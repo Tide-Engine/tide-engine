@@ -1,0 +1,1037 @@
+// DEAD SIGNAL: private, opt-in cooperative expedition. Match state only;
+// authored maps are in world.tide and local presentation in render.tide.
+settings { title = "Dead Signal — private prototype"; appId = "dev.tide.private.deadsignal"; maxPlayers = 4; hostMigration = true; }
+
+const int CREW = 4;
+const float MARINE_RADIUS = 0.34;
+const float MARINE_SPEED = 8.2;
+const float REVIVE_TIME = 2.1;
+const float STANDING_EYE = 1.55;
+const float DOWNED_EYE = 0.45;
+const float PITCH_LIMIT = 1.15;
+
+enum Phase { Lobby, Fight, Relic, Wipe, Victory }
+enum Weapon { Scattergun, Nailgun, Launcher, Arc }
+enum EnemyKind { Rush, Trooper, Bulwark, Warden }
+enum Relic { Vitality, QuickHands, Overpressure, Fleet, Resurgence, Crosslink, Salvage, Capacitor }
+enum MatchStages { Roster, Reset, Move, Navigation, Fire, Think, Shots, Interactions, Flow }
+
+component Pose { [Position] float3 position; float3 velocity; }
+
+component Marine
+{
+    int seat;
+    float health = 100;
+    float maximum = 100;
+    float armour;
+    Weapon weapon;
+    int shells = 30;
+    int nails = 160;
+    int rockets = 10;
+    int cells = 80;
+    bool downed;
+    float revive;
+    float yaw;
+    float pitch;
+    float3 aim = float3(0, 0, 1);
+    int kills;
+    int relic = -1;
+    int perks;
+    int[8] relicCounts;
+    bool ready;
+    bool holdingUse;
+    int selected = -1;
+    float fireCooldown;
+    float invulnerable;
+    int generation = -1;
+    int resetTick = -1;
+}
+
+component Enemy
+{
+    EnemyKind kind;
+    float health;
+    float maximum;
+    float3 aim = float3(0, 0, 1);
+    float windup;
+    int targetSeat = -1;
+    float flash;
+    int encounter;
+    int generation;
+    float cooldown;
+    int lastSeat = -1;
+    float marked;
+    bool dead;
+    int serial;
+    float stuck;
+    int phase;
+}
+
+// One reverse breadth-first route per player. Distances are rebuilt only
+// when their tile changes, allowing enemies to follow the authored loops.
+component Navigator
+{
+    Grid2<int> distances = Grid2(MAP_W, MAP_H);
+    int2 goal = int2(-1);
+    int generation = -1;
+}
+
+component Projectile
+{
+    int seat = -1;
+    bool hostile;
+    float damage;
+    float radius = 0.18;
+    float life = 3;
+    bool explosive;
+    int generation;
+}
+
+component Supply { int kind; int generation; bool taken; }
+
+singleton Expedition
+{
+    Phase phase = Phase.Lobby;
+    int sector;
+    int encounter;
+    int generation;
+    int manned;
+    int ready;
+    int players;
+    int objective;
+    int goal = 3;
+    int kills;
+    int wipes;
+    float elapsed;
+    float timer;
+    int remaining;
+    int3 offers;
+    bool suspended = true;
+    int triggered;
+    int cleared;
+    int relays;
+    float[3] relayHold;
+    int caches;
+    bool finale;
+    int finalePhase;
+    int[8] beats;
+    float[8] reinforcement;
+    bool[8] queued;
+    Random deck;
+    Map<PlayerID, int> seats;
+    Map<int, Entity> marines;
+}
+
+scene Main { }
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    [Absolute] float yaw;
+    [Absolute] float pitch;
+    bool fire;
+    bool use;
+    [Clamp(-1, 3)] int weapon = -1;
+    bool next;
+
+    Sample(Devices devices, Aim hand)
+    {
+        yaw = hand.yaw;
+        pitch = hand.pitch;
+        if (!hand.playing) return;
+        var keys = devices.keyboard;
+        var pad = devices.gamepad;
+        move = pad.leftStick;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
+        fire = devices.mouse.left.pressed || pad.rightTrigger > 0.35;
+        use = keys.e.pressed || pad.buttonSouth.pressed;
+        if (keys.digit1.pressed) weapon = 0;
+        if (keys.digit2.pressed) weapon = 1;
+        if (keys.digit3.pressed) weapon = 2;
+        if (keys.digit4.pressed) weapon = 3;
+        next = keys.q.pressed || pad.rightShoulder.pressed;
+    }
+
+    Sanitize()
+    {
+        if (Math.LengthSq(move) > 1) move = Math.Normalize(move);
+        yaw = Math.Clamp(yaw, -100000, 100000);
+        pitch = Math.Clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT);
+    }
+}
+
+command Ready { bool value = true; }
+command PickRelic { int choice; int sector; }
+command Retry { }
+command NewExpedition { }
+
+event Shot { float3 at; float3 way; Weapon weapon; int seat; }
+event Impact { float3 at; float damage; bool hostile; int seat = -1; bool hit; }
+event Hurt { float3 at; int seat; float damage; }
+event EnemyFell { float3 at; EnemyKind kind; bool crossfire; }
+event Revived { int seat; float3 at; }
+event SectorChanged { int sector; }
+event EncounterStarted { int sector; int encounter; }
+event RelicChosen { int seat; int relic; }
+event EnemyDamage { float amount; float3 from; int seat; int generation; }
+event MarineDamage { float amount; int generation; }
+event Rewarded { int kills; bool crossfire; }
+event Resupplied { int kind; }
+event BossPhased { int phase; }
+
+float2 Flat(float3 p) { return float2(p.x, p.z); }
+float3 Ground(float2 p) { return float3(p.x, 0, p.y); }
+bool HasPerk(Marine marine, Relic relic) { return (marine.perks & (1 << int(relic))) != 0; }
+bool WeaponUnlocked(Expedition run, Weapon weapon)
+{
+    return weapon == Weapon.Scattergun || weapon == Weapon.Nailgun
+        || weapon == Weapon.Launcher && run.sector >= 1 || weapon == Weapon.Arc && run.sector >= 2;
+}
+
+int Bits(int mask)
+{
+    mut var count = 0;
+    for (var i = 0; i < 16; i++) if ((mask & (1 << i)) != 0) count += 1;
+    return count;
+}
+
+string WeaponName(Weapon weapon)
+{
+    if (weapon == Weapon.Scattergun) return "SCATTERGUN";
+    if (weapon == Weapon.Nailgun) return "NAIL DRIVER";
+    if (weapon == Weapon.Launcher) return "BREACH LAUNCHER";
+    return "ARC CUTTER";
+}
+
+string RelicName(int relic)
+{
+    if (relic == 0) return "BLOOD RESERVOIR";
+    if (relic == 1) return "QUICK HANDS";
+    if (relic == 2) return "OVERPRESSURE";
+    if (relic == 3) return "FLEET CIRCUIT";
+    if (relic == 4) return "RESURGENCE";
+    if (relic == 5) return "CROSSLINK";
+    if (relic == 6) return "SALVAGE RITES";
+    return "CAPACITOR";
+}
+
+string RelicDetail(int relic)
+{
+    if (relic == 0) return "+35 maximum health. Full heal now.";
+    if (relic == 1) return "Fire every weapon 20% faster.";
+    if (relic == 2) return "+25% weapon damage.";
+    if (relic == 3) return "+18% movement speed.";
+    if (relic == 4) return "Revive allies twice as fast, at 65% health.";
+    if (relic == 5) return "Crossfire marks last twice as long.";
+    if (relic == 6) return "Kills restore a little health and extra ammunition.";
+    return "+25 armour each sector. Arc reaches further.";
+}
+
+int RelicOffer(Expedition run, int slot)
+{
+    return slot == 0 ? run.offers.x : slot == 1 ? run.offers.y : run.offers.z;
+}
+
+void Checkpoint(mut Expedition run)
+{
+    run.phase = Phase.Fight;
+    run.generation += 1;
+    run.encounter = 0;
+    run.triggered = 0;
+    run.cleared = 0;
+    run.relays = 0;
+    run.objective = 0;
+    run.remaining = 0;
+    run.timer = 0;
+    run.caches = 0;
+    run.finale = false;
+    run.finalePhase = 0;
+    for (var i = 0; i < 8; i++)
+    {
+        run.beats[i] = 0;
+        run.reinforcement[i] = 0;
+        run.queued[i] = false;
+    }
+    run.relayHold[0] = 0;
+    run.relayHold[1] = 0;
+    run.relayHold[2] = 0;
+    Send(SectorChanged { sector = run.sector });
+}
+
+void DealRelics(mut Expedition run)
+{
+    var a = run.deck.NextInt(8);
+    mut var b = run.deck.NextInt(7);
+    if (b >= a) b += 1;
+    mut var c = run.deck.NextInt(6);
+    if (c >= Math.Min(a, b)) c += 1;
+    if (c >= Math.Max(a, b)) c += 1;
+    run.offers = int3(a, b, c);
+}
+
+event(PlayerJoined joined) JoinCrew(mut Expedition run)
+{
+    if (run.seats.Has(joined.player)) return;
+    for (var seat = 0; seat < CREW; seat++)
+    {
+        if ((run.manned & (1 << seat)) != 0) continue;
+        run.seats[joined.player] = seat;
+        run.manned |= 1 << seat;
+        run.players = Bits(run.manned);
+        run.suspended = run.players < 2;
+        run.marines[seat] = Spawn(Pose { position = SectorStart(run.sector, seat) },
+            Marine { seat = seat }, Navigator, Owner { player = joined.player });
+        return;
+    }
+}
+
+event(PlayerLeft left) LeaveCrew(mut Expedition run)
+{
+    if (!run.seats.TryGet(left.player, out var seat)) return;
+    run.seats.Remove(left.player);
+    run.manned &= ~(1 << seat);
+    run.ready &= ~(1 << seat);
+    if (run.marines.TryGet(seat, out var body)) body.Destroy();
+    run.marines.Remove(seat);
+    run.players = Bits(run.manned);
+    run.suspended = run.players < 2;
+    run.timer = 0;
+    for (var i = 0; i < 3; i++) run.relayHold[i] = 0;
+}
+
+command(Ready ready, PlayerID sender) ReadyCrew(mut Expedition run, mut World world)
+{
+    if (run.phase != Phase.Lobby || !run.seats.TryGet(sender, out var seat)) return;
+    if (!run.marines.TryGet(seat, out var entity) || !world.TryGet<Marine>(entity, out mut var marine)) return;
+    marine.ready = ready.value;
+    world.Set<Marine>(entity, marine);
+    if (ready.value) run.ready |= 1 << seat;
+    else run.ready &= ~(1 << seat);
+}
+
+command(Retry retry, PlayerID sender) RetryCheckpoint(mut Expedition run)
+{
+    if (run.phase != Phase.Wipe || run.players < 2 || !run.seats.Has(sender)) return;
+    Checkpoint(run);
+}
+
+command(NewExpedition fresh, PlayerID sender) ResetExpedition(mut Expedition run, mut World world)
+{
+    if (!run.seats.Has(sender) || (run.phase != Phase.Lobby && run.phase != Phase.Victory && run.phase != Phase.Wipe)) return;
+    run.phase = Phase.Lobby;
+    run.sector = 0;
+    run.generation += 1;
+    run.triggered = 0;
+    run.cleared = 0;
+    run.relays = 0;
+    run.objective = 0;
+    run.ready = 0;
+    run.kills = 0;
+    run.wipes = 0;
+    run.elapsed = 0;
+    run.timer = 0;
+    foreach (var entry in run.marines)
+    {
+        if (!world.TryGet<Marine>(entry.value, out var old)) continue;
+        world.Set<Marine>(entry.value, Marine { seat = old.seat });
+    }
+    Send(SectorChanged { sector = 0 });
+}
+
+command(PickRelic pick, PlayerID sender) ChooseRelic(Expedition run, mut World world)
+{
+    if (run.phase != Phase.Relic || pick.sector != run.sector || pick.choice < 0 || pick.choice > 2) return;
+    if (!run.seats.TryGet(sender, out var seat) || !run.marines.TryGet(seat, out var entity)) return;
+    if (!world.TryGet<Marine>(entity, out mut var marine) || marine.selected >= 0) return;
+    var relic = RelicOffer(run, pick.choice);
+    marine.selected = pick.choice;
+    marine.relic = relic;
+    marine.perks |= 1 << relic;
+    marine.relicCounts[relic] += 1;
+    if (relic == int(Relic.Vitality)) marine.maximum += 35;
+    marine.health = marine.maximum;
+    world.Set<Marine>(entity, marine);
+    Send(RelicChosen { seat = seat, relic = relic });
+}
+
+[Stage(MatchStages.Reset)]
+system ResetMarines(mut Marine marine, mut Pose pose, Expedition run, Time time)
+{
+    if (marine.generation == run.generation) return;
+    marine.generation = run.generation;
+    marine.resetTick = time.tick;
+    marine.health = marine.maximum;
+    marine.armour = 25 + marine.relicCounts[int(Relic.Capacitor)] * 25;
+    marine.shells = 30;
+    marine.nails = 160;
+    marine.rockets = 10;
+    marine.cells = 80;
+    marine.downed = false;
+    marine.revive = 0;
+    marine.invulnerable = 2;
+    marine.fireCooldown = 0.2;
+    if (!WeaponUnlocked(run, marine.weapon)) marine.weapon = Weapon.Scattergun;
+    marine.selected = -1;
+    marine.holdingUse = false;
+    var entry = EncounterAt(run.sector, 0) - SectorStart(run.sector, marine.seat);
+    marine.yaw = Math.Atan2(entry.x, entry.z);
+    marine.pitch = 0;
+    marine.aim = Ground(Math.Normalize(Flat(entry)));
+    pose.position = SectorStart(run.sector, marine.seat);
+    pose.velocity = float3(0);
+    this.Snap();
+}
+
+[Stage(MatchStages.Move)]
+system MoveMarines(Controls controls, mut Marine marine, mut Pose pose, Expedition run, Time time)
+{
+    pose.velocity = float3(0);
+    marine.holdingUse = false;
+    if (run.phase != Phase.Fight || run.suspended || marine.resetTick == time.tick) return;
+    marine.holdingUse = controls.use;
+    marine.fireCooldown = Math.Max(0, marine.fireCooldown - time.dt);
+    marine.invulnerable = Math.Max(0, marine.invulnerable - time.dt);
+    marine.yaw = controls.yaw;
+    marine.pitch = controls.pitch;
+    var forward = float2(Math.Sin(marine.yaw), Math.Cos(marine.yaw));
+    var right = float2(forward.y, -forward.x);
+    marine.aim = float3(forward.x * Math.Cos(marine.pitch), -Math.Sin(marine.pitch), forward.y * Math.Cos(marine.pitch));
+    var speed = MARINE_SPEED * (1 + Math.Min(0.36, marine.relicCounts[int(Relic.Fleet)] * 0.18)) * (marine.downed ? 0.24 : 1);
+    var velocity = (right * controls.move.x + forward * controls.move.y) * speed;
+    var from = Flat(pose.position);
+    var to = MoveClear(run.sector, from, velocity * time.dt, MARINE_RADIUS);
+    pose.position = Ground(to);
+    pose.velocity = Ground((to - from) / Math.Max(time.dt, 0.001));
+    if (marine.downed) return;
+    if (controls.weapon >= 0 && WeaponUnlocked(run, Weapon(controls.weapon))) marine.weapon = Weapon(controls.weapon);
+    if (controls.next.down)
+    {
+        var next = Weapon((int(marine.weapon) + 1) % 4);
+        marine.weapon = WeaponUnlocked(run, next) ? next : Weapon.Scattergun;
+    }
+}
+
+[Stage(MatchStages.Navigation)]
+system Routes(mut Navigator navigation, Pose pose, Marine marine, Expedition run)
+{
+    if (run.phase != Phase.Fight || run.suspended || marine.downed) return;
+    var goal = int2(int(Math.Floor(pose.position.x / TILE)), int(Math.Floor(pose.position.z / TILE)));
+    if (navigation.generation == run.generation && navigation.goal.x == goal.x && navigation.goal.y == goal.y) return;
+    navigation.generation = run.generation;
+    navigation.goal = goal;
+    navigation.distances.Clear();
+    navigation.distances[goal] = 1;
+    mut List<int2> open = [];
+    open.Add(goal);
+    mut var head = 0;
+    while (head < open.count)
+    {
+        var cell = open[head];
+        head += 1;
+        var distance = navigation.distances[cell] + 1;
+        for (var direction = 0; direction < 4; direction++)
+        {
+            var step = direction == 0 ? int2(1, 0) : direction == 1 ? int2(-1, 0) : direction == 2 ? int2(0, 1) : int2(0, -1);
+            var next = cell + step;
+            if (next.x < 0 || next.y < 0 || next.x >= MAP_W || next.y >= MAP_H
+                || Cell(run.sector, next.x, next.y) == '#' || navigation.distances[next] != 0) continue;
+            navigation.distances[next] = distance;
+            open.Add(next);
+        }
+    }
+}
+
+// All weapons can aim vertically. Hitscan distance is clipped against the
+// map first, so a tiny enemy behind a wall can never receive a shot.
+float RaySphere(float3 from, float3 way, float3 center, float radius)
+{
+    var offset = center - from;
+    if (Math.LengthSq(offset) <= radius * radius) return 0;
+    var along = Math.Dot(offset, way);
+    if (along < 0) return 10000;
+    var gap = Math.LengthSq(offset) - along * along;
+    if (gap > radius * radius) return 10000;
+    return Math.Max(0, along - Math.Sqrt(radius * radius - gap));
+}
+
+float EnemyRadius(EnemyKind kind)
+{
+    return kind == EnemyKind.Warden ? 1.2 : kind == EnemyKind.Bulwark ? 0.7 : 0.55;
+}
+
+float3 EnemyCenter(Pose pose, EnemyKind kind)
+{
+    return pose.position + float3(0, kind == EnemyKind.Warden ? 1.7 : 1.0, 0);
+}
+
+[Stage(MatchStages.Fire)]
+system FireMarines(Controls controls, mut Marine marine, Pose pose, Expedition run,
+    query (Pose pose, Enemy enemy) enemies)
+{
+    if (run.phase != Phase.Fight || run.suspended || !controls.fire || marine.fireCooldown > 0) return;
+    mut var fallback = marine.downed;
+    var weapon = marine.weapon;
+    if (weapon == Weapon.Scattergun && marine.shells <= 0) fallback = true;
+    if (weapon == Weapon.Nailgun && marine.nails <= 0) fallback = true;
+    if (weapon == Weapon.Launcher && marine.rockets <= 0) fallback = true;
+    if (weapon == Weapon.Arc && marine.cells <= 0) fallback = true;
+    marine.fireCooldown = fallback ? 0.38 : weapon == Weapon.Scattergun ? 0.7 : weapon == Weapon.Nailgun ? 0.085 : weapon == Weapon.Launcher ? 0.85 : 0.18;
+    marine.fireCooldown *= Math.Max(0.55, 1 - marine.relicCounts[int(Relic.QuickHands)] * 0.2);
+    if (!fallback)
+    {
+        if (weapon == Weapon.Scattergun) marine.shells -= 1;
+        if (weapon == Weapon.Nailgun) marine.nails -= 1;
+        if (weapon == Weapon.Launcher) marine.rockets -= 1;
+        if (weapon == Weapon.Arc) marine.cells -= 1;
+    }
+    var eye = pose.position + float3(0, marine.downed ? DOWNED_EYE : STANDING_EYE, 0);
+    Send(Shot { at = eye, way = marine.aim, weapon = weapon, seat = marine.seat });
+    var boost = 1 + marine.relicCounts[int(Relic.Overpressure)] * 0.25;
+    if (!fallback && weapon == Weapon.Launcher)
+    {
+        Spawn(Pose { position = eye + marine.aim * 0.45, velocity = marine.aim * 23 },
+            Projectile { seat = marine.seat, damage = 105 * boost, explosive = true, radius = 0.2, life = 3, generation = run.generation });
+        return;
+    }
+    var pellets = !fallback && weapon == Weapon.Scattergun ? 9 : 1;
+    var limit = !fallback && weapon == Weapon.Arc ? 14 + Math.Min(15, marine.relicCounts[int(Relic.Capacitor)] * 5) : 55;
+    for (var pellet = 0; pellet < pellets; pellet++)
+    {
+        mut var way = marine.aim;
+        if (pellets > 1)
+        {
+            var sideways = (pellet % 3 - 1) * 0.075;
+            var up = (pellet / 3 - 1) * 0.055;
+            way = Math.Normalize(way + float3(Math.Cos(marine.yaw) * sideways, up, -Math.Sin(marine.yaw) * sideways));
+        }
+        var flatWay = Flat(way);
+        var flatLength = Math.Length(flatWay);
+        mut var distance = float(limit);
+        if (flatLength > 0.001) distance = Math.Min(distance, WallRayDistance(run.sector, Flat(eye), flatWay / flatLength, distance * flatLength) / flatLength);
+        mut Entity victim = default;
+        foreach (var entry in enemies)
+        {
+            if (entry.enemy.dead || entry.enemy.generation != run.generation) continue;
+            var along = RaySphere(eye, way, EnemyCenter(entry.pose, entry.enemy.kind), EnemyRadius(entry.enemy.kind));
+            if (along >= distance) continue;
+            distance = along;
+            victim = entry.entity;
+        }
+        var damage = (fallback ? 12 : weapon == Weapon.Scattergun ? 13 : weapon == Weapon.Nailgun ? 12 : 19) * boost;
+        if (victim != default) victim.Send(EnemyDamage { amount = damage, from = eye, seat = marine.seat, generation = run.generation });
+        Send(Impact { at = eye + way * distance, damage = damage, seat = marine.seat, hit = victim != default });
+        // Arc's chain is bounded, visible and never passes through walls.
+        if (!fallback && weapon == Weapon.Arc && victim != default)
+        {
+            mut var chained = 0;
+            var hitAt = eye + way * distance;
+            foreach (var entry in enemies)
+            {
+                if (entry.entity == victim || entry.enemy.dead || entry.enemy.generation != run.generation || chained >= 2) continue;
+                var at = EnemyCenter(entry.pose, entry.enemy.kind);
+                if (Math.Distance(hitAt, at) > 3.8 || !ClearLine(hitAt, at, run.sector)) continue;
+                chained += 1;
+                entry.entity.Send(EnemyDamage { amount = damage * 0.55, from = eye, seat = marine.seat, generation = run.generation });
+                Send(Impact { at = at, damage = damage * 0.55, seat = marine.seat, hit = true });
+            }
+        }
+    }
+}
+
+[Stage(MatchStages.Think)]
+system ThinkEnemies(mut Enemy enemy, mut Pose pose, Expedition run, Time time,
+    query (Marine marine, Pose pose, Navigator navigation) marines, query (Enemy enemy, Pose pose) enemies)
+{
+    if (enemy.generation != run.generation || enemy.dead)
+    {
+        this.Destroy();
+        return;
+    }
+    if (run.phase != Phase.Fight || run.suspended) return;
+    enemy.flash = Math.Max(0, enemy.flash - time.dt);
+    enemy.marked = Math.Max(0, enemy.marked - time.dt);
+    enemy.cooldown = Math.Max(0, enemy.cooldown - time.dt);
+    mut var nearest = 10000.0;
+    mut var goal = pose.position;
+    mut Entity prey = default;
+    mut var route = float2(0);
+    foreach (var entry in marines)
+    {
+        if (entry.marine.downed) continue;
+        var distance = Math.Distance(pose.position, entry.pose.position);
+        // Small deterministic preferences distribute attackers across allies.
+        var weight = distance + (entry.marine.seat == enemy.serial % CREW ? -2.5 : 0);
+        if (weight >= nearest) continue;
+        nearest = weight;
+        goal = entry.pose.position;
+        prey = entry.entity;
+        enemy.targetSeat = entry.marine.seat;
+        route = Flat(goal);
+        if (!ClearLine(pose.position, goal, run.sector))
+        {
+            var cell = int2(int(Math.Floor(pose.position.x / TILE)), int(Math.Floor(pose.position.z / TILE)));
+            mut var best = entry.navigation.distances[cell];
+            for (var direction = 0; direction < 4; direction++)
+            {
+                var step = direction == 0 ? int2(1, 0) : direction == 1 ? int2(-1, 0) : direction == 2 ? int2(0, 1) : int2(0, -1);
+                var next = cell + step;
+                var routeDistance = entry.navigation.distances[next];
+                if (routeDistance == 0 || best != 0 && routeDistance >= best) continue;
+                best = routeDistance;
+                route = (float2(next.x, next.y) + 0.5) * TILE;
+            }
+        }
+    }
+    if (prey == default) return;
+    var flat = Flat(goal - pose.position);
+    var gap = Math.Length(flat);
+    var way = Math.Normalize(flat);
+    var moveWay = Math.Normalize(route - Flat(pose.position));
+    enemy.aim = Ground(way);
+    var shooting = ClearLine(pose.position, goal, run.sector);
+    var isRush = enemy.kind == EnemyKind.Rush;
+    var wantsMove = isRush ? gap > 1.25 : gap > 10 || !shooting;
+    var speed = isRush ? 4.3 : enemy.kind == EnemyKind.Warden ? 2.1 : enemy.kind == EnemyKind.Bulwark ? 2.6 : 3.2;
+    if (wantsMove && enemy.windup <= 0)
+    {
+        var from = Flat(pose.position);
+        mut var spread = float2(0);
+        foreach (var entry in enemies)
+        {
+            if (entry.entity == this || entry.enemy.dead) continue;
+            var away = from - Flat(entry.pose.position);
+            var close = Math.Length(away);
+            if (close > 0.001 && close < 0.9) spread += away / close * (0.9 - close);
+        }
+        var steer = Math.Normalize(moveWay + spread * 0.7);
+        mut var to = MoveClear(run.sector, from, steer * (speed * time.dt), EnemyRadius(enemy.kind) * 0.7);
+        if (Math.Distance(from, to) < speed * time.dt * 0.35)
+        {
+            enemy.stuck += time.dt;
+            var side = ((enemy.serial + int(enemy.stuck / 1.5)) % 2 == 0) ? 1 : -1;
+            var aside = float2(-way.y, way.x) * side;
+            to = MoveClear(run.sector, from, aside * (speed * time.dt), EnemyRadius(enemy.kind) * 0.7);
+        }
+        else enemy.stuck = 0;
+        pose.position = Ground(to);
+        pose.velocity = Ground((to - from) / Math.Max(time.dt, 0.001));
+    }
+    else pose.velocity = float3(0);
+    if (isRush)
+    {
+        if (enemy.windup > 0)
+        {
+            enemy.windup -= time.dt;
+            if (enemy.windup <= 0)
+            {
+                if (gap < 1.8 && shooting) prey.Send(MarineDamage { amount = 13, generation = run.generation });
+                enemy.cooldown = 0.8;
+            }
+        }
+        else if (gap < 1.5 && shooting && enemy.cooldown <= 0) enemy.windup = 0.25;
+        return;
+    }
+    if (enemy.windup > 0)
+    {
+        enemy.windup -= time.dt;
+        if (enemy.windup > 0) return;
+        var muzzle = pose.position + float3(0, enemy.kind == EnemyKind.Warden ? 1.6 : 1.05, 0);
+        var aim = Math.Normalize(goal + float3(0, 0.9, 0) - muzzle);
+        var shots = enemy.kind == EnemyKind.Warden ? 5 : enemy.kind == EnemyKind.Bulwark ? 3 : 1;
+        for (var i = 0; i < shots; i++)
+        {
+            var angle = (i - (shots - 1) * 0.5) * 0.14;
+            var direction = Math.Normalize(float3(aim.x * Math.Cos(angle) + aim.z * Math.Sin(angle), aim.y,
+                aim.z * Math.Cos(angle) - aim.x * Math.Sin(angle)));
+            Spawn(Pose { position = muzzle + direction * 0.6, velocity = direction * (enemy.kind == EnemyKind.Warden ? 12 : 10) },
+                Projectile { hostile = true, damage = enemy.kind == EnemyKind.Warden ? 19 : 12, radius = 0.22, generation = run.generation });
+        }
+        enemy.cooldown = enemy.kind == EnemyKind.Warden ? Math.Max(0.85, 1.4 - enemy.phase * 0.25) : enemy.kind == EnemyKind.Bulwark ? 2.0 : 1.8;
+    }
+    else if (shooting && gap < 27 && enemy.cooldown <= 0) enemy.windup = enemy.kind == EnemyKind.Warden ? 0.65 : 0.5;
+}
+
+event(EnemyDamage hit) DamageEnemy(mut Enemy enemy, Pose pose, Expedition run, World world)
+{
+    if (enemy.dead || hit.generation != enemy.generation || run.phase != Phase.Fight || run.suspended) return;
+    var crossfire = enemy.lastSeat >= 0 && enemy.lastSeat != hit.seat && enemy.marked > 0;
+    mut var damage = hit.amount * (crossfire ? 1.35 : 1);
+    var front = Math.Dot(Math.Normalize(hit.from - EnemyCenter(pose, enemy.kind)), enemy.aim) > 0.35;
+    if (enemy.kind == EnemyKind.Bulwark && front && !crossfire) damage *= 0.28;
+    if (enemy.kind == EnemyKind.Warden && front && !crossfire) damage *= 0.7;
+    enemy.health = Math.Max(0, enemy.health - damage);
+    enemy.flash = 0.12;
+    enemy.lastSeat = hit.seat;
+    enemy.marked = 1.6;
+    if (run.marines.TryGet(hit.seat, out var shooter) && world.TryGet<Marine>(shooter, out var marine)
+        && HasPerk(marine, Relic.Crosslink)) enemy.marked = 1.6 * (1 + marine.relicCounts[int(Relic.Crosslink)]);
+    if (enemy.kind == EnemyKind.Warden && enemy.serial == 999 && enemy.health > 0)
+    {
+        var threshold = enemy.phase == 0 ? 0.7 : 0.35;
+        if (enemy.phase < 2 && enemy.health < enemy.maximum * threshold)
+        {
+            enemy.phase += 1;
+            SpawnBossAdds(run, enemy.phase);
+            Send(BossPhased { phase = enemy.phase });
+        }
+    }
+    if (enemy.health > 0) return;
+    enemy.dead = true;
+    Send(EnemyFell { at = pose.position, kind = enemy.kind, crossfire = crossfire });
+    if (run.marines.TryGet(hit.seat, out var scoring)) scoring.Send(Rewarded { kills = 1, crossfire = crossfire });
+    if (enemy.serial % 7 == 0) Spawn(Pose { position = pose.position }, Supply { kind = 0, generation = run.generation });
+    if (enemy.serial % 9 == 1) Spawn(Pose { position = pose.position }, Supply { kind = 1, generation = run.generation });
+    this.Destroy();
+}
+
+event(EnemyFell fell) CountEnemy(mut Expedition run)
+{
+    run.kills += 1;
+}
+
+event(BossPhased phase) CountBossPhase(mut Expedition run) { run.finalePhase = phase.phase; }
+
+event(MarineDamage hit) DamageMarine(mut Marine marine, Pose pose, Expedition run)
+{
+    if (marine.downed || marine.invulnerable > 0 || hit.generation != marine.generation || run.phase != Phase.Fight || run.suspended) return;
+    var absorbed = Math.Min(marine.armour, hit.amount * 0.5);
+    marine.armour -= absorbed;
+    var damage = hit.amount - absorbed;
+    marine.health = Math.Max(0, marine.health - damage);
+    Send(Hurt { at = pose.position, seat = marine.seat, damage = damage });
+    if (marine.health > 0) return;
+    marine.downed = true;
+    marine.revive = 0;
+    marine.fireCooldown = 0.5;
+}
+
+event(Rewarded reward) RewardMarine(mut Marine marine)
+{
+    marine.kills += reward.kills;
+    marine.nails = Math.Min(250, marine.nails + 3);
+    if (marine.kills % 3 == 0) marine.shells = Math.Min(60, marine.shells + 1);
+    if (marine.kills % 8 == 0) marine.rockets = Math.Min(18, marine.rockets + 1);
+    if (marine.kills % 2 == 0) marine.cells = Math.Min(150, marine.cells + 2);
+    if (HasPerk(marine, Relic.Salvage) && !marine.downed)
+    {
+        marine.health = Math.Min(marine.maximum, marine.health + 1.5 * marine.relicCounts[int(Relic.Salvage)]);
+        marine.nails = Math.Min(250, marine.nails + 3);
+    }
+}
+
+event(Resupplied supply) SupplyMarine(mut Marine marine)
+{
+    if (supply.kind == 0) marine.health = Math.Min(marine.maximum, marine.health + 22);
+    else
+    {
+        marine.shells = Math.Min(60, marine.shells + 12);
+        marine.nails = Math.Min(250, marine.nails + 65);
+        marine.rockets = Math.Min(18, marine.rockets + 4);
+        marine.cells = Math.Min(150, marine.cells + 35);
+    }
+}
+
+[Stage(MatchStages.Shots)]
+system MoveProjectiles(mut Projectile projectile, mut Pose pose, Expedition run, Time time,
+    query (Marine marine, Pose pose) marines, query (Enemy enemy, Pose pose) enemies)
+{
+    if (projectile.generation != run.generation || projectile.life <= 0 || run.phase != Phase.Fight)
+    {
+        this.Destroy();
+        return;
+    }
+    if (run.suspended) return;
+    projectile.life -= time.dt;
+    var step = pose.velocity * time.dt;
+    var length = Math.Length(step);
+    var way = Math.Normalize(step);
+    var flatWay = Flat(way);
+    var flatLength = Math.Length(flatWay);
+    mut var distance = length;
+    mut var struck = false;
+    if (flatLength > 0.001)
+    {
+        var rayLimit = length * flatLength + projectile.radius;
+        var wall = WallRayDistance(run.sector, Flat(pose.position), flatWay / flatLength, rayLimit);
+        if (wall < rayLimit - 0.00001)
+        {
+            distance = Math.Max(0, (wall - projectile.radius) / flatLength);
+            struck = true;
+        }
+    }
+    mut Entity victim = default;
+    if (projectile.hostile)
+    {
+        foreach (var entry in marines)
+        {
+            if (entry.marine.downed) continue;
+            var along = RaySphere(pose.position, way, entry.pose.position + float3(0, 0.85, 0), 0.65 + projectile.radius);
+            if (along > distance) continue;
+            victim = entry.entity;
+            distance = along;
+            struck = true;
+        }
+    }
+    else
+    {
+        foreach (var entry in enemies)
+        {
+            if (entry.enemy.dead || entry.enemy.generation != run.generation) continue;
+            var along = RaySphere(pose.position, way, EnemyCenter(entry.pose, entry.enemy.kind), EnemyRadius(entry.enemy.kind) + projectile.radius);
+            if (along > distance) continue;
+            victim = entry.entity;
+            distance = along;
+            struck = true;
+        }
+    }
+    pose.position += way * distance;
+    if (!struck) return;
+    if (projectile.hostile && victim != default) victim.Send(MarineDamage { amount = projectile.damage, generation = run.generation });
+    else if (projectile.explosive)
+    {
+        foreach (var entry in enemies)
+        {
+            if (entry.enemy.dead || entry.enemy.generation != run.generation) continue;
+            var at = EnemyCenter(entry.pose, entry.enemy.kind);
+            var gap = Math.Distance(pose.position, at);
+            if (gap > 4.8 || !ClearLine(pose.position, at, run.sector)) continue;
+            entry.entity.Send(EnemyDamage { amount = projectile.damage * (1 - gap / 6), from = pose.position,
+                seat = projectile.seat, generation = run.generation });
+        }
+    }
+    else if (victim != default) victim.Send(EnemyDamage { amount = projectile.damage, from = pose.position,
+        seat = projectile.seat, generation = run.generation });
+    Send(Impact { at = pose.position, damage = projectile.damage, hostile = projectile.hostile,
+        seat = projectile.seat, hit = victim != default });
+    this.Destroy();
+}
+
+[Stage(MatchStages.Interactions)]
+system ReviveMarines(mut Marine marine, Pose pose, Expedition run, Time time,
+    query (Marine marine, Pose pose) marines)
+{
+    if (!marine.downed || run.phase != Phase.Fight || run.suspended) return;
+    mut var helped = false;
+    mut var helpLevel = 0;
+    foreach (var entry in marines)
+    {
+        if (entry.entity == this || entry.marine.downed || !entry.marine.holdingUse) continue;
+        if (Math.Distance(pose.position, entry.pose.position) > 2.8 || !ClearLine(pose.position, entry.pose.position, run.sector)) continue;
+        helped = true;
+        helpLevel = Math.Max(helpLevel, entry.marine.relicCounts[int(Relic.Resurgence)]);
+    }
+    marine.revive = helped ? marine.revive + time.dt * (1 + Math.Min(3, helpLevel)) : 0;
+    if (marine.revive < REVIVE_TIME) return;
+    marine.downed = false;
+    marine.revive = 0;
+    marine.health = marine.maximum * Math.Min(0.85, 0.4 + helpLevel * 0.25);
+    marine.invulnerable = 2.0;
+    Send(Revived { seat = marine.seat, at = pose.position });
+}
+
+[Stage(MatchStages.Interactions)]
+system TakeSupplies(mut Supply supply, Pose pose, Expedition run, query (Marine marine, Pose pose) marines)
+{
+    if (supply.generation != run.generation)
+    {
+        this.Destroy();
+        return;
+    }
+    if (supply.taken || run.phase != Phase.Fight || run.suspended) return;
+    foreach (var entry in marines)
+    {
+        if (entry.marine.downed || Math.Distance(pose.position, entry.pose.position) > 1.4) continue;
+        if (supply.kind == 0 && entry.marine.health >= entry.marine.maximum) continue;
+        supply.taken = true;
+        entry.entity.Send(Resupplied { kind = supply.kind });
+        this.Destroy();
+        return;
+    }
+}
+
+float3 ReinforcementAt(Expedition run, int encounter, int index, int beat)
+{
+    if (beat == 0) return SpawnAt(run.sector, encounter, index);
+    var center = EncounterAt(run.sector, encounter);
+    for (var attempt = 0; attempt < 12; attempt++)
+    {
+        var angle = (encounter * 0.25 + beat * 0.5 + index * 0.037 + attempt * 0.125) * Math.TAU;
+        var gap = 7.5 + (index % 4) * 1.2;
+        var at = center + float3(Math.Cos(angle) * gap, 0, Math.Sin(angle) * gap);
+        if (!SolidAt(at, 0.6, run.sector) && ClearLine(at, center, run.sector)) return at;
+    }
+    return SpawnAt(run.sector, encounter, index + beat * 19);
+}
+
+void SpawnEncounter(mut Expedition run, int encounter)
+{
+    var beat = run.beats[encounter];
+    run.beats[encounter] += 1;
+    run.queued[encounter] = false;
+    var pattern = (run.sector + encounter) % 5;
+    // The first contact teaches strafing before the expedition's full dose.
+    var count = run.sector == 0 && encounter == 0 ? 6 + run.players + beat * 2 : 8 + run.sector + run.players * 3;
+    for (var i = 0; i < count; i++)
+    {
+        mut var kind = i % 4 == 0 ? EnemyKind.Trooper : EnemyKind.Rush;
+        if (pattern == 0 && beat == 1) kind = i % 5 == 0 && run.sector > 0 ? EnemyKind.Bulwark : EnemyKind.Trooper;
+        if (pattern == 1) kind = beat == 1 ? EnemyKind.Rush : i % 5 == 0 ? EnemyKind.Bulwark : EnemyKind.Trooper;
+        if (pattern == 2) kind = beat < 2 ? EnemyKind.Rush : i % 4 == 0 ? EnemyKind.Bulwark : EnemyKind.Trooper;
+        if (pattern == 3) kind = i % 6 == 0 ? EnemyKind.Bulwark : i % 2 == 0 ? EnemyKind.Trooper : EnemyKind.Rush;
+        if (pattern == 3 && beat == 2 && i == 0 && run.sector >= 2) kind = EnemyKind.Warden;
+        if (pattern == 4) kind = beat == 2 ? EnemyKind.Rush : i % 4 == 0 ? EnemyKind.Bulwark : EnemyKind.Trooper;
+        var health = (kind == EnemyKind.Warden ? 560.0 : kind == EnemyKind.Bulwark ? 280.0 : kind == EnemyKind.Trooper ? 130.0 : 80.0)
+            * (1 + Math.Max(0, run.players - 2) * 0.1);
+        Spawn(Pose { position = ReinforcementAt(run, encounter, i, beat) }, Enemy { kind = kind, health = health, maximum = health,
+            encounter = encounter, generation = run.generation, serial = encounter * 100 + beat * 30 + i, cooldown = i * 0.06 });
+    }
+    Send(EncounterStarted { sector = run.sector, encounter = encounter });
+}
+
+void SpawnBossAdds(Expedition run, int phase)
+{
+    var count = 6 + run.players * 2;
+    var encounter = EncounterCount(run.sector) - 1;
+    for (var i = 0; i < count; i++)
+    {
+        var kind = phase == 2 && i % 5 == 0 ? EnemyKind.Bulwark : i % 3 == 0 ? EnemyKind.Trooper : EnemyKind.Rush;
+        var hp = kind == EnemyKind.Bulwark ? 280.0 : kind == EnemyKind.Trooper ? 130.0 : 80.0;
+        Spawn(Pose { position = ReinforcementAt(run, encounter, i, phase) },
+            Enemy { kind = kind, health = hp, maximum = hp, encounter = encounter, generation = run.generation,
+                serial = 700 + phase * 40 + i, cooldown = 0.9 });
+    }
+}
+
+[Stage(MatchStages.Flow)]
+system ExpeditionFlow(mut Expedition run, Time time, query (Marine marine, Pose pose) marines,
+    query (Enemy enemy, Pose pose) enemies)
+{
+    run.players = Bits(run.manned);
+    run.suspended = run.players < 2;
+    if (run.phase == Phase.Lobby)
+    {
+        if (run.players >= 2 && (run.ready & run.manned) == run.manned) Checkpoint(run);
+        return;
+    }
+    if (run.suspended || run.phase == Phase.Wipe || run.phase == Phase.Victory) return;
+    if (run.phase == Phase.Relic)
+    {
+        mut var selected = 0;
+        foreach (var entry in marines) if (entry.marine.selected >= 0) selected += 1;
+        if (selected < run.players) return;
+        run.sector += 1;
+        Checkpoint(run);
+        return;
+    }
+    run.elapsed += time.dt;
+    mut var living = 0;
+    foreach (var entry in marines) if (!entry.marine.downed) living += 1;
+    if (living == 0)
+    {
+        run.phase = Phase.Wipe;
+        run.wipes += 1;
+        run.timer = 0;
+        return;
+    }
+    var encounters = EncounterCount(run.sector);
+    mut var occupied = 0;
+    mut int[8] alive = [0, 0, 0, 0, 0, 0, 0, 0];
+    run.remaining = 0;
+    foreach (var entry in enemies)
+    {
+        if (entry.enemy.dead || entry.enemy.generation != run.generation) continue;
+        run.remaining += 1;
+        occupied |= 1 << entry.enemy.encounter;
+        alive[entry.enemy.encounter] += 1;
+    }
+    for (var i = 0; i < encounters; i++)
+    {
+        var bit = 1 << i;
+        if ((run.triggered & bit) != 0)
+        {
+            if (run.beats[i] < 3 && alive[i] <= 3)
+            {
+                if (!run.queued[i])
+                {
+                    run.queued[i] = true;
+                    run.reinforcement[i] = 0.65;
+                }
+                run.reinforcement[i] -= time.dt;
+                if (run.reinforcement[i] <= 0) SpawnEncounter(run, i);
+            }
+            else if (run.beats[i] >= 3 && (occupied & bit) == 0) run.cleared |= bit;
+            continue;
+        }
+        mut var near = false;
+        var at = EncounterAt(run.sector, i);
+        foreach (var entry in marines)
+            if (!entry.marine.downed && Math.Distance(at, entry.pose.position) < 9 && ClearLine(at, entry.pose.position, run.sector)) near = true;
+        if (!near) continue;
+        run.triggered |= bit;
+        SpawnEncounter(run, i);
+    }
+    run.encounter = Bits(run.cleared);
+    for (var i = 0; i < 3; i++)
+    {
+        if ((run.relays & (1 << i)) != 0) continue;
+        var at = Ground(RelayPoint(run.sector, i));
+        mut var threatened = false;
+        foreach (var entry in enemies)
+            if (!entry.enemy.dead && entry.enemy.generation == run.generation && Math.Distance(at, entry.pose.position) < 10) threatened = true;
+        mut var crew = 0;
+        foreach (var entry in marines)
+            if (!entry.marine.downed && entry.marine.holdingUse && Math.Distance(at, entry.pose.position) < 4.2
+                && ClearLine(at, entry.pose.position, run.sector)) crew += 1;
+        run.relayHold[i] = crew >= 2 && !threatened ? run.relayHold[i] + time.dt : 0;
+        if (run.relayHold[i] < 1.8) continue;
+        run.relays |= 1 << i;
+        foreach (var entry in marines) if (!entry.marine.downed) entry.entity.Send(Resupplied { kind = 1 });
+    }
+    run.objective = Bits(run.relays);
+    // A hidden cache is a shared supply: every teammate gets its contents.
+    for (var i = 0; i < 2; i++)
+    {
+        if ((run.caches & (1 << i)) != 0) continue;
+        var at = Ground(CachePoint(run.sector, i));
+        mut var opened = false;
+        foreach (var entry in marines)
+            if (!entry.marine.downed && entry.marine.holdingUse && Math.Distance(at, entry.pose.position) < 2.7
+                && ClearLine(at, entry.pose.position, run.sector)) opened = true;
+        if (!opened) continue;
+        run.caches |= 1 << i;
+        foreach (var entry in marines) if (!entry.marine.downed)
+        {
+            entry.entity.Send(Resupplied { kind = 0 });
+            entry.entity.Send(Resupplied { kind = 1 });
+        }
+    }
+    if (run.encounter < encounters || run.objective < 3) return;
+    if (run.sector == SECTORS - 1 && !run.finale)
+    {
+        run.finale = true;
+        var hp = 1700.0 + run.players * 550;
+        var bossAt = ExitAt(run.sector) - float3(0, 0, 5);
+        Spawn(Pose { position = SolidAt(bossAt, 1.1, run.sector) ? SpawnAt(run.sector, encounters - 1, 0) : bossAt },
+            Enemy { kind = EnemyKind.Warden, health = hp, maximum = hp, encounter = encounters - 1,
+                generation = run.generation, serial = 999, cooldown = 1 });
+        return;
+    }
+    if (run.remaining > 0) return;
+    mut var extracting = 0;
+    foreach (var entry in marines)
+        if (!entry.marine.downed && entry.marine.holdingUse && Math.Distance(entry.pose.position, ExitAt(run.sector)) < 4.2
+            && ClearLine(entry.pose.position, ExitAt(run.sector), run.sector)) extracting += 1;
+    run.timer = extracting >= 2 ? run.timer + time.dt : 0;
+    if (run.timer < 2) return;
+    run.timer = 0;
+    if (run.sector == SECTORS - 1)
+    {
+        run.phase = Phase.Victory;
+        return;
+    }
+    run.phase = Phase.Relic;
+    DealRelics(run);
+}

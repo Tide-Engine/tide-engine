@@ -6,6 +6,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ### Tide programs
 
+Private game prototypes live in `prototypes/`, outside the examples and documentation staging lists. `-DTIDE_PRIVATE_PROTOTYPES=ON` opts into Dead Signal's playable `dead_signal` target, its `dead_signal_tests` simulation host and `dead_signal_render_tests` graphics host, on native and web builds. The option defaults off, and nothing in that folder is installed in the Tide package or copied into the docs site. Game design, implementation limits and playtest criteria belong to `prototypes/dead-signal/`, not the public language documentation. Its test-only geometry audit is explicitly listed in those hosts' source lists; the nested test manifest keeps it and the C hosts out of standalone game discovery. Sixteen simulation cases cover the expedition, real-player cooperation, collision, projectile/aim correctness, checkpoint/relic flow, snapshot replay and lossy-network convergence; native and WASI pin the same scripted hash. The graphics host draws real game views on OpenGL, WebGL and WebGPU, including the map (M; Tab belongs to GUI navigation). Full-route QA is invulnerable and establishes progression only; the 30–60-minute human pacing target is unmeasured.
+
 `tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>] [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...] [PACKAGES <Name> <file.tide>...] [DEFINES <SYMBOL>...])` builds a game as the program `<target>` (see `cmake/Tide.cmake`):
 
 - The game is every `.tide` file in the current source folder and its subfolders; the next build picks up new files. `SOURCES` lists the files instead, for tests and folders that hold several games.

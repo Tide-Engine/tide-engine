@@ -1,0 +1,65 @@
+// Included by the test target only. C independently checks the map topology
+// and ray intersections from these results of the game's actual helpers.
+singleton GeometryAudit
+{
+    bool done;
+    List<byte> cells;
+    float2[24] starts;
+    float2[6] exits;
+    float2[18] relays;
+    float2[12] caches;
+    float2[36] encounters;
+    int[6] encounterCounts;
+    bool[24] safeStarts;
+    bool[576] safeEnemies;
+    float[48] rays;
+    float2[24] moves;
+}
+
+float2 AuditWay(int index)
+{
+    switch (index)
+    {
+        case 0: return float2(1, 0);
+        case 1: return float2(-1, 0);
+        case 2: return float2(0, 1);
+        case 3: return float2(0, -1);
+        case 4: return Math.Normalize(float2(1, 1));
+        case 5: return Math.Normalize(float2(-1, 1));
+        case 6: return Math.Normalize(float2(1, -1));
+    }
+    return Math.Normalize(float2(-1, -1));
+}
+
+system SurveyGeometry(mut GeometryAudit audit)
+{
+    if (audit.done) return;
+    audit.done = true;
+    for (var sector = 0; sector < SECTORS; sector++)
+    {
+        for (var z = 0; z < MAP_H; z++)
+        for (var x = 0; x < MAP_W; x++)
+            audit.cells.Add(byte(Cell(sector, x, z)));
+        for (var seat = 0; seat < 4; seat++)
+        {
+            audit.starts[sector * 4 + seat] = SpawnPoint(sector, seat);
+            audit.safeStarts[sector * 4 + seat] = Walkable(sector, SpawnPoint(sector, seat), 0.46);
+        }
+        audit.exits[sector] = ExitPoint(sector);
+        for (var i = 0; i < 3; i++) audit.relays[sector * 3 + i] = RelayPoint(sector, i);
+        for (var i = 0; i < 2; i++) audit.caches[sector * 2 + i] = CachePoint(sector, i);
+        audit.encounterCounts[sector] = EncounterCount(sector);
+        for (var encounter = 0; encounter < EncounterCount(sector); encounter++)
+        {
+            audit.encounters[sector * 6 + encounter] = EncounterPoint(sector, encounter);
+            for (var i = 0; i < 16; i++)
+                audit.safeEnemies[sector * 96 + encounter * 16 + i] =
+                    !SolidAt(SpawnAt(sector, encounter, i), 0.6, sector);
+        }
+        var from = SpawnPoint(sector, 0);
+        for (var i = 0; i < 8; i++)
+            audit.rays[sector * 8 + i] = WallRayDistance(sector, from, AuditWay(i), 150);
+        for (var i = 0; i < 4; i++)
+            audit.moves[sector * 4 + i] = MoveClear(sector, from, AuditWay(i) * 150, 0.46);
+    }
+}
