@@ -67,6 +67,11 @@ Pages are self-contained; any future
 external game assets must stay under that protected root. The site's auth,
 retired public URLs, static build gate and catalog are in `notes/docs-site.md`.
 
+Dead Signal (`notes/dead-signal.md`) also uses `TIDE_PRIVATE_PROTOTYPES`, but
+remains local to native/web build outputs. It has no page-staging target and is
+not a dependency of `private_games`; adding catalog publication was outside its
+owner-requested design-and-build task.
+
 ## Verification and limits
 
 The native suite passed 2,010/2,010 tests and the web suite 1,982/1,982 before

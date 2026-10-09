@@ -140,14 +140,7 @@ add_subdirectory(packages) # The packages that come with tide, and their tests
 add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
-add_subdirectory(prototypes) # Private games, served only through the site's admin area
-
-# Private development games are opt-in and never staged into the documentation
-# or installed in the Tide package.
-option(TIDE_PRIVATE_PROTOTYPES "Build the private game prototypes" OFF)
-if(TIDE_PRIVATE_PROTOTYPES)
-    add_subdirectory(prototypes/dead-signal)
-endif()
+add_subdirectory(prototypes) # Private games; catalog staging is explicit
 
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.
