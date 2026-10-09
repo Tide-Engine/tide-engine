@@ -9,6 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
+const prototypeIds = ['two-forks', 'the-last-light', 'cabin-nine', 'deadbell', 'dead-signal'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -29,7 +30,7 @@ test('production website shares prototypes while protecting analytics, catalog a
     const entries = [];
     const aliases = [];
     const files = new Map();
-    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+    for (const id of prototypeIds) {
         const root = `/prototypes/${id}`;
         // When CMake staged the real games, check those exact bytes too.
         // Standalone docs builds retain the small fixtures below.
@@ -46,7 +47,11 @@ test('production website shares prototypes while protecting analytics, catalog a
     // Even a stale deployment that contains these bytes must not serve them.
     for (const name of ['/samples/two-forks/index.html', '/samples/two-forks/game.wasm', '/samples/thumbnails/two-forks.png', '/sample_two_forks.html', '/two-forks/index.html',
         '/samples/the-last-light/index.html', '/examples/the-last-light/index.html', '/the_last_light.html',
-        '/samples/cabin-nine/index.html', '/samples/cabin-nine/game.wasm', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html']) {
+        '/samples/cabin-nine/index.html', '/samples/cabin-nine/game.wasm', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html',
+        '/samples/dead-signal/index.html', '/samples/dead-signal/game.wasm', '/samples/thumbnails/dead-signal.png',
+        '/dead_signal.html', '/sample_dead_signal.html', '/dead-signal/index.html', '/examples/dead-signal/sfx/radio.ogg',
+        '/samples/deadbell/index.html', '/samples/deadbell/game.wasm', '/samples/thumbnails/deadbell.png',
+        '/deadbell.html', '/sample_deadbell.html', '/deadbell_smoke.html']) {
         files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
@@ -116,7 +121,10 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.match(catalogHtml, /Two Forks/);
     assert.match(catalogHtml, /The Last Light/);
     assert.match(catalogHtml, /Cabin Nine/);
-    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+    assert.match(catalogHtml, /Deadbell/);
+    assert.match(catalogHtml, /Dead Signal/);
+    assert.deepEqual([...catalogHtml.matchAll(/data-prototype="([^"]+)"/g)].map((match) => match[1]).sort(), [...prototypeIds].sort());
+    for (const id of prototypeIds) {
         assert.match(catalogHtml, new RegExp(`href="/prototypes/${id}/"`));
         assert.match(catalogHtml, new RegExp(`src="/prototypes/${id}/thumbnail.png"`));
     }
@@ -139,7 +147,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
             assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
         }
     }
-    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+    for (const id of prototypeIds) {
         for (const suffix of ['', '/', '/index.html']) {
             const response = await fetch(`${origin}/prototypes/${id}${suffix}?join=TEST`, { redirect: 'manual' });
             assert.equal(response.status, 200);
@@ -158,33 +166,44 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.match(response.headers.get('location'), /^\/admin\/login\?next=/);
         assert.equal(response.headers.get('cache-control'), 'private, no-store');
     }
-    for (const route of ['/samples/two%2dforks/index.html', '/samples/cabin%2dnine/index.html']) {
+    for (const route of ['/samples/two%2dforks/index.html', '/samples/cabin%2dnine/index.html',
+        '/samples/dead%2dsignal/index.html', '/dead%5fsignal.html', '/samples/dead%62ell/index.html']) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(response.status, 404, route);
     }
     const encoded = await fetch(`${origin}/adm%69n%2fprototypes%2ftwo-forks%2findex.html?join=TEST`, { redirect: 'manual' });
     assert.equal(encoded.status, 308);
     assert.equal(encoded.headers.get('location'), '/prototypes/two-forks/index.html?join=TEST');
+    for (const [route, target] of [
+        ['/adm%69n/prototypes/dead%2dsignal/index.html', '/prototypes/dead-signal/index.html'],
+        ['/admin%2fprototypes%2fdeadbell%2fgame.wasm', '/prototypes/deadbell/game.wasm'],
+    ]) {
+        const response = await fetch(`${origin}${route}?join=TEST`, { redirect: 'manual' });
+        assert.equal(response.status, 308, route);
+        assert.equal(response.headers.get('location'), `${target}?join=TEST`);
+    }
     const encodedPublic = await fetch(`${origin}/prototypes/two%2dforks/index.html`, { redirect: 'manual' });
     assert.equal(encodedPublic.status, 200);
     assert.equal(encodedPublic.headers.get('x-robots-tag'), 'noindex');
-    const wasmPath = `${origin}/prototypes/the-last-light/game.wasm`;
-    const head = await fetch(wasmPath, { method: 'HEAD' });
-    assert.equal(head.status, 200);
-    assert.equal(head.headers.get('content-type'), 'application/wasm');
-    assert.equal(head.headers.get('x-robots-tag'), null);
-    assert.equal((await head.arrayBuffer()).byteLength, 0);
-    const range = await fetch(wasmPath, { headers: { range: 'bytes=0-3' } });
-    assert.equal(range.status, 206);
-    assert.notEqual(range.headers.get('cache-control'), 'private, no-store');
-    assert.deepEqual(Buffer.from(await range.arrayBuffer()), Buffer.from([0, 97, 115, 109]));
-    const conditional = await fetch(wasmPath, { headers: { 'if-none-match': head.headers.get('etag') } });
-    assert.equal(conditional.status, 304);
-    const oldWasmPath = `${origin}/admin/prototypes/the-last-light/game.wasm`;
-    for (const options of [{ method: 'HEAD' }, { headers: { range: 'bytes=0-3' } }, { headers: { 'if-none-match': '*' } }]) {
-        const response = await fetch(oldWasmPath, { ...options, redirect: 'manual' });
-        assert.equal(response.status, 308);
-        assert.equal(response.headers.get('location'), '/prototypes/the-last-light/game.wasm');
+    for (const id of prototypeIds) {
+        const wasmPath = `${origin}/prototypes/${id}/game.wasm`;
+        const head = await fetch(wasmPath, { method: 'HEAD' });
+        assert.equal(head.status, 200);
+        assert.equal(head.headers.get('content-type'), 'application/wasm');
+        assert.equal(head.headers.get('x-robots-tag'), null);
+        assert.equal((await head.arrayBuffer()).byteLength, 0);
+        const range = await fetch(wasmPath, { headers: { range: 'bytes=0-3' } });
+        assert.equal(range.status, 206);
+        assert.notEqual(range.headers.get('cache-control'), 'private, no-store');
+        assert.deepEqual(Buffer.from(await range.arrayBuffer()), Buffer.from([0, 97, 115, 109]));
+        const conditional = await fetch(wasmPath, { headers: { 'if-none-match': head.headers.get('etag') } });
+        assert.equal(conditional.status, 304);
+        const oldWasmPath = `${origin}/admin/prototypes/${id}/game.wasm`;
+        for (const options of [{ method: 'HEAD' }, { headers: { range: 'bytes=0-3' } }, { headers: { 'if-none-match': '*' } }]) {
+            const response = await fetch(oldWasmPath, { ...options, redirect: 'manual' });
+            assert.equal(response.status, 308);
+            assert.equal(response.headers.get('location'), `/prototypes/${id}/game.wasm`);
+        }
     }
     const beacon = await fetch(`${origin}/analytics/pageview`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 Test browser' },
         body: JSON.stringify({ path: '/guide', referrer: 'https://example.org/private/path' }) });
@@ -195,14 +214,14 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|the-last-light|cabin-nine/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|the-last-light|cabin-nine|deadbell|dead-signal/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|The Last Light|the-last-light|Cabin Nine|cabin-nine/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|The Last Light|the-last-light|Cabin Nine|cabin-nine|Deadbell|deadbell|Dead Signal|dead-signal/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
     assert.equal((await fetch(`${origin}/admin/prototypes`, { redirect: 'manual' })).status, 303);
-    assert.equal((await fetch(wasmPath, { redirect: 'manual' })).status, 200);
+    for (const id of prototypeIds) assert.equal((await fetch(`${origin}/prototypes/${id}/game.wasm`, { redirect: 'manual' })).status, 200);
 
     child.kill();
     await once(child, 'exit');
@@ -216,7 +235,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.equal(response.status, 200, `admin password unset: ${route}`);
         assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
     }
-    const oldLink = await fetch(`${origin}/admin/prototypes/cabin-nine/?join=FRIEND`, { redirect: 'manual' });
-    assert.equal(oldLink.status, 308);
-    assert.equal(oldLink.headers.get('location'), '/prototypes/cabin-nine/?join=FRIEND');
+    for (const id of prototypeIds) {
+        const oldLink = await fetch(`${origin}/admin/prototypes/${id}/?join=FRIEND`, { redirect: 'manual' });
+        assert.equal(oldLink.status, 308);
+        assert.equal(oldLink.headers.get('location'), `/prototypes/${id}/?join=FRIEND`);
+    }
 });

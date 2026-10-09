@@ -23,6 +23,18 @@ const prototypes = [
         image: '/prototypes/cabin-nine/thumbnail.png',
         horror: true,
     },
+    {
+        id: 'dead-signal', title: 'Dead Signal', kind: 'PSX shooter · Cooperative roguelike', players: '2–4 players',
+        description: 'Descend into a remade communications blacksite. Split firing angles, rescue your crew, and build an arsenal through six sectors before extracting together.',
+        image: '/prototypes/dead-signal/thumbnail.png',
+        horror: true,
+    },
+    {
+        id: 'deadbell', title: 'Deadbell', kind: 'PSX roguelike · Horde combat', players: '2 players',
+        description: 'Two lamplighters. A city that will not stay dead. Carve a path through the horde, bind relics, and bring your partner home.',
+        image: '/prototypes/deadbell/thumbnail.png',
+        horror: false,
+    },
 ];
 
 export function load() {

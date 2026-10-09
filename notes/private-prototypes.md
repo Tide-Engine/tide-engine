@@ -70,15 +70,32 @@ catalog. When its existing opt-in
 `TIDE_PRIVATE_PROTOTYPES` option is enabled, `private_games` stages it under
 the public prototype root too; the manual docs workflow explicitly enables this
 option. Its independent game contract is in `notes/cabin-nine.md`.
+Deadbell uses the same opt-in option and joins this grid through
+`deadbell_page` and `private_games`, with its actual combat thumbnail and
+self-contained page under `/prototypes/deadbell/`. Its independent
+co-op roguelike contract and validation are in `notes/deadbell.md`.
+
+Dead Signal (`notes/dead-signal.md`) also uses `TIDE_PRIVATE_PROTOTYPES`. At the
+owner's follow-up request it joins the admin grid, with a combat screenshot,
+2–4-player label and the same availability check as the other games.
+`dead_signal_page` and `private_games` stage its self-contained browser page
+under `docs/static/prototypes/dead-signal/`, served as
+`/prototypes/dead-signal/`. All five games and their thumbnails are public;
+the catalog itself remains behind admin sign-in. Existing manual docs workflow
+staging covers them with no workflow change or deployment.
 Pages are self-contained. The site's admin auth, former game addresses,
 static build gate and catalog are in `notes/docs-site.md`.
 
-Dead Signal (`notes/dead-signal.md`) also uses `TIDE_PRIVATE_PROTOTYPES`, but
-remains local to native/web build outputs. It has no page-staging target and is
-not a dependency of `private_games`; adding catalog publication was outside its
-owner-requested design-and-build task.
-
 ## Verification and limits
+
+Public-sharing validation (2026-10-09): the native/web builds and full suites
+passed 2,016/2,016 and 1,993/1,993. After integrating the five-game catalog,
+scoped prototype checks passed 8/8 native and 13/13 web. All five staged public
+pages match their compiled HTML, with none staged under the old admin root.
+Site check/build and 24 analytics/admin/production HTTP/SEO/access regressions
+pass, including the real game bytes without sign-in or admin configuration.
+The current serving contract and remaining manual deployment step are in
+`notes/docs-site.md`.
 
 The native suite passed 2,010/2,010 tests and the web suite 1,982/1,982 before
 the additional game browser checks were registered. The final scoped web run

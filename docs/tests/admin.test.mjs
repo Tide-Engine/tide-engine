@@ -8,6 +8,8 @@ import test from 'node:test';
 import { createAnalytics } from '../analytics.js';
 import { createAdmin } from '../admin.js';
 
+const prototypeIds = ['two-forks', 'the-last-light', 'cabin-nine', 'deadbell', 'dead-signal'];
+
 async function site(t, options = {}) {
     const folder = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-'));
     const analytics = createAnalytics({ file: path.join(folder, 'analytics.json'), knownPaths: ['/', '/guide'], now: options.now });
@@ -70,8 +72,10 @@ test('sessions expire, password changes invalidate them, and HTTPS cookies are s
     assert.equal((await current.get('/admin/api', cookie)).status, 200);
     const changed = await site(t, { now: () => time, password: 'a-different-password' });
     assert.equal((await changed.get('/admin/api', cookie)).status, 401);
+    for (const id of prototypeIds) assert.equal((await changed.get(`/prototypes/${id}/game.wasm`, cookie)).status, 200);
     time += 12 * 60 * 60 * 1000;
     assert.equal((await current.get('/admin/api', cookie)).status, 401);
+    for (const id of prototypeIds) assert.equal((await current.get(`/prototypes/${id}/game.wasm`, cookie)).status, 200);
 });
 
 test('sign-in and logout reject cross-origin requests and sign-in attempts are bounded', async (t) => {
@@ -98,7 +102,7 @@ test('missing admin password refuses both page and API instead of exposing count
     assert.equal((await login('')).status, 503);
     assert.equal((await get('/admin/prototypes')).status, 503);
     assert.equal((await get('/admin/prototypes/__data.json')).status, 503);
-    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+    for (const id of prototypeIds) {
         assert.equal((await get(`/prototypes/${id}/`)).status, 200);
         assert.equal((await get(`/prototypes/${id}/game.wasm`)).status, 200);
     }
@@ -115,8 +119,8 @@ test('prototype files are public while the catalog and retired copies remain pro
         assert.equal(anonymous.headers.get('cache-control'), 'private, no-store');
         assert.equal((await get(route, cookie)).status, 200);
     }
-    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
-        for (const file of ['', 'index.html', 'game.wasm', 'game.pack', 'sfx/steps.ogg', 'thumbnail.png']) {
+    for (const id of prototypeIds) {
+        for (const file of ['', 'index.html', 'game.wasm', 'game.pack', 'sfx/steps.ogg', 'sfx/shot.wav', 'thumbnail.png']) {
             const route = `/prototypes/${id}/${file}`;
             const response = await get(route);
             assert.equal(response.status, 200, route);
@@ -128,10 +132,17 @@ test('prototype files are public while the catalog and retired copies remain pro
     for (const route of ['/samples/two-forks/', '/samples/two-forks/index.html', '/samples/two-forks/game.wasm',
         '/samples/thumbnails/two-forks.png', '/samples/two%2dforks/index.html', '/two-forks/',
         '/examples/the-last-light/', '/sample_two_forks.html', '/samples/the-last-light/',
-        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html', '/samples/cabin%2dnine/index.html']) {
+        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html', '/samples/cabin%2dnine/index.html',
+        '/samples/dead-signal/', '/samples/dead-signal/index.html', '/samples/dead-signal/game.wasm',
+        '/samples/thumbnails/dead-signal.png', '/examples/dead-signal/sfx/radio.ogg',
+        '/dead-signal/', '/dead_signal.html', '/sample_dead_signal.html', '/samples/dead%2dsignal/index.html',
+        '/samples/deadbell/', '/samples/deadbell/index.html', '/samples/thumbnails/deadbell.png',
+        '/deadbell.html', '/sample_deadbell.html', '/deadbell_smoke.html', '/samples/dead%62ell/index.html']) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);
+            assert.equal(response.headers.get('cache-control'), 'private, no-store');
+            assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow');
             assert.doesNotMatch(await response.text(), /protected page/);
         }
     }
@@ -140,8 +151,8 @@ test('prototype files are public while the catalog and retired copies remain pro
 test('old admin game links redirect to public URLs without requiring a session', async (t) => {
     for (const password of ['a-test-password', '']) {
         const { get } = await site(t, { password });
-        for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
-            for (const suffix of ['', '/', '/index.html', '/game.wasm', '/sfx/steps.ogg']) {
+        for (const id of prototypeIds) {
+            for (const suffix of ['', '/', '/index.html', '/game.wasm', '/game.pack', '/thumbnail.png', '/sfx/steps.ogg', '/sfx/shot.wav']) {
                 const response = await get(`/admin/prototypes/${id}${suffix}?join=TEST&backend=webgpu`);
                 assert.equal(response.status, 308);
                 assert.equal(response.headers.get('location'), `/prototypes/${id}${suffix || '/'}?join=TEST&backend=webgpu`);
@@ -151,6 +162,14 @@ test('old admin game links redirect to public URLs without requiring a session',
         const encoded = await get('/adm%69n%2fprototypes%2ftwo-forks%2findex.html?join=TEST');
         assert.equal(encoded.status, 308);
         assert.equal(encoded.headers.get('location'), '/prototypes/two-forks/index.html?join=TEST');
+        for (const [route, target] of [
+            ['/adm%69n/prototypes/dead%2dsignal/index.html', '/prototypes/dead-signal/index.html'],
+            ['/admin%2fprototypes%2fdeadbell%2fgame.wasm', '/prototypes/deadbell/game.wasm'],
+        ]) {
+            const response = await get(`${route}?join=TEST`);
+            assert.equal(response.status, 308, route);
+            assert.equal(response.headers.get('location'), `${target}?join=TEST`);
+        }
     }
 });
 

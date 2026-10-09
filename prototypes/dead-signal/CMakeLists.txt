@@ -3,6 +3,14 @@ set(DEAD_SIGNAL_ROOMS PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms
 
 if(TARGET tide_platform)
     tide_add_game(dead_signal SOURCES ${DEAD_SIGNAL_SOURCES} ${DEAD_SIGNAL_ROOMS})
+    if(TIDE_WEB)
+        set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/dead-signal")
+        add_custom_target(dead_signal_page
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE_DIR:dead_signal>/dead_signal.html" "${destination}/index.html"
+            DEPENDS dead_signal VERBATIM)
+    endif()
 endif()
 
 tide_add_game(dead_signal_tests SOURCES ${DEAD_SIGNAL_SOURCES} test/geometry.tide NAME game ${DEAD_SIGNAL_ROOMS}
