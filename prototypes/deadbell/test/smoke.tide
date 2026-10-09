@@ -1,0 +1,15 @@
+// Only the private renderer fixture compiles this declaration. All eight
+// thousand enemies are real ECS entities; none is a decorative instance.
+event(Spawned) SeedRenderer(Main main, mut Expedition run)
+{
+    if (main.testBots) return;
+    for (var i = 0; i < 8000; i++)
+    {
+        var kind = i % 19 == 0 ? EnemyKind.Cantor : i % 13 == 0 ? EnemyKind.Bellguard : i % 7 == 0 ? EnemyKind.Runner : EnemyKind.Husk;
+        Spawn(Enemy { pos = float2((i % 100 - 50) * 0.46, float(i / 100) * 0.46 + 3),
+            heading = float2(0, -1), kind = kind, health = 72, maxHealth = 72,
+            serial = i, prime = i % 17 == 0 ? 2.0 : 0.0 });
+    }
+    run.live = 8000;
+    run.peak = 8000;
+}

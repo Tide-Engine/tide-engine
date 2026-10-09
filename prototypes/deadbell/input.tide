@@ -1,0 +1,98 @@
+using Rooms;
+
+// Presentation resolves screen coordinates before the tick samples them.
+// The wire carries a ground point; it never carries camera or window state.
+local singleton Hand
+{
+    bool playing;
+    float2 move;
+    float2 aim;
+    float2 position;
+    bool touchFire;
+    bool touchHeavy;
+    bool touchDash;
+    bool touchLure;
+    bool touchInteract;
+    bool touched;
+    bool padAim;
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    [Absolute, Clamp(-140, 140)] float2 aim;
+    bool fire;
+    bool heavy;
+    bool dash;
+    bool lure;
+    bool interact;
+
+    Sample(Devices devices, Hand hand)
+    {
+        aim = hand.aim;
+        if (!hand.playing) return;
+        move = hand.move;
+        fire = devices.mouse.left.pressed || devices.gamepad.rightTrigger > 0.3 || hand.touchFire;
+        heavy = devices.mouse.right.pressed || devices.gamepad.leftTrigger > 0.3 || hand.touchHeavy;
+        dash = devices.keyboard.space.pressed || devices.gamepad.buttonSouth.pressed || hand.touchDash;
+        lure = devices.keyboard.q.pressed || devices.gamepad.buttonWest.pressed || hand.touchLure;
+        interact = devices.keyboard.e.pressed || devices.gamepad.buttonNorth.pressed || hand.touchInteract;
+    }
+}
+
+// Up is away from the camera, along the ground plane. The camera keeps its
+// bearing, so WASD and both sticks agree throughout every district.
+[Stage(Layers.Camera, 1)]
+view ReadHands(Devices devices, Lens lens, Expedition run, Session session, Rooms.Lobby lobby,
+               Guide guide, mut Hand hand, query (Hero hero, Owner owner) heroes)
+{
+    hand.playing = lobby.playing && !guide.open && run.phase != RunPhase.Waiting
+        && run.phase != RunPhase.Sanctuary && run.phase != RunPhase.Victory && run.phase != RunPhase.Defeat;
+    hand.move = float2(0);
+    hand.touchFire = false;
+    hand.touchHeavy = false;
+    hand.touchDash = false;
+    hand.touchLure = false;
+    hand.touchInteract = false;
+    foreach (var entry in heroes)
+        if (entry.owner.player == session.player) hand.position = entry.hero.pos;
+    var keys = devices.keyboard;
+    mut var direction = devices.gamepad.leftStick;
+    if (keys.d.pressed || keys.rightArrow.pressed) direction.x += 1;
+    if (keys.a.pressed || keys.leftArrow.pressed) direction.x -= 1;
+    if (keys.w.pressed || keys.upArrow.pressed) direction.y += 1;
+    if (keys.s.pressed || keys.downArrow.pressed) direction.y -= 1;
+    hand.move = float2(direction.x, direction.y);
+    if (Math.LengthSq(hand.move) > 1) hand.move = Math.Normalize(hand.move);
+    if (Math.LengthSq(devices.gamepad.rightStick) > 0.08)
+    {
+        hand.padAim = true;
+        hand.aim = hand.position + Math.Normalize(devices.gamepad.rightStick) * 35;
+    }
+    if (Math.LengthSq(devices.mouse.delta) > 0.01 || devices.mouse.left.down || devices.mouse.right.down) hand.padAim = false;
+    if (!hand.padAim && lens.made) hand.aim = GroundPointer(devices.mouse.position, lens);
+    hand.touched = devices.touchscreen.connected;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed || !hand.playing) continue;
+        var at = Screen.Flip(touch.position);
+        if (at.y > Screen.height - 100 && at.x >= Screen.width - 256)
+        {
+            if (at.x < Screen.width - 192) hand.touchInteract = true;
+            else if (at.x < Screen.width - 128) hand.touchLure = true;
+            else if (at.x < Screen.width - 64) hand.touchDash = true;
+            else hand.touchHeavy = true;
+        }
+        else if (at.x < Screen.width * 0.45)
+        {
+            var pull = (touch.position - touch.startPosition) / 52;
+            hand.move = pull;
+            if (Math.LengthSq(hand.move) > 1) hand.move = Math.Normalize(hand.move);
+        }
+        else
+        {
+            hand.aim = GroundPointer(touch.position, lens);
+            hand.touchFire = true;
+        }
+    }
+}

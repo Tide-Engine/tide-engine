@@ -1,0 +1,432 @@
+// Movement and active weapons produce only two fixed attack packets each tick.
+// Every enemy tests those packets independently; no enemy scans the horde.
+[Before(AdvanceExpedition)]
+system DriveHero(mut Hero hero, Controls controls, Expedition run, mut Squad squad, Time time)
+{
+    var dt = time.dt;
+    hero.fireFlash = Math.Max(0, hero.fireFlash - dt);
+    hero.heavyFlash = Math.Max(0, hero.heavyFlash - dt);
+    hero.damageFlash = Math.Max(0, hero.damageFlash - dt);
+    hero.invulnerable = Math.Max(0, hero.invulnerable - dt);
+    hero.fireCooldown = Math.Max(0, hero.fireCooldown - dt);
+    hero.heavyCooldown = Math.Max(0, hero.heavyCooldown - dt);
+    hero.lureCooldown = Math.Max(0, hero.lureCooldown - dt);
+    hero.dashTime = Math.Max(0, hero.dashTime - dt);
+    hero.stamina = Math.Min(MaxStamina(hero), hero.stamina + dt * (22 + float(hero.relics[5]) * 4));
+    mut var pulse = squad.seats[hero.seat];
+    pulse.entity = this;
+    pulse.fire = false;
+    pulse.heavy = false;
+    pulse.interact = false;
+    pulse.lureTime = Math.Max(0, pulse.lureTime - dt);
+    mut var move = controls.move;
+    mut var aim = controls.aim - hero.pos;
+    mut var fire = controls.fire;
+    mut var heavy = controls.heavy;
+    mut var dash = controls.dash;
+    mut var lure = controls.lure;
+    mut var interact = controls.interact;
+    if (hero.bot)
+    {
+        var goal = run.seal == 2 && hero.seat == 1 ? run.goalB : run.goal;
+        move = Math.LengthSq(goal - hero.pos) > 2 ? Unit(goal - hero.pos) : float2(0);
+        var angle = float(time.tick) * 0.013 + float(hero.seat) * Math.PI;
+        aim = float2(Math.Cos(angle), Math.Sin(angle));
+        fire = true;
+        heavy = time.tick % 120 == hero.seat * 35;
+        dash = false;
+        lure = time.tick % 600 == hero.seat * 40;
+        interact = true;
+    }
+    if (Math.LengthSq(aim) > 0.01) hero.aim = Unit(aim);
+    var live = run.phase == RunPhase.March || run.phase == RunPhase.Hold || run.phase == RunPhase.Boss;
+    var paired = run.connected == 2 || run.testBots;
+    if (hero.active && hero.down && paired && live)
+    {
+        var crawl = Math.LengthSq(move) > 1 ? Unit(move) : move;
+        hero.pos = Math.Clamp(hero.pos + crawl * (1.3 * dt), -CITY_EDGE, CITY_EDGE);
+    }
+    if (hero.active && !hero.down && paired)
+    {
+        var direction = Math.LengthSq(move) > 1 ? Unit(move) : move;
+        var speed = 8 * (1 + float(hero.relics[4]) * 0.08);
+        if (live && dash && hero.dashTime <= 0 && hero.stamina >= 32)
+        {
+            hero.stamina -= 32;
+            hero.dashTime = 0.18;
+            hero.invulnerable = 0.28;
+            hero.dashDirection = Math.LengthSq(direction) > 0.01 ? Unit(direction) : hero.aim;
+        }
+        hero.pos = Math.Clamp(hero.pos + (hero.dashTime > 0 ? hero.dashDirection * 32 : direction * speed) * dt, -CITY_EDGE, CITY_EDGE);
+        if (live)
+        {
+            pulse.interact = interact;
+            var baseReload = hero.weapon == 0 ? 0.22 : hero.weapon == 1 ? 0.55 : 0.85;
+            if (fire && hero.fireCooldown <= 0)
+            {
+                pulse.fire = true;
+                hero.fireFlash = 0.085;
+                hero.fireCooldown = baseReload / (1 + float(hero.relics[2]) * 0.12);
+                Send(Fired { at = hero.pos, weapon = hero.weapon });
+            }
+            if (heavy && hero.heavyCooldown <= 0 && hero.stamina >= 42)
+            {
+                hero.stamina -= 42;
+                pulse.heavy = true;
+                hero.heavyFlash = 0.32;
+                hero.heavyCooldown = 1.4;
+                Send(Struck { at = hero.pos });
+            }
+            if (lure && hero.lureCooldown <= 0 && hero.stamina >= 20)
+            {
+                hero.stamina -= 20;
+                pulse.lureAt = Math.Clamp(hero.pos + hero.aim * 18, -CITY_EDGE, CITY_EDGE);
+                pulse.lureTime = 6 + float(hero.relics[9]);
+                hero.lureCooldown = 9;
+                Send(Lured { at = pulse.lureAt });
+            }
+        }
+    }
+    if (run.phase == RunPhase.Sanctuary && hero.bot && !hero.ready)
+        ApplyRelic(hero, RelicOffer(run.zone * 3 + run.seal, hero.seat, hero.seat, run.seed));
+    pulse.pos = hero.pos;
+    pulse.aim = hero.aim;
+    pulse.active = hero.active;
+    pulse.down = hero.down;
+    pulse.dash = hero.dashTime > 0;
+    pulse.range = (hero.weapon == 0 ? 28 : hero.weapon == 1 ? 17 : 44) * (1 + float(hero.relics[1]) * 0.15);
+    pulse.width = (hero.weapon == 0 ? 0.65 : hero.weapon == 1 ? 0.20 : 1.4) * (1 + float(hero.relics[1]) * 0.25);
+    pulse.damage = (hero.weapon == 0 ? 27 : hero.weapon == 1 ? 50 : 85) * (1 + float(hero.relics[0]) * 0.2);
+    pulse.heavyDamage = 48 * (1 + float(hero.relics[6]) * 0.15);
+    pulse.primeDuration = 4 + float(hero.relics[7]);
+    pulse.ruptureDamage = 100 * (1 + float(hero.relics[11]) * 0.25);
+    pulse.reviveSpeed = 1 + float(hero.relics[10]) * 0.25;
+    pulse.mercy = float(hero.relics[8]) * 2;
+    squad.seats[hero.seat] = pulse;
+}
+
+[After(DriveHero)]
+[Before(AdvanceExpedition)]
+system Rescue(mut Hero hero, Squad squad, Expedition run, Time time)
+{
+    if (!hero.down) return;
+    if (run.connected < 2 && !run.testBots) return;
+    var friend = squad.seats[1 - hero.seat];
+    if (!friend.down && friend.active && friend.interact && Math.LengthSq(friend.pos - hero.pos) < 36)
+        hero.revive += time.dt * friend.reviveSpeed;
+    else hero.revive = Math.Max(0, hero.revive - time.dt * 0.35);
+    hero.bleed = Math.Max(0, hero.bleed - time.dt);
+    if (hero.revive >= 3)
+    {
+        hero.down = false;
+        hero.health = MaxHealth(hero) * 0.55;
+        hero.stamina = MaxStamina(hero);
+        hero.invulnerable = 3;
+        hero.revive = 0;
+        hero.bleed = 0;
+        Send(Rescued { at = hero.pos });
+    }
+}
+
+int CrowdTarget(Expedition run)
+{
+    mut var target = 512 + run.zone * 1500 + run.seal * 400;
+    if (run.phase == RunPhase.Hold)
+    {
+        var progress = Math.Saturate(run.objective / run.objectiveNeed);
+        target += int(progress * float(800 + run.zone * 1800));
+    }
+    if (run.phase == RunPhase.Boss) target = 8000;
+    if (run.risk) target += 700;
+    return Math.Min(8000, target);
+}
+
+void SpawnEnemy(mut Expedition run, float2 center, bool keeper, bool finalBoss)
+{
+    var serial = run.spawned++;
+    var hash = Math.Hash(int3(serial, run.zone, run.seed));
+    var recipe = serial + (run.seed == 0 ? 0 : Math.Hash(int2(run.seed, run.zone)) % 100000);
+    mut var angle = float(hash % 6283) * 0.001;
+    if (run.phase == RunPhase.Hold && run.seal == 0)
+        angle = float(run.zone) * 2.1 + float(hash % 1200) * 0.001 - 0.6
+            + (run.objective > run.objectiveNeed * 0.66 && serial % 2 == 0 ? Math.PI : 0);
+    if (run.phase == RunPhase.Hold && run.seal == 1)
+        angle = run.phaseTime * 0.03 + (serial % 2 == 0 ? 0 : Math.PI) + float(hash % 900) * 0.001 - 0.45;
+    var distance = 34 + float((hash / 6283) % 52);
+    mut var position = Math.Clamp(center + float2(Math.Cos(angle), Math.Sin(angle)) * distance, -CITY_EDGE, CITY_EDGE);
+    if (Math.LengthSq(position - center) < 484)
+        position = Math.Clamp(center - float2(Math.Cos(angle), Math.Sin(angle)) * distance, -CITY_EDGE, CITY_EDGE);
+    mut var kind = EnemyKind.Husk;
+    if (recipe % 8 == 0) kind = EnemyKind.Runner;
+    if (run.zone > 0 && recipe % 19 == 0) kind = EnemyKind.Bellguard;
+    if (run.zone > 0 && recipe % 29 == 0) kind = EnemyKind.Cantor;
+    if (run.phase == RunPhase.Hold && run.objective > run.objectiveNeed * 0.66 && recipe % 11 == 0) kind = EnemyKind.Bellguard;
+    if (keeper) { kind = EnemyKind.Warden; position = run.anchor + float2(0, 18); }
+    var health = keeper ? (finalBoss ? 60000 : float(4500 + run.zone * 1800)) : kind == EnemyKind.Bellguard ? 180 : kind == EnemyKind.Cantor ? 95 : 72 + float(run.zone) * 8;
+    Spawn(Enemy { pos = position, kind = kind, health = health, maxHealth = health, serial = serial, finalBoss = finalBoss, generation = run.generation,
+                  attackCooldown = float(serial % 120) * 0.03 });
+    run.live++;
+    run.peak = Math.Max(run.peak, run.live);
+    if (keeper) { run.bossHealth = health; run.bossMax = health; run.keeperSpawned = true; }
+}
+
+[After(Rescue)]
+[Before(Crowd)]
+system AdvanceExpedition(mut Expedition run, Squad squad, Time time, mut World world)
+{
+    if (!run.started || run.phase == RunPhase.Waiting || run.phase == RunPhase.Victory || run.phase == RunPhase.Defeat) return;
+    if (run.connected < 2 && !run.testBots) return;
+    var dt = time.dt;
+    var phaseDt = dt * run.pace;
+    var a = squad.seats[0];
+    var b = squad.seats[1];
+    mut var hero0 = world.Get<Hero>(run.hero0);
+    mut var hero1 = world.Get<Hero>(run.hero1);
+    if ((hero0.down && hero1.down) || (hero0.down && hero0.bleed <= 0) || (hero1.down && hero1.bleed <= 0))
+    {
+        run.phase = RunPhase.Defeat;
+        run.phaseTime = 0;
+        return;
+    }
+    run.clock += phaseDt;
+    run.phaseTime += phaseDt;
+    run.bellHeat = Math.Lerp(run.bellHeat, float(run.live) / 8000, Math.Min(1, dt * 2));
+    run.mendCooldown = Math.Max(0, run.mendCooldown - dt);
+    if (run.ruptures > run.heardRuptures)
+    {
+        Send(Ruptured { at = run.ruptureAt, count = run.ruptures - run.heardRuptures });
+        run.heardRuptures = run.ruptures;
+    }
+    if (run.mend >= 4 && run.mendCooldown <= 0)
+    {
+        run.mend = 0;
+        run.mendCooldown = 2;
+        run.hero0.Send(Mend { health = 4 + a.mercy });
+        run.hero1.Send(Mend { health = 4 + b.mercy });
+    }
+    if (run.phase == RunPhase.Sanctuary)
+    {
+        if ((hero0.ready && hero1.ready && run.phaseTime > 10) || run.phaseTime >= DRAFT_SECONDS)
+        {
+            if (!hero0.ready)
+            {
+                ApplyRelic(hero0, RelicOffer(run.zone * 3 + run.seal, 0, 0, run.seed));
+                if (run.risk) hero0.relics[hero0.upgrade]++;
+                world.Set<Hero>(run.hero0, hero0);
+            }
+            if (!hero1.ready)
+            {
+                ApplyRelic(hero1, RelicOffer(run.zone * 3 + run.seal, 0, 1, run.seed));
+                if (run.risk) hero1.relics[hero1.upgrade]++;
+                world.Set<Hero>(run.hero1, hero1);
+            }
+            run.seal++;
+            if (run.seal == 3) { run.seal = 0; run.zone++; run.act = run.zone; }
+            if (run.zone == 3)
+            {
+                run.phase = RunPhase.Boss;
+                run.phaseTime = 0;
+                run.goal = float2(0, 0);
+                run.goalB = run.goal;
+                run.anchor = run.goal;
+                run.objective = 0;
+                run.objectiveNeed = 180;
+                run.keeperDead = false;
+                SpawnEnemy(run, float2(0), true, true);
+            }
+            else SetMarch(run);
+        }
+        return;
+    }
+    if (run.phase == RunPhase.March)
+    {
+        if (!run.cacheTaken && a.interact && b.interact && !a.down && !b.down
+            && Math.LengthSq(a.pos - run.cache) < 64 && Math.LengthSq(b.pos - run.cache) < 64)
+            run.cacheProgress += dt;
+        else run.cacheProgress = Math.Max(0, run.cacheProgress - dt * 0.5);
+        if (run.cacheProgress >= 2 && !run.cacheTaken)
+        {
+            run.cacheTaken = true;
+            run.risk = true;
+            run.riskCount++;
+            run.coins += 40;
+            run.hero0.Send(Mend { health = 20 });
+            run.hero1.Send(Mend { health = 20 });
+        }
+        if (run.phaseTime >= MARCH_MIN && a.interact && b.interact && !a.down && !b.down
+            && Math.LengthSq(a.pos - run.goal) < 144 && Math.LengthSq(b.pos - run.goal) < 144)
+            run.objective += dt;
+        else run.objective = Math.Max(0, run.objective - dt * 2);
+        if (run.objective >= 1)
+        {
+            run.phase = RunPhase.Hold;
+            run.phaseTime = 0;
+            run.objective = 0;
+            run.objectiveNeed = HOLD_SECONDS;
+            if (run.seal == 2)
+            {
+                run.goal = run.anchor + float2(-12, 0);
+                run.goalB = run.anchor + float2(12, 0);
+                SpawnEnemy(run, run.anchor, true, false);
+            }
+        }
+    }
+    else if (run.phase == RunPhase.Hold)
+    {
+        if (run.seal == 1)
+        {
+            var angle = run.phaseTime * 0.035;
+            run.goal = run.anchor + float2(Math.Sin(angle) * 12, Math.Sin(angle * 2) * 8);
+            run.goalB = run.goal;
+        }
+        var reach = run.seal == 2 ? 100 : 225;
+        var presentA = a.active && !a.down && Math.LengthSq(a.pos - run.goal) < float(reach);
+        var presentB = b.active && !b.down && Math.LengthSq(b.pos - run.goalB) < float(reach);
+        var swapped = run.seal == 2 && a.active && b.active && !a.down && !b.down
+            && Math.LengthSq(a.pos - run.goalB) < float(reach) && Math.LengthSq(b.pos - run.goal) < float(reach);
+        if ((presentA && presentB) || swapped) run.objective += phaseDt;
+        else if (run.seal == 0 && (presentA || presentB)) run.objective += phaseDt * 0.35;
+        if (run.objective >= run.objectiveNeed && (run.seal != 2 || run.keeperDead))
+        {
+            run.phase = RunPhase.Sanctuary;
+            run.phaseTime = 0;
+            run.hero0.Send(DraftReset);
+            run.hero1.Send(DraftReset);
+            run.coins += 20;
+            return;
+        }
+    }
+    else if (run.phase == RunPhase.Boss)
+    {
+        // Destroying the keeper opens the evacuation; no timer grants victory.
+        run.objective = Math.Min(run.objectiveNeed, run.phaseTime);
+    }
+    run.spawnClock += dt;
+    if (run.spawnClock >= 0.2)
+    {
+        run.spawnClock = 0;
+        var target = CrowdTarget(run);
+        var batch = Math.Min(100, Math.Max(0, target - run.live));
+        for (var i = 0; i < batch; i++)
+        {
+            var center = (run.spawned % 2 == 0 ? a.pos : b.pos);
+            SpawnEnemy(run, center, false, false);
+        }
+    }
+}
+
+[After(AdvanceExpedition)]
+system Crowd(mut Enemy enemy, Expedition run, Squad squad, Time time)
+{
+    if (enemy.generation != run.generation || run.phase == RunPhase.Sanctuary || run.phase == RunPhase.Waiting || run.phase == RunPhase.Defeat || run.phase == RunPhase.Victory)
+    {
+        Send(Fallen { });
+        this.Destroy();
+        return;
+    }
+    if (run.connected < 2 && !run.testBots) return;
+    var dt = time.dt;
+    enemy.flash = Math.Max(0, enemy.flash - dt * 3);
+    enemy.prime = Math.Max(0, enemy.prime - dt);
+    enemy.attackCooldown = Math.Max(0, enemy.attackCooldown - dt);
+    mut var rupture = false;
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var hero = squad.seats[seat];
+        if (!hero.active || hero.down) continue;
+        var delta = enemy.pos - hero.pos;
+        var distance2 = Math.LengthSq(delta);
+        var along = Math.Dot(delta, hero.aim);
+        var across = Math.Abs(delta.x * hero.aim.y - delta.y * hero.aim.x);
+        var width = hero.width < 0.5 ? Math.Max(1, along * hero.width) : hero.width;
+        var shotHit = hero.fire && along > 0 && along < hero.range && across < width;
+        var heavyHit = hero.heavy && distance2 < 196 && along > -1 && across < Math.Max(3, along * 0.7);
+        if (shotHit || heavyHit)
+        {
+            if (enemy.prime > 0 && enemy.primedBy != seat)
+            {
+                enemy.health -= hero.ruptureDamage;
+                enemy.prime = 0;
+                rupture = true;
+                Send(Resonance { at = enemy.pos });
+            }
+            enemy.health -= (shotHit ? hero.damage : 0) + (heavyHit ? hero.heavyDamage : 0);
+            enemy.flash = 1;
+            var push = enemy.kind == EnemyKind.Warden ? 0.1 : enemy.kind == EnemyKind.Bellguard ? 0.5 : 1.0;
+            enemy.pos = Math.Clamp(enemy.pos + hero.aim * ((heavyHit ? 2.5 : 0.35) * push), -CITY_EDGE, CITY_EDGE);
+            if (heavyHit && enemy.kind != EnemyKind.Warden)
+            {
+                enemy.windup = 0;
+                enemy.attackCooldown = Math.Max(enemy.attackCooldown, 0.5);
+            }
+            if (heavyHit && enemy.health > 0) { enemy.prime = hero.primeDuration; enemy.primedBy = seat; }
+        }
+    }
+    if (enemy.health <= 0)
+    {
+        Send(Fallen { killed = true, rupture = rupture, keeper = enemy.kind == EnemyKind.Warden, finalBoss = enemy.finalBoss });
+        this.Destroy();
+        return;
+    }
+    var a = squad.seats[0];
+    var b = squad.seats[1];
+    mut var seatTarget = Math.LengthSq(enemy.pos - a.pos) < Math.LengthSq(enemy.pos - b.pos) ? 0 : 1;
+    if (a.down || !a.active) seatTarget = 1;
+    if (b.down || !b.active) seatTarget = 0;
+    var target = squad.seats[seatTarget];
+    mut var destination = target.pos;
+    var lure0 = a.lureTime > 0 && enemy.windup <= 0 && Math.LengthSq(enemy.pos - a.lureAt) < 3600;
+    var lure1 = b.lureTime > 0 && enemy.windup <= 0 && Math.LengthSq(enemy.pos - b.lureAt) < 3600;
+    var lured = enemy.kind != EnemyKind.Warden && (lure0 || lure1);
+    if (lured)
+    {
+        var nearest = lure0 && (!lure1 || Math.LengthSq(enemy.pos - a.lureAt) <= Math.LengthSq(enemy.pos - b.lureAt));
+        destination = nearest ? a.lureAt : b.lureAt;
+    }
+    // Deterministic formation offsets spread the crowd without pairwise avoidance.
+    var angle = float(enemy.serial % 512) * 2.39996;
+    mut var orbit = 0.5 + float(enemy.serial % 32) * 0.16;
+    if (enemy.kind == EnemyKind.Cantor) orbit = 12;
+    destination += float2(Math.Cos(angle), Math.Sin(angle)) * orbit;
+    var direction = Unit(destination - enemy.pos);
+    enemy.heading = direction;
+    mut var speed = enemy.kind == EnemyKind.Runner ? 4.8 : enemy.kind == EnemyKind.Bellguard ? 1.6 : enemy.kind == EnemyKind.Warden ? 2.2 : 2.5;
+    speed += float(run.zone) * 0.18;
+    if (enemy.prime > 0) speed *= 0.45;
+    if (enemy.windup <= 0 && Math.LengthSq(destination - enemy.pos) > 0.16)
+        enemy.pos += direction * speed * dt;
+    var distance = Math.LengthSq(enemy.pos - target.pos);
+    var bossStage = enemy.kind == EnemyKind.Warden ? (enemy.health < enemy.maxHealth * 0.33 ? 2 : enemy.health < enemy.maxHealth * 0.66 ? 1 : 0) : 0;
+    var attackReach = enemy.kind == EnemyKind.Warden ? float(100 + bossStage * 300) : enemy.kind == EnemyKind.Cantor ? 324 : 6.25;
+    if (!lured && enemy.attackCooldown <= 0 && distance < float(attackReach) && enemy.windup <= 0)
+    {
+        enemy.windup = enemy.kind == EnemyKind.Warden ? 1.5 : enemy.kind == EnemyKind.Cantor ? 1.2 : 0.65;
+        enemy.attackAt = target.pos;
+        enemy.target = seatTarget;
+    }
+    if (enemy.windup > 0)
+    {
+        enemy.windup -= dt;
+        if (enemy.windup <= 0)
+        {
+            var radius2 = enemy.kind == EnemyKind.Warden ? 64 : enemy.kind == EnemyKind.Cantor ? 12.25 : 5.76;
+            if (enemy.kind == EnemyKind.Warden || enemy.kind == EnemyKind.Cantor)
+            {
+                for (var seat = 0; seat < 2; seat++)
+                {
+                    var victim = squad.seats[seat];
+                    if (victim.active && !victim.down && Math.LengthSq(victim.pos - enemy.attackAt) < radius2)
+                        victim.entity.Send(Contact { damage = enemy.kind == EnemyKind.Warden ? 28 : 14, from = enemy.pos });
+                }
+            }
+            else
+            {
+                var victim = squad.seats[enemy.target];
+                if (victim.active && !victim.down && Math.LengthSq(victim.pos - enemy.attackAt) < radius2)
+                    victim.entity.Send(Contact { damage = 9, from = enemy.pos });
+            }
+            enemy.attackCooldown = enemy.kind == EnemyKind.Warden ? 4 - float(bossStage) * 0.9 : enemy.kind == EnemyKind.Cantor ? 3 : 1.4;
+        }
+    }
+    if (enemy.kind == EnemyKind.Warden) Send(BossStatus { health = enemy.health, maxHealth = enemy.maxHealth });
+}

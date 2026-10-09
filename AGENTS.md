@@ -55,6 +55,7 @@ This file is the rules and the agreed decisions every session needs. What was bu
 | `notes/tide-programs.md` | `tide_add_game`, and the generated header: the API between a game and its host | `cmake/Tide.cmake`, `run_tidec.cmake`, what `compiler/src/codegen.c` writes into a game's header |
 | `notes/docs-site.md` | The docs site: its pages and folders, SEO, hosting, live examples, the samples | `docs/` but `spec.md`, `.github/workflows/docs.yml` |
 | `notes/physics-games.md` | Towers and Sumo: their folders, seats, rules, look, shadows, tests and what they cost | `examples/towers/`, `examples/sumo/` |
+| `notes/deadbell.md` | The private Deadbell co-op roguelike prototype, its run, crowds, presentation and validation | `prototypes/deadbell/` |
 | `notes/private-prototypes.md` | The Last Light's ritual, roles, look, audio and tests; private catalog staging | `prototypes/the-last-light/`, private-game build and staging |
 | `notes/cabin-nine.md` | Cabin Nine's opt-in private build, deduction, crew, scene and tests | `prototypes/cabin-nine/` |
 | `notes/dead-signal.md` | Dead Signal's private opt-in co-op shooter, expedition, rendering and tests | `prototypes/dead-signal/` |
