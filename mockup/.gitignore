@@ -1,6 +1,0 @@
-.data/
-.env
-node_modules/
-client/vendor/
-starter/.tide/
-starter/build/
