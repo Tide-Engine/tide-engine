@@ -1,0 +1,239 @@
+using Rooms;
+
+local singleton Me
+{
+    Entity self;
+    bool notebook;
+    int target = -1;
+    string message;
+    float messageTime;
+}
+
+override string Rooms.Tagline()
+{
+    return "Private prototype. Two human crew. Compare what you witnessed.";
+}
+
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 94, screen.y - 40, 84, 32);
+}
+
+[Stage(Shot.Setup)]
+view FindCrew(Session session, mut Me me, mut Lobby lobby, query (Crew crew, Owner owner) crew)
+{
+    me.self = default;
+    lobby.seats = 2;
+    lobby.manned = 0;
+    lobby.mine = -1;
+    lobby.offersNewGame = false;
+    foreach (var row in crew)
+    {
+        lobby.manned |= 1 << row.crew.seat;
+        if (row.owner.player != session.player) continue;
+        me.self = row.entity;
+        lobby.mine = row.crew.seat;
+    }
+}
+
+// Wrap by the rendered width, so evidence and dialogue remain legible in
+// a narrow window. Evidence is always also available in the notebook.
+float Paragraph(string text, float2 at, float width, float size, Color color)
+{
+    mut var start = 0;
+    mut var y = at.y;
+    while (start < text.length)
+    {
+        mut var end = start + 1;
+        mut var space = -1;
+        while (end <= text.length)
+        {
+            if (text[end - 1] == ' ') space = end;
+            if (Draw.MeasureText(text.Substring(start, end - start), size).x > width) break;
+            end += 1;
+        }
+        if (end > text.length) end = text.length;
+        else if (space > start) end = space;
+        else end = Math.Max(start + 1, end - 1);
+        Draw.Text(text.Substring(start, end - start).Trim(), float2(at.x, y), size, color);
+        y += size * 1.4;
+        start = end;
+    }
+    return y;
+}
+
+void Panel(float x, float y, float width, float height, Color color)
+{
+    Draw.Rect(float2(x + width * 0.5, y + height * 0.5), float2(width, height), color);
+}
+
+[Stage(Shot.Hud)]
+view Hands(Devices devices, Session session, Crew crew, Owner owner, Flight flight,
+           Lobby lobby, mut Me me, query (Passenger passenger) passengers)
+{
+    if (owner.player != session.player) return;
+    me.messageTime = Math.Max(0, me.messageTime - Frame.dt);
+    if (!lobby.playing) return;
+    var keys = devices.keyboard;
+    if (keys.tab.down) me.notebook = !me.notebook;
+    if (!me.notebook) Cursor.Lock();
+    if (keys.enter.down && !crew.ready && flight.phase < 5) Send(Ready { });
+    if (flight.phase == 4 && keys.n.down) Send(NextCase { });
+    if (flight.phase == 5 && keys.r.down) Send(Restart { });
+    if (me.notebook) return;
+
+    var direction = float3(Math.Sin(crew.yaw) * Math.Cos(crew.pitch), -Math.Sin(crew.pitch), Math.Cos(crew.yaw) * Math.Cos(crew.pitch));
+    mut var closest = 2.2;
+    me.target = -1;
+    foreach (var row in passengers)
+    {
+        var delta = row.passenger.position + float3(0, 1.1, 0) - (crew.position + float3(0, 1.6, 0));
+        var distance = Math.Length(delta);
+        if (distance >= closest || Math.Dot(Math.Normalize(delta), direction) < 0.45) continue;
+        closest = distance;
+        me.target = row.passenger.id;
+    }
+    mut var station = -1;
+    if (Math.Distance(crew.position, float3(-0.75, 0, 0.8)) < 1.8) station = 0;
+    if (Math.Distance(crew.position, float3(0.75, 0, 12.8)) < 1.8) station = 1;
+    if (keys.e.down)
+    {
+        if (me.target >= 0)
+        {
+            Send(Interact { target = me.target, action = 0 });
+            me.message = flight.phase == 1 ? BoardingReply(me.target) : PassengerSpeech(me.target, me.target == 8 ? CaseCopyIdentity(flight.caseIndex) : me.target, flight.caseIndex);
+        }
+        else if (station >= 0 && flight.phase == 3)
+        {
+            Send(ReadEvidence { slot = station });
+            me.message = EvidenceText(flight.caseIndex, station);
+        }
+        else me.message = "Approach a passenger, or read a galley record during an investigation.";
+        me.messageTime = 13;
+    }
+    if (me.target >= 0 && keys.f.down)
+    {
+        Send(Interact { target = me.target, action = 1 });
+        me.message = flight.phase == 1 ? BoardingInspectReply(me.target) : InspectReply(me.target, flight.caseIndex);
+        me.messageTime = 13;
+    }
+    if (me.target >= 0 && keys.h.down) Send(Interact { target = me.target, action = 2 });
+    if (me.target >= 0 && keys.q.down)
+    {
+        Send(Propose { target = me.target });
+        if (flight.clues != 3 || flight.readers != 3)
+        {
+            me.message = "Gather the forward and aft records first. Both crew must personally read a record. TAB keeps the evidence available.";
+            me.messageTime = 9;
+        }
+    }
+    if (keys.c.down)
+    {
+        Send(Confirm { });
+        if (flight.suspect < 0)
+        {
+            me.message = "Nominate a passenger with Q after interviewing and inspecting them. Escort the recorded suspect with H; both crew then confirm with C.";
+            me.messageTime = 9;
+        }
+    }
+}
+
+[Stage(Shot.Hud, 1)]
+view CabinHud(Flight flight, Roster roster, Me me, Lobby lobby, query (Crew crew) crew)
+{
+    Draw.SetScreen();
+    var wide = Screen.width;
+    var high = Screen.height;
+    var ink = Color(0.82, 0.84, 0.76);
+    var amber = Color(0.88, 0.65, 0.34);
+    var panel = Color(0.025, 0.035, 0.043, 0.91);
+    var small = Math.Clamp(wide / 90, 12, 15);
+    var margin = 20.0;
+    mut var ready = 0;
+    foreach (var row in crew) if (row.crew.ready) ready += 1;
+    Panel(0, 0, wide, 76, panel);
+    Draw.Text("CABIN NINE", float2(margin, 14), 22, ink, font: Font.Bold);
+    Draw.Text("OVERNIGHT SERVICE / PRIVATE PROTOTYPE", float2(margin, 43), 11, amber);
+    Draw.Text($"CREW {roster.bodies.count}/2", float2(wide - margin, 18), small, ink, Anchor.UpperRight);
+    if (lobby.page != Page.Playing) return;
+
+    Panel(0, high - 44, wide, 44, panel);
+    Paragraph("WASD move   Mouse / arrows look   TAB notebook   ESC room", float2(margin, high - 35), wide - 130, Math.Min(small, 13), ink);
+    if (flight.phase == 0 || ready < 2)
+    {
+        var box = Math.Min(wide - 40, 590);
+        Panel((wide - box) * 0.5, high * 0.32, box, 154, panel);
+        Draw.Text("TWO CREW REQUIRED", float2(wide * 0.5, high * 0.32 + 20), 22, amber, Anchor.UpperCenter, Font.Bold);
+        Paragraph("Both crew press ENTER when ready. Host a room through ESC, then share its code with your partner. The flight waits if a crew member disconnects.", float2((wide - box) * 0.5 + 20, high * 0.32 + 61), box - 40, small, ink);
+        Draw.Text($"{ready}/2 ready", float2(wide * 0.5, high * 0.32 + 125), small, amber, Anchor.UpperCenter);
+        return;
+    }
+
+    var goal = flight.phase == 1 ? "MEET THE PASSENGERS. E offers service and establishes who boarded."
+        : flight.phase == 2 ? "PLEASE REMAIN SEATED. Emergency lighting is coming on."
+        : flight.phase == 3 ? CaseTitle(flight.caseIndex)
+        : flight.phase == 4 ? "CASE CLOSED. Compare the account in TAB. N continues the flight."
+        : "FINAL APPROACH / CREW ACCOUNT";
+    Paragraph(goal, float2(margin, 90), wide - margin * 2, small + 1, amber);
+    if (flight.phase == 1)
+    {
+        mut var served = 0;
+        for (var i = 0; i < 8; i++) if ((flight.served & (1 << i)) != 0) served += 1;
+        Draw.Text($"{served}/8 passengers welcomed", float2(margin, 122), small, ink);
+    }
+
+    if ((flight.phase == 1 || flight.phase == 3) && !me.notebook)
+    {
+        var center = float2(wide * 0.5, high * 0.5);
+        Draw.Line(center - float2(4, 0), center + float2(4, 0), Color(0.75, 0.7, 0.55, 0.8));
+        Draw.Line(center - float2(0, 4), center + float2(0, 4), Color(0.75, 0.7, 0.55, 0.8));
+        if (me.target >= 0)
+        {
+            Draw.Text(CasePassengerName(me.target, flight.caseIndex), float2(wide * 0.5, high * 0.5 + 30), 17, ink, Anchor.UpperCenter, Font.Bold);
+            Draw.Text(flight.phase == 1 ? "E welcome   F observe belongings" : "E speak   F inspect   H escort / release   Q nominate", float2(wide * 0.5, high * 0.5 + 55), small, amber, Anchor.UpperCenter);
+        }
+        else Draw.Text(flight.phase == 1 ? "E welcomes a nearby passenger" : "E reads a nearby galley record", float2(wide * 0.5, high - 67), small, ink, Anchor.UpperCenter);
+        if (flight.suspect >= 0)
+        {
+            Draw.Text($"Nominated: {CasePassengerName(flight.suspect, flight.caseIndex)}. Both crew C to confirm.", float2(margin, 153), small, amber);
+            Draw.Text(flight.votes == 0 ? "Awaiting crew signatures" : "One crew signature recorded", float2(margin, 177), small, ink);
+        }
+    }
+    if (flight.phase == 4) Paragraph(flight.announcement, float2(margin, 126), wide - margin * 2, small, ink);
+    if (flight.phase == 5)
+    {
+        var box = Math.Min(wide - 40, 650);
+        var left = (wide - box) * 0.5;
+        Panel(left, high * 0.25, box, 225, panel);
+        Draw.Text(flight.outcome == 3 ? "THE CABIN LOST FAITH" : "EVERY HUMAN ACCOUNTED FOR", float2(wide * 0.5, high * 0.25 + 20), 22, amber, Anchor.UpperCenter, Font.Bold);
+        Paragraph(flight.announcement, float2(left + 22, high * 0.25 + 66), box - 44, small + 1, ink);
+        Draw.Text($"{flight.resolved}/4 cases resolved. Passenger trust {flight.trust}/3.", float2(left + 22, high * 0.25 + 163), small, ink);
+        Draw.Text("R starts a new flight. ESC opens the room.", float2(left + 22, high * 0.25 + 192), small, amber);
+    }
+    if (me.messageTime > 0 && !me.notebook)
+    {
+        var box = Math.Min(wide - 40, 860);
+        var left = (wide - box) * 0.5;
+        Panel(left, high - 171, box, 113, panel);
+        Paragraph(me.message, float2(left + 18, high - 157), box - 36, small + 1, ink);
+    }
+    if (me.notebook)
+    {
+        var box = Math.Min(wide - 36, 920);
+        var left = (wide - box) * 0.5;
+        Panel(left, 90, box, high - 154, Color(0.023, 0.032, 0.038, 0.98));
+        Draw.Text("CREW NOTEBOOK", float2(left + 20, 108), 22, amber, font: Font.Bold);
+        var brief = flight.phase < 3 ? "Eight passengers boarded. Welcome each with E and observe their belongings with F. Both crew can work anywhere in the cabin. Keep these ordinary people in mind; their safety is your job." : CaseBrief(flight.caseIndex);
+        mut var y = Paragraph(brief, float2(left + 20, 147), box - 40, small, ink) + 18;
+        for (var slot = 0; slot < 2; slot++)
+        {
+            Draw.Text(slot == 0 ? "FORWARD SERVICE RECORD" : "AFT WITNESS RECORD", float2(left + 20, y), small, amber, font: Font.Bold);
+            y += 24;
+            y = Paragraph((flight.clues & (1 << slot)) != 0 ? EvidenceText(flight.caseIndex, slot) : "Not yet collected. Visit this galley and press E. Either crew may gather the record.", float2(left + 20, y), box - 40, small, ink) + 18;
+        }
+        y = Paragraph("Compare records with the passenger's testimony and visible belongings. E speaks; F examines; H escorts a suspect to the secure crew compartment. Q nominates, then both crew press C to confirm. An odd habit alone proves nothing.", float2(left + 20, y), box - 40, small, ink) + 14;
+        var collection = flight.readers == 3 ? "complete" : "both crew must collect a record";
+        Draw.Text($"Two-person record collection: {collection}. Trust: {flight.trust}/3.", float2(left + 20, y), small, amber);
+        Draw.Text("TAB closes this notebook", float2(left + 20, high - 93), small, ink);
+    }
+}

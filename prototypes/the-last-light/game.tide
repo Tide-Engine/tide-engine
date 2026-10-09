@@ -1,0 +1,422 @@
+using Rooms;
+
+// A private two-player ritual. All clocks and resources belong to the match;
+// local presentation may obscure clues, but never decides a strike's outcome.
+settings
+{
+    title = "The Last Light";
+    tickRate = 30;
+    maxPlayers = 2;
+    hostMigration = true;
+}
+
+const int RITE_RATE = 30;
+const int FRAGMENTS_PER_ACT = 6;
+const int FRAGMENTS_TO_ESCAPE = 18;
+const int CHARGE_NEEDED = 720;
+const int MIN_VIGIL = 990;
+const int FINALE_NEEDED = 240;
+
+enum Phase { Waiting, Planning, Vigil, Result, Interlude, Finale, Won, Lost }
+enum Landmark { Chapel, Gallery, Well, Belfry }
+enum Note { None, Begin, Passed, Warded, Hurt, Fragment, Unsealed, EmptyHands, Banked, Lingered, ActOpened, Escaping, Escaped, Snuffed, Taken }
+
+singleton Rite
+{
+    Phase phase;
+    int active;
+    Map<PlayerID, int> seats;
+    Map<PlayerID, Entity> owners;
+    PlayerID[2] players;
+    bool[2] present;
+    bool[2] channeling;
+    int turn;
+    int act;
+    int node;
+    int die;
+    int fragments;
+    int carried;
+    int wax = 40;
+    int candle = 100;
+    int dread;
+    int[2] nerve = [3, 3];
+    int timer;
+    int elapsed;
+    int charge;
+    int threat;
+    int threatClock;
+    int threatAge;
+    int ward = -1;
+    int sigil;
+    int secondarySigil;
+    bool echo;
+    bool safeHold;
+    int seals;
+    int strikes;
+    int attempts;
+    int finaleCharge;
+    bool shortcut;
+    bool paused;
+    int serial;
+    Note note;
+}
+
+component Participant { int seat; }
+event RitualCue { int kind; int active; }
+
+// A touch surface writes these every frame, then Sample combines it with keys.
+local singleton Hand
+{
+    bool playing;
+    bool channel;
+    int ward = -1;
+    int serial = -1;
+}
+
+input Hands
+{
+    bool channel;
+    [Clamp(-1, 2)] int ward = -1;
+    int serial = -1;
+
+    Sample(Devices devices, Hand hand, Lobby lobby)
+    {
+        if (!hand.playing || !lobby.playing) return;
+        var keys = devices.keyboard;
+        channel = keys.e.pressed || devices.gamepad.buttonSouth.pressed || hand.channel;
+        ward = hand.ward;
+        if (keys.digit1.pressed || keys.q.pressed) ward = 0;
+        if (keys.digit2.pressed || keys.w.pressed) ward = 1;
+        if (keys.digit3.pressed || keys.r.pressed) ward = 2;
+        serial = hand.serial;
+    }
+}
+
+command Plan { int serial; bool shortcut; }
+command Return { int serial; }
+command Linger { int serial; }
+command Restart { int serial; }
+
+scene Main { }
+
+int SeatOf(Rite rite, PlayerID player)
+{
+    if (!rite.seats.Has(player)) return -1;
+    var seat = rite.seats[player];
+    return rite.present[seat] ? seat : -1;
+}
+
+Landmark NodeKind(int node)
+{
+    if (node % 4 == 1) return Landmark.Gallery;
+    if (node % 4 == 2) return Landmark.Well;
+    if (node % 4 == 3) return Landmark.Belfry;
+    return Landmark.Chapel;
+}
+int VigilLength(Rite rite) { return (40 + rite.act * 2) * RITE_RATE; }
+
+bool Together(Rite rite) { return rite.present[0] && rite.present[1]; }
+
+void ChangePhase(mut Rite rite, Phase phase)
+{
+    rite.phase = phase;
+    rite.serial += 1;
+    rite.elapsed = 0;
+    rite.timer = 0;
+    rite.channeling[0] = false;
+    rite.channeling[1] = false;
+    rite.ward = -1;
+}
+
+void NextTurn(mut Rite rite)
+{
+    rite.turn += 1;
+    rite.active = (rite.turn - 1) % 2;
+    rite.carried = 0;
+    rite.attempts = 0;
+    rite.die = 1 + Random.NextInt(3);
+    rite.threat = 0;
+    rite.note = Note.Begin;
+    ChangePhase(rite, Phase.Planning);
+    Send(RitualCue { kind = 0, active = rite.active });
+}
+
+void NextThreat(mut Rite rite)
+{
+    rite.threat = 0;
+    rite.threatAge = 0;
+    // The pilgrim has the whole approach to communicate this symbol.
+    rite.sigil = Random.NextInt(3);
+    rite.secondarySigil = (rite.sigil + 1 + Random.NextInt(2)) % 3;
+    rite.echo = false;
+    rite.safeHold = NodeKind(rite.node) == Landmark.Well;
+    rite.threatClock = 105 - rite.act * 7 - rite.attempts * 4 - rite.dread / 10 + Random.NextInt(21);
+}
+
+void BeginVigil(mut Rite rite)
+{
+    rite.attempts += 1;
+    rite.charge = 0;
+    rite.seals = 0;
+    ChangePhase(rite, Phase.Vigil);
+    rite.timer = VigilLength(rite);
+    NextThreat(rite);
+}
+
+void Lose(mut Rite rite, Note why)
+{
+    rite.note = why;
+    rite.carried = 0;
+    rite.threat = 0;
+    ChangePhase(rite, Phase.Lost);
+    Send(RitualCue { kind = 7, active = rite.active });
+}
+
+void Strike(mut Rite rite)
+{
+    var exposed = rite.channeling[rite.active] != rite.safeHold;
+    var warded = rite.ward == rite.sigil && rite.wax >= 3;
+    if (warded)
+    {
+        // A correctly held ward is an acknowledgement after the first seal.
+        // Only binding the first seal or shielding exposure spends the wax.
+        if (exposed || rite.seals == 0)
+        {
+            rite.wax -= 3;
+            rite.charge = Math.Min(CHARGE_NEEDED, rite.charge + 24);
+        }
+        rite.seals += 1;
+        rite.note = Note.Warded;
+        Send(RitualCue { kind = 2, active = rite.active });
+    }
+    else if (exposed)
+    {
+        rite.nerve[rite.active] -= 1;
+        rite.candle = Math.Max(0, rite.candle - 6);
+        rite.dread = Math.Min(100, rite.dread + 12);
+        rite.carried = 0;
+        rite.strikes += 1;
+        rite.note = Note.Hurt;
+        Send(RitualCue { kind = 3, active = rite.active });
+        // One injury ends the expedition, giving the active player a decision
+        // before any other attack can take a second life.
+        if (rite.nerve[rite.active] <= 0) Lose(rite, Note.Taken);
+        else if (rite.candle <= 0) Lose(rite, Note.Snuffed);
+        else ChangePhase(rite, Phase.Result);
+        return;
+    }
+    else rite.note = Note.Passed;
+    rite.threat = 2;
+    rite.threatClock = 12;
+    rite.threatAge = 0;
+}
+
+event(PlayerJoined joined) JoinRite(mut Rite rite)
+{
+    if (SeatOf(rite, joined.player) >= 0) return;
+    mut var seat = -1;
+    if (rite.seats.Has(joined.player)) seat = rite.seats[joined.player];
+    else
+    {
+        if (!rite.present[0]) seat = 0;
+        else if (!rite.present[1]) seat = 1;
+        if (seat < 0) return;
+        rite.seats.Remove(rite.players[seat]);
+        rite.seats[joined.player] = seat;
+    }
+    rite.players[seat] = joined.player;
+    rite.present[seat] = true;
+    rite.owners[joined.player] = Spawn(Participant { seat = seat }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) LeaveRite(mut Rite rite)
+{
+    var seat = SeatOf(rite, left.player);
+    if (seat < 0) return;
+    rite.present[seat] = false;
+    rite.channeling[seat] = false;
+    rite.owners[left.player].Destroy();
+    rite.owners.Remove(left.player);
+    rite.paused = true;
+    rite.ward = -1;
+    // Inputs sent before the interruption cannot act in the resumed match.
+    rite.serial += 1;
+}
+
+system ClearHands(mut Rite rite)
+{
+    rite.channeling[0] = false;
+    rite.channeling[1] = false;
+    rite.ward = -1;
+}
+
+[After(ClearHands)]
+system ReadHands(Hands hands, Participant participant, mut Rite rite, with Owner)
+{
+    if (hands.serial != rite.serial || !rite.present[participant.seat]) return;
+    rite.channeling[participant.seat] = hands.channel;
+    if (participant.seat != rite.active) rite.ward = hands.ward;
+}
+
+[After(ReadHands)]
+system Ritual(mut Rite rite)
+{
+    var wasPaused = rite.paused;
+    rite.paused = !Together(rite);
+    if (rite.paused) return;
+    // A returning player gets the full approach again. An interrupted tell
+    // cannot strike before fresh input has crossed the network.
+    if (wasPaused && rite.phase == Phase.Vigil) NextThreat(rite);
+    if (rite.phase == Phase.Waiting)
+    {
+        NextTurn(rite);
+        return;
+    }
+    if (rite.phase == Phase.Lost || rite.phase == Phase.Won || rite.phase == Phase.Planning || rite.phase == Phase.Result) return;
+    rite.elapsed += 1;
+    if (rite.phase == Phase.Interlude)
+    {
+        rite.timer = Math.Max(0, 8 * RITE_RATE - rite.elapsed);
+        if (rite.timer == 0) NextTurn(rite);
+        return;
+    }
+    if (rite.phase == Phase.Finale)
+    {
+        if (rite.channeling[0] && rite.channeling[1]) rite.finaleCharge += 1;
+        else rite.finaleCharge = Math.Max(0, rite.finaleCharge - 2);
+        rite.timer = Math.Max(0, FINALE_NEEDED - rite.finaleCharge);
+        if (rite.finaleCharge >= FINALE_NEEDED)
+        {
+            rite.note = Note.Escaped;
+            ChangePhase(rite, Phase.Won);
+            Send(RitualCue { kind = 6, active = rite.active });
+        }
+        return;
+    }
+    if (rite.phase != Phase.Vigil) return;
+
+    rite.timer = Math.Max(0, VigilLength(rite) - rite.elapsed);
+    if (rite.threat == 0 && rite.channeling[rite.active])
+    {
+        // The belfry's paired calls leave half as much quiet to remember in.
+        var gain = rite.act == 2 && NodeKind(rite.node) == Landmark.Belfry ? 2 : 1;
+        rite.charge = Math.Min(CHARGE_NEEDED, rite.charge + gain);
+    }
+    rite.threatClock -= 1;
+    rite.threatAge += 1;
+    if (rite.threatClock <= 0)
+    {
+        if (rite.threat == 0)
+        {
+            rite.threat = 1;
+            rite.threatAge = 0;
+            rite.threatClock = 60;
+            Send(RitualCue { kind = 1, active = rite.active });
+        }
+        else if (rite.threat == 1) Strike(rite);
+        else
+        {
+            // The final belfry answers every first strike with another symbol.
+            if (rite.act == 2 && NodeKind(rite.node) == Landmark.Belfry && !rite.echo)
+            {
+                rite.echo = true;
+                rite.sigil = rite.secondarySigil;
+                rite.threat = 1;
+                rite.threatAge = 0;
+                rite.threatClock = 60;
+                Send(RitualCue { kind = 1, active = rite.active });
+            }
+            else NextThreat(rite);
+        }
+    }
+    if (rite.phase != Phase.Vigil) return;
+    var earned = rite.charge >= CHARGE_NEEDED && rite.seals > 0;
+    if (rite.timer == 0 || earned && rite.elapsed >= MIN_VIGIL && rite.threat == 0)
+    {
+        if (earned)
+        {
+            rite.carried += 1;
+            rite.note = Note.Fragment;
+            Send(RitualCue { kind = 4, active = rite.active });
+        }
+        else rite.note = rite.seals == 0 ? Note.Unsealed : Note.EmptyHands;
+        rite.threat = 0;
+        ChangePhase(rite, Phase.Result);
+    }
+}
+
+command(Plan plan, PlayerID sender) TakeRoad(mut Rite rite)
+{
+    if (!Together(rite) || rite.phase != Phase.Planning || plan.serial != rite.serial || SeatOf(rite, sender) != rite.active) return;
+    rite.shortcut = plan.shortcut;
+    rite.node = (rite.node + rite.die + (plan.shortcut ? 2 : 0)) % 12;
+    rite.candle = Math.Max(0, rite.candle - 3);
+    if (plan.shortcut) rite.dread = Math.Min(100, rite.dread + 10);
+    if (NodeKind(rite.node) == Landmark.Chapel) rite.wax = Math.Min(100, rite.wax + 6);
+    if (NodeKind(rite.node) == Landmark.Gallery) rite.dread = Math.Max(0, rite.dread - 4);
+    if (rite.candle <= 0) { Lose(rite, Note.Snuffed); return; }
+    BeginVigil(rite);
+}
+
+command(Return back, PlayerID sender) BankFragments(mut Rite rite)
+{
+    if (!Together(rite) || rite.phase != Phase.Result || back.serial != rite.serial || SeatOf(rite, sender) != rite.active) return;
+    rite.fragments = Math.Min(FRAGMENTS_TO_ESCAPE, rite.fragments + rite.carried);
+    rite.carried = 0;
+    rite.wax = Math.Min(100, rite.wax + 4);
+    rite.dread = Math.Max(0, rite.dread - 3);
+    rite.note = Note.Banked;
+    if (rite.fragments >= FRAGMENTS_TO_ESCAPE)
+    {
+        rite.finaleCharge = 0;
+        rite.note = Note.Escaping;
+        ChangePhase(rite, Phase.Finale);
+        rite.timer = FINALE_NEEDED;
+        return;
+    }
+    if (rite.fragments >= (rite.act + 1) * FRAGMENTS_PER_ACT)
+    {
+        rite.act += 1;
+        rite.wax = Math.Min(100, rite.wax + 20);
+        rite.nerve[0] = Math.Min(3, rite.nerve[0] + 1);
+        rite.nerve[1] = Math.Min(3, rite.nerve[1] + 1);
+        rite.note = Note.ActOpened;
+        ChangePhase(rite, Phase.Interlude);
+        rite.timer = 8 * RITE_RATE;
+        Send(RitualCue { kind = 5, active = rite.active });
+        return;
+    }
+    NextTurn(rite);
+}
+
+command(Linger linger, PlayerID sender) StayBelow(mut Rite rite)
+{
+    if (!Together(rite) || rite.phase != Phase.Result || linger.serial != rite.serial || SeatOf(rite, sender) != rite.active) return;
+    if (rite.attempts >= 3 || rite.carried == 0 || rite.fragments + rite.carried >= FRAGMENTS_TO_ESCAPE) return;
+    rite.candle = Math.Max(0, rite.candle - 2);
+    rite.dread = Math.Min(100, rite.dread + 8);
+    rite.note = Note.Lingered;
+    if (rite.candle <= 0) { Lose(rite, Note.Snuffed); return; }
+    BeginVigil(rite);
+}
+
+command(Restart restart, PlayerID sender) BeginAgain(mut Rite rite)
+{
+    if (!Together(rite) || restart.serial != rite.serial || SeatOf(rite, sender) < 0) return;
+    if (rite.phase != Phase.Won && rite.phase != Phase.Lost) return;
+    rite.active = 0;
+    rite.turn = 0;
+    rite.act = 0;
+    rite.node = 0;
+    rite.fragments = 0;
+    rite.carried = 0;
+    rite.wax = 40;
+    rite.candle = 100;
+    rite.dread = 0;
+    rite.nerve[0] = 3;
+    rite.nerve[1] = 3;
+    rite.charge = 0;
+    rite.strikes = 0;
+    rite.finaleCharge = 0;
+    NextTurn(rite);
+}
