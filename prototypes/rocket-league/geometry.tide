@@ -29,8 +29,8 @@ local singleton Models
     List<int> wheelFaces;
     List<Surface> ball;
     List<int> ballFaces;
-    List<Surface> cube;
-    List<int> cubeFaces;
+    List<Surface> glow;
+    List<int> glowFaces;
     List<Surface> disc;
     List<int> discFaces;
 }
@@ -154,8 +154,8 @@ void MakeCar(mut Models models)
     {
         Box(models.car, models.carFaces, float3(side * 0.16, 0.457, 0.73), float3(0.13, 0.018, 1.15), Color(0.88, 0.94, 1));
         Box(models.car, models.carFaces, float3(side * 0.16, 0.864, -0.42), float3(0.13, 0.012, 0.91), Color(0.88, 0.94, 1));
-        Shell(models.car, models.carFaces, float3(side * 0.89, 0.16, 0.88), float2(0.21, 0.47), float2(0.18, 0.36), 0.39, 0, Color.white, 5);
-        Shell(models.car, models.carFaces, float3(side * 0.89, 0.16, -0.90), float2(0.21, 0.47), float2(0.18, 0.36), 0.39, 0, Color.white, 5);
+        Shell(models.car, models.carFaces, float3(side * 0.89, 0.16, 0.984), float2(0.21, 0.43), float2(0.18, 0.32), 0.39, 0, Color.white, 5);
+        Shell(models.car, models.carFaces, float3(side * 0.89, 0.16, -1.253), float2(0.21, 0.36), float2(0.18, 0.29), 0.39, 0, Color.white, 5);
         Box(models.car, models.carFaces, float3(side * 0.87, -0.025, 0), float3(0.11, 0.14, 1.17), dark);
         Box(models.car, models.carFaces, float3(side * 0.55, 0.26, 1.48), float3(0.43, 0.15, 0.055), Color(0.68, 0.86, 1), 2);
         Box(models.car, models.carFaces, float3(side * 0.58, 0.25, -1.49), float3(0.42, 0.105, 0.045), Color(1, 0.035, 0.015), 2);
@@ -210,6 +210,26 @@ void MakeBall(mut Models models)
             models.ballFaces.Add(at + 1); models.ballFaces.Add(at + around + 1); models.ballFaces.Add(at + around + 2);
         }
     }
+}
+
+void MakeGlow(mut Models models)
+{
+    // A small smooth sphere stretches into exhaust streaks without hard box
+    // corners. It stays cheap even during a full goal celebration.
+    int rings = 6;
+    int around = 12;
+    for (var ring = 0; ring <= rings; ring++)
+        for (var step = 0; step <= around; step++)
+        {
+            var tilt = ring * Math.PI / rings;
+            var angle = step * Math.TAU / around;
+            var outward = float3(Math.Sin(tilt) * Math.Cos(angle), -Math.Cos(tilt), Math.Sin(tilt) * Math.Sin(angle));
+            models.glow.Add(Surface { position = outward, normal = outward });
+            if (ring == rings || step == around) continue;
+            var at = ring * (around + 1) + step;
+            models.glowFaces.Add(at); models.glowFaces.Add(at + around + 1); models.glowFaces.Add(at + 1);
+            models.glowFaces.Add(at + 1); models.glowFaces.Add(at + around + 1); models.glowFaces.Add(at + around + 2);
+        }
 }
 
 void GoalGeometry(mut Models models, int team)
@@ -384,8 +404,8 @@ void MakeModels(mut Models models)
     models.made = true;
     MakeCar(models);
     MakeBall(models);
+    MakeGlow(models);
     MakeStadium(models);
-    Box(models.cube, models.cubeFaces, float3(0), float3(1), Color.white);
     Face(models.disc, models.discFaces, float3(-1, 0, -1), float3(1, 0, -1), float3(1, 0, 1),
          float3(-1, 0, 1), float3(0, 1, 0), Color.white);
 }

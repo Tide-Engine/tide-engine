@@ -22,6 +22,14 @@ There are no engine or compiler additions.
 
 ## Reference and interpretation
 
+The initial implementation was rejected for incorrect controls, camera and
+physics. The follow-up [fidelity audit](RESEARCH.md) replaces assumed tuning
+with shipped control presets, Samuel Mish's recorded-game experiments and
+the independently reverse-engineered RocketSim implementation. Regression
+checks now compare actual motion against numerical references, in addition to
+checking that a match is deterministic. That audit is the implementation
+reference; the beginner articles below establish only the broad play target.
+
 Epic's [Rocket League crash course](https://www.epicgames.com/help/c-182/c-7261959845275/a13334808?lang=en-US)
 describes held-jump height, aerial boost, air-roll recovery, directional dodges,
 stronger dodge shots, softer wheel contacts and quicker handbrake turns.
@@ -31,10 +39,11 @@ motivate ball camera, forward-dodge momentum, kickoff positioning and wall
 shots. Both were consulted on 2026-10-09.
 
 These sources describe player behavior, not a published physics implementation.
-The prototype's equations, dimensions, collision response, bot and tuning are
-implementation choices. It does not reproduce proprietary physics or use
-extracted game assets. Exact competitive handling and the original game's
-advanced contact exploits are outside the verified scope.
+The prototype uses measured equations and dimensions where reference data is
+available. Its remaining arena geometry, suspension/contact solver and camera
+smoothing are reproductions rather than the proprietary game's implementation.
+It uses no extracted game assets. Numerical agreement on the tested motions
+does not by itself establish identical competitive handling.
 
 ## Presentation target
 
