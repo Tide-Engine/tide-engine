@@ -148,31 +148,6 @@ test('prototype files are public while the catalog and retired copies remain pro
     }
 });
 
-test('old admin game links redirect to public URLs without requiring a session', async (t) => {
-    for (const password of ['a-test-password', '']) {
-        const { get } = await site(t, { password });
-        for (const id of prototypeIds) {
-            for (const suffix of ['', '/', '/index.html', '/game.wasm', '/game.pack', '/thumbnail.png', '/sfx/steps.ogg', '/sfx/shot.wav']) {
-                const response = await get(`/admin/prototypes/${id}${suffix}?join=TEST&backend=webgpu`);
-                assert.equal(response.status, 308);
-                assert.equal(response.headers.get('location'), `/prototypes/${id}${suffix || '/'}?join=TEST&backend=webgpu`);
-                assert.equal(response.headers.get('set-cookie'), null);
-            }
-        }
-        const encoded = await get('/adm%69n%2fprototypes%2ftwo-forks%2findex.html?join=TEST');
-        assert.equal(encoded.status, 308);
-        assert.equal(encoded.headers.get('location'), '/prototypes/two-forks/index.html?join=TEST');
-        for (const [route, target] of [
-            ['/adm%69n/prototypes/dead%2dsignal/index.html', '/prototypes/dead-signal/index.html'],
-            ['/admin%2fprototypes%2fdeadbell%2fgame.wasm', '/prototypes/deadbell/game.wasm'],
-        ]) {
-            const response = await get(`${route}?join=TEST`);
-            assert.equal(response.status, 308, route);
-            assert.equal(response.headers.get('location'), `${target}?join=TEST`);
-        }
-    }
-});
-
 test('sign-in returns to the catalog while refusing external or malformed destinations', async (t) => {
     const { get, origin } = await site(t);
     const next = '/admin/prototypes?from=link';

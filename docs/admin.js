@@ -12,7 +12,7 @@ const bot = /bot|crawler|spider|headless|lighthouse|curl|wget|healthcheck/i;
 
 // Keep retired aliases from serving stale builds; games have one public root.
 const retiredPrototype = /(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine|dead[-_]signal|deadbell)(?:[\/._-]|$)/i;
-const prototypePath = /^\/(admin\/)?prototypes\/(two-forks|the-last-light|cabin-nine|dead-signal|deadbell)(\/.*)?$/;
+const prototypePath = /^\/prototypes\/(?:two-forks|the-last-light|cabin-nine|dead-signal|deadbell)(\/.*)?$/;
 
 /** @param {string | null} value */
 function destination(value) {
@@ -161,13 +161,7 @@ export function createAdmin({ analytics, password = '', relayUrl = '', relayToke
         catch { text(res, 400, 'Invalid path.'); return true; }
         const prototype = pathname.match(prototypePath);
         if (prototype) {
-            const [, legacy, id, file = '/'] = prototype;
-            if (!prototype[3] || file === '/' || file === '/index.html') res.setHeader('x-robots-tag', 'noindex');
-            if (legacy) {
-                // Old shared links still reach the game, including room codes.
-                res.writeHead(308, { location: `/prototypes/${id}${file.split('/').map(encodeURIComponent).join('/')}${url.search}` }).end();
-                return true;
-            }
+            if (!prototype[1] || prototype[1] === '/' || prototype[1] === '/index.html') res.setHeader('x-robots-tag', 'noindex');
             return false; // Public playable files never require an admin session.
         }
         // SvelteKit decodes route names. Apply the gate to the same path,

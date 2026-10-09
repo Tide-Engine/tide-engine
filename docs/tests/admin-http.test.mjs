@@ -154,11 +154,6 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
             assert.equal(response.headers.get('x-robots-tag'), 'noindex');
             assert.deepEqual(Buffer.from(await response.arrayBuffer()), files.get(`/prototypes/${id}/index.html`));
         }
-        for (const suffix of ['', '/', '/index.html', '/game.wasm', '/sfx/radio.ogg']) {
-            const response = await fetch(`${origin}/admin/prototypes/${id}${suffix}?join=TEST&backend=webgpu`, { redirect: 'manual' });
-            assert.equal(response.status, 308);
-            assert.equal(response.headers.get('location'), `/prototypes/${id}${suffix || '/'}?join=TEST&backend=webgpu`);
-        }
     }
     for (const route of ['/admin/prototypes', '/admin/prototypes/__data.json', '/adm%69n/prototypes/__data.json']) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
@@ -170,17 +165,6 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         '/samples/dead%2dsignal/index.html', '/dead%5fsignal.html', '/samples/dead%62ell/index.html']) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(response.status, 404, route);
-    }
-    const encoded = await fetch(`${origin}/adm%69n%2fprototypes%2ftwo-forks%2findex.html?join=TEST`, { redirect: 'manual' });
-    assert.equal(encoded.status, 308);
-    assert.equal(encoded.headers.get('location'), '/prototypes/two-forks/index.html?join=TEST');
-    for (const [route, target] of [
-        ['/adm%69n/prototypes/dead%2dsignal/index.html', '/prototypes/dead-signal/index.html'],
-        ['/admin%2fprototypes%2fdeadbell%2fgame.wasm', '/prototypes/deadbell/game.wasm'],
-    ]) {
-        const response = await fetch(`${origin}${route}?join=TEST`, { redirect: 'manual' });
-        assert.equal(response.status, 308, route);
-        assert.equal(response.headers.get('location'), `${target}?join=TEST`);
     }
     const encodedPublic = await fetch(`${origin}/prototypes/two%2dforks/index.html`, { redirect: 'manual' });
     assert.equal(encodedPublic.status, 200);
@@ -198,12 +182,6 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.deepEqual(Buffer.from(await range.arrayBuffer()), Buffer.from([0, 97, 115, 109]));
         const conditional = await fetch(wasmPath, { headers: { 'if-none-match': head.headers.get('etag') } });
         assert.equal(conditional.status, 304);
-        const oldWasmPath = `${origin}/admin/prototypes/${id}/game.wasm`;
-        for (const options of [{ method: 'HEAD' }, { headers: { range: 'bytes=0-3' } }, { headers: { 'if-none-match': '*' } }]) {
-            const response = await fetch(oldWasmPath, { ...options, redirect: 'manual' });
-            assert.equal(response.status, 308);
-            assert.equal(response.headers.get('location'), `/prototypes/${id}/game.wasm`);
-        }
     }
     const beacon = await fetch(`${origin}/analytics/pageview`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 Test browser' },
         body: JSON.stringify({ path: '/guide', referrer: 'https://example.org/private/path' }) });
@@ -234,10 +212,5 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(response.status, 200, `admin password unset: ${route}`);
         assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
-    }
-    for (const id of prototypeIds) {
-        const oldLink = await fetch(`${origin}/admin/prototypes/${id}/?join=FRIEND`, { redirect: 'manual' });
-        assert.equal(oldLink.status, 308);
-        assert.equal(oldLink.headers.get('location'), `/prototypes/${id}/?join=FRIEND`);
     }
 });
