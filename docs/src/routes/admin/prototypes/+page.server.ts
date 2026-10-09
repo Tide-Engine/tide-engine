@@ -6,6 +6,12 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'rocket-league', title: 'Afterburn', kind: 'Car soccer · Rocket League prototype', players: '1–2 players',
+        description: 'Boost, powerslide and fly through a floodlit arena. Play a five-minute duel against a bot or a friend, with wall driving, aerials and sudden-death overtime.',
+        image: '/prototypes/rocket-league/thumbnail.png',
+        horror: false,
+    },
+    {
         id: 'two-forks', title: 'Two Forks', kind: 'Cooperative puzzle', players: '1–2 players',
         description: 'Two chefs, two forks, and kitchens that only yield to teamwork. A tactile puzzle journey through coast, fields, ice and fire.',
         image: '/prototypes/two-forks/thumbnail.png',
