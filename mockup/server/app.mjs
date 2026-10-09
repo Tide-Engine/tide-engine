@@ -1,13 +1,11 @@
 import { createServer } from 'node:http';
-import { createHash, randomBytes, randomUUID, scrypt as deriveKey, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { openStore } from './store.mjs';
 import { appendCookie, authError, cookie, createOAuth } from './oauth.mjs';
 import * as Y from 'yjs';
 
-const scrypt = promisify(deriveKey);
 const SESSION_AGE = 30 * 24 * 60 * 60 * 1000;
 const PREVIEW_AGE = 60 * 60 * 1000;
 const ASSET_LIMIT = 10 * 1024 * 1024;
@@ -114,9 +112,8 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
     let stopping = false;
     const admins = new Set(adminEmails.map(email => email.trim().toLowerCase()).filter(Boolean));
     const isAdmin = user => user?.admin === true && (!admins.size || admins.has(user.email));
-    const hasPassword = user => typeof user?.salt === 'string' && user.salt.length > 0 && user.salt.length <= 256 && typeof user.passwordHash === 'string' && /^[a-f0-9]{128}$/i.test(user.passwordHash);
-    const publicUser = user => user ? { id: user.id, name: user.name, email: user.email, isAdmin: isAdmin(user), hasPassword: hasPassword(user),
-        authMethods: [...(hasPassword(user) ? ['password'] : []), ...Object.values(store.state.identities || {}).filter(identity => identity.userId === user.id).map(identity => identity.provider)] } : null;
+    const publicUser = user => user ? { id: user.id, name: user.name, email: user.email, isAdmin: isAdmin(user),
+        authMethods: Object.values(store.state.identities || {}).filter(identity => identity.userId === user.id).map(identity => identity.provider) } : null;
     const configured = { generation: typeof generator === 'function', build: typeof builder === 'function', starter: Boolean(starter) };
     await store.change(state => {
         state.identities ||= {};
@@ -167,9 +164,8 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
                 user = state.users[existing.userId];
                 if (!user) throw authError('provider');
                 // A changed provider email never changes who owns an identity.
-                if (!hasPassword(user) && user.admin !== true && !admins.has(identity.email) && !Object.values(state.users).some(item => item.id !== user.id && item.email === identity.email)) user.email = identity.email;
+                if (user.admin !== true && !Object.values(state.users).some(item => item.id !== user.id && item.email === identity.email)) user.email = identity.email;
             } else {
-                if (admins.has(identity.email)) throw authError('reserved-email');
                 if (Object.values(state.users).some(item => item.email === identity.email)) throw authError('account-exists');
                 user = { id: id(), name: identity.name, email: identity.email, emailVerified: true, createdAt: now() };
                 state.users[user.id] = user;
@@ -539,31 +535,7 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
             try { return redirect(res, social.begin({ req, res, provider: socialRoute[1], returnTo: url.searchParams.get('returnTo') || '/' })); }
             catch (error) { fail(error.authCode === 'busy' ? 429 : 400, error.authCode === 'destination' ? 'Invalid sign-in destination.' : 'This sign-in provider is not configured correctly.'); }
         }
-        if (method === 'POST' && (path === '/api/signup' || path === '/api/login')) {
-            authRate(req);
-            const value = await body(req, 8192);
-            const email = text(value.email, 'Email', 254).toLowerCase();
-            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'Enter a valid email address.');
-            if (typeof value.password !== 'string' || value.password.length < 10 || value.password.length > 256) fail(400, 'Password must contain 10–256 characters.');
-            const password = value.password;
-            let user = Object.values(store.state.users).find(item => item.email === email);
-            if (path === '/api/signup') {
-                if (admins.has(email)) fail(403, 'This address is reserved for an owner-provisioned account.');
-                const name = text(value.name || email.split('@')[0], 'Name', 80);
-                const salt = randomBytes(16).toString('hex');
-                const key = (await scrypt(password, salt, 64)).toString('hex');
-                user = { id: id(), name, email, salt, passwordHash: key, createdAt: now() };
-                await store.change(state => {
-                    if (Object.values(state.users).some(item => item.email === email)) fail(409, 'An account already uses that email.');
-                    state.users[user.id] = user;
-                });
-            } else {
-                const key = await scrypt(password, hasPassword(user) ? user.salt : 'missing-account', 64);
-                if (!hasPassword(user) || !timingSafeEqual(key, Buffer.from(user.passwordHash, 'hex'))) fail(401, 'Email or password is incorrect.');
-            }
-            await signIn(res, user);
-            return json(res, path === '/api/signup' ? 201 : 200, { user: publicUser(user) });
-        }
+        if (path === '/api/signup' || path === '/api/login') fail(404, 'API endpoint not found.');
         const user = session(req);
         if (socialRoute && method === 'POST' && socialRoute[2] === 'link') {
             if (!social.configured(socialRoute[1])) fail(503, 'This sign-in provider is not configured.');
@@ -572,8 +544,6 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
             try {
                 const key = sessionHash(req);
                 const target = social.begin({ req, res, provider: socialRoute[1], returnTo: value.returnTo || '/', link: { userId: user.id, sessionHash: key } });
-                // Refresh the same token so pre-OAuth Strict cookies also survive the callback.
-                sessionCookie(res, cookie(req, 'mockup_session'), Math.max(0, Math.ceil((store.state.sessions[key].expires - Date.now()) / 1000)));
                 return json(res, 200, { url: target });
             }
             catch (error) { fail(error.authCode === 'busy' ? 429 : 400, error.authCode === 'destination' ? 'Invalid sign-in destination.' : 'This sign-in provider is not configured correctly.'); }

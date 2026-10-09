@@ -33,13 +33,12 @@ const icons = {
   heart: '<path d="M9 15 3 9a4 4 0 0 1 6-5 4 4 0 0 1 6 5l-6 6Z"/>',
   bolt: '<path d="m10 1-7 9h5l-1 7 8-10h-5l0-6Z"/>',
   gear: '<path d="m7 2 1-1h2l1 1 1 2h2l2 2-1 2 1 2-1 3h-2l-1 2-3 1-1-2-2-1-2 1-2-2 1-2-1-2 1-3h2l1-2Z"/><circle cx="9" cy="8" r="2.5"/>',
-  lock: '<rect x="3" y="8" width="12" height="8" rx="2"/><path d="M5 8V5a4 4 0 0 1 8 0v3"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 18 18" aria-hidden="true">${icons[name] || icons.spark}</svg>`;
 const escape = (value = '') => String(value).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initials = (name = '?') => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 const brand = () => '<a class="brand" href="#" data-action="dashboard"><span class="brand-mark" aria-hidden="true"></span><div>mockup<span>.games</span></div></a>';
-const state = { user:null, configured:{}, projects:[], detail:null, panel:'chat', authMode:'signup', draft:'', polish:'polished', feedbackMode:false, pin:null, pinDraft:'', menu:false, roomStatus:'Connecting to the playtest…', assetUsage:'game', briefReady:false, briefError:'', view:'dashboard', admin:null, authProviders:[] };
+const state = { user:null, configured:{}, projects:[], detail:null, panel:'chat', draft:'', polish:'polished', feedbackMode:false, pin:null, pinDraft:'', menu:false, roomStatus:'Connecting to the playtest…', assetUsage:'game', briefReady:false, briefError:'', view:'dashboard', admin:null, authProviders:[] };
 const clientId = crypto.randomUUID();
 let room = null;
 let source = null;
@@ -118,9 +117,8 @@ function socialAuthButtons() {
 }
 function renderAuth() {
   stopRoom();
-  const signup = state.authMode === 'signup';
   const social = state.authProviders.length > 0;
-  app.innerHTML = `<main class="welcome"><section class="welcome-story">${brand()}<div class="welcome-copy"><p class="eyebrow"><span class="tiny-star">✦</span> Big imagination. Small playable worlds.</p><h1>Got an idea?<br><em>Press start.</em></h1><p>Make the game you can’t stop thinking about.<br>Build a little world. Bring your friends. Find the fun.</p>${makerIllustration()}<div class="welcome-tags"><span>${icon('spark')} Dream it up</span><span>${icon('game')} Play it out</span><span>${icon('people')} Make it together</span></div></div><footer class="welcome-footer"><span>For everyone with a game on their mind.</span><span class="mini-logo">A little idea can go a long way ↗</span></footer></section><section class="welcome-form"><div class="auth-card"><span class="auth-badge">${icon('flag')}Your adventure starts here</span><h2>${signup ? 'Let’s make a little magic.' : 'Ready for another round?'}</h2><p>${inviteToken() ? 'Your friends saved you a spot. Sign in to join their project.' : signup ? 'Your ideas, your people, your next playable obsession.' : 'Hop back into your projects and pick up where you left off.'}</p>${social ? `<div class="social-auth">${socialAuthButtons()}</div><div class="auth-divider"><span>or use your email</span></div>` : ''}<p id="oauth-error" class="error" role="alert">${escape(authError)}</p><form id="auth-form">${signup ? '<div class="field"><label for="auth-name">Your name</label><input id="auth-name" name="name" autocomplete="name" placeholder="Your player name (real names welcome)" required maxlength="80"></div>' : ''}<div class="field"><label for="auth-email">Email address</label><input id="auth-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required maxlength="254"></div><div class="field"><label for="auth-password">Password</label><input id="auth-password" name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" placeholder="${signup ? 'At least 10 characters' : 'Your password'}" required minlength="${signup ? 10 : 1}" maxlength="256"></div><p id="auth-error" class="error" role="alert"></p><button class="button primary" type="submit">${signup ? 'Create your account' : 'Let’s play'} ${icon('arrowRight')}</button></form><div class="auth-switch">${signup ? 'Already part of the party?' : 'First time here?'} <button data-action="auth-switch">${signup ? 'Sign in' : 'Create an account'}</button></div><p class="auth-note">Early access · Make, play, and experiment.<br>No payment required in this first version.</p></div></section></main>`;
+  app.innerHTML = `<main class="welcome"><section class="welcome-story">${brand()}<div class="welcome-copy"><p class="eyebrow"><span class="tiny-star">✦</span> Big imagination. Small playable worlds.</p><h1>Got an idea?<br><em>Press start.</em></h1><p>Make the game you can’t stop thinking about.<br>Build a little world. Bring your friends. Find the fun.</p>${makerIllustration()}<div class="welcome-tags"><span>${icon('spark')} Dream it up</span><span>${icon('game')} Play it out</span><span>${icon('people')} Make it together</span></div></div><footer class="welcome-footer"><span>For everyone with a game on their mind.</span><span class="mini-logo">A little idea can go a long way ↗</span></footer></section><section class="welcome-form"><div class="auth-card"><span class="auth-badge">${icon('flag')}Your adventure starts here</span><h2>Let’s make a little magic.</h2><p>${inviteToken() ? 'Your friends saved you a spot. Sign in to join their project.' : 'Your ideas, your people, your next playable obsession.'}</p><p id="oauth-error" class="error" role="alert">${escape(authError)}</p>${social ? `<div class="social-auth">${socialAuthButtons()}</div><p class="signin-note">New here? Your first sign-in creates your account.<br>Already part of the party? Use the way you joined.</p>` : `<div id="signin-unavailable" class="signin-unavailable"><span class="signin-unavailable-icon">${icon('game')}</span><h3>The lobby is warming up.</h3><p>Sign-in isn’t available just yet. Come back soon to start your next little adventure.</p><button class="button" data-action="retry">${icon('refresh')}Check again</button></div>`}<div class="signin-perks"><span>${icon('spark')}Give your ideas a home</span><span>${icon('people')}Bring your favorite people</span><span>${icon('history')}Pick up where you left off</span></div><p class="auth-note">Early access · Make, play, and experiment.<br>No payment required in this first version.</p></div></section></main>`;
 }
 function sidebar() {
   return `<aside class="sidebar">${brand()}<nav aria-label="Workspace"><button class="nav-item ${!state.detail && state.view !== 'admin' ? 'active' : ''}" data-action="dashboard">${icon('grid')}Your lobby<span class="nav-end">${state.projects.length}</span></button><button class="nav-item" data-action="new-project">${icon('plus')}New project</button>${state.user.isAdmin ? `<button class="nav-item ${state.view === 'admin' ? 'active' : ''}" data-action="admin">${icon('monitor')}Service overview</button>` : ''}</nav><div class="workspace-label">Your little worlds</div><nav class="sidebar-projects" aria-label="Projects" id="sidebar-projects">${projectNav()}</nav><div class="sidebar-footer"><div class="lobby-note">${icon('flag')}<div><strong>Keep chasing the fun.</strong><p>${state.projects.length ? `${state.projects.length} ${state.projects.length === 1 ? 'idea' : 'ideas'} with a place to grow.` : 'Your next adventure starts with an idea.'}</p></div></div><div class="user-row">${avatar(state.user.name)}<button class="user-info" data-action="account" title="Account and connected sign-ins"><strong>${escape(state.user.name)}</strong><small>Your account ${icon('gear')}</small></button><button class="icon-button" title="Sign out" aria-label="Sign out" data-action="logout">${icon('logout')}</button></div></div></aside>`;
@@ -507,8 +505,8 @@ async function shareModal() {
   } catch (error) { const area = document.querySelector('#invite-link-area'); if (area) area.innerHTML = `<p class="error">${escape(error.message)}</p>`; }
 }
 function accountModal() {
-  const linked = new Set(state.user.authMethods || (state.user.hasPassword ? ['password'] : []));
-  openModal(`${modalHeader('Your player card','One you. All your projects.')}<div class="account-identity">${avatar(state.user.name)}<div><strong>${escape(state.user.name)}</strong><p>${escape(state.user.email)}</p></div></div>${state.authProviders.length ? `<h3 class="account-section-title">Ways to sign in</h3><p class="help">Connect an account so you can hop back in with a click.</p><div class="account-connections">${state.authProviders.map((provider) => `<div class="account-connection"><span class="connection-provider">${socialLogo(provider.id)}${escape(provider.label)}</span>${linked.has(provider.id) ? `<span class="pill connected-pill">${icon('check')}Connected</span>` : `<button class="button small ${provider.id === 'google' ? 'google-link' : ''}" data-action="link-provider" data-provider="${escape(provider.id)}">Connect ${escape(provider.label)}</button>`}</div>`).join('')}${linked.has('password') ? `<div class="account-connection"><span class="connection-provider">${icon('lock')}Email and password</span><span class="pill connected-pill">${icon('check')}Ready to use</span></div>` : ''}</div><p class="help" style="margin-top:18px">Connecting adds a sign-in method to this account. It never combines two separate accounts.</p>` : '<p class="help">You’re signed in with your email and password. Your projects stay together in this account.</p>'}<p class="error" id="account-error" role="alert"></p>`);
+  const linked = new Set(state.user.authMethods || []);
+  openModal(`${modalHeader('Your player card','One you. All your projects.')}<div class="account-identity">${avatar(state.user.name)}<div><strong>${escape(state.user.name)}</strong><p>${escape(state.user.email)}</p></div></div>${state.authProviders.length ? `<h3 class="account-section-title">Ways to sign in</h3><p class="help">Connect an account so you can hop back in with a click.</p><div class="account-connections">${state.authProviders.map((provider) => `<div class="account-connection"><span class="connection-provider">${socialLogo(provider.id)}${escape(provider.label)}</span>${linked.has(provider.id) ? `<span class="pill connected-pill">${icon('check')}Connected</span>` : `<button class="button small ${provider.id === 'google' ? 'google-link' : ''}" data-action="link-provider" data-provider="${escape(provider.id)}">Connect ${escape(provider.label)}</button>`}</div>`).join('')}</div><p class="help" style="margin-top:18px">Connecting adds a sign-in method to this account. It never combines two separate accounts.</p>` : '<p class="help">Your projects stay together in this account. Connecting another sign-in isn’t available right now.</p>'}<p class="error" id="account-error" role="alert"></p>`);
 }
 function renderInvite() {
   app.innerHTML = `<main class="invite-page">${brand()}<section class="modal"><p class="eyebrow" style="color:var(--lime)">An idea is better with friends</p><h1>There’s a place for you.</h1><p>Join this shared project to playtest, leave notes, add your assets, and make the game together.</p><button class="button primary" data-action="join-invite">Join the project ${icon('arrowRight')}</button><p class="help" style="margin:18px 0 0">Joining as ${escape(state.user.name)}.</p><p class="error" id="invite-error" role="alert"></p></section></main>`;
@@ -554,8 +552,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'admin-project') await adminProjectModal(button.dataset.id);
     else if (action === 'project') setRoute(button.dataset.id);
     else if (action === 'menu') { state.menu = !state.menu; document.querySelector('.shell')?.classList.toggle('menu-open',state.menu); }
-    else if (action === 'auth-switch') { authError = ''; state.authMode = state.authMode === 'signup' ? 'login' : 'signup'; renderAuth(); }
-    else if (action === 'logout') { await api('/api/logout',{method:'POST',body:{}}); state.user = null; state.projects = []; state.detail = null; state.authMode = 'login'; renderAuth(); }
+    else if (action === 'logout') { await api('/api/logout',{method:'POST',body:{}}); state.user = null; state.projects = []; state.detail = null; authError = ''; renderAuth(); }
     else if (action === 'new-project') newProjectModal();
     else if (action === 'close-modal') closeModal();
     else if (action === 'share') await shareModal();
@@ -588,7 +585,7 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('submit', async (event) => {
   const form = event.target;
-  if (!['auth-form','create-form','chat-form','feedback-form'].includes(form.id)) return;
+  if (!['create-form','chat-form','feedback-form'].includes(form.id)) return;
   event.preventDefault();
   if (busy) return;
   busy = true;
@@ -596,14 +593,7 @@ document.addEventListener('submit', async (event) => {
   button.disabled = true;
   const data = new FormData(form);
   try {
-    if (form.id === 'auth-form') {
-      document.querySelector('#auth-error').textContent = '';
-      const result = await api(`/api/${state.authMode === 'signup' ? 'signup' : 'login'}`,{method:'POST',body:Object.fromEntries(data)});
-      state.user = result.user; authError = '';
-      const session = await api('/api/session'); applySession(session);
-      const projects = await api('/api/projects'); state.projects = projects.projects;
-      await route();
-    } else if (form.id === 'create-form') {
+    if (form.id === 'create-form') {
       document.querySelector('#create-error').textContent = '';
       const result = await api('/api/projects',{method:'POST',body:Object.fromEntries(data)});
       state.projects.unshift(result.project); closeModal(); setRoute(result.project.id);
@@ -630,8 +620,7 @@ document.addEventListener('submit', async (event) => {
       renderPinEditor(); await refreshProject(); toast('Feedback saved with this version.');
     }
   } catch (error) {
-    if (form.id === 'auth-form') { authError = error.message; const target = document.querySelector('#auth-error'); if (target) target.textContent = error.message; }
-    else if (form.id === 'create-form') { const target = document.querySelector('#create-error'); if (target) target.textContent = error.message; }
+    if (form.id === 'create-form') { const target = document.querySelector('#create-error'); if (target) target.textContent = error.message; }
     else toast(error.message);
   } finally { busy = false; if (button.isConnected) button.disabled = false; }
 });
@@ -679,14 +668,13 @@ function readAuthCallback() {
   const messages = {
     cancelled:'Sign-in was cancelled. You can try again whenever you’re ready.',
     state:'That sign-in request expired. Please start again.',
-    provider:'We couldn’t finish signing in. Please try again, or use your email.',
+    provider:'We couldn’t finish signing in. Please try again.',
     unverified:'Please verify your email with that account first, then try again.',
-    'account-exists':'An account already uses this email. Sign in with email, then connect this sign-in method from your account.',
+    'account-exists':'An account already uses this email. Sign in the way you originally joined, then connect this sign-in method from your account.',
     'identity-linked':'That sign-in is already connected to another account. Use it to sign into that account instead.',
-    'reserved-email':'This email can’t be used for a new account. Sign into your existing account to continue.',
     'link-expired':'Your connection request expired. Open your account and try connecting again.',
   };
-  if (code) { authError = messages[code] || 'Sign-in couldn’t finish. Please try again.'; if (code === 'account-exists' || code === 'reserved-email') state.authMode = 'login'; }
+  if (code) authError = messages[code] || 'Sign-in couldn’t finish. Please try again.';
   if (code || linked || signedIn) { url.searchParams.delete('authError'); url.searchParams.delete('authLinked'); url.searchParams.delete('auth'); history.replaceState(null,'',`${url.pathname}${url.search}${url.hash}`); }
   return ['google','discord'].includes(linked) ? linked : null;
 }

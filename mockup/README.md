@@ -16,16 +16,22 @@ Copy-Item .env.example .env
 npm run build
 ```
 
-Edit `.env` as needed. `TIDE_BIN` selects a Tide executable; otherwise the service finds the Windows installation or uses `tide` on `PATH`. `OPENAI_API_KEY` enables generation, and `OPENAI_MODEL` selects the provider model. Without a key, accounts, projects, collaboration, uploads, feedback and the real Moonwake starter still work; chat requests are saved without claiming that a game was generated.
+Edit `.env` as needed, configuring at least one sign-in provider as described below. `TIDE_BIN` selects a Tide executable; otherwise the service finds the Windows installation or uses `tide` on `PATH`. `OPENAI_API_KEY` enables generation, and `OPENAI_MODEL` selects the provider model. Without a generation key, accounts, projects, collaboration, uploads, feedback and the real Moonwake starter still work; chat requests are saved without claiming that a game was generated.
 
-Provision an owner account **while the service is stopped**, then start it:
+Start the service and sign in through Google or Discord:
+
+```powershell
+npm run dev
+```
+
+To grant that account owner administration, **stop the service**, then run:
 
 ```powershell
 node --env-file-if-exists=.env scripts/admin.mjs owner@example.com
 npm run dev
 ```
 
-The provisioning command prompts for a hidden password and creates or updates that account. The data directory has one writer, so do not run this command beside a running service. `MOCKUP_ADMIN_EMAILS`, when set, further restricts provisioned owner accounts; adding an email there alone does not grant administration.
+The command grants administration to the existing social account with that email. It never creates an account or asks for a password; sign in once before running it. The data directory has one writer, so do not run this command beside a running service. `MOCKUP_ADMIN_EMAILS`, when set, further restricts explicitly granted owner accounts; adding an email there alone does not grant administration or block sign-in.
 
 ### Google and Discord sign-in
 
@@ -40,7 +46,9 @@ Register the exact redirect URL for each enabled provider:
 
 Use the same hostname and port as the application, including locally. Set `MOCKUP_PUBLIC_ORIGIN` and `MOCKUP_SECURE_COOKIES=1` behind an HTTPS proxy. The callback origin is configured by the operator, not taken from request headers. Return destinations are limited to the home page and invitation paths.
 
-Existing email/password users sign in first, then connect a provider from their account. Social identities use the provider's permanent account ID and require a verified email; matching email addresses alone never merge accounts or grant administration. Tokens are used for the sign-in exchange and are not retained. The owner account stays explicitly provisioned.
+Sign-in is passwordless: there is no email/password registration, password login or password storage in the authentication flow. Configure at least one provider; without one, the landing page shows that sign-in is unavailable. There is no development login bypass.
+
+Social identities use the provider's permanent account ID and require a verified email; matching email addresses alone never merge accounts or grant administration. To use a second provider, sign in with the original provider and connect the other from your account. Tokens are used for the sign-in exchange and are not retained. Owner privileges require the explicit offline grant above. This is a direct OAuth integration; managed authentication is not currently used.
 
 Implementation references: [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [Discord OAuth2](https://docs.discord.com/developers/topics/oauth2). The Google button uses the [official branding asset](https://developers.google.com/identity/branding-guidelines).
 
@@ -48,7 +56,7 @@ Open [http://127.0.0.1:4173](http://127.0.0.1:4173). The preview server uses por
 
 ## What works
 
-- Google and Discord sign-in when configured, local email/password fallback, cookie sessions, shared projects and invitation links.
+- Passwordless Google and Discord sign-in when configured, cookie sessions, shared projects and invitation links.
 - Concurrent editing of the shared game brief through Yjs, with live teammate cursors and typing/editing presence.
 - A shared playtest: one browser runs the Tide game and streams its canvas to spectators through WebRTC. Anyone in the room can take control immediately; held input is cleared at each handoff. Taking control does not move the simulation into another browser.
 - Responsive phone layouts, touch movement and dash in Moonwake, and touch forwarding for shared control. Spectator streaming currently carries video only.
@@ -85,7 +93,7 @@ The starter test builds and runs the same gameplay checks natively and under Web
 
 ## Boundaries and next work
 
-This is a local development service. Billing, plans, free-use allowances, email verification/password recovery, isolated public build workers, global resource quotas, retention cleanup, browser world-state export, replay and state-preserving host migration remain unbuilt. The provider integration has not been verified with a live paid request. No TURN service, public deployment or `mockup.games` domain configuration is supplied here.
+This is a local development service. Billing, plans, free-use allowances, passwordless email codes/links, managed authentication, isolated public build workers, global resource quotas, retention cleanup, browser world-state export, replay and state-preserving host migration remain unbuilt. The model integration has not been verified with a live paid request, and social sign-in tests use mocked provider responses. No TURN service, public deployment or `mockup.games` domain configuration is supplied here.
 
 Generated previews use a separate origin and port from the authenticated application, with sandboxed frames, scoped preview tickets and restricted browser policies. The local builder also validates source paths and exact uploaded asset references. Those measures do not replace filesystem/process/network isolation for public multi-tenant builds.
 

@@ -1,52 +1,28 @@
-import { scrypt, randomBytes, randomUUID } from 'node:crypto';
-import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from '../server/store.mjs';
 
 // Run with the service stopped: the data directory has one writer.
-export async function provisionAdmin({ dataDir, email, password, name = 'Owner' }) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '') || password?.length < 10 || password?.length > 256) throw new Error('Use a valid email and a password of 10–256 characters.');
+export async function provisionAdmin({ dataDir, email }) {
+    const address = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (address.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new Error('Use a valid email for an existing Google or Discord account.');
     const store = await openStore(dataDir);
-    const salt = randomBytes(16).toString('hex');
-    const passwordHash = (await promisify(scrypt)(password, salt, 64)).toString('hex');
-    await store.change(state => {
-        const user = Object.values(state.users).find(user => user.email === email.toLowerCase());
-        if (user) Object.assign(user, { admin: true, salt, passwordHash });
-        else {
-            const id = randomUUID();
-            state.users[id] = { id, email: email.toLowerCase(), name, admin: true, salt, passwordHash, createdAt: new Date().toISOString() };
-        }
+    const result = await store.change(state => {
+        const user = Object.values(state.users).find(user => user.email === address);
+        const linked = user && Object.values(state.identities || {}).some(identity => identity.userId === user.id &&
+            ['google', 'discord'].includes(identity.provider) && typeof identity.subject === 'string' && identity.subject.length > 0);
+        if (!linked) throw new Error('Sign in with Google or Discord before granting owner access to this email.');
+        user.admin = true;
+        return { id: user.id, email: user.email };
     });
     await store.flush();
-}
-
-async function passwordPrompt() {
-    if (!process.stdin.isTTY) {
-        let value = ''; for await (const part of process.stdin) value += part;
-        return value.replace(/\r?\n$/, '');
-    }
-    process.stdout.write('Owner password (10–256 characters; hidden): ');
-    return new Promise((done, fail) => {
-        let value = '';
-        process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.setEncoding('utf8');
-        const finish = () => { process.stdin.off('data', read); process.stdin.setRawMode(false); process.stdin.pause(); process.stdout.write('\n'); };
-        const read = part => {
-            for (const char of part) {
-                if (char === '\u0003') { finish(); fail(new Error('Cancelled.')); return; }
-                if (char === '\r' || char === '\n') { finish(); done(value); return; }
-                if (char === '\u007f' || char === '\b') value = value.slice(0, -1);
-                else if (char >= ' ' && value.length < 257) value += char;
-            }
-        };
-        process.stdin.on('data', read);
-    });
+    return result;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     const email = process.argv[2];
     if (!email) throw new Error('Stop the service, then run: node scripts/admin.mjs owner@example.com');
     const dataDir = resolve(process.env.MOCKUP_DATA_DIR || fileURLToPath(new URL('../.data', import.meta.url)));
-    await provisionAdmin({ dataDir, email, password: await passwordPrompt() });
-    console.log(`Owner account provisioned for ${email}. Start the service and sign in.`);
+    const user = await provisionAdmin({ dataDir, email });
+    console.log(`Owner access granted to ${user.email}. Start the service and sign in with Google or Discord.`);
 }

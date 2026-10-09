@@ -15,7 +15,6 @@ const directory = await mkdtemp(join(tmpdir(), 'mockup-browser-'));
 const profile = join(directory, 'browser');
 const screenshotDir = fileURLToPath(new URL('../.data/qa/', import.meta.url));
 await mkdir(screenshotDir, { recursive: true });
-await provisionAdmin({ dataDir: directory, email: 'owner@example.com', password: 'secure owner password' });
 const providerRequests = [];
 const providerRequest = async (url, init = {}) => {
     providerRequests.push({ url: String(url), method: init.method || 'GET' });
@@ -25,14 +24,30 @@ const providerRequest = async (url, init = {}) => {
         return Response.json({ access_token: code, token_type: 'Bearer', expires_in: 300 });
     }
     const token = new Headers(init.headers).get('authorization')?.replace(/^Bearer /, '');
-    if (String(url).includes('googleapis.com')) return Response.json({ sub: token, email_verified: true,
-        email: token === 'browser-google-link' ? 'alice@example.com' : 'social-google@example.com', name: 'Google Maker' });
-    if (String(url).includes('discord.com')) return Response.json({ id: '123456789012345678', verified: true, email: 'social-discord@example.com', global_name: 'Discord Maker', username: 'discord-maker' });
+    if (String(url).includes('googleapis.com')) {
+        const users = {
+            'browser-google-owner': { email: 'owner@example.com', name: 'Owner' },
+            'browser-google-alice': { email: 'alice@example.com', name: 'Alice' },
+            'browser-google-new': { email: 'social-google@example.com', name: 'Google Maker' },
+        };
+        assert.ok(users[token], 'Known Google fixture identity');
+        return Response.json({ sub: token, email_verified: true, ...users[token] });
+    }
+    if (String(url).includes('discord.com')) {
+        const users = {
+            'browser-discord-bob': { id: '123456789012345678', email: 'bob@example.com', global_name: 'Bob' },
+            'browser-discord-new': { id: '123456789012345679', email: 'social-discord@example.com', global_name: 'Discord Maker' },
+            'browser-discord-link': { id: '123456789012345680', email: 'alice@example.com', global_name: 'Alice' },
+        };
+        assert.ok(users[token], 'Known Discord fixture identity');
+        return Response.json({ verified: true, username: 'discord-maker', ...users[token] });
+    }
     throw new Error(`Unexpected identity request: ${url}`);
 };
-const service = await start({ port: 0, previewPort: 0, dataDir: directory, pipeline: { generator: null, builder: null },
+const serviceOptions = { port: 0, previewPort: 0, dataDir: directory, pipeline: { generator: null, builder: null },
     oauth: { publicOrigin: () => service.origin, google: { clientId: 'test-google', clientSecret: 'test-secret' },
-        discord: { clientId: 'test-discord', clientSecret: 'test-secret' }, request: providerRequest } });
+        discord: { clientId: 'test-discord', clientSecret: 'test-secret' }, request: providerRequest } };
+let service = await start(serviceOptions);
 assert.ok(service.app.ready.starter, 'Run npm run build before browser tests.');
 const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--mute-audio',
     '--disable-extensions', '--remote-debugging-port=0', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
@@ -102,17 +117,46 @@ try {
             request: (path, body) => evaluate(`fetch(${JSON.stringify(path)},${body ? `{method:'POST',headers:{'Content-Type':'application/json'},body:${JSON.stringify(JSON.stringify(body))}}` : '{}'}).then(async r=>({status:r.status,data:await r.json()}))`),
         };
     }
+    const consent = async (page, code) => {
+        consentCodes.set(page.sessionId, code);
+        await command('Fetch.enable', { patterns: [
+            { urlPattern: 'https://accounts.google.com/o/oauth2/v2/auth*', requestStage: 'Request' },
+            { urlPattern: 'https://discord.com/oauth2/authorize*', requestStage: 'Request' },
+        ] }, page.sessionId);
+    };
+    const unavailableService = await start({ ...serviceOptions, dataDir: join(directory, 'no-auth'), oauth: {} });
+    try {
+        const unavailable = await tab(); await unavailable.navigate(unavailableService.origin);
+        await unavailable.until('!!document.querySelector("#signin-unavailable")', 'unconfigured sign-in state');
+        assert.equal(await unavailable.evaluate('document.querySelector("input, .social-auth a, #auth-form") === null'), true, 'No password or development login fallback');
+        await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, unavailable.sessionId);
+        await unavailable.until('document.documentElement.scrollWidth <= 390', 'unavailable phone landing fits viewport');
+        await writeFile(join(screenshotDir, 'landing-unavailable-mobile.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, unavailable.sessionId)).data, 'base64'));
+    } finally { await unavailableService.close(); }
+    // Owners use the same passwordless login, then receive an explicit offline grant.
+    const owner = await tab(); await owner.navigate(service.origin);
+    await owner.until('!!document.querySelector(".social-auth a")', 'owner sign-in');
+    await consent(owner, 'browser-google-owner');
+    await owner.click('.social-auth a[href*="/google/start"]');
+    await owner.until('!!document.querySelector(".dashboard")', 'owner social callback');
+    assert.equal((await owner.request('/api/session')).data.user.isAdmin, false, 'Signing in never grants administration');
+    const ports = { port: service.server.address().port, previewPort: service.previewServer.address().port };
+    await service.close();
+    await provisionAdmin({ dataDir: directory, email: 'owner@example.com' });
+    service = await start({ ...serviceOptions, ...ports });
+
     const alice = await tab();
     await alice.navigate(service.origin);
-    await alice.until('!!document.querySelector("#auth-form")', 'signup');
     await alice.until('document.querySelectorAll(".social-auth a").length === 2', 'configured Google and Discord choices');
+    assert.equal(await alice.evaluate('document.querySelector("input[type=password], #auth-form, [data-action=auth-switch]") === null'), true, 'No password form or signup/login mode switch');
     assert.doesNotMatch(await alice.evaluate('document.body.innerText'), /\btide\b/i, 'Public landing has no engine branding');
     await writeFile(join(screenshotDir, 'landing.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
     await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, alice.sessionId);
     await alice.until('document.documentElement.scrollWidth <= 390', 'phone landing fits viewport');
     await writeFile(join(screenshotDir, 'landing-mobile.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false }, alice.sessionId);
-    await alice.form('#auth-form', { name: 'Alice', email: 'alice@example.com', password: 'secure password 123' });
+    await consent(alice, 'browser-google-alice');
+    await alice.click('.social-auth a[href*="/google/start"]');
     await alice.until('!!document.querySelector(".dashboard")', 'dashboard');
     assert.doesNotMatch(await alice.evaluate('document.body.innerText'), /\btide\b/i, 'Project lobby has no engine branding');
     await writeFile(join(screenshotDir, 'lobby.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
@@ -127,8 +171,9 @@ try {
     await alice.click('[data-action="close-modal"]');
     const bob = await tab();
     await bob.navigate(invite);
-    await bob.until('!!document.querySelector("#auth-form")', 'friend signup');
-    await bob.form('#auth-form', { name: 'Bob', email: 'bob@example.com', password: 'secure password 123' });
+    await bob.until('!!document.querySelector(".social-auth a")', 'friend sign-in');
+    await consent(bob, 'browser-discord-bob');
+    await bob.click('.social-auth a[href*="/discord/start"]');
     await bob.until('!!document.querySelector("[data-action=join-invite]")', 'invitation');
     await bob.click('[data-action="join-invite"]');
     await bob.until('document.querySelector("#game-stream")?.videoWidth > 0', 'spectator sees actual live game');
@@ -164,10 +209,7 @@ try {
     await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, alice.sessionId);
     await alice.until('document.documentElement.scrollWidth <= 390', 'phone fits viewport');
     await writeFile(join(screenshotDir, 'mobile.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
-    const owner = await tab(); await owner.navigate(service.origin);
-    await owner.until('!!document.querySelector("#auth-form")', 'owner auth');
-    await owner.click('[data-action="auth-switch"]');
-    await owner.form('#auth-form', { email: 'owner@example.com', password: 'secure owner password' });
+    await owner.navigate(service.origin);
     await owner.until('!!document.querySelector("[data-action=admin]")', 'owner navigation');
     await owner.click('[data-action="admin"]');
     await owner.until('!!document.querySelector(".admin-table")', 'owner resources');
@@ -175,13 +217,6 @@ try {
     const cookies = await command('Network.getCookies', { urls: [service.origin] }, alice.sessionId);
     assert.equal((await fetch(`${service.origin}/api/admin`, { headers: { Cookie: cookies.cookies.map(c => `${c.name}=${c.value}`).join('; ') } })).status, 403);
     await writeFile(join(screenshotDir, 'admin.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, owner.sessionId)).data, 'base64'));
-    const consent = async (page, code) => {
-        consentCodes.set(page.sessionId, code);
-        await command('Fetch.enable', { patterns: [
-            { urlPattern: 'https://accounts.google.com/o/oauth2/v2/auth*', requestStage: 'Request' },
-            { urlPattern: 'https://discord.com/oauth2/authorize*', requestStage: 'Request' },
-        ] }, page.sessionId);
-    };
     for (const provider of ['google', 'discord']) {
         const maker = await tab(); await maker.navigate(service.origin);
         await maker.until(`!!document.querySelector('.social-auth a[href*="/${provider}/start"]')`, `${provider} sign-in choice`);
@@ -190,24 +225,24 @@ try {
         await maker.until('!!document.querySelector(".dashboard")', `${provider} callback signs in`);
         const account = (await maker.request('/api/session')).data.user;
         assert.ok(account.authMethods.includes(provider));
-        assert.equal(account.hasPassword, false);
+        assert.equal(Object.hasOwn(account, 'hasPassword'), false);
         assert.equal(account.isAdmin, false);
     }
     // Explicitly linking an existing account preserves its project ownership.
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false }, alice.sessionId);
     const beforeLink = (await alice.request('/api/session')).data.user.id;
     await alice.click('[data-action="account"]');
-    await alice.until('!!document.querySelector("[data-action=link-provider][data-provider=google]")', 'connect provider for existing account');
-    await consent(alice, 'browser-google-link');
-    await alice.click('[data-action="link-provider"][data-provider="google"]');
+    await alice.until('!!document.querySelector("[data-action=link-provider][data-provider=discord]")', 'connect second provider');
+    await consent(alice, 'browser-discord-link');
+    await alice.click('[data-action="link-provider"][data-provider="discord"]');
     await alice.until('!!document.querySelector(".dashboard") && !document.querySelector("#modal-root").children.length', 'linked account returns to lobby');
     const linked = (await alice.request('/api/session')).data.user;
     assert.equal(linked.id, beforeLink);
-    assert.ok(linked.authMethods.includes('google') && linked.authMethods.includes('password'));
+    assert.deepEqual(linked.authMethods, ['google', 'discord']);
     assert.ok((await alice.request('/api/projects')).data.projects.some(project => project.id === projectId));
-    assert.equal(providerRequests.length, 6, 'Three sign-ins exchange a code and fetch an authoritative identity');
+    assert.equal(providerRequests.length, 12, 'Five sign-ins and one link exchange codes and fetch authoritative identities');
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: branding, desktop/mobile theme, local accounts, Google/Discord callbacks, explicit account linking, projects, invitations, live stream/control/cursors/editing, captured feedback and owner admin.');
+    console.log('Browser checks passed: passwordless landing, branding, desktop/mobile theme, Google/Discord callbacks, explicit account linking, projects, invitations, live stream/control/cursors/editing, captured feedback and offline owner grant.');
 } finally {
     if (socket?.readyState === WebSocket.OPEN) { await command('Browser.close').catch(() => {}); socket.close(); }
     else child.kill();
