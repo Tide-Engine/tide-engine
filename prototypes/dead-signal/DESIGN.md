@@ -20,6 +20,16 @@ low-resolution image, coarse geometry, quantized lighting and color, restrained
 industrial palette, and original short electronic sounds. Modern readable aiming,
 teammate labels, health feedback and navigation remain part of the presentation.
 
+The visual direction is worn industrial machinery and remade bodies. Hunters
+have exposed bone ribs and long claws; troopers have masks and compact ranged
+weapons; bulwarks carry asymmetric siege shields; the Warden has a crown, spines
+and a lit rib core. Tapered limbs, hard facets and moving silhouettes carry
+their identity at low resolution. The operator's armor reserves bright panels
+for the teammate color. Gun silhouettes distinguish twin barrels, a drum nail
+driver, a flared launcher, a copper coil fork and an emergency pistol. Long
+enamel wall panels, vents, service pipes and sloping structural ribs make the
+facility feel built; continuous worn floors keep combat readable.
+
 The expedition has a beginning, a changing arsenal, a build assembled during the
 run, a final confrontation, and an ending. It does not require a permanent grind,
 procedurally generated levels, or a large campaign.

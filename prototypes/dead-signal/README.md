@@ -92,9 +92,10 @@ uses real movement, weapons, ammunition and objectives to reach the ending.
 Its full-route run is explicitly invulnerable, so it establishes progression
 without claiming normal difficulty or human completion time.
 
-The renderer test draws nine actual game states, including the relic, downed,
-victory and sector-map screens, twice each. It checks pixel readback and all four
-shader paths on native OpenGL, browser WebGL and WebGPU. The two-player capture
+The renderer test draws thirteen actual game states, including every weapon,
+the full character cast, relic, downed, victory and sector-map screens, twice
+each. It checks pixel readback and the seven shader paths on native OpenGL,
+browser WebGL and WebGPU. The two-player capture
 script also exercises readiness, camera input, shooting and the map in the
 standard host.
 
@@ -115,12 +116,20 @@ That script produces lobby, intake, combat and map pictures beside itself, one
 for each player. Generated captures are local validation artifacts. Original
 sound assets can be regenerated with `python prototypes/dead-signal/sfx/make_sounds.py`.
 
+For the full arsenal and cast, create a local output folder and run
+`build/debug/bin/dead_signal_render_tests.exe --capture-directory <folder>`.
+This counted headless run saves thirteen fixture images; it does not change
+the game or add fixtures to a normal play session.
+
 ## Implementation boundaries
 
 `world.tide` owns the authored plans and shared deterministic circle/tile
 collision, line of sight and wall rays. `game.tide` owns the match, input, guns,
 AI, objectives and checkpoint/relic flow. `render.tide` owns the local camera,
-batched meshes, shaders, UI and audio. None requires a new engine runtime API.
+mesh batches, shaders, UI and audio. `models.tide`, `weapons.tide` and
+`environment.tide` supply the original faceted cast, first-person arsenal and
+industrial architecture. Separate weapon depth, local limb animation and
+contact shadows are presentation only. None requires a new engine runtime API.
 
 The simulation is planar with vertical aiming; there are no stairs or jumping.
 There is no permanent progression, procedural level generator, built-in voice

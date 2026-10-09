@@ -39,6 +39,10 @@ struct Piece
     float4x4 transform = float4x4.identity;
     Color tint = Color.white;
     float glow;
+    float phase;
+    float motion;
+    float attack;
+    float height = 1.7;
 }
 
 struct Ember
@@ -53,14 +57,41 @@ struct Ember
 
 local singleton Art
 {
-    List<Surface> cube;
-    List<int> cubeIndices;
+    List<Surface> glintMesh;
+    List<int> glintIndices;
     List<Surface> level;
     List<int> levelIndices;
-    List<Piece> scenery;
     List<Piece> actors;
     List<Piece> lights;
     List<Piece> gun;
+    List<Surface> marineMesh;
+    List<int> marineIndices;
+    List<Surface> rushMesh;
+    List<int> rushIndices;
+    List<Surface> trooperMesh;
+    List<int> trooperIndices;
+    List<Surface> bulwarkMesh;
+    List<int> bulwarkIndices;
+    List<Surface> wardenMesh;
+    List<int> wardenIndices;
+    List<Surface> scatterMesh;
+    List<int> scatterIndices;
+    List<Surface> nailMesh;
+    List<int> nailIndices;
+    List<Surface> launcherMesh;
+    List<int> launcherIndices;
+    List<Surface> arcMesh;
+    List<int> arcIndices;
+    List<Surface> pistolMesh;
+    List<int> pistolIndices;
+    List<Surface> shadowMesh;
+    List<int> shadowIndices;
+    List<Piece> marines;
+    List<Piece> hunters;
+    List<Piece> troopers;
+    List<Piece> bulwarks;
+    List<Piece> wardens;
+    List<Piece> shadows;
     bool made;
     int sector = -1;
 }
@@ -68,6 +99,7 @@ local singleton Art
 local singleton Lens
 {
     [Filter(Filter.Point)] RenderTarget scene;
+    [Filter(Filter.Point)] RenderTarget weapon;
     bool made;
     int width;
 }
@@ -155,90 +187,29 @@ void Quad(mut List<Surface> vertices, mut List<int> indices,
     indices.Add(first); indices.Add(first + 2); indices.Add(first + 3);
 }
 
-void BoxMesh(mut List<Surface> vertices, mut List<int> indices)
+void BuildGlints(mut Art art)
 {
-    for (var face = 0; face < 6; face++)
+    for (var face = 0; face < 4; face++)
     {
-        var axis = face / 2;
-        var way = face % 2 == 0 ? 1.0 : -1.0;
-        var normal = float3(axis == 0 ? way : 0, axis == 1 ? way : 0, axis == 2 ? way : 0);
-        var across = float3(axis == 1 ? 1 : 0, axis == 2 ? 1 : 0, axis == 0 ? 1 : 0);
-        var up = Math.Cross(normal, across);
-        Quad(vertices, indices, (normal - across - up) * 0.5, (normal + across - up) * 0.5,
-             (normal + across + up) * 0.5, (normal - across + up) * 0.5, normal, Color.white, 0);
+        var a = face * Math.TAU / 4;
+        var b = (face + 1) * Math.TAU / 4;
+        var p = float3(Math.Cos(a), 0, Math.Sin(a)) * 0.5;
+        var q = float3(Math.Cos(b), 0, Math.Sin(b)) * 0.5;
+        ModelTriangle(art.glintMesh, art.glintIndices, float3(0, 0.5, 0), q, p, Color.white, 9);
+        ModelTriangle(art.glintMesh, art.glintIndices, float3(0, -0.5, 0), p, q, Color.white, 9);
+    }
+    for (var i = 0; i < 16; i++)
+    {
+        var a = i * Math.TAU / 16;
+        var b = (i + 1) * Math.TAU / 16;
+        ModelTriangle(art.shadowMesh, art.shadowIndices, float3(0),
+            float3(Math.Cos(b), 0, Math.Sin(b)), float3(Math.Cos(a), 0, Math.Sin(a)), Color.white);
     }
 }
 
-void Block(mut List<Piece> pieces, float3 at, float3 size, Color color, float glow = 0)
+void Glint(mut List<Piece> pieces, float3 at, float3 size, Color color, float glow = 0)
 {
     pieces.Add(Piece { transform = float4x4.TRS(at, quaternion.identity, size), tint = color, glow = glow });
-}
-
-void TurnedBlock(mut List<Piece> pieces, float3 at, float3 size, quaternion turn, Color color, float glow = 0)
-{
-    pieces.Add(Piece { transform = float4x4.TRS(at, turn, size), tint = color, glow = glow });
-}
-
-void Bake(mut Art art, int sector)
-{
-    art.sector = sector;
-    art.level.Clear(); art.levelIndices.Clear(); art.scenery.Clear();
-    var ink = Accent(sector);
-    var wall = Color(0.32 + sector * 0.006, 0.34, 0.35);
-    var floor = Color(0.19, 0.22, 0.24);
-    var roof = Color(0.15, 0.17, 0.19);
-    var plan = SectorPlan(sector);
-    for (var z = 0; z < MAP_H; z++)
-    {
-        for (var x = 0; x < MAP_W; x++)
-        {
-            if (PlanCell(plan, x, z) == '#') continue;
-            var x0 = x * TILE;
-            var z0 = z * TILE;
-            var x1 = x0 + TILE;
-            var z1 = z0 + TILE;
-            Quad(art.level, art.levelIndices, float3(x0, 0, z0), float3(x1, 0, z0), float3(x1, 0, z1), float3(x0, 0, z1),
-                 float3(0, 1, 0), floor, 0);
-            Quad(art.level, art.levelIndices, float3(x0, 3.8, z0), float3(x1, 3.8, z0), float3(x1, 3.8, z1), float3(x0, 3.8, z1),
-                 float3(0, -1, 0), roof, 2);
-            if (PlanCell(plan, x - 1, z) == '#')
-                Quad(art.level, art.levelIndices, float3(x0, 0, z0), float3(x0, 3.8, z0), float3(x0, 3.8, z1), float3(x0, 0, z1),
-                     float3(1, 0, 0), wall, 1);
-            if (PlanCell(plan, x + 1, z) == '#')
-                Quad(art.level, art.levelIndices, float3(x1, 0, z0), float3(x1, 0, z1), float3(x1, 3.8, z1), float3(x1, 3.8, z0),
-                     float3(-1, 0, 0), wall, 1);
-            if (PlanCell(plan, x, z - 1) == '#')
-                Quad(art.level, art.levelIndices, float3(x0, 0, z0), float3(x1, 0, z0), float3(x1, 3.8, z0), float3(x0, 3.8, z0),
-                     float3(0, 0, 1), wall, 1);
-            if (PlanCell(plan, x, z + 1) == '#')
-                Quad(art.level, art.levelIndices, float3(x0, 0, z1), float3(x0, 3.8, z1), float3(x1, 3.8, z1), float3(x1, 0, z1),
-                     float3(0, 0, -1), wall, 1);
-            // Ceiling strips and suspended beams make spaces readable without dynamic lights.
-            if ((x * 7 + z * 11) % 13 == 0)
-            {
-                var at = float3((x + 0.5) * TILE, 3.73, (z + 0.5) * TILE);
-                Block(art.scenery, at, float3(1.2, 0.12, 0.18), Color(0.65, 0.73, 0.68), 0.55);
-                Block(art.scenery, at + float3(0, -0.1, 0), float3(1.05, 0.07, 0.1), ink, 1);
-            }
-            if (z % 5 == 0 && x % 4 == 0)
-                Block(art.scenery, float3((x + 0.5) * TILE, 3.55, (z + 0.5) * TILE), float3(TILE, 0.18, 0.13), Color(0.21, 0.23, 0.25));
-        }
-    }
-    for (var i = 0; i < 3; i++)
-    {
-        var p = RelayPoint(sector, i);
-        Block(art.scenery, Raise(p, 0.56), float3(0.95, 1.12, 0.6), Color(0.16, 0.2, 0.23));
-        Block(art.scenery, Raise(p, 1.25), float3(0.78, 0.4, 0.5), Color(0.35, 0.4, 0.42));
-        Block(art.scenery, Raise(p, 1.34) + float3(0, 0, -0.27), float3(0.6, 0.2, 0.04), ink, 0.8);
-    }
-    var exit = ExitPoint(sector);
-    Block(art.scenery, Raise(exit, 0.04), float3(2.0, 0.08, 2.0), ink, 0.3);
-    for (var i = 0; i < 2; i++)
-    {
-        var p = CachePoint(sector, i);
-        Block(art.scenery, Raise(p, 0.25), float3(0.75, 0.5, 0.55), Color(0.43, 0.36, 0.17));
-        Block(art.scenery, Raise(p, 0.51), float3(0.55, 0.05, 0.35), Color(0.95, 0.72, 0.26), 0.3);
-    }
 }
 
 char PlanCell(string plan, int x, int z)
@@ -258,6 +229,34 @@ vert PixelSnap(mut Surface vertex, out float4 clip, ScenePaint room)
     }
 }
 
+vert ActorSnap(mut Surface vertex, out float4 clip, Piece piece, ScenePaint room)
+{
+    var kind = vertex.kind;
+    if (kind > 1.5 && kind < 5.5)
+    {
+        var arm = kind < 3.5;
+        var left = kind < 2.5 || kind > 3.5 && kind < 4.5;
+        var sign = left ? -1.0 : 1.0;
+        var pivot = float3(sign * piece.height * (arm ? 0.19 : 0.08), piece.height * (arm ? 0.75 : 0.47), 0);
+        var angle = Math.Sin(piece.phase + (left ? 0 : Math.PI)) * piece.motion * (arm ? -0.42 : 0.48)
+            - (arm ? piece.attack * 0.85 : 0);
+        var sine = Math.Sin(angle);
+        var cosine = Math.Cos(angle);
+        var relative = vertex.position - pivot;
+        vertex.position = pivot + float3(relative.x, relative.y * cosine - relative.z * sine,
+            relative.y * sine + relative.z * cosine);
+        var n = vertex.normal;
+        vertex.normal = float3(n.x, n.y * cosine - n.z * sine, n.y * sine + n.z * cosine);
+    }
+    vertex.position.y += Math.Sin(piece.phase * 0.5) * 0.008;
+    clip = this.clip;
+    if (clip.w > 0.05)
+    {
+        var pixel = Math.Floor((clip.xy / clip.w * 0.5 + float2(0.5)) * room.pixels + float2(0.5));
+        clip.xy = (pixel / room.pixels * 2 - float2(1)) * clip.w;
+    }
+}
+
 Color Shade(Color tint, float3 normal, float3 world, float glow, ScenePaint room, float2 pixel)
 {
     var dist = Math.Distance(world, room.eye);
@@ -268,56 +267,39 @@ Color Shade(Color tint, float3 normal, float3 world, float glow, ScenePaint room
     mist = mist * mist * 0.92;
     paint += (float3(room.fog.r, room.fog.g, room.fog.b) - paint) * mist;
     var checker = Math.Frac(Math.Floor(pixel.x) * 0.5 + Math.Floor(pixel.y) * 0.25);
-    paint = Math.Floor(paint * 28 + float3(checker * 0.65)) / 28;
+    paint = Math.Floor(paint * 48 + float3(0.35 + checker * 0.22)) / 48;
     return Color(paint.x, paint.y, paint.z, 1);
-}
-
-frag LevelPaint(Surface surface, out Color color, ScenePaint room)
-{
-    mut var tone = float3(surface.color.r, surface.color.g, surface.color.b);
-    var world = this.world;
-    mut var glow = 0.0;
-    if (surface.kind < 0.5)
-    {
-        var seam = Math.Min(Math.Frac(world.x / TILE), Math.Frac(world.z / TILE));
-        if (seam < 0.025) tone *= 0.45;
-        var plate = (int(Math.Floor(world.x * 4)) + int(Math.Floor(world.z * 4))) % 2;
-        if (plate == 0) tone *= 0.88;
-    }
-    else if (surface.kind < 1.5)
-    {
-        var along = Math.Abs(surface.normal.x) > 0.5 ? world.z : world.x;
-        if (Math.Frac(along / TILE) < 0.03) tone *= 0.4;
-        if (world.y < 0.22 || world.y > 3.15) tone *= 0.52;
-        if (world.y > 0.84 && world.y < 1.02)
-        {
-            var stripe = Math.Frac(along * 0.7 + world.y * 0.7);
-            tone = stripe < 0.5 ? float3(0.48, 0.36, 0.13) : float3(0.1, 0.12, 0.13);
-        }
-        if (world.y > 2.42 && world.y < 2.46)
-        {
-            tone = float3(0.18, 0.38, 0.36);
-            glow = 0.3;
-        }
-    }
-    else
-    {
-        if (Math.Frac(world.x / TILE) < 0.04 || Math.Frac(world.z / TILE) < 0.04) tone *= 0.45;
-    }
-    color = Shade(Color(tone.x, tone.y, tone.z), surface.normal, world, glow, room, this.position);
 }
 
 frag ActorPaint(Surface surface, out Color color, Piece piece, Instance instance, ScenePaint room)
 {
-    color = Shade(piece.tint, instance.Normal(surface.normal), this.world, piece.glow, room, this.position);
+    var accent = surface.kind > 6.5 && surface.kind < 7.5 || surface.kind > 8.5;
+    var tint = accent ? piece.tint : Color.white;
+    var paint = Color(surface.color.r * tint.r, surface.color.g * tint.g, surface.color.b * tint.b);
+    var glow = piece.glow + (surface.kind > 7.5 && surface.kind < 8.5 ? 0.75 : 0);
+    color = Shade(paint, instance.Normal(surface.normal), this.world, glow, room, this.position);
 }
 
 frag GunPaint(Surface surface, out Color color, Piece piece, Instance instance)
 {
     var normal = instance.Normal(surface.normal);
-    var light = 0.45 + Math.Max(Math.Dot(normal, Math.Normalize(float3(-0.5, 0.75, -0.5))), 0) * 0.7 + piece.glow;
-    var paint = float3(piece.tint.r, piece.tint.g, piece.tint.b) * light;
+    var grain = Math.Frac(Math.Sin(Math.Dot(Math.Floor(surface.position * 250), float3(12.989, 78.233, 37.719))) * 43758.5);
+    var light = 0.52 + Math.Max(Math.Dot(normal, Math.Normalize(float3(-0.5, 0.75, -0.5))), 0) * 0.62
+        + piece.glow + (surface.kind > 7.5 ? 0.65 : 0);
+    var paint = float3(surface.color.r * piece.tint.r, surface.color.g * piece.tint.g, surface.color.b * piece.tint.b)
+        * (light * (0.94 + grain * 0.06));
     color = Color(paint.x, paint.y, paint.z, 1);
+}
+
+frag ShadowPaint(Surface surface, out Color color)
+{
+    var edge = Math.Saturate((1 - Math.Length(surface.position.xz)) * 2.5);
+    color = Color(0.015, 0.02, 0.025, edge * 0.42);
+}
+
+frag OverlayPaint(Vertex vertex, Texture source, out Color color)
+{
+    color = source.Sample(vertex.uv, Filter.Point);
 }
 
 frag Present(Vertex vertex, Texture source, out Color color, ScenePaint room)
@@ -408,7 +390,9 @@ view PrepareFrame(mut Art art, mut Lens lens, mut Aim hand, mut Feedback fx, mut
     if (!art.made)
     {
         art.made = true;
-        BoxMesh(art.cube, art.cubeIndices);
+        BuildGlints(art);
+        BuildModels(art);
+        BuildWeapons(art);
     }
     if (art.sector != run.sector) Bake(art, run.sector);
     if (fx.sector != run.sector) { fx.sector = run.sector; fx.relays = run.relays; }
@@ -429,8 +413,13 @@ view PrepareFrame(mut Art art, mut Lens lens, mut Aim hand, mut Feedback fx, mut
         lens.made = true;
         lens.width = width;
         lens.scene = RenderTarget(width, 270, 1);
+        lens.weapon = RenderTarget(width, 270, 1);
     }
-    else if (lens.width != width) { lens.width = width; lens.scene.Resize(width, 270); }
+    else if (lens.width != width)
+    {
+        lens.width = width;
+        lens.scene.Resize(width, 270); lens.weapon.Resize(width, 270);
+    }
     room.pixels = float2(width, 270);
     room.time = fx.clock;
     room.flash = fx.kick;
@@ -496,122 +485,92 @@ view DrawLevel(Art art, Lens lens)
 {
     if (!lens.made) return;
     lens.scene.Mesh(art.level, art.levelIndices, float4x4.identity, PixelSnap, LevelPaint);
-    lens.scene.Instanced(art.cube, art.cubeIndices, art.scenery, PixelSnap, ActorPaint);
-}
-
-void Figure(mut Art art, float3 at, float yaw, Color color, float height, bool downed, float walk, float glow)
-{
-    var turn = quaternion.Euler(float3(0, yaw, downed ? Math.PI * 0.5 : 0));
-    var root = float4x4.TRS(at, turn, float3(height / 1.7));
-    var torso = Math.Transform(root, float3(0, 1.04, 0));
-    TurnedBlock(art.actors, torso, float3(0.5, 0.62, 0.3) * (height / 1.7), turn, color, glow);
-    TurnedBlock(art.actors, Math.Transform(root, float3(0, 1.4, 0)), float3(0.17, 0.15, 0.18) * (height / 1.7), turn,
-                Color(0.12, 0.14, 0.15));
-    TurnedBlock(art.actors, Math.Transform(root, float3(0, 1.59, 0)), float3(0.33, 0.3, 0.33) * (height / 1.7), turn,
-                Color(0.2, 0.23, 0.24), glow * 0.4);
-    TurnedBlock(art.actors, Math.Transform(root, float3(0, 1.6, 0.17)), float3(0.29, 0.07, 0.03) * (height / 1.7), turn,
-                color, 1);
-    TurnedBlock(art.actors, Math.Transform(root, float3(0, 1.07, -0.19)), float3(0.32, 0.45, 0.18) * (height / 1.7), turn,
-                Color(0.12, 0.14, 0.15));
-    for (var leg = 0; leg < 2; leg++)
-    {
-        var side = leg == 0 ? -1.0 : 1.0;
-        var step = Math.Sin(walk) * side * 0.16;
-        TurnedBlock(art.actors, Math.Transform(root, float3(side * 0.16, 0.38, step)), float3(0.18, 0.68, 0.22) * (height / 1.7),
-                    turn, Color(0.16, 0.18, 0.19));
-        TurnedBlock(art.actors, Math.Transform(root, float3(side * 0.16, 0.08, step + 0.07)), float3(0.21, 0.14, 0.33) * (height / 1.7),
-                    turn, Color(0.085, 0.095, 0.1));
-        TurnedBlock(art.actors, Math.Transform(root, float3(side * 0.33, 1.03, 0.09)), float3(0.17, 0.52, 0.18) * (height / 1.7),
-                    turn, color, glow);
-        TurnedBlock(art.actors, Math.Transform(root, float3(side * 0.33, 1.27, 0)), float3(0.26, 0.2, 0.25) * (height / 1.7),
-                    turn, Color(color.r * 0.65, color.g * 0.65, color.b * 0.65), glow);
-    }
-    TurnedBlock(art.actors, Math.Transform(root, float3(0.36, 1.1, 0.39)), float3(0.12, 0.13, 0.65) * (height / 1.7), turn,
-                Color(0.12, 0.14, 0.15));
 }
 
 [Stage(RenderLayers.Actors)]
-view DrawActors(mut Art art, Lens lens, Aim hand, Feedback fx, Expedition run,
+view DrawActors(mut Art art, Lens lens, Aim hand, Feedback fx, Expedition run, ScenePaint room,
                 query (Marine marine, Pose pose) players, query (Enemy enemy, Pose pose) enemies,
                 query (Projectile projectile, Pose pose) projectiles, query (Supply supply, Pose pose) supplies)
 {
     if (!lens.made) return;
+    art.marines.Clear(); art.hunters.Clear(); art.troopers.Clear();
+    art.bulwarks.Clear(); art.wardens.Clear(); art.shadows.Clear();
     foreach (var row in players)
     {
         if (row.entity == hand.self) continue;
-        Figure(art, row.pose.position, row.marine.yaw, SeatColor(row.marine.seat), 1.7, row.marine.downed,
-               fx.clock * 11 + row.marine.seat, 0);
+        // With player collision disabled, avoid a teammate clipping through the camera.
+        if (Math.Distance(row.pose.position.xz, room.eye.xz) < 0.85) continue;
+        var downed = row.marine.downed;
+        var turn = quaternion.Euler(float3(0, row.marine.yaw, downed ? Math.PI * 0.5 : 0));
+        art.marines.Add(Piece { transform = float4x4.TRS(row.pose.position + float3(0, downed ? 0.22 : 0, 0), turn, float3(1)),
+            tint = SeatColor(row.marine.seat), phase = fx.clock * 10 + row.marine.seat,
+            motion = downed ? 0 : Math.Saturate(Math.Length(row.pose.velocity) / 5), height = 1.7 });
+        art.shadows.Add(Piece { transform = float4x4.TRS(row.pose.position + float3(0, 0.018, 0), quaternion.identity,
+            downed ? float3(0.85, 1, 0.38) : float3(0.46, 1, 0.37)) });
     }
     foreach (var row in enemies)
     {
         if (row.enemy.dead || row.enemy.generation != run.generation) continue;
         var kind = row.enemy.kind;
         var height = kind == EnemyKind.Warden ? 2.9 : kind == EnemyKind.Bulwark ? 2.2 : kind == EnemyKind.Rush ? 1.35 : 1.8;
-        var tint = kind == EnemyKind.Warden ? Color(0.68, 0.25, 0.78) : kind == EnemyKind.Bulwark ? Color(0.61, 0.47, 0.28)
-                   : kind == EnemyKind.Rush ? Color(0.74, 0.2, 0.14) : Color(0.54, 0.27, 0.21);
         var yaw = Math.Atan2(row.enemy.aim.x, row.enemy.aim.z);
-        Figure(art, row.pose.position, yaw, tint, height, false, fx.clock * (kind == EnemyKind.Rush ? 17 : 8),
-               row.enemy.flash > 0 ? 0.75 : row.enemy.windup > 0 ? 0.32 : 0);
-        var turn = quaternion.Euler(float3(0, yaw, 0));
-        var body = float4x4.TRS(row.pose.position, turn, float3(height / 1.7));
-        if (kind == EnemyKind.Rush)
-        {
-            // The hunter's exposed spine and long blades make its rush readable in silhouette.
-            TurnedBlock(art.actors, Math.Transform(body, float3(0, 1.26, -0.2)), float3(0.12, 0.55, 0.17), turn, Color(0.75, 0.66, 0.51));
-            for (var side = -1; side <= 1; side += 2)
-                TurnedBlock(art.actors, Math.Transform(body, float3(side * 0.35, 0.87, 0.3)), float3(0.045, 0.08, 0.54), turn, Color(0.83, 0.69, 0.47), 0.1);
-        }
-        if (kind == EnemyKind.Trooper)
-        {
-            TurnedBlock(art.actors, Math.Transform(body, float3(0, 1.12, 0.17)), float3(0.3, 0.31, 0.07), turn, Color(0.16, 0.18, 0.17));
-            TurnedBlock(art.lights, Math.Transform(body, float3(0, 1.14, 0.22)), float3(0.1, 0.065, 0.035), turn, Color(1, 0.5, 0.16), 1);
-        }
-        if (kind == EnemyKind.Bulwark)
-        {
-            TurnedBlock(art.actors, row.pose.position + float3(0, 1.05, 0) + row.enemy.aim * 0.43,
-                        float3(0.82, 1.3, 0.14), turn, Color(0.34, 0.36, 0.33));
-            TurnedBlock(art.actors, Math.Transform(body, float3(0, 1.76, 0)), float3(0.63, 0.17, 0.4), turn, Color(0.39, 0.33, 0.23));
-        }
-        if (kind == EnemyKind.Warden)
-        {
-            Block(art.lights, row.pose.position + float3(0, 3.08, 0), float3(0.6, 0.1, 0.6), Accent(run.sector), 1.4);
-        }
+        var piece = Piece { transform = float4x4.TRS(row.pose.position, quaternion.Euler(float3(0, yaw, 0)), float3(1)),
+            tint = Color.white, phase = fx.clock * (kind == EnemyKind.Rush ? 14 : 9) + row.enemy.serial * 0.618,
+            motion = Math.Saturate(Math.Length(row.pose.velocity) / 3.5), height = height,
+            attack = Math.Saturate(row.enemy.windup * 3),
+            glow = row.enemy.flash > 0 ? 0.65 : row.enemy.windup > 0 ? 0.2 : 0 };
+        if (kind == EnemyKind.Rush) art.hunters.Add(piece);
+        else if (kind == EnemyKind.Trooper) art.troopers.Add(piece);
+        else if (kind == EnemyKind.Bulwark) art.bulwarks.Add(piece);
+        else art.wardens.Add(piece);
+        var footprint = kind == EnemyKind.Warden ? 0.95 : kind == EnemyKind.Bulwark ? 0.64 : 0.43;
+        art.shadows.Add(Piece { transform = float4x4.TRS(row.pose.position + float3(0, 0.018, 0), quaternion.identity,
+            float3(footprint, 1, footprint * 0.8)) });
     }
+    lens.scene.Depth(Depth.Read)
+    {
+        lens.scene.Instanced(art.shadowMesh, art.shadowIndices, art.shadows, PixelSnap, ShadowPaint);
+    }
+    lens.scene.Instanced(art.marineMesh, art.marineIndices, art.marines, ActorSnap, ActorPaint);
+    lens.scene.Instanced(art.rushMesh, art.rushIndices, art.hunters, ActorSnap, ActorPaint);
+    lens.scene.Instanced(art.trooperMesh, art.trooperIndices, art.troopers, ActorSnap, ActorPaint);
+    lens.scene.Instanced(art.bulwarkMesh, art.bulwarkIndices, art.bulwarks, ActorSnap, ActorPaint);
+    lens.scene.Instanced(art.wardenMesh, art.wardenIndices, art.wardens, ActorSnap, ActorPaint);
     foreach (var row in projectiles)
     {
         var color = row.projectile.hostile ? Color(1, 0.3, 0.13) : Color(0.4, 0.86, 1);
-        Block(art.lights, row.pose.position, float3(row.projectile.radius * 1.7), color, 1.5);
+        Glint(art.lights, row.pose.position, float3(row.projectile.radius * 1.7), color, 1.5);
     }
     for (var i = 0; i < 3; i++)
     {
         var completed = (run.relays & (1 << i)) != 0;
         var tint = completed ? Color(0.2, 0.82, 0.46) : Accent(run.sector);
         var p = RelayPoint(run.sector, i);
-        Block(art.lights, Raise(p, 1.6), float3(0.17, 0.17, 0.17), tint, 1);
+        Glint(art.lights, Raise(p, 1.6), float3(0.17, 0.17, 0.17), tint, 1);
         if (!completed)
-            Block(art.lights, Raise(p, 2.0 + Math.Sin(fx.clock * 3) * 0.08), float3(0.09, 0.35, 0.09), tint, 1.5);
+            Glint(art.lights, Raise(p, 2.0 + Math.Sin(fx.clock * 3) * 0.08), float3(0.09, 0.35, 0.09), tint, 1.5);
     }
     foreach (var row in supplies)
     {
         if (row.supply.taken || row.supply.generation != run.generation) continue;
         var p = row.pose.position + float3(0, 0.2 + Math.Sin(fx.clock * 3) * 0.07, 0);
         var medkit = row.supply.kind == 0;
-        Block(art.actors, p, float3(0.35, 0.23, 0.35), medkit ? Color(0.76, 0.77, 0.68) : Color(0.41, 0.38, 0.21));
+        Glint(art.actors, p, float3(0.35, 0.23, 0.35), medkit ? Color(0.76, 0.77, 0.68) : Color(0.41, 0.38, 0.21));
         if (medkit)
         {
-            Block(art.lights, p + float3(0, 0.13, 0), float3(0.08, 0.02, 0.23), Color(0.3, 0.92, 0.49), 0.65);
-            Block(art.lights, p + float3(0, 0.13, 0), float3(0.23, 0.02, 0.08), Color(0.3, 0.92, 0.49), 0.65);
+            Glint(art.lights, p + float3(0, 0.13, 0), float3(0.08, 0.02, 0.23), Color(0.3, 0.92, 0.49), 0.65);
+            Glint(art.lights, p + float3(0, 0.13, 0), float3(0.23, 0.02, 0.08), Color(0.3, 0.92, 0.49), 0.65);
         }
-        else Block(art.lights, p + float3(0, 0.13, 0), float3(0.24, 0.02, 0.24), Color(0.95, 0.71, 0.25), 0.5);
+        else Glint(art.lights, p + float3(0, 0.13, 0), float3(0.24, 0.02, 0.24), Color(0.95, 0.71, 0.25), 0.5);
     }
     for (var i = 0; i < EncounterCount(run.sector); i++)
     {
         if ((run.cleared & (1 << i)) != 0) continue;
         var p = EncounterAt(run.sector, i) + float3(0, 2.7, 0);
-        Block(art.lights, p, float3(0.24, 0.13, 0.24), Color(0.95, 0.48, 0.16), 1.2);
+        Glint(art.lights, p, float3(0.24, 0.13, 0.24), Color(0.95, 0.48, 0.16), 1.2);
     }
-    lens.scene.Instanced(art.cube, art.cubeIndices, art.actors, PixelSnap, ActorPaint);
-    lens.scene.Instanced(art.cube, art.cubeIndices, art.lights, PixelSnap, ActorPaint);
+    lens.scene.Instanced(art.glintMesh, art.glintIndices, art.actors, PixelSnap, ActorPaint);
+    lens.scene.Instanced(art.glintMesh, art.glintIndices, art.lights, PixelSnap, ActorPaint);
 }
 
 [Stage(RenderLayers.Effects)]
@@ -630,10 +589,10 @@ view DrawSparks(mut Feedback fx, mut Art art, Lens lens)
         spark.position += spark.velocity * dt;
         fx.sparks[index] = spark;
         var size = spark.size * (1 - spark.age / spark.life);
-        Block(art.lights, spark.position, float3(size), spark.color, 0.8);
+        Glint(art.lights, spark.position, float3(size), spark.color, 0.8);
         index++;
     }
-    lens.scene.Instanced(art.cube, art.cubeIndices, art.lights, PixelSnap, ActorPaint);
+    lens.scene.Instanced(art.glintMesh, art.glintIndices, art.lights, PixelSnap, ActorPaint);
 }
 
 [Stage(RenderLayers.Weapon)]
@@ -643,60 +602,35 @@ view DrawWeapon(Marine marine, mut Art art, Lens lens, Feedback fx, Aim hand, wi
     var emergency = marine.downed || Ammo(marine) <= 0;
     var kick = fx.kick * fx.kick;
     var sway = Math.Sin(fx.walk) * 0.014;
-    var at = float3(0.29 + sway, -0.29 - kick * 0.055, 0.85 - kick * 0.11);
-    var steel = Color(0.35, 0.39, 0.42);
-    var dark = Color(0.1, 0.13, 0.15);
-    var stock = Color(0.36, 0.23, 0.15);
-    if (emergency)
+    var recoil = float3(sway, -kick * 0.035 + Math.Sin(fx.walk * 2) * 0.005, -kick * 0.08);
+    var turn = quaternion.Euler(float3(-kick * 0.08, sway * 0.4, -sway * 0.5));
+    art.gun.Add(Piece { transform = float4x4.TRS(recoil, turn, float3(1)), tint = Color.white, glow = fx.kick * 0.35 });
+    // Separate depth keeps the hands and receiver correctly occluded while
+    // preserving the first-person silhouette when standing against a wall.
+    lens.weapon.Clear(Color(0, 0, 0, 0));
+    lens.weapon.SetCamera(float3(0), quaternion.identity, 72);
+    lens.weapon.Depth(Depth.ReadWrite)
     {
-        var grip = at + float3(-0.07, 0.025, 0);
-        Block(art.gun, grip, float3(0.09, 0.09, 0.27), steel);
-        Block(art.gun, grip + float3(0, -0.09, -0.08), float3(0.075, 0.19, 0.1), dark);
-        Block(art.gun, grip + float3(0, 0.01, 0.19), float3(0.065, 0.06, 0.15), dark);
-        Block(art.gun, grip + float3(0, 0.065, 0.18), float3(0.018, 0.025, 0.025), Color(0.9, 0.75, 0.35), 0.2);
-        Block(art.gun, grip + float3(0.035, -0.09, -0.11), float3(0.12, 0.14, 0.24), Color(0.49, 0.35, 0.27));
+        if (emergency) lens.weapon.Instanced(art.pistolMesh, art.pistolIndices, art.gun, GunPaint);
+        else if (marine.weapon == Weapon.Scattergun) lens.weapon.Instanced(art.scatterMesh, art.scatterIndices, art.gun, GunPaint);
+        else if (marine.weapon == Weapon.Nailgun) lens.weapon.Instanced(art.nailMesh, art.nailIndices, art.gun, GunPaint);
+        else if (marine.weapon == Weapon.Launcher) lens.weapon.Instanced(art.launcherMesh, art.launcherIndices, art.gun, GunPaint);
+        else lens.weapon.Instanced(art.arcMesh, art.arcIndices, art.gun, GunPaint);
+        if (fx.kick > 0.66)
+        {
+            art.lights.Clear();
+            var flash = !emergency && marine.weapon == Weapon.Arc ? Color(0.3, 0.8, 1) : Color(1, 0.65, 0.15);
+            var muzzle = emergency ? float3(0.25, -0.245, 0.965)
+                : marine.weapon == Weapon.Scattergun ? float3(0.241, -0.225, 1.35)
+                : marine.weapon == Weapon.Nailgun ? float3(0.245, -0.225, 1.15)
+                : marine.weapon == Weapon.Launcher ? float3(0.265, -0.22, 1.25) : float3(0.25, -0.21, 1.265);
+            var flashAt = recoil + Math.Rotate(turn, muzzle + float3(0, 0, 0.1));
+            Glint(art.lights, flashAt, float3(0.09, 0.12, 0.23), flash, 1.4);
+            Glint(art.lights, flashAt, float3(0.13, 0.055, 0.09), Color(1, 0.91, 0.68), 1.4);
+            lens.weapon.Instanced(art.glintMesh, art.glintIndices, art.lights, GunPaint);
+        }
     }
-    else
-    {
-    Block(art.gun, at + float3(0.01, -0.075, -0.1), float3(0.18, 0.19, 0.4), stock);
-    Block(art.gun, at, float3(0.18, 0.12, 0.43), steel);
-    Block(art.gun, at + float3(0, -0.16, -0.21), float3(0.13, 0.29, 0.13), dark);
-    Block(art.gun, at + float3(-0.1, -0.16, -0.2), float3(0.14, 0.16, 0.26), Color(0.49, 0.35, 0.27));
-    Block(art.gun, at + float3(0.12, -0.17, 0.05), float3(0.13, 0.14, 0.27), Color(0.49, 0.35, 0.27));
-    if (marine.weapon == Weapon.Scattergun)
-    {
-        Block(art.gun, at + float3(-0.052, 0.013, 0.33), float3(0.065, 0.07, 0.59), steel);
-        Block(art.gun, at + float3(0.052, 0.013, 0.33), float3(0.065, 0.07, 0.59), steel);
-        Block(art.gun, at + float3(0, -0.035, 0.32), float3(0.15, 0.1, 0.24), stock);
-    }
-    else if (marine.weapon == Weapon.Nailgun)
-    {
-        Block(art.gun, at + float3(0, 0, 0.31), float3(0.07, 0.09, 0.45), dark);
-        Block(art.gun, at + float3(0, 0.13, 0.03), float3(0.16, 0.18, 0.25), Color(0.54, 0.46, 0.27));
-    }
-    else if (marine.weapon == Weapon.Launcher)
-    {
-        Block(art.gun, at + float3(0, 0.08, 0.25), float3(0.28, 0.23, 0.69), Color(0.34, 0.4, 0.27));
-        Block(art.gun, at + float3(0, 0.08, 0.61), float3(0.24, 0.19, 0.035), dark);
-    }
-    else
-    {
-        Block(art.gun, at + float3(0, 0.04, 0.29), float3(0.13, 0.13, 0.5), dark);
-        Block(art.gun, at + float3(-0.11, 0.045, 0.32), float3(0.055, 0.085, 0.3), Color(0.3, 0.8, 1), 0.45);
-        Block(art.gun, at + float3(0.11, 0.045, 0.32), float3(0.055, 0.085, 0.3), Color(0.3, 0.8, 1), 0.45);
-    }
-    }
-    if (fx.kick > 0.66)
-    {
-        var color = !emergency && marine.weapon == Weapon.Arc ? Color(0.3, 0.8, 1) : Color(1, 0.7, 0.18);
-        Block(art.gun, at + (emergency ? float3(-0.07, 0.035, 0.28) : float3(0, 0.05, 0.77)),
-              emergency ? float3(0.07, 0.09, 0.035) : float3(0.14, 0.16, 0.06), color, 1.8);
-    }
-    lens.scene.SetCamera(float3(0), quaternion.identity, 72);
-    lens.scene.Depth(Depth.None)
-    {
-        lens.scene.Instanced(art.cube, art.cubeIndices, art.gun, GunPaint);
-    }
+    Draw.Blit(lens.weapon.color, lens.scene, Blend.Alpha, OverlayPaint);
 }
 
 [Stage(RenderLayers.Present)]
