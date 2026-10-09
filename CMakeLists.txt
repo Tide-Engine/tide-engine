@@ -141,7 +141,7 @@ add_subdirectory(packages) # The packages that come with tide, and their tests
 add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
-add_subdirectory(prototypes) # Private games, served only through the site's admin area
+add_subdirectory(prototypes) # Private games; catalog staging is explicit
 
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.

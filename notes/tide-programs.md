@@ -8,6 +8,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ### Tide programs
 
+Dead Signal is a local private prototype in `prototypes/dead-signal/`, outside public examples and all catalog staging. `-DTIDE_PRIVATE_PROTOTYPES=ON` opts into its playable `dead_signal` target, `dead_signal_tests` simulation host and `dead_signal_render_tests` graphics host, on native and web builds. The option defaults off; its sources/assets are neither installed into the Tide package nor copied into the docs site. It is not a dependency of `private_games`. Its contract and verification are in `notes/dead-signal.md`; design and launch instructions stay beside the game sources.
+
 `tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>] [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...] [PACKAGES <Name> <file.tide>...] [DEFINES <SYMBOL>...])` builds a game as the program `<target>` (see `cmake/Tide.cmake`):
 
 - The game is every `.tide` file in the current source folder and its subfolders; the next build picks up new files. `SOURCES` lists the files instead, for tests and folders that hold several games.

@@ -1,0 +1,362 @@
+// Original low-poly cast. All dimensions are metres, feet at y=0, facing +z.
+// Vertices are split at every face so lighting keeps the authored hard facets.
+// Character kinds: 0 body, 1 head, 2/3 arms, 4/5 legs, 7 team accent, 8 glow.
+
+void ModelTriangle(mut List<Surface> mesh, mut List<int> indices,
+                   float3 a, float3 b, float3 c, Color color, float kind = 0)
+{
+    var cross = Math.Cross(b - a, c - a);
+    if (Math.Length(cross) < 0.000001) return;
+    var normal = Math.Normalize(cross);
+    var first = mesh.count;
+    mesh.Add(Surface { position = a, normal = normal, color = color, kind = kind });
+    mesh.Add(Surface { position = b, normal = normal, color = color, kind = kind });
+    mesh.Add(Surface { position = c, normal = normal, color = color, kind = kind });
+    indices.Add(first); indices.Add(first + 1); indices.Add(first + 2);
+}
+
+void ModelQuad(mut List<Surface> mesh, mut List<int> indices,
+               float3 a, float3 b, float3 c, float3 d, Color color, float kind = 0)
+{
+    ModelTriangle(mesh, indices, a, b, c, color, kind);
+    ModelTriangle(mesh, indices, a, c, d, color, kind);
+}
+
+// A capped elliptical section along any axis. Radii are half extents.
+void ModelTube(mut List<Surface> mesh, mut List<int> indices,
+               float3 from, float3 to, float2 radiusFrom, float2 radiusTo,
+               int sides, Color color, float kind = 0)
+{
+    var axis = Math.Normalize(to - from);
+    var guide = Math.Abs(axis.y) > 0.95 ? float3(0, 0, 1) : float3(0, 1, 0);
+    var across = Math.Normalize(Math.Cross(guide, axis));
+    var around = Math.Cross(axis, across);
+    var count = Math.Clamp(sides, 3, 12);
+    for (var i = 0; i < count; i++)
+    {
+        var a = i * Math.TAU / count;
+        var b = (i + 1) * Math.TAU / count;
+        var ca = Math.Cos(a); var sa = Math.Sin(a);
+        var cb = Math.Cos(b); var sb = Math.Sin(b);
+        var p = from + across * (ca * radiusFrom.x) + around * (sa * radiusFrom.y);
+        var q = from + across * (cb * radiusFrom.x) + around * (sb * radiusFrom.y);
+        var r = to + across * (cb * radiusTo.x) + around * (sb * radiusTo.y);
+        var s = to + across * (ca * radiusTo.x) + around * (sa * radiusTo.y);
+        ModelQuad(mesh, indices, p, q, r, s, color, kind);
+        ModelTriangle(mesh, indices, from, q, p, color, kind);
+        ModelTriangle(mesh, indices, to, s, r, color, kind);
+    }
+}
+
+float2 ModelBevelCorner(int index, float2 half)
+{
+    switch (index % 8)
+    {
+        case 0: return float2(-half.x * 0.62, -half.y);
+        case 1: return float2(-half.x, -half.y * 0.62);
+        case 2: return float2(-half.x, half.y * 0.62);
+        case 3: return float2(-half.x * 0.62, half.y);
+        case 4: return float2(half.x * 0.62, half.y);
+        case 5: return float2(half.x, half.y * 0.62);
+        case 6: return float2(half.x, -half.y * 0.62);
+    }
+    return float2(half.x * 0.62, -half.y);
+}
+
+// Bevelled rectangular prism with a sloping roof: +z is the front.
+// Size is full extents; slope is front roof elevation minus back roof elevation.
+void ModelWedge(mut List<Surface> mesh, mut List<int> indices,
+                float3 center, float3 size, float slope, Color color, float kind = 0)
+{
+    var half = size * 0.5;
+    for (var i = 0; i < 8; i++)
+    {
+        var a = ModelBevelCorner(i, float2(half.x, half.z));
+        var b = ModelBevelCorner(i + 1, float2(half.x, half.z));
+        var p = center + float3(a.x, -half.y, a.y);
+        var q = center + float3(b.x, -half.y, b.y);
+        var r = center + float3(b.x, half.y + b.y / Math.Max(half.z, 0.001) * slope * 0.5, b.y);
+        var s = center + float3(a.x, half.y + a.y / Math.Max(half.z, 0.001) * slope * 0.5, a.y);
+        ModelQuad(mesh, indices, p, q, r, s, color, kind);
+        ModelTriangle(mesh, indices, center - float3(0, half.y, 0), q, p, color, kind);
+        ModelTriangle(mesh, indices, center + float3(0, half.y, 0), s, r, color, kind);
+    }
+}
+
+// A diamond-faced plate, useful for chests, masks, shields and receiver panels.
+void ModelPlate(mut List<Surface> mesh, mut List<int> indices,
+                float3 left, float3 bottom, float3 right, float3 top, float ridge, Color color, float kind = 0)
+{
+    var center = (left + bottom + right + top) * 0.25 + float3(0, 0, ridge);
+    ModelTriangle(mesh, indices, left, bottom, center, color, kind);
+    ModelTriangle(mesh, indices, bottom, right, center, color, kind);
+    ModelTriangle(mesh, indices, right, top, center, color, kind);
+    ModelTriangle(mesh, indices, top, left, center, color, kind);
+}
+
+void ModelLeg(mut List<Surface> mesh, mut List<int> indices, float side, float height,
+              Color suit, Color armour, float kind, bool hunter = false)
+{
+    var hip = float3(side * height * 0.08, height * 0.47, 0);
+    var knee = float3(side * height * 0.087, height * 0.27, height * (hunter ? 0.09 : 0.015));
+    var ankle = float3(side * height * 0.09, height * 0.115, height * (hunter ? -0.065 : -0.025));
+    ModelTube(mesh, indices, hip, knee, float2(height * 0.071, height * 0.064),
+              float2(height * 0.049, height * 0.052), 6, suit, kind);
+    ModelTube(mesh, indices, knee, ankle, float2(height * 0.064, height * 0.06),
+              float2(height * 0.041, height * 0.045), 5, armour, kind);
+    ModelWedge(mesh, indices, float3(ankle.x, height * 0.055, height * 0.055),
+               float3(height * 0.125, height * 0.11, height * 0.24), -height * 0.055,
+               Color(0.12, 0.13, 0.14), kind);
+    var front = knee + float3(0, 0, height * 0.052);
+    ModelPlate(mesh, indices, front + float3(-height * 0.052, 0, 0), front + float3(0, -height * 0.07, 0),
+               front + float3(height * 0.052, 0, 0), front + float3(0, height * 0.055, 0),
+               height * 0.027, armour, kind);
+}
+
+void ModelArm(mut List<Surface> mesh, mut List<int> indices, float side, float height,
+              Color suit, Color armour, float kind, bool hunter = false)
+{
+    var shoulder = float3(side * height * 0.19, height * 0.75, 0);
+    var elbow = float3(side * height * (hunter ? 0.24 : 0.225), height * 0.60, height * 0.025);
+    var wrist = float3(side * height * (hunter ? 0.25 : 0.20), height * (hunter ? 0.43 : 0.52), height * 0.105);
+    ModelTube(mesh, indices, shoulder, elbow, float2(height * 0.063, height * 0.06),
+              float2(height * 0.045, height * 0.043), 6, suit, kind);
+    ModelTube(mesh, indices, elbow, wrist, float2(height * 0.055, height * 0.05),
+              float2(height * 0.032, height * 0.035), 5, armour, kind);
+    ModelTube(mesh, indices, wrist, wrist + float3(0, -height * 0.055, height * 0.02),
+              float2(height * 0.039, height * 0.038), float2(height * 0.03, height * 0.028),
+              5, Color(0.22, 0.20, 0.17), kind);
+    ModelTube(mesh, indices, shoulder + float3(-side * height * 0.035, height * 0.012, 0),
+              shoulder + float3(side * height * 0.065, -height * 0.04, 0),
+              float2(height * 0.09, height * 0.08), float2(height * 0.065, height * 0.068),
+              5, armour, kind);
+}
+
+void MakeMarine(mut List<Surface> mesh, mut List<int> indices)
+{
+    var suit = Color(0.22, 0.25, 0.26);
+    var armour = Color(0.57, 0.62, 0.61);
+    var trim = Color(0.12, 0.16, 0.18);
+    ModelLeg(mesh, indices, -1, 1.7, suit, armour, 4);
+    ModelLeg(mesh, indices, 1, 1.7, suit, armour, 5);
+    ModelArm(mesh, indices, -1, 1.7, suit, armour, 2);
+    ModelArm(mesh, indices, 1, 1.7, suit, armour, 3);
+    ModelTube(mesh, indices, float3(0, 0.73, 0), float3(0, 0.9, 0), float2(0.20, 0.14), float2(0.18, 0.12), 6, trim);
+    ModelTube(mesh, indices, float3(0, 0.89, 0), float3(0, 1.31, 0), float2(0.18, 0.12), float2(0.29, 0.17), 8, suit);
+    ModelTube(mesh, indices, float3(0, 1.31, 0), float3(0, 1.40, 0), float2(0.29, 0.17), float2(0.17, 0.12), 8, armour);
+    ModelPlate(mesh, indices, float3(-0.25, 1.22, 0.17), float3(0, 0.92, 0.14),
+               float3(0.25, 1.22, 0.17), float3(0, 1.36, 0.17), 0.05, armour);
+    ModelPlate(mesh, indices, float3(-0.18, 1.22, 0.205), float3(0, 1.09, 0.235),
+               float3(0.18, 1.22, 0.205), float3(0, 1.30, 0.205), 0.015, Color.white, 7);
+    ModelWedge(mesh, indices, float3(0, 0.91, 0.11), float3(0.38, 0.09, 0.13), -0.02, trim);
+    // Twin breathing canisters and a slanted protective back shell.
+    ModelWedge(mesh, indices, float3(0, 1.15, -0.20), float3(0.30, 0.41, 0.17), -0.10, trim);
+    for (var side = -1; side <= 1; side += 2)
+        ModelTube(mesh, indices, float3(side * 0.105, 0.99, -0.29), float3(side * 0.105, 1.30, -0.27),
+                  float2(0.055, 0.055), float2(0.044, 0.044), 6, armour);
+    ModelTube(mesh, indices, float3(0, 1.38, 0), float3(0, 1.48, 0), float2(0.09, 0.09), float2(0.10, 0.10), 6, trim, 1);
+    ModelTube(mesh, indices, float3(0, 1.47, 0), float3(0, 1.59, 0), float2(0.14, 0.13), float2(0.185, 0.16), 8, armour, 1);
+    ModelTube(mesh, indices, float3(0, 1.59, 0), float3(0, 1.70, -0.025), float2(0.185, 0.16), float2(0.105, 0.10), 8, armour, 1);
+    ModelQuad(mesh, indices, float3(-0.15, 1.555, 0.125), float3(0, 1.545, 0.185),
+              float3(0, 1.605, 0.18), float3(-0.15, 1.615, 0.12), Color(0.20, 0.85, 0.75), 8);
+    ModelQuad(mesh, indices, float3(0, 1.545, 0.185), float3(0.15, 1.555, 0.125),
+              float3(0.15, 1.615, 0.12), float3(0, 1.605, 0.18), Color(0.20, 0.85, 0.75), 8);
+    ModelTube(mesh, indices, float3(0, 1.49, 0.11), float3(0, 1.51, 0.20),
+              float2(0.085, 0.05), float2(0.055, 0.04), 6, trim, 1);
+    // A compact carried carbine connects to the forward right hand.
+    ModelWedge(mesh, indices, float3(0.32, 0.98, 0.26), float3(0.11, 0.12, 0.38), -0.05, trim, 3);
+    ModelTube(mesh, indices, float3(0.32, 1.005, 0.43), float3(0.32, 1.005, 0.65),
+              float2(0.035, 0.035), float2(0.024, 0.024), 6, armour, 3);
+}
+
+void MakeRush(mut List<Surface> mesh, mut List<int> indices)
+{
+    var flesh = Color(0.53, 0.24, 0.20);
+    var sinew = Color(0.27, 0.13, 0.12);
+    var bone = Color(0.73, 0.64, 0.46);
+    ModelLeg(mesh, indices, -1, 1.35, sinew, flesh, 4, true);
+    ModelLeg(mesh, indices, 1, 1.35, sinew, flesh, 5, true);
+    ModelArm(mesh, indices, -1, 1.35, flesh, sinew, 2, true);
+    ModelArm(mesh, indices, 1, 1.35, flesh, sinew, 3, true);
+    ModelTube(mesh, indices, float3(0, 0.57, -0.035), float3(0, 1.02, 0.005),
+              float2(0.13, 0.10), float2(0.265, 0.18), 6, flesh);
+    ModelTube(mesh, indices, float3(0, 1.02, 0.005), float3(0, 1.16, 0.12),
+              float2(0.265, 0.18), float2(0.12, 0.10), 5, sinew);
+    // Exposed ribs, a hooked face, and three long forearm knives distinguish hunters.
+    for (var i = 0; i < 4; i++)
+    {
+        var y = 0.77 + i * 0.065;
+        var span = 0.11 + i * 0.026;
+        ModelPlate(mesh, indices, float3(-span, y + 0.02, 0.12), float3(0, y - 0.025, 0.19),
+                   float3(span, y + 0.02, 0.12), float3(0, y + 0.045, 0.19), 0.01, bone);
+        ModelTube(mesh, indices, float3(0, y, -0.145), float3(0, y + 0.04, -0.26),
+                  float2(0.035, 0.035), float2(0.004, 0.004), 4, bone);
+    }
+    ModelTube(mesh, indices, float3(0, 1.13, 0.10), float3(0, 1.28, 0.13),
+              float2(0.13, 0.12), float2(0.16, 0.15), 5, bone, 1);
+    ModelTube(mesh, indices, float3(0, 1.28, 0.13), float3(0, 1.35, 0.09),
+              float2(0.16, 0.15), float2(0.055, 0.065), 5, bone, 1);
+    ModelPlate(mesh, indices, float3(-0.095, 1.22, 0.23), float3(0, 1.095, 0.32),
+               float3(0.095, 1.22, 0.23), float3(0, 1.28, 0.265), 0.025, sinew, 1);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var arm = side < 0 ? 2.0 : 3.0;
+        ModelTriangle(mesh, indices, float3(side * 0.07, 1.23, 0.266), float3(side * 0.025, 1.215, 0.29),
+                      float3(side * 0.085, 1.25, 0.25), Color(1, 0.33, 0.08), 8);
+        ModelTriangle(mesh, indices, float3(side * 0.085, 1.25, 0.25), float3(side * 0.025, 1.215, 0.29),
+                      float3(side * 0.07, 1.23, 0.266), Color(1, 0.33, 0.08), 8);
+        for (var claw = 0; claw < 3; claw++)
+        {
+            var x = side * (0.31 + claw * 0.042);
+            ModelTube(mesh, indices, float3(x, 0.59, 0.15), float3(x + side * 0.025, 0.44, 0.52 - claw * 0.035),
+                      float2(0.025, 0.017), float2(0.002, 0.002), 3, bone, arm);
+        }
+    }
+}
+
+void MakeTrooper(mut List<Surface> mesh, mut List<int> indices)
+{
+    var suit = Color(0.25, 0.22, 0.18);
+    var armour = Color(0.40, 0.33, 0.25);
+    var steel = Color(0.18, 0.22, 0.23);
+    ModelLeg(mesh, indices, -1, 1.8, suit, armour, 4);
+    ModelLeg(mesh, indices, 1, 1.8, suit, armour, 5);
+    ModelArm(mesh, indices, -1, 1.8, suit, armour, 2);
+    ModelArm(mesh, indices, 1, 1.8, suit, armour, 3);
+    ModelTube(mesh, indices, float3(0, 0.77, 0), float3(0, 0.94, 0), float2(0.20, 0.13), float2(0.18, 0.12), 6, steel);
+    ModelTube(mesh, indices, float3(0, 0.93, 0), float3(0, 1.40, 0), float2(0.19, 0.13), float2(0.31, 0.18), 6, suit);
+    ModelPlate(mesh, indices, float3(-0.27, 1.30, 0.16), float3(0, 0.99, 0.18),
+               float3(0.27, 1.30, 0.16), float3(0, 1.46, 0.15), 0.08, armour);
+    ModelPlate(mesh, indices, float3(-0.10, 1.24, 0.245), float3(0, 1.12, 0.275),
+               float3(0.10, 1.24, 0.245), float3(0, 1.34, 0.245), 0.015, Color(0.81, 0.36, 0.13));
+    ModelTube(mesh, indices, float3(0, 1.08, -0.19), float3(0, 1.43, -0.23),
+              float2(0.17, 0.11), float2(0.14, 0.09), 6, steel);
+    ModelTube(mesh, indices, float3(0, 1.45, 0), float3(0, 1.65, 0.035),
+              float2(0.135, 0.12), float2(0.175, 0.15), 6, steel, 1);
+    ModelTube(mesh, indices, float3(0, 1.65, 0.035), float3(0, 1.80, -0.03),
+              float2(0.175, 0.15), float2(0.07, 0.08), 6, armour, 1);
+    // Recessed glowing lenses and two projecting respirator filters.
+    for (var side = -1; side <= 1; side += 2)
+    {
+        ModelTube(mesh, indices, float3(side * 0.076, 1.63, 0.13), float3(side * 0.076, 1.63, 0.185),
+                  float2(0.055, 0.047), float2(0.043, 0.038), 6, steel, 1);
+        ModelTube(mesh, indices, float3(side * 0.076, 1.63, 0.186), float3(side * 0.076, 1.63, 0.193),
+                  float2(0.033, 0.029), float2(0.033, 0.029), 6, Color(1, 0.42, 0.10), 8);
+        ModelTube(mesh, indices, float3(side * 0.10, 1.49, 0.10), float3(side * 0.14, 1.48, 0.25),
+                  float2(0.055, 0.05), float2(0.07, 0.055), 5, armour, 1);
+    }
+    ModelWedge(mesh, indices, float3(0.34, 1.04, 0.32), float3(0.16, 0.17, 0.46), -0.05, steel, 3);
+    ModelTube(mesh, indices, float3(0.34, 1.07, 0.52), float3(0.34, 1.07, 0.83),
+              float2(0.065, 0.065), float2(0.04, 0.04), 6, steel, 3);
+    ModelTube(mesh, indices, float3(0.34, 1.07, 0.78), float3(0.34, 1.07, 0.86),
+              float2(0.06, 0.06), float2(0.055, 0.055), 6, Color(0.72, 0.37, 0.13), 3);
+}
+
+void MakeBulwark(mut List<Surface> mesh, mut List<int> indices)
+{
+    var suit = Color(0.23, 0.20, 0.17);
+    var armour = Color(0.52, 0.46, 0.30);
+    var dark = Color(0.19, 0.23, 0.22);
+    ModelLeg(mesh, indices, -1, 2.2, suit, armour, 4);
+    ModelLeg(mesh, indices, 1, 2.2, suit, armour, 5);
+    ModelArm(mesh, indices, -1, 2.2, suit, armour, 2);
+    ModelArm(mesh, indices, 1, 2.2, suit, armour, 3);
+    ModelTube(mesh, indices, float3(0, 0.95, 0), float3(0, 1.2, 0), float2(0.29, 0.20), float2(0.25, 0.18), 8, dark);
+    ModelTube(mesh, indices, float3(0, 1.10, 0), float3(0, 1.70, -0.035), float2(0.27, 0.21), float2(0.43, 0.28), 8, armour);
+    ModelTube(mesh, indices, float3(0, 1.70, -0.035), float3(0, 1.90, -0.03), float2(0.43, 0.28), float2(0.20, 0.17), 8, armour);
+    ModelPlate(mesh, indices, float3(-0.36, 1.62, 0.22), float3(0, 1.14, 0.21),
+               float3(0.36, 1.62, 0.22), float3(0, 1.84, 0.16), 0.10, dark);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var arm = side < 0 ? 2.0 : 3.0;
+        ModelTube(mesh, indices, float3(side * 0.34, 1.72, -0.03), float3(side * 0.59, 1.64, -0.01),
+                  float2(0.20, 0.21), float2(0.14, 0.17), 5, armour, arm);
+        ModelTube(mesh, indices, float3(side * 0.15, 1.26, -0.28), float3(side * 0.15, 1.77, -0.29),
+                  float2(0.11, 0.11), float2(0.08, 0.08), 6, dark);
+    }
+    ModelTube(mesh, indices, float3(0, 1.84, 0.015), float3(0, 2.05, 0.025),
+              float2(0.16, 0.15), float2(0.23, 0.19), 6, dark, 1);
+    ModelTube(mesh, indices, float3(0, 2.05, 0.025), float3(0, 2.20, -0.045),
+              float2(0.23, 0.19), float2(0.12, 0.10), 6, armour, 1);
+    ModelPlate(mesh, indices, float3(-0.18, 2.02, 0.17), float3(0, 1.94, 0.24),
+               float3(0.18, 2.02, 0.17), float3(0, 2.07, 0.20), 0.01, Color(1, 0.61, 0.16), 8);
+    // A convex, cut-corner siege shield, asymmetric to the exposed gun arm.
+    ModelWedge(mesh, indices, float3(-0.18, 1.15, 0.49), float3(0.96, 1.40, 0.16), -0.09, dark, 2);
+    ModelPlate(mesh, indices, float3(-0.62, 1.26, 0.58), float3(-0.18, 0.48, 0.57),
+               float3(0.26, 1.26, 0.58), float3(-0.18, 1.82, 0.57), 0.16, armour, 2);
+    ModelPlate(mesh, indices, float3(-0.45, 1.25, 0.69), float3(-0.18, 1.01, 0.74),
+               float3(0.09, 1.25, 0.69), float3(-0.18, 1.42, 0.69), 0.015, dark, 2);
+    ModelTube(mesh, indices, float3(0.48, 1.14, 0.27), float3(0.48, 1.14, 0.73),
+              float2(0.10, 0.11), float2(0.065, 0.075), 6, dark, 3);
+}
+
+void MakeWarden(mut List<Surface> mesh, mut List<int> indices)
+{
+    var sinew = Color(0.31, 0.16, 0.22);
+    var shell = Color(0.39, 0.30, 0.43);
+    var bone = Color(0.64, 0.57, 0.48);
+    var dark = Color(0.13, 0.14, 0.18);
+    ModelLeg(mesh, indices, -1, 2.9, sinew, shell, 4, true);
+    ModelLeg(mesh, indices, 1, 2.9, sinew, shell, 5, true);
+    ModelArm(mesh, indices, -1, 2.9, sinew, shell, 2, true);
+    ModelArm(mesh, indices, 1, 2.9, sinew, shell, 3, true);
+    ModelTube(mesh, indices, float3(0, 1.24, 0), float3(0, 2.20, -0.08),
+              float2(0.25, 0.21), float2(0.52, 0.30), 6, sinew);
+    ModelTube(mesh, indices, float3(0, 2.20, -0.08), float3(0, 2.45, 0.02),
+              float2(0.52, 0.30), float2(0.20, 0.16), 5, shell);
+    // Ribbed cathedral chest around a bright, living transmission core.
+    ModelPlate(mesh, indices, float3(-0.42, 2.09, 0.20), float3(0, 1.38, 0.22),
+               float3(0.42, 2.09, 0.20), float3(0, 2.39, 0.17), 0.13, dark);
+    for (var rib = 0; rib < 5; rib++)
+    {
+        var y = 1.55 + rib * 0.13;
+        var span = 0.18 + rib * 0.045;
+        for (var side = -1; side <= 1; side += 2)
+            ModelTube(mesh, indices, float3(side * span, y + 0.10, 0.22), float3(side * 0.065, y, 0.36),
+                      float2(0.045, 0.045), float2(0.035, 0.035), 4, bone);
+    }
+    ModelTube(mesh, indices, float3(0, 1.69, 0.34), float3(0, 2.07, 0.34),
+              float2(0.075, 0.09), float2(0.065, 0.08), 5, Color(0.89, 0.18, 0.43), 8);
+    ModelTube(mesh, indices, float3(0, 2.42, 0.02), float3(0, 2.67, 0.07),
+              float2(0.17, 0.15), float2(0.22, 0.19), 5, bone, 1);
+    ModelTube(mesh, indices, float3(0, 2.67, 0.07), float3(0, 2.82, -0.025),
+              float2(0.22, 0.19), float2(0.08, 0.09), 5, shell, 1);
+    ModelPlate(mesh, indices, float3(-0.18, 2.64, 0.22), float3(0, 2.42, 0.30),
+               float3(0.18, 2.64, 0.22), float3(0, 2.74, 0.25), 0.055, dark, 1);
+    ModelPlate(mesh, indices, float3(-0.12, 2.65, 0.273), float3(0, 2.60, 0.324),
+               float3(0.12, 2.65, 0.273), float3(0, 2.68, 0.29), 0.008, Color(1, 0.28, 0.48), 8);
+    // A crown of broken antennae broadens the upper silhouette, with talons below.
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var arm = side < 0 ? 2.0 : 3.0;
+        ModelTube(mesh, indices, float3(side * 0.18, 2.70, -0.01), float3(side * 0.38, 2.90, -0.09),
+                  float2(0.06, 0.045), float2(0.008, 0.008), 4, bone, 1);
+        ModelTube(mesh, indices, float3(side * 0.50, 2.21, -0.13), float3(side * 0.80, 2.57, -0.22),
+                  float2(0.12, 0.10), float2(0.012, 0.012), 4, shell, arm);
+        ModelTube(mesh, indices, float3(side * 0.52, 2.18, -0.23), float3(side * 0.66, 2.48, -0.51),
+                  float2(0.10, 0.085), float2(0.008, 0.008), 4, bone, arm);
+        for (var claw = 0; claw < 3; claw++)
+        {
+            var x = side * (0.62 + claw * 0.065);
+            ModelTube(mesh, indices, float3(x, 1.28, 0.32), float3(x + side * 0.035, 1.03, 0.69 - claw * 0.045),
+                      float2(0.045, 0.035), float2(0.004, 0.004), 3, bone, arm);
+        }
+    }
+    for (var fin = 0; fin < 4; fin++)
+        ModelTube(mesh, indices, float3(0, 1.71 + fin * 0.16, -0.29), float3(0, 1.92 + fin * 0.16, -0.61),
+                  float2(0.085, 0.055), float2(0.008, 0.008), 4, bone);
+}
+
+void BuildModels(mut Art art)
+{
+    art.marineMesh.Clear(); art.marineIndices.Clear();
+    art.rushMesh.Clear(); art.rushIndices.Clear();
+    art.trooperMesh.Clear(); art.trooperIndices.Clear();
+    art.bulwarkMesh.Clear(); art.bulwarkIndices.Clear();
+    art.wardenMesh.Clear(); art.wardenIndices.Clear();
+    MakeMarine(art.marineMesh, art.marineIndices);
+    MakeRush(art.rushMesh, art.rushIndices);
+    MakeTrooper(art.trooperMesh, art.trooperIndices);
+    MakeBulwark(art.bulwarkMesh, art.bulwarkIndices);
+    MakeWarden(art.wardenMesh, art.wardenIndices);
+}
