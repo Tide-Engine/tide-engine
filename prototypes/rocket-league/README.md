@@ -3,7 +3,8 @@
 A Rocket League inspired car-soccer prototype: a five-minute blue/orange duel
 in a floodlit stadium, with a bot opponent in solo play and Tide rooms for
 two human players. It uses original procedural vehicles, arena, materials and
-sounds. See [DESIGN.md](DESIGN.md) for the target and reference sources.
+sounds. See [RESEARCH.md](RESEARCH.md) for the control-preset audit and measured
+physics references, and [DESIGN.md](DESIGN.md) for the visual target.
 
 ## Run
 
@@ -36,19 +37,35 @@ package installation, and normal builds leave it disabled.
 
 ## Controls
 
-| Action | Keyboard/mouse | Gamepad |
-|---|---|---|
-| Accelerate / brake / reverse | W / S or up / down | Right / left trigger |
-| Steer | A / D or left / right | Left stick horizontal |
-| Jump / second jump | Space | South face button |
-| Boost | Left Shift or left mouse | East face button |
-| Powerslide / free air roll | Left Ctrl | West face button |
-| Aerial pitch / yaw | WASD | Left stick |
-| Air roll left / right | Q / E | Left / right shoulder |
-| Ball camera | C | North face button |
+The default is the familiar **Classic** Rocket League keyboard/mouse scheme.
+The controls/camera panel (F2) also offers the newer **Modern** scheme. These
+are separate presets; changing one does not change the game's physics.
+
+| Action | Classic keyboard/mouse | Modern keyboard/mouse | Gamepad |
+|---|---|---|---|
+| Accelerate / brake / reverse | W / S | W / S | Right / left trigger |
+| Steer | A / D | A / D | Left stick horizontal |
+| Jump / second jump | Right mouse | Space or left mouse | South face button |
+| Boost | Left mouse | Left Shift | East face button |
+| Powerslide | Left Shift | Right mouse | West face button |
+| Free air roll | Left Shift + A / D | Right mouse + A / D | Left trigger + left stick |
+| Aerial pitch / yaw | WASD | WASD | Left stick |
+| Air roll left / right | Q / E | Q / E | Unbound, as in the standard preset |
+| Ball camera | Space | Middle mouse | North face button |
+| Rear view | Middle mouse | Left Ctrl | Right stick click |
+| Camera swivel | — | Mouse free look | Right stick |
+
+Camera FOV, distance, height, angle and stiffness can be adjusted in the panel,
+along with controller deadzone and keyboard aerial safety. The initial wide
+camera uses 110 degrees horizontal FOV, 270 distance, 100 height and −3 degrees
+angle. It is a familiar wide-view choice, rather than a claim about Rocket
+League's stock camera preset. The game converts centimetres to metres and
+horizontal FOV to the renderer's vertical convention.
 
 Hold jump for more height. Release and press again while airborne for a
-second jump; add a direction to dodge. Boost pushes along the car's nose in
+second jump; add a direction to dodge. With keyboard aerial safety enabled,
+W held through takeoff stays level until you release W, press S or air roll.
+Boost pushes along the car's nose in
 the air. Use air roll to land wheels down. Drive up a curved perimeter ramp
 to reach the walls and ceiling, and jump away to set up an aerial.
 

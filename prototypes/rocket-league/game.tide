@@ -13,14 +13,23 @@ settings
 
 const float ARENA_X = 40.96;
 const float ARENA_Z = 51.2;
-const float ARENA_HEIGHT = 20.44;
-const float GOAL_X = 8.93;
-const float GOAL_HEIGHT = 6.42;
+const float ARENA_HEIGHT = 20.48;
+const float GOAL_X = 8.92755;
+const float GOAL_HEIGHT = 6.42775;
 const float GOAL_DEPTH = 8.8;
-const float BALL_RADIUS = 0.915;
-const float CAR_HEIGHT = 0.38;
+// smish.dev ball experiments and RocketSim RLConst/CarConfig. Values here
+// are metres; their published Unreal-unit values are divided by one hundred.
+const float BALL_RADIUS = 0.9125;
+const float CAR_HEIGHT = 0.1701;
+const float CAR_MASS = 180;
+const float BALL_MASS = 30;
+const float CAR_HALF_WIDTH = 0.433497;
+const float CAR_HALF_HEIGHT = 0.1932955;
+const float CAR_HALF_LENGTH = 0.602535;
+const float CAR_OFFSET_FORWARD = 0.138757;
+const float CAR_OFFSET_UP = 0.20755;
 const float CORNER_RADIUS = 11.52;
-const float RAMP_RADIUS = 3;
+const float RAMP_RADIUS = 2.56;
 const int PAD_COUNT = 34;
 
 enum MatchPhase { Kickoff, Playing, Goal, Finished }
@@ -33,9 +42,11 @@ struct DriveInput
     float pitch;
     float yaw;
     float roll;
+    float dodgeDeadzone = 0.8;
     bool jump;
     bool boost;
     bool handbrake;
+    bool suppressPitch;
 }
 
 struct CarState
@@ -46,14 +57,29 @@ struct CarState
     float3 up = float3(0, 1, 0);
     // Local angular rates: pitch about right, yaw about up, roll about forward.
     float3 angularVelocity;
-    float boost = 33;
+    float boost = 33.333333;
     bool grounded = true;
     bool boosting;
     bool jumpHeld;
     bool secondJump;
+    bool hasJumped;
+    bool jumpActive;
+    bool supersonic;
     float airTime;
+    float airTimeSinceJump;
     float jumpTime;
     float dodgeTime;
+    float flipElapsed;
+    float2 flipDirection;
+    float boostTime;
+    float powerslide;
+    float supersonicTime;
+    float ballHitCooldown;
+    float bumpCooldown;
+    float autoFlip;
+    float autoFlipSign;
+    int wheelContacts;
+    int ballWheelContacts;
     float respawn;
     float wheelSpin;
     float steer;
@@ -106,33 +132,48 @@ input Controls
     [Clamp(-1, 1)] float pitch;
     [Clamp(-1, 1)] float yaw;
     [Clamp(-1, 1)] float roll;
+    [Clamp(0.1, 1)] float dodgeDeadzone = 0.8;
     bool jump;
     bool boost;
     bool handbrake;
+    bool suppressPitch;
     [Absolute] bool away = true;
 
     Sample(Devices devices, Lobby lobby, Hand hand)
     {
-        if (!lobby.playing) return;
+        if (!lobby.started) return;
         away = false;
+        dodgeDeadzone = hand.dodgeDeadzone;
+        if (!lobby.playing || hand.settingsOpen) return;
         var keys = devices.keyboard;
         var pad = devices.gamepad;
-        throttle = hand.throttle + pad.rightTrigger - pad.leftTrigger;
-        steer = hand.steer + pad.leftStick.x;
-        pitch = hand.pitch - pad.leftStick.y;
-        yaw = hand.yaw + pad.leftStick.x;
+        var stickX = StickAxis(pad.leftStick.x, hand.controllerDeadzone);
+        var stickY = StickAxis(pad.leftStick.y, hand.controllerDeadzone);
+        var triggerRight = Math.Max(0, (pad.rightTrigger - 0.1) / 0.9);
+        var triggerLeft = Math.Max(0, (pad.leftTrigger - 0.1) / 0.9);
+        throttle = hand.throttle + triggerRight - triggerLeft;
+        steer = hand.steer + stickX;
+        pitch = hand.pitch - stickY;
+        yaw = hand.yaw + stickX;
         roll = hand.roll;
+        var classic = hand.profile == ControlProfile.Classic;
+        var keyboardRoll = classic ? keys.leftShift.pressed : devices.mouse.right.pressed;
+        var keyboardPitchFree = !hand.keyboardAerialSafety || !hand.pitchBlocked || keys.w.up || keys.upArrow.up || keys.s.pressed
+                            || keys.downArrow.pressed || keys.q.pressed || keys.e.pressed || keyboardRoll;
+        suppressPitch = !keyboardPitchFree && (keys.w.pressed || keys.upArrow.pressed) && stickY == 0 && hand.pitch == 0;
         if (keys.w.pressed || keys.upArrow.pressed) { throttle += 1; pitch -= 1; }
         if (keys.s.pressed || keys.downArrow.pressed) { throttle -= 1; pitch += 1; }
         if (keys.a.pressed || keys.leftArrow.pressed) { steer -= 1; yaw -= 1; }
         if (keys.d.pressed || keys.rightArrow.pressed) { steer += 1; yaw += 1; }
-        if (keys.q.pressed || pad.leftShoulder.pressed) roll -= 1;
-        if (keys.e.pressed || pad.rightShoulder.pressed) roll += 1;
-        jump = hand.jump || keys.space.pressed || pad.buttonSouth.pressed;
-        boost = hand.boost || keys.leftShift.pressed || devices.mouse.left.pressed || pad.buttonEast.pressed;
-        handbrake = hand.handbrake || keys.leftCtrl.pressed || pad.buttonWest.pressed;
-        // Holding air-roll moves the stick's horizontal axis from yaw to roll.
-        if (handbrake) { roll += yaw; yaw = 0; }
+        if (keys.q.pressed) roll -= 1;
+        if (keys.e.pressed) roll += 1;
+        jump = hand.jump || pad.buttonSouth.pressed || (classic ? devices.mouse.right.pressed : keys.space.pressed || devices.mouse.left.pressed);
+        boost = hand.boost || pad.buttonEast.pressed || (classic ? devices.mouse.left.pressed : keys.leftShift.pressed);
+        handbrake = hand.handbrake || keyboardRoll || pad.buttonWest.pressed;
+        // Standard controller air roll is LT. Powerslide remains X/Square;
+        // only the keyboard and touch bind those two actions together.
+        var airRoll = keyboardRoll || hand.handbrake || pad.leftTrigger > 0.1;
+        if (airRoll) { roll += yaw; yaw = 0; }
     }
 }
 
@@ -162,26 +203,30 @@ bool PadLarge(int index) { return index < 6; }
 
 float3 PadPosition(int index)
 {
-    if (index < 4) return float3(index % 2 == 0 ? -35.84 : 35.84, 0, index < 2 ? -40.96 : 40.96);
+    if (index < 4) return float3(index % 2 == 0 ? -30.72 : 30.72, 0, index < 2 ? -40.96 : 40.96);
     if (index < 6) return float3(index == 4 ? -35.84 : 35.84, 0, 0);
-    // Fourteen mirrored small pads per half, including the centre pair.
-    var slot = (index - 6) % 14;
-    var half = index < 20 ? -1 : 1;
-    if (slot < 3) return float3((slot - 1) * 17.92, 0, half * 42.24);
-    if (slot < 5) return float3(slot == 3 ? -9.4 : 9.4, 0, half * 33.28);
-    if (slot < 8) return float3((slot - 6) * 25.6, 0, half * 28.16);
-    if (slot < 10) return float3(slot == 8 ? -17.92 : 17.92, 0, half * 17.92);
-    if (slot < 13) return float3((slot - 11) * 28.16, 0, half * 10.24);
-    return float3(half * 10.24, 0, 0);
+    // Exact standard Soccar pad centres, mirrored from the negative half.
+    if (index == 32 || index == 33) return float3(index == 32 ? -10.24 : 10.24, 0, 0);
+    var slot = (index - 6) % 13;
+    var half = index < 19 ? -1 : 1;
+    if (slot == 0) return float3(0, 0, half * 42.4);
+    if (slot < 3) return float3(slot == 1 ? -17.92 : 17.92, 0, half * 41.84);
+    if (slot < 5) return float3(slot == 3 ? -9.4 : 9.4, 0, half * 33.08);
+    if (slot == 5) return float3(0, 0, half * 28.16);
+    if (slot < 8) return float3(slot == 6 ? -35.84 : 35.84, 0, half * 24.84);
+    if (slot < 10) return float3(slot == 8 ? -17.88 : 17.88, 0, half * 23);
+    if (slot == 11) return float3(0, 0, half * 10.24);
+    return float3(slot == 10 ? -20.48 : 20.48, 0, half * 10.36);
 }
 
 CarState KickoffCar(int seat, int kickoff)
 {
     var sign = seat == 0 ? 1 : -1;
-    // Alternate straight and offset kickoffs without a hidden random source.
-    var x = kickoff % 3 == 1 ? 2.56 : kickoff % 3 == 2 ? -2.56 : 0;
-    var p = float3(x * sign, CAR_HEIGHT, -sign * 36.5);
-    var forward = UnitOr(float3(-p.x * 0.08, 0, sign), float3(0, 0, sign));
+    // The five standard spawn slots, cycled without a hidden random source.
+    var slot = kickoff % 5;
+    var x = slot < 2 ? (slot == 0 ? -20.48 : 20.48) : slot < 4 ? (slot == 2 ? -2.56 : 2.56) : 0;
+    var p = float3(x * sign, CAR_HEIGHT, -sign * (slot < 2 ? 25.6 : slot < 4 ? 38.4 : 46.08));
+    var forward = slot < 2 ? UnitOr(float3(-x * sign, 0, sign * 20.48), float3(0, 0, sign)) : float3(0, 0, sign);
     return CarState { team = seat, position = p, forward = forward };
 }
 
@@ -222,7 +267,7 @@ void NewMatch(mut MatchState state)
 void PlaneContact(mut float3 position, mut float3 velocity, float3 normal,
                   float penetration, float restitution, mut float3 contact)
 {
-    if (penetration < -0.008) return;
+    if (penetration < -0.00001) return;
     position += normal * Math.Max(0, penetration);
     var incoming = Math.Dot(velocity, normal);
     if (incoming < 0) velocity -= normal * (incoming * (1 + restitution));
@@ -298,20 +343,152 @@ float3 ArenaContact(mut float3 position, mut float3 velocity, float radius, floa
     return contact;
 }
 
-void StepCar(mut CarState car, DriveInput control, float dt)
+// Experimental coefficients: smish.dev/rocket_league/{ground_control,aerial_control}.
+// Suspension geometry and jump/flip timing: RocketSim RLConst.h and CarConfig.cpp.
+float ThrottleAcceleration(float speed)
 {
-    car.boosting = false;
+    if (speed < 14) return 16 - speed * (14.4 / 14);
+    if (speed < 14.1) return 1.6 * (14.1 - speed) / 0.1;
+    return 0;
+}
+
+float SteeringAngle(float speed)
+{
+    if (speed < 5) return Math.Lerp(0.53356, 0.31930, speed / 5);
+    if (speed < 10) return Math.Lerp(0.31930, 0.18203, (speed - 5) / 5);
+    if (speed < 15) return Math.Lerp(0.18203, 0.10570, (speed - 10) / 5);
+    if (speed < 17.5) return Math.Lerp(0.10570, 0.08507, (speed - 15) / 2.5);
+    return Math.Lerp(0.08507, 0.03454, Math.Clamp((speed - 17.5) / 12.5, 0, 1));
+}
+
+float3 WorldAngular(CarState car)
+{
+    return CarRight(car) * car.angularVelocity.x + car.up * car.angularVelocity.y + car.forward * car.angularVelocity.z;
+}
+
+void SetWorldAngular(mut CarState car, float3 omega)
+{
+    var speed = Math.Length(omega);
+    var limited = speed > 5.5 ? omega * (5.5 / speed) : omega;
+    car.angularVelocity = float3(Math.Dot(limited, CarRight(car)), Math.Dot(limited, car.up), Math.Dot(limited, car.forward));
+}
+
+float3 InverseCarInertia(CarState car, float3 torque)
+{
+    var right = CarRight(car);
+    var pitchInertia = CAR_MASS * (CAR_HALF_LENGTH * CAR_HALF_LENGTH + CAR_HALF_HEIGHT * CAR_HALF_HEIGHT) / 3;
+    var yawInertia = CAR_MASS * (CAR_HALF_LENGTH * CAR_HALF_LENGTH + CAR_HALF_WIDTH * CAR_HALF_WIDTH) / 3;
+    var rollInertia = CAR_MASS * (CAR_HALF_WIDTH * CAR_HALF_WIDTH + CAR_HALF_HEIGHT * CAR_HALF_HEIGHT) / 3;
+    return right * (Math.Dot(torque, right) / pitchInertia) + car.up * (Math.Dot(torque, car.up) / yawInertia) + car.forward * (Math.Dot(torque, car.forward) / rollInertia);
+}
+
+void CarImpulse(mut CarState car, float3 impulse, float3 arm)
+{
+    car.velocity += impulse / CAR_MASS;
+    SetWorldAngular(car, WorldAngular(car) + InverseCarInertia(car, Math.Cross(arm, impulse)));
+}
+
+struct WheelContact
+{
+    bool hit;
+    float distance;
+    float3 point;
+    float3 normal;
+}
+
+// Cast the actual suspension ray against the same analytic stadium used by
+// the sphere. Unlike a centre-of-mass sphere, a roof/side contact cannot turn
+// into tyre grip. Bisection also follows the continuously curved wall banks.
+WheelContact SurfaceRay(float3 origin, float3 direction, float length)
+{
+    mut var end = origin + direction * length;
+    mut var velocity = float3(0);
+    var normal = ArenaContact(end, velocity, 0, 0);
+    if (Math.LengthSq(normal) < 0.5) return default;
+    mut var low = 0.0;
+    mut var high = length;
+    for (var iteration = 0; iteration < 10; iteration++)
+    {
+        var middle = (low + high) * 0.5;
+        mut var sample = origin + direction * middle;
+        mut var unused = float3(0);
+        var n = ArenaContact(sample, unused, 0, 0);
+        if (Math.LengthSq(n) > 0.5) high = middle;
+        else low = middle;
+    }
+    mut var point = origin + direction * high;
+    mut var unused = float3(0);
+    var n = ArenaContact(point, unused, 0, 0);
+    return WheelContact { hit = true, distance = high, point = point, normal = n };
+}
+
+WheelContact BallRay(float3 origin, float3 direction, float length, BallState ball)
+{
+    var offset = origin - ball.position;
+    var projection = Math.Dot(offset, direction);
+    var discriminant = projection * projection - (Math.LengthSq(offset) - BALL_RADIUS * BALL_RADIUS);
+    if (discriminant < 0) return default;
+    var distance = -projection - Math.Sqrt(discriminant);
+    if (distance < 0 || distance > length) return default;
+    var point = origin + direction * distance;
+    return WheelContact { hit = true, distance = distance, point = point,
+        normal = UnitOr(point - ball.position, -direction) };
+}
+
+float3 WheelConnection(CarState car, int wheel)
+{
+    var front = wheel < 2;
+    return car.position + car.up * CAR_OFFSET_UP + car.forward * (front ? 0.5125 : -0.3375) + CarRight(car) * ((wheel % 2 == 0 ? -1 : 1) * (front ? 0.259 : 0.295));
+}
+
+// The chassis is an offset oriented box, independently of the four wheels.
+// Normal impulses use its inertia and contact lever arm, so landing on a
+// corner or roof transfers rotation instead of snapping the car upright.
+float3 ChassisContact(mut CarState car)
+{
+    mut var lastNormal = float3(0);
+    for (var corner = 0; corner < 8; corner++)
+    {
+        var right = CarRight(car);
+        var arm = right * ((corner & 1) == 0 ? -CAR_HALF_WIDTH : CAR_HALF_WIDTH) + car.up * (CAR_OFFSET_UP + ((corner & 2) == 0 ? -CAR_HALF_HEIGHT : CAR_HALF_HEIGHT)) + car.forward * (CAR_OFFSET_FORWARD + ((corner & 4) == 0 ? -CAR_HALF_LENGTH : CAR_HALF_LENGTH));
+        var initial = car.position + arm;
+        mut var point = initial;
+        mut var unused = float3(0);
+        var normal = ArenaContact(point, unused, 0.005, 0);
+        if (Math.LengthSq(normal) < 0.5) continue;
+        lastNormal = normal;
+        car.position += point - initial;
+        var contactVelocity = car.velocity + Math.Cross(WorldAngular(car), arm);
+        var incoming = Math.Dot(contactVelocity, normal);
+        if (incoming >= 0) continue;
+        var effectiveMass = 1 / CAR_MASS + Math.Dot(normal, Math.Cross(InverseCarInertia(car, Math.Cross(arm, normal)), arm));
+        mut var impulse = normal * (-incoming * 1.3 / effectiveMass);
+        var tangent = contactVelocity - normal * incoming;
+        var sliding = Math.Length(tangent);
+        if (sliding > 0.0001)
+        {
+            var direction = tangent / sliding;
+            var tangentMass = 1 / CAR_MASS + Math.Dot(direction, Math.Cross(InverseCarInertia(car, Math.Cross(arm, direction)), arm));
+            impulse -= direction * Math.Min(sliding / tangentMass, Math.Length(impulse) * 0.3);
+        }
+        CarImpulse(car, impulse, arm);
+    }
+    return lastNormal;
+}
+
+void StepCar(mut CarState car, DriveInput control, float dt, BallState ball)
+{
     if (car.respawn > 0)
     {
         car.respawn = Math.Max(0, car.respawn - dt);
+        car.boosting = false;
         if (car.respawn == 0)
         {
             var team = car.team;
             var demos = car.demolitions;
             var touches = car.touches;
-            car = KickoffCar(team, 0);
-            car.position.x = team == 0 ? -24 : 24;
-            car.position.z = team == 0 ? -40 : 40;
+            car = KickoffCar(team, 4);
+            car.position = float3(team == 0 ? -23.04 : 23.04, 0.36, team == 0 ? -46.08 : 46.08);
             car.demolitions = demos;
             car.touches = touches;
         }
@@ -319,153 +496,350 @@ void StepCar(mut CarState car, DriveInput control, float dt)
     }
     var jumpPressed = control.jump && !car.jumpHeld;
     car.jumpHeld = control.jump;
+    var initialChassisNormal = ChassisContact(car);
+    if (jumpPressed && car.up.y < -0.94 && initialChassisNormal.y > 0.707 && car.autoFlip <= 0)
+    {
+        car.velocity -= car.up * 2;
+        car.autoFlip = 0.4;
+        car.autoFlipSign = Math.Dot(CarRight(car), float3(0, 1, 0)) >= 0 ? 1 : -1;
+        car.secondJump = true;
+    }
     car.steer = control.steer;
-    var right = CarRight(car);
-    var speed = Math.Length(car.velocity);
+    car.ballHitCooldown = Math.Max(0, car.ballHitCooldown - dt);
+    car.bumpCooldown = Math.Max(0, car.bumpCooldown - dt);
+    car.powerslide = Math.Clamp(car.powerslide + (control.handbrake ? 5 : -2) * dt, 0, 1);
+
+    // A tap burns for at least 0.1 seconds, and boosting always overrides the
+    // throttle to full forward, even when reverse or no throttle is held.
+    var continueBoost = car.boosting && car.boostTime < 0.1;
+    car.boosting = car.boost > 0 && (control.boost || continueBoost);
+    if (car.boosting) car.boostTime += dt;
+    else car.boostTime = 0;
+    var throttle = car.boosting ? 1 : control.throttle;
     var along = Math.Dot(car.velocity, car.forward);
-    var wasGrounded = car.grounded;
+    var right = CarRight(car);
+    var oldOmega = WorldAngular(car);
+    var wheelVelocity = car.velocity;
+    mut var omega = oldOmega;
+    mut var worldNormalSum = float3(0);
+    mut var worldWheelContacts = 0;
+    mut var suspensionImpulse = float3(0);
+    mut var suspensionTorque = float3(0);
+    mut WheelContact[4] wheelRays = default;
+    mut bool[4] wheelOnBall = default;
+    car.wheelContacts = 0;
+    car.ballWheelContacts = 0;
+    for (var wheel = 0; wheel < 4; wheel++)
+    {
+        var front = wheel < 2;
+        var radius = front ? 0.125 : 0.15;
+        var rest = front ? 0.26755 : 0.25055;
+        var connection = WheelConnection(car, wheel);
+        var length = rest + 0.12 + radius - 0.05;
+        var worldRay = SurfaceRay(connection, -car.up, length);
+        var sphereRay = BallRay(connection, -car.up, length, ball);
+        var onBall = sphereRay.hit && (!worldRay.hit || sphereRay.distance < worldRay.distance);
+        var ray = onBall ? sphereRay : worldRay;
+        if (!ray.hit || Math.Dot(ray.normal, car.up) < 0.1) continue;
+        wheelRays[wheel] = ray;
+        wheelOnBall[wheel] = onBall;
+        car.wheelContacts += 1;
+        if (onBall)
+        {
+            car.ballWheelContacts += 1;
+        }
+        else
+        {
+            worldWheelContacts += 1;
+            worldNormalSum += ray.normal;
+        }
+        // A held jump has left its wheels even while the suspension rays
+        // can still reach the floor; do not add spring force to its impulse.
+        if (car.jumpActive) continue;
+        var arm = ray.point - car.position;
+        var alignment = Math.Max(0.1, Math.Dot(ray.normal, car.up));
+        // Pinned RocketSim damps chassis normal velocity even on a dynamic
+        // wheel support; only tire friction reads the support's velocity.
+        var relativeSpeed = Math.Dot(car.velocity + Math.Cross(omega, arm), ray.normal) / alignment;
+        var springLength = Math.Clamp(ray.distance - radius, rest - 0.12, rest + 0.12);
+        var spring = (rest - springLength) * 500 / alignment;
+        var damping = (relativeSpeed < 0 ? 25 : 40) * relativeSpeed;
+        var force = Math.Max(0, spring - damping) * (front ? 35.75 : 54.265);
+        var impulse = ray.normal * (force * dt);
+        suspensionImpulse += impulse;
+        suspensionTorque += Math.Cross(arm, impulse);
+    }
+    car.grounded = car.wheelContacts >= 3 && !car.jumpActive;
     if (car.grounded)
     {
         car.airTime = 0;
+        car.airTimeSinceJump = 0;
         car.secondJump = false;
+        car.hasJumped = false;
         car.dodgeTime = 0;
-        var direction = along < -0.5 ? -1 : 1;
-        mut var turn = (1.5 + Math.Min(15, Math.Abs(along)) * 0.09) * control.steer * direction;
-        if (control.handbrake) turn *= 1.75;
-        car.forward = RotateVector(car.forward, car.up, turn * dt);
-        var sideSpeed = Math.Dot(car.velocity, right);
-        car.velocity -= right * (sideSpeed * Math.Min(1, dt * (control.handbrake ? 1.7 : 12)));
-        mut var acceleration = 16 * Math.Max(0.05, 1 - Math.Abs(along) / 14.1);
-        if (control.throttle * along < -0.5) acceleration = 35;
-        if (control.throttle < 0 && along <= 0) acceleration = 12 * Math.Max(0, 1 - Math.Abs(along) / 12);
-        car.velocity += car.forward * (control.throttle * acceleration * dt);
-        if (Math.Abs(control.throttle) < 0.05 && !control.boost)
-            car.velocity *= Math.Max(0, 1 - dt * 1.7);
-        // Tyres push toward their surface, including the ceiling.
-        car.velocity -= car.up * (13 * dt);
-        if (jumpPressed)
-        {
-            car.velocity += car.up * 3.05;
-            car.position += car.up * 0.04;
-            car.grounded = false;
-            car.jumpTime = 0.2;
-            car.airTime = 0;
-        }
+        car.flipElapsed = 0;
+        car.flipDirection = float2(0);
+        car.jumpTime = 0;
     }
     else
     {
         car.airTime += dt;
-        if (car.jumpTime > 0)
-        {
-            if (control.jump) car.velocity += car.up * (14.6 * dt);
-            car.jumpTime = Math.Max(0, car.jumpTime - dt);
-        }
-        if (jumpPressed && !car.secondJump && car.airTime < 1.45)
-        {
-            car.secondJump = true;
-            car.jumpTime = 0;
-            mut var dodge = float2(control.steer, -control.pitch);
-            if (Math.LengthSq(dodge) > 0.12)
-            {
-                dodge = Math.Normalize(dodge);
-                var way = UnitOr(right * dodge.x + car.forward * dodge.y, car.forward);
-                car.velocity += way * 5.2;
-                if (car.velocity.y < 0) car.velocity.y *= 0.3;
-                car.velocity.y += 0.6;
-                car.angularVelocity = float3(dodge.y * 9.7, 0, -dodge.x * 9.7);
-                car.dodgeTime = 0.62;
-            }
-            else car.velocity += car.up * 3;
-        }
-        if (car.dodgeTime > 0)
-        {
-            car.dodgeTime = Math.Max(0, car.dodgeTime - dt);
-            if (car.dodgeTime == 0) car.angularVelocity *= 0.25;
-        }
-        else
-        {
-            var target = float3(control.pitch * 4.7, control.yaw * 3.5, -control.roll * 5.2);
-            car.angularVelocity += (target - car.angularVelocity) * Math.Min(1, dt * 5.5);
-        }
-        // Pitch positive rotates the nose down, matching pulling the stick.
-        car.forward = RotateVector(car.forward, right, car.angularVelocity.x * dt);
-        car.up = RotateVector(car.up, right, car.angularVelocity.x * dt);
-        car.forward = RotateVector(car.forward, car.up, car.angularVelocity.y * dt);
-        car.up = RotateVector(car.up, car.forward, car.angularVelocity.z * dt);
-        car.velocity += car.forward * (control.throttle * 0.65 * dt);
-        car.velocity *= Math.Max(0, 1 - dt * 0.035);
+        if (car.hasJumped && !car.jumpActive) car.airTimeSinceJump += dt;
+        // Falling from a ceiling/wall without jumping never starts this
+        // timer. A subsequent jump remains available however long the fall.
     }
 
-    if (control.boost && car.boost > 0)
+    if (car.grounded && jumpPressed)
     {
-        car.boosting = true;
-        car.boost = Math.Max(0, car.boost - 33.3 * dt);
-        car.velocity += car.forward * ((car.grounded ? 9.92 : 10.6) * dt);
+        car.velocity += car.up * (875.0 / 300);
+        car.hasJumped = true;
+        car.jumpActive = true;
+        car.jumpTime = 0;
+        car.airTimeSinceJump = 0;
+        car.grounded = false;
+        suspensionImpulse = float3(0);
+        suspensionTorque = float3(0);
+    }
+    else if (!car.grounded && jumpPressed && !car.secondJump && !car.jumpActive && car.airTimeSinceJump < 1.25 && car.autoFlip <= 0)
+    {
+        car.secondJump = true;
+        var inputMagnitude = Math.Abs(control.pitch) + Math.Abs(control.yaw) + Math.Abs(control.roll);
+        if (inputMagnitude >= control.dodgeDeadzone)
+        {
+            mut var direction = float2(-control.pitch, control.yaw + control.roll);
+            if (Math.Abs(direction.x) < 0.1 && Math.Abs(direction.y) < 0.1) direction = float2(0);
+            else direction = Math.Normalize(direction);
+            car.flipDirection = direction;
+            car.flipElapsed = 0;
+            car.dodgeTime = 0.65;
+            var ratio = Math.Abs(along) / 23;
+            var backwards = Math.Abs(along) < 1 ? direction.x < 0 : (direction.x >= 0) != (along >= 0);
+            var forwardImpulse = Math.Abs(direction.x) < 0.1 ? 0 : direction.x * 5 * (backwards ? (16.0 / 15) * (1 + 1.5 * ratio) : 1);
+            var sidewaysImpulse = Math.Abs(direction.y) < 0.1 ? 0 : direction.y * 5 * (1 + 0.9 * ratio);
+            var flatForward = UnitOr(float3(car.forward.x, 0, car.forward.z), float3(0, 0, 1));
+            var flatRight = Math.Cross(float3(0, 1, 0), flatForward);
+            car.velocity += flatForward * forwardImpulse + flatRight * sidewaysImpulse;
+        }
+        else car.velocity += car.up * (875.0 / 300);
+    }
+
+    if (car.jumpActive)
+    {
+        if (car.jumpTime < 0.2 && (control.jump || car.jumpTime < 0.025))
+        {
+            car.velocity += car.up * ((4375.0 / 300) * dt);
+            // The measured three-frame sticky force acts opposite local up.
+            if (car.jumpTime < 0.025) car.velocity -= car.up * (3.25 * dt);
+            car.jumpTime += dt;
+        }
+        else car.jumpActive = false;
+    }
+
+    car.velocity += suspensionImpulse / CAR_MASS;
+    omega += InverseCarInertia(car, suspensionTorque);
+    if (car.wheelContacts > 0 && !car.jumpActive)
+    {
+        if (worldWheelContacts > 0)
+        {
+            var worldNormal = UnitOr(worldNormalSum, car.up);
+            var sticky = 0.5 + ((Math.Abs(throttle) > 0.001 || Math.Abs(along) > 0.25) ? 1 - Math.Abs(worldNormal.y) : 0);
+            car.velocity -= worldNormal * (6.5 * sticky * dt);
+        }
+        var powerslideAngle = Math.Lerp(0.39235, 0.12610, Math.Clamp(Math.Abs(along) / 25, 0, 1));
+        var steerAngle = Math.Lerp(SteeringAngle(Math.Abs(along)), powerslideAngle, car.powerslide) * control.steer;
+        mut var engineForce = throttle * ThrottleAcceleration(Math.Abs(along)) * CAR_MASS / 4 * (car.wheelContacts < 3 ? 0.25 : 1);
+        mut var brake = 0.0;
+        if (!control.handbrake)
+        {
+            if (Math.Abs(throttle) < 0.001)
+            {
+                engineForce = 0;
+                brake = Math.Abs(along) < 0.25 ? 26.25 : 26.25 * 0.15;
+            }
+            else if (throttle * along < 0 && Math.Abs(along) > 0.25)
+            {
+                engineForce = 0;
+                brake = 26.25;
+            }
+        }
+        // Each steered front tire generates its own contact force and yaw
+        // moment. RocketSim's bilateral tire solve includes both bodies'
+        // point velocities/inertia, then applies the impulse to the car only.
+        // Removing the local-up lever arm is the source's roll-influence rule.
+        mut var tireImpulse = float3(0);
+        mut var tireTorque = float3(0);
+        for (var wheel = 0; wheel < 4; wheel++)
+        {
+            var ray = wheelRays[wheel];
+            if (!ray.hit) continue;
+            var axle = wheel < 2 ? RotateVector(right, car.up, steerAngle) : right;
+            var side = UnitOr(axle - ray.normal * Math.Dot(axle, ray.normal), right);
+            var forward = UnitOr(Math.Cross(side, ray.normal), car.forward);
+            var arm = ray.point - car.position;
+            var ballArm = ray.point - ball.position;
+            var supportVelocity = wheelOnBall[wheel] ? ball.velocity + Math.Cross(ball.spin, ballArm) : float3(0);
+            var relativeVelocity = wheelVelocity + Math.Cross(oldOmega, arm) - supportVelocity;
+            var inverseMass = 1 / CAR_MASS + Math.Dot(side, Math.Cross(InverseCarInertia(car, Math.Cross(arm, side)), arm));
+            var ballInverseInertia = 1 / (0.4 * BALL_MASS * BALL_RADIUS * BALL_RADIUS);
+            var supportInverseMass = wheelOnBall[wheel] ? 1 / BALL_MASS + Math.Dot(side, Math.Cross(Math.Cross(ballArm, side) * ballInverseInertia, ballArm)) : 0;
+            var sideImpulse = -0.2 * Math.Dot(relativeVelocity, side) / (inverseMass + supportInverseMass);
+            var connectionVelocity = wheelVelocity + Math.Cross(oldOmega, WheelConnection(car, wheel) - car.position);
+            var lateral = Math.Abs(Math.Dot(connectionVelocity, axle));
+            var longitudinal = Math.Abs(Math.Dot(connectionVelocity, Math.Cross(axle, ray.normal)));
+            var slip = lateral > 0.05 ? lateral / (longitudinal + lateral) : 0;
+            var vertical = Math.Clamp(ray.normal.y, 0, 1);
+            var passive = vertical < 0.7075 ? Math.Lerp(0.1, 0.5, vertical / 0.7075) : Math.Lerp(0.5, 1, (vertical - 0.7075) / 0.2925);
+            var friction = throttle != 0 ? 1 : passive;
+            var lateralGrip = (1 - 0.8 * slip) * (1 - 0.9 * car.powerslide) * friction;
+            var longitudinalGrip = Math.Lerp(1, 0.5 + 0.4 * slip, car.powerslide) * friction;
+            var driveForce = engineForce != 0 ? engineForce : Math.Clamp(-Math.Dot(relativeVelocity, forward) * 113.73963, -brake, brake) * (CAR_MASS / 3);
+            var impulse = (forward * (driveForce * longitudinalGrip) + side * (sideImpulse * lateralGrip * CAR_MASS / 3)) * dt;
+            var tireArm = arm - car.up * Math.Dot(car.up, arm);
+            tireImpulse += impulse;
+            tireTorque += Math.Cross(tireArm, impulse);
+        }
+        car.velocity += tireImpulse / CAR_MASS;
+        omega += InverseCarInertia(car, tireTorque);
+    }
+    if (car.wheelContacts < 3)
+    {
+        // RL air throttle has no speed-dependent drag and reverse is half.
+        car.velocity += car.forward * (control.throttle * (control.throttle < 0 ? 0.33334 : 0.666667) * dt);
+    }
+
+    if (!car.grounded)
+    {
+        mut var pitch = control.suppressPitch ? 0 : control.pitch;
+        mut var allowAir = true;
+        if (car.dodgeTime > 0)
+        {
+            var cancel = car.flipDirection.x * control.pitch > 0;
+            var pitchScale = cancel ? 1 - Math.Abs(control.pitch) : 1;
+            omega += (right * (car.flipDirection.x * 224 * pitchScale) - car.forward * (car.flipDirection.y * 260)) * dt;
+            allowAir = cancel || Math.LengthSq(car.flipDirection) < 0.001;
+            pitch = 0;
+            car.flipElapsed += dt;
+            car.dodgeTime = Math.Max(0, 0.65 - car.flipElapsed);
+            if (car.flipElapsed >= 0.15 && (car.velocity.y < 0 || car.flipElapsed < 0.21)) car.velocity.y *= 0.65;
+        }
+        else if (car.flipElapsed > 0)
+        {
+            car.flipElapsed += dt;
+            if (car.flipElapsed < 0.95) pitch = 0;
+        }
+        if (allowAir && car.autoFlip <= 0 && car.wheelContacts == 0)
+        {
+            var local = float3(Math.Dot(omega, right), Math.Dot(omega, car.up), Math.Dot(omega, car.forward));
+            var acceleration = float3(-12.1459978 * pitch - 2.7981943 * (1 - Math.Abs(pitch)) * local.x,
+                8.9196280 * control.yaw - 1.8864919 * (1 - Math.Abs(control.yaw)) * local.y,
+                -36.0795662 * control.roll - 4.4716630 * local.z);
+            omega += (right * acceleration.x + car.up * acceleration.y + car.forward * acceleration.z) * dt;
+        }
+    }
+    if (car.autoFlip > 0)
+    {
+        omega += car.forward * (car.autoFlipSign * 50 * dt);
+        car.autoFlip = Math.Max(0, car.autoFlip - dt);
+    }
+    if (car.boosting)
+    {
+        car.boost = Math.Max(0, car.boost - (100.0 / 3) * dt);
+        car.velocity += car.forward * ((car.grounded ? 2975.0 / 300 : 3175.0 / 300) * dt);
     }
     car.velocity.y -= 6.5 * dt;
     var velocityLength = Math.Length(car.velocity);
     if (velocityLength > 23) car.velocity *= 23 / velocityLength;
-    car.position += car.velocity * dt;
-    var normal = ArenaContact(car.position, car.velocity, CAR_HEIGHT, 0.08);
-    car.grounded = false;
-    if (Math.LengthSq(normal) > 0.5)
+    var angularSpeed = Math.Length(omega);
+    if (angularSpeed > 5.5) omega *= 5.5 / angularSpeed;
+    var averageOmega = (oldOmega + omega) * 0.5;
+    var averageSpeed = Math.Length(averageOmega);
+    if (averageSpeed > 0.000001)
     {
-        var alignment = Math.Dot(car.up, normal);
-        if (alignment > 0.35 || wasGrounded && speed > 2 && alignment > -0.15)
-        {
-            // Project the heading onto the tyre plane instead of levelling
-            // to world up: ramp, side wall and ceiling driving use one rule.
-            car.forward = UnitOr(car.forward - normal * Math.Dot(car.forward, normal), car.forward);
-            car.up = normal;
-            car.angularVelocity = float3(0);
-            car.grounded = true;
-            car.jumpTime = 0;
-        }
-        else if (jumpPressed && car.position.y < 0.75)
-        {
-            // A jump while overturned performs the recoverable self-right.
-            car.up = float3(0, 1, 0);
-            car.forward = UnitOr(float3(car.forward.x, 0, car.forward.z), float3(0, 0, 1));
-            car.velocity.y = 2.8;
-            car.secondJump = true;
-            car.angularVelocity = float3(0);
-        }
+        var axis = averageOmega / averageSpeed;
+        car.forward = RotateVector(car.forward, axis, averageSpeed * dt);
+        car.up = RotateVector(car.up, axis, averageSpeed * dt);
     }
     Orthonormalize(car);
-    car.wheelSpin += Math.Dot(car.velocity, car.forward) * dt * 5;
+    SetWorldAngular(car, omega);
+    car.position += car.velocity * dt;
+    var chassisNormal = ChassisContact(car);
+    if (jumpPressed && car.up.y < -0.94 && chassisNormal.y > 0.707 && car.autoFlip <= 0)
+    {
+        car.velocity -= car.up * 2;
+        car.autoFlip = 0.4;
+        car.autoFlipSign = Math.Dot(CarRight(car), float3(0, 1, 0)) >= 0 ? 1 : -1;
+        car.secondJump = true;
+    }
+    car.wheelSpin += Math.Dot(car.velocity, car.forward) * dt / 0.14;
     if (Math.Abs(car.wheelSpin) > Math.TAU * 100) car.wheelSpin = 0;
 }
+float3 SolveColumns(float3 a, float3 b, float3 c, float3 value)
+{
+    var determinant = Math.Dot(a, Math.Cross(b, c));
+    if (Math.Abs(determinant) < 0.00000001) return float3(0);
+    return float3(Math.Dot(value, Math.Cross(b, c)), Math.Dot(a, Math.Cross(value, c)), Math.Dot(a, Math.Cross(b, value))) / determinant;
+}
 
+float3 ContactResponse(CarState car, float3 carArm, float3 ballArm, float3 impulse)
+{
+    var ballInverseInertia = 1 / (0.4 * BALL_MASS * BALL_RADIUS * BALL_RADIUS);
+    return impulse * (1 / CAR_MASS + 1 / BALL_MASS) + Math.Cross(InverseCarInertia(car, Math.Cross(carArm, impulse)), carArm) + Math.Cross(Math.Cross(ballArm, impulse) * ballInverseInertia, ballArm);
+}
+
+// Rigid-body contact followed by the separate Psyonix extra ball impulse,
+// measured in smish.dev/rocket_league/ball_simulation_3 and implemented in
+// RocketSim Ball::_OnHit. The extra impulse is deliberately ball-only.
 void TouchBall(mut CarState car, mut BallState ball, int seat)
 {
     if (car.respawn > 0) return;
     var right = CarRight(car);
-    var offset = ball.position - car.position;
+    var boxCentre = car.position + car.forward * CAR_OFFSET_FORWARD + car.up * CAR_OFFSET_UP;
+    var offset = ball.position - boxCentre;
     var local = float3(Math.Dot(offset, right), Math.Dot(offset, car.up), Math.Dot(offset, car.forward));
-    var closest = float3(Math.Clamp(local.x, -0.5, 0.5), Math.Clamp(local.y, -0.23, 0.23), Math.Clamp(local.z, -0.74, 0.74));
-    var centre = car.position + right * closest.x + car.up * closest.y + car.forward * closest.z;
-    var delta = ball.position - centre;
+    var closest = float3(Math.Clamp(local.x, -CAR_HALF_WIDTH, CAR_HALF_WIDTH), Math.Clamp(local.y, -CAR_HALF_HEIGHT, CAR_HALF_HEIGHT), Math.Clamp(local.z, -CAR_HALF_LENGTH, CAR_HALF_LENGTH));
+    var point = boxCentre + right * closest.x + car.up * closest.y + car.forward * closest.z;
+    var delta = ball.position - point;
     var distance = Math.Length(delta);
     if (distance >= BALL_RADIUS) return;
     var normal = UnitOr(delta, UnitOr(offset, float3(0, 1, 0)));
-    ball.position += normal * (BALL_RADIUS - distance + 0.001);
-    var closing = Math.Dot(car.velocity - ball.velocity, normal);
+    var carArm = point - car.position;
+    var ballArm = -normal * BALL_RADIUS;
+    var preHitRelativeVelocity = car.velocity - ball.velocity;
+    var preHitOffset = ball.position - car.position;
+    var relativeVelocity = car.velocity + Math.Cross(WorldAngular(car), carArm) - ball.velocity - Math.Cross(ball.spin, ballArm);
+    var closing = Math.Dot(relativeVelocity, normal);
+    ball.position += normal * (BALL_RADIUS - distance + 0.0001);
     if (closing > 0)
     {
-        var underside = Math.Dot(normal, car.up) < -0.3;
-        var strike = closing * (underside ? 0.85 : 1.4) + Math.Length(car.velocity) * (underside ? 0.1 : 0.24);
-        ball.velocity += normal * strike;
-        // A front bumper lifts the sphere; hood and aerial contacts already
-        // carry their real contact normal and need no artificial aim assist.
-        if (car.grounded && Math.Dot(normal, car.forward) > 0.4)
-            ball.velocity.y += Math.Min(3.5, closing * 0.13);
-        car.velocity -= normal * (closing * 0.12);
-        ball.spin = Math.Cross(normal, ball.velocity - car.velocity) * 0.6;
+        var columnX = ContactResponse(car, carArm, ballArm, float3(1, 0, 0));
+        var columnY = ContactResponse(car, carArm, ballArm, float3(0, 1, 0));
+        var columnZ = ContactResponse(car, carArm, ballArm, float3(0, 0, 1));
+        var solution = SolveColumns(columnX, columnY, columnZ, relativeVelocity);
+        var normalMagnitude = Math.Max(0, Math.Dot(solution, normal));
+        mut var tangent = solution - normal * Math.Dot(solution, normal);
+        var tangentLength = Math.Length(tangent);
+        if (tangentLength > normalMagnitude * 2 && tangentLength > 0.00001) tangent *= normalMagnitude * 2 / tangentLength;
+        var impulse = normal * normalMagnitude + tangent;
+        ball.velocity += impulse / BALL_MASS;
+        ball.spin += Math.Cross(ballArm, impulse) / (0.4 * BALL_MASS * BALL_RADIUS * BALL_RADIUS);
+        CarImpulse(car, -impulse, carArm);
     }
-    if (ball.lastTouch != seat || closing > 1) car.touches += 1;
+    if (car.ballHitCooldown <= 0)
+    {
+        var relativeSpeed = Math.Min(46, Math.Length(preHitRelativeVelocity));
+        mut var hitDirection = preHitOffset;
+        hitDirection.y *= 0.35;
+        hitDirection = UnitOr(hitDirection, normal);
+        hitDirection = UnitOr(hitDirection - car.forward * (Math.Dot(hitDirection, car.forward) * 0.35), normal);
+        var factor = relativeSpeed < 5 ? 0.65 : relativeSpeed < 23 ? Math.Lerp(0.65, 0.55, (relativeSpeed - 5) / 18) : Math.Lerp(0.55, 0.3, (relativeSpeed - 23) / 23);
+        ball.velocity += hitDirection * (relativeSpeed * factor);
+        car.ballHitCooldown = 2.0 / 120;
+        if (ball.lastTouch != seat || closing > 1) car.touches += 1;
+    }
+    var spinSpeed = Math.Length(ball.spin);
+    if (spinSpeed > 6) ball.spin *= 6 / spinSpeed;
     ball.lastTouch = seat;
 }
-
 void ScoreGoal(mut MatchState state, int team)
 {
     if (state.phase != MatchPhase.Playing) return;
@@ -501,44 +875,132 @@ void StepBall(mut MatchState state, float dt)
     if (struckSpeed > 60) state.ball.velocity *= 60 / struckSpeed;
     if (Math.Abs(state.ball.position.z) > ARENA_Z + BALL_RADIUS && Math.Abs(state.ball.position.x) < GOAL_X - BALL_RADIUS && state.ball.position.y < GOAL_HEIGHT - BALL_RADIUS)
         ScoreGoal(state, state.ball.position.z > 0 ? 0 : 1);
-    var contact = ArenaContact(state.ball.position, state.ball.velocity, BALL_RADIUS, 0.64);
-    if (contact.y > 0.5)
+    var incoming = state.ball.velocity;
+    mut var ignored = incoming;
+    var contact = ArenaContact(state.ball.position, ignored, BALL_RADIUS, 0);
+    if (Math.LengthSq(contact) > 0.5)
     {
-        if (Math.Abs(state.ball.velocity.y) < 0.35) state.ball.velocity.y = 0;
-        state.ball.velocity.x *= Math.Max(0, 1 - 0.14 * dt);
-        state.ball.velocity.z *= Math.Max(0, 1 - 0.14 * dt);
+        // Measured sphere bounce couples sliding speed and spin. The 0.285
+        // slip coefficient and inertia factor3 are smish's model expressed
+        // in metres (his angular factor0.0003 uses Unreal units squared).
+        var normalSpeed = Math.Dot(incoming, contact);
+        if (normalSpeed < 0)
+        {
+            var tangentialVelocity = incoming - contact * normalSpeed;
+            var slip = tangentialVelocity + Math.Cross(contact, state.ball.spin) * BALL_RADIUS;
+            var slipSpeed = Math.Length(slip);
+            var slide = slipSpeed > 0.00001 ? -slip * (0.285 * Math.Min(1, 2 * Math.Abs(normalSpeed) / slipSpeed)) : float3(0);
+            state.ball.velocity = incoming - contact * (1.6 * normalSpeed) + slide;
+            state.ball.spin += Math.Cross(slide, contact) * (3 * BALL_RADIUS);
+            if (Math.Abs(normalSpeed) < 0.08) state.ball.velocity -= contact * Math.Dot(state.ball.velocity, contact);
+        }
     }
-    state.ball.spin *= Math.Max(0, 1 - dt * 0.3);
+    var spin = Math.Length(state.ball.spin);
+    if (spin > 6) state.ball.spin *= 6 / spin;
+}
+
+float3 CarBoxCentre(CarState car)
+{
+    return car.position + car.forward * CAR_OFFSET_FORWARD + car.up * CAR_OFFSET_UP;
+}
+
+float3 CarAxis(CarState car, int axis)
+{
+    return axis == 0 ? CarRight(car) : axis == 1 ? car.up : car.forward;
+}
+
+float CarProjection(CarState car, float3 normal)
+{
+    return Math.Abs(Math.Dot(CarRight(car), normal)) * CAR_HALF_WIDTH + Math.Abs(Math.Dot(car.up, normal)) * CAR_HALF_HEIGHT + Math.Abs(Math.Dot(car.forward, normal)) * CAR_HALF_LENGTH;
+}
+
+float3 ClosestCarPoint(CarState car, float3 point)
+{
+    var delta = point - CarBoxCentre(car);
+    return CarBoxCentre(car) + CarRight(car) * Math.Clamp(Math.Dot(delta, CarRight(car)), -CAR_HALF_WIDTH, CAR_HALF_WIDTH) + car.up * Math.Clamp(Math.Dot(delta, car.up), -CAR_HALF_HEIGHT, CAR_HALF_HEIGHT) + car.forward * Math.Clamp(Math.Dot(delta, car.forward), -CAR_HALF_LENGTH, CAR_HALF_LENGTH);
+}
+
+float BumpCurve(float speed, float middle, float maximum, float zero)
+{
+    if (speed < 14) return Math.Lerp(zero, middle, Math.Max(0, speed) / 14);
+    return Math.Lerp(middle, maximum, Math.Clamp((speed - 14) / 8, 0, 1));
 }
 
 void BumpCars(mut MatchState state)
 {
     if (state.cars[0].respawn > 0 || state.cars[1].respawn > 0) return;
-    var difference = state.cars[1].position - state.cars[0].position;
-    var distance = Math.Length(difference);
-    if (distance >= 1.32) return;
-    var normal = UnitOr(difference, float3(1, 0, 0));
-    var impact = Math.Dot(state.cars[0].velocity - state.cars[1].velocity, normal);
-    var speed0 = Math.Length(state.cars[0].velocity);
-    var speed1 = Math.Length(state.cars[1].velocity);
-    mut var demolished = -1;
-    if (speed0 > 21 && Math.Dot(state.cars[0].forward, normal) > 0.7 && impact > 10) demolished = 1;
-    if (speed1 > 21 && Math.Dot(state.cars[1].forward, -normal) > 0.7 && impact > 10) demolished = 0;
-    if (demolished >= 0)
+    var first = state.cars[0];
+    var second = state.cars[1];
+    var difference = CarBoxCentre(second) - CarBoxCentre(first);
+    if (Math.LengthSq(difference) > 3) return;
+    // The fifteen separating axes of two oriented boxes. Unlike a centre
+    // sphere this distinguishes a roof landing, side swipe and bumper hit.
+    mut var normal = float3(1, 0, 0);
+    mut var depth = 100.0;
+    for (var axis = 0; axis < 15; axis++)
     {
-        state.cars[demolished].respawn = 3;
-        state.cars[demolished].velocity = float3(0);
-        state.cars[1 - demolished].demolitions += 1;
-        return;
+        var direction = axis < 3 ? CarAxis(first, axis) : axis < 6 ? CarAxis(second, axis - 3) : Math.Cross(CarAxis(first, (axis - 6) / 3), CarAxis(second, (axis - 6) % 3));
+        var length = Math.Length(direction);
+        if (length < 0.00001) continue;
+        var unit = direction / length;
+        var separation = Math.Dot(difference, unit);
+        var overlap = CarProjection(first, unit) + CarProjection(second, unit) - Math.Abs(separation);
+        if (overlap <= 0) return;
+        if (overlap < depth)
+        {
+            depth = overlap;
+            normal = separation < 0 ? -unit : unit;
+        }
     }
-    state.cars[0].position -= normal * ((1.32 - distance) * 0.5);
-    state.cars[1].position += normal * ((1.32 - distance) * 0.5);
-    if (impact > 0)
+    var point = (ClosestCarPoint(first, CarBoxCentre(second)) + ClosestCarPoint(second, CarBoxCentre(first))) * 0.5;
+    var arm0 = point - first.position;
+    var arm1 = point - second.position;
+    // RocketSim's measured bumper-only addition and demolition gate. Capture
+    // pre-contact velocities; resolving the rigid bodies must not change it.
+    for (var attacker = 0; attacker < 2; attacker++)
     {
-        state.cars[0].velocity -= normal * (impact * 0.8);
-        state.cars[1].velocity += normal * (impact * 0.8);
-        state.cars[0].velocity += float3(0, Math.Min(2, impact * 0.1), 0);
-        state.cars[1].velocity += float3(0, Math.Min(2, impact * 0.1), 0);
+        var source = attacker == 0 ? first : second;
+        var target = attacker == 0 ? second : first;
+        var arm = ClosestCarPoint(source, CarBoxCentre(target)) - source.position;
+        var toward = UnitOr(target.position - source.position, attacker == 0 ? normal : -normal);
+        var velocityDirection = UnitOr(source.velocity, source.forward);
+        var speedTowards = Math.Dot(source.velocity, toward);
+        if (source.bumpCooldown > 0 || speedTowards <= 0 || speedTowards <= Math.Dot(target.velocity, velocityDirection) || Math.Dot(arm, source.forward) <= 0.645) continue;
+        state.cars[attacker].bumpCooldown = 0.25;
+        if (source.supersonic && source.team != target.team)
+        {
+            state.cars[1 - attacker].respawn = 3;
+            state.cars[1 - attacker].velocity = float3(0);
+            state.cars[attacker].demolitions += 1;
+            return;
+        }
+        var amount = target.grounded ? BumpCurve(speedTowards, 11, 15.3, 0.008333333) : BumpCurve(speedTowards, 13.9, 19.45, 0.008333333);
+        var upward = BumpCurve(speedTowards, 2.78, 4.17, 0.003333333);
+        state.cars[1 - attacker].velocity += velocityDirection * amount + (target.grounded ? target.up : float3(0, 1, 0)) * upward;
+    }
+    state.cars[0].position -= normal * (depth * 0.5);
+    state.cars[1].position += normal * (depth * 0.5);
+    var relative = second.velocity + Math.Cross(WorldAngular(second), arm1) - first.velocity - Math.Cross(WorldAngular(first), arm0);
+    var closing = Math.Dot(relative, normal);
+    if (closing < 0)
+    {
+        var inverseMass = 2 / CAR_MASS + Math.Dot(normal, Math.Cross(InverseCarInertia(first, Math.Cross(arm0, normal)), arm0) + Math.Cross(InverseCarInertia(second, Math.Cross(arm1, normal)), arm1));
+        var magnitude = -1.1 * closing / inverseMass;
+        mut var impulse = normal * magnitude;
+        var slip = relative - normal * closing;
+        var slipSpeed = Math.Length(slip);
+        if (slipSpeed > 0.00001)
+        {
+            var tangent = slip / slipSpeed;
+            var tangentMass = 2 / CAR_MASS + Math.Dot(tangent, Math.Cross(InverseCarInertia(first, Math.Cross(arm0, tangent)), arm0) + Math.Cross(InverseCarInertia(second, Math.Cross(arm1, tangent)), arm1));
+            impulse -= tangent * Math.Min(slipSpeed / tangentMass, magnitude * 0.09);
+        }
+        mut var resolvedFirst = state.cars[0];
+        mut var resolvedSecond = state.cars[1];
+        CarImpulse(resolvedFirst, -impulse, arm0);
+        CarImpulse(resolvedSecond, impulse, arm1);
+        state.cars[0] = resolvedFirst;
+        state.cars[1] = resolvedSecond;
     }
 }
 
@@ -549,12 +1011,14 @@ void CollectPads(mut MatchState state, float dt)
         state.pads[pad] = Math.Max(0, state.pads[pad] - dt);
         if (state.pads[pad] > 0) continue;
         var at = PadPosition(pad);
-        var reach = PadLarge(pad) ? 1.65 : 1.15;
+        var reach = PadLarge(pad) ? 2.08 : 1.44;
+        var height = PadLarge(pad) ? 1.68 : 1.65;
         for (var seat = 0; seat < 2; seat++)
         {
             var car = state.cars[seat];
-            if (car.respawn > 0 || car.boost >= 100 || car.position.y > 1.3) continue;
-            if (Math.DistanceSq(car.position, at) > reach * reach) continue;
+            if (car.respawn > 0 || car.boost >= 100 || car.position.y > height) continue;
+            var horizontal = float2(car.position.x - at.x, car.position.z - at.z);
+            if (Math.LengthSq(horizontal) > reach * reach) continue;
             state.cars[seat].boost = Math.Min(100, car.boost + (PadLarge(pad) ? 100 : 12));
             state.pads[pad] = PadLarge(pad) ? 10 : 4;
             break;
@@ -567,53 +1031,89 @@ DriveInput BotInput(MatchState state, int seat)
     var car = state.cars[seat];
     var sign = seat == 0 ? 1 : -1;
     var ball = state.ball;
-    var distance = Math.Distance(car.position, ball.position);
-    var lead = Math.Clamp(distance / 25, 0.05, 0.9);
-    mut var target = ball.position + ball.velocity * lead;
-    target.y = CAR_HEIGHT;
-    // Approach the ball from its own half to strike toward the other goal.
-    var goal = float3(0, 0, sign * (ARENA_Z + 2));
-    var shot = UnitOr(goal - float3(ball.position.x, 0, ball.position.z), float3(0, 0, sign));
-    if (distance > 5) target -= shot * Math.Min(7, distance * 0.2);
-    if (ball.position.z * sign < -28 && ball.velocity.z * sign < -3 && distance > 14)
-        target = float3(Math.Clamp(ball.position.x * 0.5, -7, 7), CAR_HEIGHT, -sign * 43);
-    // The bot collects a nearby pad when it has room to do so.
-    if (car.boost < 18 && distance > 15 && ball.lastTouch >= 0)
+    var right = CarRight(car);
+    var speed = Math.Length(car.velocity);
+    var flatBall = float3(ball.position.x, CAR_HEIGHT, ball.position.z);
+    var distance = Math.Distance(car.position, flatBall);
+    var lead = Math.Clamp(distance / (speed + 12), 0, 0.6);
+    var predicted = float3(Math.Clamp(ball.position.x + ball.velocity.x * lead, -37, 37), CAR_HEIGHT,
+        Math.Clamp(ball.position.z + ball.velocity.z * lead, -48, 48));
+    // A shallow angle toward a goal corner gives each bot an actual shot
+    // line. Their different preferred lanes also avoid symmetric kickoffs.
+    var goal = float3(seat == 0 ? 2.5 : -1.5, CAR_HEIGHT, sign * (ARENA_Z + 2));
+    var shot = UnitOr(goal - predicted, float3(0, 0, sign));
+    var shotRight = Math.Cross(float3(0, 1, 0), shot);
+    var relative = car.position - predicted;
+    var behind = Math.Dot(relative, shot);
+    var across = Math.Dot(relative, shotRight);
+    // Continue a lined-up shot through contact. Repositioning two metres
+    // before the ball makes the car turn away just outside bumper reach.
+    var linedUp = behind <= 0.5 && Math.Abs(across) <= Math.Max(2, -behind * 0.55);
+    mut var target = predicted + shot * 3;
+    if (!linedUp)
+    {
+        // Get onto the goal-facing side before challenging, and take a wide
+        // route around the sphere instead of hitting it toward our own end.
+        var side = Math.Abs(across) > 0.2 ? Math.Sign(across) : seat == 0 ? 1 : -1;
+        var around = behind > -1 ? 4.5 : 0;
+        target = predicted - shot * 4 + shotRight * (side * around);
+    }
+    if (ball.position.z * sign < -30 && ball.velocity.z * sign < -4 && distance > 18)
+        target = float3(Math.Clamp(ball.position.x * 0.4, -6, 6), CAR_HEIGHT, -sign * 44);
+    if (car.boost < 18 && distance > 20 && ball.lastTouch >= 0)
     {
         mut var best = 1000.0;
         for (var pad = 0; pad < PAD_COUNT; pad++)
         {
             if (state.pads[pad] > 0) continue;
             var p = PadPosition(pad);
-            var cost = Math.Distance(car.position, p) + Math.Distance(p, target) * 0.35 - (PadLarge(pad) ? 8 : 0);
+            var cost = Math.Distance(car.position, p) + Math.Distance(p, target) * 0.5 - (PadLarge(pad) ? 5 : 0);
             if (cost < best) { best = cost; target = p; }
         }
     }
     var heading = UnitOr(float3(target.x - car.position.x, 0, target.z - car.position.z), car.forward);
-    var right = CarRight(car);
     var alignment = Math.Dot(heading, car.forward);
     var lateral = Math.Dot(heading, right);
-    mut var input = DriveInput { throttle = 1, steer = Math.Clamp(lateral * 3.2, -1, 1) };
+    var angle = Math.Atan2(lateral, alignment);
     var targetDistance = Math.Distance(car.position, target);
-    var speed = Math.Length(car.velocity);
-    var desiredSpeed = Math.Min(19, Math.Max(3.5, targetDistance * 1.1)) * Math.Max(0.35, alignment);
-    input.handbrake = alignment < 0.65 && speed > 4;
-    if (speed > desiredSpeed + 0.6) input.throttle = Math.Dot(car.velocity, car.forward) >= 0 ? -1 : 1;
-    else if (alignment < 0.5) input.throttle = 0.35;
-    input.boost = alignment > 0.96 && targetDistance > 9 && distance > 7 && car.boost > 3;
+    // Slow down while setting up a turn, but retain shot speed once aligned.
+    var desiredSpeed = Math.Min(22, Math.Max(linedUp ? 12 : 4.5, targetDistance * 1.5)) * Math.Max(0.4, alignment);
+    mut var input = DriveInput { throttle = 1,
+        steer = Math.Clamp(angle * 2.5 - car.angularVelocity.y * 0.25, -1, 1) };
+    input.handbrake = Math.Abs(angle) > 0.8 && speed > 5;
+    if (speed > desiredSpeed + 1 && alignment > 0.3) input.throttle = -1;
+    else if (alignment < 0.4) input.throttle = 0.65;
+    input.boost = alignment > 0.97 && targetDistance > (linedUp ? 5 : 12) && distance > 3 && car.boost > 3;
+    // Briefly reverse out of bumper deadlocks. The phased action is only
+    // chosen when stationary and uses the same throttle/steering as a player.
+    var recovery = state.elapsed + seat * 1.7;
+    var cycle = recovery - Math.Floor(recovery / 5) * 5;
+    if (car.grounded && speed < 4 && targetDistance > 6 && cycle > 3.9)
+    {
+        input.throttle = -1;
+        input.steer = -input.steer;
+        input.boost = false;
+    }
     if (!car.grounded)
     {
-        input.pitch = Math.Clamp(car.forward.y * 3 - (ball.position.y > 3 && distance < 12 ? 0.5 : 0), -1, 1);
-        input.yaw = Math.Clamp(lateral * 2, -1, 1);
-        input.roll = Math.Clamp(-right.y * 3, -1, 1);
-        input.boost = distance < 15 && ball.position.y > 3 && car.forward.y > 0.1;
-        input.jump = car.airTime > 0.16 && car.airTime < 0.23 && !car.jumpHeld && distance < 5 && alignment > 0.8;
+        input.pitch = Math.Clamp(-car.forward.y * 3 + (ball.position.y > 3 && distance < 10 ? 0.4 : 0), -1, 1);
+        input.yaw = Math.Clamp(angle * 1.5, -1, 1);
+        input.roll = Math.Clamp(right.y * 3, -1, 1);
+        input.boost = distance < 10 && ball.position.y > 3 && car.forward.y > 0.15 && alignment > 0.8;
+        input.jump = car.airTime > 0.17 && car.airTime < 0.23 && !car.jumpHeld && distance < 4 && alignment > 0.9;
         if (input.jump) input.pitch = -1;
+        if (car.up.y < -0.5)
+        {
+            input.roll = right.y >= 0 ? 1 : -1;
+            input.pitch = Math.Clamp(-car.forward.y * 3, -1, 1);
+            input.yaw = 0;
+            input.boost = false;
+            if (car.position.y < 0.8 && car.autoFlip <= 0) input.jump = !car.jumpHeld;
+        }
     }
-    else input.jump = distance < 4.5 && alignment > 0.88 && ball.position.y > 1.5 && ball.position.y < 6;
+    else input.jump = distance < 4 && alignment > 0.9 && behind < -1 && ball.position.y > 1.7 && ball.position.y < 5;
     return input;
 }
-
 void AdvanceMatch(mut MatchState state, float dt)
 {
     if (state.phase == MatchPhase.Finished) return;
@@ -693,7 +1193,7 @@ system ReadControls(Controls input, Participant participant, mut MatchState stat
     state.active[seat] = true;
     state.controls[seat] = DriveInput { throttle = input.throttle, steer = input.steer,
         pitch = input.pitch, yaw = input.yaw, roll = input.roll,
-        jump = input.jump, boost = input.boost, handbrake = input.handbrake };
+        jump = input.jump, boost = input.boost, handbrake = input.handbrake, dodgeDeadzone = input.dodgeDeadzone, suppressPitch = input.suppressPitch };
 }
 
 [Stage(MatchStages.Simulation)]
@@ -708,11 +1208,27 @@ system Simulate(mut MatchState state, Time time)
             var control = state.phase == MatchPhase.Goal ? DriveInput { } :
                 state.active[seat] ? state.controls[seat] : BotInput(state, seat);
             mut var car = state.cars[seat];
-            StepCar(car, control, dt);
+            StepCar(car, control, dt, state.ball);
             state.cars[seat] = car;
         }
         BumpCars(state);
         StepBall(state, dt);
+        // Contacts and the extra bumper impulse run after driving. Enforce
+        // the published speed limit again at the completed physics tick.
+        for (var seat = 0; seat < 2; seat++)
+        {
+            var speed = Math.Length(state.cars[seat].velocity);
+            if (speed > 23) state.cars[seat].velocity *= 23 / speed;
+            var angularSpeed = Math.Length(state.cars[seat].angularVelocity);
+            if (angularSpeed > 5.5) state.cars[seat].angularVelocity *= 5.5 / angularSpeed;
+            if (state.cars[seat].respawn > 0) continue;
+            // RocketSim's grace belongs to the entire supersonic episode,
+            // including time spent above22. Contacts must precede this test.
+            var inGrace = state.cars[seat].supersonic && state.cars[seat].supersonicTime < 1;
+            state.cars[seat].supersonic = speed >= (inGrace ? 21 : 22);
+            if (state.cars[seat].supersonic) state.cars[seat].supersonicTime += dt;
+            else state.cars[seat].supersonicTime = 0;
+        }
         CollectPads(state, dt);
     }
     AdvanceMatch(state, dt);

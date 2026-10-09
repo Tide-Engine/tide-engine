@@ -11,9 +11,17 @@ asset Clip jumpClip = "sfx/jump.wav";
 asset Clip kickoffClip = "sfx/kickoff.wav";
 asset Clip goalClip = "sfx/goal.wav";
 
-// Touch controls join the same sampled Controls input as keys and gamepads.
+enum ControlProfile { Classic, Modern }
+
+// These preferences and touch controls belong to this machine, not the match.
 local singleton Hand
 {
+    ControlProfile profile = ControlProfile.Classic;
+    bool settingsOpen;
+    bool keyboardAerialSafety = true;
+    bool pitchBlocked;
+    float controllerDeadzone = 0.2;
+    float dodgeDeadzone = 0.8;
     float throttle;
     float steer;
     float pitch;
@@ -24,7 +32,67 @@ local singleton Hand
     bool handbrake;
     bool touch;
     float2 stick;
-    float2 mouseStart;
+}
+
+local singleton CameraPreferences
+{
+    // A wide gameplay preset, rather than a claim about the game's defaults.
+    // FOV is horizontal at 16:9; Tide's perspective camera takes vertical FOV.
+    float fov = 110;
+    float distance = 2.7;
+    float height = 1;
+    float angle = -3;
+    float stiffness = 0.5;
+    float swivelSpeed = 5;
+    float transitionSpeed = 1.2;
+    bool shake;
+}
+
+float StickAxis(float value, float deadzone)
+{
+    return Math.Abs(value) <= deadzone ? 0 : (value < 0 ? -1 : 1) * (Math.Abs(value) - deadzone) / (1 - deadzone);
+}
+
+// A wall can compress the orbit and separate the ball's bearing from the
+// car's. Keep the measured collider in automatic camera modes; free look
+// deliberately bypasses this. These are camera bounds, never match physics.
+bool CarFits(float yaw, float pitch, float3 eye, CarState car, float horizontalLimit, float verticalLimit)
+{
+    var right = CarRight(car);
+    var center = car.position + car.forward * 0.138757 + car.up * 0.20755;
+    var forward = float3(Math.Sin(yaw) * Math.Cos(pitch), Math.Sin(pitch), Math.Cos(yaw) * Math.Cos(pitch));
+    var viewRight = float3(Math.Cos(yaw), 0, -Math.Sin(yaw));
+    var viewUp = Math.Cross(forward, viewRight);
+    for (var corner = 0; corner < 8; corner++)
+    {
+        var point = center + right * ((corner & 1) != 0 ? 0.433497 : -0.433497)
+                  + car.up * ((corner & 2) != 0 ? 0.1932955 : -0.1932955)
+                  + car.forward * ((corner & 4) != 0 ? 0.602535 : -0.602535) - eye;
+        var depth = Math.Dot(point, forward);
+        if (depth <= 0 || Math.Abs(Math.Atan2(Math.Dot(point, viewRight), depth)) > horizontalLimit
+                       || Math.Abs(Math.Atan2(Math.Dot(point, viewUp), depth)) > verticalLimit) return false;
+    }
+    return true;
+}
+
+void FrameCar(mut float yaw, mut float pitch, float3 eye, CarState car, float horizontalLimit, float verticalLimit)
+{
+    if (CarFits(yaw, pitch, eye, car, horizontalLimit, verticalLimit)) return;
+    var toCenter = car.position + car.forward * 0.138757 + car.up * 0.20755 - eye;
+    var centerYaw = Math.Atan2(toCenter.x, toCenter.z);
+    var centerPitch = Math.Atan2(toCenter.y, Math.Length(toCenter.xz));
+    var turn = Math.Atan2(Math.Sin(centerYaw - yaw), Math.Cos(centerYaw - yaw));
+    var tilt = centerPitch - pitch;
+    mut var low = 0.0;
+    mut var high = 1.0;
+    for (var step = 0; step < 12; step++)
+    {
+        var middle = (low + high) * 0.5;
+        if (CarFits(yaw + turn * middle, pitch + tilt * middle, eye, car, horizontalLimit, verticalLimit)) high = middle;
+        else low = middle;
+    }
+    yaw += turn * high;
+    pitch += tilt * high;
 }
 
 struct Ember
@@ -42,6 +110,10 @@ local singleton SceneView
     bool made;
     bool cameraReady;
     bool ballCamera = true;
+    bool wasBallCamera = true;
+    bool rearView;
+    bool wasRearView;
+    bool wasPlaying;
     bool touch;
     float dt;
     float clock;
@@ -56,6 +128,14 @@ local singleton SceneView
     float3 eye;
     float3 look;
     float3 forward = float3(0, 0, 1);
+    float orbitYaw;
+    float orbitPitch;
+    float viewYaw;
+    float viewPitch;
+    float transition = 1;
+    float2 swivel;
+    float2 mouseLook;
+    quaternion cameraRotation = quaternion.identity;
     float3 previousBallVelocity;
     float3 previousCarVelocity;
     float3 mine;
@@ -255,9 +335,16 @@ frag ShadowPaint(Surface surface, out Color color, DrawPiece piece)
     color = Color(0.008, 0.013, 0.018, edge * piece.tint.a);
 }
 
-frag SparkPaint(Surface surface, out Color color, DrawPiece piece)
+frag SparkPaint(Surface surface, out Color color, DrawPiece piece, Instance instance, SceneView scene)
 {
-    color = piece.tint;
+    var normal = instance.Normal(surface.normal);
+    var facing = Math.Max(0, Math.Dot(normal, Math.Normalize(scene.eye - this.world)));
+    var opacity = Math.SmoothStep(0, 0.65, facing) * piece.tint.a;
+    if (opacity < 0.005) this.Discard();
+    var core = Math.Pow(facing, 7);
+    var rgb = float3(piece.tint.r, piece.tint.g, piece.tint.b) * (0.48 + core * 0.52)
+            + float3(0.85, 0.75, 0.52) * core * 0.5;
+    color = Color(rgb.x, rgb.y, rgb.z, opacity);
 }
 
 frag BrightPaint(Vertex vertex, Texture source, out Color color)
@@ -314,12 +401,12 @@ void Emit(mut SceneView scene, float3 at, Color tone, int count, float force, fl
     {
         var way = scene.random.NextFloat3Direction();
         scene.sparks.Add(Ember { position = at, velocity = way * scene.random.NextFloat(force * 0.3, force), color = tone,
-                                life = life * scene.random.NextFloat(0.7, 1.3), size = scene.random.NextFloat(0.08, 0.23) });
+                                life = life * scene.random.NextFloat(0.7, 1.3), size = scene.random.NextFloat(0.025, 0.075) });
     }
 }
 
 [Stage(Layers.Prepare)]
-view Prepare(mut Models models, mut SceneView scene, mut Hand hand, MatchState match, verified MatchState sure, Session session,
+view Prepare(mut Models models, mut SceneView scene, mut Hand hand, CameraPreferences camera, MatchState match, verified MatchState sure, Session session,
              Devices devices, Lobby lobby, query (Participant participant, Owner owner) players)
 {
     if (!models.made) MakeModels(models);
@@ -342,29 +429,52 @@ view Prepare(mut Models models, mut SceneView scene, mut Hand hand, MatchState m
         if (player.owner.player == session.player) scene.seat = player.participant.seat;
     scene.cars.Clear(); scene.wheels.Clear(); scene.pads.Clear(); scene.blots.Clear(); scene.motes.Clear();
     var car = match.cars[scene.seat];
+    if (scene.wasPlaying != lobby.playing) scene.cameraReady = false;
+    scene.wasPlaying = lobby.playing;
     scene.mine = car.position;
     scene.speed = Math.Length(car.velocity);
     scene.boost = car.boost;
     hand.throttle = 0; hand.steer = 0; hand.pitch = 0; hand.yaw = 0; hand.roll = 0;
     hand.jump = false; hand.boost = false; hand.handbrake = false; hand.stick = float2(0);
-    if (devices.touchscreen.connected) scene.touch = true;
+    scene.touch = devices.touchscreen.connected;
     hand.touch = scene.touch;
-    if (lobby.playing)
+    var keys = devices.keyboard;
+    var classic = hand.profile == ControlProfile.Classic;
+    var forwardHeld = keys.w.pressed || keys.upArrow.pressed;
+    var pitchReleased = !forwardHeld || keys.w.up || keys.upArrow.up || keys.s.pressed || keys.downArrow.pressed || keys.q.pressed || keys.e.pressed
+                     || (classic ? keys.leftShift.pressed : devices.mouse.right.pressed);
+    if (car.grounded) hand.pitchBlocked = forwardHeld;
+    if (pitchReleased || !hand.keyboardAerialSafety) hand.pitchBlocked = false;
+    scene.rearView = false;
+    if (lobby.playing && !hand.settingsOpen)
     {
         foreach (var touch in devices.touchscreen.touches)
             if (touch.press.pressed) ControlTouch(hand, Screen.Flip(touch.position), Screen.Flip(touch.startPosition), screen);
         var mouse = devices.mouse;
-        if (mouse.left.down) hand.mouseStart = Screen.Flip(mouse.position);
-        if (mouse.left.pressed) ControlTouch(hand, Screen.Flip(mouse.position), hand.mouseStart, screen);
-        var mouseAt = Screen.Flip(mouse.position);
-        if (devices.keyboard.c.down || devices.gamepad.buttonNorth.down
-            || mouse.left.down && mouseAt.x >= 14 && mouseAt.x <= 146 && mouseAt.y >= 76 && mouseAt.y <= 106) scene.ballCamera = !scene.ballCamera;
+        if ((classic ? keys.space.down : mouse.middle.down) || devices.gamepad.buttonNorth.down) scene.ballCamera = !scene.ballCamera;
+        scene.rearView = devices.gamepad.rightStickButton.pressed || (classic ? mouse.middle.pressed : keys.leftCtrl.pressed);
         foreach (var touch in devices.touchscreen.touches)
         {
             var at = Screen.Flip(touch.position);
             if (touch.press.down && at.x >= 14 && at.x <= 146 && at.y >= 76 && at.y <= 106) scene.ballCamera = !scene.ballCamera;
         }
+        var mouseFree = !scene.touch && (hand.profile == ControlProfile.Modern || keys.leftAlt.pressed);
+        if (mouseFree)
+        {
+            Cursor.Lock();
+            scene.mouseLook.x += mouse.delta.x * 0.003;
+            scene.mouseLook.x = Math.Atan2(Math.Sin(scene.mouseLook.x), Math.Cos(scene.mouseLook.x));
+            scene.mouseLook.y = Math.Clamp(scene.mouseLook.y + mouse.delta.y * 0.003, -1.45, 1.45);
+        }
+        else scene.mouseLook *= Math.Exp(-scene.dt * camera.swivelSpeed * 2);
     }
+    if (scene.wasBallCamera != scene.ballCamera || scene.wasRearView != scene.rearView)
+    {
+        scene.transition = 0;
+        scene.mouseLook = float2(0);
+    }
+    scene.wasBallCamera = scene.ballCamera;
+    scene.wasRearView = scene.rearView;
     var goal = sure.blueScore + sure.orangeScore;
     if (scene.score >= 0 && goal > scene.score)
     {
@@ -409,95 +519,139 @@ view Prepare(mut Models models, mut SceneView scene, mut Hand hand, MatchState m
     scene.boostSound.clip = boostClip; scene.boostSound.loop = true;
     scene.boostSound.playing = car.boosting && lobby.page == Page.Playing;
     scene.boostSound.volume = 0.23;
-    // An upright chase camera remains comfortable through rolls and wall drives.
-    mut var heading = float3(car.forward.x, 0, car.forward.z);
-    if (Math.LengthSq(heading) < 0.01) heading = scene.forward;
-    heading = Math.Normalize(heading);
-    if (scene.ballCamera)
+    // Car cam follows the car's heading with a stable horizon. Aerial rolls
+    // don't roll the camera; a vertical nose keeps the last useful heading.
+    var heading = UnitOr(float3(car.forward.x, 0, car.forward.z), scene.forward);
+    var toBall = match.ball.position - car.position;
+    var ballRange = Math.Length(toBall);
+    mut var wantedYaw = Math.Atan2(heading.x, heading.z);
+    mut var wantedPitch = 0.0;
+    if (scene.ballCamera && !scene.rearView && ballRange > 0.25)
     {
-        var toBall = float3(match.ball.position.x - car.position.x, 0, match.ball.position.z - car.position.z);
-        if (Math.LengthSq(toBall) > 4) heading = Math.Normalize(toBall);
+        if (Math.LengthSq(toBall.xz) > 0.001) wantedYaw = Math.Atan2(toBall.x, toBall.z);
+        else wantedYaw = scene.cameraReady ? scene.orbitYaw : wantedYaw;
+        // The ball's actual height drives the orbit, including aerials. There
+        // is no screen-space elevation clamp that hides a high ball.
+        wantedPitch = Math.Atan2(toBall.y, Math.Length(toBall.xz));
     }
-    var steerEase = 1 - Math.Exp(-scene.dt * 7);
-    if (!scene.cameraReady) scene.forward = heading;
-    var fromAngle = Math.Atan2(scene.forward.x, scene.forward.z);
-    var toAngle = Math.Atan2(heading.x, heading.z);
-    var angle = fromAngle + Math.Atan2(Math.Sin(toAngle - fromAngle), Math.Cos(toAngle - fromAngle)) * steerEase;
-    scene.forward = float3(Math.Sin(angle), 0, Math.Cos(angle));
-    var speedBack = Math.Min(scene.speed / 46, 1) * 1.0;
-    mut var wantEye = car.position - scene.forward * (3.8 + speedBack * 0.6) + float3(0, 1.7 + speedBack * 0.2, 0);
-    wantEye.y = Math.Max(wantEye.y, 1.35);
-    wantEye.x = Math.Clamp(wantEye.x, -ARENA_X + 1, ARENA_X - 1);
-    wantEye.z = Math.Clamp(wantEye.z, -ARENA_Z + 1, ARENA_Z - 1);
-    // A wall shortens the chase distance. Lower the eye with it so the car
-    // retains its place in the frame instead of slipping below the image.
-    var cameraDistance = Math.Length(float2(wantEye.x - car.position.x, wantEye.z - car.position.z));
-    wantEye.y = Math.Max(car.position.y + Math.Min(1.7 + speedBack * 0.2, cameraDistance * 0.45), 0.65);
-    mut var wantLook = car.position + scene.forward * 15 + float3(0, 1.0, 0);
-    if (scene.ballCamera)
+    if (scene.rearView) wantedYaw += Math.PI;
+    mut var padLook = float2(StickAxis(devices.gamepad.rightStick.x, 0.1), StickAxis(devices.gamepad.rightStick.y, 0.1));
+    if (!lobby.playing || hand.settingsOpen) padLook = float2(0);
+    scene.swivel += (padLook * float2(Math.PI * 0.85, 1.15) - scene.swivel) * (1 - Math.Exp(-scene.dt * camera.swivelSpeed * 2));
+    var freeLook = scene.swivel + scene.mouseLook;
+    wantedYaw += freeLook.x;
+    wantedPitch = Math.Clamp(wantedPitch + freeLook.y, -1.55, 1.55);
+    if (!scene.cameraReady)
     {
-        var distance = Math.Max(6, Math.Length(match.ball.position.xz - car.position.xz));
-        var elevation = Math.Clamp(match.ball.position.y - car.position.y + 0.7, -distance * 0.6, distance * 0.22);
-        // The eye and its aim turn together. The car stays in front while a
-        // ball that has crossed behind it swings the camera around.
-        wantLook = car.position + scene.forward * distance + float3(0, elevation, 0);
+        scene.orbitYaw = wantedYaw;
+        scene.orbitPitch = wantedPitch;
     }
-    // Behind the menu a broad orbit presents the arena, with the live match below.
+    scene.transition = Math.Min(1, scene.transition + scene.dt * camera.transitionSpeed);
+    var followSpeed = scene.transition < 1 ? camera.transitionSpeed * 6 : 8 + camera.stiffness * 18;
+    var ease = 1 - Math.Exp(-scene.dt * followSpeed);
+    scene.orbitYaw += Math.Atan2(Math.Sin(wantedYaw - scene.orbitYaw), Math.Cos(wantedYaw - scene.orbitYaw)) * ease;
+    scene.orbitPitch += (wantedPitch - scene.orbitPitch) * ease;
+    scene.forward = float3(Math.Sin(scene.orbitYaw), 0, Math.Cos(scene.orbitYaw));
+    var orbitForward = scene.forward * Math.Cos(scene.orbitPitch) + float3(0, Math.Sin(scene.orbitPitch), 0);
+    var distance = camera.distance + scene.speed * (1 - camera.stiffness) * 0.035;
+    mut var wantEye = car.position - orbitForward * distance + float3(0, camera.height, 0);
+    // Resolve only a local camera probe against the same rounded arena and
+    // goal recesses as physics. This never changes match state.
+    mut var probeVelocity = float3(0);
+    for (var probe = 0; probe < 3; probe++) ArenaContact(wantEye, probeVelocity, 0.12, 0);
+    // Projection into a wall must not leave the camera pressed against the
+    // car. Re-expand the corrected offset along the available wall tangent.
+    var halfVertical = Math.Atan(Math.Tan(Math.Radians(camera.fov) * 0.5) / (16.0 / 9.0));
+    var horizontalLimit = Math.Max(0.05, Math.Atan(Math.Tan(halfVertical) * screen.x / Math.Max(screen.y, 1)) - 0.035);
+    var verticalLimit = Math.Max(0.05, halfVertical - 0.035);
+    var automatic = !scene.rearView && Math.LengthSq(freeLook) < 0.0001;
+    var requestedDistance = Math.Sqrt(distance * distance + camera.height * camera.height
+                        - 2 * distance * camera.height * orbitForward.y);
+    // A ball directly overhead can push the eye into the floor. Leave enough
+    // room for the collider's .77m enclosing radius and .25m COM offset.
+    var minimumDistance = 0.77 / Math.Sin(Math.Min(horizontalLimit, verticalLimit)) + 0.25;
+    var orbitDistance = automatic ? Math.Max(requestedDistance, minimumDistance) : requestedDistance;
+    for (var slide = 0; slide < 6; slide++)
+    {
+        var offset = wantEye - car.position;
+        if (Math.LengthSq(offset) >= orbitDistance * orbitDistance * 0.999) break;
+        wantEye = car.position + UnitOr(offset, float3(0, 1, 0)) * orbitDistance;
+        for (var probe = 0; probe < 3; probe++) ArenaContact(wantEye, probeVelocity, 0.12, 0);
+    }
+    var angle = scene.orbitPitch + Math.Radians(camera.angle);
+    var aim = scene.forward * Math.Cos(angle) + float3(0, Math.Sin(angle), 0);
+    mut var wantLook = wantEye + aim * 100;
+    if (scene.ballCamera && !scene.rearView)
+    {
+        // Aim at the full 3D ball position. Swivelling intentionally looks
+        // away until the stick/Alt is released or ball cam is toggled again.
+        var ballDirection = UnitOr(match.ball.position - wantEye, orbitForward);
+        var ballYaw = Math.Atan2(ballDirection.x, ballDirection.z) + freeLook.x;
+        var ballPitch = Math.Clamp(Math.Atan2(ballDirection.y, Math.Length(ballDirection.xz)) + freeLook.y, -1.56, 1.56);
+        wantLook = wantEye + float3(Math.Sin(ballYaw) * Math.Cos(ballPitch), Math.Sin(ballPitch), Math.Cos(ballYaw) * Math.Cos(ballPitch)) * 100;
+    }
     if (lobby.page == Page.Title)
     {
         var orbit = scene.clock * 0.027;
         wantEye = float3(Math.Sin(orbit) * 43, 32, -Math.Cos(orbit) * 54);
         wantLook = float3(0, 3.5, 0);
     }
-    if (!scene.cameraReady) { scene.eye = wantEye; scene.look = wantLook; scene.cameraReady = true; }
-    var ease = 1 - Math.Exp(-scene.dt * 8);
-    if (lobby.page == Page.Title)
-    {
-        scene.eye += (wantEye - scene.eye) * ease;
-        scene.look += (wantLook - scene.look) * ease;
-    }
-    else
-    {
-        // The car already interpolates between simulation ticks. Following its
-        // position twice would let boost outrun a second camera spring.
-        scene.eye = wantEye;
-        scene.look = wantLook;
-    }
-    var shake = float3(Math.Sin(scene.clock * 71), Math.Sin(scene.clock * 63), 0) * scene.shake * scene.shake * 0.10;
-    var rotation = quaternion.LookRotation(Math.Normalize(scene.look - scene.eye), float3(0, 1, 0));
-    scene.scene.SetCamera(scene.eye + shake, rotation, 90 + Math.Min(scene.speed / 46, 1) * 6);
+    var wantedView = UnitOr(wantLook - wantEye, orbitForward);
+    var viewYaw = Math.Atan2(wantedView.x, wantedView.z);
+    var viewPitch = Math.Atan2(wantedView.y, Math.Length(wantedView.xz));
+    if (!scene.cameraReady) { scene.viewYaw = viewYaw; scene.viewPitch = viewPitch; }
+    scene.viewYaw += Math.Atan2(Math.Sin(viewYaw - scene.viewYaw), Math.Cos(viewYaw - scene.viewYaw)) * ease;
+    scene.viewPitch += (viewPitch - scene.viewPitch) * ease;
+    var verticalFov = Math.Degrees(halfVertical * 2);
+    if (lobby.page != Page.Title && automatic)
+        FrameCar(scene.viewYaw, scene.viewPitch, wantEye, car, horizontalLimit, verticalLimit);
+    var viewDirection = float3(Math.Sin(scene.viewYaw) * Math.Cos(scene.viewPitch), Math.Sin(scene.viewPitch), Math.Cos(scene.viewYaw) * Math.Cos(scene.viewPitch));
+    var viewUp = UnitOr(float3(0, 1, 0) - viewDirection * viewDirection.y, -scene.forward);
+    scene.cameraRotation = quaternion.LookRotation(viewDirection, viewUp);
+    // Only relative orbit and orientation lag. The interpolated car's world
+    // position anchors every frame, so boost cannot outrun the camera.
+    scene.eye = wantEye;
+    scene.look = scene.eye + Math.Mul(scene.cameraRotation, float3(0, 0, 100));
+    scene.cameraReady = true;
+    var shake = camera.shake ? float3(Math.Sin(scene.clock * 71), Math.Sin(scene.clock * 63), 0) * scene.shake * scene.shake * 0.10 : float3(0);
+    scene.scene.SetCamera(scene.eye + shake, scene.cameraRotation, verticalFov);
     Audio.SetListener(car.position + float3(0, 1, 0), quaternion.LookRotation(car.forward, car.up));
     for (var i = 0; i < 2; i++)
     {
         var playerCar = match.cars[i];
         if (playerCar.respawn > 0) continue;
         var turned = quaternion.LookRotation(playerCar.forward, playerCar.up);
-        var root = playerCar.position - playerCar.up * 0.17;
-        var transform = float4x4.TRS(root, turned, float3(0.5));
+        // The shell nose follows the collider's forward offset. Wheel centres
+        // and radii use the measured Octane suspension geometry in metres.
+        var root = playerCar.position + playerCar.forward * 0.138757 - playerCar.up * 0.0105;
+        var transform = float4x4.TRS(root, turned, float3(0.38));
         scene.cars.Add(DrawPiece { transform = transform, tint = TeamColor(playerCar.team) });
         for (var side = -1; side <= 1; side += 2)
             for (var axle = -1; axle <= 1; axle += 2)
             {
-                var at = root + Math.Mul(turned, float3(side * 0.94, -0.03, axle * 0.89) * 0.5);
+                var wheelRadius = axle > 0 ? 0.125 : 0.15;
+                var at = playerCar.position + Math.Mul(turned, float3(side * (axle > 0 ? 0.259 : 0.295),
+                    wheelRadius - 0.1701, axle > 0 ? 0.5125 : -0.3375));
                 var wheelRotation = Math.Mul(turned, quaternion.Euler(float3(playerCar.wheelSpin, axle > 0 ? playerCar.steer * 0.42 : 0, 0)));
-                scene.wheels.Add(DrawPiece { transform = float4x4.TRS(at, wheelRotation, float3(0.5)), tint = Color.white });
+                scene.wheels.Add(DrawPiece { transform = float4x4.TRS(at, wheelRotation, float3(0.38, wheelRadius / 0.39, wheelRadius / 0.39)), tint = Color.white });
             }
         scene.blots.Add(DrawPiece { transform = float4x4.TRS(float3(playerCar.position.x, 0.023, playerCar.position.z),
-                          quaternion.AxisAngle(float3(0, 1, 0), Math.Atan2(playerCar.forward.x, playerCar.forward.z)), float3(0.70, 1, 0.98)),
+                          quaternion.AxisAngle(float3(0, 1, 0), Math.Atan2(playerCar.forward.x, playerCar.forward.z)), float3(0.49, 1, 0.75)),
                           tint = Color(0, 0, 0, Math.Saturate(0.3 - playerCar.position.y * 0.018)) });
         if (playerCar.boosting)
         {
-            for (var tail = 0; tail < 5; tail++)
-            {
-                var behind = root - playerCar.forward * (0.85 + tail * 0.18);
-                var color = tail < 2 ? Color(1, 0.82, 0.28, 0.9) : Color(1, 0.25, 0.025, 0.72 - tail * 0.1);
-                scene.motes.Add(DrawPiece { transform = float4x4.TRS(behind, turned, float3(0.15 - tail * 0.0175, 0.11 - tail * 0.01, 0.325)), tint = color });
-            }
+            for (var exhaust = -1; exhaust <= 1; exhaust += 2)
+                for (var tail = 0; tail < 5; tail++)
+                {
+                    var behind = root + Math.Mul(turned, float3(exhaust * 0.129, -0.023, -0.65 - tail * 0.13));
+                    var color = tail < 2 ? Color(1, 0.82, 0.28, 0.9) : Color(1, 0.25, 0.025, 0.65 - tail * 0.1);
+                    scene.motes.Add(DrawPiece { transform = float4x4.TRS(behind, turned, float3(0.052 - tail * 0.008, 0.040 - tail * 0.006, 0.17)), tint = color });
+                }
             if (scene.sparks.count < 650)
                 for (var exhaust = -1; exhaust <= 1; exhaust += 2)
-                    scene.sparks.Add(Ember { position = root + Math.Mul(turned, float3(exhaust * 0.34, -0.06, -1.7) * 0.5),
+                    scene.sparks.Add(Ember { position = root + Math.Mul(turned, float3(exhaust * 0.34, -0.06, -1.7) * 0.38),
                         velocity = -playerCar.forward * 5 + scene.random.NextFloat3Direction() * 1.6,
-                        color = Color(1, 0.34, 0.025), life = 0.24, size = 0.14 });
+                        color = Color(1, 0.34, 0.025), life = 0.24, size = 0.045 });
         }
     }
     scene.blots.Add(DrawPiece { transform = float4x4.TRS(float3(match.ball.position.x, 0.025, match.ball.position.z), quaternion.identity,
@@ -512,7 +666,7 @@ view Prepare(mut Models models, mut SceneView scene, mut Hand hand, MatchState m
             float3(large ? 1.5 : 0.70, 1, large ? 1.5 : 0.70)), tint = ready ? Color(1, 0.64, 0.12, 1) : Color(0.36, 0.25, 0.11, 0.50) });
         if (large && ready)
             scene.motes.Add(DrawPiece { transform = float4x4.TRS(float3(at.x, 0.65 + Math.Sin(scene.clock * 3 + pad) * 0.10, at.z),
-                quaternion.Euler(float3(0, scene.clock, 0.75)), float3(0.40, 0.40, 0.40)), tint = Color(1, 0.67, 0.16, 0.9) });
+                quaternion.identity, float3(0.27)), tint = Color(1, 0.67, 0.16, 0.9) });
     }
     mut var index = 0;
     while (index < scene.sparks.count)
@@ -524,7 +678,11 @@ view Prepare(mut Models models, mut SceneView scene, mut Hand hand, MatchState m
         spark.velocity.y -= scene.dt * 3;
         scene.sparks[index] = spark;
         var left = 1 - spark.age / spark.life;
-        scene.motes.Add(DrawPiece { transform = float4x4.TRS(spark.position, quaternion.Euler(float3(spark.age * 7)), float3(spark.size * left)),
+        var along = UnitOr(spark.velocity, float3(0, 0, 1));
+        var guide = Math.Abs(along.y) > 0.95 ? float3(0, 0, 1) : float3(0, 1, 0);
+        var radius = spark.size * left;
+        scene.motes.Add(DrawPiece { transform = float4x4.TRS(spark.position, quaternion.LookRotation(along, guide),
+            float3(radius, radius, radius * Math.Min(3, 1 + Math.Length(spark.velocity) * 0.08))),
             tint = Color(spark.color.r, spark.color.g, spark.color.b, left) });
         index++;
     }
@@ -587,9 +745,9 @@ view Actors(Models models, SceneView scene, MatchState match)
 view Effects(Models models, SceneView scene)
 {
     if (!scene.made || !models.made) return;
-    scene.scene.Blend(Blend.Add), scene.scene.Depth(Depth.Read), scene.scene.Cull(Cull.None)
+    scene.scene.Blend(Blend.Add), scene.scene.Depth(Depth.Read), scene.scene.Cull(Cull.Back)
     {
-        scene.scene.Instanced(models.cube, models.cubeFaces, scene.motes, SparkPaint);
+        scene.scene.Instanced(models.glow, models.glowFaces, scene.motes, SparkPaint);
     }
 }
 
@@ -613,7 +771,7 @@ void TouchButton(float2 at, float radius, string text, bool held, Color tone)
 [Stage(Layers.Hud)]
 view Hud(MatchState match, SceneView scene, Hand hand, Lobby lobby)
 {
-    if (lobby.page != Page.Playing) return;
+    if (lobby.page != Page.Playing || hand.settingsOpen) return;
     Draw.SetScreen();
     var screen = float2(Screen.width, Screen.height);
     var narrow = screen.x < 600;
@@ -637,7 +795,8 @@ view Hud(MatchState match, SceneView scene, Hand hand, Lobby lobby)
     if (match.overtime) Draw.Text("OVERTIME", float2(middle, top + 36), 10, Color(1, 0.76, 0.29), Anchor.MiddleCenter, Font.Bold);
     Draw.Text(scene.ballCamera ? "BALL CAM  ON" : "BALL CAM  OFF", float2(20, 91), 12, scene.ballCamera ? Color(1, 0.47, 0.20) : Color.white,
         Anchor.MiddleLeft, Font.Bold);
-    if (!narrow) Draw.Text("PRESS C TO TOGGLE", float2(20, 111), 9, Color(0.76, 0.83, 0.87), Anchor.MiddleLeft);
+    if (!narrow) Draw.Text(hand.profile == ControlProfile.Classic ? "SPACE TO TOGGLE" : "MIDDLE MOUSE TO TOGGLE",
+        float2(20, 111), 9, Color(0.76, 0.83, 0.87), Anchor.MiddleLeft);
     // An amber circular boost gauge is readable at peripheral vision.
     var gauge = float2(screen.x - (narrow ? 61 : 83), screen.y - (scene.touch ? 318 : 82));
     var radius = narrow ? 43.0 : 56.0;
@@ -649,7 +808,10 @@ view Hud(MatchState match, SceneView scene, Hand hand, Lobby lobby)
     if (!scene.touch)
     {
         Draw.Text($"{int(scene.speed * 3.6)} KM/H", gauge + float2(0, -radius - 18), 11, Color(0.9, 0.95, 1), Anchor.MiddleCenter);
-        Draw.Text(narrow ? "WASD  SPACE jump  SHIFT boost  C camera" : "WASD / ARROWS  Drive     SPACE  Jump / Dodge     SHIFT  Boost     CTRL  Powerslide     Q / E  Air roll     C  Ball cam",
+        var help = hand.profile == ControlProfile.Classic
+            ? (narrow ? "WASD  RMB jump  LMB boost  SPACE cam" : "WASD  Drive / Aerial     RMB  Jump / Dodge     LMB  Boost     SHIFT  Powerslide / Air roll     SPACE  Ball cam     MMB  Rear view")
+            : (narrow ? "WASD  SPACE jump  SHIFT boost  MMB cam" : "WASD  Drive / Aerial     SPACE / LMB  Jump     SHIFT  Boost     RMB  Powerslide / Air roll     MMB  Ball cam     CTRL  Rear view");
+        Draw.Text(help,
             float2(middle, screen.y - 22), narrow ? 9 : 11, Color(0.81, 0.87, 0.92), Anchor.MiddleCenter);
     }
     else
@@ -732,3 +894,46 @@ view RoomSetup(SceneView scene, mut Lobby lobby, query (Participant participant)
 override string Rooms.Title() { return "AFTERBURN"; }
 override string Rooms.Tagline() { return "Rocket-powered car soccer. Five minutes. One more goal."; }
 override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 87, 10, 77, 32); }
+
+[After(Rooms.Pages)]
+view Preferences(mut Hand hand, mut CameraPreferences camera, mut SceneView scene, Devices devices)
+{
+    var screen = float2(Screen.width, Screen.height);
+    if (!hand.settingsOpen)
+    {
+        if (GUI.Button(Rect(screen.x - 177, screen.x < 600 ? 64 : 49, 167, 30), "Controls / camera") || devices.keyboard.f2.down)
+            hand.settingsOpen = true;
+    }
+    if (!hand.settingsOpen) return;
+    GUILayout.Modal(Anchor.MiddleCenter, hand.settingsOpen)
+    {
+        GUILayout.Label("Controls / camera");
+        var classic = hand.profile == ControlProfile.Classic;
+        if (GUILayout.Button(classic ? "Keyboard: Classic" : "Keyboard: Modern"))
+        {
+            hand.profile = classic ? ControlProfile.Modern : ControlProfile.Classic;
+            hand.pitchBlocked = false;
+            scene.mouseLook = float2(0);
+        }
+        GUILayout.Label(hand.profile == ControlProfile.Classic ? "RMB jump / LMB boost" : "Space or LMB jump / Shift boost");
+        GUILayout.Label(hand.profile == ControlProfile.Classic ? "Shift roll / Space ball cam" : "RMB roll / MMB ball cam");
+        GUILayout.Slider("FOV", camera.fov, 60, 110);
+        GUILayout.Slider("Distance (m)", camera.distance, 1, 4);
+        GUILayout.Slider("Height (m)", camera.height, 0.4, 2);
+        GUILayout.Slider("Angle", camera.angle, -45, 0);
+        GUILayout.Slider("Stiffness", camera.stiffness, 0, 1);
+        GUILayout.Slider("Swivel speed", camera.swivelSpeed, 1, 10);
+        GUILayout.Slider("Transition", camera.transitionSpeed, 0.5, 3);
+        GUILayout.Slider("Stick deadzone", hand.controllerDeadzone, 0.05, 0.75);
+        GUILayout.Slider("Dodge deadzone", hand.dodgeDeadzone, 0.1, 1);
+        GUILayout.Toggle("Keyboard aerial safety", hand.keyboardAerialSafety);
+        GUILayout.Toggle("Camera shake", camera.shake);
+        if (GUILayout.Button("Wide camera preset"))
+        {
+            camera.fov = 110; camera.distance = 2.7; camera.height = 1; camera.angle = -3;
+            camera.stiffness = 0.5; camera.swivelSpeed = 5; camera.transitionSpeed = 1.2; camera.shake = false;
+            scene.cameraReady = false;
+        }
+        if (GUILayout.Button("Back")) hand.settingsOpen = false;
+    }
+}
