@@ -99,6 +99,12 @@ test('missing admin password refuses both page and API instead of exposing count
     assert.equal((await get('/admin/prototypes/two-forks/index.html')).status, 503);
     assert.equal((await get('/admin/prototypes/the-last-light/game.wasm')).status, 503);
     assert.equal((await get('/admin/prototypes/cabin-nine/index.html')).status, 503);
+    for (const route of ['/admin/prototypes/dead-signal/', '/admin/prototypes/dead-signal/index.html',
+        '/admin/prototypes/dead-signal/game.wasm', '/admin/prototypes/dead-signal/game.pack',
+        '/admin/prototypes/dead-signal/thumbnail.png', '/admin/prototypes/dead-signal/sfx/radio.ogg',
+        '/adm%69n/prototypes/dead%2dsignal/index.html']) {
+        assert.equal((await get(route)).status, 503, route);
+    }
 });
 
 test('prototype files share the admin gate and retired public copies are always refused', async (t) => {
@@ -108,7 +114,10 @@ test('prototype files share the admin gate and retired public copies are always 
         '/admin/prototypes/the-last-light/index.html', '/admin/prototypes/the-last-light/game.wasm',
         '/admin/prototypes/the-last-light/game.pack', '/admin/prototypes/the-last-light/sfx/steps.ogg',
         '/adm%69n/prototypes/two-forks/thumbnail.png', '/admin%2fprototypes%2ftwo-forks%2findex.html',
-        '/admin/prototypes/cabin-nine/', '/admin/prototypes/cabin-nine/game.wasm', '/adm%69n/prototypes/cabin-nine/game.pack']) {
+        '/admin/prototypes/cabin-nine/', '/admin/prototypes/cabin-nine/game.wasm', '/adm%69n/prototypes/cabin-nine/game.pack',
+        '/admin/prototypes/dead-signal/', '/admin/prototypes/dead-signal/index.html', '/admin/prototypes/dead-signal/game.wasm',
+        '/admin/prototypes/dead-signal/game.pack', '/admin/prototypes/dead-signal/thumbnail.png', '/admin/prototypes/dead-signal/sfx/radio.ogg',
+        '/adm%69n/prototypes/dead%2dsignal/index.html', '/admin%2fprototypes%2fdead-signal%2fgame.wasm']) {
         const anonymous = await get(route);
         assert.equal(anonymous.status, 303, route);
         assert.match(anonymous.headers.get('location'), /^\/admin\/login\?next=/);
@@ -118,7 +127,10 @@ test('prototype files share the admin gate and retired public copies are always 
     for (const route of ['/samples/two-forks/', '/samples/two-forks/index.html', '/samples/two-forks/game.wasm',
         '/samples/thumbnails/two-forks.png', '/samples/two%2dforks/index.html', '/two-forks/',
         '/examples/the-last-light/', '/sample_two_forks.html', '/samples/the-last-light/',
-        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/prototypes/cabin-nine/game.wasm', '/cabin_nine.html', '/samples/cabin%2dnine/index.html']) {
+        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/prototypes/cabin-nine/game.wasm', '/cabin_nine.html', '/samples/cabin%2dnine/index.html',
+        '/samples/dead-signal/', '/samples/dead-signal/index.html', '/samples/dead-signal/game.wasm',
+        '/samples/thumbnails/dead-signal.png', '/prototypes/dead-signal/game.pack', '/examples/dead-signal/sfx/radio.ogg',
+        '/dead-signal/', '/dead_signal.html', '/sample_dead_signal.html', '/samples/dead%2dsignal/index.html', '/prototypes%2fdead-signal%2fgame.wasm']) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);
@@ -138,6 +150,8 @@ test('sign-in returns to a private game while refusing external or malformed des
     });
     const success = await signIn(next);
     assert.equal(success.headers.get('location'), next);
+    const deadSignal = '/admin/prototypes/dead-signal/?join=TEST';
+    assert.equal((await signIn(deadSignal)).headers.get('location'), deadSignal);
     for (const value of ['https://other.example/', '//other.example/', '/admin/prototypes/../logout', '/admin\\prototypes\\game', '/admin/prototypes/game/\r\nX-Test: evil']) {
         assert.equal((await signIn(value)).headers.get('location'), '/admin');
     }
