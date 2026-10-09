@@ -1,0 +1,139 @@
+# Afterburn car soccer
+
+The owner requested another prototype, as close to Rocket League visually and
+mechanically as practical, on 2026-10-09. `prototypes/rocket-league/` implements
+an original blue/orange car-soccer duel called Afterburn. The title, one-car
+teams, procedural stadium/car, tuning and bot are implementation choices for
+this request. `DESIGN.md` records the official behavior references and the
+approximation boundary; `README.md` has build, play and control instructions.
+
+## Match contract
+
+`game.tide` owns all simulation at 120 Hz. The match supports two players with
+host migration; absent or menu-idle seats are driven by deterministic bots.
+Player IDs bind through owned Participant entities. Human joining/leaving
+replaces/restores the seat's bot without resetting the match. `Restart` accepts
+only an actual participant. Rooms' New game action sends that same command.
+
+`MatchState` contains both cars, sampled controls, ball, 34 boost-pad timers,
+scores, clock, phase and participant mapping. `CarState` stores the position,
+velocity, forward/up basis, angular velocity, grounding, jump/dodge budget,
+boost and demolition respawn. Presentation reads this state; local camera,
+geometry, sound and particles never enter its hash. No engine, compiler or
+package API changes were needed. This is custom deterministic contact physics,
+without Box3D or the commercial game's suspension implementation.
+
+The arena is 81.92 by 102.4 metres, 20.44 high, with 17.86-wide, 6.42-high goals
+and 8.8-deep recesses. Rounded horizontal corners have radius 11.52; floor and
+ceiling fillets have radius 3. Ball radius is 0.915. Cars use an oriented
+1 by 0.46 by 1.48 contact box; the local mesh closely matches it, with small
+roof/fender trim and wheels touching the contact floor. Goal-post/crossbar
+contacts precede scoring. The whole ball must cross the goal plane within the
+opening to score.
+
+Driving includes acceleration, braking/reverse, speed-dependent steering,
+powerslides, 23 m/s top speed, boost along the nose, variable held-jump height,
+a second jump or directional dodge within 1.45 seconds, aerial pitch/yaw/roll,
+wall/ceiling contact and jump-off. A full boost tank lasts about three seconds:
+33.3 per second, six full pads returning in ten seconds and 28 small pads giving
+12 every four seconds. Oriented car-ball response distinguishes softer wheel
+contacts from nose/dodge shots. Cars bump; supersonic head-on contacts demolish
+the other car for three seconds. Ball speed is capped at 60 m/s after contacts.
+
+Kickoffs count down for three seconds; goals celebrate for 3.4. Regulation is
+five active minutes, with the clock stopped during kickoff and celebration.
+At zero, an airborne ball stays live until a goal or its first floor contact.
+`ballGrounded` records contact before bounce response, so a bouncing ball does
+not extend regulation until it rests. A tie enters sudden-death overtime;
+another goal ends the match. Bot steering includes incoming-shot defense,
+signed braking/reverse and boost-pad routes; kickoff bots prioritize touching
+the ball before collecting a pad.
+
+Inputs clamp and quantize analogue fields and repair non-finite values before
+simulation. Keyboard, gamepad and touch use the same `Controls` contract.
+The input's `away` default keeps disconnected/menu seats on bot control.
+Menus are local and do not pause the match.
+
+## Presentation
+
+`geometry.tide` builds the original shaped car shell, windows, stripes,
+fenders, spoilers, vents, lamps, rims and wheels; the paneled ball; pitch,
+goals, curved lower banks, seating, crowd, trusses, floodlights and skyline.
+There are no imported game assets. The visible roof and hex cage use the
+simulation's ceiling height. Upper wall/ceiling fillets are approximated
+visually by vertical hex panels meeting the flat roof.
+
+`scene.tide` owns local meshes/materials, procedural turf and stadium shaders,
+2048 shadow map, four-sample MSAA scene target, bloom, HUD, boost exhaust and
+impact/goal effects. Targets resize in place. Every target-using view guards
+the first unconnected frame; otherwise a browser can submit target zero before
+Prepare has run. `devices.touchscreen.connected` selects touch UI: the fixed
+touch array's count is its capacity, not evidence of a touch device.
+
+The chase/ball camera interpolates yaw through the wrapped angle. Normalized
+vector interpolation stuck when the orange car faced exactly opposite the
+initial camera direction. Eye and look positions derive together from the
+already interpolated car position and smoothed yaw; another absolute-eye
+spring lost the car at speed when ball cam crossed behind it. Near walls the
+camera raises as its available chase distance shrinks.
+
+Goal, impact and kickoff one-shot sounds observe verified match state. A new
+game resetting the score does not trigger a goal celebration. Six original
+mono 48 kHz WAVs are regenerated by `sfx/make_sounds.py`, using only standard
+Python arithmetic. Engine and boost loops remain local and follow the car.
+
+## Build and catalog
+
+`TIDE_PRIVATE_PROTOTYPES=ON` enables `rocket_league`, `rocket_league_tests` and
+`rocket_league_render`. `private_games` includes it. On the web,
+`rocket_league_page` stages the self-contained HTML at
+`docs/static/prototypes/rocket-league/index.html`. Its checked-in thumbnail is
+an actual native gameplay capture. The admin catalog lists Afterburn for 1–2
+players; the game and image use the public `/prototypes/rocket-league/` root,
+outside Samples, search and sitemap. The existing manual docs workflow stages
+it; no deployment or workflow dispatch was performed for this addition.
+
+The nested `test/tide.packages` manifest prevents the CLI from treating C test
+hosts as playable code. Browser checks use the bundled supported Node on this
+Windows machine, not Node 24.15 (see `notes/testing.md`); every browser launch
+passes `--mute-audio`. Native captures use this checkout's binaries with
+`TIDE_HIDDEN=1` and `--script`/`--capture`, opening no audible device.
+
+## Validation and limits
+
+Local validation on 2026-10-09/10 passed both native debug CTest targets and
+all five web-debug targets. The final camera regression passed again on native,
+WebGL and WebGPU; the optimized playable executable was rebuilt. Native release
+also passed all nineteen simulation tests. The docs build and Svelte check
+passed (zero diagnostics), as did 31 admin, HTTP, analytics, SEO and access
+regressions with the staged game bytes and thumbnail.
+
+Nineteen simulation tests cover driving/boost,
+jump height and budgets, dodges, wall driving/jumps, pad timers, ball/car
+contacts, goal-mouth/post boundaries, scoring/kickoff, the zero-second aerial
+rule and overtime, demolition/respawn, restart authorization, input bounds,
+snapshot/pack/replay, a complete bot match and two lossy clients.
+
+The scripted deterministic full-world hash is `0x61d5af1dfe471339`, identical
+in native debug, release and WASI. A full bot match finishes 1–0 after 37,202
+ticks, with 300.57 active seconds and more than 43 touches. The network test
+reaches verified ticks 2,995/2,994, replays more than 25,000 ticks per client
+under latency/jitter/loss/reordering, agrees exactly with the server and needs
+zero resyncs.
+
+Native renderer and both web renderers check retained targets at 1280 by 720
+and 390 by 844, pixel coverage/variation, keyboard and touch control sampling,
+and that views leave the match hash unchanged. Camera fixtures cover both
+teams and sizes, opposite starting headings and a 180-degree ball-cam reversal
+while translating at 23 m/s. Playable browser checks use a local relay and two
+real WebRTC peers on WebGL and WebGPU, including desktop/phone layouts and
+drive/boost/jump controls. Native and browser captures were visually inspected.
+An independent ten-second audio capture is non-silent 48 kHz stereo (peak
+6,404); the generated sounds have not been listened to by the agent.
+
+This is a single-stadium duel prototype. Team playlists, ranked matchmaking,
+garage/customization, cosmetics, replay playback and the commercial game's
+exact competitive handling/contact exploits are not implemented. Automated
+driving/contact tests are not human competitive playtesting. Physical gamepad,
+real phone performance/touch feel, two separate machines through the public
+relay and CI-only platforms remain untested.

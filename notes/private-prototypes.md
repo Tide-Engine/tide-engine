@@ -86,6 +86,13 @@ staging covers them with no workflow change or deployment.
 Pages are self-contained. The site's admin auth, former game addresses,
 static build gate and catalog are in `notes/docs-site.md`.
 
+Afterburn (`prototypes/rocket-league/`) adds a Rocket League inspired car-soccer
+duel at the owner's request on 2026-10-09. It uses the same opt-in option and
+`private_games` integration: `rocket_league_page` stages the self-contained
+page at `/prototypes/rocket-league/`, with its gameplay thumbnail beside it.
+Its catalog card supports one player against a bot or two human players.
+Its game contract and validation belong to `notes/rocket-league.md`.
+
 ## Verification and limits
 
 The 2026-10-09 Build run (37994581083) exposed browser-playtest contention:

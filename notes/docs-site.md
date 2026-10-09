@@ -1,5 +1,18 @@
 # The docs site
 
+Afterburn catalog addition (2026-10-09): the owner's Rocket League prototype
+request adds a sixth server-loaded card, `rocket-league`, titled Afterburn,
+for one or two players. Its `rocket_league_page` target stages under
+`static/prototypes/rocket-league/`, and `private_games` includes it when
+`TIDE_PRIVATE_PROTOTYPES` is enabled. The public-root and retired-alias
+patterns in `admin.js` and the build asset gate cover the new id. Existing
+admin/production HTTP tests now exercise all six ids, including anonymous
+game access with no admin password and omission from Samples/search/sitemap.
+The existing manual workflow picks it up without modification. Site build and
+Svelte check passed, with 31 admin/HTTP/analytics/SEO/access regressions using
+the staged page and actual gameplay thumbnail (2026-10-10). This addition does
+not deploy the site. Game implementation/validation: `notes/rocket-league.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Building

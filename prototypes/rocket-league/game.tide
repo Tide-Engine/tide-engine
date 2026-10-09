@@ -1,0 +1,719 @@
+using Rooms;
+
+// Afterburn. One metre is one hundred arena units. Everything in this file
+// belongs to the deterministic match; the stadium and cameras are local.
+settings
+{
+    title = "Afterburn";
+    appId = "dev.tide.private.afterburn";
+    tickRate = 120;
+    maxPlayers = 2;
+    hostMigration = true;
+}
+
+const float ARENA_X = 40.96;
+const float ARENA_Z = 51.2;
+const float ARENA_HEIGHT = 20.44;
+const float GOAL_X = 8.93;
+const float GOAL_HEIGHT = 6.42;
+const float GOAL_DEPTH = 8.8;
+const float BALL_RADIUS = 0.915;
+const float CAR_HEIGHT = 0.38;
+const float CORNER_RADIUS = 11.52;
+const float RAMP_RADIUS = 3;
+const int PAD_COUNT = 34;
+
+enum MatchPhase { Kickoff, Playing, Goal, Finished }
+enum MatchStages { Inputs, Simulation }
+
+struct DriveInput
+{
+    float throttle;
+    float steer;
+    float pitch;
+    float yaw;
+    float roll;
+    bool jump;
+    bool boost;
+    bool handbrake;
+}
+
+struct CarState
+{
+    [Position] float3 position;
+    float3 velocity;
+    float3 forward = float3(0, 0, 1);
+    float3 up = float3(0, 1, 0);
+    // Local angular rates: pitch about right, yaw about up, roll about forward.
+    float3 angularVelocity;
+    float boost = 33;
+    bool grounded = true;
+    bool boosting;
+    bool jumpHeld;
+    bool secondJump;
+    float airTime;
+    float jumpTime;
+    float dodgeTime;
+    float respawn;
+    float wheelSpin;
+    float steer;
+    int team;
+    int touches;
+    int demolitions;
+}
+
+struct BallState
+{
+    [Position] float3 position = float3(0, BALL_RADIUS, 0);
+    float3 velocity;
+    float3 spin;
+    int lastTouch = -1;
+}
+
+singleton MatchState
+{
+    CarState[2] cars;
+    BallState ball;
+    float[PAD_COUNT] pads;
+    DriveInput[2] controls;
+    bool[2] active;
+    int blueScore;
+    int orangeScore;
+    float remaining = 300;
+    float phaseTime;
+    float elapsed;
+    MatchPhase phase;
+    bool overtime;
+    int winner = -1;
+    int lastScorer = -1;
+    int humans;
+    int occupied;
+    bool initialized;
+    bool ballGrounded;
+    int kickoffs;
+    Map<PlayerID, Entity> participants;
+}
+
+component Participant { int seat; }
+scene Main { }
+scene Match { }
+command Restart { }
+
+input Controls
+{
+    [Clamp(-1, 1)] float throttle;
+    [Clamp(-1, 1)] float steer;
+    [Clamp(-1, 1)] float pitch;
+    [Clamp(-1, 1)] float yaw;
+    [Clamp(-1, 1)] float roll;
+    bool jump;
+    bool boost;
+    bool handbrake;
+    [Absolute] bool away = true;
+
+    Sample(Devices devices, Lobby lobby, Hand hand)
+    {
+        if (!lobby.playing) return;
+        away = false;
+        var keys = devices.keyboard;
+        var pad = devices.gamepad;
+        throttle = hand.throttle + pad.rightTrigger - pad.leftTrigger;
+        steer = hand.steer + pad.leftStick.x;
+        pitch = hand.pitch - pad.leftStick.y;
+        yaw = hand.yaw + pad.leftStick.x;
+        roll = hand.roll;
+        if (keys.w.pressed || keys.upArrow.pressed) { throttle += 1; pitch -= 1; }
+        if (keys.s.pressed || keys.downArrow.pressed) { throttle -= 1; pitch += 1; }
+        if (keys.a.pressed || keys.leftArrow.pressed) { steer -= 1; yaw -= 1; }
+        if (keys.d.pressed || keys.rightArrow.pressed) { steer += 1; yaw += 1; }
+        if (keys.q.pressed || pad.leftShoulder.pressed) roll -= 1;
+        if (keys.e.pressed || pad.rightShoulder.pressed) roll += 1;
+        jump = hand.jump || keys.space.pressed || pad.buttonSouth.pressed;
+        boost = hand.boost || keys.leftShift.pressed || devices.mouse.left.pressed || pad.buttonEast.pressed;
+        handbrake = hand.handbrake || keys.leftCtrl.pressed || pad.buttonWest.pressed;
+        // Holding air-roll moves the stick's horizontal axis from yaw to roll.
+        if (handbrake) { roll += yaw; yaw = 0; }
+    }
+}
+
+float3 UnitOr(float3 value, float3 fallback)
+{
+    var squared = Math.LengthSq(value);
+    return squared > 0.000001 ? value / Math.Sqrt(squared) : fallback;
+}
+
+float3 CarRight(CarState car) { return UnitOr(Math.Cross(car.up, car.forward), float3(1, 0, 0)); }
+
+float3 RotateVector(float3 value, float3 axis, float angle)
+{
+    var sine = Math.Sin(angle);
+    var cosine = Math.Cos(angle);
+    return value * cosine + Math.Cross(axis, value) * sine + axis * (Math.Dot(axis, value) * (1 - cosine));
+}
+
+void Orthonormalize(mut CarState car)
+{
+    car.forward = UnitOr(car.forward, float3(0, 0, 1));
+    var right = UnitOr(Math.Cross(car.up, car.forward), float3(1, 0, 0));
+    car.up = UnitOr(Math.Cross(car.forward, right), float3(0, 1, 0));
+}
+
+bool PadLarge(int index) { return index < 6; }
+
+float3 PadPosition(int index)
+{
+    if (index < 4) return float3(index % 2 == 0 ? -35.84 : 35.84, 0, index < 2 ? -40.96 : 40.96);
+    if (index < 6) return float3(index == 4 ? -35.84 : 35.84, 0, 0);
+    // Fourteen mirrored small pads per half, including the centre pair.
+    var slot = (index - 6) % 14;
+    var half = index < 20 ? -1 : 1;
+    if (slot < 3) return float3((slot - 1) * 17.92, 0, half * 42.24);
+    if (slot < 5) return float3(slot == 3 ? -9.4 : 9.4, 0, half * 33.28);
+    if (slot < 8) return float3((slot - 6) * 25.6, 0, half * 28.16);
+    if (slot < 10) return float3(slot == 8 ? -17.92 : 17.92, 0, half * 17.92);
+    if (slot < 13) return float3((slot - 11) * 28.16, 0, half * 10.24);
+    return float3(half * 10.24, 0, 0);
+}
+
+CarState KickoffCar(int seat, int kickoff)
+{
+    var sign = seat == 0 ? 1 : -1;
+    // Alternate straight and offset kickoffs without a hidden random source.
+    var x = kickoff % 3 == 1 ? 2.56 : kickoff % 3 == 2 ? -2.56 : 0;
+    var p = float3(x * sign, CAR_HEIGHT, -sign * 36.5);
+    var forward = UnitOr(float3(-p.x * 0.08, 0, sign), float3(0, 0, sign));
+    return CarState { team = seat, position = p, forward = forward };
+}
+
+void ResetKickoff(mut MatchState state)
+{
+    state.kickoffs += 1;
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var old = state.cars[seat];
+        state.cars[seat] = KickoffCar(seat, state.kickoffs);
+        state.cars[seat].touches = old.touches;
+        state.cars[seat].demolitions = old.demolitions;
+    }
+    state.ball = default;
+    state.ballGrounded = true;
+    for (var pad = 0; pad < PAD_COUNT; pad++) state.pads[pad] = 0;
+    state.phase = MatchPhase.Kickoff;
+    state.phaseTime = 3;
+}
+
+void NewMatch(mut MatchState state)
+{
+    state.blueScore = 0;
+    state.orangeScore = 0;
+    state.remaining = 300;
+    state.elapsed = 0;
+    state.overtime = false;
+    state.winner = -1;
+    state.lastScorer = -1;
+    state.kickoffs = -1;
+    state.cars[0] = default;
+    state.cars[1] = default;
+    state.initialized = true;
+    ResetKickoff(state);
+}
+
+// Resolve a sphere against a plane, retaining the inward contact normal.
+void PlaneContact(mut float3 position, mut float3 velocity, float3 normal,
+                  float penetration, float restitution, mut float3 contact)
+{
+    if (penetration < -0.008) return;
+    position += normal * Math.Max(0, penetration);
+    var incoming = Math.Dot(velocity, normal);
+    if (incoming < 0) velocity -= normal * (incoming * (1 + restitution));
+    contact = normal;
+}
+
+// Rounded horizontal corners and quarter-circle wall ramps make one closed
+// playing volume. A goal is a real recess that cars and the ball can enter.
+float3 ArenaContact(mut float3 position, mut float3 velocity, float radius, float restitution)
+{
+    mut var contact = float3(0);
+    var sx = position.x < 0 ? -1 : 1;
+    var sz = position.z < 0 ? -1 : 1;
+    PlaneContact(position, velocity, float3(0, 1, 0), radius - position.y, restitution, contact);
+    PlaneContact(position, velocity, float3(0, -1, 0), position.y - (ARENA_HEIGHT - radius), restitution, contact);
+    PlaneContact(position, velocity, float3(-sx, 0, 0), Math.Abs(position.x) - (ARENA_X - radius), restitution, contact);
+    var inMouth = Math.Abs(position.x) < GOAL_X - radius && position.y < GOAL_HEIGHT - radius;
+    var pastLine = Math.Abs(position.z) > ARENA_Z;
+    if (inMouth || pastLine && Math.Abs(position.x) < GOAL_X && position.y < GOAL_HEIGHT)
+    {
+        PlaneContact(position, velocity, float3(0, 0, -sz), Math.Abs(position.z) - (ARENA_Z + GOAL_DEPTH - radius), restitution, contact);
+        if (pastLine)
+        {
+            PlaneContact(position, velocity, float3(-sx, 0, 0), Math.Abs(position.x) - (GOAL_X - radius), restitution, contact);
+            PlaneContact(position, velocity, float3(0, -1, 0), position.y - (GOAL_HEIGHT - radius), restitution, contact);
+        }
+    }
+    else PlaneContact(position, velocity, float3(0, 0, -sz), Math.Abs(position.z) - (ARENA_Z - radius), restitution, contact);
+
+    var corner = float2(Math.Abs(position.x) - (ARENA_X - CORNER_RADIUS), Math.Abs(position.z) - (ARENA_Z - CORNER_RADIUS));
+    if (corner.x > 0 && corner.y > 0)
+    {
+        var distance = Math.Length(corner);
+        var normal = float3(-sx * corner.x / distance, 0, -sz * corner.y / distance);
+        PlaneContact(position, velocity, normal, distance - (CORNER_RADIUS - radius), restitution, contact);
+    }
+
+    // Both the floor and ceiling blend into the walls. The centre of each
+    // fillet is inside the field, so contact normals rotate continuously.
+    for (var cap = 0; cap < 2; cap++)
+    {
+        var height = cap == 0 ? RAMP_RADIUS : ARENA_HEIGHT - RAMP_RADIUS;
+        var nearCap = cap == 0 ? position.y < height : position.y > height;
+        if (!nearCap) continue;
+        var around = float2(Math.Abs(position.x) - (ARENA_X - CORNER_RADIUS), Math.Abs(position.z) - (ARENA_Z - CORNER_RADIUS));
+        if (around.x > 0 && around.y > 0)
+        {
+            var radial = Math.Length(around);
+            var bank = float2(radial - (CORNER_RADIUS - RAMP_RADIUS), position.y - height);
+            if (bank.x > 0)
+            {
+                var distance = Math.Length(bank);
+                var normal = float3(-sx * around.x / radial * bank.x / distance,
+                    -bank.y / distance, -sz * around.y / radial * bank.x / distance);
+                PlaneContact(position, velocity, normal, distance - (RAMP_RADIUS - radius), restitution, contact);
+            }
+        }
+        var side = float2(Math.Abs(position.x) - (ARENA_X - RAMP_RADIUS), position.y - height);
+        if (side.x > 0)
+        {
+            var distance = Math.Length(side);
+            var normal = float3(-sx * side.x / distance, -side.y / distance, 0);
+            PlaneContact(position, velocity, normal, distance - (RAMP_RADIUS - radius), restitution, contact);
+        }
+        var end = float2(Math.Abs(position.z) - (ARENA_Z - RAMP_RADIUS), position.y - height);
+        if (end.x > 0 && !inMouth)
+        {
+            var distance = Math.Length(end);
+            var normal = float3(0, -end.y / distance, -sz * end.x / distance);
+            PlaneContact(position, velocity, normal, distance - (RAMP_RADIUS - radius), restitution, contact);
+        }
+    }
+    return contact;
+}
+
+void StepCar(mut CarState car, DriveInput control, float dt)
+{
+    car.boosting = false;
+    if (car.respawn > 0)
+    {
+        car.respawn = Math.Max(0, car.respawn - dt);
+        if (car.respawn == 0)
+        {
+            var team = car.team;
+            var demos = car.demolitions;
+            var touches = car.touches;
+            car = KickoffCar(team, 0);
+            car.position.x = team == 0 ? -24 : 24;
+            car.position.z = team == 0 ? -40 : 40;
+            car.demolitions = demos;
+            car.touches = touches;
+        }
+        return;
+    }
+    var jumpPressed = control.jump && !car.jumpHeld;
+    car.jumpHeld = control.jump;
+    car.steer = control.steer;
+    var right = CarRight(car);
+    var speed = Math.Length(car.velocity);
+    var along = Math.Dot(car.velocity, car.forward);
+    var wasGrounded = car.grounded;
+    if (car.grounded)
+    {
+        car.airTime = 0;
+        car.secondJump = false;
+        car.dodgeTime = 0;
+        var direction = along < -0.5 ? -1 : 1;
+        mut var turn = (1.5 + Math.Min(15, Math.Abs(along)) * 0.09) * control.steer * direction;
+        if (control.handbrake) turn *= 1.75;
+        car.forward = RotateVector(car.forward, car.up, turn * dt);
+        var sideSpeed = Math.Dot(car.velocity, right);
+        car.velocity -= right * (sideSpeed * Math.Min(1, dt * (control.handbrake ? 1.7 : 12)));
+        mut var acceleration = 16 * Math.Max(0.05, 1 - Math.Abs(along) / 14.1);
+        if (control.throttle * along < -0.5) acceleration = 35;
+        if (control.throttle < 0 && along <= 0) acceleration = 12 * Math.Max(0, 1 - Math.Abs(along) / 12);
+        car.velocity += car.forward * (control.throttle * acceleration * dt);
+        if (Math.Abs(control.throttle) < 0.05 && !control.boost)
+            car.velocity *= Math.Max(0, 1 - dt * 1.7);
+        // Tyres push toward their surface, including the ceiling.
+        car.velocity -= car.up * (13 * dt);
+        if (jumpPressed)
+        {
+            car.velocity += car.up * 3.05;
+            car.position += car.up * 0.04;
+            car.grounded = false;
+            car.jumpTime = 0.2;
+            car.airTime = 0;
+        }
+    }
+    else
+    {
+        car.airTime += dt;
+        if (car.jumpTime > 0)
+        {
+            if (control.jump) car.velocity += car.up * (14.6 * dt);
+            car.jumpTime = Math.Max(0, car.jumpTime - dt);
+        }
+        if (jumpPressed && !car.secondJump && car.airTime < 1.45)
+        {
+            car.secondJump = true;
+            car.jumpTime = 0;
+            mut var dodge = float2(control.steer, -control.pitch);
+            if (Math.LengthSq(dodge) > 0.12)
+            {
+                dodge = Math.Normalize(dodge);
+                var way = UnitOr(right * dodge.x + car.forward * dodge.y, car.forward);
+                car.velocity += way * 5.2;
+                if (car.velocity.y < 0) car.velocity.y *= 0.3;
+                car.velocity.y += 0.6;
+                car.angularVelocity = float3(dodge.y * 9.7, 0, -dodge.x * 9.7);
+                car.dodgeTime = 0.62;
+            }
+            else car.velocity += car.up * 3;
+        }
+        if (car.dodgeTime > 0)
+        {
+            car.dodgeTime = Math.Max(0, car.dodgeTime - dt);
+            if (car.dodgeTime == 0) car.angularVelocity *= 0.25;
+        }
+        else
+        {
+            var target = float3(control.pitch * 4.7, control.yaw * 3.5, -control.roll * 5.2);
+            car.angularVelocity += (target - car.angularVelocity) * Math.Min(1, dt * 5.5);
+        }
+        // Pitch positive rotates the nose down, matching pulling the stick.
+        car.forward = RotateVector(car.forward, right, car.angularVelocity.x * dt);
+        car.up = RotateVector(car.up, right, car.angularVelocity.x * dt);
+        car.forward = RotateVector(car.forward, car.up, car.angularVelocity.y * dt);
+        car.up = RotateVector(car.up, car.forward, car.angularVelocity.z * dt);
+        car.velocity += car.forward * (control.throttle * 0.65 * dt);
+        car.velocity *= Math.Max(0, 1 - dt * 0.035);
+    }
+
+    if (control.boost && car.boost > 0)
+    {
+        car.boosting = true;
+        car.boost = Math.Max(0, car.boost - 33.3 * dt);
+        car.velocity += car.forward * ((car.grounded ? 9.92 : 10.6) * dt);
+    }
+    car.velocity.y -= 6.5 * dt;
+    var velocityLength = Math.Length(car.velocity);
+    if (velocityLength > 23) car.velocity *= 23 / velocityLength;
+    car.position += car.velocity * dt;
+    var normal = ArenaContact(car.position, car.velocity, CAR_HEIGHT, 0.08);
+    car.grounded = false;
+    if (Math.LengthSq(normal) > 0.5)
+    {
+        var alignment = Math.Dot(car.up, normal);
+        if (alignment > 0.35 || wasGrounded && speed > 2 && alignment > -0.15)
+        {
+            // Project the heading onto the tyre plane instead of levelling
+            // to world up: ramp, side wall and ceiling driving use one rule.
+            car.forward = UnitOr(car.forward - normal * Math.Dot(car.forward, normal), car.forward);
+            car.up = normal;
+            car.angularVelocity = float3(0);
+            car.grounded = true;
+            car.jumpTime = 0;
+        }
+        else if (jumpPressed && car.position.y < 0.75)
+        {
+            // A jump while overturned performs the recoverable self-right.
+            car.up = float3(0, 1, 0);
+            car.forward = UnitOr(float3(car.forward.x, 0, car.forward.z), float3(0, 0, 1));
+            car.velocity.y = 2.8;
+            car.secondJump = true;
+            car.angularVelocity = float3(0);
+        }
+    }
+    Orthonormalize(car);
+    car.wheelSpin += Math.Dot(car.velocity, car.forward) * dt * 5;
+    if (Math.Abs(car.wheelSpin) > Math.TAU * 100) car.wheelSpin = 0;
+}
+
+void TouchBall(mut CarState car, mut BallState ball, int seat)
+{
+    if (car.respawn > 0) return;
+    var right = CarRight(car);
+    var offset = ball.position - car.position;
+    var local = float3(Math.Dot(offset, right), Math.Dot(offset, car.up), Math.Dot(offset, car.forward));
+    var closest = float3(Math.Clamp(local.x, -0.5, 0.5), Math.Clamp(local.y, -0.23, 0.23), Math.Clamp(local.z, -0.74, 0.74));
+    var centre = car.position + right * closest.x + car.up * closest.y + car.forward * closest.z;
+    var delta = ball.position - centre;
+    var distance = Math.Length(delta);
+    if (distance >= BALL_RADIUS) return;
+    var normal = UnitOr(delta, UnitOr(offset, float3(0, 1, 0)));
+    ball.position += normal * (BALL_RADIUS - distance + 0.001);
+    var closing = Math.Dot(car.velocity - ball.velocity, normal);
+    if (closing > 0)
+    {
+        var underside = Math.Dot(normal, car.up) < -0.3;
+        var strike = closing * (underside ? 0.85 : 1.4) + Math.Length(car.velocity) * (underside ? 0.1 : 0.24);
+        ball.velocity += normal * strike;
+        // A front bumper lifts the sphere; hood and aerial contacts already
+        // carry their real contact normal and need no artificial aim assist.
+        if (car.grounded && Math.Dot(normal, car.forward) > 0.4)
+            ball.velocity.y += Math.Min(3.5, closing * 0.13);
+        car.velocity -= normal * (closing * 0.12);
+        ball.spin = Math.Cross(normal, ball.velocity - car.velocity) * 0.6;
+    }
+    if (ball.lastTouch != seat || closing > 1) car.touches += 1;
+    ball.lastTouch = seat;
+}
+
+void ScoreGoal(mut MatchState state, int team)
+{
+    if (state.phase != MatchPhase.Playing) return;
+    if (team == 0) state.blueScore += 1;
+    else state.orangeScore += 1;
+    state.lastScorer = team;
+    state.phase = MatchPhase.Goal;
+    state.phaseTime = 3.4;
+    if (state.overtime || state.remaining <= 0)
+    {
+        if (state.blueScore != state.orangeScore)
+            state.winner = state.blueScore > state.orangeScore ? 0 : 1;
+    }
+}
+
+void StepBall(mut MatchState state, float dt)
+{
+    state.ball.velocity.y -= 6.5 * dt;
+    state.ball.velocity *= Math.Max(0, 1 - 0.03 * dt);
+    var speed = Math.Length(state.ball.velocity);
+    if (speed > 60) state.ball.velocity *= 60 / speed;
+    state.ball.position += state.ball.velocity * dt;
+    // Keep the contact from before restitution: a ball bouncing at 0:00
+    // ends regulation on its first floor hit, not when its bounces settle.
+    state.ballGrounded = state.ball.position.y <= BALL_RADIUS + 0.008 && state.ball.velocity.y <= 0;
+    for (var seat = 0; seat < 2; seat++)
+    {
+        mut var car = state.cars[seat];
+        TouchBall(car, state.ball, seat);
+        state.cars[seat] = car;
+    }
+    var struckSpeed = Math.Length(state.ball.velocity);
+    if (struckSpeed > 60) state.ball.velocity *= 60 / struckSpeed;
+    if (Math.Abs(state.ball.position.z) > ARENA_Z + BALL_RADIUS && Math.Abs(state.ball.position.x) < GOAL_X - BALL_RADIUS && state.ball.position.y < GOAL_HEIGHT - BALL_RADIUS)
+        ScoreGoal(state, state.ball.position.z > 0 ? 0 : 1);
+    var contact = ArenaContact(state.ball.position, state.ball.velocity, BALL_RADIUS, 0.64);
+    if (contact.y > 0.5)
+    {
+        if (Math.Abs(state.ball.velocity.y) < 0.35) state.ball.velocity.y = 0;
+        state.ball.velocity.x *= Math.Max(0, 1 - 0.14 * dt);
+        state.ball.velocity.z *= Math.Max(0, 1 - 0.14 * dt);
+    }
+    state.ball.spin *= Math.Max(0, 1 - dt * 0.3);
+}
+
+void BumpCars(mut MatchState state)
+{
+    if (state.cars[0].respawn > 0 || state.cars[1].respawn > 0) return;
+    var difference = state.cars[1].position - state.cars[0].position;
+    var distance = Math.Length(difference);
+    if (distance >= 1.32) return;
+    var normal = UnitOr(difference, float3(1, 0, 0));
+    var impact = Math.Dot(state.cars[0].velocity - state.cars[1].velocity, normal);
+    var speed0 = Math.Length(state.cars[0].velocity);
+    var speed1 = Math.Length(state.cars[1].velocity);
+    mut var demolished = -1;
+    if (speed0 > 21 && Math.Dot(state.cars[0].forward, normal) > 0.7 && impact > 10) demolished = 1;
+    if (speed1 > 21 && Math.Dot(state.cars[1].forward, -normal) > 0.7 && impact > 10) demolished = 0;
+    if (demolished >= 0)
+    {
+        state.cars[demolished].respawn = 3;
+        state.cars[demolished].velocity = float3(0);
+        state.cars[1 - demolished].demolitions += 1;
+        return;
+    }
+    state.cars[0].position -= normal * ((1.32 - distance) * 0.5);
+    state.cars[1].position += normal * ((1.32 - distance) * 0.5);
+    if (impact > 0)
+    {
+        state.cars[0].velocity -= normal * (impact * 0.8);
+        state.cars[1].velocity += normal * (impact * 0.8);
+        state.cars[0].velocity += float3(0, Math.Min(2, impact * 0.1), 0);
+        state.cars[1].velocity += float3(0, Math.Min(2, impact * 0.1), 0);
+    }
+}
+
+void CollectPads(mut MatchState state, float dt)
+{
+    for (var pad = 0; pad < PAD_COUNT; pad++)
+    {
+        state.pads[pad] = Math.Max(0, state.pads[pad] - dt);
+        if (state.pads[pad] > 0) continue;
+        var at = PadPosition(pad);
+        var reach = PadLarge(pad) ? 1.65 : 1.15;
+        for (var seat = 0; seat < 2; seat++)
+        {
+            var car = state.cars[seat];
+            if (car.respawn > 0 || car.boost >= 100 || car.position.y > 1.3) continue;
+            if (Math.DistanceSq(car.position, at) > reach * reach) continue;
+            state.cars[seat].boost = Math.Min(100, car.boost + (PadLarge(pad) ? 100 : 12));
+            state.pads[pad] = PadLarge(pad) ? 10 : 4;
+            break;
+        }
+    }
+}
+
+DriveInput BotInput(MatchState state, int seat)
+{
+    var car = state.cars[seat];
+    var sign = seat == 0 ? 1 : -1;
+    var ball = state.ball;
+    var distance = Math.Distance(car.position, ball.position);
+    var lead = Math.Clamp(distance / 25, 0.05, 0.9);
+    mut var target = ball.position + ball.velocity * lead;
+    target.y = CAR_HEIGHT;
+    // Approach the ball from its own half to strike toward the other goal.
+    var goal = float3(0, 0, sign * (ARENA_Z + 2));
+    var shot = UnitOr(goal - float3(ball.position.x, 0, ball.position.z), float3(0, 0, sign));
+    if (distance > 5) target -= shot * Math.Min(7, distance * 0.2);
+    if (ball.position.z * sign < -28 && ball.velocity.z * sign < -3 && distance > 14)
+        target = float3(Math.Clamp(ball.position.x * 0.5, -7, 7), CAR_HEIGHT, -sign * 43);
+    // The bot collects a nearby pad when it has room to do so.
+    if (car.boost < 18 && distance > 15 && ball.lastTouch >= 0)
+    {
+        mut var best = 1000.0;
+        for (var pad = 0; pad < PAD_COUNT; pad++)
+        {
+            if (state.pads[pad] > 0) continue;
+            var p = PadPosition(pad);
+            var cost = Math.Distance(car.position, p) + Math.Distance(p, target) * 0.35 - (PadLarge(pad) ? 8 : 0);
+            if (cost < best) { best = cost; target = p; }
+        }
+    }
+    var heading = UnitOr(float3(target.x - car.position.x, 0, target.z - car.position.z), car.forward);
+    var right = CarRight(car);
+    var alignment = Math.Dot(heading, car.forward);
+    var lateral = Math.Dot(heading, right);
+    mut var input = DriveInput { throttle = 1, steer = Math.Clamp(lateral * 3.2, -1, 1) };
+    var targetDistance = Math.Distance(car.position, target);
+    var speed = Math.Length(car.velocity);
+    var desiredSpeed = Math.Min(19, Math.Max(3.5, targetDistance * 1.1)) * Math.Max(0.35, alignment);
+    input.handbrake = alignment < 0.65 && speed > 4;
+    if (speed > desiredSpeed + 0.6) input.throttle = Math.Dot(car.velocity, car.forward) >= 0 ? -1 : 1;
+    else if (alignment < 0.5) input.throttle = 0.35;
+    input.boost = alignment > 0.96 && targetDistance > 9 && distance > 7 && car.boost > 3;
+    if (!car.grounded)
+    {
+        input.pitch = Math.Clamp(car.forward.y * 3 - (ball.position.y > 3 && distance < 12 ? 0.5 : 0), -1, 1);
+        input.yaw = Math.Clamp(lateral * 2, -1, 1);
+        input.roll = Math.Clamp(-right.y * 3, -1, 1);
+        input.boost = distance < 15 && ball.position.y > 3 && car.forward.y > 0.1;
+        input.jump = car.airTime > 0.16 && car.airTime < 0.23 && !car.jumpHeld && distance < 5 && alignment > 0.8;
+        if (input.jump) input.pitch = -1;
+    }
+    else input.jump = distance < 4.5 && alignment > 0.88 && ball.position.y > 1.5 && ball.position.y < 6;
+    return input;
+}
+
+void AdvanceMatch(mut MatchState state, float dt)
+{
+    if (state.phase == MatchPhase.Finished) return;
+    if (state.phase == MatchPhase.Kickoff)
+    {
+        state.phaseTime = Math.Max(0, state.phaseTime - dt);
+        if (state.phaseTime == 0) state.phase = MatchPhase.Playing;
+        return;
+    }
+    if (state.phase == MatchPhase.Goal)
+    {
+        state.phaseTime = Math.Max(0, state.phaseTime - dt);
+        if (state.phaseTime > 0) return;
+        if (state.winner >= 0) { state.phase = MatchPhase.Finished; return; }
+        if (state.remaining <= 0 && state.blueScore == state.orangeScore) state.overtime = true;
+        ResetKickoff(state);
+        return;
+    }
+    state.elapsed += dt;
+    if (!state.overtime) state.remaining = Math.Max(0, state.remaining - dt);
+    // At 0:00 the final aerial remains live until the sphere touches ground.
+    if (!state.overtime && state.remaining == 0 && state.ballGrounded)
+    {
+        if (state.blueScore == state.orangeScore)
+        {
+            state.overtime = true;
+            ResetKickoff(state);
+        }
+        else
+        {
+            state.winner = state.blueScore > state.orangeScore ? 0 : 1;
+            state.phase = MatchPhase.Finished;
+        }
+    }
+}
+
+event(PlayerJoined joined) Enter(mut MatchState state)
+{
+    if (state.participants.Has(joined.player) || state.humans >= 2) return;
+    var seat = (state.occupied & 1) == 0 ? 0 : 1;
+    state.occupied |= 1 << seat;
+    state.humans += 1;
+    state.participants[joined.player] = Spawn(Participant { seat = seat }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Leave(mut MatchState state, World world)
+{
+    if (!state.participants.Has(left.player)) return;
+    var entity = state.participants[left.player];
+    var participant = world.Get<Participant>(entity);
+    state.occupied &= ~(1 << participant.seat);
+    state.active[participant.seat] = false;
+    state.humans -= 1;
+    entity.Destroy();
+    state.participants.Remove(left.player);
+}
+
+command(Restart restart, PlayerID sender) StartAgain(mut MatchState state)
+{
+    if (!state.participants.Has(sender)) return;
+    NewMatch(state);
+}
+
+[Stage(MatchStages.Inputs)]
+system ClearControls(mut MatchState state)
+{
+    if (!state.initialized) NewMatch(state);
+    state.active[0] = false;
+    state.active[1] = false;
+}
+
+[Stage(MatchStages.Inputs), After(ClearControls)]
+system ReadControls(Controls input, Participant participant, mut MatchState state, with Owner)
+{
+    var seat = participant.seat;
+    if (seat < 0 || seat > 1 || input.away) return;
+    state.active[seat] = true;
+    state.controls[seat] = DriveInput { throttle = input.throttle, steer = input.steer,
+        pitch = input.pitch, yaw = input.yaw, roll = input.roll,
+        jump = input.jump, boost = input.boost, handbrake = input.handbrake };
+}
+
+[Stage(MatchStages.Simulation)]
+system Simulate(mut MatchState state, Time time)
+{
+    var dt = time.dt;
+    // Goal celebration leaves the ball and cars drifting under real physics.
+    if (state.phase == MatchPhase.Playing || state.phase == MatchPhase.Goal)
+    {
+        for (var seat = 0; seat < 2; seat++)
+        {
+            var control = state.phase == MatchPhase.Goal ? DriveInput { } :
+                state.active[seat] ? state.controls[seat] : BotInput(state, seat);
+            mut var car = state.cars[seat];
+            StepCar(car, control, dt);
+            state.cars[seat] = car;
+        }
+        BumpCars(state);
+        StepBall(state, dt);
+        CollectPads(state, dt);
+    }
+    AdvanceMatch(state, dt);
+}
