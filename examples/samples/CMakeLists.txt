@@ -32,6 +32,9 @@ foreach(id pong snake tanks bomberman connect-four asteroids sumo tower-defense 
     if(TIDE_WEB)
         # Stage even an unchanged build, so clearing docs/static is recoverable.
         set(destination "${PROJECT_SOURCE_DIR}/docs/static/samples/${id}")
+        if(id STREQUAL "two-forks")
+            set(destination "${PROJECT_SOURCE_DIR}/docs/static/admin/prototypes/two-forks")
+        endif()
         add_custom_target(${target}_page
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
