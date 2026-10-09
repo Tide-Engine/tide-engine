@@ -7,9 +7,9 @@ An internal, unpublished co-op roguelike prototype for **two players**. Two lamp
 From the repository root:
 
 ```powershell
-cmake --preset debug -DTIDE_PRIVATE_PROTOTYPES=ON
-cmake --build --preset debug --target deadbell
-.\build\debug\bin\deadbell.exe
+cmake --preset release -DTIDE_PRIVATE_PROTOTYPES=ON
+cmake --build --preset release --target deadbell
+.\build\release\bin\deadbell.exe
 ```
 
 Open the menu, host a room, and share its code with your partner. Your partner joins the room from their own copy of the same build. Both players choose a weapon; the host then selects **Begin expedition**. A single player can inspect the city and prepare a room, but the expedition requires two joined players.
@@ -19,15 +19,15 @@ For two native instances on the same machine, start one with `--host` and the ot
 The web build is opt-in too:
 
 ```powershell
-cmake --preset web-debug -DTIDE_PRIVATE_PROTOTYPES=ON
-cmake --build --preset web-debug --target deadbell
+cmake --preset web-release -DTIDE_PRIVATE_PROTOTYPES=ON
+cmake --build --preset web-release --target deadbell
 ```
 
-This produces `build/web-debug/bin/deadbell.html`. Serve the build directory through HTTP before opening the page. The prototype is excluded from public examples, docs staging, and package installation.
+This produces `build/web-release/bin/deadbell.html`. Serve the build directory through HTTP before opening the page. The prototype is excluded from public examples, docs staging, and package installation.
 
 ## The run
 
-The run has a beginning, an escalation, and an ending: **the Drowned Ward, the Iron Procession, and the Ash Cathedral**, three seals in each district, then the Last Cantor. The intended successful run is 30–60 minutes, with a normal pacing target around 40–50 minutes. These are design targets, not measured human playtimes.
+The run has a beginning, an escalation, and an ending: **the Drowned Ward, the Iron Procession, and the Ash Cathedral**, three seals in each district, then the Last Cantor. The intended successful run is 30–60 minutes, with a normal pacing target around 40–50 minutes. An automated normal-speed run completed every seal and the boss in **32:19**, using ordinary combat and rescue inputs. A human pair's playtime remains unmeasured.
 
 Move toward the brass bell together, use noise lures to bend the crowd away from your route, and hold interact near it together to start the alarm. Each seal needs 165 seconds of capture progress:
 
@@ -77,10 +77,14 @@ Choose your weapon in the lobby. During a sanctuary, choose one of the three per
 ## Verify a change
 
 ```powershell
+cmake --preset debug -DTIDE_PRIVATE_PROTOTYPES=ON
 cmake --build --preset debug --target deadbell deadbell_tests deadbell_smoke
 ctest --preset debug -R '^deadbell_'
+cmake --preset web-debug -DTIDE_PRIVATE_PROTOTYPES=ON
 cmake --build --preset web-debug --target deadbell deadbell_tests deadbell_smoke
 ctest --preset web-debug -R '^deadbell_'
 ```
 
 The tests exercise the two-player gate, combat and rescue, personal drafts, all nine seals, a real boss kill, seeded replay, and 8,000 simulated enemies. Implementation notes and the limits of validation are in [notes/deadbell.md](../../notes/deadbell.md).
+
+Windows web tests require Node 24.16 or newer; set `TIDE_NODE` at configure time if the supported runtime is outside `PATH`.
