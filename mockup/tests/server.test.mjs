@@ -141,7 +141,7 @@ test('accounts are private, cookie sessions persist, invitations grant project a
     const signedUp = await owner.signup('Alice');
     await friend.signup('Bob');
     await stranger.signup('Eve');
-    assert.match(signedUp.response.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/);
+    assert.match(signedUp.response.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
     const project = await owner.project();
     assert.equal((await friend.call(`/api/projects/${project.id}`)).status, 404);
     assert.equal((await stranger.call('/api/projects')).data.projects.length, 0);

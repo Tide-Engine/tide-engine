@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const empty = () => ({
-    version: 1, users: {}, sessions: {}, projects: {}, messages: {},
+    version: 1, users: {}, identities: {}, sessions: {}, projects: {}, messages: {},
     revisions: {}, feedback: {}, assets: {}, invites: {}, jobs: {}, previews: {},
 });
 

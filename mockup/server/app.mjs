@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { openStore } from './store.mjs';
+import { appendCookie, authError, cookie, createOAuth } from './oauth.mjs';
 import * as Y from 'yjs';
 
 const scrypt = promisify(deriveKey);
@@ -102,9 +103,10 @@ function json(res, status, value) {
     res.end(JSON.stringify(value));
 }
 
-export async function createApp({ dataDir, generator, builder, starter, secureCookies = false, adminEmails = [] } = {}) {
+export async function createApp({ dataDir, generator, builder, starter, secureCookies = false, adminEmails = [], oauth = {} } = {}) {
     if (!dataDir) throw new Error('A dataDir is required.');
     const store = await openStore(dataDir);
+    const social = createOAuth(oauth, { secureCookies });
     const roomStates = new Map();
     const authAttempts = new Map();
     const running = new Set();
@@ -112,9 +114,12 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
     let stopping = false;
     const admins = new Set(adminEmails.map(email => email.trim().toLowerCase()).filter(Boolean));
     const isAdmin = user => user?.admin === true && (!admins.size || admins.has(user.email));
-    const publicUser = user => user ? { id: user.id, name: user.name, email: user.email, isAdmin: isAdmin(user) } : null;
+    const hasPassword = user => typeof user?.salt === 'string' && user.salt.length > 0 && user.salt.length <= 256 && typeof user.passwordHash === 'string' && /^[a-f0-9]{128}$/i.test(user.passwordHash);
+    const publicUser = user => user ? { id: user.id, name: user.name, email: user.email, isAdmin: isAdmin(user), hasPassword: hasPassword(user),
+        authMethods: [...(hasPassword(user) ? ['password'] : []), ...Object.values(store.state.identities || {}).filter(identity => identity.userId === user.id).map(identity => identity.provider)] } : null;
     const configured = { generation: typeof generator === 'function', build: typeof builder === 'function', starter: Boolean(starter) };
     await store.change(state => {
+        state.identities ||= {};
         for (const project of Object.values(state.projects)) {
             if (!project.document) project.document = documentUpdate(project.idea).encoded;
         }
@@ -131,11 +136,69 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
     });
 
     function session(req, required = true) {
-        const token = (req.headers.cookie || '').split(';').map(value => value.trim()).find(value => value.startsWith('mockup_session='))?.slice(15);
+        const token = cookie(req, 'mockup_session');
         const record = token && store.state.sessions[hash(token)];
         const user = record && record.expires > Date.now() && store.state.users[record.userId];
         if (!user && required) fail(401, 'Sign in to continue.');
         return user || null;
+    }
+
+    function sessionHash(req) {
+        const token = cookie(req, 'mockup_session');
+        return token ? hash(token) : null;
+    }
+
+    function requireLinkSession(req, link, state = store.state) {
+        const key = sessionHash(req);
+        const current = key && state.sessions[key];
+        if (!link || key !== link.sessionHash || !current || current.userId !== link.userId || current.expires <= Date.now() || !state.users[link.userId]) throw authError('link-expired');
+        return state.users[link.userId];
+    }
+
+    async function socialUser(req, identity, link) {
+        return store.change(state => {
+            const identityKey = hash(`${identity.provider}\0${identity.subject}`);
+            const existing = state.identities[identityKey];
+            let user;
+            if (link) {
+                user = requireLinkSession(req, link, state);
+                if ((existing && existing.userId !== user.id) || Object.values(state.identities).some(item => item.userId === user.id && item.provider === identity.provider && item.subject !== identity.subject)) throw authError('identity-linked');
+            } else if (existing) {
+                user = state.users[existing.userId];
+                if (!user) throw authError('provider');
+                // A changed provider email never changes who owns an identity.
+                if (!hasPassword(user) && user.admin !== true && !admins.has(identity.email) && !Object.values(state.users).some(item => item.id !== user.id && item.email === identity.email)) user.email = identity.email;
+            } else {
+                if (admins.has(identity.email)) throw authError('reserved-email');
+                if (Object.values(state.users).some(item => item.email === identity.email)) throw authError('account-exists');
+                user = { id: id(), name: identity.name, email: identity.email, emailVerified: true, createdAt: now() };
+                state.users[user.id] = user;
+            }
+            state.identities[identityKey] = { provider: identity.provider, subject: identity.subject, userId: user.id, email: identity.email,
+                createdAt: existing?.createdAt || now(), updatedAt: now() };
+            return user;
+        });
+    }
+
+    function redirect(res, destination) {
+        res.writeHead(302, { Location: destination, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+        res.end();
+    }
+
+    async function socialCallback(req, res, provider, url) {
+        let transaction;
+        try {
+            transaction = social.consume({ req, res, provider, url });
+            if (transaction.link) requireLinkSession(req, transaction.link);
+            if (url.searchParams.has('error')) throw authError('cancelled');
+            if (url.searchParams.getAll('code').length !== 1) throw authError('provider');
+            const identity = await social.identity(provider, url.searchParams.get('code'), transaction);
+            const user = await socialUser(req, identity, transaction.link);
+            if (!transaction.link) await signIn(res, user);
+            return redirect(res, transaction.link ? `${transaction.returnTo}?authLinked=${provider}` : transaction.returnTo);
+        } catch (error) {
+            return redirect(res, `${transaction?.returnTo || '/'}?authError=${error.authCode || 'provider'}`);
+        }
     }
 
     function membership(user, projectId) {
@@ -341,7 +404,8 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
     function csrf(req) {
         const origin = req.headers.origin;
         if (origin) {
-            const expected = `${secureCookies || req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
+            let expected = `${secureCookies || req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
+            if (oauth.publicOrigin) expected = social.origin();
             if (origin !== expected) fail(403, 'Cross-origin requests are not allowed.');
         } else if (req.headers['sec-fetch-site'] === 'cross-site') fail(403, 'Cross-site requests are not allowed.');
     }
@@ -360,7 +424,11 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
         await store.change(state => {
             state.sessions[hash(token)] = { userId: user.id, expires: Date.now() + SESSION_AGE };
         });
-        res.setHeader('Set-Cookie', `mockup_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_AGE / 1000}${secureCookies ? '; Secure' : ''}`);
+        sessionCookie(res, token, SESSION_AGE / 1000);
+    }
+
+    function sessionCookie(res, token, seconds) {
+        appendCookie(res, `mockup_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${seconds}${social.secure() ? '; Secure' : ''}`);
     }
 
     async function artifact(revisionId, htmlPath) {
@@ -461,7 +529,16 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
         const path = url.pathname;
         const method = req.method;
         if (method !== 'GET' && method !== 'HEAD') csrf(req);
-        if (method === 'GET' && path === '/api/session') return json(res, 200, { user: publicUser(session(req, false)), configured });
+        if (method === 'GET' && path === '/api/session') return json(res, 200, { user: publicUser(session(req, false)), configured, authProviders: social.providers });
+        if (method === 'GET' && path === '/api/auth/providers') return json(res, 200, { providers: social.providers });
+        const socialRoute = path.match(/^\/api\/auth\/(google|discord)\/(start|callback|link)$/);
+        if (socialRoute && method === 'GET' && socialRoute[2] === 'callback') return socialCallback(req, res, socialRoute[1], url);
+        if (socialRoute && method === 'GET' && socialRoute[2] === 'start') {
+            if (!social.configured(socialRoute[1])) fail(503, 'This sign-in provider is not configured.');
+            authRate(req);
+            try { return redirect(res, social.begin({ req, res, provider: socialRoute[1], returnTo: url.searchParams.get('returnTo') || '/' })); }
+            catch (error) { fail(error.authCode === 'busy' ? 429 : 400, error.authCode === 'destination' ? 'Invalid sign-in destination.' : 'This sign-in provider is not configured correctly.'); }
+        }
         if (method === 'POST' && (path === '/api/signup' || path === '/api/login')) {
             authRate(req);
             const value = await body(req, 8192);
@@ -481,13 +558,26 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
                     state.users[user.id] = user;
                 });
             } else {
-                const key = await scrypt(password, user?.salt || 'missing-account', 64);
-                if (!user || !timingSafeEqual(key, Buffer.from(user.passwordHash, 'hex'))) fail(401, 'Email or password is incorrect.');
+                const key = await scrypt(password, hasPassword(user) ? user.salt : 'missing-account', 64);
+                if (!hasPassword(user) || !timingSafeEqual(key, Buffer.from(user.passwordHash, 'hex'))) fail(401, 'Email or password is incorrect.');
             }
             await signIn(res, user);
             return json(res, path === '/api/signup' ? 201 : 200, { user: publicUser(user) });
         }
         const user = session(req);
+        if (socialRoute && method === 'POST' && socialRoute[2] === 'link') {
+            if (!social.configured(socialRoute[1])) fail(503, 'This sign-in provider is not configured.');
+            authRate(req);
+            const value = await body(req, 8192);
+            try {
+                const key = sessionHash(req);
+                const target = social.begin({ req, res, provider: socialRoute[1], returnTo: value.returnTo || '/', link: { userId: user.id, sessionHash: key } });
+                // Refresh the same token so pre-OAuth Strict cookies also survive the callback.
+                sessionCookie(res, cookie(req, 'mockup_session'), Math.max(0, Math.ceil((store.state.sessions[key].expires - Date.now()) / 1000)));
+                return json(res, 200, { url: target });
+            }
+            catch (error) { fail(error.authCode === 'busy' ? 429 : 400, error.authCode === 'destination' ? 'Invalid sign-in destination.' : 'This sign-in provider is not configured correctly.'); }
+        }
         if (method === 'GET' && path.startsWith('/api/admin')) {
             if (!isAdmin(user)) fail(403, 'Only the service owner can view administration.');
             if (path === '/api/admin') return json(res, 200, await adminView());
@@ -496,10 +586,10 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
             return json(res, 200, detail(project[1]));
         }
         if (method === 'POST' && path === '/api/logout') {
-            const token = (req.headers.cookie || '').split(';').map(value => value.trim()).find(value => value.startsWith('mockup_session='))?.slice(15);
+            const token = cookie(req, 'mockup_session');
             await store.change(state => { if (token) delete state.sessions[hash(token)]; });
             for (const state of roomStates.values()) for (const client of state.clients.values()) if (client.userId === user.id) client.res.end();
-            res.setHeader('Set-Cookie', `mockup_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secureCookies ? '; Secure' : ''}`);
+            appendCookie(res, `mockup_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${social.secure() ? '; Secure' : ''}`);
             return json(res, 200, { ok: true });
         }
         if (path === '/api/projects' && method === 'GET') {
@@ -798,6 +888,7 @@ export async function createApp({ dataDir, generator, builder, starter, secureCo
         },
         async close() {
             stopping = true;
+            social.close();
             for (const state of roomStates.values()) for (const client of state.clients.values()) client.res.end();
             if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
             await Promise.allSettled([...running]);

@@ -13,15 +13,33 @@ const browser = [process.env.TIDE_BROWSER, 'C:/Program Files/Google/Chrome/Appli
 assert.ok(browser, 'Set TIDE_BROWSER to Chrome or Edge.');
 const directory = await mkdtemp(join(tmpdir(), 'mockup-browser-'));
 const profile = join(directory, 'browser');
+const screenshotDir = fileURLToPath(new URL('../.data/qa/', import.meta.url));
+await mkdir(screenshotDir, { recursive: true });
 await provisionAdmin({ dataDir: directory, email: 'owner@example.com', password: 'secure owner password' });
-const service = await start({ port: 0, previewPort: 0, dataDir: directory, pipeline: { generator: null, builder: null } });
+const providerRequests = [];
+const providerRequest = async (url, init = {}) => {
+    providerRequests.push({ url: String(url), method: init.method || 'GET' });
+    if (String(url).endsWith('/token')) {
+        const code = new URLSearchParams(init.body).get('code');
+        assert.ok(code?.startsWith('browser-'), 'Only explicit browser fixtures reach the provider adapter');
+        return Response.json({ access_token: code, token_type: 'Bearer', expires_in: 300 });
+    }
+    const token = new Headers(init.headers).get('authorization')?.replace(/^Bearer /, '');
+    if (String(url).includes('googleapis.com')) return Response.json({ sub: token, email_verified: true,
+        email: token === 'browser-google-link' ? 'alice@example.com' : 'social-google@example.com', name: 'Google Maker' });
+    if (String(url).includes('discord.com')) return Response.json({ id: '123456789012345678', verified: true, email: 'social-discord@example.com', global_name: 'Discord Maker', username: 'discord-maker' });
+    throw new Error(`Unexpected identity request: ${url}`);
+};
+const service = await start({ port: 0, previewPort: 0, dataDir: directory, pipeline: { generator: null, builder: null },
+    oauth: { publicOrigin: () => service.origin, google: { clientId: 'test-google', clientSecret: 'test-secret' },
+        discord: { clientId: 'test-discord', clientSecret: 'test-secret' }, request: providerRequest } });
 assert.ok(service.app.ready.starter, 'Run npm run build before browser tests.');
 const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--mute-audio',
     '--disable-extensions', '--remote-debugging-port=0', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
     '--disable-features=WebRtcHideLocalIpsWithMdns', '--allow-loopback-in-peer-connection', `--user-data-dir=${profile}`, 'about:blank'],
     { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
 let socket;
-const errors = [], pending = new Map();
+const errors = [], pending = new Map(), consentCodes = new Map();
 let sequence = 0;
 const command = (method, params = {}, sessionId) => new Promise((done, fail) => {
     const id = ++sequence;
@@ -42,6 +60,16 @@ try {
             const request = pending.get(message.id); if (!request) return;
             clearTimeout(request.timer); pending.delete(message.id);
             if (message.error) request.fail(new Error(JSON.stringify(message.error))); else request.done(message.result);
+        } else if (message.method === 'Fetch.requestPaused') {
+            // Replace only the external consent screen. The application redirect,
+            // browser state cookie, callback and session are exercised normally.
+            const authorize = new URL(message.params.request.url);
+            const callback = new URL(authorize.searchParams.get('redirect_uri'));
+            assert.equal(callback.origin, service.origin);
+            callback.searchParams.set('state', authorize.searchParams.get('state'));
+            callback.searchParams.set('code', consentCodes.get(message.sessionId));
+            command('Fetch.fulfillRequest', { requestId: message.params.requestId, responseCode: 302,
+                responseHeaders: [{ name: 'Location', value: callback.href }] }, message.sessionId).catch(error => errors.push(error.message));
         } else if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
         else if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error') errors.push(`${message.params.entry.text} ${message.params.entry.url || ''}`);
     });
@@ -77,8 +105,17 @@ try {
     const alice = await tab();
     await alice.navigate(service.origin);
     await alice.until('!!document.querySelector("#auth-form")', 'signup');
+    await alice.until('document.querySelectorAll(".social-auth a").length === 2', 'configured Google and Discord choices');
+    assert.doesNotMatch(await alice.evaluate('document.body.innerText'), /\btide\b/i, 'Public landing has no engine branding');
+    await writeFile(join(screenshotDir, 'landing.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
+    await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, alice.sessionId);
+    await alice.until('document.documentElement.scrollWidth <= 390', 'phone landing fits viewport');
+    await writeFile(join(screenshotDir, 'landing-mobile.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
+    await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false }, alice.sessionId);
     await alice.form('#auth-form', { name: 'Alice', email: 'alice@example.com', password: 'secure password 123' });
     await alice.until('!!document.querySelector(".dashboard")', 'dashboard');
+    assert.doesNotMatch(await alice.evaluate('document.body.innerText'), /\btide\b/i, 'Project lobby has no engine branding');
+    await writeFile(join(screenshotDir, 'lobby.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
     await alice.click('[data-action="new-project"]');
     await alice.form('#create-form', { title: 'Night garden', idea: 'A polished moonlit garden where you collect glowing seeds.' });
     await alice.until('!!document.querySelector("#game-frame")', 'project');
@@ -123,7 +160,6 @@ try {
     assert.ok(feedback.data.feedback[0].capture.screenshot.startsWith('data:image/'), 'Feedback captures real rendered image');
     assert.ok(feedback.data.feedback[0].capture.inputs.some(item => item.event.code === 'KeyD'), 'Feedback contains remote controller input');
     assert.equal(feedback.data.feedback[0].capture.worldSnapshot, null, 'Do not claim a world export');
-    const screenshotDir = fileURLToPath(new URL('../.data/qa/', import.meta.url)); await mkdir(screenshotDir, { recursive: true });
     await writeFile(join(screenshotDir, 'desktop.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, alice.sessionId)).data, 'base64'));
     await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, alice.sessionId);
     await alice.until('document.documentElement.scrollWidth <= 390', 'phone fits viewport');
@@ -139,8 +175,39 @@ try {
     const cookies = await command('Network.getCookies', { urls: [service.origin] }, alice.sessionId);
     assert.equal((await fetch(`${service.origin}/api/admin`, { headers: { Cookie: cookies.cookies.map(c => `${c.name}=${c.value}`).join('; ') } })).status, 403);
     await writeFile(join(screenshotDir, 'admin.png'), Buffer.from((await command('Page.captureScreenshot', { format: 'png' }, owner.sessionId)).data, 'base64'));
+    const consent = async (page, code) => {
+        consentCodes.set(page.sessionId, code);
+        await command('Fetch.enable', { patterns: [
+            { urlPattern: 'https://accounts.google.com/o/oauth2/v2/auth*', requestStage: 'Request' },
+            { urlPattern: 'https://discord.com/oauth2/authorize*', requestStage: 'Request' },
+        ] }, page.sessionId);
+    };
+    for (const provider of ['google', 'discord']) {
+        const maker = await tab(); await maker.navigate(service.origin);
+        await maker.until(`!!document.querySelector('.social-auth a[href*="/${provider}/start"]')`, `${provider} sign-in choice`);
+        await consent(maker, `browser-${provider}-new`);
+        await maker.click(`.social-auth a[href*="/${provider}/start"]`);
+        await maker.until('!!document.querySelector(".dashboard")', `${provider} callback signs in`);
+        const account = (await maker.request('/api/session')).data.user;
+        assert.ok(account.authMethods.includes(provider));
+        assert.equal(account.hasPassword, false);
+        assert.equal(account.isAdmin, false);
+    }
+    // Explicitly linking an existing account preserves its project ownership.
+    await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false }, alice.sessionId);
+    const beforeLink = (await alice.request('/api/session')).data.user.id;
+    await alice.click('[data-action="account"]');
+    await alice.until('!!document.querySelector("[data-action=link-provider][data-provider=google]")', 'connect provider for existing account');
+    await consent(alice, 'browser-google-link');
+    await alice.click('[data-action="link-provider"][data-provider="google"]');
+    await alice.until('!!document.querySelector(".dashboard") && !document.querySelector("#modal-root").children.length', 'linked account returns to lobby');
+    const linked = (await alice.request('/api/session')).data.user;
+    assert.equal(linked.id, beforeLink);
+    assert.ok(linked.authMethods.includes('google') && linked.authMethods.includes('password'));
+    assert.ok((await alice.request('/api/projects')).data.projects.some(project => project.id === projectId));
+    assert.equal(providerRequests.length, 6, 'Three sign-ins exchange a code and fetch an authoritative identity');
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: signup, project, invitation, actual game stream, takeover, remote input, live cursors, concurrent editing, captured feedback, mobile, owner admin.');
+    console.log('Browser checks passed: branding, desktop/mobile theme, local accounts, Google/Discord callbacks, explicit account linking, projects, invitations, live stream/control/cursors/editing, captured feedback and owner admin.');
 } finally {
     if (socket?.readyState === WebSocket.OPEN) { await command('Browser.close').catch(() => {}); socket.close(); }
     else child.kill();
