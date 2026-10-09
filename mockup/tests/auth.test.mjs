@@ -5,8 +5,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../server/app.mjs';
+import { provisionAdmin } from '../scripts/admin.mjs';
 
-const password = 'a good test password';
 const google = { sub: 'google-subject', email: 'player@example.com', email_verified: true, name: 'Player' };
 const discord = { id: '123456789012345678', email: 'discord@example.com', verified: true, global_name: 'Discord player', username: 'player' };
 
@@ -55,10 +55,12 @@ async function fixture(t, options = {}) {
             return { response, status: response.status, location: response.headers.get('location'),
                 data: response.headers.get('content-type')?.includes('application/json') ? await response.json() : null };
         },
-        async signup(email = 'local@example.com') {
-            const result = await this.call('/api/signup', { email, password, name: 'Local player' });
-            assert.equal(result.status, 201);
-            return result.data.user;
+        async signin(email = 'another@example.com', provider = 'discord') {
+            const code = `signin-${profiles.size}`;
+            const subject = createHash('sha256').update(email).digest('hex');
+            profiles.set(code, provider === 'google' ? { ...google, sub: subject, email } : { ...discord, id: BigInt(`0x${subject.slice(0, 15)}`).toString(), email });
+            assert.equal((await this.callback(await this.start(provider), code)).location, '/');
+            return this.user();
         },
         async start(provider = 'google', value) {
             const result = value === undefined ? await this.call(`/api/auth/${provider}/start`) : await this.call(`/api/auth/${provider}/link`, value);
@@ -92,7 +94,7 @@ test('configured providers, fixed callbacks, Google S256 and authoritative useri
     assert.match(cookies[1], /mockup_session=.+; Path=\/; HttpOnly; SameSite=Lax/);
     const user = await client.user();
     assert.equal(user.email, google.email);
-    assert.equal(user.hasPassword, false);
+    assert.equal(Object.hasOwn(user, 'hasPassword'), false);
     assert.equal(user.isAdmin, false);
     assert.deepEqual(user.authMethods, ['google']);
     const tokenRequest = f.calls[0];
@@ -104,8 +106,12 @@ test('configured providers, fixed callbacks, Google S256 and authoritative useri
     assert.equal(createHash('sha256').update(form.get('code_verifier')).digest('base64url'), start.searchParams.get('code_challenge'));
     assert.equal(f.calls[1].url, 'https://openidconnect.googleapis.com/v1/userinfo');
     assert.equal(f.calls[1].init.headers.Authorization, 'Bearer access-success');
-    assert.equal((await client.call('/api/login', { email: google.email, password })).status, 401);
+    for (const path of ['/api/login', '/api/signup']) {
+        assert.equal((await client.call(path, { email: google.email, password: 'a rejected password', admin: true })).status, 404);
+    }
     const disk = await readFile(join(f.directory, 'store.json'), 'utf8');
+    assert.equal(disk.includes('passwordHash'), false);
+    assert.equal(disk.includes('"salt"'), false);
     for (const secret of ['access-success', 'do-not-store-this', 'google-secret', form.get('code_verifier'), start.searchParams.get('state')]) assert.equal(disk.includes(secret), false);
 });
 
@@ -204,38 +210,37 @@ test('provider failures are safe, bounded and consumed; invalid emails are never
     assert.equal(Object.keys(JSON.parse(await readFile(join(f.directory, 'store.json'), 'utf8')).identities).length, 0);
 });
 
-test('matching unverified local email does not auto-link; authenticated connection preserves projects', async t => {
+test('matching provider emails do not auto-link; explicit connection preserves projects', async t => {
     const f = await fixture(t), client = f.client();
-    const local = await client.signup(google.email);
+    const original = await client.signin(google.email);
     const project = await client.call('/api/projects', { title: 'Original', idea: 'Keep my original world.' });
     const stranger = f.client();
     assert.equal((await stranger.callback(await stranger.start())).location, '/?authError=account-exists');
     assert.equal(await stranger.user(), null);
-    assert.deepEqual((await client.user()).authMethods, ['password']);
+    assert.deepEqual((await client.user()).authMethods, ['discord']);
     const link = await client.start('google', {});
     assert.equal((await client.callback(link)).location, '/?authLinked=google');
-    assert.equal((await client.user()).id, local.id);
-    assert.deepEqual((await client.user()).authMethods, ['password', 'google']);
+    assert.equal((await client.user()).id, original.id);
+    assert.deepEqual((await client.user()).authMethods, ['discord', 'google']);
     assert.equal((await stranger.callback(await stranger.start())).location, '/');
-    assert.equal((await stranger.user()).id, local.id);
+    assert.equal((await stranger.user()).id, original.id);
     assert.equal((await stranger.call(`/api/projects/${project.data.project.id}`)).status, 200);
 });
 
 test('linking requires the same live initiating session before and after the provider request', async t => {
     const f = await fixture(t), client = f.client();
     assert.equal((await client.call('/api/auth/google/link', {})).status, 401);
-    await client.signup();
+    await client.signin();
     const oldSession = client.cookies.get('mockup_session');
     const begin = await client.call('/api/auth/google/link', {});
     assert.equal(begin.status, 200);
     const first = new URL(begin.data.url);
-    assert.match(begin.response.headers.getSetCookie().find(value => value.startsWith('mockup_session=')), new RegExp(`mockup_session=${oldSession}; Path=/; HttpOnly; SameSite=Lax`));
     assert.equal(client.cookies.get('mockup_session'), oldSession);
     await client.call('/api/logout', {});
-    await client.call('/api/login', { email: 'local@example.com', password });
+    await client.signin();
     assert.notEqual(client.cookies.get('mockup_session'), oldSession);
     assert.equal((await client.callback(first)).location, '/?authError=link-expired');
-    assert.equal(f.calls.length, 0);
+    assert.equal(f.calls.length, 4); // Two actual Discord sign-ins; rejected link never contacts Google.
     const second = await client.start('google', {});
     const request = f.failure;
     f.failure = async (url, init) => {
@@ -244,7 +249,8 @@ test('linking requires the same live initiating session before and after the pro
         return Response.json({ access_token: 'access-success', token_type: 'Bearer' });
     };
     assert.equal((await client.callback(second)).location, '/?authError=link-expired');
-    assert.equal(Object.keys(JSON.parse(await readFile(join(f.directory, 'store.json'), 'utf8')).identities).length, 0);
+    const identities = Object.values(JSON.parse(await readFile(join(f.directory, 'store.json'), 'utf8')).identities);
+    assert.deepEqual(identities.map(identity => identity.provider), ['discord']);
 });
 
 test('an immutable provider subject owns its account across email changes and restart', async t => {
@@ -261,7 +267,7 @@ test('an immutable provider subject owns its account across email changes and re
     await after.callback(await after.start(), 'changed');
     assert.equal((await after.user()).id, original.id);
     const other = f.client();
-    await other.signup('collision@example.com');
+    await other.signin('collision@example.com');
     f.profiles.set('collision', { ...google, email: 'collision@example.com' });
     await after.callback(await after.start(), 'collision');
     assert.equal((await after.user()).id, original.id);
@@ -279,19 +285,46 @@ test('simultaneous first sign-ins for one provider subject create one durable ac
     assert.equal(Object.keys(state.identities).length, 1);
 });
 
-test('reserved owner emails cannot create social admins, and identities cannot move between users', async t => {
+test('an email allowlist never grants admin, and identities cannot move between users', async t => {
     const f = await fixture(t, { adminEmails: [google.email] }), client = f.client();
-    assert.equal((await client.callback(await client.start())).location, '/?authError=reserved-email');
-    assert.equal(await client.user(), null);
-    await client.signup('one@example.com');
+    assert.equal((await client.callback(await client.start())).location, '/');
+    assert.equal((await client.user()).isAdmin, false);
+    assert.equal((await client.call('/api/admin')).status, 403);
     await client.callback(await client.start('discord', {}));
     const one = await client.user();
     const other = f.client();
-    await other.signup('two@example.com');
+    await other.signin('two@example.com', 'google');
     assert.equal((await other.callback(await other.start('discord', {}))).location, '/?authError=identity-linked');
     f.profiles.set('different', { ...discord, id: '987654321012345678' });
     assert.equal((await client.callback(await client.start('discord', {}), 'different')).location, '/?authError=identity-linked');
     assert.equal((await client.user()).id, one.id);
     assert.equal((await other.user()).isAdmin, false);
-    assert.deepEqual((await other.user()).authMethods, ['password']);
+    assert.deepEqual((await other.user()).authMethods, ['google']);
+});
+
+test('offline admin grants require an existing social account and the allowlist only narrows grants', async t => {
+    const f = await fixture(t, { adminEmails: ['owner@example.com'] });
+    const owner = f.client(), excluded = f.client();
+    for (const path of ['/api/signup', '/api/login']) {
+        assert.equal((await owner.call(path, { email: 'owner@example.com', password: 'no passwords accepted', admin: true })).status, 404);
+    }
+    const account = await owner.signin('owner@example.com', 'google');
+    await excluded.signin('excluded@example.com', 'discord');
+    assert.equal(account.isAdmin, false);
+    await f.app.close();
+    await assert.rejects(provisionAdmin({ dataDir: f.directory, email: 'absent@example.com' }), /sign in|existing/i);
+    const grant = await provisionAdmin({ dataDir: f.directory, email: 'OWNER@EXAMPLE.COM' });
+    assert.equal(grant.id, account.id);
+    await provisionAdmin({ dataDir: f.directory, email: 'excluded@example.com' });
+    await f.restart();
+    assert.equal((await owner.user()).isAdmin, true);
+    assert.equal((await owner.call('/api/admin')).status, 200);
+    assert.equal((await excluded.user()).isAdmin, false);
+    assert.equal((await excluded.call('/api/admin')).status, 403);
+    const state = JSON.parse(await readFile(join(f.directory, 'store.json'), 'utf8'));
+    assert.equal(Object.keys(state.users).length, 2);
+    for (const user of Object.values(state.users)) {
+        assert.equal(Object.hasOwn(user, 'passwordHash'), false);
+        assert.equal(Object.hasOwn(user, 'salt'), false);
+    }
 });

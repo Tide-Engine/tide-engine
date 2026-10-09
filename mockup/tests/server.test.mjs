@@ -3,10 +3,11 @@ import { test } from 'node:test';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scryptSync } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import * as Y from 'yjs';
 import { createApp } from '../server/app.mjs';
 import { openStore } from '../server/store.mjs';
+import { provisionAdmin } from '../scripts/admin.mjs';
 
 async function fixture(t, options = {}) {
     const directory = await mkdtemp(join(tmpdir(), 'mockup-server-'));
@@ -15,9 +16,15 @@ async function fixture(t, options = {}) {
     const starter = { files: [{ path: 'game.tide', content: '// initial source' }], htmlPath, toolchain: 'test-tide' };
     const { setupStore, ...appOptions } = options;
     if (setupStore) await setupStore(directory);
-    const app = await createApp({ dataDir: directory, starter, ...appOptions });
+    let origin;
+    const profiles = new Map();
+    const app = await createApp({ dataDir: directory, starter, ...appOptions, oauth: {
+        publicOrigin: () => origin, google: { clientId: 'test-client', clientSecret: 'test-secret' },
+        request: async (url, init) => url.endsWith('/token') ? Response.json({ access_token: `access-${new URLSearchParams(init.body).get('code')}`, token_type: 'Bearer' }) :
+            Response.json(profiles.get(init.headers.Authorization.slice('Bearer access-'.length))),
+    } });
     const address = await app.listen();
-    const origin = `http://127.0.0.1:${address.port}`;
+    origin = `http://127.0.0.1:${address.port}`;
     const streams = [];
     t.after(async () => {
         for (const stream of streams) stream.close();
@@ -32,18 +39,30 @@ async function fixture(t, options = {}) {
                 async call(path, value, headers = {}) {
                     const response = await fetch(`${origin}${path}`, {
                         method: value === undefined ? 'GET' : 'POST',
+                        redirect: 'manual',
                         headers: { Cookie: this.cookie, ...(value === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers },
                         body: value === undefined ? undefined : JSON.stringify(value),
                     });
-                    const setCookie = response.headers.get('set-cookie');
-                    if (setCookie) this.cookie = setCookie.split(';')[0];
-                    const data = await response.json();
+                    const cookies = new Map(this.cookie.split(';').map(part => part.trim().split('=')).filter(parts => parts.length === 2));
+                    for (const setCookie of response.headers.getSetCookie()) {
+                        const [key, content] = setCookie.split(';')[0].split('=');
+                        if (content) cookies.set(key, content); else cookies.delete(key);
+                    }
+                    this.cookie = [...cookies].map(([key, content]) => `${key}=${content}`).join('; ');
+                    const data = response.headers.get('content-type')?.includes('application/json') ? await response.json() : null;
                     return { status: response.status, data, response };
                 },
-                async signup(name, extra = {}) {
-                    const result = await this.call('/api/signup', { name, email: `${name.toLowerCase()}@example.com`, password: 'secure password 123', ...extra });
-                    assert.equal(result.status, 201);
-                    this.user = result.data.user;
+                async signin(name, extra = {}) {
+                    const email = extra.email || `${name.toLowerCase()}@example.com`;
+                    const subject = createHash('sha256').update(email).digest('hex');
+                    profiles.set(subject, { sub: subject, name, email, email_verified: true, ...extra });
+                    const start = await this.call('/api/auth/google/start');
+                    assert.equal(start.status, 302);
+                    const state = new URL(start.response.headers.get('location')).searchParams.get('state');
+                    const result = await this.call(`/api/auth/google/callback?state=${state}&code=${subject}`);
+                    assert.equal(result.status, 302);
+                    assert.equal(result.response.headers.get('location'), '/');
+                    this.user = (await this.call('/api/session')).data.user;
                     return result;
                 },
                 async project(title = 'Tiny orchard') {
@@ -138,10 +157,10 @@ async function settled(client, jobId) {
 test('accounts are private, cookie sessions persist, invitations grant project access, and browser writes check Origin', async t => {
     const f = await fixture(t);
     const owner = f.client(), friend = f.client(), stranger = f.client();
-    const signedUp = await owner.signup('Alice');
-    await friend.signup('Bob');
-    await stranger.signup('Eve');
-    assert.match(signedUp.response.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
+    const signedIn = await owner.signin('Alice');
+    await friend.signin('Bob');
+    await stranger.signin('Eve');
+    assert.match(signedIn.response.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
     const project = await owner.project();
     assert.equal((await friend.call(`/api/projects/${project.id}`)).status, 404);
     assert.equal((await stranger.call('/api/projects')).data.projects.length, 0);
@@ -153,19 +172,21 @@ test('accounts are private, cookie sessions persist, invitations grant project a
     assert.equal(blocked.status, 403);
     assert.equal((await owner.call(`/api/projects/${project.id}/messages`, { text: 'hello team' }, { Origin: f.origin })).status, 201);
     const raw = await readFile(join(f.directory, 'store.json'), 'utf8');
-    assert.ok(!raw.includes('secure password 123'));
+    assert.ok(!raw.includes('passwordHash'));
+    assert.ok(!raw.includes('"salt"'));
     assert.ok(!raw.includes(token));
     assert.equal((await owner.call('/api/logout', {})).status, 200);
     assert.equal((await owner.call('/api/session')).data.user, null);
-    assert.equal((await owner.call('/api/login', { email: 'alice@example.com', password: 'secure password 123' })).status, 200);
-    assert.equal((await owner.call('/api/login', { email: 'alice@example.com', password: 'incorrect password' })).status, 401);
+    assert.equal((await owner.call('/api/login', { email: 'alice@example.com', password: 'no passwords accepted' })).status, 404);
+    await owner.signin('Alice');
+    assert.equal((await owner.call(`/api/projects/${project.id}`)).status, 200);
 });
 
 test('starter artifacts are immutable and preview tickets are scoped to an authorized revision', async t => {
     const f = await fixture(t);
     const owner = f.client(), stranger = f.client();
-    await owner.signup('Alice');
-    await stranger.signup('Eve');
+    await owner.signin('Alice');
+    await stranger.signin('Eve');
     const project = await owner.project();
     const detail = (await owner.call(`/api/projects/${project.id}`)).data;
     assert.equal(detail.revisions[0].origin, 'starter');
@@ -189,8 +210,8 @@ test('starter artifacts are immutable and preview tickets are scoped to an autho
 test('original upload bytes survive restart and are only downloadable by project members', async t => {
     const f = await fixture(t);
     const owner = f.client(), stranger = f.client();
-    await owner.signup('Alice');
-    await stranger.signup('Eve');
+    await owner.signin('Alice');
+    await stranger.signin('Eve');
     const project = await owner.project();
     const bytes = Buffer.from([0, 255, 42, 13, 10, 0, 128]);
     const uploaded = await owner.call(`/api/projects/${project.id}/assets`, { name: 'hero.png', type: 'image/png', usage: 'game', data: bytes.toString('base64') });
@@ -214,8 +235,8 @@ test('original upload bytes survive restart and are only downloadable by project
 test('instant controller handoffs clear held inputs, reject stale epochs, and authorize room signaling', async t => {
     const f = await fixture(t);
     const owner = f.client(), friend = f.client();
-    await owner.signup('Alice');
-    await friend.signup('Bob');
+    await owner.signin('Alice');
+    await friend.signin('Bob');
     const project = await owner.project();
     await invite(owner, friend, project.id);
     const ownerEvents = await owner.stream(project.id, 'alice-browser');
@@ -255,8 +276,8 @@ test('instant controller handoffs clear held inputs, reject stale epochs, and au
 test('teammate cursors broadcast live and concurrent CRDT brief edits merge and persist', async t => {
     const f = await fixture(t);
     const owner = f.client(), friend = f.client();
-    await owner.signup('Alice');
-    await friend.signup('Bob');
+    await owner.signin('Alice');
+    await friend.signin('Bob');
     const project = await owner.project();
     await invite(owner, friend, project.id);
     const ownerEvents = await owner.stream(project.id, 'alice-browser');
@@ -313,7 +334,7 @@ test('parallel iterations preserve stale work as candidates; failed builds prese
     };
     f = await fixture(t, { generator, builder });
     const owner = f.client();
-    await owner.signup('Alice');
+    await owner.signin('Alice');
     const project = await owner.project();
     const p = `/api/projects/${project.id}`;
     await owner.call(`${p}/assets`, { name: 'hero.png', type: 'image/png', usage: 'game', data: Buffer.from('sprite').toString('base64') });
@@ -364,7 +385,7 @@ test('parallel iterations preserve stale work as candidates; failed builds prese
 test('startup marks interrupted work failed without losing the previously active version', async t => {
     const f = await fixture(t);
     const owner = f.client();
-    await owner.signup('Alice');
+    await owner.signin('Alice');
     const project = await owner.project();
     await f.app.close();
     const path = join(f.directory, 'store.json');
@@ -387,8 +408,13 @@ test('only the owner can inspect all projects and failed iterations retain actua
         adminEmails: ['owner@example.com'],
         setupStore: async directory => {
             const store = await openStore(directory);
-            await store.change(state => { state.users.owner = { id: 'owner', name: 'Owner', email: 'owner@example.com', salt: 'test-owner-salt',
-                passwordHash: scryptSync('secure password 123', 'test-owner-salt', 64).toString('hex'), admin: true, createdAt: new Date().toISOString() }; });
+            const subject = createHash('sha256').update('owner@example.com').digest('hex');
+            const key = createHash('sha256').update(`google\0${subject}`).digest('hex');
+            await store.change(state => {
+                state.users.owner = { id: 'owner', name: 'Owner', email: 'owner@example.com', createdAt: new Date().toISOString() };
+                state.identities[key] = { provider: 'google', subject, userId: 'owner', email: 'owner@example.com', createdAt: new Date().toISOString() };
+            });
+            await provisionAdmin({ dataDir: directory, email: 'owner@example.com' });
         },
         generator: async context => {
             const usage = { responseId: 'response-one', model: 'test-model', inputTokens: 100, cachedInputTokens: 50, outputTokens: 25, totalTokens: 125, estimatedUsd: 0.0032, durationMs: 1250, attempt: 1, rates: { input: 1, cachedInput: 0.1, output: 4 } };
@@ -412,11 +438,9 @@ test('only the owner can inspect all projects and failed iterations retain actua
         },
     });
     const owner = f.client(), user = f.client();
-    assert.equal((await owner.call('/api/signup', { name: 'Pretender', email: 'owner@example.com', password: 'secure password 123', admin: true })).status, 403);
-    const login = await owner.call('/api/login', { email: 'owner@example.com', password: 'secure password 123' });
-    assert.equal(login.status, 200);
-    owner.user = login.data.user;
-    await user.signup('Alice', { admin: true });
+    assert.equal((await owner.call('/api/signup', { name: 'Pretender', email: 'owner@example.com', admin: true })).status, 404);
+    await owner.signin('Owner');
+    await user.signin('Alice', { admin: true });
     assert.equal(owner.user.isAdmin, true);
     assert.equal(user.user.isAdmin, false);
     assert.equal((await user.call('/api/admin')).status, 403);
