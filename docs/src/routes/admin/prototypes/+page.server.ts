@@ -23,6 +23,12 @@ const prototypes = [
         image: '/admin/prototypes/cabin-nine/thumbnail.png',
         horror: true,
     },
+    {
+        id: 'deadbell', title: 'Deadbell', kind: 'PSX roguelike · Horde combat', players: '2 players',
+        description: 'Two lamplighters. A city that will not stay dead. Carve a path through the horde, bind relics, and bring your partner home.',
+        image: '/admin/prototypes/deadbell/thumbnail.png',
+        horror: false,
+    },
 ];
 
 export function load() {
