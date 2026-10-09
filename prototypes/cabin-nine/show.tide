@@ -16,6 +16,55 @@ struct CabinMesh
     List<int> indices;
 }
 
+// Seat and seated bodies share their contact planes. Positions are relative
+// to the passenger's floor position; forward is -z.
+const float CABIN_CUSHION_TOP = 0.50;
+const float CABIN_CUSHION_THICKNESS = 0.15;
+const float CABIN_CUSHION_FRONT = -0.405;
+const float CABIN_BACK_PADDING_FRONT = 0.16;
+const float CABIN_THIGH_RADIUS = 0.12;
+
+struct CabinPose
+{
+    float3 hips;
+    float3 torso;
+    float3 shoulders;
+    float3 head;
+    float3 elbow;
+    float3 hand;
+    float3 knee;
+    float3 ankle;
+}
+
+CabinPose PassengerPose(bool upright)
+{
+    if (upright)
+        return CabinPose {
+            hips = float3(0, 0.95, -0.04), torso = float3(0, 0.93, 0),
+            shoulders = float3(0, 1.34, 0), head = float3(0, 1.57, -0.012),
+            elbow = float3(0.23, 1.08, 0.015), hand = float3(0.23, 0.89, -0.025),
+            knee = float3(0.10, 0.45, 0), ankle = float3(0.10, 0.16, 0)
+        };
+    float hip = CABIN_CUSHION_TOP + CABIN_THIGH_RADIUS;
+    return CabinPose {
+        hips = float3(0, hip, -0.08), torso = float3(0, hip + 0.03, -0.08),
+        shoulders = float3(0, hip + 0.42, CABIN_BACK_PADDING_FRONT - 0.275),
+        head = float3(0, hip + 0.65, -0.08),
+        elbow = float3(0.25, hip + 0.20, -0.16), hand = float3(0.15, hip + 0.15, -0.40),
+        knee = float3(0.11, hip, CABIN_CUSHION_FRONT - 0.145), ankle = float3(0.11, 0.16, -0.58)
+    };
+}
+
+float3 PoseSide(float3 at, float side)
+{
+    return float3(at.x * side, at.y, at.z);
+}
+
+float3 PassengerWrist(CabinPose pose)
+{
+    return pose.elbow + (pose.hand - pose.elbow) * 0.78;
+}
+
 local singleton CabinArt
 {
     CabinMesh shell;
@@ -140,58 +189,56 @@ void CabinPerson(mut CabinMesh mesh, int identity, bool upright)
     mut var skin = identity == 2 || identity == 4 ? Color(0.59, 0.39, 0.29) : Color(0.79, 0.62, 0.47);
     if (identity == 3) skin = Color(0.67, 0.50, 0.34);
     var hair = identity == 1 ? Color(0.59, 0.58, 0.53) : identity == 7 ? Color(0.37, 0.19, 0.13) : Color(0.13, 0.11, 0.11);
-    float lift = upright ? 0.34 : 0;
-    float shoulders = 1.0 + lift;
-    float head = 1.23 + lift;
+    var pose = PassengerPose(upright);
     var trousers = Color(0.22, 0.23, 0.25);
     var shoe = Color(0.09, 0.09, 0.10);
-    CabinTube(mesh, float3(0, 0.59 + lift, 0), float3(0, shoulders, 0), 0.18, 0.25, coat);
-    CabinTube(mesh, float3(0, shoulders, 0), float3(0, head - 0.16, 0), 0.095, 0.075, skin);
-    CabinOval(mesh, float3(0, head, -0.012), float3(0.14, 0.19, 0.135), skin);
-    CabinOval(mesh, float3(0, head + 0.105, 0.022), float3(0.15, 0.115, 0.14), hair, 3, 8);
+    if (!upright) CabinOval(mesh, pose.hips, float3(0.245, CABIN_THIGH_RADIUS, 0.175), trousers);
+    CabinTube(mesh, pose.torso, pose.shoulders, 0.18, 0.25, coat);
+    CabinTube(mesh, pose.shoulders, pose.head + float3(0, -0.16, 0.012), 0.095, 0.075, skin);
+    CabinOval(mesh, pose.head, float3(0.14, 0.19, 0.135), skin);
+    CabinOval(mesh, pose.head + float3(0, 0.105, 0.034), float3(0.15, 0.115, 0.14), hair, 3, 8);
     if (identity == 2 || identity == 7)
     {
-        CabinTube(mesh, float3(-0.12, head + 0.10, 0.06), float3(-0.12, shoulders - 0.01, 0.07), 0.08, 0.06, hair);
-        CabinTube(mesh, float3(0.12, head + 0.10, 0.06), float3(0.12, shoulders - 0.01, 0.07), 0.08, 0.06, hair);
+        CabinTube(mesh, pose.head + float3(-0.12, 0.10, 0.072), pose.shoulders + float3(-0.12, -0.01, 0.07), 0.08, 0.06, hair);
+        CabinTube(mesh, pose.head + float3(0.12, 0.10, 0.072), pose.shoulders + float3(0.12, -0.01, 0.07), 0.08, 0.06, hair);
     }
     if (identity == 3)
     {
-        CabinTube(mesh, float3(0, head + 0.13, 0), float3(0, head + 0.20, 0), 0.17, 0.13, Color(0.17, 0.23, 0.17), 8);
-        CabinBox(mesh, float3(0, head + 0.13, -0.10), float3(0.28, 0.035, 0.25), Color(0.17, 0.23, 0.17));
+        CabinTube(mesh, pose.head + float3(0, 0.13, 0.012), pose.head + float3(0, 0.20, 0.012), 0.17, 0.13, Color(0.17, 0.23, 0.17), 8);
+        CabinBox(mesh, pose.head + float3(0, 0.13, -0.088), float3(0.28, 0.035, 0.25), Color(0.17, 0.23, 0.17));
     }
     var ink = Color(0.10, 0.08, 0.075);
     for (var side = 0; side < 2; side++)
     {
         float x = side == 0 ? -0.06 : 0.06;
-        CabinBox(mesh, float3(x, head + 0.025, -0.128), float3(0.039, 0.027, 0.018), ink);
-        CabinBox(mesh, float3(x, head + 0.064, -0.119), float3(0.055, 0.015, 0.020), hair);
+        CabinBox(mesh, pose.head + float3(x, 0.025, -0.116), float3(0.039, 0.027, 0.018), ink);
+        CabinBox(mesh, pose.head + float3(x, 0.064, -0.107), float3(0.055, 0.015, 0.020), hair);
         if (identity == 5)
         {
-            CabinOval(mesh, float3(x, head + 0.025, -0.14), float3(0.055, 0.045, 0.009), Color(0.12, 0.12, 0.12), 2, 8);
-            CabinOval(mesh, float3(x, head + 0.025, -0.15), float3(0.039, 0.03, 0.008), Color(0.47, 0.52, 0.52), 2, 8);
+            CabinOval(mesh, pose.head + float3(x, 0.025, -0.128), float3(0.055, 0.045, 0.009), Color(0.12, 0.12, 0.12), 2, 8);
+            CabinOval(mesh, pose.head + float3(x, 0.025, -0.138), float3(0.039, 0.03, 0.008), Color(0.47, 0.52, 0.52), 2, 8);
         }
-        float arm = side == 0 ? -0.23 : 0.23;
-        var elbow = float3(arm, shoulders - 0.26, upright ? 0.015 : -0.13);
-        var hand = float3(arm, shoulders - 0.45, upright ? -0.025 : -0.29);
-        CabinTube(mesh, float3(arm * 0.88, shoulders - 0.01, 0), elbow, 0.085, 0.067, coat);
+        float way = side == 0 ? -1 : 1;
+        var elbow = PoseSide(pose.elbow, way);
+        var hand = PoseSide(pose.hand, way);
+        CabinTube(mesh, pose.shoulders + float3(way * 0.2024, -0.01, 0), elbow, 0.085, 0.067, coat);
         CabinTube(mesh, elbow, hand, 0.065, 0.045, coat);
-        CabinOval(mesh, hand, float3(0.048, 0.06, 0.045), skin, 3, 6);
-        float leg = side == 0 ? -0.10 : 0.10;
-        var knee = float3(leg, upright ? 0.45 : 0.53, upright ? 0 : -0.40);
-        var ankle = float3(leg, 0.16, upright ? 0 : -0.40);
-        CabinTube(mesh, float3(leg, 0.61 + lift, -0.04), knee, 0.12, 0.09, trousers);
+        CabinOval(mesh, hand, float3(0.048, upright ? 0.06 : 0.055, upright ? 0.045 : 0.06), skin, 3, 6);
+        var knee = PoseSide(pose.knee, way);
+        var ankle = PoseSide(pose.ankle, way);
+        CabinTube(mesh, pose.hips + float3(knee.x, 0, 0), knee, CABIN_THIGH_RADIUS, upright ? 0.09 : 0.095, trousers, upright ? 6 : 8);
         CabinTube(mesh, knee, ankle, 0.095, 0.075, trousers);
         CabinOval(mesh, ankle + float3(0, -0.07, -0.05), float3(0.09, 0.08, 0.17), shoe, 3, 6);
     }
-    CabinTriangle(mesh, float3(-0.025, head - 0.013, -0.13), float3(0.025, head - 0.013, -0.13), float3(0, head - 0.057, -0.182), float3(0, 0, -1), skin);
-    CabinBox(mesh, float3(0, head - 0.097, -0.11), float3(0.056, 0.014, 0.018), Color(0.37, 0.20, 0.17));
+    CabinTriangle(mesh, pose.head + float3(-0.025, -0.013, -0.118), pose.head + float3(0.025, -0.013, -0.118), pose.head + float3(0, -0.057, -0.170), float3(0, 0, -1), skin);
+    CabinBox(mesh, pose.head + float3(0, -0.097, -0.098), float3(0.056, 0.014, 0.018), Color(0.37, 0.20, 0.17));
     if (identity == 6)
     {
-        CabinTriangle(mesh, float3(-0.032, shoulders + 0.018, -0.22), float3(0.032, shoulders + 0.018, -0.22), float3(0, shoulders - 0.31, -0.21), float3(0, 0, -1), Color(0.60, 0.19, 0.17));
+        CabinTriangle(mesh, pose.shoulders + float3(-0.032, -0.01, -0.255), pose.shoulders + float3(0.032, -0.01, -0.255), float3(0, pose.shoulders.y - 0.31, pose.torso.z - 0.208), float3(0, 0, -1), Color(0.60, 0.19, 0.17));
     }
     if (identity == 4)
     {
-        CabinTube(mesh, float3(-0.12, shoulders, -0.17), float3(0.12, shoulders, -0.17), 0.065, 0.065, Color(0.72, 0.59, 0.45));
+        CabinTube(mesh, pose.shoulders + float3(-0.12, -0.015, -0.196), pose.shoulders + float3(0.12, -0.015, -0.196), 0.065, 0.065, Color(0.72, 0.59, 0.45));
     }
 }
 
@@ -200,10 +247,11 @@ void CabinSeat(mut CabinMesh mesh, float x, float z)
     var fabric = Color(0.23, 0.35, 0.37);
     var edge = Color(0.12, 0.19, 0.21);
     var plastic = Color(0.62, 0.59, 0.50);
-    CabinBox(mesh, float3(x, 0.34, z + 0.06), float3(0.57, 0.49, 0.45), edge);
-    CabinBox(mesh, float3(x, 0.57, z - 0.08), float3(0.76, 0.15, 0.65), fabric, 1);
+    float supportTop = CABIN_CUSHION_TOP - CABIN_CUSHION_THICKNESS;
+    CabinBox(mesh, float3(x, (0.10 + supportTop) * 0.5, z + 0.06), float3(0.57, supportTop - 0.10, 0.45), edge);
+    CabinBox(mesh, float3(x, CABIN_CUSHION_TOP - CABIN_CUSHION_THICKNESS * 0.5, z + CABIN_CUSHION_FRONT + 0.325), float3(0.76, CABIN_CUSHION_THICKNESS, 0.65), fabric, 1);
     CabinBox(mesh, float3(x, 0.95, z + 0.30), float3(0.78, 0.84, 0.18), plastic);
-    CabinBox(mesh, float3(x, 0.98, z + 0.195), float3(0.70, 0.74, 0.07), fabric, 1);
+    CabinBox(mesh, float3(x, 0.98, z + CABIN_BACK_PADDING_FRONT + 0.035), float3(0.70, 0.74, 0.07), fabric, 1);
     CabinBox(mesh, float3(x, 1.35, z + 0.23), float3(0.60, 0.16, 0.19), fabric, 1);
     CabinBox(mesh, float3(x, 1.32, z + 0.125), float3(0.45, 0.18, 0.018), Color(0.82, 0.79, 0.68), 2);
     for (var side = 0; side < 2; side++)
@@ -339,8 +387,9 @@ frag CabinSurface(CabinVertex vertex, out Color color, Instance instance, CabinA
 vert CabinUnmask(mut CabinVertex vertex, Passenger passenger, Flight flight, CabinArt art)
 {
     bool revealed = passenger.id == 8 && passenger.held && (flight.phase == 4 || (flight.phase == 5 && flight.outcome > 0));
-    if (!revealed || vertex.position.y < 1.22) return;
-    var pivot = float3(0, 1.22, 0);
+    var pose = PassengerPose(true);
+    var pivot = pose.shoulders - float3(0, 0.12, 0);
+    if (!revealed || vertex.position.y < pivot.y) return;
     mut var offset = vertex.position - pivot;
     offset.y *= 1.53;
     var twist = quaternion.AxisAngle(float3(0, 0, 1), 0.46 + Math.Sin(art.time * 0.6) * 0.05);
@@ -372,7 +421,7 @@ view PrepareCabin(mut CabinArt art, Flight flight)
         art.made = true;
         art.scene = RenderTarget(480, 270);
         MakeCabin(art.shell);
-        CabinTriangle(art.collar, float3(0.187, 1.05, -0.202), float3(0.093, 1.05, -0.202), float3(0.14, 0.958, -0.202), float3(0, 0, -1), Color(0.84, 0.83, 0.74));
+        CabinTriangle(art.collar, float3(0.187, -0.015, -0.17), float3(0.093, -0.015, -0.17), float3(0.14, -0.107, -0.17), float3(0, 0, -1), Color(0.84, 0.83, 0.74));
         for (var identity = 0; identity < 8; identity++)
         {
             mut CabinMesh sitting = default;
@@ -447,38 +496,37 @@ view CabinPassengers(Passenger passenger, CabinArt art, Flight flight)
 {
     int identity = Math.Clamp(passenger.identity, 0, 7);
     var mesh = passenger.held ? art.standing[identity] : art.seated[identity];
-    // The subtle breath affects everyone equally and cannot identify a suspect.
-    float breath = Math.Sin(art.time * 1.2 + passenger.id * 0.7) * 0.002;
-    art.scene.Mesh(mesh.vertices, mesh.indices, float4x4.Translate(passenger.position + float3(0, breath, 0)), CabinUnmask, CabinSurface);
+    // Seat contact and soles stay fixed; only a confirmed copy deforms.
+    art.scene.Mesh(mesh.vertices, mesh.indices, float4x4.Translate(passenger.position), CabinUnmask, CabinSurface);
     if (passenger.held)
     {
         art.scene.Cube(float3(0.83, 1.94, 13.31), float3(0.09, 0.05, 0.035), Color(0.72, 0.47, 0.22));
     }
     if (passenger.id == 8 && passenger.held && (flight.phase == 4 || (flight.phase == 5 && flight.outcome > 0))) return;
-    float lift = passenger.held ? 0.34 : 0;
-    var at = passenger.position + float3(0, lift + breath, 0);
+    var pose = PassengerPose(passenger.held);
+    var at = passenger.position;
     bool copy = passenger.id == 8;
     if (identity == 0)
     {
-        float wrist = copy || flight.phase < 2 ? 0.23 : -0.23;
-        art.scene.Cube(at + float3(wrist, 0.59, -0.27), float3(0.10, 0.085, 0.08), Color(0.22, 0.42, 0.64));
+        float side = copy || flight.phase < 2 ? 1 : -1;
+        art.scene.Cube(at + PoseSide(PassengerWrist(pose), side), float3(0.10, 0.085, 0.08), Color(0.22, 0.42, 0.64));
     }
     if (identity == 3)
     {
         bool taped = flight.caseIndex > 1 || (flight.caseIndex == 1 && flight.phase >= 2);
         for (var strip = 0; strip < (!copy && taped ? 2 : 1); strip++)
-            art.scene.Cube(at + float3(-0.06 + strip * 0.11, 1.385, -0.17), float3(0.065, 0.012, 0.12), Color(0.68, 0.20, 0.16));
+            art.scene.Cube(at + pose.head + float3(-0.06 + strip * 0.11, 0.155, -0.158), float3(0.065, 0.012, 0.12), Color(0.68, 0.20, 0.16));
     }
     if (identity == 5 && (flight.caseIndex > 2 || (flight.caseIndex == 2 && flight.phase >= 2)))
     {
-        art.scene.Cube(at + float3(0, 1.255, -0.158), float3(0.064, 0.032, 0.021), Color(0.90, 0.87, 0.74));
-        if (!copy) art.scene.Cube(at + float3(0, 1.257, -0.171), float3(0.008, 0.028, 0.005), quaternion.AxisAngle(float3(0, 0, 1), 0.4), Color(0.12, 0.11, 0.10));
+        art.scene.Cube(at + pose.head + float3(0, 0.025, -0.146), float3(0.064, 0.032, 0.021), Color(0.90, 0.87, 0.74));
+        if (!copy) art.scene.Cube(at + pose.head + float3(0, 0.027, -0.159), float3(0.008, 0.028, 0.005), quaternion.AxisAngle(float3(0, 0, 1), 0.4), Color(0.12, 0.11, 0.10));
     }
     if (identity == 2 && (flight.caseIndex > 3 || (flight.caseIndex == 3 && flight.phase >= 2)))
     {
-        art.scene.Mesh(art.collar.vertices, art.collar.indices, float4x4.Translate(at), CabinSurface);
-        if (copy) art.scene.Cube(at + float3(0.14, 1.01, -0.208), float3(0.031, 0.031, 0.004), Color(0.18, 0.23, 0.23));
-        else art.scene.Sphere(at + float3(0.14, 1.01, -0.207), 0.017, Color(0.18, 0.23, 0.23));
+        art.scene.Mesh(art.collar.vertices, art.collar.indices, float4x4.Translate(at + pose.shoulders), CabinSurface);
+        if (copy) art.scene.Cube(at + pose.shoulders + float3(0.14, -0.06, -0.182), float3(0.031, 0.031, 0.004), Color(0.18, 0.23, 0.23));
+        else art.scene.Sphere(at + pose.shoulders + float3(0.14, -0.06, -0.181), 0.017, Color(0.18, 0.23, 0.23));
     }
 }
 
