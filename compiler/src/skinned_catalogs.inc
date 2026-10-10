@@ -185,8 +185,11 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
             mesh->skin_skeleton->skin_bones->skin_metadata_status = mesh->skin_animations->skin_metadata_status;
         }
         if (!metadata) {
-            if (status == MODEL_METADATA_INVALID) diag_error(path->at, "model catalog metadata is invalid: %s", why ? why : "invalid model JSON");
-            else diag_info(path->at, "model catalog metadata is unavailable: %s", why ? why : "no cached model JSON");
+            if (status == MODEL_METADATA_INVALID) {
+                if (!asset_skinned_obj_diagnostic(written, path->at)) {
+                    diag_error(path->at, "model catalog metadata is invalid: %s", why ? why : "invalid model JSON");
+                }
+            } else diag_info(path->at, "model catalog metadata is unavailable: %s", why ? why : "no cached model JSON");
             return;
         }
         if (base->skin_contract) skinned_validate_contract(base, metadata, path->at);

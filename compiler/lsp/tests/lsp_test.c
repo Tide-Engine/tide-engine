@@ -18,6 +18,7 @@
 #include "json.h"
 #include "model_metadata.h"
 #include "packages.h"
+#include "sha256.h"
 #include "tide_test.h"
 #include "server.h"
 
@@ -10538,7 +10539,8 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
     model_metadata_invalidate(path);
     open_uri(uri_main, main_file);
     TIDE_CHECK(has(last_sent(), "animation catalog metadata is invalid") && !has(last_sent(), "has no checked member 'walk'"));
-    TIDE_CHECK(diagnosed(0, (int)(strchr(main_file, '"') - main_file), 11, 1, "model catalog metadata is invalid:"));
+    TIDE_CHECK(diagnosed(0, (int)(strchr(main_file, '"') - main_file), 11, 1,
+                         "model catalog metadata is invalid: has incomplete or invalid JSON"));
     remove_game_file("lsp_skin_status/hero.gltf");
     open_uri(uri_main, main_file);
     TIDE_CHECK(has(last_sent(), "animation catalog metadata is unavailable") && !has(last_sent(), "has no checked member 'walk'"));
@@ -10571,6 +10573,67 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
     remove_game_file("lsp_skin_status/.tide/.gitignore");
     remove_folder("lsp_skin_status/.tide");
     remove_folder("lsp_skin_status");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
+}
+
+TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_skin_format");
+    static const char obj[] = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    static const char local[] = "asset SkinnedMesh<Vertex3> hero = \"character.obj\";\nscene Main { }\n";
+    static const char primary[] = "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb), not OBJ";
+    static const char guidance[] = "use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0";
+    write_file("lsp_skin_format/main.tide", local);
+    write_file("lsp_skin_format/character.obj", obj);
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_skin_format", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_skin_format/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, local);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(local, '"') - local), 15, 1, primary));
+    TIDE_CHECK(has(last_sent(), guidance) && !has(last_sent(), "incomplete or invalid JSON")
+               && !has(last_sent(), "model catalog metadata is invalid"));
+    write_file("lsp_skin_format/character.obj", "{\"asset\":{\"version\":\"2.0\"}}");
+    open_uri(uri_main, local);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // Accepted glTF content keeps working regardless of its suffix.
+
+    // An uncached URL remains unavailable without a fetch; an existing OBJ
+    // cache uses the source URL's extension, not its extensionless hash path.
+    model_metadata_forget();
+    static const char url[] = "https://must-never-be-contacted.invalid/character.OBJ?revision=1#preview";
+    char remote[512];
+    snprintf(remote, sizeof remote, "asset SkinnedMesh<Vertex3> hero = \"%s\";\nscene Main { }\n", url);
+    open_uri(uri_main, remote);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(remote, '"') - remote), (int)strlen(url) + 2, 3,
+                         "model catalog metadata is unavailable:"));
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1") && model_metadata_statistics().file_reads == 0
+               && model_metadata_statistics().parses == 0);
+    make_folder("lsp_skin_format/.tide");
+    make_folder("lsp_skin_format/.tide/assets");
+    make_folder("lsp_skin_format/.tide/assets/urls");
+    char digest[65], cache[160];
+    sha256_hex(url, strlen(url), digest);
+    snprintf(cache, sizeof cache, "lsp_skin_format/.tide/assets/urls/%s", digest);
+    write_file(cache, obj);
+    open_uri(uri_main, remote);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(remote, '"') - remote), (int)strlen(url) + 2, 1, primary));
+    TIDE_CHECK(has(last_sent(), guidance) && !has(last_sent(), "incomplete or invalid JSON")
+               && !has(last_sent(), "model catalog metadata is invalid"));
+    TIDE_CHECK(model_metadata_statistics().file_reads == 1);
+    remove_game_file(cache);
+    remove_game_file("lsp_skin_format/main.tide");
+    remove_game_file("lsp_skin_format/character.obj");
+    remove_game_file("lsp_skin_format/.tide/assets.sha256");
+    remove_game_file("lsp_skin_format/.tide/.gitignore");
+    remove_folder("lsp_skin_format/.tide/assets/urls");
+    remove_folder("lsp_skin_format/.tide/assets");
+    remove_folder("lsp_skin_format/.tide");
+    remove_folder("lsp_skin_format");
     clear_sent();
     lsp_free(&server);
     model_metadata_forget();

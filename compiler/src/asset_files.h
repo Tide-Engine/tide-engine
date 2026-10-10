@@ -61,6 +61,11 @@ asset_value *asset_resolve(const char *declaring, str path, asset_kind kind, boo
 // Decode the language literal's escapes and normalize path separators (arena).
 const char *asset_written_path(str text);
 
+// After a skinned import fails, diagnose an OBJ path with its supported
+// alternative instead of a glTF JSON error. URL queries and fragments do
+// not name a format. False leaves the original import diagnostic to callers.
+bool asset_skinned_obj_diagnostic(const char *path, loc at);
+
 // The folders and files a resolved value depends on, for whoever watches
 // them: each file's path, and a glob's folder (ending in '/'). Calls `found`
 // with each, once. What a file was read with beside it (a .gltf's buffers) is
