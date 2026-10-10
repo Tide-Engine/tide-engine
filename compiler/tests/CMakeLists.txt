@@ -82,6 +82,7 @@ tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
 tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
 tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists after each entity and frame
+tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
 target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=2430772888184797451ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload

@@ -18,5 +18,7 @@ extern void skinned_scratch_observe(int index);
 view Show(Body body)
 {
     skinned_scratch_observe(body.index);
-    Draw.SkinnedMesh(character, float4x4.identity);
+    // An ordinary local value owns its model lists even when Draw can borrow it.
+    var model = character;
+    Draw.SkinnedMesh(model, float4x4.identity);
 }

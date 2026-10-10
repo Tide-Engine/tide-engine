@@ -41,3 +41,4 @@ bench/skinned/model.gltf text eol=lf
 bench/results/skinned.jsonl text eol=lf
 bench/results/skinned-baseline-metadata.json text eol=lf
 bench/results/skinned-gpu-monitor.csv text eol=lf
+bench/results/skinned-cpu/** text eol=lf

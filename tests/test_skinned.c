@@ -1,7 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tide/net.h"
+#include "tide/pack.h"
+#include "tide/sha256.h"
 #include "tide/skinned.h"
 #include "tide/skinned_data.h"
 #include "tide_test.h"
@@ -171,6 +174,132 @@ static uint64_t pose_hash(const tide_list pose)
         hash = tide_hash_more(hash, &value, sizeof value);
     }
     return tide_hash_end(hash);
+}
+
+// Typed geometry is deliberately simple: sampling consumes only the portable
+// bytes. The alias variant embeds those bytes in writable packed geometry to
+// exercise proof invalidation after a generated-default-style update.
+static uint8_t *sample_model_pack(const tide_list data, const bool alias, size_t *size)
+{
+    tide_pack_builder b = {0};
+    const uint32_t bytes = (uint32_t)tide_list_count(data);
+    const void *flat = tide_list_at(data, 0, 1u);
+    uint8_t h[32];
+    uint32_t offsets[3];
+    if (alias) {
+        uint8_t carrier[2048u + sizeof(tide_block)] = {0};
+        if (bytes > 2048u) return NULL;
+        const tide_block header = {.a = bytes, .b = bytes};
+        memcpy(carrier, &header, sizeof header);
+        memcpy(carrier + sizeof header, flat, bytes);
+        const uint32_t carrier_size = bytes + (uint32_t)sizeof header, indices[3] = {0u, 0u, 0u};
+        uint32_t writable[2];
+        tide_sha256_of(carrier, carrier_size, h);
+        tide_pack_mesh(&b, h, carrier, carrier_size, 1u, indices, 3u, writable);
+        tide_pack_name(&b, "Game.writable", TIDE_PACK_MESH, writable[0], writable[1], 1u);
+        offsets[0] = writable[0] + (uint32_t)sizeof(tide_block);
+    } else {
+        tide_sha256_of(flat, bytes, h);
+        uint32_t chars;
+        offsets[0] = tide_pack_bytes(&b, h, flat, bytes, &chars);
+    }
+    const tide_float3 vertices[3] = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
+    const uint32_t indices[3] = {0u, 1u, 2u};
+    tide_sha256_of(vertices, sizeof vertices, h);
+    tide_pack_mesh(&b, h, vertices, sizeof vertices[0], 3u, indices, 3u, &offsets[1]);
+    const uint32_t record = tide_pack_skinned_list(&b, offsets, 1u);
+    tide_pack_name(&b, "Game.actor", TIDE_PACK_SKINNED, record, 1u, 1u);
+    return tide_pack_end(&b, size);
+}
+
+TIDE_TEST(skinned_packed_samples_match_owned_bits_and_reject_negative_first_keys)
+{
+    const uint32_t mark = tide_scratch_mark();
+    for (uint32_t variant = 0; variant < 2u; variant++) {
+        const tide_list raw = model();
+        uint8_t *flat = tide_list_at_mut(raw, 0, 1u);
+        const uint32_t bytes = (uint32_t)tide_list_count(raw);
+        tide_skinned_data_view view;
+        tide_skinned_channel_data channel;
+        TIDE_REQUIRE(tide_skinned_data_open(flat, bytes, &view));
+        TIDE_REQUIRE(tide_skinned_data_channel(&view, 0u, &channel));
+        if (variant) number(flat, channel.times_at, -0.5f);
+        // Full validation permits this strictly increasing negative first
+        // time, while sampling has always required every key time >=0.
+        TIDE_REQUIRE(tide_skinned_valid(raw));
+        size_t size;
+        uint8_t *pack = sample_model_pack(raw, false, &size);
+        TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+        const tide_list packed = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
+        uint64_t version;
+        TIDE_REQUIRE(tide_pack_skinned_version(packed, &version));
+        tide_heap heap = {0};
+        tide_text_use(&heap, NULL);
+        tide_list owned = {0}, a = {0}, b = {0};
+        tide_list_set(&owned, raw, 1u, TIDE_IN_MATCH);
+        TIDE_CHECK(!tide_pack_skinned_version(owned, &version));
+        TIDE_REQUIRE(tide_skinned_rest(raw, &a, TIDE_IN_SCRATCH));
+        TIDE_REQUIRE(tide_skinned_rest(raw, &b, TIDE_IN_SCRATCH));
+        const float times[] = {-1.0f, 0.0f, 0.375f, 1.0f, 2.0f, 3.0f};
+        for (int32_t clip = 0; clip < 3; clip++) {
+            for (uint32_t i = 0; i < sizeof times / sizeof times[0]; i++) {
+                const uint64_t before_a = pose_hash(a), before_b = pose_hash(b);
+                const bool expected = variant == 0u || clip != 0;
+                TIDE_CHECK(tide_skinned_sample(packed, clip, times[i], &a, TIDE_IN_SCRATCH) == expected);
+                TIDE_CHECK(tide_skinned_sample(owned, clip, times[i], &b, TIDE_IN_SCRATCH) == expected);
+                if (!expected) {
+                    TIDE_CHECK(pose_hash(a) == before_a && pose_hash(b) == before_b);
+                    TIDE_CHECK(!tide_skinned_sample(raw, clip, times[i], &b, TIDE_IN_SCRATCH));
+                }
+                TIDE_CHECK(tide_list_count(a) == tide_list_count(b));
+                for (int32_t node = 0; node < tide_list_count(a); node++) {
+                    const tide_bone_transform first = bone(a, node), second = bone(b, node);
+                    TIDE_CHECK(memcmp(&first, &second, sizeof first) == 0);
+                }
+            }
+        }
+        const uint64_t unchanged = pose_hash(a);
+        TIDE_CHECK(!tide_skinned_sample(packed, -1, 0, &a, TIDE_IN_SCRATCH));
+        TIDE_CHECK(!tide_skinned_sample(packed, 3, 0, &a, TIDE_IN_SCRATCH));
+        TIDE_CHECK(pose_hash(a) == unchanged);
+        tide_text_use(NULL, NULL);
+        tide_heap_free(&heap);
+        tide_pack_unload();
+        free(pack);
+    }
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(skinned_packed_sampling_rechecks_later_keys_after_proof_invalidation)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw = model();
+    size_t size;
+    uint8_t *pack = sample_model_pack(raw, true, &size);
+    TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+    const tide_list packed = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
+    uint64_t version;
+    TIDE_REQUIRE(tide_pack_skinned_version(packed, &version));
+    tide_list pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample(packed, 0, 1.0f, &pose, TIDE_IN_SCRATCH));
+    const uint64_t before = pose_hash(pose);
+    const uint32_t carrier_size = (uint32_t)tide_list_count(raw) + (uint32_t)sizeof(tide_block);
+    uint32_t count;
+    uint8_t *to = tide_pack_mesh_open(tide_pack_find("Game.writable", TIDE_PACK_MESH), 0u, carrier_size, &count);
+    TIDE_REQUIRE(to && count == 1u);
+    tide_skinned_data_view view;
+    tide_skinned_channel_data channel;
+    TIDE_REQUIRE(tide_skinned_data_open(to + sizeof(tide_block), (size_t)tide_list_count(raw), &view));
+    TIDE_REQUIRE(tide_skinned_data_channel(&view, 0u, &channel));
+    // Leave the first key valid; the fallback must inspect the later key.
+    number(to + sizeof(tide_block), channel.times_at + 4u, 0.0f);
+    tide_pack_mesh_updated(to, carrier_size);
+    TIDE_CHECK(!tide_pack_skinned_version(packed, &version));
+    TIDE_CHECK(!tide_skinned_sample(packed, 0, 1.0f, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == before);
+    tide_pack_unload();
+    free(pack);
+    tide_scratch_reset(mark);
 }
 
 TIDE_TEST(skinned_separate_animation_exports_bind_by_required_rig)
@@ -461,6 +590,76 @@ TIDE_TEST(skinned_rejects_bad_data_without_changing_pose)
     TIDE_CHECK(!tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(hash == tide_hash(tide_list_at(pose, 0, sizeof(tide_bone_transform)), 3u * sizeof(tide_bone_transform)));
     TIDE_CHECK(tide_skinned_fingerprint(data) == 0u);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(skinned_compatibility_reads_owned_chunked_headers_and_keeps_snapshots)
+{
+    const uint32_t mark = tide_scratch_mark();
+    tide_list data = model();
+    uint8_t nodes[3u * TIDE_SKINNED_NODE_SIZE];
+    memcpy(nodes, (const uint8_t *)tide_list_at(data, 0, 1u) + TIDE_SKINNED_HEADER_SIZE, sizeof nodes);
+    const uint32_t bytes = TIDE_LIST_CHUNK * 32u + 4u, node_at = bytes - (uint32_t)sizeof nodes;
+    tide_list_resize(&data, (int32_t)bytes, 1u, TIDE_IN_SCRATCH);
+    uint8_t *source = tide_list_at_mut(data, 0, 1u);
+    word(source, 8u, bytes);
+    word(source, 20u, node_at);
+    memcpy(source + node_at, nodes, sizeof nodes);
+    TIDE_REQUIRE(tide_skinned_valid(data));
+
+    tide_heap heap = {0}, snapshot = {0};
+    tide_text_use(&heap, NULL);
+    tide_list owned = {0};
+    tide_list_set(&owned, data, 1u, TIDE_IN_MATCH);
+    const tide_list stored = owned;
+    TIDE_REQUIRE(tide_block_at(owned.at)->b & TIDE_LIST_CHUNKED);
+    tide_heap_copy(&snapshot, &heap);
+    const uint64_t before = tide_heap_hash(TIDE_HASH_START, &heap);
+    const uint32_t scratch_before = tide_scratch_mark(), moves = heap.moves;
+    for (uint32_t i = 0; i < 100u; i++) {
+        TIDE_CHECK(tide_skinned_compatible(data, owned));
+        TIDE_CHECK(tide_skinned_compatible(owned, data));
+        TIDE_CHECK(tide_skinned_compatible(owned, owned));
+    }
+    TIDE_CHECK(tide_heap_hash(TIDE_HASH_START, &heap) == before && heap.moves == moves);
+    TIDE_CHECK(tide_scratch_mark() == scratch_before);
+
+    const tide_list short_header = tide_list_from(source, TIDE_SKINNED_HEADER_SIZE - 1u, 1u);
+    TIDE_CHECK(!tide_skinned_compatible(data, short_header));
+    TIDE_CHECK(!tide_skinned_compatible(short_header, data));
+    TIDE_CHECK(!tide_skinned_compatible(data, (tide_list){0}));
+    TIDE_CHECK(!tide_skinned_compatible((tide_list){0}, data));
+    const struct { uint32_t at, bad, restored; } rejected[] = {
+        {0u, 0u, TIDE_SKINNED_DATA_MAGIC},
+        {4u, TIDE_SKINNED_DATA_VERSION + 1u, TIDE_SKINNED_DATA_VERSION},
+        {8u, bytes - 4u, bytes},
+        {16u, UINT32_MAX, 3u},
+        {20u, bytes - 4u, node_at},
+        {16u, 2u, 3u}, // Same fingerprint, different declared node count.
+    };
+    for (uint32_t i = 0; i < sizeof rejected / sizeof rejected[0]; i++) {
+        uint8_t *header = tide_list_at_mut(owned, 0, 1u);
+        word(header, rejected[i].at, rejected[i].bad);
+        TIDE_CHECK(!tide_skinned_compatible(data, owned));
+        TIDE_CHECK(!tide_skinned_compatible(owned, data));
+        word(header, rejected[i].at, rejected[i].restored);
+    }
+    uint8_t *fingerprint = tide_list_at_mut(owned, 119, 1u);
+    *fingerprint ^= 1u;
+    TIDE_CHECK(!tide_skinned_compatible(data, owned));
+    *fingerprint ^= 1u;
+    // Compatibility always checked header identity rather than all body
+    // contents. Keep that behavior for a malformed node in a distant chunk.
+    word(tide_list_at_mut(owned, (int32_t)node_at, 1u), 0u, 0u);
+    TIDE_CHECK(!tide_skinned_valid(owned));
+    TIDE_CHECK(tide_skinned_compatible(data, owned));
+    tide_text_use(&snapshot, NULL);
+    TIDE_CHECK(tide_skinned_valid(stored));
+    TIDE_CHECK(tide_skinned_compatible(data, stored));
+    TIDE_CHECK(tide_heap_hash(TIDE_HASH_START, &snapshot) == before);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+    tide_heap_free(&snapshot);
     tide_scratch_reset(mark);
 }
 
