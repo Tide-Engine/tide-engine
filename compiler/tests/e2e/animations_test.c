@@ -25,6 +25,14 @@ static float position(const tide_world *w)
     return at ? at->position.x : 12345.0f;
 }
 
+static float fbx_position(tide_world *w)
+{
+    tide_text_use(&w->heap, NULL);
+    const int32_t bone = tide_skinned_find_bone(w->Probe.fbxPose.data, tide_str_from_cstr("Bone0"));
+    const tide_bone_transform *at = tide_list_read(&w->heap, w->Probe.fbxPose.transforms, bone, sizeof *at);
+    return at ? at->position.x : 12345.0f;
+}
+
 static bool same(const tide_world *a, const tide_world *b)
 {
     const uint32_t size = tide_world_pack(a, NULL, 0);
@@ -42,15 +50,18 @@ TIDE_TEST(animations_import_checked_catalogs_without_geometry)
 {
     start();
     if (world.Probe.firstFailure) printf("    check %d failed\n", world.Probe.firstFailure);
-    TIDE_CHECK(world.Probe.checks == 17 && world.Probe.passed == 17);
-    TIDE_CHECK(position(&world) == -6.0f);
-    const tide_pack_entry *entry = tide_pack_find("movement", TIDE_PACK_BYTES);
-    TIDE_REQUIRE(entry != NULL);
-    const tide_list data = {tide_pack_handle(entry)};
-    const uint8_t *bytes = tide_list_at(data, 0, 1u);
-    tide_skinned_data_view view;
-    TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(data), &view));
-    TIDE_CHECK(view.vertices == 0 && view.indices == 0 && view.clips == 1);
+    TIDE_CHECK(world.Probe.checks == 21 && world.Probe.passed == 21);
+    TIDE_CHECK(position(&world) == -6.0f && fbx_position(&world) == -2.0f);
+    static const char *const names[] = {"movement", "fbxAscii", "fbxBinary"};
+    for (uint32_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        const tide_pack_entry *entry = tide_pack_find(names[i], TIDE_PACK_BYTES);
+        TIDE_REQUIRE(entry != NULL);
+        const tide_list data = {tide_pack_handle(entry)};
+        const uint8_t *bytes = tide_list_at(data, 0, 1u);
+        tide_skinned_data_view view;
+        TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(data), &view));
+        TIDE_CHECK(view.vertices == 0 && view.indices == 0 && view.clips == 1);
+    }
     tide_world_free(&world);
     tide_pack_unload();
 }
@@ -63,6 +74,7 @@ TIDE_TEST(animations_owned_catalogs_survive_pack_unload_snapshots_and_serializat
     tide_pack_unload();
     tide_world_tick(&world);
     TIDE_CHECK(position(&world) == -12.0f && position(&copy) == -6.0f);
+    TIDE_CHECK(fbx_position(&world) == -3.0f && fbx_position(&copy) == -2.0f);
     TIDE_CHECK(tide_world_hash(&copy) == old_hash);
     tide_world_tick(&copy);
     TIDE_CHECK(same(&world, &copy));

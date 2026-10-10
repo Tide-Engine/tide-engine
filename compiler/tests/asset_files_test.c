@@ -65,7 +65,7 @@ TIDE_TEST(asset_skinned_obj_diagnostics_follow_written_file_names)
         {"character.obj", true}, {"art/character.OBJ", true}, {"character#old.obj", true},
         {"https://example.com/character.OBJ?revision=1#skin", true},
         {"http://example.com/character.obj#skin", true},
-        {"character.gltf", false}, {"character.glb", false}, {"character.obj.backup", false},
+        {"character.gltf", false}, {"character.glb", false}, {"character.fbx", false}, {"character.obj.backup", false},
         {"character.obj?revision=1", false}, {"character.obj#skin", false},
         {"https://character.obj?revision=1", false}, {"https://example.com?file=/character.obj", false},
         {"https://example.com/model.gltf?file=character.obj", false},
@@ -81,8 +81,8 @@ TIDE_TEST(asset_skinned_obj_diagnostics_follow_written_file_names)
         TIDE_CHECK(out.count == (cases[i].obj ? 2 : 0));
         if (cases[i].obj) {
             TIDE_CHECK(out.severity[0] == DIAG_ERROR && out.severity[1] == DIAG_NOTE);
-            TIDE_CHECK(strcmp(out.message[0], "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb), not OBJ") == 0);
-            TIDE_CHECK(strcmp(out.message[1], "use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0") == 0);
+            TIDE_CHECK(strcmp(out.message[0], "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ") == 0);
+            TIDE_CHECK(strcmp(out.message[1], "use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX") == 0);
         }
     }
     diag_reset();

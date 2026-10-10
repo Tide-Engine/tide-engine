@@ -1,0 +1,9 @@
+The portable math implementation in ufbx_math.c is based on LIBM
+(https://www.netlib.org/libm/). Its original notice follows:
+
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+
+Developed at SunSoft, a Sun Microsystems, Inc. business.
+Permission to use, copy, modify, and distribute this
+software is freely granted, provided that this notice
+is preserved.

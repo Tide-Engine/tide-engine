@@ -334,6 +334,62 @@ TIDE_TEST(skinned_separate_sampling_keeps_owned_snapshots_and_exact_bits)
     tide_scratch_reset(mark);
 }
 
+TIDE_TEST(skinned_separate_bindings_skip_only_static_identity_scene_wrappers)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list target = model();
+    tide_list wrapped = separate_model(
+        "{\"children\":[2]},{\"name\":\"hand\",\"translation\":[0,3,0]},"
+        "{\"name\":\"arm\",\"translation\":[-2,0,0],\"children\":[1]}");
+    TIDE_REQUIRE(tide_skinned_valid(wrapped));
+    tide_skinned_data_view view;
+    uint8_t *bytes = tide_list_at_mut(wrapped, 0, 1u);
+    TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(wrapped), &view));
+    // FBX conversion adds a constant scene-root translation channel to retain
+    // the take's duration. Turn the fixture's second clip into that channel.
+    const uint32_t wrapper_channel = view.channel_at + TIDE_SKINNED_CHANNEL_SIZE;
+    word(bytes, wrapper_channel, 1u);
+    tide_skinned_channel_data channel;
+    TIDE_REQUIRE(tide_skinned_data_channel(&view, 1u, &channel));
+    for (uint32_t i = 0; i < 6u; i++) number(bytes, channel.values_at + i * 4u, 0.0f);
+    TIDE_REQUIRE(tide_skinned_valid(wrapped));
+    tide_list source_pose = {0}, pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample_into(target, wrapped, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(bone(pose, 1).position.x == 3.0f && bone(pose, 2).position.y == 3.0f);
+    TIDE_REQUIRE(tide_skinned_sample_into(target, wrapped, 1, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(bone(pose, 0).position.x == 0.0f && bone(pose, 1).position.x == 2.0f);
+    TIDE_REQUIRE(tide_skinned_sample(wrapped, 0, 1, &source_pose, TIDE_IN_SCRATCH));
+    tide_bone_transform *root = tide_list_at_mut(source_pose, 0, sizeof *root);
+    TIDE_REQUIRE(root);
+    root->position.x = 5.0f;
+    TIDE_REQUIRE(tide_skinned_pose_into(target, wrapped, source_pose, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(bone(pose, 0).position.x == 5.0f && bone(pose, 1).position.x == 3.0f);
+    const uint64_t before = pose_hash(pose);
+    tide_bone_transform *wrapper = tide_list_at_mut(source_pose, 1, sizeof *wrapper);
+    TIDE_REQUIRE(wrapper);
+    wrapper->position.x = 1.0f;
+    TIDE_CHECK(!tide_skinned_pose_into(target, wrapped, source_pose, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == before);
+    wrapper->position.x = 0.0f;
+    number(bytes, channel.values_at + 12u, 1.0f);
+    TIDE_CHECK(!tide_skinned_sample_into(target, wrapped, 1, 0, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(!tide_skinned_pose_into(target, wrapped, source_pose, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == before);
+    number(bytes, channel.values_at + 12u, 0.0f);
+    TIDE_REQUIRE(tide_skinned_sample_into(wrapped, target, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(bone(pose, 1).position.x == 0.0f && bone(pose, 2).position.x == 3.0f);
+    const uint64_t reverse = pose_hash(pose);
+    number(bytes, view.node_at + TIDE_SKINNED_NODE_SIZE + 16u, 1.0f);
+    TIDE_CHECK(!tide_skinned_sample_into(wrapped, target, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == reverse);
+    const tide_list nested = separate_model(
+        "{\"children\":[1]},{\"children\":[2]},{\"name\":\"arm\",\"translation\":[-2,0,0]}");
+    TIDE_REQUIRE(tide_skinned_valid(nested));
+    TIDE_CHECK(!tide_skinned_sample_into(target, nested, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == reverse);
+    tide_scratch_reset(mark);
+}
+
 TIDE_TEST(skinned_pose_samples_defaults_modes_and_hierarchy)
 {
     const uint32_t mark = tide_scratch_mark();

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "folders.h"
+#include "fbx_metadata_fixture.h"
 #include "model_metadata.h"
 #include "sha256.h"
 #include "tide/time.h"
@@ -76,6 +77,21 @@ TIDE_TEST(model_metadata_reads_escaped_keys_and_utf8_names)
     TIDE_CHECK(m.animation_count == 1 && strcmp(m.animations[0], "caf\xc3\xa9\xf0\x9f\x98\x80\"") == 0);
     TIDE_CHECK(m.node_count == 1 && strcmp(m.nodes[0].name, "\xc3\xa9") == 0);
     model_metadata_free(&m);
+}
+
+TIDE_TEST(model_metadata_reads_fbx_catalogs_and_source_hierarchy)
+{
+    model_metadata m;
+    char why[256];
+    TIDE_REQUIRE(model_metadata_read((const uint8_t *)fbx_catalog_fixture, sizeof fbx_catalog_fixture - 1u, "hero.FBX", &m, why));
+    TIDE_CHECK(m.animation_count == 2 && m.node_count == 3 && m.skin_count == 0);
+    TIDE_CHECK(strcmp(m.animations[0], "Idle") == 0 && strcmp(m.animations[1], "Run") == 0);
+    TIDE_CHECK(m.nodes[0].name == NULL && m.nodes[0].parent == -1);
+    TIDE_CHECK(strcmp(m.nodes[1].name, "Root") == 0 && m.nodes[1].parent == 0);
+    TIDE_CHECK(strcmp(m.nodes[2].name, "Hand") == 0 && m.nodes[2].parent == 1);
+    model_metadata_free(&m);
+    TIDE_CHECK(!model_metadata_read((const uint8_t *)"broken FBX", 10, "hero.fbx", &m, why) && why[0]);
+    TIDE_CHECK(m.node_count == 0 && m.animation_count == 0);
 }
 
 TIDE_TEST(model_metadata_refuses_invalid_json_and_hierarchy_without_partial_catalogs)
@@ -253,6 +269,59 @@ TIDE_TEST(model_metadata_url_inspection_uses_only_an_existing_local_cache)
     TIDE_REQUIRE(model_metadata_cached_url(url, folder, &m, &why) == MODEL_METADATA_READY && m);
     TIDE_CHECK(m->animation_count == 3);
     TIDE_CHECK(model_metadata_statistics().file_reads == 1);
+    TIDE_CHECK(remove(path) == 0);
+    model_metadata_forget();
+}
+
+TIDE_TEST(model_metadata_fbx_url_cache_keeps_the_original_source_extension)
+{
+    model_metadata_forget();
+    const char *folder = MODEL_METADATA_WORK "/fbx-url-game";
+    const char *url = "https://must-never-be-contacted.invalid/hero.FBX?revision=1";
+    const char *dir = MODEL_METADATA_WORK "/fbx-url-game/.tide/assets/urls";
+    TIDE_REQUIRE(folder_make(dir));
+    char digest[65], path[1024];
+    sha256_hex(url, strlen(url), digest);
+    snprintf(path, sizeof path, "%s/%s", dir, digest);
+    TIDE_REQUIRE(write_text(path, fbx_catalog_fixture));
+    const model_metadata *m;
+    const char *why;
+    TIDE_REQUIRE(model_metadata_cached_url(url, folder, &m, &why) == MODEL_METADATA_READY && m);
+    TIDE_CHECK(m->animation_count == 2 && strcmp(m->animations[0], "Idle") == 0);
+    const model_metadata_stats warm = model_metadata_statistics();
+    TIDE_REQUIRE(model_metadata_cached_url(url, folder, &m, &why) == MODEL_METADATA_READY);
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses && model_metadata_statistics().file_reads == warm.file_reads);
+    model_metadata_invalidate(path);
+    TIDE_REQUIRE(model_metadata_cached_url(url, folder, &m, &why) == MODEL_METADATA_READY);
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1u);
+    TIDE_CHECK(remove(path) == 0);
+    model_metadata_forget();
+    // A source without a suffix still identifies FBX beyond leading comments.
+    const char *extensionless = "https://must-never-be-contacted.invalid/download?model=hero";
+    sha256_hex(extensionless, strlen(extensionless), digest);
+    snprintf(path, sizeof path, "%s/%s", dir, digest);
+    TIDE_REQUIRE(write_text(path, fbx_catalog_fixture));
+    TIDE_REQUIRE(model_metadata_cached_url(extensionless, folder, &m, &why) == MODEL_METADATA_READY && m);
+    TIDE_CHECK(m->animation_count == 2 && strcmp(m->animations[1], "Run") == 0);
+    TIDE_CHECK(remove(path) == 0);
+    model_metadata_forget();
+}
+
+TIDE_TEST(model_metadata_fbx_interactive_source_budget_is_unavailable)
+{
+    model_metadata_forget();
+    TIDE_REQUIRE(folder_make(MODEL_METADATA_WORK));
+    const char *path = MODEL_METADATA_WORK "/large.FBX";
+    FILE *file = fopen(path, "wb");
+    TIDE_REQUIRE(file);
+    TIDE_CHECK(fwrite(fbx_catalog_fixture, 1, sizeof fbx_catalog_fixture - 1u, file) == sizeof fbx_catalog_fixture - 1u);
+    TIDE_CHECK(fseek(file, 64u * 1024u * 1024u, SEEK_SET) == 0 && fputc(' ', file) != EOF);
+    TIDE_REQUIRE(fclose(file) == 0);
+    const model_metadata *m;
+    const char *why;
+    TIDE_CHECK(model_metadata_cached(path, &m, &why) == MODEL_METADATA_UNAVAILABLE && m == NULL);
+    TIDE_CHECK(strstr(why, "64 MiB") != NULL);
+    TIDE_CHECK(model_metadata_statistics().bytes_read == 20u && model_metadata_statistics().parses == 0);
     TIDE_CHECK(remove(path) == 0);
     model_metadata_forget();
 }

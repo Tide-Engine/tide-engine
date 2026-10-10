@@ -5,6 +5,10 @@ asset List<Animations> all = "animations/clips/*.gltf";
 asset Map<string, Animations> byPath = "animations/clips/*.gltf";
 asset List<Animations> one = "animations/clips/a.gltf";
 asset Map<string, Animations> oneByPath = "animations/clips/a.gltf";
+asset Animations fbxAscii = "fbx/clips/move_ascii.fbx";
+asset Animations fbxBinary = "fbx/clips/move_binary.fbx";
+asset List<Animations> fbxAll = "fbx/clips/*.fbx";
+asset Map<string, Animations> fbxByPath = "fbx/clips/*.fbx";
 
 singleton Probe
 {
@@ -13,10 +17,12 @@ singleton Probe
     int firstFailure;
     int ticks;
     Animations saved = movement;
+    Animations fbxSaved = fbxAscii;
     List<Animations> savedList = all;
     Map<string, Animations> savedMap = byPath;
     Animation clip;
     Pose pose;
+    Pose fbxPose;
 }
 
 scene Main { }
@@ -54,11 +60,17 @@ system CheckAndSample(mut Probe p)
         Expect(p, one.count == 1 && one[0].At(0)!.name == "Move");
         Expect(p, oneByPath.count == 1 && oneByPath["animations/clips/a.gltf"].count == 1);
         Expect(p, p.saved.count == 1 && p.savedList.count == 2 && p.savedMap.count == 2);
+        Expect(p, fbxAscii.move.name == "Move" && fbxAscii.move.duration == 1);
+        Expect(p, fbxBinary.move.name == "Move" && fbxBinary.move.duration == 1);
+        Expect(p, fbxAll.count == 2 && fbxAll[0].Find("Move")!.duration == 1);
+        Expect(p, fbxByPath["fbx/clips/move_binary.fbx"].At(0)!.name == "Move");
         p.clip = p.saved.Find("Move")!;
         p.pose = p.clip.Sample(0);
+        p.fbxPose = p.fbxSaved.Find("Move")!.Sample(0);
     }
     Expect(p, p.saved.Find("Move")!.duration == 1 && p.savedList[1].count == 1
-        && p.savedMap["animations/clips/a.gltf"].At(0)!.name == "Move");
+        && p.savedMap["animations/clips/a.gltf"].At(0)!.name == "Move" && p.fbxSaved.count == 1);
     p.pose.Sample(p.clip, float(p.ticks + 1) * 0.25, Playback.Loop);
+    p.fbxPose.Sample(p.fbxSaved.Find("Move")!, float(p.ticks + 1) * 0.25, Playback.Loop);
     p.ticks++;
 }

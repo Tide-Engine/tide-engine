@@ -1,4 +1,4 @@
-// expect: an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), a Cubemap (six PNGs), a Clip (a WAV or Ogg Vorbis), a Mesh<V> (a glTF or an OBJ), or a SkinnedMesh<V> or Animations (glTF 2.0), not 'int'
+// expect: an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), a Cubemap (six PNGs), a Clip (a WAV or Ogg Vorbis), a Mesh<V> (a glTF, an OBJ or an FBX), or a SkinnedMesh<V> or Animations (glTF 2.0 or FBX), not 'int'
 asset int count = "../e2e/assets/table.bin";
 
 scene Main
