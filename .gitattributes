@@ -32,3 +32,9 @@ packages/box3d/box3d/** -text
 *.glb binary
 *.fbx binary
 compiler/third_party/ufbx/** -text
+
+# Reproducible skinned fixture and saved measurements retain their hashed bytes.
+bench/skinned/model.gltf text eol=lf
+bench/results/skinned.jsonl text eol=lf
+bench/results/skinned-baseline-metadata.json text eol=lf
+bench/results/skinned-gpu-monitor.csv text eol=lf
