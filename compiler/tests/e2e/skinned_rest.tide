@@ -73,6 +73,11 @@ view Show(mut Calls calls)
     Pose invalid = default;
     Draw.SkinnedMesh(character, float4x4.identity, invalid);
 
+    // A separately editable default Pose stays distinct from omitted rest.
+    Draw.SkinnedMesh(character, float4x4.identity, edited);
+    edited[hand].position.x = -17;
+    Draw.SkinnedMesh(character, float4x4.identity);
+
     // The animation export contains Arm without this model's MeshNode.
     mut var posed = character.defaultPose;
     posed.Sample(movement.move, 0.5);

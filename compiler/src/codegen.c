@@ -17404,15 +17404,18 @@ static void gen_shaders(gen *g)
                       sh->skin_base_at >= 0 ? 4 : 3);
             sb_put(o,
                       "    const uint32_t tide_skin_mark = tide_scratch_mark();\n"
-                      "    tide_list tide_skin_transforms = tide_pose_transforms;\n"
-                      "    if (tide_default_pose) {\n"
-                      "        if (!tide_skinned_rest(tide_model_data, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }\n"
-                      "    } else if (!tide_skinned_compatible(tide_model_data, tide_pose_data)) {\n"
-                      "        tide_skin_transforms = (tide_list){0};\n"
-                      "        if (!tide_skinned_pose_into(tide_model_data, tide_pose_data, tide_pose_transforms, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }\n"
-                      "    }\n");
-            sb_printf(o, "    if (!%s(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }\n",
+                      "    if (tide_default_pose) {\n");
+            sb_printf(o, "        if (!%s(tide_draw, tide_model_data, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }\n",
+                      sh->skin_base_at >= 0 ? "tide_draw_skinned_rest_atlas" : "tide_draw_skinned_rest_data");
+            sb_put(o, "    } else {\n"
+                      "        tide_list tide_skin_transforms = tide_pose_transforms;\n"
+                      "        if (!tide_skinned_compatible(tide_model_data, tide_pose_data)) {\n"
+                      "            tide_skin_transforms = (tide_list){0};\n"
+                      "            if (!tide_skinned_pose_into(tide_model_data, tide_pose_data, tide_pose_transforms, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }\n"
+                      "        }\n");
+            sb_printf(o, "        if (!%s(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }\n",
                       sh->skin_base_at >= 0 ? "tide_draw_skinned_atlas" : "tide_draw_skinned_data");
+            sb_put(o, "    }\n");
             if (sh->skin_base_at >= 0) sb_printf(o, "    tide_instance.i[%d] = tide_skin_info[3];\n", sh->skin_base_at);
         }
         // What's read as the Texture it's given says: that texture's filter's and wrap's bits, for the draw's own
