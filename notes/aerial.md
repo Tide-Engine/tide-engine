@@ -10,6 +10,12 @@ how to build it, play it and test it.
 
 No engine, compiler or package change was needed.
 
+The same day another session reworked Afterburn after the owner rejected its
+controls, camera and physics (`prototypes/rocket-league/RESEARCH.md`). What
+that research found is in Aerial too: the game's two key layouts, keyboard
+aerial safety, the camera's angle, RocketSim's hitbox, and two of RocketSim's
+own numbers as tests.
+
 ## The match
 
 `game.tide` is the match, at 120 Hz, for up to six players with host
@@ -80,6 +86,11 @@ game's units.
     `DESIGN.md` for why.
   - `struck` is the tick the ball last took this car's punch: a ball that's
     touched every tick, carried on a roof, is punched once.
+  - The box is RocketSim's, with its collision margin: 1.205 by 0.867 by
+    0.387 m, and the moments of inertia are that box's. With the game's bare
+    1.180 by 0.842 by 0.362 the reference shot touched a tick late.
+  - `DriveInput.level` is keyboard aerial safety: the pitch turns nothing,
+    and still aims a dodge.
   - The scoresheet is in `CarState`, and `Fresh` carries it over when a car
     is put back on its wheels.
 - **`ball.tide`.** `MoveBall` is flight, then the arena: a bounce that keeps
@@ -88,6 +99,10 @@ game's units.
   rolling faster than 5.5 m/s keeps scrubbing speed. `CarMeetsBall` is the
   contact, and `PunchBall` the second push, from the velocities the tick
   began with.
+  - **The contact settles its push and its grip together, over eight
+    rounds.** A push at the nose turns the car, which moves the point of
+    contact; settled once each, the reference shot's ball left 0.4 m/s too
+    fast downward.
 - **Two cars at the ball in one tick** are settled over three rounds, in an
   order that turns round each round and each tick (`Simulate`). Settled in
   seat order, the side with the higher seats won nearly every contest: bots
@@ -136,9 +151,15 @@ singletons, and nothing here is in the match's hash (the render test checks).
   that looked right from behind.
 - The camera (`AimCamera`) sits 2.7 m behind a point a metre over the car, on
   the line from the ball with the ball camera on and along the nose with it
-  off. It goes out through the glass walls behind a car that's driving up
-  one; the pitch, the kerb and the roof hold it in. From the grass it looks
-  up only as far as keeps the car in the picture.
+  off, at 77.55 degrees up and down on every screen. It goes out through the
+  glass walls behind a car that's driving up one; the pitch, the kerb and the
+  roof hold it in. From the grass it looks up only as far as keeps the car in
+  the picture. A held key looks back, and a gamepad's right stick swivels it.
+- **Keys are in one of the game's two layouts** (`KeyLayout` in `hand.tide`,
+  Classic unless the button beside Menu switches it): the input's `Sample`
+  and `Prepare`'s camera keys both read it. `Hand.held` is the throttle key
+  held since the ground, which the HUD's view keeps from the car's wheels,
+  and `Sample` turns into the input's `level`.
 - `effects.tide` and `sound.tide` are local handlers of the match's events.
   A goal, a wreck, a feat and the result wait for `verified`; a touch, a
   bounce, a pad and a jump are heard as predicted.
@@ -161,7 +182,7 @@ was deployed and no workflow was dispatched.
 
 ## Tests
 
-- **`aerial_tests`** (`test/test.c`, 25 tests, native and WASI): the car at
+- **`aerial_tests`** (`test/test.c`, 28 tests, native and WASI): the car at
   rest on its springs; throttle, boost and their top speeds; coasting,
   braking and reverse; the turning circle at 12 and 23 m/s; a powerslide;
   jump heights (0.90, 2.34 and 4.87 m for a tap, a hold and two); one dodge
@@ -174,13 +195,16 @@ was deployed and no workflow was dispatched.
   wrecking one's own side; seats, sides, team sizes and who may restart; a
   whole bot match with every car and the ball in bounds; six cars on random
   controls for 150 seconds; input bounds and NaN; snapshot, pack and replay;
-  two clients on a network with 30 ms of latency, 20 of jitter and 5% loss.
-- **The scripted match's hash is `0xa9b16d2a5f2c8639`**, the same on native
+  two clients on a network with 30 ms of latency, 20 of jitter and 5% loss;
+  keyboard aerial safety; and RocketSim's shot and its powerslides (1.6 cm/s
+  from its ball's velocity; within 0.08 m, 0.15 m/s, 0.02 rad and 0.04 rad/s
+  of its car).
+- **The scripted match's hash is `0x66d4ba38f380cd9b`**, the same on native
   debug and WASI. Any change to the match changes it: update it from one
   platform and confirm the other.
 - **`aerial_render`** (`test/render.c`; OpenGL, WebGL and WebGPU): draws at
-  1280 by 720 and 390 by 844, samples keys, the touch stick and each touch
-  button through the views into the input, keeps each side's car in the
+  1280 by 720 and 390 by 844, samples both key layouts, a gamepad, the touch
+  stick and each touch button through the views into the input, keeps each side's car in the
   lower middle of the picture with the ball ahead, behind at 23 m/s and with
   the car camera, and checks the match's hash is what it was.
 - **`aerial_play_webgl` and `aerial_play_webgpu`** (`test/browser_test.mjs`):

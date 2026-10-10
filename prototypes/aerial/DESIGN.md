@@ -52,13 +52,36 @@ sits 0.171 m up (the wiki: 0.1701); flat out on full lock it settles at
 12.0 m/s on a circle of 5.0 m (the wiki: 12.34 and 5.3), and at 23 m/s on one
 of 11.5 m (11.4).
 
+Held to RocketSim, the open reimplementation of the game's physics, by two
+fixtures another session built it for and ran (its numbers and how they were
+made are in `prototypes/rocket-league/RESEARCH.md`; its license is in
+`THIRD_PARTY_NOTICES.md`):
+
+- **A shot in the air.** A car flying level at 10 m/s meets a ball falling at
+  1 m/s. Four ticks on, the ball leaves 1.6 cm/s from RocketSim's 14.59 m/s,
+  and touches on the same tick.
+- **A powerslide.** From 10 and 15 m/s with a touch of throttle, full lock and
+  the handbrake held, where the car is, its velocity, its heading and its yaw
+  rate after half a second and a whole one are within 0.08 m, 0.15 m/s,
+  0.02 rad and 0.04 rad/s.
+
+Neither was reached by tuning to it: the hitbox became RocketSim's (1.205 by
+0.867 by 0.387 m, the box with its collision margin) and the hit's contact is
+settled with its friction over a few rounds, and the numbers followed.
+
 From memory of RocketSim's constants, and **not checked against a source in
-this work**: the Octane's hitbox and where its wheels are, the springs'
+this work** beyond those two fixtures: where the wheels are, the springs'
 stiffness and damping, the steering angle by speed, the tyres' grip by slide,
 what a powerslide does to it, the dodge's shove and spin and their timings,
 the hit's second push and its curve, the bump and its curves, righting an
 overturned car. The ball's bounce is the model usually credited to Chip, with
 its 0.285 grip.
+
+The controls are the game's own two keyboard and mouse layouts, Classic and
+Modern, as the same research read them from the game's files on this machine,
+with its keyboard aerial safety. The camera is the game's widest: 110 degrees
+across a 16:9 screen (77.55 up and down, kept on every screen), 2.7 m back,
+1 m up, tilted down 3 degrees.
 
 ## Where it isn't the game
 

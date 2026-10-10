@@ -13,7 +13,7 @@
 #include "tide_test.h"
 
 #define DT (1.0f / 120.0f)
-#define SCRIPTED_HASH UINT64_C(0xa9b16d2a5f2c8639)
+#define SCRIPTED_HASH UINT64_C(0x66d4ba38f380cd9b)
 static tide_world world;
 
 static tide_player_id player(const int index) { return tide_player_from_index(index); }
@@ -889,4 +889,90 @@ TIDE_TEST(aerial_two_clients_confirm_the_match_on_a_lossy_network)
     for (int seat = 0; seat < 2; seat++) tide_client_destroy(match.clients[seat]);
     tide_server_destroy(match.server);
     tide_loopback_destroy(match.net);
+}
+
+// The two fixtures below are RocketSim's numbers: the open reimplementation
+// of the game's physics, MIT, at c2baacb8f4b441dd8505e63c2aeb5a1679b60b02,
+// built with Bullet and run as prototypes/rocket-league/RESEARCH.md records.
+// Its axes (X, Y, Z) are this game's (Z, X, Y), and its units a hundredth
+// of a metre. They aren't the game's own output, and matching them isn't
+// matching every contact: they're two things a player feels, a shot and a
+// slide, held to an independent reference.
+TIDE_TEST(aerial_a_shot_in_the_air_matches_rocketsim)
+{
+    // A car flying level at 10 m/s meets a ball, level with its box's
+    // middle and falling at 1 m/s. Four ticks on, RocketSim's ball leaves
+    // at (1459.242310, 0, -28.956762).
+    alone();
+    MatchState *m = &world.MatchState;
+    m->cars.at[0] = (CarState){.position = {6, 8, 0}, .rotation = {{0, 0, 0, 1}}, .velocity = {0, 0, 10}, .struck = -1000};
+    m->ball = (BallState){.position = {6, 8.20755f, 1.9f}, .velocity = {0, -1, 0}, .rotation = {{0, 0, 0, 1}}, .live = true};
+    ticks(3);
+    TIDE_CHECK(m->toucher < 0); // It touches on the fourth tick, as there
+    ticks(1);
+    TIDE_REQUIRE(m->toucher == 0);
+    const tide_float3 off = tide_sub_f3(m->ball.velocity, tide_f3(0, -0.289567623f, 14.592423096f));
+    printf("    shot: ball leaves at %.4f, %.4f, %.4f m/s, %.2f cm/s from RocketSim's\n",
+        m->ball.velocity.x, m->ball.velocity.y, m->ball.velocity.z, length3(off) * 100);
+    TIDE_CHECK(length3(off) < 0.03f);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(aerial_powerslides_match_rocketsim)
+{
+    // From 10 and 15 m/s on flat ground: a touch of throttle, full lock and
+    // the handbrake held, after half a second and a whole one
+    const struct { float from; int ticks; float forward, side, forwardSpeed, sideSpeed, heading, yawRate; } samples[] = {
+        {10, 60, 4.616834f, 0.984217f, 8.011390f, 3.190682f, 1.099752f, 2.592835f},
+        {10, 120, 7.846190f, 2.603352f, 5.404876f, 2.852377f, 2.228757f, 2.134542f},
+        {15, 60, 6.968331f, 1.333106f, 11.984447f, 4.421085f, 1.215760f, 2.946254f},
+        {15, 120, 11.920829f, 3.402780f, 8.503550f, 3.132042f, 2.508944f, 2.560881f},
+    };
+    for (size_t at = 0; at < sizeof samples / sizeof samples[0]; at++) {
+        CarState *car = alone();
+        car->position = tide_f3(-20, 0.1701f, -30);
+        car->velocity = tide_f3(0, 0, samples[at].from);
+        car->wheels = 4;
+        car->grounded = true;
+        input(&world, 0, (Controls){.throttle = 0.02f, .steer = 1, .handbrake = true});
+        ticks(samples[at].ticks);
+        const tide_float3 nose = axis(car, 0, 0, 1);
+        const float heading = tide_atan2_f(nose.x, nose.z), yawRate = dot3(car->spin, axis(car, 0, 1, 0));
+        const float speedOff = tide_sqrt_f((car->velocity.z - samples[at].forwardSpeed) * (car->velocity.z - samples[at].forwardSpeed)
+            + (car->velocity.x - samples[at].sideSpeed) * (car->velocity.x - samples[at].sideSpeed));
+        printf("    slide from %.0f m/s, %.1f s: heading %.4f (RocketSim %.4f), velocity %.3f m/s off, yaw rate %.3f (%.3f)\n",
+            samples[at].from, samples[at].ticks * DT, heading, samples[at].heading, speedOff, yawRate, samples[at].yawRate);
+        TIDE_CHECK(tide_abs_f(car->position.z + 30 - samples[at].forward) < 0.14f);
+        TIDE_CHECK(tide_abs_f(car->position.x + 20 - samples[at].side) < 0.1f);
+        TIDE_CHECK(speedOff < 0.18f);
+        TIDE_CHECK(tide_abs_f(heading - samples[at].heading) < 0.04f);
+        TIDE_CHECK(tide_abs_f(yawRate - samples[at].yawRate) < 0.06f);
+    }
+    tide_world_free(&world);
+}
+
+TIDE_TEST(aerial_the_throttle_key_held_through_takeoff_leaves_the_nose_alone)
+{
+    // W is the throttle and the nose-down key. Held since the ground, the
+    // input says so (`level`), and the nose stays where it is
+    CarState *car = alone();
+    car->position.y = 9;
+    input(&world, 0, (Controls){.throttle = 1, .pitch = -1, .level = true});
+    ticks(40);
+    TIDE_CHECK(tide_abs_f(axis(car, 0, 0, 1).y) < 0.05f && length3(car->spin) < 0.1f);
+    // ...where the same key pressed in the air dips it
+    input(&world, 0, (Controls){.throttle = 1, .pitch = -1});
+    ticks(40);
+    TIDE_CHECK(axis(car, 0, 0, 1).y < -0.5f);
+    // Held or not, it still aims a dodge: forward, off a jump
+    car = alone();
+    input(&world, 0, (Controls){.throttle = 1, .pitch = -1, .level = true, .jump = true});
+    ticks(6);
+    input(&world, 0, (Controls){.throttle = 1, .pitch = -1, .level = true});
+    ticks(4);
+    TIDE_CHECK(tide_abs_f(axis(car, 0, 0, 1).y) < 0.05f);
+    input(&world, 0, (Controls){.throttle = 1, .pitch = -1, .level = true, .jump = true});
+    ticks(2);
+    TIDE_CHECK(car->flipped && car->flip.x > 0.99f && car->velocity.z > 4.5f);
+    tide_world_free(&world);
 }

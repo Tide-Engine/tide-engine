@@ -129,6 +129,10 @@ try {
                 windowsVirtualKeyCode: code === 'Escape' ? 27 : key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0 });
         };
         const tapKey = async (code, value) => { await key(code, value, true); await delay(100); await key(code, value, false); };
+        // A mouse button, held in the middle of the picture, clear of the HUD's buttons
+        const mouse = (button, down) => command('Input.dispatchMouseEvent', { type: down ? 'mousePressed' : 'mouseReleased',
+            x: 640, y: 400, button, buttons: down ? (button === 'left' ? 1 : 2) : 0, clickCount: 1 });
+        const tapMouse = async (button) => { await mouse(button, true); await delay(100); await mouse(button, false); };
         const screenshot = async (label) => {
             const result = await command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
             const bytes = Buffer.from(result.data, 'base64');
@@ -136,7 +140,7 @@ try {
             await writeFile(path.join(output, `${backend}-${label}.png`), bytes);
             return bytes;
         };
-        const client = { name, id: target.id, socket, command, evaluate, until, resize, key, tapKey, screenshot };
+        const client = { name, id: target.id, socket, command, evaluate, until, resize, key, tapKey, mouse, tapMouse, screenshot };
         clients.push(client);
         await command('Page.enable');
         await command('Runtime.enable');
@@ -204,20 +208,21 @@ try {
     const before = await host.screenshot('desktop-kickoff');
     await orange.screenshot('desktop-orange');
 
+    // The Classic layout: W drives, the left button boosts, the right one jumps
     stage = 'driving, steering, boost and jump';
     await host.key('KeyW', 'w', true);
-    await host.key('ShiftLeft', 'Shift', true);
+    await host.mouse('left', true);
     await orange.key('KeyW', 'w', true);
     await orange.key('KeyD', 'd', true);
     await delay(1000);
-    await host.tapKey('Space', ' ');
+    await host.tapMouse('right');
     await delay(180);
-    await host.tapKey('Space', ' ');
+    await host.tapMouse('right');
     await delay(500);
     const moving = await host.screenshot('desktop-boost-jump');
     assert.notDeepEqual(moving, before, 'Driving changes the rendered match');
     await host.key('KeyW', 'w', false);
-    await host.key('ShiftLeft', 'Shift', false);
+    await host.mouse('left', false);
     await orange.key('KeyW', 'w', false);
     await orange.key('KeyD', 'd', false);
 

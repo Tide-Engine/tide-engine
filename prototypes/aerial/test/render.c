@@ -178,20 +178,58 @@ static int frame(void *unused, const float seconds)
         .press = {.pressed = true, .held = true, .down = true}};
     views(390, 844);
     if (local.Look.ballCam == was) failures++;
+    // The game's two layouts of keys and mouse. Classic: jump and boost on
+    // the mouse, powerslide on Shift, the ball camera on Space
+    const tide_button down = {.pressed = true, .held = true};
     memset(&devices, 0, sizeof devices);
-    devices.keyboard.w = (tide_button){.pressed = true, .held = true};
-    devices.keyboard.leftShift = (tide_button){.pressed = true, .held = true};
-    devices.keyboard.space = (tide_button){.pressed = true, .held = true};
-    devices.keyboard.d = (tide_button){.pressed = true, .held = true};
+    local.Hand.layout = KeyLayout_Classic;
+    devices.keyboard.w = down;
+    devices.keyboard.d = down;
+    devices.mouse.left = down;
+    devices.mouse.right = down;
     views(1280, 720);
-    const Controls keys = tide_input_sample(&devices, &local);
-    if (keys.throttle < 0.95f || keys.pitch > -0.95f || keys.steer < 0.95f || !keys.boost || !keys.jump) failures++;
-    // Powerslide held, the same stick rolls the car where it would have turned it
-    devices.keyboard.leftCtrl = (tide_button){.pressed = true, .held = true};
+    const Controls classic = tide_input_sample(&devices, &local);
+    if (classic.throttle < 0.95f || classic.pitch > -0.95f || classic.steer < 0.95f || !classic.boost || !classic.jump
+        || classic.handbrake) failures++;
+    // W held on the ground is held through the takeoff: the input says the nose is to stay level
+    if (!classic.level) failures++;
+    devices.keyboard.leftShift = down;
     views(1280, 720);
-    const Controls rolling = tide_input_sample(&devices, &local);
-    if (!rolling.handbrake || rolling.roll < 0.95f || rolling.yaw != 0) failures++;
-    puts("Aerial: keys, the touch stick and each touch button sampled");
+    const Controls sliding = tide_input_sample(&devices, &local);
+    if (!sliding.handbrake || sliding.roll < 0.95f || sliding.yaw != 0 || sliding.level) failures++;
+    const bool camera = local.Look.ballCam;
+    devices.keyboard.leftShift = (tide_button){0};
+    devices.keyboard.space = (tide_button){.pressed = true, .held = true, .down = true};
+    views(1280, 720);
+    if (local.Look.ballCam == camera || tide_input_sample(&devices, &local).jump != true) failures++;
+    devices.keyboard.space = (tide_button){0};
+    devices.mouse.middle = down;
+    views(1280, 720);
+    if (!local.Look.rear) failures++;
+    // Modern: jump on Space, boost on Shift, powerslide on the right button
+    memset(&devices, 0, sizeof devices);
+    local.Hand.layout = KeyLayout_Modern;
+    devices.keyboard.w = down;
+    devices.keyboard.space = down;
+    devices.keyboard.leftShift = down;
+    views(1280, 720);
+    const Controls modern = tide_input_sample(&devices, &local);
+    if (modern.throttle < 0.95f || !modern.boost || !modern.jump || modern.handbrake || local.Look.rear) failures++;
+    devices.mouse.right = down;
+    devices.keyboard.a = down;
+    views(1280, 720);
+    const Controls turning = tide_input_sample(&devices, &local);
+    if (!turning.handbrake || turning.roll > -0.95f || turning.yaw != 0 || turning.steer > -0.95f) failures++;
+    local.Hand.layout = KeyLayout_Classic;
+    // A gamepad: triggers past their slack, the stick past its dead middle
+    memset(&devices, 0, sizeof devices);
+    devices.gamepad.rightTrigger = 1;
+    devices.gamepad.leftStick = tide_f2(0.1f, 1);
+    devices.gamepad.buttonSouth = down;
+    views(1280, 720);
+    const Controls pad = tide_input_sample(&devices, &local);
+    if (pad.throttle < 0.99f || pad.steer != 0 || pad.pitch > -0.99f || !pad.jump || pad.level) failures++;
+    puts("Aerial: both key layouts, a gamepad, the touch stick and each touch button sampled");
     failures += camera_regressions();
     if (tide_world_hash(&world) != hash) {
         puts("FAIL: drawing changed the match");

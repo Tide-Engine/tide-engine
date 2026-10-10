@@ -127,6 +127,15 @@ view Hud(MatchState match, mut Look look, mut Board board, mut Hand hand, Device
             if (touch.press.down && Math.Distance(Screen.Flip(touch.position), TouchCam(screen)) < 30) look.ballCam = !look.ballCam;
         }
 
+    // The throttle key, held as the car leaves the ground, is held through
+    // the takeoff until it's let go, or another key says where the nose goes
+    var keys = devices.keyboard;
+    var forward = keys.w.pressed || keys.upArrow.pressed;
+    var steered = keys.s.pressed || keys.downArrow.pressed || keys.q.pressed || keys.e.pressed
+               || (hand.layout == KeyLayout.Classic ? keys.leftShift.pressed : devices.mouse.right.pressed);
+    if (match.cars[look.seat].wheels >= 3 || !forward) hand.held = forward;
+    if (steered) hand.held = false;
+
     board.goalAge += dt;
     board.playAge = match.phase == MatchPhase.Playing ? board.playAge + dt : 0;
     if (look.ballCam != board.camWas) board.camAge = 0;
@@ -313,10 +322,12 @@ view Hud(MatchState match, mut Look look, mut Board board, mut Hand hand, Device
     else if (board.hint > 0)
     {
         var fade = Math.Saturate(board.hint);
-        Draw.RoundRect(float2(middle, screen.y - 26), float2(Math.Min(screen.x - 20, 880.0), 28), 8, Color(0.02, 0.03, 0.05, 0.6 * fade));
-        Draw.Text(narrow ? "WASD drive   SPACE jump   SHIFT boost   C camera"
-                         : "WASD  Drive      SPACE  Jump / Dodge      SHIFT  Boost      CTRL  Powerslide / Air roll      Q E  Roll      C  Ball cam",
-            float2(middle, screen.y - 26), narrow ? 10 : 12, Color(0.9, 0.94, 0.98, fade), Anchor.MiddleCenter);
+        Draw.RoundRect(float2(middle, screen.y - 26), float2(Math.Min(screen.x - 20, 980.0), 28), 8, Color(0.02, 0.03, 0.05, 0.6 * fade));
+        var classic = hand.layout == KeyLayout.Classic;
+        var keysHint = narrow ? (classic ? "WASD drive   RMB jump   LMB boost   SPACE camera" : "WASD drive   SPACE jump   SHIFT boost   MMB camera")
+            : classic ? "WASD  Drive      RIGHT MOUSE  Jump / Dodge      LEFT MOUSE  Boost      SHIFT  Powerslide / Air roll      Q E  Roll      SPACE  Ball cam"
+                      : "WASD  Drive      SPACE  Jump / Dodge      SHIFT  Boost      RIGHT MOUSE  Powerslide / Air roll      Q E  Roll      MIDDLE MOUSE  Ball cam";
+        Draw.Text(keysHint, float2(middle, screen.y - 26), narrow ? 10 : 12, Color(0.9, 0.94, 0.98, fade), Anchor.MiddleCenter);
     }
 }
 
@@ -331,7 +342,7 @@ view RoomTheme()
 // How many cars a side, beside the Menu button: a press asks for one more,
 // and round again, from the next kickoff.
 [After(Rooms.Pages)]
-view RoomSetup(MatchState match, Look look, mut Lobby lobby, query (Participant participant) players)
+view RoomSetup(MatchState match, Look look, mut Lobby lobby, mut Hand hand, mut Board board, query (Participant participant) players)
 {
     mut var manned = 0;
     foreach (var player in players) manned |= 1 << player.participant.seat;
@@ -347,6 +358,13 @@ view RoomSetup(MatchState match, Look look, mut Lobby lobby, query (Participant 
     // On a narrow screen the two buttons sit under the score, at its sides
     var place = Screen.width < 620 ? Rect(10, 64, 92, 32) : Rect(Screen.width - 190, 10, 92, 32);
     if (GUI.Button(place, label)) Send(Teams { size = match.wanted % 3 + 1 });
+    // Which of the game's two layouts the keys and the mouse are in
+    if (hand.touch || Screen.width < 620) return;
+    if (GUI.Button(Rect(Screen.width - 332, 10, 132, 32), hand.layout == KeyLayout.Classic ? "Keys: Classic" : "Keys: Modern"))
+    {
+        hand.layout = hand.layout == KeyLayout.Classic ? KeyLayout.Modern : KeyLayout.Classic;
+        board.hint = 10;
+    }
 }
 
 override string Rooms.Title() { return "AERIAL"; }

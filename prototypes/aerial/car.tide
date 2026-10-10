@@ -13,12 +13,13 @@ const float BOOST_PER_SECOND = 100.0 / 3.0;
 const float BOOST_MIN_TIME = 0.1;
 const float REST_HEIGHT = 0.1701;
 
-// The hitbox, about a centre a little ahead of and above the body's own.
-const float3 BOX_CENTRE = float3(0, 0.2075, 0.1388);
-const float3 BOX_HALF = float3(0.421, 0.1808, 0.59005);
+// The hitbox, about a centre a little ahead of and above the body's own:
+// 1.205 long, 0.867 wide and 0.387 high.
+const float3 BOX_CENTRE = float3(0, 0.20755, 0.138757);
+const float3 BOX_HALF = float3(0.433497, 0.1932955, 0.602535);
 // Turning a torque into spin: one over the box's moment about each of the
 // car's own axes (right, up, forward), per unit of mass.
-const float3 SPIN_PER_TORQUE = float3(1 / 0.126945, 1 / 0.175128, 1 / 0.069981);
+const float3 SPIN_PER_TORQUE = float3(1 / 0.133473, 1 / 0.183658, 1 / 0.075095);
 const float CAR_MASS = 180;
 const float BALL_MASS = 30;
 
@@ -37,6 +38,7 @@ struct DriveInput
     bool jump;
     bool boost;
     bool handbrake;
+    bool level;     // The pitch isn't meant for the nose: it turns nothing, and still aims a dodge
 }
 
 struct CarState
@@ -316,15 +318,16 @@ void DriveCar(mut CarState car, DriveInput input, int seat, float dt)
         }
         else if (car.flipped) car.flipTime += dt;
 
+        var pitch = input.level ? 0.0 : input.pitch;
         mut var steering = count == 0 && car.righting <= 0;
         if (car.flipping && Math.LengthSq(car.flip) > 0)
         {
             // Pulling against a flip's pitch cancels it
             mut var pitchPart = car.flip.x;
             steering = false;
-            if (pitchPart != 0 && input.pitch != 0 && pitchPart * input.pitch > 0)
+            if (pitchPart != 0 && pitch != 0 && pitchPart * pitch > 0)
             {
-                pitchPart *= 1 - Math.Min(Math.Abs(input.pitch), 1);
+                pitchPart *= 1 - Math.Min(Math.Abs(pitch), 1);
                 steering = count == 0 && car.righting <= 0;
             }
             car.spin += (right * (pitchPart * 224) - forward * (car.flip.y * 260)) * dt;
@@ -332,8 +335,8 @@ void DriveCar(mut CarState car, DriveInput input, int seat, float dt)
         if (steering)
         {
             float pitchScale = car.flipping || car.flipped && car.flipTime < 0.95 ? 0 : 1;
-            var turn = right * (-input.pitch * pitchScale * 12.46) + up * (input.yaw * 9.11) - forward * (input.roll * 38.34);
-            var damp = right * (Math.Dot(right, car.spin) * 2.876 * (1 - Math.Abs(input.pitch * pitchScale)))
+            var turn = right * (-pitch * pitchScale * 12.46) + up * (input.yaw * 9.11) - forward * (input.roll * 38.34);
+            var damp = right * (Math.Dot(right, car.spin) * 2.876 * (1 - Math.Abs(pitch * pitchScale)))
                      + up * (Math.Dot(up, car.spin) * 1.917 * (1 - Math.Abs(input.yaw)))
                      + forward * (Math.Dot(forward, car.spin) * 4.793);
             car.spin += (turn - damp) * dt;

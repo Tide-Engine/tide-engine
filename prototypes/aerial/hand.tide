@@ -1,5 +1,13 @@
-// What this machine's touch controls add to the keys and the gamepad. The
-// HUD fills it each frame, and the input's Sample reads it.
+// What this machine's hands add to the match's input: the touch controls,
+// which the HUD fills each frame, and how its keys are laid out.
+
+// The two keyboard and mouse layouts the game itself ships with.
+enum KeyLayout
+{
+    Classic,    // Jump and boost on the mouse, powerslide on Shift, ball camera on Space
+    Modern      // Jump on Space, boost on Shift, powerslide on the right button
+}
+
 local singleton Hand
 {
     float throttle;
@@ -10,4 +18,22 @@ local singleton Hand
     bool handbrake;
     bool touch;         // A touchscreen is how this machine is played
     float2 stick;
+    KeyLayout layout;
+    // Keyboard aerial safety: W is the throttle and the nose-down key at
+    // once, so held through a takeoff it isn't taken for the nose until
+    // it's let go. `held` is that it's being held through this one.
+    bool safety = true;
+    bool held;
+}
+
+// A stick's push past its dead middle, and a trigger's past its slack.
+float StickAxis(float value)
+{
+    var size = Math.Abs(value);
+    return size < 0.15 ? 0.0 : Math.Sign(value) * (size - 0.15) / 0.85;
+}
+
+float TriggerAxis(float value)
+{
+    return Math.Max(0, (value - 0.1) / 0.9);
 }
