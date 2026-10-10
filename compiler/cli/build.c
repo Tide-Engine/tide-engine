@@ -373,6 +373,9 @@ static const char *const cpp_flags[] = {"-std=c++20",      "-nostdinc++",       
                                         "-fno-rtti",       "-fno-threadsafe-statics", NULL};
 static const char *const debug_flags[] = {"-O0", "-g", NULL};
 static const char *const release_flags[] = {"-O2", "-DNDEBUG", NULL};
+// These compile flags are part of every object's stamp. The link runs on
+// every build, so changing its collection policy cannot reuse an old program.
+static const char *const release_sections[] = {"-ffunction-sections", "-fdata-sections", NULL};
 
 #ifdef _WIN32
 // Windows games use the MinGW-w64 target, whose C runtime comes with tide (as
@@ -494,6 +497,7 @@ static void config_flags(args *a, const build *b, const bool cpp)
     arg_list(a, cpp ? cpp_flags : c_flags);
     arg_list(a, common_flags);
     arg_list(a, b->opts->release ? release_flags : debug_flags);
+    if (b->opts->release) arg_list(a, release_sections);
     // A library's code works wherever it's loaded, and Android's games are libraries.
     // On Linux and Android, a function whose locals take more than a page
     // touches each page as it makes room for them (-fstack-clash-protection):
@@ -1450,6 +1454,16 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     arg(&a, "-o");
     arg(&a, output);
     arg_list(&a, opts->release ? release_flags : debug_flags);
+    // Hot-reload libraries keep their public symbols and their existing link
+    // policy. Standalone releases only need code reachable from their entry.
+    if (opts->release && !opts->watch && !shared) {
+        if (opts->web) arg(&a, "-Wl,-s"); // wasm-ld already collects unused sections.
+#ifdef __APPLE__
+        else arg(&a, "-Wl,-dead_strip,-S,-x");
+#else
+        else arg(&a, "-Wl,--gc-sections,-s"); // ELF and Windows' MinGW lld.
+#endif
+    }
     char *pdb_flag = NULL;
     char *ld_flag = NULL;
     char *imports_flag = NULL;
@@ -1641,6 +1655,27 @@ static char *pack_of(const char *gen)
     return path_join(gen, "game.pack");
 }
 
+static bool folder_has_c_code(const char *folder)
+{
+    file_list sources = own_files_of(folder, source_extensions);
+    file_list libraries = own_files_of(folder, library_extensions);
+    const bool found = sources.count || libraries.count;
+    free_files(&sources);
+    free_files(&libraries);
+    return found;
+}
+
+// C and libraries can read pack entries by name without a Tide reference.
+// Only a closed Tide game gives the compiler every root of its asset graph.
+static bool strip_game_assets(const build *b, const bool layout)
+{
+    if (!b->opts->release || b->opts->watch || b->library || layout || folder_has_c_code(b->folder)) return false;
+    for (int i = 0; i < b->packages.count; i++) {
+        if (folder_has_c_code(b->packages.items[i].folder)) return false;
+    }
+    return true;
+}
+
 static bool generate(build *b, const char *gen, const bool layout)
 {
     if (!find_packages(b->folder, &b->packages)) return false;
@@ -1655,6 +1690,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout, .externs = &b->externs,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
+                                     .strip_unused_assets = strip_game_assets(b, layout),
                                      .defines = b->opts->defines, .define_count = b->opts->define_count};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
     if (ok) {
@@ -2349,6 +2385,9 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     arg(&a, "-o");
     arg(&a, output);
     arg_list(&a, b->opts->release ? release_flags : debug_flags);
+    // The activity and every public shared-library export remain roots. Only
+    // unused private sections are collected; stripping never changes exports.
+    if (b->opts->release && !b->opts->watch) arg(&a, "-Wl,--gc-sections,-s");
     // The activity's way in, which nothing in the game calls; a C function
     // nothing defines fails here, not when the app starts; pages of 16 KiB,
     // as Android 15's devices can have.
