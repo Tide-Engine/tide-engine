@@ -108,10 +108,8 @@ typedef struct asset_site {
     bool glob;
     bool url;
     bool many;          // A List or Map: a glob's matches, or the one file its path names
-    const char *format;  // The files it takes, or NULL for any
-    const char *format2; // A second kind of file the asset can be, or NULL
-    const char *format3; // A third accepted format, or NULL
-    const char *format4; // A fourth accepted format, or NULL
+    const char *const *formats; // Accepted suffixes, or NULL for any file
+    int format_count;
 } asset_site;
 
 // A path to write at a site whose file is missing, fixing its diagnostic.
@@ -2863,7 +2861,7 @@ static void describe(const occurrence *o, sb *out)
                             "too wherever one is drawn with.");
             }
             if (o->decl->asset_kind == ASSET_CLIP) {
-                sb_put(out, " A `Clip` is a sound to play, this machine's (a WAV, or Ogg Vorbis): `Audio.Play(name)` in a view "
+                sb_put(out, " A `Clip` is a sound to play, this machine's (WAV, Ogg Vorbis, MP3 or FLAC): `Audio.Play(name)` in a view "
                             "or a local handler plays it, and the match can't use it.");
             }
             if (o->decl->asset_kind == ASSET_MESH) {
@@ -10471,6 +10469,9 @@ static bool file_hash(const char *path, const unsigned long long size, const uns
 
 static void collect_assets(void)
 {
+    static const char *const images[] = {".png", ".psd", ".jpg", ".jpeg", ".tga", ".bmp"};
+    static const char *const clips[] = {".wav", ".ogg", ".mp3", ".flac"};
+    static const char *const models[] = {".glb", ".gltf", ".fbx", ".obj"};
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind != DECL_ASSET || !d->value || d->value->kind != E_STRING || !d->unit) continue; // A `const string` path has no site
@@ -10485,12 +10486,16 @@ static void collect_assets(void)
         site.string = tok;
         site.path = A.files[f].toks[tok].text;
         site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
-        site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".png"
-                    : d->asset_kind == ASSET_CLIP ? ".wav" : d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS ? ".glb" : NULL;
-        site.format2 = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".psd"
-                     : d->asset_kind == ASSET_CLIP ? ".ogg" : d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS ? ".gltf" : NULL;
-        site.format3 = d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS ? ".fbx" : NULL;
-        site.format4 = d->asset_kind == ASSET_MESH ? ".obj" : NULL;
+        if (d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP) {
+            site.formats = images;
+            site.format_count = (int)(sizeof images / sizeof images[0]);
+        } else if (d->asset_kind == ASSET_CLIP) {
+            site.formats = clips;
+            site.format_count = (int)(sizeof clips / sizeof clips[0]);
+        } else if (d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS) {
+            site.formats = models;
+            site.format_count = (int)(sizeof models / sizeof models[0]) - (d->asset_kind == ASSET_MESH ? 0 : 1);
+        }
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
         char *folder = asset_path_folder(A.files[f].src.path);
@@ -10819,13 +10824,12 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
         asset_item(c, label.data, KIND_FOLDER, start, at, label.data, "A folder", '1');
     }
     if (site->many) {
-        const char *formats[] = {site->format, site->format2, site->format3, site->format4};
-        for (int i = 0; i < 4; i++) {
-            if (i > 0 && !formats[i]) continue;
+        for (int i = 0; i < (site->format_count ? site->format_count : 1); i++) {
+            const char *format = site->format_count ? site->formats[i] : "";
             sb any = {0};
             sb all = {0};
-            sb_printf(&any, "*%s", formats[i] ? formats[i] : "");
-            sb_printf(&all, "**/*%s", formats[i] ? formats[i] : "");
+            sb_printf(&any, "*%s", format);
+            sb_printf(&all, "**/*%s", format);
             asset_item(c, any.data, KIND_FILE, start, at, any.data, "Every matching file in this folder", '2');
             asset_item(c, all.data, KIND_FILE, start, at, all.data, "Every matching file in this folder and its subfolders", '2');
         }
@@ -10833,9 +10837,9 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
     for (int i = 0; i < entries.files.count; i++) {
         const char *name = entries.files.items[i];
         if (ends_with_fold(name, ".tide")) continue;
-        if (site->format && !ends_with_fold(name, site->format) && !(site->format2 && ends_with_fold(name, site->format2))
-            && !(site->format3 && ends_with_fold(name, site->format3))
-            && !(site->format4 && ends_with_fold(name, site->format4))) continue;
+        bool accepted = site->format_count == 0;
+        for (int k = 0; k < site->format_count && !accepted; k++) accepted = ends_with_fold(name, site->formats[k]);
+        if (!accepted) continue;
         asset_item(c, name, KIND_FILE, start, at, name, NULL, '3');
     }
     free(base);

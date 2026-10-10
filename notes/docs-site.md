@@ -1,5 +1,7 @@
 # The docs site
 
+Media formats (2026-10-10): Assets has a format/representation table covering images, models, audio, text and bytes, with build-time imports separated from runtime Decode. Assets, Audio, Editors and the spec document JPEG/TGA/BMP and MP3/FLAC, variant/budget limits, unsupported alternatives, required glTF extensions and optional uncompressed fallbacks. MP3/FLAC conversion explicitly trades compressed source size for PCM pack/RAM use; Vorbis remains the streaming choice. The audio spec's stale 48kHz conversion and built Clip.length claims are corrected to the implemented source-rate behavior and absent property. No site deployment was requested.
+
 Degree literals (2026-10-10): Basics, Math and the spec document lowercase
 decimal `deg` literals as ordinary float radians, converted at compile time
 after reading their binary32 degree value. They cover fractions, exponents,

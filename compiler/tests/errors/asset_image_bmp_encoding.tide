@@ -1,0 +1,3 @@
+// expect: BMP compression isn't supported; use uncompressed pixels or RGB bitfields, or export PNG
+asset Texture image = "../e2e/assets/images/bad/rle.bmp";
+scene Main { }

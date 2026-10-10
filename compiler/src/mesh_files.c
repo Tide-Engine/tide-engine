@@ -55,6 +55,7 @@ static void *zeroed(const size_t count, const size_t size)
 }
 
 #include "tide/internal/gltf_json.h"
+#include "tide/internal/gltf_extensions.h"
 
 bool mesh_number(const char *s, const char *end, float *out)
 {
@@ -261,6 +262,17 @@ typedef struct vertex_pick {
     uint32_t *place; // Original index to compact index + 1, or 0 for an unused vertex
 } vertex_pick;
 
+static bool read_component(gltf *g, const uint8_t *bytes, const accessor *a, float *out, const char *what)
+{
+    if (a->type == 5126) {
+        uint32_t bits;
+        memcpy(&bits, bytes, sizeof bits);
+        if ((bits & 0x7f800000u) == 0x7f800000u) return fail(g->r, NULL, "has non-finite %s", what);
+    }
+    *out = component(bytes, a->type, a->normalized);
+    return true;
+}
+
 // The selected accessor elements as floats, `want` numbers each into `out`:
 // the numbers it has, and `fill` for a fourth it hasn't (a color's alpha).
 // The whole accessor still has to have `expect` elements and fit its views.
@@ -272,6 +284,9 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
     if (a.count != expect) {
         return fail(g->r, NULL, "has %llu %s for %llu positions: a mesh has one of each for every vertex", (unsigned long long)a.count,
                     what, (unsigned long long)expect);
+    }
+    if (a.width != want && !(want == 4u && fill == 1.0f && a.width == 3u && strcmp(what, "colors") == 0)) {
+        return fail(g->r, NULL, "has %s with the wrong number of components", what);
     }
     const uint32_t each = component_bytes(a.type);
     const uint32_t element = each * a.width;
@@ -289,7 +304,9 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
         }
         for (uint32_t i = 0; i < pick->count; i++) {
             const uint64_t from = pick->source[i];
-            for (uint32_t c = 0; c < take; c++) out[(uint64_t)i * want + c] = component(at + from * stride + (uint64_t)c * each, a.type, a.normalized);
+            for (uint32_t c = 0; c < take; c++) {
+                if (!read_component(g, at + from * stride + (uint64_t)c * each, &a, &out[(uint64_t)i * want + c], what)) return false;
+            }
         }
     }
     // A sparse accessor: some elements, by their numbers, given apart from the rest
@@ -301,7 +318,7 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
         if (!pick->place[i]) continue;
         const uint64_t to = pick->place[i] - 1u;
         for (uint32_t c = 0; c < take; c++) {
-            out[to * want + c] = component(sparse.values + k * sparse.element_bytes + (uint64_t)c * each, a.type, a.normalized);
+            if (!read_component(g, sparse.values + k * sparse.element_bytes + (uint64_t)c * each, &a, &out[to * want + c], what)) return false;
         }
     }
     return true;
@@ -345,14 +362,12 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
 {
     reader *r = g->r;
     const int64_t mode = jwhole_or(primitive, "mode", 4);
-    if (mode < 4 || mode > 6) return true; // Points and lines: nothing a Mesh draws
-    if (jget(jget(primitive, "extensions"), "KHR_draco_mesh_compression")) {
-        return fail(r, "export it again with compression off: Tide reads a mesh's numbers as they are",
-                    "has its geometry compressed with Draco, which Tide doesn't read");
-    }
+    if (mode >= 0 && mode < 4) return true; // Points and lines: nothing a Mesh draws
+    if (mode < 4 || mode > 6) return fail(r, NULL, "has an invalid primitive mode");
+    // Optional Draco data has ordinary accessors as a core fallback.
     const jnode *attributes = jget(primitive, "attributes");
     const jnode *positions = jget(attributes, "POSITION");
-    if (!positions) return true; // Nothing to draw
+    if (!positions) return fail(r, NULL, "has a triangle primitive with no POSITION attribute");
     accessor counted;
     if (!accessor_of(g, positions, &counted, "positions")) return false;
     const uint64_t count = counted.count;
@@ -540,20 +555,18 @@ static bool read_gltf(reader *r, builder *b, const char *text, const size_t leng
     }
     if (ok) {
         const jnode *version = jget(jget(root, "asset"), "version");
-        if (!version || version->kind != J_STRING || version->text[0] != '2') {
+        if (!version || version->kind != J_STRING || strcmp(version->text, "2.0") != 0) {
             ok = fail(r, "export it as glTF 2.0, which is what tools write today",
                       "is glTF %.20s, and Tide reads glTF 2.0", version && version->kind == J_STRING ? version->text : "of no version");
         }
     }
     const jnode *required = ok ? jget(root, "extensionsRequired") : NULL;
+    if (required && required->kind != J_ARRAY) ok = fail(r, NULL, "has extensionsRequired that isn't an array");
     for (uint32_t i = 0; ok && i < jcount(required); i++) {
-        const char *name = required->items[i]->kind == J_STRING ? required->items[i]->text : "";
-        const char *by = strcmp(name, "KHR_draco_mesh_compression") == 0 ? "Draco"
-                       : strcmp(name, "EXT_meshopt_compression") == 0 || strcmp(name, "KHR_meshopt_compression") == 0 ? "meshopt" : NULL;
-        if (by) {
-            ok = fail(r, "export it again with compression off: Tide reads a mesh's numbers as they are",
-                      "has its geometry compressed with %s, which Tide doesn't read", by);
-        }
+        const jnode *extension = required->items[i];
+        char why[256], note[256];
+        if (extension->kind != J_STRING) ok = fail(r, NULL, "has a required glTF extension that isn't text");
+        else if (gltf_required_extension_error(extension->text, why, note)) ok = fail(r, note, "%s", why);
     }
     if (ok) {
         g.buffer_count = jcount(jget(root, "buffers"));
@@ -575,7 +588,7 @@ static bool read_gltf(reader *r, builder *b, const char *text, const size_t leng
                 const jnode *children = jget(nodes->items[i], "children");
                 for (uint32_t k = 0; k < jcount(children); k++) {
                     int64_t at;
-                    if (jwhole(children->items[k], &at) && at < (int64_t)g.node_count) child[at] = true;
+                    if (jwhole(children->items[k], &at) && at >= 0 && at < (int64_t)g.node_count) child[at] = true;
                 }
             }
             for (uint32_t i = 0; ok && i < g.node_count; i++) {
@@ -603,25 +616,31 @@ static bool read_glb(reader *r, builder *b, const uint8_t *data, const size_t si
     uint32_t header[3];
     if (size < 20u) return fail(r, NULL, "isn't a .glb that reads: it ends before its header does");
     memcpy(header, data, sizeof header);
+    if (header[0] != 0x46546c67u) return fail(r, "export a GLB 2 file, or use .gltf for a JSON glTF file", "has an invalid GLB header: its magic isn't glTF");
     if (header[1] != 2u) {
         return fail(r, "export it as glTF 2.0, which is what tools write today", "is a .glb of version %u, and Tide reads glTF 2.0",
                     (unsigned)header[1]);
     }
-    if (header[2] > size) return fail(r, NULL, "isn't a .glb that reads: it says it's longer than it is");
+    if (header[2] != size) return fail(r, NULL, "isn't a .glb that reads: its declared length doesn't match its bytes");
     const uint8_t *json = NULL, *bin = NULL;
     uint32_t json_size = 0, bin_size = 0;
-    for (uint64_t at = 12u; at + 8u <= header[2];) {
+    for (uint64_t at = 12u; at < size;) {
+        if (size - at < 8u) return fail(r, NULL, "isn't a .glb that reads: it ends inside a chunk header");
         uint32_t chunk[2];
         memcpy(chunk, data + at, sizeof chunk);
         if ((uint64_t)chunk[0] > header[2] - at - 8u) return fail(r, NULL, "isn't a .glb that reads: a chunk runs past its end");
-        if (chunk[1] == 0x4E4F534Au && !json) {
+        if (chunk[0] & 3u) return fail(r, NULL, "isn't a .glb that reads: a chunk lacks four-byte alignment");
+        if (at == 12u && chunk[1] != 0x4E4F534Au) return fail(r, NULL, "isn't a .glb that reads: its first chunk isn't JSON");
+        if (chunk[1] == 0x4E4F534Au) {
+            if (json) return fail(r, NULL, "isn't a .glb that reads: it has more than one JSON chunk");
             json = data + at + 8u;
             json_size = chunk[0];
-        } else if (chunk[1] == 0x004E4942u && !bin) {
+        } else if (chunk[1] == 0x004E4942u) {
+            if (bin) return fail(r, NULL, "isn't a .glb that reads: it has more than one binary chunk");
             bin = data + at + 8u;
             bin_size = chunk[0];
         }
-        at += 8u + (((uint64_t)chunk[0] + 3u) & ~(uint64_t)3u);
+        at += 8u + chunk[0];
     }
     if (!json) return fail(r, NULL, "isn't a .glb that reads: it has no description");
     return read_gltf(r, b, (const char *)json, json_size, bin, bin_size);
@@ -929,6 +948,8 @@ bool mesh_file_read(const uint8_t *data, const size_t size, const char *name, co
         ok = fbx_file_to_glb(data, size, false, &glb, &glb_size, why, note);
         if (ok) ok = read_glb(&r, &b, glb, glb_size);
         free(glb);
+    } else if (ends_with(name, ".glb")) {
+        ok = read_glb(&r, &b, data, size);
     } else if (ends_with(name, ".gltf")) {
         ok = read_gltf(&r, &b, (const char *)data, size, NULL, 0);
     } else if (ends_with(name, ".obj")) {

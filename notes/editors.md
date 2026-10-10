@@ -1,5 +1,7 @@
 # The language server and the editors
 
+Media formats (2026-10-10): asset path completion stores a counted suffix array rather than four fixed format fields. Texture/Grid2<Color>/Cubemap offer PNG, PSD, JPG/JPEG, TGA and BMP; Clip offers WAV, Ogg, MP3 and FLAC, including case-insensitive file names and per-format list/map globs. `lsp_asset_path_completion` checks each addition. Build-time import failures come from the same checker helpers as ordinary builds; runtime Decode hovers remain PNG/GLB-only. Unsupported skinned source formats now share export guidance across build/editor while recognized model feature errors retain their reason. The existing OBJ/catalog diagnostic regression also checks DAE. The earlier PNG/PSD-only and four-slot descriptions below describe the previous coverage.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Layout

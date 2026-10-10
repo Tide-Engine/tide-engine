@@ -45,11 +45,8 @@ static bool buffer_bytes(gltf *g, const int64_t index, const uint8_t **data, uin
         buffer->tried = true;
         const jnode *described = jitem(jget(g->root, "buffers"), index);
         const jnode *uri = jget(described, "uri");
-        const jnode *extensions = jget(described, "extensions");
-        if (jget(extensions, "EXT_meshopt_compression") || jget(extensions, "KHR_meshopt_compression")) {
-            return fail(g->r, "export it again with compression off: Tide reads a mesh's numbers as they are",
-                        "has its geometry compressed with meshopt, which Tide doesn't read");
-        }
+        // A meshopt fallback buffer is ordinary core data. Required
+        // compression was refused before any buffers were opened.
         if (!uri) {
             if (index != 0 || !g->bin) return fail(g->r, NULL, "has a buffer with no bytes: it names no file, and isn't a .glb's own");
             buffer->data = g->bin;
@@ -115,12 +112,7 @@ static const uint8_t *view_at(gltf *g, const int64_t view, const uint64_t offset
         fail(g->r, NULL, "names a buffer view it hasn't got, or one that doesn't say its buffer and its length");
         return NULL;
     }
-    const jnode *extensions = jget(v, "extensions");
-    if (jget(extensions, "EXT_meshopt_compression") || jget(extensions, "KHR_meshopt_compression")) {
-        fail(g->r, "export it again with compression off: Tide reads a mesh's numbers as they are",
-             "has its geometry compressed with meshopt, which Tide doesn't read");
-        return NULL;
-    }
+    // Ignore optional meshopt data and read this view's core fallback.
     const uint64_t from = (uint64_t)jwhole_or(v, "byteOffset", 0);
     const uint8_t *data;
     uint64_t size;

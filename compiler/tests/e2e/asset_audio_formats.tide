@@ -1,0 +1,46 @@
+asset Clip cbr = "audio_import/stereo_cbr.mp3";
+asset Clip cbrAgain = "audio_import/stereo_cbr.mp3";
+asset Clip lossless = "audio_import/precise24.flac";
+asset List<Clip> songs = "audio_import/*.mp3";
+asset Map<string, Clip> named = "audio_import/*.flac";
+// The same read-file cache must keep the original bytes for byte assets.
+asset List<byte> mp3Bytes = "audio_import/stereo_cbr.mp3";
+asset List<byte> flacBytes = "audio_import/precise24.flac";
+
+singleton RawProbe
+{
+    int mp3Count;
+    int flacCount;
+    bool mp3Header;
+    bool flacHeader;
+}
+
+local singleton Played
+{
+    Clip kept;
+    Clip alias;
+    Clip precise;
+    int count;
+    bool keyed;
+}
+
+scene Main { }
+
+system ReadRaw(mut RawProbe probe)
+{
+    probe.mp3Count = mp3Bytes.count;
+    probe.flacCount = flacBytes.count;
+    probe.mp3Header = mp3Bytes[0] == 73 && mp3Bytes[1] == 68 && mp3Bytes[2] == 51; // ID3
+    probe.flacHeader = flacBytes[0] == 102 && flacBytes[1] == 76 && flacBytes[2] == 97 && flacBytes[3] == 67;
+}
+
+view PlayImported(mut Played probe)
+{
+    probe.kept = cbr;
+    probe.alias = cbrAgain;
+    probe.precise = lossless;
+    probe.count = songs.count;
+    probe.keyed = named.Has("audio_import/precise24.flac");
+    Audio.Play(songs[0]);
+    Audio.Play(named["audio_import/precise24.flac"]);
+}

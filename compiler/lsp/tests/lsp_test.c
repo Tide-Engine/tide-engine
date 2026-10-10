@@ -9822,7 +9822,7 @@ TIDE_TEST(lsp_asset_one_file_for_a_list_or_a_map)
 }
 
 // Inside an asset's path, completion offers the folders and files where the
-// path so far leads, from the declaring file: the type's files (PNG and PSD for
+// path so far leads, from the declaring file: the type's image/audio files,
 // an image), and globs for a list or a map.
 TIDE_TEST(lsp_asset_path_completion)
 {
@@ -9837,14 +9837,23 @@ TIDE_TEST(lsp_asset_path_completion)
                                     "asset Texture tile = \"art/\";\n"
                                     "asset Map<string, Texture> images = \"art/\";\n"
                                     "asset Cubemap sky = \"art/\";\n"
+                                    "asset List<Clip> sounds = \"art/\";\n"
                                     "scene Main { }\n";
     write_file("lsp_cp/main.tide", main_file);
     write_bytes("lsp_cp/art/hero.png", "png", 3);
     write_bytes("lsp_cp/art/hero.psd", "psd", 3);
     write_bytes("lsp_cp/art/tile.PSD", "psd", 3);
+    static const char *const image_names[] = {"photo.jpg", "photo.JPEG", "tile.tga", "tile.bmp"};
+    for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) {
+        char path[100];
+        snprintf(path, sizeof path, "lsp_cp/art/%s", image_names[i]);
+        write_bytes(path, "image", 5);
+    }
     write_file("lsp_cp/art/other.txt", "text");
     write_bytes("lsp_cp/art/shot.wav", "wav", 3);
     write_bytes("lsp_cp/art/music.ogg", "ogg", 3);
+    write_bytes("lsp_cp/art/music.MP3", "mp3", 3);
+    write_bytes("lsp_cp/art/music.flac", "flac", 4);
     write_file("lsp_cp/readme.txt", "text");
     char root[700], uri_main[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
@@ -9868,6 +9877,8 @@ TIDE_TEST(lsp_asset_path_completion)
     TIDE_CHECK(!offers(completion, "other.txt"));
     TIDE_CHECK(offers(completion, "*.png") && offers(completion, "**/*.png"));
     TIDE_CHECK(offers(completion, "*.psd") && offers(completion, "**/*.psd"));
+    for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) TIDE_CHECK(offers(completion, image_names[i]));
+    TIDE_CHECK(offers(completion, "*.jpg") && offers(completion, "**/*.jpeg") && offers(completion, "*.tga") && offers(completion, "**/*.bmp"));
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":1,\"character\":36},\"end\":{\"line\":1,\"character\":36}},\"newText\":\"hero.png\"}"));
 
     // Text takes any file
@@ -9875,20 +9886,28 @@ TIDE_TEST(lsp_asset_path_completion)
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "other.txt"));
     TIDE_CHECK(!offers(completion, "*") && !offers(completion, "**/*"));
 
-    // A clip is a WAV or an Ogg
+    // A clip accepts WAV, Ogg Vorbis, MP3 and FLAC.
     completion = request_at(uri_main, "textDocument/completion", 3, 23, "");
     TIDE_CHECK(offers(completion, "shot.wav") && offers(completion, "music.ogg"));
+    TIDE_CHECK(offers(completion, "music.MP3") && offers(completion, "music.flac"));
     TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "hero.psd") && !offers(completion, "other.txt"));
 
     // Textures and cube faces take the same image formats; only many files offer globs.
     completion = request_at(uri_main, "textDocument/completion", 4, 26, "");
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "tile.PSD"));
+    for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) TIDE_CHECK(offers(completion, image_names[i]));
     TIDE_CHECK(!offers(completion, "other.txt") && !offers(completion, "*.psd"));
     completion = request_at(uri_main, "textDocument/completion", 5, 41, "");
     TIDE_CHECK(offers(completion, "hero.psd") && offers(completion, "*.psd") && offers(completion, "**/*.psd"));
+    TIDE_CHECK(offers(completion, "*.jpg") && offers(completion, "**/*.tga"));
     completion = request_at(uri_main, "textDocument/completion", 6, 25, "");
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "*.psd"));
+    TIDE_CHECK(offers(completion, "photo.JPEG") && offers(completion, "*.bmp"));
     TIDE_CHECK(!offers(completion, "other.txt"));
+
+    completion = request_at(uri_main, "textDocument/completion", 7, 31, "");
+    TIDE_CHECK(offers(completion, "*.wav") && offers(completion, "**/*.ogg")
+               && offers(completion, "*.mp3") && offers(completion, "**/*.flac"));
 
     // Part of a name typed: the item replaces it
     open_uri(uri_main, "asset Grid2<Color> hero = \"art/he\";\nscene Main { }\n");
@@ -9903,6 +9922,15 @@ TIDE_TEST(lsp_asset_path_completion)
     remove_game_file("lsp_cp/art/hero.png");
     remove_game_file("lsp_cp/art/hero.psd");
     remove_game_file("lsp_cp/art/tile.PSD");
+    for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) {
+        char path[100];
+        snprintf(path, sizeof path, "lsp_cp/art/%s", image_names[i]);
+        remove_game_file(path);
+    }
+    remove_game_file("lsp_cp/art/shot.wav");
+    remove_game_file("lsp_cp/art/music.ogg");
+    remove_game_file("lsp_cp/art/music.MP3");
+    remove_game_file("lsp_cp/art/music.flac");
     remove_game_file("lsp_cp/art/other.txt");
     remove_game_file("lsp_cp/readme.txt");
     remove_game_file("lsp_cp/.tide/assets.sha256");
@@ -10461,7 +10489,7 @@ TIDE_TEST(lsp_asset_meshes)
                                 "local singleton Kept\n{\n    Mesh<Corner> one;\n}\n"
                                 "scene Main { }\n";
     open_uri(uri_main, wrong);
-    TIDE_CHECK(has(last_sent(), "'art/rock.glb' isn't a mesh file Tide reads"));
+    TIDE_CHECK(has(last_sent(), "'art/rock.glb' has an invalid GLB header: its magic isn't glTF"));
     TIDE_CHECK(has(last_sent(), "'art/hill.gltf' is glTF of no version, and Tide reads glTF 2.0"));
     TIDE_CHECK(has(last_sent(), "'art/other.txt' isn't a mesh file Tide reads"));
     TIDE_CHECK(has(last_sent(), "a field can't be a Mesh"));
@@ -10752,6 +10780,12 @@ TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
     open_uri(uri_main, local);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // Accepted glTF content keeps working regardless of its suffix.
 
+    write_file("lsp_skin_format/character.DAE", "<COLLADA/>");
+    static const char dae[] = "asset SkinnedMesh<Vertex3> hero = \"character.DAE\";\nscene Main { }\n";
+    open_uri(uri_main, dae);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(dae, '"') - dae), 15, 1, "'character.DAE' isn't a supported SkinnedMesh format"));
+    TIDE_CHECK(has(last_sent(), "export the rigged model as glTF 2.0") && !has(last_sent(), "invalid JSON"));
+
     // An uncached URL remains unavailable without a fetch; an existing OBJ
     // cache uses the source URL's extension, not its extensionless hash path.
     model_metadata_forget();
@@ -10778,6 +10812,7 @@ TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
     remove_game_file(cache);
     remove_game_file("lsp_skin_format/main.tide");
     remove_game_file("lsp_skin_format/character.obj");
+    remove_game_file("lsp_skin_format/character.DAE");
     remove_game_file("lsp_skin_format/.tide/assets.sha256");
     remove_game_file("lsp_skin_format/.tide/.gitignore");
     remove_folder("lsp_skin_format/.tide/assets/urls");

@@ -6,8 +6,8 @@ list(REMOVE_ITEM TIDEC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
-    # Assets: tidec reads a game's PNGs with the engine's own reader, PSD
-    # composites with src/psd_files.c, and writes
+    # Assets: tidec reads PNG/PSD itself, imports JPEG/TGA/BMP pixels and
+    # converts MP3/FLAC into PCM WAV, then writes
     # its pack with the engine's own builder (tide/png.h, tide/pack.h), so what
     # it packs is what the game reads; those files bring the engine's pages and
     # hashes. The same objects are in the engine's library, so a program that
@@ -29,8 +29,16 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_compile_options(tide_fbx PRIVATE -w) # Vendored code, as the other third-party libraries.
     install(FILES third_party/ufbx/LICENSE third_party/ufbx/MATH-LICENSE
         DESTINATION licenses/ufbx COMPONENT tide)
+    # Source audio decoders are build-time tools; games retain WAV/Vorbis playback.
+    add_library(tide_audio_import STATIC third_party/dr_libs/dr_decoders.c)
+    target_include_directories(tide_audio_import SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/dr_libs")
+    target_link_libraries(tide_audio_import PUBLIC tide_flags)
+    target_compile_options(tide_audio_import PRIVATE -w)
+    install(FILES third_party/dr_libs/LICENSE DESTINATION licenses/dr_libs COMPONENT tide)
+    install(FILES third_party/stb_image/LICENSE DESTINATION licenses/stb_image COMPONENT tide)
     add_library(tidec_core STATIC ${TIDEC_SOURCES} ${TIDEC_ENGINE_SOURCES})
-    target_link_libraries(tidec_core PUBLIC tide_fbx)
+    target_link_libraries(tidec_core PUBLIC tide_fbx tide_audio_import)
+    target_include_directories(tidec_core SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_image")
     # Expected asset digests and emitted loaders share this exact private walker.
     set(TIDEC_PACK_FINGERPRINT_C "${CMAKE_CURRENT_BINARY_DIR}/pack_fingerprint_source.c")
     add_custom_command(OUTPUT "${TIDEC_PACK_FINGERPRINT_C}"

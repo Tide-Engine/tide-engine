@@ -1,4 +1,4 @@
-// expect: '../e2e/assets/meshes/bad/cut.glb' isn't a .glb that reads: it says it's longer than it is
+// expect: '../e2e/assets/meshes/bad/cut.glb' isn't a .glb that reads: its declared length doesn't match its bytes
 struct Corner
 {
     float3 position;

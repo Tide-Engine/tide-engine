@@ -17,12 +17,12 @@
 typedef enum asset_kind {
     ASSET_TEXT,  // string: UTF-8 text
     ASSET_BYTES, // List<byte>: any file
-    ASSET_GRID,  // Grid2<Color>: a PNG or PSD composite, decoded
-    ASSET_TEXTURE, // Texture: a PNG or PSD composite, decoded, kept a byte a channel to draw with
+    ASSET_GRID,  // Grid2<Color>: a supported image, decoded
+    ASSET_TEXTURE, // Texture: a supported image, decoded, kept a byte a channel to draw with
     // Cubemap: six images a glob matches, each named for its face by how its name ends before the extension (px,
     // nx, py, ny, pz, nz), decoded: its items are the six in that order
     ASSET_CUBEMAP,
-    ASSET_CLIP,    // Clip: a WAV, checked here and kept as it is; the engine decodes it as it's first played
+    ASSET_CLIP,    // Clip: WAV/Vorbis kept encoded; MP3/FLAC converted to float PCM WAV at build time
     // Mesh<V>: glTF (.glb, .gltf), OBJ or FBX, read here as one mesh (mesh_files.h), which codegen lays out as
     // the declaration's vertex struct
     ASSET_MESH,
@@ -33,9 +33,9 @@ typedef enum asset_kind {
 typedef struct asset_match {
     const char *key;      // The path as written from the declaring file, forward slashes: a map's key. A URL as it is.
     const char *abs;      // Where the bytes were read from
-    const uint8_t *data;  // The file's bytes (kept until the process ends)
+    const uint8_t *data;  // File bytes, or an imported Clip's PCM WAV (kept until the file changes)
     size_t size;
-    uint8_t hash[32];     // SHA-256 of the bytes
+    uint8_t hash[32];     // SHA-256 of the original file bytes
     tide_png_image image; // ASSET_GRID and ASSET_TEXTURE: its pixels
     mesh_file mesh;       // ASSET_MESH: its vertices and triangles, which stay until the file changes, as its bytes do
     const uint8_t *skinned;
@@ -62,11 +62,11 @@ asset_value *asset_resolve(const char *declaring, str path, asset_kind kind, boo
 // Decode the language literal's escapes and normalize path separators (arena).
 const char *asset_written_path(str text);
 
-// After a skinned import fails, diagnose an OBJ path with its supported
-// alternative instead of a glTF JSON error. URL queries and fragments do
+// After a skinned import fails, diagnose an unsupported source format with
+// export guidance instead of a glTF JSON error. URL queries and fragments do
 // not name a format. False leaves the original import diagnostic to callers.
-bool asset_skinned_obj_diagnostic(const char *path, loc at);
-bool asset_animations_obj_diagnostic(const char *path, loc at);
+bool asset_skinned_format_diagnostic(const char *path, const char *why, loc at);
+bool asset_animations_format_diagnostic(const char *path, const char *why, loc at);
 
 // The folders and files a resolved value depends on, for whoever watches
 // them: each file's path, and a glob's folder (ending in '/'). Calls `found`
