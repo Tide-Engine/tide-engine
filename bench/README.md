@@ -249,6 +249,8 @@ All 2,064 native and 2,034 web debug CTests pass, alongside 40 focused skinned r
 node bench/results/skinned-cpu3/reproduce/export.mjs --verify bench/results/skinned-cpu3
 ```
 
+Integration at `7c5566bf` with the latest web compression/private-header packaging passes 26 bounded native/web debug and release checks. Staged engine headers match their sources, and a standalone pruned game verifies separate-file clip binding, four instances with two poses in one batch, retained pack provenance, scratch cleanup and all 21 pixels across three frames on OpenGL, WebGL and WebGPU. Its release page verifies exact decoded bytes for separately compressed WASM and pack payloads under the generated minified runtime. The actual native standalone completes three hidden frames. Both measured executable identities remain unchanged; this adds no timing comparison.
+
 ## Input delay in Sumo
 
 ```powershell
