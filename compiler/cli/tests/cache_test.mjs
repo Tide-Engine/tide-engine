@@ -35,6 +35,25 @@ function check(condition, message) {
     if (!condition) throw new Error(message);
 }
 
+function checkEngineHeaders(installation) {
+    const engine = join(installation, "src", "engine");
+    function visit(folder) {
+        for (const entry of readdirSync(folder, { withFileTypes: true })) {
+            const file = join(folder, entry.name);
+            if (entry.isDirectory()) visit(file);
+            else if (/\.[ch]$/.test(entry.name)) {
+                for (const match of readFileSync(file, "utf8").matchAll(/^\s*#\s*include\s*"([^"]+)"/gm)) {
+                    const header = match[1];
+                    check(existsSync(join(dirname(file), header)) || existsSync(join(installation, "include", header)),
+                        `installed engine source ${relative(installation, file)} is missing quoted header ${header}`);
+                }
+            }
+        }
+    }
+    visit(engine);
+    console.log("Installed engine's quoted headers are present.");
+}
+
 async function run(executable, args, cwd, extra = {}) {
     return await new Promise((accept, reject) => {
         const child = spawn(executable, args, { cwd, env: { ...env, ...extra }, shell: false, windowsHide: true });
@@ -562,6 +581,7 @@ async function main() {
         }
         const tide = join(installation, "bin", process.platform === "win32" ? "tide.exe" : "tide");
         cpSync(opts.tide, tide);
+        checkEngineHeaders(installation);
         const version = await run(tide, ["version"], root);
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
