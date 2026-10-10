@@ -87,6 +87,7 @@ input Controls
     bool jump;
     bool boost;
     bool handbrake;
+    bool level;     // The pitch is the throttle key's, held since the ground: it isn't for the nose
     [Absolute] bool away = true;
 
     Sample(Devices devices, Lobby lobby, Hand hand)
@@ -94,23 +95,30 @@ input Controls
         if (!lobby.playing) return;
         away = false;
         var keys = devices.keyboard;
+        var mouse = devices.mouse;
         var pad = devices.gamepad;
-        var stick = pad.leftStick;
-        throttle = hand.throttle + pad.rightTrigger - pad.leftTrigger;
+        var stick = float2(StickAxis(pad.leftStick.x), StickAxis(pad.leftStick.y));
+        var forward = keys.w.pressed || keys.upArrow.pressed;
+        var back = keys.s.pressed || keys.downArrow.pressed;
+        var classic = hand.layout == KeyLayout.Classic;
+        var slide = classic ? keys.leftShift.pressed : mouse.right.pressed;
+        throttle = hand.throttle + TriggerAxis(pad.rightTrigger) - TriggerAxis(pad.leftTrigger);
         steer = hand.steer + stick.x;
         pitch = hand.pitch - stick.y;
         yaw = hand.steer + stick.x;
-        if (keys.w.pressed || keys.upArrow.pressed) { throttle += 1; pitch -= 1; }
-        if (keys.s.pressed || keys.downArrow.pressed) { throttle -= 1; pitch += 1; }
+        if (forward) { throttle += 1; pitch -= 1; }
+        if (back) { throttle -= 1; pitch += 1; }
         if (keys.a.pressed || keys.leftArrow.pressed) { steer -= 1; yaw -= 1; }
         if (keys.d.pressed || keys.rightArrow.pressed) { steer += 1; yaw += 1; }
         if (keys.q.pressed || pad.leftShoulder.pressed) roll -= 1;
         if (keys.e.pressed || pad.rightShoulder.pressed) roll += 1;
-        jump = hand.jump || keys.space.pressed || devices.mouse.right.pressed || pad.buttonSouth.pressed;
-        boost = hand.boost || keys.leftShift.pressed || devices.mouse.left.pressed && !hand.touch || pad.buttonEast.pressed;
-        handbrake = hand.handbrake || keys.leftCtrl.pressed || keys.x.pressed || pad.buttonWest.pressed;
-        // Held, the powerslide button makes the stick roll the car in the air
-        if (handbrake) { roll += yaw; yaw = 0; }
+        jump = hand.jump || pad.buttonSouth.pressed || (classic ? mouse.right.pressed : keys.space.pressed || mouse.left.pressed);
+        boost = hand.boost || pad.buttonEast.pressed || (classic ? mouse.left.pressed : keys.leftShift.pressed);
+        handbrake = hand.handbrake || slide || pad.buttonWest.pressed;
+        level = hand.safety && hand.held && forward && !back && !slide && roll == 0 && stick.y == 0 && hand.pitch == 0;
+        // Held in the air, powerslide turns a sideways push from yaw to
+        // roll, and so does a gamepad's left trigger
+        if (handbrake || pad.leftTrigger > 0.1) { roll += yaw; yaw = 0; }
     }
 }
 
@@ -378,7 +386,7 @@ system ReadControls(Controls input, Participant participant, mut MatchState stat
     state.manned[seat] = true;
     state.controls[seat] = DriveInput { throttle = input.throttle, steer = input.steer,
         pitch = input.pitch, yaw = input.yaw, roll = input.roll,
-        jump = input.jump, boost = input.boost, handbrake = input.handbrake };
+        jump = input.jump, boost = input.boost, handbrake = input.handbrake, level = input.level };
 }
 
 int Loud(float speed)

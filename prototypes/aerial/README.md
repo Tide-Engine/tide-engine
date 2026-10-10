@@ -37,16 +37,26 @@ package installation, and ordinary builds leave it out.
 
 ## Controls
 
-| Action | Keyboard and mouse | Gamepad | Touch |
-|---|---|---|---|
-| Drive, brake and reverse | W / S or the arrows | Right / left trigger | Stick up / down |
-| Steer; yaw in the air | A / D or the arrows | Left stick | Stick |
-| Pitch in the air | W / S | Left stick | Stick |
-| Jump, second jump, dodge | Space or right mouse | South button | JUMP |
-| Boost | Left Shift or left mouse | East button | BOOST |
-| Powerslide; air roll with the stick | Left Ctrl or X | West button | SLIDE |
-| Air roll left / right | Q / E | Shoulders | |
-| Ball camera | C or middle mouse | North button | CAM |
+The keys and the mouse are in one of the game's own two layouts. **Keys:
+Classic**, beside the menu button, switches to Modern and back; it starts in
+Classic.
+
+| Action | Classic | Modern | Gamepad | Touch |
+|---|---|---|---|---|
+| Drive, brake and reverse | W / S or the arrows | the same | Right / left trigger | Stick up / down |
+| Steer; yaw in the air | A / D or the arrows | the same | Left stick | Stick |
+| Pitch in the air | W / S | the same | Left stick | Stick |
+| Jump, second jump, dodge | Right mouse | Space or left mouse | South button | JUMP |
+| Boost | Left mouse | Left Shift | East button | BOOST |
+| Powerslide; air roll with the stick | Left Shift | Right mouse | West button; left trigger rolls too | SLIDE |
+| Air roll left / right | Q / E | Q / E | Shoulders | |
+| Ball camera | Space | Middle mouse | North button | CAM |
+| Look back, while held | Middle mouse | Left Ctrl | Right stick pressed | |
+| Look around | | | Right stick | |
+
+- W is the throttle and the nose-down key at once. Held as the car leaves the
+  ground, it's left out of the nose until it's let go (the game's keyboard
+  aerial safety); it still aims a dodge forward.
 
 - Hold jump for height. In the air, jump again with no direction for a second
   jump, or with one for a dodge that way: forward into the ball is the shot.

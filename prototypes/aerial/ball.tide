@@ -72,23 +72,34 @@ bool CarMeetsBall(mut CarState car, mut BallState ball)
     if (distance >= BALL_RADIUS) return false;
     var normal = distance > 0.0001 ? Math.Rotate(car.rotation, gap / distance) : Math.Normalize(between);
     var offset = Math.Rotate(car.rotation, nearest + BOX_CENTRE);
-    var surface = ball.velocity + Math.Cross(ball.spin, normal * -BALL_RADIUS) - VelocityAt(car, offset);
-    var closing = Math.Dot(surface, normal);
     var ratio = CAR_MASS / BALL_MASS;
     ball.position += normal * (BALL_RADIUS - distance);
-    if (closing >= 0) return true;
-    var stop = -closing / (ratio + 1 / Heft(car, offset, normal));
-    ball.velocity += normal * (stop * ratio);
-    Push(car, normal * -stop, offset);
-    var slide = surface - normal * closing;
-    var sliding = Math.Length(slide);
-    if (sliding < 0.001) return true;
-    var along = slide / sliding;
-    var grip = Math.Min(2 * stop, sliding / (ratio * 3.5 + 1 / Heft(car, offset, along)));
-    var change = along * (-grip * ratio);
-    ball.velocity += change;
-    ball.spin += Math.Cross(change, normal) * BALL_SPIN_PER_PUSH;
-    Push(car, along * grip, offset);
+    // The two stop closing, and stop sliding as far as grip twice the push
+    // allows. A push at the nose turns the car, which moves the point of
+    // contact, so the two are settled together over a few rounds.
+    mut var pushed = 0.0;
+    mut var gripped = float3(0);
+    for (var round = 0; round < 8; round++)
+    {
+        var closing = Math.Dot(ball.velocity + Math.Cross(ball.spin, normal * -BALL_RADIUS) - VelocityAt(car, offset), normal);
+        var push = Math.Max(0, pushed - closing / (ratio + 1 / Heft(car, offset, normal))) - pushed;
+        pushed += push;
+        ball.velocity += normal * (push * ratio);
+        Push(car, normal * -push, offset);
+        var surface = ball.velocity + Math.Cross(ball.spin, normal * -BALL_RADIUS) - VelocityAt(car, offset);
+        var slide = surface - normal * Math.Dot(surface, normal);
+        var sliding = Math.Length(slide);
+        if (sliding < 0.0001) continue;
+        var along = slide / sliding;
+        mut var grip = gripped - along * (sliding / (ratio * 3.5 + 1 / Heft(car, offset, along)));
+        var most = 2 * pushed;
+        if (Math.Length(grip) > most) grip *= most / Math.Length(grip);
+        var change = (grip - gripped) * ratio;
+        ball.velocity += change;
+        ball.spin += Math.Cross(change, normal) * BALL_SPIN_PER_PUSH;
+        Push(car, gripped - grip, offset);
+        gripped = grip;
+    }
     return true;
 }
 

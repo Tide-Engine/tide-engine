@@ -48,6 +48,8 @@ local singleton Look
     float3 heading = float3(0, 0, 1);
     bool placed;
     bool ballCam = true;
+    bool rear;              // Looking back, while its key is held
+    float2 swivel;          // The right stick's look around
     float shake;
     float fov = 78;
     int seat;               // The car this machine's player has
@@ -467,10 +469,19 @@ quaternion AimCamera(mut Look look, CarState car, BallState ball)
     // Straight behind is no direction to turn through: go round by the side
     if (Math.Dot(look.heading, want) < -0.98) want = Math.Normalize(want + Math.Cross(float3(0, 1, 0), want) * 0.3);
     look.heading = Math.Normalize(Math.Lerp(look.heading, want, 1 - Math.Exp(-look.dt * (look.ballCam ? 10 : 6))));
+    // Looking back is the car's own nose turned round, and the right stick
+    // swivels whichever view it is
+    mut var view = look.heading;
+    if (look.rear) view = Math.Normalize(-Flat(CarForward(car)) + float3(0, 0.001, 0));
+    if (Math.LengthSq(look.swivel) > 0)
+    {
+        view = Math.Rotate(quaternion.AxisAngle(float3(0, 1, 0), look.swivel.x * 2.6), view);
+        view = Math.Rotate(quaternion.AxisAngle(Math.Normalize(Math.Cross(float3(0, 1, 0), view)), -look.swivel.y * 0.9), view);
+    }
     // Up is the sky's, but for a car driving straight up a wall
-    var steep = look.heading.y * look.heading.y;
+    var steep = view.y * view.y;
     var over = Math.Normalize(float3(0, 1, 0) * (1 - steep) + CarUp(car) * steep + float3(0, 0.001, 0));
-    mut var eye = focus - look.heading * (2.7 + speed / CAR_MAX_SPEED * 0.55);
+    mut var eye = focus - view * (2.7 + speed / CAR_MAX_SPEED * 0.4);
     eye.y = Math.Max(eye.y, 0.3);
     // The walls are glass, and the camera goes out through them behind a
     // car that's driving up one. The pitch, the kerb round it and the roof
@@ -478,11 +489,11 @@ quaternion AimCamera(mut Look look, CarState car, BallState ball)
     var room = Arena(eye);
     if (room.distance < 0.4 && (eye.y < 3.4 || room.normal.y < -0.5)) eye += room.normal * (0.4 - room.distance);
     look.eye = eye;
-    return quaternion.LookRotation(Math.Normalize(look.heading - over * 0.05), over);
+    return quaternion.LookRotation(Math.Normalize(view - over * 0.05), over);
 }
 
 [Stage(Layers.Prepare)]
-view Prepare(mut Models models, mut Look look, MatchState match, Session session, Devices devices, Lobby lobby,
+view Prepare(mut Models models, mut Look look, MatchState match, Session session, Devices devices, Lobby lobby, Hand hand,
              query (Participant participant, Owner owner) players)
 {
     if (!models.made) MakeModels(models);
@@ -504,8 +515,14 @@ view Prepare(mut Models models, mut Look look, MatchState match, Session session
     look.seat = 0;
     foreach (var player in players)
         if (player.owner.player == session.player) look.seat = player.participant.seat;
-    if (lobby.playing && (devices.keyboard.c.down || devices.gamepad.buttonNorth.down || devices.mouse.middle.down))
+    // The cameras' keys, by the layout: Space and the middle button in
+    // Classic, the middle button and Ctrl in Modern
+    var classic = hand.layout == KeyLayout.Classic;
+    if (lobby.playing && (devices.gamepad.buttonNorth.down || (classic ? devices.keyboard.space.down : devices.mouse.middle.down)))
         look.ballCam = !look.ballCam;
+    look.rear = lobby.playing && (devices.gamepad.rightStickButton.pressed
+        || (classic ? devices.mouse.middle.pressed : devices.keyboard.leftCtrl.pressed));
+    look.swivel = lobby.playing ? float2(StickAxis(devices.gamepad.rightStick.x), StickAxis(devices.gamepad.rightStick.y)) : float2(0);
 
     // The crowd is loud after a goal, and rises as the ball nears one
     var near = match.ball.live ? Math.Saturate((Math.Abs(match.ball.position.z) - 25) / 30) * 0.5 : 0.0;
@@ -515,8 +532,9 @@ view Prepare(mut Models models, mut Look look, MatchState match, Session session
     // The camera
     var mine = match.cars[look.seat];
     mut var rotation = quaternion.identity;
-    var aspect = screen.x / screen.y;
-    mut var fov = Math.Min(Math.Degrees(2 * Math.Atan(1.428 / aspect)), 96);
+    // The game's widest view, 110 degrees across a 16:9 screen, as the
+    // angle that is up and down: a wider screen sees more to the sides
+    mut var fov = 77.55;
     if (!look.playing || match.phase == MatchPhase.Finished)
     {
         // Round the stadium behind the title, and round the pitch at the end
@@ -531,7 +549,6 @@ view Prepare(mut Models models, mut Look look, MatchState match, Session session
     else
     {
         rotation = AimCamera(look, mine, match.ball);
-        if (mine.supersonic) fov += 3;
     }
     look.fov = fov;
     var jolt = float3(Math.Sin(look.clock * 83), Math.Sin(look.clock * 71), Math.Sin(look.clock * 59)) * (look.shake * look.shake * 0.12);
