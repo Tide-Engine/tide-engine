@@ -1536,6 +1536,7 @@ typedef struct gpu_texture {
     tide_gpu_id texture;
     uint32_t frame; // The frame that last drew with it
     bool mipped;    // Its smaller images are of these pixels: made when a draw first reads it between them (prepare_mipmaps)
+    bool protected; // Referenced by a later step of the current list
 } gpu_texture;
 
 static gpu_texture *gpu_textures;
@@ -1543,6 +1544,20 @@ static uint32_t gpu_texture_count, gpu_texture_capacity;
 static uint32_t *gpu_texture_index; // Texture places by space/id: 1 + a place, or 0 for none
 static uint32_t gpu_texture_index_capacity; // A power of two, or 0: at most half taken
 static uint32_t gpu_frame;
+
+// Temporary integer-data storage detached from identities absent from this
+// list. Only the current invocation can take it; leftovers are freed before
+// overlays. The shape buckets and records retain CPU capacity, never GPU ids.
+typedef struct spare_data_texture {
+    tide_gpu_id texture;
+    int32_t width, height;
+    uint32_t next;
+} spare_data_texture;
+
+static spare_data_texture *spare_data_textures;
+static uint32_t spare_data_count, spare_data_capacity;
+static uint32_t *spare_data_index;
+static uint32_t spare_data_slots;
 
 // Render targets retain their attachments across passes and frames. Their
 // owner supplies a stable identity; resizing replaces both attachments, and
@@ -1769,6 +1784,7 @@ static bool gpu_ready(void)
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     gpu_texture_count = 0;
     if (gpu_texture_index) memset(gpu_texture_index, 0, (size_t)gpu_texture_index_capacity * sizeof(uint32_t));
+    spare_data_count = 0; // A lost device took these objects too.
     gpu_target_count = 0;
     gpu_cube_count = 0;
     forget_held();
@@ -2387,20 +2403,107 @@ static void reindex_gpu_textures(void)
     for (uint32_t i = 0; i < gpu_texture_count; i++) index_gpu_texture(i);
 }
 
+static gpu_texture *find_gpu_texture(const uint32_t space, const uint64_t id)
+{
+    if (gpu_texture_index_capacity) {
+        const uint32_t mask = gpu_texture_index_capacity - 1u;
+        for (uint32_t i = gpu_texture_hash(space, id) & mask; gpu_texture_index[i]; i = (i + 1u) & mask) {
+            gpu_texture *found = &gpu_textures[gpu_texture_index[i] - 1u];
+            if (found->id == id && found->space == space) return found;
+        }
+    }
+    return NULL;
+}
+
+static uint32_t data_shape_hash(const int32_t width, const int32_t height)
+{
+    return gpu_texture_hash((uint32_t)width, (uint32_t)height);
+}
+
+// Determine liveness before detaching anything: a later draw can still name a
+// previous frame's unchanged palette. Merely protecting it does not count it
+// as drawn; skipped destinations and invalid reads still prune as before.
+static void prepare_data_textures(const tide_draw_list *list)
+{
+    for (uint32_t i = 0; i < gpu_texture_count; i++) gpu_textures[i].protected = false;
+    for (uint32_t i = 0; i < step_count; i++) {
+        const draw_step *s = &steps[i];
+        if (s->kind != STEP_SHADED && s->kind != STEP_BLIT) continue;
+        const tide_draw_run *run = &list->runs[s->first];
+        for (uint32_t k = 0; k < run->shader->texture_count; k++) {
+            const uint32_t slot = run->textures[k];
+            if (gpu_read(run->shader, k) != TIDE_GPU_READ_DATA || !slot || slot > list->texture_count) continue;
+            const tide_draw_texture *t = &list->textures[slot - 1u];
+            gpu_texture *g = find_gpu_texture(t->space, t->id);
+            if (g) g->protected = true;
+        }
+    }
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < gpu_texture_count; i++) {
+        const gpu_texture *g = &gpu_textures[i];
+        if (g->texture && !g->protected && g->frame != gpu_frame && g->space == TIDE_PIXELS_LIST
+            && g->format == TIDE_TEXELS_INTS && (g->id >> 63)) count++;
+    }
+    spare_data_count = 0;
+    if (!count) return;
+    if (count > spare_data_capacity) {
+        if ((uint64_t)count * sizeof *spare_data_textures > SIZE_MAX) tide_out_of_memory();
+        spare_data_textures = tide_realloc(spare_data_textures, (size_t)spare_data_capacity * sizeof *spare_data_textures,
+                                           (size_t)count * sizeof *spare_data_textures);
+        spare_data_capacity = count;
+    }
+    uint32_t slots = spare_data_slots ? spare_data_slots : 16u;
+    while (slots / 2u < count) {
+        if (slots > UINT32_MAX / 2u) tide_out_of_memory();
+        slots *= 2u;
+    }
+    if ((uint64_t)slots * sizeof(uint32_t) > SIZE_MAX) tide_out_of_memory();
+    if (slots != spare_data_slots) {
+        spare_data_index = tide_realloc(spare_data_index, (size_t)spare_data_slots * sizeof(uint32_t),
+                                        (size_t)slots * sizeof(uint32_t));
+        spare_data_slots = slots;
+    }
+    memset(spare_data_index, 0, (size_t)slots * sizeof(uint32_t));
+    for (uint32_t i = 0; i < gpu_texture_count; i++) {
+        gpu_texture *g = &gpu_textures[i];
+        if (!g->texture || g->protected || g->frame == gpu_frame || g->space != TIDE_PIXELS_LIST
+            || g->format != TIDE_TEXELS_INTS || !(g->id >> 63)) continue;
+        const uint32_t bucket = data_shape_hash(g->width, g->height) & (slots - 1u);
+        spare_data_textures[spare_data_count] = (spare_data_texture){g->texture, g->width, g->height, spare_data_index[bucket]};
+        spare_data_index[bucket] = ++spare_data_count;
+        g->texture = 0; // The old logical identity no longer owns this object.
+    }
+}
+
+static tide_gpu_id take_data_texture(const tide_draw_texture *t)
+{
+    if (!spare_data_count || t->space != TIDE_PIXELS_LIST || t->format != TIDE_TEXELS_INTS || !(t->id >> 63)) return 0;
+    uint32_t *place = &spare_data_index[data_shape_hash(t->width, t->height) & (spare_data_slots - 1u)];
+    while (*place) {
+        spare_data_texture *s = &spare_data_textures[*place - 1u];
+        if (s->width == t->width && s->height == t->height) {
+            const tide_gpu_id texture = s->texture;
+            s->texture = 0;
+            *place = s->next;
+            return texture;
+        }
+        place = &s->next;
+    }
+    return 0;
+}
+
+static void free_spare_data_textures(void)
+{
+    for (uint32_t i = 0; i < spare_data_count; i++) {
+        if (spare_data_textures[i].texture) free_texture(spare_data_textures[i].texture);
+    }
+    spare_data_count = 0;
+}
+
 // The GPU's copy of a list's texture, uploaded if it hasn't got these pixels.
 static gpu_texture *texture_for(const tide_draw_texture *t)
 {
-    gpu_texture *g = NULL;
-    if (gpu_texture_index_capacity) {
-        const uint32_t mask = gpu_texture_index_capacity - 1u;
-        for (uint32_t i = gpu_texture_hash(t->space, t->id) & mask; gpu_texture_index[i]; i = (i + 1u) & mask) {
-            gpu_texture *found = &gpu_textures[gpu_texture_index[i] - 1u];
-            if (found->id == t->id && found->space == t->space) {
-                g = found;
-                break;
-            }
-        }
-    }
+    gpu_texture *g = find_gpu_texture(t->space, t->id);
     if (!g) {
         if (gpu_texture_count == gpu_texture_capacity) {
             const uint32_t capacity = gpu_texture_capacity ? gpu_texture_capacity * 2u : 8u;
@@ -2432,9 +2535,13 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     } else {
         if (g->texture) free_texture(g->texture);
-        // A grid of floats' cells are one float of 16 bits a pixel
-        g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
-                                  t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        g->texture = take_data_texture(t);
+        if (g->texture) gpu->texture_write(g->texture, t->pixels);
+        else {
+            // A grid of floats' cells are one float of 16 bits a pixel
+            g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
+                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        }
         gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     }
     if (count) g->mipped = false; // Its smaller images are of other pixels
@@ -3074,6 +3181,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
 
     // What the steps draw from goes to the GPU first
     renderer_start();
+    if (!over) prepare_data_textures(list);
     find_pipelines(list);
     upload_shapes_and_meshes();
     upload_meshes_3d(list);
@@ -3083,6 +3191,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     screen_uniforms uniforms = target_uniforms();
     // Start after the CPU expanded the list and prepared/uploaded resources.
     // Otherwise a desktop GPU waiting for that work would time the CPU too.
+    // Texture uploads requested by shaded draws still occur inside the query.
     if (timed && gpu->time_begin) gpu->time_begin();
     begin_pass(target, !over); // Every frame starts black; Draw.Clear picks another color
     bool pass_active = true;
@@ -3209,6 +3318,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     scaled = false;
     draw_target = 0;
     if (!over) {
+        free_spare_data_textures();
         draw_calls = calls;
         // The first frame through shaders after the list forgot (a hot reload): what's left of the last build's goes
         if (shaded && list->epoch != shader_epoch) {

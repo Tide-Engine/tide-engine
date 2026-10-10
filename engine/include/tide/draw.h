@@ -1257,6 +1257,7 @@ typedef struct tide_draw_list {
     const unsigned char *bold; // The bold weight's file, once a command of the frame draws with it: its renderer's
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t epoch;   // Counts tide_draw_forget
+    struct tide_skinned_draw_cache *skinned; // Private frame-local palette captures
 } tide_draw_list;
 
 // Empties the list for a new frame. It keeps its memory for the next, and the
