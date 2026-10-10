@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import childProcess, { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import test from 'node:test';
 import { stopBrowser } from './browser-process.mjs';
 
@@ -83,4 +84,104 @@ test('an unresponsive close request cannot prevent forced shutdown', { timeout: 
         browser.kill('SIGKILL');
         browser.stderr.destroy();
     }
+});
+
+// Replace only the Windows tree-killer launch; the browser and any stalled
+// taskkill stand-in are real owned processes, with real exit notifications.
+async function withTaskkill(t, launch, check) {
+    const browser = child('setInterval(() => {}, 1000)');
+    const originalSpawn = childProcess.spawn;
+    let killer;
+    t.mock.method(childProcess, 'spawn', (command, args, options) => {
+        if (command !== 'taskkill') return originalSpawn(command, args, options);
+        assert.deepEqual(args, ['/PID', String(browser.pid), '/T', '/F']);
+        assert.equal(options.windowsHide, true);
+        killer = launch(originalSpawn, options, browser);
+        return killer;
+    });
+    syncBuiltinESMExports();
+    try {
+        await once(browser, 'spawn');
+        await check(browser, () => killer);
+    } finally {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+        await Promise.all([browser, killer].map(async process => {
+            if (!process) return;
+            process.ref();
+            const exit = process.pid && process.exitCode === null && process.signalCode === null
+                ? once(process, 'exit') : Promise.resolve();
+            process.kill('SIGKILL');
+            process.stderr?.destroy();
+            await exit;
+        }));
+    }
+}
+
+const windowsOnly = { skip: process.platform !== 'win32', timeout: 10_000 };
+const stalledTaskkill = (spawn, options) => spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options);
+
+// These fixtures use real Windows processes. Keep the production exit budget:
+// under contention SIGKILL's exit notification can arrive well after 100 ms.
+test('a stalled tree killer falls back to killing the browser and is reaped', windowsOnly, async t => {
+    await withTaskkill(t, stalledTaskkill, async (browser, killer) => {
+        assert.equal(await stopBrowser(browser, () => new Promise(() => {})), true);
+        assert.ok(browser.exitCode !== null || browser.signalCode !== null);
+        assert.equal(browser.stderr.destroyed, true);
+        assert.equal(killer().signalCode, 'SIGKILL', 'the stalled tree killer cannot outlive cleanup');
+    });
+});
+
+test('a tree killer that cannot start still falls back to killing the browser', windowsOnly, async t => {
+    const errors = [];
+    t.mock.method(console, 'error', message => errors.push(message));
+    await withTaskkill(t, (spawn, options) => spawn(`${process.execPath}.missing-taskkill-fixture`, [], options), async browser => {
+        assert.equal(await stopBrowser(browser, () => new Promise(() => {})), true);
+        assert.ok(browser.exitCode !== null || browser.signalCode !== null);
+        assert.equal(browser.stderr.destroyed, true);
+        assert.match(errors.join('\n'), /Could not stop browser tree:.*ENOENT/);
+    });
+});
+
+test('an independently exiting browser does not leave a stalled tree killer behind', windowsOnly, async t => {
+    await withTaskkill(t, (spawn, options, browser) => {
+        const killer = stalledTaskkill(spawn, options);
+        browser.kill('SIGKILL');
+        return killer;
+    }, async (browser, killer) => {
+        assert.equal(await stopBrowser(browser, () => new Promise(() => {})), true);
+        assert.equal(browser.stderr.destroyed, true);
+        assert.equal(killer().signalCode, 'SIGKILL');
+    });
+});
+
+test('failed direct termination keeps the browser marked alive and retains stderr', windowsOnly, async t => {
+    await withTaskkill(t, stalledTaskkill, async (browser, killer) => {
+        t.mock.method(browser, 'kill', () => false);
+        assert.equal(await stopBrowser(browser, () => new Promise(() => {})), false);
+        assert.equal(browser.exitCode, null);
+        assert.equal(browser.signalCode, null);
+        assert.equal(browser.stderr.destroyed, false, 'stdio is retained until process exit is confirmed');
+        assert.equal(killer().signalCode, 'SIGKILL');
+    });
+});
+
+test('failed tree killer termination cannot report successful cleanup or retain an event-loop reference', windowsOnly, async t => {
+    const errors = [];
+    t.mock.method(console, 'error', message => errors.push(message));
+    let unreferenced = false;
+    await withTaskkill(t, (spawn, options) => {
+        const killer = stalledTaskkill(spawn, options);
+        t.mock.method(killer, 'kill', () => false);
+        const unref = killer.unref.bind(killer);
+        t.mock.method(killer, 'unref', () => { unreferenced = true; return unref(); });
+        return killer;
+    }, async (browser, killer) => {
+        assert.equal(await stopBrowser(browser, () => new Promise(() => {})), false);
+        assert.equal(browser.signalCode, 'SIGKILL');
+        assert.equal(killer().exitCode, null);
+        assert.equal(killer().signalCode, null);
+        assert.equal(unreferenced, true, 'failed cleanup remains bounded even when the tree killer cannot stop');
+        assert.match(errors.join('\n'), /Browser tree killer did not stop:/);
+    });
 });

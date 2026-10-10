@@ -13,7 +13,8 @@ set_tests_properties(last_light_tests PROPERTIES TIMEOUT 60)
 if(TIDE_NODE)
     add_test(NAME last_light_browser_process
         COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/test/browser-process.test.mjs")
-    set_tests_properties(last_light_browser_process PROPERTIES TIMEOUT 30)
+    # Windows fault cases each exercise several real two-second cleanup waits.
+    set_tests_properties(last_light_browser_process PROPERTIES TIMEOUT 60)
     add_test(NAME last_light_frame_pacing
         COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/test/frame-pacing.test.mjs")
     set_tests_properties(last_light_frame_pacing PROPERTIES TIMEOUT 30)
