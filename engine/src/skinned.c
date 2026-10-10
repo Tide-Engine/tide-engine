@@ -381,16 +381,16 @@ bool tide_skinned_sample(const tide_list data, const int32_t animation, const fl
     if (!transforms || animation < 0) return false;
     model_seen m;
     if (!open_model(data, &m)) return false;
-    uint64_t version;
-    const bool packed = tide_pack_skinned_version(data, &version);
+    bool nonnegative = false;
+    const bool packed = tide_pack_skinned_sample_proof(data, &nonnegative);
     tide_skinned_clip_data clip;
     bool valid = (packed || nodes_valid(&m.view)) && tide_skinned_data_clip(&m.view, (uint32_t)animation, &clip);
-    for (uint32_t i = 0; valid && i < clip.channels; i++) {
+    for (uint32_t i = 0; valid && !(packed && nonnegative) && i < clip.channels; i++) {
         tide_skinned_channel_data channel;
         if (packed) {
             validated_channel(&m.view, clip.first_channel + i, &channel);
-            // Full immutable-model validation proves finite increasing keys,
-            // but permits the first time in (-1, 0). Sampling requires >=0.
+            // The ordinary proof permits first times in (-1, 0). Without
+            // the stronger load-time fact, check this selected clip only.
             valid = validated_time(&m.view, &channel, 0u) >= 0.0f;
         } else valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel)
                    && channel_valid(&m.view, &channel);

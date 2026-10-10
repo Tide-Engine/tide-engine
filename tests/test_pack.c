@@ -1260,6 +1260,10 @@ TIDE_TEST(pack_skinned_proof_identities_follow_loaded_blocks)
     uint64_t identity, version, same, other;
     TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &identity, &version));
     TIDE_CHECK(identity != 0u);
+    // No channels: the stronger sampling fact is vacuously true.
+    bool nonnegative = false;
+    TIDE_REQUIRE(tide_pack_skinned_sample_proof(model.data, &nonnegative));
+    TIDE_CHECK(nonnegative && tide_pack_skinned_sample_proof(model.data, NULL));
     TIDE_REQUIRE(tide_pack_skinned_proof(first->data, &same, NULL));
     TIDE_CHECK(same == identity);
     TIDE_REQUIRE(tide_pack_skinned_proof(second->data, &other, NULL));
@@ -1271,6 +1275,7 @@ TIDE_TEST(pack_skinned_proof_identities_follow_loaded_blocks)
     other = version;
     TIDE_CHECK(!tide_pack_skinned_proof(copy, &same, &other));
     TIDE_CHECK(same == identity && other == version);
+    TIDE_CHECK(!tide_pack_skinned_sample_proof(copy, &nonnegative) && nonnegative);
     TIDE_CHECK(!tide_pack_skinned_proof((tide_list){0}, &same, &other));
 
     // A rejected load retains the current proof; equal successful loads must
@@ -1278,6 +1283,9 @@ TIDE_TEST(pack_skinned_proof_identities_follow_loaded_blocks)
     TIDE_CHECK(!tide_pack_load(bytes, sizeof(tide_pack_header) - 1u));
     TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &same, NULL));
     TIDE_CHECK(same == identity);
+    nonnegative = false;
+    TIDE_REQUIRE(tide_pack_skinned_sample_proof(model.data, &nonnegative));
+    TIDE_CHECK(nonnegative);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &same, &other));
     TIDE_CHECK(same != 0u && same != identity && other == version);
@@ -1285,6 +1293,7 @@ TIDE_TEST(pack_skinned_proof_identities_follow_loaded_blocks)
     tide_pack_unload();
     TIDE_CHECK(!tide_pack_skinned_proof(model.data, &same, &other));
     TIDE_CHECK(same == replacement && other == version);
+    TIDE_CHECK(!tide_pack_skinned_sample_proof(model.data, &nonnegative) && nonnegative);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &same, &other));
     TIDE_CHECK(same != 0u && same != replacement && same != identity && other == version);

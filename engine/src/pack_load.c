@@ -70,6 +70,7 @@ typedef struct packed_skinned {
     uint32_t end; // End of its header/payload span, or 0 once a geometry write overlaps it.
     uint64_t version;
     uint64_t identity;
+    bool nonnegative_first_times;
 } packed_skinned;
 
 typedef struct skinned_span {
@@ -315,6 +316,22 @@ static int compare_skinned_spans(const void *a, const void *b)
     return left->begin < right->begin ? -1 : left->begin > right->begin ? 1 : 0;
 }
 
+// Full validation permits first times in (-1, 0); sampling requires >=0.
+// Cache this stronger fact once for an immutable blob, including channels
+// outside any clip. A false result leaves the ordinary proof usable.
+static bool nonnegative_first_times(const void *data, const uint32_t bytes)
+{
+    tide_skinned_data_view view;
+    if (!tide_skinned_data_open(data, bytes, &view)) return false;
+    for (uint32_t i = 0; i < view.channels; i++) {
+        tide_skinned_channel_data channel;
+        float time, value[4], in[4], out[4];
+        if (!tide_skinned_data_channel(&view, i, &channel)
+            || !tide_skinned_data_key(&view, &channel, 0u, &time, value, in, out) || !(time >= 0.0f)) return false;
+    }
+    return true;
+}
+
 static void index_skinned_spans(void)
 {
     if (!pack.skinned_count) return;
@@ -334,6 +351,7 @@ static void index_skinned_spans(void)
         model->end = offset + (uint32_t)sizeof(tide_block) + bytes;
         model->version = tide_hash(pack.region + offset + sizeof(tide_block), bytes);
         model->identity = ++skinned_proof_identity;
+        model->nonnegative_first_times = nonnegative_first_times(pack.region + offset + sizeof(tide_block), bytes);
         pack.skinned_spans[count++] = (skinned_span){offset, model->end, i, 0u};
     }
     pack.skinned_span_count = count;
@@ -931,6 +949,15 @@ bool tide_pack_skinned_proof(const tide_list data, uint64_t *identity, uint64_t 
 bool tide_pack_skinned_version(const tide_list data, uint64_t *version)
 {
     return version && tide_pack_skinned_proof(data, NULL, version);
+}
+
+bool tide_pack_skinned_sample_proof(const tide_list data, bool *nonnegative)
+{
+    if (!pack.region || !pack.skinned_places) return false;
+    const packed_skinned *found = &pack.skinned[skinned_place(pack.skinned, pack.skinned_places, data.at)];
+    if (!found->at || !found->end) return false;
+    if (nonnegative) *nonnegative = found->nonnegative_first_times;
+    return true;
 }
 
 tide_str tide_pack_text(const tide_pack_entry *e)

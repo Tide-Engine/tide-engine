@@ -511,6 +511,7 @@ TIDE_TEST(skinned_sampling_keeps_chunked_output_ownership_and_snapshots)
 TIDE_TEST(skinned_packed_samples_match_owned_bits_and_reject_negative_first_keys)
 {
     const uint32_t mark = tide_scratch_mark();
+    uint32_t previous_handle = 0u;
     for (uint32_t variant = 0; variant < 4u; variant++) {
         const tide_list raw = model();
         uint8_t *flat = tide_list_at_mut(raw, 0, 1u);
@@ -529,11 +530,21 @@ TIDE_TEST(skinned_packed_samples_match_owned_bits_and_reject_negative_first_keys
         const tide_list packed = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
         uint64_t version;
         TIDE_REQUIRE(tide_pack_skinned_version(packed, &version));
+        // Replacement reuses the numeric handle, but must recompute the
+        // stronger fact: true -> false -> false -> true (negative zero).
+        if (previous_handle) TIDE_CHECK(packed.at == previous_handle);
+        previous_handle = packed.at;
+        bool nonnegative = variant != 0u && variant != 3u;
+        TIDE_REQUIRE(tide_pack_skinned_sample_proof(packed, &nonnegative));
+        TIDE_CHECK(nonnegative == (variant == 0u || variant == 3u));
+        TIDE_CHECK(tide_pack_skinned_sample_proof(packed, NULL));
         tide_heap heap = {0};
         tide_text_use(&heap, NULL);
         tide_list owned = {0}, a = {0}, b = {0}, stored = {0};
         tide_list_set(&owned, raw, 1u, TIDE_IN_MATCH);
         TIDE_CHECK(!tide_pack_skinned_version(owned, &version));
+        nonnegative = true;
+        TIDE_CHECK(!tide_pack_skinned_sample_proof(owned, &nonnegative) && nonnegative);
         TIDE_REQUIRE(tide_skinned_rest(raw, &a, TIDE_IN_SCRATCH));
         TIDE_REQUIRE(tide_skinned_rest(raw, &b, TIDE_IN_SCRATCH));
         TIDE_REQUIRE(tide_skinned_rest(raw, &stored, TIDE_IN_MATCH));
@@ -565,9 +576,11 @@ TIDE_TEST(skinned_packed_samples_match_owned_bits_and_reject_negative_first_keys
         TIDE_CHECK(pose_hash(a) == unchanged);
         tide_text_use(NULL, NULL);
         tide_heap_free(&heap);
-        tide_pack_unload();
         free(pack);
     }
+    tide_pack_unload();
+    bool unchanged = true;
+    TIDE_CHECK(!tide_pack_skinned_sample_proof((tide_list){previous_handle}, &unchanged) && unchanged);
     tide_scratch_reset(mark);
 }
 
@@ -581,6 +594,9 @@ TIDE_TEST(skinned_packed_sampling_rechecks_later_keys_after_proof_invalidation)
     const tide_list packed = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
     uint64_t version;
     TIDE_REQUIRE(tide_pack_skinned_version(packed, &version));
+    bool nonnegative = false;
+    TIDE_REQUIRE(tide_pack_skinned_sample_proof(packed, &nonnegative));
+    TIDE_CHECK(nonnegative);
     tide_list pose = {0};
     TIDE_REQUIRE(tide_skinned_sample(packed, 0, 1.0f, &pose, TIDE_IN_SCRATCH));
     const uint64_t before = pose_hash(pose);
@@ -596,6 +612,7 @@ TIDE_TEST(skinned_packed_sampling_rechecks_later_keys_after_proof_invalidation)
     number(to + sizeof(tide_block), channel.times_at + 4u, 0.0f);
     tide_pack_mesh_updated(to, carrier_size);
     TIDE_CHECK(!tide_pack_skinned_version(packed, &version));
+    TIDE_CHECK(!tide_pack_skinned_sample_proof(packed, &nonnegative) && nonnegative);
     TIDE_CHECK(!tide_skinned_sample(packed, 0, 1.0f, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(pose_hash(pose) == before);
     tide_pack_unload();
