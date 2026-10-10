@@ -251,6 +251,21 @@ node bench/results/skinned-cpu3/reproduce/export.mjs --verify bench/results/skin
 
 Integration at `7c5566bf` with the latest web compression/private-header packaging passes 26 bounded native/web debug and release checks. Staged engine headers match their sources, and a standalone pruned game verifies separate-file clip binding, four instances with two poses in one batch, retained pack provenance, scratch cleanup and all 21 pixels across three frames on OpenGL, WebGL and WebGPU. Its release page verifies exact decoded bytes for separately compressed WASM and pack payloads under the generated minified runtime. The actual native standalone completes three hidden frames. Both measured executable identities remain unchanged; this adds no timing comparison.
 
+### 10,000-character scaling
+
+The same preserved final `a10d2f4b` executable measures 1,000 and 10,000 characters in three fresh processes, all four modes, 20 warmup and 100 measured frames per case (2026-10-10). The 24 rows contain 2,400 CPU frames and completed GPU samples. The named gate and 90-second quiet window exclude competing builds/tests; no attempts are excluded. At 10,000 characters, medians of three process medians are:
+
+| Mode | CPU views (ms) | CPU submission (ms) | GPU query (ms) |
+| --- | ---: | ---: | ---: |
+| Static geometry | 0.655 | 0.030 | 4.724 |
+| Omitted default pose | 6.798 | 0.043 | 8.179 |
+| Shared animated pose | 6.846 | 0.044 | 8.192 |
+| Independent animated poses | 30.492 | 5.090 | 13.698 |
+
+Fresh 1,000-character independent medians are 2.957 ms views, 0.454 ms submission and 1.078 ms GPU. Independent 10,000-character GPU process medians span 13.544–13.926 ms; the median of process p95 values is 15.412 ms, not a pooled p95. The derived CPU estimate (median of each process's separate view/submission median sum) scales 3.404→35.576 ms. Synchronized full-frame readback scales 4.922→48.281 ms; this does not establish pipelined FPS, and GPU queries must not be added to CPU intervals.
+
+Independent poses occupy ten palette pages, issuing ten mesh draws plus clear and uploading 40,960,000 bytes/frame; the other modes keep one mesh draw plus clear. Sampling stays serial, and palette preparation keeps its cap of three workers plus caller. The fixed 1024×576 viewport and summed nominal projected area make each of the 100×100 characters only about 4.6 pixels tall. The fixture still submits 30.72 million source vertices and 60.48 million triangles/frame without LOD, culling or match simulation; this is not a close-up crowd scene. Whole-process clocks have 134 P0/3 initial P8 samples, spanning 210–2,835 MHz graphics and 405–11,501 MHz memory; other desktop applications remain running, with no settings changes. [The scaling evidence](results/skinned-10k/README.md) retains exact source/executable/fixture identities, all rows, ranges, clocks and scripts. The final 10,000-character capture is retained in scratch with recorded PNG/RGB hashes; no pixel equality across different grids is expected. The ledger preserves its 336-row prefix plus these 24 rows. This measurement changes no production code.
+
 ## Input delay in Sumo
 
 ```powershell
