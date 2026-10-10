@@ -128,8 +128,41 @@ of about six seconds. It persisted after the earlier contention fix.
 The runner now records ICE, gathering and signaling states, the start/end
 of local/remote SDP operations, and wall-clock timestamps. Delivery age and
 the page's monotonic/wall-clock drift distinguish buffered DevTools reports
-from a page whose clock fell behind. Existing deadlines and pass conditions
-are unchanged; the failure's cause remains unconfirmed.
+from a page whose clock fell behind. That run alone did not confirm the cause;
+the diagnostics kept existing deadlines and pass conditions.
+
+Run 38049029745 located the Windows WebGL join failure before signaling:
+after the keeper's navigation, neither page completed a frame for about
+sixteen seconds. The first peer and local SDP operation appeared only after
+the keeper had spent its session's fifteen-second connection deadline.
+Delivery ages around a millisecond and clock drift below a millisecond ruled
+out stale DevTools reports in that run. The playtest now renders the keeper's
+local title first, then uses the actual Rooms keyboard controls to enter and
+join the host's code on that initialized page. Cold rendering therefore
+finishes before a live join starts, without changing session/test deadlines
+or depending on shader caches surviving another navigation. Existing
+desktop/phone captures, packet/tick assertions and controls remain covered.
+
+The same run's macOS WebGL gameplay passed, but shutdown failed while waiting
+for the child process's `close` event. That event also waits for stdio EOF:
+a helper inheriting stderr can keep it pending after the browser process has
+exited. `test/browser-process.mjs` now confirms process exit before releasing
+the runner's stderr pipe. Graceful and forced shutdown waits stay bounded;
+a browser process that remains alive still fails and retains its profile.
+The regression reproduces exit with stderr held by an owned helper, and also
+checks graceful and unresponsive shutdown. These CPU-only checks run through
+CTest on native and web builds and pass on Windows and Linux. The macOS log
+did not record process exit separately from stdio closure; hosted confirmation
+still requires a requested CI run.
+
+Validation of these fixes (2026-10-10): scoped native debug passed 2/2,
+web-debug and web-release each passed 4/4, including both real two-player
+backends. Cleanup's three regressions passed on Windows Node 24.19 and Linux
+Node 24.21. With CI's Chrome Headless Shell 155.0.8059.39, a temporary runner
+that blocked the keeper's first draw for seventeen seconds made the previous
+URL join fail before exchanging any packets; the same fault passed with the
+initialized-page GUI join. No assertions or deadlines were relaxed, and no
+workflow was dispatched.
 
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with

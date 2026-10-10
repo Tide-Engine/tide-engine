@@ -40,6 +40,21 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   keeps software-rendered pages from competing with each other or WASI tests.
   Other suites keep their existing parallelism. No suites, assertions, browser
   flags, timeouts or publishing gates changed.
+- The JetBrains build job disables `setup-gradle` caching (2026-10-10).
+  Run `38049029745` exhausted the hosted runner's disk during Gradle setup:
+  its check annotation reports `No space left on device` writing the runner's
+  own diagnostic log, while `Build and verify` never started. The dependency
+  and transform caches accessed at that time held 2.91 GB and 2.69 GB of
+  compressed data, before extraction. `setup-gradle` v4 applies its
+  [`gradle-home-cache-excludes` after restoring the entries](https://github.com/gradle/actions/blob/v4/sources/src/caching/gradle-user-home-cache.ts),
+  so exclusions alone cannot prevent the existing cache from exhausting disk
+  first. The job uses the supported
+  [`cache-disabled` input](https://github.com/gradle/actions/blob/v4/docs/setup-gradle.md#disabling-caching)
+  and downloads the wrapper and dependencies on demand; plugin compilation and
+  verification stay the same. This trades warm-cache build speed for avoiding
+  the failing restore. Actionlint passes with only the existing unsupported
+  `queue` key excluded, and `git diff --check` passes. A requested hosted run
+  is still needed to confirm the cold build's disk use. No run was dispatched.
 - Publishing uses the default `GITHUB_TOKEN` unless repository secret `TIDE_PUBLISH_TOKEN` is configured. The optional token belongs to `Tide-Engine`, selects this repository, and needs Contents and Workflows write permission: GitHub requires workflow authorization when the selected commit's workflows differ from the default branch's. Version checks that difference before building packages when the optional token is absent; Release checks again because the default branch can move during a build. This publishing token is separate from the docs site's read-only `TIDE_RELEASES_TOKEN`. Nightly retries fetch existing tag and notes refs, reject a tag for another commit, and push both refs atomically so a rejected tag leaves no new notes behind.
 - **All CI jobs use GitHub-hosted runners** (the owner, 2026-10-09: "move the workflows back to pure github for now, not blacksmith"). Windows' package and suites run on `windows-2025`, Linux's on `ubuntu-24.04`, and macOS's (Apple Silicon) on `macos-latest`. The supporting jobs and Docs use `ubuntu-24.04` too. Both workflows use `actions/checkout@v4`, install their tools and restore their caches on fresh checkouts. Manual triggers, suites, publishing gates and `TIDE_HIDDEN` stay as before. `.github/runner/README.md` records the former self-hosted runners, which neither workflow selects.
   - Validation: both workflows parse as YAML, a comparison against their previous versions confirms only runner labels, checkout actions and the runner comment changed, and `git diff --check` passes. `actionlint` 1.7.12 passes with only its unsupported existing `queue` key excluded; `queue: single` is supported by [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency). The hosted environments still need a manually requested workflow run; none was dispatched for this change.

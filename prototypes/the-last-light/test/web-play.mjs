@@ -11,6 +11,7 @@ import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createRelay } from '../../../relay/relay.mjs';
+import { stopBrowser } from './browser-process.mjs';
 
 const [gamePage, captureDirectory, backend = 'webgl'] = process.argv.slice(2);
 assert.ok(gamePage && captureDirectory, 'Usage: web-play.mjs <last_light.html> <capture directory> [webgl|webgpu]');
@@ -59,8 +60,6 @@ const browser = spawn(browserPath, ['--headless', '--no-sandbox', '--no-first-ru
     '--disable-features=WebRtcHideLocalIpsWithMdns', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
     ...(process.platform === 'win32' ? ['--enable-logging', `--log-file=${browserLog}`] : []), ...gpuFlags, 'about:blank'],
     { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
-let browserStopped = false;
-const browserExit = new Promise(resolve => browser.once('close', () => { browserStopped = true; resolve(); }));
 const clients = [];
 const errors = [];
 let endpoint;
@@ -176,6 +175,7 @@ try {
         };
         const key = async (code, key, down) => {
             await command('Input.dispatchKeyEvent', { type: down ? 'keyDown' : 'keyUp', code, key,
+                ...(down && key.length === 1 ? { text: key } : {}),
                 windowsVirtualKeyCode: code === 'Escape' ? 27 : key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0 });
             await frames();
         };
@@ -293,7 +293,19 @@ try {
     await host.until(value => /^[0-9A-Z]{6}$/.test(value.room ?? ''), 'host receives room code');
     const room = host.state.room;
     const keeper = await player('keeper');
-    await navigate(keeper, `&join=${room}`);
+    // Render the second player's cold shaders before starting a live join.
+    // A software renderer can block both pages past the session's 15-second
+    // connection deadline before their first relay/SDP callbacks can run.
+    // Join through the same title/code controls a player uses, without a
+    // navigation that would repeat initialization inside that deadline.
+    await navigate(keeper);
+    await keeper.tapKey('Tab', 'Tab');
+    await keeper.tapKey('Tab', 'Tab');
+    await keeper.tapKey('Enter', 'Enter');
+    for (const character of room) {
+        await keeper.tapKey(`${/\d/.test(character) ? 'Digit' : 'Key'}${character}`, character);
+    }
+    await keeper.tapKey('Enter', 'Enter');
     const connected = value => value.state === 2 && value.peers.includes('connected') && value.messages > 5 && value.sent > 5;
     await host.until(connected, 'host exchanging real WebRTC packets');
     await keeper.until(connected, 'keeper exchanging real WebRTC packets');
@@ -361,23 +373,7 @@ try {
         console.error(`Browser subprocess log:\n${log.slice(-16_000)}`);
     }
 } finally {
-    await clients[0]?.command('Browser.close', {}, 2000).catch(() => {});
-    const waitForExit = async () => {
-        let timer;
-        await Promise.race([browserExit, new Promise(resolve => { timer = setTimeout(resolve, 2000); })]);
-        clearTimeout(timer);
-    };
-    await waitForExit();
-    if (!browserStopped && browser.pid) {
-        // Chrome's children can retain the profile after its parent is gone.
-        if (process.platform === 'win32') {
-            const kill = spawn('taskkill', ['/PID', String(browser.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-            kill.on('error', error => { console.error(`Could not stop browser tree: ${error}`); browser.kill('SIGKILL'); });
-            kill.on('exit', code => { if (code !== 0 && !browserStopped) browser.kill('SIGKILL'); });
-            kill.unref();
-        } else browser.kill('SIGKILL');
-        await waitForExit();
-    }
+    const browserStopped = await stopBrowser(browser, () => clients[0]?.command('Browser.close', {}, 2000));
     if (!browserStopped) {
         process.exitCode = 1;
         console.error(`Browser did not stop; retained profile ${profile}`);
