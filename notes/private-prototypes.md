@@ -282,7 +282,18 @@ errors, closed pipes, late replies after timeout, isolated target detachment,
 malformed records/browser exit/write failure, and disposal with commands pending.
 All eight pass on Node 24.21. The real checked-in runner also passes the complete
 two-player WebGL and WebGPU checks with the release page and that same browser
-and Node version. Hosted confirmation still requires the requested CI run.
+and Node version.
+
+Hosted run `38085091225` at `ea509d62` passed all 2,037 Windows web tests,
+including the real WebGPU playtest in 53.62 seconds. The Windows installer
+check also passed in 13.99 seconds. All three package jobs, Linux native/web/sanitizers
+and Android, macOS native/web, MinGW, docs and JetBrains passed too. Windows
+native alone failed one of 2,048 tests: `last_light_browser_process`, in its
+unresponsive-close forced-shutdown case. That helper and test are byte-unchanged
+since `6a8c9e24`; they passed prior CI and the same run's Windows web check
+in 4.46 seconds. No nightly was published. The pipe playtest therefore passed
+on the previously failing hosted platform, but this single result does not
+establish the cause of the earlier buffered reports and input timeouts.
 
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
