@@ -34,7 +34,14 @@ function Phase([string]$name) {
         $testClock.Elapsed.TotalSeconds, $testProcess.TotalProcessorTime.TotalSeconds, $name))
 }
 Phase 'started'
-if ([IO.Path]::GetTempPath().TrimEnd('\') -ne $env:TEST_WORK.TrimEnd('\')) { throw 'Installer scratch files escaped the fixture.' }
+$testTemp = [IO.Path]::GetTempPath()
+$testMarker = [IO.Path]::Combine($testTemp, 'tide-installer-fixture.txt')
+# Windows may expand an inherited 8.3 TEMP path. Verify directory identity
+# through its private marker, rather than comparing two path spellings.
+if (-not [IO.File]::Exists($testMarker) -or [IO.File]::ReadAllText($testMarker) -ne $env:TEST_WORK) {
+    Phase "scratch path actual=$testTemp; fixture=$env:TEST_WORK"
+    throw "Installer scratch path $testTemp escaped the fixture $env:TEST_WORK."
+}
 # Windows PowerShell prepends vendor module paths at startup, even when the
 # child environment lists only its stock modules. Isolate discovery again
 # before the first command can trigger module analysis.
@@ -181,6 +188,7 @@ for (const runtime of shells) for (const c of cases) {
             });
             writeFileSync(join(work, 'list.json'), JSON.stringify([release('v1.3.0-nightly.1', true), release('v1.2.0'), release('v1.2.1')]));
             mkdirSync(join(work, 'temporary'));
+            writeFileSync(join(work, 'temporary', 'tide-installer-fixture.txt'), join(work, 'temporary'));
             const installation = runtime === 'powershell' ? join(work, 'local', 'Tide') : join(work, 'user', '.tide');
             if (c.installed) {
                 mkdirSync(join(installation, 'bin'), { recursive: true });
