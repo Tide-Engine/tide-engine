@@ -16,11 +16,10 @@
 #include <string.h>
 
 #include "assets.h"
+#include "audio_files.h"
 #include "folders.h"
-#include "psd_files.h"
+#include "image_files.h"
 #include "sha256.h"
-#include "tide/vorbis.h"
-#include "tide/wav.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
 
@@ -40,12 +39,14 @@ typedef struct read_file {
     uint8_t *data;
     size_t len;
     uint8_t hash[32];
-    bool decoded;          // Tried as a PNG or PSD...
+    bool decoded;          // Tried as an image...
     tide_png_image image;  // ...and what it gave (pixels NULL when neither decodes)
-    char psd_why[256];     // What's wrong with bytes that start as a PSD
+    char image_why[256];
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
-    bool sound_tried, sound; // Whether it's a WAV or an Ogg Vorbis file that decodes
-    const char *vorbis_why;  // What's wrong with it as Ogg Vorbis, for a file that starts as one
+    bool sound_tried, sound;
+    char sound_why[256];
+    uint8_t *sound_data; // MP3/FLAC imported as float PCM WAV; raw file bytes remain available separately
+    size_t sound_size;
     // Tried as a mesh, and what it gave: the mesh, or why not. A .gltf's buffers can be files beside it, so
     // what was read holds while those are as they were (`sides`)
     bool mesh_tried, mesh_ok;
@@ -108,6 +109,7 @@ static void forget_file(read_file *f)
     forget_skin(f);
     free(f->path);
     free(f->data);
+    free(f->sound_data);
     free(f->image.pixels);
     memset(f, 0, sizeof *f);
 }
@@ -575,7 +577,7 @@ static const char *kind_name(const asset_kind kind)
          : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "Animations" : "Grid2<Color>";
 }
 
-static bool asset_model_obj_diagnostic(const char *path, const loc at, const bool animations)
+static bool source_extension(const char *path, const char *extension)
 {
     size_t end = strlen(path);
     if (asset_path_is_url(path, end)) {
@@ -584,26 +586,41 @@ static bool asset_model_obj_diagnostic(const char *path, const loc at, const boo
         if (*part != '/') return false;
         end = (size_t)(part - path) + strcspn(part, "?#");
     }
-    static const char extension[] = ".obj";
-    if (end < sizeof extension - 1u) return false;
-    for (size_t i = 0; i < sizeof extension - 1u; i++) {
-        const char ch = path[end - (sizeof extension - 1u) + i];
+    const size_t length = strlen(extension);
+    if (end < length) return false;
+    for (size_t i = 0; i < length; i++) {
+        const char ch = path[end - length + i];
         if ((ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch) != extension[i]) return false;
     }
-    diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ", animations ? "an Animations" : "a SkinnedMesh");
-    if (animations) diag_note("export the model's animations as glTF 2.0 or FBX; OBJ contains no animation data");
-    else diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
     return true;
 }
 
-bool asset_skinned_obj_diagnostic(const char *path, const loc at)
+static bool asset_model_format_diagnostic(const char *path, const char *why, const loc at, const bool animations)
 {
-    return asset_model_obj_diagnostic(path, at, false);
+    // Called only after content inspection failed. A renamed glTF is still accepted.
+    // Preserve errors from recognized model content, including unsupported features.
+    if (!why || !strstr(why, "JSON") || strstr(why, "GLB") || strstr(why, "FBX")) return false;
+    if (source_extension(path, ".gltf") || source_extension(path, ".glb") || source_extension(path, ".fbx")) return false;
+    if (source_extension(path, ".obj")) {
+        diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ", animations ? "an Animations" : "a SkinnedMesh");
+        if (animations) diag_note("export the model's animations as glTF 2.0 or FBX; OBJ contains no animation data");
+        else diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
+    } else {
+        diag_error(at, "'%s' isn't a supported %s format", path, animations ? "Animations" : "SkinnedMesh");
+        diag_note("export %s as glTF 2.0 (.gltf or .glb) or FBX (.fbx); scene files such as .blend, .dae and .usd aren't imported directly",
+                  animations ? "the model's animations" : "the rigged model");
+    }
+    return true;
 }
 
-bool asset_animations_obj_diagnostic(const char *path, const loc at)
+bool asset_skinned_format_diagnostic(const char *path, const char *why, const loc at)
 {
-    return asset_model_obj_diagnostic(path, at, true);
+    return asset_model_format_diagnostic(path, why, at, false);
+}
+
+bool asset_animations_format_diagnostic(const char *path, const char *why, const loc at)
+{
+    return asset_model_format_diagnostic(path, why, at, true);
 }
 
 // A file a .gltf names beside it: read like any, and noted, so the mesh is
@@ -759,39 +776,29 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     if (kind == ASSET_GRID || kind == ASSET_TEXTURE || kind == ASSET_CUBEMAP) {
         if (!f->decoded) {
             f->decoded = true;
-            if (f->len >= 4 && memcmp(f->data, "8BPS", 4) == 0) {
-                psd_file_read(f->data, f->len, &f->image, f->psd_why);
-            } else if (!tide_png_decode(f->data, f->len, &f->image)) f->image = (tide_png_image){0};
+            image_file_read(f->data, f->len, key, &f->image, f->image_why);
         }
         if (!f->image.pixels) {
-            diag_error(at, "'%s' isn't a PNG or a PSD that decodes", key);
-            diag_note("a %s asset is a PNG or an RGB PSD's saved composite image; for the file's bytes as they are, "
+            diag_error(at, "'%s' can't be imported as an image: %s", key, f->image_why);
+            diag_note("a %s asset accepts PNG, RGB PSD composites, JPEG, TGA or BMP; for the file's bytes as they are, "
                       "read it as a List<byte>", kind_name(kind));
-            if (f->psd_why[0]) diag_note("as PSD, %s", f->psd_why);
             return false;
         }
         item->image = f->image;
     } else if (kind == ASSET_CLIP) {
         if (!f->sound_tried) {
             f->sound_tried = true;
-            tide_sound sound;
-            f->sound = tide_wav_decode(f->data, f->len, &sound);
-            if (f->sound) {
-                tide_sound_free(&sound);
-            } else {
-                const char *why = NULL;
-                tide_vorbis *v = tide_vorbis_open(f->data, f->len, &why); // Its headers and pages: no audio is decoded
-                f->sound = v != NULL;
-                tide_vorbis_close(v);
-                if (!f->sound && f->len >= 4 && memcmp(f->data, "OggS", 4) == 0) f->vorbis_why = why;
-            }
+            f->sound = audio_file_read(f->data, f->len, &f->sound_data, &f->sound_size, f->sound_why);
         }
         if (!f->sound) {
-            diag_error(at, "'%s' isn't a WAV or an Ogg Vorbis file that decodes", key);
-            diag_note("a Clip asset is a WAV of PCM or floats, or Ogg Vorbis, of one or two channels; for the file's bytes as "
+            diag_error(at, "'%s' can't be imported as audio: %s", key, f->sound_why);
+            diag_note("a Clip asset accepts PCM or float WAV, Ogg Vorbis, MP3 or FLAC, of one or two channels; for the file's bytes as "
                       "they are, read it as a List<byte>");
-            if (f->vorbis_why) diag_note("as Ogg Vorbis, %s", f->vorbis_why);
             return false;
+        }
+        if (f->sound_data) {
+            item->data = f->sound_data;
+            item->size = f->sound_size;
         }
     } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) {
         const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
@@ -808,6 +815,12 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             bool ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
             if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
                 false, read_side, &sides, &bytes, &size, why, note);
+            if (!ok && !is_fbx && source_extension(key, ".glb") &&
+                (f->len < 4 || memcmp(f->data, "glTF", 4) != 0) &&
+                strstr(why, "JSON")) {
+                snprintf(why, sizeof why, "has an invalid GLB header (expected glTF 2.0)");
+                snprintf(note, sizeof note, "re-export as glTF 2.0 binary (.glb), glTF JSON (.gltf) or FBX (.fbx)");
+            }
             free(fbx_glb);
             free(folder);
             f = read_at(path);
@@ -829,7 +842,8 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (ok) f->skin_mesh = skin_geometry(bytes, size);
         }
         if (!f->skin_ok) {
-            if (!(kind == ASSET_ANIMATIONS ? asset_animations_obj_diagnostic(key, at) : asset_skinned_obj_diagnostic(key, at))) {
+            if (!(kind == ASSET_ANIMATIONS ? asset_animations_format_diagnostic(key, f->skin_why, at)
+                                          : asset_skinned_format_diagnostic(key, f->skin_why, at))) {
                 diag_error(at, "'%s' %s", key, f->skin_why);
                 if (f->skin_note[0]) diag_note("%s", f->skin_note);
             }

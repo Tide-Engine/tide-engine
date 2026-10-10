@@ -1,0 +1,3 @@
+// expect: JPEG encoding isn't supported; use an 8-bit baseline or progressive JPEG, or export PNG
+asset Texture image = "../e2e/assets/images/bad/lossless.jpg";
+scene Main { }

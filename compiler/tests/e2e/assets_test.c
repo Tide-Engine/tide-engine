@@ -58,7 +58,7 @@ TIDE_TEST(assets_read_as_values_of_their_types)
     TIDE_CHECK(text_is(&world, p->noteA, "alpha"));
     TIDE_CHECK(p->noteCount == 2 && p->noteListCount == 2); // The list's glob has a '*' for the folder, which is one folder deep
     TIDE_CHECK(text_is(&world, p->noteFirst, "alpha")); // a.txt before b.txt: by their paths' bytes
-    TIDE_CHECK(p->pngCount == 5); // bad.png, hero.png, run/0.png, run/1.png, run/2.png
+    TIDE_CHECK(p->pngCount == 8); // Original five plus images/reference.png and two malformed-image fixtures
     TIDE_CHECK(p->pngFirstByte == 'o'); // bad.png's second byte
     TIDE_CHECK(text_is(&world, p->nested, "alpha"));
     TIDE_CHECK(text_is(&world, p->copied, "R\xc3\xa8gles: be kind.\nLine two."));

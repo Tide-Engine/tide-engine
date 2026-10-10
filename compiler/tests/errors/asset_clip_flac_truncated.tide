@@ -1,0 +1,4 @@
+// expect: '../e2e/audio_import/bad/truncated.flac' can't be imported as audio: FLAC audio is truncated or corrupt; decoded sample count or frame checksum is wrong
+// expect: a Clip asset accepts PCM or float WAV, Ogg Vorbis, MP3 or FLAC, of one or two channels; for the file's bytes as they are, read it as a List<byte>
+asset Clip broken = "../e2e/audio_import/bad/truncated.flac";
+scene Main { }

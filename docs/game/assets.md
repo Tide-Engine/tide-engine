@@ -1,10 +1,28 @@
 ---
-description: "Declare PNG and PSD images, textures, cubemaps, meshes from glTF and OBJ files, text and bytes as Tide assets, then load files or fetch URLs locally while the game runs."
+description: "Import images, audio and glTF, FBX or OBJ models as Tide assets. See supported formats and their limits, then load files or fetch URLs while the game runs."
 ---
 
 # Assets
 
 An asset is a file a game is built with: an image, a model, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.
+
+## Supported formats
+
+| Asset | Build-time source formats | What reaches the game |
+| --- | --- | --- |
+| `Texture`, `Grid2<Color>`, cubemap faces | PNG, PSD, JPEG (`.jpg`, `.jpeg`), TGA, BMP | Decoded pixels; textures and cube faces use RGBA8 |
+| `Mesh<V>` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX, OBJ | Static vertices and triangles |
+| `SkinnedMesh<V>` | glTF 2.0, binary or ASCII FBX | Geometry, skeleton and animation; see [Animation](./animation.md) |
+| `Animations` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | Skeleton and every animation clip; see [Animation files](./animation.md#animation-files) |
+| `Clip` | WAV, Ogg Vorbis, MP3, FLAC | WAV/Vorbis bytes, or float PCM WAV converted from MP3/FLAC; see [Audio](./audio.md#clips) |
+| `string` | Any UTF-8 text file | Text |
+| `List<byte>` | Any file | Its original bytes |
+
+These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `Animations` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
+
+WebP, TIFF, animated images, SVG, HDR/EXR and GPU texture containers such as DDS/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
+
+Custom font assets (TTF/OTF) and video playback aren't built. [`Draw.Text`](./views.md#text) uses Tide's bundled font. Any file can still be packed as `List<byte>`, which preserves its bytes without interpreting them.
 
 ## Declaring an asset
 
@@ -89,9 +107,23 @@ view Show(mut Player player)
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
 
+### Image formats
+
+PNG supports its standard color types and bit depths, palette/key transparency and Adam7 interlacing. PNG metadata, color profiles and gamma aren't applied; an APNG supplies its default image, without animation. PSD retains the saved composite described below. All image formats have a maximum of 16,384 pixels per side.
+
+JPEG, TGA and BMP are decoded during the build, through the same `Texture`, `Grid2<Color>` and cubemap declarations. Only their pixels enter the pack, so the game needs none of these source decoders. JPEG is lossy and has no alpha; use PNG, PSD or TGA for transparent art. Imported textures keep eight bits per channel, including when the source has more. Color profiles and JPEG EXIF orientation aren't applied; export sRGB pixels in the intended orientation.
+
+| Format | Accepted variants |
+| --- | --- |
+| JPEG | 8-bit baseline/sequential or progressive, grayscale, RGB/YCbCr or Adobe-marked CMYK/YCCK converted to RGB; no arithmetic coding or 12-bit channels |
+| TGA | Non-interleaved raw/RLE RGB, grayscale or indexed images, with either vertical/horizontal origin; use 32-bit RGBA for pixel alpha |
+| BMP | 1/4/8/16/24/32-bit uncompressed pixels or RGB bitfields; no RLE or embedded JPEG/PNG |
+
+JPEG/TGA/BMP source data and combined decoder/output allocations are bounded to 512 MiB. Larger images get an error asking for smaller dimensions.
+
 ### Photoshop images
 
-An image asset can be a PNG or a `.psd`, whether it's a `Texture`, a `Grid2<Color>`, a list or map of either, or a cubemap face. PSD import needs no Photoshop installation, including when CI builds the game:
+PSD import needs no Photoshop installation, including when CI builds the game:
 
 ```csharp
 asset Texture portrait = "art/portrait.psd";
@@ -115,7 +147,7 @@ asset Cubemap sky = "art/sky_??.png";
 
 - **Each file is named for its face** by how its name ends before the extension: `px` and `nx` are the faces `+x` and `-x` point at, `py` and `ny` the ones above and below, `pz` and `nz` the ones ahead and behind. `sky_px.png`, `px.png` and `dusk-PX.png` are all the first.
 - **Each is a face as it's seen from the cube's middle,** the way a picture is: `+y` is up for the four around, with `+x` to the right of `+z`. The one above has `-z` at its top, and the one below `+z`.
-- Each is a PNG or PSD, a square, and all six are one size. A file that's none of the six, a face that's missing or there twice, and a size that differs are errors at the path, which name the file.
+- Each uses a supported image format, is square, and all six are one size. A file that's none of the six, a face that's missing or there twice, and a size that differs are errors at the path, which name the file.
 - A file is in the pack once, as any is: a face that's also an `asset Texture` shares its pixels.
 - It's a value, like a `Texture`: a field or a local holds one, a function takes one, and a frag samples one by its name, `sky.Sample(direction)`. It's this machine's, so match code can't name one.
 - No list or map of cubes yet, and no `[Filter]` on one: a cube's filter is said where it's sampled.
@@ -178,10 +210,10 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 
 **What's read, and what isn't:**
 
-- From a glTF: its meshes' positions, normals, tangents, two sets of uvs and vertex colors, its nodes' places, and each material's base color. Not its textures, nor the rest of a material; not skins, animation, morph targets, cameras or lights: a skinned model is the mesh as it stands. A file whose geometry is compressed (Draco, meshopt) is an error that says to export it without: Tide reads a mesh's numbers as they are.
+- From a glTF: its meshes' positions, normals, tangents, two sets of uvs and vertex colors, its nodes' places, and each material's base color. Not its textures, nor the rest of a material; not skins, animation, morph targets, cameras or lights: a skinned model is the mesh as it stands. Required Draco/meshopt compression and other unsupported required extensions give an error with export guidance. Optional compression can use the file's valid uncompressed fallback.
 - From an OBJ: positions, uvs, normals and faces of any number of corners, with a color after a position where a tool wrote one. Not its materials file.
 - From an FBX: polygon meshes, node transforms, normals, tangents, two sets of uvs, vertex colors and material base colors. Polygons are triangulated, and the file's axes and units are converted to Y-up meters before Tide's coordinate conversion. Embedded textures and the rest of a material are not imported. A static `Mesh<V>` takes the rest geometry; use [`SkinnedMesh<V>`](./animation.md) for bones and animation.
-- **A texture a model has is a file of its own**, a PNG or PSD beside it, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
+- **A texture a model has is a file of its own**, using a supported image format, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
 - A mesh holds 16,777,216 vertices at the most.
 
 **It comes in as Tide has the world.** Tide's world is left-handed with fronts [clockwise](./3d.md#which-side-draws), like Unity's. glTF is right-handed with fronts counterclockwise: a file's `x` is turned around and its triangles are wound the other way, so `+y` stays up and a model that faces `+z` still faces `+z`. OBJ uses the same conversion. FBX first converts its declared axes and units to right-handed Y-up meters, then uses that conversion too. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
@@ -254,7 +286,7 @@ Anything wrong that can be known as the game is built is an error at the declara
 
 - A file that isn't there. The error says where a file with the same bytes is now, if the file was moved (the compiler keeps a hash of every named file in the game's `.tide/`), or else lists the files of that name, with a quick fix for each in the editor.
 - A glob that matches nothing.
-- Bytes that aren't what the type says: a `Grid2<Color>` or a `Texture` whose file isn't a PNG or supported PSD that decodes, a `string` whose file isn't UTF-8, a `Mesh` whose file isn't a glTF or an OBJ that reads, with what's wrong in it.
+- Bytes that aren't what the type says: an unsupported image/audio/model format, a damaged supported file, an unsupported codec or required extension, or text that isn't UTF-8. The diagnostic names the source file and the reason, with supported alternatives or export guidance.
 - A type an asset can't be, a path that isn't a constant, a `local` or `virtual` asset, a write to one.
 
 The editor keeps assets in step with their files: renaming a file or a folder rewrites the paths that name it, and a path's completion offers the files it can lead to. See [Editors](../tools/editors.md).

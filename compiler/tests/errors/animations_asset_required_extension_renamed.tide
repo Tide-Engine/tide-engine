@@ -1,0 +1,3 @@
+// expect: requires an unsupported glTF extension ('EXT_mesh_gpu_instancing')
+asset Animations model = "../e2e/assets/meshes/bad/required_extension.dae";
+scene Main { }

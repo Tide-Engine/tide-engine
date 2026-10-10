@@ -14811,7 +14811,7 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         free(rgba);
         return at;
     }
-    if (kind == ASSET_CLIP) return tide_pack_clip(b, item->hash, item->data, (uint32_t)item->size); // The file as it is
+    if (kind == ASSET_CLIP) return tide_pack_clip(b, item->hash, item->data, (uint32_t)item->size); // WAV/Vorbis or imported PCM WAV
     if (kind == ASSET_GRID) {
         const tide_grid_shape shape = asset_grid_shape(grid);
         return tide_pack_grid(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, item->image.pixels, &shape);

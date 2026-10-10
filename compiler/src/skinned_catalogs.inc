@@ -192,8 +192,8 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
         }
         if (!metadata) {
             if (status == MODEL_METADATA_INVALID) {
-                if (!(animations_only ? asset_animations_obj_diagnostic(written, path->at)
-                                      : asset_skinned_obj_diagnostic(written, path->at))) {
+                if (!(animations_only ? asset_animations_format_diagnostic(written, why, path->at)
+                                      : asset_skinned_format_diagnostic(written, why, path->at))) {
                     diag_error(path->at, "model catalog metadata is invalid: %s", why ? why : "invalid model JSON");
                 }
             } else diag_info(path->at, "model catalog metadata is unavailable: %s", why ? why : "no cached model JSON");

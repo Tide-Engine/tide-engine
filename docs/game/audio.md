@@ -1,5 +1,5 @@
 ---
-description: "Play WAV and Ogg Vorbis assets in Tide, control spatial sound and buses, and create audio filters while keeping sound local to each machine."
+description: "Import WAV, Ogg Vorbis, MP3 and FLAC audio in Tide, control spatial sound and buses, and create audio filters while keeping sound local to each machine."
 ---
 
 # Audio
@@ -7,7 +7,7 @@ description: "Play WAV and Ogg Vorbis assets in Tide, control spatial sound and 
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
 
 ::: info
-What's here: clips as assets (WAV and Ogg Vorbis), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, the device on every platform, and the microphone. See the [spec](../spec.md#audio) for the whole design and what's still open.
+What's here: clips as assets (WAV, Ogg Vorbis, MP3 and FLAC), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, the device on every platform, and the microphone. See the [spec](../spec.md#audio) for the whole design and what's still open.
 :::
 
 ## Clips
@@ -21,9 +21,20 @@ asset List<Clip> hits = "sfx/hit_*.wav";
 asset Map<string, Clip> voices = "voice/*.ogg";
 ```
 
-A `Clip` is a WAV (PCM of 8, 16, 24 or 32 bits, or floats) or an Ogg Vorbis file, of one or two channels, at any rate. The build checks the file decodes, and the pack keeps it as it is, so a Vorbis clip stays about a tenth the size of its PCM. As the game loads its pack, every clip is decoded, on the pool's threads, so the first play of one costs nothing: a WAV whole, and Vorbis up to ten seconds long whole too. A longer Vorbis clip (music, a long ambience) is kept as its file and decoded as it plays, a block at a time on the audio thread, which takes a few hundred kilobytes for each voice playing it and nothing for the clip itself. Which way a clip goes changes nothing a game sees: it plays, loops and pitches the same.
+A `Clip` accepts these source formats, with one or two channels and their source sample rate preserved:
 
-Both decoders are the engine's own, written from the formats' specifications, so a game carries no license terms for them; a file that isn't one is an error at the path, and for an Ogg file the error says what's wrong with it. A clip has one or two channels: a surround file is refused.
+| Source | Supported variants | Packed representation |
+| --- | --- | --- |
+| WAV | Little-endian RIFF/WAVE, integer PCM 8/16/24/32-bit or IEEE float 32/64-bit | Original WAV |
+| Ogg Vorbis | Vorbis I, mono/stereo | Original compressed Ogg Vorbis |
+| MP3 | MPEG Layer III, CBR or VBR | Float32 PCM WAV, converted at build time |
+| FLAC | Native FLAC, mono/stereo, with a declared STREAMINFO sample count | Float32 PCM WAV, converted at build time |
+
+The build identifies the file from its contents and reports unsupported formats, codecs, channels and damaged data at the asset's path. Ogg is a container: an `.ogg` holding Opus is not Vorbis. AIFF, AAC/M4A, Opus, ADPCM WAV and surround audio aren't imported yet; export PCM WAV, FLAC or Ogg Vorbis instead.
+
+MP3 and FLAC conversion adds no decoder to the game, but PCM takes more pack space and memory than compressed audio. Use Ogg Vorbis for long music or ambience that should stay compressed. MP3/FLAC imports are bounded to 128 MiB of source data, 256 MiB of decoded samples and 30 minutes of audio.
+
+As the game loads its pack, clips are prepared on the pool's threads: WAV and converted MP3/FLAC are fully decoded, as is Vorbis up to ten seconds long. A longer Vorbis clip is kept compressed and decoded as it plays, a block at a time on the audio thread. Playing, looping and pitch use the same API for every imported source format. Runtime playback uses Tide's WAV and Vorbis decoders; MP3/FLAC decoders are build tools only.
 
 A `Clip` is a value: keep it in a local field, pass it to a function, pick one from the glob's list or map. It names the declaration's file, so under `tide run` a saved file plays through every copy the game kept. The match can't use one: a `Clip` is this machine's, as a `Texture` is.
 

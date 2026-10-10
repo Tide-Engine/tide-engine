@@ -1,0 +1,3 @@
+// expect: requires an unsupported glTF extension ('EXT_mesh_gpu_instancing')
+asset SkinnedMesh<Vertex3> model = "../e2e/assets/meshes/bad/required_extension.gltf";
+scene Main { }

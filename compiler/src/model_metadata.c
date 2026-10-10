@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/internal/gltf_extensions.h"
+
 #define METADATA_JSON_MOST (16u * 1024u * 1024u)
 #define METADATA_FBX_MOST (64u * 1024u * 1024u)
 
@@ -401,11 +403,36 @@ static bool hierarchy(reader *r)
     return true;
 }
 
+static bool required_extensions(reader *r)
+{
+    space(r);
+    if (r->at == r->end || *r->at != '[') return fail(r, "has extensionsRequired that isn't an array");
+    if (!take(r, '[')) return false;
+    bool first = true, done;
+    for (;;) {
+        if (!item(r, ']', first, &done)) return false;
+        if (done) return true;
+        space(r);
+        if (r->at == r->end || *r->at != '"') return fail(r, "has a required glTF extension that isn't text");
+        char *name = NULL;
+        if (!string(r, &name)) return false;
+        char why[256], note[256];
+        const bool unsupported = gltf_required_extension_error(name, why, note);
+        free(name);
+        if (unsupported) {
+            char detail[256];
+            snprintf(detail, sizeof detail, "%.130s; %.120s", why, note);
+            return fail(r, detail);
+        }
+        first = false;
+    }
+}
+
 static bool json_read(const uint8_t *data, const size_t size, model_metadata *out, char why[256])
 {
     reader r = {.at = data, .end = data + size, .out = out, .why = why};
     if (!take(&r, '{')) return false;
-    bool first = true, done, saw_asset = false;
+    bool first = true, done, saw_asset = false, saw_required = false;
     bool catalogs[3] = {false, false, false};
     for (;;) {
         if (!item(&r, '}', first, &done)) break;
@@ -416,6 +443,9 @@ static bool json_read(const uint8_t *data, const size_t size, model_metadata *ou
         if (strcmp(field, "asset") == 0) {
             ok = saw_asset ? fail(&r, "has duplicate asset properties") : asset(&r);
             saw_asset = true;
+        } else if (strcmp(field, "extensionsRequired") == 0) {
+            ok = saw_required ? fail(&r, "has duplicate extensionsRequired properties") : required_extensions(&r);
+            saw_required = true;
         } else {
             const int kind = strcmp(field, "animations") == 0 ? 0 : strcmp(field, "nodes") == 0 ? 1 : strcmp(field, "skins") == 0 ? 2 : -1;
             if (kind >= 0) {
@@ -449,6 +479,24 @@ static bool glb_header(const uint8_t *data, const size_t header, const uint64_t 
     }
     *json = little32(data + 12);
     return true;
+}
+
+static void glb_json_failure(const char *name, char why[256])
+{
+    if (!name || !strstr(why, "JSON")) return;
+    size_t end = strlen(name);
+    if (asset_path_is_url(name, end)) {
+        const char *authority = strstr(name, "://") + 3;
+        const char *path = authority + strcspn(authority, "/?#");
+        if (*path != '/') return;
+        end = (size_t)(path - name) + strcspn(path, "?#");
+    }
+    if (end < 4u || name[end - 4u] != '.') return;
+    const char *extension = name + end - 3u;
+    if ((extension[0] == 'g' || extension[0] == 'G') && (extension[1] == 'l' || extension[1] == 'L')
+        && (extension[2] == 'b' || extension[2] == 'B')) {
+        snprintf(why, 256, "has an invalid GLB header (expected glTF 2.0)");
+    }
 }
 
 static bool fbx_name(const ufbx_string source, char **out, char why[256])
@@ -541,7 +589,7 @@ bool model_metadata_read(const uint8_t *data, const size_t size, const char *nam
         data += 20;
         if (!json_read(data, count, out, why)) { model_metadata_free(out); return false; }
     } else if (fbx_file_is(data, size, name)) return fbx_read(data, size, false, out, why, NULL);
-    else if (!json_read(data, size, out, why)) { model_metadata_free(out); return false; }
+    else if (!json_read(data, size, out, why)) { glb_json_failure(name, why); model_metadata_free(out); return false; }
     return true;
 }
 
@@ -613,7 +661,11 @@ static model_metadata_status inspect(const char *path, const char *name, const u
     bool unavailable = false;
     const bool ok = fbx ? fbx_read(json, (size_t)bytes, true, out, why, &unavailable) : json_read(json, (size_t)bytes, out, why);
     free(json);
-    if (!ok) { model_metadata_free(out); return unavailable ? MODEL_METADATA_UNAVAILABLE : MODEL_METADATA_INVALID; }
+    if (!ok) {
+        if (!glb && !fbx) glb_json_failure(name, why);
+        model_metadata_free(out);
+        return unavailable ? MODEL_METADATA_UNAVAILABLE : MODEL_METADATA_INVALID;
+    }
     return MODEL_METADATA_READY;
 }
 

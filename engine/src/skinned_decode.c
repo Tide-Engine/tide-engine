@@ -44,6 +44,7 @@ static void *zeroed(size_t count, size_t size)
 }
 
 #include "tide/internal/gltf_json.h"
+#include "tide/internal/gltf_extensions.h"
 
 typedef struct gltf_buffer {
     const uint8_t *data;
@@ -468,9 +469,7 @@ static bool primitive(decoded *d, const jnode *json, uint32_t node, int64_t skin
     const int64_t mode = jwhole_or(json, "mode", 4);
     if (mode >= 0 && mode < 4) return true;
     if (mode > 6 || mode < 0) return fail(g->r, NULL, "has a primitive mode glTF doesn't define");
-    if (jget(jget(json, "extensions"), "KHR_draco_mesh_compression")) {
-        return fail(g->r, "export with geometry compression off", "has Draco-compressed geometry, which Tide doesn't read");
-    }
+    // Optional Draco data is ignored in favor of its core glTF accessors.
     if (jcount(jget(json, "targets"))) return fail(g->r, "export the model without morph targets", "has morph targets, which skinned models don't read yet");
     const jnode *attributes = jget(json, "attributes"), *position = jget(attributes, "POSITION");
     accessor counted;
@@ -906,12 +905,12 @@ bool tide_skinned_data_decode(const void *input, size_t size, bool runtime, tide
         ok = fail(&r, "export as glTF 2.0", "isn't a glTF 2.0 model");
     }
     const jnode *required = jget(root, "extensionsRequired");
+    if (ok && required && required->kind != J_ARRAY) ok = fail(&r, NULL, "has extensionsRequired that isn't an array");
     for (uint32_t i = 0; ok && i < jcount(required); i++) {
         const jnode *extension = required->items[i];
-        const char *text = extension->kind == J_STRING ? extension->text : "";
-        if (strcmp(text, "KHR_mesh_quantization") != 0) {
-            ok = fail(&r, "export without required extensions other than KHR_mesh_quantization", "requires an unsupported glTF extension ('%.80s')", text);
-        }
+        char why[256], note[256];
+        if (extension->kind != J_STRING) ok = fail(&r, NULL, "has a required glTF extension that isn't text");
+        else if (gltf_required_extension_error(extension->text, why, note)) ok = fail(&r, note, "%s", why);
     }
     gltf g = {.r = &r, .root = root, .bin = bin, .bin_size = bin_size};
     g.buffer_count = jcount(jget(root, "buffers"));
