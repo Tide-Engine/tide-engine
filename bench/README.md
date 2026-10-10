@@ -176,7 +176,32 @@ The initial 2026-10-10 baseline measures source `b9faf142` on Windows, Ryzen 9 7
 | Shared animated pose | 139.063 | 0.143 | 5.829 | 1 | 4,096 bytes |
 | Independent animated poses | 151.682 | 16.178 | 58.685 | 1,000 | 4,096,000 bytes |
 
-CPU preparation is the clearest bottleneck: at 100 characters the three skinned modes already take 13.315, 13.837 and 15.097 ms respectively. Sharing a pose preserves GPU batching, but does not remove the CPU work per character. Source inspection finds generated copies of the owned model value, model validation/hashing and palette construction on each draw; these are investigation targets, not separately timed attributions. Different independent palettes also require separate mesh draws and uploads. The benchmark fixes missing compiler scratch cleanup exposed by these value copies, but makes no rendering optimization claim. [Saved runs](results/skinned.jsonl), [measurement metadata](results/skinned-baseline-metadata.json) and [clock observations](results/skinned-gpu-monitor.csv) retain the full cases, p95 values and artifact identities. All 2,040 native and 2,013 web debug checks pass.
+CPU preparation was the clearest bottleneck in the initial study: at 100 characters the three skinned modes already took 13.315, 13.837 and 15.097 ms respectively. Sharing a pose preserved GPU batching, while CPU work remained per character. The benchmark fixed missing compiler scratch cleanup exposed by owned value copies; it initially changed no renderer optimization. [Saved runs](results/skinned.jsonl), [measurement metadata](results/skinned-baseline-metadata.json) and [clock observations](results/skinned-gpu-monitor.csv) retain that study's full cases, p95 values and artifact identities. Its 2,040 native and 2,013 web debug checks passed.
+
+### CPU preparation improvements
+
+The follow-up removes four repeated costs. Generated skinned draws borrow model/Pose handles when later arguments cannot change them, while preserving ordinary snapshots before later writes or C calls. Loaded models reuse full validation and the canonical content hash established during pack loading; owned/decoded draws retain full validation and hashing, and replacement or overlapping geometry writes invalidate the loaded proof. Comparing a shared pose's rig reads its header instead of flattening the complete owned model. Sampling a verified model's clips reuses key validation, retaining the sampler's stricter first-time check. Palette evaluation and capture still happen per draw; interpolation still happens at each animation sample. Standalone `Animations` assets do not establish this proof and retain full sampling checks unless their bytes share a separately verified model block.
+
+A baseline phase diagnostic at 1,000 characters attributes about 44 ms/frame to complete model validation and 52 ms/frame to combined model hashing/influence capture. These are instrumented arithmetic means over ten frames, include clock overhead, and sit inside the draw-function interval; they are not the uninstrumented frame medians or an independent before/after comparison. The optimized code passes all 2,041 native and 2,014 web debug tests, including unchanged deterministic pose hashes, argument-order/COW regressions, pack invalidation, and OpenGL/WebGL/WebGPU pixel checks.
+
+The comparison uses the preserved original `b9faf142` release executable and the tested `c06de5f5` executable with unchanged host, fixture and settings. Three rounds alternate before/after, after/before, then before/after; each process measures all 16 cases for 100 frames after 20 warmup frames. Each build contributes 4,800 CPU/GPU samples. Summary times take the median of three per-round medians; paired speedups take the median of the three within-round before/after ratios. Builds and tests finish before the measurements, and a coordination gate and process checks guard the batch. Other user applications remain running, and GPU clocks are observed every 250 ms without changing power settings.
+
+| 1,000 characters | CPU views/recording before (ms) | After (ms) | Median paired speedup |
+| --- | ---: | ---: | ---: |
+| Static geometry | 0.057 | 0.057 | 1.01× |
+| Omitted default pose | 132.549 | 3.463 | 38.30× |
+| Shared animated pose | 139.436 | 2.663 | 52.37× |
+| Independent animated poses | 151.600 | 8.964 | 16.97× |
+
+The six processes completed all 96 cases, 9,600 CPU frames and 9,600 GPU samples. Draw counts and upload bytes match before/after in every paired case. The final 1,000-character independent-pose captures at frame 119 have identical PNG bytes and decoded RGB pixels. At 100 characters the optimized rest/shared/independent CPU costs are 0.347, 0.292 and 0.860 ms/frame. Independently animated characters still need 1,000 mesh draws and 4,096,000 palette-upload bytes/frame at the largest count; this change removes CPU preparation overhead without introducing independently posed instancing.
+
+GPU timings also change, but clock conditions differ: the original processes mostly report P8, while the optimized processes mostly report P0. Across the whole processes graphics clocks range from 210 to 2,835 MHz and memory clocks from 405 to 11,501 MHz. These observations are not per-case clock normalization and do not establish a GPU shader speedup. CPU submission, GPU execution, readback and total intervals remain in the saved records. Two earlier attempts interrupted by concurrent external builds were excluded and the original ledger restored before the clean batch; metadata records both exclusions.
+
+[Summary](results/skinned-cpu/summary.json), [measurement metadata](results/skinned-cpu/metadata.json), [paired rows](results/skinned-cpu/paired-rows.jsonl), [clock observations](results/skinned-cpu/clock-summary.json) and [baseline phase attribution](results/skinned-cpu/diagnostic-before/phase-summary.json) retain the measurements and their boundaries. [Reproduction instructions](results/skinned-cpu/README.md) include the measured scripts and artifact identities. Original measured hashes and LF-normalized committed hashes are recorded separately. Verify the exported text with:
+
+```powershell
+node bench/results/skinned-cpu/reproduce/export.mjs --verify bench/results/skinned-cpu
+```
 
 ## Input delay in Sumo
 

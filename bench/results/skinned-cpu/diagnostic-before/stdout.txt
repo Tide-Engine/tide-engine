@@ -1,0 +1,14 @@
+renderer: OpenGL 3.3; 2 warmup, 10 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+100 characters, omitted_rest, repeat 1 (median / p95 ms): view 13.070 / 14.211, submit 0.006 / 0.033, completion + readback 0.516 / 0.637, total 13.668 / 14.738, GPU 0.097 / 0.098 (10 samples); draw calls 2, texture uploads 0 bytes/frame
+phase_diagnostic {"characters":100,"mode":1,"frames":10,"calls":1000,"failures":0,"validation_ns":44226500,"palette_ns":2179700,"palette_capture_ns":562400,"hash_influence_ns":52016800,"total_ns":99049200}
+100 characters, shared_pose, repeat 1 (median / p95 ms): view 14.083 / 14.953, submit 0.073 / 0.152, completion + readback 0.518 / 0.658, total 14.750 / 15.743, GPU 0.104 / 0.106 (10 samples); draw calls 2, texture uploads 4096 bytes/frame
+phase_diagnostic {"characters":100,"mode":2,"frames":10,"calls":1000,"failures":0,"validation_ns":44547100,"palette_ns":2200700,"palette_capture_ns":580500,"hash_influence_ns":52914800,"total_ns":100315000}
+100 characters, independent_poses, repeat 1 (median / p95 ms): view 15.440 / 15.810, submit 1.200 / 1.726, completion + readback 1.420 / 1.549, total 18.113 / 18.487, GPU 0.988 / 1.042 (10 samples); draw calls 101, texture uploads 409600 bytes/frame
+phase_diagnostic {"characters":100,"mode":3,"frames":10,"calls":1000,"failures":0,"validation_ns":44053800,"palette_ns":2141600,"palette_capture_ns":1026900,"hash_influence_ns":51944000,"total_ns":99237600}
+1000 characters, omitted_rest, repeat 1 (median / p95 ms): view 133.050 / 135.019, submit 0.024 / 0.301, completion + readback 1.404 / 2.785, total 134.514 / 137.833, GPU 0.793 / 1.839 (10 samples); draw calls 2, texture uploads 0 bytes/frame
+phase_diagnostic {"characters":1000,"mode":1,"frames":10,"calls":10000,"failures":0,"validation_ns":443764500,"palette_ns":21880500,"palette_capture_ns":5724200,"hash_influence_ns":518976700,"total_ns":990980400}
+1000 characters, shared_pose, repeat 1 (median / p95 ms): view 140.053 / 142.019, submit 0.149 / 0.287, completion + readback 4.518 / 6.317, total 144.856 / 147.972, GPU 3.263 / 4.795 (10 samples); draw calls 2, texture uploads 4096 bytes/frame
+phase_diagnostic {"characters":1000,"mode":2,"frames":10,"calls":10000,"failures":0,"validation_ns":443693700,"palette_ns":21890700,"palette_capture_ns":5653300,"hash_influence_ns":523990700,"total_ns":995941900}
+1000 characters, independent_poses, repeat 1 (median / p95 ms): view 155.574 / 160.528, submit 11.713 / 15.387, completion + readback 49.524 / 52.762, total 218.155 / 225.082, GPU 58.201 / 59.015 (10 samples); draw calls 1001, texture uploads 4096000 bytes/frame
+phase_diagnostic {"characters":1000,"mode":3,"frames":10,"calls":10000,"failures":0,"validation_ns":441187600,"palette_ns":21627800,"palette_capture_ns":15484700,"hash_influence_ns":524375200,"total_ns":1003371900}
