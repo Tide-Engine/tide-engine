@@ -351,6 +351,11 @@ within their ten-second guards. That extreme-load full suite passed 7/8:
 the older portable stderr-inheritance fixture exceeded its separate
 five-second startup deadline before reaching cleanup. The fixture correction
 does not change that startup guard. All owned workers and helpers were reaped.
+The complete eight-case suite then passed with CI's exact Node 24.21 on one
+CPU with two competing workers in 39.05 seconds; its longest case took 6.56
+seconds. All ten-second case guards held, and the measured suite duration
+fits the new 60-second CTest guard but exceeds the previous 30 seconds.
+The final process audit confirmed every owned worker and helper was gone.
 No CI run or retry was dispatched.
 
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
