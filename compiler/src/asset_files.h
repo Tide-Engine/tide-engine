@@ -27,6 +27,7 @@ typedef enum asset_kind {
     // the declaration's vertex struct
     ASSET_MESH,
     ASSET_SKINNED,
+    ASSET_ANIMATIONS, // Animations: glTF skeleton/clip data, without typed render geometry
 } asset_kind;
 
 typedef struct asset_match {
@@ -65,6 +66,7 @@ const char *asset_written_path(str text);
 // export guidance instead of a glTF JSON error. URL queries and fragments do
 // not name a format. False leaves the original import diagnostic to callers.
 bool asset_skinned_format_diagnostic(const char *path, const char *why, loc at);
+bool asset_animations_format_diagnostic(const char *path, const char *why, loc at);
 
 // The folders and files a resolved value depends on, for whoever watches
 // them: each file's path, and a glob's folder (ending in '/'). Calls `found`

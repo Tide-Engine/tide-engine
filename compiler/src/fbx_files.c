@@ -641,7 +641,7 @@ bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **o
         }
     }
     for (size_t i = 0; ok && i < b.scene->nodes.count; i++) ok = fbx_mesh(&b, b.scene->nodes.data[i]);
-    if (ok && !b.indices) ok = fbx_fail(&b, "export a polygon mesh", "has no FBX triangles: there's nothing in it to draw");
+    if (ok && !skinned && !b.indices) ok = fbx_fail(&b, "export a polygon mesh", "has no FBX triangles: there's nothing in it to draw");
     if (ok) ok = fbx_animations(&b);
     fbx_buffer json = {.owner=&b}, glb = {.owner=&b};
     if (ok) ok = fbx_json(&b, &json);

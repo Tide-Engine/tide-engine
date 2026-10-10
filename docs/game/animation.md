@@ -8,7 +8,20 @@ A `SkinnedMesh<V>` holds a model's geometry, skeleton and animation clips. A `Po
 
 ## Import and draw
 
-Import a glTF 2.0 `.glb` or `.gltf`, or a binary or ASCII `.fbx`, with your [vertex struct](./assets.md#meshes), then sample an animation and draw its pose:
+Import a glTF 2.0 `.glb` or `.gltf`, or a binary or ASCII `.fbx`, with your [vertex struct](./assets.md#meshes). A model needs no animation clips to draw: leaving out the pose draws its authored rest pose.
+
+```csharp
+asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
+
+view Character()
+{
+    Draw.SkinnedMesh(hero, float4x4.identity);
+}
+```
+
+`hero.defaultPose` makes an owned pose with the same rest transforms, ready to edit or keep in a field. `hero.skeleton.RestPose()` remains available too. The rest pose belongs to the model's skeleton, independently of its animation catalog.
+
+To animate it, sample a clip and pass the resulting pose:
 
 ```csharp
 asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
@@ -27,7 +40,7 @@ view Characters(Character character)
 }
 ```
 
-`Draw.SkinnedMesh(mesh, transform, pose)` takes the same texture, vert, frag and values arguments as a [3D mesh](./3d.md), and also works on a render target. Deformation applies before your `vert`, which receives the posed mesh-local position, normal and tangent. Use `hero.skeleton.RestPose()` to draw the authored rest pose.
+`Draw.SkinnedMesh(mesh, transform[, pose])` takes the same texture, vert, frag and values arguments as a [3D mesh](./3d.md), and also works on a render target. The optional pose goes immediately after the transform; textures and shaders can follow the transform directly when no pose is supplied. Deformation applies before your `vert`, which receives the posed mesh-local position, normal and tangent.
 
 An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
 
@@ -36,6 +49,8 @@ Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject 
 ## Checked names and dynamic lookup
 
 A known asset provides animation and bone members from its source names: `Idle` becomes `idle`, and `RightHand` becomes `rightHand`. Only the first ASCII letter is lowercased. Invalid identifiers, keywords and colliding names have no dot member; the editor offers the members that are available.
+
+The editor reads the file's catalog without importing geometry or animation samples, and refreshes the names when the file changes. Invalid files and unavailable metadata have separate diagnostics; a requested clip is only reported missing after its catalog was inspected successfully. For an asset URL, the editor uses an existing local cache; a build fetches uncached content.
 
 ```csharp
 var model = hero; // Retains the known asset's checked catalog.
@@ -71,6 +86,33 @@ Animation Running(SkinnedMesh<Vertex3, Locomotion> model)
 
 The contract requires that subset; extra clips and bones remain discoverable through `Find` and `At`. Unaliased fields match normalized source identifiers; `[Name]` matches exact source spelling. Contracts stay available through helper parameters and collection elements. A build checks an imported asset's requirements; runtime decoding checks them before returning a model.
 
+## Animation files
+
+A separate glTF or FBX file can supply animation clips without importing typed render geometry. For the character above:
+
+```csharp
+asset Animations movement = "art/movement.glb";
+
+view MovingCharacter(Character character)
+{
+    mut var pose = hero.defaultPose;
+    pose.Sample(movement.run, character.seconds, Playback.Loop);
+    Draw.SkinnedMesh(hero, float4x4.identity, pose);
+}
+```
+
+An `Animations` asset holds every clip in the file and the skeleton those clips animate. A single known asset exposes its clips directly, such as `movement.run`. The editor completes these members and shows their original source names on hover, using the same rules as `hero.animations`. `movement.count`, `movement.Find("Run")` and `movement.At(index)` enumerate or find clips too. Copying with `var` retains checked names; a plain `Animations` helper parameter exposes lookup and enumeration.
+
+The file can be `.glb`, `.gltf` or `.fbx`. The importer keeps animation and skeleton data, so an animation file need not contain a mesh. A file containing several clips imports them all; the declaration never chooses an arbitrary first clip.
+
+`pose.Sample` binds the clip to the pose's skeleton. Use a pose from the character when you also need its bone references for edits or sockets. You can also sample the source clip with `movement.run.Sample(seconds)` and pass that pose directly to `Draw.SkinnedMesh`; the draw binds it to the character.
+
+Binding matches nodes by unique exact source names, matching hierarchy and authored local transforms; source node order can differ. Sampling into a target pose requires the selected clip's animated nodes and their ancestors. Drawing a source pose requires all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated unanimated nodes can differ, and unanimated target nodes keep their rest transforms.
+
+An extra unnamed identity scene root, as added by FBX importing, is ignored while its pose and relevant animation channels stay at rest. Animated wrappers or deeper unnamed ancestors cannot be bound this way.
+
+This supports separate files exported from the same rig; it does not retarget animation between rigs with different proportions or rest transforms. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw.
+
 ## Sample, blend and edit
 
 Time is explicit. `Sample(seconds)` clamps to the clip's endpoints. `Playback.Loop` wraps positive and negative time; an exact loop endpoint becomes time zero. Every sample begins from the authored rest transforms, so unanimated properties never retain a previous clip's values.
@@ -86,6 +128,8 @@ pose[head].rotation = Math.Mul(pose[head].rotation, lookRotation);
 
 `pose[bone]` is a `BoneTransform` with parent-local `position`, quaternion `rotation` and `scale`. `pose.Sample(animation, seconds[, playback])` resamples in place and reuses its transform storage. Sampling and blending run deterministically on the CPU in match systems as well as views. A pose can be stored in an ordinary match field or a local field, with the same copy and snapshot rules as other structs containing lists.
 
+`Pose.Blend` requires identical skeleton data and does not bind across separate exports. To blend clips from separate files, start both poses from `hero.defaultPose` and sample each clip into its target pose before blending.
+
 A stored pose takes the latest tick's transforms in a view. For smoother playback, sample a view pose from the presentation time your game chooses, or blend two sampled poses explicitly. Keep an unwrapped clock when interpolating time across a loop boundary.
 
 ## Sockets and match use
@@ -98,7 +142,7 @@ var weaponTransform = Math.Mul(characterTransform, pose.Model(hand));
 Draw.Mesh(sword, weaponTransform);
 ```
 
-Systems can use the same matrices for sockets or hitboxes. Sampling leaves entity movement to your own systems; it does not extract root-motion deltas or send animation events. Bone references carry their skeleton identity. Sampling or blending an incompatible pose leaves the destination unchanged; an incompatible skinned draw produces no draw.
+Systems can use the same matrices for sockets or hitboxes. Sampling leaves entity movement to your own systems; it does not extract root-motion deltas or send animation events. Bone references carry their skeleton identity, so use the character's pose when accessing its bones. An incompatible blend leaves the destination unchanged.
 
 Imported model and animation content participates in the game's match compatibility, including assets read by its vertex defaults. Those dependencies include reads through constants, implicit struct defaults, operators and helper functions, and through another mesh's defaults. Changing their content requires the corresponding game build; a mismatched pack is refused before it replaces the running pack. Unrelated images and other visual assets can still reload without changing model compatibility.
 

@@ -35,23 +35,30 @@ function geometry() {
             node("LayerElement", [], [node("Type", [`LayerElement${kind}`]), node("TypedIndex", [0])]))]),
     ]);
 }
-function document(skinned) {
-    const objects = [geometry(), model(2000n, "Triangle", "Mesh", skinned ? [0, 0, 0] : [3, 4, 0], skinned ? [1, 1, 1] : [-1, 2, 1]),
+function document(skinned, meshless = false) {
+    const objects = meshless ? [] : [geometry(), model(2000n, "Triangle", "Mesh", skinned ? [0, 0, 0] : [3, 4, 0], skinned ? [1, 1, 1] : [-1, 2, 1]),
         node("Material", [3000n, "Material::Blue", ""], [node("Version", [102]), node("ShadingModel", ["phong"]),
             node("MultiLayer", [0]), node("Properties70", [], [prop("DiffuseColor", "Color", [0.25, 0.5, 1]),
                 prop("DiffuseFactor", "Number", [1])])])];
-    const connections = [connect(1000n, 2000n), connect(2000n, 0n), connect(3000n, 2000n)];
+    const connections = meshless ? [] : [connect(1000n, 2000n), connect(2000n, 0n), connect(3000n, 2000n)];
     if (skinned) {
-        objects.push(model(4000n, "Root", "Null", [2, 0, 0]), node("Deformer", [5000n, "Deformer::Skin", "Skin"], [
-            node("Version", [101]), node("Link_DeformAcuracy", [50]), node("SkinningType", ["Linear"])]));
-        connections.push(connect(4000n, 0n), connect(5000n, 1000n));
+        objects.push(model(4000n, "Root", "Null", [2, 0, 0]));
+        connections.push(connect(4000n, 0n));
+        if (!meshless) {
+            objects.push(node("Deformer", [5000n, "Deformer::Skin", "Skin"], [
+                node("Version", [101]), node("Link_DeformAcuracy", [50]), node("SkinningType", ["Linear"])]));
+            connections.push(connect(5000n, 1000n));
+        }
         for (let i = 0; i < 5; i++) {
             const bone = 4100n + BigInt(i), cluster = 5100n + BigInt(i);
-            objects.push(model(bone, `Bone${i}`, "LimbNode", [i + 1, 0, 0]),
-                node("Deformer", [cluster, `SubDeformer::Bone${i}`, "Cluster"], [node("Version", [100]),
+            objects.push(model(bone, `Bone${i}`, "LimbNode", [i + 1, 0, 0]));
+            connections.push(connect(bone, 4000n));
+            if (!meshless) {
+                objects.push(node("Deformer", [cluster, `SubDeformer::Bone${i}`, "Cluster"], [node("Version", [100]),
                     node("Indexes", [array("i", [0, 1, 2])]), node("Weights", [array("d", [i + 1, i + 1, i + 1])]),
                     node("Transform", [array("d", translation(-(i + 3)))]), node("TransformLink", [array("d", translation(i + 3))]) ]));
-            connections.push(connect(bone, 4000n), connect(cluster, 5000n), connect(bone, cluster));
+                connections.push(connect(cluster, 5000n), connect(bone, cluster));
+            }
         }
         objects.push(node("AnimationStack", [6000n, "AnimStack::Move", ""], [node("Properties70", [], [
             prop("LocalStart", "KTime", [0n]), prop("LocalStop", "KTime", [tick]),
@@ -113,6 +120,7 @@ function writePair(folder, name, tree) {
 }
 for (const [folder, skinned] of [["static", false], ["models", true]])
     writePair(folder, skinned ? "rig" : "triangle", document(skinned));
+writePair("clips", "move", document(true, true));
 
 const stepped = document(true);
 const curve = stepped.find(n => n.name === "Objects").children.find(n => n.name === "AnimationCurve");

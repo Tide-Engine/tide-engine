@@ -92,11 +92,11 @@ static void skinned_builtins(program *prog)
 
 static bool skinned_type_named(program *prog, const str name, type *out)
 {
-    static const char *const names[] = {"Animation", "Bone", "Pose", "Skeleton", "BoneTransform", "Playback"};
+    static const char *const names[] = {"Animation", "Bone", "Pose", "Skeleton", "BoneTransform", "Playback", "Animations"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (!str_eq_c(name, names[i])) continue;
         skinned_builtins(prog);
-        decl *const types[] = {prog->animation, prog->bone, prog->pose, prog->skeleton, prog->bone_transform, prog->playback};
+        decl *const types[] = {prog->animation, prog->bone, prog->pose, prog->skeleton, prog->bone_transform, prog->playback, prog->animations};
         *out = decl_type(types[i]);
         return true;
     }

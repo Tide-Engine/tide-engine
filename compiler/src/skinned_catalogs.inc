@@ -149,22 +149,28 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
     if (inner.kind == TY_LIST) inner = list_element(inner);
     if (inner.kind == TY_MAP) inner = map_value(inner);
     decl *base = inner.decl;
-    skinned_contract_catalogs(c->prog, base, path->at);
+    const bool animations_only = asset->asset_kind == ASSET_ANIMATIONS;
+    if (!animations_only) skinned_contract_catalogs(c->prog, base, path->at);
     // Each asset gets its own immutable catalog type; var preserves it.
     // A collection has a common contract rather than item-specific inference.
     const bool infer = !base->skin_contract && !asset->asset_many;
     decl *mesh = base;
     if (infer) {
-        mesh = skinned_struct(c->prog, str_to_cstr(base->name), SKIN_MESH);
+        mesh = skinned_struct(c->prog, str_to_cstr(base->name), animations_only ? SKIN_ANIMATIONS : SKIN_MESH);
         mesh->fields = base->fields;
         mesh->skin_vertex = base->skin_vertex;
         mesh->skin_inferred = true;
-        mesh->skin_animations = skinned_catalog(c->prog, SKIN_ANIMATIONS, -1);
-        mesh->skin_skeleton = skinned_struct(c->prog, "Skeleton", SKIN_SKELETON);
-        skinned_data_field(c->prog, mesh->skin_skeleton);
-        mesh->skin_skeleton->skin_bones = skinned_catalog(c->prog, SKIN_BONES, -1);
+        if (animations_only) mesh->skin_metadata_status = -1;
+        else {
+            mesh->skin_animations = skinned_catalog(c->prog, SKIN_ANIMATIONS, -1);
+            mesh->skin_skeleton = skinned_struct(c->prog, "Skeleton", SKIN_SKELETON);
+            skinned_data_field(c->prog, mesh->skin_skeleton);
+            mesh->skin_skeleton->skin_bones = skinned_catalog(c->prog, SKIN_BONES, -1);
+        }
         asset->return_type = decl_type(mesh);
     }
+    decl *animations = animations_only ? mesh : mesh->skin_animations;
+    decl *bones = animations_only ? NULL : mesh->skin_skeleton->skin_bones;
     if (c->prog->asset_metadata_only) {
         if (asset->asset_many) return;
         const char *written = asset_written_path(path->text);
@@ -181,12 +187,13 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
             free(absolute);
         }
         if (infer) {
-            mesh->skin_animations->skin_metadata_status = status == MODEL_METADATA_READY ? 1 : status == MODEL_METADATA_INVALID ? -2 : -1;
-            mesh->skin_skeleton->skin_bones->skin_metadata_status = mesh->skin_animations->skin_metadata_status;
+            animations->skin_metadata_status = status == MODEL_METADATA_READY ? 1 : status == MODEL_METADATA_INVALID ? -2 : -1;
+            if (bones) bones->skin_metadata_status = animations->skin_metadata_status;
         }
         if (!metadata) {
             if (status == MODEL_METADATA_INVALID) {
-                if (!asset_skinned_format_diagnostic(written, why, path->at)) {
+                if (!(animations_only ? asset_animations_format_diagnostic(written, why, path->at)
+                                      : asset_skinned_format_diagnostic(written, why, path->at))) {
                     diag_error(path->at, "model catalog metadata is invalid: %s", why ? why : "invalid model JSON");
                 }
             } else diag_info(path->at, "model catalog metadata is unavailable: %s", why ? why : "no cached model JSON");
@@ -194,8 +201,8 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
         }
         if (base->skin_contract) skinned_validate_contract(base, metadata, path->at);
         if (infer) {
-            skinned_infer_catalog(mesh->skin_animations, metadata, false);
-            skinned_infer_catalog(mesh->skin_skeleton->skin_bones, metadata, true);
+            skinned_infer_catalog(animations, metadata, false);
+            if (bones) skinned_infer_catalog(bones, metadata, true);
         }
         return;
     }
@@ -207,9 +214,10 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
         if (!model_metadata_read(item->data, item->size, item->key, &metadata, why)) continue; // Full import already diagnosed bad data.
         if (base->skin_contract) skinned_validate_contract(base, &metadata, path->at);
         if (infer) {
-            mesh->skin_animations->skin_metadata_status = mesh->skin_skeleton->skin_bones->skin_metadata_status = 1;
-            skinned_infer_catalog(mesh->skin_animations, &metadata, false);
-            skinned_infer_catalog(mesh->skin_skeleton->skin_bones, &metadata, true);
+            animations->skin_metadata_status = 1;
+            if (bones) bones->skin_metadata_status = 1;
+            skinned_infer_catalog(animations, &metadata, false);
+            if (bones) skinned_infer_catalog(bones, &metadata, true);
         }
         model_metadata_free(&metadata);
     }

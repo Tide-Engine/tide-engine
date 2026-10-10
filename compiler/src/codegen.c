@@ -1440,7 +1440,8 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         return;
     }
     if (want.kind == TY_STRUCT && have.kind == TY_STRUCT && want.decl != have.decl
-        && want.decl->skin_kind == SKIN_MESH && have.decl->skin_kind == SKIN_MESH) {
+        && ((want.decl->skin_kind == SKIN_MESH && have.decl->skin_kind == SKIN_MESH)
+            || (want.decl->skin_kind == SKIN_ANIMATIONS && have.decl->skin_kind == SKIN_ANIMATIONS))) {
         sb_printf(o, "tide_skin_%s_from(tide_skin_%s_to(", type_cname(want.decl), type_cname(have.decl));
         gen_expr(g, o, e);
         sb_put(o, "))");
@@ -2036,7 +2037,8 @@ static void gen_value_of(gen *g, sb *o, expr *e, const type want)
         return;
     }
     const bool skin_convert = want.kind == TY_STRUCT && e->type.kind == TY_STRUCT && want.decl != e->type.decl
-        && want.decl->skin_kind == SKIN_MESH && e->type.decl->skin_kind == SKIN_MESH;
+        && ((want.decl->skin_kind == SKIN_MESH && e->type.decl->skin_kind == SKIN_MESH)
+            || (want.decl->skin_kind == SKIN_ANIMATIONS && e->type.decl->skin_kind == SKIN_ANIMATIONS));
     if (skin_convert) sb_printf(o, "tide_skin_%s_from(tide_skin_%s_to(", type_cname(want.decl), type_cname(e->type.decl));
     if (e->type.kind == TY_LIST) sb_printf(o, "tide_list%d_copy(", e->type.decl->index);
     else if (e->type.kind == TY_MAP || e->type.kind == TY_SET) sb_printf(o, "tide_map%d_copy(", e->type.decl->index);
@@ -3449,11 +3451,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             if (sh->skinned) {
                 sb_put(o, ", (");
                 gen_expr(g, o, e->skin_mesh);
-                sb_put(o, ").data, (");
-                gen_expr(g, o, e->skin_pose);
-                sb_put(o, ").data, (");
-                gen_expr(g, o, e->skin_pose);
-                sb_put(o, ").transforms");
+                sb_put(o, ").data");
+                if (e->skin_pose) {
+                    sb_put(o, ", (");
+                    gen_expr(g, o, e->skin_pose);
+                    sb_put(o, ").data, (");
+                    gen_expr(g, o, e->skin_pose);
+                    sb_put(o, ").transforms, false");
+                } else sb_put(o, ", (tide_list){0}, (tide_list){0}, true");
             }
             if (sh->blit && given < 3) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
             if (sh->values_type) { // What it gives its vert and frag, after their names
@@ -6549,9 +6554,9 @@ static void gen_header(gen *g)
     if (prog->skinned_types.count) sb_put(o, "#include \"tide/skinned.h\"\n\n");
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *asset = prog->assets.items[i];
-        if (asset->asset_kind != ASSET_SKINNED || !asset->asset) continue;
+        if ((asset->asset_kind != ASSET_SKINNED && asset->asset_kind != ASSET_ANIMATIONS) || !asset->asset) continue;
         const decl *vertex = asset_vertex(asset->return_type);
-        const char *layout = mesh_layout(g, vertex);
+        const char *layout = vertex ? mesh_layout(g, vertex) : "";
         for (int k = 0; k < asset->asset->count; k++) {
             const asset_match *item = &asset->asset->items[k];
             tide_sha256 hash;
@@ -14368,6 +14373,8 @@ static uint32_t mesh_layout_number(gen *g, const decl *vertex)
 static uint32_t asset_pack_kind(const type t)
 {
     const type inner = t.kind == TY_LIST ? list_elem(t.decl) : t.kind == TY_MAP ? t.decl->fields.items[1].type : t;
+    if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATIONS)
+        return t.kind == TY_LIST ? TIDE_PACK_LIST : t.kind == TY_MAP ? TIDE_PACK_MAP : TIDE_PACK_BYTES;
     if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH)
         return t.kind == TY_LIST ? TIDE_PACK_SKINNEDS : t.kind == TY_MAP ? TIDE_PACK_SKINNED_MAP : TIDE_PACK_SKINNED;
     if (asset_vertex(t)) return t.kind == TY_MESH ? TIDE_PACK_MESH : t.kind == TY_LIST ? TIDE_PACK_MESH_LIST : TIDE_PACK_MESHES;
@@ -14563,6 +14570,10 @@ static void collect_asset_dependencies(gen *g)
                     .vertex_size = (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size}};
                 vec_push(g->skinned_fingerprints, dep);
             }
+        } else if (d->asset_kind == ASSET_ANIMATIONS && d->asset) {
+            const asset_dependency dep = {.asset = d, .shape = {
+                .kind = asset_pack_kind(d->return_type), .leaf_kind = TIDE_PACK_BYTES}};
+            vec_push(g->skinned_fingerprints, dep);
         }
     }
     // Decode uses the same vertex defaults without requiring an imported
@@ -14578,7 +14589,8 @@ static void collect_asset_dependencies(gen *g)
         const decl *d = w.assets.items[i];
         const decl *vertex = asset_vertex(d->return_type);
         asset_dependency dep = {.asset = d, .shape = {.kind = asset_pack_kind(d->return_type)}};
-        dep.shape.leaf_kind = d->asset_kind == ASSET_TEXT ? TIDE_PACK_TEXT : d->asset_kind == ASSET_BYTES ? TIDE_PACK_BYTES
+        dep.shape.leaf_kind = d->asset_kind == ASSET_TEXT ? TIDE_PACK_TEXT
+                           : d->asset_kind == ASSET_BYTES || d->asset_kind == ASSET_ANIMATIONS ? TIDE_PACK_BYTES
                            : d->asset_kind == ASSET_GRID ? TIDE_PACK_GRID : d->asset_kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE
                            : d->asset_kind == ASSET_CLIP ? TIDE_PACK_CLIP : 0u;
         if (vertex) dep.shape.vertex_size = (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size;
@@ -14767,6 +14779,11 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
                           uint32_t *extra)
 {
     *extra = 0;
+    if (kind == ASSET_ANIMATIONS) {
+        uint8_t hash[32];
+        tide_sha256_of(item->skinned, item->skinned_size, hash);
+        return tide_pack_bytes(b, hash, item->skinned, item->skinned_size, extra);
+    }
     if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
         const size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
         uint8_t *rgba = malloc(pixels ? pixels * 4u : 1u);
@@ -14936,7 +14953,8 @@ static void build_pack(gen *g)
         if (!v->many) {
             uint32_t extra;
             const uint32_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, &extra);
-            tide_pack_name(&b, qualified, kind, at, (uint32_t)v->items[0].size, extra);
+            tide_pack_name(&b, qualified, kind, at,
+                           v->kind == ASSET_ANIMATIONS ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
             continue;
         }
         uint32_t *offsets = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
@@ -14951,7 +14969,8 @@ static void build_pack(gen *g)
                 keys[k] = tide_pack_string(&b, hash, v->items[k].key, (uint32_t)strlen(v->items[k].key), &extra);
             }
         }
-        const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES
+        const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT
+                                    : v->kind == ASSET_BYTES || v->kind == ASSET_ANIMATIONS ? TIDE_PACK_BYTES
                                     : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : v->kind == ASSET_CLIP ? TIDE_PACK_CLIP : TIDE_PACK_GRID;
         if (v->is_map) {
             uint32_t index;
@@ -17294,7 +17313,7 @@ static void gen_shaders(gen *g)
         if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
         if (sh->direct_texture || sh->textured) sb_put(o, ", tide_texture_ref tide_texture");
-        if (sh->skinned) sb_put(o, ", tide_list tide_model_data, tide_list tide_pose_data, tide_list tide_pose_transforms");
+        if (sh->skinned) sb_put(o, ", tide_list tide_model_data, tide_list tide_pose_data, tide_list tide_pose_transforms, bool tide_default_pose");
         if (sh->blit) sb_put(o, ", tide_render_target tide_destination, int32_t tide_over");
         if (sh->values_type) sb_printf(o, ", %s tide_values", type_cname(sh->values_type));
         for (int b = 0; b < sh->bound.count; b++) {
@@ -17372,8 +17391,15 @@ static void gen_shaders(gen *g)
         sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
         if (sh->skinned) {
             sb_put(o, "    uint32_t tide_skin_textures[2];\n    int32_t tide_skin_info[3];\n"
-                      "    if (!tide_skinned_compatible(tide_model_data, tide_pose_data)\n"
-                      "        || !tide_draw_skinned_data(tide_draw, tide_model_data, tide_pose_transforms, tide_skin_textures, tide_skin_info)) return;\n");
+                      "    const uint32_t tide_skin_mark = tide_scratch_mark();\n"
+                      "    tide_list tide_skin_transforms = tide_pose_transforms;\n"
+                      "    if (tide_default_pose) {\n"
+                      "        if (!tide_skinned_rest(tide_model_data, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }\n"
+                      "    } else if (!tide_skinned_compatible(tide_model_data, tide_pose_data)) {\n"
+                      "        tide_skin_transforms = (tide_list){0};\n"
+                      "        if (!tide_skinned_pose_into(tide_model_data, tide_pose_data, tide_pose_transforms, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }\n"
+                      "    }\n"
+                      "    if (!tide_draw_skinned_data(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }\n");
         }
         // What's read as the Texture it's given says: that texture's filter's and wrap's bits, for the draw's own
         // (a shader with no frag) all of it, and for a Sample what it leaves unsaid of a Texture that's no asset's
@@ -17494,8 +17520,9 @@ static void gen_shaders(gen *g)
                       s, instance ? "tide_instances" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data,
                       instance ? "    tide_scratch_reset(tide_mark);\n" : "");
         else
-            sb_printf(o, "    tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, %s, tide_textures, %s);\n}\n\n",
-                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data);
+            sb_printf(o, "    tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, %s, tide_textures, %s);\n%s}\n\n",
+                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data,
+                      sh->skinned ? "    tide_scratch_reset(tide_skin_mark);\n" : "");
     }
 }
 
@@ -17558,7 +17585,8 @@ bool codegen(program *prog, const codegen_options *opts)
         opts->info->microphone = prog->uses_microphone;
         opts->info->assets_affect_match = false;
         for (int i = 0; i < prog->assets.count; i++)
-            opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED;
+            opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED
+                                           || prog->assets.items[i]->asset_kind == ASSET_ANIMATIONS;
     }
     gen g = {0};
     g.prog = prog;

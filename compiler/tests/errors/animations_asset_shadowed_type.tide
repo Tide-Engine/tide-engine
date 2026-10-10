@@ -1,0 +1,4 @@
+// expect: an Animations asset uses the built-in animation catalog; 'Animations' names a different type
+struct Animations { int value; }
+asset Animations movement = "../e2e/animations/clips/a.gltf";
+scene Main { }
