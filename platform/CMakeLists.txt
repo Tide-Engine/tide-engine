@@ -119,9 +119,13 @@ endfunction()
 # (cmake/GLFW.cmake).
 install(DIRECTORY include/tide DESTINATION include COMPONENT tide)
 install(FILES web/shell.html DESTINATION web COMPONENT tide)
+if(TIDE_NODE)
+    add_test(NAME tide_web_runtime COMMAND "${TIDE_NODE}" --test "${PROJECT_SOURCE_DIR}/cmake/web_runtime.test.mjs")
+endif()
 if(TIDE_WEB)
     set(TIDE_PACKAGE_LIBS lib/web)
-    install(FILES web/tide.js DESTINATION web COMPONENT tide)
+    install(FILES web/tide.js web/tide.release.js DESTINATION web COMPONENT tide)
+    install(FILES third_party/fflate/LICENSE DESTINATION licenses/fflate COMPONENT tide)
     # The C library tide links web games with, from cmake/wasi-toolchain.cmake:
     # only what its target's C programs use (threads are in libc.a). Games are
     # C, so not the C++ headers.

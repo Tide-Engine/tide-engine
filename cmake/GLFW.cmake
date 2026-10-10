@@ -28,6 +28,11 @@ function(tide_add_glfw)
 
     # Third-party code: its warnings aren't ours to fix.
     target_compile_options(glfw PRIVATE -w)
+    # GLFW's objects are embedded in the platform archive too. A release game
+    # can discard unused APIs inside them, just as it can Tide's own functions.
+    target_compile_options(glfw PRIVATE
+        "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-ffunction-sections>"
+        "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-fdata-sections>")
 endfunction()
 
 tide_add_glfw()

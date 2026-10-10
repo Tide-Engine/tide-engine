@@ -51,6 +51,8 @@ A standalone `tide build --release` omits asset declarations that no checked Tid
 
 Debug and hot-reload builds keep every declared asset. So do games or packages with C/C++ sources or prebuilt libraries, and games with a custom C host: their C code may read assets through the generated API or by name in the pack.
 
+A web release also compresses the retained pack inside its self-contained page when that saves space. The page decodes the same packed bytes before the game starts; the asset values and match results stay the same.
+
 ### A field's default
 
 A field's default can name an asset, as it names a constant:

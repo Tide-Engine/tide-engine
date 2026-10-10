@@ -2805,24 +2805,37 @@
 
     // The program's bytes, from the base64 the page holds them as.
     function programBytes(text) {
-        if (Uint8Array.fromBase64) return Uint8Array.fromBase64(text);
-        const binary = atob(text);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        let bytes;
+        if (Uint8Array.fromBase64) bytes = Uint8Array.fromBase64(text);
+        else {
+            const binary = atob(text);
+            bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        }
+        // Only the generated release runtime includes this synchronous
+        // decoder. Debug and hot-reload pages keep their original raw bytes.
+        if (bytes[0] === 31 && bytes[1] === 139) {
+            if (typeof TideInflate === 'undefined') throw new Error('tide: gzip decoder is missing');
+            return TideInflate.gunzip(bytes);
+        }
         return bytes;
     }
 
     // The game's pack of assets (tide/pack.h): the page's own, which a page
     // that ships holds as base64 beside the program, or under tide run the one
     // tide serves, which the program asks for as it starts and when it changes.
-    let packBytes = typeof TIDE_PACK === 'string' ? programBytes(TIDE_PACK) : null;
+    let packBytes = null;
     platform.pack_size = () => packBytes ? packBytes.length : 0;
     platform.pack_copy = ptr => { if (packBytes) u8().set(packBytes, ptr); };
 
     // The program loads while the page waits to hear about its GPU, and starts
     // once it knows; instantiate loads its saved files too when the program
     // uses them.
-    const load = async () => instantiate(programBytes(TIDE_PROGRAM));
+    const load = async () => {
+        // Decode errors use the same fail/onAbort path as invalid WASM.
+        packBytes = typeof TIDE_PACK === 'string' ? programBytes(TIDE_PACK) : null;
+        return instantiate(programBytes(TIDE_PROGRAM));
+    };
     const loaded = typeof TIDE_PROGRAM === 'string' && !config.reload
         ? load().then(program => ({ program }), error => ({ error })) : null;
     await deviceAsked;

@@ -1,5 +1,7 @@
 # The docs site
 
+Web release payloads (2026-10-10): CLI and Assets explain compression inside a self-contained release page, built-in decoding, unchanged decoded asset values and readable/raw debug or watched pages. The implementation and generation/freshness requirements are in `notes/web.md`.
+
 Release size (2026-10-10): Assets and the spec explain conservative omission of unreferenced asset declarations from standalone Tide-only release builds, including retained helper/type-default references, whole glob collections, unchanged validation and C/C++/prebuilt/custom-host/hot-reload exclusions. The CLI page describes native linker removal of unreachable code/data and stripped debug symbols, with runtime references and required exports preserved. The production docs build passed; missing generated game/example pages used the existing allowed placeholders. No deployment was requested.
 
 Media formats (2026-10-10): Assets has a format/representation table covering images, models, audio, text and bytes, with build-time imports separated from runtime Decode. Assets, Audio, Editors and the spec document JPEG/TGA/BMP and MP3/FLAC, variant/budget limits, unsupported alternatives, required glTF extensions and optional uncompressed fallbacks. MP3/FLAC conversion explicitly trades compressed source size for PCM pack/RAM use; Vorbis remains the streaming choice. The audio spec's stale 48kHz conversion and built Clip.length claims are corrected to the implemented source-rate behavior and absent property. No site deployment was requested.

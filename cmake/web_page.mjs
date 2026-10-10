@@ -1,6 +1,6 @@
 // Makes a self-contained web page from a WebAssembly program:
 //
-//   node web_page.mjs <program.wasm> <shell.html> <tide.js> <page.html> [<game.pack>]
+//   node web_page.mjs <program.wasm> <shell.html> <tide.js> <page.html> [<game.pack>] [--release]
 //
 // The shell's {{{ SCRIPT }}} becomes a <script> with the program (base64) and
 // tide.js, which runs it, so the page opens straight from disk. The game's
@@ -9,10 +9,21 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 
-const [program, shell, script, page, pack] = process.argv.slice(2);
-const wasm = (await readFile(program)).toString('base64');
-const packed = pack && existsSync(pack) ? (await readFile(pack)).toString('base64') : null;
+const args = process.argv.slice(2);
+const release = args.includes('--release');
+const [program, shell, script, page, pack] = args.filter(arg => arg !== '--release');
+const encoded = bytes => {
+    if (release) {
+        const compressed = gzipSync(bytes, { level: 9, mtime: 0 });
+        compressed[9] = 255; // No host OS in a reproducible embedded payload.
+        if (compressed.length < bytes.length) return compressed.toString('base64');
+    }
+    return bytes.toString('base64');
+};
+const wasm = encoded(await readFile(program));
+const packed = pack && existsSync(pack) ? encoded(await readFile(pack)) : null;
 const template = await readFile(shell, 'utf8');
 if (!template.includes('{{{ SCRIPT }}}')) {
     console.error(`${shell} has no {{{ SCRIPT }}} for the program`);
