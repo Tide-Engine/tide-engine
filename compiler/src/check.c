@@ -5343,6 +5343,7 @@ static type check_mesh_draw(checker *c, expr *e)
     // A Mesh where the vertices go is its two lists, its vertices and then its indices: the arguments become
     // those, each a member of the same expression, and what the call wrote stays in `written`, for the editors
     int checked = 0; // How many of the first arguments are checked already
+    int checked_optional = -1;
     if (count > 0 && e->args.items[0]->kind != E_LIST && e->args.items[0]->kind != E_DEFAULT) {
         expr *mesh = e->args.items[0];
         const type whole = check_expr(c, mesh);
@@ -5353,9 +5354,9 @@ static type check_mesh_draw(checker *c, expr *e)
                                                   type_name(whole));
             return T_ERR;
         }
-        if (skinned && count < 3) {
+        if (skinned && count < 2) {
             for (int i = 1; i < count; i++) check_expr(c, e->args.items[i]);
-            diag_error(e->at, "%s takes a skinned mesh, its float4x4 transform, and a Pose first", draw_name);
+            diag_error(e->at, "%s takes a skinned mesh and its float4x4 transform first; a Pose is optional", draw_name);
             return T_ERR;
         }
         if (whole.kind == TY_MESH || skinned) {
@@ -5377,27 +5378,26 @@ static type check_mesh_draw(checker *c, expr *e)
                 of->mesh_part = part;
                 vec_push(e->args, of);
             }
+            if (skinned) e->skin_mesh = mesh;
             for (int i = 1; i < had; i++) {
-                if (skinned && i == 2) {
+                if (skinned && i == 2 && i < count) {
                     const type pose = check_expr(c, given[i]);
-                    if (pose.kind != TY_STRUCT || pose.decl->skin_kind != SKIN_POSE) {
-                        if (pose.kind != TY_ERROR) diag_error(given[i]->at, "%s takes a Pose after its transform, and this is %s",
-                                                             draw_name, type_name(pose));
-                        return T_ERR;
+                    if (pose.kind == TY_ERROR) return T_ERR;
+                    if (pose.kind == TY_STRUCT && pose.decl->skin_kind == SKIN_POSE) {
+                        e->skin_pose = given[i];
+                        continue;
                     }
-                    e->skin_mesh = mesh;
-                    e->skin_pose = given[i];
-                    continue;
+                    checked_optional = e->args.count;
                 }
                 vec_push(e->args, given[i]);
             }
-            count += skinned ? 0 : 1;
+            count += skinned && e->skin_pose ? 0 : 1;
             checked = 2;
         }
     }
     if (skinned && !e->skin_mesh) {
         for (int i = checked; i < count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "%s takes a skinned mesh, its float4x4 transform, and a Pose first", draw_name);
+        diag_error(e->at, "%s takes a skinned mesh and its float4x4 transform first; a Pose is optional", draw_name);
         return T_ERR;
     }
     const int named_end = e->args.count - (values ? 1 : 0); // Past the vert and the frag
@@ -5452,7 +5452,7 @@ static type check_mesh_draw(checker *c, expr *e)
                                                                                     : check_expr(c, indices);
     for (int i = 2; i < count; i++) {
         expr *arg = e->args.items[i];
-        if (i == early) continue;
+        if (i == early || i == checked_optional) continue;
         if (instanced && i == 2 && arg->kind == E_LIST) {
             type element = {TY_FLOAT4X4, NULL};
             const decl *stages[] = {e->vert, e->frag};
@@ -11283,6 +11283,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
+    else if (str_eq_c(inner->text, "Animations")) *kind = ASSET_ANIMATIONS;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
     else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
     else if (str_eq_c(inner->text, "Mesh")) {
@@ -11299,12 +11300,21 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         *kind = ASSET_CUBEMAP;
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), a "
-                       "Cubemap (six PNGs), a Clip (a WAV or Ogg Vorbis), or a Mesh<V> (a glTF or an OBJ), not '" STR_FMT "'",
+                       "Cubemap (six PNGs), a Clip (a WAV or Ogg Vorbis), a Mesh<V> (a glTF or an OBJ), or a SkinnedMesh<V> or "
+                       "Animations (glTF 2.0), not '" STR_FMT "'",
                    STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
     k->return_type = resolve_type(c, written, PLACE_ASSET, at);
+    if (*kind == ASSET_ANIMATIONS && k->return_type.kind != TY_ERROR) {
+        const type t = k->return_type.kind == TY_LIST ? list_element(k->return_type)
+                     : k->return_type.kind == TY_MAP ? map_value(k->return_type) : k->return_type;
+        if (t.kind != TY_STRUCT || t.decl->skin_kind != SKIN_ANIMATIONS) {
+            diag_error(at, "an Animations asset uses the built-in animation catalog; '%s' names a different type", type_name(t));
+            return false;
+        }
+    }
     return k->return_type.kind != TY_ERROR;
 }
 
@@ -11485,10 +11495,10 @@ static void check_asset_decl(checker *c, decl *k)
         diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
     }
     if (typed && fills && path) {
-        if (!c->prog->asset_metadata_only || kind != ASSET_SKINNED) {
+        if (!c->prog->asset_metadata_only || (kind != ASSET_SKINNED && kind != ASSET_ANIMATIONS)) {
             k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
         }
-        if (kind == ASSET_SKINNED) skinned_asset_catalogs(c, k, path);
+        if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) skinned_asset_catalogs(c, k, path);
     }
     k->index = 2;
     vec_push(c->prog->assets, k);

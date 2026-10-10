@@ -9,6 +9,12 @@ static void gen_skinned_adapters(gen *g)
     sb_put(o, "typedef struct tide_skin_model_lists { tide_list data, vertices, indices; } tide_skin_model_lists;\n\n");
     for (int i = 0; i < p->skinned_types.count; i++) {
         const decl *d = p->skinned_types.items[i];
+        if (d->skin_kind == SKIN_ANIMATIONS) {
+            const char *n = type_cname(d);
+            sb_printf(o, "TIDE_HELPER tide_list tide_skin_%s_to(%s v) { return v.data; }\n"
+                         "TIDE_HELPER %s tide_skin_%s_from(tide_list v) { return (%s){.data = v}; }\n", n, n, n, n, n);
+            continue;
+        }
         if (d->skin_kind != SKIN_MESH) continue;
         const char *n = type_cname(d);
         sb_printf(o, "TIDE_HELPER tide_skin_model_lists tide_skin_%s_to(%s v) { return (tide_skin_model_lists){v.data, v.vertices, v.indices}; }\n"
@@ -49,9 +55,9 @@ static void gen_skinned_adapters(gen *g)
                  "    seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
                  "    (void)tide_skinned_sample(animation.data, animation.index, seconds, &v.transforms, TIDE_IN_SCRATCH);\n    return v;\n}\n"
                  "TIDE_HELPER void tide_skin_pose_sample(%s *v, %s animation, float seconds, int32_t playback, uint32_t where)\n{\n"
-                 "    if (!v || !tide_skinned_compatible(v->data, animation.data)) return;\n"
+                 "    if (!v) return;\n"
                  "    seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
-                 "    (void)tide_skinned_sample(animation.data, animation.index, seconds, &v->transforms, where);\n}\n"
+                 "    (void)tide_skinned_sample_into(v->data, animation.data, animation.index, seconds, &v->transforms, where);\n}\n"
                  "TIDE_HELPER void tide_skin_pose_blend(%s *v, %s other, float weight, uint32_t where)\n{\n"
                  "    if (!v || !tide_skinned_compatible(v->data, other.data)) return;\n"
                  "    (void)tide_skinned_blend(v->transforms, other.transforms, weight, &v->transforms, where);\n}\n"

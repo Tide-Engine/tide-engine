@@ -37,6 +37,18 @@ bool tide_skinned_rest(tide_list data, tide_list *transforms, uint32_t where);
 bool tide_skinned_sample(tide_list data, int32_t animation, float seconds,
                          tide_list *transforms, uint32_t where);
 
+// Bind a clip or an existing pose to another export of the same rig. Required
+// nodes match unique exact names, parents and rest TRS, independently of source
+// node order. Unrelated nodes are ignored; target nodes start at target rest.
+// Sampling requires the selected clip's targets and ancestors. A pose requires
+// all its model's clip targets, changed transforms and ancestors. These are
+// bindings, not retargeting: missing, ambiguous or different required nodes
+// fail and leave the destination untouched. Source and destination may alias.
+bool tide_skinned_sample_into(tide_list target_data, tide_list animation_data, int32_t animation,
+                              float seconds, tide_list *transforms, uint32_t where);
+bool tide_skinned_pose_into(tide_list target_data, tide_list source_data, tide_list source_transforms,
+                            tide_list *transforms, uint32_t where);
+
 // Blend parent-local TRS values, with shortest-path quaternion interpolation.
 // Callers check skeleton compatibility; unequal list counts leave out alone.
 // Inputs and output may alias. Weight is clamped to 0..1, with NaN giving 0.

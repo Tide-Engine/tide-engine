@@ -110,7 +110,7 @@ TIDE_TEST(asset_mesh_side_notifications_override_unchanged_metadata)
     snprintf(obj_model, sizeof obj_model, "%s/shape.obj", ASSET_FILES_WORK);
     TIDE_REQUIRE(folder_make(ASSET_FILES_WORK));
     TIDE_REQUIRE(write_bytes(model, json, sizeof json - 1u));
-    static const asset_kind kinds[] = {ASSET_MESH, ASSET_SKINNED};
+    static const asset_kind kinds[] = {ASSET_MESH, ASSET_SKINNED, ASSET_ANIMATIONS};
     for (size_t k = 0; k < sizeof kinds / sizeof kinds[0]; k++) {
         // Separate cache lifetimes ensure the skinned case has no static-mesh
         // side list that could accidentally make its missing invalidation pass.

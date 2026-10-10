@@ -1,0 +1,3 @@
+// expect: Animations has no checked member 'move'
+Animation Read(Animations clips) { return clips.move; }
+scene Main { }
