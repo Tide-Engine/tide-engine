@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "game.h"
 #include "tide/pack.h"
 #include "tide_test.h"
@@ -55,14 +57,22 @@ static uint32_t instances(void)
     return count;
 }
 
-static float palette_x(const uint32_t run_at)
+static float palette_x(uint32_t instance_at)
 {
-    const tide_draw_run *run = &draw.runs[run_at];
-    for (uint32_t i = 0; i < run->shader->texture_count; i++) {
-        if (run->shader->texture_reads[i] != TIDE_SHADER_READ_DATA) continue;
-        const tide_draw_texture *texture = &draw.textures[run->textures[i] - 1u];
-        const float *matrices = (const float *)(const void *)texture->pixels;
-        return matrices[12];
+    tide_draw_prepare(&draw, NULL);
+    for (uint32_t r = 0; r < draw.run_count; r++) {
+        const tide_draw_run *run = &draw.runs[r];
+        if (instance_at >= run->count) { instance_at -= run->count; continue; }
+        const uint8_t *instance = draw.instances + run->first + instance_at * tide_shader_instance_size(run->shader);
+        int32_t base;
+        memcpy(&base, instance + run->shader->instance_floats * 16u, sizeof base);
+        for (uint32_t i = 0; i < run->shader->texture_count; i++) {
+            if (run->shader->texture_reads[i] != TIDE_SHADER_READ_DATA) continue;
+            const tide_draw_texture *texture = &draw.textures[run->textures[i] - 1u];
+            if (base < 0 || (uint64_t)base * 4u + 4u > (uint64_t)texture->width * texture->height) return 12345.0f;
+            const float *matrices = (const float *)(const void *)texture->pixels;
+            return matrices[(size_t)base * 16u + 12u];
+        }
     }
     return 12345.0f;
 }
@@ -113,7 +123,7 @@ TIDE_TEST(skinned_draw_captures_borrowed_pose_before_the_next_statement_edits_it
 {
     start(4);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
-    TIDE_REQUIRE(instances() == 2u && draw.run_count == 2u);
+    TIDE_REQUIRE(instances() == 2u && draw.run_count == 1u);
     TIDE_CHECK(palette_x(0) == 0.0f && palette_x(1) == -17.0f);
     TIDE_CHECK(pose_x() == -17.0f);
     stop();

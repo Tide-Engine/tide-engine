@@ -2324,16 +2324,23 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     }
     if (t->space == TIDE_PIXELS_PACK) return pack_texture(d, t->id, t->width, t->height, t->pixels);
     if (t->space == TIDE_PIXELS_PACK_CUBE) return pack_cube(d, t->id, t->width, (const uint8_t *const *)(uintptr_t)t->pixels);
+    // An atlas page keeps its identity across source frames. Its appended
+    // image is a snapshot: resetting and appending that source again cannot
+    // replace pixels still used by earlier commands in this destination.
+    uint64_t id = t->id;
+    if (t->changes && (t->changes->kind == TIDE_SKINNED_ATLAS_KIND || t->changes->kind == ~TIDE_SKINNED_ATLAS_KIND)) {
+        id = tide_hash_end(tide_hash_more(tide_hash(&id, sizeof id), &t->version, sizeof t->version)) | (UINT64_C(1) << 63);
+    }
     // What `from` knows changed since the pixels `d` has is all that's copied, and `d` knows it of its own then.
     // The kind is a copy's, of that writer's: the writer itself, on `d`, would find none of its own numbers here
-    const tide_draw_texture *mine = find_texture(d, t->space, t->id);
+    const tide_draw_texture *mine = find_texture(d, t->space, id);
     const uint64_t had = mine ? mine->version : 0;
     const uint64_t kind = t->changes && t->changes->kind ? ~t->changes->kind : 0;
     uint8_t *pixels;
     bool kept;
-    const uint32_t slot = kind ? tide_draw_texture_edit(d, t->space, t->id, t->version, t->width, t->height, t->format, kind,
+    const uint32_t slot = kind ? tide_draw_texture_edit(d, t->space, id, t->version, t->width, t->height, t->format, kind,
                                                         &pixels, &kept)
-                               : texture_place(d, t->space, t->id, t->version, t->width, t->height, t->format, 0, &pixels, &kept);
+                               : texture_place(d, t->space, id, t->version, t->width, t->height, t->format, 0, &pixels, &kept);
     if (!pixels) return slot;
     const size_t pixel = tide_texels_bytes(t->format), row = (size_t)t->width * pixel;
     const tide_draw_area *areas;
@@ -2392,6 +2399,7 @@ static void append_place(tide_draw_list *d, const tide_draw_list *from, const ti
 
 void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
 {
+    tide_draw_prepare(from, NULL);
     tide_draw_defaults(d);
     reserve(d, from->count);
     d->remap = grow(d->remap, 0, &d->remap_capacity, from->clip_count, sizeof(uint32_t), 16u);

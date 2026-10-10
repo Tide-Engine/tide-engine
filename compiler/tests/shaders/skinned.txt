@@ -14,6 +14,7 @@ layout(location = 3) in vec4 tide_n0;
 layout(location = 4) in vec4 tide_n1;
 layout(location = 5) in vec4 tide_n2;
 layout(location = 6) in vec4 tide_n3;
+layout(location = 7) in ivec4 tide_j0;
 out vec4 tide_s2;
 struct tt_Vertex3 {
     vec3 m_position;
@@ -28,7 +29,7 @@ ivec4 tide_skin_words1(int p) {
 }
 mat4 tide_skin_matrix(int i) {
     if (i < 0 || i >= tide_v0.x) return mat4(1.0);
-    int p = i * 4;
+    int p = (tide_j0.x + i) * 4;
     return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
 }
 mat4 tide_skinning(int vertex) {
@@ -99,6 +100,7 @@ var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
 var<private> tide_n3: vec4f;
+var<private> tide_j0: vec4i;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -118,7 +120,7 @@ fn tide_skin_words1(p: i32) -> vec4i {
 }
 fn tide_skin_matrix(i: i32) -> mat4x4f {
     if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
-    let p = i * 4;
+    let p = (tide_j0.x + i) * 4;
     return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
 }
 fn tide_skinning(vertex: i32) -> mat4x4f {
@@ -146,11 +148,12 @@ fn tide_skinning(vertex: i32) -> mat4x4f {
     if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
     return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
 }
-@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @location(7) tide_ij0: vec4i, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
     tide_n0 = tide_in0;
     tide_n1 = tide_in1;
     tide_n2 = tide_in2;
     tide_n3 = tide_in3;
+    tide_j0 = tide_ij0;
     var tide_vertex: tt_Vertex3 = tt_Vertex3(tide_a0, tide_a1, tide_a2);
     let tide_skin = tide_skinning(i32(tide_vertex_index));
     tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
@@ -190,6 +193,7 @@ layout(location = 3) in vec4 tide_n0;
 layout(location = 4) in vec4 tide_n1;
 layout(location = 5) in vec4 tide_n2;
 layout(location = 6) in vec4 tide_n3;
+layout(location = 7) in ivec4 tide_j0;
 out vec2 tide_s1;
 out vec4 tide_s2;
 struct tt_Vertex3 {
@@ -205,7 +209,7 @@ ivec4 tide_skin_words1(int p) {
 }
 mat4 tide_skin_matrix(int i) {
     if (i < 0 || i >= tide_v0.x) return mat4(1.0);
-    int p = i * 4;
+    int p = (tide_j0.x + i) * 4;
     return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
 }
 mat4 tide_skinning(int vertex) {
@@ -286,6 +290,7 @@ var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
 var<private> tide_n3: vec4f;
+var<private> tide_j0: vec4i;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -310,7 +315,7 @@ fn tide_skin_words1(p: i32) -> vec4i {
 }
 fn tide_skin_matrix(i: i32) -> mat4x4f {
     if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
-    let p = i * 4;
+    let p = (tide_j0.x + i) * 4;
     return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
 }
 fn tide_skinning(vertex: i32) -> mat4x4f {
@@ -338,11 +343,12 @@ fn tide_skinning(vertex: i32) -> mat4x4f {
     if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
     return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
 }
-@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @location(7) tide_ij0: vec4i, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
     tide_n0 = tide_in0;
     tide_n1 = tide_in1;
     tide_n2 = tide_in2;
     tide_n3 = tide_in3;
+    tide_j0 = tide_ij0;
     var tide_vertex: tt_Vertex3 = tt_Vertex3(tide_a0, tide_a1, tide_a2);
     let tide_skin = tide_skinning(i32(tide_vertex_index));
     tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
@@ -385,6 +391,7 @@ layout(location = 5) in vec4 tide_n0;
 layout(location = 6) in vec4 tide_n1;
 layout(location = 7) in vec4 tide_n2;
 layout(location = 8) in vec4 tide_n3;
+layout(location = 9) in ivec4 tide_j0;
 out vec3 tide_s1;
 out vec4 tide_s3;
 flat out vec3 tide_normals0;
@@ -424,7 +431,7 @@ ivec4 tide_skin_words1(int p) {
 }
 mat4 tide_skin_matrix(int i) {
     if (i < 0 || i >= tide_v0.x) return mat4(1.0);
-    int p = i * 4;
+    int p = (tide_j0.x + i) * 4;
     return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
 }
 mat4 tide_skinning(int vertex) {
@@ -538,6 +545,7 @@ var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
 var<private> tide_n3: vec4f;
+var<private> tide_j0: vec4i;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 var<private> tide_normals0: vec3f;
@@ -597,7 +605,7 @@ fn tide_skin_words1(p: i32) -> vec4i {
 }
 fn tide_skin_matrix(i: i32) -> mat4x4f {
     if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
-    let p = i * 4;
+    let p = (tide_j0.x + i) * 4;
     return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
 }
 fn tide_skinning(vertex: i32) -> mat4x4f {
@@ -629,11 +637,12 @@ fn ts_Inspect(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     (*t_color) = (t_corner.m_color * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.1)));
 }
 
-@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @location(9) tide_ij0: vec4i, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
     tide_n0 = tide_in0;
     tide_n1 = tide_in1;
     tide_n2 = tide_in2;
     tide_n3 = tide_in3;
+    tide_j0 = tide_ij0;
     var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
     let tide_skin = tide_skinning(i32(tide_vertex_index));
     tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
@@ -688,6 +697,7 @@ layout(location = 5) in vec4 tide_n0;
 layout(location = 6) in vec4 tide_n1;
 layout(location = 7) in vec4 tide_n2;
 layout(location = 8) in vec4 tide_n3;
+layout(location = 9) in ivec4 tide_j0;
 out vec4 tide_s3;
 struct tt_Corner {
     vec3 m_position;
@@ -723,7 +733,7 @@ ivec4 tide_skin_words1(int p) {
 }
 mat4 tide_skin_matrix(int i) {
     if (i < 0 || i >= tide_v0.x) return mat4(1.0);
-    int p = i * 4;
+    int p = (tide_j0.x + i) * 4;
     return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
 }
 mat4 tide_skinning(int vertex) {
@@ -800,6 +810,7 @@ var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
 var<private> tide_n3: vec4f;
+var<private> tide_j0: vec4i;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -840,7 +851,7 @@ fn tide_skin_words1(p: i32) -> vec4i {
 }
 fn tide_skin_matrix(i: i32) -> mat4x4f {
     if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
-    let p = i * 4;
+    let p = (tide_j0.x + i) * 4;
     return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
 }
 fn tide_skinning(vertex: i32) -> mat4x4f {
@@ -868,11 +879,12 @@ fn tide_skinning(vertex: i32) -> mat4x4f {
     if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
     return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
 }
-@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @location(9) tide_ij0: vec4i, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
     tide_n0 = tide_in0;
     tide_n1 = tide_in1;
     tide_n2 = tide_in2;
     tide_n3 = tide_in3;
+    tide_j0 = tide_ij0;
     var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
     let tide_skin = tide_skinning(i32(tide_vertex_index));
     tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
@@ -1120,6 +1132,7 @@ layout(location = 3) in vec4 tide_n0;
 layout(location = 4) in vec4 tide_n1;
 layout(location = 5) in vec4 tide_n2;
 layout(location = 6) in vec4 tide_n3;
+layout(location = 7) in ivec4 tide_j0;
 out float tide_h0_0;
 out vec3 tide_world;
 struct tt_Vertex3 {
@@ -1145,7 +1158,7 @@ ivec4 tide_skin_words1(int p) {
 }
 mat4 tide_skin_matrix(int i) {
     if (i < 0 || i >= tide_v0.x) return mat4(1.0);
-    int p = i * 4;
+    int p = (tide_j0.x + i) * 4;
     return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
 }
 mat4 tide_skinning(int vertex) {
@@ -1236,6 +1249,7 @@ var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
 var<private> tide_n3: vec4f;
+var<private> tide_j0: vec4i;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -1269,7 +1283,7 @@ fn tide_skin_words1(p: i32) -> vec4i {
 }
 fn tide_skin_matrix(i: i32) -> mat4x4f {
     if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
-    let p = i * 4;
+    let p = (tide_j0.x + i) * 4;
     return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
 }
 fn tide_skinning(vertex: i32) -> mat4x4f {
@@ -1301,11 +1315,12 @@ fn ts_Placed(t_corner: tt_Vertex3, t_info: tt_PlacedInfo, t_color: ptr<function,
     (*t_color) = vec4f((t_info.m_posed / tide_f(128.0)), (tide_world.x / tide_f(128.0)), 1.0, 1.0);
 }
 
-@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @location(7) tide_ij0: vec4i, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
     tide_n0 = tide_in0;
     tide_n1 = tide_in1;
     tide_n2 = tide_in2;
     tide_n3 = tide_in3;
+    tide_j0 = tide_ij0;
     var tide_vertex: tt_Vertex3 = tt_Vertex3(tide_a0, tide_a1, tide_a2);
     let tide_skin = tide_skinning(i32(tide_vertex_index));
     tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
