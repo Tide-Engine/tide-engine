@@ -1,0 +1,121 @@
+{
+  "source_revision": "b9faf142183e7ed41fb81e3e923af2a06cfbb4e3",
+  "purpose": "Exploratory phase attribution, not uninstrumented before/after performance evidence",
+  "started_at": "2026-10-10T16:42:35.7286991Z",
+  "ended_at": "2026-10-10T16:42:42.8256455Z",
+  "exit_code": 0,
+  "arguments": [
+    "--counts",
+    "100,1000",
+    "--modes",
+    "rest,shared,independent",
+    "--frames",
+    "10",
+    "--warmup",
+    "2",
+    "--repeat",
+    "1"
+  ],
+  "gate": "Local\\TideClaudeContinuationBenchmark",
+  "gpu_monitor_interval_ms": 250,
+  "instrumentation": "Per-call wall clock counters for full model validation, palette generation, palette texture capture, combined model hashing/influence capture and total tide_draw_skinned_data. Setup/warmup counters reset before measurement. Clock/counter overhead included. Per-frame phase values are arithmetic means, unlike host frame medians.",
+  "files": [
+    {
+      "path": "bench_skinned_diagnostic.exe",
+      "sha256": "99c170c0497ae58b0f2b26beba3613d23f42e49ea08217c84113c50c44e394d6",
+      "bytes": 1864192
+    },
+    {
+      "path": "bench_skinned_diagnostic.map",
+      "sha256": "5dbd337cf43d961bf2abd011dd10627ae8eb9bf4b412b14f9ccb405c230f7f44",
+      "bytes": 435534
+    },
+    {
+      "path": "build.ps1",
+      "sha256": "3243390f74567b64a19f443d543eb516e92df4981db7ddefdea385221e37ce0a",
+      "bytes": 5809
+    },
+    {
+      "path": "game_pack.c.obj",
+      "sha256": "83162145143120252568c99410f7f86b83dfd3e50d15e863ac016f97e0459925",
+      "bytes": 844090
+    },
+    {
+      "path": "game.c.obj",
+      "sha256": "55ce1e3f7ab286bd051374c12b5f5fd5637192493635da8c02a6e168eef28c6a",
+      "bytes": 191312
+    },
+    {
+      "path": "main.c",
+      "sha256": "83b0a4ce4c4ce1316a248770f88fda952a17d3c9e0d6409e3419be016dd6ca32",
+      "bytes": 17295
+    },
+    {
+      "path": "main.obj",
+      "sha256": "8ec1d6ae4afc88e661ba55d4d1734df72021b96227c1205bce4788e7bb3c7621",
+      "bytes": 75856
+    },
+    {
+      "path": "run.ps1",
+      "sha256": "b9c98e8f2846348bb08b06602dd7112e0ffce948530f238e955fce25f9429108",
+      "bytes": 3327
+    },
+    {
+      "path": "skinned-original.c",
+      "sha256": "6c476012d227c2af58b0f9d311a509baa801ea363948728efafbe7bbbe880ab0",
+      "bytes": 29110
+    },
+    {
+      "path": "skinned.c",
+      "sha256": "d8e518533cd5e55a95a666bffe6f6f6eb1aa0be7ca2424456a57de17d948d50e",
+      "bytes": 30820
+    },
+    {
+      "path": "skinned.obj",
+      "sha256": "46230962726930dc7dfb4face6007b794d7615e219418a703aca0a8cbaeb30f7",
+      "bytes": 105971
+    },
+    {
+      "path": "tide_font_bold.lib",
+      "sha256": "ca5d3f1e08b9307ced9774344cc1ea804f5c1d9e232dce0ac951549df58267f5",
+      "bytes": 98596
+    },
+    {
+      "path": "tide_platform.lib",
+      "sha256": "814af03713d2327b62165db515b733ae83114f58517064373be2eafaeb955fb3",
+      "bytes": 3424282
+    },
+    {
+      "path": "tide.lib",
+      "sha256": "dd8e48c7423f845f672a372f2e9d2a4be92ba542df4b777f9b594e5a1f49a915",
+      "bytes": 3063574
+    }
+  ],
+  "evidence": [
+    {
+      "path": "gpu-clock-errors.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "gpu-clock.csv",
+      "sha256": "5079cb794dfc44bb8269543dea6de91e55297328644891244e6684e546690ef1",
+      "bytes": 3700
+    },
+    {
+      "path": "phase-summary.json",
+      "sha256": "433008b37513d5a0bf10d284009c74b8d8faa851245c32339c16bef87ea6626d",
+      "bytes": 2162
+    },
+    {
+      "path": "stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "stdout.txt",
+      "sha256": "54684695fea4252cb72d9171205eec12c29b46059c14d4aa9d60ca97cc1c14d4",
+      "bytes": 2915
+    }
+  ]
+}
