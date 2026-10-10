@@ -31,6 +31,10 @@ static type check_skinned_member(checker *c, expr *e, const type obj, bool *hand
             e->skin_operation = SKIN_OP_SKELETON;
             return decl_type(d->skin_skeleton);
         }
+        if (str_eq_c(e->member, "defaultPose")) {
+            e->skin_operation = SKIN_OP_REST_POSE;
+            return decl_type(c->prog->pose);
+        }
     }
     if (d->skin_kind == SKIN_SKELETON && str_eq_c(e->member, "bones")) {
         e->skin_operation = SKIN_OP_BONES;

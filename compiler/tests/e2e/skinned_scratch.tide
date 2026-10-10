@@ -1,0 +1,22 @@
+// Model values own lists internally; this program has no direct container or text expressions.
+asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
+
+component Body
+{
+    int index;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < 32; i++) Spawn(Body { index = i });
+}
+
+extern void skinned_scratch_observe(int index);
+
+view Show(Body body)
+{
+    skinned_scratch_observe(body.index);
+    Draw.SkinnedMesh(character, float4x4.identity);
+}

@@ -95,3 +95,24 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `gh workflow run build.yml --ref dev` is a nightly, `gh workflow run build.yml --ref release` a stable release, and the same on any other branch checks it and publishes nothing.
   - macOS's suites (native and web) are back with it. They ran on no machine from 2026-10-07 until the first run after this, so what landed in between (audio's CoreAudio, Box3D's resident state) was first run on a Mac then.
 - **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. The workflow's `concurrency` group is what keeps two runs from taking one number.
+  - Nightlies use commit-based release notes again (2026-10-10, future releases
+    only). Switching the publisher to `gh --generate-notes` had replaced the
+    Features/Bug Fixes lists with GitHub's merged-PR notes; direct commits to
+    `dev` left only a comparison link. `.github/nightly-notes.mjs` calls
+    `@semantic-release/release-notes-generator` directly with the stable
+    release's options from `.releaserc.json`, without semantic-release's
+    branch-tip check or publishing steps. Its dependencies are pinned in
+    `.github/package-lock.json`; `npm ci --prefix .github --legacy-peer-deps`
+    omits the unused semantic-release peer.
+  - The notes cover the highest lower-version tag reachable from the built
+    commit through that exact commit, including merged work and full commit
+    bodies. An existing target tag on a retry never becomes its own baseline,
+    and later branch-tip commits or higher-version tags cannot enter the
+    notes. `gh release create --notes-file` uses the result; the existing-release
+    branch still only verifies its assets and never edits published notes.
+    The Version job tests temporary Git histories before any packages build:
+    snapshot and baseline selection, merges, retry tags, scoped changes and
+    links, breaking headers and footers, revert pairs and a first release.
+    Local Windows and WSL tests, a preview of the `.116` to `.117` history,
+    actionlint (with the existing `queue` exception) and whitespace checks
+    validate this change; no Actions run was started for it.

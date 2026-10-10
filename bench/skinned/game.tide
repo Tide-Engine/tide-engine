@@ -1,0 +1,75 @@
+// Four rendering paths over the same model, fragment and screen coverage.
+// The host selects count/mode/time; no match simulation or playback clock is timed.
+local scene Main { }
+
+enum Stages { Prepare, Objects }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color;
+}
+
+asset SkinnedMesh<Corner> character = "model.gltf";
+asset Mesh<Corner> staticCharacter = "model.gltf";
+
+local singleton Workload
+{
+    int count = 1;
+    int mode;
+    float seconds;
+    bool ready;
+    int columns;
+    int rows;
+    float scale;
+    Pose sharedPose;
+}
+
+local component Character { int index; }
+
+frag Lit(Corner corner, out Color color)
+{
+    color = corner.color * (0.65 + 0.35 * Math.Abs(corner.normal.z));
+    color.a = 1;
+}
+
+[Stage(Stages.Prepare)]
+view Prepare(mut Workload work)
+{
+    Draw.Clear(Color(0.035, 0.045, 0.06));
+    Draw.SetCamera(float4x4.Translate(float3(0, 0, -5)), float4x4.Ortho(160.0 / 9.0, 10, 0.1, 100));
+    Draw.SetCull(Cull.None);
+
+    work.count = Math.Max(work.count, 1);
+    work.columns = 1;
+    while (work.columns * work.columns < work.count) work.columns++;
+    work.rows = (work.count + work.columns - 1) / work.columns;
+    work.scale = 4 / Math.Sqrt(float(work.count));
+    if (work.mode == 2) work.sharedPose = character.animations.move.Sample(work.seconds, Playback.Loop);
+
+    // The host runs this setup frame outside timing after resetting local state.
+    // Spawns settle after that frame, so every measured frame has exactly count.
+    if (!work.ready)
+    {
+        for (int i = 0; i < work.count; i++) Spawn(Character { index = i });
+        work.ready = true;
+    }
+}
+
+[Stage(Stages.Objects)]
+view Show(Character item, Workload work)
+{
+    int i = item.index;
+    float x = (float(i % work.columns) + 0.5) * (160.0 / 9.0 / float(work.columns)) - 80.0 / 9.0;
+    float y = (float(i / work.columns) + 0.5) * (10.0 / float(work.rows)) - 5;
+    var transform = float4x4.TRS(float3(x, y, 0), quaternion.identity, float3(work.scale));
+    if (work.mode == 0) Draw.Mesh(staticCharacter, transform, Lit);
+    else if (work.mode == 1) Draw.SkinnedMesh(character, transform, Lit);
+    else if (work.mode == 2) Draw.SkinnedMesh(character, transform, work.sharedPose, Lit);
+    else
+    {
+        var pose = character.animations.move.Sample(work.seconds + float(i) / float(work.count), Playback.Loop);
+        Draw.SkinnedMesh(character, transform, pose, Lit);
+    }
+}

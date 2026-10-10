@@ -1,0 +1,7 @@
+// expect: model members are read-only; edit a Pose's local transforms through a Bone
+asset SkinnedMesh<Vertex3> hero = "../e2e/skinned/rest.gltf";
+scene Main { }
+view V()
+{
+    hero.defaultPose[hero.skeleton.bones.arm].position.x = 1;
+}

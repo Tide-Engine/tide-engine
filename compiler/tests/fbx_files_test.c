@@ -228,6 +228,37 @@ TIDE_TEST(fbx_skin_preserves_five_influences_inverse_binds_rest_and_clip)
     free(b);
 }
 
+TIDE_TEST(fbx_animation_only_ascii_and_binary_keep_clips_without_geometry)
+{
+    static const char *const names[] = {"clips/move_ascii.fbx", "clips/move_binary.fbx"};
+    uint8_t *canonical[2] = {NULL, NULL};
+    uint32_t canonical_size[2] = {0, 0};
+    for (uint32_t i = 0; i < 2; i++) {
+        size_t size;
+        uint8_t *bytes = fixture(names[i], &size);
+        TIDE_REQUIRE(bytes);
+        TIDE_REQUIRE(decode(bytes, size, &canonical[i], &canonical_size[i]));
+        tide_skinned_data_view view;
+        TIDE_REQUIRE(tide_skinned_data_validate(canonical[i], canonical_size[i])
+                     && tide_skinned_data_open(canonical[i], canonical_size[i], &view));
+        TIDE_CHECK(view.vertices == 0 && view.indices == 0 && view.palettes == 0 && view.clips == 1);
+        TIDE_CHECK(named_node(&view, "Root") != UINT32_MAX && named_node(&view, "Bone0") != UINT32_MAX);
+        tide_skinned_clip_data clip;
+        TIDE_REQUIRE(tide_skinned_data_clip(&view, 0, &clip));
+        TIDE_CHECK(clip.length == 1 && clip.name_length == 4 && memcmp(clip.name, "Move", 4) == 0);
+        mesh_file mesh = {0};
+        char why[256], note[256];
+        TIDE_CHECK(!mesh_file_read(bytes, size, names[i], NULL, NULL, &mesh, why, note));
+        TIDE_CHECK(strcmp(why, "has no FBX triangles: there's nothing in it to draw") == 0
+                   && strcmp(note, "export a polygon mesh") == 0);
+        mesh_file_free(&mesh);
+        free(bytes);
+    }
+    TIDE_CHECK(canonical_size[0] == canonical_size[1] && memcmp(canonical[0], canonical[1], canonical_size[0]) == 0);
+    tide_skinned_data_free(canonical[0]);
+    tide_skinned_data_free(canonical[1]);
+}
+
 TIDE_TEST(fbx_real_blender_and_maya_binary_exports)
 {
     static const char *const names[] = {"upstream/blender_272_cube_7400_binary.fbx", "upstream/maya_game_sausage_7500_binary.fbx",
@@ -276,7 +307,7 @@ static const char *name_or_empty(const char *name) { return name ? name : ""; }
 TIDE_TEST(fbx_metadata_catalogs_match_the_converted_model)
 {
     static const char *const names[] = {"static/triangle_ascii.fbx", "static/triangle_binary.fbx", "models/rig_ascii.fbx",
-        "models/rig_binary.fbx", "upstream/blender_272_cube_7400_binary.fbx", "upstream/maya_game_sausage_7500_binary.fbx",
+        "models/rig_binary.fbx", "clips/move_ascii.fbx", "clips/move_binary.fbx", "upstream/blender_272_cube_7400_binary.fbx", "upstream/maya_game_sausage_7500_binary.fbx",
         "upstream/maya_anim_interpolation_7700_binary.fbx"};
     for (uint32_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         size_t size, glb_size = 0;

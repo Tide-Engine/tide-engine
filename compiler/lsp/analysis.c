@@ -2117,7 +2117,8 @@ static const method_form animation_calls[] = {
 
 static const method_form pose_calls[] = {
     {"Sample", "Sample(Animation animation, float seconds, Playback playback = Playback.Clamp)",
-     "Fills a writable pose with this animation, reusing its storage. Each sample starts from the authored rest pose."},
+     "Fills a writable pose with this animation, reusing its storage. Each sample starts from the target's authored rest pose. "
+     "A separate animation file binds matching named nodes and their ancestors to the target skeleton."},
     {"Blend", "Blend(Pose other, float weight)",
      "Blends a writable pose toward a compatible pose in parent-local space. Weight is clamped to 0 through 1."},
     {"Model", "Model(Bone bone) -> float4x4",
@@ -2882,8 +2883,16 @@ static void describe(const occurrence *o, sb *out)
             }
             if (o->decl->asset_kind == ASSET_SKINNED) {
                 sb_put(out, " A `SkinnedMesh` is a glTF or FBX model with immutable geometry, a skeleton and an animation catalog. "
-                            "Systems and views sample deterministic CPU poses; `Draw.SkinnedMesh` applies a pose to its vertices.");
-                sb_put(out, "\n\nThe editor inspects the glTF JSON catalog. Geometry, side buffers and uncached URLs are read by a build.");
+                            "Systems and views sample deterministic CPU poses; `Draw.SkinnedMesh` applies a pose to its vertices, "
+                            "or uses the authored rest pose when the pose argument is omitted.");
+                sb_put(out, "\n\nThe editor inspects the glTF JSON or FBX catalog without importing geometry or animation samples. "
+                            "Side buffers and uncached URLs are read by a build.");
+            }
+            if (o->decl->asset_kind == ASSET_ANIMATIONS) {
+                sb_put(out, " An `Animations` asset imports a glTF or FBX file's animation clips and source skeleton without typed render geometry. "
+                            "Its checked clip names appear directly on the asset, with count, Find and At for discovery.");
+                sb_put(out, "\n\nThe editor inspects the glTF JSON or FBX catalog without importing geometry or animation samples. "
+                            "Side buffers and uncached URLs are read by a build.");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
@@ -3201,6 +3210,9 @@ static void describe(const occurrence *o, sb *out)
         code_block(out, code.data);
         if (o->object_type.decl && o->object_type.decl->skin_kind) {
             const decl *d = o->object_type.decl;
+            if (d->skin_kind == SKIN_MESH && str_eq_c(o->name, "defaultPose")) {
+                sb_put(out, "\n\nMakes an owned pose with this model's authored rest transforms, including models without animation clips.");
+            }
             for (int i = 0; i < d->skin_catalog.count; i++) {
                 const skinned_member *m = &d->skin_catalog.items[i];
                 if (str_eq(m->name, o->name)) {
@@ -5933,6 +5945,7 @@ static type member_type(const type t, const str member)
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "animations")) return (type){TY_STRUCT, d->skin_animations};
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "skeleton")) return (type){TY_STRUCT, d->skin_skeleton};
+        if (d->skin_kind == SKIN_MESH && str_eq_c(member, "defaultPose")) return (type){TY_STRUCT, A.prog->pose};
         if (d->skin_kind == SKIN_SKELETON && str_eq_c(member, "bones")) return (type){TY_STRUCT, d->skin_bones};
         if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
         if (d->skin_kind == SKIN_ANIMATION && str_eq_c(member, "name")) return (type){TY_STRING, NULL};
@@ -6106,6 +6119,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (d->skin_kind == SKIN_MESH) {
             item(c, "animations", CK_PROPERTY, "Animations", "The immutable animation catalog: checked names where the asset or contract supplies them, and Find for exact source names.", NULL);
             item(c, "skeleton", CK_PROPERTY, "Skeleton", "The immutable node hierarchy, rest transforms and bone catalog.", NULL);
+            item(c, "defaultPose", CK_PROPERTY, "Pose", "Makes an owned pose with this model's authored rest transforms, including models without animation clips.", NULL);
         }
         if (d->skin_kind == SKIN_SKELETON) item(c, "bones", CK_PROPERTY, "Bones", "Named nodes for sockets, hitboxes and procedural pose edits.", NULL);
         if (d->skin_kind == SKIN_ANIMATION) {
@@ -6834,6 +6848,8 @@ static void complete_value_types(completion *c, const unsigned which)
         if (!(which & VT_GPU)) {
             item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
                  "An immutable glTF or FBX model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
+            item(c, "Animations", CK_STRUCT, "built-in type",
+                 "An immutable catalog of animation clips and their source skeleton, imported with asset Animations or read from a skinned model.", NULL);
             static const char *const names[] = {"Animation", "Skeleton", "Bone", "Pose", "BoneTransform", "Playback"};
             static const char *const docs[] = {
                 "An immutable animation value, sampled deterministically on the CPU.",
@@ -7770,6 +7786,7 @@ static int mesh_argument(const scope *sc, const int first, const int last)
     const type t = names_type(sc, first, last);
     if (t.kind == TY_ENUM) return t.decl == A.prog->wrap ? MESH_WRAP : t.decl == A.prog->filter ? MESH_FILTER : MESH_PARAMS;
     return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE
+         : t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_POSE ? MESH_POSE
          : t.kind == TY_STRUCT ? MESH_VALUES : MESH_PARAMS;
 }
 
@@ -8623,7 +8640,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool type_written = pk == T_IDENT && (builtin_type_named(prev->text, &ignored) || str_eq_c(prev->text, "string"));
         if (statement_start && type_written) break;
         // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
-        if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") || str_eq_c(DOC->toks[call - 1].text, "SkinnedMesh") ? 3 : 2)) {
+        if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
             const scope sc = scope_at(at);
             call_args args;
             call_arguments(call, &args);
@@ -9351,7 +9368,7 @@ static const char *const instanced_labels[2] = {
 // ...and the forms a Mesh asset is drawn by: the Mesh where its vertices and its indices go.
 static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])";
 static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])";
-static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform, pose[, texture[, filter[, wrap]]][, vert][, frag][, values])";
+static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform[, pose][, texture[, filter[, wrap]]][, vert][, frag][, values])";
 
 // Each of its parameters: what it's called in those, and what it takes, in a
 // 2D mesh and, where that differs, in a 3D one.
@@ -9385,7 +9402,7 @@ static const struct {
     [MESH_WHOLE] = {"mesh", {"A `Mesh<V>`: an asset's vertices and its indices as one, like `asset Mesh<Corner> tree = "
                              "\"art/tree.glb\";`. A vert and a frag take its vertex struct, V."}},
     [MESH_SKINNED] = {"mesh", {"An immutable `SkinnedMesh<V>` model. A vert and a frag take its ordinary vertex struct, V."}},
-    [MESH_POSE] = {"pose", {"A compatible Pose: skinning applies its transforms before the user vertex stage."}},
+    [MESH_POSE] = {"pose", {"An optional Pose: skinning applies its transforms before the user vertex stage. Omit it to draw the model's authored rest pose."}},
 };
 
 // The names of the parameters a checked call's arguments go to, in order:
@@ -9398,7 +9415,8 @@ static int call_param_names(const expr *call, str *names, const int max)
         for (; count < written_count(call) && count < max; count++) {
             const expr *arg = written_arg(call, count);
             const type t = arg->type;
-            const int param = count == 0 ? MESH_SKINNED : count == 1 ? MESH_TRANSFORM : count == 2 ? MESH_POSE
+            const int param = count == 0 ? MESH_SKINNED : count == 1 ? MESH_TRANSFORM
+                : t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_POSE ? MESH_POSE
                 : arg == call->values ? MESH_VALUES
                 : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
                 : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE
@@ -9597,7 +9615,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
     const int *order = forms[skinned ? 5 : whole ? (instanced ? 4 : 3) : instanced ? 2 : three_d ? 1 : 0];
     const int count = whole ? 8 : instanced || three_d ? 9 : 8;
-    const int fixed = whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances
+    const int fixed = skinned || whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances
 
     int active = 0;
     int next = 0; // The first parameter the next argument can be
@@ -10474,9 +10492,9 @@ static void collect_assets(void)
         } else if (d->asset_kind == ASSET_CLIP) {
             site.formats = clips;
             site.format_count = (int)(sizeof clips / sizeof clips[0]);
-        } else if (d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED) {
+        } else if (d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS) {
             site.formats = models;
-            site.format_count = (int)(sizeof models / sizeof models[0]) - (d->asset_kind == ASSET_SKINNED ? 1 : 0);
+            site.format_count = (int)(sizeof models / sizeof models[0]) - (d->asset_kind == ASSET_MESH ? 0 : 1);
         }
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
