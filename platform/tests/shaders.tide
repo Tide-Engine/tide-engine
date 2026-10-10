@@ -775,6 +775,9 @@ struct Turns
     quaternion nlerpNone;
     quaternion axisAngle;
     quaternion euler;
+    quaternion eulerScalar;
+    quaternion eulerNamed;
+    quaternion eulerInt;
     quaternion look;
     quaternion fromSmall;
     quaternion fromX;
@@ -894,6 +897,9 @@ Turns TurnsOf(Given given)
     turns.nlerpNone = Math.Nlerp(given.none, given.none, given.amount);
     turns.axisAngle = quaternion.AxisAngle(Math.Normalize(given.point), given.wide);
     turns.euler = quaternion.Euler(given.angles);
+    turns.eulerScalar = quaternion.Euler(given.angles.x, given.angles.y, given.angles.z);
+    turns.eulerNamed = quaternion.Euler(z: given.angles.z, x: given.angles.x, y: given.angles.y);
+    turns.eulerInt = quaternion.Euler(1, 2, 3);
     turns.look = quaternion.LookRotation(Math.Forward(a), Math.Up(b));
     // From a matrix, each of the four ways there are: by its trace, and by each axis it turns nearly half around
     turns.fromSmall = quaternion(float3x3(a));
@@ -956,6 +962,9 @@ bool SameTurns(Turns a, Turns b)
     same = same && CloseTurn(a.slerp, b.slerp) && CloseTurn(a.slerpNear, b.slerpNear) && CloseTurn(a.slerpFar, b.slerpFar);
     same = same && CloseTurn(a.nlerp, b.nlerp) && CloseTurn(a.nlerpFar, b.nlerpFar) && CloseTurn(a.nlerpNone, b.nlerpNone);
     same = same && CloseTurn(a.axisAngle, b.axisAngle) && CloseTurn(a.euler, b.euler) && CloseTurn(a.look, b.look);
+    same = same && CloseTurn(a.eulerScalar, b.eulerScalar) && CloseTurn(a.eulerNamed, b.eulerNamed) && CloseTurn(a.eulerInt, b.eulerInt);
+    same = same && CloseTurn(a.eulerScalar, a.euler) && CloseTurn(a.eulerNamed, a.euler)
+                && CloseTurn(a.eulerInt, quaternion.Euler(float3(1, 2, 3)));
     same = same && CloseTurn(a.fromSmall, b.fromSmall) && CloseTurn(a.fromX, b.fromX) && CloseTurn(a.fromY, b.fromY);
     same = same && CloseTurn(a.fromZ, b.fromZ) && CloseTurn(a.made, b.made) && CloseTurn(a.constant, b.constant);
     same = same && Close3(a.rotated, b.rotated) && Close3(a.multiplied, b.multiplied);

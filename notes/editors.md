@@ -30,6 +30,10 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     - Tests: `lsp_asset_rename_rewrites_paths`, `lsp_asset_rename_large_batch`, `lsp_asset_rename_multiple_games`, `lsp_asset_rename_manifest_games`, `lsp_asset_moved_file_is_found_by_its_bytes`, `lsp_asset_path_completion`, `lsp_game_without_assets_changes_nothing` and `lsp_asset_paths` (`compiler/lsp/tests/lsp_test.c`), on games written to the test's folder.
 - `tools/`: editor support. `tide-vscode` is the VS Code extension and `tide-jetbrains` the JetBrains plugin: each is the grammar, a client that runs `tidels`, and running the game with `tide run`, natively, on the web or on Android. `tide-syntax` is the TextMate grammar they both include, which the package also ships as a bundle for other editors. An editor feature goes to every integration that can have it, each in its own editor's way. File renames reach `tidels` from both without code of theirs: `vscode-languageclient` (10.1.2) registers the file-operation features itself, declaring `fileOperations` with dynamic registration and matching the server's filters with minimatch against the path (case-insensitive where the filter says); LSP4IJ (0.21.0) sends `workspace/willRenameFiles` by the server's static capability alone (`FileOperationsManager`), which is why tidels announces it in the initialize result for a client with no dynamic registration.
 
+## Quaternion Euler overloads
+
+`quaternion.Euler` (2026-10-10) exposes both `float3 radians` and scalar `float x, float y, float z` signatures from the shared built-in declarations. Both use radians and the same Z-X-Y rotation order. `lsp_quaternion_euler_signature_help` checks both labels, selection of the vector and scalar forms, the third positional parameter and reordered named `x`, `y` and `z` arguments. The focused native debug test passed.
+
 ## Skinned meshes and animation
 
 Built 2026-10-08, after the owner asked for the IDE to respond properly without lag. The language rules are in `docs/spec.md`, **Skinned meshes and animation**; the full importer is described in `notes/assets-and-files.md`.

@@ -5094,6 +5094,40 @@ TIDE_TEST(lsp_signature_help)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"result\":null"));
 }
 
+TIDE_TEST(lsp_quaternion_euler_signature_help)
+{
+    start();
+    static const struct {
+        const char *arguments;
+        bool vector;
+        int parameter;
+    } cases[] = {
+        {"$float3(0.1, 0.2, 0.3)", true, 0},
+        {"0.1, 0.2, $0.3", false, 2},
+        {"z: $0.3, x: 0.1, y: 0.2", false, 2},
+        {"z: 0.3, x: $0.1, y: 0.2", false, 0},
+        {"z: 0.3, x: 0.1, y: $0.2", false, 1},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof *cases; i++) {
+        char source[256];
+        snprintf(source, sizeof source, "scene Main { }\nquaternion Rotation() { return quaternion.Euler(%s); }\n", cases[i].arguments);
+        open_document(source);
+        TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+        const char *reply = request("textDocument/signatureHelp");
+        TIDE_CHECK(has(reply, "quaternion.Euler(float3 radians)")
+                   && has(reply, "quaternion.Euler(float x, float y, float z)") && has(reply, "in radians"));
+        const json *result = json_get(json_parse(reply, strlen(reply)), "result");
+        const json *signatures = json_get(result, "signatures");
+        const int active = json_int(json_get(result, "activeSignature"), -1);
+        TIDE_REQUIRE(signatures && active >= 0 && active < signatures->count);
+        const char *label = json_str(json_get(signatures->items[active], "label"));
+        TIDE_REQUIRE(label);
+        TIDE_CHECK(strcmp(label, cases[i].vector ? "quaternion.Euler(float3 radians) -> quaternion" : "quaternion.Euler(float x, float y, float z) -> quaternion") == 0);
+        TIDE_CHECK(json_int(json_get(result, "activeParameter"), -1) == cases[i].parameter);
+        json_release();
+    }
+}
+
 TIDE_TEST(lsp_singleton_function_parameters)
 {
     start();

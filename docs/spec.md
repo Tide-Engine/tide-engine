@@ -776,7 +776,7 @@ float2 flat = trs.position.xz;
 - Vectors have `x`, `y`, `z`, `w`. Swizzles can also be assigned (`v.xz = float2(1, 2)`), as long as no component repeats.
 - `quaternion` has `value`, a `float4` with (x, y, z) as the vector part. Matrices are stored column by column and have columns `c0` to `c3`.
 - `Math.PI`, `Math.TAU`, `Math.E`, `quaternion.identity`, `float2x2.identity`, `float3x3.identity`, `float4x4.identity`.
-- `quaternion.AxisAngle(axis, angle)`, `quaternion.Euler(radians)` (Z first, then X, then Y, Unity's default order), `quaternion.LookRotation(forward, up)`, `float4x4.TRS(translation, rotation, scale)`, `float4x4.Translate(translation)`.
+- `quaternion.AxisAngle(axis, angle)`, `quaternion.Euler(radians)` from a `float3` or `quaternion.Euler(x, y, z)` from three angles in radians (equivalent to `quaternion.Euler(float3(x, y, z))`; Z first, then X, then Y, Unity's default order), `quaternion.LookRotation(forward, up)`, `float4x4.TRS(translation, rotation, scale)`, `float4x4.Translate(translation)`.
 - Projections, as Unity.Mathematics': `float4x4.PerspectiveFov(verticalFov, aspect, near, far)`, with the field of view in radians and `aspect` width over height, and `float4x4.Ortho(width, height, near, far)`. They take a view looking down -z, as OpenGL's and Unity's, to clip space, where z goes from -1 at `near` to 1 at `far`.
 
 **Operators**
