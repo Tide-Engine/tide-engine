@@ -1002,11 +1002,17 @@ static void queue_engine(build *b, compiles *list)
 #endif
     sys_mkdirs(engine_dir);
     char *stamp_path = path_join(engine_dir, "stamp");
-    char *stamp = stamp_of(b);
+    char *engine_src = path_join(b->root, "src/engine/");
+    // Private headers affect engine objects alone; game and user C objects
+    // keep their ordinary public-header stamp.
+    char *common_stamp = stamp_of(b);
+    char private_headers[17];
+    snprintf(private_headers, sizeof private_headers, "%016llx", (unsigned long long)header_stamp(engine_src));
+    char *stamp = format("%s %s", common_stamp, private_headers);
+    free(common_stamp);
     char *old_stamp = sys_read_file(stamp_path, NULL);
     engine_build engine = {b, engine_dir, !old_stamp || strcmp(old_stamp, stamp) != 0, list, {0}};
     const int listed = list->count;
-    char *engine_src = path_join(b->root, "src/engine/");
     folder_find(engine_src, ".c", queue_engine_file, &engine);
     free(engine_src);
     b->engine = engine.objects;

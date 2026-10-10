@@ -415,6 +415,21 @@ async function targetTests(tide, installation, root, target, embedded) {
     await build();
     expectWrites(cache, before, [...before.keys()], "installed engine header invalidates every object");
 
+    // A private-header-only update must reach the compiler even while its
+    // sources, public headers and compiler executable are unchanged.
+    const privateHeader = join(installation, "src", "engine", "skinned_cache.h");
+    const privateHeaderText = readFileSync(privateHeader, "utf8");
+    before = mark(cache);
+    put(privateHeader, privateHeaderText + "\n#error cache_private_header_failure\n", changedTime);
+    await build([], "cache_private_header_failure");
+    put(privateHeader, privateHeaderText, headerTime);
+    await build();
+    expectWrites(cache, before, [...before.keys()].filter(file => file.startsWith("engine/")),
+        "private engine header update and revert rebuild only engine objects");
+    before = mark(cache);
+    await build();
+    expectWrites(cache, before, [], "unchanged private engine headers reuse every object");
+
     if (embedded) {
         before = mark(cache);
         // Only the private copied compiler changes, preserving the real installation.
