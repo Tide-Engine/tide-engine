@@ -336,6 +336,12 @@ bool tide_pack_skinned_version(tide_list data, uint64_t *version);
 // in a pack, game state or snapshot.
 bool tide_pack_skinned_proof(tide_list data, uint64_t *identity, uint64_t *version);
 
+// The same current proof, plus whether every channel's first key time is
+// nonnegative (including negative zero). False in the optional output means
+// sampling still checks the selected clip's channels, not that the model is
+// invalid. The output is unchanged when no current proof exists.
+bool tide_pack_skinned_sample_proof(tide_list data, bool *nonnegative_first_times);
+
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps
 // (tide_text_use), so every thread that runs Tide code reads the pack.
