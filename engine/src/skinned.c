@@ -281,11 +281,19 @@ bool tide_skinned_sample(const tide_list data, const int32_t animation, const fl
     if (!transforms || animation < 0) return false;
     model_seen m;
     if (!open_model(data, &m)) return false;
+    uint64_t version;
+    const bool packed = tide_pack_skinned_version(data, &version);
     tide_skinned_clip_data clip;
-    bool valid = nodes_valid(&m.view) && tide_skinned_data_clip(&m.view, (uint32_t)animation, &clip);
+    bool valid = (packed || nodes_valid(&m.view)) && tide_skinned_data_clip(&m.view, (uint32_t)animation, &clip);
     for (uint32_t i = 0; valid && i < clip.channels; i++) {
         tide_skinned_channel_data channel;
-        valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel) && channel_valid(&m.view, &channel);
+        valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel);
+        if (valid && packed) {
+            // Full immutable-model validation proves finite increasing keys,
+            // but permits the first time in (-1, 0). Sampling requires >=0.
+            float time, value[4], in[4], out[4];
+            valid = tide_skinned_data_key(&m.view, &channel, 0u, &time, value, in, out) && time >= 0.0f;
+        } else if (valid) valid = channel_valid(&m.view, &channel);
     }
     if (valid) {
         fill_rest(&m.view, transforms, where);
