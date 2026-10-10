@@ -1,0 +1,237 @@
+{
+  "label": "initial-skinned-native",
+  "source_revision": "b9faf142183e7ed41fb81e3e923af2a06cfbb4e3",
+  "configuration": "release / RelWithDebInfo",
+  "compiler": "clang 23.1.2",
+  "cpu": "AMD Ryzen 9 7900X, 12 cores / 24 threads",
+  "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+  "driver": "NVIDIA 595.79",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "executable_sha256": "76e97fb938517d68c3715a2aa2bbed3d407f00c599f1074104039eec6be0985c",
+  "fixture_sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3",
+  "gpu_attribution": {
+    "tool": "nvidia-smi process table",
+    "pid": 76780,
+    "gpu_index": 0,
+    "process": "bench_skinned.exe",
+    "performance_state_at_observation": "P8",
+    "gpu_utilization_percent_at_observation": 11,
+    "observed_at": "2026-10-10T17:36:21+02:00"
+  },
+  "measurement": {
+    "native_completion": "Full framebuffer readback after every measured draw",
+    "coordination_gate": "Local\\TideClaudeContinuationBenchmark",
+    "counts": [
+      1,
+      10,
+      100,
+      1000
+    ],
+    "warmup_frames": 20,
+    "pixel_scale": 1,
+    "measured_frames": 100,
+    "width": 1024,
+    "repeats": 3,
+    "context": "Shared desktop, other user applications left running. This task had no concurrent builds or tests during measurement. No exclusive CPU/GPU isolation or fixed clocks.",
+    "height": 576
+  },
+  "validation": {
+    "web_debug_tests": 2013,
+    "failures": 0,
+    "native_debug_tests": 2040
+  },
+  "gpu_monitor": {
+    "interpretation": "Reported GPU timings are observed shared-desktop low-clock results, not peak GPU throughput",
+    "memory_clock_mhz": 405,
+    "path": "skinned-gpu-monitor.csv",
+    "observations": 15,
+    "scope": "Fifteen observations during the final independent-pose case with 1,000 characters, at roughly one-second intervals",
+    "pstate": "P8",
+    "clock_mhz": 210,
+    "timezone": "Europe/Paris (UTC+02:00)",
+    "sha256": "4d63e5b62b4ab285a44e4d8e6a81aeecb902efd0f10107e29d4b41865e01e5a1"
+  },
+  "results_sha256": "39f478a28fd6f1cdbd4455aca77b7416326bf39a2ae7457d444bc0b9a1d14160",
+  "summary": {
+    "aggregation": "Median of three per-repeat medians",
+    "cases": [
+      {
+        "count": 1,
+        "mode": "static",
+        "view": 0.001,
+        "submit": 0.0283,
+        "gpu": 0.082944,
+        "calls": 2,
+        "upload": 0,
+        "memory": 85381120,
+        "gpu_memory": 4943364
+      },
+      {
+        "count": 1,
+        "mode": "omitted_rest",
+        "view": 0.1349,
+        "submit": 0.0306,
+        "gpu": 0.058368,
+        "calls": 2,
+        "upload": 0,
+        "memory": 84946944,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 1,
+        "mode": "shared_pose",
+        "view": 0.1675,
+        "submit": 0.0442,
+        "gpu": 0.058368,
+        "calls": 2,
+        "upload": 4096,
+        "memory": 85446656,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 1,
+        "mode": "independent_poses",
+        "view": 0.15335,
+        "submit": 0.0438,
+        "gpu": 0.050176,
+        "calls": 2,
+        "upload": 4096,
+        "memory": 85463040,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 10,
+        "mode": "static",
+        "view": 0.0016,
+        "submit": 0.0284,
+        "gpu": 0.027136,
+        "calls": 2,
+        "upload": 0,
+        "memory": 85479424,
+        "gpu_memory": 4943364
+      },
+      {
+        "count": 10,
+        "mode": "omitted_rest",
+        "view": 1.3259,
+        "submit": 0.03315,
+        "gpu": 0.033792,
+        "calls": 2,
+        "upload": 0,
+        "memory": 85495808,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 10,
+        "mode": "shared_pose",
+        "view": 1.4131,
+        "submit": 0.0468,
+        "gpu": 0.047104,
+        "calls": 2,
+        "upload": 4096,
+        "memory": 86003712,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 10,
+        "mode": "independent_poses",
+        "view": 1.5067,
+        "submit": 0.1013,
+        "gpu": 0.19712,
+        "calls": 11,
+        "upload": 40960,
+        "memory": 86020096,
+        "gpu_memory": 5131780
+      },
+      {
+        "count": 100,
+        "mode": "static",
+        "view": 0.0066,
+        "submit": 0.0283,
+        "gpu": 0.118784,
+        "calls": 2,
+        "upload": 0,
+        "memory": 86048768,
+        "gpu_memory": 4943364
+      },
+      {
+        "count": 100,
+        "mode": "omitted_rest",
+        "view": 13.3147,
+        "submit": 0.0408,
+        "gpu": 0.147456,
+        "calls": 2,
+        "upload": 0,
+        "memory": 86216704,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 100,
+        "mode": "shared_pose",
+        "view": 13.8365,
+        "submit": 0.05765,
+        "gpu": 0.500224,
+        "calls": 2,
+        "upload": 4096,
+        "memory": 86753280,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 100,
+        "mode": "independent_poses",
+        "view": 15.0971,
+        "submit": 0.6281,
+        "gpu": 5.8793,
+        "calls": 101,
+        "upload": 409600,
+        "memory": 88502272,
+        "gpu_memory": 5500420
+      },
+      {
+        "count": 1000,
+        "mode": "static",
+        "view": 0.0572,
+        "submit": 0.03095,
+        "gpu": 0.499712,
+        "calls": 2,
+        "upload": 0,
+        "memory": 86491136,
+        "gpu_memory": 4943364
+      },
+      {
+        "count": 1000,
+        "mode": "omitted_rest",
+        "view": 133.064,
+        "submit": 0.1098,
+        "gpu": 5.78355,
+        "calls": 2,
+        "upload": 0,
+        "memory": 86675456,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 1000,
+        "mode": "shared_pose",
+        "view": 139.063,
+        "submit": 0.1433,
+        "gpu": 5.82861,
+        "calls": 2,
+        "upload": 4096,
+        "memory": 87068672,
+        "gpu_memory": 5094916
+      },
+      {
+        "count": 1000,
+        "mode": "independent_poses",
+        "view": 151.682,
+        "submit": 16.1776,
+        "gpu": 58.6854,
+        "calls": 1001,
+        "upload": 4096000.0,
+        "memory": 104824832,
+        "gpu_memory": 9186820
+      }
+    ],
+    "units": "view, submit and gpu are milliseconds; upload, memory and gpu_memory are bytes; calls includes one clear draw"
+  }
+}
