@@ -573,6 +573,26 @@ static const char *kind_name(const asset_kind kind)
          : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : "Grid2<Color>";
 }
 
+bool asset_skinned_obj_diagnostic(const char *path, const loc at)
+{
+    size_t end = strlen(path);
+    if (asset_path_is_url(path, end)) {
+        const char *authority = strstr(path, "://") + 3;
+        const char *part = authority + strcspn(authority, "/?#");
+        if (*part != '/') return false;
+        end = (size_t)(part - path) + strcspn(part, "?#");
+    }
+    static const char extension[] = ".obj";
+    if (end < sizeof extension - 1u) return false;
+    for (size_t i = 0; i < sizeof extension - 1u; i++) {
+        const char ch = path[end - (sizeof extension - 1u) + i];
+        if ((ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch) != extension[i]) return false;
+    }
+    diag_error(at, "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb), not OBJ");
+    diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0");
+    return true;
+}
+
 // A file a .gltf names beside it: read like any, and noted, so the mesh is
 // read again when it changes. The files' list can move as one is read, so the
 // .gltf's own entry is found again by its path afterwards.
@@ -790,8 +810,10 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (ok) f->skin_mesh = skin_geometry(bytes, size);
         }
         if (!f->skin_ok) {
-            diag_error(at, "'%s' %s", key, f->skin_why);
-            if (f->skin_note[0]) diag_note("%s", f->skin_note);
+            if (!asset_skinned_obj_diagnostic(key, at)) {
+                diag_error(at, "'%s' %s", key, f->skin_why);
+                if (f->skin_note[0]) diag_note("%s", f->skin_note);
+            }
             return false;
         }
         item->mesh = f->skin_mesh;
