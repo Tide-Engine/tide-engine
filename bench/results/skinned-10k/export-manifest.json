@@ -1,0 +1,245 @@
+{
+  "format": 1,
+  "source_revision": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+  "normalization": "UTF-8 without BOM,LF with final newline; empty files remain empty.",
+  "files": [
+    {
+      "path": "clocks/skinned-10k-final-r1-gpu.csv",
+      "bytes": 6342,
+      "sha256": "9ab451f0f6370202c491f758a7df8f1c27df1891cd6d19215b7607666ad7889b",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r1-gpu.csv",
+        "bytes": 6389,
+        "sha256": "1f6bb9ac1878f75d514739c0efb0dbab8917a91851e914dfac61bf5ebfd1140c",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "clocks/skinned-10k-final-r2-gpu.csv",
+      "bytes": 6355,
+      "sha256": "0f5c334ef81f44eb5ef7f2f0a4f50b087322f6d6fd4ae14e37723bfd801ba95e",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r2-gpu.csv",
+        "bytes": 6402,
+        "sha256": "9bcbdb01df66d9116457d2609ba2fd6b4fc5939e919675fba1787013db31b8c3",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "clocks/skinned-10k-final-r3-gpu.csv",
+      "bytes": 6218,
+      "sha256": "495b4155df29b72efc3baa26bf23434a1d3785ad8bcba07ea767feb3fb6dc0b2",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r3-gpu.csv",
+        "bytes": 6264,
+        "sha256": "5232b41b84c642c91f670e6507027bc727bd15b0eaa8dab8c9834abc7f7c01ad",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "ledger-normalization.json",
+      "bytes": 749,
+      "sha256": "aea10ce9407813fc18f1a10bdef6303b514f423561d1418d5e3d18ad6b0b86d9",
+      "original": null
+    },
+    {
+      "path": "logs/skinned-10k-final-r1-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r1-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r1-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r1-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r1-stdout.txt",
+      "bytes": 2083,
+      "sha256": "a6e06cc151f63d706fe93572a62bace181806fbfddc2497338474705ddaca3e8",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r1-stdout.txt",
+        "bytes": 2093,
+        "sha256": "5ff83643aa6e17f9006243834a6718668da230fd1cdf2c8162bcb5cff1457805",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r2-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r2-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r2-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r2-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r2-stdout.txt",
+      "bytes": 2083,
+      "sha256": "476c3158914bcc90c4eeff29f30774d6a0dce0fae3831daf122cc1dcafacd839",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r2-stdout.txt",
+        "bytes": 2093,
+        "sha256": "4f3d5bd4441eb99f462f6a7cba1d7952d2ba1c784bbe408394098924b1728f52",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r3-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r3-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r3-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r3-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-10k-final-r3-stdout.txt",
+      "bytes": 2220,
+      "sha256": "2368080ffd39fbd9e212281c99460149b1691d4125f483be2bd72cc1897b87d3",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\skinned-10k-final-r3-stdout.txt",
+        "bytes": 2231,
+        "sha256": "729888cd6d9ab4f1866d9cb08e75793bd4c94f13272459f5b70f03d8326637b6",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "metadata.json",
+      "bytes": 10389,
+      "sha256": "8f24199d0d895441704102c8ba4d5ba826ca417d8c99ee22869f83abf5be2769",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\metadata.json",
+        "bytes": 10634,
+        "sha256": "316db655102c57ba8764c90856df9f4f49d3f1aa55beeb7ae177deb6180024a7",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "original-artifacts.json",
+      "bytes": 7042,
+      "sha256": "aec184e31201eca335c047ed1d3b3829fb43bec29e4bb63430b04c5224c59184",
+      "original": null
+    },
+    {
+      "path": "README.md",
+      "bytes": 3581,
+      "sha256": "2320cceefd20dfee293ce08bf39823cae68ddae435eb41638c9cce6c6caadca8",
+      "original": null
+    },
+    {
+      "path": "reproduce/analyze.mjs",
+      "bytes": 8379,
+      "sha256": "80118e6fc467997cf9ce0387e263a9653b3e70d12a2ab6e39abe33bda929c185",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\analyze.mjs",
+        "bytes": 8379,
+        "sha256": "80118e6fc467997cf9ce0387e263a9653b3e70d12a2ab6e39abe33bda929c185",
+        "category": "analysis-script"
+      }
+    },
+    {
+      "path": "reproduce/export.mjs",
+      "bytes": 10006,
+      "sha256": "794d990fd9181f10bd2d3221e99abe9930d8af401419add43e7a1ef43803eecd",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\export.mjs",
+        "bytes": 10006,
+        "sha256": "794d990fd9181f10bd2d3221e99abe9930d8af401419add43e7a1ef43803eecd",
+        "category": "export-script"
+      }
+    },
+    {
+      "path": "reproduce/run.ps1",
+      "bytes": 10139,
+      "sha256": "4a1fce7cc390a58fd41a8993d4019e3f4b89936129d782de4cc42d130ed8a5dd",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\run.ps1",
+        "bytes": 10139,
+        "sha256": "4a1fce7cc390a58fd41a8993d4019e3f4b89936129d782de4cc42d130ed8a5dd",
+        "category": "measurement-script"
+      }
+    },
+    {
+      "path": "rows.jsonl",
+      "bytes": 26695,
+      "sha256": "3a295d84214db4d2e26014af6f579fe1a297a9a1bbee5b87175e0753869fe524",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\rows.jsonl",
+        "bytes": 26695,
+        "sha256": "3a295d84214db4d2e26014af6f579fe1a297a9a1bbee5b87175e0753869fe524",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "snapshot/metadata.json",
+      "bytes": 10815,
+      "sha256": "b56a4639f9a5345d433476b3babdc768a5b9b1731ecfb8c16c918aaea5aefd49",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\metadata.json",
+        "bytes": 11161,
+        "sha256": "eed9d63fceb2fe0d678c8ee44939ac7fa970506c7bff7f878e13ea5d7c9044b2",
+        "category": "preserved-snapshot"
+      }
+    },
+    {
+      "path": "snapshot/source-hashes.json",
+      "bytes": 470109,
+      "sha256": "b12ed24a2f375401ed039e517380b40c1de4c168060d56774a5823b2e56eef1b",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\source-hashes.json",
+        "bytes": 484296,
+        "sha256": "873317e0b2148cfe23be614f590342e3de886c2e4c69860273c7e5f16c610583",
+        "category": "preserved-source-hashes"
+      }
+    },
+    {
+      "path": "summary.json",
+      "bytes": 48986,
+      "sha256": "c6662f12ccbf115313cf2d1ea6f54e4d61b6c08b800ee4131daf351dc6584d8e",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\summary.json",
+        "bytes": 48986,
+        "sha256": "c6662f12ccbf115313cf2d1ea6f54e4d61b6c08b800ee4131daf351dc6584d8e",
+        "category": "measured"
+      }
+    }
+  ]
+}
