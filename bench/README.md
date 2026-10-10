@@ -149,6 +149,24 @@ The drawing benchmark measures 65,536 rectangles, circles, rectangles interrupte
 
 These are C calls to Tide's drawing APIs. They exclude generated Tide view execution, and rendering time includes CPU submission, GPU completion and copying the target's pixels back. They are useful for tracking overhead and batching, but there is no handwritten GPU API baseline yet, so they do not establish competitive graphics performance. Pixel tests of generated shaders and manual instancing verify correctness separately.
 
+## Skinned meshes
+
+```powershell
+$env:TIDE_HIDDEN = '1'
+cmake --build --preset release --target bench_skinned
+$env:TIDE_BENCH_REVISION = "<revision and local changes>"
+$env:TIDE_BENCH_MACHINE = "<CPU, GPU and driver>"
+build/release/bin/bench_skinned --counts 1,10,100,1000 --frames 100 --warmup 20 --repeat 3 --save skinning-baseline
+```
+
+`bench_skinned` compares static geometry, an omitted default pose, an animated pose sampled once per frame and shared, and a separately sampled animated pose per character. Each character has its own local entity and Tide view. A preceding view sets the camera and samples the shared pose. Entity creation is outside the measurements. `--modes static,rest,shared,independent` selects cases; `--capture image.png` saves the final native frame.
+
+The self-contained fixture has 3,072 vertices, 6,048 triangles, 64 skin joints, four positive influences per vertex and a one-second looping clip with 17 rotation keys per joint. It is a tapered tube with a joint chain, rather than a particular game's character. Static and skinned cases import the same geometry and use the same fragment. The grid keeps every instance visible at 1024 by 576 and scales instances to keep their summed nominal projected areas constant as counts increase. Independently animated characters use different loop phases. Reproduce the fixture with `node bench/skinned/generate.mjs`; `--check` verifies it.
+
+Each case reports median and p95 generated-view/recording CPU time (including sampling and temporary cleanup), CPU submission time, asynchronous GPU execution time with its sample count, draw calls (including the clear) and texture-upload bytes per frame. Native runs separately time waiting for and reading the completed framebuffer, and the whole frame through that readback. GPU queries measure drawing after renderer preparation, excluding texture uploads and readback; these times overlap CPU work and cannot be added to infer FPS. WebGL has no GPU timer; WebGPU needs optional timestamp-query support. Web readback metrics are unavailable. The native readback intentionally synchronizes every measured frame, so these are isolated frame costs rather than a measurement of pipelined display throughput.
+
+`--save` appends one row per count, mode and repeat to `bench/results/skinned.jsonl`, including compiler, revision, machine, fixture SHA-256, resolution and workload dimensions. Process memory and renderer-tracked GPU memory are retained totals after each case, including caches from earlier cases, rather than allocations attributable solely to that case. On the web, `bench_skinned.html?bench&counts=1,10,100,1000&frames=100&warmup=20&repeat=3&save=label&backend=webgpu` prints the same JSONL. Web dimensions are logical pixels; hardware browser measurements should force device scale factor 1. The `bench` argument disables synchronous per-call GL error checking for measurements; omit it for correctness checks. CTest smoke runs exercise every mode on native OpenGL and software WebGL/WebGPU without timing assertions. Use a quiet machine and repeat measurements; software browser smoke timings are not hardware performance results.
+
 ## Input delay in Sumo
 
 ```powershell
