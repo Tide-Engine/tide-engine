@@ -908,7 +908,7 @@ static void register_watchers(lsp_server *s)
                "\"params\":{\"registrations\":[{\"id\":\"tide-files\",\"method\":\"workspace/didChangeWatchedFiles\","
                "\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.tide\"},"
                "{\"globPattern\":\"**/build/tools/games.txt\"},{\"globPattern\":\"**/tide.packages\"},"
-               "{\"globPattern\":\"**/*.gltf\"},{\"globPattern\":\"**/*.glb\"},"
+               "{\"globPattern\":\"**/*.gltf\"},{\"globPattern\":\"**/*.glb\"},{\"globPattern\":\"**/*.[fF][bB][xX]\"},"
                "{\"globPattern\":\"**/.tide/assets/urls/*\"}");
     bool outside = s->manifest != NULL;
     for (int i = 0; outside && i < s->root_count; i++) outside = !under(s->manifest, s->roots[i]);

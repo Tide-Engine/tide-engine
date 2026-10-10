@@ -17,6 +17,7 @@
 #include "assets.h"
 #include "json.h"
 #include "model_metadata.h"
+#include "../../tests/fbx_metadata_fixture.h"
 #include "packages.h"
 #include "tide_test.h"
 #include "server.h"
@@ -10344,6 +10345,7 @@ TIDE_TEST(lsp_asset_meshes)
     write_file("lsp_mesh/art/tree.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nf 1//1 2//1 3//1\n");
     write_file("lsp_mesh/art/rock.glb", "not one, but named as one");
     write_file("lsp_mesh/art/hill.gltf", "{}");
+    write_file("lsp_mesh/art/hero.FBX", fbx_catalog_fixture);
     write_file("lsp_mesh/art/other.txt", "text");
     char root[700], uri_main[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
@@ -10368,10 +10370,11 @@ TIDE_TEST(lsp_asset_meshes)
 
     // Its path: mesh files, and nothing else
     const char *completion = request_at(uri_main, "textDocument/completion", 5, 31, "");
-    TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "rock.glb") && offers(completion, "hill.gltf"));
+    TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "rock.glb") && offers(completion, "hill.gltf") && offers(completion, "hero.FBX"));
     TIDE_CHECK(!offers(completion, "other.txt") && !offers(completion, "*.glb"));
     completion = request_at(uri_main, "textDocument/completion", 6, 38, ""); // A list's: globs too
     TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "*.glb") && offers(completion, "**/*.glb"));
+    TIDE_CHECK(offers(completion, "*.fbx") && offers(completion, "**/*.fbx") && offers(completion, "*.obj") && offers(completion, "**/*.obj"));
 
     // After its dot: its two lists
     static char dotted[sizeof main_file + 32];
@@ -10409,6 +10412,7 @@ TIDE_TEST(lsp_asset_meshes)
     remove_game_file("lsp_mesh/art/tree.obj");
     remove_game_file("lsp_mesh/art/rock.glb");
     remove_game_file("lsp_mesh/art/hill.gltf");
+    remove_game_file("lsp_mesh/art/hero.FBX");
     remove_game_file("lsp_mesh/art/other.txt");
     remove_game_file("lsp_mesh/.tide/assets.sha256");
     remove_game_file("lsp_mesh/.tide/.gitignore");
@@ -10501,7 +10505,7 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     TIDE_CHECK(offers(completion, "hand"));
     TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1);
 
-    // File path completion accepts only glTF for skinned assets.
+    // File path completion excludes static-only formats for skinned assets.
     completion = request_at(uri_main, "textDocument/completion", 1, 42, "");
     TIDE_CHECK(offers(completion, "hero.gltf") && !offers(completion, "other.obj"));
     remove_game_file("lsp_skin/main.tide");
@@ -10512,6 +10516,65 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     remove_folder("lsp_skin/.tide");
     remove_folder("lsp_skin/art");
     remove_folder("lsp_skin");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
+}
+
+TIDE_TEST(lsp_skinned_fbx_catalogs_complete_names_paths_and_refresh)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_fbx");
+    make_folder("lsp_fbx/art");
+    static const char prefix[] = "struct Corner { float3 position; }\n"
+                                 "asset SkinnedMesh<Corner> hero = \"art/hero.FBX\";\n"
+                                 "asset List<SkinnedMesh<Corner>> models = \"art/hero.FBX\";\n"
+                                 "scene Main { }\n";
+    write_file("lsp_fbx/main.tide", prefix);
+    write_file("lsp_fbx/art/hero.FBX", fbx_catalog_fixture);
+    write_file("lsp_fbx/art/static.obj", "not a skinned format");
+    char root[700], uri_main[700], uri_model[700], text[2048];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_fbx", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_fbx/main.tide", dir);
+    snprintf(uri_model, sizeof uri_model, "file:///%s/lsp_fbx/art/hero.FBX", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    handle("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+    TIDE_CHECK(sent_with("**/*.[fF][bB][xX]") != NULL);
+    snprintf(text, sizeof text, "%sview V()\n{\n    hero.animations.\n}\n", prefix);
+    open_uri(uri_main, text);
+    const char *completion = request_at(uri_main, "textDocument/completion", 6, 20, "");
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "run") && has(completion, "original source name `Idle`"));
+    const model_metadata_stats warm = model_metadata_statistics();
+    open_uri(uri_main, text);
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses && model_metadata_statistics().file_reads == warm.file_reads);
+    snprintf(text, sizeof text, "%sview V()\n{\n    hero.skeleton.bones.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 6, 24, "");
+    TIDE_CHECK(offers(completion, "root") && offers(completion, "hand") && offers(completion, "Find"));
+    completion = request_at(uri_main, "textDocument/completion", 1, 42, "");
+    TIDE_CHECK(offers(completion, "hero.FBX") && !offers(completion, "static.obj"));
+    completion = request_at(uri_main, "textDocument/completion", 2, 50, "");
+    TIDE_CHECK(offers(completion, "*.fbx") && offers(completion, "**/*.fbx") && !offers(completion, "*.obj"));
+    snprintf(text, sizeof text, "%sview V()\n{\n    Debug.Log(hero.animations.idle.name);\n}\n", prefix);
+    open_uri(uri_main, text);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at(uri_main, "textDocument/hover", 6, 32, "");
+    TIDE_CHECK(has(hover, "Animation idle") && has(hover, "original source name `Idle`"));
+    char notification[1024];
+    snprintf(notification, sizeof notification, "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\","
+             "\"params\":{\"changes\":[{\"uri\":\"%s\",\"type\":2}]}}", uri_model);
+    handle(notification);
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1u && model_metadata_statistics().file_reads == warm.file_reads + 1u);
+    remove_game_file("lsp_fbx/main.tide");
+    remove_game_file("lsp_fbx/art/hero.FBX");
+    remove_game_file("lsp_fbx/art/static.obj");
+    remove_game_file("lsp_fbx/.tide/assets.sha256");
+    remove_game_file("lsp_fbx/.tide/.gitignore");
+    remove_folder("lsp_fbx/.tide");
+    remove_folder("lsp_fbx/art");
+    remove_folder("lsp_fbx");
     clear_sent();
     lsp_free(&server);
     model_metadata_forget();

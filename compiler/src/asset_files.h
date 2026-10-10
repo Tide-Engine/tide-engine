@@ -23,7 +23,7 @@ typedef enum asset_kind {
     // nx, py, ny, pz, nz), decoded: its items are the six in that order
     ASSET_CUBEMAP,
     ASSET_CLIP,    // Clip: a WAV, checked here and kept as it is; the engine decodes it as it's first played
-    // Mesh<V>: a glTF (.glb, .gltf) or an OBJ, read here as one mesh (mesh_files.h), which codegen lays out as
+    // Mesh<V>: glTF (.glb, .gltf), OBJ or FBX, read here as one mesh (mesh_files.h), which codegen lays out as
     // the declaration's vertex struct
     ASSET_MESH,
     ASSET_SKINNED,

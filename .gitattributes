@@ -30,3 +30,5 @@ packages/box3d/box3d/** -text
 
 # Models the tests and the examples draw.
 *.glb binary
+*.fbx binary
+compiler/third_party/ufbx/** -text

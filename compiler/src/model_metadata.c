@@ -1,11 +1,12 @@
-// Catalog inspection for editors: read a glTF's JSON and skip its binary
-// data. The parser allocates only names, hierarchy edges and skin indices;
-// unknown JSON values are validated and skipped without building a tree.
+// Catalog inspection for editors. glTF reads JSON only; FBX skips geometry,
+// animation curves and embedded content. No format opens external files.
 #include "model_metadata.h"
 
 #include "assets.h"
 #include "folders.h"
+#include "fbx_files.h"
 #include "sha256.h"
+#include <ufbx.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -13,6 +14,7 @@
 #include <string.h>
 
 #define METADATA_JSON_MOST (16u * 1024u * 1024u)
+#define METADATA_FBX_MOST (64u * 1024u * 1024u)
 
 typedef struct edge {
     uint32_t parent, child;
@@ -449,9 +451,87 @@ static bool glb_header(const uint8_t *data, const size_t header, const uint64_t 
     return true;
 }
 
+static bool fbx_name(const ufbx_string source, char **out, char why[256])
+{
+    if (source.length == 0) return true;
+    if (memchr(source.data, 0, source.length)) { snprintf(why, 256, "has an FBX catalog name containing a NUL"); return false; }
+    *out = malloc(source.length + 1u);
+    if (!*out) abort();
+    memcpy(*out, source.data, source.length);
+    (*out)[source.length] = '\0';
+    return true;
+}
+
+static bool fbx_read(const uint8_t *data, const size_t size, const bool interactive, model_metadata *out, char why[256],
+                     bool *unavailable)
+{
+    // Keep helper generation and source ordering in step with fbx_files.c.
+    // Ignoring content retains nodes, animation stacks and skin clusters.
+    ufbx_load_opts opts = {0};
+    opts.file_format = UFBX_FILE_FORMAT_FBX;
+    opts.ignore_geometry = opts.ignore_animation = opts.ignore_embedded = true;
+    opts.skip_skin_vertices = true;
+    opts.target_axes = ufbx_axes_right_handed_y_up;
+    opts.target_unit_meters = 1.0;
+    opts.space_conversion = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
+    opts.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_HELPER_NODES;
+    opts.inherit_mode_handling = UFBX_INHERIT_MODE_HANDLING_HELPER_NODES;
+    opts.node_depth_limit = 128;
+    opts.index_error_handling = UFBX_INDEX_ERROR_HANDLING_ABORT_LOADING;
+    opts.use_blender_pbr_material = true;
+    opts.force_single_thread_ascii_parsing = true;
+    opts.temp_allocator.memory_limit = opts.result_allocator.memory_limit = (interactive ? 128u : 512u) * 1024u * 1024u;
+    ufbx_error error;
+    ufbx_scene *scene = ufbx_load_memory(data, size, &opts, &error);
+    if (!scene) {
+        if (unavailable) *unavailable = error.type == UFBX_ERROR_MEMORY_LIMIT;
+        snprintf(why, 256, "FBX catalog metadata: %.*s", (int)error.description.length, error.description.data);
+        return false;
+    }
+    bool ok = false;
+    if (scene->nodes.count > INT32_MAX || scene->anim_stacks.count > INT32_MAX || scene->skin_deformers.count > INT32_MAX) {
+        snprintf(why, 256, "has too many FBX catalog items");
+        goto done;
+    }
+    out->node_count = (uint32_t)scene->nodes.count;
+    out->animation_count = (uint32_t)scene->anim_stacks.count;
+    out->skin_count = (uint32_t)scene->skin_deformers.count;
+    out->nodes = calloc(out->node_count ? out->node_count : 1u, sizeof *out->nodes);
+    out->animations = calloc(out->animation_count ? out->animation_count : 1u, sizeof *out->animations);
+    out->skins = calloc(out->skin_count ? out->skin_count : 1u, sizeof *out->skins);
+    if (!out->nodes || !out->animations || !out->skins) abort();
+    for (uint32_t i = 0; i < out->node_count; i++) {
+        const ufbx_node *node = scene->nodes.data[i];
+        out->nodes[i].parent = node->parent ? (int32_t)node->parent->typed_id : -1;
+        if (!fbx_name(node->name, &out->nodes[i].name, why)) goto done;
+    }
+    for (uint32_t i = 0; i < out->animation_count; i++) {
+        if (!fbx_name(scene->anim_stacks.data[i]->name, &out->animations[i], why)) goto done;
+    }
+    for (uint32_t i = 0; i < out->skin_count; i++) {
+        const ufbx_skin_deformer *skin = scene->skin_deformers.data[i];
+        model_metadata_skin *target = &out->skins[i];
+        target->root = -1;
+        if (skin->clusters.count > INT32_MAX) { snprintf(why, 256, "has too many FBX skin clusters"); goto done; }
+        if (!fbx_name(skin->name, &target->name, why)) goto done;
+        target->joint_count = (uint32_t)skin->clusters.count;
+        target->joints = calloc(target->joint_count ? target->joint_count : 1u, sizeof *target->joints);
+        if (!target->joints) abort();
+        for (uint32_t k = 0; k < target->joint_count; k++) {
+            const ufbx_node *bone = skin->clusters.data[k]->bone_node;
+            if (!bone || bone->typed_id >= out->node_count) { snprintf(why, 256, "has an FBX skin cluster without a bone"); goto done; }
+            target->joints[k] = bone->typed_id;
+        }
+    }
+    ok = true;
+done:
+    ufbx_free_scene(scene);
+    if (!ok) model_metadata_free(out);
+    return ok;
+}
+
 bool model_metadata_read(const uint8_t *data, const size_t size, const char *name, model_metadata *out, char why[256])
 {
-    (void)name;
     *out = (model_metadata){0};
     why[0] = '\0';
     if (!data || !size) { snprintf(why, 256, "has no model metadata"); return false; }
@@ -460,7 +540,8 @@ bool model_metadata_read(const uint8_t *data, const size_t size, const char *nam
         if (!glb_header(data, size, size, &count, why)) return false;
         data += 20;
         if (!json_read(data, count, out, why)) { model_metadata_free(out); return false; }
-    } else if (!json_read(data, size, out, why)) { model_metadata_free(out); return false; }
+    } else if (fbx_file_is(data, size, name)) return fbx_read(data, size, false, out, why, NULL);
+    else if (!json_read(data, size, out, why)) { model_metadata_free(out); return false; }
     return true;
 }
 
@@ -488,20 +569,34 @@ typedef struct cached_metadata {
 static cached_metadata *cached;
 static model_metadata_stats statistics;
 
-static model_metadata_status inspect(const char *path, const unsigned long long size, model_metadata *out, char why[256])
+static model_metadata_status inspect(const char *path, const char *name, const unsigned long long size, model_metadata *out, char why[256])
 {
     FILE *in = fopen(path, "rb");
     if (!in) { snprintf(why, 256, "model metadata can't be read"); return MODEL_METADATA_UNAVAILABLE; }
-    uint8_t header[20];
-    const size_t got = fread(header, 1, sizeof header, in);
+    uint8_t header[4096];
+    size_t got = fread(header, 1, 20u, in);
     statistics.file_reads++;
     statistics.bytes_read += got;
     uint32_t count = 0;
-    bool glb = got >= 4 && little32(header) == 0x46546c67u;
+    const bool glb = got >= 4 && little32(header) == 0x46546c67u;
+    bool fbx = !glb && fbx_file_is(header, got, name);
+    if (!glb && !fbx) {
+        // Extensionless URL caches can contain ASCII FBX with leading
+        // comments. Match the full importer's bounded header sniff.
+        const size_t prefix = size < sizeof header ? (size_t)size : sizeof header;
+        const size_t extra = prefix > got ? fread(header + got, 1, prefix - got, in) : 0;
+        got += extra;
+        statistics.bytes_read += extra;
+        fbx = fbx_file_is(header, got, name);
+    }
     if (glb && !glb_header(header, got, size, &count, why)) { fclose(in); return MODEL_METADATA_INVALID; }
-    if (!glb && size > UINT32_MAX) { fclose(in); snprintf(why, 256, "model JSON is too large for interactive inspection"); return MODEL_METADATA_UNAVAILABLE; }
+    if (!glb && size > UINT32_MAX) { fclose(in); snprintf(why, 256, "model metadata is too large for interactive inspection"); return MODEL_METADATA_UNAVAILABLE; }
     const uint64_t bytes = glb ? count : size;
-    if (bytes > METADATA_JSON_MOST) { fclose(in); snprintf(why, 256, "model JSON exceeds the 16 MiB interactive inspection budget"); return MODEL_METADATA_UNAVAILABLE; }
+    if (bytes > (fbx ? METADATA_FBX_MOST : METADATA_JSON_MOST)) {
+        fclose(in);
+        snprintf(why, 256, "%s exceeds the %u MiB interactive inspection budget", fbx ? "FBX source" : "model JSON", fbx ? 64u : 16u);
+        return MODEL_METADATA_UNAVAILABLE;
+    }
     uint8_t *json = malloc(bytes ? (size_t)bytes : 1u);
     if (!json) abort();
     size_t have = 0;
@@ -515,13 +610,14 @@ static model_metadata_status inspect(const char *path, const unsigned long long 
     fclose(in);
     if (have + more != bytes) { free(json); snprintf(why, 256, "model metadata changed or couldn't be read"); return MODEL_METADATA_UNAVAILABLE; }
     statistics.parses++;
-    const bool ok = json_read(json, (size_t)bytes, out, why);
+    bool unavailable = false;
+    const bool ok = fbx ? fbx_read(json, (size_t)bytes, true, out, why, &unavailable) : json_read(json, (size_t)bytes, out, why);
     free(json);
-    if (!ok) { model_metadata_free(out); return MODEL_METADATA_INVALID; }
+    if (!ok) { model_metadata_free(out); return unavailable ? MODEL_METADATA_UNAVAILABLE : MODEL_METADATA_INVALID; }
     return MODEL_METADATA_READY;
 }
 
-model_metadata_status model_metadata_cached(const char *path, const model_metadata **out, const char **why)
+static model_metadata_status cached_named(const char *path, const char *name, const model_metadata **out, const char **why)
 {
     *out = NULL;
     cached_metadata *entry = cached;
@@ -547,12 +643,17 @@ model_metadata_status model_metadata_cached(const char *path, const model_metada
         entry->modified = modified;
         entry->dirty = false;
         entry->why[0] = '\0';
-        if (present) entry->status = inspect(path, size, &entry->metadata, entry->why);
+        if (present) entry->status = inspect(path, name, size, &entry->metadata, entry->why);
         else { entry->status = MODEL_METADATA_UNAVAILABLE; snprintf(entry->why, sizeof entry->why, "model metadata file is unavailable"); }
     }
     *why = entry->why;
     if (entry->status == MODEL_METADATA_READY) *out = &entry->metadata;
     return entry->status;
+}
+
+model_metadata_status model_metadata_cached(const char *path, const model_metadata **out, const char **why)
+{
+    return cached_named(path, path, out, why);
 }
 
 model_metadata_status model_metadata_cached_url(const char *url, const char *game_folder, const model_metadata **out,
@@ -569,7 +670,7 @@ model_metadata_status model_metadata_cached_url(const char *url, const char *gam
     char *path = malloc(length);
     if (!path) abort();
     snprintf(path, length, "%s%s%s", base, middle, digest);
-    const model_metadata_status status = model_metadata_cached(path, out, why);
+    const model_metadata_status status = cached_named(path, url, out, why);
     free(path);
     return status;
 }
