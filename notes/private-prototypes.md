@@ -204,6 +204,15 @@ and WebGPU multiplayer. CPU-only scheduling probes covered cancellation,
 duplicate callbacks, native timestamps/context, recursive slow frames and
 callback errors. No workflow was dispatched or rerun.
 
+Hosted run `38057969812` at `6a8c9e24` passed Windows native (1,993/1,993)
+and Windows web (1,985/1,985). The paced Last Light WebGL and WebGPU
+playtests passed in 37.51 and 59.74 seconds, and the cleanup fixture passed
+on both. Linux and macOS suites passed too. Unrelated Windows tool-feed and
+JetBrains dependency-resolution failures blocked release; at the owner's
+request only the failed jobs and their dependent gates were retried.
+MinGW passed 1,993/1,993 on that retry, including the cleanup fixture.
+The complete run then passed and published `v0.3.0-nightly.117`.
+
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
 unrestricted parent affinity and parent affinity limited to two processors

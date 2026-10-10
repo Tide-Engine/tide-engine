@@ -40,6 +40,24 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   keeps software-rendered pages from competing with each other or WASI tests.
   Other suites keep their existing parallelism. No suites, assertions, browser
   flags, timeouts or publishing gates changed.
+- Windows tool setup verifies the hosted image's Ninja and zstd instead of
+  asking Chocolatey to install them again (2026-10-10). In run `38057969812`,
+  the Windows package and MinGW jobs stopped before building because the
+  Chocolatey `zstandard` metadata request timed out after 100 seconds. That
+  exact image already had Ninja 1.13.2 and zstd 1.5.7; LLVM cache restoration
+  had already run PATH-visible zstd successfully. Chocolatey installs ccache
+  only when it is missing, and setup verifies all three tools. Missing tools
+  and failed installations still stop the job; LLVM extraction is unchanged.
+  Local Git Bash validation of the exact setup block covers ccache already
+  present, a successful missing-ccache installation and an installation
+  failure propagating its exit code. Chocolatey is isolated behind a stub;
+  the real Ninja/zstd version commands run. Actionlint and whitespace checks
+  pass, excluding only actionlint's existing unsupported `queue` key.
+  The original `6a8c9e24` run recovered with one failed-jobs-only retry:
+  every required check passed and `v0.3.0-nightly.117` published all five
+  assets. Successful jobs and their artifacts were reused. This preventive
+  setup change was validated locally and landed after that release; the
+  hosted retry used the original setup, and no new full workflow was started.
 - The JetBrains build job disables `setup-gradle` caching (2026-10-10).
   Run `38049029745` exhausted the hosted runner's disk during Gradle setup:
   its check annotation reports `No space left on device` writing the runner's
@@ -53,8 +71,16 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   and downloads the wrapper and dependencies on demand; plugin compilation and
   verification stay the same. This trades warm-cache build speed for avoiding
   the failing restore. Actionlint passes with only the existing unsupported
-  `queue` key excluded, and `git diff --check` passes. A requested hosted run
-  is still needed to confirm the cold build's disk use. No run was dispatched.
+  `queue` key excluded, and `git diff --check` passes. Run `38051684843`
+  subsequently passed the cold build and verification in 6 minutes 10 seconds.
+  Run `38057969812` failed resolving twelve plugin dependencies before
+  compilation, with the same pinned IntelliJ plugin 2.19.0 and Gradle 9.8.
+  Those artifacts were reachable again afterward, and an unchanged local
+  Gradle/JDK 21 `help` run with an empty isolated Gradle home resolved them
+  and passed in 1 minute 58 seconds. This was an upstream resolution failure;
+  no plugin dependencies or repositories were changed. The owner authorized
+  a failed-jobs-only retry of that run, reusing successful suites and artifacts.
+  JetBrains passed unchanged on that retry in 5 minutes 33 seconds.
 - Publishing uses the default `GITHUB_TOKEN` unless repository secret `TIDE_PUBLISH_TOKEN` is configured. The optional token belongs to `Tide-Engine`, selects this repository, and needs Contents and Workflows write permission: GitHub requires workflow authorization when the selected commit's workflows differ from the default branch's. Version checks that difference before building packages when the optional token is absent; Release checks again because the default branch can move during a build. This publishing token is separate from the docs site's read-only `TIDE_RELEASES_TOKEN`. Nightly retries fetch existing tag and notes refs, reject a tag for another commit, and push both refs atomically so a rejected tag leaves no new notes behind.
 - **All CI jobs use GitHub-hosted runners** (the owner, 2026-10-09: "move the workflows back to pure github for now, not blacksmith"). Windows' package and suites run on `windows-2025`, Linux's on `ubuntu-24.04`, and macOS's (Apple Silicon) on `macos-latest`. The supporting jobs and Docs use `ubuntu-24.04` too. Both workflows use `actions/checkout@v4`, install their tools and restore their caches on fresh checkouts. Manual triggers, suites, publishing gates and `TIDE_HIDDEN` stay as before. `.github/runner/README.md` records the former self-hosted runners, which neither workflow selects.
   - Validation: both workflows parse as YAML, a comparison against their previous versions confirms only runner labels, checkout actions and the runner comment changed, and `git diff --check` passes. `actionlint` 1.7.12 passes with only its unsupported existing `queue` key excluded; `queue: single` is supported by [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency). The hosted environments still need a manually requested workflow run; none was dispatched for this change.
