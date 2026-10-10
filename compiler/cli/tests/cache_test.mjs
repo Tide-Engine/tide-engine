@@ -1,12 +1,12 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only] [--gpu] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-const opts = { tide: null, web: false, watchOnly: false, gpu: false, keep: false };
+const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, gpu: false, keep: false };
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -15,10 +15,11 @@ for (let i = 2; i < process.argv.length; i++) {
     }
     else if (process.argv[i] === "--web") opts.web = true;
     else if (process.argv[i] === "--watch-only") opts.watchOnly = true;
+    else if (process.argv[i] === "--strip-only") opts.stripOnly = true;
     else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only] [--gpu] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
@@ -88,9 +89,86 @@ function removeOwned(root, path) {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
-async function webRunTest(tide, root) {
-    console.log("Cache correctness: default web hot reload");
-    const game = join(root, "web-reload");
+async function strippingTests(tide, installation, root, target) {
+    console.log(`Release code stripping: ${target}`);
+    const game = join(root, `strip-${target}`);
+    mkdirSync(game);
+    const engine = join(installation, "src", "engine", "strip_test.c");
+    check(!existsSync(engine), "private installation already contains strip_test.c");
+    const markers = {
+        engineCalled: "TIDE_STRIP_ENGINE_CALLED_7e469203",
+        engineUnused: "TIDE_STRIP_ENGINE_UNUSED_c56a080d",
+        userCalled: "TIDE_STRIP_USER_CALLED_6d1a39b7",
+        userUnused: "TIDE_STRIP_USER_UNUSED_a97f0d24",
+    };
+    const functions = (prefix, called, unused) => `
+static const char ${prefix}_called[] = "${called}";
+static const char ${prefix}_unused[] = "${unused}";
+__attribute__((noinline)) const char *${prefix}Called(void) { return ${prefix}_called; }
+__attribute__((noinline)) const char *${prefix}Unused(void) { return ${prefix}_unused; }
+`;
+    put(engine, functions("EngineProbe", markers.engineCalled, markers.engineUnused));
+    put(join(game, "probe.c"), functions("UserProbe", markers.userCalled, markers.userUnused));
+    // A separate caller prevents the C optimizer from replacing a known
+    // returned address without calling the user function in the first place.
+    put(join(game, "caller.c"), `
+#include <stdlib.h>
+#include <string.h>
+const char *EngineProbeCalled(void);
+const char *UserProbeCalled(void);
+int Native(int value)
+{
+    const char *engine = EngineProbeCalled();
+    const char *user = UserProbeCalled();
+    if (strcmp(engine, "${markers.engineCalled}") || strcmp(user, "${markers.userCalled}")) abort();
+    return value + (unsigned char)engine[0] + (unsigned char)user[0];
+}
+`);
+    put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; }\nextern int Native(int value);\n"
+        + 'asset string fromC = "from-c.txt";\n'
+        + "system Update(mut State state) { state.value = Native(state.value); }\n");
+    const packedMarker = "TIDE_C_ASSET_WITHOUT_TIDE_REFERENCE_2c961b87";
+    put(join(game, "from-c.txt"), packedMarker);
+    try {
+        for (const release of [false, true]) {
+            const output = join(root, `strip-${target}-${release ? "release" : "debug"}${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
+            const args = ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []), ...(release ? ["--release"] : [])];
+            const result = await run(tide, args, game);
+            check(result.code === 0, `stripping fixture build failed:\n${result.said}`);
+            const pack = readFileSync(join(game, ".tide", `${target}-${release ? "release" : "debug"}`, "gen", "game.pack"));
+            check(pack.includes(Buffer.from(packedMarker)), "C interop lost an asset without a Tide reference");
+            let program = readFileSync(output);
+            if (target === "web") {
+                const encoded = program.toString("utf8").match(/const TIDE_PROGRAM = "([A-Za-z0-9+/=]+)";/)?.[1];
+                check(encoded, "web stripping fixture has no embedded program");
+                program = Buffer.from(encoded, "base64");
+            }
+            for (const [name, marker] of Object.entries(markers)) {
+                // WebAssembly already collects unused code in debug. Native
+                // debug must keep it, proving that release changes the link.
+                const expected = name.endsWith("Called") || (!release && target === "native");
+                check(program.includes(Buffer.from(marker)) === expected,
+                    `${target} ${release ? "release" : "debug"}: ${name} ${expected ? "was removed" : "was retained"}`);
+            }
+            if (release) {
+                // Both unused bodies/data really entered the link: their
+                // disappearance is link collection, not C-level optimization.
+                const cache = join(game, ".tide", `${target}-release`);
+                check(readFileSync(join(cache, "engine", "strip_test.c.o")).includes(Buffer.from(markers.engineUnused)),
+                    "unused engine sentinel missing before the release link");
+                check(readFileSync(join(cache, "c", "probe.c.o")).includes(Buffer.from(markers.userUnused)),
+                    "unused user sentinel missing before the release link");
+            }
+        }
+        console.log("  called engine/user code remains; uncalled code/data is absent from releases");
+    } finally {
+        removeOwned(root, engine);
+    }
+}
+
+async function webRunTest(tide, root, release = false) {
+    console.log(`Cache correctness: ${release ? "release" : "debug"} web hot reload`);
+    const game = join(root, `web-reload-${release ? "release" : "debug"}`);
     mkdirSync(game);
     const source = join(game, "game.tide");
     const c = join(game, "native.c");
@@ -98,7 +176,7 @@ async function webRunTest(tide, root) {
     put(source, tideText);
     put(join(game, "message.txt"), "before");
     put(c, "int Native(int value) { return value + 1; }\n");
-    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7"],
+    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7", ...(release ? ["--release"] : [])],
         { cwd: game, env, shell: false, windowsHide: true });
     let output = "", url = null, exited = false, exitCode = null, startError = null;
     const closed = new Promise((accept) => {
@@ -141,7 +219,7 @@ async function webRunTest(tide, root) {
         check(page.includes('Tide.arguments = [ "--seed","7"]'), "web run passes the game's arguments");
         check(page.includes("Tide.reload = true;"), "web run enables page polling by default");
         await waitFor(async () => await buildNumber() === 1, "initial web build");
-        const cache = join(game, ".tide", "web-debug");
+        const cache = join(game, ".tide", `web-${release ? "release" : "debug"}`);
         let before = mark(cache);
         const generated = [...before.keys()].find((file) => /^run\/\d+\/game\.o$/.test(file));
         check(generated, "web run's generated object not found");
@@ -489,11 +567,17 @@ async function main() {
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
         if (!opts.watchOnly) {
-            for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
-            for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
+            for (const target of opts.web ? ["native", "web"] : ["native"]) await strippingTests(tide, installation, root, target);
+            if (!opts.stripOnly) {
+                for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
+                for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
+            }
         }
-        if (opts.web || opts.watchOnly) await webRunTest(tide, root);
-        if (opts.gpu && !opts.watchOnly) await nativeRunTest(tide, root);
+        if (!opts.stripOnly && (opts.web || opts.watchOnly)) {
+            await webRunTest(tide, root);
+            await webRunTest(tide, root, true);
+        }
+        if (opts.gpu && !opts.watchOnly && !opts.stripOnly) await nativeRunTest(tide, root);
         console.log("Cache integration tests passed.");
     } finally {
         if (opts.keep) console.log(`Kept fixtures: ${root}`);
