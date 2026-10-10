@@ -1,5 +1,11 @@
 # The docs site
 
+Quaternion Euler overload (2026-10-10): the Math page and spec document both
+`quaternion.Euler(float3 radians)` and `quaternion.Euler(x, y, z)`. Each scalar
+angle is in radians; the scalar form equals `quaternion.Euler(float3(x, y, z))`
+with the same Z-X-Y rotation order. Existing examples keep their current form.
+The production docs build passed; no site deployment was requested.
+
 Aerial catalog addition (2026-10-10): the owner's second Rocket League
 prototype adds a seventh server-loaded card, `aerial`, for one to six
 players, above Afterburn's. `aerial_page` stages under

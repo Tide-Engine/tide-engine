@@ -536,6 +536,9 @@ static void build_signatures(void)
              "axis, angle", "A rotation of `angle` radians around `axis`.");
     describe(add("quaternion", "Euler", T_Q, "tide_euler_q", 1, T_F3, T_NONE, T_NONE),
              "radians", "A rotation from Euler angles in radians: Z first, then X, then Y.");
+    signature *euler = add("quaternion", "Euler", T_Q, "tide_euler_q", 3, T_F, T_F, T_F);
+    euler->pack = "tide_f3";
+    describe(euler, "x, y, z", "A rotation from Euler angles in radians: Z first, then X, then Y.");
     describe(add("quaternion", "LookRotation", T_Q, "tide_lookrotation_q", 2, T_F3, T_F3, T_NONE),
              "forward, up", "A rotation that looks along `forward`, with `up` as up.");
     describe(add("float4x4", "TRS", T_F4X4, "tide_trs_f4x4", 3, T_F3, T_Q, T_F3),

@@ -4,6 +4,18 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Rendering and platform
 
+- **Scalar quaternion Euler arguments** (2026-10-10): `quaternion.Euler(x, y, z)`
+  packs its three checked float arguments into the existing `H_EULER_Q` helper
+  in both GLSL and WGSL. It retains the vector overload's radians and ZXY
+  rotation order; integer arguments widen normally and named arguments use
+  the checker's settled x/y/z order. The vector overload and helper formula
+  are unchanged. `compiler/tests/shaders/math` pins scalar float, integer and
+  reordered named calls in both stages. `platform/tests/shaders.tide` adds
+  these forms to the existing CPU-versus-frag/vert quaternion probes, including
+  comparisons with vector Euler results to check argument placement.
+  Validation: GLSL/WGSL golden pins and the quaternion probes pass on OpenGL,
+  WebGL 2 and WebGPU; all 2,016 native debug tests pass.
+
 ### Skinned vertex stage
 
 - `Draw.SkinnedMesh` plans `shader.skinned` (2026-10-08), including plain Vertex3 draws without a user stage. Two existing integer data textures carry the palette and hidden influence ranges/pairs (`shader_texture.skin` 1 and 2; 0 is an ordinary texture), using three draw-uniform ints for their counts. They consume normal texture slots; they require no backend-specific attributes or new vertex fields. `tide_draw_skinned_data` captures them before the ordinary `tide_draw_mesh_shaded` call.
