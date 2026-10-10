@@ -314,8 +314,8 @@ Windows cleanup still requests the whole browser tree;
 the direct fallback confirms the owned parent and tree-killer exits, without
 claiming that every independently surviving descendant was observed.
 
-Five Windows regressions use real owned processes and intercept only the
-taskkill launch: a stalled command, failure to start, browser exit while the
+The original five Windows regressions used real owned processes and intercepted
+only the taskkill launch: a stalled command, failure to start, browser exit while the
 command is stalled, refused direct browser termination, and refused taskkill
 termination. The original three portable cases remain. The previous helper
 fails the stalled-command and lingering-command negative controls; the fixed
@@ -334,10 +334,11 @@ at the production two-second budget. Successful browser termination took
 180–925 ms to report exit. This establishes a scheduling-sensitive fixture;
 the hosted log alone does not identify its precise exit delays.
 
-The five Windows fault cases now use cleanup's default two-second budget.
+The first fixture correction gave the five Windows fault cases cleanup's
+default two-second budget.
 Their process-exit, pipe-release, failed-termination and unreferenced-helper
-assertions and ten-second case guards stay the same. Only their combined
-CTest guard changes from 30 to 60 seconds: intentional waits now total about
+assertions and ten-second case guards stayed the same. Only their combined
+CTest guard changed from 30 to 60 seconds: intentional waits then totaled about
 24 seconds before process startup and exit overhead. The cleanup helper and
 the real browser playtests' deadlines are unchanged.
 
@@ -357,6 +358,40 @@ seconds. All ten-second case guards held, and the measured suite duration
 fits the new 60-second CTest guard but exceeds the previous 30 seconds.
 The final process audit confirmed every owned worker and helper was gone.
 No CI run or retry was dispatched.
+
+Run `38089269838` at `bd890b83` passed Windows native and web and every other
+suite except MinGW's copy of the CPU-only cleanup fixture. Seven cases passed
+with no assertion failures; the refused direct-termination case was cancelled
+at its ten-second Node guard, reporting 13.49 seconds. The whole fixture took
+40.38 seconds, below the 60-second CTest guard. The previous budget correction
+therefore did not remove the fault cases' dependence on CPU scheduling.
+
+The Windows fault tests now control the clock and process notifications
+(2026-10-11). Six cases use EventEmitter child doubles and Node's
+[mock timer API](https://nodejs.org/download/release/v24.21.0/docs/api/test.html#class-mocktimers)
+to advance the real cleanup helper's default two-second windows. The doubles'
+accepted kill requests set `killed` but leave exit/signal codes null until a
+test reports exit. Assertions check both full grace windows at 1,999/2,000 ms,
+pending cleanup before both exits, spawn errors, independent browser exit,
+refused termination, retained stderr on failure, unreferencing a stuck killer
+and released browser exit listeners. A new kill-only case requires failure
+when both requests succeed but neither process reports exit; a scratch mutant
+that treats `child.killed` as exit fails that case. No synthetic PID reaches
+an OS process command. The original three real-process integration cases and
+both real two-player browser playtests remain.
+
+The fault cases no longer spend about 22 wall seconds deliberately waiting;
+their ten-second case guards stay the same, and the CTest guard returns to its
+original 30 seconds. The cleanup implementation, real-process startup guard
+and browser playtest deadlines are unchanged. CI's exact Node 24.21 passed
+all 23 cleanup, pacing and DevTools cases in 2.40 seconds. With one CPU and
+eight competing owned workers, all six controlled cases passed in 4.81
+seconds including Node startup (individual cases 57–318 ms); every worker
+was reaped. The full nine-case suite passed on one CPU with two competing
+workers in 5.93 seconds, versus the previous fixture's 39.05 seconds under
+the same load. Scoped native debug passed 4/4 and web-debug passed 6/6,
+including real two-player WebGL and WebGPU with Chrome Headless Shell
+155.0.8059.39. All owned processes were reaped. No CI run or retry was dispatched.
 
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
