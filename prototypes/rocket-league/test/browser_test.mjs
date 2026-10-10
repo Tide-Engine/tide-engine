@@ -128,6 +128,16 @@ try {
                 windowsVirtualKeyCode: code === 'Escape' ? 27 : key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0 });
         };
         const tapKey = async (code, value) => { await key(code, value, true); await delay(100); await key(code, value, false); };
+        let mouseButtons = 0;
+        const mouse = async (button, down, x = 640, y = 360) => {
+            const mask = button === 'left' ? 1 : button === 'right' ? 2 : 4;
+            mouseButtons = down ? mouseButtons | mask : mouseButtons & ~mask;
+            await command('Input.dispatchMouseEvent', { type: down ? 'mousePressed' : 'mouseReleased',
+                x, y, button, buttons: mouseButtons, clickCount: 1 });
+        };
+        const tapMouse = async (button, x = 640, y = 360) => {
+            await mouse(button, true, x, y); await delay(100); await mouse(button, false, x, y);
+        };
         const screenshot = async (label) => {
             const result = await command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
             const bytes = Buffer.from(result.data, 'base64');
@@ -135,7 +145,7 @@ try {
             await writeFile(path.join(output, `${backend}-${label}.png`), bytes);
             return bytes;
         };
-        const client = { name, id: target.id, socket, command, evaluate, until, resize, key, tapKey, screenshot };
+        const client = { name, id: target.id, socket, command, evaluate, until, resize, key, tapKey, mouse, tapMouse, screenshot };
         clients.push(client);
         await command('Page.enable');
         await command('Runtime.enable');
@@ -203,22 +213,52 @@ try {
     const before = await host.screenshot('desktop-kickoff');
     await orange.screenshot('desktop-orange');
 
-    stage = 'driving, steering, boost and jump';
+    // Classic TAInput.ini bindings: LMB boost, RMB jump, Shift powerslide/
+    // air roll, Space ball cam. Space must not accidentally remain a jump.
+    stage = 'Classic keyboard/mouse driving, boost, forward dodge and ball camera';
     await host.key('KeyW', 'w', true);
-    await host.key('ShiftLeft', 'Shift', true);
+    await host.mouse('left', true);
     await orange.key('KeyW', 'w', true);
     await orange.key('KeyD', 'd', true);
     await delay(1000);
+    await host.tapMouse('right');
+    await delay(180);
+    await host.tapMouse('right');
+    await delay(500);
+    const moving = await host.screenshot('classic-boost-forward-dodge');
+    assert.notDeepEqual(moving, before, 'Driving changes the rendered match');
+    await host.key('KeyW', 'w', false);
+    await host.mouse('left', false);
+    await orange.key('KeyW', 'w', false);
+    await orange.key('KeyD', 'd', false);
+    await host.tapKey('Space', ' ');
+    await delay(300);
+    await host.screenshot('classic-ball-camera-toggle');
+
+    // Select the current Modern profile through the actual canvas GUI, then
+    // exercise its distinct actions. Coordinates are its settled 1280x720
+    // modal rows, verified by the native GUI fixture/captures.
+    stage = 'control profile selection and Modern bindings';
+    await host.tapKey('F2', 'F2');
+    await delay(300);
+    await host.screenshot('controls-classic');
+    await host.tapMouse('left', 640, 129);
+    await delay(150);
+    await host.screenshot('controls-modern');
+    await host.tapMouse('left', 640, 624);
+    await delay(150);
+    await host.key('KeyW', 'w', true);
+    await host.key('ShiftLeft', 'Shift', true);
     await host.tapKey('Space', ' ');
     await delay(180);
     await host.tapKey('Space', ' ');
-    await delay(500);
-    const moving = await host.screenshot('desktop-boost-jump');
-    assert.notDeepEqual(moving, before, 'Driving changes the rendered match');
+    await delay(400);
+    await host.screenshot('modern-boost-forward-dodge');
     await host.key('KeyW', 'w', false);
     await host.key('ShiftLeft', 'Shift', false);
-    await orange.key('KeyW', 'w', false);
-    await orange.key('KeyD', 'd', false);
+    await host.tapMouse('middle');
+    await delay(300);
+    await host.screenshot('modern-ball-camera-toggle');
 
     stage = 'portrait driving and multitouch boost/jump';
     await host.resize(390, 844);
@@ -246,7 +286,7 @@ try {
         assert.equal(screen.canvasHeight, screen.height, `${client.name}: canvas fits phone height`);
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`Afterburn (${backend}): title, two real WebRTC players, driving/boost/jump, keyboard/multitouch controls and desktop/phone rendering passed. Captures: ${output}`);
+    console.log(`Afterburn (${backend}): title, two real WebRTC players, Classic/Modern driving/boost/dodge/camera, keyboard/multitouch controls and desktop/phone rendering passed. Captures: ${output}`);
 } catch (error) {
     console.error(`Afterburn failed during ${stage}: ${error.stack ?? error}`);
     if (errors.length) console.error(errors.join('\n'));
