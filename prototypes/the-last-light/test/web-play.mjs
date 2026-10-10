@@ -4,7 +4,6 @@
 // node web-play.mjs <last_light.html> <capture directory> [webgl|webgpu]
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -13,6 +12,7 @@ import path from 'node:path';
 import { createRelay } from '../../../relay/relay.mjs';
 import { stopBrowser } from './browser-process.mjs';
 import { installFramePacing } from './frame-pacing.mjs';
+import { connectDevTools } from './browser-devtools.mjs';
 
 const [gamePage, captureDirectory, backend = 'webgl'] = process.argv.slice(2);
 assert.ok(gamePage && captureDirectory, 'Usage: web-play.mjs <last_light.html> <capture directory> [webgl|webgpu]');
@@ -58,12 +58,12 @@ const gpuFlags = backend === 'webgl'
 const browser = spawn(browserPath, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--mute-audio', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
     '--disable-backgrounding-occluded-windows', '--allow-loopback-in-peer-connection',
-    '--disable-features=WebRtcHideLocalIpsWithMdns', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    '--disable-features=WebRtcHideLocalIpsWithMdns', '--remote-debugging-pipe', `--user-data-dir=${profile}`,
     ...(process.platform === 'win32' ? ['--enable-logging', `--log-file=${browserLog}`] : []), ...gpuFlags, 'about:blank'],
-    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
 const clients = [];
 const errors = [];
-let endpoint;
+let ending = false;
 let stage = 'browser startup';
 const began = performance.now();
 const account = [];
@@ -73,46 +73,31 @@ const note = (line) => {
 };
 let browserErrors = '';
 browser.stderr.on('data', bytes => { browserErrors = (browserErrors + bytes).slice(-16_000); });
+const devtools = connectDevTools(browser);
+devtools.onDisconnect(error => { if (!ending) errors.push(`DevTools: ${error.message}`); });
+const browserCommand = async (method, params = {}, timeout = 20_000) => {
+    const started = performance.now();
+    note(`browser: ${method} started`);
+    const result = await devtools.command(method, params, { timeout });
+    note(`browser: ${method} finished in ${(performance.now() - started).toFixed(0)} ms`);
+    return result;
+};
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 try {
-    endpoint = await new Promise((resolve, reject) => {
-        let log = '';
-        browser.stderr.on('data', (bytes) => {
-            log += bytes;
-            const match = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(log);
-            if (match) resolve(`http://127.0.0.1:${match[1]}`);
-        });
-        browser.on('error', reject);
-        browser.on('exit', (code) => reject(new Error(`Browser stopped (${code}): ${log}`)));
-    });
+    await browserCommand('Browser.getVersion');
 
     async function player(name) {
-        let target;
-        if (clients.length) {
-            // Separate windows represent separate players' screens. Two
-            // tabs of one window intentionally stop drawing the hidden tab.
-            const created = await clients[0].command('Target.createTarget', { url: 'about:blank', newWindow: true });
-            target = (await (await fetch(`${endpoint}/json/list`)).json()).find((entry) => entry.id === created.targetId);
-        } else target = await (await fetch(`${endpoint}/json/new?about:blank`, { method: 'PUT' })).json();
-        const socket = new WebSocket(target.webSocketDebuggerUrl);
-        await once(socket, 'open');
-        let next = 1;
-        const pending = new Map();
+        // Separate windows represent separate players' screens. Two
+        // tabs of one window intentionally stop drawing the hidden tab.
+        const target = await browserCommand('Target.createTarget', { url: 'about:blank', newWindow: clients.length > 0 });
+        const { sessionId } = await browserCommand('Target.attachToTarget', { targetId: target.targetId, flatten: true });
         let state;
         let reportedAt = performance.now();
         let clock;
         let stalled = false;
-        socket.addEventListener('message', ({ data }) => {
-            const message = JSON.parse(data);
-            if (message.id) {
-                const entry = pending.get(message.id);
-                if (!entry) return;
-                clearTimeout(entry.timer);
-                pending.delete(message.id);
-                if (message.error) entry.reject(new Error(JSON.stringify(message.error)));
-                else entry.resolve(message.result);
-            } else if (message.method === 'Runtime.bindingCalled' && message.params.name === '__lastLightFrame') {
+        devtools.onEvent(sessionId, message => {
+            if (message.method === 'Runtime.bindingCalled' && message.params.name === '__lastLightFrame') {
                 const now = performance.now();
                 if (now - reportedAt > 1000) note(`${name}: ${(now - reportedAt).toFixed(0)} ms between completed frames`);
                 reportedAt = now;
@@ -133,24 +118,21 @@ try {
                 errors.push(`${name}: ${message.params.entry.text}`);
             } else if (message.method === 'Inspector.targetCrashed') errors.push(`${name}: renderer crashed`);
         });
-        socket.addEventListener('close', () => {
-            for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error(`${name}: debugging connection closed`)); }
-            pending.clear();
-        });
-        const command = (method, params = {}, timeout = 20_000) => new Promise((resolve, reject) => {
-            const id = next++;
+        const command = async (method, params = {}, timeout = 20_000) => {
             const started = performance.now();
             note(`${name}: ${method} started`);
-            const timer = setTimeout(() => {
-                pending.delete(id); stalled = true;
-                reject(new Error(`${name}: timed out ${method} (${stage}); last completed frame ${JSON.stringify(state)}`));
-            }, timeout);
-            pending.set(id, { resolve: result => {
+            try {
+                const result = await devtools.command(method, params, { sessionId, timeout });
                 note(`${name}: ${method} finished in ${(performance.now() - started).toFixed(0)} ms`);
-                resolve(result);
-            }, reject, timer });
-            socket.send(JSON.stringify({ id, method, params }));
-        });
+                return result;
+            } catch (error) {
+                if (error.code === 'ETIMEDOUT') {
+                    stalled = true;
+                    throw new Error(`${name}: timed out ${method} (${stage}); last completed frame ${JSON.stringify(state)}`);
+                }
+                throw new Error(`${name}: ${method}: ${error.message}`);
+            }
+        };
         // Frames arrive through a DevTools binding after the host has drawn.
         // Polling Runtime.evaluate can itself block behind a cold shader compile
         // and hit its command timeout before the readiness deadline expires.
@@ -190,7 +172,7 @@ try {
             await writeFile(path.join(output, `${backend}-${label}.png`), bytes);
             return bytes;
         };
-        const client = { name, id: target.id, socket, command, until, frames, resize, key, tapKey, screenshot,
+        const client = { name, command, until, frames, resize, key, tapKey, screenshot,
             get state() { return state && { ...state, reportAge: performance.now() - reportedAt }; }, get stalled() { return stalled; } };
         clients.push(client);
         await command('Page.enable');
@@ -378,14 +360,15 @@ try {
         console.error(`Browser subprocess log:\n${log.slice(-16_000)}`);
     }
 } finally {
-    const browserStopped = await stopBrowser(browser, () => clients[0]?.command('Browser.close', {}, 2000));
+    ending = true;
+    const browserStopped = await stopBrowser(browser, () => browserCommand('Browser.close', {}, 2000));
     if (!browserStopped) {
         process.exitCode = 1;
         console.error(`Browser did not stop; retained profile ${profile}`);
         browser.unref();
         browser.stderr.destroy();
     }
-    for (const client of clients) client.socket.close();
+    devtools.dispose();
     // HTTP close does not destroy upgraded relay sockets left by a crashed browser.
     for (const socket of connections) socket.destroy();
     await new Promise((resolve) => server.close(resolve));
