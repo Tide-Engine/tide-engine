@@ -111,9 +111,14 @@ static tide_bone_transform *scratch_transforms(const tide_list transforms, const
 // Private readers used only after the relevant nodes or channels have been
 // checked, or current immutable-pack provenance proves them. The opened model
 // remains live through each loop. Explicit LE decoding preserves stored bits.
+static uint32_t validated_word(const uint8_t *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
 static float validated_number(const uint8_t *p)
 {
-    const uint32_t bits = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+    const uint32_t bits = validated_word(p);
     float value;
     memcpy(&value, &bits, sizeof value);
     return value;
@@ -277,11 +282,16 @@ static bool channel_valid(const tide_skinned_data_view *v, const tide_skinned_ch
     return c->keys != 0u;
 }
 
-// Only sampled_value uses these unchecked time/key readers. Its two callers first
-// validate every selected channel/key, or establish current immutable-pack
-// provenance and check the channel plus its first nonnegative key. The opened
-// model stays live and unchanged through sampling; no pointer escapes. Decode
-// little-endian words explicitly, retaining the exact stored float bits.
+// These readers require complete channel/key validation, or current immutable-
+// pack provenance. The latter still needs the sampler's first-time >=0 guard.
+// The opened model stays live and unchanged through sampling; no pointer escapes.
+static void validated_channel(const tide_skinned_data_view *v, const uint32_t index, tide_skinned_channel_data *out)
+{
+    const uint8_t *p = v->data + v->channel_at + (size_t)index * TIDE_SKINNED_CHANNEL_SIZE;
+    *out = (tide_skinned_channel_data){validated_word(p), validated_word(p + 4u), validated_word(p + 8u),
+                                     validated_word(p + 12u), validated_word(p + 16u), validated_word(p + 20u)};
+}
+
 static float validated_time(const tide_skinned_data_view *v, const tide_skinned_channel_data *c, const uint32_t index)
 {
     return validated_number(v->data + c->times_at + (size_t)index * 4u);
@@ -305,16 +315,45 @@ static void validated_key(const tide_skinned_data_view *v, const tide_skinned_ch
     }
 }
 
-static tide_float4 sampled_value(const tide_skinned_data_view *v, const tide_skinned_channel_data *c, const float seconds)
+enum { SAMPLE_INTERVAL_SLOTS = 4, SAMPLE_INTERVAL_KEYS = 32 };
+
+typedef struct sample_interval {
+    const uint8_t *times;
+    uint32_t keys, low;
+} sample_interval;
+
+typedef struct sample_intervals {
+    sample_interval slots[SAMPLE_INTERVAL_SLOTS];
+} sample_intervals;
+
+static uint32_t sampled_interval(const tide_skinned_data_view *v, const tide_skinned_channel_data *c,
+                                const float seconds, sample_intervals *intervals)
 {
+    // One call samples one clock against an unchanged opened model. Short
+    // tracks can reuse only the search result after exact time-byte equality;
+    // values, paths and interpolation never enter this cache. Bound comparisons
+    // to 128 bytes, so long or colliding tracks retain bounded extra work.
+    sample_interval *slot = intervals && c->keys <= SAMPLE_INTERVAL_KEYS
+        ? &intervals->slots[c->keys % SAMPLE_INTERVAL_SLOTS] : NULL;
+    const uint8_t *times = v->data + c->times_at;
+    if (slot && slot->keys == c->keys
+        && (slot->times == times || tide_same_bytes(slot->times, times, (size_t)c->keys * 4u))) return slot->low;
     uint32_t low = 0, high = c->keys;
-    float time, value[4], in[4], out[4];
     while (low < high) {
         const uint32_t middle = low + (high - low) / 2u;
-        time = validated_time(v, c, middle);
+        const float time = validated_time(v, c, middle);
         if (time <= seconds) low = middle + 1u;
         else high = middle;
     }
+    if (slot) *slot = (sample_interval){times, c->keys, low};
+    return low;
+}
+
+static tide_float4 sampled_value(const tide_skinned_data_view *v, const tide_skinned_channel_data *c,
+                                const float seconds, sample_intervals *intervals)
+{
+    const uint32_t low = sampled_interval(v, c, seconds, intervals);
+    float time, value[4], in[4], out[4];
     const uint32_t before = low ? low - 1u : 0u;
     float first_time, first[4], unused[4], first_out[4];
     validated_key(v, c, before, &first_time, first, unused, first_out);
@@ -348,23 +387,24 @@ bool tide_skinned_sample(const tide_list data, const int32_t animation, const fl
     bool valid = (packed || nodes_valid(&m.view)) && tide_skinned_data_clip(&m.view, (uint32_t)animation, &clip);
     for (uint32_t i = 0; valid && i < clip.channels; i++) {
         tide_skinned_channel_data channel;
-        valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel);
-        if (valid && packed) {
+        if (packed) {
+            validated_channel(&m.view, clip.first_channel + i, &channel);
             // Full immutable-model validation proves finite increasing keys,
             // but permits the first time in (-1, 0). Sampling requires >=0.
-            float time, value[4], in[4], out[4];
-            valid = tide_skinned_data_key(&m.view, &channel, 0u, &time, value, in, out) && time >= 0.0f;
-        } else if (valid) valid = channel_valid(&m.view, &channel);
+            valid = validated_time(&m.view, &channel, 0u) >= 0.0f;
+        } else valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel)
+                   && channel_valid(&m.view, &channel);
     }
     if (valid) {
         fill_rest(&m.view, transforms, where);
         const float clock = tide_clamp_f(seconds, 0.0f, clip.length);
         tide_bone_transform *flat = scratch_transforms(*transforms, m.view.nodes);
         tide_list_cache cache = {0};
+        sample_intervals intervals = {0};
         for (uint32_t i = 0; i < clip.channels; i++) {
             tide_skinned_channel_data channel;
-            (void)tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel);
-            const tide_float4 value = sampled_value(&m.view, &channel, clock);
+            validated_channel(&m.view, clip.first_channel + i, &channel);
+            const tide_float4 value = sampled_value(&m.view, &channel, clock, &intervals);
             tide_bone_transform *to = flat ? flat + channel.node : tide_list_cached_at_mut(&cache, *transforms, (int32_t)channel.node, sizeof *to);
             if (!to) continue;
             if (channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
@@ -547,7 +587,7 @@ bool tide_skinned_sample_into(const tide_list target_data, const tide_list anima
             tide_skinned_channel_data channel;
             (void)tide_skinned_data_channel(&source.view, clip.first_channel + i, &channel);
             if (map[channel.node] < 0) continue;
-            const tide_float4 value = sampled_value(&source.view, &channel, clock);
+            const tide_float4 value = sampled_value(&source.view, &channel, clock, NULL);
             tide_bone_transform *to = tide_list_cached_at_mut(&cache, *transforms, map[channel.node], sizeof *to);
             if (!to) continue;
             if (channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
@@ -836,16 +876,14 @@ static bool skin_cache_texture(tide_draw_list *draw, const cached_skin_pose *pos
     return true;
 }
 
-static tide_bone_transform *skin_capture_transforms(const tide_list transforms, const uint32_t nodes)
+static const tide_bone_transform *skin_capture_transforms(const tide_list transforms, const uint32_t nodes)
 {
     if (tide_list_count(transforms) != (int32_t)nodes) return NULL;
+    // Actual scratch lists are contiguous and remain live through this
+    // synchronous call. Retained cache/atlas captures still copy these bytes
+    // before returning; heap/chunked inputs need a contiguous staging copy.
+    if (transforms.at >> 30 == TIDE_IN_SCRATCH) return tide_list_at(transforms, 0, sizeof(tide_bone_transform));
     tide_bone_transform *out = tide_scratch_memory((size_t)nodes * sizeof *out);
-    if (transforms.at >> 30 == TIDE_IN_SCRATCH) {
-        const void *flat = tide_list_at(transforms, 0, sizeof *out);
-        if (!flat) return NULL;
-        memcpy(out, flat, (size_t)nodes * sizeof *out);
-        return out;
-    }
     tide_list_cache cache = {0};
     for (uint32_t i = 0; i < nodes; i++) {
         const tide_bone_transform *local = tide_list_cached_at(&cache, transforms, (int32_t)i, sizeof *out);
@@ -986,7 +1024,7 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     bool valid = packed || tide_skinned_data_validate(m.view.data, m.view.size);
     const uint64_t pixels = (uint64_t)m.view.vertices + ((uint64_t)m.view.influences + 1u) / 2u;
     valid = valid && m.view.palettes != 0u && pixels > 0u && pixels <= TIDE_LIST_DATA_MOST;
-    tide_bone_transform *captured = NULL;
+    const tide_bone_transform *captured = NULL;
     uint32_t cached_model = 0u;
     uint64_t pose_hash = 0u;
     if (valid && packed) {
@@ -995,7 +1033,7 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
         if (valid) {
             if (!draw->skinned) draw->skinned = tide_alloc_zeroed(1u, sizeof *draw->skinned);
             cached_model = skin_cache_model(draw->skinned, &m.view, version);
-            pose_hash = tide_hash_end(tide_hash_more(tide_hash(captured, (size_t)m.view.nodes * sizeof *captured),
+            pose_hash = tide_hash_end(tide_hash_more(tide_hash_wide(captured, (size_t)m.view.nodes * sizeof *captured),
                                                     &cached_model, sizeof cached_model));
             const cached_skin_pose *pose = skin_cache_pose(draw->skinned, cached_model, pose_hash, captured,
                                                            (size_t)m.view.nodes * sizeof *captured, false);
@@ -1128,13 +1166,13 @@ bool tide_draw_skinned_atlas(tide_draw_list *draw, const tide_list data, const t
     const uint64_t pixels = (uint64_t)m.view.vertices + ((uint64_t)m.view.influences + 1u) / 2u;
     bool valid = m.view.palettes && m.view.palettes <= TIDE_LIST_DATA_MOST / 4u
         && pixels > 0u && pixels <= TIDE_LIST_DATA_MOST;
-    tide_bone_transform *trs = valid ? skin_capture_transforms(transforms, m.view.nodes) : NULL;
+    const tide_bone_transform *trs = valid ? skin_capture_transforms(transforms, m.view.nodes) : NULL;
     valid = valid && trs != NULL;
     if (valid) {
         if (!draw->skinned) draw->skinned = tide_alloc_zeroed(1u, sizeof *draw->skinned);
         const uint32_t model = skin_cache_model(draw->skinned, &m.view, version);
         const size_t bytes = (size_t)m.view.nodes * sizeof *trs;
-        const uint64_t hash = tide_hash_end(tide_hash_more(tide_hash(trs, bytes), &model, sizeof model));
+        const uint64_t hash = tide_hash_end(tide_hash_more(tide_hash_wide(trs, bytes), &model, sizeof model));
         const cached_skin_pose *pose = atlas_capture(draw, model, version, hash, trs, bytes);
         valid = pose != NULL;
         if (valid) {
