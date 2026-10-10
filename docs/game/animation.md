@@ -42,6 +42,8 @@ view Characters(Character character)
 
 `Draw.SkinnedMesh(mesh, transform[, pose])` takes the same texture, vert, frag and values arguments as a [3D mesh](./3d.md), and also works on a render target. The optional pose goes immediately after the transform; textures and shaders can follow the transform directly when no pose is supplied. Deformation applies before your `vert`, which receives the posed mesh-local position, normal and tangent.
 
+Each draw captures the pose as it is at that call, so later edits or samples do not change characters already drawn. The renderer can batch consecutive compatible draws of an imported model even when their poses differ. Different shaders, textures, shared values or draw settings can separate those batches.
+
 An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
 
 Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh, morph targets and external vertex caches. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.

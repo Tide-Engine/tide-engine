@@ -3001,6 +3001,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         if (!over) draw_calls = 0;
         return;
     }
+    tide_draw_prepare(list, tide_platform_jobs());
     const tide_gpu_id target = to.gpu;
     root = to;
     if (!over && target_epoch != list->epoch) {

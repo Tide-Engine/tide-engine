@@ -73,3 +73,11 @@ tide_list tide_skinned_palette(tide_list data, tide_list transforms);
 // pose; callers then record no draw. Geometry remains the ordinary V list.
 bool tide_draw_skinned_data(tide_draw_list *draw, tide_list data, tide_list transforms,
                             uint32_t textures[2], int32_t info[3]);
+
+// Generated skinned draws can share a palette page. info[3] is that pose's
+// matrix base, in addition to the three counts above. Validated dependencies
+// and current transforms are captured immediately; tide_draw_prepare fills
+// the matrices before rendering or copying the list. Unproven model values
+// retain the immediate checked path and have base zero.
+bool tide_draw_skinned_atlas(tide_draw_list *draw, tide_list data, tide_list transforms,
+                             uint32_t textures[2], int32_t info[4]);

@@ -1184,6 +1184,7 @@ typedef struct shader {
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
     VEC(shader_handed) handed; // What its vert writes for its frag, in the order the vert takes them
     int instance_floats, instance_ints; // Words
+    int skin_base_at; // Instance int word for an atlas matrix base, or -1 for individual palettes
     int uniform_floats, uniform_ints;
     int frag_floats, frag_ints; // Words of the instance the vertex stage passes on to the pixels
     // Its vert or its frag rolls with Random (rolled_at: the word of the uniforms' ints that's the frame's

@@ -2,7 +2,9 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 
+#include "tide/jobs.h"
 #include "tide/mesh.h"
 #include "tide/net.h"
 #include "tide/pack.h"
@@ -653,7 +655,14 @@ typedef struct cached_skin_pose {
     uint32_t model, texture;
     size_t bytes;
     int32_t width, height;
+    uint32_t base;
+    bool atlas, pending;
 } cached_skin_pose;
+
+typedef struct skin_atlas_page {
+    uint64_t id, hash;
+    uint32_t texture, count;
+} skin_atlas_page;
 
 struct tide_skinned_draw_cache {
     cached_skin_model *models;
@@ -663,6 +672,8 @@ struct tide_skinned_draw_cache {
     uint32_t model_slots, pose_slots;
     uint8_t *bytes;
     size_t used, capacity;
+    skin_atlas_page *pages;
+    uint32_t page_count, page_built, page_capacity;
 };
 
 void tide_skinned_draw_cache_reset(tide_draw_list *draw)
@@ -671,6 +682,11 @@ void tide_skinned_draw_cache_reset(tide_draw_list *draw)
     if (!c) return;
     c->model_count = c->pose_count = 0u;
     c->used = 0u;
+    c->page_count = 0u;
+    for (uint32_t i = 0; i < c->page_built; i++) {
+        c->pages[i].texture = c->pages[i].count = 0u;
+        c->pages[i].hash = TIDE_HASH_START;
+    }
     if (c->model_slots) memset(c->model_index, 0, (size_t)c->model_slots * sizeof(uint32_t));
     if (c->pose_slots) memset(c->pose_index, 0, (size_t)c->pose_slots * sizeof(uint32_t));
 }
@@ -684,6 +700,7 @@ void tide_skinned_draw_cache_free(tide_draw_list *draw)
     free(c->model_index);
     free(c->pose_index);
     free(c->bytes);
+    free(c->pages);
     free(c);
     draw->skinned = NULL;
 }
@@ -769,13 +786,13 @@ static uint32_t skin_cache_model(struct tide_skinned_draw_cache *c, const tide_s
 }
 
 static cached_skin_pose *skin_cache_pose(struct tide_skinned_draw_cache *c, const uint32_t model,
-                                         const uint64_t hash, const void *trs, const size_t bytes)
+                                         const uint64_t hash, const void *trs, const size_t bytes, const bool atlas)
 {
     if (!c->pose_slots) return NULL;
     uint32_t at = (uint32_t)hash & (c->pose_slots - 1u);
     while (c->pose_index[at]) {
         cached_skin_pose *p = &c->poses[c->pose_index[at] - 1u];
-        if (p->hash == hash && p->model == model && tide_same_bytes(c->bytes + p->bytes, trs, bytes)) return p;
+        if (p->hash == hash && p->model == model && p->atlas == atlas && tide_same_bytes(c->bytes + p->bytes, trs, bytes)) return p;
         at = (at + 1u) & (c->pose_slots - 1u);
     }
     return NULL;
@@ -785,7 +802,7 @@ static void skin_cache_capture(struct tide_skinned_draw_cache *c, const uint32_t
                                 const void *trs, const size_t bytes, const tide_draw_list *draw, const uint32_t slot)
 {
     const tide_draw_texture *t = &draw->textures[slot - 1u];
-    cached_skin_pose *previous = skin_cache_pose(c, model, hash, trs, bytes);
+    cached_skin_pose *previous = skin_cache_pose(c, model, hash, trs, bytes, false);
     if (previous) {
         previous->texture_id = t->id;
         previous->texture_version = t->version;
@@ -798,7 +815,8 @@ static void skin_cache_capture(struct tide_skinned_draw_cache *c, const uint32_t
     const size_t at = skin_cache_bytes(c, bytes);
     memcpy(c->bytes + at, trs, bytes);
     const uint32_t pose = c->pose_count++;
-    c->poses[pose] = (cached_skin_pose){hash, t->id, t->version, model, slot, at, t->width, t->height};
+    c->poses[pose] = (cached_skin_pose){.hash = hash, .texture_id = t->id, .texture_version = t->version,
+                                      .model = model, .texture = slot, .bytes = at, .width = t->width, .height = t->height};
     if (c->pose_count >= c->pose_slots / 2u) skin_cache_index(c, false);
     else {
         uint32_t place = (uint32_t)hash & (c->pose_slots - 1u);
@@ -924,6 +942,36 @@ static void matrix_words(const void *element, int32_t *words)
     memcpy(words, element, sizeof(tide_float4x4));
 }
 
+static uint32_t capture_influences(tide_draw_list *draw, const tide_skinned_data_view *v, const uint64_t version)
+{
+    const uint64_t pixels = (uint64_t)v->vertices + ((uint64_t)v->influences + 1u) / 2u;
+    const int32_t width = pixels < TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
+    const int32_t height = (int32_t)((pixels + TIDE_LIST_DATA_ACROSS - 1u) / TIDE_LIST_DATA_ACROSS);
+    const uint64_t kind = UINT64_C(0x534b494e494e464c);
+    uint8_t *out;
+    bool kept;
+    const uint32_t texture = tide_draw_texture_edit(draw, TIDE_PIXELS_LIST, UINT64_C(1) << 63 | version >> 1,
+                                                    version, width, height, TIDE_TEXELS_INTS, kind, &out, &kept);
+    if (out && !kept) {
+        memset(out, 0, (size_t)width * (size_t)height * 16u);
+        int32_t *words = (int32_t *)(void *)out;
+        for (uint32_t i = 0; i < v->vertices; i++) {
+            tide_skinned_vertex_data vertex;
+            (void)tide_skinned_data_vertex(v, i, &vertex);
+            words[(size_t)i * 4u] = (int32_t)vertex.first_influence;
+            words[(size_t)i * 4u + 1u] = (int32_t)vertex.influences;
+        }
+        for (uint32_t i = 0; i < v->influences; i++) {
+            tide_skinned_influence_data influence;
+            (void)tide_skinned_data_influence(v, i, &influence);
+            int32_t *at = words + (size_t)v->vertices * 4u + (size_t)i * 2u;
+            at[0] = (int32_t)influence.palette;
+            memcpy(&at[1], &influence.weight, sizeof at[1]);
+        }
+    }
+    return texture;
+}
+
 bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const tide_list transforms,
                             uint32_t textures[2], int32_t info[3])
 {
@@ -950,7 +998,7 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
             pose_hash = tide_hash_end(tide_hash_more(tide_hash(captured, (size_t)m.view.nodes * sizeof *captured),
                                                     &cached_model, sizeof cached_model));
             const cached_skin_pose *pose = skin_cache_pose(draw->skinned, cached_model, pose_hash, captured,
-                                                           (size_t)m.view.nodes * sizeof *captured);
+                                                           (size_t)m.view.nodes * sizeof *captured, false);
             if (pose && skin_cache_texture(draw, pose)) {
                 textures[0] = pose->texture;
                 info[0] = (int32_t)m.view.palettes;
@@ -968,31 +1016,8 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
         }
     }
     if (valid) {
-        const int32_t width = pixels < TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
-        const int32_t height = (int32_t)((pixels + TIDE_LIST_DATA_ACROSS - 1u) / TIDE_LIST_DATA_ACROSS);
         if (!packed) version = tide_hash(m.view.data, m.view.size);
-        const uint64_t kind = UINT64_C(0x534b494e494e464c);
-        uint8_t *out;
-        bool kept;
-        textures[1] = tide_draw_texture_edit(draw, TIDE_PIXELS_LIST, UINT64_C(1) << 63 | version >> 1,
-                                             version, width, height, TIDE_TEXELS_INTS, kind, &out, &kept);
-        if (out && !kept) {
-            memset(out, 0, (size_t)width * (size_t)height * 16u);
-            int32_t *words = (int32_t *)(void *)out;
-            for (uint32_t i = 0; i < m.view.vertices; i++) {
-                tide_skinned_vertex_data vertex;
-                (void)tide_skinned_data_vertex(&m.view, i, &vertex);
-                words[(size_t)i * 4u] = (int32_t)vertex.first_influence;
-                words[(size_t)i * 4u + 1u] = (int32_t)vertex.influences;
-            }
-            for (uint32_t i = 0; i < m.view.influences; i++) {
-                tide_skinned_influence_data influence;
-                (void)tide_skinned_data_influence(&m.view, i, &influence);
-                int32_t *at = words + (size_t)m.view.vertices * 4u + (size_t)i * 2u;
-                at[0] = (int32_t)influence.palette;
-                memcpy(&at[1], &influence.weight, sizeof at[1]);
-            }
-        }
+        textures[1] = capture_influences(draw, &m.view, version);
         info[1] = (int32_t)m.view.vertices;
         info[2] = (int32_t)m.view.influences;
     }
@@ -1000,4 +1025,215 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     close_model(&m);
     if (!valid) { memset(textures, 0, 2u * sizeof *textures); memset(info, 0, 3u * sizeof *info); }
     return valid;
+}
+
+// Nonempty container identities have a nonzero list handle in their low
+// word; scratch content identities have their high bit set. Atlas pages use
+// neither, and each page keeps its own identity across frames and list moves.
+static atomic_uint atlas_identity;
+
+static skin_atlas_page *atlas_page(tide_draw_list *draw, const uint32_t matrices)
+{
+    struct tide_skinned_draw_cache *c = draw->skinned;
+    const uint32_t most = TIDE_LIST_DATA_MOST / 4u;
+    if (!matrices || matrices > most) return NULL;
+    // Ordinary pages stay at 4 MiB; a single larger valid palette gets a
+    // page of its own within the existing shader-data texture bound.
+    const uint32_t limit = matrices > 65536u ? matrices : 65536u;
+    skin_atlas_page *p = c->page_count ? &c->pages[c->page_count - 1u] : NULL;
+    if (!p || p->count > limit || matrices > limit - p->count) {
+        const uint32_t at = c->page_count++;
+        if (at == c->page_built) {
+            c->pages = skin_cache_room(c->pages, &c->page_capacity, at, sizeof *c->pages);
+            const uint32_t id = atomic_fetch_add_explicit(&atlas_identity, 1u, memory_order_relaxed) + 1u;
+            if (!id || id > INT32_MAX) tide_out_of_memory();
+            c->pages[at] = (skin_atlas_page){.id = (uint64_t)id << 32, .hash = TIDE_HASH_START};
+            c->page_built++;
+        }
+        p = &c->pages[at];
+    }
+    const uint32_t count = p->count + matrices, pixels = count * 4u;
+    const int32_t width = pixels < TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
+    const int32_t height = (int32_t)((pixels + TIDE_LIST_DATA_ACROSS - 1u) / TIDE_LIST_DATA_ACROSS);
+    if (!p->texture) {
+        uint8_t *out;
+        bool kept;
+        p->texture = tide_draw_texture_edit(draw, TIDE_PIXELS_LIST, p->id, 0u, width, height,
+                                             TIDE_TEXELS_INTS, TIDE_SKINNED_ATLAS_KIND, &out, &kept);
+    }
+    tide_draw_texture *t = &draw->textures[p->texture - 1u];
+    const uint32_t bytes = (uint32_t)width * (uint32_t)height * 16u;
+    if (bytes > t->capacity) {
+        uint32_t capacity = t->capacity ? t->capacity : 4096u;
+        while (capacity < bytes) capacity *= 2u;
+        t->pixels = tide_realloc(t->pixels, t->capacity, capacity);
+        t->capacity = capacity;
+    }
+    // Growing a page changes no earlier matrix's flat offset. Reserve the
+    // full logical image before workers receive any of its raw slice pointers.
+    t->width = width;
+    t->height = height;
+    t->format = TIDE_TEXELS_INTS;
+    t->frame = draw->frame;
+    t->epoch = draw->epoch;
+    if (t->changes) t->changes->known = false;
+    return p;
+}
+
+static cached_skin_pose *atlas_capture(tide_draw_list *draw, const uint32_t model, const uint64_t version,
+                                       const uint64_t hash, const void *trs, const size_t bytes)
+{
+    struct tide_skinned_draw_cache *c = draw->skinned;
+    cached_skin_pose *previous = skin_cache_pose(c, model, hash, trs, bytes, true);
+    if (previous) {
+        draw->textures[previous->texture - 1u].frame = draw->frame;
+        return previous;
+    }
+    const uint32_t matrices = c->models[model].palettes;
+    skin_atlas_page *page = atlas_page(draw, matrices);
+    if (!page) return NULL;
+    c->poses = skin_cache_room(c->poses, &c->pose_capacity, c->pose_count, sizeof *c->poses);
+    const size_t at = skin_cache_bytes(c, bytes);
+    memcpy(c->bytes + at, trs, bytes);
+    const uint32_t i = c->pose_count++;
+    const uint32_t base = page->count;
+    page->count += matrices;
+    page->hash = tide_hash_more(page->hash, &version, sizeof version);
+    page->hash = tide_hash_more(page->hash, &hash, sizeof hash);
+    page->hash = tide_hash_more(page->hash, &matrices, sizeof matrices);
+    tide_draw_texture *t = &draw->textures[page->texture - 1u];
+    t->version = tide_hash_end(page->hash);
+    c->poses[i] = (cached_skin_pose){.hash = hash, .model = model, .texture = page->texture,
+                                    .bytes = at, .base = base, .atlas = true, .pending = true};
+    if (c->pose_count >= c->pose_slots / 2u) skin_cache_index(c, false);
+    else {
+        uint32_t place = (uint32_t)hash & (c->pose_slots - 1u);
+        while (c->pose_index[place]) place = (place + 1u) & (c->pose_slots - 1u);
+        c->pose_index[place] = i + 1u;
+    }
+    return &c->poses[i];
+}
+
+bool tide_draw_skinned_atlas(tide_draw_list *draw, const tide_list data, const tide_list transforms,
+                             uint32_t textures[2], int32_t info[4])
+{
+    if (!textures || !info) return false;
+    memset(textures, 0, 2u * sizeof *textures);
+    memset(info, 0, 4u * sizeof *info);
+    uint64_t version;
+    if (!tide_pack_skinned_version(data, &version)) return tide_draw_skinned_data(draw, data, transforms, textures, info);
+    model_seen m;
+    if (!draw || !open_model(data, &m)) return false;
+    const uint32_t mark = tide_scratch_mark();
+    const uint64_t pixels = (uint64_t)m.view.vertices + ((uint64_t)m.view.influences + 1u) / 2u;
+    bool valid = m.view.palettes && m.view.palettes <= TIDE_LIST_DATA_MOST / 4u
+        && pixels > 0u && pixels <= TIDE_LIST_DATA_MOST;
+    tide_bone_transform *trs = valid ? skin_capture_transforms(transforms, m.view.nodes) : NULL;
+    valid = valid && trs != NULL;
+    if (valid) {
+        if (!draw->skinned) draw->skinned = tide_alloc_zeroed(1u, sizeof *draw->skinned);
+        const uint32_t model = skin_cache_model(draw->skinned, &m.view, version);
+        const size_t bytes = (size_t)m.view.nodes * sizeof *trs;
+        const uint64_t hash = tide_hash_end(tide_hash_more(tide_hash(trs, bytes), &model, sizeof model));
+        const cached_skin_pose *pose = atlas_capture(draw, model, version, hash, trs, bytes);
+        valid = pose != NULL;
+        if (valid) {
+            textures[0] = pose->texture;
+            textures[1] = capture_influences(draw, &m.view, version);
+            info[0] = (int32_t)m.view.palettes;
+            info[1] = (int32_t)m.view.vertices;
+            info[2] = (int32_t)m.view.influences;
+            info[3] = (int32_t)pose->base;
+        }
+    }
+    tide_scratch_reset(mark);
+    close_model(&m);
+    if (!valid) { memset(textures, 0, 2u * sizeof *textures); memset(info, 0, 4u * sizeof *info); }
+    return valid;
+}
+
+typedef struct skin_prepare_work {
+    const tide_draw_list *draw;
+    struct tide_skinned_draw_cache *cache;
+    atomic_uint next;
+    uint32_t count;
+} skin_prepare_work;
+
+static void prepare_atlas_poses(void *context, const uint32_t thread)
+{
+    (void)thread;
+    skin_prepare_work *work = context;
+    struct tide_skinned_draw_cache *c = work->cache;
+    tide_memory_sync();
+    for (;;) {
+        const uint32_t first = atomic_fetch_add_explicit(&work->next, 4u, memory_order_relaxed);
+        if (first >= work->count) break;
+        const uint32_t end = work->count - first < 4u ? work->count : first + 4u;
+        for (uint32_t i = first; i < end; i++) {
+            cached_skin_pose *pose = &c->poses[i];
+            if (!pose->atlas || !pose->pending) continue;
+            const cached_skin_model *model = &c->models[pose->model];
+            const uint8_t *nodes = c->bytes + model->bytes;
+            const uint8_t *palettes = nodes + (size_t)model->nodes * TIDE_SKINNED_NODE_SIZE;
+            const tide_bone_transform *trs = (const tide_bone_transform *)(const void *)(c->bytes + pose->bytes);
+            const uint32_t mark = tide_scratch_mark();
+            tide_float4x4 *global = tide_scratch_memory((size_t)model->nodes * sizeof *global);
+            // Captured tables were fully validated while their pack proof
+            // was current. Only these owned bytes and exact current TRS are
+            // used here; no pack, list handle or mutable cache escapes to a
+            // worker. Each pose owns a disjoint preallocated output slice.
+            for (uint32_t n = 0; n < model->nodes; n++) {
+                const int32_t parent = n ? (int32_t)draw_word(nodes + (size_t)n * TIDE_SKINNED_NODE_SIZE) : -1;
+                const tide_float4x4 local = tide_trs_f4x4(trs[n].position, trs[n].rotation, trs[n].scale);
+                global[n] = parent < 0 ? local : tide_mul_f4x4(global[parent], local);
+            }
+            tide_float4x4 *out = (tide_float4x4 *)(void *)(work->draw->textures[pose->texture - 1u].pixels
+                                                         + (size_t)pose->base * sizeof *out);
+            for (uint32_t p = 0; p < model->palettes; p++) {
+                const uint8_t *bytes = palettes + (size_t)p * TIDE_SKINNED_PALETTE_SIZE;
+                const uint32_t node = draw_word(bytes);
+                tide_float4x4 inverse_bind;
+                for (uint32_t k = 0; k < 16u; k++) {
+                    const uint32_t bits = draw_word(bytes + 4u + k * 4u);
+                    memcpy((uint8_t *)&inverse_bind + k * 4u, &bits, sizeof bits);
+                }
+                out[p] = tide_mul_f4x4(global[node], inverse_bind);
+            }
+            pose->pending = false;
+            tide_scratch_reset(mark);
+        }
+    }
+}
+
+void tide_draw_prepare(const tide_draw_list *draw, const tide_jobs *jobs)
+{
+    if (!draw || !draw->skinned) return;
+    struct tide_skinned_draw_cache *c = draw->skinned;
+    uint64_t nodes = 0u;
+    uint32_t pending = 0u;
+    for (uint32_t i = 0; i < c->pose_count; i++) {
+        if (c->poses[i].atlas && c->poses[i].pending) {
+            pending++;
+            nodes += c->models[c->poses[i].model].nodes;
+        }
+    }
+    if (!pending) return;
+    skin_prepare_work work = {.draw = draw, .cache = c, .count = c->pose_count};
+    atomic_init(&work.next, 0u);
+    if (jobs && (jobs->run_some || jobs->run) && jobs->threads > 1u && nodes >= 4096u && pending >= 16u) {
+        uint32_t others = pending / 32u;
+        if (!others) others = 1u;
+        if (others > 3u) others = 3u;
+        if (others >= jobs->threads) others = jobs->threads - 1u;
+        if (jobs->run_some) jobs->run_some(jobs->self, others, prepare_atlas_poses, &work);
+        else jobs->run(jobs->self, prepare_atlas_poses, &work);
+        tide_memory_sync();
+    } else prepare_atlas_poses(&work, 0u);
+    for (uint32_t i = 0; i < c->page_count; i++) {
+        const skin_atlas_page *page = &c->pages[i];
+        const tide_draw_texture *t = &draw->textures[page->texture - 1u];
+        const size_t used = (size_t)page->count * sizeof(tide_float4x4);
+        const size_t bytes = (size_t)t->width * (size_t)t->height * 16u;
+        if (bytes > used) memset(t->pixels + used, 0, bytes - used);
+    }
 }

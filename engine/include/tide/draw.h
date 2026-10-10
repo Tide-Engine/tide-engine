@@ -1264,6 +1264,12 @@ typedef struct tide_draw_list {
 // textures the frame drew with.
 void tide_draw_reset(tide_draw_list *d);
 
+// Completes captured CPU drawing work before a renderer reads the list's
+// pixels. A pool can prepare independent palettes together; NULL runs the
+// same work on this thread. Recording and GPU calls remain ordered.
+struct tide_jobs;
+void tide_draw_prepare(const tide_draw_list *d, const struct tide_jobs *jobs);
+
 // Lets the list's memory go: it's empty, and ready to use again.
 void tide_draw_free(tide_draw_list *d);
 

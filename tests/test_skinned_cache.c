@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "tide/pack.h"
+#include "tide/jobs.h"
 #include "tide/sha256.h"
 #include "tide/skinned.h"
 #include "tide/skinned_data.h"
@@ -29,14 +30,17 @@ static uint32_t put_table(uint8_t *p, uint32_t *end, const uint32_t header, cons
 
 // Enough nodes for an owned pose to occupy several chunks. The skeleton
 // fingerprint is intentionally shared by variants with different inverse binds.
-static tide_list cache_model(const uint32_t count, const float bind)
+static tide_list cache_model_palettes(const uint32_t count, const uint32_t palette_count, const float bind)
 {
-    uint8_t p[16384] = {0};
+    const size_t capacity = TIDE_SKINNED_HEADER_SIZE + (size_t)count * TIDE_SKINNED_NODE_SIZE
+        + (size_t)palette_count * TIDE_SKINNED_PALETTE_SIZE + 3u * TIDE_SKINNED_VERTEX_SIZE
+        + 3u * 4u + 3u * TIDE_SKINNED_INFLUENCE_SIZE + 4u;
+    uint8_t *p = tide_alloc_zeroed(capacity, 1u);
     uint32_t end = TIDE_SKINNED_HEADER_SIZE;
     put_word(p, 0u, TIDE_SKINNED_DATA_MAGIC);
     put_word(p, 4u, TIDE_SKINNED_DATA_VERSION);
     const uint32_t nodes = put_table(p, &end, 16u, count, TIDE_SKINNED_NODE_SIZE);
-    const uint32_t palettes = put_table(p, &end, 24u, 2u, TIDE_SKINNED_PALETTE_SIZE);
+    const uint32_t palettes = put_table(p, &end, 24u, palette_count, TIDE_SKINNED_PALETTE_SIZE);
     const uint32_t vertices = put_table(p, &end, 32u, 3u, TIDE_SKINNED_VERTEX_SIZE);
     const uint32_t indices = put_table(p, &end, 40u, 3u, 4u);
     (void)put_table(p, &end, 48u, 0u, TIDE_SKINNED_CLIP_SIZE);
@@ -58,7 +62,7 @@ static tide_list cache_model(const uint32_t count, const float bind)
         put_float(p, n + 40u, 1.0f);
         for (uint32_t k = 0; k < 3u; k++) put_float(p, n + 44u + k * 4u, 1.0f);
     }
-    for (uint32_t i = 0; i < 2u; i++) {
+    for (uint32_t i = 0; i < palette_count; i++) {
         const uint32_t at = palettes + i * TIDE_SKINNED_PALETTE_SIZE;
         put_word(p, at, i ? count - 1u : 1u);
         for (uint32_t k = 0; k < 4u; k++) put_float(p, at + 4u + k * 20u, 1.0f);
@@ -72,7 +76,14 @@ static tide_list cache_model(const uint32_t count, const float bind)
         put_word(p, indices + i * 4u, i);
         put_float(p, influences + i * TIDE_SKINNED_INFLUENCE_SIZE + 4u, 1.0f);
     }
-    return tide_list_from(p, (int32_t)end, 1u);
+    const tide_list out = tide_list_from(p, (int32_t)end, 1u);
+    free(p);
+    return out;
+}
+
+static tide_list cache_model(const uint32_t count, const float bind)
+{
+    return cache_model_palettes(count, 2u, bind);
 }
 
 static uint8_t *cache_pack(const tide_list data, const bool alias, size_t *size)
@@ -313,6 +324,273 @@ TIDE_TEST(skinned_draw_cache_rechecks_invalidated_proof_and_owned_models)
     tide_text_use(NULL, NULL);
     tide_heap_free(&heap);
     tide_pack_unload();
+    free(bytes);
+    tide_scratch_reset(mark);
+}
+
+static bool atlas_matches(const tide_draw_list *draw, const uint32_t texture, const int32_t base,
+                           const tide_float4x4 *expected, const uint32_t count)
+{
+    if (!texture || texture > draw->texture_count || base < 0) return false;
+    const tide_draw_texture *t = &draw->textures[texture - 1u];
+    const size_t at = (size_t)(uint32_t)base * sizeof *expected, bytes = (size_t)count * sizeof *expected;
+    return t->pixels && at <= t->capacity && bytes <= t->capacity - at
+        && memcmp(t->pixels + at, expected, bytes) == 0;
+}
+
+static void expected_palette(const tide_list data, const tide_list pose, tide_float4x4 out[2])
+{
+    const tide_list palette = tide_skinned_palette(data, pose);
+    const void *matrices = tide_list_at(palette, 0, sizeof *out);
+    if (matrices && tide_list_count(palette) >= 2) memcpy(out, matrices, 2u * sizeof *out);
+    else memset(out, 0, 2u * sizeof *out);
+}
+
+TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw = cache_model(128u, 0.0f);
+    size_t size;
+    uint8_t *bytes = cache_pack(raw, false, &size);
+    TIDE_REQUIRE(bytes && tide_pack_load(bytes, size));
+    const tide_list data = packed_model();
+    tide_heap heap = {0}, snapshot = {0};
+    tide_text_use(&heap, NULL);
+    tide_list pose = {0};
+    TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_MATCH));
+    tide_heap_copy(&snapshot, &heap);
+    const uint64_t snapshot_hash = tide_heap_hash(1u, &snapshot);
+    tide_float4x4 expected[3][2];
+    expected_palette(data, pose, expected[0]);
+    tide_draw_list draw = {0}, other = {0};
+    uint32_t textures[3][2], again[2];
+    int32_t info[3][4], repeated[4];
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, textures[0], info[0]));
+    TIDE_CHECK(info[0][0] == 2 && info[0][1] == 3 && info[0][2] == 3 && info[0][3] == 0);
+    tide_bone_transform *last = tide_list_at_mut(pose, 127, sizeof *last);
+    TIDE_REQUIRE(last != NULL);
+    last->position.y = 7.0f;
+    expected_palette(data, pose, expected[1]);
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, textures[1], info[1]));
+    TIDE_CHECK(textures[1][0] == textures[0][0] && textures[1][1] == textures[0][1] && info[1][3] == 2);
+    tide_text_use(&snapshot, NULL);
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, again, repeated));
+    TIDE_CHECK(again[0] == textures[0][0] && repeated[3] == info[0][3]);
+    TIDE_CHECK(tide_heap_hash(1u, &snapshot) == snapshot_hash);
+    // Equal captures in another list have independent page identities.
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&other, data, pose, again, repeated));
+    TIDE_CHECK(other.textures[again[0] - 1u].id != draw.textures[textures[0][0] - 1u].id);
+    const uint32_t reused = tide_scratch_mark();
+    tide_list scratch_pose = {0};
+    TIDE_REQUIRE(tide_skinned_rest(data, &scratch_pose, TIDE_IN_SCRATCH));
+    last = tide_list_at_mut(scratch_pose, 127, sizeof *last);
+    TIDE_REQUIRE(last != NULL);
+    last->position.y = -4.0f;
+    expected_palette(data, scratch_pose, expected[2]);
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, scratch_pose, textures[2], info[2]));
+    tide_scratch_reset(reused);
+    memset(tide_scratch_memory(16384u), 0xa5, 16384u);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+    tide_heap_free(&snapshot);
+    tide_pack_unload();
+    // All dependencies are now gone or overwritten; preparation owns them.
+    tide_draw_prepare(&draw, NULL);
+    tide_draw_prepare(&other, NULL);
+    for (uint32_t i = 0; i < 3u; i++) TIDE_CHECK(atlas_matches(&draw, textures[i][0], info[i][3], expected[i], 2u));
+    TIDE_CHECK(atlas_matches(&other, again[0], repeated[3], expected[0], 2u));
+    const uint64_t version = draw.textures[textures[0][0] - 1u].version;
+    tide_draw_prepare(&draw, NULL);
+    TIDE_CHECK(draw.textures[textures[0][0] - 1u].version == version);
+    tide_draw_forget(&draw);
+    TIDE_CHECK(draw.texture_count == 0u);
+    tide_draw_prepare(&draw, NULL);
+    tide_draw_free(&draw);
+    tide_draw_free(&other);
+    free(bytes);
+    tide_scratch_reset(mark);
+}
+
+typedef struct atlas_pool_probe {
+    uint32_t calls, others, mask;
+} atlas_pool_probe;
+
+static void atlas_pool_some(void *self, const uint32_t others,
+                            void (*work)(void *, uint32_t), void *context)
+{
+    atlas_pool_probe *probe = self;
+    probe->calls++;
+    probe->others = others;
+    for (uint32_t i = others; i > 0u; i--) {
+        probe->mask |= 1u << i;
+        work(context, i);
+    }
+    probe->mask |= 1u;
+    work(context, 0u);
+}
+
+static void atlas_pool_all(void *self, void (*work)(void *, uint32_t), void *context)
+{
+    atlas_pool_some(self, 3u, work, context);
+}
+
+TIDE_TEST(skinned_atlas_grows_splits_and_prepares_through_jobs)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw = cache_model_palettes(128u, 2048u, 0.0f);
+    TIDE_REQUIRE(tide_skinned_valid(raw));
+    size_t size;
+    uint8_t *bytes = cache_pack(raw, false, &size);
+    TIDE_REQUIRE(bytes && tide_pack_load(bytes, size));
+    const tide_list data = packed_model();
+    tide_draw_list draw = {0};
+    uint32_t textures[33][2];
+    int32_t info[33][4];
+    tide_float4x4 expected[33][2];
+    tide_list pose = {0};
+    TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH));
+    atlas_pool_probe probe = {0};
+    tide_jobs jobs = {.self = &probe, .threads = 8u, .run = atlas_pool_all, .run_some = atlas_pool_some};
+    uint64_t page_id = 0u, version = 0u;
+    for (uint32_t frame = 0; frame < 2u; frame++) {
+        for (uint32_t i = 0; i < 33u; i++) {
+            tide_bone_transform *last = tide_list_at_mut(pose, 127, sizeof *last);
+            TIDE_REQUIRE(last != NULL);
+            last->position.y = (float)i;
+            expected_palette(data, pose, expected[i]);
+            TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, textures[i], info[i]));
+            TIDE_CHECK(info[i][0] == 2048 && info[i][3] == (int32_t)((i % 32u) * 2048u));
+            if (i < 32u) TIDE_CHECK(textures[i][0] == textures[0][0]);
+        }
+        TIDE_CHECK(textures[32][0] != textures[0][0] && textures[32][1] == textures[0][1]);
+        const tide_draw_texture *first = &draw.textures[textures[0][0] - 1u];
+        TIDE_CHECK(first->width == 1024 && first->height == 256 && first->capacity >= 4194304u);
+        if (!frame) { page_id = first->id; version = first->version; }
+        else TIDE_CHECK(first->id == page_id && first->version == version);
+        tide_draw_prepare(&draw, &jobs);
+        TIDE_CHECK(probe.calls == frame + 1u && probe.others == (frame ? 3u : 1u));
+        TIDE_CHECK((probe.mask & 3u) == 3u);
+        for (uint32_t i = 0; i < 33u; i++) {
+            TIDE_CHECK(atlas_matches(&draw, textures[i][0], info[i][3], expected[i], 2u));
+            // Every palette entry after the first addresses the last node.
+            TIDE_CHECK(atlas_matches(&draw, textures[i][0], info[i][3] + 2047, &expected[i][1], 1u));
+        }
+        tide_draw_prepare(&draw, &jobs);
+        TIDE_CHECK(probe.calls == frame + 1u);
+        if (!frame) { tide_draw_reset(&draw); jobs.run_some = NULL; }
+    }
+    tide_draw_reset(&draw);
+    // Reset discards pending work before textures are compacted.
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, textures[0], info[0]));
+    tide_draw_reset(&draw);
+    tide_draw_prepare(&draw, &jobs);
+    TIDE_CHECK(probe.calls == 2u);
+    tide_draw_free(&draw);
+    tide_pack_unload();
+    free(bytes);
+    tide_scratch_reset(mark);
+}
+
+static void atlas_command(tide_draw_list *draw, const tide_list vertices, const tide_list indices,
+                           const uint32_t texture[2], const int32_t base)
+{
+    static const tide_shader shader = {.vertex_size = sizeof(tide_float3), .instance_ints = 1u, .texture_count = 2u};
+    const int32_t instance[4] = {base, 0, 0, 0};
+    const uint32_t textures[TIDE_SHADER_TEXTURES] = {texture[0], texture[1]};
+    tide_draw_mesh_shaded(draw, &shader, vertices, indices, instance, NULL, textures, 0u);
+}
+
+TIDE_TEST(skinned_atlas_append_preserves_two_source_frame_snapshots)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw = cache_model(3u, 0.0f);
+    size_t size;
+    uint8_t *bytes = cache_pack(raw, false, &size);
+    TIDE_REQUIRE(bytes && tide_pack_load(bytes, size));
+    const tide_list data = packed_model();
+    tide_list pose = {0};
+    TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH));
+    const tide_float3 points[3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    const uint32_t corners[3] = {0u, 1u, 2u};
+    const tide_list vertices = tide_list_from(points, 3, sizeof *points), indices = tide_list_from(corners, 3, sizeof *corners);
+    tide_draw_list source = {0}, destination = {0}, copied = {0};
+    tide_float4x4 expected[2][2];
+    uint32_t texture[2];
+    int32_t info[4];
+    uint64_t page_id = 0u;
+    for (uint32_t frame = 0; frame < 2u; frame++) {
+        tide_bone_transform *last = tide_list_at_mut(pose, 2, sizeof *last);
+        TIDE_REQUIRE(last != NULL);
+        last->position.y = (float)frame * 9.0f;
+        expected_palette(data, pose, expected[frame]);
+        TIDE_REQUIRE(tide_draw_skinned_atlas(&source, data, pose, texture, info));
+        if (!frame) page_id = source.textures[texture[0] - 1u].id;
+        else TIDE_CHECK(source.textures[texture[0] - 1u].id == page_id);
+        atlas_command(&source, vertices, indices, texture, info[3]);
+        // Append must finalize the deferred source before taking its copy.
+        tide_draw_append(&destination, &source);
+        TIDE_REQUIRE(destination.run_count == frame + 1u);
+        for (uint32_t i = 0; i <= frame; i++) {
+            TIDE_CHECK(atlas_matches(&destination, destination.runs[i].textures[0], 0, expected[i], 2u));
+        }
+        tide_draw_reset(&source);
+    }
+    TIDE_CHECK(destination.runs[0].textures[0] != destination.runs[1].textures[0]);
+    tide_draw_free(&source);
+    // A second append recognizes the copied writer kind as well.
+    tide_draw_append(&copied, &destination);
+    TIDE_REQUIRE(copied.run_count == 2u);
+    for (uint32_t i = 0; i < 2u; i++) TIDE_CHECK(atlas_matches(&copied, copied.runs[i].textures[0], 0, expected[i], 2u));
+    tide_draw_free(&destination);
+    tide_draw_free(&copied);
+    tide_pack_unload();
+    free(bytes);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(skinned_atlas_rechecks_proof_and_keeps_immediate_owned_fallback)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw = cache_model(3u, 0.0f);
+    size_t size;
+    uint8_t *bytes = cache_pack(raw, true, &size);
+    TIDE_REQUIRE(bytes && tide_pack_load(bytes, size));
+    const tide_list data = packed_model();
+    tide_list pose = {0};
+    TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH));
+    tide_float4x4 expected[2];
+    expected_palette(data, pose, expected);
+    tide_draw_list draw = {0}, owned_draw = {0};
+    uint32_t first[2], next[2];
+    int32_t info[4];
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, first, info));
+    tide_heap heap = {0};
+    tide_text_use(&heap, NULL);
+    tide_list owned = {0};
+    tide_list_set(&owned, data, 1u, TIDE_IN_MATCH);
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&owned_draw, owned, pose, next, info));
+    TIDE_CHECK(owned_draw.skinned == NULL && info[3] == 0 && captured_matches(&owned_draw, next[0], owned, pose));
+    const uint32_t carrier_size = (uint32_t)tide_list_count(raw) + (uint32_t)sizeof(tide_block);
+    uint32_t count;
+    void *carrier = tide_pack_mesh_open(tide_pack_find("Game.writable", TIDE_PACK_MESH), 0u, carrier_size, &count);
+    TIDE_REQUIRE(carrier != NULL && count == 1u);
+    uint8_t *model = (uint8_t *)carrier + sizeof(tide_block);
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(model, carrier_size - sizeof(tide_block), &view));
+    put_float(model, view.palette_at + 52u, 5.0f);
+    tide_pack_mesh_updated(carrier, carrier_size);
+    TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, next, info));
+    TIDE_CHECK(next[0] != first[0] && info[3] == 0 && captured_matches(&draw, next[0], data, pose));
+    put_word(model, view.palette_at, view.nodes);
+    tide_pack_mesh_updated(carrier, carrier_size);
+    TIDE_CHECK(!tide_draw_skinned_atlas(&draw, data, pose, next, info) && zero_outputs(next, info) && info[3] == 0);
+    tide_pack_unload();
+    tide_draw_prepare(&draw, NULL);
+    TIDE_CHECK(atlas_matches(&draw, first[0], 0, expected, 2u));
+    tide_draw_free(&draw);
+    tide_draw_free(&owned_draw);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
     free(bytes);
     tide_scratch_reset(mark);
 }

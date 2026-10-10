@@ -1,9 +1,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdatomic.h>
+#include <string.h>
 
 #include "game.h"
+#include "tide/jobs.h"
+#include "tide/pack.h"
 #include "tide/platform.h"
+#include "tide/skinned.h"
 
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
@@ -14,12 +19,96 @@ static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
 
+typedef struct observed_jobs {
+    const tide_jobs *pool;
+    void (*work)(void *context, uint32_t thread);
+    void *context;
+    atomic_uint callbacks, worker_callbacks;
+} observed_jobs;
+
+static void observed_work(void *context, const uint32_t thread)
+{
+    observed_jobs *o = context;
+    atomic_fetch_add_explicit(&o->callbacks, 1u, memory_order_relaxed);
+    if (thread) atomic_fetch_add_explicit(&o->worker_callbacks, 1u, memory_order_relaxed);
+    o->work(o->context, thread);
+}
+
+static void observed_run(void *self, void (*work)(void *context, uint32_t thread), void *context)
+{
+    observed_jobs *o = self;
+    o->work = work;
+    o->context = context;
+    o->pool->run(o->pool->self, observed_work, o);
+}
+
+static void observed_run_some(void *self, const uint32_t others,
+                              void (*work)(void *context, uint32_t thread), void *context)
+{
+    observed_jobs *o = self;
+    o->work = work;
+    o->context = context;
+    o->pool->run_some(o->pool->self, others, observed_work, o);
+}
+
+// Exercise the real pool with enough distinct captured poses to dispatch a
+// round, and compare every prepared byte with the same inputs on one thread.
+// A pool may legitimately finish on the caller before any worker joins.
+static int parallel_palettes(void)
+{
+    tide_draw_list serial = {0}, parallel = {0};
+    const tide_list data = tide_pack_skinned_of(tide_pack_find("model", TIDE_PACK_SKINNED), sizeof(tide_vertex3)).data;
+    const tide_jobs *pool = tide_platform_jobs();
+    observed_jobs observed = {.pool = pool};
+    atomic_init(&observed.callbacks, 0u);
+    atomic_init(&observed.worker_callbacks, 0u);
+    tide_jobs jobs = {0};
+    if (pool) {
+        jobs = *pool;
+        jobs.self = &observed;
+        jobs.run = observed_run;
+        jobs.run_some = pool->run_some ? observed_run_some : NULL;
+    }
+    uint32_t first[2] = {0};
+    int failures = 0;
+    for (uint32_t i = 0; i < 2048u; i++) {
+        const uint32_t mark = tide_scratch_mark();
+        tide_list pose = {0};
+        uint32_t textures[2];
+        int32_t info[4];
+        bool valid = tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH);
+        tide_bone_transform *bone = valid ? tide_list_at_mut(pose, 1, sizeof *bone) : NULL;
+        if (bone) bone->position.x += (float)i * 0.001f;
+        valid = bone && tide_draw_skinned_atlas(&serial, data, pose, textures, info);
+        if (valid && !i) first[0] = textures[0];
+        valid = valid && tide_draw_skinned_atlas(&parallel, data, pose, textures, info);
+        if (valid && !i) first[1] = textures[0];
+        tide_scratch_reset(mark);
+        if (!valid) { failures++; break; }
+    }
+    if (!failures) {
+        tide_draw_prepare(&serial, NULL);
+        tide_draw_prepare(&parallel, pool ? &jobs : NULL);
+        const tide_draw_texture *a = &serial.textures[first[0] - 1u], *b = &parallel.textures[first[1] - 1u];
+        const bool same = a->width == b->width && a->height == b->height && a->format == b->format
+            && memcmp(a->pixels, b->pixels, (size_t)a->width * (size_t)a->height * 16u) == 0;
+        printf("%s: 2048 independent palettes match serial preparation (pool %u, callbacks %u, workers %u)\n",
+               same ? "ok" : "FAIL", pool ? pool->threads : 1u,
+               atomic_load_explicit(&observed.callbacks, memory_order_relaxed),
+               atomic_load_explicit(&observed.worker_callbacks, memory_order_relaxed));
+        if (!same) failures++;
+    }
+    tide_draw_free(&serial);
+    tide_draw_free(&parallel);
+    return failures;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user;
     (void)seconds;
     printf("renderer: %s\n", tide_platform_renderer());
-    int failures = 0;
+    int failures = parallel_palettes();
     static const struct {
         tide_float2 at;
         uint32_t color;

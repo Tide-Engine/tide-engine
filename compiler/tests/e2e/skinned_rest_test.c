@@ -24,7 +24,10 @@ TIDE_TEST(skinned_rest_draws_without_clips_and_preserves_operand_order)
     TIDE_CHECK(local.Calls.omittedOrder == 12 && local.Calls.explicitOrder == 123);
     TIDE_CHECK(local.Calls.independent);
     TIDE_CHECK(local.Calls.bound);
-    uint32_t instances = 0, palette = 0, animated = 0;
+    tide_draw_prepare(&draw, NULL);
+    uint32_t instances = 0;
+    float authored[16] = {0}, animated[16] = {0};
+    int32_t authored_base = -1, animated_base = -1;
     for (uint32_t i = 0; i < draw.run_count; i++) {
         const tide_draw_run *run = &draw.runs[i];
         // The omitted and explicit forms capture the same authored palette,
@@ -37,20 +40,27 @@ TIDE_TEST(skinned_rest_draws_without_clips_and_preserves_operand_order)
             }
         }
         TIDE_REQUIRE(current != 0);
-        uint32_t *expected = instances < 7u ? &palette : &animated;
-        if (!*expected) *expected = current;
-        const tide_draw_texture *a = &draw.textures[*expected - 1u];
-        const tide_draw_texture *b = &draw.textures[current - 1u];
-        TIDE_REQUIRE(a->width == b->width && a->height == b->height && a->format == b->format);
-        TIDE_CHECK(memcmp(a->pixels, b->pixels, (size_t)a->width * (size_t)a->height * tide_texels_bytes(a->format)) == 0);
-        instances += run->count;
+        const tide_draw_texture *texture = &draw.textures[current - 1u];
+        // The palette count still bounds one pose, even when its matrices
+        // share a texture with another pose of this model.
+        int32_t palette_count;
+        memcpy(&palette_count, draw.uniforms + run->uniforms + run->shader->uniform_floats * 16u, sizeof palette_count);
+        TIDE_CHECK(palette_count == 1);
+        for (uint32_t n = 0; n < run->count; n++, instances++) {
+            const uint8_t *instance = draw.instances + run->first + n * tide_shader_instance_size(run->shader);
+            int32_t base;
+            memcpy(&base, instance + run->shader->instance_floats * 16u, sizeof base);
+            TIDE_REQUIRE(base >= 0 && (uint64_t)base * 4u + 4u <= (uint64_t)texture->width * texture->height);
+            const float *matrix = (const float *)(const void *)texture->pixels + (size_t)base * 16u;
+            float *expected = instances < 7u ? authored : animated;
+            int32_t *expected_base = instances < 7u ? &authored_base : &animated_base;
+            if (*expected_base < 0) { memcpy(expected, matrix, sizeof authored); *expected_base = base; }
+            TIDE_CHECK(memcmp(expected, matrix, sizeof authored) == 0);
+        }
     }
     TIDE_CHECK(instances == 9u);
-    TIDE_REQUIRE(palette != 0 && animated != 0);
-    const tide_draw_texture *a = &draw.textures[palette - 1u];
-    const tide_draw_texture *b = &draw.textures[animated - 1u];
-    TIDE_REQUIRE(a->width == b->width && a->height == b->height && a->format == b->format);
-    TIDE_CHECK(memcmp(a->pixels, b->pixels, (size_t)a->width * (size_t)a->height * tide_texels_bytes(a->format)) != 0);
+    TIDE_REQUIRE(authored_base >= 0 && animated_base > 0);
+    TIDE_CHECK(memcmp(authored, animated, sizeof authored) != 0);
     tide_scratch_reset(mark);
     tide_draw_free(&draw);
     tide_local_free(&local);

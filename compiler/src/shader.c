@@ -5360,7 +5360,13 @@ static void put_skin_helpers(emit *em)
     put_word(em, 'v', sh->textures.items[palette].count_at);
     sb_put(o, wgsl ? ") { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n"
                    : ") return mat4(1.0);\n");
-    sb_put(o, wgsl ? "    let p = i * 4;\n    return mat4x4f(" : "    int p = i * 4;\n    return mat4(");
+    sb_put(o, wgsl ? "    let p = " : "    int p = ");
+    if (sh->skin_base_at >= 0) {
+        sb_put(o, "(");
+        put_word(em, 'j', sh->skin_base_at);
+        sb_put(o, " + i)");
+    } else sb_put(o, "i");
+    sb_put(o, wgsl ? " * 4;\n    return mat4x4f(" : " * 4;\n    return mat4(");
     for (int column = 0; column < 4; column++) {
         sb_printf(o, wgsl ? "%sbitcast<vec4f>(tide_skin_words0(p + %d))" : "%sintBitsToFloat(tide_skin_words0(p + %d))",
                   column ? ", " : "", column);
@@ -5954,6 +5960,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->direct_texture = direct_texture;
     sh->instanced = call->instanced;
     sh->skinned = call->skinned;
+    sh->skin_base_at = -1;
     sh->instance_type = call->instance_type;
     sh->values_type = call->values_type;
     const field *position = field_called(vertex, "position");
@@ -6053,6 +6060,12 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         }
         varyings += sh->frag_fields[i];
     }
+
+    // An atlas base stays with each instance, after its ordinary int words.
+    // Reuse an int4's spare lane before adding an attribute. A valid layout
+    // already using all 16 attributes can keep its individual palette.
+    if (sh->skinned && vertex->fields.count + packs(sh->instance_floats) + packs(sh->instance_ints + 1) <= 16)
+        sh->skin_base_at = sh->instance_ints++;
 
     // What a GPU takes, on every backend
     const int attributes = vertex->fields.count + packs(sh->instance_floats) + packs(sh->instance_ints);
