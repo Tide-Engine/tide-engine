@@ -1,0 +1,22 @@
+{
+  "recorded_at_utc": "2026-10-10T22:24:59.8641798Z",
+  "stage": "90-second premeasurement quiet guard",
+  "event": "Guard counter reset after approximately45quietseconds when externalctest/cmake appeared",
+  "measurement_started_at_observation": false,
+  "saved_rows_at_observation": 0,
+  "unrelated_checkout": "C:/Users/blenm/.codex/worktrees/39af/PurrEngine",
+  "observed_processes": [
+    {
+      "pid": 71076,
+      "name": "ctest.exe",
+      "command": "ctest --preset web-debug -R ^last_light_ -j4"
+    },
+    {
+      "pid": 53904,
+      "parent_pid": 71076,
+      "name": "cmake.exe",
+      "command": "cmake -E env TIDE_BROWSER=<headless-shell> <Node24.21> C:/Users/blenm/.codex/worktrees/39af/PurrEngine/prototypes/the-last-light/test/web-play.mjs <last_light.html> <webgpu-captures> webgpu"
+    }
+  ],
+  "disposition": "Wait for externalwork to finish, then require90consecutivequietseconds. No unrelated processes stopped or chats messaged."
+}

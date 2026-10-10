@@ -1,0 +1,10 @@
+renderer: OpenGL 3.3; 20 warmup, 100 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+1000 characters, static, repeat 1 (median / p95 ms): view 0.058 / 0.085, submit 0.007 / 0.012, completion + readback 0.952 / 1.269, total 1.031 / 1.356, GPU 0.500 / 0.507 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+1000 characters, omitted_rest, repeat 1 (median / p95 ms): view 0.480 / 0.561, submit 0.010 / 0.023, completion + readback 1.174 / 1.551, total 1.696 / 2.097, GPU 0.830 / 1.162 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+1000 characters, shared_pose, repeat 1 (median / p95 ms): view 0.524 / 0.676, submit 0.011 / 0.025, completion + readback 1.087 / 1.381, total 1.676 / 2.049, GPU 0.763 / 1.021 (100 samples); draw calls 2, texture uploads 4096 bytes/frame
+1000 characters, independent_poses, repeat 1 (median / p95 ms): view 2.897 / 3.150, submit 0.495 / 0.708, completion + readback 1.436 / 1.785, total 4.881 / 5.366, GPU 1.076 / 1.396 (100 samples); draw calls 2, texture uploads 4096000 bytes/frame
+10000 characters, static, repeat 1 (median / p95 ms): view 0.589 / 0.852, submit 0.031 / 0.048, completion + readback 5.176 / 5.861, total 5.863 / 6.596, GPU 4.726 / 5.394 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+10000 characters, omitted_rest, repeat 1 (median / p95 ms): view 4.839 / 6.497, submit 0.047 / 0.071, completion + readback 8.422 / 8.964, total 13.417 / 15.096, GPU 7.932 / 8.401 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+10000 characters, shared_pose, repeat 1 (median / p95 ms): view 5.306 / 5.808, submit 0.050 / 0.070, completion + readback 8.459 / 9.262, total 13.904 / 14.934, GPU 7.996 / 8.730 (100 samples); draw calls 2, texture uploads 4096 bytes/frame
+10000 characters, independent_poses, repeat 1 (median / p95 ms): view 29.205 / 29.942, submit 6.461 / 7.561, completion + readback 12.322 / 14.216, total 47.976 / 50.596, GPU 13.967 / 15.652 (100 samples); draw calls 11, texture uploads 40960000 bytes/frame

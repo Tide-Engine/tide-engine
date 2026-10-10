@@ -1,0 +1,5 @@
+Initial preservation check rejected the candidate before any paired measurement:
+Generated C differs beyond the exact reviewed adapter replacement and two #line paths.
+The exact raw diff showed the approved adapter plus two expected compiler debug line-number increments:2755->2757 and2813->2815.
+The failed snapshot is retained at build/release/skinned-cpu5/after-snapshot-incomplete-line-check.
+No build/source change or saved benchmark rows resulted. The guard was tightened to the exact original/new numbers and paths before retrying preservation.

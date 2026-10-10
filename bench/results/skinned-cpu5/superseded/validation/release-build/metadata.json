@@ -1,0 +1,40 @@
+{
+  "source_revision": "000a5986ba637eb9638f8b187b74736e95103378",
+  "configuration": "RelWithDebInfo / -O2 / -fno-fast-math / -ffp-contract=off",
+  "configure": [
+    "cmake",
+    "--preset",
+    "release",
+    "-B",
+    "build/skinned-cpu5-release",
+    "-DTIDE_NODE=C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe",
+    "-DFETCHCONTENT_SOURCE_DIR_GLFW=C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\_deps\\glfw-src"
+  ],
+  "build": [
+    "cmake",
+    "--build",
+    "build/skinned-cpu5-release",
+    "--target",
+    "bench_skinned",
+    "-j",
+    "8"
+  ],
+  "executable": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-release\\bin\\bench_skinned.exe",
+    "bytes": 1880576,
+    "sha256": "1f471332b38237fb6886aefcd311002e9084e18471b7b46e48216e6b919df6dc"
+  },
+  "sourceFrozen": true,
+  "completedAtUtc": "2026-10-10T22:19:11.0213823Z",
+  "logs": [
+    "configure.log",
+    "build.log"
+  ],
+  "orchestration": {
+    "required_shell": "PowerShell7",
+    "successful_shell": "PowerShell7.6.5",
+    "initial_preconfigure_failure": "Windows PowerShell5 Join-Path binding failed before any build; successful retry used PowerShell7.6.5",
+    "preflight_record": "../preflight/metadata.json",
+    "measured_attempt": false
+  }
+}

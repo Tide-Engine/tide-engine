@@ -1,0 +1,25 @@
+{
+  "historical_rows": 408,
+  "superseded_rows": 48,
+  "final_rows": 48,
+  "total_rows": 504,
+  "historical": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5\\final-cpu5\\ledger-before.jsonl",
+    "bytes": 453760,
+    "sha256": "0cdfc8ed2fe4cdc99ec2d6602870483dffe5c507630960e3338e829d3090ad1b",
+    "category": "historical-408-row-ledger"
+  },
+  "input": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5-final\\final-cpu5-final\\ledger-before.jsonl",
+    "bytes": 507267,
+    "sha256": "e60cf4d74b6256fc4a8a02ea44ba9936dbef00f02e1e96946d3290c1203bea44",
+    "category": "final-input-456-row-ledger"
+  },
+  "raw": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5-final\\final-cpu5-final\\raw-ledger.jsonl",
+    "bytes": 561064,
+    "sha256": "e71be9dc93deb3f4640b190dace98b0390e6a178a02c7e7fb9179d3755560c33",
+    "category": "final-504-row-raw-ledger"
+  },
+  "note": "Original 408-row raw prefix is byte-identical, the completed adverse comparison appends 48 rows to the exact 456-row input, and 48 distinct final-label rows append to 504. Exported JSONL uses normalized UTF-8/LF; raw byte identities remain separate."
+}

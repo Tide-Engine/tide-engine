@@ -1,0 +1,232 @@
+[
+  {
+    "path": "metadata.json",
+    "bytes": 26389,
+    "sha256": "24ac55749f28aa25638be090fbb03d300cab447b248d10ef7277e56beda5c390"
+  },
+  {
+    "path": "summary.json",
+    "bytes": 12571,
+    "sha256": "63e9420a066655bdd2ba53ed754d25ea84e97848752514efdb61ad37b38a775e"
+  },
+  {
+    "path": "after/bench_skinned_diagnostic.exe",
+    "bytes": 1880576,
+    "sha256": "ba3651f07167bca28c945c225822a8a55fa57669c73c140c1106703eff68b3b3"
+  },
+  {
+    "path": "after/bench_skinned_diagnostic.map",
+    "bytes": 443734,
+    "sha256": "f7f119e338432b164995cca418edee0bf6e34259e3e4a2602ca451582ea9e448"
+  },
+  {
+    "path": "after/bench_skinned_diagnostic.pdb",
+    "bytes": 3002368,
+    "sha256": "fd1c57037480fb7134fef7593c8639b2af514e1bc5199be1d05e94c1cd1fbea5"
+  },
+  {
+    "path": "after/compile-game.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after/compile-main.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after/game.c",
+    "bytes": 168409,
+    "sha256": "3ea6656728e62ee9932665ae0a8e8c0df8bb70ace80e74fbdfbcc7896f4a0353"
+  },
+  {
+    "path": "after/game.obj",
+    "bytes": 211730,
+    "sha256": "60a6f63dc06e0d23ab19f6c98e54d35dcf80e7b63a2e27a111c4cbbbb1095a9b"
+  },
+  {
+    "path": "after/link.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after/main.c",
+    "bytes": 17638,
+    "sha256": "7bdce4ca52058247d2f31b9406c6fadff9646abd37b18c4d76c5e9f91b86a57b"
+  },
+  {
+    "path": "after/main.obj",
+    "bytes": 80551,
+    "sha256": "834a97819f9f13e673a814610bf1b60aff6f3c1fec2e0c2b6e46397affca2b01"
+  },
+  {
+    "path": "after-all/gpu-errors.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after-all/gpu.csv",
+    "bytes": 733,
+    "sha256": "0075ecc5ce9e38284956c5b4e9e0e9d6bbb81addd0773592b438bd711fd679c6"
+  },
+  {
+    "path": "after-all/stderr.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after-all/stdout.txt",
+    "bytes": 4577,
+    "sha256": "cf4b12e59048d2feda62040520e2c4e31a59a22297e471658cd168dde4bf10ce"
+  },
+  {
+    "path": "after-independent/gpu-errors.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after-independent/gpu.csv",
+    "bytes": 537,
+    "sha256": "328be82239563e4854a4db8e7835d7d0f7fdac45e7b4fe2b39ef945bd5a4ec6b"
+  },
+  {
+    "path": "after-independent/stderr.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after-independent/stdout.txt",
+    "bytes": 753,
+    "sha256": "bc1582a834330fcf46ea3110ade9aeff89de6fb9d5a4906c50346add6757e79e"
+  },
+  {
+    "path": "after-original-independent/gpu-errors.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after-original-independent/gpu.csv",
+    "bytes": 535,
+    "sha256": "f0f1eb5d46334e3c426441791414d728df2a13f3c7e27858445af111484019c8"
+  },
+  {
+    "path": "after-original-independent/stderr.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "after-original-independent/stdout.txt",
+    "bytes": 421,
+    "sha256": "093ea335f586da86bf0ae33db1136e229d13e92c218da5f573ac93bce9776d71"
+  },
+  {
+    "path": "before/bench_skinned_diagnostic.exe",
+    "bytes": 1878016,
+    "sha256": "b1af22c01562b2c6710a148ddb9eb40795ae7c8860d5aa7af9eef51791c6e2b9"
+  },
+  {
+    "path": "before/bench_skinned_diagnostic.map",
+    "bytes": 443287,
+    "sha256": "8b47d47c862feb6f78dc24405b1e98dbe168781ab733799fa665e0ef54847cb2"
+  },
+  {
+    "path": "before/bench_skinned_diagnostic.pdb",
+    "bytes": 2998272,
+    "sha256": "388c4fc8b4194180df439c8960b7635a5be7200038124d2027a6f6c4be3bd6e8"
+  },
+  {
+    "path": "before/compile-game.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before/compile-main.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before/game.c",
+    "bytes": 168355,
+    "sha256": "1f02162740f9fc0ad512fe3d2c37f1ba661c14350baeb02ebcaa17c4f3cefb0c"
+  },
+  {
+    "path": "before/game.obj",
+    "bytes": 211805,
+    "sha256": "8a77875dbd5725a99947ea65849e532d31d45c78592fef83810b04226a330c86"
+  },
+  {
+    "path": "before/link.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before/main.c",
+    "bytes": 17638,
+    "sha256": "7bdce4ca52058247d2f31b9406c6fadff9646abd37b18c4d76c5e9f91b86a57b"
+  },
+  {
+    "path": "before/main.obj",
+    "bytes": 80555,
+    "sha256": "b41679ec88f51e72f8b3e281a9b0f2da468e88b894485254bd42349b1b29b129"
+  },
+  {
+    "path": "before-all/gpu-errors.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before-all/gpu.csv",
+    "bytes": 823,
+    "sha256": "d59a0091fcdf55a57272ce351ced60df315ab5925dab7358b154d51268b5ebe5"
+  },
+  {
+    "path": "before-all/stderr.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before-all/stdout.txt",
+    "bytes": 4576,
+    "sha256": "6f35b7cc05616f649bcfd1852783cff724b1af5d90c9ef051914bef0d2cd2891"
+  },
+  {
+    "path": "before-independent/gpu-errors.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before-independent/gpu.csv",
+    "bytes": 533,
+    "sha256": "6c55234e5129e818d0d4f6607e61685fed54b48ac64886b9968a1170f0653eda"
+  },
+  {
+    "path": "before-independent/stderr.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before-independent/stdout.txt",
+    "bytes": 753,
+    "sha256": "c9ac8f6d93b695002203e55ab70b93f5b39ee50e41988893ee2d18ef342348dd"
+  },
+  {
+    "path": "before-original-independent/gpu-errors.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before-original-independent/gpu.csv",
+    "bytes": 533,
+    "sha256": "0d8dca087b8905431c2e78a79adaf5c1639e498e90f807c810a70e8eb250cb5f"
+  },
+  {
+    "path": "before-original-independent/stderr.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "before-original-independent/stdout.txt",
+    "bytes": 421,
+    "sha256": "17c5ad313b24f5acb8a07d66e4ab2823420221d1ff21968dafcb0e042b9d37ff"
+  }
+]

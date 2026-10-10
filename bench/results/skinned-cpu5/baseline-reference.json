@@ -1,0 +1,74 @@
+{
+  "purpose": "CPU5 reuses the immutable CPU4 candidate. Referenced committed baseline artifacts are hash pinned; binaries and full generated/source inputs remain in this checkout scratch and are not duplicated in the CPU5 export.",
+  "source_revision": "711af03879d9bd687edc4f977ec92f80544e0c22",
+  "executable": {
+    "path": "build/release/skinned-cpu4/after-snapshot/bench_skinned.exe",
+    "bytes": 1878016,
+    "sha256": "786d7c0a0f19d036d11240e0917223bcf8d383de299f8822a9f55307a0c514c1"
+  },
+  "raw_snapshot_metadata": {
+    "path": "build/release/skinned-cpu4/after-snapshot/metadata.json",
+    "bytes": 11332,
+    "sha256": "9034c5cd9cbae68bcd18862d4acfb5039684e81d64775b656d29e11c18bc3f2f"
+  },
+  "raw_source_hashes": {
+    "path": "build/release/skinned-cpu4/after-snapshot/source-hashes.json",
+    "bytes": 493098,
+    "sha256": "0ee06ddc54795715e351df4bf9ee7cf3f2eb945086bcb433d22d0c32f3b464d2"
+  },
+  "committed_references": [
+    {
+      "path": "bench/results/skinned-cpu4/snapshot-after/metadata.json",
+      "bytes": 10981,
+      "sha256": "910a4aea8c7603f54eaaf52ef6a110246f130189c7b3fa0e8bf5491d25adf2de"
+    },
+    {
+      "path": "bench/results/skinned-cpu4/snapshot-after/source-hashes.json",
+      "bytes": 478621,
+      "sha256": "86919159353f73974d0b28104a147e0f4b0a3a8a01b45036023639e714f61cba"
+    }
+  ],
+  "fixture_and_generated": [
+    {
+      "path": "fixture/game.tide",
+      "bytes": 2416,
+      "sha256": "5c03927f454d74b0835b69c7ee2de4e2d50a02da9af988105e5dbd90293b7f49"
+    },
+    {
+      "path": "fixture/generate.mjs",
+      "bytes": 6178,
+      "sha256": "a2d53f2585b54aff4811cbc8f56783aa959a2cf7e641fe6db66f6ea7158d103a"
+    },
+    {
+      "path": "fixture/main.c",
+      "bytes": 17096,
+      "sha256": "2f729935753e470ab7eb6154c1aebc64905b9e84f5eacdb2fcc0943025001662"
+    },
+    {
+      "path": "fixture/model.gltf",
+      "bytes": 364131,
+      "sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3"
+    },
+    {
+      "path": "generated/game_pack.c",
+      "bytes": 2481119,
+      "sha256": "6d681bc5dc8b98a21628862a6811a936237019b81c8935fc597fb954f31e49af"
+    },
+    {
+      "path": "generated/game.c",
+      "bytes": 167582,
+      "sha256": "74f8f346a5d46a05aa5baf647a09ceac3f8767a21d54fcaf7396defc624bb302"
+    },
+    {
+      "path": "generated/game.h",
+      "bytes": 23431,
+      "sha256": "2e562055931a97f98ffa1ed2217e99d4b6deeaa16d2214bad67446ffeb12a301"
+    }
+  ],
+  "ledger_before": {
+    "path": "bench/results/skinned.jsonl",
+    "bytes": 507267,
+    "sha256": "e60cf4d74b6256fc4a8a02ea44ba9936dbef00f02e1e96946d3290c1203bea44"
+  },
+  "ledger_before_rows": 456
+}
