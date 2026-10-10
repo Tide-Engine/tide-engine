@@ -16,6 +16,7 @@ compiler/tests/e2e/assets/** -text
 *.ogg binary
 *.pcm binary
 platform/third_party/* -text
+platform/third_party/fflate/** -text
 
 # Box2D, as it came (packages/box2d/box2d/TIDE.md lists what is changed).
 packages/box2d/box2d/** -text

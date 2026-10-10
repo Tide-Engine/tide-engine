@@ -1,0 +1,28 @@
+# Checked-in release JavaScript keeps npm and minifiers out of normal builds.
+# Normalize checkout line endings before hashing, as the maintainer generator does.
+file(REAL_PATH "${CMAKE_CURRENT_LIST_DIR}/.." _tide_web_root)
+set(_tide_web_manifest "${_tide_web_root}/platform/web/tide.release.json")
+file(READ "${_tide_web_manifest}" _tide_web_json)
+string(JSON _tide_web_count LENGTH "${_tide_web_json}" inputs)
+math(EXPR _tide_web_last "${_tide_web_count} - 1")
+foreach(_tide_web_i RANGE 0 ${_tide_web_last})
+    string(JSON _tide_web_path MEMBER "${_tide_web_json}" inputs ${_tide_web_i})
+    string(JSON _tide_web_expected GET "${_tide_web_json}" inputs "${_tide_web_path}")
+    file(READ "${_tide_web_root}/${_tide_web_path}" _tide_web_text)
+    string(REPLACE "\r\n" "\n" _tide_web_text "${_tide_web_text}")
+    string(SHA256 _tide_web_actual "${_tide_web_text}")
+    if(NOT _tide_web_actual STREQUAL _tide_web_expected)
+        message(FATAL_ERROR "Release web runtime is stale (${_tide_web_path}). Run npm ci --prefix docs, "
+                            "then node cmake/web_runtime.mjs --write.")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_tide_web_root}/${_tide_web_path}")
+endforeach()
+file(READ "${_tide_web_root}/platform/web/tide.release.js" _tide_web_text)
+string(REPLACE "\r\n" "\n" _tide_web_text "${_tide_web_text}")
+string(SHA256 _tide_web_actual "${_tide_web_text}")
+string(JSON _tide_web_expected GET "${_tide_web_json}" output)
+if(NOT _tide_web_actual STREQUAL _tide_web_expected)
+    message(FATAL_ERROR "Generated release web runtime differs; run node cmake/web_runtime.mjs --write.")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_tide_web_manifest}"
+    "${_tide_web_root}/platform/web/tide.release.js")

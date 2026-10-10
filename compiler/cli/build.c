@@ -1,6 +1,7 @@
 #include "build.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,10 @@
 #include "serve.h"
 #include "sys.h"
 #include "toolchain.h"
+
+#ifdef TIDE_EMBEDDED_CLANG
+#include <zlib.h>
+#endif
 
 #ifndef TIDE_VERSION
 #define TIDE_VERSION "0.0.0-dev"
@@ -1540,6 +1545,44 @@ static char *base64(const unsigned char *data, const size_t len)
     return out;
 }
 
+// The installed compiler already links zlib for LLVM. Compress embedded
+// release payloads before base64: the page's release runtime accepts gzip
+// and raw bytes. Development builds need no additional dependency.
+static char *page_payload(const char *data, const size_t len, const bool release)
+{
+#ifdef TIDE_EMBEDDED_CLANG
+    if (release && len && len <= UINT_MAX) {
+        z_stream stream = {0};
+        if (deflateInit2(&stream, 9, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) == Z_OK) {
+            const uLong bound = deflateBound(&stream, (uLong)len);
+            if (bound <= UINT_MAX) {
+                unsigned char *compressed = malloc((size_t)bound);
+                if (!compressed) abort();
+                // A stable header on every host: no timestamp or host OS.
+                gz_header header = {0};
+                header.os = 255;
+                const int header_ok = deflateSetHeader(&stream, &header);
+                stream.next_in = (Bytef *)(void *)data;
+                stream.avail_in = (uInt)len;
+                stream.next_out = compressed;
+                stream.avail_out = (uInt)bound;
+                if (header_ok == Z_OK && deflate(&stream, Z_FINISH) == Z_STREAM_END && stream.total_out < len) {
+                    char *encoded = base64(compressed, (size_t)stream.total_out);
+                    free(compressed);
+                    deflateEnd(&stream);
+                    return encoded;
+                }
+                free(compressed);
+            }
+            deflateEnd(&stream);
+        }
+    }
+#else
+    (void)release;
+#endif
+    return base64((const unsigned char *)data, len);
+}
+
 // The first line from `from` that's `marker` alone (indented or not), or NULL.
 // `after` gets the start of the line after it.
 static char *marker_line(char *from, const char *marker, char **after)
@@ -1591,28 +1634,32 @@ static void page_arguments(char *text, const size_t size, const char *const *arg
     strcat(text, "];\n");
 }
 
-static bool make_page(const char *root, const char *program, const char *page, const char *pack, const char *const *args)
+static bool make_page(const char *root, const char *program, const char *page, const char *pack, const char *const *args,
+                      const bool release)
 {
     char *shell_path = path_join(root, "web/shell.html");
-    char *script_path = path_join(root, "web/tide.js");
+    char *script_path = path_join(root, release ? "web/tide.release.js" : "web/tide.js");
     char *shell = sys_read_file(shell_path, NULL);
     char *script = sys_read_file(script_path, NULL);
+    free(shell_path);
+    free(script_path);
     size_t wasm_len = 0;
     char *wasm = sys_read_file(program, &wasm_len);
     size_t pack_len = 0;
     char *packed = pack ? sys_read_file(pack, &pack_len) : NULL; // The game's assets, inside the page too (TIDE_PACK)
     const char *slot = shell ? strstr(shell, "{{{ SCRIPT }}}") : NULL;
+    bool ok = false;
     if (!script || !wasm || !slot) {
         fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
-        return false;
+        goto done;
     }
     strip_reloading(script);
-    char *encoded = base64((const unsigned char *)wasm, wasm_len);
     FILE *f = fopen(page, "wb");
     if (!f) {
         fprintf(stderr, "tide: can't write %s\n", page);
-        return false;
+        goto done;
     }
+    char *encoded = page_payload(wasm, wasm_len, release);
     fwrite(shell, 1, (size_t)(slot - shell), f);
     fprintf(f, "<script>\nconst TIDE_PROGRAM = \"%s\";\n", encoded);
     if (args && args[0]) {
@@ -1621,14 +1668,17 @@ static bool make_page(const char *root, const char *program, const char *page, c
         fputs(arguments, f);
     }
     if (packed) {
-        char *pack_encoded = base64((const unsigned char *)packed, pack_len);
+        char *pack_encoded = page_payload(packed, pack_len, release);
         fprintf(f, "const TIDE_PACK = \"%s\";\n", pack_encoded);
         free(pack_encoded);
     }
     fprintf(f, "%s</script>", script);
     fputs(slot + strlen("{{{ SCRIPT }}}"), f);
-    const bool ok = fclose(f) == 0;
+    ok = fclose(f) == 0;
     free(encoded);
+done:
+    free(shell);
+    free(script);
     free(wasm);
     free(packed);
     return ok;
@@ -1766,7 +1816,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
     }
     if (!link_objects(&b, &objects, &c, program, false, NULL)) return NULL;
     char *pack = pack_of(gen);
-    if (opts->web && !make_page(root, program, output, pack, args)) return NULL;
+    if (opts->web && !make_page(root, program, output, pack, args, opts->release && !opts->watch)) return NULL;
     if (!opts->web) { // Beside the program, as <name>.pack, which tide/run.h loads
         char file[512];
         snprintf(file, sizeof file, "%s.pack", b.name);
