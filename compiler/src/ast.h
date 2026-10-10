@@ -103,6 +103,7 @@ typedef struct skinned_member {
     str source_name;
     int index;
     bool explicit_name; // Contract aliases use the exact export; inferred members already know it.
+    str source_file; // Original path for combined animation catalog completion/hover.
 } skinned_member;
 
 // ---------------------------------------------------------------------------
@@ -610,7 +611,9 @@ typedef struct decl {
     struct expr *value; // A constant expression of its type (return_type)
     // Assets: the files the path resolved to, once checked (asset_files.h); NULL where it couldn't
     struct asset_value *asset;
+    VEC(struct expr *) asset_paths; // Checked path literals, including an Animations file list.
     int asset_kind;  // The asset_kind its type says, once checked (asset_files.h)
+    int asset_animation_index; // A singular Animation's checked source clip.
     // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
     // names it doesn't say: 1 + the enum member's number, or 0 for none (declared_sampling)
     int sample_filter, sample_wrap;

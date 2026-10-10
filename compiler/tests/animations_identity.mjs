@@ -49,3 +49,36 @@ for (const shape of ['single', 'list', 'map']) {
     }
     console.log(`${shape}: animation identity passed`);
 }
+
+// File lists authenticate every source; filename aliases and selected clip
+// ordinals affect the program even when the canonical bytes are unchanged.
+{
+    const folder = path.resolve(work, 'combined'), output = path.join(folder, 'out');
+    mkdirSync(output, { recursive: true });
+    const source = path.join(folder, 'game.tide');
+    const clips = JSON.parse(JSON.stringify(model));
+    clips.animations = [clips.animations[0], { ...clips.animations[0], name: 'Idle' }];
+    writeFileSync(path.join(folder, 'a.gltf'), JSON.stringify(clips));
+    writeFileSync(path.join(folder, 'b.gltf'), JSON.stringify(clips));
+    writeFileSync(path.join(folder, 'keys.bin'), original);
+    function compile(paths, selected = clips.animations[0].name) {
+        writeFileSync(source, `asset Animations movement = ${JSON.stringify(paths)};\n`
+            + `[Name(${JSON.stringify(selected)})] asset Animation clip = "a.gltf";\nscene Main { }\n`);
+        execFileSync(tidec, [source, '-o', output, '--name', 'game', '--no-line'], { stdio: 'pipe' });
+        return readFileSync(path.join(output, 'game.c'), 'utf8').match(/\.hash = (0x[0-9A-F]+ull)/)?.[1];
+    }
+    const before = compile(['a.gltf', 'b.gltf']);
+    assert(before, 'combined identity missing');
+    assert.equal(compile(['a.gltf', 'b.gltf', 'a.gltf']), before, 'repeated file changed catalog identity');
+    assert.notEqual(compile(['a.gltf', 'b.gltf'], 'Idle'), before, 'selected clip ordinal retained identity');
+    renameSync(path.join(folder, 'b.gltf'), path.join(folder, 'renamed.gltf'));
+    const renamed = compile(['a.gltf', 'renamed.gltf']);
+    assert.notEqual(renamed, before, 'collision filename edit retained identity');
+    assert.notEqual(compile(['renamed.gltf', 'a.gltf']), renamed, 'combined source order retained identity');
+    const changed = JSON.parse(JSON.stringify(clips));
+    changed.animations[0].name = 'Changed';
+    writeFileSync(path.join(folder, 'renamed.gltf'), JSON.stringify(changed));
+    assert.notEqual(compile(['a.gltf', 'renamed.gltf']), renamed, 'later-source content edit retained identity');
+    rmSync(path.join(folder, 'renamed.gltf'));
+    console.log('combined and selected clips: animation identity passed');
+}

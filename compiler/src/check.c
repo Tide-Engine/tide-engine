@@ -11284,6 +11284,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
     else if (str_eq_c(inner->text, "Animations")) *kind = ASSET_ANIMATIONS;
+    else if (str_eq_c(inner->text, "Animation")) *kind = ASSET_ANIMATION;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
     else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
     else if (str_eq_c(inner->text, "Mesh")) {
@@ -11301,17 +11302,23 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V> or Animations (glTF 2.0 or FBX), not '" STR_FMT "'",
+                       "SkinnedMesh<V>, Animation or Animations (glTF 2.0 or FBX), not '" STR_FMT "'",
                    STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
     k->return_type = resolve_type(c, written, PLACE_ASSET, at);
-    if (*kind == ASSET_ANIMATIONS && k->return_type.kind != TY_ERROR) {
+    if ((*kind == ASSET_ANIMATIONS || *kind == ASSET_ANIMATION) && k->return_type.kind != TY_ERROR) {
         const type t = k->return_type.kind == TY_LIST ? list_element(k->return_type)
                      : k->return_type.kind == TY_MAP ? map_value(k->return_type) : k->return_type;
-        if (t.kind != TY_STRUCT || t.decl->skin_kind != SKIN_ANIMATIONS) {
-            diag_error(at, "an Animations asset uses the built-in animation catalog; '%s' names a different type", type_name(t));
+        if (t.kind != TY_STRUCT || t.decl->skin_kind != (*kind == ASSET_ANIMATION ? SKIN_ANIMATION : SKIN_ANIMATIONS)) {
+            diag_error(at, "an %s asset uses the built-in %s; '%s' names a different type",
+                       *kind == ASSET_ANIMATION ? "Animation" : "Animations",
+                       *kind == ASSET_ANIMATION ? "animation type" : "animation catalog", type_name(t));
+            return false;
+        }
+        if (*kind == ASSET_ANIMATION && *many) {
+            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an Animations catalog");
             return false;
         }
     }
@@ -11483,22 +11490,57 @@ static void check_asset_decl(checker *c, decl *k)
             check_sampling_attribute(c, k, attr);
         }
     }
-    const expr *path = NULL;
-    const bool constant = is_constant(c, k->value);
-    if (constant) {
-        const type t = check_constant_expr(c, k->value, true, (type){TY_STRING, NULL});
-        if (t.kind == TY_STRING) path = text_literal(k->value);
-        else if (t.kind != TY_ERROR) diag_error(k->value->at, "an asset's path is text, not %s", type_name(t));
+    const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
+    const bool paths = catalog && k->value->kind == E_LIST;
+    const int path_count = paths ? k->value->args.count : 1;
+    if (!path_count) diag_error(k->value->at, "an Animations file list can't be empty: name at least one file");
+    bool valid = path_count > 0;
+    for (int i = 0; i < path_count; i++) {
+        expr *value = paths ? k->value->args.items[i] : k->value;
+        const expr *path = NULL;
+        if (is_constant(c, value)) {
+            const type t = check_constant_expr(c, value, true, (type){TY_STRING, NULL});
+            if (t.kind == TY_STRING) path = text_literal(value);
+            else if (t.kind != TY_ERROR) diag_error(value->at, "an asset's path is text, not %s", type_name(t));
+        } else {
+            diag_error(value->at, "an asset's path is a constant: a string literal, or a 'const string'");
+            diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
+        }
+        if (path) vec_push(k->asset_paths, (expr *)path);
+        else valid = false;
     }
-    if (!constant) {
-        diag_error(k->value->at, "an asset's path is a constant: a string literal, or a 'const string'");
-        diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
-    }
-    if (typed && fills && path) {
-        if (!c->prog->asset_metadata_only || (kind != ASSET_SKINNED && kind != ASSET_ANIMATIONS)) {
+    if (typed && fills && valid) {
+        if (catalog) {
+            asset_value *combined = NEW(asset_value);
+            combined->kind = kind;
+            combined->paths_only = c->prog->asset_metadata_only;
+            VEC(asset_match) matches = {0};
+            for (int i = 0; i < k->asset_paths.count; i++) {
+                const expr *path = k->asset_paths.items[i];
+                asset_value *v = c->prog->asset_metadata_only
+                    ? asset_resolve_paths(k->unit->src->path, path->text, kind, true, false, path->at, c->prog->game_folder)
+                    : asset_resolve(k->unit->src->path, path->text, kind, true, false, path->at, c->prog->game_folder);
+                if (!v) { valid = false; continue; }
+                for (int n = 0; n < v->count; n++) {
+                    bool duplicate = false;
+                    for (int m = 0; m < matches.count && !duplicate; m++) {
+                        duplicate = v->items[n].abs && matches.items[m].abs
+                            ? asset_path_same(v->items[n].abs, matches.items[m].abs)
+                            : strcmp(v->items[n].key, matches.items[m].key) == 0;
+                    }
+                    if (!duplicate) vec_push(matches, v->items[n]);
+                }
+            }
+            combined->items = matches.items;
+            combined->count = matches.count;
+            if (valid) k->asset = combined;
+        } else if (!c->prog->asset_metadata_only || (kind != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
+            const expr *path = k->asset_paths.items[0];
             k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
         }
-        if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) skinned_asset_catalogs(c, k, path);
+        if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS)
+            skinned_asset_catalogs(c, k, k->asset_paths.items[0]);
+        else if (kind == ASSET_ANIMATION) skinned_animation_asset(c, k, k->asset_paths.items[0]);
     }
     k->index = 2;
     vec_push(c->prog->assets, k);
@@ -15837,6 +15879,11 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Name")) {
+                if (d->kind != DECL_ASSET || d->asset_kind != ASSET_ANIMATION)
+                    diag_error(attr->at, "Name selects a clip on an Animation asset: [Name(\"Root|Run\")] asset Animation run = \"run.fbx\";");
+                continue; // The selection was checked with the asset.
+            }
             if (str_eq_c(attr->name, "Channel") || str_eq_c(attr->name, "Unordered")) {
                 check_channel_attribute(c, d, attr);
                 continue;
@@ -15877,6 +15924,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "After");
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
+                suggest_consider_c(&s, "Name");
                 suggest_consider_c(&s, "Sparse");
                 suggest_consider_c(&s, "Bus");
                 suggest_consider_c(&s, "Channel");
@@ -17731,12 +17779,17 @@ bool check(program *prog)
     }
     if (prog->game_folder && prog->assets.count > 0) {
         // The hashes of the named files, in the game's .tide/, so one that moves is found by its bytes
-        asset_named *named = arena_alloc(sizeof(asset_named) * (size_t)prog->assets.count);
+        int path_count = 0;
+        for (int i = 0; i < prog->assets.count; i++) path_count += prog->assets.items[i]->asset_paths.count;
+        asset_named *named = arena_alloc(sizeof(asset_named) * (size_t)path_count);
         int count = 0;
         for (int i = 0; i < prog->assets.count; i++) {
             const decl *d = prog->assets.items[i];
-            const expr *path = d->value ? text_literal(d->value) : NULL;
-            if (path) named[count++] = (asset_named){d->unit->src->path, path->text, d->asset};
+            for (int n = 0; n < d->asset_paths.count; n++) {
+                const expr *path = d->asset_paths.items[n];
+                named[count++] = (asset_named){d->unit->src->path, path->text,
+                    d->asset && !d->asset->paths_only ? d->asset : NULL};
+            }
         }
         asset_files_save_hashes(prog->game_folder, named, count);
     }

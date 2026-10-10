@@ -28,6 +28,7 @@ typedef enum asset_kind {
     ASSET_MESH,
     ASSET_SKINNED,
     ASSET_ANIMATIONS, // Animations: glTF skeleton/clip data, without typed render geometry
+    ASSET_ANIMATION, // Animation: one selected clip from an animation source.
 } asset_kind;
 
 typedef struct asset_match {
@@ -48,6 +49,7 @@ typedef struct asset_value {
     asset_kind kind;
     bool many;   // A List<T> or Map<string, T>: a glob's matches, or the one file a path or a URL names
     bool is_map; // ...a Map<string, T>
+    bool paths_only; // Editor discovery: paths without file reads or full imports.
     asset_match *items;
     int count;
 } asset_value;
@@ -59,6 +61,8 @@ typedef struct asset_value {
 // own): it's where the hashes of named files are kept, so a moved file is
 // found by its bytes, and where fetched URLs are cached.
 asset_value *asset_resolve(const char *declaring, str path, asset_kind kind, bool many, bool is_map, loc at, const char *game_folder);
+asset_value *asset_resolve_paths(const char *declaring, str path, asset_kind kind, bool many, bool is_map, loc at,
+                                 const char *game_folder);
 // Decode the language literal's escapes and normalize path separators (arena).
 const char *asset_written_path(str text);
 

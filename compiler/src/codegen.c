@@ -6564,7 +6564,8 @@ static void gen_header(gen *g)
     if (prog->skinned_types.count) sb_put(o, "#include \"tide/skinned.h\"\n\n");
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *asset = prog->assets.items[i];
-        if ((asset->asset_kind != ASSET_SKINNED && asset->asset_kind != ASSET_ANIMATIONS) || !asset->asset) continue;
+        if ((asset->asset_kind != ASSET_SKINNED && asset->asset_kind != ASSET_ANIMATIONS
+             && asset->asset_kind != ASSET_ANIMATION) || !asset->asset) continue;
         const decl *vertex = asset_vertex(asset->return_type);
         const char *layout = vertex ? mesh_layout(g, vertex) : "";
         for (int k = 0; k < asset->asset->count; k++) {
@@ -6572,7 +6573,8 @@ static void gen_header(gen *g)
             tide_sha256 hash;
             uint8_t content[32];
             tide_sha256_init(&hash);
-            if (asset->asset->is_map) tide_sha256_add(&hash, item->key, strlen(item->key));
+            if (asset->asset->is_map || (asset->asset_kind == ASSET_ANIMATIONS && asset->asset->count > 1))
+                tide_sha256_add(&hash, item->key, strlen(item->key));
             tide_sha256_add(&hash, item->skinned, item->skinned_size);
             tide_sha256_add(&hash, layout, strlen(layout));
             tide_sha256_end(&hash, content);
@@ -6580,6 +6582,8 @@ static void gen_header(gen *g)
             for (int byte = 0; byte < 32; byte++) sb_printf(o, "%02x", content[byte]);
             sb_put(o, "\n");
         }
+        if (asset->asset_kind == ASSET_ANIMATION)
+            sb_printf(o, "// Selected animation " STR_FMT ": %d\n", STR_ARG(asset->qualified), asset->asset_animation_index);
     }
     for (int i = 0; i < g->asset_dependencies.count; i++) {
         const asset_dependency *dep = &g->asset_dependencies.items[i];
@@ -14383,8 +14387,9 @@ static uint32_t mesh_layout_number(gen *g, const decl *vertex)
 static uint32_t asset_pack_kind(const type t)
 {
     const type inner = t.kind == TY_LIST ? list_elem(t.decl) : t.kind == TY_MAP ? t.decl->fields.items[1].type : t;
+    if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATION) return TIDE_PACK_BYTES;
     if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATIONS)
-        return t.kind == TY_LIST ? TIDE_PACK_LIST : t.kind == TY_MAP ? TIDE_PACK_MAP : TIDE_PACK_BYTES;
+        return t.kind == TY_MAP ? TIDE_PACK_MAP : TIDE_PACK_LIST;
     if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH)
         return t.kind == TY_LIST ? TIDE_PACK_SKINNEDS : t.kind == TY_MAP ? TIDE_PACK_SKINNED_MAP : TIDE_PACK_SKINNED;
     if (asset_vertex(t)) return t.kind == TY_MESH ? TIDE_PACK_MESH : t.kind == TY_LIST ? TIDE_PACK_MESH_LIST : TIDE_PACK_MESHES;
@@ -14580,9 +14585,10 @@ static void collect_asset_dependencies(gen *g)
                     .vertex_size = (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size}};
                 vec_push(g->skinned_fingerprints, dep);
             }
-        } else if (d->asset_kind == ASSET_ANIMATIONS && d->asset) {
+        } else if ((d->asset_kind == ASSET_ANIMATIONS || d->asset_kind == ASSET_ANIMATION) && d->asset) {
             const asset_dependency dep = {.asset = d, .shape = {
-                .kind = asset_pack_kind(d->return_type), .leaf_kind = TIDE_PACK_BYTES}};
+                .kind = asset_pack_kind(d->return_type),
+                .leaf_kind = d->return_type.kind == TY_STRUCT ? TIDE_PACK_BYTES : TIDE_PACK_LIST}};
             vec_push(g->skinned_fingerprints, dep);
         }
     }
@@ -14600,7 +14606,8 @@ static void collect_asset_dependencies(gen *g)
         const decl *vertex = asset_vertex(d->return_type);
         asset_dependency dep = {.asset = d, .shape = {.kind = asset_pack_kind(d->return_type)}};
         dep.shape.leaf_kind = d->asset_kind == ASSET_TEXT ? TIDE_PACK_TEXT
-                           : d->asset_kind == ASSET_BYTES || d->asset_kind == ASSET_ANIMATIONS ? TIDE_PACK_BYTES
+                           : d->asset_kind == ASSET_ANIMATIONS ? (d->return_type.kind == TY_STRUCT ? TIDE_PACK_BYTES : TIDE_PACK_LIST)
+                           : d->asset_kind == ASSET_BYTES || d->asset_kind == ASSET_ANIMATION ? TIDE_PACK_BYTES
                            : d->asset_kind == ASSET_GRID ? TIDE_PACK_GRID : d->asset_kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE
                            : d->asset_kind == ASSET_CLIP ? TIDE_PACK_CLIP : 0u;
         if (vertex) dep.shape.vertex_size = (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size;
@@ -14724,6 +14731,9 @@ static void gen_assets(gen *g)
         else if (d->return_type.kind == TY_TEXTURE) sb_printf(o, "    %s = tide_pack_texture_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CUBEMAP) sb_printf(o, "    %s = tide_pack_cubemap_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CLIP) sb_printf(o, "    %s = tide_pack_clip_of(e);\n", asset_cname(d));
+        else if (d->asset_kind == ASSET_ANIMATION)
+            sb_printf(o, "    %s = (%s){.data = {tide_pack_handle(e)}, .index = %d};\n",
+                      asset_cname(d), c_type(d->return_type), d->asset_animation_index);
         else if (d->return_type.kind == TY_MAP) sb_printf(o, "    %s = tide_pack_map_of(e);\n", asset_cname(d));
         else sb_printf(o, "    %s = (%s){tide_pack_handle(e)};\n", asset_cname(d), asset_ctype(d->return_type));
         // A Texture is born sampled as its declaration says ([Filter], [Wrap]), each of a glob's too
@@ -14789,10 +14799,11 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
                           uint32_t *extra)
 {
     *extra = 0;
-    if (kind == ASSET_ANIMATIONS) {
+    if (kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION) {
         uint8_t hash[32];
         tide_sha256_of(item->skinned, item->skinned_size, hash);
-        return tide_pack_bytes(b, hash, item->skinned, item->skinned_size, extra);
+        const uint32_t at = tide_pack_bytes(b, hash, item->skinned, item->skinned_size, extra);
+        return kind == ASSET_ANIMATION ? at : tide_pack_list(b, &at, 1u);
     }
     if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
         const size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
@@ -14886,9 +14897,10 @@ static void build_pack(gen *g)
     if (opts->info) {
         for (int i = 0; i < prog->assets.count; i++) {
             const decl *d = prog->assets.items[i];
-            const expr *path = d->value;
-            while (path->bind == BIND_CONST) path = path->constant->value;
-            if (path->kind == E_STRING) asset_watched(d->unit->src->path, path->text, note_watched, opts->info);
+            for (int n = 0; n < d->asset_paths.count; n++) {
+                const expr *path = d->asset_paths.items[n];
+                asset_watched(d->unit->src->path, path->text, note_watched, opts->info);
+            }
             // A .gltf's buffers in files beside it: saved, the mesh is another
             for (int k = 0; d->asset && k < d->asset->count; k++) {
                 for (int s = 0; s < d->asset->items[k].side_count; s++) note_watched(opts->info, d->asset->items[k].sides[s]);
@@ -14960,11 +14972,23 @@ static void build_pack(gen *g)
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
             continue;
         }
+        if (v->kind == ASSET_ANIMATIONS && t.kind == TY_STRUCT) {
+            uint32_t *sources = arena_alloc(sizeof *sources * (size_t)v->count);
+            for (int n = 0; n < v->count; n++) {
+                uint8_t hash[32];
+                uint32_t chars;
+                tide_sha256_of(v->items[n].skinned, v->items[n].skinned_size, hash);
+                sources[n] = tide_pack_bytes(&b, hash, v->items[n].skinned, v->items[n].skinned_size, &chars);
+            }
+            tide_pack_name(&b, qualified, TIDE_PACK_LIST, tide_pack_list(&b, sources, (uint32_t)v->count),
+                           (uint32_t)v->count, TIDE_PACK_BYTES);
+            continue;
+        }
         if (!v->many) {
             uint32_t extra;
             const uint32_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, &extra);
             tide_pack_name(&b, qualified, kind, at,
-                           v->kind == ASSET_ANIMATIONS ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
+                           v->kind == ASSET_ANIMATION ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
             continue;
         }
         uint32_t *offsets = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
@@ -14980,7 +15004,8 @@ static void build_pack(gen *g)
             }
         }
         const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT
-                                    : v->kind == ASSET_BYTES || v->kind == ASSET_ANIMATIONS ? TIDE_PACK_BYTES
+                                    : v->kind == ASSET_ANIMATIONS ? TIDE_PACK_LIST
+                                    : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES
                                     : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : v->kind == ASSET_CLIP ? TIDE_PACK_CLIP : TIDE_PACK_GRID;
         if (v->is_map) {
             uint32_t index;
@@ -17604,7 +17629,8 @@ bool codegen(program *prog, const codegen_options *opts)
         opts->info->assets_affect_match = false;
         for (int i = 0; i < prog->assets.count; i++)
             opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED
-                                           || prog->assets.items[i]->asset_kind == ASSET_ANIMATIONS;
+                                           || prog->assets.items[i]->asset_kind == ASSET_ANIMATIONS
+                                           || prog->assets.items[i]->asset_kind == ASSET_ANIMATION;
     }
     gen g = {0};
     g.prog = prog;

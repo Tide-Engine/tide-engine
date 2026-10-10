@@ -7,12 +7,28 @@ static void gen_skin_data(gen *g, sb *o, expr *object)
     sb_put(o, ").data");
 }
 
+static void gen_skin_catalog(gen *g, sb *o, expr *object)
+{
+    // Direct model catalog operations borrow its blob, retaining the fixed
+    // path's allocation-free behavior. Escaped catalogs own source lists.
+    if (object->skin_operation == SKIN_OP_ANIMATIONS && !object->hoisted) {
+        sb_put(o, "((tide_skin_catalog){.data = ");
+        gen_skin_data(g, o, object->object);
+    } else {
+        sb_put(o, "((tide_skin_catalog){.sources = ");
+        gen_skin_data(g, o, object);
+    }
+    sb_put(o, "})");
+}
+
 static void gen_skin_expr(gen *g, sb *o, const expr *e)
 {
     const skinned_operation op = (skinned_operation)e->skin_operation;
     if (op == SKIN_OP_ANIMATIONS || op == SKIN_OP_SKELETON || op == SKIN_OP_BONES) {
         sb_printf(o, "((%s){.data = ", c_type(e->type));
+        if (op == SKIN_OP_ANIMATIONS) sb_put(o, "tide_skin_catalog_list(");
         gen_skin_data(g, o, e->object);
+        if (op == SKIN_OP_ANIMATIONS) sb_put(o, ")");
         sb_put(o, "})");
         return;
     }
@@ -22,8 +38,17 @@ static void gen_skin_expr(gen *g, sb *o, const expr *e)
         for (int i = 0; i < catalog->skin_catalog.count; i++) {
             if (str_eq(catalog->skin_catalog.items[i].name, e->member)) member = &catalog->skin_catalog.items[i];
         }
-        sb_printf(o, "tide_skin_%s_member(", op == SKIN_OP_ANIMATION_MEMBER ? "animation" : "bone");
-        gen_skin_data(g, o, e->object);
+        if (member->index >= 0 && op == SKIN_OP_ANIMATION_MEMBER) {
+            // Imported catalogs pin source order, including duplicate original
+            // names. The asset identity/preflight already authenticates it.
+            sb_put(o, "tide_skin_catalog_at(");
+            gen_skin_catalog(g, o, e->object);
+            sb_printf(o, ", %d)", member->index);
+            return;
+        }
+        sb_printf(o, "tide_skin_%s_member(", op == SKIN_OP_ANIMATION_MEMBER ? "catalog" : "bone");
+        if (op == SKIN_OP_ANIMATION_MEMBER) gen_skin_catalog(g, o, e->object);
+        else gen_skin_data(g, o, e->object);
         sb_put(o, ", ");
         gen_text_literal(o, member->source_name, true);
         sb_printf(o, ", %s)", member->explicit_name ? "true" : "false");
@@ -32,8 +57,9 @@ static void gen_skin_expr(gen *g, sb *o, const expr *e)
         return;
     }
     if (op == SKIN_OP_ANIMATION_COUNT || op == SKIN_OP_BONE_COUNT) {
-        sb_printf(o, "tide_skinned_%s_count(", op == SKIN_OP_ANIMATION_COUNT ? "animation" : "bone");
-        gen_skin_data(g, o, e->object);
+        sb_put(o, op == SKIN_OP_ANIMATION_COUNT ? "tide_skin_catalog_count(" : "tide_skinned_bone_count(");
+        if (op == SKIN_OP_ANIMATION_COUNT) gen_skin_catalog(g, o, e->object);
+        else gen_skin_data(g, o, e->object);
         sb_put(o, ")");
         return;
     }
@@ -42,7 +68,8 @@ static void gen_skin_expr(gen *g, sb *o, const expr *e)
     } else if (op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_FIND_BONE || op == SKIN_OP_AT_ANIMATION || op == SKIN_OP_AT_BONE) {
         sb_printf(o, "tide_skin_result%d_%s(", e->type.decl->index,
                   op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_FIND_BONE ? "find" : "at");
-        gen_skin_data(g, o, e->object);
+        if (op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_AT_ANIMATION) gen_skin_catalog(g, o, e->object);
+        else gen_skin_data(g, o, e->object);
         sb_put(o, ", ");
         if (op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_FIND_BONE) gen_expr(g, o, e->args.items[0]);
         else gen_as(g, o, e->args.items[0], (type){TY_INT, NULL});

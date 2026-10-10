@@ -257,6 +257,13 @@ static bool skin_catalog_guarantees(const decl *wanted, const decl *known)
     if (known->skin_metadata_status != 1) return false;
     for (int i = 0; i < wanted->skin_catalog.count; i++) {
         const skinned_member *member = &wanted->skin_catalog.items[i];
+        if (wanted->skin_kind == SKIN_ANIMATIONS && member->index >= 0) {
+            // Inferred clip members are bound to source ordinals, including
+            // duplicate names. A conversion must preserve those ordinals.
+            if (member->index >= known->skin_sources.count
+                || !str_eq(member->source_name, known->skin_sources.items[member->index])) return false;
+            continue;
+        }
         int matches = 0;
         for (int j = 0; j < known->skin_sources.count; j++) {
             const str source = known->skin_sources.items[j];
@@ -287,6 +294,9 @@ bool type_assignable(const type to, const type from)
     if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_MESH
         && from.decl->skin_kind == SKIN_MESH) {
         if (to.decl->skin_vertex.decl != from.decl->skin_vertex.decl) return false;
+        if (to.decl->skin_inferred)
+            return skin_catalog_guarantees(to.decl->skin_animations, from.decl->skin_animations)
+                && skin_catalog_guarantees(to.decl->skin_skeleton->skin_bones, from.decl->skin_skeleton->skin_bones);
         if (!to.decl->skin_contract || to.decl->skin_contract == from.decl->skin_contract) return true;
         return from.decl->skin_inferred
             && skin_catalog_guarantees(to.decl->skin_animations, from.decl->skin_animations)
