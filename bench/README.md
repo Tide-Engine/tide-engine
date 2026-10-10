@@ -266,6 +266,25 @@ Fresh 1,000-character independent medians are 2.957 ms views, 0.454 ms submissio
 
 Independent poses occupy ten palette pages, issuing ten mesh draws plus clear and uploading 40,960,000 bytes/frame; the other modes keep one mesh draw plus clear. Sampling stays serial, and palette preparation keeps its cap of three workers plus caller. The fixed 1024×576 viewport and summed nominal projected area make each of the 100×100 characters only about 4.6 pixels tall. The fixture still submits 30.72 million source vertices and 60.48 million triangles/frame without LOD, culling or match simulation; this is not a close-up crowd scene. Whole-process clocks have 134 P0/3 initial P8 samples, spanning 210–2,835 MHz graphics and 405–11,501 MHz memory; other desktop applications remain running, with no settings changes. [The scaling evidence](results/skinned-10k/README.md) retains exact source/executable/fixture identities, all rows, ranges, clocks and scripts. The final 10,000-character capture is retained in scratch with recorded PNG/RGB hashes; no pixel equality across different grids is expected. The ledger preserves its 336-row prefix plus these 24 rows. This measurement changes no production code.
 
+### Fourth CPU improvement
+
+At `711af038` (2026-10-10), sampling reuses current pack validation for private channel reads while checking each channel's first key time, then reuses binary-search intervals only for exactly equal short time arrays within one call. Pose-cache indexing uses the existing four-chain hash, and synchronous capture borrows contiguous scratch poses before making the retained copy. Animation arithmetic, pose bits, palette layout and rendering work are unchanged. All 2,067 native and 2,037 web debug CTests pass, including 42 focused native skinned checks and OpenGL/WebGL/WebGPU pixels.
+
+The comparison against preserved `a10d2f4b` uses three alternating before/after pairs at 1,000 and 10,000 characters, all four modes, 20 warmup and 100 measured frames. All 48 rows contain 4,800 CPU frames and completed GPU queries. At 10,000 characters, medians of three process medians are:
+
+| Mode | CPU views before → after (ms) | CPU submission before → after (ms) | GPU query before → after (ms) |
+| --- | ---: | ---: | ---: |
+| Static geometry | 0.694 → 0.709 | 0.026 → 0.026 | 4.630 → 4.707 |
+| Omitted default pose | 6.791 → 4.718 | 0.038 → 0.037 | 7.902 → 7.813 |
+| Shared animated pose | 6.691 → 5.187 | 0.039 → 0.039 | 7.866 → 7.903 |
+| Independent animated poses | 30.101 → 26.709 | 4.839 → 4.904 | 13.880 → 13.335 |
+
+Independent view recording falls about 11.3%; the derived median of per-round view/submission median sums falls 34.93990→31.61265 ms, about 9.5%. Its median within-pair speedup is 1.115×; these are distinct aggregations, and the sum is an estimate rather than a combined-frame median. View round medians are [29.8186, 30.1010, 30.3239] before and [26.8006, 26.3477, 26.7090] after. Median-of-process-p95 recording falls 30.5573→27.1997 ms. Default/shared derived CPU estimates fall 6.82880→4.75485 and 6.73065→5.22530 ms. At 1,000 independent poses, views are 2.93510→2.58355 ms, submission 0.43780→0.44060 and the derived CPU estimate 3.36680→3.02755 ms.
+
+Palette math remains inside CPU submission on both sides; its small change is not a claimed improvement. Static rendering is essentially unchanged. GPU queries include on-demand palette uploads and drawing, with the same shaders, geometry, draws and upload bytes; these observations do not establish a shader speedup. Independent synchronized readback-frame medians fall 47.3672→43.5442 ms, without establishing pipelined FPS. CPU and GPU intervals must not be added.
+
+Both 1,000- and 10,000-character final independent captures match exactly in PNG bytes and RGB pixels. The 10k workload retains ten mesh draws plus clear, 40,960,000 palette upload bytes and 60.48 million source triangles/frame, with tiny projected characters and no LOD, culling or match simulation. A named gate and 90-second sustained quiet guard detected no competing builds/tests or excluded measurement attempts. Whole-process observations have 252 P0/2 initial P8 samples, spanning 210–2,820 MHz graphics and 405–11,501 MHz memory; other desktop applications remain running and no settings change. [Saved comparison evidence](results/skinned-cpu4/README.md) retains all rows, ranges, clocks, validation, baseline phase attribution and reproduction scripts. Raw generated C differs only in two debug `#line` paths for the isolated build; exact normalized hashes match. The original 360-row ledger prefix stays exact, with 48 new rows bringing it to 408.
+
 ## Input delay in Sumo
 
 ```powershell

@@ -1,0 +1,108 @@
+{
+  "state": "passed",
+  "head": "398f3a49cf1e256c8b5c7489adb14890ef02d55e",
+  "startedAtUtc": "2026-10-10T21:25:21.5402678Z",
+  "sourceManifest": "source-hashes.json",
+  "sourceCount": 2895,
+  "sourceEnumeration": "git ls-files --cached --others --exclude-standard; includes untracked fixtures/goldens",
+  "frozenProductionAndTestSourcesUnchanged": true,
+  "node": {
+    "version": "v24.19.0",
+    "path": "C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe"
+  },
+  "checks": [
+    {
+      "command": "cmake --build --preset debug --target tide_tests tide_platform_skinned tidec_e2e_skinned_rest tidec_e2e_skinned_draw_borrow tidec_e2e_skinned_attribute_limit -j 8",
+      "log": "focused-debug-build.log",
+      "startedAtUtc": "2026-10-10T21:25:23.1374104Z",
+      "exitCode": 0,
+      "elapsedSeconds": 2.4200637,
+      "completedAtUtc": "2026-10-10T21:25:25.5634954Z"
+    },
+    {
+      "command": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\debug\\bin\\tide_tests.exe skinned",
+      "log": "skinned-tests.log",
+      "startedAtUtc": "2026-10-10T21:25:27.7861285Z",
+      "exitCode": 0,
+      "elapsedSeconds": 0.6136256,
+      "completedAtUtc": "2026-10-10T21:25:28.401306Z",
+      "passed": 42,
+      "total": 42,
+      "failed": 0
+    },
+    {
+      "command": "ctest --preset debug --verbose -R ^(tide_platform_skinned|tidec_e2e_skinned_(rest|draw_borrow|attribute_limit))$",
+      "log": "native-focused-ctest.log",
+      "startedAtUtc": "2026-10-10T21:25:30.5861425Z",
+      "exitCode": 0,
+      "elapsedSeconds": 0.691832,
+      "completedAtUtc": "2026-10-10T21:25:31.2793544Z",
+      "failed": 0,
+      "total": 4,
+      "passed": 4
+    },
+    {
+      "command": "cmake --build --preset debug -j 8",
+      "log": "debug-build.log",
+      "startedAtUtc": "2026-10-10T21:25:33.3953532Z",
+      "exitCode": 0,
+      "elapsedSeconds": 11.5694435,
+      "completedAtUtc": "2026-10-10T21:25:44.966231Z"
+    },
+    {
+      "command": "ctest --preset debug --output-on-failure",
+      "log": "native-ctest.log",
+      "startedAtUtc": "2026-10-10T21:25:47.2051631Z",
+      "exitCode": 0,
+      "elapsedSeconds": 284.9607374,
+      "completedAtUtc": "2026-10-10T21:30:32.1673185Z",
+      "failed": 0,
+      "total": 2067,
+      "passed": 2067
+    },
+    {
+      "command": "cmake --build --preset web-debug -j 8",
+      "log": "web-build.log",
+      "startedAtUtc": "2026-10-10T21:30:34.5259512Z",
+      "exitCode": 0,
+      "elapsedSeconds": 9.8040777,
+      "completedAtUtc": "2026-10-10T21:30:44.3311065Z"
+    },
+    {
+      "command": "ctest --preset web-debug --verbose -R ^(tide_tests|tide_platform_skinned(_webgpu)?|tidec_e2e_skinned_(rest|draw_borrow|attribute_limit))$",
+      "log": "web-focused-ctest.log",
+      "startedAtUtc": "2026-10-10T21:30:46.676455Z",
+      "exitCode": 0,
+      "elapsedSeconds": 5.2960023,
+      "completedAtUtc": "2026-10-10T21:30:51.9734823Z",
+      "failed": 0,
+      "total": 6,
+      "passed": 6
+    },
+    {
+      "command": "ctest --preset web-debug --output-on-failure",
+      "log": "web-ctest.log",
+      "startedAtUtc": "2026-10-10T21:30:54.3827657Z",
+      "exitCode": 0,
+      "elapsedSeconds": 346.7293774,
+      "completedAtUtc": "2026-10-10T21:36:41.1133015Z",
+      "failed": 0,
+      "total": 2037,
+      "passed": 2037
+    }
+  ],
+  "benchmarkRunsPerformed": 0,
+  "skinnedPoseBits": {
+    "expected": "e5d23f82e5d18f26",
+    "test": "skinned_crossplatform_pose_bits",
+    "meaning": "Both native and WASI tide_tests must pass this exact-bit assertion; the failure path prints any different actual hash."
+  },
+  "completedAtUtc": "2026-10-10T21:36:43.2624838Z",
+  "benchmarkRunMeaning": "Zero standalone saved performance comparison runs. Full CTest includes bounded benchmark correctness tests.",
+  "releaseExecutable": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-release\\bin\\bench_skinned.exe",
+    "bytes": 1878016,
+    "sha256": "786d7c0a0f19d036d11240e0917223bcf8d383de299f8822a9f55307a0c514c1"
+  },
+  "releaseSourceRevision": "711af03879d9bd687edc4f977ec92f80544e0c22"
+}
