@@ -1,0 +1,80 @@
+// New image formats use the existing pixels, pack, collections and runtime.
+asset Grid2<Color> jpeg = "assets/images/baseline.jpg";
+asset Grid2<Color> progressive = "assets/images/progressive.jpg";
+asset Grid2<Color> tga = "assets/images/rle_top_right.tga";
+asset Grid2<Color> bmp = "assets/images/rgb24_top.bmp";
+asset List<Grid2<Color>> jpegList = "assets/images/baseline.jpg";
+asset Map<string, Grid2<Color>> bmpMap = "assets/images/rgb24_top.bmp";
+asset Texture jpegTexture = "assets/images/baseline.jpg";
+asset Texture tgaTexture = "assets/images/rle_top_right.tga";
+asset Texture bmpTexture = "assets/images/rgb24_top.bmp";
+[Raw] asset Texture tgaNumbers = "assets/images/rle_top_right.tga";
+asset List<Texture> jpegTextures = "assets/images/baseline.jpg";
+asset Map<string, Texture> bmpTextures = "assets/images/rgb24_top.bmp";
+asset List<byte> source = "assets/images/baseline.jpg";
+
+singleton Probe
+{
+    int2 jpegSize;
+    int2 tgaSize;
+    int2 bmpSize;
+    Color jpegPixel;
+    Color progressivePixel;
+    Color tgaPixel;
+    Color bmpPixel;
+    Color listed;
+    Color keyed;
+    int listCount;
+    int mapCount;
+    int sourceSize;
+    byte sourceFirst;
+    Grid2<Color> runtime;
+    bool runtimeRefusedJpeg;
+}
+
+system Read(mut Probe probe)
+{
+    probe.jpegSize = jpeg.size;
+    probe.tgaSize = tga.size;
+    probe.bmpSize = bmp.size;
+    probe.jpegPixel = jpeg[2, 3];
+    probe.progressivePixel = progressive[2, 3];
+    probe.tgaPixel = tga[1, 0];
+    probe.bmpPixel = bmp[1, 0];
+    probe.listed = jpegList[0][2, 3];
+    probe.keyed = bmpMap["assets/images/rgb24_top.bmp"][1, 0];
+    probe.listCount = jpegList.count;
+    probe.mapCount = bmpMap.count;
+    probe.sourceSize = source.count;
+    probe.sourceFirst = source[0];
+    probe.runtime = Grid2(1, 1);
+    probe.runtime[0, 0] = Color(1, 0, 0);
+    if (probe.runtime.Decode(source) is IOError error) probe.runtimeRefusedJpeg = error == IOError.InvalidData;
+}
+
+local singleton Art
+{
+    List<Vertex> vertices;
+    List<int> indices;
+    Texture listed;
+    Texture keyed;
+}
+
+frag Numbers(Vertex vertex, out Color color) { color = tgaNumbers.Sample(vertex.uv); }
+
+view Show(mut Art art)
+{
+    art.vertices = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) },
+                    Vertex { position = float2(0, 1), uv = float2(0, 1) }];
+    art.indices = [0, 1, 2];
+    art.listed = jpegTextures[0];
+    art.keyed = bmpTextures["assets/images/rgb24_top.bmp"];
+    Draw.Mesh(art.vertices, art.indices, jpegTexture);
+    Draw.Mesh(art.vertices, art.indices, tgaTexture);
+    Draw.Mesh(art.vertices, art.indices, bmpTexture);
+    Draw.Mesh(art.vertices, art.indices, art.listed);
+    Draw.Mesh(art.vertices, art.indices, art.keyed);
+    Draw.Mesh(art.vertices, art.indices, Numbers);
+}
+
+scene Main { }

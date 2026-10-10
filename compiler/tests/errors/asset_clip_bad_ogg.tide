@@ -1,6 +1,5 @@
-// expect: '../e2e/assets/badclip.ogg' isn't a WAV or an Ogg Vorbis file that decodes
-// expect: a Clip asset is a WAV of PCM or floats, or Ogg Vorbis, of one or two channels; for the file's bytes as they are, read it as a List<byte>
-// expect: as Ogg Vorbis, a page's checksum is wrong
+// expect: '../e2e/assets/badclip.ogg' can't be imported as audio: Ogg Vorbis: a page's checksum is wrong
+// expect: a Clip asset accepts PCM or float WAV, Ogg Vorbis, MP3 or FLAC, of one or two channels; for the file's bytes as they are, read it as a List<byte>
 asset Clip broken = "../e2e/assets/badclip.ogg";
 
 scene Main
