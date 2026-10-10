@@ -4,6 +4,7 @@
 const float3 RGB = float3(0.25, 0.5, 0.75);
 const Color RGB_TINT = Color(RGB);
 const Color RGBA_TINT = Color(float4(RGB.xy, RGB.z, 0.5));
+const float QUARTER_TURN = 90deg;
 
 component Body
 {
@@ -23,6 +24,9 @@ component Body
     Color rgbaTint = RGBA_TINT;
     Color mixedTint = Color(0.25, float2(0.5, 0.75));
     Color integerTint = Color(int3(1, 0, 1), 0.5);
+    float degreeAngle = 180deg;
+    float degreeConstant = QUARTER_TURN;
+    quaternion degreeEuler = quaternion.Euler(y: 90deg, x: 0deg, z: 0deg);
 }
 
 component Results
@@ -85,6 +89,18 @@ component Results
     quaternion reorderedEuler;
     int eulerOrder;
     int namedEulerOrder;
+    float4 degreeForms;
+    float4 degreeRounding;
+    float4 degreeZeros;
+    float2 degreeSubnormals;
+    float degreeArithmetic;
+    float degreeDefault;
+    float degreeNamed;
+    float degreeInferred;
+    float degreeField;
+    quaternion degreeScalarEuler;
+    quaternion degreeVectorEuler;
+    quaternion degreeNamedEuler;
 }
 
 scene Main { }
@@ -98,6 +114,11 @@ float EulerArgument(mut int order, int digit)
 {
     order = order * 10 + digit;
     return digit * 0.1;
+}
+
+float DegreeIdentity(float angle = 45deg)
+{
+    return angle;
 }
 
 system Compute(mut Body body, mut Results r)
@@ -192,4 +213,19 @@ system Compute(mut Body body, mut Results r)
     order = 0;
     r.reorderedEuler = quaternion.Euler(z: EulerArgument(order, 3), x: EulerArgument(order, 1), y: EulerArgument(order, 2));
     r.namedEulerOrder = order;
+
+    // deg produces an ordinary binary32 radians value wherever a float goes.
+    r.degreeForms = float4(180deg, .5deg, 1e2deg, 1_8_0deg);
+    r.degreeRounding = float4(16_777_217deg, 1_2.5_0e+1deg, .5_0e-0_1deg, 3.4028234e38deg);
+    r.degreeZeros = float4(0deg, -0deg, 1e-100deg, -1e-100deg);
+    r.degreeSubnormals = float2(1e-37deg, 1e-40deg);
+    r.degreeArithmetic = -(45deg + 90deg) * 2;
+    r.degreeDefault = DegreeIdentity();
+    r.degreeNamed = DegreeIdentity(angle: 30deg);
+    var inferredAngle = -180deg;
+    r.degreeInferred = inferredAngle;
+    r.degreeField = body.degreeAngle;
+    r.degreeScalarEuler = quaternion.Euler(30deg, 90deg, -45deg);
+    r.degreeVectorEuler = quaternion.Euler(Math.Radians(float3(30, 90, -45)));
+    r.degreeNamedEuler = quaternion.Euler(z: -45deg, x: 30deg, y: 90deg);
 }

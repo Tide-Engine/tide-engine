@@ -4,6 +4,15 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Rendering and platform
 
+- **Degree literals on the GPU** (2026-10-10): lowercase `deg` on a decimal
+  literal is an ordinary float in radians. GLSL and WGSL emit the parser's
+  converted binary32 value, shared with generated C, instead of converting
+  separately on the GPU. `compiler/tests/shaders/math` pins integer, decimal,
+  leading-point, exponent, separator and unary-minus forms in both stages.
+  The quaternion probes in `platform/tests/shaders.tide` compare degree
+  constants exactly with the CPU's and check their angles and rotations
+  against `Math.Radians` within the existing GPU math tolerance.
+
 - **Scalar quaternion Euler arguments** (2026-10-10): `quaternion.Euler(x, y, z)`
   packs its three checked float arguments into the existing `H_EULER_Q` helper
   in both GLSL and WGSL. It retains the vector overload's radians and ZXY

@@ -572,10 +572,10 @@ static const char *kind_name(const asset_kind kind)
 {
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
          : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
-         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : "Grid2<Color>";
+         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "Animations" : "Grid2<Color>";
 }
 
-bool asset_skinned_obj_diagnostic(const char *path, const loc at)
+static bool asset_model_obj_diagnostic(const char *path, const loc at, const bool animations)
 {
     size_t end = strlen(path);
     if (asset_path_is_url(path, end)) {
@@ -590,9 +590,20 @@ bool asset_skinned_obj_diagnostic(const char *path, const loc at)
         const char ch = path[end - (sizeof extension - 1u) + i];
         if ((ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch) != extension[i]) return false;
     }
-    diag_error(at, "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ");
-    diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
+    diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ", animations ? "an Animations" : "a SkinnedMesh");
+    if (animations) diag_note("export the model's animations as glTF 2.0 or FBX; OBJ contains no animation data");
+    else diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
     return true;
+}
+
+bool asset_skinned_obj_diagnostic(const char *path, const loc at)
+{
+    return asset_model_obj_diagnostic(path, at, false);
+}
+
+bool asset_animations_obj_diagnostic(const char *path, const loc at)
+{
+    return asset_model_obj_diagnostic(path, at, true);
 }
 
 // A file a .gltf names beside it: read like any, and noted, so the mesh is
@@ -782,7 +793,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (f->vorbis_why) diag_note("as Ogg Vorbis, %s", f->vorbis_why);
             return false;
         }
-    } else if (kind == ASSET_SKINNED) {
+    } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) {
         const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
         if (f->skin_tried && !sides_same(&sides_check)) forget_skin(f);
         if (!f->skin_tried) {
@@ -818,7 +829,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (ok) f->skin_mesh = skin_geometry(bytes, size);
         }
         if (!f->skin_ok) {
-            if (!asset_skinned_obj_diagnostic(key, at)) {
+            if (!(kind == ASSET_ANIMATIONS ? asset_animations_obj_diagnostic(key, at) : asset_skinned_obj_diagnostic(key, at))) {
                 diag_error(at, "'%s' %s", key, f->skin_why);
                 if (f->skin_note[0]) diag_note("%s", f->skin_note);
             }

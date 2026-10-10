@@ -1,0 +1,132 @@
+; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+  FBXHeaderVersion: 1003
+  FBXVersion: 7400
+  Creator: "Tide FBX test fixture"
+}
+GlobalSettings:  {
+  Version: 1000
+  Properties70:  {
+    P: "UpAxis", "int", "", "A", 1
+    P: "UpAxisSign", "int", "", "A", 1
+    P: "FrontAxis", "int", "", "A", 2
+    P: "FrontAxisSign", "int", "", "A", 1
+    P: "CoordAxis", "int", "", "A", 0
+    P: "CoordAxisSign", "int", "", "A", 1
+    P: "UnitScaleFactor", "double", "", "A", 100
+    P: "OriginalUnitScaleFactor", "double", "", "A", 100
+    P: "TimeMode", "enum", "", "A", 3
+  }
+}
+Objects:  {
+  Model: 4000, "Model::Root", "Null" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 2, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Model: 4100, "Model::Bone0", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 1, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Model: 4101, "Model::Bone1", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 2, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Model: 4102, "Model::Bone2", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 3, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Model: 4103, "Model::Bone3", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 4, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Model: 4104, "Model::Bone4", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 5, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  AnimationStack: 6000, "AnimStack::Move", "" {
+    Properties70:  {
+      P: "LocalStart", "KTime", "", "A", 0
+      P: "LocalStop", "KTime", "", "A", 46186158000
+      P: "ReferenceStart", "KTime", "", "A", 0
+      P: "ReferenceStop", "KTime", "", "A", 46186158000
+    }
+  }
+  AnimationLayer: 6100, "AnimLayer::BaseLayer", ""
+  AnimationCurveNode: 6200, "AnimCurveNode::T", "" {
+    Properties70:  {
+      P: "d|X", "Number", "", "A", 1
+      P: "d|Y", "Number", "", "A", 0
+      P: "d|Z", "Number", "", "A", 0
+    }
+  }
+  AnimationCurve: 6300, "AnimCurve::X", "" {
+    Default: 1
+    KeyVer: 4008
+    KeyTime: *2 {
+      a: 0,46186158000
+    }
+    KeyValueFloat: *2 {
+      a: 1,5
+    }
+    KeyAttrFlags: *2 {
+      a: 4,4
+    }
+    KeyAttrDataFloat: *8 {
+      a: 0,0,0,0,0,0,0,0
+    }
+    KeyAttrRefCount: *2 {
+      a: 1,1
+    }
+  }
+}
+Connections:  {
+  C: "OO", 4000, 0
+  C: "OO", 4100, 4000
+  C: "OO", 4101, 4000
+  C: "OO", 4102, 4000
+  C: "OO", 4103, 4000
+  C: "OO", 4104, 4000
+  C: "OO", 6100, 6000
+  C: "OO", 6200, 6100
+  C: "OP", 6200, 4100, "Lcl Translation"
+  C: "OP", 6300, 6200, "d|X"
+}
+Takes:  {
+  Current: "Move"
+}

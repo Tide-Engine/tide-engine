@@ -1,0 +1,4 @@
+// expect: an Animations asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ
+// expect: export the model's animations as glTF 2.0 or FBX; OBJ contains no animation data
+asset Animations movement = "../e2e/assets/meshes/box.obj";
+scene Main { }
