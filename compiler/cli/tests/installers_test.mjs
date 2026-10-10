@@ -27,6 +27,11 @@ const cases = [
 
 const powershell = String.raw`
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell prepends vendor module paths at startup, even when the
+# child environment lists only its stock modules. Isolate discovery again
+# before the first command can trigger module analysis.
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
+Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'))
 $null = Get-Command Get-FileHash
 function Record($entry) { $entry | ConvertTo-Json -Compress -Depth 8 | Add-Content $env:TEST_LOG }
 function Invoke-RestMethod {
@@ -155,16 +160,23 @@ for (const runtime of shells) for (const c of cases) {
                 TEST_PAYLOAD: payload, TEST_SUMS: `${c.damaged ? '0'.repeat(64) : sum}  ${packageName}\n`,
                 TEST_PYTHON: process.env.INSTALL_TEST_PYTHON || 'python3', TIDE_HIDDEN: '1' };
             if (runtime === 'sh') for (const key of ['HOME', 'TEST_LOG', 'TEST_WORK', 'TEST_INSTALLER', 'TEST_LIST']) env[key] = env[key].replaceAll('\\', '/');
-            // Windows PowerShell must discover its own modules when the test
-            // runner was started by PowerShell 7.
-            if (runtime === 'powershell') for (const key of Object.keys(env)) if (key.toUpperCase() === 'PSMODULEPATH') delete env[key];
+            // Use Windows PowerShell's stock modules, independent of PowerShell
+            // 7 or vendor modules installed on the host. Every case starts with
+            // an empty analysis cache instead of depending on a warmed user one.
+            if (runtime === 'powershell') {
+                for (const key of Object.keys(env)) {
+                    if (['PSMODULEPATH', 'PSMODULEANALYSISCACHEPATH'].includes(key.toUpperCase())) delete env[key];
+                }
+                env.PSModulePath = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
+                env.PSModuleAnalysisCachePath = join(work, 'ModuleAnalysisCache');
+            }
             const harness = join(work, runtime === 'powershell' ? 'case.ps1' : 'case.sh');
             writeFileSync(harness, runtime === 'powershell' ? powershell : shell);
             const executable = runtime === 'powershell' ? 'powershell.exe' : process.env.INSTALL_TEST_SH || 'sh';
             const args = runtime === 'powershell' ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harness] : [harness];
             const result = spawnSync(executable, args, { env, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
-            assert.ifError(result.error);
             const said = `${result.stdout}\n${result.stderr}`;
+            assert.ok(!result.error, `${result.error}\n${said}`);
             const expectedStatus = runtime === 'sh' && c.failUpgrade ? 17 : runtime === 'sh' && c.damaged ? 1 : runtime === 'sh' && !c.installed ? 87 : 0;
             assert.equal(result.status, expectedStatus, said);
             assert.ok(!said.includes('nobody-is-sent'), 'A token appeared in installer output.');
