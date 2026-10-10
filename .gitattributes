@@ -32,3 +32,6 @@ packages/box3d/box3d/** -text
 *.glb binary
 *.fbx binary
 compiler/third_party/ufbx/** -text
+compiler/third_party/stb_image/** -text
+compiler/third_party/dr_libs/** -text
+compiler/tests/e2e/audio_import/** -text

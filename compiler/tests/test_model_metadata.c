@@ -79,6 +79,52 @@ TIDE_TEST(model_metadata_reads_escaped_keys_and_utf8_names)
     model_metadata_free(&m);
 }
 
+TIDE_TEST(model_metadata_required_extensions_match_build_policy_without_buffers)
+{
+    static const struct { const char *extension, *reason; } cases[] = {
+        {"EXT_mesh_gpu_instancing", "unsupported glTF extension ('EXT_mesh_gpu_instancing')"},
+        {"KHR_draco_mesh_compression", "compressed with Draco"},
+        {"EXT_meshopt_compression", "compressed with meshopt"},
+        {"KHR_meshopt_compression", "compressed with meshopt"},
+    };
+    for (uint32_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        char json[512], why[256];
+        model_metadata m;
+        snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"partial\"}],"
+            "\"extensionsRequired\":[\"%s\"],\"buffers\":[{\"uri\":\"never-open-this.bin\"}]}", cases[i].extension);
+        TIDE_CHECK(!read_text(json, &m, why));
+        TIDE_CHECK(strstr(why, cases[i].reason) != NULL && m.nodes == NULL && m.node_count == 0u);
+        snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"extensionsUsed\":[\"%s\"],\"nodes\":[{\"name\":\"fallback\"}],"
+            "\"buffers\":[{\"uri\":\"never-open-this.bin\"}]}", cases[i].extension);
+        TIDE_REQUIRE(read_text(json, &m, why));
+        TIDE_CHECK(m.node_count == 1u && strcmp(m.nodes[0].name, "fallback") == 0);
+        model_metadata_free(&m);
+    }
+    model_metadata m;
+    char why[256];
+    TIDE_REQUIRE(read_text("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"KHR_mesh_quantization\"]}", &m, why));
+    model_metadata_free(&m);
+    TIDE_CHECK(!read_text("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":{}}", &m, why));
+    TIDE_CHECK(!read_text("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[17]}", &m, why));
+}
+
+TIDE_TEST(model_metadata_malformed_glb_suffix_has_header_guidance)
+{
+    static const char *const names[] = {"hero.glb", "HERO.GLB", "https://models.test/HERO.GLB?key=1#x"};
+    for (uint32_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        model_metadata m;
+        char why[256];
+        TIDE_CHECK(!model_metadata_read((const uint8_t *)"broken", 6u, names[i], &m, why));
+        TIDE_CHECK(strcmp(why, "has an invalid GLB header (expected glTF 2.0)") == 0);
+        // Content wins: JSON glTF under a mismatched name remains readable.
+        TIDE_REQUIRE(model_metadata_read((const uint8_t *)model, sizeof model - 1u, names[i], &m, why));
+        model_metadata_free(&m);
+        static const char required[] = "{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"EXT_mesh_gpu_instancing\"]}";
+        TIDE_CHECK(!model_metadata_read((const uint8_t *)required, sizeof required - 1u, names[i], &m, why));
+        TIDE_CHECK(strstr(why, "requires an unsupported glTF extension") != NULL);
+    }
+}
+
 TIDE_TEST(model_metadata_reads_fbx_catalogs_and_source_hierarchy)
 {
     model_metadata m;
@@ -269,6 +315,31 @@ TIDE_TEST(model_metadata_url_inspection_uses_only_an_existing_local_cache)
     TIDE_REQUIRE(model_metadata_cached_url(url, folder, &m, &why) == MODEL_METADATA_READY && m);
     TIDE_CHECK(m->animation_count == 3);
     TIDE_CHECK(model_metadata_statistics().file_reads == 1);
+    TIDE_CHECK(remove(path) == 0);
+    model_metadata_forget();
+}
+
+TIDE_TEST(model_metadata_cached_malformed_glb_keeps_local_and_url_format_hints)
+{
+    model_metadata_forget();
+    TIDE_REQUIRE(folder_make(MODEL_METADATA_WORK));
+    const char *local = MODEL_METADATA_WORK "/broken.GLB";
+    TIDE_REQUIRE(write_text(local, "broken"));
+    const model_metadata *m;
+    const char *why;
+    TIDE_CHECK(model_metadata_cached(local, &m, &why) == MODEL_METADATA_INVALID && m == NULL);
+    TIDE_CHECK(strcmp(why, "has an invalid GLB header (expected glTF 2.0)") == 0);
+    TIDE_CHECK(remove(local) == 0);
+    const char *folder = MODEL_METADATA_WORK "/broken-glb-url-game";
+    const char *dir = MODEL_METADATA_WORK "/broken-glb-url-game/.tide/assets/urls";
+    const char *url = "https://must-never-be-contacted.invalid/hero.GLB?revision=1#model";
+    TIDE_REQUIRE(folder_make(dir));
+    char digest[65], path[1024];
+    sha256_hex(url, strlen(url), digest);
+    snprintf(path, sizeof path, "%s/%s", dir, digest);
+    TIDE_REQUIRE(write_text(path, "broken"));
+    TIDE_CHECK(model_metadata_cached_url(url, folder, &m, &why) == MODEL_METADATA_INVALID && m == NULL);
+    TIDE_CHECK(strcmp(why, "has an invalid GLB header (expected glTF 2.0)") == 0);
     TIDE_CHECK(remove(path) == 0);
     model_metadata_forget();
 }

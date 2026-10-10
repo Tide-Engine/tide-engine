@@ -75,6 +75,8 @@ tide_e2e_test(assets) # Files a game is built with, read by name: each type, glo
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
 tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Texture and Grid2<Color> assets
+tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/texture assets
+tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
@@ -451,4 +453,15 @@ if(TARGET tidec_core)
     target_compile_definitions(tidec_psd_files_tests PRIVATE PSD_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/assets/psds")
     target_link_libraries(tidec_psd_files_tests PRIVATE tide tidec_core)
     add_test(NAME tidec_psd_files COMMAND tidec_psd_files_tests)
+    add_executable(tidec_image_files_tests image_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_image_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_image_files_tests PRIVATE IMAGE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/assets/images")
+    target_link_libraries(tidec_image_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_image_files COMMAND tidec_image_files_tests)
+    add_executable(tidec_audio_files_tests audio_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_audio_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_audio_files_tests PRIVATE AUDIO_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/audio_import"
+        AUDIO_WORK="${CMAKE_CURRENT_BINARY_DIR}/audio_files")
+    target_link_libraries(tidec_audio_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_audio_files COMMAND tidec_audio_files_tests)
 endif()

@@ -137,6 +137,84 @@ static bool fixture_decode(const void *input, size_t size, bool runtime, const m
     return ok;
 }
 
+static bool fixture_replace(model_fixture *f, const char *from, const char *to)
+{
+    char *at = strstr(f->json, from);
+    const size_t old = strlen(from), next = strlen(to);
+    if (!at || f->json_size - old + next >= sizeof f->json) return false;
+    memmove(at + next, at + old, f->json_size - (size_t)(at - f->json) - old + 1u);
+    memcpy(at, to, next);
+    f->json_size = f->json_size - old + next;
+    return true;
+}
+
+TIDE_TEST(skinned_decode_optional_compression_uses_identical_core_fallback)
+{
+    model_fixture f;
+    make_fixture(&f, false);
+    size_t input_size;
+    uint8_t *input = fixture_glb(&f, &input_size), *expected;
+    uint32_t expected_size;
+    TIDE_REQUIRE(fixture_decode(input, input_size, true, NULL, &expected, &expected_size));
+    free(input);
+    static const char *const extensions[] = {"KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_meshopt_compression", "KHR_mesh_quantization"};
+    for (uint32_t i = 0; i < 4u; i++) {
+        make_fixture(&f, false);
+        char replacement[768];
+        snprintf(replacement, sizeof replacement, "{\"%s\":[\"%s\"],\"asset\":",
+                 i == 3u ? "extensionsRequired" : "extensionsUsed", extensions[i]);
+        TIDE_REQUIRE(fixture_replace(&f, "{\"asset\":", replacement));
+        if (i == 0u) {
+            TIDE_REQUIRE(fixture_replace(&f, "{\"primitives\":[{\"attributes\":",
+                "{\"primitives\":[{\"extensions\":{\"KHR_draco_mesh_compression\":{\"bufferView\":0,\"attributes\":{\"POSITION\":0}}},\"attributes\":"));
+        } else if (i < 3u) {
+            snprintf(replacement, sizeof replacement, "{\"buffer\":1,\"byteOffset\":0,\"byteLength\":36,\"byteStride\":12,\"extensions\":{\"%s\":{"
+                "\"buffer\":0,\"byteOffset\":0,\"byteLength\":36,\"byteStride\":12,\"count\":3,\"mode\":\"ATTRIBUTES\"}}}", extensions[i]);
+            TIDE_REQUIRE(fixture_replace(&f, "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}", replacement));
+            snprintf(replacement, sizeof replacement, "},{\"byteLength\":36,\"uri\":\"data:application/octet-stream;base64,"
+                "AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA\",\"extensions\":{\"%s\":{\"fallback\":true}}}],\"bufferViews\":[", extensions[i]);
+            TIDE_REQUIRE(fixture_replace(&f, "}],\"bufferViews\":[", replacement));
+        }
+        input = fixture_glb(&f, &input_size);
+        uint8_t *actual;
+        uint32_t actual_size;
+        TIDE_REQUIRE(fixture_decode(input, input_size, true, NULL, &actual, &actual_size));
+        TIDE_CHECK(actual_size == expected_size);
+        TIDE_CHECK(actual_size == expected_size && memcmp(actual, expected, expected_size) == 0);
+        tide_skinned_data_free(actual);
+        free(input);
+    }
+    tide_skinned_data_free(expected);
+}
+
+TIDE_TEST(skinned_decode_required_extensions_have_actionable_errors)
+{
+    static const struct { const char *extension, *why, *note; } cases[] = {
+        {"KHR_draco_mesh_compression", "compressed with Draco", "compression off"},
+        {"EXT_meshopt_compression", "compressed with meshopt", "compression off"},
+        {"KHR_meshopt_compression", "compressed with meshopt", "compression off"},
+        {"EXT_mesh_gpu_instancing", "unsupported glTF extension ('EXT_mesh_gpu_instancing')", "export without required extensions"},
+    };
+    for (uint32_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        char json[256], why[256], note[256];
+        snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"%s\"]}", cases[i].extension);
+        uint8_t *out = NULL;
+        uint32_t size = 0;
+        TIDE_CHECK(!tide_skinned_data_decode(json, strlen(json), false, NULL, NULL, &out, &size, why, note));
+        TIDE_CHECK(out == NULL && size == 0u);
+        TIDE_CHECK(strstr(why, cases[i].why) != NULL && strstr(note, cases[i].note) != NULL);
+    }
+    static const char *const malformed[] = {"{}", "[17]"};
+    for (uint32_t i = 0; i < 2u; i++) {
+        char json[256], why[256], note[256];
+        snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":%s}", malformed[i]);
+        uint8_t *out = NULL;
+        uint32_t size = 0;
+        TIDE_CHECK(!tide_skinned_data_decode(json, strlen(json), false, NULL, NULL, &out, &size, why, note));
+        TIDE_CHECK(strstr(why, "isn't") != NULL);
+    }
+}
+
 TIDE_TEST(skinned_decode_preserves_hierarchy_skin_sets_and_animation_curves)
 {
     model_fixture f;

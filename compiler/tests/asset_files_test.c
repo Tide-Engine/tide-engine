@@ -56,34 +56,39 @@ static void capture_diagnostic(void *user, const diag_severity severity, const l
     out->count++;
 }
 
-TIDE_TEST(asset_skinned_obj_diagnostics_follow_written_file_names)
+TIDE_TEST(asset_skinned_format_diagnostics_follow_written_file_names)
 {
     static const struct {
         const char *path;
-        bool obj;
+        int kind; // -1: retain parser diagnostic, 0: unsupported format, 1: OBJ guidance
     } cases[] = {
-        {"character.obj", true}, {"art/character.OBJ", true}, {"character#old.obj", true},
-        {"https://example.com/character.OBJ?revision=1#skin", true},
-        {"http://example.com/character.obj#skin", true},
-        {"character.gltf", false}, {"character.glb", false}, {"character.fbx", false}, {"character.obj.backup", false},
-        {"character.obj?revision=1", false}, {"character.obj#skin", false},
-        {"https://character.obj?revision=1", false}, {"https://example.com?file=/character.obj", false},
-        {"https://example.com/model.gltf?file=character.obj", false},
-        {"https://example.com/model.glb#character.obj", false}, {"https://example.com/character.obj/model", false},
+        {"character.obj", 1}, {"art/character.OBJ", 1}, {"character#old.obj", 1},
+        {"https://example.com/character.OBJ?revision=1#skin", 1},
+        {"http://example.com/character.obj#skin", 1},
+        {"character.gltf", -1}, {"character.glb", -1}, {"character.fbx", -1}, {"character.obj.backup", 0},
+        {"character.obj?revision=1", 0}, {"character.obj#skin", 0}, {"character.dae", 0},
+        {"https://character.obj?revision=1", 0}, {"https://example.com?file=/character.obj", 0},
+        {"https://example.com/model.gltf?file=character.obj", -1},
+        {"https://example.com/model.glb#character.obj", -1}, {"https://example.com/character.obj/model", 0},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         captured_diagnostics out = {0};
         diag_reset();
         diag_set_sink(capture_diagnostic, &out);
-        const bool handled = asset_skinned_obj_diagnostic(cases[i].path, (loc){0});
+        const bool handled = asset_skinned_format_diagnostic(cases[i].path, "has incomplete or invalid JSON", (loc){0});
         diag_set_sink(NULL, NULL);
-        TIDE_CHECK(handled == cases[i].obj && diag_error_count() == (cases[i].obj ? 1 : 0));
-        TIDE_CHECK(out.count == (cases[i].obj ? 2 : 0));
-        if (cases[i].obj) {
+        TIDE_CHECK(handled == (cases[i].kind >= 0) && diag_error_count() == (cases[i].kind >= 0 ? 1 : 0));
+        TIDE_CHECK(out.count == (cases[i].kind >= 0 ? 2 : 0));
+        if (cases[i].kind == 1) {
             TIDE_CHECK(out.severity[0] == DIAG_ERROR && out.severity[1] == DIAG_NOTE);
             TIDE_CHECK(strcmp(out.message[0], "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ") == 0);
             TIDE_CHECK(strcmp(out.message[1], "use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX") == 0);
+        } else if (cases[i].kind == 0) {
+            TIDE_CHECK(strstr(out.message[0], "isn't a supported SkinnedMesh format"));
+            TIDE_CHECK(strstr(out.message[1], "export the rigged model as glTF 2.0"));
         }
+        TIDE_CHECK(!asset_skinned_format_diagnostic(cases[i].path, "requires an unsupported glTF extension", (loc){0}));
+        TIDE_CHECK(!asset_skinned_format_diagnostic(cases[i].path, "FBX animation uses unsupported skinning", (loc){0}));
     }
     diag_reset();
 }

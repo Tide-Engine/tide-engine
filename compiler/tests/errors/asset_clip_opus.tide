@@ -1,0 +1,4 @@
+// expect: '../e2e/audio_import/bad/unsupported.opus' can't be imported as audio: Ogg Opus is unsupported; use Ogg Vorbis, WAV, MP3 or FLAC
+// expect: a Clip asset accepts PCM or float WAV, Ogg Vorbis, MP3 or FLAC, of one or two channels; for the file's bytes as they are, read it as a List<byte>
+asset Clip broken = "../e2e/audio_import/bad/unsupported.opus";
+scene Main { }

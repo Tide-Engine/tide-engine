@@ -1,0 +1,3 @@
+// expect: TGA image has truncated pixel data
+asset Texture image = "../e2e/assets/images/bad/cut.tga";
+scene Main { }

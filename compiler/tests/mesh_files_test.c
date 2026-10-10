@@ -496,7 +496,7 @@ TIDE_TEST(mesh_gltf_refuses_what_its_bytes_dont_bear_out)
     TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"mesh\":0}]," TRIANGLE_MESH TRIANGLE_ACCESSORS
                        "\"bufferViews\":[{\"buffer\":0,\"byteLength\":36},{\"buffer\":0,\"byteLength\":36},{\"buffer\":0,\"byteLength\":6}],"
                        "\"buffers\":[{\"byteLength\":4096}]}", "longer than its bytes are"));
-    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"mesh\":0}],\"meshes\":[{\"primitives\":[{\"attributes\":"
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"KHR_draco_mesh_compression\"],\"nodes\":[{\"mesh\":0}],\"meshes\":[{\"primitives\":[{\"attributes\":"
                        "{\"POSITION\":0},\"extensions\":{\"KHR_draco_mesh_compression\":{\"bufferView\":0}}}]}],"
                        TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}", "compressed with Draco"));
     TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"EXT_meshopt_compression\"]}", "compressed with meshopt"));
@@ -505,4 +505,115 @@ TIDE_TEST(mesh_gltf_refuses_what_its_bytes_dont_bear_out)
                        "{\"POSITION\":0},\"mode\":1}]}]," TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}", "has no triangles"));
     TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},", "isn't JSON"));
     TIDE_CHECK(refused("[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[", "isn't JSON"));
+}
+
+static bool same_triangle(const char *json)
+{
+    mesh_file expected, actual;
+    char why[256];
+    size_t size;
+    uint8_t *bytes = make_glb(triangle_json, &triangle, sizeof triangle, &size);
+    const bool baseline = read_exactly(bytes, size, "triangle.glb", &expected, why);
+    free(bytes);
+    if (!baseline) return false;
+    bytes = make_glb(json, &triangle, sizeof triangle, &size);
+    const bool ok = read_exactly(bytes, size, "fallback.glb", &actual, why);
+    if (!ok) printf("    fallback: %s\n", why);
+    free(bytes);
+    const bool same = ok && memcmp(expected.hash, actual.hash, sizeof expected.hash) == 0;
+    if (ok) mesh_file_free(&actual);
+    mesh_file_free(&expected);
+    return same;
+}
+
+TIDE_TEST(mesh_gltf_required_extensions_and_optional_compression_fallbacks)
+{
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"EXT_mesh_gpu_instancing\"]}",
+                       "requires an unsupported glTF extension ('EXT_mesh_gpu_instancing')"));
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":{}}", "isn't an array"));
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[17]}", "isn't text"));
+    TIDE_CHECK(same_triangle("{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
+        "\"extensionsRequired\":[\"KHR_mesh_quantization\"]," TRIANGLE_MESH TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}"));
+    TIDE_CHECK(same_triangle("{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
+        "\"extensionsUsed\":[\"KHR_draco_mesh_compression\"],\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1},"
+        "\"indices\":2,\"extensions\":{\"KHR_draco_mesh_compression\":{\"bufferView\":0,\"attributes\":{\"POSITION\":0,\"NORMAL\":1}}}}]}],"
+        TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}"));
+    static const char *const meshopt[] = {"EXT_meshopt_compression", "KHR_meshopt_compression"};
+    for (uint32_t i = 0; i < 2u; i++) {
+        char json[2048];
+        snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
+            "\"extensionsUsed\":[\"%s\"]," TRIANGLE_MESH TRIANGLE_ACCESSORS
+            "\"bufferViews\":[{\"buffer\":1,\"byteLength\":36,\"byteStride\":12,\"extensions\":{\"%s\":{\"buffer\":0,\"byteOffset\":0,"
+            "\"byteLength\":36,\"byteStride\":12,\"count\":3,\"mode\":\"ATTRIBUTES\"}}},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
+            "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":6}],\"buffers\":[{\"byteLength\":80},{\"byteLength\":36,"
+            "\"uri\":\"data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA\",\"extensions\":{\"%s\":{\"fallback\":true}}}]}",
+            meshopt[i], meshopt[i], meshopt[i]);
+        TIDE_CHECK(same_triangle(json));
+        snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"%s\"]}", meshopt[i]);
+        TIDE_CHECK(refused(json, "compressed with meshopt"));
+    }
+    // Optional compression without core bytes must still fail to read.
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"}," TRIANGLE_MESH TRIANGLE_ACCESSORS
+        "\"bufferViews\":[{\"buffer\":1,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
+        "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":6}],\"buffers\":[{\"byteLength\":80},{\"byteLength\":36,"
+        "\"extensions\":{\"EXT_meshopt_compression\":{\"fallback\":true}}}]}", "buffer with no bytes"));
+}
+
+TIDE_TEST(mesh_glb_reports_malformed_headers_and_chunks)
+{
+    mesh_file mesh;
+    char why[256];
+    uint8_t bad[20] = {0};
+    TIDE_CHECK(!read_exactly(bad, sizeof bad, "https://models.test/HERO.GLB?key=1#x", &mesh, why));
+    TIDE_CHECK(strstr(why, "invalid GLB header") != NULL);
+    TIDE_CHECK(!read_exactly(bad, 3u, "hero.glb", &mesh, why));
+    TIDE_CHECK(strstr(why, "header") != NULL);
+    size_t size;
+    uint8_t *bytes = make_glb(triangle_json, &triangle, sizeof triangle, &size);
+    const uint32_t length = (uint32_t)size - 4u;
+    memcpy(bytes + 8u, &length, 4u);
+    TIDE_CHECK(!read_exactly(bytes, size, "hero.glb", &mesh, why));
+    TIDE_CHECK(strstr(why, "declared length") != NULL);
+    const uint32_t actual = (uint32_t)size, binary = 0x004e4942u;
+    memcpy(bytes + 8u, &actual, 4u);
+    memcpy(bytes + 16u, &binary, 4u);
+    TIDE_CHECK(!read_exactly(bytes, size, "hero.glb", &mesh, why));
+    TIDE_CHECK(strstr(why, "first chunk isn't JSON") != NULL);
+    free(bytes);
+    bytes = make_glb(triangle_json, &triangle, sizeof triangle, &size);
+    uint32_t json_size;
+    memcpy(&json_size, bytes + 12u, 4u);
+    json_size--;
+    memcpy(bytes + 12u, &json_size, 4u);
+    TIDE_CHECK(!read_exactly(bytes, size, "hero.glb", &mesh, why));
+    TIDE_CHECK(strstr(why, "alignment") != NULL);
+    free(bytes);
+}
+
+TIDE_TEST(mesh_gltf_reports_invalid_attributes_instead_of_changing_geometry)
+{
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"mesh\":0,\"children\":[-1]}],"
+        TRIANGLE_MESH TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}", "a node it hasn't got"));
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":["
+        "{\"attributes\":{\"POSITION\":0,\"NORMAL\":1},\"indices\":2},{\"attributes\":{},\"mode\":99}]}],"
+        TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}", "invalid primitive mode"));
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":["
+        "{\"attributes\":{\"POSITION\":0,\"NORMAL\":1},\"indices\":2},{\"attributes\":{}}]}],"
+        TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}", "no POSITION"));
+    TIDE_CHECK(refused("{\"asset\":{\"version\":\"2.0\"}," TRIANGLE_MESH
+        "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
+        "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}]," TRIANGLE_VIEWS "}", "normals with the wrong number"));
+    static const uint32_t nonfinite[] = {0x7f800000u, 0xff800000u, 0x7fc00000u};
+    for (uint32_t i = 0; i < 3u; i++) {
+        triangle_bytes altered = triangle;
+        memcpy(&altered.positions[3], &nonfinite[i], 4u);
+        size_t size;
+        uint8_t *bytes = make_glb(triangle_json, &altered, sizeof altered, &size);
+        mesh_file mesh;
+        char why[256];
+        TIDE_CHECK(!read_exactly(bytes, size, "hero.glb", &mesh, why));
+        TIDE_CHECK(strstr(why, "non-finite positions") != NULL);
+        free(bytes);
+    }
 }
