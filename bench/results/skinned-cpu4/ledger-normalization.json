@@ -1,0 +1,14 @@
+{
+  "note": "The committed history ledger is LF normalized after measurement. Original raw ledger remains in scratch. The historical initial-baseline hash covers only its original 48 rows. The ledger held 360 rows before cpu4 and 408 rows afterward.",
+  "path": "bench/results/skinned.jsonl",
+  "raw": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\raw-ledger.jsonl",
+    "bytes": 453760,
+    "sha256": "0cdfc8ed2fe4cdc99ec2d6602870483dffe5c507630960e3338e829d3090ad1b",
+    "category": "excluded-raw-ledger"
+  },
+  "committed_lf": {
+    "bytes": 453760,
+    "sha256": "0cdfc8ed2fe4cdc99ec2d6602870483dffe5c507630960e3338e829d3090ad1b"
+  }
+}

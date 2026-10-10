@@ -1,0 +1,33 @@
+{
+  "source_revision": "711af03879d9bd687edc4f977ec92f80544e0c22",
+  "configuration": "RelWithDebInfo / -O2 / -fno-fast-math / -ffp-contract=off",
+  "configure": [
+    "cmake",
+    "--preset",
+    "release",
+    "-B",
+    "build/skinned-cpu4-release",
+    "-DTIDE_NODE=C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe",
+    "-DFETCHCONTENT_SOURCE_DIR_GLFW=C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\_deps\\glfw-src"
+  ],
+  "build": [
+    "cmake",
+    "--build",
+    "build/skinned-cpu4-release",
+    "--target",
+    "bench_skinned",
+    "-j",
+    "8"
+  ],
+  "executable": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-release\\bin\\bench_skinned.exe",
+    "bytes": 1878016,
+    "sha256": "786d7c0a0f19d036d11240e0917223bcf8d383de299f8822a9f55307a0c514c1"
+  },
+  "sourceFrozen": true,
+  "completedAtUtc": "2026-10-10T21:38:10.4306573Z",
+  "logs": [
+    "configure.log",
+    "build.log"
+  ]
+}
