@@ -1,0 +1,4 @@
+// expect: Idle
+struct Required { [Name("Idle")] Animation idle; }
+asset SkinnedMesh<Vertex3, Required> rig = "../e2e/fbx/models/rig_ascii.fbx";
+scene Main { }

@@ -40,13 +40,17 @@ vert Blow(mut SkyVertex vertex, Wind wind)
 {
     quaternion spin = Math.Mul(wind.turn, quaternion.AxisAngle(float3(0, 0, 1), wind.strength));
     quaternion eased = Math.Slerp(quaternion.Euler(wind.from), Math.Inverse(spin), 0.5);
+    quaternion scalar = quaternion.Euler(wind.from.x, wind.from.y, wind.from.z);
+    quaternion named = quaternion.Euler(z: wind.from.z, x: wind.from.x, y: wind.from.y);
+    quaternion whole = quaternion.Euler(1, 2, 3);
     quaternion aimed = Math.Nlerp(quaternion.LookRotation(Math.Forward(eased), Math.Up(spin)), Math.Conjugate(Math.Normalize(spin)), 0.5);
     float3 pushed = Math.Rotate(aimed, float3(vertex.position, 0)) + Math.Right(spin) * Math.Angle(spin, eased);
     float4x4 placed = Math.Mul(float4x4.TRS(wind.from, quaternion(float3x3(aimed)), float3(1)), Math.Inverse(wind.place));
     float4x4 seen = Math.Mul(float4x4.PerspectiveFov(1, 1.5, 0.1, 100), float4x4.Ortho(4, 3, 0.1, 100));
     float4x4 moved = Math.Mul(float4x4.Translate(pushed), float4x4(Math.Inverse(float3x3(spin)), wind.from));
     float2x2 flat = Math.Inverse(float2x2(2, 1, -1, 3));
-    vertex.position = Math.Mul(flat, Math.Transform(Math.Mul(placed, Math.Mul(seen, moved)), pushed).xy);
+    vertex.position = Math.Mul(flat, Math.Transform(Math.Mul(placed, Math.Mul(seen, moved)), pushed).xy)
+                    + Math.Rotate(scalar, Math.Forward(named)).xy + Math.Right(whole).xy;
 }
 
 // What's forgiving on the CPU is forgiving here, and gives a number where the CPU does
@@ -59,7 +63,10 @@ frag Calm(SkyVertex vertex, out Color color, Wind wind)
     float raised = Math.Pow(wind.strength - 2, 2);
     float turned = Math.Atan2(vertex.uv.y - 0.5, vertex.uv.x - 0.5);
     int capped = Math.Clamp(wind.seed, 0, 9);
-    color = Color(most.x * eased, held.y * raised, Math.Cmin(held) + turned, 1) * (capped / 9.0);
+    quaternion scalar = quaternion.Euler(wind.from.x, wind.from.y, wind.from.z);
+    quaternion named = quaternion.Euler(y: 2, z: 3, x: 1);
+    color = Color(most.x * eased, held.y * raised, Math.Cmin(held) + turned, 1) * (capped / 9.0)
+          + Color(Math.Forward(scalar) + Math.Up(named), 0);
 }
 
 // Noise: a frag's and a vert's are the CPU's lines, in each size, with a seed and without

@@ -47,7 +47,7 @@ They're lowercase built-in value types, like `float`. Angles are in radians: `Ma
 And these build values:
 
 - `quaternion.AxisAngle(axis, angle)`
-- `quaternion.Euler(radians)`: Z first, then X, then Y, Unity's default order
+- `quaternion.Euler(radians)` takes a `float3`, or `quaternion.Euler(x, y, z)` takes three angles in radians. The scalar form equals `quaternion.Euler(float3(x, y, z))`. Both rotate Z first, then X, then Y, Unity's default order.
 - `quaternion.LookRotation(forward, up)`
 - `float4x4.TRS(translation, rotation, scale)`
 - `float4x4.Translate(translation)`

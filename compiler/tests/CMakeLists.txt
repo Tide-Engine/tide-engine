@@ -78,6 +78,8 @@ tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Textur
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=2430772888184797451ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
 if(TIDE_NODE)
     add_test(NAME tidec_skinned_default_identity
@@ -409,6 +411,13 @@ endforeach()
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.
 if(TARGET tidec_core)
+    add_executable(tidec_fbx_files_tests fbx_files_test.c fbx_parity_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_fbx_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_fbx_files_tests PRIVATE FBX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/fbx"
+        FBX_WORK="${CMAKE_CURRENT_BINARY_DIR}/fbx_cache")
+    target_link_libraries(tidec_fbx_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_fbx_files COMMAND tidec_fbx_files_tests)
+    set_tests_properties(tidec_fbx_files PROPERTIES TIMEOUT 180)
     add_executable(tidec_asset_cache_tests asset_cache_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_asset_cache_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_link_libraries(tidec_asset_cache_tests PRIVATE tide tidec_core)

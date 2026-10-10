@@ -1,5 +1,11 @@
 # The docs site
 
+Quaternion Euler overload (2026-10-10): the Math page and spec document both
+`quaternion.Euler(float3 radians)` and `quaternion.Euler(x, y, z)`. Each scalar
+angle is in radians; the scalar form equals `quaternion.Euler(float3(x, y, z))`
+with the same Z-X-Y rotation order. Existing examples keep their current form.
+The production docs build passed; no site deployment was requested.
+
 Aerial catalog addition (2026-10-10): the owner's second Rocket League
 prototype adds a seventh server-loaded card, `aerial`, for one to six
 players, above Afterburn's. `aerial_page` stages under
@@ -101,6 +107,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - The docs' Markdown fences Tide as `csharp`, which GitHub highlights; the site highlights it with the editors' grammar (`tools/tide-syntax`). The workflow tests the grammar first, through the site's Shiki: `npm run test:grammar` in `docs/` checks the scopes of `tools/tide-syntax/test/probe.tide`'s cases and of the compiler's test programs.
 
 - **Skinned meshes and animation** (2026-10-08): `docs/game/animation.md` is the new presentation page, next to Drawing in 3D in the sidebar, linked from that page and Assets. It explains import/drawing, inferred names and optional contracts, dynamic lookup, explicit CPU sampling/blending, local bone edits, sockets and runtime GLB decoding with the match/local boundary. `docs/spec.md` now separates the agreed design, implemented provisional API details and remaining animation proposals. No automatic controller, root-motion extraction, IK or morph animation is presented as built. The shared grammar recognizes `SkinnedMesh<V, Contract>` without treating every unparameterized `SkinnedMesh` identifier as a builtin. The site build and all 202 grammar tests passed after merging the current `dev`.
+
+- **FBX imports** (2026-10-10): Assets, Drawing in 3D, Animation, Editors and the spec now document binary/ASCII `.fbx` for static and skinned build-time imports. They explain axis/unit conversion, animation baking, helper bones and separate textures, while runtime `SkinnedMesh.Decode` remains self-contained GLB only. The production docs build passed; missing generated example pages use the existing build's allowed placeholders. No site deployment was requested.
 
 - **Docs audit, 2026-10-08:** checked the user pages against the spec, subsystem notes and current code. Corrected nested collection and in-place field rules, default values, explicit World helpers, parallel lists, GPU random ordering and async limits; inputs versus commands; Android touch support and phone suspension; current full-world delivery despite private-scene metadata; profiler timings, CMake/host options and presentation ordering; and misleading 3D upload/culling claims. Audio now uses separate stereo filter histories, per-frame bus settings, frame-separated restarts and a delay line that reads before overwriting. The spec's obsolete World/array statements and Audio's unbuilt status are corrected; the original Audio proposals are labeled as historical rather than changing agreed design.
   - Three new standalone examples use the existing CMake glob and source inclusion: `pointer` on Input (pointer/button edges, individual fingers and their ten slots), `maps` on Text and lists (insertion order, TryGet, set deduplication and removal), and `audio` on Audio (an asset-free sine source, frequency/volume controls and a waveform preview). All are in Live examples. They fit the usual 376 × 400 viewport; `audio` starts silent and only plays after its Play sound button is pressed. None changes the engine or compiler.

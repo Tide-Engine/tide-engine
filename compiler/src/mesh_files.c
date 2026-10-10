@@ -1,10 +1,12 @@
 // Mesh files as `asset Mesh<V>` reads them (see mesh_files.h): glTF 2.0 and
-// Wavefront OBJ, from their specifications, with a JSON reader, a base64
+// Wavefront OBJ, plus build-time FBX import through ufbx, with a JSON reader, a base64
 // reader and a number reader of their own. A file is somebody else's bytes,
 // and the language server reads one at every keystroke: every offset and
 // count a file says is checked against what's there before it's used.
 
 #include "mesh_files.h"
+
+#include "fbx_files.h"
 
 #include "assets.h"
 
@@ -921,12 +923,18 @@ bool mesh_file_read(const uint8_t *data, const size_t size, const char *name, co
     bool ok;
     if (size >= 4u && memcmp(data, "glTF", 4) == 0) {
         ok = read_glb(&r, &b, data, size);
+    } else if (fbx_file_is(data, size, name)) {
+        uint8_t *glb = NULL;
+        size_t glb_size = 0;
+        ok = fbx_file_to_glb(data, size, false, &glb, &glb_size, why, note);
+        if (ok) ok = read_glb(&r, &b, glb, glb_size);
+        free(glb);
     } else if (ends_with(name, ".gltf")) {
         ok = read_gltf(&r, &b, (const char *)data, size, NULL, 0);
     } else if (ends_with(name, ".obj")) {
         ok = read_obj(&r, &b, (const char *)data, size);
     } else {
-        ok = fail(&r, "a Mesh asset is glTF, a .glb or a .gltf, or a Wavefront .obj: export it as one of those",
+        ok = fail(&r, "a Mesh asset is glTF (.glb or .gltf), Wavefront .obj, or FBX (.fbx): export it as one of those",
                   "isn't a mesh file Tide reads");
     }
     if (ok && !b.m.indices) ok = fail(&r, NULL, "has no triangles: there's nothing in it to draw");

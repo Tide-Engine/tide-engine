@@ -17,7 +17,9 @@
 #include "assets.h"
 #include "json.h"
 #include "model_metadata.h"
+#include "../../tests/fbx_metadata_fixture.h"
 #include "packages.h"
+#include "sha256.h"
 #include "tide_test.h"
 #include "server.h"
 
@@ -5090,6 +5092,40 @@ TIDE_TEST(lsp_signature_help)
 
     open_document(GAME_TYPES "system S()\n{\n    $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"result\":null"));
+}
+
+TIDE_TEST(lsp_quaternion_euler_signature_help)
+{
+    start();
+    static const struct {
+        const char *arguments;
+        bool vector;
+        int parameter;
+    } cases[] = {
+        {"$float3(0.1, 0.2, 0.3)", true, 0},
+        {"0.1, 0.2, $0.3", false, 2},
+        {"z: $0.3, x: 0.1, y: 0.2", false, 2},
+        {"z: 0.3, x: $0.1, y: 0.2", false, 0},
+        {"z: 0.3, x: 0.1, y: $0.2", false, 1},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof *cases; i++) {
+        char source[256];
+        snprintf(source, sizeof source, "scene Main { }\nquaternion Rotation() { return quaternion.Euler(%s); }\n", cases[i].arguments);
+        open_document(source);
+        TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+        const char *reply = request("textDocument/signatureHelp");
+        TIDE_CHECK(has(reply, "quaternion.Euler(float3 radians)")
+                   && has(reply, "quaternion.Euler(float x, float y, float z)") && has(reply, "in radians"));
+        const json *result = json_get(json_parse(reply, strlen(reply)), "result");
+        const json *signatures = json_get(result, "signatures");
+        const int active = json_int(json_get(result, "activeSignature"), -1);
+        TIDE_REQUIRE(signatures && active >= 0 && active < signatures->count);
+        const char *label = json_str(json_get(signatures->items[active], "label"));
+        TIDE_REQUIRE(label);
+        TIDE_CHECK(strcmp(label, cases[i].vector ? "quaternion.Euler(float3 radians) -> quaternion" : "quaternion.Euler(float x, float y, float z) -> quaternion") == 0);
+        TIDE_CHECK(json_int(json_get(result, "activeParameter"), -1) == cases[i].parameter);
+        json_release();
+    }
 }
 
 TIDE_TEST(lsp_singleton_function_parameters)
@@ -10344,6 +10380,7 @@ TIDE_TEST(lsp_asset_meshes)
     write_file("lsp_mesh/art/tree.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nf 1//1 2//1 3//1\n");
     write_file("lsp_mesh/art/rock.glb", "not one, but named as one");
     write_file("lsp_mesh/art/hill.gltf", "{}");
+    write_file("lsp_mesh/art/hero.FBX", fbx_catalog_fixture);
     write_file("lsp_mesh/art/other.txt", "text");
     char root[700], uri_main[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
@@ -10368,10 +10405,11 @@ TIDE_TEST(lsp_asset_meshes)
 
     // Its path: mesh files, and nothing else
     const char *completion = request_at(uri_main, "textDocument/completion", 5, 31, "");
-    TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "rock.glb") && offers(completion, "hill.gltf"));
+    TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "rock.glb") && offers(completion, "hill.gltf") && offers(completion, "hero.FBX"));
     TIDE_CHECK(!offers(completion, "other.txt") && !offers(completion, "*.glb"));
     completion = request_at(uri_main, "textDocument/completion", 6, 38, ""); // A list's: globs too
     TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "*.glb") && offers(completion, "**/*.glb"));
+    TIDE_CHECK(offers(completion, "*.fbx") && offers(completion, "**/*.fbx") && offers(completion, "*.obj") && offers(completion, "**/*.obj"));
 
     // After its dot: its two lists
     static char dotted[sizeof main_file + 32];
@@ -10409,6 +10447,7 @@ TIDE_TEST(lsp_asset_meshes)
     remove_game_file("lsp_mesh/art/tree.obj");
     remove_game_file("lsp_mesh/art/rock.glb");
     remove_game_file("lsp_mesh/art/hill.gltf");
+    remove_game_file("lsp_mesh/art/hero.FBX");
     remove_game_file("lsp_mesh/art/other.txt");
     remove_game_file("lsp_mesh/.tide/assets.sha256");
     remove_game_file("lsp_mesh/.tide/.gitignore");
@@ -10501,7 +10540,7 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     TIDE_CHECK(offers(completion, "hand"));
     TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1);
 
-    // File path completion accepts only glTF for skinned assets.
+    // File path completion excludes static-only formats for skinned assets.
     completion = request_at(uri_main, "textDocument/completion", 1, 42, "");
     TIDE_CHECK(offers(completion, "hero.gltf") && !offers(completion, "other.obj"));
     remove_game_file("lsp_skin/main.tide");
@@ -10512,6 +10551,65 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     remove_folder("lsp_skin/.tide");
     remove_folder("lsp_skin/art");
     remove_folder("lsp_skin");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
+}
+
+TIDE_TEST(lsp_skinned_fbx_catalogs_complete_names_paths_and_refresh)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_fbx");
+    make_folder("lsp_fbx/art");
+    static const char prefix[] = "struct Corner { float3 position; }\n"
+                                 "asset SkinnedMesh<Corner> hero = \"art/hero.FBX\";\n"
+                                 "asset List<SkinnedMesh<Corner>> models = \"art/hero.FBX\";\n"
+                                 "scene Main { }\n";
+    write_file("lsp_fbx/main.tide", prefix);
+    write_file("lsp_fbx/art/hero.FBX", fbx_catalog_fixture);
+    write_file("lsp_fbx/art/static.obj", "not a skinned format");
+    char root[700], uri_main[700], uri_model[700], text[2048];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_fbx", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_fbx/main.tide", dir);
+    snprintf(uri_model, sizeof uri_model, "file:///%s/lsp_fbx/art/hero.FBX", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    handle("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+    TIDE_CHECK(sent_with("**/*.[fF][bB][xX]") != NULL);
+    snprintf(text, sizeof text, "%sview V()\n{\n    hero.animations.\n}\n", prefix);
+    open_uri(uri_main, text);
+    const char *completion = request_at(uri_main, "textDocument/completion", 6, 20, "");
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "run") && has(completion, "original source name `Idle`"));
+    const model_metadata_stats warm = model_metadata_statistics();
+    open_uri(uri_main, text);
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses && model_metadata_statistics().file_reads == warm.file_reads);
+    snprintf(text, sizeof text, "%sview V()\n{\n    hero.skeleton.bones.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 6, 24, "");
+    TIDE_CHECK(offers(completion, "root") && offers(completion, "hand") && offers(completion, "Find"));
+    completion = request_at(uri_main, "textDocument/completion", 1, 42, "");
+    TIDE_CHECK(offers(completion, "hero.FBX") && !offers(completion, "static.obj"));
+    completion = request_at(uri_main, "textDocument/completion", 2, 50, "");
+    TIDE_CHECK(offers(completion, "*.fbx") && offers(completion, "**/*.fbx") && !offers(completion, "*.obj"));
+    snprintf(text, sizeof text, "%sview V()\n{\n    Debug.Log(hero.animations.idle.name);\n}\n", prefix);
+    open_uri(uri_main, text);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at(uri_main, "textDocument/hover", 6, 32, "");
+    TIDE_CHECK(has(hover, "Animation idle") && has(hover, "original source name `Idle`"));
+    char notification[1024];
+    snprintf(notification, sizeof notification, "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\","
+             "\"params\":{\"changes\":[{\"uri\":\"%s\",\"type\":2}]}}", uri_model);
+    handle(notification);
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1u && model_metadata_statistics().file_reads == warm.file_reads + 1u);
+    remove_game_file("lsp_fbx/main.tide");
+    remove_game_file("lsp_fbx/art/hero.FBX");
+    remove_game_file("lsp_fbx/art/static.obj");
+    remove_game_file("lsp_fbx/.tide/assets.sha256");
+    remove_game_file("lsp_fbx/.tide/.gitignore");
+    remove_folder("lsp_fbx/.tide");
+    remove_folder("lsp_fbx/art");
+    remove_folder("lsp_fbx");
     clear_sent();
     lsp_free(&server);
     model_metadata_forget();
@@ -10538,7 +10636,8 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
     model_metadata_invalidate(path);
     open_uri(uri_main, main_file);
     TIDE_CHECK(has(last_sent(), "animation catalog metadata is invalid") && !has(last_sent(), "has no checked member 'walk'"));
-    TIDE_CHECK(diagnosed(0, (int)(strchr(main_file, '"') - main_file), 11, 1, "model catalog metadata is invalid:"));
+    TIDE_CHECK(diagnosed(0, (int)(strchr(main_file, '"') - main_file), 11, 1,
+                         "model catalog metadata is invalid: has incomplete or invalid JSON"));
     remove_game_file("lsp_skin_status/hero.gltf");
     open_uri(uri_main, main_file);
     TIDE_CHECK(has(last_sent(), "animation catalog metadata is unavailable") && !has(last_sent(), "has no checked member 'walk'"));
@@ -10571,6 +10670,67 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
     remove_game_file("lsp_skin_status/.tide/.gitignore");
     remove_folder("lsp_skin_status/.tide");
     remove_folder("lsp_skin_status");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
+}
+
+TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_skin_format");
+    static const char obj[] = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    static const char local[] = "asset SkinnedMesh<Vertex3> hero = \"character.obj\";\nscene Main { }\n";
+    static const char primary[] = "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ";
+    static const char guidance[] = "use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX";
+    write_file("lsp_skin_format/main.tide", local);
+    write_file("lsp_skin_format/character.obj", obj);
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_skin_format", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_skin_format/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, local);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(local, '"') - local), 15, 1, primary));
+    TIDE_CHECK(has(last_sent(), guidance) && !has(last_sent(), "incomplete or invalid JSON")
+               && !has(last_sent(), "model catalog metadata is invalid"));
+    write_file("lsp_skin_format/character.obj", "{\"asset\":{\"version\":\"2.0\"}}");
+    open_uri(uri_main, local);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // Accepted glTF content keeps working regardless of its suffix.
+
+    // An uncached URL remains unavailable without a fetch; an existing OBJ
+    // cache uses the source URL's extension, not its extensionless hash path.
+    model_metadata_forget();
+    static const char url[] = "https://must-never-be-contacted.invalid/character.OBJ?revision=1#preview";
+    char remote[512];
+    snprintf(remote, sizeof remote, "asset SkinnedMesh<Vertex3> hero = \"%s\";\nscene Main { }\n", url);
+    open_uri(uri_main, remote);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(remote, '"') - remote), (int)strlen(url) + 2, 3,
+                         "model catalog metadata is unavailable:"));
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1") && model_metadata_statistics().file_reads == 0
+               && model_metadata_statistics().parses == 0);
+    make_folder("lsp_skin_format/.tide");
+    make_folder("lsp_skin_format/.tide/assets");
+    make_folder("lsp_skin_format/.tide/assets/urls");
+    char digest[65], cache[160];
+    sha256_hex(url, strlen(url), digest);
+    snprintf(cache, sizeof cache, "lsp_skin_format/.tide/assets/urls/%s", digest);
+    write_file(cache, obj);
+    open_uri(uri_main, remote);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(remote, '"') - remote), (int)strlen(url) + 2, 1, primary));
+    TIDE_CHECK(has(last_sent(), guidance) && !has(last_sent(), "incomplete or invalid JSON")
+               && !has(last_sent(), "model catalog metadata is invalid"));
+    TIDE_CHECK(model_metadata_statistics().file_reads == 1);
+    remove_game_file(cache);
+    remove_game_file("lsp_skin_format/main.tide");
+    remove_game_file("lsp_skin_format/character.obj");
+    remove_game_file("lsp_skin_format/.tide/assets.sha256");
+    remove_game_file("lsp_skin_format/.tide/.gitignore");
+    remove_folder("lsp_skin_format/.tide/assets/urls");
+    remove_folder("lsp_skin_format/.tide/assets");
+    remove_folder("lsp_skin_format/.tide");
+    remove_folder("lsp_skin_format");
     clear_sent();
     lsp_free(&server);
     model_metadata_forget();
