@@ -152,8 +152,8 @@ a browser process that remains alive still fails and retains its profile.
 The regression reproduces exit with stderr held by an owned helper, and also
 checks graceful and unresponsive shutdown. These CPU-only checks run through
 CTest on native and web builds and pass on Windows and Linux. The macOS log
-did not record process exit separately from stdio closure; hosted confirmation
-still requires a requested CI run.
+did not record process exit separately from stdio closure; run 38051684843
+subsequently passed both macOS suites.
 
 Validation of these fixes (2026-10-10): scoped native debug passed 2/2,
 web-debug and web-release each passed 4/4, including both real two-player
@@ -164,21 +164,67 @@ URL join fail before exchanging any packets; the same fault passed with the
 initialized-page GUI join. No assertions or deadlines were relaxed, and no
 workflow was dispatched.
 
+Run 38051684843 passed JetBrains, Linux and both macOS suites. Windows native
+and MinGW each failed only the new stderr-inheritance regression, before it
+called the cleanup helper: libuv kills a non-detached child when its Windows
+parent exits, so `unref()` alone did not establish the fixture's premise.
+The fixture now detaches the owned helper, waits for its actual stderr write
+and verifies that its PID remains alive after the parent exits. It still
+kills that exact helper in cleanup. All three cleanup cases pass on Windows
+and Linux with CI's Node 24.21; the first case passed thirty repetitions on
+each. A negative control without detachment fails the new alive assertion.
+The combined readiness/parent-exit wait has a five-second deadline so a
+stuck parent still reaches cleanup. A temporary stuck-parent control fails
+within six seconds on both platforms and confirms its helper PID is gone.
+The browser cleanup implementation did not change.
+
+That run's Windows WebGL failure was again before the keeper joined, this
+time with DevTools reports buffered by 24–33 seconds and less than a
+millisecond of clock drift. Input commands were already slow on the host
+alone. The test now paces each page's animation requests: after a completed
+callback it leaves at least 1/30 second idle before another frame. Both
+visible players still draw, and the game's simulation catches up to real
+time. This changes only the injected test script; dimensions, screenshots,
+GL checks, controls, packet/tick assertions and deadlines stay the same.
+Cancellation and callback timestamps retain their browser behavior.
+
+Local comparisons use CI's Node 24.21 and Chrome Headless Shell 155.0.8059.39
+with a Windows job CPU-rate limit covering Node and the whole browser tree.
+At a budget equivalent to about half a logical processor, the unpaced
+optimized WebGL playtest passed in 160.8 seconds using 68.9 CPU-seconds;
+the paced test passed in 119.6 seconds using 53.2 CPU-seconds. This establishes
+lower resource use and more deadline margin locally. At a tighter budget
+equivalent to 0.36 processors, the unpaced test failed before exchanging host
+packets (129.4 seconds); the paced test passed all gameplay checks in 164.0
+seconds. The specific hosted DevTools stall has not been reproduced.
+
+Scoped validation of the fixture and pacing fixes (2026-10-10): native debug
+passed 2/2; web-debug and web-release each passed 4/4, including real WebGL
+and WebGPU multiplayer. CPU-only scheduling probes covered cancellation,
+duplicate callbacks, native timestamps/context, recursive slow frames and
+callback errors. No workflow was dispatched or rerun.
+
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
-unrestricted affinity, two processors and one processor, and on web-release
-with one processor. A pending local SDP operation injected into a temporary
+unrestricted parent affinity and parent affinity limited to two processors
+and one processor, and on web-release with parent affinity limited to one.
+These affinity runs did not constrain SwiftShader's total CPU use: its Marl
+workers explicitly request the system's processors. Later resource comparisons
+use a Windows job CPU-rate limit for the complete process tree, keeping the
+full processor affinity mask so those workers can start.
+A pending local SDP operation injected into a temporary
 runner reproduced peers staying
 `new`; its account identified the uncompleted operation, and the game's
 existing connection timeout failed the run and closed its browser normally.
 
 Fix validation (2026-10-10): native simulation passed 1/1 (fourteen inner
 cases), scoped web-debug passed 3/3, and web-release passed 6/6 with the test
-process restricted to one CPU and CTest parallelism four (both play backends,
-simulation, demo on both backends and Sumo). Fault-injected browser signal
+parent process restricted to one CPU and CTest parallelism four (both play
+backends, simulation, demo on both backends and Sumo). Fault-injected browser signal
 termination and a hung browser both failed promptly, removed their profiles
-and left no browser process. macOS confirmation requires a requested CI run;
-no workflow was dispatched for this fix.
+and left no browser process. These parent-affinity runs did not constrain
+SwiftShader's workers. Both macOS suites later passed in run 38051684843;
+no workflow was dispatched by the agent for this fix.
 
 Public-sharing validation (2026-10-09): the native/web builds and full suites
 passed 2,016/2,016 and 1,993/1,993. After integrating the five-game catalog,
