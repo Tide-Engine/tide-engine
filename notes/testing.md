@@ -4,6 +4,18 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Building
 
+- `last_light_browser_process` has eight cleanup regressions (2026-10-10):
+  three portable process/stdio cases and five Windows taskkill cases. The
+  Windows fixtures intercept only the tree-killer launch and use real owned
+  processes to check stalled commands, spawn failure, independent browser exit
+  and refused termination of either process. Cleanup must confirm exit before
+  reporting success; an unkillable helper must not keep Node's event loop alive.
+  All eight pass on Windows Node 24.19, including ten consecutive suite runs;
+  the previous helper fails the stalled/lingering-command negative controls.
+  Scoped native and web checks, including real WebGL/WebGPU play, pass. The
+  reproduction and the limits of the CI diagnosis are in
+  `notes/private-prototypes.md`.
+
 - `last_light_browser_devtools` exercises the Last Light fixture's DevTools
   pipe without a browser (2026-10-10). Eight cases cover fragmented UTF-8,
   coalesced records, target-session routing and reordered replies, protocol

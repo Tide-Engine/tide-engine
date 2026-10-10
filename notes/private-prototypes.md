@@ -295,6 +295,35 @@ in 4.46 seconds. No nightly was published. The pipe playtest therefore passed
 on the previously failing hosted platform, but this single result does not
 establish the cause of the earlier buffered reports and input timeouts.
 
+The cleanup failure exposed a missing Windows fallback (2026-10-10):
+`stopBrowser` launched `taskkill /T /F` without waiting for that command,
+then returned false if the browser had not exited within two seconds.
+A local probe replacing only that launch with an owned idle Node process
+reproduced the false return with both processes still alive. This establishes
+the cleanup defect; the hosted log did not time taskkill and cannot establish
+that it stalled there.
+
+Cleanup now gives the close request and browser exit one shared grace window,
+waits a bounded window for taskkill, stops a stalled taskkill before directly
+terminating the owned browser, and confirms both exits. A tree killer that
+cannot be stopped is diagnosed, unreferenced and reported as failed cleanup;
+the caller retains the profile. Browser stderr is released only after browser
+exit. The two-second per-wait bounds and ten/30-second regression/CTest guards
+are unchanged. Normal Windows cleanup still requests the whole browser tree;
+the direct fallback confirms the owned parent and tree-killer exits, without
+claiming that every independently surviving descendant was observed.
+
+Five Windows regressions use real owned processes and intercept only the
+taskkill launch: a stalled command, failure to start, browser exit while the
+command is stalled, refused direct browser termination, and refused taskkill
+termination. The original three portable cases remain. The previous helper
+fails the stalled-command and lingering-command negative controls; the fixed
+helper passes all eight. Windows Node 24.19 passed all 22 CPU-only cleanup,
+pacing and DevTools cases and ten consecutive cleanup-suite runs. Scoped
+native debug passed 4/4 and web-debug passed 6/6, including the actual two-player
+WebGL and WebGPU checks with Chrome Headless Shell 155.0.8059.39. No CI run or
+retry was dispatched.
+
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
 unrestricted parent affinity and parent affinity limited to two processors
