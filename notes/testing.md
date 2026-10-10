@@ -4,6 +4,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Building
 
+- `last_light_frame_pacing` checks the playtest's serialized scheduler without
+  a browser (2026-10-10): WebGL callback/spacing behavior, pending GPU work,
+  timer progress, cancellation, rejected completion and several queues.
+  The Last Light's WebGPU playtest waits for the prior submitted GPU frame
+  before scheduling another, keeping its existing assertions and deadlines.
+  The controlled measurements and the limits of the hosted-timeout diagnosis
+  are in `notes/private-prototypes.md`.
+
 - Browser tests registered by `tide_add_web_test` reserve the host's CPU count
   through CTest `PROCESSORS`, for WebGL and WebGPU (2026-10-10). Chrome's software
   renderer starts its own workers, so counting each page as one job let four

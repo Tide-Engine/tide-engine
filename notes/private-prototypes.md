@@ -213,6 +213,40 @@ request only the failed jobs and their dependent gates were retried.
 MinGW passed 1,993/1,993 on that retry, including the cleanup fixture.
 The complete run then passed and published `v0.3.0-nightly.117`.
 
+Windows WebGPU input timeouts returned in runs `38079507404` and
+`38080715656`, before any keeper peer/SDP operation. Both pages' DevTools
+frame reports arrived 19–30 seconds late while page clock drift stayed below
+a millisecond. The existing frame callback counted CPU submission, not GPU
+completion: its 33 ms idle interval did not bound pending software GPU work.
+`test/frame-pacing.mjs`, serialized into the playtest page by `web-play.mjs`,
+now waits for every queue used by the previous game frame through
+`onSubmittedWorkDone` before scheduling another. WebGL keeps its original
+idle interval. Both visible players still render; dimensions, screenshots,
+GL checks, keyboard/touch steps, packet/tick assertions and all deadlines
+are unchanged. This affects only the injected test script, not the runtime.
+Frame diagnostics now include GPU submissions, completions, pending/peak
+frames, longest completion and oldest pending age. Fence rejection is an
+explicit console error, which already fails the playtest, and releases its
+wait so it cannot hide behind a frame deadline. Cancellation remains effective
+while a fence is pending.
+
+A local comparison used the same freshly packaged release page and a Windows
+job CPU-rate cap for Node and the complete Chrome Headless Shell 155.0.8059.39
+tree, with full processor affinity retained. At a budget equivalent to 0.48
+logical processors, the previous pacing passed in 82.31 seconds with 34.89
+CPU-seconds and a peak of three pending GPU frames; completion pacing passed
+in 75.08 seconds with 32.98 CPU-seconds and a peak of one. GPU completion took
+up to 2.45 seconds in both. This confirms bounded GPU work and improved local
+margin, but did not reproduce the hosted DevTools backlog and does not
+establish that GPU queueing caused those CI timeouts.
+
+Six CPU-only `last_light_frame_pacing` regressions exercise the actual serialized
+helper: native callback context/timestamp and WebGL spacing, free timers while
+GPU work is pending, cancellation before native delivery and during GPU waits,
+rejected completion and frames using several queues. All six pass. The real
+release two-player WebGL and WebGPU playtests pass with the helper; hosted
+confirmation remains the requested CI run's job.
+
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
 unrestricted parent affinity and parent affinity limited to two processors
