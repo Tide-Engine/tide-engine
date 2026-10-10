@@ -44,6 +44,8 @@ tide <command> [folder] [options]
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
+Web releases compress the program and assets inside that file and use a smaller page runtime. Decoding is included, so playing or building a packaged Tide game needs no extra tools or downloads. Debug and hot-reload pages keep their readable runtime and original payloads.
+
 Standalone release builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Debug and hot-reload builds keep their usual code and asset loading behavior.
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.

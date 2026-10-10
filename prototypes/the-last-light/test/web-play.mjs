@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRelay } from '../../../relay/relay.mjs';
 import { stopBrowser } from './browser-process.mjs';
+import { installFramePacing } from './frame-pacing.mjs';
 
 const [gamePage, captureDirectory, backend = 'webgl'] = process.argv.slice(2);
 assert.ok(gamePage && captureDirectory, 'Usage: web-play.mjs <last_light.html> <capture directory> [webgl|webgpu]');
@@ -201,37 +202,8 @@ try {
         await command('Page.addScriptToEvaluateOnNewDocument', { source: `
             // Both visible players still draw every requested frame. Leave
             // real time for input/signaling between software-rendered frames.
-            const requestFrame = window.requestAnimationFrame.bind(window);
-            const cancelFrame = window.cancelAnimationFrame.bind(window);
-            const frameRequests = new Map();
-            let frameRequest = 0;
-            let nextFrame = 0;
-            window.requestAnimationFrame = callback => {
-                if (typeof callback !== 'function') throw new TypeError('Animation frame callback must be a function');
-                const id = ++frameRequest;
-                const request = { timer: null, frame: null };
-                const schedule = () => {
-                    const remaining = nextFrame - performance.now();
-                    if (remaining > 0) request.timer = setTimeout(schedule, remaining);
-                    else request.frame = requestFrame(timestamp => {
-                        frameRequests.delete(id);
-                        try { callback.call(window, timestamp); }
-                        finally { nextFrame = performance.now() + 1000 / 30; }
-                    });
-                };
-                frameRequests.set(id, request);
-                // Defer scheduling until the current callback has completed,
-                // including a request made by that callback's frame loop.
-                request.timer = setTimeout(schedule, Math.max(0, nextFrame - performance.now()));
-                return id;
-            };
-            window.cancelAnimationFrame = id => {
-                const request = frameRequests.get(id);
-                if (!request) return;
-                clearTimeout(request.timer);
-                if (request.frame !== null) cancelFrame(request.frame);
-                frameRequests.delete(id);
-            };
+            ${installFramePacing.toString()}
+            installFramePacing(window);
             window.__draws = 0; window.__frames = 0; window.__peers = []; window.__messages = 0; window.__sent = 0; window.__aborted = '';
             window.__receivedAt = 0; window.__sentAt = 0;
             let reported = -Infinity;
@@ -296,7 +268,7 @@ try {
                         negotiation:window.__peers.map(peerState),
                         messages:window.__messages, sent:window.__sent, aborted:window.__aborted,
                         receiveAge:performance.now()-window.__receivedAt, sendAge:performance.now()-window.__sentAt,
-                        state:netcode[0], verified:netcode[4], work:netcode[17],
+                        state:netcode[0], verified:netcode[4], work:netcode[17], gpu:window.__lastLightGPU(),
                         screen:{width:innerWidth,height:innerHeight,canvasWidth:canvas.clientWidth,canvasHeight:canvas.clientHeight}}));
                 };
             }});
