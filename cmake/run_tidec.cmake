@@ -15,6 +15,11 @@ foreach(i RANGE ${last})
     endif()
 endforeach()
 
+# Standalone optimized games can omit assets with no checked Tide references.
+if(STRIP_UNUSED_ASSETS)
+    list(APPEND args --strip-unused-assets)
+endif()
+
 execute_process(
     COMMAND "${TIDEC}" ${args}
     RESULT_VARIABLE result

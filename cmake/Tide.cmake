@@ -268,10 +268,17 @@ function(tide_add_game target)
     if(NOT written STREQUAL source_lines)
         file(WRITE "${listed}" "${source_lines}")
     endif()
+    # Custom C and hosts may find assets by name through the C API, which
+    # Tide expressions cannot describe. Keep their declarations, and layouts
+    # used for reloading; prune only ordinary standalone optimized games.
+    set(strip_assets OFF)
+    if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT)
+        set(strip_assets "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
+    endif()
     add_custom_command(
         OUTPUT "${out_c}" "${out_h}" ${pack_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
-        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" -P "${TIDE_RUN_TIDEC}"
+        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
@@ -317,6 +324,21 @@ int main(int argc, char **argv)
                     -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/copy_pack.cmake"
                 VERBATIM)
             tide_web_page(${target} PACK "${out_pack}")
+        endif()
+    endif()
+    if(NOT ARG_HOST)
+        # Keep profiling information in RelWithDebInfo. Shipped Release and
+        # MinSizeRel executables also omit linker symbol/debug tables.
+        if(TIDE_WEB)
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,MinSizeRel>:LINKER:-s>")
+        elseif(APPLE)
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:-dead_strip>"
+                "$<$<CONFIG:Release,MinSizeRel>:LINKER:-S,-x>")
+        elseif(WIN32 AND NOT MINGW)
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:/OPT:REF>")
+        else()
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:--gc-sections>"
+                "$<$<CONFIG:Release,MinSizeRel>:LINKER:-s>")
         endif()
     endif()
     target_include_directories(${target} PRIVATE "${out_dir}")

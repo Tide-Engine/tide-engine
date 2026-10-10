@@ -21,6 +21,7 @@ typedef struct codegen_options {
     const char *out_dir;
     bool line_directives;    // Map generated code back to .tide lines for debuggers.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
+    bool strip_unused_assets; // Closed release games only: exclude assets never referenced by checked Tide code/defaults/shaders.
     sb *externs;             // If set, gets the C function of each extern function, a line each (for tide's checks).
     game_info *info;         // If set, gets what tide needs of the game's settings.
     bool shaders;            // Instead of the schedule, print the game's shaders (tidec --shaders).

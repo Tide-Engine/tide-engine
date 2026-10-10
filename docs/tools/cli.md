@@ -44,6 +44,8 @@ tide <command> [folder] [options]
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
+Standalone release builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Debug and hot-reload builds keep their usual code and asset loading behavior.
+
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
 
 A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
