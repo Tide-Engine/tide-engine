@@ -1,0 +1,77 @@
+asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
+
+local singleton Cases
+{
+    int mode = -1;
+    bool ready;
+    int changes;
+    SkinnedMesh<Vertex3> model;
+    Pose pose;
+    Bone hand;
+}
+
+struct Shade { Color color; }
+
+frag Paint(Vertex3 vertex, Shade shade, out Color color)
+{
+    color = vertex.color * shade.color;
+}
+
+float4x4 ReplaceModel(mut Cases cases)
+{
+    cases.model = default;
+    cases.changes++;
+    return float4x4.identity;
+}
+
+Shade EditPose(mut Cases cases)
+{
+    cases.pose[cases.hand].position.x = -7;
+    cases.changes++;
+    return Shade { color = Color.white };
+}
+
+extern void skinned_draw_observe(int step);
+extern Shade skinned_draw_c_edit();
+
+view Show(mut Cases cases)
+{
+    if (!cases.ready)
+    {
+        cases.model = character;
+        cases.pose = character.defaultPose;
+        cases.hand = character.skeleton.bones.arm;
+        cases.ready = true;
+    }
+    if (cases.mode == 0)
+    {
+        skinned_draw_observe(0);
+        Draw.SkinnedMesh(character, float4x4.identity);
+        skinned_draw_observe(1);
+        Draw.SkinnedMesh(cases.model, float4x4.identity, cases.pose);
+        skinned_draw_observe(2);
+    }
+    else if (cases.mode == 1)
+    {
+        // A later operand releases the owned model's backing lists.
+        Draw.SkinnedMesh(cases.model, ReplaceModel(cases));
+    }
+    else if (cases.mode == 2)
+    {
+        // Values are evaluated after the model and pose have been captured.
+        Draw.SkinnedMesh(character, float4x4.identity, cases.pose, Paint, EditPose(cases));
+    }
+    else if (cases.mode == 3)
+    {
+        // An extern can change a value without a Tide mut parameter.
+        Draw.SkinnedMesh(character, float4x4.identity, cases.pose, Paint, skinned_draw_c_edit());
+    }
+    else if (cases.mode == 4)
+    {
+        Draw.SkinnedMesh(character, float4x4.identity, cases.pose);
+        cases.pose[cases.hand].position.x = -17;
+        Draw.SkinnedMesh(character, float4x4.identity, cases.pose);
+    }
+}
+
+scene Main { }

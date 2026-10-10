@@ -63,9 +63,22 @@ typedef struct packed_cube {
     const uint8_t *faces[TIDE_CUBE_FACES];
 } packed_cube;
 
+// Only canonical blobs that passed full skinned-record validation are here.
+// Ordinary packed byte lists do not establish this provenance.
+typedef struct packed_skinned {
+    uint32_t at;
+    uint32_t end; // End of its header/payload span, or 0 once a geometry write overlaps it.
+    uint64_t version;
+} packed_skinned;
+
+typedef struct skinned_span {
+    uint32_t begin, end, slot, prefix_end;
+} skinned_span;
+
 static struct {
     uint8_t *region;
     uint32_t size;
+    uint32_t file_size; // Before mutable texture/clip references are laid out after it.
     tide_pack_entry *entries;
     uint32_t entry_count;
     uint32_t epoch; // Counts the loads, so threads see a new one
@@ -75,6 +88,10 @@ static struct {
     uint32_t texture_count, texture_places;
     packed_cube *cubes; // Its cubes, of which a game has a few: looked through
     uint32_t cube_count;
+    packed_skinned *skinned;
+    uint32_t skinned_count, skinned_places;
+    skinned_span *skinned_spans;
+    uint32_t skinned_span_count;
 } pack;
 
 static TIDE_THREAD_LOCAL uint32_t mapped_epoch;
@@ -262,6 +279,84 @@ static bool flat_at(const uint32_t offset, const uint32_t element, uint32_t *cou
     return flat_in(pack.region, pack.size, offset, element, count);
 }
 
+static uint32_t skinned_place(const packed_skinned *slots, const uint32_t places, const uint32_t at)
+{
+    uint32_t i = (uint32_t)tide_hash_i((int32_t)at) & (places - 1u);
+    while (slots[i].at && slots[i].at != at) i = (i + 1u) & (places - 1u);
+    return i;
+}
+
+static void note_skinned(const tide_list data)
+{
+    if (pack.skinned_places && pack.skinned[skinned_place(pack.skinned, pack.skinned_places, data.at)].at) return;
+    if ((uint64_t)(pack.skinned_count + 1u) * 2u > pack.skinned_places) {
+        const uint32_t places = pack.skinned_places ? pack.skinned_places * 2u : 8u;
+        packed_skinned *slots = tide_alloc_zeroed(places, sizeof *slots);
+        for (uint32_t i = 0; i < pack.skinned_places; i++) {
+            const packed_skinned had = pack.skinned[i];
+            if (had.at) slots[skinned_place(slots, places, had.at)] = had;
+        }
+        free(pack.skinned);
+        pack.skinned = slots;
+        pack.skinned_places = places;
+    }
+    // Keep a candidate, not a proof yet: a later malformed record may alias
+    // this byte block when sanitizing writes clear that record.
+    pack.skinned[skinned_place(pack.skinned, pack.skinned_places, data.at)] = (packed_skinned){.at = data.at};
+    pack.skinned_count++;
+}
+
+static int compare_skinned_spans(const void *a, const void *b)
+{
+    const skinned_span *left = a, *right = b;
+    return left->begin < right->begin ? -1 : left->begin > right->begin ? 1 : 0;
+}
+
+static void index_skinned_spans(void)
+{
+    if (!pack.skinned_count) return;
+    pack.skinned_spans = tide_alloc((size_t)pack.skinned_count * sizeof *pack.skinned_spans);
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < pack.skinned_places; i++) {
+        packed_skinned *model = &pack.skinned[i];
+        if (!model->at) continue;
+        const uint32_t offset = OFFSET(model->at) - TIDE_PACK_BASE;
+        uint32_t bytes;
+        if (!flat_in(pack.region, pack.file_size, offset, 1u, &bytes)
+            || !tide_skinned_data_validate(pack.region + offset + sizeof(tide_block), bytes)) continue;
+        // Establish the proof only after every load-time sanitizing write.
+        model->end = offset + (uint32_t)sizeof(tide_block) + bytes;
+        model->version = tide_hash(pack.region + offset + sizeof(tide_block), bytes);
+        pack.skinned_spans[count++] = (skinned_span){offset, model->end, i, 0u};
+    }
+    pack.skinned_span_count = count;
+    qsort(pack.skinned_spans, count, sizeof *pack.skinned_spans, compare_skinned_spans);
+    uint32_t end = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        skinned_span *span = &pack.skinned_spans[i];
+        if (span->end > end) end = span->end;
+        span->prefix_end = end;
+    }
+}
+
+// Generated defaults normally write disjoint geometry blocks. A forged raw
+// pack can alias one with a canonical byte block, so invalidate only those
+// proofs whose physical storage may have changed. Sorted spans keep ordinary
+// default fills logarithmic even when thousands of models are imported.
+static void changed_skinned_span(const uint32_t begin, const uint32_t end)
+{
+    uint32_t low = 0u, high = pack.skinned_span_count;
+    while (low < high) {
+        const uint32_t middle = low + (high - low) / 2u;
+        if (pack.skinned_spans[middle].prefix_end <= begin) low = middle + 1u;
+        else high = middle;
+    }
+    for (uint32_t i = low; i < pack.skinned_span_count && pack.skinned_spans[i].begin < end; i++) {
+        const skinned_span span = pack.skinned_spans[i];
+        if (span.end > begin) pack.skinned[span.slot].end = 0u;
+    }
+}
+
 static bool skinned_at(const tide_skinned_lists *model, const bool full, uint32_t *vertex, uint32_t *count)
 {
     const uint32_t data = place_of(model->data.at, pack.size), vertices = place_of(model->vertices.at, pack.size);
@@ -353,7 +448,7 @@ static void check_skinned(void)
             if (!skinned_at(&model, true, &vertex, &vertices)) {
                 model = (tide_skinned_lists){0};
                 memcpy(row + value_at, &model, sizeof model);
-            }
+            } else note_skinned(model.data);
         }
         if (!map) e->size = count;
     }
@@ -567,12 +662,14 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     pack.region = tide_alloc(slots ? (size_t)slots << TIDE_SCRATCH_SHIFT : 16u);
     memcpy(pack.region, bytes + h.region_at, h.region_size);
     pack.size = h.region_size;
+    pack.file_size = h.region_size;
     pack.entries = tide_alloc(h.entries ? h.entries * sizeof(tide_pack_entry) : 16u);
     memcpy(pack.entries, entries, (size_t)h.entries * sizeof(tide_pack_entry));
     pack.entry_count = h.entries;
     lay_textures(h.region_size);
     check_meshes();
     check_skinned();
+    index_skinned_spans();
     note_cubes(); // Once nothing more is laid out: the region is where it stays
     pack.epoch++;
     tide_pack_region_slots = slots;
@@ -586,6 +683,12 @@ void tide_pack_unload(void)
     free(pack.entries);
     free(pack.textures);
     free(pack.cubes);
+    free(pack.skinned);
+    free(pack.skinned_spans);
+    pack.skinned = NULL;
+    pack.skinned_spans = NULL;
+    pack.skinned_count = pack.skinned_places = 0;
+    pack.skinned_span_count = 0;
     pack.cubes = NULL;
     pack.cube_count = 0;
     pack.region = NULL;
@@ -593,6 +696,7 @@ void tide_pack_unload(void)
     pack.textures = NULL;
     pack.texture_count = pack.texture_places = 0;
     pack.size = 0;
+    pack.file_size = 0;
     pack.entry_count = 0;
     pack.epoch++;
     tide_pack_region_slots = 0;
@@ -690,6 +794,7 @@ void tide_pack_mesh_updated(void *vertices, const uint32_t vertex)
     version = tide_hash(vertices, (size_t)count * vertex);
     if (!version) version = 1;
     const tide_block *b = (const tide_block *)(const void *)(pack.region + offset);
+    changed_skinned_span(offset, offset + b->next + (uint32_t)sizeof version);
     memcpy(pack.region + offset + b->next, &version, sizeof version);
 }
 
@@ -804,6 +909,15 @@ bool tide_pack_list_version(const tide_list list, const uint32_t element, uint64
     if (!pack.region || !tide_pack_holds(list.at)) return false;
     uint32_t count, said;
     return versioned_at(pack.region, pack.size, (list.at & 0x3FFFFFFFu) - TIDE_PACK_BASE, &count, &said, version) && said == element;
+}
+
+bool tide_pack_skinned_version(const tide_list data, uint64_t *version)
+{
+    if (!version || !pack.region || !pack.skinned_places) return false;
+    const packed_skinned *found = &pack.skinned[skinned_place(pack.skinned, pack.skinned_places, data.at)];
+    if (!found->at || !found->end) return false;
+    *version = found->version;
+    return true;
 }
 
 tide_str tide_pack_text(const tide_pack_entry *e)

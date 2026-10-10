@@ -320,6 +320,14 @@ bool tide_pack_skinned_content(const uint8_t *bytes, size_t size, const char *qu
 // for one whose elements aren't `element` bytes each.
 bool tide_pack_list_version(tide_list list, uint32_t element, uint64_t *version);
 
+// Runtime draw support: true only for immutable canonical model bytes that
+// passed complete skinned-record validation in the currently loaded pack.
+// The version is the hash of those exact bytes, computed once at load. Other
+// byte lists, including owned copies and decoded values, are not registered.
+// Replacement/unload discard this provenance, as do geometry-default writes
+// whose storage overlaps a model's header or bytes in a forged pack.
+bool tide_pack_skinned_version(tide_list data, uint64_t *version);
+
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps
 // (tide_text_use), so every thread that runs Tide code reads the pack.
