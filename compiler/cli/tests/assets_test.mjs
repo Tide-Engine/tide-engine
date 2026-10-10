@@ -39,6 +39,7 @@ const models = new Map([
     ["/triangle.obj", Buffer.from("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")],
     ["/triangle.gltf", readFileSync(new URL("../../tests/e2e/assets/meshes/inline.gltf", import.meta.url))],
     ["/triangle.glb", readFileSync(new URL("../../tests/e2e/assets/meshes/quad.glb", import.meta.url))],
+    ["/triangle.fbx", readFileSync(new URL("../../tests/e2e/fbx/static/triangle_ascii.fbx", import.meta.url))],
 ]);
 const modelRequests = [];
 const server = createServer((request, response) => {
@@ -148,7 +149,7 @@ try {
     // a map key. GLB continues to be recognized by its bytes.
     const modelUrls = [];
     const declarations = [];
-    for (const format of ["obj", "gltf", "glb"]) {
+    for (const format of ["obj", "gltf", "glb", "fbx"]) {
         for (const [name, suffix] of [["plain", ""], ["query", "?revision=1"], ["fragment", "#model"]]) {
             const url = `http://127.0.0.1:${port}/triangle.${format}${suffix}`;
             modelUrls.push(url);

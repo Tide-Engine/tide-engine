@@ -1,5 +1,5 @@
 ---
-description: "Import skinned glTF models, sample and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
+description: "Import skinned glTF or FBX models, sample and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
 ---
 
 # Skinned meshes and animation
@@ -8,7 +8,7 @@ A `SkinnedMesh<V>` holds a model's geometry, skeleton and animation clips. A `Po
 
 ## Import and draw
 
-Import a glTF 2.0 `.glb` or `.gltf` with your [vertex struct](./assets.md#meshes), then sample an animation and draw its pose:
+Import a glTF 2.0 `.glb` or `.gltf`, or a binary or ASCII `.fbx`, with your [vertex struct](./assets.md#meshes), then sample an animation and draw its pose:
 
 ```csharp
 asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
@@ -28,6 +28,10 @@ view Characters(Character character)
 ```
 
 `Draw.SkinnedMesh(mesh, transform, pose)` takes the same texture, vert, frag and values arguments as a [3D mesh](./3d.md), and also works on a render target. Deformation applies before your `vert`, which receives the posed mesh-local position, normal and tangent. Use `hero.skeleton.RestPose()` to draw the authored rest pose.
+
+An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
+
+Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh, morph targets and external vertex caches. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
 
 ## Checked names and dynamic lookup
 
@@ -106,4 +110,4 @@ Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files
 
 Decoded vertices use your vertex struct's defaults too. Assets those defaults read have the same compatibility requirement even when the game declares no imported skinned model.
 
-Assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. Morph targets, retargeting, IK, animation events and an automatic playback controller are not implemented.
+glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights and baked node transforms; textures remain separate assets. Morph targets, retargeting, IK, animation events and an automatic playback controller are not implemented.
