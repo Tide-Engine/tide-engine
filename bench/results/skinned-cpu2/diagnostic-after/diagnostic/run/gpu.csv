@@ -1,0 +1,4 @@
+timestamp, uuid, pstate, clocks.current.graphics [MHz], clocks.current.memory [MHz], utilization.gpu [%], power.draw [W], temperature.gpu, clocks_event_reasons.gpu_idle, clocks_event_reasons.sw_power_cap, clocks_event_reasons.hw_thermal_slowdown
+2026/10/10 20:17:44.042, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P8, 210, 405, 1, 6.23, 31, Active, Not Active, Not Active
+2026/10/10 20:17:44.313, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P8, 210, 405, 1, 6.23, 31, Active, Not Active, Not Active
+2026/10/10 20:17:44.577, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2550, 11501, 42, 14.90, 34, Active, Not Active, Not Active

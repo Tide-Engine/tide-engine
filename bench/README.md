@@ -169,7 +169,7 @@ Each case reports median and p95 generated-view/recording CPU time (including sa
 
 The initial 2026-10-10 baseline measures source `b9faf142` on Windows, Ryzen 9 7900X, RTX 4080 SUPER, NVIDIA 595.79 and Clang 23.1.2, using release OpenGL 3.3. Each of the 16 count/mode combinations has three repeats of 100 measured frames after 20 warmup frames. The table takes the median of the three per-repeat medians at 1,000 characters. GPU timings describe this shared desktop under its observed clock conditions: all 15 clock samples during the final independent-pose case report 210 MHz graphics, 405 MHz memory and P8. They do not establish peak GPU throughput. Other user applications remained running; this task's builds and tests had finished before measurement.
 
-| 1,000 characters | CPU views/recording (ms) | CPU submission (ms) | GPU execution (ms) | Mesh draw calls | Palette uploads/frame |
+| 1,000 characters | CPU views/recording (ms) | CPU submission (ms) | GPU query (ms) | Mesh draw calls | Palette uploads/frame |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Static geometry | 0.057 | 0.031 | 0.500 | 1 | 0 |
 | Omitted default pose | 133.064 | 0.110 | 5.784 | 1 | 0 |
@@ -197,7 +197,7 @@ The comparison uses the preserved original `b9faf142` release executable and the
 
 The six processes completed all 96 cases, 9,600 CPU frames and 9,600 GPU samples. Draw counts and upload bytes match before/after in every paired case. The final 1,000-character independent-pose captures at frame 119 have identical PNG bytes and decoded RGB pixels. At 100 characters the optimized rest/shared/independent CPU costs are 0.347, 0.292 and 0.860 ms/frame. Independently animated characters still need 1,000 mesh draws and 4,096,000 palette-upload bytes/frame at the largest count; this change removes CPU preparation overhead without introducing independently posed instancing.
 
-GPU timings also change, but clock conditions differ: the original processes mostly report P8, while the optimized processes mostly report P0. Across the whole processes graphics clocks range from 210 to 2,835 MHz and memory clocks from 405 to 11,501 MHz. These observations are not per-case clock normalization and do not establish a GPU shader speedup. CPU submission, GPU execution, readback and total intervals remain in the saved records. Two earlier attempts interrupted by concurrent external builds were excluded and the original ledger restored before the clean batch; metadata records both exclusions.
+GPU timings also change, but clock conditions differ: the original processes mostly report P8, while the optimized processes mostly report P0. Across the whole processes graphics clocks range from 210 to 2,835 MHz and memory clocks from 405 to 11,501 MHz. These observations are not per-case clock normalization and do not establish a GPU shader speedup. CPU submission, GPU query, readback and total intervals remain in the saved records. Two earlier attempts interrupted by concurrent external builds were excluded and the original ledger restored before the clean batch; metadata records both exclusions.
 
 [Summary](results/skinned-cpu/summary.json), [measurement metadata](results/skinned-cpu/metadata.json), [paired rows](results/skinned-cpu/paired-rows.jsonl), [clock observations](results/skinned-cpu/clock-summary.json) and [baseline phase attribution](results/skinned-cpu/diagnostic-before/phase-summary.json) retain the measurements and their boundaries. [Reproduction instructions](results/skinned-cpu/README.md) include the measured scripts and artifact identities. Original measured hashes and LF-normalized committed hashes are recorded separately. Verify the exported text with:
 
@@ -210,6 +210,19 @@ node bench/results/skinned-cpu/reproduce/export.mjs --verify bench/results/skinn
 The next CPU change reuses captured palettes for exact repeated poses within a frame, reads validated animation endpoints without decoding unrelated keys, and initializes rest transforms without repeating node checks. Mutable models keep their checked paths, and cached poses compare their current values rather than handles. Matrix and interpolation arithmetic are unchanged.
 
 Independent poses exposed another cost: the renderer created and deleted 1,000 palette textures per frame. It now determines which previous textures the complete current draw list references, then reuses obsolete integer-data allocations of the same size for new content identities. Each changed palette still uploads every byte; current and later draws retain separate textures, and unused allocations are freed by frame end. This does not introduce independently posed instancing.
+
+The comparison measures preserved `77be2f24` and tested `625596e8` release executables with the same fixture, host and three alternating pairs described above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after a 90-second quiet window, with no competing build/test jobs during measurement. Times below are medians of three round medians at 1,000 characters.
+
+| 1,000 characters | CPU views before (ms) | After (ms) | CPU submission before (ms) | After (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Static geometry | 0.057 | 0.059 | 0.033 | 0.032 |
+| Omitted default pose | 3.451 | 0.647 | 0.036 | 0.035 |
+| Shared animated pose | 2.650 | 0.671 | 0.050 | 0.037 |
+| Independent animated poses | 8.749 | 4.824 | 6.223 | 3.263 |
+
+Median paired view speedups are 5.36× for rest, 3.95× for shared animation and 1.83× for independent animation; independent submission improves 1.91×. Submission varies substantially across optimized rounds, from 0.621 to 3.275 ms at 1,000 independent poses, so the table retains the conservative three-round median. Static view differences are only 0.003 ms in the aggregate. GPU observations are mostly P0 (93 of 95 samples), with two initial P8 samples; graphics clocks span 210–2,835 MHz and memory 405–11,501 MHz. These whole-process observations do not normalize individual cases or establish a shader speedup or pipelined FPS.
+
+Draw counts and upload bytes match every before/after case, and the final frame-119 independent-pose captures match PNG bytes and decoded RGB pixels exactly. Separate phase diagnostics confirm one palette/hierarchy computation per frame for repeated rest/shared poses, and zero warmed texture creates/frees plus exactly 1,000 texture updates/frame for 1,000 independent poses. Those diagnostics include instrumentation overhead and do not supply the table's timings. Independently posed characters still issue 1,000 mesh draws and upload 4,096,000 palette bytes/frame. All 2,061 native and 2,032 web debug checks pass, including deterministic pose bits, malformed-data and snapshot boundaries, and OpenGL/WebGL/WebGPU rendering and device loss. [The complete comparison evidence](results/skinned-cpu2/README.md) retains paired rows, ranges, clocks, both diagnostics, validation summaries, reproduction scripts and artifact hashes. The historical 144 ledger rows are preserved alongside the 96 new rows.
 
 ## Input delay in Sumo
 
