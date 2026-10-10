@@ -1,5 +1,12 @@
 # The docs site
 
+Degree literals (2026-10-10): Basics, Math and the spec document lowercase
+decimal `deg` literals as ordinary float radians, converted at compile time
+after reading their binary32 degree value. They cover fractions, exponents,
+underscores, unary minus and `quaternion.Euler(0, 180deg, 0)`. The shared
+TextMate grammar gives the entire literal the float scope, including in docs
+code fences. The grammar suite and production docs build passed.
+
 Quaternion Euler overload (2026-10-10): the Math page and spec document both
 `quaternion.Euler(float3 radians)` and `quaternion.Euler(x, y, z)`. Each scalar
 angle is in radians; the scalar form equals `quaternion.Euler(float3(x, y, z))`

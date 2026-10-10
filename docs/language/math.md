@@ -25,6 +25,8 @@ float2 flat = trs.position.xz;
 
 They're lowercase built-in value types, like `float`. Angles are in radians: `Math.Radians(degrees)` and `Math.Degrees(radians)` convert.
 
+For a constant angle, add lowercase `deg` to a decimal number: `quaternion.Euler(0, 180deg, 0)` turns halfway around Y. `180deg` is an ordinary `float` already in radians, converted at compile time with the same result as `Math.Radians(180.0)`. Fractional, exponent and underscore forms work too (`.5deg`, `1e2deg`, `1_8_0deg`), as does unary minus (`-90deg`). Use `Math.Radians(value)` when the degree value is computed at runtime.
+
 ## Building values
 
 - Vectors take any mix of scalars and vectors that adds up to their size, `float4(v.xy, 0, 1)`, or one scalar for every component, `float3(1)`.

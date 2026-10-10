@@ -5215,6 +5215,29 @@ static const char *format_reply(const char *text)
     return request_with("textDocument/formatting", "\"options\":{\"tabSize\":4,\"insertSpaces\":true}");
 }
 
+TIDE_TEST(lsp_degree_literals_keep_source_spelling)
+{
+    start();
+    static const char messy[] =
+        "const float HALF_TURN=180deg;\nscene Main { }\nfloat Turn()\n{\nreturn -1_8_0deg+.5deg+1e2deg;\n}\n"
+        "quaternion Facing()\n{\nreturn quaternion.Euler(0,HALF_TURN,0);\n}\n";
+    static const char expected[] =
+        "const float HALF_TURN = 180deg;\nscene Main { }\nfloat Turn()\n{\n    return -1_8_0deg + .5deg + 1e2deg;\n}\n"
+        "quaternion Facing()\n{\n    return quaternion.Euler(0, HALF_TURN, 0);\n}\n";
+    open_document(messy);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at("file:///test.tide", "textDocument/hover", 0, 15, "");
+    TIDE_CHECK(has(hover, "const float HALF_TURN = 180deg"));
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), expected) == 0);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+    open_document("scene Main { }\nquaternion Facing() { return quaternion.Euler(0, $180deg, 0); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signature, "quaternion.Euler(float x, float y, float z)")
+               && has(signature, "\"activeParameter\":1"));
+}
+
 TIDE_TEST(lsp_format)
 {
     start();
