@@ -1,0 +1,376 @@
+{
+  "source_revision": "000a5986ba637eb9638f8b187b74736e95103378",
+  "preserved_at": "2026-10-10T22:22:59.1778193Z",
+  "configuration": "release / RelWithDebInfo / -O2 -fno-fast-math -ffp-contract=off",
+  "compiler": "clang 23.1.2",
+  "checkout": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine",
+  "pack": "Embedded game_pack.c; no external pack",
+  "purpose": "Immutable tested optimized inputs for paired CPU5 measurement",
+  "files": [
+    {
+      "path": "baseline-reference.json",
+      "bytes": 2644,
+      "sha256": "5cb707b57c14d346d9bf151c6ea05d9d166fb7520c264a4ff9979e58ee6851f1"
+    },
+    {
+      "path": "bench_skinned.exe",
+      "bytes": 1880576,
+      "sha256": "1f471332b38237fb6886aefcd311002e9084e18471b7b46e48216e6b919df6dc"
+    },
+    {
+      "path": "bench_skinned.pdb",
+      "bytes": 2994176,
+      "sha256": "8650c0c46cd16f8d56b87865017357a2e4aeb9b3fffe69aee4f08c5e9460e5bf"
+    },
+    {
+      "path": "compare-generated.mjs",
+      "bytes": 5412,
+      "sha256": "a804c90c8b9a8b1f8cd19e2346e42474e1e9c3afe910890f69008387258f8fd9"
+    },
+    {
+      "path": "game_pack.c.obj",
+      "bytes": 844286,
+      "sha256": "41e436221774b5ffab30f88e3f520de10be6fa7445f77062de1db9268d6bcaa2"
+    },
+    {
+      "path": "game.c.obj",
+      "bytes": 208674,
+      "sha256": "145e20bf666efe8d76ef8e999f9899bee309361db11b7c9ab750c1ce106ba6ab"
+    },
+    {
+      "path": "generated-adapter.diff",
+      "bytes": 3249,
+      "sha256": "f2b9464cdb8e77a0a364a83bdc1b73174bfb9c4466f325bd2a73aa8d1110a99d"
+    },
+    {
+      "path": "generated-source-comparison.json",
+      "bytes": 1802,
+      "sha256": "d1688f2112833644162b3834b6294a80dc4ec51bdfac7e1e640091d83cf4a605"
+    },
+    {
+      "path": "main.c.obj",
+      "bytes": 81416,
+      "sha256": "637c28b2a579ac5ef5857e403ced8308fefec0c093456c650f7aadf13a775f79"
+    },
+    {
+      "path": "preserve-after.ps1",
+      "bytes": 6297,
+      "sha256": "466dbe60ddcd9cc7deac309e5992efacf99b6d47aa65ab019207b72cfb644e4d"
+    },
+    {
+      "path": "source-hashes.json",
+      "bytes": 548106,
+      "sha256": "b0f9f35dd4f1a63b9b4fa47a6b72b8ded7024a772288a3d86f7caeef021bdb33"
+    },
+    {
+      "path": "tide_font_bold.lib",
+      "bytes": 98664,
+      "sha256": "eb53b000201c5e9f6e587afb32a7c83af761000b615db17b6694f2b33840898f"
+    },
+    {
+      "path": "tide_platform.lib",
+      "bytes": 3696792,
+      "sha256": "0f88391faed32c2e2e6969ecf9cf6bda6f89a71ea9f4469fbfa7a21f2551ae2c"
+    },
+    {
+      "path": "tide.lib",
+      "bytes": 3405694,
+      "sha256": "cc515b6099e9f56cfea173be598e6867a5d10e95dde1c695bc6131a4637677b5"
+    },
+    {
+      "path": "fixture/game.tide",
+      "bytes": 2416,
+      "sha256": "5c03927f454d74b0835b69c7ee2de4e2d50a02da9af988105e5dbd90293b7f49"
+    },
+    {
+      "path": "fixture/generate.mjs",
+      "bytes": 6178,
+      "sha256": "a2d53f2585b54aff4811cbc8f56783aa959a2cf7e641fe6db66f6ea7158d103a"
+    },
+    {
+      "path": "fixture/main.c",
+      "bytes": 17096,
+      "sha256": "2f729935753e470ab7eb6154c1aebc64905b9e84f5eacdb2fcc0943025001662"
+    },
+    {
+      "path": "fixture/model.gltf",
+      "bytes": 364131,
+      "sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3"
+    },
+    {
+      "path": "generated/after-normalized.c",
+      "bytes": 167460,
+      "sha256": "e608f73da3101d58631c43a31f386136227cd4ab9393ca6909b52173ff7f0abe"
+    },
+    {
+      "path": "generated/before-normalized.c",
+      "bytes": 167406,
+      "sha256": "67581449507a71c205bed44c7ecbe2d096dbcf65ce0a84026b7973dff5fbdc04"
+    },
+    {
+      "path": "generated/game_pack.c",
+      "bytes": 2481119,
+      "sha256": "6d681bc5dc8b98a21628862a6811a936237019b81c8935fc597fb954f31e49af"
+    },
+    {
+      "path": "generated/game.c",
+      "bytes": 167636,
+      "sha256": "fae6fb9f1538c176c2545d8f0c444f9ce10c2e0e3fed66f7afb2046af438eb4d"
+    },
+    {
+      "path": "generated/game.h",
+      "bytes": 23431,
+      "sha256": "2e562055931a97f98ffa1ed2217e99d4b6deeaa16d2214bad67446ffeb12a301"
+    },
+    {
+      "path": "include/tide/attached.h",
+      "bytes": 4126,
+      "sha256": "f2dccd73fac9471c28beb239a8c181af97f972b9829d2b4fcf56f2e5acf48174"
+    },
+    {
+      "path": "include/tide/audio.h",
+      "bytes": 11037,
+      "sha256": "c2370268696e0257e782b80af62071e2ead7ce06b90c8938c9da126aba57cb43"
+    },
+    {
+      "path": "include/tide/color.h",
+      "bytes": 4539,
+      "sha256": "d8f826dc7097b7de34681f162c33bf9f6fd00f0d76afb91c3eff6a955b2e9ffb"
+    },
+    {
+      "path": "include/tide/debug.h",
+      "bytes": 794,
+      "sha256": "6a22ad3873fa7ab15b72cd67a3dabd87e97e37052baf9f8718abeeea201e8411"
+    },
+    {
+      "path": "include/tide/delta.h",
+      "bytes": 5940,
+      "sha256": "d9cafe55dae932b310151d8b2b37ed0a95bf78f0813dabf84c78c61aaea78f21"
+    },
+    {
+      "path": "include/tide/devices.h",
+      "bytes": 11728,
+      "sha256": "16656815e524a69d676a51d313d5a86836f2bd6a80f1d148ace2a54975b428a5"
+    },
+    {
+      "path": "include/tide/draw.h",
+      "bytes": 102938,
+      "sha256": "e851e88c1337d43ee85f852ac5abf655591ba276f4cb627e9d3aad2df111b61c"
+    },
+    {
+      "path": "include/tide/entity.h",
+      "bytes": 8184,
+      "sha256": "12e02c42a2527a29a4ecac4c336ed72c84509d72667d40c98e8a79916abbb424"
+    },
+    {
+      "path": "include/tide/events.h",
+      "bytes": 8107,
+      "sha256": "a4badc1b88ff30d78f63ec00faac512ee28f9fa061af6441da1da823c7f88a48"
+    },
+    {
+      "path": "include/tide/grid.h",
+      "bytes": 19983,
+      "sha256": "29eb3fdda5d0cc85b583bd481a2b35ba0842507c3205b0d12efb245f1b12bd47"
+    },
+    {
+      "path": "include/tide/gui.h",
+      "bytes": 26429,
+      "sha256": "bb7aaf82ec25f552104991e08bbe2e2a0afabd690228aa05b9b6a0c079cff214"
+    },
+    {
+      "path": "include/tide/heap.h",
+      "bytes": 7008,
+      "sha256": "ac3f9fc2ac16ca16d95270dde4f44e4b53744aa2497c37f2d613fb6d93db65b0"
+    },
+    {
+      "path": "include/tide/host.h",
+      "bytes": 50089,
+      "sha256": "0647309fb12823a36b456eea19c5eadb36c148748ae48d4c284c151ac85c24b6"
+    },
+    {
+      "path": "include/tide/io.h",
+      "bytes": 6079,
+      "sha256": "6af1cf774885478785fd14cb571465e2ae2f16159e0b982591fc4d5571fbbebd"
+    },
+    {
+      "path": "include/tide/jobs.h",
+      "bytes": 10467,
+      "sha256": "5baddaf43f3942e977f3221739f7f27d4b3674589a7a8425310f0d1e3314c266"
+    },
+    {
+      "path": "include/tide/layout.h",
+      "bytes": 5077,
+      "sha256": "2644f5220e7cd5c39a68905637a9172dceffcb4ee65d45be472c64c1c2d57bc9"
+    },
+    {
+      "path": "include/tide/list.h",
+      "bytes": 17172,
+      "sha256": "5d0b911105aa7910a8a03ee02024e9db7758bdbc49918dcb33b9bcf829483211"
+    },
+    {
+      "path": "include/tide/map.h",
+      "bytes": 5503,
+      "sha256": "9528ecbe9e7a3f37ba93c93994ebfa45902dbb5bc591d47f70b4962fa12e973c"
+    },
+    {
+      "path": "include/tide/math.h",
+      "bytes": 43933,
+      "sha256": "3f47c2ed6e5ddc9a7e2cef2c1b75d0297bb123503ec58e0c385418ea6e6b7298"
+    },
+    {
+      "path": "include/tide/mesh.h",
+      "bytes": 11435,
+      "sha256": "0ec2e985f242d49c6e46cdfce1202847bb1cb908859a097edd9b08d805b3e463"
+    },
+    {
+      "path": "include/tide/migrate.h",
+      "bytes": 3062,
+      "sha256": "3214100092ecba58b74d05670a2b033dccbb580ab2376ae00db4df04f8a716e5"
+    },
+    {
+      "path": "include/tide/net.h",
+      "bytes": 10800,
+      "sha256": "0f1c5036057b741c369beec423d482adda364c65e0004d3f3d2f771adbe1b658"
+    },
+    {
+      "path": "include/tide/pack.h",
+      "bytes": 20880,
+      "sha256": "d20286f1b241ab5ea538ddaae93d6769f119f0a9e1ece602bc197057c4f61d3a"
+    },
+    {
+      "path": "include/tide/page.h",
+      "bytes": 7838,
+      "sha256": "52efd58b060fef111f168e6b2eca9a27a968a3987111fc3784c543eba00d64a7"
+    },
+    {
+      "path": "include/tide/platform.h",
+      "bytes": 24499,
+      "sha256": "032a901e11e3a3c0c3394b5b284e0f7f9afb142cca2b82608de7dd7432277022"
+    },
+    {
+      "path": "include/tide/player.h",
+      "bytes": 2381,
+      "sha256": "484fb8d5dcdad7e8fb7385e6c4d1abae631c25575b4130bb1cd91eb57a9e1c6c"
+    },
+    {
+      "path": "include/tide/png.h",
+      "bytes": 3511,
+      "sha256": "bc5ec74d88d90a499b589e9001daf13f6e5b7d84d174c2a7d898cfb4d198ab9f"
+    },
+    {
+      "path": "include/tide/profile.h",
+      "bytes": 3395,
+      "sha256": "ee379331bb172db149b3eb5a00478d65200228dcddfe27c8d361ae940554fdd2"
+    },
+    {
+      "path": "include/tide/profiler.h",
+      "bytes": 4363,
+      "sha256": "d4c71f85f5935576eec51472a31db52809f36d1af511936847c4e52b86361a67"
+    },
+    {
+      "path": "include/tide/random.h",
+      "bytes": 8929,
+      "sha256": "d5488721359c9accdc66ad1b30ed299df10ad58eff06e690f51e2ab819efcbfc"
+    },
+    {
+      "path": "include/tide/resident.h",
+      "bytes": 8335,
+      "sha256": "14564cf7f0651831b1628e25b96131c5c3ca6c5dbe7b37596acd210ce1f30a6d"
+    },
+    {
+      "path": "include/tide/rows.h",
+      "bytes": 6178,
+      "sha256": "4dce1af12a6951f9540781e97d805a43a0682198154b0d7947440914aac6bcee"
+    },
+    {
+      "path": "include/tide/run.h",
+      "bytes": 8682,
+      "sha256": "eaac230ee6abdee9319e66d184469afdd6ac9e912175630016392fe0c75d3a1e"
+    },
+    {
+      "path": "include/tide/session.h",
+      "bytes": 37443,
+      "sha256": "7a1bd1cb4b419d557d7713b13c573b4015b28b0cef0b4a1aafde355f253f8cdd"
+    },
+    {
+      "path": "include/tide/sha256.h",
+      "bytes": 604,
+      "sha256": "40d56b46ba57d9442e3be6652b2c3d694c1fa1119feabfd85e6fc2571ca7f7c1"
+    },
+    {
+      "path": "include/tide/skinned_data.h",
+      "bytes": 5363,
+      "sha256": "e7a558b637dec54200371391240f5b5c73592e4074a86d24ea2547c2e5b278a2"
+    },
+    {
+      "path": "include/tide/skinned.h",
+      "bytes": 5325,
+      "sha256": "543e96134382b2ca0a9cebe38a393c5910e85e86dbaf555a1d545a3582ef1d69"
+    },
+    {
+      "path": "include/tide/stats.h",
+      "bytes": 8733,
+      "sha256": "05e356c2ecc8a3180338e1c551f96aae4c37ecec7e06df4b5e320178b5a616c1"
+    },
+    {
+      "path": "include/tide/table.h",
+      "bytes": 14862,
+      "sha256": "2406d170a902990313da7e0a41475abd5551ffc23c1074d83faab292b9e24412"
+    },
+    {
+      "path": "include/tide/text.h",
+      "bytes": 15160,
+      "sha256": "9651d91a701a99cd80b757038a0fc88802eaf94d96e26d095d6cf7f453a4d08c"
+    },
+    {
+      "path": "include/tide/time.h",
+      "bytes": 308,
+      "sha256": "32779f67592ee9eb1604610f04a019dfa09a1f265db0ca526d19bfadf5eda4a3"
+    },
+    {
+      "path": "include/tide/vorbis.h",
+      "bytes": 2724,
+      "sha256": "377c1a21ed000e5b1702a1a816ef470c503200a9b9b89a1f2d8a0bb467132266"
+    },
+    {
+      "path": "include/tide/wav.h",
+      "bytes": 1327,
+      "sha256": "0937b0530f1bbe13b0584793d955dff0bcb7f4a0ba4add8554cf916c588b90e6"
+    },
+    {
+      "path": "sources/build.ninja",
+      "bytes": 3233010,
+      "sha256": "046d1090d15d746d8b1395abf5c10ce3352905ad6f032d970bb91b09f8f41885"
+    },
+    {
+      "path": "sources/CMakeCache.txt",
+      "bytes": 22128,
+      "sha256": "b9629d2b74ea7becd80be82c9d964a30e98b7de3d34fa502a3f1a3e67878d9d4"
+    },
+    {
+      "path": "sources/gpu_gl.c",
+      "bytes": 44792,
+      "sha256": "ffbfb42e086c34bc928fb62593c379a61dff02304c05f0688ebee98c538143cb"
+    },
+    {
+      "path": "sources/mesh.c",
+      "bytes": 45077,
+      "sha256": "1e51169046cb79ca279a7637245f07a7709dea9f3e06f69fdbe9f9cc40669412"
+    },
+    {
+      "path": "sources/platform.c",
+      "bytes": 161279,
+      "sha256": "2acdda486660d10dc2241cfb246c6aa56b30ebbe4f5ecdba0fb72519c35c58b0"
+    },
+    {
+      "path": "sources/skinned_cache.h",
+      "bytes": 288,
+      "sha256": "5b001902bb67b660dc24d7f2f4d351beb215dfe4428c1f69321624d776b8a865"
+    },
+    {
+      "path": "sources/skinned.c",
+      "bytes": 65712,
+      "sha256": "b6c1edfc47f38b981d2a0aad3f5c10336fb2dff7b61b991fb3b06dbf38e2d98e"
+    }
+  ]
+}

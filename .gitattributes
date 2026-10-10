@@ -46,4 +46,5 @@ bench/results/skinned-cpu/** text eol=lf
 bench/results/skinned-cpu2/** text eol=lf
 bench/results/skinned-cpu3/** text eol=lf
 bench/results/skinned-cpu4/** text eol=lf
+bench/results/skinned-cpu5/** text eol=lf
 bench/results/skinned-10k/** text eol=lf

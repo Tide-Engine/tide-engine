@@ -1,0 +1,78 @@
+{
+  "source_revision": "000a5986ba637eb9638f8b187b74736e95103378",
+  "executable": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5\\final-cpu5\\after\\bench_skinned.exe",
+    "bytes": 1880576,
+    "sha256": "1f471332b38237fb6886aefcd311002e9084e18471b7b46e48216e6b919df6dc"
+  },
+  "snapshot_source_manifest": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5\\after-snapshot\\source-hashes.json",
+    "bytes": 548106,
+    "sha256": "b0f9f35dd4f1a63b9b4fa47a6b72b8ded7024a772288a3d86f7caeef021bdb33",
+    "category": "referenced-superseded-source-manifest"
+  },
+  "validation_source_manifest": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\source-hashes.json",
+    "bytes": 548106,
+    "sha256": "b0f9f35dd4f1a63b9b4fa47a6b72b8ded7024a772288a3d86f7caeef021bdb33",
+    "category": "referenced-superseded-validation-manifest"
+  },
+  "source_count": 2895,
+  "validation_logs": [
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\focused-debug-build.log",
+      "bytes": 6914,
+      "sha256": "ad775b829c031a485fbc1f8b8ae892d830fa0c591d7e052117b8a7362a0dc9f5",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\skinned-tests.log",
+      "bytes": 7170,
+      "sha256": "0dc4789524bfc0674c3e199bc4c93a7740b970d64a177a3ce400250a213c533a",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\pack-tests.log",
+      "bytes": 3954,
+      "sha256": "443277fef9c8a650f6059b9c5dcbdee0fa5a0dde885206c443effec8bad8cec2",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\native-focused-ctest.log",
+      "bytes": 10800,
+      "sha256": "71a8e07adb9f3c3b007f44339570ecbfdb593c27761becf68c85d7df6cfb0618",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\debug-build.log",
+      "bytes": 217080,
+      "sha256": "c7a6e3e27a40adbe761d3c904754aaa91b686a5c531939d2dee2ae2547ed81b7",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\native-ctest.log",
+      "bytes": 651420,
+      "sha256": "1b56ef1a3cef929b3b3bee84b8cdf3331ece87b32decc000b66d1a6a0a4a7e74",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\web-build.log",
+      "bytes": 220964,
+      "sha256": "e4d79b36385449c1368a6dc90b50de6ac1f8de73251158633530bd26cb427a86",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\web-focused-ctest.log",
+      "bytes": 74932,
+      "sha256": "52a602c40fa757e539a7a55c8fbbabd125ca1ad43a235a202980622d261906f9",
+      "category": "referenced-superseded-validation-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-validation\\final\\web-ctest.log",
+      "bytes": 642888,
+      "sha256": "5a708e50b8ce4e8eb0dbefb7158cf2f6c194d5bcd7711ef4f96d7ae2dc1ba531",
+      "category": "referenced-superseded-validation-log"
+    }
+  ],
+  "note": "The initial full source manifest and full-suite logs remain hash-identified in scratch. The exported initial validation summaries retain commands, outcomes and chronology; the final candidate complete source manifest is exported once separately."
+}

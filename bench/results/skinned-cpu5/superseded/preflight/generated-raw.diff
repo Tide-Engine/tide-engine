@@ -1,0 +1,45 @@
+diff --git a/build/release/skinned-cpu4/after-snapshot/generated/game.c b/build/release/skinned-cpu5/after-snapshot-incomplete-line-check/generated/game.c
+index 17a66812..20e2c8c2 100644
+--- a/build/release/skinned-cpu4/after-snapshot/generated/game.c
++++ b/build/release/skinned-cpu5/after-snapshot-incomplete-line-check/generated/game.c
+@@ -2577,14 +2577,16 @@ TIDE_HELPER void tide_shade_1(tide_draw_list *tide_draw, tide_list tide_vertices
+     uint32_t tide_skin_textures[2];
+     int32_t tide_skin_info[4];
+     const uint32_t tide_skin_mark = tide_scratch_mark();
+-    tide_list tide_skin_transforms = tide_pose_transforms;
+     if (tide_default_pose) {
+-        if (!tide_skinned_rest(tide_model_data, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }
+-    } else if (!tide_skinned_compatible(tide_model_data, tide_pose_data)) {
+-        tide_skin_transforms = (tide_list){0};
+-        if (!tide_skinned_pose_into(tide_model_data, tide_pose_data, tide_pose_transforms, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }
++        if (!tide_draw_skinned_rest_atlas(tide_draw, tide_model_data, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }
++    } else {
++        tide_list tide_skin_transforms = tide_pose_transforms;
++        if (!tide_skinned_compatible(tide_model_data, tide_pose_data)) {
++            tide_skin_transforms = (tide_list){0};
++            if (!tide_skinned_pose_into(tide_model_data, tide_pose_data, tide_pose_transforms, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }
++        }
++        if (!tide_draw_skinned_atlas(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }
+     }
+-    if (!tide_draw_skinned_atlas(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }
+     tide_instance.i[0] = tide_skin_info[3];
+     tide_textures[0] = tide_skin_textures[0];
+     tide_uniforms.i[0] = tide_skin_info[0];
+@@ -2751,7 +2753,7 @@ TIDE_HELPER void tide_view_Prepare(const tide_world *tide_w, tide_local *tide_l,
+         work->ready = true;
+     }
+ }
+-#line 2755 "C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/skinned-cpu4-release/bench/tide/bench_skinned/game.c"
++#line 2757 "C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/skinned-cpu5-release/bench/tide/bench_skinned/game.c"
+
+ // view Show
+ TIDE_HELPER void tide_view_Show(const tide_world *tide_w, tide_local *tide_l, tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, tide_entity tide_this, const Character *restrict item, const Workload *restrict work, tide_entity tide_scene)
+@@ -2809,7 +2811,7 @@ TIDE_HELPER void tide_view_Show(const tide_world *tide_w, tide_local *tide_l, ti
+         }
+     }
+ }
+-#line 2813 "C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/skinned-cpu4-release/bench/tide/bench_skinned/game.c"
++#line 2815 "C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/skinned-cpu5-release/bench/tide/bench_skinned/game.c"
+
+ static void tide_run_view_Prepare(const tide_world *tide_w, const tide_world *tide_prev, float tide_alpha, tide_local *tide_l, tide_draw_list *tide_draw, tide_gui *tide_ui)
+ {

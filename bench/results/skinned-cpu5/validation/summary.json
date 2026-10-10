@@ -1,0 +1,121 @@
+{
+  "state": "passed",
+  "head": "000a5986ba637eb9638f8b187b74736e95103378",
+  "startedAtUtc": "2026-10-10T22:45:08.8329975Z",
+  "sourceManifest": "source-hashes.json",
+  "sourceCount": 2895,
+  "sourceEnumeration": "git ls-files --cached --others --exclude-standard; includes untracked fixtures/goldens",
+  "implementationNotesManifest": "notes-hashes.json",
+  "implementationNotesCount": 2,
+  "frozenProductionAndTestSourcesUnchanged": true,
+  "node": {
+    "version": "v24.19.0",
+    "path": "C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe"
+  },
+  "checks": [
+    {
+      "command": "cmake --build --preset debug --target tide_tests tide_platform_skinned tidec_e2e_skinned_rest tidec_e2e_skinned_draw_borrow tidec_e2e_skinned_attribute_limit -j 8",
+      "log": "focused-debug-build.log",
+      "startedAtUtc": "2026-10-10T22:45:10.6732244Z",
+      "exitCode": 0,
+      "elapsedSeconds": 1.5769911,
+      "completedAtUtc": "2026-10-10T22:45:12.2570942Z"
+    },
+    {
+      "command": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\debug\\bin\\tide_tests.exe skinned",
+      "log": "skinned-tests.log",
+      "startedAtUtc": "2026-10-10T22:45:14.7023727Z",
+      "exitCode": 0,
+      "elapsedSeconds": 0.6238536,
+      "completedAtUtc": "2026-10-10T22:45:15.327788Z",
+      "passed": 46,
+      "total": 46,
+      "failed": 0
+    },
+    {
+      "command": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\debug\\bin\\tide_tests.exe pack",
+      "log": "pack-tests.log",
+      "startedAtUtc": "2026-10-10T22:45:17.6757134Z",
+      "exitCode": 0,
+      "elapsedSeconds": 0.0318906,
+      "completedAtUtc": "2026-10-10T22:45:17.70935Z",
+      "passed": 30,
+      "total": 30,
+      "failed": 0
+    },
+    {
+      "command": "ctest --preset debug --verbose -R ^(tide_platform_skinned|tidec_e2e_skinned_(rest|draw_borrow|attribute_limit))$",
+      "log": "native-focused-ctest.log",
+      "startedAtUtc": "2026-10-10T22:45:19.9695743Z",
+      "exitCode": 0,
+      "elapsedSeconds": 0.6044539,
+      "completedAtUtc": "2026-10-10T22:45:20.5755182Z",
+      "failed": 0,
+      "total": 4,
+      "passed": 4
+    },
+    {
+      "command": "cmake --build --preset debug -j 8",
+      "log": "debug-build.log",
+      "startedAtUtc": "2026-10-10T22:45:22.7895259Z",
+      "exitCode": 0,
+      "elapsedSeconds": 49.2101955,
+      "completedAtUtc": "2026-10-10T22:46:12.0013597Z"
+    },
+    {
+      "command": "ctest --preset debug --output-on-failure",
+      "log": "native-ctest.log",
+      "startedAtUtc": "2026-10-10T22:46:14.2995584Z",
+      "exitCode": 0,
+      "elapsedSeconds": 313.9373581,
+      "completedAtUtc": "2026-10-10T22:51:28.2383308Z",
+      "failed": 0,
+      "total": 2067,
+      "passed": 2067
+    },
+    {
+      "command": "cmake --build --preset web-debug -j 8",
+      "log": "web-build.log",
+      "startedAtUtc": "2026-10-10T22:51:30.5991306Z",
+      "exitCode": 0,
+      "elapsedSeconds": 34.664619,
+      "completedAtUtc": "2026-10-10T22:52:05.2654423Z"
+    },
+    {
+      "command": "ctest --preset web-debug --verbose -R ^(tide_tests|tide_platform_skinned(_webgpu)?|tidec_e2e_skinned_(rest|draw_borrow|attribute_limit))$",
+      "log": "web-focused-ctest.log",
+      "startedAtUtc": "2026-10-10T22:52:07.7015431Z",
+      "exitCode": 0,
+      "elapsedSeconds": 5.6891429,
+      "completedAtUtc": "2026-10-10T22:52:13.3922274Z",
+      "failed": 0,
+      "total": 6,
+      "passed": 6
+    },
+    {
+      "command": "ctest --preset web-debug --output-on-failure",
+      "log": "web-ctest.log",
+      "startedAtUtc": "2026-10-10T22:52:16.1535782Z",
+      "exitCode": 0,
+      "elapsedSeconds": 371.5368828,
+      "completedAtUtc": "2026-10-10T22:58:27.6920014Z",
+      "failed": 0,
+      "total": 2037,
+      "passed": 2037
+    }
+  ],
+  "benchmarkRunsPerformed": 0,
+  "benchmarkMeaning": "Zero standalone saved comparison runs; CTest includes bounded benchmark correctness tests.",
+  "skinnedPoseBits": {
+    "expected": "e5d23f82e5d18f26",
+    "test": "skinned_crossplatform_pose_bits",
+    "meaning": "Both native and WASI tide_tests must pass this exact-bit assertion; the failure path prints any different actual hash."
+  },
+  "completedAtUtc": "2026-10-10T22:58:30.1079836Z",
+  "releaseExecutable": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-final-release\\bin\\bench_skinned.exe",
+    "bytes": 1880576,
+    "sha256": "ab595c6b762cabf9bcfe1a40a899054c2a87d20c2627b1555dcef34b38aeff55"
+  },
+  "releaseSourceRevision": "42a7ba2df7e4372655821d351559217085fd00eb"
+}

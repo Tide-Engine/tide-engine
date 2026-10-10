@@ -1,0 +1,60 @@
+{
+  "interpretation": "Short exploratory layout-only comparison, 10 measured/2 warmup independent10k frames. Timings are printed to three decimal places. Existing functions move together; results support a layout contribution but are not definitive performance evidence. GPU clocks transitioned in these short capture runs, so GPU/readback values cannot isolate a shader effect.",
+  "control": {
+    "view_median_ms": 30.458,
+    "view_p95_ms": 31.203,
+    "cpu_submit_median_ms": 5.69,
+    "gpu_median_ms": 27.482,
+    "total_readback_median_ms": 61.699
+  },
+  "prefix48": {
+    "view_median_ms": 28.511,
+    "view_p95_ms": 29.591,
+    "cpu_submit_median_ms": 4.942,
+    "gpu_median_ms": 29.5,
+    "total_readback_median_ms": 62.341
+  },
+  "capture_png_bytes_equal": true,
+  "draw_calls": 11,
+  "uploaded_bytes": 40960000,
+  "ledger_sha256": "e60cf4d74b6256fc4a8a02ea44ba9936dbef00f02e1e96946d3290c1203bea44",
+  "clocks": [
+    {
+      "side": "control",
+      "samples": 5,
+      "graphics_mhz": {
+        "minimum": 1110,
+        "maximum": 1245
+      },
+      "memory_mhz": {
+        "minimum": 810,
+        "maximum": 11501
+      },
+      "pstates": [
+        "P5",
+        "P0"
+      ]
+    },
+    {
+      "side": "prefix48",
+      "samples": 5,
+      "graphics_mhz": {
+        "minimum": 1005,
+        "maximum": 1170
+      },
+      "memory_mhz": {
+        "minimum": 11501,
+        "maximum": 11501
+      },
+      "pstates": [
+        "P0"
+      ]
+    }
+  ],
+  "guard_only_preflights": [
+    "layout48: empty-section-pointer guard rejected before patch/link/run",
+    "layout48-v2: control-text guard rejected the private PDB path layout change before timing",
+    "layout48-v3: linked-code guard did not yet handle SECREL TLS operands; no timing"
+  ],
+  "measured_run": "layout48-v4"
+}

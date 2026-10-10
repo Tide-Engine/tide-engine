@@ -1,0 +1,88 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.codex/worktrees/1315/PurrEngine/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/debug/DartConfiguration.tcl
+Test project C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/debug
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 81
+    Start   81: tidec_e2e_skinned_rest
+
+81: Test command: C:\Users\blenm\.codex\worktrees\1315\PurrEngine\build\debug\bin\tidec_e2e_skinned_rest.exe
+81: Working Directory: C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/debug/compiler/tests
+81: Test timeout computed to be: 10000000
+81: ok   skinned_rest_draws_without_clips_and_preserves_operand_order (0.899 ms)
+81:
+81: 1/1 passed
+1/4 Test   #81: tidec_e2e_skinned_rest ..............   Passed    0.03 sec
+test 83
+    Start   83: tidec_e2e_skinned_draw_borrow
+
+83: Test command: C:\Users\blenm\.codex\worktrees\1315\PurrEngine\build\debug\bin\tidec_e2e_skinned_draw_borrow.exe
+83: Working Directory: C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/debug/compiler/tests
+83: Test timeout computed to be: 10000000
+83: ok   skinned_draw_borrows_unchanged_model_and_pose_without_owned_copies (0.586 ms)
+83: ok   skinned_draw_captures_borrowed_pose_before_the_next_statement_edits_it (0.258 ms)
+83: ok   skinned_draw_snapshots_model_before_a_later_operand_replaces_it (0.253 ms)
+83: ok   skinned_draw_snapshots_pose_before_later_tide_and_c_operands_edit_it (0.500 ms)
+83:
+83: 4/4 passed
+2/4 Test   #83: tidec_e2e_skinned_draw_borrow .......   Passed    0.03 sec
+test 84
+    Start   84: tidec_e2e_skinned_attribute_limit
+
+84: Test command: C:\Users\blenm\.codex\worktrees\1315\PurrEngine\build\debug\bin\tidec_e2e_skinned_attribute_limit.exe
+84: Working Directory: C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/debug/compiler/tests
+84: Test timeout computed to be: 10000000
+84: ok   skinned_atlas_uses_spare_instance_lane_and_preserves_full_attribute_layout (0.619 ms)
+84:
+84: 1/1 passed
+3/4 Test   #84: tidec_e2e_skinned_attribute_limit ...   Passed    0.02 sec
+test 2012
+    Start 2012: tide_platform_skinned
+
+2012: Test command: C:\Users\blenm\.codex\worktrees\1315\PurrEngine\build\debug\bin\tide_platform_skinned.exe
+2012: Working Directory: C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/debug/platform
+2012: Test timeout computed to be: 10000000
+2012: renderer: OpenGL 3.3
+2012: ok: 2048 independent palettes match serial preparation (pool 12, callbacks 4, workers 3)
+2012: ok: built-in Vertex3 draws its rest pose (FFFFFFFF, expected FFFFFFFF)
+2012: ok: animated geometry leaves its original position (000000FF, expected 000000FF)
+2012: ok: eight influences deform on the GPU before drawing (FFFFFFFF, expected FFFFFFFF)
+2012: ok: custom vert sees inverse-transpose normals, tangents and default fields (39E4FFFF, expected 39E4FFFF)
+2012: ok: custom vert moves the already deformed geometry (000000FF, expected 000000FF)
+2012: ok: the shadow pass leaves the original position too (000000FF, expected 000000FF)
+2012: ok: render-target shadow and color use the same pose (FF00FFFF, expected FF00FFFF)
+2012: ok: the same asset draws another independent rest pose (FFFFFFFF, expected FFFFFFFF)
+2012: ok: later samples preserve earlier palette captures (FFFFFFFF, expected FFFFFFFF)
+2012: ok: this.clip sees skinning and explicit placement retains posed world coordinates (00FFFFFF, expected 00FFFFFF)
+2012: ok: explicit clip placement uses the posed vertex (000000FF, expected 000000FF)
+2012: ok: the engine does not replace an explicit clip position (000000FF, expected 000000FF)
+2012: ok: built-in Vertex3 draws its rest pose, again (FFFFFFFF, expected FFFFFFFF)
+2012: ok: animated geometry leaves its original position, again (000000FF, expected 000000FF)
+2012: ok: eight influences deform on the GPU before drawing, again (FFFFFFFF, expected FFFFFFFF)
+2012: ok: custom vert sees inverse-transpose normals, tangents and default fields, again (39E4FFFF, expected 39E4FFFF)
+2012: ok: custom vert moves the already deformed geometry, again (000000FF, expected 000000FF)
+2012: ok: the shadow pass leaves the original position too, again (000000FF, expected 000000FF)
+2012: ok: render-target shadow and color use the same pose, again (FF00FFFF, expected FF00FFFF)
+2012: ok: the same asset draws another independent rest pose, again (FFFFFFFF, expected FFFFFFFF)
+2012: ok: later samples preserve earlier palette captures, again (FFFFFFFF, expected FFFFFFFF)
+2012: ok: this.clip sees skinning and explicit placement retains posed world coordinates, again (00FFFFFF, expected 00FFFFFF)
+2012: ok: explicit clip placement uses the posed vertex, again (000000FF, expected 000000FF)
+2012: ok: the engine does not replace an explicit clip position, again (000000FF, expected 000000FF)
+4/4 Test #2012: tide_platform_skinned ...............   Passed    0.43 sec
+
+The following tests passed:
+	tidec_e2e_skinned_rest
+	tidec_e2e_skinned_draw_borrow
+	tidec_e2e_skinned_attribute_limit
+	tide_platform_skinned
+
+100% tests passed, 0 tests failed out of 4
+
+Label Time Summary:
+gpu    =   0.43 sec*proc (1 test)
+
+Total Test time (real) =   0.57 sec

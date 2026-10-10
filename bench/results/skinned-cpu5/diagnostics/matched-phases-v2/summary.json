@@ -1,0 +1,433 @@
+{
+  "interpretation": "Instrumented expression wall-clock sums include timer overhead and perturb code layout. Sampling expression includes clip lookup, duration/wrapping and sample. Draw adapter includes compatibility, atlas capture, instance recording. Results are diagnostic means, not definitive paired performance.",
+  "conclusion": "Untouched independent-only processes retain the independent regression, while adding matched phase timers reverses the sampling ranking. This refutes prior rest-case allocation as a necessary cause and supports code-layout sensitivity as a hypothesis; the timer experiment cannot establish a production-speed improvement.",
+  "ledger_sha256": "e60cf4d74b6256fc4a8a02ea44ba9936dbef00f02e1e96946d3290c1203bea44",
+  "runs": [
+    {
+      "name": "before-all",
+      "phases": [
+        {
+          "characters": 1000,
+          "mode": 0,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 1000,
+          "mode": 1,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 1000,
+          "mode": 2,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 1000,
+          "mode": 3,
+          "frames": 10,
+          "calls": 10000,
+          "sample_expression_ns": 25352100,
+          "draw_adapter_ns": 6256800,
+          "sample_expression_mean_ms": 2.53521,
+          "draw_adapter_mean_ms": 0.62568
+        },
+        {
+          "characters": 10000,
+          "mode": 0,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 10000,
+          "mode": 1,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 10000,
+          "mode": 2,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "calls": 100000,
+          "sample_expression_ns": 253967000,
+          "draw_adapter_ns": 58344700,
+          "sample_expression_mean_ms": 25.3967,
+          "draw_adapter_mean_ms": 5.83447
+        }
+      ],
+      "hosts": [
+        {
+          "characters": 1000,
+          "mode": 0,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.0647,
+          "view_p95_ms": 0.1234,
+          "submit_median_ms": 0.00895,
+          "gpu_median_ms": 0.500736,
+          "total_median_ms": 1.2284
+        },
+        {
+          "characters": 1000,
+          "mode": 1,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.47625,
+          "view_p95_ms": 0.5503,
+          "submit_median_ms": 0.022,
+          "gpu_median_ms": 0.834048,
+          "total_median_ms": 1.77775
+        },
+        {
+          "characters": 1000,
+          "mode": 2,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.57735,
+          "view_p95_ms": 0.7197,
+          "submit_median_ms": 0.0183,
+          "gpu_median_ms": 0.840192,
+          "total_median_ms": 1.83705
+        },
+        {
+          "characters": 1000,
+          "mode": 3,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 3.2055,
+          "view_p95_ms": 3.3384,
+          "submit_median_ms": 0.80965,
+          "gpu_median_ms": 1.497088,
+          "total_median_ms": 6.1455
+        },
+        {
+          "characters": 10000,
+          "mode": 0,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.6192,
+          "view_p95_ms": 0.9172,
+          "submit_median_ms": 0.0481,
+          "gpu_median_ms": 5.83168,
+          "total_median_ms": 7.16925
+        },
+        {
+          "characters": 10000,
+          "mode": 1,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 4.76775,
+          "view_p95_ms": 5.0467,
+          "submit_median_ms": 0.0619,
+          "gpu_median_ms": 8.474112,
+          "total_median_ms": 13.93225
+        },
+        {
+          "characters": 10000,
+          "mode": 2,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 5.0648,
+          "view_p95_ms": 5.2751,
+          "submit_median_ms": 0.05625,
+          "gpu_median_ms": 8.279552,
+          "total_median_ms": 13.94295
+        },
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 31.8101,
+          "view_p95_ms": 32.6447,
+          "submit_median_ms": 5.7179,
+          "gpu_median_ms": 12.584448,
+          "total_median_ms": 47.84935
+        }
+      ],
+      "printed_medians": []
+    },
+    {
+      "name": "after-all",
+      "phases": [
+        {
+          "characters": 1000,
+          "mode": 0,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 1000,
+          "mode": 1,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 1000,
+          "mode": 2,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 1000,
+          "mode": 3,
+          "frames": 10,
+          "calls": 10000,
+          "sample_expression_ns": 22883400,
+          "draw_adapter_ns": 6743200,
+          "sample_expression_mean_ms": 2.28834,
+          "draw_adapter_mean_ms": 0.67432
+        },
+        {
+          "characters": 10000,
+          "mode": 0,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 10000,
+          "mode": 1,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 10000,
+          "mode": 2,
+          "frames": 10,
+          "calls": 0,
+          "sample_expression_ns": 0,
+          "draw_adapter_ns": 0,
+          "sample_expression_mean_ms": 0,
+          "draw_adapter_mean_ms": 0
+        },
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "calls": 100000,
+          "sample_expression_ns": 211443100,
+          "draw_adapter_ns": 56917700,
+          "sample_expression_mean_ms": 21.14431,
+          "draw_adapter_mean_ms": 5.69177
+        }
+      ],
+      "hosts": [
+        {
+          "characters": 1000,
+          "mode": 0,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.0705,
+          "view_p95_ms": 0.0895,
+          "submit_median_ms": 0.00755,
+          "gpu_median_ms": 0.455168,
+          "total_median_ms": 0.9886
+        },
+        {
+          "characters": 1000,
+          "mode": 1,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.08155,
+          "view_p95_ms": 0.1535,
+          "submit_median_ms": 0.01615,
+          "gpu_median_ms": 0.75776,
+          "total_median_ms": 1.3894
+        },
+        {
+          "characters": 1000,
+          "mode": 2,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.54575,
+          "view_p95_ms": 0.6633,
+          "submit_median_ms": 0.01335,
+          "gpu_median_ms": 0.765952,
+          "total_median_ms": 1.69155
+        },
+        {
+          "characters": 1000,
+          "mode": 3,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 2.9788,
+          "view_p95_ms": 3.8541,
+          "submit_median_ms": 0.6484,
+          "gpu_median_ms": 1.179648,
+          "total_median_ms": 5.45895
+        },
+        {
+          "characters": 10000,
+          "mode": 0,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.5798,
+          "view_p95_ms": 1.0384,
+          "submit_median_ms": 0.04235,
+          "gpu_median_ms": 5.040128,
+          "total_median_ms": 6.34715
+        },
+        {
+          "characters": 10000,
+          "mode": 1,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 0.82505,
+          "view_p95_ms": 1.0022,
+          "submit_median_ms": 0.06685,
+          "gpu_median_ms": 8.780288,
+          "total_median_ms": 10.1899
+        },
+        {
+          "characters": 10000,
+          "mode": 2,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 5.1948,
+          "view_p95_ms": 5.5239,
+          "submit_median_ms": 0.0656,
+          "gpu_median_ms": 8.4224,
+          "total_median_ms": 14.26205
+        },
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 27.17795,
+          "view_p95_ms": 28.8543,
+          "submit_median_ms": 5.687,
+          "gpu_median_ms": 12.653056,
+          "total_median_ms": 43.64395
+        }
+      ],
+      "printed_medians": []
+    },
+    {
+      "name": "after-independent",
+      "phases": [
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "calls": 100000,
+          "sample_expression_ns": 214097100,
+          "draw_adapter_ns": 57912400,
+          "sample_expression_mean_ms": 21.40971,
+          "draw_adapter_mean_ms": 5.79124
+        }
+      ],
+      "hosts": [
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 27.55135,
+          "view_p95_ms": 30.0215,
+          "submit_median_ms": 5.85055,
+          "gpu_median_ms": 12.429824,
+          "total_median_ms": 43.9792
+        }
+      ],
+      "printed_medians": []
+    },
+    {
+      "name": "before-independent",
+      "phases": [
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "calls": 100000,
+          "sample_expression_ns": 249997200,
+          "draw_adapter_ns": 59411200,
+          "sample_expression_mean_ms": 24.99972,
+          "draw_adapter_mean_ms": 5.94112
+        }
+      ],
+      "hosts": [
+        {
+          "characters": 10000,
+          "mode": 3,
+          "frames": 10,
+          "gpu_samples": 10,
+          "view_median_ms": 31.33865,
+          "view_p95_ms": 32.1518,
+          "submit_median_ms": 5.4026,
+          "gpu_median_ms": 12.980224,
+          "total_median_ms": 48.18205
+        }
+      ],
+      "printed_medians": []
+    },
+    {
+      "name": "before-original-independent",
+      "phases": [],
+      "hosts": [],
+      "printed_medians": [
+        "10000 characters, independent_poses, repeat 1 (median / p95 ms): view 27.613 / 27.981, submit 5.713 / 6.274, completion + readback 11.125 / 11.577, total 44.558 / 45.353, GPU 13.054 / 13.365 (10 samples); draw calls 11, texture uploads 40960000 bytes/frame"
+      ]
+    },
+    {
+      "name": "after-original-independent",
+      "phases": [],
+      "hosts": [],
+      "printed_medians": [
+        "10000 characters, independent_poses, repeat 1 (median / p95 ms): view 30.961 / 32.291, submit 5.324 / 6.062, completion + readback 11.334 / 11.584, total 47.938 / 49.059, GPU 12.804 / 13.528 (10 samples); draw calls 11, texture uploads 40960000 bytes/frame"
+      ]
+    }
+  ]
+}

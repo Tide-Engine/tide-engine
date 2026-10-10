@@ -1,0 +1,100 @@
+{
+  "purpose": "One bounded unsaved correctness smoke; excluded from definitive performance comparison",
+  "source_revision": "42a7ba2df7e4372655821d351559217085fd00eb",
+  "executable": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-final-release\\bin\\bench_skinned.exe",
+    "bytes": 1880576,
+    "sha256": "ab595c6b762cabf9bcfe1a40a899054c2a87d20c2627b1555dcef34b38aeff55"
+  },
+  "arguments": [
+    "--counts",
+    "1000,10000",
+    "--frames",
+    "3",
+    "--warmup",
+    "2",
+    "--repeat",
+    "1"
+  ],
+  "standalone_smoke_invocations": 1,
+  "saved_rows": 0,
+  "cases": [
+    {
+      "characters": 1000,
+      "mode": "static",
+      "gpu_samples": 3,
+      "draw_calls": 2,
+      "upload_bytes": 0
+    },
+    {
+      "characters": 1000,
+      "mode": "omitted_rest",
+      "gpu_samples": 3,
+      "draw_calls": 2,
+      "upload_bytes": 0
+    },
+    {
+      "characters": 1000,
+      "mode": "shared_pose",
+      "gpu_samples": 3,
+      "draw_calls": 2,
+      "upload_bytes": 4096
+    },
+    {
+      "characters": 1000,
+      "mode": "independent_poses",
+      "gpu_samples": 3,
+      "draw_calls": 2,
+      "upload_bytes": 4096000
+    },
+    {
+      "characters": 10000,
+      "mode": "static",
+      "gpu_samples": 3,
+      "draw_calls": 2,
+      "upload_bytes": 0
+    },
+    {
+      "characters": 10000,
+      "mode": "omitted_rest",
+      "gpu_samples": 3,
+      "draw_calls": 2,
+      "upload_bytes": 0
+    },
+    {
+      "characters": 10000,
+      "mode": "shared_pose",
+      "gpu_samples": 3,
+      "draw_calls": 2,
+      "upload_bytes": 4096
+    },
+    {
+      "characters": 10000,
+      "mode": "independent_poses",
+      "gpu_samples": 3,
+      "draw_calls": 11,
+      "upload_bytes": 40960000
+    }
+  ],
+  "ledger_before": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\bench\\results\\skinned.jsonl",
+    "bytes": 507267,
+    "sha256": "e60cf4d74b6256fc4a8a02ea44ba9936dbef00f02e1e96946d3290c1203bea44"
+  },
+  "ledger_after": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\bench\\results\\skinned.jsonl",
+    "bytes": 507267,
+    "sha256": "e60cf4d74b6256fc4a8a02ea44ba9936dbef00f02e1e96946d3290c1203bea44"
+  },
+  "stdout": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-final-validation\\final\\release-smoke.log",
+    "bytes": 2072,
+    "sha256": "04ac81a5cf512205a5a1529ac46eb732bc08892247b982f4dcb1fc8ff268b548"
+  },
+  "stderr": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu5-final-validation\\final\\release-smoke-stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "completedAtUtc": "2026-10-10T23:00:48.1549181Z"
+}

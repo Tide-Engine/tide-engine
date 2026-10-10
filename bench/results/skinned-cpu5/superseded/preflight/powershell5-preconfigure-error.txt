@@ -1,0 +1,3 @@
+PowerShell5 preconfigure orchestration failure, before any build or measurement:
+Cannot convert 'System.Object[]' to the type 'System.String' required by parameter 'ChildPath'. Specified method is not supported.
+The same build script was invoked in the existing PowerShell7.6.5 session and successfully configured/built the isolated candidate. PowerShell7 is required for these orchestration scripts.

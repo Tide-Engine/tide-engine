@@ -1,0 +1,26 @@
+renderer: OpenGL 3.3; 2 warmup, 10 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+1000 characters, static, repeat 1 (median / p95 ms): view 0.071 / 0.089, submit 0.008 / 0.245, completion + readback 0.883 / 1.907, total 0.989 / 1.971, GPU 0.455 / 0.793 (10 samples); draw calls 2, texture uploads 0 bytes/frame
+game_phase {"characters":1000,"mode":0,"frames":10,"calls":0,"sample_expression_ns":0,"draw_adapter_ns":0}
+host_diagnostic {"characters":1000,"mode":0,"frames":10,"gpu_samples":10,"view_median_ms":0.0705,"view_p95_ms":0.0895,"submit_median_ms":0.00755,"gpu_median_ms":0.455168,"total_median_ms":0.9886}
+1000 characters, omitted_rest, repeat 1 (median / p95 ms): view 0.082 / 0.153, submit 0.016 / 0.384, completion + readback 1.220 / 1.626, total 1.389 / 1.889, GPU 0.758 / 1.134 (10 samples); draw calls 2, texture uploads 0 bytes/frame
+game_phase {"characters":1000,"mode":1,"frames":10,"calls":0,"sample_expression_ns":0,"draw_adapter_ns":0}
+host_diagnostic {"characters":1000,"mode":1,"frames":10,"gpu_samples":10,"view_median_ms":0.08155,"view_p95_ms":0.1535,"submit_median_ms":0.01615,"gpu_median_ms":0.75776,"total_median_ms":1.3894}
+1000 characters, shared_pose, repeat 1 (median / p95 ms): view 0.546 / 0.663, submit 0.013 / 0.075, completion + readback 1.099 / 1.474, total 1.692 / 2.070, GPU 0.766 / 1.115 (10 samples); draw calls 2, texture uploads 4096 bytes/frame
+game_phase {"characters":1000,"mode":2,"frames":10,"calls":0,"sample_expression_ns":0,"draw_adapter_ns":0}
+host_diagnostic {"characters":1000,"mode":2,"frames":10,"gpu_samples":10,"view_median_ms":0.54575,"view_p95_ms":0.6633,"submit_median_ms":0.01335,"gpu_median_ms":0.765952,"total_median_ms":1.69155}
+1000 characters, independent_poses, repeat 1 (median / p95 ms): view 2.979 / 3.854, submit 0.648 / 0.825, completion + readback 1.618 / 2.284, total 5.459 / 6.013, GPU 1.180 / 1.855 (10 samples); draw calls 2, texture uploads 4096000 bytes/frame
+game_phase {"characters":1000,"mode":3,"frames":10,"calls":10000,"sample_expression_ns":22883400,"draw_adapter_ns":6743200}
+host_diagnostic {"characters":1000,"mode":3,"frames":10,"gpu_samples":10,"view_median_ms":2.9788,"view_p95_ms":3.8541,"submit_median_ms":0.6484,"gpu_median_ms":1.179648,"total_median_ms":5.45895}
+10000 characters, static, repeat 1 (median / p95 ms): view 0.580 / 1.038, submit 0.042 / 0.292, completion + readback 5.529 / 6.182, total 6.347 / 6.799, GPU 5.040 / 5.769 (10 samples); draw calls 2, texture uploads 0 bytes/frame
+game_phase {"characters":10000,"mode":0,"frames":10,"calls":0,"sample_expression_ns":0,"draw_adapter_ns":0}
+host_diagnostic {"characters":10000,"mode":0,"frames":10,"gpu_samples":10,"view_median_ms":0.5798,"view_p95_ms":1.0384,"submit_median_ms":0.04235,"gpu_median_ms":5.040128,"total_median_ms":6.34715}
+10000 characters, omitted_rest, repeat 1 (median / p95 ms): view 0.825 / 1.002, submit 0.067 / 0.139, completion + readback 9.263 / 10.039, total 10.190 / 10.892, GPU 8.780 / 9.243 (10 samples); draw calls 2, texture uploads 0 bytes/frame
+game_phase {"characters":10000,"mode":1,"frames":10,"calls":0,"sample_expression_ns":0,"draw_adapter_ns":0}
+host_diagnostic {"characters":10000,"mode":1,"frames":10,"gpu_samples":10,"view_median_ms":0.82505,"view_p95_ms":1.0022,"submit_median_ms":0.06685,"gpu_median_ms":8.780288,"total_median_ms":10.1899}
+10000 characters, shared_pose, repeat 1 (median / p95 ms): view 5.195 / 5.524, submit 0.066 / 0.180, completion + readback 8.938 / 9.294, total 14.262 / 14.597, GPU 8.422 / 8.855 (10 samples); draw calls 2, texture uploads 4096 bytes/frame
+game_phase {"characters":10000,"mode":2,"frames":10,"calls":0,"sample_expression_ns":0,"draw_adapter_ns":0}
+host_diagnostic {"characters":10000,"mode":2,"frames":10,"gpu_samples":10,"view_median_ms":5.1948,"view_p95_ms":5.5239,"submit_median_ms":0.0656,"gpu_median_ms":8.4224,"total_median_ms":14.26205}
+10000 characters, independent_poses, repeat 1 (median / p95 ms): view 27.178 / 28.854, submit 5.687 / 6.486, completion + readback 10.693 / 11.484, total 43.644 / 46.723, GPU 12.653 / 13.423 (10 samples); draw calls 11, texture uploads 40960000 bytes/frame
+game_phase {"characters":10000,"mode":3,"frames":10,"calls":100000,"sample_expression_ns":211443100,"draw_adapter_ns":56917700}
+host_diagnostic {"characters":10000,"mode":3,"frames":10,"gpu_samples":10,"view_median_ms":27.17795,"view_p95_ms":28.8543,"submit_median_ms":5.687,"gpu_median_ms":12.653056,"total_median_ms":43.64395}

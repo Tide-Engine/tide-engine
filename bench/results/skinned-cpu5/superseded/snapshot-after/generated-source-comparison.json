@@ -1,0 +1,41 @@
+{
+  "contract": "Only the exact reviewed default-pose adapter replacement and two known #line debug paths/numbers may differ. Each debug line number must increase by the exact number of lines added by that adapter replacement. Both raw generated C files remain preserved; expected code is compared ordinally, not broadly normalized.",
+  "before": {
+    "raw_sha256": "74f8f346a5d46a05aa5baf647a09ceac3f8767a21d54fcaf7396defc624bb302",
+    "normalized_sha256": "67581449507a71c205bed44c7ecbe2d096dbcf65ce0a84026b7973dff5fbdc04",
+    "replaced_line_count": 2,
+    "original_path": "C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/skinned-cpu4-release/bench/tide/bench_skinned/game.c",
+    "debug_line_numbers": [
+      2755,
+      2813
+    ]
+  },
+  "after": {
+    "raw_sha256": "fae6fb9f1538c176c2545d8f0c444f9ce10c2e0e3fed66f7afb2046af438eb4d",
+    "normalized_sha256": "e608f73da3101d58631c43a31f386136227cd4ab9393ca6909b52173ff7f0abe",
+    "replaced_line_count": 2,
+    "original_path": "C:/Users/blenm/.codex/worktrees/1315/PurrEngine/build/skinned-cpu5-release/bench/tide/bench_skinned/game.c",
+    "debug_line_numbers": [
+      2757,
+      2815
+    ]
+  },
+  "expected_adapter_replacements": 1,
+  "old_adapter_sha256": "7d0a2dcda7a187e25ee436b82856614e51ce70247c4fbff9f75f88221afbc012",
+  "new_adapter_sha256": "da4341e0ba698305d60f9ed3309bc65147ac1c5b343075970ea29c24e7f0c0ea",
+  "line_number_adjustments": [
+    {
+      "before": 2755,
+      "after": 2757,
+      "delta": 2
+    },
+    {
+      "before": 2813,
+      "after": 2815,
+      "delta": 2
+    }
+  ],
+  "expected_after_normalized_sha256": "e608f73da3101d58631c43a31f386136227cd4ab9393ca6909b52173ff7f0abe",
+  "exact_expected_adapter_change": true,
+  "diff_sha256": "f2b9464cdb8e77a0a364a83bdc1b73174bfb9c4466f325bd2a73aa8d1110a99d"
+}

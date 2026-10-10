@@ -1,0 +1,63 @@
+{
+  "purpose": "Scratch-only +48-byte skinned COFF text-prefix layout diagnostic; no production changes, compilation, linking or execution.",
+  "input": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5\\causal-review\\layout48-v4\\original-object\\skinned.c.obj",
+    "bytes": 168441,
+    "sha256": "85ffe9c4d70b96c147031cd18e7d3fa297a5dd4ef22955da8d8482c4e2f333ad"
+  },
+  "output": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5\\causal-review\\layout48-v4\\patched-object\\skinned.c.obj",
+    "bytes": 168492,
+    "sha256": "788458f7074ef486c189a75bc7cff5b5a8ff0daaf2e3810025ae559acc94b6a3"
+  },
+  "prefix": {
+    "section": 1,
+    "raw_at": 168444,
+    "bytes": 48,
+    "alignment": 16,
+    "append_alignment_zero_bytes": 3
+  },
+  "changed_original_bytes": 6,
+  "checks": {
+    "only_four_authorized_fields_changed": true,
+    "other_section_headers_identical": true,
+    "all_existing_section_bodies_identical": true,
+    "all_existing_relocations_identical": true,
+    "all_existing_line_records_identical": true,
+    "existing_unwind_debug_and_function_bytes_identical": true,
+    "prefix_has_no_executable_references": true,
+    "output_readback_identical": true
+  },
+  "functions": [
+    {
+      "name": "fill_rest",
+      "section": 19,
+      "bytes": 446,
+      "raw_sha256": "75d189545603b9e2594c5cefc5f2fa7c9b1e56a054dbb3ddcaf9c3ee69e7136a"
+    },
+    {
+      "name": "tide_skinned_sample",
+      "section": 23,
+      "bytes": 1593,
+      "raw_sha256": "10a18d53e6690e2eb079a17a66c9c69f7f1026534a041d5794646914f3bff78c"
+    },
+    {
+      "name": "sampled_value",
+      "section": 26,
+      "bytes": 1015,
+      "raw_sha256": "245c2e0b8a2c63fa97890ba31f6f5a7761ba149ef4e1de81f15b06fb7f935b69"
+    },
+    {
+      "name": "require_clip",
+      "section": 29,
+      "bytes": 1294,
+      "raw_sha256": "aff1f6cd35b367a474a0d67499338a5d8f61b7e34ef2ddd1c08ce3be4825dbff"
+    }
+  ],
+  "required_after_relink": [
+    "Use only a private archive/executable/PDB and preserve archive member order and all other candidate link inputs.",
+    "Check the four function VAs move exactly +48 bytes to the CPU4 baseline addresses before any diagnostic run.",
+    "Compare relocation-aware function disassembly with the immutable candidate; instructions and call targets must remain equivalent.",
+    "Treat any timing result as a layout diagnostic: later skinned functions can also move; this is not a production padding fix."
+  ]
+}

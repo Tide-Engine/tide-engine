@@ -1,0 +1,4 @@
+renderer: OpenGL 3.3; 20 warmup, 100 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+1000 characters, independent_poses, repeat 1 (median / p95 ms): view 2.665 / 2.924, submit 0.474 / 0.581, completion + readback 1.456 / 1.887, total 4.645 / 5.146, GPU 1.154 / 1.486 (100 samples); draw calls 2, texture uploads 4096000 bytes/frame
+tide: captured C:\Users\blenm\.codex\worktrees\1315\PurrEngine\build\release\skinned-cpu5-final\final-cpu5-final\before-1000.png, 1024 by 576 pixels

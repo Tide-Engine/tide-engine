@@ -1,0 +1,3 @@
+renderer: OpenGL 3.3; 2 warmup, 10 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+10000 characters, independent_poses, repeat 1 (median / p95 ms): view 30.961 / 32.291, submit 5.324 / 6.062, completion + readback 11.334 / 11.584, total 47.938 / 49.059, GPU 12.804 / 13.528 (10 samples); draw calls 11, texture uploads 40960000 bytes/frame
