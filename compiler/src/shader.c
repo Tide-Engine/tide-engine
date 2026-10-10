@@ -3018,6 +3018,16 @@ static void ex_math(emit *em, const expr *e)
 static bool ex_builder(emit *em, const expr *e)
 {
     const str owner = e->object->name;
+    if (str_eq_c(owner, "quaternion") && str_eq_c(e->name, "Euler") && e->args.count == 3) {
+        need(em, H_EULER_Q);
+        sb_printf(em->o, "tide_euler_q(%s(", float_ty(em, 3));
+        for (int i = 0; i < 3; i++) {
+            if (i) sb_put(em->o, ", ");
+            put_arg(em, e, i);
+        }
+        sb_put(em->o, "))");
+        return true;
+    }
     if (str_eq_c(owner, "float4x4") && str_eq_c(e->name, "Translate")) {
         const char *f4 = float_ty(em, 4);
         sb_printf(em->o, "%s(%s(1.0, 0.0, 0.0, 0.0), %s(0.0, 1.0, 0.0, 0.0), %s(0.0, 0.0, 1.0, 0.0), %s(",

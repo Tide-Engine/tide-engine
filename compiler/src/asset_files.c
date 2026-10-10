@@ -8,6 +8,8 @@
 
 #include "asset_files.h"
 
+#include "fbx_files.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -588,9 +590,9 @@ static bool asset_model_obj_diagnostic(const char *path, const loc at, const boo
         const char ch = path[end - (sizeof extension - 1u) + i];
         if ((ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch) != extension[i]) return false;
     }
-    diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb), not OBJ", animations ? "an Animations" : "a SkinnedMesh");
-    if (animations) diag_note("export the model's animations as glTF 2.0; OBJ contains no animation data");
-    else diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0");
+    diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ", animations ? "an Animations" : "a SkinnedMesh");
+    if (animations) diag_note("export the model's animations as glTF 2.0 or FBX; OBJ contains no animation data");
+    else diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
     return true;
 }
 
@@ -800,7 +802,13 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             uint8_t *bytes = NULL;
             uint32_t size = 0;
             char why[256], note[256];
-            const bool ok = tide_skinned_data_decode(f->data, f->len, false, read_side, &sides, &bytes, &size, why, note);
+            uint8_t *fbx_glb = NULL;
+            size_t fbx_glb_size = 0;
+            const bool is_fbx = fbx_file_is(f->data, f->len, key);
+            bool ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
+            if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
+                false, read_side, &sides, &bytes, &size, why, note);
+            free(fbx_glb);
             free(folder);
             f = read_at(path);
             if (!f) {

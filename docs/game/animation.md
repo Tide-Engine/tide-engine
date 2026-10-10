@@ -1,5 +1,5 @@
 ---
-description: "Import skinned glTF models, sample and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
+description: "Import skinned glTF or FBX models, sample and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
 ---
 
 # Skinned meshes and animation
@@ -8,7 +8,7 @@ A `SkinnedMesh<V>` holds a model's geometry, skeleton and animation clips. A `Po
 
 ## Import and draw
 
-Import a glTF 2.0 `.glb` or `.gltf` with your [vertex struct](./assets.md#meshes). A model needs no animation clips to draw: leaving out the pose draws its authored rest pose.
+Import a glTF 2.0 `.glb` or `.gltf`, or a binary or ASCII `.fbx`, with your [vertex struct](./assets.md#meshes). A model needs no animation clips to draw: leaving out the pose draws its authored rest pose.
 
 ```csharp
 asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
@@ -42,11 +42,15 @@ view Characters(Character character)
 
 `Draw.SkinnedMesh(mesh, transform[, pose])` takes the same texture, vert, frag and values arguments as a [3D mesh](./3d.md), and also works on a render target. The optional pose goes immediately after the transform; textures and shaders can follow the transform directly when no pose is supplied. Deformation applies before your `vert`, which receives the posed mesh-local position, normal and tangent.
 
+An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
+
+Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh, morph targets and external vertex caches. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
+
 ## Checked names and dynamic lookup
 
 A known asset provides animation and bone members from its source names: `Idle` becomes `idle`, and `RightHand` becomes `rightHand`. Only the first ASCII letter is lowercased. Invalid identifiers, keywords and colliding names have no dot member; the editor offers the members that are available.
 
-The editor reads the file's JSON catalog without loading geometry or animation samples, and refreshes the names when the file changes. Malformed JSON and unavailable metadata have separate diagnostics; a requested clip is only reported missing after its catalog was inspected successfully. For an asset URL, the editor uses an existing local cache; a build fetches uncached content.
+The editor reads the file's catalog without importing geometry or animation samples, and refreshes the names when the file changes. Invalid files and unavailable metadata have separate diagnostics; a requested clip is only reported missing after its catalog was inspected successfully. For an asset URL, the editor uses an existing local cache; a build fetches uncached content.
 
 ```csharp
 var model = hero; // Retains the known asset's checked catalog.
@@ -84,7 +88,7 @@ The contract requires that subset; extra clips and bones remain discoverable thr
 
 ## Animation files
 
-A separate glTF file can supply animation clips without importing drawable geometry. For the character above:
+A separate glTF or FBX file can supply animation clips without importing typed render geometry. For the character above:
 
 ```csharp
 asset Animations movement = "art/movement.glb";
@@ -99,11 +103,13 @@ view MovingCharacter(Character character)
 
 An `Animations` asset holds every clip in the file and the skeleton those clips animate. A single known asset exposes its clips directly, such as `movement.run`. The editor completes these members and shows their original source names on hover, using the same rules as `hero.animations`. `movement.count`, `movement.Find("Run")` and `movement.At(index)` enumerate or find clips too. Copying with `var` retains checked names; a plain `Animations` helper parameter exposes lookup and enumeration.
 
-Both `.glb` and `.gltf` are supported. The importer keeps animation and skeleton data, so an animation file need not contain a mesh. A file containing several clips imports them all; the declaration never chooses an arbitrary first clip.
+The file can be `.glb`, `.gltf` or `.fbx`. The importer keeps animation and skeleton data, so an animation file need not contain a mesh. A file containing several clips imports them all; the declaration never chooses an arbitrary first clip.
 
 `pose.Sample` binds the clip to the pose's skeleton. Use a pose from the character when you also need its bone references for edits or sockets. You can also sample the source clip with `movement.run.Sample(seconds)` and pass that pose directly to `Draw.SkinnedMesh`; the draw binds it to the character.
 
 Binding matches nodes by unique exact source names, matching hierarchy and authored local transforms; source node order can differ. Sampling into a target pose requires the selected clip's animated nodes and their ancestors. Drawing a source pose requires all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated unanimated nodes can differ, and unanimated target nodes keep their rest transforms.
+
+An extra unnamed identity scene root, as added by FBX importing, is ignored while its pose and relevant animation channels stay at rest. Animated wrappers or deeper unnamed ancestors cannot be bound this way.
 
 This supports separate files exported from the same rig; it does not retarget animation between rigs with different proportions or rest transforms. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw.
 
@@ -148,4 +154,4 @@ Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files
 
 Decoded vertices use your vertex struct's defaults too. Assets those defaults read have the same compatibility requirement even when the game declares no imported skinned model.
 
-Assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. Morph targets, retargeting, IK, animation events and an automatic playback controller are not implemented.
+glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights and baked node transforms; textures remain separate assets. Morph targets, retargeting, IK, animation events and an automatic playback controller are not implemented.

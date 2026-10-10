@@ -213,7 +213,14 @@ jobs:
       - name: Install tools (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install ninja zstandard ccache -y --no-progress
+          # Ninja and zstd are on the hosted image (cache restore uses zstd
+          # already). Avoid redundant Chocolatey feed requests for them.
+          ninja --version
+          zstd --version
+          if ! command -v ccache >/dev/null 2>&1; then
+            choco install ccache -y --no-progress
+          fi
+          ccache --version
           if [ '${{ steps.llvm-tools.outputs.cache-hit }}' != true ]; then
             name="clang+llvm-$LLVM_VERSION-x86_64-pc-windows-msvc"
             mkdir -p /c/llvm

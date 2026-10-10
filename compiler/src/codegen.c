@@ -3546,8 +3546,8 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
     else if (e->call == CALL_AUDIO) sb_put(o, "tide_l->tide_audio"); // The frame's audio list, which the host gave the local state
     else if (receiver) gen_expr(g, o, e->object);
-    // Draw.Transform(offset, rotation): its arguments as the one value the setting takes
-    if (e->c_pack) sb_printf(o, ", %s(", e->c_pack);
+    // Several arguments as one value: a draw setting or scalar Euler angles.
+    if (e->c_pack) sb_printf(o, "%s%s(", e->call == CALL_DRAW || e->call == CALL_AUDIO || receiver ? ", " : "", e->c_pack);
     // Text at an anchor, in a weight: C takes both, the weight as its file (tide_font_file)
     const bool text_at = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_text_at") == 0;
     const bool measure_text = e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText");

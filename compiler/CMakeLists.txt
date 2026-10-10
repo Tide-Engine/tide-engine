@@ -12,14 +12,25 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # it packs is what the game reads; those files bring the engine's pages and
     # hashes. The same objects are in the engine's library, so a program that
     # links both (tide_cli_tests) finds each symbol once.
-    # Meshes: tidec reads a game's glTF and OBJ files itself (src/mesh_files.c),
+    # Meshes: tidec reads glTF and OBJ directly and imports FBX through ufbx,
     # and a file's colors become the screen's with the engine's own pow
     # (tide/math.h), which gives the same bits whichever machine builds.
     set(TIDEC_ENGINE_SOURCES "${PROJECT_SOURCE_DIR}/engine/src/png_read.c" "${PROJECT_SOURCE_DIR}/engine/src/wav.c" "${PROJECT_SOURCE_DIR}/engine/src/vorbis.c" "${PROJECT_SOURCE_DIR}/engine/src/pack.c"
         "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/engine/src/page.c" "${PROJECT_SOURCE_DIR}/engine/src/net.c"
         "${PROJECT_SOURCE_DIR}/engine/src/math.c" "${PROJECT_SOURCE_DIR}/engine/src/skinned_data.c"
         "${PROJECT_SOURCE_DIR}/engine/src/skinned_decode.c")
+    # FBX is a build-time dependency only. Its portable math implementation
+    # keeps imported transforms/animations independent of the host's libm.
+    add_library(tide_fbx STATIC third_party/ufbx/ufbx.c third_party/ufbx/ufbx_math.c)
+    target_include_directories(tide_fbx SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx")
+    target_compile_definitions(tide_fbx PRIVATE UFBX_EXTERNAL_MATH UFBX_STANDARD_C UFBX_NO_STDIO
+        UFBX_NO_FORMAT_OBJ UFBX_NO_SUBDIVISION UFBX_NO_TESSELLATION UFBX_NO_GEOMETRY_CACHE)
+    target_link_libraries(tide_fbx PUBLIC tide_flags)
+    target_compile_options(tide_fbx PRIVATE -w) # Vendored code, as the other third-party libraries.
+    install(FILES third_party/ufbx/LICENSE third_party/ufbx/MATH-LICENSE
+        DESTINATION licenses/ufbx COMPONENT tide)
     add_library(tidec_core STATIC ${TIDEC_SOURCES} ${TIDEC_ENGINE_SOURCES})
+    target_link_libraries(tidec_core PUBLIC tide_fbx)
     # Expected asset digests and emitted loaders share this exact private walker.
     set(TIDEC_PACK_FINGERPRINT_C "${CMAKE_CURRENT_BINARY_DIR}/pack_fingerprint_source.c")
     add_custom_command(OUTPUT "${TIDEC_PACK_FINGERPRINT_C}"

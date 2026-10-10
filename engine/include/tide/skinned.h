@@ -44,6 +44,8 @@ bool tide_skinned_sample(tide_list data, int32_t animation, float seconds,
 // all its model's clip targets, changed transforms and ancestors. These are
 // bindings, not retargeting: missing, ambiguous or different required nodes
 // fail and leave the destination untouched. Source and destination may alias.
+// An unnamed identity wrapper directly under node zero is transparent only
+// while its source clip channels and pose remain at rest; node zero is kept.
 bool tide_skinned_sample_into(tide_list target_data, tide_list animation_data, int32_t animation,
                               float seconds, tide_list *transforms, uint32_t where);
 bool tide_skinned_pose_into(tide_list target_data, tide_list source_data, tide_list source_transforms,

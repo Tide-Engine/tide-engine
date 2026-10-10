@@ -334,6 +334,36 @@ static bool same_transform(const tide_bone_transform a, const tide_bone_transfor
         && a.scale.x == b.scale.x && a.scale.y == b.scale.y && a.scale.z == b.scale.z && rotation;
 }
 
+// FBX conversion retains its scene root under the canonical identity root.
+// A static identity wrapper has no effect on named bones' parent-local TRS.
+static bool root_wrapper(const tide_skinned_data_view *v, const uint32_t index)
+{
+    tide_skinned_node_data n;
+    const tide_bone_transform identity = {tide_f3(0, 0, 0), {tide_f4(0, 0, 0, 1)}, tide_f3(1, 1, 1)};
+    return index != 0u && tide_skinned_data_node(v, index, &n) && n.parent == 0 && n.name_length == 0u
+        && same_transform(local_of(&n), identity);
+}
+
+static bool wrapper_channel_at_rest(const tide_skinned_data_view *v, const tide_skinned_channel_data *channel)
+{
+    const uint32_t width = channel->path == TIDE_SKINNED_ROTATION ? 4u : 3u;
+    float rotation_sign = 0.0f;
+    for (uint32_t i = 0; i < channel->keys; i++) {
+        float time, value[4], in[4], out[4];
+        if (!tide_skinned_data_key(v, channel, i, &time, value, in, out)) return false;
+        if (channel->path == TIDE_SKINNED_ROTATION && channel->interpolation == TIDE_SKINNED_CUBICSPLINE) {
+            if (i != 0u && value[3] != rotation_sign) return false;
+            rotation_sign = value[3];
+        }
+        for (uint32_t k = 0; k < width; k++) {
+            const float rest = channel->path == TIDE_SKINNED_SCALE || (channel->path == TIDE_SKINNED_ROTATION && k == 3u) ? 1.0f : 0.0f;
+            if (value[k] != rest && !(channel->path == TIDE_SKINNED_ROTATION && k == 3u && value[k] == -1.0f)) return false;
+            if (channel->interpolation == TIDE_SKINNED_CUBICSPLINE && (in[k] != 0.0f || out[k] != 0.0f)) return false;
+        }
+    }
+    return true;
+}
+
 static bool require_clip(const tide_skinned_data_view *v, const uint32_t index, uint8_t *required, const bool keys)
 {
     tide_skinned_clip_data clip;
@@ -341,6 +371,7 @@ static bool require_clip(const tide_skinned_data_view *v, const uint32_t index, 
     for (uint32_t i = 0; i < clip.channels; i++) {
         tide_skinned_channel_data channel;
         if (!tide_skinned_data_channel(v, clip.first_channel + i, &channel) || (keys && !channel_valid(v, &channel))) return false;
+        if (root_wrapper(v, channel.node) && !wrapper_channel_at_rest(v, &channel)) return false;
         required[channel.node] = 1u;
     }
     return true;
@@ -362,12 +393,18 @@ static int32_t *bind_nodes(const tide_skinned_data_view *target, const tide_skin
         if (!required[i]) continue;
         tide_skinned_node_data n, to;
         (void)tide_skinned_data_node(source, i, &n);
+        if (root_wrapper(source, i)) {
+            map[i] = -2; // Transparent, never copied onto the canonical root.
+            continue;
+        }
         if (i != 0u) {
             if (named_index(source, source_names, &n) != (int32_t)i) return NULL;
             map[i] = named_index(target, target_names, &n);
         }
-        if (map[i] < 0 || !tide_skinned_data_node(target, (uint32_t)map[i], &to)
-            || to.parent != (n.parent < 0 ? -1 : map[n.parent]) || !same_transform(local_of(&n), local_of(&to))) return NULL;
+        if (map[i] < 0 || !tide_skinned_data_node(target, (uint32_t)map[i], &to)) return NULL;
+        const int32_t source_parent = n.parent > 0 && root_wrapper(source, (uint32_t)n.parent) ? 0 : n.parent;
+        const int32_t target_parent = to.parent > 0 && root_wrapper(target, (uint32_t)to.parent) ? 0 : to.parent;
+        if (target_parent != (source_parent < 0 ? -1 : map[source_parent]) || !same_transform(local_of(&n), local_of(&to))) return NULL;
     }
     return map;
 }
@@ -401,6 +438,7 @@ bool tide_skinned_sample_into(const tide_list target_data, const tide_list anima
         for (uint32_t i = 0; i < clip.channels; i++) {
             tide_skinned_channel_data channel;
             (void)tide_skinned_data_channel(&source.view, clip.first_channel + i, &channel);
+            if (map[channel.node] < 0) continue;
             const tide_float4 value = sampled_value(&source.view, &channel, clock);
             tide_bone_transform *to = tide_list_cached_at_mut(&cache, *transforms, map[channel.node], sizeof *to);
             if (!to) continue;
@@ -436,7 +474,10 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
         if (!exact) {
             tide_skinned_node_data n;
             (void)tide_skinned_data_node(&source.view, i, &n);
-            if (!same_transform(*local, local_of(&n))) required[i] = 1u;
+            if (!same_transform(*local, local_of(&n))) {
+                if (root_wrapper(&source.view, i)) { valid = false; break; }
+                required[i] = 1u;
+            }
         }
     }
     const int32_t *map = valid && !exact ? bind_nodes(&target.view, &source.view, required) : NULL;
@@ -450,7 +491,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
             made[i] = local_of(&n);
         }
         for (uint32_t i = 0; i < source.view.nodes; i++) {
-            if (!exact && !required[i]) continue;
+            if (!exact && (!required[i] || map[i] < 0)) continue;
             const tide_bone_transform *local = tide_list_cached_at(&cache, source_transforms, (int32_t)i, sizeof *local);
             made[exact ? i : (uint32_t)map[i]] = *local;
         }

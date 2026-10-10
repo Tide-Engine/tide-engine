@@ -4,9 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// A glTF's catalog and hierarchy, without geometry, animation samples or
+// A model's catalog and hierarchy, without geometry, animation samples or
 // side buffers. Names are the source's UTF-8, NULL for an unnamed item.
-// Node indices and array order are the source's, not a runtime skeleton's.
+// Node indices and array order are the import source's, including FBX's
+// unnamed root and transform helpers, not a runtime skeleton's.
 typedef struct model_metadata_node {
     char *name;
     int32_t parent; // -1 for a root
@@ -28,21 +29,23 @@ typedef struct model_metadata {
     uint32_t skin_count;
 } model_metadata;
 
-// Reads JSON, or the JSON chunk of a complete GLB 2 buffer. All resulting
+// Reads glTF JSON, the JSON chunk of GLB 2, or ASCII/binary FBX. All resulting
 // arrays and names are owned; free them with model_metadata_free. On failure
-// out is empty and why says why (256 bytes). This checks JSON, glTF version,
+// out is empty and why says why (256 bytes). This checks catalog structure,
 // hierarchy and skin indices, not the data the full importer validates.
 bool model_metadata_read(const uint8_t *data, size_t size, const char *name, model_metadata *out, char why[256]);
 void model_metadata_free(model_metadata *metadata);
 
 typedef enum model_metadata_status {
     MODEL_METADATA_READY,
-    MODEL_METADATA_UNAVAILABLE, // Missing, unreadable, or beyond interactive inspection's JSON budget
+    MODEL_METADATA_UNAVAILABLE, // Missing, unreadable, or beyond interactive inspection's budget
     MODEL_METADATA_INVALID,
 } model_metadata_status;
 
 // Cached inspection of a local file. GLB reads its header and JSON only,
 // regardless of its BIN size; JSON over 16 MiB is unavailable interactively.
+// FBX reads at most 64 MiB of source and skips geometry/curves/embedded data,
+// with a 128 MiB limit for each of the parser's temporary and result arenas.
 // A READY result borrows metadata until this path is reloaded or the cache
 // is forgotten. Other results set out to NULL. why borrows the same cache.
 model_metadata_status model_metadata_cached(const char *path, const model_metadata **out, const char **why);
