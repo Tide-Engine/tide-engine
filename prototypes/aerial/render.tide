@@ -49,6 +49,7 @@ local singleton Look
     bool placed;
     bool ballCam = true;
     bool rear;              // Looking back, while its key is held
+    float outside;          // 1 while the camera is out through a wall
     float2 swivel;          // The right stick's look around
     float shake;
     float fov = 78;
@@ -172,6 +173,12 @@ frag GrassPaint(Solid vertex, out Color color, Look look, Sun sun)
 
 frag ShellPaint(Solid vertex, out Color color, Look look, Sun sun)
 {
+    // Out through a wall, the camera is in the stands: what's round it
+    // there is left undrawn, so it still sees its car and the pitch
+    var across = Math.Abs(this.world.x);
+    var along = Math.Abs(this.world.z);
+    if (look.outside > 0.5 && (across > SIDE_WALL + 0.03 || along > BACK_WALL + 0.03 || across + along > CORNER_CUT + 0.05)
+        && Math.DistanceSq(this.world, look.eye) < 18 * 18) this.Discard();
     var normal = Math.Normalize(vertex.normal);
     var kind = vertex.material;
     var run = this.world.z * normal.x - this.world.x * normal.z;   // Along the wall
@@ -488,6 +495,7 @@ quaternion AimCamera(mut Look look, CarState car, BallState ball)
     // hold it in.
     var room = Arena(eye);
     if (room.distance < 0.4 && (eye.y < 3.4 || room.normal.y < -0.5)) eye += room.normal * (0.4 - room.distance);
+    look.outside = Arena(eye).distance < 0 ? 1.0 : 0.0;
     look.eye = eye;
     return quaternion.LookRotation(Math.Normalize(view - over * 0.05), over);
 }
@@ -543,6 +551,7 @@ view Prepare(mut Models models, mut Look look, MatchState match, Session session
         look.eye = float3(Math.Sin(turn) * wide.x, wide.y, -Math.Cos(turn) * wide.z);
         look.heading = Math.Normalize(float3(0, 3, 0) - look.eye);
         look.placed = false;
+        look.outside = 0;
         rotation = quaternion.LookRotation(look.heading, float3(0, 1, 0));
         fov = Math.Min(fov, 62);
     }
