@@ -14,6 +14,7 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 | `Mesh<V>` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX, OBJ | Static vertices and triangles |
 | `SkinnedMesh<V>` | glTF 2.0, binary or ASCII FBX | Geometry, skeleton and animation; see [Animation](./animation.md) |
 | `Animations` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | Skeleton and every animation clip; see [Animation files](./animation.md#animation-files) |
+| `Animation` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | The only clip, or an exact `[Name("source name")]` selection |
 | `Clip` | WAV, Ogg Vorbis, MP3, FLAC | WAV/Vorbis bytes, or float PCM WAV converted from MP3/FLAC; see [Audio](./audio.md#clips) |
 | `string` | Any UTF-8 text file | Text |
 | `List<byte>` | Any file | Its original bytes |

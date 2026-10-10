@@ -10542,6 +10542,8 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     TIDE_CHECK(!offers(completion, "Jump") && !offers(completion, "jump") && !offers(completion, "bad name")
                && !offers(completion, "for") && !offers(completion, "data"));
     TIDE_CHECK(has(completion, "original source name `Idle`"));
+    TIDE_CHECK(offers(completion, "badName") && offers(completion, "jump_4") && offers(completion, "jump_5")
+               && offers(completion, "_for"));
     model_metadata_stats warm = model_metadata_statistics();
     TIDE_CHECK(warm.parses == 1 && warm.file_reads == 1 && warm.bytes_read == sizeof metadata - 1);
     for (int i = 0; i < 20; i++) {
@@ -10878,6 +10880,83 @@ TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
     open_document("scene Main { }\nstruct EmptyAlias { [Name(\"\")] Bone socket; }\n"
                   "int Count(SkinnedMesh<Vertex3, EmptyAlias> model) { return model.skeleton.bones.count; }\n");
     TIDE_CHECK(has(last_sent(), "a model contract's Name alias cannot be empty") && has(last_sent(), "\"severity\":1"));
+}
+
+TIDE_TEST(lsp_animation_file_lists_clean_names_select_clips_and_refresh_all_sources)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_animation_list");
+    make_folder("lsp_animation_list/art");
+    static const char walk[] = "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Root|Walk\"},{\"name\":\"Root|0.Targeting Pose\"}]}";
+    static const char run[] = "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Root|Run\"},{\"name\":\"Root|0.Targeting Pose\"}]}";
+    static const char prefix[] = "asset Animations movement = [\"art/walk.gltf\", \"art/run.gltf\"];\n"
+                                 "[Name(\"Root|Run\")] asset Animation run = \"art/run.gltf\";\n"
+                                 "scene Main { }\n";
+    write_file("lsp_animation_list/main.tide", prefix);
+    write_file("lsp_animation_list/art/walk.gltf", walk);
+    write_file("lsp_animation_list/art/run.gltf", run);
+    pin_file_time("lsp_animation_list/art/run.gltf");
+    char root[700], uri[700], uri_run[700], text[2048];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_animation_list", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_animation_list/main.tide", dir);
+    snprintf(uri_run, sizeof uri_run, "file:///%s/lsp_animation_list/art/run.gltf", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    snprintf(text, sizeof text, "%sview V()\n{\n    movement.\n}\n", prefix);
+    open_uri(uri, text);
+    const char *completion = request_at(uri, "textDocument/completion", 5, 13, "");
+    TIDE_CHECK(offers(completion, "rootWalk") && offers(completion, "rootRun")
+               && offers(completion, "walkRoot0TargetingPose") && offers(completion, "runRoot0TargetingPose"));
+    TIDE_CHECK(has(completion, "original source name `Root|Run`") && has(completion, "Imported from `art/run.gltf`"));
+    TIDE_CHECK(!offers(completion, "root0TargetingPose") && !offers(completion, "data"));
+    const model_metadata_stats warm = model_metadata_statistics();
+    TIDE_CHECK(warm.parses == 2 && warm.file_reads == 2 && warm.bytes_read == sizeof walk + sizeof run - 2u);
+    completion = request_at(uri, "textDocument/completion", 0, (int)strlen("asset Animations movement = [\"art/walk.gltf\", \"art/"), "");
+    TIDE_CHECK(offers(completion, "run.gltf") && offers(completion, "*.gltf"));
+    completion = request_at(uri, "textDocument/completion", 1, (int)strlen("[Name(\"Root|Run\")] asset Animation run = \"art/"), "");
+    TIDE_CHECK(offers(completion, "run.gltf") && !offers(completion, "*.gltf"));
+    snprintf(text, sizeof text, "%sview V() { Debug.Log(movement.rootRun.name + run.name); }\n", prefix);
+    open_uri(uri, text);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at(uri, "textDocument/hover", 3, (int)strlen("view V() { Debug.Log(movement.root"), "");
+    TIDE_CHECK(has(hover, "Animation rootRun") && has(hover, "Root|Run") && has(hover, "art/run.gltf"));
+    hover = request_at(uri, "textDocument/hover", 1, (int)strlen("[Name(\"Root|Run\")] asset Animation r"), "");
+    TIDE_CHECK(has(hover, "asset Animation run") && has(hover, "exact clip selected"));
+    char rename[2048];
+    snprintf(rename, sizeof rename, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/willRenameFiles\","
+             "\"params\":{\"files\":[{\"oldUri\":\"%s\",\"newUri\":\"file:///%s/lsp_animation_list/art/jog.gltf\"}]}}", uri_run, dir);
+    clear_sent();
+    handle(rename);
+    const char *edited = apply_reply(text, uri);
+    TIDE_CHECK(count(last_sent(), "\"newText\"") == 2 && has(edited, "art/jog.gltf") && !has(edited, "art/run.gltf"));
+    char replacement[sizeof run];
+    memcpy(replacement, run, sizeof run);
+    memcpy(strstr(replacement, "Root|Run"), "Root|Jog", 8);
+    write_file("lsp_animation_list/art/run.gltf", replacement);
+    pin_file_time("lsp_animation_list/art/run.gltf");
+    notify_file(uri_run, 2);
+    snprintf(text, sizeof text, "asset Animations movement = \"art/*.gltf\";\nscene Main { }\nview V()\n{\n    movement.\n}\n");
+    open_uri(uri, text);
+    completion = request_at(uri, "textDocument/completion", 4, 13, "");
+    TIDE_CHECK(offers(completion, "rootJog") && !offers(completion, "rootRun") && offers(completion, "rootWalk"));
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1u);
+    write_file("lsp_animation_list/art/run.gltf", "{invalid JSON}");
+    notify_file(uri_run, 2);
+    open_uri(uri, text);
+    completion = request_at(uri, "textDocument/completion", 4, 13, "");
+    TIDE_CHECK(!offers(completion, "rootWalk") && !offers(completion, "rootJog") && offers(completion, "Find"));
+    remove_game_file("lsp_animation_list/art/run.gltf");
+    remove_game_file("lsp_animation_list/art/walk.gltf");
+    remove_game_file("lsp_animation_list/main.tide");
+    remove_game_file("lsp_animation_list/.tide/assets.sha256");
+    remove_game_file("lsp_animation_list/.tide/.gitignore");
+    remove_folder("lsp_animation_list/.tide");
+    remove_folder("lsp_animation_list/art");
+    remove_folder("lsp_animation_list");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
 }
 
 TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)

@@ -40,6 +40,50 @@ static void gen_skinned_adapters(gen *g)
                  "TIDE_HELPER tide_str tide_skin_animation_name(%s v) { return tide_skinned_animation_name(v.data, v.index); }\n"
                  "TIDE_HELPER float tide_skin_animation_duration(%s v) { return tide_skinned_animation_duration(v.data, v.index); }\n\n",
               animation, animation, bone, bone, animation, bone, animation, animation);
+    sb_put(o, "typedef struct tide_skin_catalog { tide_list data, sources; } tide_skin_catalog;\n"
+              "TIDE_HELPER tide_list tide_skin_catalog_list(tide_list data)\n{\n"
+              "    return data.at ? tide_list_from(&data, 1, sizeof data) : (tide_list){0};\n}\n"
+              "TIDE_HELPER tide_list tide_skin_catalog_source(tide_skin_catalog v, int32_t i)\n{\n"
+              "    if (v.data.at) return i == 0 ? v.data : (tide_list){0};\n"
+              "    const tide_list *at = tide_list_at(v.sources, i, sizeof *at);\n"
+              "    return at ? *at : (tide_list){0};\n}\n"
+              "TIDE_HELPER int32_t tide_skin_catalog_count(tide_skin_catalog v)\n{\n"
+              "    if (v.data.at) return tide_skinned_animation_count(v.data);\n"
+              "    int64_t count = 0;\n    const int32_t sources = tide_list_count(v.sources);\n"
+              "    for (int32_t i = 0; i < sources; i++) count += tide_skinned_animation_count(tide_skin_catalog_source(v, i));\n"
+              "    return count > INT32_MAX ? INT32_MAX : (int32_t)count;\n}\n");
+    sb_printf(o, "TIDE_HELPER %s tide_skin_catalog_at(tide_skin_catalog v, int32_t index)\n{\n"
+                 "    if (index < 0) return tide_skin_animation_at((tide_list){0}, -1);\n"
+                 "    if (v.data.at) return tide_skin_animation_at(v.data, index);\n"
+                 "    const int32_t sources = tide_list_count(v.sources);\n"
+                 "    for (int32_t i = 0; i < sources; i++) {\n"
+                 "        const tide_list data = tide_skin_catalog_source(v, i);\n"
+                 "        const int32_t count = tide_skinned_animation_count(data);\n"
+                 "        if (index < count) return tide_skin_animation_at(data, index);\n"
+                 "        index -= count;\n    }\n    return tide_skin_animation_at((tide_list){0}, -1);\n}\n"
+                 "TIDE_HELPER %s tide_skin_catalog_find(tide_skin_catalog v, tide_str name)\n{\n"
+                 "    %s found = {.index = -1};\n    if (!name.bytes) return found;\n"
+                 "    if (v.data.at) return tide_skin_animation_at(v.data, tide_skinned_find_animation(v.data, name));\n"
+                 "    const int32_t sources = v.data.at ? 1 : tide_list_count(v.sources);\n"
+                 "    if (sources == 1) {\n"
+                 "        const tide_list data = tide_skin_catalog_source(v, 0);\n"
+                 "        return tide_skin_animation_at(data, tide_skinned_find_animation(data, name));\n    }\n"
+                 "    for (int32_t i = 0; i < sources; i++) {\n"
+                 "        const tide_list data = tide_skin_catalog_source(v, i);\n"
+                 "        const int32_t count = tide_skinned_animation_count(data);\n"
+                 "        for (int32_t j = 0; j < count; j++) {\n"
+                 "            if (!tide_str_eq(tide_skinned_animation_name(data, j), name)) continue;\n"
+                 "            if (found.index >= 0) return (%s){.index = -1};\n"
+                 "            found = tide_skin_animation_at(data, j);\n        }\n    }\n    return found;\n}\n"
+                 "TIDE_HELPER %s tide_skin_catalog_member(tide_skin_catalog v, tide_str name, bool exact)\n{\n"
+                 "    if (v.data.at) return tide_skin_animation_member(v.data, name, exact);\n"
+                 "    if (exact) return tide_skin_catalog_find(v, name);\n"
+                 "    %s found = {.index = -1};\n    const int32_t sources = tide_list_count(v.sources);\n"
+                 "    for (int32_t i = 0; i < sources; i++) {\n"
+                 "        const %s candidate = tide_skin_animation_member(tide_skin_catalog_source(v, i), name, false);\n"
+                 "        if (candidate.index < 0) continue;\n"
+                 "        if (found.index >= 0) return (%s){.index = -1};\n        found = candidate;\n    }\n    return found;\n}\n\n",
+              animation, animation, animation, animation, animation, animation, animation, animation);
     sb_put(o, "TIDE_HELPER float tide_skin_seconds(float seconds, float duration, int32_t playback)\n{\n"
               "    if (playback != 1 || !(duration > 0.0f)) return seconds;\n"
               "    if (!tide_is_finite_f(seconds)) return 0.0f;\n"
@@ -80,6 +124,16 @@ static void gen_skinned_adapters(gen *g)
         if (r->fields.count == 1 && (value.decl == p->animation || value.decl == p->bone)) {
             const char *which = value.decl == p->bone ? "bone" : "animation";
             const char *result = c_type((type){TY_OPTIONAL, (decl *)r});
+            if (value.decl == p->animation) {
+                sb_printf(o, "TIDE_HELPER %s tide_skin_result%d_at(tide_skin_catalog data, int32_t i)\n{\n"
+                             "    const %s value = tide_skin_catalog_at(data, i);\n"
+                             "    return (%s){.value = value, .ok = value.index >= 0};\n}\n"
+                             "TIDE_HELPER %s tide_skin_result%d_find(tide_skin_catalog data, tide_str name)\n{\n"
+                             "    const %s value = tide_skin_catalog_find(data, name);\n"
+                             "    return (%s){.value = value, .ok = value.index >= 0};\n}\n\n",
+                          result, r->index, animation, result, result, r->index, animation, result);
+                continue;
+            }
             sb_printf(o, "TIDE_HELPER %s tide_skin_result%d_at(tide_list data, int32_t i)\n{\n"
                          "    return (%s){.value = tide_skin_%s_at(data, i), .ok = i >= 0 && i < tide_skinned_%s_count(data)};\n}\n"
                          "TIDE_HELPER %s tide_skin_result%d_find(tide_list data, tide_str name)\n{\n"

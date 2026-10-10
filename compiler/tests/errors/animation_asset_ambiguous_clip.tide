@@ -1,0 +1,3 @@
+// expect: animation 'Same' is ambiguous
+[Name("Same")] asset Animation run = "../e2e/animation_imports/names.gltf";
+scene Main { }

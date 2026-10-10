@@ -1,0 +1,9 @@
+// expect: can't assign Animations to Animations
+asset Animations forward = ["../e2e/animation_imports/movement/walk.gltf", "../e2e/animation_imports/movement/run.gltf"];
+asset Animations reverse = ["../e2e/animation_imports/movement/run.gltf", "../e2e/animation_imports/movement/walk.gltf"];
+scene Main { }
+system Check() {
+    mut var known = forward;
+    known = reverse;
+    Debug.Log(known.rootWalk.name);
+}

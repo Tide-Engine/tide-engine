@@ -54,9 +54,11 @@ TIDE_TEST(animations_import_checked_catalogs_without_geometry)
     TIDE_CHECK(position(&world) == -6.0f && fbx_position(&world) == -2.0f);
     static const char *const names[] = {"movement", "fbxAscii", "fbxBinary"};
     for (uint32_t i = 0; i < sizeof names / sizeof names[0]; i++) {
-        const tide_pack_entry *entry = tide_pack_find(names[i], TIDE_PACK_BYTES);
+        const tide_pack_entry *entry = tide_pack_find(names[i], TIDE_PACK_LIST);
         TIDE_REQUIRE(entry != NULL);
-        const tide_list data = {tide_pack_handle(entry)};
+        const tide_list *source = tide_list_at((tide_list){tide_pack_handle(entry)}, 0, sizeof(tide_list));
+        TIDE_REQUIRE(source != NULL);
+        const tide_list data = *source;
         const uint8_t *bytes = tide_list_at(data, 0, 1u);
         tide_skinned_data_view view;
         TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(data), &view));
@@ -96,7 +98,7 @@ TIDE_TEST(animations_owned_catalogs_survive_pack_unload_snapshots_and_serializat
 TIDE_TEST(animations_changed_canonical_data_is_rejected_before_pack_replacement)
 {
     start();
-    const tide_pack_entry *before = tide_pack_find("movement", TIDE_PACK_BYTES);
+    const tide_pack_entry *before = tide_pack_find("movement", TIDE_PACK_LIST);
     TIDE_REQUIRE(before != NULL);
     uint8_t *clone = malloc(tide_game_pack_size);
     memcpy(clone, tide_game_pack, tide_game_pack_size);
@@ -114,7 +116,7 @@ TIDE_TEST(animations_changed_canonical_data_is_rejected_before_pack_replacement)
     memcpy(clone + model + view.clip_at + 16u, &duration, sizeof duration);
     TIDE_REQUIRE(tide_skinned_data_validate(clone + model, size));
     TIDE_CHECK(!tide_assets_load(clone, tide_game_pack_size));
-    TIDE_CHECK(tide_pack_find("movement", TIDE_PACK_BYTES) == before);
+    TIDE_CHECK(tide_pack_find("movement", TIDE_PACK_LIST) == before);
     tide_world_tick(&world);
     TIDE_CHECK(position(&world) == -12.0f && world.Probe.passed == world.Probe.checks);
     TIDE_CHECK(tide_assets_load(tide_game_pack, tide_game_pack_size));

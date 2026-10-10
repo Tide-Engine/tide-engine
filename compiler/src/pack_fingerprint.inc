@@ -169,7 +169,7 @@ static bool tide_asset_fp_grid(const tide_asset_fp_region *r, const uint32_t at,
 
 static bool tide_asset_fp_leaf_kind(const uint32_t kind)
 {
-    return kind == TIDE_PACK_TEXT || kind == TIDE_PACK_BYTES || kind == TIDE_PACK_GRID
+    return kind == TIDE_PACK_TEXT || kind == TIDE_PACK_BYTES || kind == TIDE_PACK_GRID || kind == TIDE_PACK_LIST
         || kind == TIDE_PACK_TEXTURE || kind == TIDE_PACK_CLIP;
 }
 
@@ -177,6 +177,20 @@ static bool tide_asset_fp_leaf(const tide_asset_fp_region *r, const uint32_t at,
                                const tide_asset_fingerprint_desc *desc, tide_sha256 *hash)
 {
     tide_asset_fp_word(hash, kind);
+    if (kind == TIDE_PACK_LIST) {
+        // An animation catalog is a bounded second level of byte-list
+        // handles. Recurse only into bytes, never another arbitrary list.
+        uint32_t count;
+        const uint8_t *sources;
+        if (!tide_asset_fp_flat(r, at, sizeof(uint32_t), &count, &sources)) return false;
+        tide_asset_fp_word(hash, count);
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t source;
+            if (!tide_asset_fp_handle(r, tide_asset_fp_u32(sources + (size_t)i * sizeof(uint32_t)), &source)
+                || !tide_asset_fp_leaf(r, source, TIDE_PACK_BYTES, desc, hash)) return false;
+        }
+        return true;
+    }
     if (kind == TIDE_PACK_TEXT) return tide_asset_fp_text(r, at, hash, NULL, NULL);
     if (kind == TIDE_PACK_GRID) return tide_asset_fp_grid(r, at, &desc->grid_shape, hash);
     if (kind == TIDE_PACK_BYTES) {
@@ -319,7 +333,7 @@ static bool tide_asset_fp_entry(const tide_asset_fp_region *r, const tide_pack_e
     tide_sha256_add(&hash, "Tide asset content 1", sizeof("Tide asset content 1") - 1u);
     tide_asset_fp_word(&hash, e.kind);
     bool ok = false;
-    if (tide_asset_fp_leaf_kind(e.kind)) {
+    if (e.kind != TIDE_PACK_LIST && tide_asset_fp_leaf_kind(e.kind)) {
         if (e.kind == TIDE_PACK_TEXT) {
             uint32_t length, chars;
             ok = tide_asset_fp_text(&region, e.offset, &hash, &length, &chars) && length == e.size && chars == e.extra;

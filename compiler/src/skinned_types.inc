@@ -28,7 +28,9 @@ static decl *skinned_struct(program *prog, const char *name, const skinned_kind 
 
 static void skinned_data_field(program *prog, decl *d)
 {
-    vec_push(d->fields, skinned_field("data", list_of(prog, (type){TY_BYTE, NULL}), true));
+    type data = list_of(prog, (type){TY_BYTE, NULL});
+    if (d->skin_kind == SKIN_ANIMATIONS) data = list_of(prog, data);
+    vec_push(d->fields, skinned_field("data", data, true));
 }
 
 static void skinned_builtins(program *prog)

@@ -10,6 +10,38 @@ static str skinned_identifier(const char *source)
     return result;
 }
 
+// Checked imports expose writable source identifiers even when exporters use
+// punctuation, spaces, leading digits or language keywords in their names.
+// Contract fields retain their existing first-letter/exact-alias matching.
+static str skinned_inferred_identifier(const char *source)
+{
+    if (!source || !*source) return (str){0};
+    sb name = {0};
+    bool word = false;
+    for (const unsigned char *p = (const unsigned char *)source; *p; p++) {
+        char ch = (char)*p;
+        const bool letter = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z');
+        if (!letter && *p != '_' && !(*p >= '0' && *p <= '9')) {
+            word = name.len > 0;
+            continue;
+        }
+        if (!name.len && ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+        else if (word && ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
+        sb_putn(&name, &ch, 1);
+        word = false;
+    }
+    if (!name.len) sb_put(&name, "_");
+    const str result = {name.data, (int)name.len};
+    if (!lex_identifier_ok(result) || str_eq_c(result, "count") || str_eq_c(result, "Find")
+        || str_eq_c(result, "At") || str_eq_c(result, "data")) {
+        sb prefixed = {0};
+        sb_put(&prefixed, "_");
+        sb_putn(&prefixed, result.ptr, (size_t)result.len);
+        return (str){prefixed.data, (int)prefixed.len};
+    }
+    return result;
+}
+
 static str skinned_alias(const field *f, bool *exact)
 {
     *exact = false;
@@ -67,7 +99,7 @@ static void skinned_contract_catalogs(program *prog, decl *mesh, const loc at)
             diag_error(f->at, "a model contract's Name alias cannot be empty");
             continue;
         }
-        const skinned_member member = {f->name, source, -1, exact};
+        const skinned_member member = {f->name, source, -1, exact, {0}};
         decl *catalog = kind == SKIN_ANIMATION ? animations : bones;
         vec_push(catalog->skin_catalog, member);
     }
@@ -122,25 +154,155 @@ static int skinned_name_order(const void *a, const void *b)
     return order ? order : left->name.len - right->name.len;
 }
 
-static void skinned_infer_catalog(decl *catalog, const model_metadata *metadata, const bool bones)
+static void skinned_infer_catalog(decl *catalog, const model_metadata *metadata, const bool bones,
+                                  const char *const *files)
 {
     const uint32_t count = bones ? metadata->node_count : metadata->animation_count;
     skinned_name_index *names = arena_alloc(sizeof *names * (size_t)(count ? count : 1));
     bool *duplicates = arena_alloc(sizeof *duplicates * (size_t)(count ? count : 1));
     memset(duplicates, 0, sizeof *duplicates * (size_t)count);
-    for (uint32_t i = 0; i < count; i++) names[i] = (skinned_name_index){skinned_identifier(skinned_source_name(metadata, bones, i)), i};
+    str *members = arena_alloc(sizeof *members * (size_t)(count ? count : 1));
+    bool *ambiguous_bones = arena_alloc(sizeof *ambiguous_bones * (size_t)(count ? count : 1));
+    memset(ambiguous_bones, 0, sizeof *ambiguous_bones * (size_t)count);
+    if (bones) {
+        // Bone lookup uses canonical names rather than metadata node order.
+        // Exact duplicate names cannot identify one canonical bone.
+        for (uint32_t i = 0; i < count; i++) {
+            const char *source = skinned_source_name(metadata, true, i);
+            names[i] = (skinned_name_index){source ? str_from(source) : (str){0}, i};
+        }
+        if (count > 1) qsort(names, count, sizeof *names, skinned_name_order);
+        for (uint32_t i = 1; i < count; i++)
+            if (str_eq(names[i - 1].name, names[i].name))
+                ambiguous_bones[names[i - 1].index] = ambiguous_bones[names[i].index] = true;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        members[i] = skinned_inferred_identifier(skinned_source_name(metadata, bones, i));
+        names[i] = (skinned_name_index){members[i], i};
+    }
     if (count > 1) qsort(names, count, sizeof *names, skinned_name_order);
     for (uint32_t i = 1; i < count; i++) {
         if (str_eq(names[i - 1].name, names[i].name)) duplicates[names[i - 1].index] = duplicates[names[i].index] = true;
     }
+    if (files) {
+        for (uint32_t i = 0; i < count; i++) {
+            if (!duplicates[i] || !members[i].len) continue;
+            const char *file = files[i];
+            size_t length = strlen(file);
+            if (asset_path_is_url(file, length)) length = strcspn(file, "?#");
+            const char *stem = asset_path_name(str_to_cstr((str){file, (int)length}));
+            const char *dot = strrchr(stem, '.');
+            const str prefix = skinned_inferred_identifier(str_to_cstr((str){stem, (int)(dot ? dot - stem : (ptrdiff_t)strlen(stem))}));
+            sb qualified = {0};
+            sb_putn(&qualified, prefix.ptr, (size_t)prefix.len);
+            char first = members[i].ptr[0];
+            if (first >= 'a' && first <= 'z') first -= 'a' - 'A';
+            sb_putn(&qualified, &first, 1);
+            sb_putn(&qualified, members[i].ptr + 1, (size_t)members[i].len - 1u);
+            members[i] = (str){qualified.data, (int)qualified.len};
+        }
+        memset(duplicates, 0, sizeof *duplicates * (size_t)count);
+        for (uint32_t i = 0; i < count; i++) names[i] = (skinned_name_index){members[i], i};
+        if (count > 1) qsort(names, count, sizeof *names, skinned_name_order);
+        for (uint32_t i = 1; i < count; i++) {
+            if (str_eq(names[i - 1].name, names[i].name)) duplicates[names[i - 1].index] = duplicates[names[i].index] = true;
+        }
+    }
     for (uint32_t i = 0; i < count; i++) {
         const char *source = skinned_source_name(metadata, bones, i);
-        if (source) vec_push(catalog->skin_sources, str_from(str_to_cstr(str_from(source))));
-        const str name = skinned_identifier(source);
-        if (!name.len || duplicates[i]) continue;
-        const skinned_member member = {name, str_from(str_to_cstr(str_from(source))), (int)i, true};
+        vec_push(catalog->skin_sources, source ? str_from(str_to_cstr(str_from(source))) : (str){0});
+        str name = members[i];
+        if (!name.len || ambiguous_bones[i]) continue;
+        if (duplicates[i]) {
+            // Source ordinals make colliding aliases unique. Reserve every
+            // unsuffixed name so an authored 'jump_1' keeps its own member.
+            sb unique = {0};
+            sb_putn(&unique, name.ptr, (size_t)name.len);
+            size_t prefix = unique.len;
+            skinned_name_index key = {0};
+            do {
+                unique.len = prefix;
+                sb_put(&unique, "_");
+                prefix = unique.len;
+                sb_printf(&unique, "%u", i + 1u);
+                key.name = (str){unique.data, (int)unique.len};
+                if (!bsearch(&key, names, count, sizeof *names, skinned_name_order)) break;
+            } while (true);
+            name = key.name;
+        }
+        const skinned_member member = {name, str_from(str_to_cstr(str_from(source))), (int)i, true,
+            files ? str_from(files[i]) : (str){0}};
         vec_push(catalog->skin_catalog, member);
     }
+}
+
+static void skinned_animation_asset(checker *c, decl *asset, const expr *path)
+{
+    str selected = {0};
+    bool named = false;
+    for (int i = 0; i < asset->attributes.count; i++) {
+        const attribute *attr = &asset->attributes.items[i];
+        if (!str_eq_c(attr->name, "Name")) continue;
+        if (named || attr->args.count || attr->values.count != 1 || !text_literal(attr->values.items[0])) {
+            diag_error(attr->at, "select one exact source clip with [Name(\"Root|Run\")] before an Animation asset");
+            return;
+        }
+        named = true;
+        field alias = {0};
+        vec_push(alias.attributes, *attr);
+        bool exact;
+        selected = skinned_alias(&alias, &exact);
+        if (!selected.len) {
+            diag_error(attr->at, "an Animation asset's Name alias cannot be empty");
+            return;
+        }
+    }
+    if (c->prog->asset_metadata_only)
+        asset->asset = asset_resolve_paths(asset->unit->src->path, path->text, ASSET_ANIMATION, false, false,
+                                         path->at, c->prog->game_folder);
+    if (!asset->asset) return;
+    const asset_match *item = &asset->asset->items[0];
+    model_metadata owned = {0};
+    const model_metadata *metadata = NULL;
+    const char *why = NULL;
+    char error[256];
+    if (c->prog->asset_metadata_only) {
+        const model_metadata_status status = asset_path_is_url(item->key, strlen(item->key))
+            ? model_metadata_cached_url(item->key, c->prog->game_folder, &metadata, &why)
+            : model_metadata_cached(item->abs, &metadata, &why);
+        if (!metadata) {
+            if (status == MODEL_METADATA_INVALID) {
+                if (!asset_animations_format_diagnostic(item->key, why, path->at))
+                    diag_error(path->at, "model catalog metadata is invalid: %s", why ? why : "invalid model JSON");
+            } else diag_info(path->at, "model catalog metadata is unavailable: %s", why ? why : "no cached model JSON");
+            return;
+        }
+    } else {
+        if (!model_metadata_read(item->data, item->size, item->key, &owned, error)) {
+            diag_error(path->at, "animation catalog metadata cannot be read from '%s': %s", item->key, error);
+            return;
+        }
+        metadata = &owned;
+    }
+    int found = -1;
+    if (!named) {
+        if (metadata->animation_count == 1) found = 0;
+        else {
+            diag_error(path->at, "an Animation asset requires exactly one clip, but '%s' contains %u", item->key,
+                       metadata->animation_count);
+            diag_note("select a clip with [Name(\"original clip name\")], or import every clip with asset Animations");
+        }
+    } else {
+        for (uint32_t i = 0; i < metadata->animation_count; i++) {
+            if (!metadata->animations[i] || !str_eq(selected, str_from(metadata->animations[i]))) continue;
+            if (found >= 0) { found = -2; break; }
+            found = (int)i;
+        }
+        if (found < 0) diag_error(path->at, "animation '" STR_FMT "' is %s in '%s'", STR_ARG(selected),
+                                 found == -2 ? "ambiguous" : "missing", item->key);
+    }
+    asset->asset_animation_index = found;
+    model_metadata_free(&owned);
 }
 
 static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
@@ -171,6 +333,55 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
     }
     decl *animations = animations_only ? mesh : mesh->skin_animations;
     decl *bones = animations_only ? NULL : mesh->skin_skeleton->skin_bones;
+    if (animations_only && infer) {
+        if (!asset->asset) return;
+        VEC(char *) names = {0};
+        VEC(const char *) files = {0};
+        int status = 1;
+        for (int i = 0; i < asset->asset->count; i++) {
+            const asset_match *item = &asset->asset->items[i];
+            model_metadata owned = {0};
+            const model_metadata *metadata = NULL;
+            const char *why = NULL;
+            char error[256];
+            if (c->prog->asset_metadata_only) {
+                const model_metadata_status result = asset_path_is_url(item->key, strlen(item->key))
+                    ? model_metadata_cached_url(item->key, c->prog->game_folder, &metadata, &why)
+                    : model_metadata_cached(item->abs, &metadata, &why);
+                if (!metadata) {
+                    if (result == MODEL_METADATA_INVALID) {
+                        status = -2;
+                        if (!asset_animations_format_diagnostic(item->key, why, path->at))
+                            diag_error(path->at, "model catalog metadata is invalid: %s", why ? why : "invalid model JSON");
+                    } else {
+                        if (status != -2) status = -1;
+                        diag_info(path->at, "model catalog metadata is unavailable: %s", why ? why : "no cached model JSON");
+                    }
+                    continue;
+                }
+            } else {
+                if (!model_metadata_read(item->data, item->size, item->key, &owned, error)) {
+                    status = -2;
+                    diag_error(path->at, "animation catalog metadata cannot be read from '%s': %s", item->key, error);
+                    continue;
+                }
+                metadata = &owned;
+            }
+            for (uint32_t n = 0; n < metadata->animation_count; n++) {
+                vec_push(names, metadata->animations[n] ? str_to_cstr(str_from(metadata->animations[n])) : NULL);
+                vec_push(files, item->key);
+            }
+            model_metadata_free(&owned);
+        }
+        animations->skin_metadata_status = status;
+        // Don't offer partially checked aliases: missing files can introduce
+        // collisions and change the names or flattened source indices.
+        if (status == 1) {
+            const model_metadata metadata = {.animations = names.items, .animation_count = (uint32_t)names.count};
+            skinned_infer_catalog(animations, &metadata, false, asset->asset->count > 1 ? files.items : NULL);
+        }
+        return;
+    }
     if (c->prog->asset_metadata_only) {
         if (asset->asset_many) return;
         const char *written = asset_written_path(path->text);
@@ -201,8 +412,8 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
         }
         if (base->skin_contract) skinned_validate_contract(base, metadata, path->at);
         if (infer) {
-            skinned_infer_catalog(animations, metadata, false);
-            if (bones) skinned_infer_catalog(bones, metadata, true);
+            skinned_infer_catalog(animations, metadata, false, NULL);
+            if (bones) skinned_infer_catalog(bones, metadata, true, NULL);
         }
         return;
     }
@@ -216,8 +427,8 @@ static void skinned_asset_catalogs(checker *c, decl *asset, const expr *path)
         if (infer) {
             animations->skin_metadata_status = 1;
             if (bones) bones->skin_metadata_status = 1;
-            skinned_infer_catalog(animations, &metadata, false);
-            if (bones) skinned_infer_catalog(bones, &metadata, true);
+            skinned_infer_catalog(animations, &metadata, false, NULL);
+            if (bones) skinned_infer_catalog(bones, &metadata, true, NULL);
         }
         model_metadata_free(&metadata);
     }

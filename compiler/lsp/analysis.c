@@ -2889,10 +2889,14 @@ static void describe(const occurrence *o, sb *out)
                             "Side buffers and uncached URLs are read by a build.");
             }
             if (o->decl->asset_kind == ASSET_ANIMATIONS) {
-                sb_put(out, " An `Animations` asset imports a glTF or FBX file's animation clips and source skeleton without typed render geometry. "
-                            "Its checked clip names appear directly on the asset, with count, Find and At for discovery.");
+                sb_put(out, " An `Animations` asset imports a combined catalog from glTF or FBX paths, file lists or globs without typed render geometry. "
+                            "Its cleaned clip names appear directly on the asset; filenames distinguish collisions. "
+                            "Find uses original source names and At uses flattened source order.");
                 sb_put(out, "\n\nThe editor inspects the glTF JSON or FBX catalog without importing geometry or animation samples. "
                             "Side buffers and uncached URLs are read by a build.");
+            }
+            if (o->decl->asset_kind == ASSET_ANIMATION) {
+                sb_put(out, " An `Animation` asset imports the only clip in a glTF or FBX file, or the exact clip selected by [Name(\"source name\")].");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
@@ -3219,6 +3223,7 @@ static void describe(const occurrence *o, sb *out)
                     sb_printf(out, "\n\nChecked %s member for %s `" STR_FMT "`.",
                               d->skin_kind == SKIN_ANIMATIONS ? "animation" : "bone",
                               m->explicit_name ? "original source name" : "required normalized source identifier", STR_ARG(m->source_name));
+                    if (m->source_file.len) sb_printf(out, " Imported from `" STR_FMT "`.", STR_ARG(m->source_file));
                     break;
                 }
             }
@@ -3270,7 +3275,7 @@ static void describe(const occurrence *o, sb *out)
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
             {"Name", "[Name(\"source name\")]",
-             "The exact original animation or node name an Animation or Bone field promises in a SkinnedMesh contract."},
+             "Selects an exact original clip on an Animation asset, or names the Animation or Bone a SkinnedMesh contract field promises."},
             {"Channel", "[Channel(Channels.Uploads)]",
              "Puts the command after it in a channel of the game's, an enum member: a player's commands are handled in the "
              "order sent within a channel, and in no order against another channel's, so a chat line never waits behind an "
@@ -6133,6 +6138,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                 sb doc = {0};
                 sb_printf(&doc, "Checked %s member for %s `" STR_FMT "`.", d->skin_kind == SKIN_ANIMATIONS ? "animation" : "bone",
                           m->explicit_name ? "original source name" : "required normalized source identifier", STR_ARG(m->source_name));
+                if (m->source_file.len) sb_printf(&doc, " Imported from `" STR_FMT "`.", STR_ARG(m->source_file));
                 item(c, str_to_cstr(m->name), CK_PROPERTY, d->skin_kind == SKIN_ANIMATIONS ? "Animation" : "Bone", doc.data, NULL);
             }
         }
@@ -8237,6 +8243,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "NativeName", CK_FUNCTION, "[NativeName(\"c_function\")]",
                  "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own.",
                  "NativeName(\"$1\")");
+            item(&c, "Name", CK_FUNCTION, "[Name(\"source name\")]",
+                 "Selects a unique exact original clip from an Animation asset's file.", "Name(\"$1\")");
             item(&c, "Channel", CK_FUNCTION, "[Channel(Channels.Uploads)]",
                  "Puts the command in a channel of the game's: in order among that channel's commands, and in no order against the others.",
                  "Channel($1)");
@@ -10474,39 +10482,45 @@ static void collect_assets(void)
     static const char *const models[] = {".glb", ".gltf", ".fbx", ".obj"};
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind != DECL_ASSET || !d->value || d->value->kind != E_STRING || !d->unit) continue; // A `const string` path has no site
-        int f = -1;
-        for (int k = 0; k < A.file_count && f < 0; k++) {
-            if (&A.files[k].src == d->unit->src) f = k;
+        if (d->kind != DECL_ASSET || !d->value || !d->unit) continue;
+        const int paths = d->value->kind == E_LIST ? d->value->args.count : 1;
+        for (int n = 0; n < paths; n++) {
+            const expr *value = d->value->kind == E_LIST ? d->value->args.items[n] : d->value;
+            if (value->kind != E_STRING) continue; // A `const string` path has no site.
+            int f = -1;
+            for (int k = 0; k < A.file_count && f < 0; k++) {
+                if (&A.files[k].src == d->unit->src) f = k;
+            }
+            const int tok = f >= 0 ? token_at((loc){value->at.line, value->at.col, f}) : -1;
+            if (tok < 0 || A.files[f].toks[tok].kind != T_STRING) continue;
+            asset_site site = {0};
+            site.file = f;
+            site.string = tok;
+            site.path = A.files[f].toks[tok].text;
+            site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP || d->asset_kind == ASSET_ANIMATIONS;
+            if (d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP) {
+                site.formats = images;
+                site.format_count = (int)(sizeof images / sizeof images[0]);
+            } else if (d->asset_kind == ASSET_CLIP) {
+                site.formats = clips;
+                site.format_count = (int)(sizeof clips / sizeof clips[0]);
+            } else if (d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS
+                       || d->asset_kind == ASSET_ANIMATION) {
+                site.formats = models;
+                site.format_count = (int)(sizeof models / sizeof models[0]) - (d->asset_kind == ASSET_MESH ? 0 : 1);
+            }
+            site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
+            site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
+            char *folder = asset_path_folder(A.files[f].src.path);
+            site.folder = arena_copy(folder);
+            if (!site.url) {
+                char *abs = asset_path_join(folder, site.path.ptr, (size_t)site.path.len);
+                site.abs = arena_copy(abs);
+                free(abs);
+            }
+            free(folder);
+            vec_push(A.assets, site);
         }
-        const int tok = f >= 0 ? token_at((loc){d->value->at.line, d->value->at.col, f}) : -1;
-        if (tok < 0 || A.files[f].toks[tok].kind != T_STRING) continue;
-        asset_site site = {0};
-        site.file = f;
-        site.string = tok;
-        site.path = A.files[f].toks[tok].text;
-        site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
-        if (d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP) {
-            site.formats = images;
-            site.format_count = (int)(sizeof images / sizeof images[0]);
-        } else if (d->asset_kind == ASSET_CLIP) {
-            site.formats = clips;
-            site.format_count = (int)(sizeof clips / sizeof clips[0]);
-        } else if (d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS) {
-            site.formats = models;
-            site.format_count = (int)(sizeof models / sizeof models[0]) - (d->asset_kind == ASSET_MESH ? 0 : 1);
-        }
-        site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
-        site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
-        char *folder = asset_path_folder(A.files[f].src.path);
-        site.folder = arena_copy(folder);
-        if (!site.url) {
-            char *abs = asset_path_join(folder, site.path.ptr, (size_t)site.path.len);
-            site.abs = arena_copy(abs);
-            free(abs);
-        }
-        free(folder);
-        vec_push(A.assets, site);
     }
 }
 

@@ -80,6 +80,7 @@ tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving r
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+tide_e2e_test(animation_imports) # Cleaned exporter names, selected clips and combined source catalogs
 tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
 tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists after each entity and frame
 tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes

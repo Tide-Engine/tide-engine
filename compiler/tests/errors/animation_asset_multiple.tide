@@ -1,0 +1,4 @@
+// expect: an Animation asset requires exactly one clip
+// expect: select a clip with [Name("original clip name")]
+asset Animation run = "../e2e/animation_imports/movement/run.gltf";
+scene Main { }

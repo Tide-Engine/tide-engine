@@ -574,7 +574,8 @@ static const char *kind_name(const asset_kind kind)
 {
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
          : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
-         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "Animations" : "Grid2<Color>";
+         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "Animations"
+         : kind == ASSET_ANIMATION ? "Animation" : "Grid2<Color>";
 }
 
 static bool source_extension(const char *path, const char *extension)
@@ -800,7 +801,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             item->data = f->sound_data;
             item->size = f->sound_size;
         }
-    } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) {
+    } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION) {
         const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
         if (f->skin_tried && !sides_same(&sides_check)) forget_skin(f);
         if (!f->skin_tried) {
@@ -842,7 +843,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (ok) f->skin_mesh = skin_geometry(bytes, size);
         }
         if (!f->skin_ok) {
-            if (!(kind == ASSET_ANIMATIONS ? asset_animations_format_diagnostic(key, f->skin_why, at)
+            if (!(kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION ? asset_animations_format_diagnostic(key, f->skin_why, at)
                                           : asset_skinned_format_diagnostic(key, f->skin_why, at))) {
                 diag_error(at, "'%s' %s", key, f->skin_why);
                 if (f->skin_note[0]) diag_note("%s", f->skin_note);
@@ -981,8 +982,18 @@ static bool order_cube(asset_value *v, const char *written, const loc at)
     return true;
 }
 
-asset_value *asset_resolve(const char *declaring_as_given, const str path, const asset_kind kind, const bool many, const bool is_map,
-                           const loc at, const char *game_folder)
+static bool resolve_item(asset_match *item, const char *key, const char *absolute, const asset_kind kind,
+                         const char *written, const loc at, const bool paths_only)
+{
+    if (!paths_only) return read_item(item, key, absolute, kind, written, at);
+    item->key = str_to_cstr(str_from(key));
+    item->abs = absolute ? str_to_cstr(str_from(absolute)) : NULL;
+    return true;
+}
+
+static asset_value *asset_resolve_impl(const char *declaring_as_given, const str path, const asset_kind kind,
+                                      const bool many, const bool is_map, const loc at, const char *game_folder,
+                                      const bool paths_only)
 {
     char *declaring = declaring_abs(declaring_as_given);
     const char *written = asset_written_path(path);
@@ -997,6 +1008,7 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
     v->kind = kind;
     v->many = many;
     v->is_map = is_map;
+    v->paths_only = paths_only;
     const bool url = asset_path_is_url(written, strlen(written));
     const bool glob = !url && asset_path_is_glob(written, strlen(written));
     if (kind == ASSET_CUBEMAP && !glob) {
@@ -1016,7 +1028,11 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
     // One file, or a URL, where the type holds many is a list or a map of that one, its key the path as written: a
     // declaration's path can go from a file to a glob and back with its type, and the code that reads it, as they are
     bool ok = true;
-    if (url) {
+    if (url && paths_only) {
+        v->items = arena_alloc(sizeof(asset_match));
+        v->count = 1;
+        resolve_item(&v->items[0], written, NULL, kind, written, at, true);
+    } else if (url) {
         const fetched *f = fetch_url(written, game_folder);
         if (!f->path) {
             diag_error(at, "'%s' can't be fetched: %s", written, f->failed);
@@ -1052,7 +1068,8 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
             qsort(pairs, (size_t)w.keys.count, sizeof(char *) * 2u, key_order);
             v->items = arena_alloc(sizeof(asset_match) * (size_t)w.keys.count);
             v->count = w.keys.count;
-            for (int i = 0; i < w.keys.count && ok; i++) ok = read_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at);
+            for (int i = 0; i < w.keys.count && ok; i++)
+                ok = resolve_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at, paths_only);
             free(pairs);
             if (ok && kind == ASSET_CUBEMAP) ok = order_cube(v, written, at);
         }
@@ -1066,12 +1083,24 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
         } else {
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
-            ok = read_item(&v->items[0], written, abs, kind, written, at);
+            ok = resolve_item(&v->items[0], written, abs, kind, written, at, paths_only);
         }
         free(abs);
     }
     free(folder);
     return ok ? v : NULL;
+}
+
+asset_value *asset_resolve(const char *declaring, const str path, const asset_kind kind, const bool many,
+                           const bool is_map, const loc at, const char *game_folder)
+{
+    return asset_resolve_impl(declaring, path, kind, many, is_map, at, game_folder, false);
+}
+
+asset_value *asset_resolve_paths(const char *declaring, const str path, const asset_kind kind, const bool many,
+                                 const bool is_map, const loc at, const char *game_folder)
+{
+    return asset_resolve_impl(declaring, path, kind, many, is_map, at, game_folder, true);
 }
 
 void asset_watched(const char *declaring_as_given, const str path, asset_path_fn found, void *user)
