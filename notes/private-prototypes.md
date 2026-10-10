@@ -308,8 +308,9 @@ waits a bounded window for taskkill, stops a stalled taskkill before directly
 terminating the owned browser, and confirms both exits. A tree killer that
 cannot be stopped is diagnosed, unreferenced and reported as failed cleanup;
 the caller retains the profile. Browser stderr is released only after browser
-exit. The two-second per-wait bounds and ten/30-second regression/CTest guards
-are unchanged. Normal Windows cleanup still requests the whole browser tree;
+exit. The two-second per-wait bounds and ten-second regression guards
+are unchanged; the original 30-second CTest guard is revised below. Normal
+Windows cleanup still requests the whole browser tree;
 the direct fallback confirms the owned parent and tree-killer exits, without
 claiming that every independently surviving descendant was observed.
 
@@ -323,6 +324,34 @@ pacing and DevTools cases and ten consecutive cleanup-suite runs. Scoped
 native debug passed 4/4 and web-debug passed 6/6, including the actual two-player
 WebGL and WebGPU checks with Chrome Headless Shell 155.0.8059.39. No CI run or
 retry was dispatched.
+
+Run `38087099842` at `7c7c0fe3` failed Windows native only in two of those
+fault cases: the stalled tree killer and the tree killer that cannot start.
+Both passed a 100 ms per-wait budget to cleanup despite using real Windows
+processes. A controlled Node 24.16 probe restricted to one CPU with eight
+owned CPU workers failed five of six attempts at 100 ms and passed all six
+at the production two-second budget. Successful browser termination took
+180–925 ms to report exit. This establishes a scheduling-sensitive fixture;
+the hosted log alone does not identify its precise exit delays.
+
+The five Windows fault cases now use cleanup's default two-second budget.
+Their process-exit, pipe-release, failed-termination and unreferenced-helper
+assertions and ten-second case guards stay the same. Only their combined
+CTest guard changes from 30 to 60 seconds: intentional waits now total about
+24 seconds before process startup and exit overhead. The cleanup helper and
+the real browser playtests' deadlines are unchanged.
+
+Scoped validation of this fixture correction: native debug passed 4/4 and
+web-debug passed 6/6 with Node 24.16, including actual two-player WebGL and
+WebGPU play using Chrome Headless Shell 155.0.8059.39. The cleanup suite took
+26.53/24.80 seconds respectively. CI's exact Node 24.21 passed all 22 cleanup,
+pacing and DevTools cases in 24.61 seconds. With one CPU and eight competing
+workers, all five corrected Windows fault cases passed in 5.11–8.32 seconds,
+within their ten-second guards. That extreme-load full suite passed 7/8:
+the older portable stderr-inheritance fixture exceeded its separate
+five-second startup deadline before reaching cleanup. The fixture correction
+does not change that startup guard. All owned workers and helpers were reaped.
+No CI run or retry was dispatched.
 
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
