@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -27,29 +27,64 @@ const cases = [
 
 const powershell = String.raw`
 $ErrorActionPreference = 'Stop'
+$testClock = [Diagnostics.Stopwatch]::StartNew()
+$testProcess = [Diagnostics.Process]::GetCurrentProcess()
+function Phase([string]$name) {
+    [Console]::Error.WriteLine(('Installer fixture: wall={0:F3}s cpu={1:F3}s {2}' -f
+        $testClock.Elapsed.TotalSeconds, $testProcess.TotalProcessorTime.TotalSeconds, $name))
+}
+Phase 'started'
+if ([IO.Path]::GetTempPath().TrimEnd('\') -ne $env:TEST_WORK.TrimEnd('\')) { throw 'Installer scratch files escaped the fixture.' }
 # Windows PowerShell prepends vendor module paths at startup, even when the
 # child environment lists only its stock modules. Isolate discovery again
 # before the first command can trigger module analysis.
 $env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
+Phase 'import Utility begin'
 Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'))
+Phase 'import Utility end; import Management begin'
+Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'))
+Phase 'import Management end'
 $null = Get-Command Get-FileHash
-function Record($entry) { $entry | ConvertTo-Json -Compress -Depth 8 | Add-Content $env:TEST_LOG }
+function Record($entry) {
+    Phase "record $($entry.op) begin"
+    $entry | ConvertTo-Json -Compress -Depth 8 | Add-Content $env:TEST_LOG
+    Phase "record $($entry.op) end"
+}
 function Invoke-RestMethod {
     param($Uri, $Headers)
+    Phase 'release list mock begin'
     Record @{ op = 'request'; url = $Uri; auth = $Headers.Authorization }
-    Get-Content $env:TEST_LIST -Raw | ConvertFrom-Json
+    $list = Get-Content $env:TEST_LIST -Raw | ConvertFrom-Json
+    Phase 'release list mock end'
+    $list
 }
 function Invoke-WebRequest {
     param($Uri, $Headers, $OutFile, [switch]$UseBasicParsing)
+    Phase "download mock begin: $([IO.Path]::GetFileName($OutFile))"
     Record @{ op = 'request'; url = $Uri; auth = $Headers.Authorization; output = $OutFile }
     if ($OutFile.EndsWith('SHA256SUMS')) { [IO.File]::WriteAllText($OutFile, $env:TEST_SUMS) }
     else { [IO.File]::WriteAllText($OutFile, $env:TEST_PAYLOAD) }
+    Phase 'download mock end'
+}
+# Keep the checksum real, while distinguishing a hash stall from mock I/O or
+# shell startup when a hosted runner reaches the unchanged process guard.
+function Get-FileHash {
+    param($Path, $Algorithm)
+    Phase 'checksum begin'
+    $hash = Microsoft.PowerShell.Utility\Get-FileHash @PSBoundParameters
+    Phase 'checksum end'
+    $hash
 }
 function Expand-Archive {
     param($Path, $DestinationPath, [switch]$Force)
+    Phase 'unpack mock begin'
     Record @{ op = 'unpack' }
     throw 'TEST_UNPACK'
 }
+foreach ($mock in @('Invoke-RestMethod', 'Invoke-WebRequest', 'Expand-Archive')) {
+    if ((Get-Command $mock).CommandType -ne 'Function') { throw "The $mock mock was not selected." }
+}
+Phase 'mock command resolution verified'
 $testTide = Join-Path $env:LOCALAPPDATA 'Tide/bin/tide.exe'
 Set-Item -LiteralPath "Function:$testTide" -Value {
     if ($args[0] -eq 'upgrade') {
@@ -65,14 +100,17 @@ Set-Item -LiteralPath "Function:$testTide" -Value {
     } else { Record @{ op = 'editors' } }
     $global:LASTEXITCODE = 0
 }
+Phase 'installer begin'
 try { . $env:TEST_INSTALLER }
 catch {
+    Phase 'installer exception caught'
     if ($_.Exception.Message -eq 'TEST_UNPACK') { 'Stopped before unpacking.' }
     elseif ($_.Exception.Message.Contains('checksum does not match')) { 'Checksum refused.' }
     elseif ($_.Exception.Message -eq 'tide could not finish the upgrade.') { 'Upgrade refused.' }
     else { throw }
 }
 if ($env:TIDE_RELEASES_URL -ne 'file:///original-override.json') { throw 'The installer changed TIDE_RELEASES_URL.' }
+Phase 'finished'
 `;
 
 const shell = String.raw`
@@ -130,6 +168,8 @@ fi
 for (const runtime of shells) for (const c of cases) {
     test(`${runtime}: ${c.name}`, () => {
         const work = mkdtempSync(join(tmpdir(), 'tide-installers-test-'));
+        let passed = false;
+        let result;
         try {
             const packageName = runtime === 'powershell' ? 'tide-windows-x64.zip' : 'tide-linux-x64.tar.gz';
             const site = 'https://tide-engine.dev/releases';
@@ -169,12 +209,15 @@ for (const runtime of shells) for (const c of cases) {
                 }
                 env.PSModulePath = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
                 env.PSModuleAnalysisCachePath = join(work, 'ModuleAnalysisCache');
+                // Keep real installer scratch files with the fixture too, so
+                // a killed child leaves no untracked downloads in user TEMP.
+                env.TEMP = env.TMP = join(work, 'temporary');
             }
             const harness = join(work, runtime === 'powershell' ? 'case.ps1' : 'case.sh');
             writeFileSync(harness, runtime === 'powershell' ? powershell : shell);
             const executable = runtime === 'powershell' ? 'powershell.exe' : process.env.INSTALL_TEST_SH || 'sh';
             const args = runtime === 'powershell' ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harness] : [harness];
-            const result = spawnSync(executable, args, { env, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+            result = spawnSync(executable, args, { env, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
             const said = `${result.stdout}\n${result.stderr}`;
             assert.ok(!result.error, `${result.error}\n${said}`);
             const expectedStatus = runtime === 'sh' && c.failUpgrade ? 17 : runtime === 'sh' && c.damaged ? 1 : runtime === 'sh' && !c.installed ? 87 : 0;
@@ -200,6 +243,21 @@ for (const runtime of shells) for (const c of cases) {
             assert.equal(entries.filter((entry) => entry.op === 'editors').length, c.installed && !c.damaged && !c.failUpgrade ? 1 : 0);
             assert.equal(entries.filter((entry) => entry.op === 'unpack').length, !c.installed && !c.damaged ? 1 : 0);
             if (runtime === 'sh') assert.ok(!existsSync(env.TEST_WORK), 'The temporary downloads were not removed.');
-        } finally { rmSync(work, { recursive: true, force: true }); }
+            passed = true;
+        } catch (error) {
+            const log = join(work, 'requests.jsonl');
+            const entries = existsSync(log) ? readFileSync(log, 'utf8') : '(no mock calls recorded)';
+            // The fixture uses dummy tokens only. Preserve its private files
+            // and surface partial calls even when the child died mid-record.
+            if (result) {
+                writeFileSync(join(work, 'stdout.log'), result.stdout || '');
+                writeFileSync(join(work, 'stderr.log'), result.stderr || '');
+            }
+            const detail = `\nFixture preserved at ${work}\nCPUs available: ${availableParallelism()}; CTEST_PARALLEL_LEVEL=${process.env.CTEST_PARALLEL_LEVEL || '(unset)'}\nPartial mock calls:\n${entries}`;
+            // Node's assertion reporter uses the stack captured at construction.
+            error.stack += detail;
+            error.message += detail;
+            throw error;
+        } finally { if (passed) rmSync(work, { recursive: true, force: true }); }
     });
 }
