@@ -346,10 +346,13 @@ jobs:
           fi
           cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL" -DTIDE_DOC_EXAMPLES=OFF "${browser[@]}"
           cmake --build --preset web-release
+          # Software-rendered pages reserve the host's CPUs in CTest. Private
+          # Windows/Linux runners have two CPUs, despite the four-job default.
+          web_test_jobs="$(node -p 'require("node:os").availableParallelism()')"
           if [ "$RUNNER_OS" = Linux ]; then
-            ctest --preset web-release -LE webgpu
+            ctest --preset web-release --parallel "$web_test_jobs" -LE webgpu
           else
-            ctest --preset web-release
+            ctest --preset web-release --parallel "$web_test_jobs"
           fi
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)

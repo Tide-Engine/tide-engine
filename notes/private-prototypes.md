@@ -121,6 +121,24 @@ Failures record recent commands, frame/packet timing and browser logs; recovery
 captures and browser shutdown have short bounds and force-stop only the test's
 own browser tree when necessary.
 
+Build run 38003829989 still failed Windows WebGL while WebGPU passed:
+both peers remained `new`, neither reported a packet, and completed-frame
+reports fell behind the runner by 19–25 seconds through simultaneous gaps
+of about six seconds. It persisted after the earlier contention fix.
+The runner now records ICE, gathering and signaling states, the start/end
+of local/remote SDP operations, and wall-clock timestamps. Delivery age and
+the page's monotonic/wall-clock drift distinguish buffered DevTools reports
+from a page whose clock fell behind. Existing deadlines and pass conditions
+are unchanged; the failure's cause remains unconfirmed.
+
+Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
+155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
+unrestricted affinity, two processors and one processor, and on web-release
+with one processor. A pending local SDP operation injected into a temporary
+runner reproduced peers staying
+`new`; its account identified the uncompleted operation, and the game's
+existing connection timeout failed the run and closed its browser normally.
+
 Fix validation (2026-10-10): native simulation passed 1/1 (fourteen inner
 cases), scoped web-debug passed 3/3, and web-release passed 6/6 with the test
 process restricted to one CPU and CTest parallelism four (both play backends,

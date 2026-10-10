@@ -4,6 +4,29 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Building
 
+- Browser tests registered by `tide_add_web_test` reserve the host's CPU count
+  through CTest `PROCESSORS`, for WebGL and WebGPU (2026-10-10). Chrome's software
+  renderer starts its own workers, so counting each page as one job let four
+  browsers compete on GitHub's small runners. In run 38003829989, Linux's draw
+  and shader fixtures reached the 120-second guard without a result; the prior
+  shader run had already taken 106 seconds with the same renderer/test code.
+  `ProcessorCount` measures the build host even for a WebAssembly build, with
+  one as the fallback if the count is unavailable. CTest schedules the page
+  within that CPU budget; assertions, browser flags and deadlines are unchanged.
+  The Build workflow's web test parallelism also follows the available CPUs,
+  instead of its four-job default: private Windows/Linux runners have two CPUs.
+  Otherwise a two-CPU reservation would still allow two browsers at once.
+  Validation: full Windows debug suites passed 2,010 native and 1,984 web tests,
+  with the web suite using CI's Chrome Headless Shell 155.0.8059.39. A scoped
+  Linux release build under WSL, restricted to two CPUs with CTest parallelism
+  two, ran the draw, targets, shaders and skinned fixtures separately and passed
+  all four; draw took 26 seconds and shaders 53 against their original 120-second
+  guards. A four-CPU comparison also passed both schedules, with draw/shaders
+  taking 42/74 seconds concurrently and 25/57 separately. These timings show the
+  scheduling effect, not a hardware-independent benchmark. Workflow lint passes
+  with only actionlint 1.7.12's unsupported existing `queue` key excluded.
+  GitHub-hosted confirmation still needs a requested CI run; none was dispatched.
+
 - Skinned-model implementation validation (2026-10-08): the merged full native suite passed 1,957 tests and the full web suite passed 1,932. After the subsequent function-capability merge and the empty-alias diagnostic, both full builds passed again, with all 1,880 affected native compiler/editor tests and 1,869 web compiler tests passing. The language-server harness passed 188/188; docs production build and grammar 202/202 passed. CPU pose bits and the persistent match hash agree between native and WASI; OpenGL, WebGL and WebGPU each pass 24 skinning pixel assertions. An isolated Windows clang AddressSanitizer build passed the skinned, pack, map and static-importer groups, and the web CLI watch regression passed. No CI workflow was dispatched; real modelling-tool exports and Android GPU rendering were not exercised here.
 
 Node runs many of the tests (`cmake/run_wasi.mjs`, the relay's, the build service's, the scripts under `platform/tests/`), and on Windows it has to be 24.16 or newer. Before that, and in every 22 so far, a process that starts a TCP connection ends, about one launch in 500, with exit code 3221226505 (0xC0000409) and nothing on stderr, however idle the machine is:
