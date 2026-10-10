@@ -1,0 +1,50 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+const script=fileURLToPath(import.meta.url),root=path.resolve(path.dirname(script),'../../..');
+const hash=b=>createHash('sha256').update(b).digest('hex');
+const assert=(c,m)=>{if(!c)throw Error(m)};
+const read=p=>JSON.parse(fs.readFileSync(p,'utf8').replace(/^\uFEFF/,''));
+const normalize=b=>{const s=new TextDecoder('utf-8',{fatal:true}).decode(b).replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n');return Buffer.from(s&&!s.endsWith('\n')?s+'\n':s)};
+function verify(dir){
+ const manifest=read(path.join(dir,'export-manifest.json'));
+ for(const file of manifest.files){assert(!file.path.includes('..')&&!path.isAbsolute(file.path),'Unsafe path');const b=fs.readFileSync(path.join(dir,file.path));assert(b.length===file.bytes&&hash(b)===file.sha256,`Hash mismatch ${file.path}`);assert(b.equals(normalize(b)),`Non-LF text ${file.path}`)}
+ const metadata=read(path.join(dir,'metadata.json')),summary=read(path.join(dir,'summary.json')),rows=fs.readFileSync(path.join(dir,'rows.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ assert(metadata.state==='verified'&&rows.length===24&&summary.cases.length===8,'Incomplete evidence');
+ assert(rows.every(r=>r.frames===100&&r.gpu_samples===100&&r.warmup===20&&r.repeat===1&&r.revision===metadata.source_revision),'Unexpected samples/source');
+ assert(rows.reduce((s,r)=>s+r.frames,0)===2400&&rows.reduce((s,r)=>s+r.gpu_samples,0)===2400,'Unexpected total samples');
+ assert(summary.source_revision===metadata.source_revision&&summary.fixture_sha256===metadata.fixture_sha256&&summary.executable_sha256===metadata.executable.sha256,'Summary identity mismatch');
+ console.log(`Verified ${manifest.files.length} LF text files,24 rows,2400 CPU/GPU samples.`);
+}
+const args=process.argv.slice(2);
+if(args[0]==='--verify'){verify(path.resolve(args[1]));process.exit(0)}
+if(!args[0])throw Error('Usage: export.mjs <verified-run-directory> [--output directory] [--dry-run]');
+const dir=path.resolve(args.shift());let out=path.join(root,'bench/results/skinned-10k'),dry=false;
+while(args.length){const a=args.shift();if(a==='--dry-run')dry=true;else if(a==='--output'){assert(args.length,'Missing output');out=path.resolve(args.shift())}else throw Error('Unknown option '+a)}
+assert(!fs.existsSync(out),'Refusing to overwrite existing export');
+const meta=read(path.join(dir,'metadata.json'));assert(meta.state==='verified'&&meta.runs.length===3,'Export requires verified complete run');
+const sources=new Map(),files=new Map();
+function remember(p,declared,category){const b=fs.readFileSync(p),identity={path:path.resolve(p),bytes:b.length,sha256:hash(b),category};if(declared)assert(identity.bytes===declared.bytes&&identity.sha256===declared.sha256,`Original changed ${p}`);sources.set(identity.path,identity);return{b,identity}}
+function add(p,name,declared,category='measured'){const {b,identity}=remember(p,declared,category);assert(!files.has(name),'Duplicate path');files.set(name,{b:normalize(b),original:identity})}
+function generated(name,value){files.set(name,{b:Buffer.from(typeof value==='string'?value:JSON.stringify(value,null,2)+'\n'),original:null})}
+add(path.join(dir,'metadata.json'),'metadata.json');add(meta.summary.path,'summary.json',meta.summary);add(meta.rows.path,'rows.jsonl',meta.rows);
+add(meta.runner.path,'reproduce/run.ps1',meta.runner,'measurement-script');add(meta.analyzer.path,'reproduce/analyze.mjs',meta.analyzer,'analysis-script');add(script,'reproduce/export.mjs',undefined,'export-script');
+add(meta.snapshot.path,'snapshot/metadata.json',meta.snapshot,'preserved-snapshot');add(meta.snapshot_source_hashes.path,'snapshot/source-hashes.json',meta.snapshot_source_hashes,'preserved-source-hashes');
+remember(meta.executable.path,meta.executable,'excluded-executable');remember(meta.ledger_before_copy.path,meta.ledger_before_copy,'excluded-history-ledger');
+const raw=remember(meta.raw_ledger.path,meta.raw_ledger,'excluded-raw-ledger');
+assert(hash(fs.readFileSync(meta.ledger_after.path))===meta.ledger_after.sha256,'Main ledger changed');
+assert(raw.identity.sha256===meta.ledger_after.sha256,'Raw and current ledger differ');
+const committed=normalize(raw.b),before=fs.readFileSync(meta.ledger_before_copy.path);
+assert(committed.subarray(0,before.length).equals(before),'Normalization would change336-row history');
+generated('ledger-normalization.json',{path:'bench/results/skinned.jsonl',previous_rows:336,appended_rows:24,final_rows:360,raw:raw.identity,committed_lf:{bytes:committed.length,sha256:hash(committed)},previous_prefix:meta.ledger_before});
+for(const run of meta.runs){assert(run.state==='complete'&&run.exit_code===0,'Incomplete process');for(const artifact of run.evidence){const name=path.basename(artifact.path);add(artifact.path,`${name.endsWith('-gpu.csv')?'clocks':'logs'}/${name}`,artifact)}}
+const summary=read(meta.summary.path);remember(summary.capture.path,{bytes:fs.statSync(summary.capture.path).size,sha256:summary.capture.png_sha256},'excluded-capture');
+generated('README.md',`# 1,000 and 10,000 character rendering measurements\n\nMeasured source: \`${meta.source_revision}\`; checkout HEAD at measurement: \`${meta.checkout_head}\`. The preserved CPU3 release executable SHA-256 is \`${meta.executable.sha256}\`; its embedded fixture is \`${meta.fixture_sha256}\`. No production code was changed or rebuilt for this measurement.\n\nThree fresh hidden OpenGL processes each run counts 1,000 then 10,000, with static/rest/shared/independent cases in that order, 20 warmup and 100 measured frames, repeat 1. Labels are skinned-10k-final-r1/r2/r3. All 24 rows contain 2,400 CPU frames and 2,400 completed GPU samples. Summaries report the median of three process medians and retain each median/range. The p95 summary is the median of three process p95 values, not a pooled-frame p95. Scaling ratios compare 10k/1k within each process before taking their median.\n\nCPU view recording, CPU submission, GPU queries and synchronized completion/readback have distinct boundaries. Deferred palette math is included in CPU submission. GPU queries exclude upfront preparation/geometry/instance uploads, but include on-demand palette uploads and drawing; they are not isolated shader timings. The CPU sum adds separate interval medians and is only a derived estimate. Whole-frame readback timings do not establish pipelined FPS.\n\nThe fixture has 3,072 vertices, 6,048 triangles, 64 joints and four influences per character. At 10k this submits 30,720,000 vertices and 60,480,000 triangles/frame. The grid keeps nominal projected coverage constant; characters become smaller, so this is not ten times the pixel workload. Ten independent palette pages produce 11 total draws including clear and 40,960,000 palette upload bytes/frame. Memory values include earlier-case caches. The fresh 1k cases have a different preceding-case history from the original CPU3 study.\n\nThe named gate and 90-second sustained quiet guard exclude competing builds/tests/benchmarks; other desktop applications remain running. 250 ms NVIDIA observations cover entire processes, not individual cases or clock-normalized throughput. No system/power settings were changed. Excluded attempts, if any, are identified in metadata.\n\nThe final capture is frame 119 with 10k independently sampled poses at 1024×576. PNG/RGB hashes are retained in summary.json; the image and executable remain in scratch storage. No pixel comparison across the different character-count grids is implied. The 336-row prior ledger prefix remains exact; 24 new rows bring it to 360. Original measured artifact hashes and exported LF text hashes are recorded separately. CPU3 sealed evidence remains unchanged.\n\nVerify the lightweight export:\n\n\`\`\`sh\nnode bench/results/skinned-10k/reproduce/export.mjs --verify bench/results/skinned-10k\n\`\`\`\n\nTo reproduce, rebuild and preserve the stated source revision with the unchanged host/fixture, restore reproduce scripts to build/release/skinned-10k/, and adapt the machine-specific snapshot/executable/Node/GPU paths in run.ps1. Update the expected executable hash from that validated preserved build and the machine/driver description; keep the source, fixture and historical-ledger identities fixed. Restore the exact 336-row history before saving fresh labels. The runner refuses existing output directories and an unexpected history hash. It records the measured snapshot revision separately from checkout HEAD. Export afterward with export.mjs <verified-run-directory>.\n`);
+generated('original-artifacts.json',{meaning:'Original artifact bytes/hashes before UTF-8 LF normalization; executable,capture and historical/raw ledgers are excluded from this lightweight export.',source_revision:meta.source_revision,artifacts:[...sources.values()].sort((a,b)=>a.path.localeCompare(b.path))});
+const manifest={format:1,source_revision:meta.source_revision,normalization:'UTF-8 without BOM,LF with final newline; empty files remain empty.',files:[...files].map(([name,f])=>({path:name,bytes:f.b.length,sha256:hash(f.b),original:f.original})).sort((a,b)=>a.path.localeCompare(b.path))};
+if(dry){console.log(JSON.stringify({output:out,entries:manifest.files.length,ledger_sha256:hash(committed),files:manifest.files.map(f=>f.path)},null,2));process.exit(0)}
+fs.mkdirSync(out,{recursive:true});for(const[name,f]of files){const target=path.join(out,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,f.b,{flag:'wx'})}fs.writeFileSync(path.join(out,'export-manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx'});verify(out);
+if(!fs.readFileSync(meta.ledger_after.path).equals(committed))fs.writeFileSync(meta.ledger_after.path,committed);
+assert(hash(fs.readFileSync(meta.ledger_after.path))===hash(committed),'Ledger normalization failed');
+console.log(`Exported ${out};360-row committed-ledger SHA256 ${hash(committed)}`);
