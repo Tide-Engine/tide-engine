@@ -1,5 +1,12 @@
 # The docs site
 
+Degree literals (2026-10-10): Basics, Math and the spec document lowercase
+decimal `deg` literals as ordinary float radians, converted at compile time
+after reading their binary32 degree value. They cover fractions, exponents,
+underscores, unary minus and `quaternion.Euler(0, 180deg, 0)`. The shared
+TextMate grammar gives the entire literal the float scope, including in docs
+code fences. The grammar suite and production docs build passed.
+
 Quaternion Euler overload (2026-10-10): the Math page and spec document both
 `quaternion.Euler(float3 radians)` and `quaternion.Euler(x, y, z)`. Each scalar
 angle is in radians; the scalar form equals `quaternion.Euler(float3(x, y, z))`
@@ -107,6 +114,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - The docs' Markdown fences Tide as `csharp`, which GitHub highlights; the site highlights it with the editors' grammar (`tools/tide-syntax`). The workflow tests the grammar first, through the site's Shiki: `npm run test:grammar` in `docs/` checks the scopes of `tools/tide-syntax/test/probe.tide`'s cases and of the compiler's test programs.
 
 - **Skinned meshes and animation** (2026-10-08): `docs/game/animation.md` is the new presentation page, next to Drawing in 3D in the sidebar, linked from that page and Assets. It explains import/drawing, inferred names and optional contracts, dynamic lookup, explicit CPU sampling/blending, local bone edits, sockets and runtime GLB decoding with the match/local boundary. `docs/spec.md` now separates the agreed design, implemented provisional API details and remaining animation proposals. No automatic controller, root-motion extraction, IK or morph animation is presented as built. The shared grammar recognizes `SkinnedMesh<V, Contract>` without treating every unparameterized `SkinnedMesh` identifier as a builtin. The site build and all 202 grammar tests passed after merging the current `dev`.
+  - **Rest poses and separate clips** (2026-10-10): the animation page starts with drawing a model without clips, explains `defaultPose` and an omitted `Draw.SkinnedMesh` pose, and documents `asset Animations` with direct checked clip members. Its separate-file example samples into the character's default pose so edits and sockets use the character's bone references; direct sampled-source drawing and matching-rig binding are explained alongside the retargeting limitation. Sampling binds the selected clip's targets, while a drawn source pose requires all its source asset's animation targets and edited nodes. `Pose.Blend` stays strict, so the page explains sampling both clips into target poses first. Assets and Drawing in 3D link to these workflows; Editors describes catalog completion and metadata diagnostics.
 
 - **FBX imports** (2026-10-10): Assets, Drawing in 3D, Animation, Editors and the spec now document binary/ASCII `.fbx` for static and skinned build-time imports. They explain axis/unit conversion, animation baking, helper bones and separate textures, while runtime `SkinnedMesh.Decode` remains self-contained GLB only. The production docs build passed; missing generated example pages use the existing build's allowed placeholders. No site deployment was requested.
 

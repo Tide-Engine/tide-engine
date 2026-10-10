@@ -1,0 +1,84 @@
+asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
+asset Animations movement = "animations/clips/a.gltf";
+asset Texture image = "assets/hero.png";
+
+local singleton Calls
+{
+    int models;
+    int transforms;
+    int poses;
+    int order;
+    int omittedOrder;
+    int explicitOrder;
+    bool independent;
+    bool bound;
+}
+
+SkinnedMesh<Vertex3> Model(mut Calls calls)
+{
+    calls.models++;
+    calls.order = calls.order * 10 + 1;
+    return character;
+}
+
+float4x4 Transform(mut Calls calls)
+{
+    calls.transforms++;
+    calls.order = calls.order * 10 + 2;
+    return float4x4.identity;
+}
+
+Pose Rest(mut Calls calls)
+{
+    calls.poses++;
+    calls.order = calls.order * 10 + 3;
+    return character.defaultPose;
+}
+
+struct Shade { Color color; }
+
+vert Place(mut Vertex3 vertex, out float4 clip)
+{
+    clip = this.clip;
+}
+
+frag Paint(Vertex3 vertex, Shade shade, out Color color)
+{
+    color = shade.color * vertex.color;
+}
+
+view Show(mut Calls calls)
+{
+    var hand = character.skeleton.bones.arm;
+    mut var edited = character.defaultPose;
+    edited[hand].position.x = -7;
+    calls.independent = edited[hand].position.x == -7
+        && character.defaultPose[hand].position.x == 0
+        && character.animations.count == 0;
+
+    Draw.SkinnedMesh(Model(calls), Transform(calls));
+    calls.omittedOrder = calls.order;
+    calls.order = 0;
+    Draw.SkinnedMesh(Model(calls), Transform(calls), Rest(calls));
+    calls.explicitOrder = calls.order;
+
+    Draw.SkinnedMesh(character, float4x4.identity, image);
+    Draw.SkinnedMesh(character, float4x4.identity, image, Filter.Point, Wrap.Repeat);
+    Draw.SkinnedMesh(character, float4x4.identity, Paint, Shade { color = Color.white });
+    Draw.SkinnedMesh(character, float4x4.identity, Place, Paint, Shade { color = Color.white });
+    var target = RenderTarget.Window();
+    target.SkinnedMesh(character, float4x4.identity, Paint, Shade { color = Color.white });
+
+    // An explicitly invalid pose stays invalid; omission alone requests rest.
+    Pose invalid = default;
+    Draw.SkinnedMesh(character, float4x4.identity, invalid);
+
+    // The animation export contains Arm without this model's MeshNode.
+    mut var posed = character.defaultPose;
+    posed.Sample(movement.move, 0.5);
+    calls.bound = posed[hand].position.x == -12;
+    Draw.SkinnedMesh(character, float4x4.identity, posed);
+    Draw.SkinnedMesh(character, float4x4.identity, movement.move.Sample(0.5));
+}
+
+scene Main { }

@@ -1,0 +1,4 @@
+// expect: can't assign float to int
+scene Main { }
+component Angle { int value; }
+system Set(mut Angle angle) { angle.value = 180deg; }

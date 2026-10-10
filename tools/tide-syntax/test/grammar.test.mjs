@@ -498,6 +498,26 @@ for (const [name, lines] of Object.entries(cases)) {
 
 test('no text in probe.tide runs past its line', () => checkLinesEndText('probe.tide', probe));
 
+test('degree literals are whole float tokens with a lowercase suffix', () => {
+    const lines = tokenize('float degrees = 180deg + .5deg + 1e2deg + 1_8_0deg + 1.2_5e+1deg - 90deg;\n'
+        + 'quaternion turn = quaternion.Euler(0, 180deg, 0);\n'
+        + 'float ordinary = .5f + 1.5 + 1e2;\n'
+        + 'float names = turn180deg + deg + 180DEG + 180Deg + 180degExtra;\n'
+        + 'string text = "180deg .5deg"; // 90deg\n'
+        + 'float field = value.5deg;');
+    for (const text of ['180deg', '.5deg', '1e2deg', '1_8_0deg', '1.2_5e+1deg', '90deg']) {
+        check(lines[0], [text, 'constant.numeric.float']);
+        assert.equal(piecesOf(lines[0], text, 1).map(p => p.text).join(''), text, `${text} is one whole numeric token`);
+    }
+    check(lines[0], ['-', 'keyword.operator.arithmetic']);
+    check(lines[1], ['180deg', 'constant.numeric.float']);
+    for (const text of ['.5f', '1.5', '1e2']) check(lines[2], [text, 'constant.numeric.float']);
+    for (const text of ['turn180deg', 'deg', '180DEG', '180Deg', '180degExtra']) check(lines[3], [text, '!constant.numeric.float']);
+    check(lines[4], ['180deg', 'string.quoted.double']);
+    check(lines[4], ['90deg', 'comment.line']);
+    check(lines[5], ['.5deg', '!constant.numeric.float']);
+});
+
 // The editors indent after a line that opens a brace, but not one in text or a comment.
 test('indenting ignores braces in text and comments', () => {
     const configuration = JSON.parse(fs.readFileSync(path.join(here, '..', 'language-configuration.json'), 'utf8'));
@@ -530,7 +550,8 @@ test('indenting ignores braces in text and comments', () => {
 // can be written with what it's in (Combat.Move, Stats.Hurt): its last part
 // is the name.
 const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
-const programs = fs.readdirSync(e2e, { recursive: true }).filter(f => f.endsWith('.tide')).sort();
+const programs = fs.readdirSync(e2e, { recursive: true })
+    .filter(f => f.endsWith('.tide') && fs.statSync(path.join(e2e, f)).isFile()).sort();
 
 const modifiers = String.raw`(?:(?:local|async|virtual|override)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;

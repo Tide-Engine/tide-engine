@@ -1,0 +1,3 @@
+// expect: invalid number '180_'
+scene Main { }
+component Angle { float value = 180_deg; }

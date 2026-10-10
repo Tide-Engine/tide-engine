@@ -78,10 +78,16 @@ tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Textur
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
 target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=2430772888184797451ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
+tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)
+    add_test(NAME tidec_animations_identity
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/animations_identity.mjs"
+            "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/animations-identity" "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(tidec_animations_identity PROPERTIES TIMEOUT 120)
     add_test(NAME tidec_skinned_default_identity
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/skinned_default_identity.mjs"
             "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")
@@ -411,6 +417,10 @@ endforeach()
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.
 if(TARGET tidec_core)
+    add_executable(tidec_lexer_tests lexer_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_lexer_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_lexer_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_lexer COMMAND tidec_lexer_tests)
     add_executable(tidec_fbx_files_tests fbx_files_test.c fbx_parity_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_fbx_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_fbx_files_tests PRIVATE FBX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/fbx"

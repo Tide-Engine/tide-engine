@@ -1,6 +1,10 @@
+#include <math.h>
 #include <setjmp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include "tide/math.h"
 
 #include "ast.h"
 #include "types.h"
@@ -397,6 +401,24 @@ static expr *parse_primary(parser *p)
         advance(p);
         expr *e = new_expr(E_FLOAT, t->at);
         e->text = t->text;
+        if (t->text.len >= 3 && memcmp(t->text.ptr + t->text.len - 3, "deg", 3) == 0) {
+            // Read directly as binary32, then use the same binary32 multiply
+            // as Math.Radians. Keep the result, so C and shaders get one value
+            // and the original spelling stays available to editor tools.
+            char *digits = arena_alloc((size_t)t->text.len - 2);
+            int count = 0;
+            for (int i = 0; i < t->text.len - 3; i++) {
+                if (t->text.ptr[i] != '_') digits[count++] = t->text.ptr[i];
+            }
+            digits[count] = '\0';
+            const float degrees = strtof(digits, NULL);
+            if (!isfinite(degrees)) {
+                diag_error(t->at, "degree literal '" STR_FMT "' is too large for float", STR_ARG(t->text));
+                longjmp(p->fail, 1);
+            }
+            e->is_degrees = true;
+            e->float_value = tide_radians_f(degrees);
+        }
         return e;
     }
     case T_TRUE:

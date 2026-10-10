@@ -130,7 +130,8 @@ static void lex_digits(lexer *lx, const int base, const bool leading)
     }
 }
 
-// Numbers: 12, 1.5, .5, 1e3, 2.5e-3, with an optional f suffix meaning float.
+// Numbers: 12, 1.5, .5, 1e3, 2.5e-3, with an optional f suffix meaning float,
+// or deg for a float in radians, converted from degrees by the parser.
 // Integers can also be hex (0x1F) or binary (0b1010). `_` separates digits.
 static tok_kind lex_number(lexer *lx)
 {
@@ -164,7 +165,10 @@ static tok_kind lex_number(lexer *lx)
             lx->p = save;
         }
     }
-    if (lx->p < lx->end && (*lx->p == 'f' || *lx->p == 'F')) {
+    if (lx->end - lx->p >= 3 && memcmp(lx->p, "deg", 3) == 0) {
+        is_float = true;
+        lx->p += 3;
+    } else if (lx->p < lx->end && (*lx->p == 'f' || *lx->p == 'F')) {
         is_float = true;
         lx->p++;
     } else if (!is_float && lx->p < lx->end && (*lx->p == 'L' || *lx->p == 'l')) {

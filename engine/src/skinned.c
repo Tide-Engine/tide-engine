@@ -35,7 +35,7 @@ static void close_model(model_seen *m)
 
 static bool nodes_valid(const tide_skinned_data_view *v)
 {
-    if (v->nodes == 0u) return false;
+    if (v->nodes == 0u || v->nodes > INT32_MAX) return false;
     for (uint32_t i = 0; i < v->nodes; i++) {
         tide_skinned_node_data n;
         if (!tide_skinned_data_node(v, i, &n) || (i == 0u ? n.parent != -1 : n.parent < 0 || (uint32_t)n.parent >= i)) return false;
@@ -265,6 +265,246 @@ bool tide_skinned_sample(const tide_list data, const int32_t animation, const fl
         }
     }
     close_model(&m);
+    return valid;
+}
+
+typedef struct named_node {
+    uint64_t hash;
+    int32_t index;
+    bool ambiguous;
+} named_node;
+
+typedef struct node_names {
+    named_node *slots;
+    uint32_t mask;
+} node_names;
+
+static bool same_name(const tide_skinned_node_data *a, const tide_skinned_node_data *b)
+{
+    return a->name_length == b->name_length && memcmp(a->name, b->name, a->name_length) == 0;
+}
+
+static node_names index_names(const tide_skinned_data_view *v)
+{
+    uint32_t room = 1u;
+    while ((uint64_t)room < (uint64_t)v->nodes * 2u) room *= 2u;
+    node_names names = {tide_scratch_memory((size_t)room * sizeof(named_node)), room - 1u};
+    for (uint32_t i = 0; i < room; i++) names.slots[i] = (named_node){.index = -1};
+    for (uint32_t i = 1; i < v->nodes; i++) {
+        tide_skinned_node_data n;
+        (void)tide_skinned_data_node(v, i, &n);
+        if (!n.name_length) continue;
+        const uint64_t hash = tide_hash(n.name, n.name_length);
+        uint32_t at = (uint32_t)hash & names.mask;
+        while (names.slots[at].index >= 0) {
+            tide_skinned_node_data previous;
+            (void)tide_skinned_data_node(v, (uint32_t)names.slots[at].index, &previous);
+            if (names.slots[at].hash == hash && same_name(&n, &previous)) break;
+            at = (at + 1u) & names.mask;
+        }
+        if (names.slots[at].index >= 0) names.slots[at].ambiguous = true;
+        else names.slots[at] = (named_node){hash, (int32_t)i, false};
+    }
+    return names;
+}
+
+static int32_t named_index(const tide_skinned_data_view *v, const node_names names, const tide_skinned_node_data *n)
+{
+    if (!n->name_length) return -1;
+    const uint64_t hash = tide_hash(n->name, n->name_length);
+    uint32_t at = (uint32_t)hash & names.mask;
+    while (names.slots[at].index >= 0) {
+        tide_skinned_node_data found;
+        (void)tide_skinned_data_node(v, (uint32_t)names.slots[at].index, &found);
+        if (names.slots[at].hash == hash && same_name(n, &found)) {
+            return names.slots[at].ambiguous ? -1 : names.slots[at].index;
+        }
+        at = (at + 1u) & names.mask;
+    }
+    return -1;
+}
+
+static bool same_transform(const tide_bone_transform a, const tide_bone_transform b)
+{
+    const bool rotation = (a.rotation.value.x == b.rotation.value.x && a.rotation.value.y == b.rotation.value.y
+                           && a.rotation.value.z == b.rotation.value.z && a.rotation.value.w == b.rotation.value.w)
+        || (a.rotation.value.x == -b.rotation.value.x && a.rotation.value.y == -b.rotation.value.y
+            && a.rotation.value.z == -b.rotation.value.z && a.rotation.value.w == -b.rotation.value.w);
+    return a.position.x == b.position.x && a.position.y == b.position.y && a.position.z == b.position.z
+        && a.scale.x == b.scale.x && a.scale.y == b.scale.y && a.scale.z == b.scale.z && rotation;
+}
+
+// FBX conversion retains its scene root under the canonical identity root.
+// A static identity wrapper has no effect on named bones' parent-local TRS.
+static bool root_wrapper(const tide_skinned_data_view *v, const uint32_t index)
+{
+    tide_skinned_node_data n;
+    const tide_bone_transform identity = {tide_f3(0, 0, 0), {tide_f4(0, 0, 0, 1)}, tide_f3(1, 1, 1)};
+    return index != 0u && tide_skinned_data_node(v, index, &n) && n.parent == 0 && n.name_length == 0u
+        && same_transform(local_of(&n), identity);
+}
+
+static bool wrapper_channel_at_rest(const tide_skinned_data_view *v, const tide_skinned_channel_data *channel)
+{
+    const uint32_t width = channel->path == TIDE_SKINNED_ROTATION ? 4u : 3u;
+    float rotation_sign = 0.0f;
+    for (uint32_t i = 0; i < channel->keys; i++) {
+        float time, value[4], in[4], out[4];
+        if (!tide_skinned_data_key(v, channel, i, &time, value, in, out)) return false;
+        if (channel->path == TIDE_SKINNED_ROTATION && channel->interpolation == TIDE_SKINNED_CUBICSPLINE) {
+            if (i != 0u && value[3] != rotation_sign) return false;
+            rotation_sign = value[3];
+        }
+        for (uint32_t k = 0; k < width; k++) {
+            const float rest = channel->path == TIDE_SKINNED_SCALE || (channel->path == TIDE_SKINNED_ROTATION && k == 3u) ? 1.0f : 0.0f;
+            if (value[k] != rest && !(channel->path == TIDE_SKINNED_ROTATION && k == 3u && value[k] == -1.0f)) return false;
+            if (channel->interpolation == TIDE_SKINNED_CUBICSPLINE && (in[k] != 0.0f || out[k] != 0.0f)) return false;
+        }
+    }
+    return true;
+}
+
+static bool require_clip(const tide_skinned_data_view *v, const uint32_t index, uint8_t *required, const bool keys)
+{
+    tide_skinned_clip_data clip;
+    if (!tide_skinned_data_clip(v, index, &clip)) return false;
+    for (uint32_t i = 0; i < clip.channels; i++) {
+        tide_skinned_channel_data channel;
+        if (!tide_skinned_data_channel(v, clip.first_channel + i, &channel) || (keys && !channel_valid(v, &channel))) return false;
+        if (root_wrapper(v, channel.node) && !wrapper_channel_at_rest(v, &channel)) return false;
+        required[channel.node] = 1u;
+    }
+    return true;
+}
+
+static int32_t *bind_nodes(const tide_skinned_data_view *target, const tide_skinned_data_view *source, uint8_t *required)
+{
+    const node_names target_names = index_names(target), source_names = index_names(source);
+    int32_t *map = tide_scratch_memory((size_t)source->nodes * sizeof *map);
+    for (uint32_t i = 0; i < source->nodes; i++) map[i] = -1;
+    map[0] = 0;
+    for (uint32_t i = source->nodes; i-- > 1u;) {
+        if (!required[i]) continue;
+        tide_skinned_node_data n;
+        (void)tide_skinned_data_node(source, i, &n);
+        required[n.parent] = 1u;
+    }
+    for (uint32_t i = 0; i < source->nodes; i++) {
+        if (!required[i]) continue;
+        tide_skinned_node_data n, to;
+        (void)tide_skinned_data_node(source, i, &n);
+        if (root_wrapper(source, i)) {
+            map[i] = -2; // Transparent, never copied onto the canonical root.
+            continue;
+        }
+        if (i != 0u) {
+            if (named_index(source, source_names, &n) != (int32_t)i) return NULL;
+            map[i] = named_index(target, target_names, &n);
+        }
+        if (map[i] < 0 || !tide_skinned_data_node(target, (uint32_t)map[i], &to)) return NULL;
+        const int32_t source_parent = n.parent > 0 && root_wrapper(source, (uint32_t)n.parent) ? 0 : n.parent;
+        const int32_t target_parent = to.parent > 0 && root_wrapper(target, (uint32_t)to.parent) ? 0 : to.parent;
+        if (target_parent != (source_parent < 0 ? -1 : map[source_parent]) || !same_transform(local_of(&n), local_of(&to))) return NULL;
+    }
+    return map;
+}
+
+bool tide_skinned_sample_into(const tide_list target_data, const tide_list animation_data, const int32_t animation,
+                              const float seconds, tide_list *transforms, const uint32_t where)
+{
+    if (!transforms || animation < 0) return false;
+    model_seen target, source;
+    if (!open_model(target_data, &target)) return false;
+    if (!open_model(animation_data, &source)) { close_model(&target); return false; }
+    bool valid = nodes_valid(&target.view) && nodes_valid(&source.view);
+    if (valid && target.view.nodes == source.view.nodes
+        && memcmp(target.view.skeleton_hash, source.view.skeleton_hash, sizeof target.view.skeleton_hash) == 0) {
+        close_model(&source);
+        close_model(&target);
+        return tide_skinned_sample(animation_data, animation, seconds, transforms, where);
+    }
+    const uint32_t mark = tide_scratch_mark();
+    uint8_t *required = valid ? tide_scratch_memory(source.view.nodes) : NULL;
+    if (valid) memset(required, 0, source.view.nodes);
+    valid = valid && require_clip(&source.view, (uint32_t)animation, required, true);
+    const int32_t *map = valid ? bind_nodes(&target.view, &source.view, required) : NULL;
+    valid = valid && map != NULL;
+    if (valid) {
+        fill_rest(&target.view, transforms, where);
+        tide_skinned_clip_data clip;
+        (void)tide_skinned_data_clip(&source.view, (uint32_t)animation, &clip);
+        const float clock = tide_clamp_f(seconds, 0.0f, clip.length);
+        tide_list_cache cache = {0};
+        for (uint32_t i = 0; i < clip.channels; i++) {
+            tide_skinned_channel_data channel;
+            (void)tide_skinned_data_channel(&source.view, clip.first_channel + i, &channel);
+            if (map[channel.node] < 0) continue;
+            const tide_float4 value = sampled_value(&source.view, &channel, clock);
+            tide_bone_transform *to = tide_list_cached_at_mut(&cache, *transforms, map[channel.node], sizeof *to);
+            if (!to) continue;
+            if (channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
+            else if (channel.path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
+            else to->rotation = tide_normalize_q((tide_quaternion){value});
+        }
+    }
+    if (!valid || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
+    close_model(&source);
+    close_model(&target);
+    return valid;
+}
+
+bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_data, const tide_list source_transforms,
+                            tide_list *transforms, const uint32_t where)
+{
+    if (!transforms) return false;
+    model_seen target, source;
+    if (!open_model(target_data, &target)) return false;
+    if (!open_model(source_data, &source)) { close_model(&target); return false; }
+    const uint32_t mark = tide_scratch_mark();
+    bool valid = nodes_valid(&target.view) && nodes_valid(&source.view) && tide_list_count(source_transforms) == (int32_t)source.view.nodes;
+    const bool exact = valid && target.view.nodes == source.view.nodes
+        && memcmp(target.view.skeleton_hash, source.view.skeleton_hash, sizeof target.view.skeleton_hash) == 0;
+    uint8_t *required = valid && !exact ? tide_scratch_memory(source.view.nodes) : NULL;
+    if (required) memset(required, 0, source.view.nodes);
+    for (uint32_t i = 0; valid && !exact && i < source.view.clips; i++) valid = require_clip(&source.view, i, required, false);
+    tide_list_cache cache = {0};
+    for (uint32_t i = 0; valid && i < source.view.nodes; i++) {
+        const tide_bone_transform *local = tide_list_cached_at(&cache, source_transforms, (int32_t)i, sizeof *local);
+        if (!local) { valid = false; break; }
+        if (!exact) {
+            tide_skinned_node_data n;
+            (void)tide_skinned_data_node(&source.view, i, &n);
+            if (!same_transform(*local, local_of(&n))) {
+                if (root_wrapper(&source.view, i)) { valid = false; break; }
+                required[i] = 1u;
+            }
+        }
+    }
+    const int32_t *map = valid && !exact ? bind_nodes(&target.view, &source.view, required) : NULL;
+    valid = valid && (exact || map != NULL);
+    if (valid) {
+        // Stage the complete target before resizing: the output may alias source.
+        tide_bone_transform *made = tide_scratch_memory((size_t)target.view.nodes * sizeof *made);
+        for (uint32_t i = 0; i < target.view.nodes; i++) {
+            tide_skinned_node_data n;
+            (void)tide_skinned_data_node(&target.view, i, &n);
+            made[i] = local_of(&n);
+        }
+        for (uint32_t i = 0; i < source.view.nodes; i++) {
+            if (!exact && (!required[i] || map[i] < 0)) continue;
+            const tide_bone_transform *local = tide_list_cached_at(&cache, source_transforms, (int32_t)i, sizeof *local);
+            made[exact ? i : (uint32_t)map[i]] = *local;
+        }
+        tide_list_resize(transforms, (int32_t)target.view.nodes, sizeof *made, where);
+        tide_list_cache output = {0};
+        for (uint32_t i = 0; i < target.view.nodes; i++) {
+            tide_bone_transform *to = tide_list_cached_at_mut(&output, *transforms, (int32_t)i, sizeof *to);
+            if (to) *to = made[i];
+        }
+    }
+    if (!valid || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
+    close_model(&source);
+    close_model(&target);
     return valid;
 }
 

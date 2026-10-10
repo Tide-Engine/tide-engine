@@ -5215,6 +5215,29 @@ static const char *format_reply(const char *text)
     return request_with("textDocument/formatting", "\"options\":{\"tabSize\":4,\"insertSpaces\":true}");
 }
 
+TIDE_TEST(lsp_degree_literals_keep_source_spelling)
+{
+    start();
+    static const char messy[] =
+        "const float HALF_TURN=180deg;\nscene Main { }\nfloat Turn()\n{\nreturn -1_8_0deg+.5deg+1e2deg;\n}\n"
+        "quaternion Facing()\n{\nreturn quaternion.Euler(0,HALF_TURN,0);\n}\n";
+    static const char expected[] =
+        "const float HALF_TURN = 180deg;\nscene Main { }\nfloat Turn()\n{\n    return -1_8_0deg + .5deg + 1e2deg;\n}\n"
+        "quaternion Facing()\n{\n    return quaternion.Euler(0, HALF_TURN, 0);\n}\n";
+    open_document(messy);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at("file:///test.tide", "textDocument/hover", 0, 15, "");
+    TIDE_CHECK(has(hover, "const float HALF_TURN = 180deg"));
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), expected) == 0);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+    open_document("scene Main { }\nquaternion Facing() { return quaternion.Euler(0, $180deg, 0); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signature, "quaternion.Euler(float x, float y, float z)")
+               && has(signature, "\"activeParameter\":1"));
+}
+
 TIDE_TEST(lsp_format)
 {
     start();
@@ -10568,6 +10591,7 @@ TIDE_TEST(lsp_skinned_fbx_catalogs_complete_names_paths_and_refresh)
                                  "scene Main { }\n";
     write_file("lsp_fbx/main.tide", prefix);
     write_file("lsp_fbx/art/hero.FBX", fbx_catalog_fixture);
+    pin_file_time("lsp_fbx/art/hero.FBX");
     write_file("lsp_fbx/art/static.obj", "not a skinned format");
     char root[700], uri_main[700], uri_model[700], text[2048];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
@@ -10602,6 +10626,35 @@ TIDE_TEST(lsp_skinned_fbx_catalogs_complete_names_paths_and_refresh)
              "\"params\":{\"changes\":[{\"uri\":\"%s\",\"type\":2}]}}", uri_model);
     handle(notification);
     TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1u && model_metadata_statistics().file_reads == warm.file_reads + 1u);
+    static const char animation_prefix[] = "asset Animations movement = \"art/hero.FBX\";\n"
+                                           "asset List<Animations> clips = \"art/hero.FBX\";\n"
+                                           "scene Main { }\n";
+    snprintf(text, sizeof text, "%sview V()\n{\n    movement.\n}\n", animation_prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 5, 13, "");
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "run") && offers(completion, "Find")
+               && offers(completion, "At") && offers(completion, "count") && !offers(completion, "skeleton"));
+    TIDE_CHECK(has(completion, "original source name `Idle`"));
+    const model_metadata_stats shared = model_metadata_statistics();
+    TIDE_CHECK(shared.parses == warm.parses + 1u && shared.file_reads == warm.file_reads + 1u);
+    completion = request_at(uri_main, "textDocument/completion", 0, (int)strlen("asset Animations movement = \"art/"), "");
+    TIDE_CHECK(offers(completion, "hero.FBX") && !offers(completion, "static.obj"));
+    completion = request_at(uri_main, "textDocument/completion", 1, (int)strlen("asset List<Animations> clips = \"art/"), "");
+    TIDE_CHECK(offers(completion, "*.fbx") && offers(completion, "**/*.fbx") && !offers(completion, "*.obj"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 20, "");
+    TIDE_CHECK(has(hover, "asset Animations movement") && has(hover, "glTF or FBX") && has(hover, "without typed render geometry"));
+    char replacement[sizeof fbx_catalog_fixture];
+    memcpy(replacement, fbx_catalog_fixture, sizeof fbx_catalog_fixture);
+    memcpy(strstr(replacement, "Idle"), "Walk", 4);
+    write_file("lsp_fbx/art/hero.FBX", replacement);
+    pin_file_time("lsp_fbx/art/hero.FBX");
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 5, 13, "");
+    TIDE_CHECK(offers(completion, "idle") && !offers(completion, "walk"));
+    notify_file(uri_model, 2);
+    completion = request_at(uri_main, "textDocument/completion", 5, 13, "");
+    TIDE_CHECK(offers(completion, "walk") && !offers(completion, "idle"));
+    TIDE_CHECK(model_metadata_statistics().parses == shared.parses + 1u && model_metadata_statistics().file_reads == shared.file_reads + 1u);
     remove_game_file("lsp_fbx/main.tide");
     remove_game_file("lsp_fbx/art/hero.FBX");
     remove_game_file("lsp_fbx/art/static.obj");
@@ -10739,7 +10792,11 @@ TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
 {
     start();
-    const char *completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
+    const char *completion = complete("void Helper($\n");
+    TIDE_CHECK(offers(completion, "Animations"));
+    completion = complete("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color)\n{\n    Anim$\n}\n");
+    TIDE_CHECK(!offers(completion, "Animations"));
+    completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
     TIDE_CHECK(offers(completion, "Decode") && has(completion, "self-contained GLB"));
     open_document("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.Dec$ode([byte(0)])!;\n"
                   "    Debug.Log(\"\" + model.indices.count);\n}\n");
@@ -10751,12 +10808,31 @@ TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "Decode(List<byte> bytes)") && has(help, "SkinnedMesh<Vertex3> fails IOError"));
     completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    model.$\n}\n");
-    TIDE_CHECK(offers(completion, "animations") && offers(completion, "skeleton") && !offers(completion, "Decode") && !offers(completion, "data"));
+    TIDE_CHECK(offers(completion, "animations") && offers(completion, "skeleton") && offers(completion, "defaultPose")
+               && !offers(completion, "Decode") && !offers(completion, "data"));
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    var pose = model.default$Pose;\n    Draw.SkinnedMesh(model, float4x4.identity, pose);\n"
+                  "    Draw.SkinnedMesh(model, float4x4.identity);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *rest_hover = request("textDocument/hover");
+    TIDE_CHECK(has(rest_hover, "Pose defaultPose") && has(rest_hover, "authored rest transforms")
+               && has(rest_hover, "without animation clips"));
     open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
                   "    Pose pose = default;\n    Draw.SkinnedMesh(model, float4x4.identity, $pose);\n}\n");
     help = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(help, "Draw.SkinnedMesh(mesh, transform, pose[") && has(help, "\"activeParameter\":2"));
+    TIDE_CHECK(has(help, "Draw.SkinnedMesh(mesh, transform[, pose]") && has(help, "\"activeParameter\":2"));
     TIDE_CHECK(has(help, "skinning applies its transforms before the user vertex stage"));
+    open_document("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color) { color = vertex.color; }\n"
+                  "view V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    Draw.SkinnedMesh(model, float4x4.identity, $Shade);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Draw.SkinnedMesh(mesh, transform[, pose]") && has(help, "\"activeParameter\":7")
+               && has(help, "Omit it to draw the model's authored rest pose"));
+    completion = complete("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color) { color = vertex.color; }\n"
+                          "view V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                          "    Draw.SkinnedMesh(model, float4x4.identity, $\n}\n");
+    TIDE_CHECK(offers(completion, "Shade"));
     completion = complete("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color) { color = vertex.color; }\n"
                           "view V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    Pose pose = default;\n"
                           "    Draw.SkinnedMesh(model, float4x4.identity, pose, $\n}\n");
@@ -10767,4 +10843,115 @@ TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
     open_document("scene Main { }\nstruct EmptyAlias { [Name(\"\")] Bone socket; }\n"
                   "int Count(SkinnedMesh<Vertex3, EmptyAlias> model) { return model.skeleton.bones.count; }\n");
     TIDE_CHECK(has(last_sent(), "a model contract's Name alias cannot be empty") && has(last_sent(), "\"severity\":1"));
+}
+
+TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_animations");
+    make_folder("lsp_animations/art");
+    static const char prefix[] = "asset Animations movement = \"art/movement.gltf\";\nscene Main { }\n";
+    static const char metadata[] = "{\"asset\":{\"version\":\"2.0\"},"
+                                   "\"animations\":[{\"name\":\"Idle\"},{\"name\":\"Run\"},{\"name\":\"bad name\"},"
+                                   "{\"name\":\"Jump\"},{\"name\":\"jump\"},{\"name\":\"for\"}],"
+                                   "\"nodes\":[{\"name\":\"Root\"}],"
+                                   "\"buffers\":[{\"uri\":\"must-not-read.bin\",\"byteLength\":99999999}]}";
+    write_file("lsp_animations/main.tide", prefix);
+    write_file("lsp_animations/art/movement.gltf", metadata);
+    pin_file_time("lsp_animations/art/movement.gltf");
+    write_file("lsp_animations/art/other.glb", "not inspected by path completion");
+    write_file("lsp_animations/art/other.obj", "not glTF");
+    char root[700], uri_main[700], uri_model[700], text[2048];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_animations", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_animations/main.tide", dir);
+    snprintf(uri_model, sizeof uri_model, "file:///%s/lsp_animations/art/movement.gltf", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    snprintf(text, sizeof text, "%sview V()\n{\n    var clips = movement;\n    clips.\n}\n", prefix);
+    open_uri(uri_main, text);
+    const char *completion = request_at(uri_main, "textDocument/completion", 5, 10, "");
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "run") && offers(completion, "count")
+               && offers(completion, "Find") && offers(completion, "At"));
+    TIDE_CHECK(!offers(completion, "bad name") && !offers(completion, "jump") && !offers(completion, "for")
+               && !offers(completion, "data") && !offers(completion, "skeleton") && !offers(completion, "Decode"));
+    TIDE_CHECK(has(completion, "original source name `Idle`"));
+    model_metadata_stats warm = model_metadata_statistics();
+    TIDE_CHECK(warm.parses == 1 && warm.file_reads == 1 && warm.bytes_read == sizeof metadata - 1);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 5, 10, "");
+    TIDE_CHECK(offers(completion, "idle") && model_metadata_statistics().parses == warm.parses
+               && model_metadata_statistics().file_reads == warm.file_reads);
+
+    snprintf(text, sizeof text, "%sview V() { Debug.Log(movement.idle.name); }\n", prefix);
+    open_uri(uri_main, text);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at(uri_main, "textDocument/hover", 2, 31, "");
+    TIDE_CHECK(has(hover, "Animation idle") && has(hover, "original source name `Idle`"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 20, "");
+    TIDE_CHECK(has(hover, "asset Animations movement") && has(hover, "without typed render geometry"));
+    completion = request_at(uri_main, "textDocument/completion", 0, 40, "");
+    TIDE_CHECK(offers(completion, "movement.gltf") && offers(completion, "other.glb") && !offers(completion, "other.obj"));
+
+    snprintf(text, sizeof text, "%svoid Helper(Animations clips)\n{\n    clips.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 4, 10, "");
+    TIDE_CHECK(offers(completion, "count") && offers(completion, "Find") && offers(completion, "At")
+               && !offers(completion, "idle"));
+    snprintf(text, sizeof text, "%sfrag Shade(Vertex3 vertex, out Color color)\n{\n    movement.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 4, 13, "");
+    TIDE_CHECK(!offers(completion, "count") && !offers(completion, "Find") && !offers(completion, "idle"));
+
+    char replacement[sizeof metadata];
+    memcpy(replacement, metadata, sizeof metadata);
+    memcpy(strstr(replacement, "Idle"), "Walk", 4);
+    memcpy(strstr(replacement, "Run"), "Jog", 3);
+    write_file("lsp_animations/art/movement.gltf", replacement);
+    pin_file_time("lsp_animations/art/movement.gltf");
+    snprintf(text, sizeof text, "%sview V()\n{\n    movement.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 4, 13, "");
+    TIDE_CHECK(offers(completion, "idle") && !offers(completion, "walk"));
+    notify_file(uri_model, 2);
+    completion = request_at(uri_main, "textDocument/completion", 4, 13, "");
+    TIDE_CHECK(offers(completion, "walk") && offers(completion, "jog") && !offers(completion, "idle") && !offers(completion, "run"));
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1 && model_metadata_statistics().file_reads == warm.file_reads + 1);
+
+    write_file("lsp_animations/art/movement.gltf", "{broken JSON}");
+    notify_file(uri_model, 2);
+    snprintf(text, sizeof text, "%sview V() { Debug.Log(movement.walk.name); }\n", prefix);
+    open_uri(uri_main, text);
+    TIDE_CHECK(has(last_sent(), "animation catalog metadata is invalid") && has(last_sent(), "has incomplete or invalid JSON")
+               && !has(last_sent(), "has no checked member 'walk'"));
+    remove_game_file("lsp_animations/art/movement.gltf");
+    notify_file(uri_model, 3);
+    open_uri(uri_main, text);
+    TIDE_CHECK(has(last_sent(), "animation catalog metadata is unavailable") && !has(last_sent(), "has no checked member 'walk'"));
+    model_metadata_forget();
+    static const char remote[] = "asset Animations movement = \"https://must-never-be-contacted.invalid/run.glb\";\n"
+                                 "scene Main { }\nview V() { if (movement.Find(\"Run\") is Animation run) Debug.Log(run.name); }\n";
+    open_uri(uri_main, remote);
+    TIDE_CHECK(has(last_sent(), "metadata is unavailable") && !has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(model_metadata_statistics().file_reads == 0 && model_metadata_statistics().parses == 0);
+    write_file("lsp_animations/art/rest.gltf", "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"Root\"}]}");
+    static const char rest[] = "asset SkinnedMesh<Vertex3> hero = \"art/rest.gltf\";\nscene Main { }\n"
+                               "view V()\n{\n    var pose = hero.defaultPose;\n    Draw.SkinnedMesh(hero, float4x4.identity, pose);\n"
+                               "    Draw.SkinnedMesh(hero, float4x4.identity);\n}\n";
+    open_uri(uri_main, rest);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    hover = request_at(uri_main, "textDocument/hover", 4, 24, "");
+    TIDE_CHECK(has(hover, "Pose defaultPose") && has(hover, "without animation clips"));
+    remove_game_file("lsp_animations/main.tide");
+    remove_game_file("lsp_animations/art/rest.gltf");
+    remove_game_file("lsp_animations/art/other.glb");
+    remove_game_file("lsp_animations/art/other.obj");
+    remove_game_file("lsp_animations/.tide/assets.sha256");
+    remove_game_file("lsp_animations/.tide/.gitignore");
+    remove_folder("lsp_animations/.tide");
+    remove_folder("lsp_animations/art");
+    remove_folder("lsp_animations");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
 }
