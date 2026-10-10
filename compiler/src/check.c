@@ -9063,8 +9063,8 @@ static type check_expr_any(checker *c, expr *e)
         t = T_ERR;
     }
     e->type = t;
-    // Text and lists that code makes go in the scratch area.
-    if ((t.kind == TY_STRING && e->kind != E_STRING) || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) c->prog->uses_text = true;
+    // Text and lists, including a struct's owned fields, go in the scratch area.
+    if (holds_heap(t) && (t.kind != TY_STRING || e->kind != E_STRING)) c->prog->uses_text = true;
     if (!whole_ok) note_device_value(c, e, t);
     return t;
 }
