@@ -28,6 +28,16 @@ find_program(TIDE_FIREFOX
     PATHS "C:/Program Files/Mozilla Firefox" "/Applications/Firefox.app/Contents/MacOS"
     DOC "Firefox, for desktop rooms against a second browser")
 
+# Chrome's software renderer uses workers across the host's CPUs. Account for
+# them in CTest's budget, so concurrent browsers and WASI tests don't starve
+# a page while its real-time guard is running. This is the build host even
+# when the tests themselves are compiled for WebAssembly.
+include(ProcessorCount)
+ProcessorCount(TIDE_WEB_TEST_PROCESSORS)
+if(NOT TIDE_WEB_TEST_PROCESSORS GREATER 0)
+    set(TIDE_WEB_TEST_PROCESSORS 1)
+endif()
+
 function(tide_add_web_test name)
     cmake_parse_arguments(ARG "WEBGPU" "TARGET;QUERY;EXPECT" "" ${ARGN})
     set(page "$<TARGET_FILE_DIR:${ARG_TARGET}>/${ARG_TARGET}.html")
@@ -45,7 +55,8 @@ function(tide_add_web_test name)
             "-DQUERY=${query}"
             "-DPROFILE=${CMAKE_CURRENT_BINARY_DIR}/${name}-browser"
             -P "${PROJECT_SOURCE_DIR}/cmake/run_web_test.cmake")
-    set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+    set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:"
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     if(ARG_WEBGPU)
         set(expect "")
         if(ARG_EXPECT)
@@ -56,6 +67,7 @@ function(tide_add_web_test name)
                 "${CMAKE_CURRENT_BINARY_DIR}/${name}_webgpu-browser" "${webgpu_query}" ${expect})
         # The runner gives up after 100 seconds by itself, and then asks the
         # page where it stands, which can take 30 more: this is the guard around it.
-        set_tests_properties(${name}_webgpu PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS webgpu TIMEOUT 150)
+        set_tests_properties(${name}_webgpu PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS webgpu TIMEOUT 150
+            PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     endif()
 endfunction()

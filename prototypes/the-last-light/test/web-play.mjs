@@ -117,9 +117,14 @@ try {
                 if (now - reportedAt > 1000) note(`${name}: ${(now - reportedAt).toFixed(0)} ms between completed frames`);
                 reportedAt = now;
                 const value = JSON.parse(message.params.payload);
-                if (value.url !== state?.url) clock = { node: now, page: value.pageAt };
+                if (value.url !== state?.url) clock = { node: now, page: value.pageAt, wall: value.wallAt };
                 value.reportLag = Math.max(0, (now - clock.node) - (value.pageAt - clock.page));
+                value.deliveryLag = Math.max(0, Date.now() - value.wallAt);
+                value.clockDrift = (value.wallAt - clock.wall) - (value.pageAt - clock.page);
                 state = value;
+            } else if (message.method === 'Runtime.bindingCalled' && message.params.name === '__lastLightEvent') {
+                const value = JSON.parse(message.params.payload);
+                note(`${name}: ${JSON.stringify({ ...value, deliveryLag: Math.max(0, Date.now() - value.wallAt) })}`);
             } else if (message.method === 'Runtime.exceptionThrown') {
                 errors.push(`${name}: ${message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text}`);
             } else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
@@ -192,10 +197,16 @@ try {
         await command('Log.enable');
         await command('Inspector.enable');
         await command('Runtime.addBinding', { name: '__lastLightFrame' });
+        await command('Runtime.addBinding', { name: '__lastLightEvent' });
         await command('Page.addScriptToEvaluateOnNewDocument', { source: `
             window.__draws = 0; window.__frames = 0; window.__peers = []; window.__messages = 0; window.__sent = 0; window.__aborted = '';
             window.__receivedAt = 0; window.__sentAt = 0;
             let reported = -Infinity;
+            const event = (name, details) => window.__lastLightEvent(JSON.stringify({event:name,
+                pageAt:performance.now(), wallAt:Date.now(), ...details}));
+            const peerState = peer => ({connection:peer.connectionState, ice:peer.iceConnectionState,
+                gathering:peer.iceGatheringState, signaling:peer.signalingState,
+                local:peer.localDescription?.type, remote:peer.remoteDescription?.type});
             const received = () => { window.__messages++; window.__receivedAt = performance.now(); };
             for (const name of ['drawArraysInstanced','drawElementsInstanced','drawArrays','drawElements']) {
                 const original = WebGL2RenderingContext.prototype[name];
@@ -209,7 +220,21 @@ try {
             window.RTCPeerConnection = class extends peer {
                 constructor(...values) {
                     super(...values); window.__peers.push(this);
+                    const index = window.__peers.length - 1;
+                    event('peer created', {index, ...peerState(this)});
+                    for (const name of ['connectionstatechange', 'iceconnectionstatechange', 'icegatheringstatechange', 'signalingstatechange'])
+                        this.addEventListener(name, () => event(name, {index, ...peerState(this)}));
                     this.addEventListener('datachannel', event => event.channel.addEventListener('message', received));
+                }
+                async setLocalDescription(...values) {
+                    event('setLocalDescription started', peerState(this));
+                    await super.setLocalDescription(...values);
+                    event('setLocalDescription finished', peerState(this));
+                }
+                async setRemoteDescription(...values) {
+                    event('setRemoteDescription started', peerState(this));
+                    await super.setRemoteDescription(...values);
+                    event('setRemoteDescription finished', peerState(this));
                 }
                 createDataChannel(...values) {
                     const channel = super.createDataChannel(...values);
@@ -231,10 +256,11 @@ try {
                     if (now - reported < 100) return;
                     reported = now;
                     const canvas = document.querySelector('canvas');
-                    window.__lastLightFrame(JSON.stringify({url:location.href, pageAt:now, ready:document.readyState,
+                    window.__lastLightFrame(JSON.stringify({url:location.href, pageAt:now, wallAt:Date.now(), ready:document.readyState,
                         isolated:window.crossOriginIsolated, visibility:document.visibilityState,
                         frames:window.__frames, draws:window.__draws, room:value.room,
                         peers:window.__peers.map(peer=>peer.connectionState),
+                        negotiation:window.__peers.map(peerState),
                         messages:window.__messages, sent:window.__sent, aborted:window.__aborted,
                         receiveAge:performance.now()-window.__receivedAt, sendAge:performance.now()-window.__sentAt,
                         state:netcode[0], verified:netcode[4], work:netcode[17],
