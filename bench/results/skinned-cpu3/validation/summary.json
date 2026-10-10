@@ -1,0 +1,196 @@
+{
+  "state": "passed",
+  "head": "874422c0becc35116c94e31e4d92bbe074dde6b3",
+  "startedAtUtc": "2026-10-10T20:14:27.3117653Z",
+  "sourceManifest": "source-hashes.json",
+  "sourceCount": 2886,
+  "sourceEnumeration": "git ls-files --cached --others --exclude-standard; includes untracked fixtures/goldens",
+  "frozenProductionAndTestSourcesUnchanged": true,
+  "node": {
+    "version": "v24.19.0",
+    "path": "C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe"
+  },
+  "checks": [
+    {
+      "command": "cmake --build --preset debug --target tide_tests tide_platform_skinned tidec_e2e_skinned_rest tidec_e2e_skinned_draw_borrow tidec_e2e_skinned_attribute_limit -j 8",
+      "log": "focused-debug-build.log",
+      "startedAtUtc": "2026-10-10T20:14:28.6506439Z",
+      "exitCode": 0,
+      "elapsedSeconds": 1.5479785,
+      "completedAtUtc": "2026-10-10T20:14:30.2052861Z"
+    },
+    {
+      "command": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\debug\\bin\\tide_tests.exe skinned",
+      "log": "skinned-tests.log",
+      "startedAtUtc": "2026-10-10T20:14:32.2157245Z",
+      "exitCode": 0,
+      "elapsedSeconds": 0.6105132,
+      "completedAtUtc": "2026-10-10T20:14:32.8275554Z",
+      "passed": 40,
+      "total": 40,
+      "failed": 0
+    },
+    {
+      "command": "ctest --preset debug --verbose -R ^(tide_platform_skinned|tidec_e2e_skinned_(rest|draw_borrow|attribute_limit))$",
+      "log": "native-focused-ctest.log",
+      "startedAtUtc": "2026-10-10T20:14:34.7909658Z",
+      "exitCode": 0,
+      "elapsedSeconds": 0.689672,
+      "completedAtUtc": "2026-10-10T20:14:35.4817346Z",
+      "failed": 0,
+      "total": 4,
+      "passed": 4
+    },
+    {
+      "command": "cmake --build --preset debug -j 8",
+      "log": "debug-build.log",
+      "startedAtUtc": "2026-10-10T20:14:37.4982558Z",
+      "exitCode": 0,
+      "elapsedSeconds": 25.4005246,
+      "completedAtUtc": "2026-10-10T20:15:02.8998296Z"
+    },
+    {
+      "command": "ctest --preset debug --output-on-failure",
+      "log": "native-ctest.log",
+      "startedAtUtc": "2026-10-10T20:15:05.2107411Z",
+      "exitCode": 0,
+      "elapsedSeconds": 260.6991429,
+      "completedAtUtc": "2026-10-10T20:19:25.9110006Z",
+      "failed": 0,
+      "total": 2064,
+      "passed": 2064
+    },
+    {
+      "command": "cmake --build --preset web-debug -j 8",
+      "log": "web-build.log",
+      "startedAtUtc": "2026-10-10T20:19:27.9415944Z",
+      "exitCode": 0,
+      "elapsedSeconds": 27.1563326,
+      "completedAtUtc": "2026-10-10T20:19:55.098957Z"
+    },
+    {
+      "command": "ctest --preset web-debug --verbose -R ^(tide_tests|tide_platform_skinned(_webgpu)?|tidec_e2e_skinned_(rest|draw_borrow|attribute_limit))$",
+      "log": "web-focused-ctest.log",
+      "startedAtUtc": "2026-10-10T20:19:57.146845Z",
+      "exitCode": 0,
+      "elapsedSeconds": 5.1319379,
+      "completedAtUtc": "2026-10-10T20:20:02.2798163Z",
+      "failed": 0,
+      "total": 6,
+      "passed": 6
+    },
+    {
+      "command": "ctest --preset web-debug --output-on-failure",
+      "log": "web-ctest.log",
+      "startedAtUtc": "2026-10-10T20:20:04.3110912Z",
+      "exitCode": 0,
+      "elapsedSeconds": 311.1270678,
+      "completedAtUtc": "2026-10-10T20:25:15.4391545Z",
+      "failed": 0,
+      "total": 2034,
+      "passed": 2034
+    },
+    {
+      "command": "cmake --build --preset release --target bench_skinned -j 8",
+      "log": "release-bench-build.log",
+      "startedAtUtc": "2026-10-10T20:25:17.5478113Z",
+      "exitCode": 0,
+      "elapsedSeconds": 6.9503853,
+      "completedAtUtc": "2026-10-10T20:25:24.4991846Z"
+    },
+    {
+      "command": "npm run build (docs)",
+      "exitCode": 0,
+      "log": "../docs-build.log",
+      "logSha256": "6a365e71bf2cf46f2bc0a33a7a995333980ca104d006c6194ec52d6a3504e658",
+      "note": "Run by compiler agent during correctness build; finished before performance measurements."
+    },
+    {
+      "command": "bench_skinned --counts 1000 --frames 3 --warmup 2 --repeat 1",
+      "exitCode": 0,
+      "log": "release-smoke.log",
+      "workloads": 4,
+      "framesPerWorkload": 3,
+      "gpuSamplesPerWorkload": 3,
+      "independentDrawCalls": 2,
+      "independentPaletteUploadBytes": 4096000,
+      "saved": false,
+      "ledgerUnchanged": true,
+      "purpose": "Bounded rendering/work-count correctness smoke; timings are not performance evidence"
+    }
+  ],
+  "benchmarkRunsPerformed": 0,
+  "releaseExecutable": {
+    "path": "build/release/bin/bench_skinned.exe",
+    "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575"
+  },
+  "completedAtUtc": "2026-10-10T20:25:26.5314035Z",
+  "unsavedBenchmarkSmokesPerformed": 1,
+  "benchmarkRunsPerformedMeaning": "Saved performance comparisons; the separate three-frame unsaved rendering smoke is correctness evidence only.",
+  "observedPalettePreparation": [
+    {
+      "log": "native-focused-ctest.log",
+      "stdout": "2011: ok: 2048 independent palettes match serial preparation (pool 12, callbacks 4, workers 3)"
+    },
+    {
+      "log": "web-focused-ctest.log",
+      "stdout": "1976: ok: 2048 independent palettes match serial preparation (pool 1, callbacks 0, workers 0)"
+    },
+    {
+      "log": "web-focused-ctest.log",
+      "stdout": "1977: ok: 2048 independent palettes match serial preparation (pool 24, callbacks 1, workers 0)"
+    }
+  ],
+  "logIdentities": [
+    {
+      "path": "debug-build.log",
+      "bytes": 113453,
+      "sha256": "f0d1783e15f81e6865a03b1e019849d1b72a35949a6ccbedefd21bcdeddb0f77"
+    },
+    {
+      "path": "focused-debug-build.log",
+      "bytes": 5968,
+      "sha256": "a8ca5b800151ef91aa13beec125853ad503edd65093f702f48f41a03ce8ee8bc"
+    },
+    {
+      "path": "native-ctest.log",
+      "bytes": 325259,
+      "sha256": "41dad318e4b94228b6a2c81f489d72f1c5970ce9653bef498ce9d872652f3a7d"
+    },
+    {
+      "path": "native-focused-ctest.log",
+      "bytes": 5399,
+      "sha256": "80a1c5d5fd6f23bd8514faaedddf0cf2644051f245eb0b46c893369a75c6d4dd"
+    },
+    {
+      "path": "release-bench-build.log",
+      "bytes": 4684,
+      "sha256": "6dee456f86aab352a7b7e14ae9e0f3eef977f8908f85eafd4aaf4cc7f43d9789"
+    },
+    {
+      "path": "release-smoke.log",
+      "bytes": 1109,
+      "sha256": "d2d640325897afdd69a2c29724c4649b45ff52c7ead8c02af5dc6340dd7a94e8"
+    },
+    {
+      "path": "skinned-tests.log",
+      "bytes": 3090,
+      "sha256": "82f7504616c52f531e069943004c057b8bfd8957ad3e4446cfd2d17b1e36ff85"
+    },
+    {
+      "path": "web-build.log",
+      "bytes": 118195,
+      "sha256": "5a65cc5e36546406f50ee817c71d30b7be04c1f518e357362c8860f8ec4be539"
+    },
+    {
+      "path": "web-ctest.log",
+      "bytes": 320993,
+      "sha256": "8f5dce6d8f2ad16aab4b2421fe36b332493673957f60f0f7d3585950ffd2400b"
+    },
+    {
+      "path": "web-focused-ctest.log",
+      "bytes": 36953,
+      "sha256": "fb2548ddc074986d033d12d3ca426c3c5707345c8f78ac8f890cf67a97dfa072"
+    }
+  ]
+}

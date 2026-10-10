@@ -1,0 +1,67 @@
+{
+  "command": "bench_skinned --counts 1000 --frames 3 --warmup 2 --repeat 1",
+  "exitCode": 0,
+  "saved": false,
+  "ledgerBeforeSha256": "058ff4d25eabb5836294d2ad508aba6291f48d1b662ad2f8236e84a99a9c51b5",
+  "ledgerAfterSha256": "058ff4d25eabb5836294d2ad508aba6291f48d1b662ad2f8236e84a99a9c51b5",
+  "purpose": "Bounded rendering/work-count correctness smoke; timings are not performance evidence",
+  "verificationNote": "The original single invocation exited0. A JSON-only scratch parser failed afterward; its existing human-summary log was reparsed without rerunning the executable.",
+  "rows": [
+    {
+      "characters": 1000,
+      "mode": "static",
+      "frames": 3,
+      "gpu_samples": 3,
+      "warmup": 2,
+      "repeat": 1,
+      "draw_calls": {
+        "median": 2
+      },
+      "texture_upload_bytes": {
+        "median": 0
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "omitted_rest",
+      "frames": 3,
+      "gpu_samples": 3,
+      "warmup": 2,
+      "repeat": 1,
+      "draw_calls": {
+        "median": 2
+      },
+      "texture_upload_bytes": {
+        "median": 0
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "shared_pose",
+      "frames": 3,
+      "gpu_samples": 3,
+      "warmup": 2,
+      "repeat": 1,
+      "draw_calls": {
+        "median": 2
+      },
+      "texture_upload_bytes": {
+        "median": 4096
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "independent_poses",
+      "frames": 3,
+      "gpu_samples": 3,
+      "warmup": 2,
+      "repeat": 1,
+      "draw_calls": {
+        "median": 2
+      },
+      "texture_upload_bytes": {
+        "median": 4096000
+      }
+    }
+  ]
+}

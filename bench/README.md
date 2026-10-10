@@ -226,6 +226,29 @@ Draw counts and upload bytes match every before/after case, and the final frame-
 
 The subsequent clean merge with release stripping at `1886fbb9` passes 52 overlapping native/web debug and release checks. A standalone pruned game's native/WASI probe verifies retained used mesh/animation assets, current model validation after pack offsets change, repeated palette reuse and scratch cleanup; release OpenGL/WebGL/WebGPU rendering and benchmark smoke also pass. The measured executable hashes and source identities above remain unchanged.
 
+### Shared palette pages and worker preparation
+
+The third change captures independent poses into shared integer-texture palette pages. A hidden per-instance matrix offset lets compatible characters form one mesh draw even with different poses. Captured model dependencies and local transforms remain owned by the draw list; the existing worker pool calculates independent palettes before rendering. Small workloads run serially, shaders with fully occupied attribute layouts retain individual palettes, and animation sampling still happens immediately.
+
+Preserved `874422c0` and tested `a10d2f4b` release executables use the unchanged host, fixture and three alternating pairs above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after the 90-second quiet window, without competing builds/tests or excluded attempts. These are medians of three round medians at 1,000 characters:
+
+| Mode | CPU views before (ms) | After (ms) | CPU submission before (ms) | After (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Static geometry | 0.057 | 0.057 | 0.032 | 0.006 |
+| Omitted default pose | 0.646 | 0.671 | 0.034 | 0.009 |
+| Shared animated pose | 0.673 | 0.702 | 0.037 | 0.010 |
+| Independent animated poses | 4.920 | 2.961 | 3.331 | 0.465 |
+
+Palette math moves from views into CPU submission, so the view reduction alone overstates the net CPU gain. Summing the separate view/submission medians within each round gives a **derived estimate**, not a median of combined per-frame samples. The median of these sums is 8.178→3.425 ms for independent animation, with a median paired ratio of 2.21×. Baseline submission round medians are 3.497/0.646/3.331 ms; optimized medians are 0.465/0.426/0.650 ms. Static submission shows the same small alternating-process variation, so its isolated interval is not evidence of a static-rendering improvement. Rest/shared derived CPU sums are essentially unchanged at 0.680→0.682 and 0.710→0.711 ms; their full-readback frame medians slightly increase, 1.656→1.727 and 1.682→1.756 ms.
+
+Independent animation now uses one mesh draw plus the clear, replacing 1,001 total draws with two. Palette uploads remain 4,096,000 bytes/frame at 1,000 characters. At ten independent poses, final-row padding increases uploaded bytes from 40,960 to 49,152; at 100 and 1,000 they remain equal. Final frame-119 captures have identical PNG bytes and decoded RGB pixels. The independent full frame through synchronized readback falls from 13.588 to 4.788 ms; GPU queries fall from 6.375 to 1.071 ms. Queries still include on-demand uploads and draw execution, and the batching changes submission; these values do not isolate shader arithmetic or establish pipelined FPS. Whole-process clocks have 65 P0 observations and one initial P8, spanning 210–2,835 MHz graphics and 405–11,501 MHz memory. Other desktop applications remain running.
+
+All 2,064 native and 2,034 web debug CTests pass, alongside 40 focused skinned runtime tests and the docs production build. The native preparation probe observed three worker callbacks and matched every serial palette byte; the initial served WebGPU round completed on its caller, while WebGL exercised the no-pool fallback. [The complete comparison evidence](results/skinned-cpu3/README.md) retains rows, ranges, clocks, both immutable snapshots' identities/source hashes and validation summaries. The ledger preserves its exact previous 240 rows alongside 96 new rows. Verify the exported text with:
+
+```powershell
+node bench/results/skinned-cpu3/reproduce/export.mjs --verify bench/results/skinned-cpu3
+```
+
 ## Input delay in Sumo
 
 ```powershell

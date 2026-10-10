@@ -1,0 +1,424 @@
+{
+  "protocol": "Three paired rounds; round 1 before/after, round 2 after/before, round 3 before/after",
+  "state": "verified",
+  "source_before": "874422c0becc35116c94e31e4d92bbe074dde6b3",
+  "source_after": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+  "fixture_sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3",
+  "counts": [
+    1,
+    10,
+    100,
+    1000
+  ],
+  "modes": [
+    "static",
+    "omitted_rest",
+    "shared_pose",
+    "independent_poses"
+  ],
+  "frames": 100,
+  "warmup": 20,
+  "repeat": 1,
+  "rounds": 3,
+  "width": 1024,
+  "height": 576,
+  "pixel_scale": 1,
+  "expected_rows": 96,
+  "expected_cpu_frames": 9600,
+  "expected_gpu_samples": 9600,
+  "gpu_monitor_interval_ms": 250,
+  "gpu_uuid": "GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f",
+  "gate": "Local\\TideClaudeContinuationBenchmark",
+  "interpretation": "CPU view/recording, CPU submission, GPU queries and full-frame readback are distinct intervals. GPU queries exclude upfront renderer preparation and geometry/instance uploads, but include on-demand palette texture creation/update inside draw_shaded; they are not pure shader time. Do not sum CPU and GPU or infer pipelined FPS. Retained process/GPU memory includes caches. Clocks are observed without power-setting changes; shared desktop applications remain running.",
+  "capture": "Both round-3 final frames: 1000 independent poses, frame_at=119, seconds=float(119)/60; compare PNG bytes and decoded RGB pixels",
+  "ledger_before": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\bench\\results\\skinned.jsonl",
+    "bytes": 266834,
+    "sha256": "058ff4d25eabb5836294d2ad508aba6291f48d1b662ad2f8236e84a99a9c51b5"
+  },
+  "ledger_before_rows": 240,
+  "gpu_query_boundary": "Excludes upfront renderer preparation and geometry/instance uploads. Includes on-demand palette texture creation/update inside draw_shaded, plus shader drawing; excludes framebuffer readback. GPU query is not pure shader execution time.",
+  "cpu_comparison": "Palette computation moves from generated views into renderer preparation inside CPU submission, before the GPU query. Compare both CPU intervals and full-frame readback. The sum of separate view/submission round medians is a derived estimate, not the median of combined per-frame samples.",
+  "rendering_work": "Identical fixture, character counts and sampled times. Palette atlas batching intentionally changes draw counts; upload bytes and draws are compared and recorded, rather than required equal. Final PNG/RGB equality remains mandatory.",
+  "excluded_attempts": [],
+  "pre_run_quiet_seconds": 90,
+  "runs": [
+    {
+      "round": 1,
+      "side": "before",
+      "label": "skinned-cpu3-before-r1",
+      "source_revision": "874422c0becc35116c94e31e4d92bbe074dde6b3",
+      "executable": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-874422c0\\bench_skinned.exe",
+        "bytes": 1871360,
+        "sha256": "d3bf476296d7a7ba5ce814b9e7eb51bc6b35ae889fd5d9800fe3e6f403231ea4"
+      },
+      "arguments": [
+        "--counts",
+        "1,10,100,1000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "skinned-cpu3-before-r1"
+      ],
+      "started_at": "2026-10-10T20:28:56.8171689Z",
+      "state": "complete",
+      "pid": 42808,
+      "exit_code": 0,
+      "wall_seconds": 3.34055,
+      "ended_at": "2026-10-10T20:29:00.2656620Z",
+      "evidence": [
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r1-gpu-errors.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r1-gpu.csv",
+          "bytes": 1975,
+          "sha256": "49a1f3a25a04e373d27f6085881dc53f763b00fde88813d4e28bce572aedbf49"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r1-stderr.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r1-stdout.txt",
+          "bytes": 3963,
+          "sha256": "00969efa77494f5004baa7e79d847e386e792eb83495a3940a99f08c3c577b6b"
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "side": "after",
+      "label": "skinned-cpu3-after-r1",
+      "source_revision": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+      "executable": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\after\\bench_skinned.exe",
+        "bytes": 1878016,
+        "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575"
+      },
+      "arguments": [
+        "--counts",
+        "1,10,100,1000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "skinned-cpu3-after-r1"
+      ],
+      "started_at": "2026-10-10T20:29:00.3408437Z",
+      "state": "complete",
+      "pid": 38840,
+      "exit_code": 0,
+      "wall_seconds": 2.2336147,
+      "ended_at": "2026-10-10T20:29:02.6541172Z",
+      "evidence": [
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r1-gpu-errors.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r1-gpu.csv",
+          "bytes": 1462,
+          "sha256": "9623638ce474c61167cb43f6ccbbac8516492188872a7b9210088aab6bfc10a6"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r1-stderr.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r1-stdout.txt",
+          "bytes": 3955,
+          "sha256": "9cc41fdc07d41cfee104ee819f3d4c1592f9f137a581ae5eecafb3345cf7065d"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "side": "after",
+      "label": "skinned-cpu3-after-r2",
+      "source_revision": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+      "executable": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\after\\bench_skinned.exe",
+        "bytes": 1878016,
+        "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575"
+      },
+      "arguments": [
+        "--counts",
+        "1,10,100,1000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "skinned-cpu3-after-r2"
+      ],
+      "started_at": "2026-10-10T20:29:02.6940277Z",
+      "state": "complete",
+      "pid": 67680,
+      "exit_code": 0,
+      "wall_seconds": 2.1975941,
+      "ended_at": "2026-10-10T20:29:04.9033122Z",
+      "evidence": [
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r2-gpu-errors.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r2-gpu.csv",
+          "bytes": 1465,
+          "sha256": "1a7ea2ad4605c032e8970f36b57342461e787a23fc1676cb2dde0c02b378beee"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r2-stderr.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r2-stdout.txt",
+          "bytes": 3955,
+          "sha256": "3afc7b060fd9609d08331a0203676b2382633c6a0d7c2c1c371790730817b5b7"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "side": "before",
+      "label": "skinned-cpu3-before-r2",
+      "source_revision": "874422c0becc35116c94e31e4d92bbe074dde6b3",
+      "executable": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-874422c0\\bench_skinned.exe",
+        "bytes": 1871360,
+        "sha256": "d3bf476296d7a7ba5ce814b9e7eb51bc6b35ae889fd5d9800fe3e6f403231ea4"
+      },
+      "arguments": [
+        "--counts",
+        "1,10,100,1000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "skinned-cpu3-before-r2"
+      ],
+      "started_at": "2026-10-10T20:29:04.9432950Z",
+      "state": "complete",
+      "pid": 38752,
+      "exit_code": 0,
+      "wall_seconds": 3.3068569,
+      "ended_at": "2026-10-10T20:29:08.2617307Z",
+      "evidence": [
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r2-gpu-errors.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r2-gpu.csv",
+          "bytes": 2001,
+          "sha256": "43612d8e2e1b547b852825a6d8b6038aa71dfc39afac6351a8430b29efea7d4e"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r2-stderr.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r2-stdout.txt",
+          "bytes": 3963,
+          "sha256": "70060d6d8444d5d6e5b12c17fc32c0a0516d061966c27618d7196d50a8758cd2"
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "side": "before",
+      "label": "skinned-cpu3-before-r3",
+      "source_revision": "874422c0becc35116c94e31e4d92bbe074dde6b3",
+      "executable": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-874422c0\\bench_skinned.exe",
+        "bytes": 1871360,
+        "sha256": "d3bf476296d7a7ba5ce814b9e7eb51bc6b35ae889fd5d9800fe3e6f403231ea4"
+      },
+      "arguments": [
+        "--counts",
+        "1,10,100,1000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "skinned-cpu3-before-r3",
+        "--capture",
+        "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\before.png"
+      ],
+      "started_at": "2026-10-10T20:29:08.3018204Z",
+      "state": "complete",
+      "pid": 72220,
+      "exit_code": 0,
+      "wall_seconds": 3.2147019,
+      "ended_at": "2026-10-10T20:29:11.5276363Z",
+      "evidence": [
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r3-gpu-errors.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r3-gpu.csv",
+          "bytes": 2002,
+          "sha256": "374e0c38078ad002286450148f21a12575b51811d034b64046004d25baedda07"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r3-stderr.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-before-r3-stdout.txt",
+          "bytes": 4096,
+          "sha256": "6d71af1397c77749170d0692f1c53acdd5791287c54b709f2c25105a589f8777"
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "side": "after",
+      "label": "skinned-cpu3-after-r3",
+      "source_revision": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+      "executable": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\after\\bench_skinned.exe",
+        "bytes": 1878016,
+        "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575"
+      },
+      "arguments": [
+        "--counts",
+        "1,10,100,1000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "skinned-cpu3-after-r3",
+        "--capture",
+        "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\after.png"
+      ],
+      "started_at": "2026-10-10T20:29:11.5687689Z",
+      "state": "complete",
+      "pid": 66096,
+      "exit_code": 0,
+      "wall_seconds": 2.2710859,
+      "ended_at": "2026-10-10T20:29:13.8519649Z",
+      "evidence": [
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r3-gpu-errors.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r3-gpu.csv",
+          "bytes": 1462,
+          "sha256": "486910188b0a6128adff55beeade75fb8aa9e4086098105335c2439fa5ac9875"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r3-stderr.txt",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\skinned-cpu3-after-r3-stdout.txt",
+          "bytes": 4087,
+          "sha256": "2f548b1338a5b75cb50aed1a683e969fabbeff7a06be6c2b84d0c12ee8edbb83"
+        }
+      ]
+    }
+  ],
+  "ledger_before_copy": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\ledger-before.jsonl",
+    "bytes": 266834,
+    "sha256": "058ff4d25eabb5836294d2ad508aba6291f48d1b662ad2f8236e84a99a9c51b5"
+  },
+  "before": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-874422c0\\bench_skinned.exe",
+    "bytes": 1871360,
+    "sha256": "d3bf476296d7a7ba5ce814b9e7eb51bc6b35ae889fd5d9800fe3e6f403231ea4"
+  },
+  "after": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\after\\bench_skinned.exe",
+    "bytes": 1878016,
+    "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575"
+  },
+  "before_snapshot": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-874422c0\\metadata.json",
+    "bytes": 11611,
+    "sha256": "f4a0ebf77412f48e5b7f7ee27605aa64bf1e8438466715e965461c65a2170a1a"
+  },
+  "before_source_hashes": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-874422c0\\source-hashes.json",
+    "bytes": 483755,
+    "sha256": "50359c1ade9aaedfce32c0b92d34d9d9457303f0ee4c0072adf7e165d65cb02a"
+  },
+  "after_snapshot": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\metadata.json",
+    "bytes": 11161,
+    "sha256": "eed9d63fceb2fe0d678c8ee44939ac7fa970506c7bff7f878e13ea5d7c9044b2"
+  },
+  "after_source_hashes": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\source-hashes.json",
+    "bytes": 484296,
+    "sha256": "873317e0b2148cfe23be614f590342e3de886c2e4c69860273c7e5f16c610583"
+  },
+  "runner": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\run_pairs.ps1",
+    "bytes": 17299,
+    "sha256": "2a89ead9ef37ffdcb21c709e5f3466a41e63536755e3dcbe4fc38ed73e5cd6d9"
+  },
+  "analyzer": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\analyze.mjs",
+    "bytes": 11253,
+    "sha256": "0d63ee70de0421f2c27a0664d843780d648a4ff6234e5344d0a426cbf1b735b2"
+  },
+  "started_at": "2026-10-10T20:28:56.8007749Z",
+  "ended_at": "2026-10-10T20:29:13.8789163Z",
+  "ledger_after": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\bench\\results\\skinned.jsonl",
+    "bytes": 373543,
+    "sha256": "70a0899a6bcbc93923fa4dbc7b0a60b701a321ba0d2078b4e19b89965f1250e5"
+  },
+  "raw_ledger": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\raw-ledger.jsonl",
+    "bytes": 373543,
+    "sha256": "70a0899a6bcbc93923fa4dbc7b0a60b701a321ba0d2078b4e19b89965f1250e5"
+  },
+  "summary": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\summary.json",
+    "bytes": 89356,
+    "sha256": "ccf2fa8d76d0906d3cf811fb98715ce40b030575ef4367fe5d67bf80e7221733"
+  },
+  "rows": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\final-cpu3\\paired-rows.jsonl",
+    "bytes": 106685,
+    "sha256": "226441e815ced9f134409fcd36d8da48edd9b4d0e27c2f0e909b659ba9ee3b5d"
+  }
+}
