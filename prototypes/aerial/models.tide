@@ -1,0 +1,317 @@
+// What's drawn, built once in code: the car, its wheels, the ball and the
+// simple shapes effects are made of. Metres, y up, a car's nose along +z.
+struct Solid
+{
+    float3 position;
+    float3 normal;
+    Color color = Color.white;
+    float material;
+}
+
+// A particle's corner: where it is on its card, from -1 to 1 each way.
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+
+struct Piece
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+    float glow;
+}
+
+// What a surface is made of, for the frags
+const float MATTE = 0;
+const float GLOW = 1;
+const float PAINT = 2;
+const float GLAZING = 3;
+const float CHROME = 4;
+const float RUBBER = 5;
+const float CROWD = 6;
+const float BOARDS = 7;
+const float SCREEN = 8;
+
+local singleton Models
+{
+    bool made;
+    List<Solid> pitch;
+    List<int> pitchFaces;
+    List<Solid> shell;
+    List<int> shellFaces;
+    List<Solid> glass;
+    List<int> glassFaces;
+    List<Solid> body;
+    List<int> bodyFaces;
+    List<Solid> wheel;
+    List<int> wheelFaces;
+    List<Solid> globe;
+    List<int> globeFaces;
+    List<Solid> disc;
+    List<int> discFaces;
+    List<Solid> cube;
+    List<int> cubeFaces;
+    List<Corner> card;
+    List<int> cardFaces;
+}
+
+Color TeamColor(int team) { return team == 0 ? Color(0.06, 0.36, 1) : Color(1, 0.42, 0.04); }
+Color TeamGlow(int team) { return team == 0 ? Color(0.25, 0.62, 1) : Color(1, 0.6, 0.18); }
+
+// Four corners with a normal each, wound to face the way the normals point.
+void Patch(mut List<Solid> vertices, mut List<int> faces, Solid a, Solid b, Solid c, Solid d)
+{
+    var first = vertices.count;
+    var facing = Math.Dot(Math.Cross(b.position - a.position, c.position - a.position), a.normal + b.normal + c.normal) > 0;
+    vertices.Add(a);
+    vertices.Add(facing ? b : d);
+    vertices.Add(c);
+    vertices.Add(facing ? d : b);
+    faces.Add(first); faces.Add(first + 1); faces.Add(first + 2);
+    faces.Add(first); faces.Add(first + 2); faces.Add(first + 3);
+}
+
+void Quad(mut List<Solid> vertices, mut List<int> faces, float3 a, float3 b, float3 c, float3 d,
+          float3 normal, Color paint, float material = 0)
+{
+    Patch(vertices, faces, Solid { position = a, normal = normal, color = paint, material = material },
+          Solid { position = b, normal = normal, color = paint, material = material },
+          Solid { position = c, normal = normal, color = paint, material = material },
+          Solid { position = d, normal = normal, color = paint, material = material });
+}
+
+void Wedge(mut List<Solid> vertices, mut List<int> faces, float3 a, float3 b, float3 c, float3 normal,
+           Color paint, float material = 0)
+{
+    var first = vertices.count;
+    var facing = Math.Dot(Math.Cross(b - a, c - a), normal) > 0;
+    vertices.Add(Solid { position = a, normal = normal, color = paint, material = material });
+    vertices.Add(Solid { position = facing ? b : c, normal = normal, color = paint, material = material });
+    vertices.Add(Solid { position = facing ? c : b, normal = normal, color = paint, material = material });
+    faces.Add(first); faces.Add(first + 1); faces.Add(first + 2);
+}
+
+void Box(mut List<Solid> vertices, mut List<int> faces, float3 centre, float3 size, Color paint, float material = 0)
+{
+    for (var face = 0; face < 6; face++)
+    {
+        var axis = face / 2;
+        float way = face % 2 == 0 ? 1 : -1;
+        var normal = float3(axis == 0 ? way : 0, axis == 1 ? way : 0, axis == 2 ? way : 0);
+        var across = float3(axis == 1 ? 1 : 0, axis == 2 ? 1 : 0, axis == 0 ? 1 : 0);
+        var along = Math.Cross(normal, across);
+        Quad(vertices, faces, centre + (normal - across - along) * size * 0.5, centre + (normal + across - along) * size * 0.5,
+             centre + (normal + across + along) * size * 0.5, centre + (normal - across + along) * size * 0.5, normal, paint, material);
+    }
+}
+
+// A round bar from one point to another, its ends closed.
+void Tube(mut List<Solid> vertices, mut List<int> faces, float3 from, float3 to, float radius, int sides,
+          Color paint, float material = 0)
+{
+    var axis = Math.Normalize(to - from);
+    var across = Math.Normalize(Math.Cross(Math.Abs(axis.y) > 0.9 ? float3(1, 0, 0) : float3(0, 1, 0), axis));
+    var around = Math.Cross(axis, across);
+    for (var side = 0; side < sides; side++)
+    {
+        var a = side * Math.TAU / sides;
+        var b = (side + 1) * Math.TAU / sides;
+        var na = across * Math.Cos(a) + around * Math.Sin(a);
+        var nb = across * Math.Cos(b) + around * Math.Sin(b);
+        Patch(vertices, faces, Solid { position = from + na * radius, normal = na, color = paint, material = material },
+              Solid { position = from + nb * radius, normal = nb, color = paint, material = material },
+              Solid { position = to + nb * radius, normal = nb, color = paint, material = material },
+              Solid { position = to + na * radius, normal = na, color = paint, material = material });
+        Wedge(vertices, faces, from, from + na * radius, from + nb * radius, -axis, paint, material);
+        Wedge(vertices, faces, to, to + na * radius, to + nb * radius, axis, paint, material);
+    }
+}
+
+// One slice of a hull: where its middle is, half its width and height, and
+// how square its corners are (2 is an ellipse, more is boxier).
+struct Rib
+{
+    float z;
+    float y;
+    float2 half;
+    float square = 4;
+}
+
+float3 RibPoint(Rib rib, float turn)
+{
+    var c = Math.Cos(turn);
+    var s = Math.Sin(turn);
+    var power = 2 / rib.square;
+    return float3(Math.Sign(c) * Math.Pow(Math.Abs(c), power) * rib.half.x,
+                  rib.y + Math.Sign(s) * Math.Pow(Math.Abs(s), power) * rib.half.y, rib.z);
+}
+
+// A smooth skin over a row of ribs, closed at both ends, moved by `offset`.
+void Hull(mut List<Solid> vertices, mut List<int> faces, List<Rib> ribs, Color paint, float material,
+          float3 offset = float3(0, 0, 0))
+{
+    int around = 20;
+    var first = vertices.count;
+    for (var row = 0; row < ribs.count; row++)
+        for (var step = 0; step < around; step++)
+        {
+            var turn = (step + 0.5) * Math.TAU / around;
+            var here = RibPoint(ribs[row], turn);
+            // The skin's normal, from its neighbours along and around it
+            var along = RibPoint(ribs[Math.Min(row + 1, ribs.count - 1)], turn) - RibPoint(ribs[Math.Max(row - 1, 0)], turn);
+            var round = RibPoint(ribs[row], turn + 0.02) - RibPoint(ribs[row], turn - 0.02);
+            mut var normal = Math.Normalize(Math.Cross(round, along));
+            if (Math.Dot(normal, here - float3(0, ribs[row].y, ribs[row].z)) < 0) normal = -normal;
+            vertices.Add(Solid { position = here + offset, normal = normal, color = paint, material = material });
+        }
+    for (var row = 0; row + 1 < ribs.count; row++)
+        for (var step = 0; step < around; step++)
+        {
+            var a = first + row * around + step;
+            var b = first + row * around + (step + 1) % around;
+            var c = b + around;
+            var d = a + around;
+            // Clockwise from outside, with the ribs along +z and the turn from +x to +y
+            faces.Add(a); faces.Add(c); faces.Add(d);
+            faces.Add(a); faces.Add(b); faces.Add(c);
+        }
+    for (var end = 0; end < 2; end++)
+    {
+        var rib = ribs[end == 0 ? 0 : ribs.count - 1];
+        var middle = float3(0, rib.y, rib.z);
+        var out = float3(0, 0, end == 0 ? -1 : 1);
+        for (var step = 0; step < around; step++)
+            Wedge(vertices, faces, middle + offset, RibPoint(rib, (step + 0.5) * Math.TAU / around) + offset,
+                  RibPoint(rib, (step + 1.5) * Math.TAU / around) + offset, out, paint, material);
+    }
+}
+
+// A ball of radius 1, smooth, its normals its own positions.
+void Globe(mut List<Solid> vertices, mut List<int> faces, int rings, int around)
+{
+    var first = vertices.count;
+    for (var ring = 0; ring <= rings; ring++)
+    {
+        var tilt = ring * Math.PI / rings;
+        for (var step = 0; step <= around; step++)
+        {
+            var turn = step * Math.TAU / around;
+            var out = float3(Math.Sin(tilt) * Math.Cos(turn), -Math.Cos(tilt), Math.Sin(tilt) * Math.Sin(turn));
+            vertices.Add(Solid { position = out, normal = out });
+            if (ring == rings || step == around) continue;
+            var at = first + ring * (around + 1) + step;
+            faces.Add(at); faces.Add(at + around + 1); faces.Add(at + 1);
+            faces.Add(at + 1); faces.Add(at + around + 1); faces.Add(at + around + 2);
+        }
+    }
+}
+
+// The car: a low tub between the axles, a nose and a tail, arches over four
+// big wheels, a glazed cabin and a wing. Its paint is the instance's tint.
+void MakeCar(mut Models models)
+{
+    var dark = Color(0.03, 0.035, 0.045);
+    var trim = Color(0.09, 0.1, 0.12);
+    // The tub, nose to tail: narrow where the wheels are, wide between them
+    Hull(models.body, models.bodyFaces, [
+        Rib { z = -0.56, y = 0.07, half = float2(0.19, 0.07), square = 5 },
+        Rib { z = -0.5, y = 0.07, half = float2(0.21, 0.13), square = 5 },
+        Rib { z = -0.3, y = 0.065, half = float2(0.205, 0.135), square = 5 },
+        Rib { z = -0.12, y = 0.055, half = float2(0.33, 0.125), square = 5 },
+        Rib { z = 0.26, y = 0.045, half = float2(0.33, 0.115), square = 5 },
+        Rib { z = 0.42, y = 0.04, half = float2(0.2, 0.105), square = 5 },
+        Rib { z = 0.62, y = 0.03, half = float2(0.2, 0.09), square = 4 },
+        Rib { z = 0.72, y = 0.015, half = float2(0.18, 0.06), square = 3 },
+    ], Color.white, PAINT);
+    // The cabin: glass all round, under a painted roof
+    Hull(models.body, models.bodyFaces, [
+        Rib { z = -0.42, y = 0.2, half = float2(0.2, 0.03), square = 4 },
+        Rib { z = -0.3, y = 0.26, half = float2(0.235, 0.1), square = 4 },
+        Rib { z = -0.08, y = 0.265, half = float2(0.24, 0.105), square = 4 },
+        Rib { z = 0.12, y = 0.24, half = float2(0.235, 0.08), square = 4 },
+        Rib { z = 0.3, y = 0.17, half = float2(0.22, 0.02), square = 4 },
+    ], Color(0.05, 0.09, 0.13), GLAZING);
+    Hull(models.body, models.bodyFaces, [
+        Rib { z = -0.34, y = 0.365, half = float2(0.2, 0.012), square = 4 },
+        Rib { z = -0.2, y = 0.375, half = float2(0.225, 0.02), square = 4 },
+        Rib { z = 0.02, y = 0.37, half = float2(0.225, 0.02), square = 4 },
+        Rib { z = 0.13, y = 0.345, half = float2(0.2, 0.012), square = 4 },
+    ], Color.white, PAINT);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        // Arches over the wheels, front and rear, and the pillars of the cabin
+        Hull(models.body, models.bodyFaces, [
+            Rib { z = 0.33, y = 0.085, half = float2(0.09, 0.02), square = 3 },
+            Rib { z = 0.4, y = 0.125, half = float2(0.1, 0.035), square = 3 },
+            Rib { z = 0.52, y = 0.14, half = float2(0.1, 0.035), square = 3 },
+            Rib { z = 0.64, y = 0.12, half = float2(0.1, 0.03), square = 3 },
+            Rib { z = 0.7, y = 0.07, half = float2(0.085, 0.02), square = 3 },
+        ], Color.white, PAINT, float3(side * 0.27, 0, 0));
+        Hull(models.body, models.bodyFaces, [
+            Rib { z = -0.55, y = 0.12, half = float2(0.1, 0.025), square = 3 },
+            Rib { z = -0.46, y = 0.175, half = float2(0.11, 0.035), square = 3 },
+            Rib { z = -0.34, y = 0.19, half = float2(0.11, 0.035), square = 3 },
+            Rib { z = -0.2, y = 0.165, half = float2(0.11, 0.035), square = 3 },
+            Rib { z = -0.12, y = 0.11, half = float2(0.09, 0.02), square = 3 },
+        ], Color.white, PAINT, float3(side * 0.3, 0, 0));
+    }
+    // Bumpers, lamps, the grille and the nozzle the boost comes from
+    Box(models.body, models.bodyFaces, float3(0, -0.035, 0.7), float3(0.5, 0.06, 0.08), dark);
+    Box(models.body, models.bodyFaces, float3(0, -0.02, -0.56), float3(0.46, 0.07, 0.06), dark);
+    Box(models.body, models.bodyFaces, float3(0, 0.035, 0.735), float3(0.2, 0.035, 0.02), trim);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        Box(models.body, models.bodyFaces, float3(side * 0.13, 0.06, 0.722), float3(0.07, 0.03, 0.03), Color(1, 0.96, 0.82), GLOW);
+        Box(models.body, models.bodyFaces, float3(side * 0.14, 0.1, -0.563), float3(0.09, 0.025, 0.02), Color(1, 0.08, 0.04), GLOW);
+        Box(models.body, models.bodyFaces, float3(side * 0.335, 0.0, 0.07), float3(0.03, 0.06, 0.34), dark);
+        // The wing's uprights
+        Box(models.body, models.bodyFaces, float3(side * 0.17, 0.26, -0.5), float3(0.02, 0.11, 0.07), dark);
+    }
+    Box(models.body, models.bodyFaces, float3(0, 0.325, -0.52), float3(0.56, 0.018, 0.13), Color.white, PAINT);
+    Box(models.body, models.bodyFaces, float3(0, 0.335, -0.585), float3(0.56, 0.04, 0.012), dark);
+    Tube(models.body, models.bodyFaces, float3(0, 0.07, -0.54), float3(0, 0.07, -0.62), 0.055, 12, trim);
+    Tube(models.body, models.bodyFaces, float3(0, 0.07, -0.6), float3(0, 0.07, -0.625), 0.04, 12, Color(1, 0.55, 0.15), GLOW);
+
+    // A wheel of radius 1 and width 1 along its axle, x: a rounded tyre round a dished rim
+    int steps = 28;
+    for (var step = 0; step < steps; step++)
+    {
+        var a = step * Math.TAU / steps;
+        var b = (step + 1) * Math.TAU / steps;
+        var ra = float3(0, Math.Cos(a), Math.Sin(a));
+        var rb = float3(0, Math.Cos(b), Math.Sin(b));
+        // Tread, two shoulders, two walls, and the rim's two faces
+        for (var part = 0; part < 5; part++)
+        {
+            float x0 = part == 0 ? -0.5 : part == 1 ? -0.4 : part == 2 ? 0.4 : part == 3 ? -0.5 : 0.5;
+            float x1 = part == 0 ? -0.4 : part == 1 ? 0.4 : part == 2 ? 0.5 : x0;
+            float r0 = part == 0 ? 0.9 : part == 3 || part == 4 ? 0.9 : 1;
+            float r1 = part == 2 ? 0.9 : part == 3 || part == 4 ? 0.62 : 1;
+            var slope = part == 0 ? float3(-0.6, 0.8, 0) : part == 2 ? float3(0.6, 0.8, 0) : part == 1 ? float3(0, 1, 0) : float3(x0 * 2, 0, 0);
+            var na = part >= 3 ? slope : Math.Normalize(float3(slope.x, 0, 0) + ra * slope.y);
+            var nb = part >= 3 ? slope : Math.Normalize(float3(slope.x, 0, 0) + rb * slope.y);
+            Patch(models.wheel, models.wheelFaces,
+                  Solid { position = float3(x0, 0, 0) + ra * r0, normal = na, color = Color(0.02, 0.022, 0.026), material = RUBBER },
+                  Solid { position = float3(x0, 0, 0) + rb * r0, normal = nb, color = Color(0.02, 0.022, 0.026), material = RUBBER },
+                  Solid { position = float3(x1, 0, 0) + rb * r1, normal = nb, color = Color(0.02, 0.022, 0.026), material = RUBBER },
+                  Solid { position = float3(x1, 0, 0) + ra * r1, normal = na, color = Color(0.02, 0.022, 0.026), material = RUBBER });
+        }
+        for (var face = -1; face <= 1; face += 2)
+        {
+            var out = float3(face, 0, 0);
+            Wedge(models.wheel, models.wheelFaces, float3(face * 0.36, 0, 0), float3(face * 0.46, 0, 0) + ra * 0.62,
+                  float3(face * 0.46, 0, 0) + rb * 0.62, Math.Normalize(out + (ra + rb) * -0.12), Color.white, CHROME);
+        }
+    }
+}
+
+void MakeShapes(mut Models models)
+{
+    Globe(models.globe, models.globeFaces, 28, 44);
+    Box(models.cube, models.cubeFaces, float3(0), float3(1), Color.white);
+    Quad(models.disc, models.discFaces, float3(-1, 0, -1), float3(1, 0, -1), float3(1, 0, 1), float3(-1, 0, 1), float3(0, 1, 0), Color.white);
+    models.card = [Corner { position = float3(-1, 1, 0), uv = float2(-1, 1) }, Corner { position = float3(1, 1, 0), uv = float2(1, 1) },
+                   Corner { position = float3(1, -1, 0), uv = float2(1, -1) }, Corner { position = float3(-1, -1, 0), uv = float2(-1, -1) }];
+    models.cardFaces = [0, 1, 2, 0, 2, 3];
+}

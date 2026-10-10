@@ -1,0 +1,13 @@
+// What this machine's touch controls add to the keys and the gamepad. The
+// HUD fills it each frame, and the input's Sample reads it.
+local singleton Hand
+{
+    float throttle;
+    float steer;
+    float pitch;
+    bool jump;
+    bool boost;
+    bool handbrake;
+    bool touch;         // A touchscreen is how this machine is played
+    float2 stick;
+}

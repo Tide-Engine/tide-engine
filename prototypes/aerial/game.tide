@@ -1,0 +1,528 @@
+using Rooms;
+
+// Aerial: rocket-powered car soccer. This file is the match: who's in which
+// car, kickoffs, the clock, goals and the scoresheet. The cars and the ball
+// are car.tide's and ball.tide's, on arena.tide's pitch, and bots.tide drives
+// the cars nobody has. What's seen and heard of it is this machine's alone.
+settings
+{
+    title = "Aerial";
+    appId = "dev.tide.private.aerial";
+    tickRate = 120;
+    maxPlayers = 6;
+    hostMigration = true;
+}
+
+const int PADS = 34;
+const float MATCH_SECONDS = 300;
+const float COUNTDOWN_SECONDS = 3;
+const float GOAL_SECONDS = 3.6;
+const float RESULT_SECONDS = 14;
+
+enum MatchPhase { Countdown, Playing, Goal, Finished }
+enum MatchStages { Inputs, Simulation }
+enum Feat { Goal, Assist, Save, EpicSave, Shot, Wreck }
+
+singleton MatchState
+{
+    CarState[CARS] cars;
+    BallState ball;
+    float[PADS] pads;               // Seconds until each is back
+    DriveInput[CARS] controls;
+    bool[CARS] manned;              // A player has the wheel this tick
+    int size = 2;                   // Cars a side
+    int wanted = 2;                 // ...from the next kickoff
+    int[2] score;
+    float clock = MATCH_SECONDS;
+    float played;                   // Seconds of open play, overtime's too
+    float since;                    // Seconds since the last countdown ended
+    MatchPhase phase;
+    float phaseTime;
+    bool waiting = true;            // The clock holds until a kickoff's first touch
+    bool overtime;
+    bool started;
+    int winner = -1;
+    int kickoffs;
+    int ticks;
+    // Who touched the ball last, for each side, and who before them
+    int toucher = -1;
+    int[2] last = [-1, -1];
+    int[2] before = [-1, -1];
+    float[2] lastAt;
+    float[2] beforeAt;
+    int threat = -1;                // The side whose goal the ball is flying into
+    float threatIn;                 // ...and in how many seconds
+    int scorer = -1;
+    int scoredFor = -1;
+    float scoredSpeed;
+    Map<PlayerID, Entity> participants;
+    int seated;                     // A bit for each seat a player has
+}
+
+component Participant { int seat; }
+scene Main { }
+
+command Restart { }
+command Teams { int size; }
+
+// What the match says happened, for this machine to show and sound. Each is
+// kept coarse, so a tick run again says the same thing and it's heard once.
+event BallTouched { int seat; int force; }
+event BallBounced { int force; }
+event GoalScored { int team; int scorer; int assist; int speed; }
+event CarWrecked { int seat; int by; }
+event CarsBumped { int seat; }
+event PadTaken { int pad; int seat; }
+event CarJumped { int seat; bool dodge; }
+event FeatEarned { int seat; Feat feat; }
+event MatchEnded { int winner; }
+
+input Controls
+{
+    [Clamp(-1, 1)] float throttle;
+    [Clamp(-1, 1)] float steer;
+    [Clamp(-1, 1)] float pitch;
+    [Clamp(-1, 1)] float yaw;
+    [Clamp(-1, 1)] float roll;
+    bool jump;
+    bool boost;
+    bool handbrake;
+    [Absolute] bool away = true;
+
+    Sample(Devices devices, Lobby lobby, Hand hand)
+    {
+        if (!lobby.playing) return;
+        away = false;
+        var keys = devices.keyboard;
+        var pad = devices.gamepad;
+        var stick = pad.leftStick;
+        throttle = hand.throttle + pad.rightTrigger - pad.leftTrigger;
+        steer = hand.steer + stick.x;
+        pitch = hand.pitch - stick.y;
+        yaw = hand.steer + stick.x;
+        if (keys.w.pressed || keys.upArrow.pressed) { throttle += 1; pitch -= 1; }
+        if (keys.s.pressed || keys.downArrow.pressed) { throttle -= 1; pitch += 1; }
+        if (keys.a.pressed || keys.leftArrow.pressed) { steer -= 1; yaw -= 1; }
+        if (keys.d.pressed || keys.rightArrow.pressed) { steer += 1; yaw += 1; }
+        if (keys.q.pressed || pad.leftShoulder.pressed) roll -= 1;
+        if (keys.e.pressed || pad.rightShoulder.pressed) roll += 1;
+        jump = hand.jump || keys.space.pressed || devices.mouse.right.pressed || pad.buttonSouth.pressed;
+        boost = hand.boost || keys.leftShift.pressed || devices.mouse.left.pressed && !hand.touch || pad.buttonEast.pressed;
+        handbrake = hand.handbrake || keys.leftCtrl.pressed || keys.x.pressed || pad.buttonWest.pressed;
+        // Held, the powerslide button makes the stick roll the car in the air
+        if (handbrake) { roll += yaw; yaw = 0; }
+    }
+}
+
+int TeamOf(int seat) { return seat % 2; }
+bool InPlay(MatchState state, int seat) { return seat < state.size * 2; }
+float TeamWay(int team) { return team == 0 ? 1 : -1; }
+
+bool PadBig(int pad) { return pad < 6; }
+
+float3 PadPosition(int pad)
+{
+    float a = pad % 2 == 0 ? -1 : 1;
+    float b = pad / 2 % 2 == 0 ? -1 : 1;
+    if (pad < 4) return float3(a * 30.72, 0, b * 40.96);
+    if (pad < 6) return float3(a * 35.84, 0, 0);
+    if (pad < 8) return float3(0, 0, a * 42.4);
+    if (pad < 12) return float3(a * 17.92, 0, b * 41.84);
+    if (pad < 16) return float3(a * 9.4, 0, b * 33.08);
+    if (pad < 18) return float3(0, 0, a * 28.16);
+    if (pad < 22) return float3(a * 35.84, 0, b * 24.84);
+    if (pad < 26) return float3(a * 17.88, 0, b * 23);
+    if (pad < 30) return float3(a * 20.48, 0, b * 10.36);
+    if (pad < 32) return float3(0, 0, a * 10.24);
+    return float3(a * 10.24, 0, 0);
+}
+
+// The five places a kickoff starts from, for the blue side: two diagonals,
+// two off-centre and one from the goal line. Orange's are these, turned round.
+float3 KickoffPlace(int spot)
+{
+    switch (spot)
+    {
+        case 0: return float3(-20.48, REST_HEIGHT, -25.6);
+        case 1: return float3(20.48, REST_HEIGHT, -25.6);
+        case 2: return float3(-2.56, REST_HEIGHT, -38.4);
+        case 3: return float3(2.56, REST_HEIGHT, -38.4);
+    }
+    return float3(0, REST_HEIGHT, -46.08);
+}
+
+CarState PlacedForKickoff(CarState sheet, int seat, int spot)
+{
+    var way = TeamWay(TeamOf(seat));
+    var place = KickoffPlace(spot);
+    var facing = spot < 2 ? float3(spot == 0 ? SQRT_HALF : -SQRT_HALF, 0, SQRT_HALF) : float3(0, 0, 1);
+    return Fresh(sheet, float3(place.x * way, place.y, place.z * way), facing * way);
+}
+
+void StartKickoff(mut MatchState state)
+{
+    state.size = Math.Clamp(state.wanted, 1, CARS / 2);
+    for (var seat = 0; seat < CARS; seat++)
+        if ((state.seated >> seat & 1) == 1) state.size = Math.Max(state.size, seat / 2 + 1);
+    // Which places the sides start from changes with every kickoff, and the
+    // two sides always mirror each other
+    var first = Math.Hash(int2(state.kickoffs, Random.seed)) % 5;
+    state.kickoffs += 1;
+    for (var seat = 0; seat < CARS; seat++)
+    {
+        if (InPlay(state, seat)) state.cars[seat] = PlacedForKickoff(state.cars[seat], seat, (first + seat / 2 * 2) % 5);
+        else state.cars[seat].wrecked = 0;
+    }
+    state.ball = default;
+    for (var pad = 0; pad < PADS; pad++) state.pads[pad] = 0;
+    state.phase = MatchPhase.Countdown;
+    state.phaseTime = COUNTDOWN_SECONDS;
+    state.since = 0;
+    state.waiting = true;
+    state.toucher = -1;
+    state.last = [-1, -1];
+    state.before = [-1, -1];
+    state.threat = -1;
+}
+
+void NewMatch(mut MatchState state)
+{
+    state.started = true;
+    state.score = [0, 0];
+    state.clock = MATCH_SECONDS;
+    state.played = 0;
+    state.overtime = false;
+    state.winner = -1;
+    state.scorer = -1;
+    state.scoredFor = -1;
+    for (var seat = 0; seat < CARS; seat++) state.cars[seat] = default;
+    StartKickoff(state);
+}
+
+void Award(mut MatchState state, int seat, Feat feat)
+{
+    if (seat < 0 || seat >= CARS) return;
+    switch (feat)
+    {
+        case Feat.Goal: state.cars[seat].goals += 1; state.cars[seat].points += 100; break;
+        case Feat.Assist: state.cars[seat].assists += 1; state.cars[seat].points += 50; break;
+        case Feat.Save: state.cars[seat].saves += 1; state.cars[seat].points += 50; break;
+        case Feat.EpicSave: state.cars[seat].saves += 1; state.cars[seat].points += 75; break;
+        case Feat.Shot: state.cars[seat].shots += 1; state.cars[seat].points += 10; break;
+        case Feat.Wreck: state.cars[seat].wrecks += 1; break;
+    }
+    Send(FeatEarned { seat = seat, feat = feat });
+}
+
+void Touched(mut MatchState state, int seat)
+{
+    var team = TeamOf(seat);
+    if (state.last[team] != seat)
+    {
+        state.before[team] = state.last[team];
+        state.beforeAt[team] = state.lastAt[team];
+    }
+    state.last[team] = seat;
+    state.lastAt[team] = state.played;
+    state.toucher = seat;
+    state.waiting = false;
+}
+
+void Score(mut MatchState state, int team)
+{
+    state.score[team] += 1;
+    state.scoredFor = team;
+    state.scorer = state.last[team];
+    state.scoredSpeed = Math.Length(state.ball.velocity);
+    mut var assist = -1;
+    if (state.scorer >= 0)
+    {
+        Award(state, state.scorer, Feat.Goal);
+        // A pass counts when it came within five seconds of the finish
+        if (state.before[team] >= 0 && state.lastAt[team] - state.beforeAt[team] < 5) assist = state.before[team];
+        if (assist >= 0) Award(state, assist, Feat.Assist);
+    }
+    Send(GoalScored { team = team, scorer = state.scorer, assist = assist, speed = int(state.scoredSpeed * 3.6) });
+    // The goal goes off: the ball is gone, and cars near it are thrown clear
+    var at = state.ball.position;
+    for (var seat = 0; seat < CARS; seat++)
+    {
+        if (!InPlay(state, seat) || state.cars[seat].wrecked > 0) continue;
+        var away = state.cars[seat].position - at;
+        var far = Math.Length(away);
+        if (far > 28) continue;
+        var blast = 22 * (1 - far / 28);
+        state.cars[seat].velocity += Math.Normalize(away + float3(0, 2, 0)) * blast;
+        state.cars[seat].spin += float3(away.z, 0, -away.x) * (blast * 0.02);
+    }
+    state.ball.live = false;
+    state.ball.velocity = float3(0);
+    state.ball.spin = float3(0);
+    state.phase = MatchPhase.Goal;
+    state.phaseTime = GOAL_SECONDS;
+    state.threat = -1;
+    if (state.overtime || state.clock <= 0) state.winner = state.score[0] > state.score[1] ? 0 : 1;
+}
+
+void Finish(mut MatchState state)
+{
+    state.winner = state.score[0] > state.score[1] ? 0 : 1;
+    state.phase = MatchPhase.Finished;
+    state.phaseTime = RESULT_SECONDS;
+    Send(MatchEnded { winner = state.winner });
+}
+
+void CollectPads(mut MatchState state, float dt)
+{
+    for (var pad = 0; pad < PADS; pad++)
+    {
+        if (state.pads[pad] > 0)
+        {
+            state.pads[pad] -= dt;
+            continue;
+        }
+        var at = PadPosition(pad);
+        var big = PadBig(pad);
+        var reach = big ? 2.08 : 1.44;
+        for (var seat = 0; seat < state.size * 2; seat++)
+        {
+            var car = state.cars[seat];
+            if (car.wrecked > 0 || car.boost >= 100 || car.position.y > 1.65) continue;
+            var across = car.position.xz - at.xz;
+            if (Math.Dot(across, across) > reach * reach) continue;
+            state.cars[seat].boost = big ? 100 : Math.Min(100, car.boost + 12);
+            state.pads[pad] = big ? 10 : 4;
+            Send(PadTaken { pad = pad, seat = seat });
+            break;
+        }
+    }
+}
+
+// Where the ball is headed: the side whose goal it flies into within three
+// seconds, if nothing more touches it.
+void WatchBall(mut MatchState state, int goal, float goalIn)
+{
+    var was = state.threat;
+    state.threat = goal;
+    if (goal >= 0) state.threatIn = goalIn;
+    if (state.toucher < 0 || state.threat == was) return;
+    var team = TeamOf(state.toucher);
+    var recent = state.played - state.lastAt[team] < 0.5;
+    // A shot turns a ball towards the other goal, and a save turns one away
+    if (state.threat >= 0 && state.threat != team && recent) Award(state, state.toucher, Feat.Shot);
+    if (was >= 0 && was == team && state.threat < 0 && recent)
+        Award(state, state.toucher, state.threatIn < 0.5 ? Feat.EpicSave : Feat.Save);
+}
+
+event(PlayerJoined joined) Enter(mut MatchState state)
+{
+    if (state.participants.Has(joined.player)) return;
+    // The side with fewer players, in its first car nobody has
+    mut int[2] players = [0, 0];
+    for (var taken = 0; taken < CARS; taken++)
+        if ((state.seated >> taken & 1) == 1) players[TeamOf(taken)] += 1;
+    mut var seat = players[1] < players[0] ? 1 : 0;
+    while (seat < CARS && (state.seated >> seat & 1) == 1) seat += 2;
+    if (seat >= CARS)
+    {
+        seat = 1 - TeamOf(seat);
+        while (seat < CARS && (state.seated >> seat & 1) == 1) seat += 2;
+    }
+    if (seat >= CARS) return;
+    state.seated |= 1 << seat;
+    state.participants[joined.player] = Spawn(Participant { seat = seat }, Owner { player = joined.player });
+    // Cars past the teams' size join the pitch as a wrecked one comes back
+    if (!InPlay(state, seat))
+    {
+        var had = state.size * 2;
+        state.size = seat / 2 + 1;
+        for (var added = had; added < state.size * 2; added++) state.cars[added] = Respawned(state.cars[added], added, added / 2);
+    }
+}
+
+event(PlayerLeft left) Leave(mut MatchState state, World world)
+{
+    if (!state.participants.Has(left.player)) return;
+    var entity = state.participants[left.player];
+    var seat = world.Get<Participant>(entity).seat;
+    state.seated &= ~(1 << seat);
+    state.manned[seat] = false;
+    entity.Destroy();
+    state.participants.Remove(left.player);
+}
+
+command(Restart restart, PlayerID sender) StartAgain(mut MatchState state)
+{
+    if (!state.participants.Has(sender)) return;
+    NewMatch(state);
+}
+
+command(Teams teams, PlayerID sender) Resize(mut MatchState state)
+{
+    if (!state.participants.Has(sender)) return;
+    state.wanted = Math.Clamp(teams.size, 1, CARS / 2);
+}
+
+[Stage(MatchStages.Inputs)]
+system ClearControls(mut MatchState state)
+{
+    if (!state.started) NewMatch(state);
+    for (var seat = 0; seat < CARS; seat++) state.manned[seat] = false;
+}
+
+[Stage(MatchStages.Inputs), After(ClearControls)]
+system ReadControls(Controls input, Participant participant, mut MatchState state, with Owner)
+{
+    var seat = participant.seat;
+    if (seat < 0 || seat >= CARS || input.away) return;
+    state.manned[seat] = true;
+    state.controls[seat] = DriveInput { throttle = input.throttle, steer = input.steer,
+        pitch = input.pitch, yaw = input.yaw, roll = input.roll,
+        jump = input.jump, boost = input.boost, handbrake = input.handbrake };
+}
+
+int Loud(float speed)
+{
+    return speed > 30 ? 3 : speed > 14 ? 2 : speed > 4 ? 1 : 0;
+}
+
+[Stage(MatchStages.Simulation)]
+system Simulate(mut MatchState state, Time time)
+{
+    var dt = time.dt;
+    state.ticks += 1;
+    if (state.phase == MatchPhase.Finished)
+    {
+        state.phaseTime -= dt;
+        if (state.phaseTime <= 0) NewMatch(state);
+        return;
+    }
+    var cars = state.size * 2;
+    var racing = state.phase != MatchPhase.Countdown;
+
+    // Where the ball is going, once for everyone who asks
+    mut var path = BallPath { };
+    if (state.phase == MatchPhase.Playing) PredictBall(path, state.ball);
+
+    for (var seat = 0; seat < cars; seat++)
+    {
+        mut var input = DriveInput { };
+        if (racing) input = state.manned[seat] ? state.controls[seat] : BotDrive(state, path, seat);
+        mut var car = state.cars[seat];
+        var jumping = car.jumping;
+        var flipped = car.flipped;
+        DriveCar(car, input, seat, dt);
+        state.cars[seat] = car;
+        if (!jumping && car.jumping) Send(CarJumped { seat = seat, dodge = false });
+        if (!flipped && car.flipped) Send(CarJumped { seat = seat, dodge = true });
+    }
+    for (var first = 0; first < cars; first++)
+        for (var second = first + 1; second < cars; second++)
+        {
+            if (Math.DistanceSq(state.cars[first].position, state.cars[second].position) > 2.6 * 2.6) continue;
+            mut var a = state.cars[first];
+            mut var b = state.cars[second];
+            var bumpedBefore = a.bumped + b.bumped;
+            var wreck = CarsMeet(a, b, TeamOf(first) != TeamOf(second));
+            state.cars[first] = a;
+            state.cars[second] = b;
+            if (a.bumped + b.bumped > bumpedBefore) Send(CarsBumped { seat = first });
+            for (var side = 0; side < 2; side++)
+            {
+                if ((wreck >> side & 1) == 0) continue;
+                var loser = side == 0 ? first : second;
+                var by = side == 0 ? second : first;
+                state.cars[loser].wrecked = 3;
+                state.cars[loser].velocity = float3(0);
+                state.cars[loser].spin = float3(0);
+                Award(state, by, Feat.Wreck);
+                Send(CarWrecked { seat = loser, by = by });
+            }
+        }
+    // The ball against every car that reaches it. Two at once is a contest:
+    // the contact is settled over a few rounds, so neither wins by its seat.
+    var ballBefore = state.ball.velocity;
+    mut float3[CARS] carBefore = [float3(0), float3(0), float3(0), float3(0), float3(0), float3(0)];
+    mut bool[CARS] met = [false, false, false, false, false, false];
+    mut var meeting = 0;
+    for (var round = 0; round < 3; round++)
+    {
+        if (round > 0 && meeting < 2) break;
+        for (var turn = 0; turn < cars; turn++)
+        {
+            // Who's settled last has the last word, so the order turns
+            // round every round and every tick
+            var seat = (state.ticks + round) % 2 == 0 ? turn : cars - 1 - turn;
+            if (round > 0 && !met[seat]) continue;
+            mut var car = state.cars[seat];
+            if (round == 0) carBefore[seat] = car.velocity;
+            if (!CarMeetsBall(car, state.ball)) continue;
+            state.cars[seat] = car;
+            if (met[seat]) continue;
+            met[seat] = true;
+            meeting += 1;
+        }
+    }
+    for (var seat = 0; seat < cars; seat++)
+    {
+        mut var car = state.cars[seat];
+        mut var force = 0.0;
+        if (met[seat]) force = PunchBall(car, state.ball, ballBefore, carBefore[seat], state.ticks);
+        LimitCar(car, dt);
+        MoveCar(car, dt);
+        CarOnArena(car);
+        LimitCar(car, 0);
+        state.cars[seat] = car;
+        if (!met[seat]) continue;
+        if (state.toucher != seat || force > 3) Send(BallTouched { seat = seat, force = Loud(force) });
+        Touched(state, seat);
+    }
+    if (state.ball.live)
+    {
+        MoveBall(state.ball, dt);
+        TurnBall(state.ball, dt);
+        if (state.ball.struck > 2.5) Send(BallBounced { force = Loud(state.ball.struck) });
+    }
+    CollectPads(state, dt);
+
+    if (state.phase == MatchPhase.Countdown)
+    {
+        state.phaseTime -= dt;
+        if (state.phaseTime <= 0) state.phase = MatchPhase.Playing;
+        return;
+    }
+    if (state.phase == MatchPhase.Goal)
+    {
+        state.phaseTime -= dt;
+        if (state.phaseTime > 0) return;
+        if (state.winner >= 0) Finish(state);
+        else StartKickoff(state);
+        return;
+    }
+
+    state.since += dt;
+    WatchBall(state, path.goal, path.goalIn);
+    var goal = GoalAt(state.ball.position, BALL_RADIUS);
+    if (goal != 0)
+    {
+        Score(state, goal > 0 ? 0 : 1);
+        return;
+    }
+    if (state.waiting) return;
+    state.played += dt;
+    if (state.overtime)
+    {
+        state.clock += dt;
+        return;
+    }
+    state.clock = Math.Max(0, state.clock - dt);
+    // At 0:00 the ball stays in play until it next touches the pitch
+    if (state.clock > 0 || !state.ball.floored) return;
+    if (state.score[0] != state.score[1])
+    {
+        Finish(state);
+        return;
+    }
+    state.overtime = true;
+    StartKickoff(state);
+}

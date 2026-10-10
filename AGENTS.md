@@ -60,6 +60,7 @@ This file is the rules and the agreed decisions every session needs. What was bu
 | `notes/cabin-nine.md` | Cabin Nine's opt-in private build, deduction, crew, scene and tests | `prototypes/cabin-nine/` |
 | `notes/dead-signal.md` | Dead Signal's private opt-in co-op shooter, expedition, rendering and tests | `prototypes/dead-signal/` |
 | `notes/rocket-league.md` | Afterburn's car soccer, driving and aerial physics, arena, match flow, presentation and tests | `prototypes/rocket-league/` |
+| `notes/aerial.md` | Aerial, the second car soccer prototype: its rigid-body car, the arena as one function, the ball, bots, match rules, what's drawn and its tests | `prototypes/aerial/` |
 | `notes/cli-and-packages.md` | `tide`: its commands, the built-in clang and tide's size, packages and `tide.packages`, a game's C and libraries, what the package holds, `tide build --android` | `compiler/cli/`, `compiler/lsp/packages.c`, `cmake/LLVM.cmake`, `cmake/package.cmake` |
 | `notes/releases-and-ci.md` | Installing and upgrading, releases through the site, the Build workflow, its runners, nightlies | `.github/`, `install.ps1`, `install.sh`, `docs/releases.js`, `compiler/cli/upgrade.c`, `install.c`, `release.c` |
 | `notes/box2d.md` | The Box2D package: its state in the match, its stage, sleep, sensors, images in parts, parts, queries, tuning, pins and costs | `packages/box2d/` |

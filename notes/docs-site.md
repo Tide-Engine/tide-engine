@@ -1,5 +1,19 @@
 # The docs site
 
+Aerial catalog addition (2026-10-10): the owner's second Rocket League
+prototype adds a seventh server-loaded card, `aerial`, for one to six
+players, above Afterburn's. `aerial_page` stages under
+`static/prototypes/aerial/` and is one of `private_games` when
+`TIDE_PRIVATE_PROTOTYPES` is on. `admin.js`'s public-root and retired-alias
+patterns and the build's asset gate have the id, and the admin and production
+HTTP tests go through all seven: anonymous access to the game with no admin
+password, the catalog behind sign-in, and nothing of it in Samples, search or
+the sitemap. The id is an ordinary word, so those last checks look for
+`prototypes/aerial`, not the bare word, and a public path with a segment
+`aerial` outside `/prototypes/` is refused like any retired alias. The manual
+docs workflow picks it up as it is; nothing was deployed. The game itself:
+`notes/aerial.md`.
+
 Afterburn catalog addition (2026-10-09): the owner's Rocket League prototype
 request adds a sixth server-loaded card, `rocket-league`, titled Afterburn,
 for one or two players. Its `rocket_league_page` target stages under
