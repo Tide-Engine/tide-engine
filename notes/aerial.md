@@ -155,6 +155,9 @@ singletons, and nothing here is in the match's hash (the render test checks).
   glass walls behind a car that's driving up one; the pitch, the kerb and the
   roof hold it in. From the grass it looks up only as far as keeps the car in
   the picture. A held key looks back, and a gamepad's right stick swivels it.
+  While it's out through a wall (`Look.outside`), `ShellPaint` leaves undrawn
+  what's past the walls within 18 m of it, or the seats it's among hide the
+  car.
 - **Keys are in one of the game's two layouts** (`KeyLayout` in `hand.tide`,
   Classic unless the button beside Menu switches it): the input's `Sample`
   and `Prepare`'s camera keys both read it. `Hand.held` is the throttle key
@@ -200,7 +203,7 @@ was deployed and no workflow was dispatched.
   from its ball's velocity; within 0.08 m, 0.15 m/s, 0.02 rad and 0.04 rad/s
   of its car).
 - **The scripted match's hash is `0x66d4ba38f380cd9b`**, the same on native
-  debug and WASI. Any change to the match changes it: update it from one
+  debug, native release and WASI. Any change to the match changes it: update it from one
   platform and confirm the other.
 - **`aerial_render`** (`test/render.c`; OpenGL, WebGL and WebGPU): draws at
   1280 by 720 and 390 by 844, samples both key layouts, a gamepad, the touch
@@ -214,7 +217,9 @@ was deployed and no workflow was dispatched.
 
 Validation on 2026-10-10, on this Windows machine: `ctest --preset debug -R
 '^aerial_'` passed 2 of 2 and `ctest --preset web-debug -R '^aerial_'` 5 of 5,
-the web ones with Node 24.19. With the page staged, the site's build and
+the web ones with Node 24.19. The optimized build's `aerial_tests` passed 28
+of 28 with the same hash; there a whole bot match of two a side, about 37,000
+ticks, takes 0.31 s, under 9 microseconds a tick. With the page staged, the site's build and
 Svelte check passed (no errors), and so did its 31 analytics, admin, access,
 HTTP and SEO tests. Native runs with no window (`--script`, under
 `TIDE_HIDDEN`) were looked at as captures: the title, a kickoff, driving and
@@ -230,5 +235,5 @@ audio is stereo at 48 kHz and neither silent nor clipped (peak 20,725 of
 - Nobody has played it: every check here is a scripted run, a bot match or a
   capture looked at by the agent. How it feels in the hand, on a gamepad or
   a phone, is untested, and so are the sounds, which were never listened to.
-- A release build and its frame time; two machines through the public relay;
-  Linux, macOS, MinGW and Android, which need a requested CI run.
+- A frame's time, in any build; two machines through the public relay; Linux,
+  macOS, MinGW and Android, which need a requested CI run.
