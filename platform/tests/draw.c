@@ -3289,6 +3289,124 @@ static const tide_shader lights_shader = {
     .texture_reads = {TIDE_SHADER_READ_DATA},
 };
 
+static tide_color transient_data_color(const uint32_t cell, const uint32_t seed)
+{
+    return (tide_color){(float)(32u + (cell * 37u + seed * 17u) % 192u) / 255.0f,
+                        (float)(32u + (cell * 53u + seed * 29u) % 192u) / 255.0f,
+                        (float)(32u + (cell * 71u + seed * 43u) % 192u) / 255.0f, 1.0f};
+}
+
+static void transient_data_cell(tide_draw_list *draw, const uint32_t cell, const uint32_t seed, const uint32_t count)
+{
+    bench_light lights[4] = {0};
+    for (uint32_t i = 0; i < count; i++) {
+        lights[i].position = tide_f3((float)seed, (float)cell, (float)i);
+        lights[i].color = transient_data_color(cell, seed);
+    }
+    int32_t uniforms[4] = {0, (int32_t)tide_data_stride(7u), 3, 0};
+    const uint32_t textures[] = {tide_draw_list_data(draw, tide_list_from(lights, (int32_t)count, sizeof lights[0]),
+                                                   sizeof lights[0], 7u, 1u, bench_light_read, &uniforms[0])};
+    const float x = (float)(cell % 6u) * 8.0f, y = (float)(cell / 6u) * 8.0f;
+    const float corners[4][2] = {{x, y}, {x + 8.0f, y}, {x + 8.0f, y + 8.0f}, {x, y + 8.0f}};
+    bool fill;
+    const uint32_t mesh = tide_draw_mesh_slot(draw, TIDE_MESH_BYTES, 0x7e580000u + cell, 0u, tide_hash(corners, sizeof corners), &fill);
+    if (fill) tide_draw_mesh_fill_bytes(draw, mesh, corners, sizeof corners[0], 4u, quad_indices, 6u);
+    tide_draw_shaded(draw, &lights_shader, mesh, NULL, uniforms, textures, 0u);
+}
+
+// Scratch shader data has a new content identity whenever a pose changes.
+// Reusing an obsolete GPU allocation must preserve every current draw,
+// including an unchanged identity first sampled late in the next frame.
+static void transient_data_textures(void)
+{
+    enum { cells = 12, width = 48, height = 16, pixels = width * height };
+    tide_float2 points[pixels];
+    uint32_t got[pixels];
+    for (uint32_t y = 0; y < height; y++) {
+        for (uint32_t x = 0; x < width; x++) points[y * width + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    // Start without another fixture's mesh buffer capacities or textures.
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, points, 1, got);
+    tide_draw_list extra = {0};
+    uint64_t base_memory = 0;
+    for (uint32_t phase = 0; phase < 8u; phase++) {
+        if (phase == 7u) tide_draw_forget(&list);
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_draw_set_screen(&list);
+        tide_draw_reset(&extra);
+        tide_draw_set_screen(&extra);
+        uint32_t active = 0;
+        uint64_t bytes = 0, uploaded = 0;
+        const uint32_t mark = tide_scratch_mark();
+        for (uint32_t place = 0; place < cells; place++) {
+            const uint32_t cell = phase & 1u ? cells - 1u - place : place;
+            if (phase == 4u || (phase == 3u && (cell & 1u))) continue;
+            const uint32_t count = phase == 2u || phase == 3u ? cell % 3u + 1u : 1u;
+            const uint32_t seed = cell ? phase + 1u : 0u;
+            transient_data_cell(phase == 6u && cell >= cells / 2u ? &extra : &list, cell, seed, count);
+            const uint32_t size = count * tide_data_stride(7u) * sizeof(int32_t);
+            bytes += size;
+            if (phase == 0u || phase == 5u || phase == 7u || cell != 0u) uploaded += size;
+            active++;
+        }
+        if (phase == 6u) tide_draw_append(&list, &extra);
+        // Draw-list capture owns the data after the source scratch is gone.
+        tide_scratch_reset(mark);
+        const uint64_t before = tide_platform_gpu_written();
+        tide_platform_read_pixels(&list, points, pixels, got);
+        uint32_t different = 0;
+        for (uint32_t y = 0; y < height; y++) {
+            for (uint32_t x = 0; x < width; x++) {
+                const uint32_t cell = y / 8u * 6u + x / 8u;
+                const tide_color wanted = phase == 4u || (phase == 3u && (cell & 1u)) ? background
+                    : transient_data_color(cell, cell ? phase + 1u : 0u);
+                different += !near(got[y * width + x], rgba(wanted), 8);
+            }
+        }
+        char what[192];
+        snprintf(what, sizeof what, "transient shader data phase %u keeps every earlier/later draw's pixels (%u differ)", phase, different);
+        expect(different == 0u, what);
+        snprintf(what, sizeof what, "transient shader data phase %u uploads exactly changed pixels (%llu bytes, expected %llu)", phase,
+                 (unsigned long long)(tide_platform_gpu_written() - before), (unsigned long long)uploaded);
+        expect(tide_platform_gpu_written() - before == uploaded, what);
+        // Each quad has 32 vertex bytes and 12 narrowed index bytes. No
+        // transient spare allocation remains counted after a frame ends.
+        if (phase == 0u) base_memory = tide_platform_gpu_memory() - cells * 44u - bytes;
+        expect(tide_platform_gpu_memory() == base_memory + active * 44u + bytes,
+               "transient shader data keeps only current textures and meshes after each frame");
+    }
+    // A separate list has its own mesh places and epoch. Draw changed data
+    // at a different shape after the appended list, then retire everything.
+    tide_draw_reset(&extra);
+    tide_draw_clear(&extra, background);
+    tide_draw_set_screen(&extra);
+    const uint32_t mark = tide_scratch_mark();
+    for (uint32_t cell = cells / 2u; cell < cells; cell++) transient_data_cell(&extra, cell, 89u, 2u);
+    tide_scratch_reset(mark);
+    const uint64_t before = tide_platform_gpu_written();
+    tide_platform_read_pixels(&extra, points, pixels, got);
+    uint32_t different = 0;
+    for (uint32_t y = 0; y < height; y++) {
+        for (uint32_t x = 0; x < width; x++) {
+            const uint32_t cell = y / 8u * 6u + x / 8u;
+            different += !near(got[y * width + x], rgba(cell < cells / 2u ? background : transient_data_color(cell, 89u)), 8);
+        }
+    }
+    expect(different == 0u, "a separate list retains every shader-data pixel after append and forgetting");
+    const uint64_t data_bytes = cells / 2u * 2u * tide_data_stride(7u) * sizeof(int32_t);
+    expect(tide_platform_gpu_written() - before == data_bytes, "a separate list uploads every new shader-data byte");
+    expect(tide_platform_gpu_memory() == base_memory + cells / 2u * 44u + data_bytes,
+           "a separate list leaves no obsolete shader-data allocations retained");
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, points, 1, got);
+    expect(tide_platform_gpu_memory() == base_memory, "an empty frame releases all transient shader data and meshes");
+    tide_draw_free(&extra);
+}
+
 static void bench_keep(void)
 {
     if (bench_heap.pages) return;
@@ -3468,6 +3586,7 @@ static int frame(void *user, const float seconds)
         meshes_3d();
         primitives();
         shaded();
+        transient_data_textures();
         wraps();
         mipmaps();
         smooth_shapes();
@@ -3486,6 +3605,7 @@ static int frame(void *user, const float seconds)
     meshes_3d();
     primitives();
     shaded();
+    transient_data_textures();
     wraps();
     mipmaps();
     smooth_shapes();
