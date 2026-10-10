@@ -885,6 +885,8 @@ struct expr {
     // E_INT, E_FLOAT. int_value is a case label's value too, worked out by the checker.
     str text;
     int64_t int_value;
+    float float_value; // E_FLOAT with is_degrees: the converted, single-precision radians
+    bool is_degrees;  // E_FLOAT: a deg suffix; text keeps the source spelling for editors
     bool is_long; // E_INT: a long literal (an L suffix, or a value past int's range)
     bool is_char; // E_INT: a char literal, 'a', whose value is its code point
 

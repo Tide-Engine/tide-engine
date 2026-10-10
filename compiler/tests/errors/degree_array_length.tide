@@ -1,0 +1,3 @@
+// expect: an array's length is a constant int
+scene Main { }
+component Bad { int[90deg] values; }

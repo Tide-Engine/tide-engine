@@ -417,6 +417,10 @@ endforeach()
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.
 if(TARGET tidec_core)
+    add_executable(tidec_lexer_tests lexer_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_lexer_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_lexer_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_lexer COMMAND tidec_lexer_tests)
     add_executable(tidec_fbx_files_tests fbx_files_test.c fbx_parity_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_fbx_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_fbx_files_tests PRIVATE FBX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/fbx"

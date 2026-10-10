@@ -3982,6 +3982,10 @@ static void ex(emit *em, const expr *e)
         else put_int(em, int_literal(e));
         return;
     case E_FLOAT: {
+        if (e->is_degrees) {
+            put_float(em, e->float_value);
+            return;
+        }
         char text[64];
         snprintf(text, sizeof text, STR_FMT, STR_ARG(e->text));
         put_float(em, strtod(text, NULL));

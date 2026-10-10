@@ -778,6 +778,8 @@ struct Turns
     quaternion eulerScalar;
     quaternion eulerNamed;
     quaternion eulerInt;
+    quaternion eulerDegrees;
+    float4 degreeLiterals;
     quaternion look;
     quaternion fromSmall;
     quaternion fromX;
@@ -900,6 +902,8 @@ Turns TurnsOf(Given given)
     turns.eulerScalar = quaternion.Euler(given.angles.x, given.angles.y, given.angles.z);
     turns.eulerNamed = quaternion.Euler(z: given.angles.z, x: given.angles.x, y: given.angles.y);
     turns.eulerInt = quaternion.Euler(1, 2, 3);
+    turns.eulerDegrees = quaternion.Euler(180deg, -45.5deg, 9e1deg);
+    turns.degreeLiterals = float4(180deg, -45.5deg, 1_8e1deg, .5deg);
     turns.look = quaternion.LookRotation(Math.Forward(a), Math.Up(b));
     // From a matrix, each of the four ways there are: by its trace, and by each axis it turns nearly half around
     turns.fromSmall = quaternion(float3x3(a));
@@ -965,6 +969,11 @@ bool SameTurns(Turns a, Turns b)
     same = same && CloseTurn(a.eulerScalar, b.eulerScalar) && CloseTurn(a.eulerNamed, b.eulerNamed) && CloseTurn(a.eulerInt, b.eulerInt);
     same = same && CloseTurn(a.eulerScalar, a.euler) && CloseTurn(a.eulerNamed, a.euler)
                 && CloseTurn(a.eulerInt, quaternion.Euler(float3(1, 2, 3)));
+    same = same && CloseTurn(a.eulerDegrees, b.eulerDegrees)
+                && CloseTurn(a.eulerDegrees, quaternion.Euler(Math.Radians(float3(180, -45.5, 90))));
+    same = same && a.degreeLiterals.x == b.degreeLiterals.x && a.degreeLiterals.y == b.degreeLiterals.y
+                && a.degreeLiterals.z == b.degreeLiterals.z && a.degreeLiterals.w == b.degreeLiterals.w
+                && Close4(a.degreeLiterals, Math.Radians(float4(180, -45.5, 180, 0.5)));
     same = same && CloseTurn(a.fromSmall, b.fromSmall) && CloseTurn(a.fromX, b.fromX) && CloseTurn(a.fromY, b.fromY);
     same = same && CloseTurn(a.fromZ, b.fromZ) && CloseTurn(a.made, b.made) && CloseTurn(a.constant, b.constant);
     same = same && Close3(a.rotated, b.rotated) && Close3(a.multiplied, b.multiplied);
