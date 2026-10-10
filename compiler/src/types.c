@@ -277,6 +277,13 @@ bool type_assignable(const type to, const type from)
 {
     if (to.kind == TY_ERROR || from.kind == TY_ERROR) return true;
     if (to.kind == from.kind && to.decl == from.decl) return true;
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_ANIMATIONS
+        && from.decl->skin_kind == SKIN_ANIMATIONS) {
+        // An annotation erases static names; dynamic values cannot gain an
+        // inferred catalog's compile-time guarantees.
+        return (!to.decl->skin_metadata_status && !to.decl->skin_inferred && !to.decl->skin_catalog.count)
+            || skin_catalog_guarantees(to.decl, from.decl);
+    }
     if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_MESH
         && from.decl->skin_kind == SKIN_MESH) {
         if (to.decl->skin_vertex.decl != from.decl->skin_vertex.decl) return false;

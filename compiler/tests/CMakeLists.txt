@@ -78,8 +78,14 @@ tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Textur
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
+tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)
+    add_test(NAME tidec_animations_identity
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/animations_identity.mjs"
+            "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/animations-identity" "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(tidec_animations_identity PROPERTIES TIMEOUT 120)
     add_test(NAME tidec_skinned_default_identity
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/skinned_default_identity.mjs"
             "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")

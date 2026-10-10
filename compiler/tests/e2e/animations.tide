@@ -1,0 +1,64 @@
+// Animation-only assets expose checked clip names and keep ordinary owned values.
+asset Animations movement = "animations/clips/a.gltf";
+asset Animations modelClips = "skinned/model.glb";
+asset List<Animations> all = "animations/clips/*.gltf";
+asset Map<string, Animations> byPath = "animations/clips/*.gltf";
+asset List<Animations> one = "animations/clips/a.gltf";
+asset Map<string, Animations> oneByPath = "animations/clips/a.gltf";
+
+singleton Probe
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    int ticks;
+    Animations saved = movement;
+    List<Animations> savedList = all;
+    Map<string, Animations> savedMap = byPath;
+    Animation clip;
+    Pose pose;
+}
+
+scene Main { }
+
+void Expect(mut Probe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+
+Animations Erase(Animations clips) { return clips; }
+Animation FindMove(Animations clips) { return clips.Find("Move")!; }
+
+system CheckAndSample(mut Probe p)
+{
+    if (p.ticks == 0)
+    {
+        var known = movement;
+        Expect(p, known.move.name == "Move" && known.move.duration == 1);
+        Expect(p, movement.count == 1);
+        Expect(p, movement.Find("Move")!.name == "Move" && movement.Find("move") == null);
+        Expect(p, movement.At(0)!.name == "Move");
+        Expect(p, movement.At(-1) == null && movement.At(1) == null);
+        Expect(p, FindMove(movement).duration == 1);
+        Expect(p, Erase(movement).Find("Move")!.duration == 1);
+        Animations chosen = p.ticks == 0 ? known : movement;
+        Expect(p, chosen.count == 1);
+        Animation? optional = known.move;
+        Expect(p, optional!.name == "Move");
+        Expect(p, modelClips.move.name == "Move" && modelClips.squash.name == "Squash");
+        Expect(p, modelClips.count == 2);
+        Expect(p, all.count == 2 && all[0].count == 1 && all[1].Find("Move") != null);
+        Expect(p, byPath.count == 2 && byPath["animations/clips/a.gltf"].Find("Move") != null);
+        Expect(p, one.count == 1 && one[0].At(0)!.name == "Move");
+        Expect(p, oneByPath.count == 1 && oneByPath["animations/clips/a.gltf"].count == 1);
+        Expect(p, p.saved.count == 1 && p.savedList.count == 2 && p.savedMap.count == 2);
+        p.clip = p.saved.Find("Move")!;
+        p.pose = p.clip.Sample(0);
+    }
+    Expect(p, p.saved.Find("Move")!.duration == 1 && p.savedList[1].count == 1
+        && p.savedMap["animations/clips/a.gltf"].At(0)!.name == "Move");
+    p.pose.Sample(p.clip, float(p.ticks + 1) * 0.25, Playback.Loop);
+    p.ticks++;
+}
