@@ -4,6 +4,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Layout
 
+The temporary-maintenance exception applies to the AI agent working on an assigned task. References to Claude below record who wrote these implementations, not an exclusive right to maintain them. The owner still takes them over when ready, and new runtime functions needed by generated code require agreement before either side depends on them. This clarifies the existing working agreement; it does not transfer ownership of other runtime work.
+
 `tide_draw_list` owns a retained texture lookup index alongside its texture array (`texture_index`, `texture_index_capacity`). `tide_draw_reset` rebuilds it when textures are pruned and compacted, `tide_draw_forget` clears it, and `tide_draw_free` releases it. Its private `skinned` pointer owns frame-local palette memoization; reset clears its entries before pruning, forgetting clears them, and freeing releases its retained capacities through private `engine/src/skinned_cache.h` lifecycle helpers. No generated runtime call changes; the C structure layout does, so hosts, libraries and generated games rebuild together.
 
 ### Runtime written by Claude for now

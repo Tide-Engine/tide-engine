@@ -4,24 +4,22 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Building
 
-- `last_light_browser_process` has eight cleanup regressions (2026-10-10):
-  three portable process/stdio cases and five Windows taskkill cases. The
-  Windows fixtures intercept only the tree-killer launch and use real owned
-  processes to check stalled commands, spawn failure, independent browser exit
-  and refused termination of either process. Cleanup must confirm exit before
-  reporting success; an unkillable helper must not keep Node's event loop alive.
-  All eight pass on Windows Node 24.19, including ten consecutive suite runs;
-  the previous helper fails the stalled/lingering-command negative controls.
-  Scoped native and web checks, including real WebGL/WebGPU play, pass. The
-  reproduction and the limits of the CI diagnosis are in
-  `notes/private-prototypes.md`.
-  Run `38087099842` exposed the Windows fault fixtures' artificial 100 ms
-  exit budget under contention. They now use cleanup's production two-second
-  default, with all assertions and ten-second case guards retained. Their
-  intentional waits total about 24 seconds, so only this combined CTest
-  guard increases from 30 to 60 seconds. A controlled Windows probe failed
-  five of six attempts at 100 ms and passed six of six at two seconds;
-  the cleanup implementation and browser-playtest deadlines are unchanged.
+- `last_light_browser_process` has nine cleanup regressions (2026-10-11):
+  three portable real-process/stdio cases and six controlled Windows taskkill
+  cases. The fault fixtures use EventEmitter children and Node's mock timers
+  to advance the actual helper's default two-second windows, separately from
+  explicit process-exit/error notifications. Accepted kill requests leave exit
+  codes null until an exit is reported. Assertions cover complete grace windows,
+  both exits before success, retained stderr on failure, spawn errors,
+  independent browser exit and unreferencing an unkillable helper. A kill-only
+  case rejects treating `ChildProcess.killed` as confirmed exit.
+  Run `38089269838` passed native Windows and web but cancelled one MinGW fault
+  case at its ten-second test guard. The preceding 100 ms-to-two-second fixture
+  correction had left scheduling-dependent wall-clock waits in those cases.
+  Controlled time removes the deliberate waits; ten-second case guards remain,
+  and the CTest guard returns from 60 to its original 30 seconds. The cleanup
+  implementation and real browser-playtest deadlines are unchanged. Evidence,
+  validation and the earlier fixture history are in `notes/private-prototypes.md`.
 
 - `last_light_browser_devtools` exercises the Last Light fixture's DevTools
   pipe without a browser (2026-10-10). Eight cases cover fragmented UTF-8,
