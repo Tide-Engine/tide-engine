@@ -45,6 +45,12 @@ An asset is read-only. Nothing assigns it, takes it `mut`, or clears it: it's th
 
 Match code reads assets like any value, since every machine has the same pack; a `Texture` is the one that's local code's alone (below). What a machine loads as the game runs is another matter, further down.
 
+### Release builds
+
+A standalone `tide build --release` omits asset declarations that no checked Tide code, default or shader references. An asset named in a helper or a type's default stays, even if that helper or type is unused. A referenced list or map keeps every file its path matches. Every declaration is still checked, so an unused asset with a missing or invalid file remains a build error.
+
+Debug and hot-reload builds keep every declared asset. So do games or packages with C/C++ sources or prebuilt libraries, and games with a custom C host: their C code may read assets through the generated API or by name in the pack.
+
 ### A field's default
 
 A field's default can name an asset, as it names a constant:

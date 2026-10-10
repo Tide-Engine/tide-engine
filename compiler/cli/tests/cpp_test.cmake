@@ -65,11 +65,16 @@ set(web_args --web)
 set(game "${WORK}/game")
 file(COPY "${e2e}/cpp.tide" DESTINATION "${game}")
 file(COPY "${e2e}/cpp_code.cpp" DESTINATION "${game}/lib")
+file(APPEND "${game}/cpp.tide" "\nsettings { appId = \"dev.tide.test.cpp\"; }\n")
 foreach(target IN LISTS targets)
     tide("${game}" ARGS build . ${${target}_args} EXPECT "Built ")
+    # Release section collection must retain constructors, virtual dispatch,
+    # and the code's own new/delete implementation as well as direct calls.
+    tide("${game}" ARGS build . ${${target}_args} --release EXPECT "Built ")
 endforeach()
 if(ANDROID)
     tide("${game}" ARGS build . --android EXPECT "Built ")
+    tide("${game}" ARGS build . --android --release EXPECT "Built ")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -179,6 +184,7 @@ extern \"C\" void __cxa_pure_virtual() { abort(); }
 ")
 foreach(target IN LISTS targets)
     tide("${bare}" ARGS build . ${${target}_args} EXPECT "Built ")
+    tide("${bare}" ARGS build . ${${target}_args} --release EXPECT "Built ")
 endforeach()
 
 # ---------------------------------------------------------------------------

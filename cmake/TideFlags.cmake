@@ -14,6 +14,12 @@ target_compile_options(tide_flags INTERFACE
     -ffp-contract=off
 )
 
+# Release game links can collect unused code inside a selected archive member.
+# Sections do not remove symbols: profiling builds still keep their debug info.
+target_compile_options(tide_flags INTERFACE
+    "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-ffunction-sections>"
+    "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-fdata-sections>")
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux and Android (whose toolchain file says Linux): a function whose
     # locals take more than a page touches each page as it makes room for

@@ -1,6 +1,7 @@
 #include "codegen.h"
 
 #include "asset_files.h"
+#include "asset_usage.h"
 #include "pack_fingerprint.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
@@ -17574,6 +17575,7 @@ static void order_arrays(program *prog)
 
 bool codegen(program *prog, const codegen_options *opts)
 {
+    if (opts->strip_unused_assets) program_strip_unused_assets(prog);
     order_arrays(prog);
     // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was
     if (!prog->names_trilinear && prog->filter && prog->filter->members.count > 2) prog->filter->members.count = 2;
