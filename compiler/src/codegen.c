@@ -4270,6 +4270,7 @@ static void gen_task_start(gen *g, const expr *call)
 typedef struct ordered_item {
     expr *e;
     bool read; // A value read ahead of a call that writes, rather than something with side effects
+    bool borrowed; // A skinned draw consumes these handles before any later operand can change them
 } ordered_item;
 
 typedef struct ordering {
@@ -4632,7 +4633,7 @@ static void collect_operands(ordering *out, const operand_list *ops, const bool 
         if (out->items.count > had && out->items.items[out->items.count - 1].e == e) continue; // It waits in a temporary already
         if (settled(e)) continue;
         if (after && can_keep(e->type)) {
-            const ordered_item item = {e, true};
+            const ordered_item item = {e, true, false};
             vec_push(out->items, item);
         } else if (after || (first >= 0 && first < i)) {
             out->forced = true;
@@ -4676,7 +4677,14 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
                 collect_ordered(arg, out, false);
                 if (arg->bind == BIND_SHADER || !can_keep(arg->type)) continue;
                 if (out->items.count > had && out->items.items[out->items.count - 1].e == arg) continue;
-                const ordered_item item = {arg, true};
+                // Drawing only reads the model and pose, then captures their data in the draw list.
+                // Keep the handles without another owned copy when no later operand can change
+                // them. Calls into C and other ordered effects retain the ordinary snapshot.
+                bool borrowed = arg == e->skin_mesh || arg == e->skin_pose;
+                for (int k = i + 1; borrowed && k < ops.count; k++) {
+                    if (holds_ordered(ops.items[k].e)) borrowed = false;
+                }
+                const ordered_item item = {arg, true, borrowed};
                 vec_push(out->items, item);
             }
         } else {
@@ -4694,7 +4702,7 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
             if (type_dim(arg->type) >= 2 && holds_ordered(arg)) out->forced = true;
         }
         if (call_keeps_order(e)) {
-            const ordered_item item = {e, false};
+            const ordered_item item = {e, false, false};
             vec_push(out->items, item);
         }
         break;
@@ -4714,7 +4722,7 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         const bool ordered = !unit ? operator_keeps_order(e)
                            : (e->kind == E_CONDITIONAL && holds_ordered(e->lhs)) || holds_ordered(e->rhs);
         if (ordered) {
-            const ordered_item item = {e, false};
+            const ordered_item item = {e, false, false};
             vec_push(out->items, item);
         }
         break;
@@ -4727,7 +4735,7 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
     case E_STEP: { // ++i: its variable by address, then the step, whose value waits in a temporary
         operand_push(&ops, e->lhs, PLACE);
         collect_operands(out, &ops, false);
-        const ordered_item item = {e, false};
+        const ordered_item item = {e, false, false};
         vec_push(out->items, item);
         break;
     }
@@ -4749,7 +4757,7 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
             take(&ops, e->lhs);
         }
         collect_operands(out, &ops, false);
-        const ordered_item item = {e, false};
+        const ordered_item item = {e, false, false};
         vec_push(out->items, item);
         break;
     }
@@ -4824,11 +4832,12 @@ static void hoist_ordered(gen *g, const ordering *ordered)
     for (int i = 0; i < ordered->items.count; i++) {
         expr *e = ordered->items.items[i].e;
         sb name = {0};
-        if (ordered->items.items[i].read) { // As it is now, with its lists copied, so nothing shares them
+        if (ordered->items.items[i].read) { // As it is now; skinned draws can borrow until their synchronous capture
             sb_printf(&name, "tide_read%d", g->call_temps++);
             indent(g, &g->c);
             sb_printf(&g->c, "%s = ", const_decl(e->type, name.data));
-            gen_value_of(g, &g->c, e, e->type);
+            if (ordered->items.items[i].borrowed) gen_as(g, &g->c, e, e->type);
+            else gen_value_of(g, &g->c, e, e->type);
             sb_put(&g->c, ";\n");
             task_declare(g, name.data, e->type);
             e->kept = true;
@@ -4926,7 +4935,7 @@ static void hoist_assign(gen *g, const stmt *s)
         // The target is written out twice, to read and to write: what it runs waits in temporaries
         if (ordered.items.count > 0) ordered.forced = true;
         if (value_writes) { // What it held before the value's calls wrote
-            const ordered_item item = {s->target, true};
+            const ordered_item item = {s->target, true, false};
             vec_push(ordered.items, item);
         }
     }

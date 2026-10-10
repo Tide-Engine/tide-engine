@@ -464,6 +464,76 @@ TIDE_TEST(skinned_rejects_bad_data_without_changing_pose)
     tide_scratch_reset(mark);
 }
 
+TIDE_TEST(skinned_compatibility_reads_owned_chunked_headers_and_keeps_snapshots)
+{
+    const uint32_t mark = tide_scratch_mark();
+    tide_list data = model();
+    uint8_t nodes[3u * TIDE_SKINNED_NODE_SIZE];
+    memcpy(nodes, (const uint8_t *)tide_list_at(data, 0, 1u) + TIDE_SKINNED_HEADER_SIZE, sizeof nodes);
+    const uint32_t bytes = TIDE_LIST_CHUNK * 32u + 4u, node_at = bytes - (uint32_t)sizeof nodes;
+    tide_list_resize(&data, (int32_t)bytes, 1u, TIDE_IN_SCRATCH);
+    uint8_t *source = tide_list_at_mut(data, 0, 1u);
+    word(source, 8u, bytes);
+    word(source, 20u, node_at);
+    memcpy(source + node_at, nodes, sizeof nodes);
+    TIDE_REQUIRE(tide_skinned_valid(data));
+
+    tide_heap heap = {0}, snapshot = {0};
+    tide_text_use(&heap, NULL);
+    tide_list owned = {0};
+    tide_list_set(&owned, data, 1u, TIDE_IN_MATCH);
+    const tide_list stored = owned;
+    TIDE_REQUIRE(tide_block_at(owned.at)->b & TIDE_LIST_CHUNKED);
+    tide_heap_copy(&snapshot, &heap);
+    const uint64_t before = tide_heap_hash(TIDE_HASH_START, &heap);
+    const uint32_t scratch_before = tide_scratch_mark(), moves = heap.moves;
+    for (uint32_t i = 0; i < 100u; i++) {
+        TIDE_CHECK(tide_skinned_compatible(data, owned));
+        TIDE_CHECK(tide_skinned_compatible(owned, data));
+        TIDE_CHECK(tide_skinned_compatible(owned, owned));
+    }
+    TIDE_CHECK(tide_heap_hash(TIDE_HASH_START, &heap) == before && heap.moves == moves);
+    TIDE_CHECK(tide_scratch_mark() == scratch_before);
+
+    const tide_list short_header = tide_list_from(source, TIDE_SKINNED_HEADER_SIZE - 1u, 1u);
+    TIDE_CHECK(!tide_skinned_compatible(data, short_header));
+    TIDE_CHECK(!tide_skinned_compatible(short_header, data));
+    TIDE_CHECK(!tide_skinned_compatible(data, (tide_list){0}));
+    TIDE_CHECK(!tide_skinned_compatible((tide_list){0}, data));
+    const struct { uint32_t at, bad, restored; } rejected[] = {
+        {0u, 0u, TIDE_SKINNED_DATA_MAGIC},
+        {4u, TIDE_SKINNED_DATA_VERSION + 1u, TIDE_SKINNED_DATA_VERSION},
+        {8u, bytes - 4u, bytes},
+        {16u, UINT32_MAX, 3u},
+        {20u, bytes - 4u, node_at},
+        {16u, 2u, 3u}, // Same fingerprint, different declared node count.
+    };
+    for (uint32_t i = 0; i < sizeof rejected / sizeof rejected[0]; i++) {
+        uint8_t *header = tide_list_at_mut(owned, 0, 1u);
+        word(header, rejected[i].at, rejected[i].bad);
+        TIDE_CHECK(!tide_skinned_compatible(data, owned));
+        TIDE_CHECK(!tide_skinned_compatible(owned, data));
+        word(header, rejected[i].at, rejected[i].restored);
+    }
+    uint8_t *fingerprint = tide_list_at_mut(owned, 119, 1u);
+    *fingerprint ^= 1u;
+    TIDE_CHECK(!tide_skinned_compatible(data, owned));
+    *fingerprint ^= 1u;
+    // Compatibility always checked header identity rather than all body
+    // contents. Keep that behavior for a malformed node in a distant chunk.
+    word(tide_list_at_mut(owned, (int32_t)node_at, 1u), 0u, 0u);
+    TIDE_CHECK(!tide_skinned_valid(owned));
+    TIDE_CHECK(tide_skinned_compatible(data, owned));
+    tide_text_use(&snapshot, NULL);
+    TIDE_CHECK(tide_skinned_valid(stored));
+    TIDE_CHECK(tide_skinned_compatible(data, stored));
+    TIDE_CHECK(tide_heap_hash(TIDE_HASH_START, &snapshot) == before);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+    tide_heap_free(&snapshot);
+    tide_scratch_reset(mark);
+}
+
 TIDE_TEST(skinned_draw_captures_palettes_and_variable_influences)
 {
     const uint32_t mark = tide_scratch_mark();
