@@ -6,6 +6,12 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'aerial', title: 'Aerial', kind: 'Car soccer · Rocket League prototype', players: '1–6 players',
+        description: 'Rocket-powered car soccer on the sport\'s own numbers: sprung wheels, flips, wall rides and flight. One, two or three a side, with bots in every seat nobody takes.',
+        image: '/prototypes/aerial/thumbnail.png',
+        horror: false,
+    },
+    {
         id: 'rocket-league', title: 'Afterburn', kind: 'Car soccer · Rocket League prototype', players: '1–2 players',
         description: 'Boost, powerslide and fly through a floodlit arena. Play a five-minute duel against a bot or a friend, with wall driving, aerials and sudden-death overtime.',
         image: '/prototypes/rocket-league/thumbnail.png',

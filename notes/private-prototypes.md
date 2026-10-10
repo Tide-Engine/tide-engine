@@ -93,6 +93,13 @@ page at `/prototypes/rocket-league/`, with its gameplay thumbnail beside it.
 Its catalog card supports one player against a bot or two human players.
 Its game contract and validation belong to `notes/rocket-league.md`.
 
+Aerial (`prototypes/aerial/`) is a second Rocket League prototype, asked for by
+the owner on 2026-10-10 as a better one: the sport's own numbers on a
+rigid-body car, for one to six players with bots in every other seat. It uses
+the same opt-in option and `private_games`: `aerial_page` stages its page at
+`/prototypes/aerial/`, beside a native capture as its thumbnail. Afterburn
+stays as it is. Its contract and tests are in `notes/aerial.md`.
+
 ## Verification and limits
 
 The 2026-10-09 Build run (37994581083) exposed browser-playtest contention:
