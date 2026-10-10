@@ -8,6 +8,8 @@
 
 #include "asset_files.h"
 
+#include "fbx_files.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -573,6 +575,26 @@ static const char *kind_name(const asset_kind kind)
          : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : "Grid2<Color>";
 }
 
+bool asset_skinned_obj_diagnostic(const char *path, const loc at)
+{
+    size_t end = strlen(path);
+    if (asset_path_is_url(path, end)) {
+        const char *authority = strstr(path, "://") + 3;
+        const char *part = authority + strcspn(authority, "/?#");
+        if (*part != '/') return false;
+        end = (size_t)(part - path) + strcspn(part, "?#");
+    }
+    static const char extension[] = ".obj";
+    if (end < sizeof extension - 1u) return false;
+    for (size_t i = 0; i < sizeof extension - 1u; i++) {
+        const char ch = path[end - (sizeof extension - 1u) + i];
+        if ((ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch) != extension[i]) return false;
+    }
+    diag_error(at, "a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ");
+    diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
+    return true;
+}
+
 // A file a .gltf names beside it: read like any, and noted, so the mesh is
 // read again when it changes. The files' list can move as one is read, so the
 // .gltf's own entry is found again by its path afterwards.
@@ -769,7 +791,13 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             uint8_t *bytes = NULL;
             uint32_t size = 0;
             char why[256], note[256];
-            const bool ok = tide_skinned_data_decode(f->data, f->len, false, read_side, &sides, &bytes, &size, why, note);
+            uint8_t *fbx_glb = NULL;
+            size_t fbx_glb_size = 0;
+            const bool is_fbx = fbx_file_is(f->data, f->len, key);
+            bool ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
+            if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
+                false, read_side, &sides, &bytes, &size, why, note);
+            free(fbx_glb);
             free(folder);
             f = read_at(path);
             if (!f) {
@@ -790,8 +818,10 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (ok) f->skin_mesh = skin_geometry(bytes, size);
         }
         if (!f->skin_ok) {
-            diag_error(at, "'%s' %s", key, f->skin_why);
-            if (f->skin_note[0]) diag_note("%s", f->skin_note);
+            if (!asset_skinned_obj_diagnostic(key, at)) {
+                diag_error(at, "'%s' %s", key, f->skin_why);
+                if (f->skin_note[0]) diag_note("%s", f->skin_note);
+            }
             return false;
         }
         item->mesh = f->skin_mesh;

@@ -12,6 +12,7 @@ component Body
     float4 color = float4(1, 0.5, 0.25, 1);
     int2 cell = int2(3, -4);
     quaternion rotation = quaternion.identity;
+    quaternion initialEuler = quaternion.Euler(0, Math.PI / 2, 0);
     float3x3 basis = float3x3.identity;
     float4x4 world;
     float angle = Math.Radians(90);
@@ -76,6 +77,14 @@ component Results
     Color clampedColor;
     Color saturatedColor;
     Color brighterColor;
+    quaternion vectorEuler;
+    quaternion scalarEuler;
+    quaternion namedEuler;
+    quaternion integerEuler;
+    quaternion orderedEuler;
+    quaternion reorderedEuler;
+    int eulerOrder;
+    int namedEulerOrder;
 }
 
 scene Main { }
@@ -83,6 +92,12 @@ scene Main { }
 event(Spawned) Setup(with Main)
 {
     Spawn(Body, Results);
+}
+
+float EulerArgument(mut int order, int digit)
+{
+    order = order * 10 + digit;
+    return digit * 0.1;
 }
 
 system Compute(mut Body body, mut Results r)
@@ -165,4 +180,16 @@ system Compute(mut Body body, mut Results r)
     r.clampedColor = Math.Clamp(Color(-1, 0.5, 2, 0.75), 0, Color(1, 0.25, 1, 1));
     r.saturatedColor = Math.Saturate(Color(-1, 0.5, 2, 3));
     r.brighterColor = Math.Max(from, 0.25);
+
+    // Both Euler forms use the same radians and Z-X-Y rotation order.
+    r.vectorEuler = quaternion.Euler(float3(0.1, 0.2, 0.3));
+    r.scalarEuler = quaternion.Euler(0.1, 0.2, 0.3);
+    r.namedEuler = quaternion.Euler(z: 0.3, x: 0.1, y: 0.2);
+    r.integerEuler = quaternion.Euler(0, 180, 0);
+    mut int order = 0;
+    r.orderedEuler = quaternion.Euler(EulerArgument(order, 1), EulerArgument(order, 2), EulerArgument(order, 3));
+    r.eulerOrder = order;
+    order = 0;
+    r.reorderedEuler = quaternion.Euler(z: EulerArgument(order, 3), x: EulerArgument(order, 1), y: EulerArgument(order, 2));
+    r.namedEulerOrder = order;
 }

@@ -6,15 +6,15 @@
 
 // A mesh file as an `asset Mesh<V>` reads it (docs/spec.md, Assets, Meshes):
 // glTF 2.0 (a .glb, or a .gltf with its buffers inside it or in files beside
-// it) and Wavefront OBJ, read with nothing of anyone else's. Whatever the
+// it), Wavefront OBJ, and FBX (through the compiler's ufbx import). Whatever the
 // file is, what comes out is one mesh as Tide draws one: every mesh the file
-// places, where it places it, with x turned around (the files are
-// right-handed, Tide's world is Unity's) and each triangle's corners going
-// clockwise seen from its front.
+// places, where it places it, with x turned around (glTF is right-handed;
+// FBX first converts to right-handed Y-up meters, and OBJ uses its written
+// units). Each triangle's corners go clockwise seen from its front.
 //
-// Every number is worked out with the basic float operations alone, in a
-// fixed order, so a file gives the same bits whichever machine builds the
-// game: match code reads a mesh's vertices too.
+// Arithmetic has a fixed order; FBX uses ufbx's portable math implementation.
+// A file gives the same bits whichever machine builds the game: match code
+// reads a mesh's vertices too.
 
 typedef struct mesh_file {
     uint32_t vertices;

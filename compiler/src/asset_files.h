@@ -23,7 +23,7 @@ typedef enum asset_kind {
     // nx, py, ny, pz, nz), decoded: its items are the six in that order
     ASSET_CUBEMAP,
     ASSET_CLIP,    // Clip: a WAV, checked here and kept as it is; the engine decodes it as it's first played
-    // Mesh<V>: a glTF (.glb, .gltf) or an OBJ, read here as one mesh (mesh_files.h), which codegen lays out as
+    // Mesh<V>: glTF (.glb, .gltf), OBJ or FBX, read here as one mesh (mesh_files.h), which codegen lays out as
     // the declaration's vertex struct
     ASSET_MESH,
     ASSET_SKINNED,
@@ -60,6 +60,11 @@ typedef struct asset_value {
 asset_value *asset_resolve(const char *declaring, str path, asset_kind kind, bool many, bool is_map, loc at, const char *game_folder);
 // Decode the language literal's escapes and normalize path separators (arena).
 const char *asset_written_path(str text);
+
+// After a skinned import fails, diagnose an OBJ path with its supported
+// alternative instead of a glTF JSON error. URL queries and fragments do
+// not name a format. False leaves the original import diagnostic to callers.
+bool asset_skinned_obj_diagnostic(const char *path, loc at);
 
 // The folders and files a resolved value depends on, for whoever watches
 // them: each file's path, and a glob's folder (ending in '/'). Calls `found`

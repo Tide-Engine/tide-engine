@@ -122,7 +122,7 @@ asset Cubemap sky = "art/sky_??.png";
 
 ## Meshes
 
-A model an artist made, or one a tool generated, is a mesh file: glTF (a `.glb`, or a `.gltf` with its buffers) or a Wavefront `.obj`. `asset Mesh<V>` declares one as vertices of a struct of yours, `V`, which the file fills by its fields' names:
+A model an artist made, or one a tool generated, is a mesh file: glTF (a `.glb`, or a `.gltf` with its buffers), FBX (`.fbx`, binary or ASCII) or a Wavefront `.obj`. `asset Mesh<V>` declares one as vertices of a struct of yours, `V`, which the file fills by its fields' names:
 
 ```csharp
 struct Corner
@@ -180,10 +180,11 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 
 - From a glTF: its meshes' positions, normals, tangents, two sets of uvs and vertex colors, its nodes' places, and each material's base color. Not its textures, nor the rest of a material; not skins, animation, morph targets, cameras or lights: a skinned model is the mesh as it stands. A file whose geometry is compressed (Draco, meshopt) is an error that says to export it without: Tide reads a mesh's numbers as they are.
 - From an OBJ: positions, uvs, normals and faces of any number of corners, with a color after a position where a tool wrote one. Not its materials file.
+- From an FBX: polygon meshes, node transforms, normals, tangents, two sets of uvs, vertex colors and material base colors. Polygons are triangulated, and the file's axes and units are converted to Y-up meters before Tide's coordinate conversion. Embedded textures and the rest of a material are not imported. A static `Mesh<V>` takes the rest geometry; use [`SkinnedMesh<V>`](./animation.md) for bones and animation.
 - **A texture a model has is a file of its own**, a PNG or PSD beside it, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
 - A mesh holds 16,777,216 vertices at the most.
 
-**It comes in as Tide has the world.** Mesh files are right-handed with their triangles' fronts counterclockwise, and Tide's world is left-handed with them [clockwise](./3d.md#which-side-draws), like Unity's. So a file's `x` is turned around and its triangles are wound the other way: `+y` stays up, a model that faces `+z` in its file faces `+z` here, and nothing is mirrored. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
+**It comes in as Tide has the world.** Tide's world is left-handed with fronts [clockwise](./3d.md#which-side-draws), like Unity's. glTF is right-handed with fronts counterclockwise: a file's `x` is turned around and its triangles are wound the other way, so `+y` stays up and a model that faces `+z` still faces `+z`. OBJ uses the same conversion. FBX first converts its declared axes and units to right-handed Y-up meters, then uses that conversion too. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
 
 **Nothing keeps one.** A `Mesh` is the pack's own memory, which code reads by the asset's name: a local, a function's parameter and what a function returns pass one on, and no field holds one, nor a task while it waits. What says which model a thing has is a number or a key of yours:
 

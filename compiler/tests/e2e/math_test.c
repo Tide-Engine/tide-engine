@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string.h>
 
 #include "game.h"
 #include "tide_test.h"
@@ -38,6 +39,8 @@ TIDE_TEST(math_defaults)
     TIDE_CHECK(b.color.y == 0.5f && b.color.w == 1.0f);
     TIDE_CHECK(b.cell.x == 3 && b.cell.y == -4);
     TIDE_CHECK(b.rotation.value.w == 1.0f && b.rotation.value.x == 0.0f);
+    const tide_quaternion initial_euler = tide_euler_q(tide_f3(0, TIDE_PI_F / 2.0f, 0));
+    TIDE_CHECK(memcmp(&b.initialEuler, &initial_euler, sizeof initial_euler) == 0);
     TIDE_CHECK(b.basis.c0.x == 1.0f && b.basis.c1.y == 1.0f && b.basis.c0.y == 0.0f);
     TIDE_CHECK(near(b.angle, TIDE_PI_F / 2.0f));
     TIDE_CHECK(b.pi == TIDE_PI_F);
@@ -138,6 +141,19 @@ TIDE_TEST(math_swizzle_writes)
     TIDE_REQUIRE(tide_has_Results(&world, THING));
     // w = (0,0,0); w.xz = (4,5) -> (4,0,5); w.y += 1 -> (4,1,5); w.zx += (1,1) -> (5,1,6)
     TIDE_CHECK(eq3(r.written, 5, 1, 6));
+}
+
+TIDE_TEST(math_euler_scalar_arguments)
+{
+    const Results r = results();
+    TIDE_REQUIRE(tide_has_Results(&world, THING));
+    TIDE_CHECK(memcmp(&r.scalarEuler, &r.vectorEuler, sizeof r.scalarEuler) == 0);
+    TIDE_CHECK(memcmp(&r.namedEuler, &r.vectorEuler, sizeof r.namedEuler) == 0);
+    TIDE_CHECK(memcmp(&r.orderedEuler, &r.vectorEuler, sizeof r.orderedEuler) == 0);
+    TIDE_CHECK(memcmp(&r.reorderedEuler, &r.vectorEuler, sizeof r.reorderedEuler) == 0);
+    const tide_quaternion integers = tide_euler_q(tide_f3(0, 180, 0));
+    TIDE_CHECK(memcmp(&r.integerEuler, &integers, sizeof integers) == 0);
+    TIDE_CHECK(r.eulerOrder == 123 && r.namedEulerOrder == 312);
 }
 
 TIDE_TEST(math_hash)

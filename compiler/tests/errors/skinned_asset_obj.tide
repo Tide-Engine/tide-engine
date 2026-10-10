@@ -1,0 +1,6 @@
+// expect: a SkinnedMesh asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ
+// expect: use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX
+
+asset SkinnedMesh<Vertex3> character = "../e2e/assets/meshes/box.obj";
+
+scene Main { }
