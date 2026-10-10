@@ -4,6 +4,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Building
 
+- `last_light_browser_devtools` exercises the Last Light fixture's DevTools
+  pipe without a browser (2026-10-10). Eight cases cover fragmented UTF-8,
+  coalesced records, target-session routing and reordered replies, protocol
+  errors, transport closure, timeout/late replies, target detachment and
+  disposal. It runs in native and web builds alongside the process-cleanup
+  and frame-pacing checks. The transport comparison and the limits of the
+  hosted-timeout diagnosis are in `notes/private-prototypes.md`.
+
 - `last_light_frame_pacing` checks the playtest's serialized scheduler without
   a browser (2026-10-10): WebGL callback/spacing behavior, pending GPU work,
   timer progress, cancellation, rejected completion and several queues.

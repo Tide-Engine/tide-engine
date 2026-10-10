@@ -244,8 +244,45 @@ Six CPU-only `last_light_frame_pacing` regressions exercise the actual serialize
 helper: native callback context/timestamp and WebGL spacing, free timers while
 GPU work is pending, cancellation before native delivery and during GPU waits,
 rejected completion and frames using several queues. All six pass. The real
-release two-player WebGL and WebGPU playtests pass with the helper; hosted
-confirmation remains the requested CI run's job.
+release two-player WebGL and WebGPU playtests pass with the helper.
+
+Hosted run `38083005042` still timed out while entering the keeper's room code.
+At the last delivered samples, both pages had completed every submitted GPU
+frame, with pending counts of zero, peaks of one and longest completions of
+0.82/1.31 seconds. Those DevTools reports arrived about 20 seconds late, so
+they cannot identify the current renderer state at failure. The completion
+gate did not resolve the timeout. The synchronized delays on both page
+connections implicate a shared path, but do not locate it within Chrome,
+Windows or the transport.
+
+The playtest now uses Chrome's DevTools pipe, as the existing served web and
+rooms runners do, instead of separate Node WebSocket clients to the browser's
+HTTP debugging server. `test/browser-devtools.mjs` decodes NUL-terminated UTF-8
+records, assigns globally unique command IDs, and routes each player's events
+through its flattened target session. A closed pipe rejects all commands; a
+detached target rejects only that session. Browser close is a browser-level
+command, and both pipes are released after bounded process shutdown. Separate
+player windows, renderer flags, frame reporting, pacing, all gameplay checks,
+screenshots and deadlines remain unchanged. This is fixture code only.
+
+Controlled release-page probes used Chrome Headless Shell 155.0.8059.39,
+Node 24.21 and the same 0.48-processor job budget. Scratch-only HTTP frame/input
+timestamps and browser heartbeats compared paths independently. The WebSocket
+probe passed in 74.08 seconds using 35.89 CPU-seconds, and the pipe probe passed
+in 70.51 seconds using 32.75 CPU-seconds; maximum DevTools frame delivery age
+was 602/39 ms. Neither reproduced the hosted backlog, so these local results
+do not establish its cause or prove the hosted fix. The unmodified WebSocket
+playtest also passed separately with Node 24.21 and 24.19 in 75.82/78.93 seconds;
+there is no supported reason to pin Node. The sideband and heartbeat probes
+are not part of the checked-in runner.
+
+Eight CPU-only `last_light_browser_devtools` cases cover split UTF-8 and
+coalesced records, independent target events and reordered replies, protocol
+errors, closed pipes, late replies after timeout, isolated target detachment,
+malformed records/browser exit/write failure, and disposal with commands pending.
+All eight pass on Node 24.21. The real checked-in runner also passes the complete
+two-player WebGL and WebGPU checks with the release page and that same browser
+and Node version. Hosted confirmation still requires the requested CI run.
 
 Diagnostic validation (2026-10-10): the exact CI Chrome Headless Shell
 155.0.8059.39 and Node 24.19 passed the WebGL playtest on web-debug with
