@@ -92,6 +92,8 @@ set(TIDE_CPP_FLAGS -x c++ -std=c++20 -nostdinc++ -fno-exceptions -fno-rtti -fno-
 # can page a host of its own.
 set(TIDE_WEB_SHELL "${PROJECT_SOURCE_DIR}/platform/web/shell.html" CACHE INTERNAL "")
 set(TIDE_WEB_SCRIPT "${PROJECT_SOURCE_DIR}/platform/web/tide.js" CACHE INTERNAL "")
+set(TIDE_WEB_RELEASE_SCRIPT "${PROJECT_SOURCE_DIR}/platform/web/tide.release.js" CACHE INTERNAL "")
+include("${PROJECT_SOURCE_DIR}/cmake/WebRuntime.cmake")
 function(tide_web_page target)
     if(NOT TIDE_WEB)
         return()
@@ -102,13 +104,16 @@ function(tide_web_page target)
     else()
         set(shell "${TIDE_WEB_SHELL}")
     endif()
+    set(release "$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>")
+    set(script "$<IF:${release},${TIDE_WEB_RELEASE_SCRIPT},${TIDE_WEB_SCRIPT}>")
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/web_page.mjs"
-            "$<TARGET_FILE:${target}>" "${shell}" "${TIDE_WEB_SCRIPT}"
-            "$<TARGET_FILE_DIR:${target}>/${target}.html" ${ARG_PACK}
+            "$<TARGET_FILE:${target}>" "${shell}" "${script}"
+            "$<TARGET_FILE_DIR:${target}>/${target}.html" ${ARG_PACK} "$<${release}:--release>"
         COMMENT "Web page for ${target}"
         VERBATIM)
-    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}" "${TIDE_WEB_SCRIPT}")
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}" "${TIDE_WEB_SCRIPT}"
+        "${TIDE_WEB_RELEASE_SCRIPT}" "${PROJECT_SOURCE_DIR}/cmake/web_page.mjs")
 endfunction()
 
 function(tide_add_game target)

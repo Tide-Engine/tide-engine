@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, gpu: false, keep: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -33,6 +34,25 @@ const changedTime = new Date("2021-01-01T00:00:00Z");
 
 function check(condition, message) {
     if (!condition) throw new Error(message);
+}
+
+function checkEngineHeaders(installation) {
+    const engine = join(installation, "src", "engine");
+    function visit(folder) {
+        for (const entry of readdirSync(folder, { withFileTypes: true })) {
+            const file = join(folder, entry.name);
+            if (entry.isDirectory()) visit(file);
+            else if (/\.[ch]$/.test(entry.name)) {
+                for (const match of readFileSync(file, "utf8").matchAll(/^\s*#\s*include\s*"([^"]+)"/gm)) {
+                    const header = match[1];
+                    check(existsSync(join(dirname(file), header)) || existsSync(join(installation, "include", header)),
+                        `installed engine source ${relative(installation, file)} is missing quoted header ${header}`);
+                }
+            }
+        }
+    }
+    visit(engine);
+    console.log("Installed engine's quoted headers are present.");
 }
 
 async function run(executable, args, cwd, extra = {}) {
@@ -89,7 +109,15 @@ function removeOwned(root, path) {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
-async function strippingTests(tide, installation, root, target) {
+function embeddedPayload(page, name) {
+    const encoded = page.match(new RegExp(`const ${name} = "([A-Za-z0-9+/=]+)";`))?.[1];
+    check(encoded, `web stripping fixture has no embedded ${name}`);
+    const bytes = Buffer.from(encoded, "base64");
+    const gzip = bytes[0] === 0x1f && bytes[1] === 0x8b;
+    return { bytes: gzip ? gunzipSync(bytes) : bytes, gzip };
+}
+
+async function strippingTests(tide, installation, root, target, embedded) {
     console.log(`Release code stripping: ${target}`);
     const game = join(root, `strip-${target}`);
     mkdirSync(game);
@@ -139,9 +167,13 @@ int Native(int value)
             check(pack.includes(Buffer.from(packedMarker)), "C interop lost an asset without a Tide reference");
             let program = readFileSync(output);
             if (target === "web") {
-                const encoded = program.toString("utf8").match(/const TIDE_PROGRAM = "([A-Za-z0-9+/=]+)";/)?.[1];
-                check(encoded, "web stripping fixture has no embedded program");
-                program = Buffer.from(encoded, "base64");
+                const page = program.toString("utf8");
+                const payload = embeddedPayload(page, "TIDE_PROGRAM");
+                const expectGzip = release && embedded && existsSync(join(installation, "web", "tide.release.js"));
+                check(payload.gzip === expectGzip, `web ${release ? "release" : "debug"}: unexpected program compression`);
+                program = payload.bytes;
+                check(program.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d])), "embedded program is not WebAssembly");
+                check(embeddedPayload(page, "TIDE_PACK").bytes.equals(pack), "embedded pack differs from generated pack");
             }
             for (const [name, marker] of Object.entries(markers)) {
                 // WebAssembly already collects unused code in debug. Native
@@ -149,6 +181,16 @@ int Native(int value)
                 const expected = name.endsWith("Called") || (!release && target === "native");
                 check(program.includes(Buffer.from(marker)) === expected,
                     `${target} ${release ? "release" : "debug"}: ${name} ${expected ? "was removed" : "was retained"}`);
+            }
+            if (target === "native" && process.platform === "win32") {
+                // GLFW's Vulkan termination shares an archive member with
+                // APIs this OpenGL host never calls. Collect their code/data
+                // inside that member, while debug links keep them available.
+                const unusedGlfw = Buffer.from("Vulkan: Loader not found");
+                check(readFileSync(join(installation, "lib", "native", "libtide_platform.a")).includes(unusedGlfw),
+                    "unused GLFW sentinel missing from the prebuilt platform archive");
+                check(program.includes(unusedGlfw) === !release,
+                    `native ${release ? "release" : "debug"}: unused GLFW Vulkan API ${release ? "was retained" : "was removed"}`);
             }
             if (release) {
                 // Both unused bodies/data really entered the link: their
@@ -373,6 +415,21 @@ async function targetTests(tide, installation, root, target, embedded) {
     await build();
     expectWrites(cache, before, [...before.keys()], "installed engine header invalidates every object");
 
+    // A private-header-only update must reach the compiler even while its
+    // sources, public headers and compiler executable are unchanged.
+    const privateHeader = join(installation, "src", "engine", "skinned_cache.h");
+    const privateHeaderText = readFileSync(privateHeader, "utf8");
+    before = mark(cache);
+    put(privateHeader, privateHeaderText + "\n#error cache_private_header_failure\n", changedTime);
+    await build([], "cache_private_header_failure");
+    put(privateHeader, privateHeaderText, headerTime);
+    await build();
+    expectWrites(cache, before, [...before.keys()].filter(file => file.startsWith("engine/")),
+        "private engine header update and revert rebuild only engine objects");
+    before = mark(cache);
+    await build();
+    expectWrites(cache, before, [], "unchanged private engine headers reuse every object");
+
     if (embedded) {
         before = mark(cache);
         // Only the private copied compiler changes, preserving the real installation.
@@ -562,12 +619,13 @@ async function main() {
         }
         const tide = join(installation, "bin", process.platform === "win32" ? "tide.exe" : "tide");
         cpSync(opts.tide, tide);
+        checkEngineHeaders(installation);
         const version = await run(tide, ["version"], root);
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
         if (!opts.watchOnly) {
-            for (const target of opts.web ? ["native", "web"] : ["native"]) await strippingTests(tide, installation, root, target);
+            for (const target of opts.web ? ["native", "web"] : ["native"]) await strippingTests(tide, installation, root, target, embedded);
             if (!opts.stripOnly) {
                 for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
                 for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);

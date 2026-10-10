@@ -7,4 +7,6 @@ target_link_libraries(tide PUBLIC tide_flags)
 
 # In the package, the engine is sources: tide compiles them with each game.
 install(DIRECTORY include/tide DESTINATION include COMPONENT tide)
-install(FILES ${TIDE_ENGINE_SOURCES} DESTINATION src/engine COMPONENT tide)
+# Sources include private headers relative to their own folders.
+install(DIRECTORY src/ DESTINATION src/engine COMPONENT tide
+    FILES_MATCHING PATTERN "*.c" PATTERN "*.h")
