@@ -328,6 +328,14 @@ bool tide_pack_list_version(tide_list list, uint32_t element, uint64_t *version)
 // whose storage overlaps a model's header or bytes in a forged pack.
 bool tide_pack_skinned_version(tide_list data, uint64_t *version);
 
+// The same current proof, with a nonzero process-local identity unique to this
+// validated block and load. Unlike the content hash, identity proves that the
+// bytes have not changed while this proof remains current. Reload/replacement
+// creates new identities even for equal bytes; overlapping writes invalidate
+// them. Optional outputs are left unchanged on failure. No identity is stored
+// in a pack, game state or snapshot.
+bool tide_pack_skinned_proof(tide_list data, uint64_t *identity, uint64_t *version);
+
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps
 // (tide_text_use), so every thread that runs Tide code reads the pack.

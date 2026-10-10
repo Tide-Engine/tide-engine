@@ -704,6 +704,13 @@ typedef struct skin_atlas_page {
     uint32_t texture, count;
 } skin_atlas_page;
 
+typedef struct cached_skin_rest {
+    uint64_t identity, version, atlas_id;
+    uint32_t pose[2], page;
+    int32_t info[3];
+    cached_skin_pose influences;
+} cached_skin_rest;
+
 struct tide_skinned_draw_cache {
     cached_skin_model *models;
     cached_skin_pose *poses;
@@ -714,6 +721,8 @@ struct tide_skinned_draw_cache {
     size_t used, capacity;
     skin_atlas_page *pages;
     uint32_t page_count, page_built, page_capacity;
+    cached_skin_rest *rests;
+    uint32_t rest_count, rest_capacity, *rest_index, rest_slots;
 };
 
 void tide_skinned_draw_cache_reset(tide_draw_list *draw)
@@ -721,6 +730,7 @@ void tide_skinned_draw_cache_reset(tide_draw_list *draw)
     struct tide_skinned_draw_cache *c = draw->skinned;
     if (!c) return;
     c->model_count = c->pose_count = 0u;
+    c->rest_count = 0u;
     c->used = 0u;
     c->page_count = 0u;
     for (uint32_t i = 0; i < c->page_built; i++) {
@@ -729,6 +739,7 @@ void tide_skinned_draw_cache_reset(tide_draw_list *draw)
     }
     if (c->model_slots) memset(c->model_index, 0, (size_t)c->model_slots * sizeof(uint32_t));
     if (c->pose_slots) memset(c->pose_index, 0, (size_t)c->pose_slots * sizeof(uint32_t));
+    if (c->rest_slots) memset(c->rest_index, 0, (size_t)c->rest_slots * sizeof(uint32_t));
 }
 
 void tide_skinned_draw_cache_free(tide_draw_list *draw)
@@ -741,6 +752,8 @@ void tide_skinned_draw_cache_free(tide_draw_list *draw)
     free(c->pose_index);
     free(c->bytes);
     free(c->pages);
+    free(c->rests);
+    free(c->rest_index);
     free(c);
     draw->skinned = NULL;
 }
@@ -1188,6 +1201,142 @@ bool tide_draw_skinned_atlas(tide_draw_list *draw, const tide_list data, const t
     close_model(&m);
     if (!valid) { memset(textures, 0, 2u * sizeof *textures); memset(info, 0, 4u * sizeof *info); }
     return valid;
+}
+
+static cached_skin_rest *skin_rest_find(struct tide_skinned_draw_cache *c, const uint64_t identity)
+{
+    if (!c || !c->rest_slots) return NULL;
+    uint32_t at = (uint32_t)identity & (c->rest_slots - 1u);
+    while (c->rest_index[at]) {
+        cached_skin_rest *rest = &c->rests[c->rest_index[at] - 1u];
+        if (rest->identity == identity) return rest;
+        at = (at + 1u) & (c->rest_slots - 1u);
+    }
+    return NULL;
+}
+
+static void skin_rest_index(struct tide_skinned_draw_cache *c)
+{
+    uint32_t slots = c->rest_slots ? c->rest_slots : 16u;
+    while (slots / 2u <= c->rest_count) {
+        if (slots > UINT32_MAX / 2u) tide_out_of_memory();
+        slots *= 2u;
+    }
+    if ((uint64_t)slots * sizeof(uint32_t) > SIZE_MAX) tide_out_of_memory();
+    c->rest_index = tide_realloc(c->rest_index, (size_t)c->rest_slots * sizeof(uint32_t), (size_t)slots * sizeof(uint32_t));
+    c->rest_slots = slots;
+    memset(c->rest_index, 0, (size_t)slots * sizeof(uint32_t));
+    for (uint32_t i = 0; i < c->rest_count; i++) {
+        uint32_t at = (uint32_t)c->rests[i].identity & (slots - 1u);
+        while (c->rest_index[at]) at = (at + 1u) & (slots - 1u);
+        c->rest_index[at] = i + 1u;
+    }
+}
+
+static bool skin_rest_cached(tide_draw_list *draw, const cached_skin_rest *rest, const bool atlas,
+                             uint32_t textures[2], int32_t *info, bool *palette_bad)
+{
+    *palette_bad = false;
+    struct tide_skinned_draw_cache *c = draw->skinned;
+    const uint32_t pose_index = rest->pose[atlas ? 1u : 0u];
+    if (!pose_index || pose_index > c->pose_count) return false;
+    const cached_skin_pose *pose = &c->poses[pose_index - 1u];
+    if (atlas) {
+        // A remembered atlas slice must not fall through to atlas_capture's
+        // generic pose hit after its texture slot has failed this guard.
+        *palette_bad = true;
+        if (rest->page >= c->page_count || !pose->atlas || !pose->texture || pose->texture > draw->texture_count) return false;
+        const skin_atlas_page *page = &c->pages[rest->page];
+        tide_draw_texture *t = &draw->textures[pose->texture - 1u];
+        const uint64_t pixels = (uint64_t)page->count * 4u;
+        const int32_t width = pixels < TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
+        const int32_t height = (int32_t)((pixels + TIDE_LIST_DATA_ACROSS - 1u) / TIDE_LIST_DATA_ACROSS);
+        if (page->texture != pose->texture || page->id != rest->atlas_id || t->id != page->id
+            || t->space != TIDE_PIXELS_LIST || !t->changes || t->changes->kind != TIDE_SKINNED_ATLAS_KIND || t->format != TIDE_TEXELS_INTS
+            || t->version != tide_hash_end(page->hash) || t->epoch != draw->epoch || t->width != width || t->height != height
+            || !t->pixels || (uint64_t)(uint32_t)width * (uint32_t)height * 16u > t->capacity
+            || pose->base > page->count || (uint32_t)rest->info[0] > page->count - pose->base) return false;
+        t->frame = draw->frame;
+        *palette_bad = false;
+    } else if (!skin_cache_texture(draw, pose)) return false;
+    if (!skin_cache_texture(draw, &rest->influences)) return false;
+    textures[0] = pose->texture;
+    textures[1] = rest->influences.texture;
+    memcpy(info, rest->info, sizeof rest->info);
+    if (atlas) info[3] = (int32_t)pose->base;
+    return true;
+}
+
+static void skin_rest_remember(tide_draw_list *draw, const uint64_t identity, const uint64_t version,
+                               const bool atlas, const uint32_t textures[2], const int32_t *info)
+{
+    struct tide_skinned_draw_cache *c = draw->skinned;
+    uint32_t pose = c->pose_count;
+    while (pose) {
+        const cached_skin_pose *p = &c->poses[--pose];
+        if (p->texture == textures[0] && p->atlas == atlas && (!atlas || p->base == (uint32_t)info[3])) break;
+    }
+    if (!c->pose_count || c->poses[pose].texture != textures[0] || c->poses[pose].atlas != atlas
+        || (atlas && c->poses[pose].base != (uint32_t)info[3])) return;
+    cached_skin_rest *rest = skin_rest_find(c, identity);
+    if (!rest) {
+        c->rests = skin_cache_room(c->rests, &c->rest_capacity, c->rest_count, sizeof *c->rests);
+        const uint32_t i = c->rest_count++;
+        c->rests[i] = (cached_skin_rest){.identity = identity, .version = version};
+        if (c->rest_count >= c->rest_slots / 2u) skin_rest_index(c);
+        else {
+            uint32_t at = (uint32_t)identity & (c->rest_slots - 1u);
+            while (c->rest_index[at]) at = (at + 1u) & (c->rest_slots - 1u);
+            c->rest_index[at] = i + 1u;
+        }
+        rest = &c->rests[i];
+    }
+    rest->pose[atlas ? 1u : 0u] = pose + 1u;
+    memcpy(rest->info, info, sizeof rest->info);
+    const tide_draw_texture *t = &draw->textures[textures[1] - 1u];
+    rest->influences = (cached_skin_pose){.texture = textures[1], .texture_id = t->id, .texture_version = t->version,
+                                         .width = t->width, .height = t->height};
+    if (atlas) {
+        rest->atlas_id = draw->textures[textures[0] - 1u].id;
+        for (uint32_t i = 0; i < c->page_count; i++) {
+            if (c->pages[i].texture == textures[0]) { rest->page = i; break; }
+        }
+    }
+}
+
+static bool draw_skinned_rest(tide_draw_list *draw, const tide_list data, const bool atlas,
+                              uint32_t textures[2], int32_t *info)
+{
+    if (!textures || !info) return false;
+    memset(textures, 0, 2u * sizeof *textures);
+    memset(info, 0, (atlas ? 4u : 3u) * sizeof *info);
+    if (!draw) return false;
+    uint64_t identity, version;
+    const bool proven = tide_pack_skinned_proof(data, &identity, &version);
+    cached_skin_rest *rest = proven ? skin_rest_find(draw->skinned, identity) : NULL;
+    bool palette_bad = false;
+    if (rest && rest->version == version && skin_rest_cached(draw, rest, atlas, textures, info, &palette_bad)) return true;
+    // Only the first capture needs authored TRS. Existing draw capture owns
+    // those values and model dependencies before this scratch scope ends.
+    const uint32_t mark = tide_scratch_mark();
+    tide_list transforms = {0};
+    const bool capture_atlas = atlas && !palette_bad;
+    const bool valid = tide_skinned_rest(data, &transforms, TIDE_IN_SCRATCH)
+        && (capture_atlas ? tide_draw_skinned_atlas(draw, data, transforms, textures, info)
+                          : tide_draw_skinned_data(draw, data, transforms, textures, info));
+    if (valid && proven && draw->skinned) skin_rest_remember(draw, identity, version, capture_atlas, textures, info);
+    tide_scratch_reset(mark);
+    return valid;
+}
+
+bool tide_draw_skinned_rest_data(tide_draw_list *draw, const tide_list data, uint32_t textures[2], int32_t info[3])
+{
+    return draw_skinned_rest(draw, data, false, textures, info);
+}
+
+bool tide_draw_skinned_rest_atlas(tide_draw_list *draw, const tide_list data, uint32_t textures[2], int32_t info[4])
+{
+    return draw_skinned_rest(draw, data, true, textures, info);
 }
 
 typedef struct skin_prepare_work {

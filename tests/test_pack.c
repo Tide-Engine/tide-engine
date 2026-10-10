@@ -1247,6 +1247,52 @@ TIDE_TEST(pack_skinned_verified_versions_grow_and_exclude_ordinary_bytes)
     free(bytes);
 }
 
+TIDE_TEST(pack_skinned_proof_identities_follow_loaded_blocks)
+{
+    size_t size;
+    uint8_t *bytes = build_skinned_pack(&size);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_skinned_lists model = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner));
+    const tide_list listed = {tide_pack_handle(tide_pack_find("Game.actors", TIDE_PACK_SKINNEDS))};
+    const tide_skinned_lists *first = tide_list_at(listed, 0, sizeof *first);
+    const tide_skinned_lists *second = tide_list_at(listed, 1, sizeof *second);
+    TIDE_REQUIRE(first && second);
+    uint64_t identity, version, same, other;
+    TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &identity, &version));
+    TIDE_CHECK(identity != 0u);
+    TIDE_REQUIRE(tide_pack_skinned_proof(first->data, &same, NULL));
+    TIDE_CHECK(same == identity);
+    TIDE_REQUIRE(tide_pack_skinned_proof(second->data, &other, NULL));
+    TIDE_CHECK(other != 0u && other != identity);
+    TIDE_REQUIRE(tide_pack_skinned_proof(model.data, NULL, &same));
+    TIDE_CHECK(same == version && tide_pack_skinned_proof(model.data, NULL, NULL));
+    const tide_list copy = tide_list_copy(model.data, 1u);
+    same = identity;
+    other = version;
+    TIDE_CHECK(!tide_pack_skinned_proof(copy, &same, &other));
+    TIDE_CHECK(same == identity && other == version);
+    TIDE_CHECK(!tide_pack_skinned_proof((tide_list){0}, &same, &other));
+
+    // A rejected load retains the current proof; equal successful loads must
+    // replace it even when the numeric handle and canonical hash stay equal.
+    TIDE_CHECK(!tide_pack_load(bytes, sizeof(tide_pack_header) - 1u));
+    TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &same, NULL));
+    TIDE_CHECK(same == identity);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &same, &other));
+    TIDE_CHECK(same != 0u && same != identity && other == version);
+    const uint64_t replacement = same;
+    tide_pack_unload();
+    TIDE_CHECK(!tide_pack_skinned_proof(model.data, &same, &other));
+    TIDE_CHECK(same == replacement && other == version);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &same, &other));
+    TIDE_CHECK(same != 0u && same != replacement && same != identity && other == version);
+    tide_pack_unload();
+    tide_scratch_free();
+    free(bytes);
+}
+
 TIDE_TEST(pack_skinned_verified_versions_invalidate_geometry_aliases)
 {
     tide_pack_builder b = {0};
@@ -1280,9 +1326,11 @@ TIDE_TEST(pack_skinned_verified_versions_invalidate_geometry_aliases)
     const tide_list models = {tide_pack_handle(tide_pack_find("Game.actors", TIDE_PACK_SKINNEDS))};
     const tide_skinned_lists *aliased = tide_list_at(models, 0, sizeof *aliased);
     const tide_skinned_lists *separate = tide_list_at(models, 1, sizeof *separate);
-    uint64_t version;
+    uint64_t version, aliased_identity, separate_identity;
     TIDE_REQUIRE(aliased && separate && tide_pack_skinned_version(aliased->data, &version));
     TIDE_REQUIRE(tide_pack_skinned_version(separate->data, &version));
+    TIDE_REQUIRE(tide_pack_skinned_proof(aliased->data, &aliased_identity, NULL));
+    TIDE_REQUIRE(tide_pack_skinned_proof(separate->data, &separate_identity, NULL));
     tide_list pose = {0};
     tide_draw_list draw = {0};
     uint32_t textures[2], count;
@@ -1295,6 +1343,11 @@ TIDE_TEST(pack_skinned_verified_versions_invalidate_geometry_aliases)
     tide_pack_mesh_updated(to, sizeof carrier);
     TIDE_CHECK(!tide_pack_skinned_version(aliased->data, &version));
     TIDE_CHECK(tide_pack_skinned_version(separate->data, &version));
+    uint64_t current_identity = aliased_identity;
+    TIDE_CHECK(!tide_pack_skinned_proof(aliased->data, &current_identity, NULL));
+    TIDE_CHECK(current_identity == aliased_identity);
+    TIDE_REQUIRE(tide_pack_skinned_proof(separate->data, &current_identity, NULL));
+    TIDE_CHECK(current_identity == separate_identity);
     TIDE_CHECK(!tide_draw_skinned_data(&draw, aliased->data, pose, textures, info));
     TIDE_CHECK(!textures[0] && !textures[1] && !info[0] && !info[1] && !info[2]);
     // The aliased list header can change too. Check its actual packed span

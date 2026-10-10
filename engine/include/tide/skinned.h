@@ -81,3 +81,11 @@ bool tide_draw_skinned_data(tide_draw_list *draw, tide_list data, tide_list tran
 // retain the immediate checked path and have base zero.
 bool tide_draw_skinned_atlas(tide_draw_list *draw, tide_list data, tide_list transforms,
                              uint32_t textures[2], int32_t info[4]);
+
+// Omitted-pose draws use authored rest without creating a mutable Pose value.
+// Current immutable-pack proof permits reuse of a frame-local owned capture;
+// other model values retain complete checked rest and draw preparation.
+bool tide_draw_skinned_rest_data(tide_draw_list *draw, tide_list data,
+                                 uint32_t textures[2], int32_t info[3]);
+bool tide_draw_skinned_rest_atlas(tide_draw_list *draw, tide_list data,
+                                  uint32_t textures[2], int32_t info[4]);

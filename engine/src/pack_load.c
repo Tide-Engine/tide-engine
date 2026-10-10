@@ -69,6 +69,7 @@ typedef struct packed_skinned {
     uint32_t at;
     uint32_t end; // End of its header/payload span, or 0 once a geometry write overlaps it.
     uint64_t version;
+    uint64_t identity;
 } packed_skinned;
 
 typedef struct skinned_span {
@@ -95,6 +96,8 @@ static struct {
 } pack;
 
 static TIDE_THREAD_LOCAL uint32_t mapped_epoch;
+// Never reset on unload: an offset reused by another load is a different proof.
+static uint64_t skinned_proof_identity;
 
 // What a Texture names an image by: the declaration (its name's hash, as its
 // entry has it), and for one of a glob's, its place in the list or its key
@@ -324,9 +327,13 @@ static void index_skinned_spans(void)
         uint32_t bytes;
         if (!flat_in(pack.region, pack.file_size, offset, 1u, &bytes)
             || !tide_skinned_data_validate(pack.region + offset + sizeof(tide_block), bytes)) continue;
+        // Exhausting identities disables this optimization rather than reusing
+        // a proof that a live draw list could still name.
+        if (skinned_proof_identity == UINT64_MAX) continue;
         // Establish the proof only after every load-time sanitizing write.
         model->end = offset + (uint32_t)sizeof(tide_block) + bytes;
         model->version = tide_hash(pack.region + offset + sizeof(tide_block), bytes);
+        model->identity = ++skinned_proof_identity;
         pack.skinned_spans[count++] = (skinned_span){offset, model->end, i, 0u};
     }
     pack.skinned_span_count = count;
@@ -911,13 +918,19 @@ bool tide_pack_list_version(const tide_list list, const uint32_t element, uint64
     return versioned_at(pack.region, pack.size, (list.at & 0x3FFFFFFFu) - TIDE_PACK_BASE, &count, &said, version) && said == element;
 }
 
-bool tide_pack_skinned_version(const tide_list data, uint64_t *version)
+bool tide_pack_skinned_proof(const tide_list data, uint64_t *identity, uint64_t *version)
 {
-    if (!version || !pack.region || !pack.skinned_places) return false;
+    if (!pack.region || !pack.skinned_places) return false;
     const packed_skinned *found = &pack.skinned[skinned_place(pack.skinned, pack.skinned_places, data.at)];
     if (!found->at || !found->end) return false;
-    *version = found->version;
+    if (identity) *identity = found->identity;
+    if (version) *version = found->version;
     return true;
+}
+
+bool tide_pack_skinned_version(const tide_list data, uint64_t *version)
+{
+    return version && tide_pack_skinned_proof(data, NULL, version);
 }
 
 tide_str tide_pack_text(const tide_pack_entry *e)
