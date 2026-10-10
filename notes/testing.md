@@ -4,6 +4,25 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Building
 
+- `last_light_browser_process` has eight cleanup regressions (2026-10-10):
+  three portable process/stdio cases and five Windows taskkill cases. The
+  Windows fixtures intercept only the tree-killer launch and use real owned
+  processes to check stalled commands, spawn failure, independent browser exit
+  and refused termination of either process. Cleanup must confirm exit before
+  reporting success; an unkillable helper must not keep Node's event loop alive.
+  All eight pass on Windows Node 24.19, including ten consecutive suite runs;
+  the previous helper fails the stalled/lingering-command negative controls.
+  Scoped native and web checks, including real WebGL/WebGPU play, pass. The
+  reproduction and the limits of the CI diagnosis are in
+  `notes/private-prototypes.md`.
+  Run `38087099842` exposed the Windows fault fixtures' artificial 100 ms
+  exit budget under contention. They now use cleanup's production two-second
+  default, with all assertions and ten-second case guards retained. Their
+  intentional waits total about 24 seconds, so only this combined CTest
+  guard increases from 30 to 60 seconds. A controlled Windows probe failed
+  five of six attempts at 100 ms and passed six of six at two seconds;
+  the cleanup implementation and browser-playtest deadlines are unchanged.
+
 - `last_light_browser_devtools` exercises the Last Light fixture's DevTools
   pipe without a browser (2026-10-10). Eight cases cover fragmented UTF-8,
   coalesced records, target-session routing and reordered replies, protocol
