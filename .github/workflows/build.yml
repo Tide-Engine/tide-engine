@@ -528,6 +528,10 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          # Restoring IDE archives and extracted transforms exhausted the
+          # hosted runner's disk before Gradle could start. Download on demand.
+          cache-disabled: true
       - name: Build and verify
         run: |
           chmod +x gradlew
