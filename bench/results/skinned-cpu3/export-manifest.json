@@ -294,7 +294,7 @@
     {
       "path": "original-artifacts.json",
       "bytes": 52060,
-      "sha256": "23f2e7aa93903b8f313e46d301f1f3b00b737a057813353c9458d4ae00a884db",
+      "sha256": "e57024b72080111565e2ab0939c78122efa9a0eff737f2d31609664f30441ace",
       "original": null
     },
     {
@@ -310,8 +310,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 4566,
-      "sha256": "97f6b19ca96929e284bf80db7af86c615b57bf79d0dbd641407b206ed858c6b9",
+      "bytes": 4843,
+      "sha256": "15493e171c3e8714ad05f9856521259b90a3614d67c6331fdccabf373b927be9",
       "original": null
     },
     {
@@ -338,12 +338,12 @@
     },
     {
       "path": "reproduce/export.mjs",
-      "bytes": 21164,
-      "sha256": "c87dc74ccd6a8d7ad138ed7dd1927e8861b523b7a1fecb3375991735b54b1a2b",
+      "bytes": 21426,
+      "sha256": "177dd84cb19e192529e335b967f25a5507c8a349bd0c7d66af7756812a07bdac",
       "original": {
         "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\export.mjs",
-        "bytes": 21164,
-        "sha256": "c87dc74ccd6a8d7ad138ed7dd1927e8861b523b7a1fecb3375991735b54b1a2b",
+        "bytes": 21426,
+        "sha256": "177dd84cb19e192529e335b967f25a5507c8a349bd0c7d66af7756812a07bdac",
         "category": "export-script"
       }
     },
