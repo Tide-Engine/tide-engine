@@ -8,8 +8,10 @@
 
 #include "tide/draw.h"
 #include "tide/mesh.h"
+#include "tide/net.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
+#include "tide/skinned.h"
 #include "tide/skinned_data.h"
 #include "tide_test.h"
 
@@ -1140,6 +1142,226 @@ TIDE_TEST(pack_skinned_lists_maps_and_vertex_defaults)
     tide_pack_unload();
     tide_scratch_free();
     free(bytes);
+}
+
+TIDE_TEST(pack_skinned_verified_versions_follow_loaded_bytes_and_owned_copies)
+{
+    size_t size;
+    uint8_t *bytes = build_skinned_pack(&size);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_skinned_lists model = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner));
+    uint64_t original, version;
+    TIDE_REQUIRE(tide_pack_skinned_version(model.data, &original));
+    TIDE_CHECK(original == tide_hash(tide_list_at(model.data, 0, 1u), PACK_SKIN_BYTES));
+    TIDE_CHECK(!tide_pack_skinned_version(model.vertices, &version));
+    TIDE_CHECK(!tide_pack_skinned_version(model.indices, &version));
+    TIDE_CHECK(!tide_pack_skinned_version((tide_list){model.data.at + 16u}, &version));
+    TIDE_CHECK(!tide_pack_skinned_version((tide_list){0}, &version));
+    TIDE_CHECK(!tide_pack_skinned_version(model.data, NULL));
+
+    const tide_list copy = tide_list_copy(model.data, 1u);
+    TIDE_CHECK(!tide_pack_skinned_version(copy, &version));
+    tide_list pose = {0};
+    tide_draw_list draw = {0};
+    uint32_t textures[2], copied[2], edited[2];
+    int32_t info[3];
+    TIDE_REQUIRE(tide_skinned_rest(model.data, &pose, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_draw_skinned_data(&draw, model.data, pose, textures, info));
+    TIDE_REQUIRE(tide_draw_skinned_data(&draw, copy, pose, copied, info));
+    TIDE_CHECK(textures[0] == copied[0] && textures[1] == copied[1]);
+    uint8_t *owned = tide_list_at_mut(copy, 0, 1u);
+    skin_float(owned, 500u, 2.0f);
+    TIDE_REQUIRE(tide_draw_skinned_data(&draw, copy, pose, edited, info));
+    TIDE_CHECK(edited[0] == textures[0] && edited[1] != textures[1]);
+    const tide_draw_texture *captured = &draw.textures[textures[1] - 1u];
+    const int32_t *words = (const int32_t *)(const void *)captured->pixels;
+    TIDE_CHECK(tide_f_from_bits((uint32_t)words[13]) == 1.0f);
+    skin_word(owned, 496u, UINT32_MAX);
+    TIDE_CHECK(!tide_draw_skinned_data(&draw, copy, pose, edited, info));
+    TIDE_CHECK(!edited[0] && !edited[1] && !info[0] && !info[1] && !info[2]);
+    TIDE_CHECK(!tide_draw_skinned_data(&draw, model.data, (tide_list){0}, edited, info));
+
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    // The replacement reuses the same byte-list handle with different valid
+    // content. Its registry must report the new content rather than the old.
+    skin_float(bytes + header.region_at + skinned_blocks[0][0] + sizeof(tide_block), 500u, 3.0f);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_REQUIRE(tide_pack_skinned_version(model.data, &version));
+    TIDE_CHECK(version != original);
+    TIDE_CHECK(version == tide_hash(tide_list_at(model.data, 0, 1u), PACK_SKIN_BYTES));
+    TIDE_REQUIRE(tide_draw_skinned_data(&draw, model.data, pose, edited, info));
+    TIDE_CHECK(edited[1] != textures[1]);
+    // A structurally valid pack containing a malformed model clears all of
+    // that model's records and must also clear the old registration.
+    skin_word(bytes + header.region_at + skinned_blocks[0][0] + sizeof(tide_block), 120u, 0u);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_skinned_version(model.data, &version));
+    TIDE_CHECK(!tide_draw_skinned_data(&draw, model.data, pose, edited, info));
+    tide_pack_unload();
+    TIDE_CHECK(!tide_pack_skinned_version(model.data, &version));
+    tide_draw_free(&draw);
+    tide_scratch_free();
+    free(bytes);
+}
+
+TIDE_TEST(pack_skinned_verified_versions_grow_and_exclude_ordinary_bytes)
+{
+    enum { MODELS = 24 };
+    tide_pack_builder b = {0};
+    uint32_t offsets[MODELS][3], raw = 0;
+    uint64_t versions[MODELS];
+    for (uint32_t i = 0; i <= MODELS; i++) {
+        uint8_t data[PACK_SKIN_BYTES], h[32];
+        pack_skin_blob(data, (float)i + 1.0f);
+        tide_sha256_of(data, sizeof data, h);
+        uint32_t chars;
+        const uint32_t at = tide_pack_bytes(&b, h, data, sizeof data, &chars);
+        if (i == MODELS) { raw = at; continue; }
+        offsets[i][0] = at;
+        versions[i] = tide_hash(data, sizeof data);
+        const corner vertices[3] = {{{0, 0, 0}, {0, 0, 1}, 0}, {{1, 0, 0}, {0, 0, 1}, 0}, {{0, (float)i + 1.0f, 0}, {0, 0, 1}, 0}};
+        tide_sha256_of(vertices, sizeof vertices, h);
+        const uint32_t indices[3] = {0, 2, 1};
+        tide_pack_mesh(&b, h, vertices, sizeof(corner), 3u, indices, 3u, &offsets[i][1]);
+    }
+    const uint32_t list = tide_pack_skinned_list(&b, &offsets[0][0], MODELS);
+    tide_pack_name(&b, "Game.actors", TIDE_PACK_SKINNEDS, list, MODELS, CORNER_LAYOUT);
+    tide_pack_name(&b, "Game.raw", TIDE_PACK_BYTES, raw, PACK_SKIN_BYTES, 0u);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&b, &size);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_list models = {tide_pack_handle(tide_pack_find("Game.actors", TIDE_PACK_SKINNEDS))};
+    for (uint32_t i = 0; i < MODELS; i++) {
+        const tide_skinned_lists *model = tide_list_at(models, (int32_t)i, sizeof *model);
+        uint64_t version;
+        TIDE_REQUIRE(model && tide_pack_skinned_version(model->data, &version));
+        TIDE_CHECK(version == versions[i]);
+    }
+    const tide_list ordinary = {tide_pack_handle(tide_pack_find("Game.raw", TIDE_PACK_BYTES))};
+    uint64_t version;
+    TIDE_CHECK(tide_skinned_valid(ordinary));
+    TIDE_CHECK(!tide_pack_skinned_version(ordinary, &version));
+    tide_pack_unload();
+    tide_scratch_free();
+    free(bytes);
+}
+
+TIDE_TEST(pack_skinned_verified_versions_invalidate_geometry_aliases)
+{
+    tide_pack_builder b = {0};
+    uint8_t data[PACK_SKIN_BYTES], h[32], carrier[sizeof(tide_block) + PACK_SKIN_BYTES];
+    pack_skin_blob(data, 1.0f);
+    const tide_block inner = {.a = PACK_SKIN_BYTES, .b = PACK_SKIN_BYTES};
+    memcpy(carrier, &inner, sizeof inner);
+    memcpy(carrier + sizeof inner, data, sizeof data);
+    tide_sha256_of(carrier, sizeof carrier, h);
+    const uint32_t repeated[3] = {0u, 0u, 0u};
+    uint32_t writable[2];
+    tide_pack_mesh(&b, h, carrier, sizeof carrier, 1u, repeated, 3u, writable);
+    tide_pack_name(&b, "Game.writable", TIDE_PACK_MESH, writable[0], writable[1], 1u);
+    uint32_t offsets[2][3];
+    for (uint32_t i = 0; i < 2u; i++) {
+        pack_skin_blob(data, (float)i + 1.0f);
+        tide_sha256_of(data, sizeof data, h);
+        uint32_t chars;
+        offsets[i][0] = i ? tide_pack_bytes(&b, h, data, sizeof data, &chars) : writable[0] + (uint32_t)sizeof(tide_block);
+        const corner vertices[3] = {{{0, 0, 0}, {0, 0, 1}, 0}, {{1, 0, 0}, {0, 0, 1}, 0},
+                                   {{0, (float)i + 1.0f, 0}, {0, 0, 1}, 0}};
+        tide_sha256_of(vertices, sizeof vertices, h);
+        const uint32_t indices[3] = {0u, 2u, 1u};
+        tide_pack_mesh(&b, h, vertices, sizeof(corner), 3u, indices, 3u, &offsets[i][1]);
+    }
+    const uint32_t list = tide_pack_skinned_list(&b, &offsets[0][0], 2u);
+    tide_pack_name(&b, "Game.actors", TIDE_PACK_SKINNEDS, list, 2u, CORNER_LAYOUT);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&b, &size);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_list models = {tide_pack_handle(tide_pack_find("Game.actors", TIDE_PACK_SKINNEDS))};
+    const tide_skinned_lists *aliased = tide_list_at(models, 0, sizeof *aliased);
+    const tide_skinned_lists *separate = tide_list_at(models, 1, sizeof *separate);
+    uint64_t version;
+    TIDE_REQUIRE(aliased && separate && tide_pack_skinned_version(aliased->data, &version));
+    TIDE_REQUIRE(tide_pack_skinned_version(separate->data, &version));
+    tide_list pose = {0};
+    tide_draw_list draw = {0};
+    uint32_t textures[2], count;
+    int32_t info[3];
+    TIDE_REQUIRE(tide_skinned_rest(aliased->data, &pose, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_draw_skinned_data(&draw, aliased->data, pose, textures, info));
+    uint8_t *to = tide_pack_mesh_open(tide_pack_find("Game.writable", TIDE_PACK_MESH), 0u, sizeof carrier, &count);
+    TIDE_REQUIRE(to && count == 1u);
+    skin_word(to + sizeof(tide_block), 496u, UINT32_MAX);
+    tide_pack_mesh_updated(to, sizeof carrier);
+    TIDE_CHECK(!tide_pack_skinned_version(aliased->data, &version));
+    TIDE_CHECK(tide_pack_skinned_version(separate->data, &version));
+    TIDE_CHECK(!tide_draw_skinned_data(&draw, aliased->data, pose, textures, info));
+    TIDE_CHECK(!textures[0] && !textures[1] && !info[0] && !info[1] && !info[2]);
+    // The aliased list header can change too. Check its actual packed span
+    // before using its claimed size or any canonical table offsets.
+    skin_word(to, offsetof(tide_block, a), INT32_MAX);
+    skin_word(to, offsetof(tide_block, b), INT32_MAX);
+    skin_word(to + sizeof(tide_block), 8u, INT32_MAX);
+    skin_word(to + sizeof(tide_block), 20u, INT32_MAX - 119u);
+    tide_pack_mesh_updated(to, sizeof carrier);
+    TIDE_CHECK(!tide_skinned_valid(aliased->data));
+    TIDE_CHECK(!tide_draw_skinned_data(&draw, aliased->data, pose, textures, info));
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    const tide_list end = {TIDE_IN_SCRATCH << 30 | (TIDE_PACK_BASE + header.region_size - 4u)};
+    TIDE_CHECK(!tide_skinned_valid(end));
+    tide_draw_free(&draw);
+    tide_pack_unload();
+    tide_scratch_free();
+    free(bytes);
+}
+
+TIDE_TEST(pack_skinned_verified_versions_follow_load_sanitization)
+{
+    enum { BLOB_BYTES = 576 };
+    for (uint32_t variant = 0; variant < 2u; variant++) {
+        tide_pack_builder b = {0};
+        uint8_t data[BLOB_BYTES] = {0}, h[32];
+        pack_skin_blob(data, 1.0f);
+        skin_word(data, 8u, sizeof data);
+        const uint32_t nested = variant ? 304u : 528u;
+        const tide_block inner = {.a = 1u, .b = 1u};
+        memcpy(data + nested, &inner, sizeof inner);
+        if (!variant) for (uint32_t i = 0; i < 3u; i++) skin_word(data, nested + (uint32_t)sizeof inner + i * 4u, UINT32_MAX);
+        TIDE_REQUIRE(tide_skinned_data_validate(data, sizeof data));
+        const uint64_t before = tide_hash(data, sizeof data);
+        tide_sha256_of(data, sizeof data, h);
+        uint32_t chars, offsets[3];
+        offsets[0] = tide_pack_bytes(&b, h, data, sizeof data, &chars);
+        const corner vertices[3] = {{{0, 0, 0}, {0, 0, 1}, 0}, {{1, 0, 0}, {0, 0, 1}, 0}, {{0, 1, 0}, {0, 0, 1}, 0}};
+        tide_sha256_of(vertices, sizeof vertices, h);
+        const uint32_t indices[3] = {0u, 2u, 1u};
+        tide_pack_mesh(&b, h, vertices, sizeof(corner), 3u, indices, 3u, &offsets[1]);
+        const uint32_t model = tide_pack_skinned_list(&b, offsets, 1u);
+        tide_pack_name(&b, "Game.actor", TIDE_PACK_SKINNED, model, 1u, CORNER_LAYOUT);
+        // The later invalid record aliases either unused bytes or a vertex's
+        // influence count. Clearing it changes valid bytes or spoils the model
+        // after the first record's complete validation.
+        tide_pack_name(&b, "Game.bad", TIDE_PACK_SKINNED, offsets[0] + (uint32_t)sizeof(tide_block) + nested, 1u, CORNER_LAYOUT);
+        size_t size;
+        uint8_t *bytes = tide_pack_end(&b, &size);
+        TIDE_REQUIRE(tide_pack_load(bytes, size));
+        const tide_skinned_lists loaded = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner));
+        uint64_t version;
+        if (variant) {
+            TIDE_CHECK(!tide_pack_skinned_version(loaded.data, &version));
+            TIDE_CHECK(!tide_skinned_valid(loaded.data));
+        } else {
+            TIDE_REQUIRE(tide_pack_skinned_version(loaded.data, &version));
+            TIDE_CHECK(version != before);
+            TIDE_CHECK(version == tide_hash(tide_list_at(loaded.data, 0, 1u), sizeof data));
+            TIDE_CHECK(tide_skinned_valid(loaded.data));
+        }
+        TIDE_CHECK(!tide_pack_skinned_of(tide_pack_find("Game.bad", TIDE_PACK_SKINNED), sizeof(corner)).data.at);
+        tide_pack_unload();
+        tide_scratch_free();
+        free(bytes);
+    }
 }
 
 TIDE_TEST(pack_skinned_spoiled_models_and_counts_clear_all_handles)

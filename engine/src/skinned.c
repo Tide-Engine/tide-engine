@@ -4,9 +4,11 @@
 
 #include "tide/mesh.h"
 #include "tide/net.h"
+#include "tide/pack.h"
 #include "tide/skinned_data.h"
 
 _Static_assert(sizeof(tide_bone_transform) == 40u, "bone transforms have ten float words");
+_Static_assert(TIDE_LIST_CHUNK >= TIDE_SKINNED_HEADER_SIZE, "a byte list's first chunk holds the model header");
 
 typedef struct model_seen {
     tide_skinned_data_view view;
@@ -18,10 +20,24 @@ typedef struct model_seen {
 static bool open_model(const tide_list data, model_seen *m)
 {
     memset(m, 0, sizeof *m);
-    const int32_t count = tide_list_count(data);
+    int32_t count;
+    if (tide_pack_holds(data.at)) {
+        const uint32_t offset = data.at & 0x3FFFFFFFu;
+        const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
+        if (!header) return false;
+        tide_block block;
+        memcpy(&block, header, sizeof block);
+        if (block.a != block.b || block.a > INT32_MAX) return false;
+        count = (int32_t)block.a;
+        m->bytes = (void *)tide_pack_span(offset + (uint32_t)sizeof(tide_block), block.a);
+        if (!m->bytes) return false;
+    } else {
+        count = tide_list_count(data);
+        if (count < (int32_t)TIDE_SKINNED_HEADER_SIZE) return false;
+        m->bytes = tide_list_flatten(data, 1u, false, &m->copied);
+    }
     if (count < (int32_t)TIDE_SKINNED_HEADER_SIZE) return false;
     m->list = data;
-    m->bytes = tide_list_flatten(data, 1u, false, &m->copied);
     if (m->bytes && tide_skinned_data_open(m->bytes, (size_t)count, &m->view)) return true;
     tide_list_unflatten(data, m->bytes, 1u, false, m->copied);
     memset(m, 0, sizeof *m);
@@ -31,6 +47,36 @@ static bool open_model(const tide_list data, model_seen *m)
 static void close_model(model_seen *m)
 {
     tide_list_unflatten(m->list, m->bytes, 1u, false, m->copied);
+}
+
+typedef struct skeleton_identity {
+    uint32_t nodes;
+    uint8_t hash[32];
+} skeleton_identity;
+
+static bool read_identity(const tide_list data, skeleton_identity *out)
+{
+    tide_skinned_data_view view;
+    if (tide_pack_holds(data.at)) {
+        model_seen packed;
+        if (!open_model(data, &packed)) return false;
+        out->nodes = packed.view.nodes;
+        memcpy(out->hash, packed.view.skeleton_hash, sizeof out->hash);
+        close_model(&packed);
+        return true;
+    }
+    const int32_t count = tide_list_count(data);
+    if (count < (int32_t)TIDE_SKINNED_HEADER_SIZE) return false;
+    // Byte lists hold their complete header in the first contiguous run,
+    // including heap lists whose remaining bytes occupy other chunks.
+    // data_open reads only that header, checking table spans against the
+    // logical total size. Keep this partial view local: no table getter may
+    // use it, and no pointer into the list escapes with the identity.
+    const void *header = tide_list_at(data, 0, 1u);
+    if (!tide_skinned_data_open(header, (size_t)count, &view)) return false;
+    out->nodes = view.nodes;
+    memcpy(out->hash, view.skeleton_hash, sizeof out->hash);
+    return true;
 }
 
 static bool nodes_valid(const tide_skinned_data_view *v)
@@ -82,17 +128,9 @@ uint64_t tide_skinned_fingerprint(const tide_list data)
 
 bool tide_skinned_compatible(const tide_list a, const tide_list b)
 {
-    model_seen first, second;
-    if (!open_model(a, &first)) return false;
-    if (!open_model(b, &second)) {
-        close_model(&first);
-        return false;
-    }
-    const bool same = first.view.nodes == second.view.nodes
-        && memcmp(first.view.skeleton_hash, second.view.skeleton_hash, sizeof first.view.skeleton_hash) == 0;
-    close_model(&second);
-    close_model(&first);
-    return same;
+    skeleton_identity first, second;
+    return read_identity(a, &first) && read_identity(b, &second) && first.nodes == second.nodes
+        && memcmp(first.hash, second.hash, sizeof first.hash) == 0;
 }
 
 int32_t tide_skinned_bone_count(const tide_list data)
@@ -243,11 +281,19 @@ bool tide_skinned_sample(const tide_list data, const int32_t animation, const fl
     if (!transforms || animation < 0) return false;
     model_seen m;
     if (!open_model(data, &m)) return false;
+    uint64_t version;
+    const bool packed = tide_pack_skinned_version(data, &version);
     tide_skinned_clip_data clip;
-    bool valid = nodes_valid(&m.view) && tide_skinned_data_clip(&m.view, (uint32_t)animation, &clip);
+    bool valid = (packed || nodes_valid(&m.view)) && tide_skinned_data_clip(&m.view, (uint32_t)animation, &clip);
     for (uint32_t i = 0; valid && i < clip.channels; i++) {
         tide_skinned_channel_data channel;
-        valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel) && channel_valid(&m.view, &channel);
+        valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel);
+        if (valid && packed) {
+            // Full immutable-model validation proves finite increasing keys,
+            // but permits the first time in (-1, 0). Sampling requires >=0.
+            float time, value[4], in[4], out[4];
+            valid = tide_skinned_data_key(&m.view, &channel, 0u, &time, value, in, out) && time >= 0.0f;
+        } else if (valid) valid = channel_valid(&m.view, &channel);
     }
     if (valid) {
         fill_rest(&m.view, transforms, where);
@@ -607,7 +653,9 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
     const uint32_t mark = tide_scratch_mark();
-    bool valid = tide_skinned_data_validate(m.view.data, m.view.size);
+    uint64_t version;
+    const bool packed = tide_pack_skinned_version(data, &version);
+    bool valid = packed || tide_skinned_data_validate(m.view.data, m.view.size);
     tide_list palette = valid ? palette_of(&m.view, transforms) : (tide_list){0};
     valid = valid && tide_list_count(palette) == (int32_t)m.view.palettes && m.view.palettes != 0u;
     const uint64_t pixels = (uint64_t)m.view.vertices + ((uint64_t)m.view.influences + 1u) / 2u;
@@ -619,7 +667,8 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     if (valid) {
         const int32_t width = pixels < TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
         const int32_t height = (int32_t)((pixels + TIDE_LIST_DATA_ACROSS - 1u) / TIDE_LIST_DATA_ACROSS);
-        const uint64_t version = tide_hash(m.view.data, m.view.size), kind = UINT64_C(0x534b494e494e464c);
+        if (!packed) version = tide_hash(m.view.data, m.view.size);
+        const uint64_t kind = UINT64_C(0x534b494e494e464c);
         uint8_t *out;
         bool kept;
         textures[1] = tide_draw_texture_edit(draw, TIDE_PIXELS_LIST, UINT64_C(1) << 63 | version >> 1,
