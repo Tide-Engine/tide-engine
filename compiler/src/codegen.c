@@ -2944,7 +2944,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         else sb_printf(o, "%lld", (long long)e->int_value);
         break;
     case E_FLOAT:
-        gen_float_literal(o, e->text);
+        if (e->is_degrees) {
+            char radians[32];
+            snprintf(radians, sizeof(radians), "%.9g", (double)e->float_value);
+            gen_float_literal(o, str_from(radians));
+        } else {
+            gen_float_literal(o, e->text);
+        }
         break;
     case E_BOOL:
         sb_put(o, e->bool_value ? "true" : "false");

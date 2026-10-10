@@ -1,0 +1,3 @@
+// expect: degree literal '1e999deg' is too large for float
+scene Main { }
+component Angle { float value = 1e999deg; }
