@@ -13,29 +13,29 @@ from pathlib import Path
 LEVELS = Path(__file__).resolve().parent.parent / "levels.tide"
 
 NUDGES = [
-    "A loose tile lifts from any floor beside it, and lays over water. The tile you want is not the one in your path.",
-    "A tile you have crossed can be lifted again from the far side, once nobody still needs it.",
-    "Each of you starts beside a tile the other one needs. Hand them across the gaps; do not try to walk them round.",
-    "A crate pushed into the water fills it for good. Then the tile only has to cover what is left.",
-    "Only one of these crates is worth more underwater. The other just has to get out of the way first.",
-    "One crate becomes floor and the other only steps aside. Decide where the first one sinks before you move a tile.",
+    "A loose slab lifts from any floor beside it, and lays over the pit. The slab you want is not the one in your path.",
+    "A slab you have crossed can be lifted again from the far side, once nobody still needs it.",
+    "Each of you starts beside a slab the other one needs. Hand them across the gaps; do not try to walk them round.",
+    "A coffin pushed into the pit fills it for good. Then the slab only has to cover what is left.",
+    "Only one of these coffins is worth more in the pit. The other just has to get out of the way first.",
+    "One coffin becomes floor and the other only steps aside. Decide where the first one goes down before you move a slab.",
     "The plate is loose. Lay it where stepping off it takes you straight through the gate.",
-    "Someone has to stand on the plate while the other pushes a crate through the gate. Work out who ends up where.",
-    "The gate is open because a crate sits on the plate, and that crate is needed elsewhere. Plan what passes the gate before it moves, and what holds the plate after.",
+    "Someone has to stand on the plate while the other pushes a coffin through the gate. Work out who ends up where.",
+    "The gate is open because a coffin sits on the plate, and that crate is needed elsewhere. Plan what passes the gate before it moves, and what holds the plate after.",
     "Nothing stops on ice but an edge. Make one.",
-    "Loose ice is a tile you cannot stand still on. Lay it where you only ever pass through.",
+    "Loose ice is a slab you cannot stand still on. Lay it where you only ever pass through.",
     "Loose ice is a bridge you can lay ahead of you and take up behind. Count the pieces against the gaps.",
     "Whatever you carry comes through the portal with you.",
     "A portal in someone's hand takes its twin out of play. Move one end, and the same step leads somewhere new.",
-    "Crates go through portals too, and the far end is wherever you lay it.",
+    "Coffins go through portals too, and the far end is wherever you lay it.",
     "Only the portal's far end needs to travel. Keep carrying it to where the next arrival is wanted.",
     "Whoever carries a portal decides where the other one leads. Take turns being the one who moves the door.",
-    "Everything loose here is a tile when you need one: the plate, the portals, the ice. The plate has two jobs, and it cannot do both at once.",
+    "Everything loose here is a slab when you need one: the plate, the portals, the ice. The plate has two jobs, and it cannot do both at once.",
 ]
 
 NAMES = {"@": "Ember", "&": "Tide"}
 WAYS = {"N": "north", "E": "east", "S": "south", "W": "west"}
-KINDS = {"stone": "tile", "ice": "ice", "portal P": "portal", "portal Q": "portal", "plate A": "plate", "plate B": "plate"}
+KINDS = {"stone": "slab", "ice": "ice", "portal P": "portal", "portal Q": "portal", "plate A": "plate", "plate B": "plate"}
 
 
 def cell(text):
@@ -53,10 +53,10 @@ def sentence(line):
         return f"{who}, on {cell(m[1])}, lays the {KINDS[m[2]]} at {cell(m[3])}."
     m = re.match(r". pushes the crate at (\S+) (.): it sinks$", line)
     if m:
-        return f"{who} pushes the crate at {cell(m[1])} {WAYS[m[2]]}, and it sinks."
+        return f"{who} pushes the coffin at {cell(m[1])} {WAYS[m[2]]}, and it goes down."
     m = re.match(r". pushes the crate at (\S+) (.) to (\S+) ", line)
     if m:
-        return f"{who} pushes the crate at {cell(m[1])} {WAYS[m[2]]}."
+        return f"{who} pushes the coffin at {cell(m[1])} {WAYS[m[2]]}."
     m = re.match(r". steps (.) from (\S+) and (slides|jumps) to (\S+)$", line)
     if m:
         return f"{who} steps {WAYS[m[1]]} from {cell(m[2])} and {'slides' if m[3] == 'slides' else 'comes out'} at {cell(m[4])}."
@@ -94,7 +94,7 @@ for index, level in enumerate(levels):
         if lifts[who]:
             work.append(f"{NAMES[who]} lifts {times(lifts[who])}")
     if pushes:
-        work.append(f"a crate is pushed {times(pushes)}" + (f" and {'one sinks' if sinks == 1 else f'{sinks} sink'}" if sinks else ""))
+        work.append(f"a coffin is pushed {times(pushes)}" + (f" and {'one goes down' if sinks == 1 else f'{sinks} go down'}" if sinks else ""))
     facts = f"The shortest way is {level['moves']} moves. It ends with Ember on {level['end'][0]} and Tide on {level['end'][1]}."
     if work:
         facts += " Along it " + ", ".join(work) + "."
