@@ -1,6 +1,8 @@
 // The real game, two browser players and a local relay. Render on both
 // backends, exercise role-specific keyboard/touch controls, and preserve
-// desktop/phone captures for visual review. Audio never reaches the device.
+// desktop/phone captures for visual review. Frames and match time advance
+// together under runner control; browser/GPU waits consume only wall time.
+// Audio never reaches the device.
 // node web-play.mjs <last_light.html> <capture directory> [webgl|webgpu]
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -11,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRelay } from '../../../relay/relay.mjs';
 import { stopBrowser } from './browser-process.mjs';
-import { installFramePacing } from './frame-pacing.mjs';
+import { installFrameControl } from './frame-control.mjs';
 import { connectDevTools } from './browser-devtools.mjs';
 
 const [gamePage, captureDirectory, backend = 'webgl'] = process.argv.slice(2);
@@ -84,6 +86,14 @@ const browserCommand = async (method, params = {}, timeout = 20_000) => {
 };
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+let pumping;
+// Concurrent predicates share one round. Neither player gets another frame
+// until both have finished drawing, including their GPU completion fences.
+const pumpFrames = () => pumping ??= Promise.all(clients.map(client => client.command('Runtime.evaluate', {
+    expression: 'globalThis.__lastLightStep?.() ?? false', awaitPromise: true, returnByValue: true,
+}))).then(results => {
+    for (const result of results) assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
+}).finally(() => { pumping = undefined; });
 try {
     await browserCommand('Browser.getVersion');
 
@@ -133,15 +143,15 @@ try {
                 throw new Error(`${name}: ${method}: ${error.message}`);
             }
         };
-        // Frames arrive through a DevTools binding after the host has drawn.
-        // Polling Runtime.evaluate can itself block behind a cold shader compile
-        // and hit its command timeout before the readiness deadline expires.
+        // State arrives through a DevTools binding from each explicit frame.
+        // Wall-clock guards still catch a browser or transport that stops.
         const until = async (predicate, label, milliseconds = 30_000) => {
             const deadline = performance.now() + milliseconds;
             while (performance.now() < deadline) {
                 assert.deepEqual(errors, [], `${stage}: no browser/runtime/shader errors`);
                 if (state && predicate(state)) return;
-                await delay(75);
+                await pumpFrames();
+                await delay(0);
             }
             throw new Error(`${name}: timed out ${label}; ${JSON.stringify(state)}`);
         };
@@ -182,15 +192,13 @@ try {
         await command('Runtime.addBinding', { name: '__lastLightFrame' });
         await command('Runtime.addBinding', { name: '__lastLightEvent' });
         await command('Page.addScriptToEvaluateOnNewDocument', { source: `
-            // Both visible players still draw every requested frame. Leave
-            // real time for input/signaling between software-rendered frames.
-            ${installFramePacing.toString()}
-            installFramePacing(window);
+            // Explicit frames and a match clock independent of rendering speed.
+            ${installFrameControl.toString()}
+            installFrameControl(window);
             window.__draws = 0; window.__frames = 0; window.__peers = []; window.__messages = 0; window.__sent = 0; window.__aborted = '';
             window.__receivedAt = 0; window.__sentAt = 0;
-            let reported = -Infinity;
             const event = (name, details) => window.__lastLightEvent(JSON.stringify({event:name,
-                pageAt:performance.now(), wallAt:Date.now(), ...details}));
+                pageAt:window.__lastLightWallNow(), wallAt:Date.now(), ...details}));
             const peerState = peer => ({connection:peer.connectionState, ice:peer.iceConnectionState,
                 gathering:peer.iceGatheringState, signaling:peer.signalingState,
                 local:peer.localDescription?.type, remote:peer.remoteDescription?.type});
@@ -237,11 +245,7 @@ try {
                 value.onAbort=error=>{window.__aborted=String(error); console.error(error);};
                 value.netcode=netcode=> {
                     window.__frames++;
-                    // Count every completed frame, but keep diagnostic traffic
-                    // from competing with input and screenshots on a small runner.
-                    const now = performance.now();
-                    if (now - reported < 100) return;
-                    reported = now;
+                    const now = window.__lastLightWallNow();
                     const canvas = document.querySelector('canvas');
                     window.__lastLightFrame(JSON.stringify({url:location.href, pageAt:now, wallAt:Date.now(), ready:document.readyState,
                         isolated:window.crossOriginIsolated, visibility:document.visibilityState,
@@ -249,7 +253,7 @@ try {
                         peers:window.__peers.map(peer=>peer.connectionState),
                         negotiation:window.__peers.map(peerState),
                         messages:window.__messages, sent:window.__sent, aborted:window.__aborted,
-                        receiveAge:performance.now()-window.__receivedAt, sendAge:performance.now()-window.__sentAt,
+                        gameAt:performance.now(), receiveAge:performance.now()-window.__receivedAt, sendAge:performance.now()-window.__sentAt,
                         state:netcode[0], verified:netcode[4], work:netcode[17], gpu:window.__lastLightGPU(),
                         screen:{width:innerWidth,height:innerHeight,canvasWidth:canvas.clientWidth,canvasHeight:canvas.clientHeight}}));
                 };
@@ -304,16 +308,16 @@ try {
             value.messages > before[index].messages && value.sent > before[index].sent, `${ticks} verified ticks and fresh match packets`)));
         for (const client of clients) assert.equal(client.state.visibility, 'visible', 'both players have a visible screen');
     };
-    await advanceMatch(18);
+    await advanceMatch(6);
     await host.screenshot('desktop-planning-pilgrim');
     await keeper.screenshot('desktop-planning-keeper');
 
     stage = 'role-specific keyboard controls and live vigil';
     await host.tapKey('Digit1', '1');
-    await advanceMatch(54);
+    await advanceMatch(6);
     await host.key('KeyE', 'e', true);
     await keeper.key('Digit1', '1', true);
-    await advanceMatch(27);
+    await advanceMatch(6);
     await host.screenshot('desktop-pilgrim');
     await keeper.screenshot('desktop-keeper');
     await host.key('KeyE', 'e', false);
@@ -323,13 +327,13 @@ try {
     await host.resize(390, 844);
     await keeper.resize(390, 844);
     await Promise.all(clients.map((client) => client.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })));
-    await advanceMatch(12);
+    await advanceMatch(6);
     await host.screenshot('phone-pilgrim');
     await keeper.screenshot('phone-keeper');
     for (const [client, x] of [[host, 195], [keeper, 83]]) {
         await client.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: 784, id: 1 }] });
     }
-    await advanceMatch(20);
+    await advanceMatch(6);
     await host.screenshot('phone-pilgrim-touch');
     await keeper.screenshot('phone-keeper-touch');
     await Promise.all(clients.map((client) => client.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })));

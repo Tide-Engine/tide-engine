@@ -26,16 +26,27 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   coalesced records, target-session routing and reordered replies, protocol
   errors, transport closure, timeout/late replies, target detachment and
   disposal. It runs in native and web builds alongside the process-cleanup
-  and frame-pacing checks. The transport comparison and the limits of the
+  and frame-control checks. The transport comparison and the limits of the
   hosted-timeout diagnosis are in `notes/private-prototypes.md`.
 
-- `last_light_frame_pacing` checks the playtest's serialized scheduler without
-  a browser (2026-10-10): WebGL callback/spacing behavior, pending GPU work,
-  timer progress, cancellation, rejected completion and several queues.
-  The Last Light's WebGPU playtest waits for the prior submitted GPU frame
-  before scheduling another, keeping its existing assertions and deadlines.
-  The controlled measurements and the limits of the hosted-timeout diagnosis
-  are in `notes/private-prototypes.md`.
+- `last_light_frame_control` checks the playtest's serialized frame/clock
+  controller without a browser (2026-10-11). The runner advances both real
+  browser players one 30 Hz frame per shared round, then waits for every
+  submitted WebGPU queue and completes WebGL work before another round.
+  Only delivered frames advance the page's monotonic match/transport clock;
+  browser startup, input commands,
+  captures and GPU completion waits consume wall time alone. Seven regressions
+  cover long capture/GPU waits, the two-player barrier, recursive callbacks,
+  cancellation, rejected fences, several queues/canvases and idle/invalid steps.
+  Real-time session/transport behavior remains covered by the engine's net
+  and browser-room tests. Game keyboard/touch, visibility, rendering,
+  screenshots, fresh packets and verified-tick assertions remain, with six
+  fresh verified ticks per gameplay checkpoint rather than long waits checking
+  nothing further. All wall-clock guards remain. This replaces the former
+  `last_light_frame_pacing`
+  fixture, which gated the entire host loop on GPU completion while session
+  deadlines continued passing in real time. Evidence and validation are in
+  `notes/private-prototypes.md`.
 
 - Browser tests registered by `tide_add_web_test` reserve the host's CPU count
   through CTest `PROCESSORS`, for WebGL and WebGPU (2026-10-10). Chrome's software

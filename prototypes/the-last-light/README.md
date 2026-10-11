@@ -72,6 +72,11 @@ with `python prototypes/the-last-light/sfx/make_sounds.py`.
 worlds, complete bank/linger runs and two network clients under lag, jitter
 and loss. WebGL and WebGPU tests use two real browser clients through a local
 relay, with keyboard/touch controls and desktop/phone captures.
+The browser runner advances both players by one 30 Hz frame at a time and
+waits for GPU completion before advancing again. Compilation, capture and
+software-rendering delays do not count as match time. Session deadline and
+real-time browser-room behavior are covered by the engine's network tests;
+this game check covers its controls, rendering and verified multiplayer state.
 
 The researched design, primary sources and remaining human-playtest questions
 are in [DESIGN.md](DESIGN.md). Fear, audio feel, first-time comprehension and
