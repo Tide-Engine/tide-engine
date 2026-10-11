@@ -8,7 +8,7 @@ import test from 'node:test';
 import { createAnalytics } from '../analytics.js';
 import { createAdmin } from '../admin.js';
 
-const prototypeIds = ['two-forks', 'the-last-light', 'cabin-nine', 'deadbell', 'dead-signal', 'rocket-league', 'aerial'];
+const prototypeIds = ['two-forks', 'cracked'];
 
 async function site(t, options = {}) {
     const folder = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-'));
@@ -131,15 +131,10 @@ test('prototype files are public while the catalog and retired copies remain pro
     }
     for (const route of ['/samples/two-forks/', '/samples/two-forks/index.html', '/samples/two-forks/game.wasm',
         '/samples/thumbnails/two-forks.png', '/samples/two%2dforks/index.html', '/two-forks/',
-        '/examples/the-last-light/', '/sample_two_forks.html', '/samples/the-last-light/',
-        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html', '/samples/cabin%2dnine/index.html',
-        '/samples/dead-signal/', '/samples/dead-signal/index.html', '/samples/dead-signal/game.wasm',
-        '/samples/thumbnails/dead-signal.png', '/examples/dead-signal/sfx/radio.ogg',
-        '/dead-signal/', '/dead_signal.html', '/sample_dead_signal.html', '/samples/dead%2dsignal/index.html',
-        '/samples/deadbell/', '/samples/deadbell/index.html', '/samples/thumbnails/deadbell.png',
-        '/deadbell.html', '/sample_deadbell.html', '/deadbell_smoke.html', '/samples/dead%62ell/index.html',
-        '/samples/rocket-league/index.html', '/rocket_league.html', '/samples/rocket%2dleague/game.wasm',
-        '/samples/aerial/index.html', '/aerial.html', '/samples/%61erial/game.wasm']) {
+        '/examples/two-forks/', '/sample_two_forks.html',
+        '/samples/cracked/', '/samples/cracked/index.html', '/samples/cracked/game.wasm',
+        '/samples/thumbnails/cracked.png', '/examples/cracked/sfx/radio.ogg',
+        '/cracked/', '/cracked.html', '/sample_cracked.html', '/samples/%63racked/index.html']) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);

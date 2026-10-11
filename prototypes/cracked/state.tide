@@ -1,0 +1,322 @@
+// CRACKED: what the match is made of. Every number here that the Unity game
+// has is that game's, from its prefabs and scenes (DESIGN.md says which).
+// The match is one singleton, as the Unity game's predicted state is one
+// hierarchy: seats, bullets, clouds and the map's pieces, simulated in one
+// system in a fixed order (game.tide).
+
+const int SEATS = 8;             // 4v4 at the most
+const int TEAMS = 2;
+const int MAPS = 7;              // The rotation: Map1, Map2, Map4, Map6, Map7, Map9, Map10
+const int UPGRADES = 38;         // The upgrade database, in its order
+const int CARDS = 5;             // Cards offered to a player who lost a round
+
+// ShooterSettings, a player's stats: the defaults are the Magician prefab's.
+struct Settings
+{
+    float fireForce = 30;
+    int fireRate = 3;
+    float reloadTime = 3;
+    float spread;
+    int magazineSize = 5;
+    float health = 100;
+    float speed = 200;
+    float maxVelocity = 8.5;
+    float jumpForce = 6;
+    float size = 1;
+    float shieldDuration = 0.6;
+    float shieldCooldown = 5;
+    bool hasJetpack;
+    float jetpackCapacity;
+    float jetpackForce = 5.5;
+    int extraJumps;
+}
+
+// BulletProperties: the defaults are the Magician prefab's.
+struct BulletProps
+{
+    int maxWallPenetrations;
+    int maxBounces = 1;
+    float bounceFactor = 1;
+    float size = 0.2;
+    float damage = 15;
+    float knockback = 100;
+    float lifetime = 3;
+    float gravity = 10;
+}
+
+// The modifiers the upgrade database uses. Each list is every seat's, in the
+// order the cards were applied: a modifier says whose it is.
+enum BulletModKind
+{
+    Bigger,          // a: size multiplier, b: addition
+    Damage,          // a: damage multiplier, b: addition
+    Explode,         // a: pellets' force, n: pellets (ExplodeOnImpact)
+    FireForce,       // a: force multiplier, b: addition
+    MoreBounce,      // n: extra bounces
+    SlowOnBounce,    // a: speed multiplier at each collision
+    HeatSeek,        // a: range, b: angle in degrees, c: force
+    DamageOverTime,  // a: damage a second of flight
+    SizeOverTime,    // a: size a second of flight
+    MorePenetration, // n: extra wall penetrations
+    PoisonCloud,
+    Knockback,       // a: knockback multiplier, b: addition
+    ReloadOnHit,
+    DazeOnHit,       // a: seconds
+    NoGravity,
+    Speed,           // a: force multiplier (BulletSpeedMultiplier)
+    LifeSteal        // a: share of the damage
+}
+
+struct BulletMod
+{
+    int seat;
+    BulletModKind kind;
+    float a;
+    float b;
+    float c;
+    int n;
+}
+
+enum ShootModKind
+{
+    Single,
+    Multi            // a: spread angle, n: shots
+}
+
+struct ShootMod
+{
+    int seat;
+    ShootModKind kind;
+    float a;
+    int n;
+}
+
+enum TraitKind
+{
+    DashOnBlock,     // a: dash seconds, b: force
+    DelayedBlock,    // a: seconds to the second block
+    FreezeOnBlock,   // a: radius, b: seconds, c: slow multiplier, n: damage
+    Freeze,          // a: seconds, b: slow multiplier
+    LingeringPain,   // a: damage a second (negative), DamageTakenOverTime
+    Electrify,       // a: range, b: seconds between, n: damage
+    HealOnBlock,
+    Daze             // a: seconds
+}
+
+// A player effect (IPlayerEffect): `Effect` is the engine's own name.
+struct Trait
+{
+    int seat;
+    TraitKind kind;
+    float a;
+    float b;
+    float c;
+    int n;
+    float timer;
+    float accumulate;
+    int damage;
+    float3 direction;
+}
+
+// One player's input for a tick, as the match reads it.
+struct Pad
+{
+    float2 move;         // World x and z
+    bool jump;
+    bool jumpDown;
+    bool fire;
+    bool shield;
+    bool reload;
+    float3 aim = float3(0, 0, 1);   // From the fire point to where the camera looks
+    float yaw;           // The camera's orbit, in degrees
+    float pitch = 17.5;
+}
+
+// A seat: a player's or a bot's place in a team, and their avatar while a
+// round has one. PlayerMovement, ShooterBase, PlayerShield and PlayerHealth
+// in one.
+struct Seat
+{
+    bool taken;          // A player or a bot has it
+    bool bot;
+    PlayerID player;
+    int team = -1;
+    int away;            // Ticks since its player left: gone for good after the grace
+    bool alive;          // Its avatar is in the map (dead or not)
+
+    // PlayerMovement
+    float3 position;     // The feet
+    float3 velocity;
+    quaternion rotation = quaternion.identity;
+    float3 spin;         // Angular velocity
+    float timeSinceJump;
+    float timeSinceGrounded;
+    int jumpCount;
+    float2 localVelocity;    // For the animation: right and forward
+    bool grounded;
+    int uncapVelocity;
+    float ragdollTimer = 9999;
+    float movementMultiplier = 1;
+    float jetpackFuel;
+    Random stagger;      // PlayerMovement's random
+    float3 push;         // The speed this tick's forces give it, at the body's step
+    float3 twist;        // ...and the spin
+    int inPads;          // The jump pads it's in, a bit each
+
+    // ShooterBase
+    Random random;
+    int lastShootTick;
+    bool reloading;
+    float reloadLeft;
+    int magazine;
+    Settings settings;
+    Settings baseSettings;
+    float3 aim = float3(0, 0, 1);
+    float yaw;
+    float pitch = 17.5;
+    float timeSinceWasShot;
+
+    // PlayerShield
+    bool shieldActive;
+    float shieldActual;  // actualActiveTimer
+    float shieldTimer;   // activeTimer
+    float shieldCooldown;
+
+    // PlayerHealth
+    int maxHealth = 100;
+    int health = 100;
+    bool dead;
+    float poisonLevel;
+    float timeSinceLastPoison;
+
+    Pad pad;             // This tick's input
+    int padTick = -1;    // The tick it was read in
+}
+
+struct Bullet
+{
+    int id;              // Which bullet it is, for what draws its trail
+    int seat;            // The shooter's
+    Random random;
+    BulletProps props;
+    float3 position;
+    float3 velocity;
+    float lifetime;
+    int bounces;
+    int penetrations;
+    bool insideWall;
+    bool original;
+    bool waitTillLeavesPlayer;
+    bool spent;          // It hit its last thing: gone at the tick's end
+}
+
+enum CloudKind { Poison, Heal }
+
+struct Cloud
+{
+    CloudKind kind;
+    float3 position;
+    float radius;
+    float perSecond;
+    float time;
+    float accumulated;
+}
+
+// What moves a map's pieces. A piece that names a mover is placed by it.
+enum MoverKind
+{
+    Slide,   // EnvironmentMoving: from origin to origin + travel and back
+    HingeA,  // MovingBridge: a half that turns about its pivot's x axis
+    HingeB,  // ...and the other half, turned the other way and about y by 180
+    Lift     // ...and its blocker, which rises as the halves come down
+}
+
+struct Mover
+{
+    MoverKind kind;
+    float3 origin;       // Slide: where it starts. Hinges: the pivot. Lift: where it is at height 0
+    float3 travel;       // Slide: _endPoint
+    float speedMin;      // Slide: _moveSpeed
+    float speedMax;
+    bool randomStart;    // Slide: _randomizeStartPosition
+    float angleMin;      // Bridge: _minMaxAngle, in degrees
+    float angleMax;
+    float angleStart;
+    float angleSpeed;    // Degrees a second
+    float heightMin;     // Lift: _minMaxheight
+    float heightMax;
+    int link = -1;       // HingeB and Lift: the HingeA of their bridge
+
+    // State
+    float progress;
+    bool back;
+    float speed;
+    float angle;
+    bool pong;
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    float3 velocity;     // Meters a second, this tick
+    float3 turning;      // Radians a second about its position, this tick
+}
+
+// A pushable block (EnvironmentPhysics on a Rigidbody that isn't kinematic):
+// its pieces and what's drawn of it are placed from where it is.
+struct Block
+{
+    float3 origin;           // Where the map has it
+    quaternion originRotation = quaternion.identity;
+    float mass = 15;
+    float damping = 1;
+    float knockback = 0.5;   // _knockbackMultiplier
+    // State
+    bool gone;               // The floor under the map took it
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    float3 velocity;
+    float3 turning;
+}
+
+// A box that's solid, or that's asked what touches it: a map's colliders are
+// boxes, each as the world has it (center, rotation, half its size). One on a
+// mover is where `local` and `localRotation` say from the mover's place.
+struct Piece
+{
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    float3 half;
+    bool solid = true;       // False for a trigger
+    bool jumpPad;            // A trigger that throws a player
+    bool damageFloor;        // The floor under every map (layer Ground)
+    bool ignoreRaycast;      // Unity's Ignore Raycast layer: bullets pass, players stand
+    float3 force;            // A jump pad's knockback, in the world
+    int mover = -1;
+    int block = -1;          // A pushable block's: placed from the block, as from a mover
+    float3 local;
+    quaternion localRotation = quaternion.identity;
+    float radius;            // Of a ball around it, for a quick no
+}
+
+struct SpawnLine
+{
+    int team;
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    float width;
+}
+
+// What's drawn of a map: a block's mesh, where, and which of the map's eight
+// palette colors it has. Nothing of the match reads these.
+enum BlockMesh { Plane, PlaneSquare, Cube, CubeU, CubeL, BeamLong, BeamShort, TrapezoidNarrow, Box }
+enum Paint { Green, Grey, Orange, Purple, Red, Blue, Brown, Yellow, Own }
+
+struct Visual
+{
+    BlockMesh mesh;
+    float3 position;         // On a mover: from the mover's place
+    quaternion rotation = quaternion.identity;
+    float3 scale = float3(1);
+    Paint paint;
+    Color own = Color.white; // The color of a piece whose paint is its own
+    int mover = -1;
+    int block = -1;
+}
