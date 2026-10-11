@@ -1,5 +1,12 @@
 # Code the GPU runs: frags and verts
 
+Contextual enum shorthand (2026-10-11): owner-approved `.Member` resolves to
+the ordinary checked enum member before GPU lowering. The `lit` and `maps`
+fixtures use it in comparisons and helper arguments; `declared` and `cubemaps`
+use it in fixed Sample filter/wrap arguments. Their existing GLSL/WGSL goldens
+remain byte-for-byte unchanged. No shader writer or backend change is needed;
+language and editor contracts are in `notes/language.md` and `notes/editors.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform

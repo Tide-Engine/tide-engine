@@ -1,0 +1,4 @@
+// expect: enum 'State' has no member 'Running'
+enum State { Idle }
+scene Main { }
+view V() { State state = .Running; Debug.Log(state); }

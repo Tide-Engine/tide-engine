@@ -1,8 +1,44 @@
 # Language features, as tidec builds them
 
+## Contextual enum members, 2026-10-11
+
+Owner-approved `.Idle` shorthand uses the expected enum type. The parser keeps
+an `E_MEMBER` with `enum_shorthand` and an implicit `E_NAME` receiver; no new
+expression kind, runtime ABI or generated representation is needed. The checker
+binds that receiver from typed initialization/assignment, field and parameter
+defaults, returns, ordinary arguments, container elements/keys, comparisons and
+switch labels. Typed conditionals carry the expected enum into both branches;
+otherwise one ordinary branch can supply the other's type. Overload resolution
+defers shorthand like `default`, requires enum parameters and never picks an
+enum by its member names. Missing/non-enum context and ambiguous overloads need
+the qualified spelling. Built-in signatures and fixed Sample filter/wrap
+parameters use the same members; implicit built-in enum names retain generated
+declarations, bold-font and trilinear flags. Checking still runs ordinary
+assignment/capability rules. Source evaluation order and enum numeric values
+are unchanged.
+
+Regression coverage: `enum_shorthand_uses_expected_types` in the native/web
+`enums` E2E, the `text` E2E's built-in enum arguments and return, four
+`enum_shorthand_*` error fixtures, and unchanged GLSL/WGSL goldens for `lit`,
+`maps`, `declared` and `cubemaps`. Editor behavior and validation are recorded
+in `notes/editors.md`. The spec and Language basics page document the feature;
+untyped `var state = .Idle` remains an error. This adds no general backward
+type inference, enum-member search or attribute-specific shorthand contexts.
+
+Final validation after merging dev: full Windows native debug (2,085 tests)
+and web debug (2,057 tests, including WebGL/WebGPU) pass with Node 24.16.0.
+The docs production build and all 217 shared grammar checks pass. Other native
+platforms, sanitizers and Android were not run on this Windows machine.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language
+
+- Sample argument bookkeeping (2026-10-11): `skinned_arguments` preserves the
+  existing `expr.written` source list when it appends an omitted Playback.Clamp.
+  `expr.args` still contains the same full parameter values; named evaluation
+  order and generated operations are unchanged. This corrects editor hints for
+  the synthetic default; regression and validation are in `notes/editors.md`.
 
 - Conservative release asset pruning (2026-10-10): `codegen_options.strip_unused_assets` defaults false and invokes `program_strip_unused_assets` before any codegen asset metadata is collected. Checking remains unchanged and validates every declaration. The collector follows checked bindings, constants, all emitted helpers/methods, type and omitted argument defaults, operators, statement/expression children and GPU sampler/data metadata; generated types are conservative roots for implicit defaults and runtime Decode. It compacts only `program.assets` in declaration order, with iterative pointer-visited traversal for shared/cyclic graphs. This is declaration pruning, not routine reachability: a reference in an unused helper or type default retains its asset. External C-host/API/pack uses require caller opt-out, which is the default and the automatic CLI/CMake policy whenever C/C++ or prebuilt libraries are present. All seven `tidec_asset_usage` tests passed; asset pack, loader, fingerprint and watch behavior is recorded in `assets-and-files.md`.
 - Decimal numeric literals accept a lowercase `deg` suffix (2026-10-10, approved by the owner): `180deg`, `22.5deg`, `.5deg`, `1e2deg` and digit separators. They are ordinary `float` values in radians; unary minus works normally, and variables still use `Math.Radians`. The suffix is exclusive with `f`/`L`, is not allowed on hex/binary literals, and cannot follow a variable or expression. `lex_number` makes these `T_FLOAT`; `parse_primary` strips separators, reads the degree value directly as binary32 with `strtof`, rejects a nonfinite input, then multiplies through the existing `tide_radians_f`. `expr.is_degrees` and `float_value` keep that single converted value while `text` keeps the full source spelling for editors. C codegen emits a round-tripping, nine-digit single-precision literal; GPU lowering uses the same stored value (`notes/shaders.md`). No runtime API or angle type was added. Lexer tests (`tidec_lexer`), `compiler/tests/errors/degree_*` and `compiler/tests/e2e/math` cover suffix boundaries, malformed forms, overflow, float typing, defaults, arithmetic, named scalar Euler calls and bit-identical results to `Math.Radians` on the CPU, including binary32 input rounding, signed zero, underflow and subnormals.

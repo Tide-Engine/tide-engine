@@ -26,7 +26,7 @@ frag Shine(Corner corner, out Color color, Room room)
     var away = Math.Normalize(corner.normal);
     mut Color near = room.reflection.Sample(away);
     // In a branch, as it's read at its one level, and at its nearest pixel: another texture
-    if (near.a < 1) near = room.reflection.Sample(-away, Filter.Point);
+    if (near.a < 1) near = room.reflection.Sample(-away, .Point);
     // Between its smaller images, wherever the Sample is
     mut Color far = Color.black;
     if (corner.normal.y > 0) far = sky.Sample(away, Filter.Trilinear);
