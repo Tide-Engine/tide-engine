@@ -11,6 +11,7 @@ singleton Probe
 {
     List<List<byte>> copies;
     Grid2<int> cells;
+    List<byte>? optional;
     int checks;
     int passed;
     bool done;
@@ -72,6 +73,15 @@ system Check(mut Probe probe)
     Expect(probe, empty.count == 0 && table.count == 300);
     probe.copies[0] = table;
     Expect(probe, probe.copies[0][3] == 21 && probe.copies[1][3] == 21);
+    // New dev's optional-field storage must keep the same asset ownership.
+    probe.optional = table;
+    var held = probe.optional!;
+    mut List<byte> edited = held;
+    edited[3] = 97;
+    Expect(probe, held[3] == 21 && edited[3] == 97);
+    probe.optional = null;
+    Expect(probe, probe.optional == null);
+    probe.optional = table; // Retain it through snapshots, packing and join.
 }
 
 scene Main { }

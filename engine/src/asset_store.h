@@ -20,7 +20,8 @@ typedef struct tide_asset_entry {
 } tide_asset_entry;
 
 typedef struct tide_asset_pool {
-    uint32_t refs, count, slots;
+    uint32_t refs, count, slots, descriptors;
+    uint64_t leases; // Cached commutative descriptor ID/location hash.
     tide_asset_entry entries[];
 } tide_asset_pool;
 
