@@ -21,6 +21,7 @@
 #include "png.h"
 #include "script.h"
 #include "shaders.h"
+#include "texture_residency.h"
 #include "window.h"
 
 uint8_t *tide_platform_pack(size_t *size)
@@ -1524,8 +1525,8 @@ static void *upload_room(const size_t bytes)
 }
 
 // A texture on the GPU: a copy of a draw list's, uploaded when a list first
-// draws with it and again when its pixels changed, and let go once a frame
-// draws without it. Nothing else keeps it: the pixels are the game's.
+// draws with it and again when its pixels changed. Immutable pack images may
+// stay briefly in a bounded idle cache; other textures go after an unused frame.
 typedef struct gpu_texture {
     uint64_t id; // Whose pixels (see tide_draw_texture)
     uint64_t version;
@@ -1536,6 +1537,7 @@ typedef struct gpu_texture {
     tide_gpu_id texture;
     uint32_t frame; // The frame that last drew with it
     bool mipped;    // Its smaller images are of these pixels: made when a draw first reads it between them (prepare_mipmaps)
+    bool compressed;
     bool protected; // Referenced by a later step of the current list
 } gpu_texture;
 
@@ -1544,6 +1546,8 @@ static uint32_t gpu_texture_count, gpu_texture_capacity;
 static uint32_t *gpu_texture_index; // Texture places by space/id: 1 + a place, or 0 for none
 static uint32_t gpu_texture_index_capacity; // A power of two, or 0: at most half taken
 static uint32_t gpu_frame;
+static tide_texture_idle *idle_textures;
+static uint32_t idle_texture_capacity;
 
 // Temporary integer-data storage detached from identities absent from this
 // list. Only the current invocation can take it; leftovers are freed before
@@ -2517,10 +2521,12 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         else index_gpu_texture(gpu_texture_count - 1u);
     }
     g->frame = gpu_frame;
-    const bool shaped = g->texture && g->width == t->width && g->height == t->height && g->format == t->format;
-    if (shaped && g->version == t->version && g->epoch == t->epoch) return g;
+    const bool same_shape = g->texture && g->width == t->width && g->height == t->height && g->format == t->format;
+    if (same_shape && g->version == t->version && g->epoch == t->epoch) return g;
+    const bool shaped = same_shape && !g->compressed && !t->compressed.pixels;
     const tide_draw_area *areas;
     uint32_t count = 1;
+    bool resident_mips = false;
     if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = made_cube(TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
@@ -2535,16 +2541,23 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     } else {
         if (g->texture) free_texture(g->texture);
-        g->texture = take_data_texture(t);
-        if (g->texture) gpu->texture_write(g->texture, t->pixels);
-        else {
+        g->texture = t->compressed.pixels && gpu->texture_blocks
+            ? gpu->texture_blocks(t->width, t->height, t->compressed) : 0;
+        if (g->texture) {
+            hold(held(&held_textures, &held_texture_count, g->texture), t->compressed.bytes);
+            gpu_written += t->compressed.bytes;
+            resident_mips = true;
+        } else g->texture = take_data_texture(t);
+        if (g->texture && !resident_mips) gpu->texture_write(g->texture, t->pixels);
+        else if (!g->texture) {
             // A grid of floats' cells are one float of 16 bits a pixel
             g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
                                       t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
         }
-        gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
+        if (!resident_mips) gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     }
-    if (count) g->mipped = false; // Its smaller images are of other pixels
+    if (count) g->mipped = resident_mips; // Uploaded blocks already contain every mip.
+    if (count) g->compressed = resident_mips;
     g->format = t->format;
     g->version = t->version;
     g->width = t->width;
@@ -2553,15 +2566,40 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     return g;
 }
 
-// Lets go of the textures the frame didn't draw with.
-static void forget_textures(void)
+// Retain only immutable content identities, never C addresses, grid handles,
+// targets or scratch data. The cache owns GPU ids, not borrowed pack pointers.
+static void forget_textures(const uint32_t epoch)
 {
-    uint32_t kept = 0;
+    if (gpu_texture_count > idle_texture_capacity) {
+        if ((uint64_t)gpu_texture_count * sizeof *idle_textures > SIZE_MAX) tide_out_of_memory();
+        idle_textures = tide_realloc(idle_textures, (size_t)idle_texture_capacity * sizeof *idle_textures,
+                                     (size_t)gpu_texture_count * sizeof *idle_textures);
+        idle_texture_capacity = gpu_texture_count;
+    }
+    uint32_t idle_count = 0;
     for (uint32_t i = 0; i < gpu_texture_count; i++) {
-        if (gpu_textures[i].frame != gpu_frame) {
-            if (gpu_textures[i].texture) free_texture(gpu_textures[i].texture);
+        gpu_texture *g = &gpu_textures[i];
+        if (g->frame == gpu_frame || !g->texture) continue;
+        if (g->epoch != epoch || (g->space != TIDE_PIXELS_PACK && g->space != TIDE_PIXELS_PACK_CUBE)) {
+            free_texture(g->texture);
+            g->texture = 0;
             continue;
         }
+        idle_textures[idle_count++] = (tide_texture_idle){
+            .bytes = g->texture < held_texture_count ? held_textures[g->texture].bytes : 0,
+            .age = gpu_frame - g->frame, .place = i,
+        };
+    }
+    tide_texture_idle_trim(idle_textures, idle_count, TIDE_TEXTURE_IDLE_BYTES, TIDE_TEXTURE_IDLE_COUNT);
+    for (uint32_t i = 0; i < idle_count; i++) {
+        if (idle_textures[i].keep) continue;
+        gpu_texture *g = &gpu_textures[idle_textures[i].place];
+        free_texture(g->texture);
+        g->texture = 0;
+    }
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < gpu_texture_count; i++) {
+        if (gpu_textures[i].frame != gpu_frame && !gpu_textures[i].texture) continue;
         gpu_textures[kept++] = gpu_textures[i];
     }
     if (kept != gpu_texture_count) {
@@ -3327,7 +3365,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             shader_epoch = list->epoch;
         }
         forget_meshes_3d();
-        forget_textures();
+        forget_textures(list->epoch);
     }
 }
 

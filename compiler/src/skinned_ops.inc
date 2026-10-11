@@ -102,6 +102,11 @@ static bool skinned_arguments(checker *c, expr *e, const char *names, const int 
         }
     }
     if (valid && e->args.count < count) {
+        if (!e->settled) {
+            e->settled = true;
+            e->written.items = e->args.items;
+            e->written.count = e->written.cap = e->args.count;
+        }
         expr *clamp = NEW(expr);
         clamp->kind = E_INT;
         clamp->type = types[count - 1];
