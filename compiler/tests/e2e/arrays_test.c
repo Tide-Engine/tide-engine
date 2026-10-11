@@ -128,7 +128,7 @@ TIDE_TEST(arrays_in_local_state_and_views)
     tide_local_init(&local);
     tide_draw_list draw = {0};
     tide_gui gui = {0};
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Mirror.sum == 24);
     TIDE_CHECK(local.Mirror.copy.at[0] == 4 && local.Mirror.copy.at[7] == 3);
     tide_local_free(&local);

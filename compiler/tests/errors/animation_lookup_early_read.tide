@@ -1,0 +1,5 @@
+// expect: 'result' is read before it's assigned
+string Read(AnimationCatalog clips, bool enabled) {
+    if (enabled && clips.TryGetAt(0, out var result)) return result.name;
+    return result.name;
+}

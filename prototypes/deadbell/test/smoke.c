@@ -23,7 +23,7 @@ static int frame(void *unused, float seconds)
         tide_draw_reset(&draw);
         tide_gui_begin(&gui, &devices, tide_f2((float)sizes[size][0], (float)sizes[size][1]), tide_platform_measure_text);
         tide_local_frame_time(&local, 1.0f / 60.0f);
-        tide_frame(&world, NULL, 1, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1, NULL, NULL, 1.0f, &local, &draw, &gui);
         tide_gui_end(&gui, &draw);
         tide_float2 points[32];
         uint32_t pixels[32];
@@ -47,7 +47,7 @@ static int frame(void *unused, float seconds)
         touch->startPosition = action == 4 ? tide_f2(70, 198) : touch->position;
         tide_draw_reset(&draw);
         tide_gui_begin(&gui, &devices, tide_f2(390, 780), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1, NULL, NULL, 1.0f, &local, &draw, &gui);
         tide_gui_end(&gui, &draw);
         const Controls sampled = tide_input_sample(&devices, &local);
         if (sampled.interact != (action == 0) || sampled.lure != (action == 1)

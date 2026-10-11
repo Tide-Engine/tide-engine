@@ -60,7 +60,8 @@ typedef struct body {
     bool bullet;
     bool asleep;
     bool step_asleep; // What the last step left `asleep` as
-    uint8_t unused[4];
+    bool rewind;
+    uint8_t unused[3];
 } body;
 
 typedef struct box {
@@ -139,11 +140,18 @@ typedef struct physics {
     tide_map owners;
     tide_map parts;
     tide_map sensors;
+    float history_dt;
+    float history_limit;
+    int32_t history_tick;
+    uint8_t history_padding[4];
+    tide_map selected;
+    tide_list pending;
+    tide_list history;
 } physics;
 
 _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 152 && offsetof(physics, moved) == 60,
+                   && sizeof(physics) == 200 && offsetof(physics, moved) == 60,
                "box2d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 8
@@ -163,7 +171,7 @@ _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) ==
 #define FLAGS offsetof(body, fixed_rotation)
 
 _Static_assert(FLAGS % 4 == 0 && offsetof(body, asleep) == FLAGS + 2 && offsetof(body, step_asleep) == FLAGS + 3
-                   && offsetof(body, unused) == FLAGS + 4,
+                   && offsetof(body, rewind) == FLAGS + 4,
                "a Body's flags aren't where the systems written in C look for them any more");
 
 // Whether a body is asleep, as the four bytes its flags are in read, and what
@@ -1790,4 +1798,314 @@ int32_t b2t_inside(const int64_t first, const int64_t second, tide_list_out *out
         if (b2Shape_IsValid(shape)) visitors(shape);
     }
     return give(out);
+}
+
+// Historical scenes contain plain geometry, never native world pointers.
+typedef struct collider {
+    int64_t body, shape;
+    tide_entity entity, part;
+    int32_t snaps;
+    tide_float2 position;
+    float angle;
+    tide_float2 points[8];
+    int32_t count;
+    float radius;
+    bool sensor;
+    uint8_t padding[7];
+} collider;
+_Static_assert(sizeof(collider) == 128 && offsetof(physics, pending) == 192, "historical scene ABI changed");
+
+static b2Vec2 scene_vec(const tide_float2 p) { return (b2Vec2){p.x, p.y}; }
+static tide_float2 scene_float(const b2Vec2 p) { return (tide_float2){p.x, p.y}; }
+
+static bool scene_real(const collider *c)
+{
+    if (c->count < 1 || c->count > 8 || !real2(c->position) || !real(c->radius) || c->radius < 0 || !real(c->angle)) return false;
+    for (int i = 0; i < c->count; i++) if (!real2(c->points[i])) return false;
+    return true;
+}
+
+// The caller supplies a validated native body; geometry remains in its local frame.
+static int scene_read(const world *w, const int64_t handle, collider **out)
+{
+    *out = NULL;
+    if (!w) return 0;
+    const b2BodyId on = body_of(w, handle);
+    if (!b2Body_IsValid(on)) return 0;
+    const int count = b2Body_GetShapeCount(on);
+    if (count <= 0 || (size_t)count > SIZE_MAX / sizeof(b2ShapeId) || (size_t)count > SIZE_MAX / sizeof(collider)) return 0;
+    b2ShapeId *shapes = malloc((size_t)count * sizeof *shapes);
+    collider *records = calloc((size_t)count, sizeof *records);
+    if (!shapes || !records) { free(shapes); free(records); return 0; }
+    const int got = b2Body_GetShapes(on, shapes, count);
+    const b2WorldTransform pose = b2Body_GetTransform(on);
+    int used = 0;
+    for (int i = 0; i < got; i++) {
+        const b2ShapeId id = shapes[i];
+        collider c = {0};
+        c.body = handle;
+        c.shape = shape_handle(id);
+        c.position = (tide_float2){(float)pose.p.x, (float)pose.p.y};
+        c.angle = b2Rot_GetAngle(pose.q);
+        c.sensor = b2Shape_IsSensor(id);
+        switch (b2Shape_GetType(id)) {
+        case b2_circleShape: {
+            const b2Circle shape = b2Shape_GetCircle(id);
+            c.points[0] = scene_float(shape.center); c.count = 1; c.radius = shape.radius;
+            break;
+        }
+        case b2_polygonShape: {
+            const b2Polygon shape = b2Shape_GetPolygon(id);
+            if (shape.count < 1 || shape.count > 8) continue;
+            c.count = shape.count; c.radius = shape.radius;
+            for (int k = 0; k < c.count; k++) c.points[k] = scene_float(shape.vertices[k]);
+            break;
+        }
+        default: continue;
+        }
+        if (scene_real(&c)) records[used++] = c;
+    }
+    free(shapes);
+    *out = records;
+    return used;
+}
+
+void b2t_read_colliders(const int64_t handle, tide_list_out *out)
+{
+    collider *records;
+    const int count = scene_read(asked, handle, &records);
+    if (count) memcpy(tide_list_out_room(out, (uint32_t)count), records, (size_t)count * sizeof *records);
+    tide_list_out_count(out, (uint32_t)count);
+    free(records);
+}
+
+void b2t_capture_history(tide_rows *rows, physics *p)
+{
+    if (!(p->history_limit > 0)) return;
+    const world *w = world_at(p->stamp);
+    const tide_entity *entities = tide_rows_entities(rows);
+    for (uint32_t i = 0; i < tide_rows_count(rows); i++) {
+        body b;
+        tide_rows_get(rows, 0, i, &b);
+        if (!b.rewind) continue;
+        collider *records;
+        const int count = scene_read(w, b.id, &records);
+        for (int k = 0; k < count; k++) {
+            records[k].entity = entities[i];
+            records[k].snaps = rows->entities ? (int32_t)tide_entity_snaps(rows->entities, entities[i]) : 0;
+            void *record = tide_list_add(&p->pending, sizeof(collider), TIDE_IN_MATCH);
+            if (!record) { p->history_limit = 0; free(records); return; }
+            memcpy(record, &records[k], sizeof(collider));
+        }
+        free(records);
+    }
+}
+
+// Geometry was captured by the physics step; identity/Snap metadata is final
+// only after the tick's queued changes have applied.
+typedef struct history_frame { int32_t tick; tide_list colliders; } history_frame;
+_Static_assert(sizeof(history_frame) == 8, "history frame ABI changed");
+static void seal_history(void *context, const tide_entities *entities)
+{
+    physics *p = context;
+    const int32_t last = tide_list_count(p->history) - 1;
+    const history_frame *stored = tide_list_at(p->history, last, sizeof(history_frame));
+    if (!stored) return;
+    history_frame frame = *stored;
+    for (int32_t i = tide_list_count(frame.colliders); i-- > 0;) {
+        const collider *stored_c = tide_list_at(frame.colliders, i, sizeof(collider));
+        if (!stored_c) continue;
+        collider c = *stored_c;
+        if (!tide_entity_alive(entities, c.entity) || !tide_entity_alive(entities, c.part)) {
+            tide_list_remove_at(&frame.colliders, i, sizeof(collider));
+            continue;
+        }
+        const int32_t snaps = (int32_t)tide_entity_snaps(entities, c.entity);
+        if (c.snaps != snaps) {
+            c.snaps = snaps;
+            memcpy(tide_list_at_mut(frame.colliders, i, sizeof(collider)), &c, sizeof(collider));
+        }
+    }
+    memcpy(tide_list_at_mut(p->history, last, sizeof(history_frame)), &frame, sizeof(frame));
+}
+void b2t_seal_history(tide_rows *rows, physics *p)
+{
+    if (p->history_limit > 0) tide_rows_after_tick(rows, seal_history, p);
+}
+
+// Match the view layer's short-arc interpolation, including its exact fast path.
+static float scene_wrap_angle(const float angle)
+{
+    if (angle >= -TIDE_PI_F && angle <= TIDE_PI_F) return angle;
+    if (angle > TIDE_PI_F && angle <= 3.0f * TIDE_PI_F) return angle - 2.0f * TIDE_PI_F;
+    if (angle < -TIDE_PI_F && angle >= -3.0f * TIDE_PI_F) return angle + 2.0f * TIDE_PI_F;
+    return tide_atan2_f(tide_sin_f(angle), tide_cos_f(angle));
+}
+
+collider b2t_blend_collider(const collider *before, const collider *current, const float alpha)
+{
+    collider c = *current;
+    if (!scene_real(before) || !scene_real(current) || !(alpha >= 0 && alpha <= 1)) return c;
+    c.position.x = before->position.x + (current->position.x - before->position.x) * alpha;
+    c.position.y = before->position.y + (current->position.y - before->position.y) * alpha;
+    const float delta = scene_wrap_angle(scene_wrap_angle(current->angle) - scene_wrap_angle(before->angle));
+    c.angle = scene_wrap_angle(before->angle) + delta * alpha;
+    return c;
+}
+
+static b2ShapeProxy scene_proxy(const collider *c, b2Vec2 points[8])
+{
+    for (int i = 0; i < c->count; i++) points[i] = b2RotateVector(b2MakeRot(c->angle), scene_vec(c->points[i]));
+    return b2MakeProxy(points, c->count, c->radius);
+}
+
+static bool scene_overlap(const collider *c, b2ShapeProxy query, const tide_float2 position)
+{
+    if (!scene_real(c) || !real2(position)) return false;
+    b2Vec2 points[8];
+    const b2ShapeProxy target = scene_proxy(c, points);
+    const b2Vec2 relative = b2Sub(scene_vec(position), scene_vec(c->position));
+    if (!real2(scene_float(relative))) return false;
+    const b2DistanceInput input = {.proxyA = target, .proxyB = query, .transform = {relative, b2Rot_identity}, .useRadii = true};
+    b2SimplexCache cache = {0};
+    return b2ShapeDistance(&input, &cache, NULL, 0).distance <= 0.0f;
+}
+
+static met scene_cast(const collider *c, b2ShapeProxy query, const tide_float2 from, const tide_float2 to)
+{
+    met result = {0};
+    if (!scene_real(c) || !real2(from) || !real2(to)) return result;
+    const b2Vec2 translation = b2Sub(scene_vec(to), scene_vec(from));
+    const b2Vec2 relative = b2Sub(scene_vec(from), scene_vec(c->position));
+    if (!real2(scene_float(translation)) || !real2(scene_float(relative))) return result;
+    if (scene_overlap(c, query, from)) {
+        result.body = c->body; result.shape = c->shape; result.point = from; result.any = true;
+        return result;
+    }
+    b2Vec2 points[8];
+    const b2ShapeCastPairInput input = {.proxyA = scene_proxy(c, points), .proxyB = query,
+        .transform = {relative, b2Rot_identity}, .translationB = translation, .maxFraction = 1.0f};
+    const b2CastOutput hit = b2ShapeCast(&input);
+    if (!hit.hit) return result;
+    result.body = c->body; result.shape = c->shape;
+    result.point = scene_float(b2Add(scene_vec(c->position), hit.point));
+    result.normal = scene_float(hit.normal); result.fraction = hit.fraction; result.any = true;
+    return result;
+}
+
+bool b2t_scene_touch(const collider *a, const collider *b)
+{
+    if (!scene_real(b)) return false;
+    b2Vec2 points[8];
+    return scene_overlap(a, scene_proxy(b, points), b->position);
+}
+
+met b2t_scene_ray(const collider *c, const tide_float2 from, const tide_float2 to)
+{
+    met result = {0};
+    if (!scene_real(c) || !real2(from) || !real2(to)) return result;
+    const b2Vec2 start = b2InvRotateVector(b2MakeRot(c->angle), b2Sub(scene_vec(from), scene_vec(c->position)));
+    const b2Vec2 finish = b2InvRotateVector(b2MakeRot(c->angle), b2Sub(scene_vec(to), scene_vec(c->position)));
+    const b2Vec2 direction = b2Sub(finish, start);
+    if (!real2(scene_float(start)) || !real2(scene_float(direction))) return result;
+    const b2RayCastInput input = {.origin = start, .translation = direction, .maxFraction = 1.0f};
+    b2CastOutput hit = {0};
+    if (c->count == 1) {
+        const b2Circle shape = {scene_vec(c->points[0]), c->radius};
+        hit = b2RayCastCircle(&shape, &input);
+    }
+    else {
+        tide_float2 lo = c->points[0], hi = lo;
+        for (int i = 1; i < c->count; i++) { if (c->points[i].x < lo.x) lo.x = c->points[i].x; if (c->points[i].x > hi.x) hi.x = c->points[i].x; }
+        for (int i = 1; i < c->count; i++) { if (c->points[i].y < lo.y) lo.y = c->points[i].y; if (c->points[i].y > hi.y) hi.y = c->points[i].y; }
+        float enter = 0.0f, leave = 1.0f;
+        if (direction.x == 0) { if (start.x < lo.x || start.x > hi.x) return result; }
+        else {
+            float near = (lo.x - start.x) / direction.x, far = (hi.x - start.x) / direction.x;
+            float sign = -1.0f;
+            if (near > far) { const float temp = near; near = far; far = temp; sign = 1.0f; }
+            if (near > enter) { enter = near; hit.normal = (b2Vec2){0}; hit.normal.x = sign; }
+            if (far < leave) leave = far;
+            if (enter > leave) return result;
+        }
+        if (direction.y == 0) { if (start.y < lo.y || start.y > hi.y) return result; }
+        else {
+            float near = (lo.y - start.y) / direction.y, far = (hi.y - start.y) / direction.y;
+            float sign = -1.0f;
+            if (near > far) { const float temp = near; near = far; far = temp; sign = 1.0f; }
+            if (near > enter) { enter = near; hit.normal = (b2Vec2){0}; hit.normal.y = sign; }
+            if (far < leave) leave = far;
+            if (enter > leave) return result;
+        }
+        hit.hit = true; hit.fraction = enter; hit.point = b2Add(start, b2MulSV(enter, direction));
+    }
+    if (!hit.hit) {
+        // Box2D's world rays count their starting overlap; low-level rays don't.
+        const b2Vec2 point = {0}; const b2ShapeProxy query = b2MakeProxy(&point, 1, 0); return scene_cast(c, query, from, to);
+    }
+    result.body = c->body; result.shape = c->shape;
+    result.point = scene_float(b2Add(scene_vec(c->position), b2RotateVector(b2MakeRot(c->angle), hit.point)));
+    result.normal = scene_float(b2RotateVector(b2MakeRot(c->angle), hit.normal)); result.fraction = hit.fraction; result.any = true;
+    return result;
+}
+met b2t_scene_cast_box(const collider *c, const box *shape, const tide_float2 from, const float angle, const tide_float2 to)
+{
+    b2ShapeProxy query; if (!box_proxy(shape, angle, &query)) return (met){0};
+    return scene_cast(c, query, from, to);
+}
+bool b2t_scene_overlap_box(const collider *c, const box *shape, const tide_float2 from, const float angle)
+{
+    b2ShapeProxy query; if (!box_proxy(shape, angle, &query)) return false;
+    return scene_overlap(c, query, from);
+}
+met b2t_scene_cast_circle(const collider *c, const circle *shape, const tide_float2 from, const float angle, const tide_float2 to)
+{
+    b2ShapeProxy query; if (!circle_proxy(shape, angle, &query)) return (met){0};
+    return scene_cast(c, query, from, to);
+}
+bool b2t_scene_overlap_circle(const collider *c, const circle *shape, const tide_float2 from, const float angle)
+{
+    b2ShapeProxy query; if (!circle_proxy(shape, angle, &query)) return false;
+    return scene_overlap(c, query, from);
+}
+
+// Immutable preorder BVH. A missed branch jumps to its end; queries allocate
+// only their short candidate list and preserve the original native handle order.
+typedef struct scene_bounds { tide_float2 min, max; bool valid; uint8_t padding[3]; } scene_bounds;
+typedef struct scene_node { tide_float2 min, max; int32_t collider, next; } scene_node;
+_Static_assert(sizeof(scene_bounds) == 20 && sizeof(scene_node) == 24, "scene index ABI changed");
+static scene_bounds proxy_bounds(const b2Vec2 *points, const int count, const float radius,
+                                 const tide_float2 from, const tide_float2 to)
+{
+    scene_bounds bounds = {0};
+    if (count < 1 || count > 8 || !real2(from) || !real2(to) || !real(radius) || radius < 0) return bounds;
+    bounds.min = bounds.max = scene_float(points[0]);
+    for (int i = 1; i < count; i++) { if (points[i].x < bounds.min.x) bounds.min.x = points[i].x; if (points[i].x > bounds.max.x) bounds.max.x = points[i].x; }
+    bounds.min.x += (from.x < to.x ? from.x : to.x) - radius;
+    bounds.max.x += (from.x > to.x ? from.x : to.x) + radius;
+    for (int i = 1; i < count; i++) { if (points[i].y < bounds.min.y) bounds.min.y = points[i].y; if (points[i].y > bounds.max.y) bounds.max.y = points[i].y; }
+    bounds.min.y += (from.y < to.y ? from.y : to.y) - radius;
+    bounds.max.y += (from.y > to.y ? from.y : to.y) + radius;
+    bounds.valid = real2(bounds.min) && real2(bounds.max);
+    return bounds;
+}
+scene_bounds b2t_collider_bounds(const collider *c)
+{
+    if (!scene_real(c)) return (scene_bounds){0};
+    b2Vec2 points[8];
+    const b2ShapeProxy proxy = scene_proxy(c, points);
+    return proxy_bounds(points, proxy.count, proxy.radius, c->position, c->position);
+}
+scene_bounds b2t_box_bounds(const box *shape, const float rotation, const tide_float2 from, const tide_float2 to)
+{
+    b2ShapeProxy proxy;
+    if (!box_proxy(shape, rotation, &proxy)) return (scene_bounds){0};
+    return proxy_bounds(proxy.points, proxy.count, proxy.radius, from, to);
+}
+
+scene_bounds b2t_circle_bounds(const circle *shape, const float rotation, const tide_float2 from, const tide_float2 to)
+{
+    b2ShapeProxy proxy;
+    if (!circle_proxy(shape, rotation, &proxy)) return (scene_bounds){0};
+    return proxy_bounds(proxy.points, proxy.count, proxy.radius, from, to);
 }

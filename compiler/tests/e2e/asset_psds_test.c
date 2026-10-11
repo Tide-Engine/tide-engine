@@ -78,7 +78,7 @@ TIDE_TEST(psd_texture_assets_draw_with_recovered_and_premultiplied_colors)
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     tide_world_init(&world, 1.0f / 60.0f);
     tide_local_init(&local);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Art.imageCount == 10 && local.Art.imageMapCount == 10);
     TIDE_CHECK(local.Art.soloCount == 1 && local.Art.soloMapCount == 1);
     TIDE_CHECK(packed_image(local.Art.kept, 3, 2, multiplied));

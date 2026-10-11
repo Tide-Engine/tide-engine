@@ -49,7 +49,7 @@ static void draw_frame(void)
     tide_world_tick(&world);
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 TIDE_TEST(views_run_in_declaration_order)
@@ -101,8 +101,8 @@ TIDE_TEST(views_leave_the_world_alone)
     uint8_t *before = world_bytes(&world, &size);
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(world_is(&world, before, size));
     TIDE_CHECK(draw.count == 21); // Drawing twice without a reset adds up, but for the camera, set to what it was
 }

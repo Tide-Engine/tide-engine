@@ -18,7 +18,7 @@ for (const shape of ['single', 'list', 'map']) {
     writeFileSync(file, JSON.stringify(model));
     writeFileSync(side, original);
     writeFileSync(path.join(folder, 'visual.txt'), 'ordinary');
-    const type = shape === 'single' ? 'Animations' : shape === 'list' ? 'List<Animations>' : 'Map<string, Animations>';
+    const type = shape === 'single' ? 'AnimationCatalog' : shape === 'list' ? 'List<AnimationCatalog>' : 'Map<string, AnimationCatalog>';
     const pick = shape === 'single' ? 'a.gltf' : '*.gltf';
     const source = path.join(folder, 'game.tide');
     writeFileSync(source, `asset ${type} clips = "${pick}";\nasset string visual = "visual.txt";\nscene Main { }\n`);
@@ -62,7 +62,7 @@ for (const shape of ['single', 'list', 'map']) {
     writeFileSync(path.join(folder, 'b.gltf'), JSON.stringify(clips));
     writeFileSync(path.join(folder, 'keys.bin'), original);
     function compile(paths, selected = clips.animations[0].name) {
-        writeFileSync(source, `asset Animations movement = ${JSON.stringify(paths)};\n`
+        writeFileSync(source, `asset AnimationCatalog movement = ${JSON.stringify(paths)};\n`
             + `[Name(${JSON.stringify(selected)})] asset Animation clip = "a.gltf";\nscene Main { }\n`);
         execFileSync(tidec, [source, '-o', output, '--name', 'game', '--no-line'], { stdio: 'pipe' });
         return readFileSync(path.join(output, 'game.c'), 'utf8').match(/\.hash = (0x[0-9A-F]+ull)/)?.[1];

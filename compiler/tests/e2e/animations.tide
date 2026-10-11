@@ -1,14 +1,17 @@
+Animation LookupClip(AnimationCatalog clips, string name) { clips.TryGetByName(name, out var result); return result; }
+Animation ClipAt(AnimationCatalog clips, int index) { clips.TryGetAt(index, out var result); return result; }
+
 // Animation-only assets expose checked clip names and keep ordinary owned values.
-asset Animations movement = "animations/clips/a.gltf";
-asset Animations modelClips = "skinned/model.glb";
-asset List<Animations> all = "animations/clips/*.gltf";
-asset Map<string, Animations> byPath = "animations/clips/*.gltf";
-asset List<Animations> one = "animations/clips/a.gltf";
-asset Map<string, Animations> oneByPath = "animations/clips/a.gltf";
-asset Animations fbxAscii = "fbx/clips/move_ascii.fbx";
-asset Animations fbxBinary = "fbx/clips/move_binary.fbx";
-asset List<Animations> fbxAll = "fbx/clips/*.fbx";
-asset Map<string, Animations> fbxByPath = "fbx/clips/*.fbx";
+asset AnimationCatalog movement = "animations/clips/a.gltf";
+asset AnimationCatalog modelClips = "skinned/model.glb";
+asset List<AnimationCatalog> all = "animations/clips/*.gltf";
+asset Map<string, AnimationCatalog> byPath = "animations/clips/*.gltf";
+asset List<AnimationCatalog> one = "animations/clips/a.gltf";
+asset Map<string, AnimationCatalog> oneByPath = "animations/clips/a.gltf";
+asset AnimationCatalog fbxAscii = "fbx/clips/move_ascii.fbx";
+asset AnimationCatalog fbxBinary = "fbx/clips/move_binary.fbx";
+asset List<AnimationCatalog> fbxAll = "fbx/clips/*.fbx";
+asset Map<string, AnimationCatalog> fbxByPath = "fbx/clips/*.fbx";
 
 singleton Probe
 {
@@ -16,10 +19,10 @@ singleton Probe
     int passed;
     int firstFailure;
     int ticks;
-    Animations saved = movement;
-    Animations fbxSaved = fbxAscii;
-    List<Animations> savedList = all;
-    Map<string, Animations> savedMap = byPath;
+    AnimationCatalog saved = movement;
+    AnimationCatalog fbxSaved = fbxAscii;
+    List<AnimationCatalog> savedList = all;
+    Map<string, AnimationCatalog> savedMap = byPath;
     Animation clip;
     Pose pose;
     Pose fbxPose;
@@ -34,8 +37,8 @@ void Expect(mut Probe p, bool yes)
     else if (p.firstFailure == 0) p.firstFailure = p.checks;
 }
 
-Animations Erase(Animations clips) { return clips; }
-Animation FindMove(Animations clips) { return clips.Find("Move")!; }
+AnimationCatalog Erase(AnimationCatalog clips) { return clips; }
+Animation FindMove(AnimationCatalog clips) { return LookupClip(clips, "Move"); }
 
 system CheckAndSample(mut Probe p)
 {
@@ -44,33 +47,33 @@ system CheckAndSample(mut Probe p)
         var known = movement;
         Expect(p, known.move.name == "Move" && known.move.duration == 1);
         Expect(p, movement.count == 1);
-        Expect(p, movement.Find("Move")!.name == "Move" && movement.Find("move") == null);
-        Expect(p, movement.At(0)!.name == "Move");
-        Expect(p, movement.At(-1) == null && movement.At(1) == null);
+        Expect(p, LookupClip(movement, "Move").name == "Move" && !movement.TryGetByName("move", out _));
+        Expect(p, ClipAt(movement, 0).name == "Move");
+        Expect(p, !movement.TryGetAt(-1, out _) && !movement.TryGetAt(1, out _));
         Expect(p, FindMove(movement).duration == 1);
-        Expect(p, Erase(movement).Find("Move")!.duration == 1);
-        Animations chosen = p.ticks == 0 ? known : movement;
+        Expect(p, LookupClip(Erase(movement), "Move").duration == 1);
+        AnimationCatalog chosen = p.ticks == 0 ? known : movement;
         Expect(p, chosen.count == 1);
         Animation? optional = known.move;
         Expect(p, optional!.name == "Move");
         Expect(p, modelClips.move.name == "Move" && modelClips.squash.name == "Squash");
         Expect(p, modelClips.count == 2);
-        Expect(p, all.count == 2 && all[0].count == 1 && all[1].Find("Move") != null);
-        Expect(p, byPath.count == 2 && byPath["animations/clips/a.gltf"].Find("Move") != null);
-        Expect(p, one.count == 1 && one[0].At(0)!.name == "Move");
+        Expect(p, all.count == 2 && all[0].count == 1 && all[1].TryGetByName("Move", out _));
+        Expect(p, byPath.count == 2 && byPath["animations/clips/a.gltf"].TryGetByName("Move", out _));
+        Expect(p, one.count == 1 && ClipAt(one[0], 0).name == "Move");
         Expect(p, oneByPath.count == 1 && oneByPath["animations/clips/a.gltf"].count == 1);
         Expect(p, p.saved.count == 1 && p.savedList.count == 2 && p.savedMap.count == 2);
         Expect(p, fbxAscii.move.name == "Move" && fbxAscii.move.duration == 1);
         Expect(p, fbxBinary.move.name == "Move" && fbxBinary.move.duration == 1);
-        Expect(p, fbxAll.count == 2 && fbxAll[0].Find("Move")!.duration == 1);
-        Expect(p, fbxByPath["fbx/clips/move_binary.fbx"].At(0)!.name == "Move");
-        p.clip = p.saved.Find("Move")!;
+        Expect(p, fbxAll.count == 2 && LookupClip(fbxAll[0], "Move").duration == 1);
+        Expect(p, ClipAt(fbxByPath["fbx/clips/move_binary.fbx"], 0).name == "Move");
+        p.clip = LookupClip(p.saved, "Move");
         p.pose = p.clip.Sample(0);
-        p.fbxPose = p.fbxSaved.Find("Move")!.Sample(0);
+        p.fbxPose = LookupClip(p.fbxSaved, "Move").Sample(0);
     }
-    Expect(p, p.saved.Find("Move")!.duration == 1 && p.savedList[1].count == 1
-        && p.savedMap["animations/clips/a.gltf"].At(0)!.name == "Move" && p.fbxSaved.count == 1);
+    Expect(p, LookupClip(p.saved, "Move").duration == 1 && p.savedList[1].count == 1
+        && ClipAt(p.savedMap["animations/clips/a.gltf"], 0).name == "Move" && p.fbxSaved.count == 1);
     p.pose.Sample(p.clip, float(p.ticks + 1) * 0.25, Playback.Loop);
-    p.fbxPose.Sample(p.fbxSaved.Find("Move")!, float(p.ticks + 1) * 0.25, Playback.Loop);
+    p.fbxPose.Sample(LookupClip(p.fbxSaved, "Move"), float(p.ticks + 1) * 0.25, Playback.Loop);
     p.ticks++;
 }

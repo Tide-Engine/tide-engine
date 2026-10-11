@@ -38,7 +38,7 @@ static int frame(void *user, float seconds)
             tide_local_frame_time(&local, 1.0f / 60.0f);
             tide_draw_reset(&draw);
             tide_gui_begin(&gui, &devices, tide_f2(960, 540), tide_platform_measure_text);
-            tide_frame(&world, NULL, 1, NULL, &local, &draw, &gui);
+            tide_frame(&world, NULL, 1, NULL, NULL, 1.0f, &local, &draw, &gui);
             tide_gui_end(&gui, &draw);
         }
         tide_float2 points[64];

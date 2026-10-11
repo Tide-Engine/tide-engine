@@ -29,7 +29,7 @@ static void frame(const bool leave)
     tide_draw_reset(&draw);
     static tide_devices devices;
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), NULL); // A screen, for the conversions
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     draw_count = 0;
     drawn places[8] = {0};
     uint32_t target = 0;

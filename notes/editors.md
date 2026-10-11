@@ -1,5 +1,24 @@
 # The language server and the editors
 
+## AnimationCatalog and TryGet completion, 2026-10-11
+
+The owner-approved catalog name and bool/out lookup are reflected in type and
+asset completion/hover, catalog methods, signature help and insertion snippets.
+`TryGetAt(index, out result)` and `TryGetByName(name, out result)` report bool
+results and Animation or Bone outputs. Old method names are no longer offered.
+Incomplete out-argument inference recognizes animation catalogs, bone catalogs
+and Skeleton, using the receiver type and the existing ordinary out machinery.
+Metadata inspection/cache behavior and checked clip members are unchanged.
+
+`lsp_animation_catalog_try_get` covers method signatures/snippets, positional
+and reordered named output completion, incomplete result-member inference,
+bone outputs and method hover. Existing asset/catalog tests use the renamed
+type and methods; source-position assertions account for the longer name.
+Historical API spellings below describe the preceding implementation.
+Validation: complete native (2,150) and web (2,121) debug CTest suites and the
+docs build pass. Final hover wording also passes the focused server suite;
+actual editor host rendering is not separately exercised for this API change.
+
 ## Delayed locals and switch expressions, 2026-10-11
 
 The shared checker supplies delayed-local diagnostics and switch-arm types.
@@ -289,3 +308,7 @@ Built 2026-10-08, after the owner asked for the IDE to respond properly without 
   - Validation: all 10 metadata tests and all 197 language-server tests passed on Windows, including the full native suite's stdio/pipe checks. The metadata suite also passed under Linux ASan/UBSan. The docs production build passed after the FBX import and editor pages were updated.
 
 - **Writable animation names and file-list completion** (2026-10-11): the shared checker exposes exporter names such as `Root|Run` as `rootRun`, retaining original names in hover. Combined `Animations` file lists/globs inspect every source through the existing content-skipping metadata cache, prefix colliding aliases with filenames, and offer no partially inferred members if any source metadata is invalid or unavailable. Completion and hover report source filenames. Every literal list path has its own asset site for completion and file-rename edits; singular Animation paths offer model formats without globs, and `[Name]` completion/hover explains exact clip selection. `lsp_animation_file_lists_clean_names_select_clips_and_refresh_all_sources` covers two-file catalogs, cleanup/collisions, shared warm metadata, both path kinds, member/asset hover, rewriting both list and singular references on file rename, same-size/time second-source refresh and no partial catalog after a malformed source. Existing skinned/catalog tests also pin cleaned keywords and ordinal collisions. Native and web editor suite results are recorded with asset validation.
+
+## Singleton methods and view times (2026-10-11)
+
+Editor semantic analysis recognizes singleton methods for dot/field-scope completion and hover, using the compiler's readonly diagnostics. ViewTime and the reserved enabled-input viewTime field come from the analyzed compiler program; hover describes confirmed interpolation instead of exact/unblended verified views. `lsp_singleton_methods_and_presented_view_time` pins method completion/hover, readonly singleton errors and viewTime.valid completion.

@@ -390,7 +390,7 @@ system Clear(Course course, with Table)
 system Peek(Physics physics, mut Peeked peeked, with Cup)
 {
     peeked.now = 0;
-    if (Inside(physics, this, out var found))
+    if (physics.Inside(this, out var found))
     {
         peeked.now = found.count;
         peeked.who = found[0];
@@ -400,7 +400,7 @@ system Peek(Physics physics, mut Peeked peeked, with Cup)
 
 system PeekStand(Physics physics, mut Peeked peeked, with Stand)
 {
-    if (Inside(physics, this, out _)) peeked.stand = true;
+    if (physics.Inside(this, out _)) peeked.stand = true;
 }
 
 system Topple(Course course, with Doomed)
@@ -410,7 +410,7 @@ system Topple(Course course, with Doomed)
 
 Answer Ray(Physics physics, float3 from, float3 to)
 {
-    bool any = Raycast(physics, from, to, out var hit);
+    bool any = physics.Raycast(from, to, out var hit);
     return Answer { any = any, hit = hit };
 }
 
@@ -426,23 +426,23 @@ void AskAll(Physics physics, out Answers answers)
     answers.turner = Ray(physics, float3(0.3, 9, 12.2), float3(0.3, 0.1, 12.2));
     answers.doomed = Ray(physics, float3(1, 1, -8), float3(1, 1, -20));
 
-    answers.ball.any = Cast(physics, Sphere { radius = 0.5 }, float3(0, 3, 5), quaternion.identity, float3(0, -3, 5), out var ball);
+    answers.ball.any = physics.Cast(Sphere { radius = 0.5 }, float3(0, 3, 5), quaternion.identity, float3(0, -3, 5), out var ball);
     answers.ball.hit = ball;
-    answers.block.any = Cast(physics, Box { size = float3(1, 1, 1) }, float3(0, 1.2, 0), quaternion.Euler(float3(0, 0.3, 0)), float3(10, 1.2, 0), out var block);
+    answers.block.any = physics.Cast(Box { size = float3(1, 1, 1) }, float3(0, 1.2, 0), quaternion.Euler(float3(0, 0.3, 0)), float3(10, 1.2, 0), out var block);
     answers.block.hit = block;
-    answers.pill.any = Cast(physics, Capsule { radius = 0.3, height = 1.6 }, float3(-6, 4, 12), quaternion.Euler(float3(0, 0, 1.2)),
+    answers.pill.any = physics.Cast(Capsule { radius = 0.3, height = 1.6 }, float3(-6, 4, 12), quaternion.Euler(float3(0, 0, 1.2)),
                             float3(6, 4, 12), out var pill);
     answers.pill.hit = pill;
 
-    if (Overlap(physics, Box { size = float3(14, 3, 3) }, float3(0, 1.6, 0), quaternion.identity, out var over))
+    if (physics.Overlap(Box { size = float3(14, 3, 3) }, float3(0, 1.6, 0), quaternion.identity, out var over))
     {
         answers.over = over.count;
         answers.overFirst = over[0];
         answers.overLast = over[over.count - 1];
     }
-    Overlap(physics, Sphere { radius = 1.5 }, float3(0, 2.5, -5), quaternion.identity, out var around);
+    physics.Overlap(Sphere { radius = 1.5 }, float3(0, 2.5, -5), quaternion.identity, out var around);
     answers.around = around.count;
-    Overlap(physics, Capsule { radius = 0.4, height = 6 }, float3(-5, 1, 0), quaternion.Euler(float3(0, 0, 1.57)), out var across);
+    physics.Overlap(Capsule { radius = 0.4, height = 6 }, float3(-5, 1, 0), quaternion.Euler(float3(0, 0, 1.57)), out var across);
     answers.capsule = across.count;
 }
 
@@ -461,7 +461,7 @@ system AskZone(Physics physics, mut Asked asked, Course course, with Zone)
     if (course.mute) return;
     asked.zone = 0;
     asked.zoneFirst = default;
-    if (Inside(physics, this, out var found))
+    if (physics.Inside(this, out var found))
     {
         asked.zone = found.count;
         asked.zoneFirst = found[0];
@@ -472,7 +472,7 @@ system AskZone(Physics physics, mut Asked asked, Course course, with Zone)
 system AskOrder(Physics physics, World world, mut Asked asked, Course course)
 {
     if (course.which != Case.Asking || course.mute) return;
-    Overlap(physics, Box { size = float3(14, 3, 3) }, float3(0, 1.6, 0), quaternion.identity, out var over);
+    physics.Overlap(Box { size = float3(14, 3, 3) }, float3(0, 1.6, 0), quaternion.identity, out var over);
     asked.listed = over.count;
     asked.sorted = true;
     mut long last = 0;

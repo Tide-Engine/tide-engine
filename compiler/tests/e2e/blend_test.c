@@ -14,7 +14,7 @@ static void frame(const tide_world *previous, const float alpha)
 {
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(&now, previous, alpha, NULL, &local, &draw, &gui);
+    tide_frame(&now, previous, alpha, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 
@@ -24,6 +24,31 @@ static const tide_draw_command *nth(const uint32_t kind, int n)
         if (draw.commands[i].kind == kind && n-- == 0) return &draw.commands[i];
     }
     return NULL;
+}
+
+TIDE_TEST(blend_verified_parameters_and_queries_use_the_confirmed_interval)
+{
+    static tide_world confirmed_before, confirmed, predicted;
+    tide_world_init(&confirmed, 1.0f / 20.0f);
+    tide_world_tick(&confirmed);
+    tide_world_copy(&confirmed_before, &confirmed);
+    tide_world_tick(&confirmed);
+    tide_world_copy(&predicted, &confirmed);
+    tide_world_tick(&predicted);
+    tide_local_init(&local);
+    const uint64_t hash = tide_world_hash(&confirmed);
+    tide_draw_reset(&draw);
+    tide_frame(&predicted, &confirmed, 0.75f, &confirmed, &confirmed_before, 0.25f, &local, &draw, &gui);
+    TIDE_CHECK(local.ConfirmedSeen.bodyX == 5.0f && local.ConfirmedSeen.mixedX == 5.0f);
+    TIDE_CHECK(local.ConfirmedSeen.queryX == 105.0f && local.ConfirmedSeen.mixedQueryX == 105.0f);
+    TIDE_CHECK(local.ConfirmedSeen.heading == 355.0f && local.ConfirmedSeen.radius == 3.0f && local.ConfirmedSeen.lives == 2);
+    TIDE_CHECK(local.ConfirmedSeen.jumperX == 1000.0f);
+    TIDE_CHECK(local.ConfirmedSeen.cameraY == 10.0f && local.ConfirmedSeen.shotY == 500.0f);
+    TIDE_CHECK(tide_world_hash(&confirmed) == hash);
+    tide_local_free(&local);
+    tide_world_free(&predicted);
+    tide_world_free(&confirmed);
+    tide_world_free(&confirmed_before);
 }
 
 TIDE_TEST(blend_views_see_the_match_between_ticks)

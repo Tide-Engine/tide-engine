@@ -126,7 +126,7 @@ TIDE_TEST(box3d_views_see_a_body_between_two_ticks)
     const tide_quaternion was = body_of(&previous, tide_has_Spinner).rotation;
     const tide_quaternion is = body_of(&a, tide_has_Spinner).rotation;
     tide_draw_reset(&draw);
-    tide_frame(&a, &previous, 0.5f, NULL, &local, &draw, &gui);
+    tide_frame(&a, &previous, 0.5f, NULL, NULL, 1.0f, &local, &draw, &gui);
     // Halfway between the two ticks, it's turned half of what it turned between them
     TIDE_CHECK(alike(was, is) < 0.99999f);
     TIDE_CHECK(near(alike(local.Seen.rotation, was), alike(local.Seen.rotation, is)));
@@ -150,7 +150,7 @@ TIDE_TEST(box3d_views_glide_through_a_correction)
     tide_world_tick(&a);
     const Box3D_Body drawn = body_of(&a, tide_has_Spinner);
     tide_draw_reset(&draw);
-    tide_frame(&a, &previous, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&a, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Seen.position.x == drawn.position.x && alike(local.Seen.rotation, drawn.rotation) > 0.99999f);
 
     // The same tick as the server had it: a meter to the side, and turned a radian more, around another axis
@@ -163,7 +163,7 @@ TIDE_TEST(box3d_views_glide_through_a_correction)
     const tide_view_correction correction = {&a, &previous, &b, &previous, 0, 1.0f, false};
     tide_local_correct(&local, &correction);
     tide_draw_reset(&draw);
-    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&b, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     printf("    drawn at %g, and said to be at %g and turned a radian more: a view sees it at %g, turned %g of the way", (double)drawn.position.x,
            (double)said.position.x, (double)local.Seen.position.x,
            (double)(2.0f * tide_acos_f(tide_min_f(1.0f, alike(local.Seen.rotation, drawn.rotation)))));
@@ -171,7 +171,7 @@ TIDE_TEST(box3d_views_glide_through_a_correction)
     // ...and halfway there 75 ms later
     tide_local_frame_time(&local, 0.075f);
     tide_draw_reset(&draw);
-    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&b, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     const float turned = 2.0f * tide_acos_f(tide_min_f(1.0f, alike(local.Seen.rotation, drawn.rotation)));
     printf(", then at %g and %g\n", (double)local.Seen.position.x, (double)turned);
     TIDE_CHECK(near(local.Seen.position.x, drawn.position.x + 0.5f) && tide_abs_f(turned - 0.5f) < 0.01f);
@@ -309,8 +309,8 @@ TIDE_TEST(box3d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box3D's image.
-#define SENSORS_HASH UINT64_C(0x7575d49142d0a207)
-#define SENSORS_IMAGES_HASH UINT64_C(0xdd5ddf6e8b623867)
+#define SENSORS_HASH UINT64_C(0x720be1fc17f45596)
+#define SENSORS_IMAGES_HASH UINT64_C(0x2ed0c0eaaade5861)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 
@@ -473,7 +473,7 @@ static const tide_entity nobody = {0};
 // ---------------------------------------------------------------------------
 // Shapes on entities of their own
 
-#define PARTS_HASH UINT64_C(0x0633007d2073202c)
+#define PARTS_HASH UINT64_C(0xa40f4440d97ed24a)
 
 enum { PART_TICKS = 460, SAW = 200, CLEAR = 340 };
 
@@ -569,7 +569,7 @@ TIDE_TEST(box3d_parts_are_shapes_on_entities_of_their_own)
 // ---------------------------------------------------------------------------
 // A body's type, and how it's to be, written after it's made
 
-#define CHANGES_HASH UINT64_C(0xfaccef21a973ac2c)
+#define CHANGES_HASH UINT64_C(0xff0ce93705ff88e4)
 
 enum { CHANGE_TICKS = 900 };
 
@@ -717,7 +717,7 @@ TIDE_TEST(box3d_a_bodys_type_and_settings_change)
 // ---------------------------------------------------------------------------
 // How the world is tuned, and what meets hard
 
-#define TUNING_HASH UINT64_C(0x5a69ac7813d46b5e)
+#define TUNING_HASH UINT64_C(0xff5782b71adcc5dc)
 
 enum { TUNE_TICKS = 150 };
 
@@ -893,7 +893,7 @@ TIDE_TEST(box3d_the_world_is_tuned_by_its_fields)
 // ---------------------------------------------------------------------------
 // What code asks of the world
 
-#define ASKING_HASH UINT64_C(0xa178cdf74f9b2914)
+#define ASKING_HASH UINT64_C(0x40a51f01bf73b1a7)
 #define ANSWERS_HASH UINT64_C(0xdc5da4ff7c55ceb8)
 
 enum { ASK_TICKS = 260, DOOM = 120 };
@@ -943,7 +943,7 @@ TIDE_TEST(box3d_answers_what_code_asks)
         }
         // A view asks of the world it draws, and is told what the match's systems were
         tide_draw_reset(&draw);
-        tide_frame(&a, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&a, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         if (i >= 1) {
             if (!same_answers(local.Glimpse.seen, said[i])) printf("    tick %d: a view's answers aren't the match's\n", i);
             TIDE_REQUIRE(same_answers(local.Glimpse.seen, said[i]));
@@ -1015,12 +1015,12 @@ TIDE_TEST(box3d_answers_what_code_asks)
     const int32_t rebuilt = b3t_rebuilds();
     memset(&local.Glimpse, 0, sizeof local.Glimpse);
     tide_draw_reset(&draw);
-    tide_frame(&a, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&a, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(b3t_rebuilds() == rebuilt + 1 && same_answers(local.Glimpse.seen, last));
     // ...once: the next frame finds it there, and so does the next tick
     const int32_t restored = b3t_restores();
     tide_draw_reset(&draw);
-    tide_frame(&a, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&a, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_world_tick(&a);
     TIDE_CHECK(b3t_rebuilds() == rebuilt + 1 && b3t_restores() == restored);
     tide_local_free(&local);
@@ -1075,13 +1075,13 @@ TIDE_TEST(box3d_asking_costs)
     for (int round = 0; round < 20; round++) {
         tide_draw_reset(&draw);
         uint64_t began = tide_time_now_ns();
-        tide_frame(&a, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&a, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         uint64_t took = tide_time_now_ns() - began;
         if (took < there) there = took;
         b3t_forget();
         tide_draw_reset(&draw);
         began = tide_time_now_ns();
-        tide_frame(&a, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&a, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         took = tide_time_now_ns() - began;
         if (took < made) made = took;
     }
