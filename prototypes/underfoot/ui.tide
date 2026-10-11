@@ -41,6 +41,8 @@ local singleton Hands
     float hintHeight = 150;
     float blockTime;
     int blockPaver;
+    string reason;
+    float reasonTime;
 }
 
 Color PaverColor(int paver) { return paver == 0 ? CORAL : SKY; }
@@ -131,14 +133,43 @@ view PrepareHands(Session session, mut Hands hands)
 {
     hands.player = session.player;
     hands.blockTime = Math.Max(0, hands.blockTime - Frame.dt);
+    hands.reasonTime = Math.Max(0, hands.reasonTime - Frame.dt);
     GUI.SetTheme(NIGHT_THEME);
 }
 
-local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
+// Why hands did nothing, in a few words: the rules are few, but a refusal
+// with no reason reads as a broken game.
+string Refusal(Yard yard, int paver, int direction)
 {
-    if (cue.kind != Cue.Blocked) return;
+    var board = yard.board;
+    var here = board.paver[paver];
+    var to = Step(here, direction);
+    if (to < 0 || board.ground[to] == Ground.Wall) return "That is rock.";
+    if (yard.layout.gate[to] != 0) return "Nothing is lifted or laid in a gateway.";
+    var taken = PaverAt(board, to) >= 0 || CrateAt(board, to) >= 0;
+    if (board.held[paver] != Ground.Void)
+        return board.ground[to] == Ground.Void ? "" : "Your hands are full. Lay this over nothing first.";
+    if (board.ground[to] == Ground.Void) return "Nothing there to lift.";
+    if (taken) return "Not while something stands on it.";
+    if (yard.layout.fixed[to] || !Loose(board.ground[to])) return "That one is set for good. Only loose ground lifts.";
+    if (!Firm(yard.layout, board, here)) return "No lifting from loose ground. Stand on set stone.";
+    return "";
+}
+
+local event(PuzzleCue cue) FeelPuzzle(Yard yard, mut Hands hands)
+{
+    if (cue.kind != Cue.Blocked)
+    {
+        if (cue.paver == hands.active) hands.reasonTime = Math.Min(hands.reasonTime, 0.25);
+        return;
+    }
     hands.blockTime = 0.22;
     hands.blockPaver = cue.paver;
+    if (cue.action < 4 || cue.action > 7 || cue.paver != hands.active || cue.paver < 0 || cue.paver > 1) return;
+    var reason = Refusal(yard, cue.paver, cue.action - 4);
+    if (reason == "") return;
+    hands.reason = reason;
+    hands.reasonTime = 2.6;
 }
 
 override string Rooms.Tagline() { return "Two pavers, a long way down, and never quite enough stone."; }
@@ -338,6 +369,17 @@ view YardControls(Yard yard, Session session, Devices devices, Progress progress
     else if (width >= 1180) Label(hand ? "HANDS  /  a direction lifts the loose stone there, or lays the one you carry" : "WASD or arrows walk  /  hold Shift or Space with a direction to lift and lay  /  E uses what you face",
         float2(right, height - 16), 12, hand ? GOLD : MUTED, Anchor.MiddleRight);
     else if (width >= 900) Label(hand ? "HANDS  /  a direction lifts or lays" : "Shift or Space + a direction lifts and lays", float2(right, bottom + 20), 12, hand ? GOLD : MUTED, Anchor.MiddleRight);
+
+    if (hands.reasonTime > 0 && !hands.shelf && !hands.guide && !yard.board.solved)
+    {
+        var fade = Math.Min(1, hands.reasonTime / 0.25);
+        var words = Draw.MeasureText(hands.reason, 14).x + 36;
+        var at = float2(width * 0.5, bottom - 26);
+        Draw.RoundRect(at + float2(0, 2), float2(words, 34), 17, Color(0, 0, 0, 0.35 * fade));
+        Draw.RoundRect(at, float2(words, 34), 17, Color(0.16, 0.13, 0.20, 0.96 * fade));
+        Draw.WireRoundRect(at, float2(words, 34), 17, 1.5, Color(CORAL.r, CORAL.g, CORAL.b, 0.85 * fade));
+        Label(hands.reason, at, 14, Color(CREAM.r, CREAM.g, CREAM.b, fade), Anchor.MiddleCenter);
+    }
 
     if (hands.hintOpen && !hands.shelf && !hands.guide && !yard.board.solved)
     {
