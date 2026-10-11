@@ -196,3 +196,34 @@ No human pair has yet evaluated whether the late
 puzzles are satisfying or whether discovery and discussion last long enough;
 that is the purpose of this public prototype. Native platforms beyond this
 Windows machine and physical phone hardware remain separate coverage.
+
+## Public deployment (2026-10-11)
+
+The feature was committed, merged with `origin/dev` and pushed directly to
+`dev` using the owner's procedure. Incoming compiler, standard-host frame ABI
+and docs changes merged cleanly. The affected native/web game targets and all
+site game/example staging targets were rebuilt; the scoped game, browser and
+site checks above passed again before publication.
+
+The existing `tide-website` Fly app was deployed with
+`fly deploy --remote-only --ha=false`. Its rolling update completed with a
+healthy machine (version 252), using image
+`deployment-01M4NW4CRPNFH1X3P4MRYWDY2B`. No GitHub workflow was dispatched.
+Anonymous requests to `https://tide-engine.dev/prototypes/inside-out/` and its
+thumbnail both return 200. The served HTML matches the staged/built page
+byte-for-byte (SHA256
+`57a970dbf68a347b5502dca6eec59db4249c88b691a0881ee5e077ac2d39f21a`),
+and the thumbnail bytes match the checked-in capture. The page retains
+`noindex`, same-origin opener isolation and require-corp embedder isolation.
+
+The browser fixture accepts optional `TIDE_INSIDE_OUT_RELAY` for a service
+probe, retaining its local relay by default. A final WebGPU run used the
+anonymously downloaded deployed HTML and `wss://relay.tide-engine.dev`.
+Two separate muted browser windows connected through the production relay
+and passed keyboard actions from both roles, shared undo/reset, held-input
+recovery, the first-puzzle solution, progression and phone touch in 17.1
+seconds (220/210 completed frames). The fixture serves those exact downloaded
+bytes locally and controls match time, as in its standard checks; this probes
+production signalling and peer traffic without claiming physical-device/NAT
+or real-time latency coverage. Captures are in the ignored
+`build/inside-out-captures/production-relay/` directory.
