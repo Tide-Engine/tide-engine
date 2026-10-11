@@ -3,6 +3,7 @@
 ## Levels of detail: design agreed, nothing built (2026-10-11)
 
 - `docs/spec.md`, Levels of detail, records it. The owner decided four points: opt-in with `[LOD]` on a mesh asset's declaration (opt-out was the first proposal; "that way no surprises for the user"), everything else automatic and baked at build time with a cache, a pick for each instance of `Draw.Instanced`, and skinned meshes included. The remaining rules there are picks awaiting the owner.
+- Added the same day, after the shadow-map mismatch came up: the owner asked for both a way to override the level directly and a way for a target to pick through another camera. `LOD`/`SetLOD` and `LODCamera`/`SetLODCamera`, their arguments and rules are picks.
 - No code exists: no attribute, no simplifier, no pack entry, no picking in the draw list. The checker doesn't know `[LOD]`.
 - Constraints found while writing it, for whoever builds it:
   - `mesh.vertices`/`mesh.indices` are read by match code, so levels have to stay beside them, never in their place, and outside the game's compatibility identity.
