@@ -1,16 +1,15 @@
 // How the yard looks. Nothing here is in the match: where things are drawn
 // eases towards where the match says they are.
 //
-// A tiled courtyard over dark water at night, cut from flat colour. The rules
+// A crypt floor over a pit, cut from flat colour and given height. The rules
 // of the look are art/make_art.py's, and this file keeps them too: flat colour
-// only, one hard shadow straight down from whatever is loose or stands up, and
-// decoration only on what can be carried. Set ground is plain sand paving; a
-// loose stone is a glazed tile with an eight-pointed star. Where there is no
-// ground there is water.
+// only; everything has height, seen from above and a little from the south, so
+// walls and slabs show a south face; and one light in the north-west, so
+// whatever stands up casts a hard shadow down and to the right. Set ground is
+// plain grey flagstone; a loose slab is bone white with a red eye. Where there
+// is no ground there is the pit, and what is in it looks back.
 [Filter(Filter.Trilinear)]
 asset Texture artSheet = "art/atlas.png";
-[Wrap(Wrap.Repeat)]
-asset Texture starLattice = "art/lattice.png";
 
 // The atlas's sprites, in its order: six across.
 enum Art
@@ -59,16 +58,20 @@ struct Lens
     int y1;
 }
 
-const float FRAME = 0.34;
+const float FRAME = 0.5;
+const float WALL_H = 0.30;
+const float DROP = 0.42;
 const float FLIGHT = 0.15;
 const float SHEET_W = 1728;
 const float SHEET_H = 1152;
-const Color WALL_TOP = Color(0.20, 0.19, 0.36);
-const Color WALL_FACE = Color(0.12, 0.115, 0.23);
-const Color WATER = Color(0.075, 0.20, 0.33);
-const Color WATER_DEEP = Color(0.055, 0.15, 0.26);
-const Color WATER_LIGHT = Color(0.16, 0.34, 0.48);
-const Color GROUT = Color(0.56, 0.48, 0.39);
+const Color WALL_TOP = Color(0.215, 0.205, 0.27);
+const Color WALL_EDGE = Color(0.31, 0.30, 0.38);
+const Color WALL_FACE = Color(0.115, 0.105, 0.155);
+const Color PIT = Color(0.02, 0.016, 0.035);
+const Color FLOOR_FACE = Color(0.23, 0.245, 0.26);
+const Color FLOOR_FOOT = Color(0.10, 0.105, 0.12);
+const Color GROUT = Color(0.27, 0.29, 0.31);
+const Color SHADE = Color(0, 0, 0.01, 0.32);
 
 float2 CellPoint(int cell) { return float2(cell % BOARD_W, cell / BOARD_W); }
 float2 LensPoint(float2 cell, Lens lens) { return lens.origin + cell * lens.tile; }
@@ -93,7 +96,8 @@ Lens BoardLens(Board board, float2 screen, float reserved = 0)
     var top = narrow ? 150.0 : 112.0;
     var bottom = screen.y - (narrow ? 164.0 : 80.0) - reserved;
     var columns = x1 - x0 + 1 + FRAME * 2;
-    var rows = y1 - y0 + 1 + FRAME * 2;
+    // The crypt's own south face hangs below it, and needs the room.
+    var rows = y1 - y0 + 1 + FRAME * 2 + DROP;
     var tile = Math.Clamp(Math.Min((screen.x - (narrow ? 12.0 : 60.0)) / columns, (bottom - top) / rows), 8, 136);
     var corner = float2((screen.x - columns * tile) * 0.5, top + (bottom - top - rows * tile) * 0.5);
     return Lens { origin = corner + float2(tile * (0.5 + FRAME)) - float2(x0, y0) * tile, tile = tile, x0 = x0, y0 = y0, x1 = x1, y1 = y1 };
@@ -129,19 +133,6 @@ void Sprite(Art art, float2 center, float tile, Color tint = Color.white, bool m
     Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], artSheet);
 }
 
-// The backdrop's pattern over a part of the screen: stars in line, very faint.
-void LatticePatch(float2 from, float2 to, Color tint)
-{
-    var scale = 1.0 / 150;
-    List<Vertex> corners = [
-        Vertex { position = from, uv = from * scale, color = tint },
-        Vertex { position = float2(to.x, from.y), uv = float2(to.x, from.y) * scale, color = tint },
-        Vertex { position = to, uv = to * scale, color = tint },
-        Vertex { position = float2(from.x, to.y), uv = float2(from.x, to.y) * scale, color = tint },
-    ];
-    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], starLattice);
-}
-
 [Stage(ArtStage.Backdrop)]
 view NightSky(mut Picture picture)
 {
@@ -150,7 +141,14 @@ view NightSky(mut Picture picture)
     var screen = float2(Screen.width, Screen.height);
     picture.clock += Math.Min(Frame.dt, 0.08);
     if (picture.clock > 4000) picture.clock -= 4000;
-    LatticePatch(float2(0), screen, Color(0.55, 0.62, 1, 0.045));
+    // Dust, rising slowly through the dark. It keeps out of the band of words
+    // along the top, which stays still.
+    for (var mote = 0; mote < 26; mote++)
+    {
+        var rise = (mote * 104729 % 997) / 997.0 * screen.y - picture.clock * (3.0 + mote % 5);
+        var at = float2((mote * 7919 % 1009) / 1009.0 * screen.x + Math.Sin(picture.clock * 0.3 + mote) * 12, rise - Math.Floor(rise / screen.y) * screen.y);
+        if (at.y > 130) Draw.Circle(at, mote % 3 == 0 ? 2.0 : 1.3, Color(0.62, 0.60, 0.70, 0.10));
+    }
 }
 
 // One cell's ground, `size` being its cell: the board's cells, and at a
@@ -159,7 +157,7 @@ view NightSky(mut Picture picture)
 void GroundPaint(Ground ground, float2 at, float size, bool fixed, bool down, bool live, float clock, int seed = 0)
 {
     // A loose stone's top is a little above its cell's middle; a set one's is on it.
-    var face = at - float2(0, fixed ? 0.0 : size * 0.035);
+    var face = at;
     if (ground == Ground.Stone || ground == Ground.PlateA || ground == Ground.PlateB)
     {
         if (!fixed) Sprite(ground == Ground.Stone ? Art.StoneLoose : Art.TilePlain, at, size);
@@ -173,17 +171,19 @@ void GroundPaint(Ground ground, float2 at, float size, bool fixed, bool down, bo
     {
         Sprite(fixed ? Art.PortalSet : Art.PortalLoose, at, size);
         // Lit and turning while it leads somewhere; a dull ring while its twin is in a hand.
-        if (live) Sprite(Art.PortalLight, face, size, Color(0.97, 0.94, 0.87), false, clock * 1.2);
-        else Sprite(Art.PortalLight, face, size, Color(0.45, 0.40, 0.62));
+        if (live) Sprite(Art.PortalLight, face, size, VIOLET, false, clock * 0.9);
+        else Sprite(Art.PortalLight, face, size, Color(0.27, 0.26, 0.33));
     }
     else if (ground == Ground.Rubble) Sprite(Art.Rubble, at, size);
 }
 
 // A wall stands above the floor. Its top is the courtyard's own; what a cell
-// of it adds is a face, wherever open ground or water is south of it.
+// of it adds is its south face, wherever the floor or the pit is south of it.
 void Rock(float2 at, float size, bool faced)
 {
-    if (faced) Draw.Rect(at + float2(0, size * 0.43), float2(size + 0.6, size * 0.14), WALL_FACE);
+    if (!faced) return;
+    Draw.Rect(at + float2(0, size * (0.5 - WALL_H * 0.5)), float2(size + 0.6, size * WALL_H), WALL_FACE);
+    Draw.Rect(at + float2(0, size * (0.5 - WALL_H) - size * 0.015), float2(size + 0.6, size * 0.03), WALL_EDGE);
 }
 
 // Corner marks round a cell, in a paver's colour: where its hands would act.
@@ -256,8 +256,8 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
     // A plain bar behind the words: easier to read than words on stars, and the
     // same pixels on every machine, which the browser test compares.
     var bar = narrow ? 126.0 : 66.0;
-    Draw.Rect(float2(screen.x * 0.5, bar * 0.5), float2(screen.x, bar), Color(0.065, 0.07, 0.15));
-    Draw.Rect(float2(screen.x * 0.5, bar + 1), float2(screen.x, 3), Color(0.035, 0.04, 0.09));
+    Draw.Rect(float2(screen.x * 0.5, bar * 0.5), float2(screen.x, bar), Color(0.07, 0.065, 0.095));
+    Draw.Rect(float2(screen.x * 0.5, bar + 1), float2(screen.x, 3), Color(0.02, 0.016, 0.035));
     Label("underfoot", float2(left, 34), narrow ? 26.0 : 30.0, CREAM);
     if (!yard.initialized) return;
     var board = yard.board;
@@ -316,10 +316,12 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
     var extent = float2(columns, rows) * tile;
     var slab = extent + float2(tile * FRAME * 2);
 
-    // The courtyard: one flat block of wall, and its one hard shadow.
-    Draw.RoundRect(middle + float2(0, tile * 0.20), slab, tile * 0.16, Color(0.03, 0.035, 0.08));
-    Draw.RoundRect(middle + float2(0, tile * 0.10), slab, tile * 0.16, WALL_FACE);
-    Draw.RoundRect(middle, slab, tile * 0.16, WALL_TOP);
+    // The crypt: one block of wall with the floor let into it. Its south face
+    // drops away below it, into a dark of its own.
+    Draw.RoundRect(middle + float2(tile * 0.10, tile * (DROP + 0.12)), slab, tile * 0.10, Color(0, 0, 0, 0.55));
+    Draw.RoundRect(middle + float2(0, tile * DROP), slab, tile * 0.10, WALL_FACE);
+    Draw.RoundRect(middle + float2(0, tile * 0.03), slab, tile * 0.10, WALL_EDGE);
+    Draw.RoundRect(middle, slab, tile * 0.10, WALL_TOP);
 
     var pressed = Pressed(board);
     mut var hasP = false;
@@ -330,8 +332,9 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
         if (board.ground[cell] == Ground.PortalQ) hasQ = true;
     }
 
-    // First what everything else lies on or in: rock, the beds of set ground,
-    // and the dark at the edges of each gap.
+    // First what everything else lies on or in: the walls' faces, the joints
+    // under set ground, and the pit.
+    var watched = LensPoint(picture.pavers[hands.active], lens);
     for (var y = lens.y0; y <= lens.y1; y++)
         for (var x = lens.x0; x <= lens.x1; x++)
         {
@@ -344,21 +347,27 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
             if (bedded && ground != Ground.Void)
             {
                 Draw.Rect(at, float2(tile + 0.6), GROUT);
-                if (below >= 0 && y < lens.y1 && !(layout.fixed[below] || board.ground[below] == Ground.Rubble || board.ground[below] == Ground.Wall))
-                    Draw.Rect(at + float2(0, tile * 0.5 + tile * 0.07), float2(tile + 0.6, tile * 0.14), Color(0.36, 0.30, 0.25));
                 continue;
             }
-            // No ground: water, darker in the shade of whatever stands north of it.
-            Draw.Rect(at, float2(tile + 0.6), WATER);
-            Draw.Rect(at - float2(0, tile * 0.41), float2(tile + 0.6, tile * 0.18), WATER_DEEP);
-            if (ground != Ground.Void) continue;
-            // Two short lines of light on it, sliding slowly.
-            for (var ripple = 0; ripple < 2; ripple++)
+            // No ground: the pit. Set floor north of it shows the edge it ends at.
+            Draw.Rect(at, float2(tile + 0.6), PIT);
+            var north = Step(cell, 0);
+            if (north >= 0 && board.ground[north] != Ground.Wall && (layout.fixed[north] || board.ground[north] == Ground.Rubble))
             {
-                var seed = cell * 2 + ripple;
-                var slide = hands.reduceMotion ? 0.0 : Math.Sin(picture.clock * (0.5 + seed % 3 * 0.17) + seed * 1.9) * tile * 0.08;
-                var from = at + float2((seed * 37 % 40 - 30) / 100.0 * tile + slide, (ripple == 0 ? -0.08 : 0.22) * tile + (seed * 13 % 10) / 100.0 * tile);
-                Draw.Line(from, from + float2(tile * (0.16 + seed % 3 * 0.05), 0), Math.Max(1.5, tile * 0.028), WATER_LIGHT);
+                Draw.Rect(at - float2(0, tile * 0.42), float2(tile + 0.6, tile * 0.16), FLOOR_FACE);
+                Draw.Rect(at - float2(0, tile * 0.30), float2(tile + 0.6, tile * 0.08), FLOOR_FOOT);
+            }
+            if (ground != Ground.Void || (cell * 7 + yard.level * 3) % 4 != 0) continue;
+            // Something down there, watching whoever is being moved. It blinks.
+            var gaze = watched - at;
+            var look = gaze / (Math.Sqrt(gaze.x * gaze.x + gaze.y * gaze.y) + 0.001) * tile * 0.014;
+            var blink = hands.reduceMotion ? 0.0 : Math.Sin(picture.clock * 0.83 + cell * 2.1);
+            var open = blink > 0.965 ? 0.12 : 1.0;
+            for (var side = -1; side <= 1; side += 2)
+            {
+                var eye = at + float2(side * tile * 0.085, tile * 0.16);
+                Draw.Ellipse(eye, float2(tile * 0.048, tile * 0.032 * open), Color(0.72, 0.68, 0.50));
+                if (open > 0.5) Draw.Circle(eye + look, tile * 0.017, PIT);
             }
         }
     // The rim's face, wherever the top row is open below it.
@@ -366,7 +375,8 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
     {
         if (board.ground[lens.y0 * BOARD_W + x] == Ground.Wall) continue;
         var under = LensPoint(float2(x, lens.y0), lens) - float2(0, tile * 0.5);
-        Draw.Rect(under - float2(0, tile * 0.07), float2(tile + 0.6, tile * 0.14), WALL_FACE);
+        Draw.Rect(under - float2(0, tile * WALL_H * 0.5), float2(tile + 0.6, tile * WALL_H), WALL_FACE);
+        Draw.Rect(under - float2(0, tile * WALL_H + tile * 0.015), float2(tile + 0.6, tile * 0.03), WALL_EDGE);
     }
 
     // Then the ground itself, and what is fixed to it.
@@ -382,6 +392,15 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
             var grow = hands.reduceMotion || set ? 1.0 : 0.80 + 0.20 * Ease(picture.age[cell]);
             var occupied = PaverAt(board, cell) >= 0 || CrateAt(board, cell) >= 0;
             GroundPaint(ground, at, tile * grow, layout.fixed[cell], occupied, hasP && hasQ, picture.clock, x * 7 + y * 13);
+            // A wall to the north lays its shadow across the cell's far edge.
+            var north = Step(cell, 0);
+            if (north < 0 || board.ground[north] == Ground.Wall) Draw.Rect(at - float2(0, tile * 0.39), float2(tile + 0.6, tile * 0.22), SHADE);
+            // Candlelight pools on the floor round a lantern that has been reached.
+            if (layout.goal[cell] && PaverAt(board, cell) >= 0)
+            {
+                Draw.Circle(at, tile * 0.78, Color(1, 0.70, 0.28, 0.09));
+                Draw.Circle(at, tile * 0.52, Color(1, 0.70, 0.28, 0.10));
+            }
             // A lantern waits unlit; the paver who reaches it takes it up, lit.
             if (layout.goal[cell] && PaverAt(board, cell) < 0) Sprite(Art.Lantern, at, tile);
             if (layout.gate[cell] != 0) Sprite(Shut(layout, cell, pressed) && !occupied ? Art.GateShut : Art.GateOpen, at, tile, layout.gate[cell] == 1 ? GOLD : MINT);
