@@ -102,6 +102,25 @@ tide_str tide_str_to_lower(tide_str a);
 tide_str tide_str_trim(tide_str a);
 tide_str tide_str_replace(tide_str a, tide_str from, tide_str to);
 
+// Numbers out of text: `int.TryParse(text, out value)` and the like. True,
+// with the number in `*value`, when the whole text is one: digits, with a `-`
+// before them for a negative one, and for a float a point among them and an
+// exponent after (`-12.5`, `.5`, `5.`, `1e-3`, `2.5E+10`). No spaces, no `+`
+// before it, no hex, no words for infinity or NaN. False, with zero in
+// `*value`, for anything else, and for a number the type doesn't hold: an int
+// past its range, a float past the biggest one. A float is the one nearest
+// the number, a tie going to the even one, worked out with exact integer
+// arithmetic, never strtof: the same text gives the same bits on every
+// platform, and what tide_str_add_float writes reads back as the float it
+// was.
+bool tide_str_parse_int(tide_str text, int32_t *value);
+bool tide_str_parse_long(tide_str text, int64_t *value);
+bool tide_str_parse_float(tide_str text, float *value);
+
+// Whether `count` bytes are UTF-8 through and through: every one part of a
+// character, in its shortest form, none half of a UTF-16 pair.
+bool tide_utf8_valid(const char *bytes, int32_t count);
+
 // ---------------------------------------------------------------------------
 // Tide's `char`: one character, a Unicode code point, as an int32_t. 0 is no
 // character: what reading past a text's ends gives, and what text shows as

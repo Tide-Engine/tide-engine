@@ -1,0 +1,210 @@
+// expect: deep false false false true 0
+// expect: cut 0 of 259 then true
+// expect: spoiled 2590 tries, 628 read, sum 7406
+// expect: digits false false true 0 false true false true 0
+// expect: big 262146 131073 786432 true 1001 1007 393219
+// expect: pieces 1048577 1 349526 false true 1048576
+// expect: numbers false false false 0 false 0 true 0 false
+// expect: kept 131073 131073 3 back 262146
+
+// JSON nobody checked: nesting far past what a reader takes, text cut at
+// every length and with every byte of it spoiled, numbers of a hundred
+// thousand digits, megabytes of text, elements and keys, and what's read kept
+// in the world.
+
+struct Limits
+{
+    int min = 1;
+    int max = 8;
+}
+
+struct Lobby
+{
+    string id;
+    string name = "unnamed";
+    int players;
+    List<string> tags;
+    [Json("max_players")] int maxPlayers = 4;
+    bool open;
+    float rating = 1.5;
+    long created;
+    byte flags;
+    char grade = 'c';
+    Limits limits;
+    int[3] scores;
+    Map<string, int> counts;
+    List<Limits> history;
+}
+
+struct Tree
+{
+    string name;
+    List<Tree> kids;
+}
+
+struct Numbers
+{
+    List<float> floats;
+    List<long> longs;
+    List<int> ints;
+}
+
+singleton Kept
+{
+    Numbers numbers;
+    Map<string, int> counts;
+    List<string> pieces;
+    string text;
+    bool done;
+    int most = 2147483647;
+}
+
+scene Main { }
+
+string Times(string piece, int doublings)
+{
+    mut var text = piece;
+    for (var i = 0; i < doublings; i++) text = text + text;
+    return text;
+}
+
+void Deep()
+{
+    // A hundred thousand arrays and objects, opened and never closed, closed and never opened, and matched
+    var open = Times("[", 17);
+    var close = Times("]", 17);
+    var objects = Times("{\"kids\":[", 15);
+    var deep = Json.Read<Tree>(objects) != null;
+    var skipped = Json.Read<Tree>("{\"other\":" + open + close + "}") != null;
+    var closed = Json.Read<List<int>>(close) != null;
+    var shallow = Json.Read<Tree>("{\"other\":" + open.Substring(0, 31) + close.Substring(0, 31) + "}") != null;
+    var kids = (Json.Read<Tree>("{\"kids\":" + open + close + "}") ?? Tree { }).kids.count;
+    Debug.Log($"deep {deep} {skipped} {closed} {shallow} {kids}");
+}
+
+string Whole()
+{
+    return "{\"id\":\"a\\u00e9\\ud83d\\ude00\",\"name\":\"n\",\"players\":3,\"tags\":[\"x\",\"y\"],\"max_players\":16,\"open\":true,"
+         + "\"rating\":-1.5e3,\"created\":123456789012,\"flags\":7,\"grade\":\"g\",\"limits\":{\"min\":2,\"max\":3},"
+         + "\"scores\":[1,2,3],\"counts\":{\"a\":1},\"history\":[{},null],\"x\":[null,{\"y\":[]}]}";
+}
+
+void Cut()
+{
+    // Every start of a JSON text but the whole of it is no JSON
+    var whole = Whole();
+    mut var read = 0;
+    for (var i = 0; i < whole.length; i++)
+    {
+        if (Json.Read<Lobby>(whole.Substring(0, i)) != null) read++;
+    }
+    Debug.Log($"cut {read} of {whole.length} then {Json.Read<Lobby>(whole) != null}");
+}
+
+void Spoiled()
+{
+    // Each byte of it in turn made ten others, a NUL and ones no UTF-8 has among them: read or refused, never more
+    var bytes = Whole().ToBytes();
+    List<byte> others = [0, 34, 44, 48, 58, 92, 93, 125, 128, 255];
+    mut var tries = 0;
+    mut var read = 0;
+    mut var sum = 0;
+    for (var i = 0; i < bytes.count; i++)
+    {
+        mut var spoiled = bytes;
+        foreach (var other in others)
+        {
+            spoiled[i] = other;
+            tries++;
+            if (Json.Read<Lobby>(spoiled) is Lobby lobby)
+            {
+                read++;
+                sum += lobby.players + lobby.tags.count + lobby.history.count + lobby.name.length + lobby.id.length + lobby.counts.count;
+            }
+        }
+    }
+    Debug.Log($"spoiled {tries} tries, {read} read, sum {sum}");
+}
+
+void Digits()
+{
+    // Numbers of 131,072 digits, and powers of ten no int holds
+    var nines = Times("9", 17);
+    var zeros = Times("0", 17);
+    var ints = Json.Read<Numbers>("{\"ints\":[" + nines + "]}") != null;
+    var longs = Json.Read<Numbers>("{\"longs\":[-" + nines + "]}") != null;
+    var small = Json.Read<Numbers>("{\"ints\":[0." + zeros + "e131073]}") ?? Numbers { };
+    var floats = Json.Read<Numbers>("{\"floats\":[" + nines + "]}") != null;
+    var tiny = Json.Read<Numbers>("{\"floats\":[0." + zeros + "1,1e-" + nines + ",-0." + nines + "e1]}") ?? Numbers { };
+    var huge = Json.Read<Numbers>("{\"floats\":[1e" + nines + "]}") != null;
+    var whole = Json.Read<Numbers>("{\"ints\":[1" + zeros + "e-131072,0e" + nines + "]}") ?? Numbers { };
+    Debug.Log($"digits {ints} {longs} {small.ints.count == 1} {small.ints[0]} {floats} {tiny.floats.count == 3 && tiny.floats[2] == -10} {huge} "
+            + $"{whole.ints.count == 2 && whole.ints[0] == 1} {whole.ints[1]}");
+}
+
+void Big(mut Kept kept)
+{
+    // Megabytes: elements, keys (each one twice), one text, and all of it written again
+    var list = Times("1,-2,3,40,5,6,7,8,", 14) + "0"; // 131,073 numbers
+    mut var map = "\"k0\":0";
+    for (var i = 1; i < 2000; i++) map += $",\"k{i % 1000}\":{i}";
+    var numbers = Json.Read<Numbers>("{\"ints\":[" + list + "],\"floats\":[" + list + "],\"longs\":[" + list + "]}") ?? Numbers { };
+    var counts = Json.Read<Map<string, int>>("{" + map + ",\"last\":1}") ?? default;
+    var text = Times("é\\n", 18); // A megabyte of characters, half of them escapes
+    var names = Json.Read<List<string>>("[\"" + text + "\"]") ?? [];
+    var written = Json.Write(names);
+    var back = Json.Read<List<string>>(written) ?? [];
+    Debug.Log($"big {numbers.ints.count + numbers.longs.count} {numbers.floats.count} {written.length - 4} {back.count == 1 && back[0] == names[0]} "
+            + $"{counts.count} {counts["k7"]} {Json.Write(numbers).Split(",").count}");
+    kept.numbers = numbers;
+    kept.counts = counts;
+}
+
+void Pieces(mut Kept kept)
+{
+    // A million pieces, none at all, and bytes that are and aren't text
+    var commas = Times(",", 20);
+    var pieces = commas.Split(",");
+    var one = commas.Split("").count + commas.Split(Times(",", 21)).count - 1;
+    var threes = commas.Split(",,,").count;
+    mut var bytes = Times("é€", 17).ToBytes();
+    var good = string.FromBytes(bytes) ?? "";
+    bytes[bytes.count - 1] = 0xC3;
+    var bad = string.FromBytes(bytes) != null;
+    Debug.Log($"pieces {pieces.count} {one} {threes} {bad} {good.length == 262144} {(string.FromBytes(commas.ToBytes()) ?? "").length}");
+    kept.pieces = "a,b,c".Split(',');
+}
+
+void Parsed(Kept kept)
+{
+    var nines = Times("9", 17);
+    mut var whole = 5;
+    mut float part = 5;
+    var a = int.TryParse(nines, out whole);
+    var b = long.TryParse("-" + nines, out var wide);
+    var c = float.TryParse(nines, out part);
+    var d = float.TryParse("0." + Times("0", 17) + "1e-" + nines, out var none);
+    var e = float.TryParse(nines + "e-" + nines, out var zero) && zero == 0 && int.TryParse($"{kept.most}0", out _);
+    Debug.Log($"numbers {a} {b} {c} {whole} {wide != 0} {part} {d} {none} {e}");
+}
+
+system Run(mut Kept kept)
+{
+    if (kept.done)
+    {
+        // What a tick kept, another reads, writes and reads back
+        kept.text = Json.Write(kept.numbers);
+        var back = Json.Read<Numbers>(kept.text) ?? Numbers { };
+        Debug.Log($"kept {kept.numbers.ints.count} {kept.numbers.floats.count} {kept.pieces.count} back {back.ints.count + back.longs.count}");
+        kept.text = "";
+        return;
+    }
+    kept.done = true;
+    Deep();
+    Cut();
+    Spoiled();
+    Digits();
+    Big(kept);
+    Pieces(kept);
+    Parsed(kept);
+}

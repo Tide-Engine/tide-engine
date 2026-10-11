@@ -48,7 +48,41 @@ Matrices can't be shown yet, so neither can a value that holds one.
 - `Substring(start)` and `Substring(start, length)`.
 - `ToUpper` and `ToLower`, for ASCII letters for now.
 - `Trim` and `Replace(from, to)`, of text or of chars.
+- `Split(separator)`, the pieces between each separator and the next, and `ToBytes()`, the text as UTF-8 (see [Bytes, pieces and numbers](#bytes-pieces-and-numbers)).
 - `==` and `!=` compare text byte by byte. There's no `<` for text.
+
+### Bytes, pieces and numbers
+
+What comes from outside the game is bytes, and what a player types is text: these turn one into the other, and text into the values in it. They're the same on every machine, so the match can use them.
+
+```csharp
+bool ReadScore(List<byte> file, out string name, out int score)
+{
+    name = "";
+    score = 0;
+    var line = string.FromBytes(file) ?? "";      // "Ada;1200"
+    var parts = line.Trim().Split(';');
+    if (parts.count != 2) return false;
+    name = parts[0];
+    return int.TryParse(parts[1], out score);
+}
+```
+
+| Call | What it gives |
+| --- | --- |
+| `text.ToBytes()` | A `List<byte>`: the text's UTF-8 |
+| `string.FromBytes(bytes)` | A `string?`: the text those bytes are, or nothing when they aren't UTF-8 |
+| `text.Split(separator)` | A `List<string>`: the pieces between each separator and the next. The separator is text or a char |
+| `int.TryParse(text, out value)` | Whether the whole text is an int, which goes to `value` |
+| `long.TryParse(text, out value)` | The same, for a long |
+| `float.TryParse(text, out value)` | Whether the whole text is a number, which goes to `value` as the nearest float |
+
+- **`Split` keeps empty pieces**, so joining the pieces with the separator gives the text back: `"a,,b".Split(",")` is `["a", "", "b"]`, and `"".Split(",")` is one empty piece. A separator that isn't in the text, or an empty one, gives the whole text as one piece.
+- **`TryParse` takes a number and nothing else.** An int is digits, with `-` before them for a negative one. A float can have a point and an exponent too: `-12.5`, `.5`, `1e-3`. Spaces, a `+`, hex and words like `NaN` make it false, and so does a number its type doesn't hold. `Trim` the text first when it's what a player typed. When it's false, `value` is 0.
+- **A float read from text is the nearest one**, worked out exactly, the same bits on every platform. What `$"{x}"` shows of a float reads back as that float.
+- **`FromBytes` gives a [`string?`](./errors.md)**, since bytes from a file or a server can be anything: `?? ""` for a fallback, or `is string text` to run only when they're text.
+
+For JSON, there's [`Json.Read` and `Json.Write`](./json.md), which read and write a struct whole.
 
 ### Characters
 

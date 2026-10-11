@@ -6,6 +6,12 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'inside-out', title: 'Inside Out', kind: 'Cooperative puzzle · Nested rooms', players: '2 players',
+        description: 'A warm miniature workshop built for two. One player explores inside movable rooms while the other rearranges them outside. Connect doorways, pass crates between scales, and find the way together.',
+        image: '/prototypes/inside-out/thumbnail.png',
+        horror: false,
+    },
+    {
         id: 'aerial', title: 'Aerial', kind: 'Car soccer · Rocket League prototype', players: '1–6 players',
         description: 'Rocket-powered car soccer on the sport\'s own numbers: sprung wheels, flips, wall rides and flight. One, two or three a side, with bots in every seat nobody takes.',
         image: '/prototypes/aerial/thumbnail.png',

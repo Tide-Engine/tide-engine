@@ -8,7 +8,7 @@ import test from 'node:test';
 import { createAnalytics } from '../analytics.js';
 import { createAdmin } from '../admin.js';
 
-const prototypeIds = ['two-forks', 'the-last-light', 'cabin-nine', 'deadbell', 'dead-signal', 'rocket-league', 'aerial'];
+const prototypeIds = ['two-forks', 'the-last-light', 'cabin-nine', 'deadbell', 'dead-signal', 'rocket-league', 'aerial', 'inside-out'];
 
 async function site(t, options = {}) {
     const folder = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-'));
@@ -139,7 +139,9 @@ test('prototype files are public while the catalog and retired copies remain pro
         '/samples/deadbell/', '/samples/deadbell/index.html', '/samples/thumbnails/deadbell.png',
         '/deadbell.html', '/sample_deadbell.html', '/deadbell_smoke.html', '/samples/dead%62ell/index.html',
         '/samples/rocket-league/index.html', '/rocket_league.html', '/samples/rocket%2dleague/game.wasm',
-        '/samples/aerial/index.html', '/aerial.html', '/samples/%61erial/game.wasm']) {
+        '/samples/aerial/index.html', '/aerial.html', '/samples/%61erial/game.wasm',
+        '/samples/inside-out/index.html', '/inside_out.html', '/samples/inside%2dout/game.wasm',
+        '/samples/thumbnails/inside-out.png']) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);

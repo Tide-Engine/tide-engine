@@ -1,0 +1,6 @@
+// expect: Json has no function 'Parse'
+// expect: it has 'Json.Read<T>(json)', which gives a T? from a string or a List<byte>
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.count = Json.Parse(seen.text); }

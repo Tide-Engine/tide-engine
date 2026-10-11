@@ -3,6 +3,7 @@
 
 #include "tide/math.h"
 #include "tide/random.h"
+#include "tide/text.h"
 #include "tide_test.h"
 
 // Cross-platform determinism. Each test hashes the exact bits of many results,
@@ -214,4 +215,57 @@ TIDE_TEST(crossplatform_random)
     h = hash_bits(hash_bits(h, (uint32_t)unseeded.state), (uint32_t)((uint64_t)unseeded.state >> 32));
     h = hash_bits(hash_bits(h, (uint32_t)placed.state), (uint32_t)((uint64_t)placed.state >> 32));
     expect_hash("random", h, 0xBD6BDD2B157C28BCull);
+}
+
+// Numbers out of text (tide_str_parse_float, which Json.Read reads floats with):
+// the float each text is, and whether it's one at all. The texts are made from
+// integers alone, so every platform reads the same ones: up to forty digits
+// with a point anywhere among them and an exponent, which covers the floats
+// under the smallest normal one, the ones past the biggest, and digits far
+// past what decides a float. Then every float's own text, the shortest that
+// reads back, which has to read back here as well.
+TIDE_TEST(crossplatform_numbers_from_text)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    rng = 20261011u;
+    for (int i = 0; i < SAMPLES; i++) {
+        char text[96];
+        int n = 0;
+        const uint32_t shape = next_bits();
+        const int digits = 1 + (int)(next_bits() >> 8) % 40;
+        const int point = (int)(next_bits() >> 8) % (digits + 2) - 1; // Before which digit the point goes: -1 for none
+        if (shape & 1u) text[n++] = '-';
+        for (int d = 0; d < digits; d++) {
+            if (d == point) text[n++] = '.';
+            text[n++] = (char)('0' + (next_bits() >> 8) % 10u);
+        }
+        if (shape & 6u) { // Three in four have an exponent, from -70 to 57
+            const int exponent = (int)(next_bits() >> 8) % 128 - 70;
+            text[n++] = shape & 8u ? 'E' : 'e';
+            if (exponent < 0) text[n++] = '-';
+            else if (shape & 16u) text[n++] = '+';
+            const int size = exponent < 0 ? -exponent : exponent;
+            if (size >= 10) text[n++] = (char)('0' + size / 10);
+            text[n++] = (char)('0' + size % 10);
+        }
+        float value;
+        const bool read = tide_str_parse_float((tide_str){text, n, n}, &value);
+        h = hash_int(hash_float(h, value), read ? 1 : 0);
+    }
+    const uint32_t mark = tide_scratch_mark();
+    int finite = 0;
+    int back = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+        const float x = any_float();
+        if (x != x || x - x != 0.0f) continue; // NaN and the infinities have no number in text
+        finite++;
+        const tide_str shown = tide_str_add_float(TIDE_STR_EMPTY, x, 0);
+        float value;
+        back += tide_str_parse_float(shown, &value) && tide_f_bits(value) == (tide_f_bits(x) == 0x80000000u ? 0u : tide_f_bits(x));
+        for (int32_t k = 0; k < shown.bytes; k++) h = hash_bits(h, (uint8_t)shown.ptr[k]);
+        h = hash_float(h, value);
+        tide_scratch_reset(mark);
+    }
+    TIDE_CHECK(back == finite);
+    expect_hash("numbers from text", h, 0xF2921150CCFB2A4Dull);
 }

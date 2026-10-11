@@ -100,6 +100,16 @@ the same opt-in option and `private_games`: `aerial_page` stages its page at
 `/prototypes/aerial/`, beside a native capture as its thumbnail. Afterburn
 stays as it is. Its contract and tests are in `notes/aerial.md`.
 
+Inside Out (`prototypes/inside-out/`) adds the owner's two-player online
+cooperative puzzle prototype on 2026-10-11. One player works inside movable
+rooms while the other rearranges those rooms in a larger workshop. It uses the
+same opt-in option and `private_games` integration: `inside_out_page` stages
+the game under `/prototypes/inside-out/`, beside its gameplay thumbnail. The
+public sharing URL needs no admin session; its two-player catalog card stays
+behind admin sign-in. Its rules, puzzle verification and play instructions are
+in `notes/inside-out.md` and its source folder. No hosting workflow change is
+needed: the existing docs staging target collects the page.
+
 ## Verification and limits
 
 ### Controlled browser playtest clock (2026-10-11)

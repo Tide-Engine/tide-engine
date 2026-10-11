@@ -1,0 +1,6 @@
+// expect: Json.Read reads a struct, a List<T> or a Map<string, T>, and this is int
+// expect: a value alone goes in a struct's field: 'struct Answer { int value; }'
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.count = Json.Read<int>(seen.text) ?? 0; }
