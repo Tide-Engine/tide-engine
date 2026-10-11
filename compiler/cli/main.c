@@ -41,6 +41,7 @@ static void usage(void)
            "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
            "  add <source>       add a package to the game here: from git, a folder, or one that comes with tide (see below)\n"
            "  update [package]   move the game's packages from git to the newest commit of what they follow\n"
+           "  eject <package>    copy one of the game's packages into the game's folder, to change it as the game's own\n"
            "  fetch [folder]     download the game's packages from git that aren't on this machine yet, building nothing\n"
            "  publish [folder]   send this version of the game's source to the build service, which builds it with mods\n"
            "  editors            add Tide to VS Code, Cursor, VSCodium and Windsurf\n"
@@ -191,6 +192,15 @@ int main(const int argc, char **argv)
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
     }
 
+    if (strcmp(command, "eject") == 0) {
+        if (argc != 3 || argv[2][0] == '-') {
+            fprintf(stderr, "tide: eject takes the name of one of the game's packages, like `tide eject rooms`\n");
+            return 2;
+        }
+        char *folder = path_absolute(".");
+        return tide_eject(folder, argv[2]);
+    }
+
     if (strcmp(command, "fetch") == 0 || strcmp(command, "publish") == 0) {
         if (argc > 3 || (argc == 3 && argv[2][0] == '-')) {
             fprintf(stderr, "tide: %s takes the game's folder, or none for this one\n", command);
@@ -221,8 +231,8 @@ int main(const int argc, char **argv)
     const bool schedule = strcmp(command, "schedule") == 0 || shaders;
     if (!run && !build && !schedule) {
         fprintf(stderr, "tide: unknown command '%s'\n", command);
-        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, fetch, publish, editors, upgrade "
-                        "and version; see `tide help`\n");
+        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, eject, fetch, publish, editors, "
+                        "upgrade and version; see `tide help`\n");
         return 2;
     }
 

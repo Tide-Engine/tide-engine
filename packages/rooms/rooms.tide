@@ -25,7 +25,10 @@
 // switch of its own (`offersNewGame`, `offersBots`), whose buttons then set
 // `newGame` and `toggleBots` for the frame they're pressed in, for the game
 // to send its commands. The title, the line under it and where the Menu
-// button goes are functions a game overrides.
+// button goes are functions a game overrides, and so is each page
+// (`TitlePage`, `JoinPage`, `RoomPage`, `SettingsPage`): a game draws one its
+// own way and keeps the others, with what its buttons do a call each
+// (`Play`, `Host`, `Join`, `Leave` and the rest, below).
 namespace Rooms;
 
 enum Page
@@ -35,6 +38,17 @@ enum Page
     Join,    // A room's code to type, and the wait to be let in
     Room,    // The room and who's in it: the host's lobby, and the menu from a match
     Settings // This machine's volume, from the title or the room's page
+}
+
+// What a page's button asks of the session or the machine, which the Pages
+// view does once the page is drawn: functions can't call Session themselves.
+enum Ask
+{
+    None,
+    Open,  // Session.Open: this machine's match, to others
+    Join,  // Session.Join, of the room whose code is `Lobby.code`
+    Start, // Session.Start: a match of this machine's own
+    Copy   // The room's code, to the clipboard
 }
 
 local singleton Lobby
@@ -49,6 +63,7 @@ local singleton Lobby
     float copied = 10;  // Seconds since the room's code was copied
     Page settingsFrom = Page.Title; // The page Settings returns to
     float volume = 1;   // This machine's master volume: 0 mutes, 1 is full volume
+    Ask ask;            // What this frame's page asked for
 
     // For the frame a button was pressed in: Play on the title or New game,
     // and the bots' switch. The game sends its commands when it sees them.
@@ -107,13 +122,227 @@ view Begin(Session session, Devices devices, mut Lobby lobby)
                  && (lobby.playing || !devices.pointer.press.pressed);
 }
 
-// The pages, as modals of the GUI's: over everything the game draws, and
-// the devices are theirs while one is up. It runs with no match too, as while
-// one is being joined.
+// What the pages' buttons do, for a page a game writes itself: each is what
+// the package's own page does at that press, so a page of the game's keeps
+// the menu's way through its pages.
+
+// Into the match that's running behind the page.
+void Resume(mut Lobby lobby)
+{
+    lobby.page = Page.Playing;
+}
+
+// A game of this machine's own, from its start: the game sees `newGame`.
+void Play(mut Lobby lobby)
+{
+    lobby.newGame = true;
+    lobby.page = Page.Playing;
+}
+
+// Opens this machine's match to others, and shows its room.
+void Host(mut Lobby lobby)
+{
+    lobby.ask = Ask.Open;
+    lobby.page = Page.Room;
+    lobby.resume = false;
+    lobby.message = "";
+}
+
+// To the page a room's code is typed into.
+void ShowJoin(mut Lobby lobby)
+{
+    lobby.page = Page.Join;
+    lobby.message = "";
+}
+
+// Asks to join the room with this code: the Join page waits to be let in.
+void Join(mut Lobby lobby, string code)
+{
+    lobby.message = "";
+    lobby.joining = true;
+    lobby.code = code;
+    lobby.ask = Ask.Join;
+}
+
+// From the Join page to the title, and out of a match that was being joined.
+void LeaveJoin(Session session, mut Lobby lobby)
+{
+    if (lobby.joining && session.state == SessionState.Connecting)
+    {
+        lobby.joining = false;
+        lobby.ask = Ask.Start;
+    }
+    lobby.page = Page.Title;
+    lobby.message = "";
+}
+
+// To the settings, which go back to the page that's up now.
+void ShowSettings(mut Lobby lobby)
+{
+    lobby.settingsFrom = lobby.page;
+    lobby.page = Page.Settings;
+}
+
+// From the settings to the page they came from.
+void LeaveSettings(mut Lobby lobby)
+{
+    lobby.page = lobby.settingsFrom;
+}
+
+// Opens a match this machine plays alone to others, from its room's page.
+void Invite(mut Lobby lobby)
+{
+    lobby.ask = Ask.Open;
+}
+
+// Copies the room's code, and has `copied` count from there.
+void CopyCode(mut Lobby lobby)
+{
+    lobby.ask = Ask.Copy;
+    lobby.copied = 0;
+}
+
+// Out of the room to the title, and into a match of this machine's own. The
+// room's match goes on without it when the game has host migration: another
+// player's machine takes it over.
+void Leave(Session session, mut Lobby lobby)
+{
+    if (!session.server || session.open) lobby.ask = Ask.Start;
+    lobby.page = Page.Title;
+    lobby.message = "";
+}
+
+// The pages. Each is a function a game overrides to draw that page its own
+// way, with its own controls or the GUI's, and keeps the others: what its
+// buttons do is the functions above.
+
+// The game's name, and the three ways in.
+virtual void TitlePage(Session session, mut Lobby lobby)
+{
+    var connected = session.state == SessionState.Connected;
+    mut var open = true;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label(Title());
+        GUILayout.Label(Tagline());
+        mut var play = false;
+        mut var host = false;
+        GUI.Disabled(!connected)
+        {
+            play = GUILayout.Button("Play");
+            host = GUILayout.Button("Host a room");
+        }
+        var join = GUILayout.Button("Join a room");
+        var settings = GUILayout.Button("Settings");
+        if (lobby.message != "") GUILayout.Label(lobby.message);
+        if (play) Play(lobby);
+        if (host) Host(lobby);
+        if (join) ShowJoin(lobby);
+        if (settings) ShowSettings(lobby);
+    }
+    // Escape: into the match that's running behind the title
+    if (!open) Resume(lobby);
+}
+
+// A room's code to type, and the wait to be let in.
+virtual void JoinPage(Session session, mut Lobby lobby)
+{
+    mut var open = true;
+    var busy = lobby.joining && session.state == SessionState.Connecting;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label(busy ? "Joining" : "Join a room");
+        if (busy)
+        {
+            GUILayout.Label($"Room {lobby.code.Trim()}...");
+            if (GUILayout.Button("Cancel")) open = false;
+        }
+        else
+        {
+            GUILayout.TextField("Code", lobby.code, out var entered);
+            // A room's code is capitals, however it's typed
+            lobby.code = lobby.code.ToUpper();
+            var code = lobby.code.Trim();
+            mut var go = false;
+            GUI.Disabled(code == "") { go = GUILayout.Button("Join"); }
+            GUILayout.Label(lobby.message != "" ? lobby.message : "Type the code your friend is hosting.");
+            if (GUILayout.Button("Back")) open = false;
+            if (go || entered && code != "") Join(lobby, code);
+        }
+    }
+    // Back, Cancel, or Escape
+    if (!open) LeaveJoin(session, lobby);
+}
+
+// The room and who's in it: the host's lobby, and the menu from a match.
+// `room` is its code, or "" while it has none.
+virtual void RoomPage(Session session, string room, mut Lobby lobby)
+{
+    var connected = session.state == SessionState.Connected;
+    mut var open = true;
+    var alone = session.server && !session.open;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label(alone ? "Playing alone" : session.server ? "Your room" : "Room");
+        if (alone)
+        {
+            mut var invite = false;
+            GUI.Disabled(!connected) { invite = GUILayout.Button("Invite friends"); }
+            if (invite) Invite(lobby);
+        }
+        else
+        {
+            GUILayout.Label(room != "" ? $"Code {room}" : "Opening a room...");
+            mut var copy = false;
+            GUI.Disabled(room == "") { copy = GUILayout.Button(lobby.copied < 1.5 ? "Copied" : "Copy the code"); }
+            if (copy) CopyCode(lobby);
+        }
+        for (var seat = 0; seat < lobby.seats; seat++)
+        {
+            var manned = (lobby.manned >> seat & 1) == 1;
+            var who = seat == lobby.mine ? "you" : manned ? "a player" : lobby.bots ? "a bot" : "open";
+            GUILayout.Label($"Seat {seat + 1}: {who}");
+        }
+        mut var play = false;
+        mut var fresh = false;
+        mut var bots = false;
+        GUI.Disabled(!connected)
+        {
+            play = GUILayout.Button(lobby.resume ? "Resume" : "Play");
+            if (lobby.offersNewGame) fresh = GUILayout.Button("New game");
+            if (lobby.offersBots) bots = GUILayout.Button(lobby.bots ? "Bots: on" : "Bots: off");
+        }
+        var settings = GUILayout.Button("Settings");
+        var leave = GUILayout.Button(alone ? "Back to the title" : "Leave the room");
+        if (play) Resume(lobby);
+        if (fresh) Play(lobby);
+        if (bots) lobby.toggleBots = true;
+        if (settings) ShowSettings(lobby);
+        if (leave) Leave(session, lobby);
+    }
+    // Escape: back to the match
+    if (!open) Resume(lobby);
+}
+
+// This machine's volume, from the title or the room's page.
+virtual void SettingsPage(mut Lobby lobby)
+{
+    mut var open = true;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label("Settings");
+        GUILayout.Slider("Volume", lobby.volume, 0, 1);
+        if (GUILayout.Button("Back")) open = false;
+    }
+    if (!open) LeaveSettings(lobby);
+}
+
+// The page that's up, over everything the game draws, with the devices its
+// own while it is. It runs with no match too, as while one is being joined.
+// A page that follows another in the same frame is drawn then.
 view Pages(Session session, Devices devices, mut Lobby lobby)
 {
     lobby.copied += Math.Min(Frame.dt, 0.1);
-    var connected = session.state == SessionState.Connected;
     if (lobby.page == Page.Playing)
     {
         if (GUI.Button(MenuButton(float2(Screen.width, Screen.height)), "Menu") || devices.keyboard.escape.down)
@@ -121,177 +350,23 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
             lobby.page = Page.Room;
             lobby.resume = true;
         }
-        return;
     }
-    // A menu over a match: the arrows and a gamepad move between its buttons
-    GUI.Navigate();
-
-    if (lobby.page == Page.Settings)
+    else
     {
-        mut var open = true;
-        GUILayout.Modal(Anchor.MiddleCenter, open)
-        {
-            GUILayout.Label("Settings");
-            GUILayout.Slider("Volume", lobby.volume, 0, 1);
-            if (GUILayout.Button("Back")) open = false;
-        }
-        if (!open) lobby.page = lobby.settingsFrom;
+        // A menu over a match: the arrows and a gamepad move between its buttons
+        GUI.Navigate();
+        if (lobby.page == Page.Settings) SettingsPage(lobby);
+        if (lobby.page == Page.Join) JoinPage(session, lobby);
+        if (lobby.page == Page.Title) TitlePage(session, lobby);
+        if (lobby.page == Page.Room) RoomPage(session, session.room, lobby);
     }
-
-    if (lobby.page == Page.Join)
-    {
-        mut var open = true;
-        var busy = lobby.joining && session.state == SessionState.Connecting;
-        GUILayout.Modal(Anchor.MiddleCenter, open)
-        {
-            GUILayout.Label(busy ? "Joining" : "Join a room");
-            if (busy)
-            {
-                GUILayout.Label($"Room {lobby.code.Trim()}...");
-                if (GUILayout.Button("Cancel")) open = false;
-            }
-            else
-            {
-                GUILayout.TextField("Code", lobby.code, out var entered);
-                // A room's code is capitals, however it's typed
-                lobby.code = lobby.code.ToUpper();
-                var code = lobby.code.Trim();
-                mut var go = false;
-                GUI.Disabled(code == "") { go = GUILayout.Button("Join"); }
-                GUILayout.Label(lobby.message != "" ? lobby.message : "Type the code your friend is hosting.");
-                if (GUILayout.Button("Back")) open = false;
-                if (go || entered && code != "")
-                {
-                    lobby.message = "";
-                    lobby.joining = true;
-                    Session.Join(code);
-                }
-            }
-        }
-        // Back, Cancel, or Escape: to the title, and out of a match that was being joined
-        if (!open)
-        {
-            if (busy)
-            {
-                lobby.joining = false;
-                Session.Start();
-            }
-            lobby.page = Page.Title;
-            lobby.message = "";
-        }
-    }
-
-    if (lobby.page == Page.Title)
-    {
-        mut var open = true;
-        GUILayout.Modal(Anchor.MiddleCenter, open)
-        {
-            GUILayout.Label(Title());
-            GUILayout.Label(Tagline());
-            mut var play = false;
-            mut var host = false;
-            GUI.Disabled(!connected)
-            {
-                play = GUILayout.Button("Play");
-                host = GUILayout.Button("Host a room");
-            }
-            var join = GUILayout.Button("Join a room");
-            var settings = GUILayout.Button("Settings");
-            if (lobby.message != "") GUILayout.Label(lobby.message);
-            if (play)
-            {
-                // A game of this machine's own, from its start
-                lobby.newGame = true;
-                open = false;
-            }
-            if (host)
-            {
-                Session.Open();
-                lobby.page = Page.Room;
-                lobby.resume = false;
-                lobby.message = "";
-            }
-            if (join)
-            {
-                lobby.page = Page.Join;
-                lobby.message = "";
-            }
-            if (settings)
-            {
-                lobby.settingsFrom = Page.Title;
-                lobby.page = Page.Settings;
-            }
-        }
-        // Play, or Escape: into the match that's running behind the title
-        if (!open) lobby.page = Page.Playing;
-    }
-
-    if (lobby.page == Page.Room)
-    {
-        mut var open = true;
-        var alone = session.server && !session.open;
-        GUILayout.Modal(Anchor.MiddleCenter, open)
-        {
-            GUILayout.Label(alone ? "Playing alone" : session.server ? "Your room" : "Room");
-            if (alone)
-            {
-                mut var invite = false;
-                GUI.Disabled(!connected) { invite = GUILayout.Button("Invite friends"); }
-                if (invite) Session.Open();
-            }
-            else
-            {
-                GUILayout.Label(session.room != "" ? $"Code {session.room}" : "Opening a room...");
-                mut var copy = false;
-                GUI.Disabled(session.room == "") { copy = GUILayout.Button(lobby.copied < 1.5 ? "Copied" : "Copy the code"); }
-                if (copy)
-                {
-                    Clipboard.Copy(session.room);
-                    lobby.copied = 0;
-                }
-            }
-            for (var seat = 0; seat < lobby.seats; seat++)
-            {
-                var manned = (lobby.manned >> seat & 1) == 1;
-                var who = seat == lobby.mine ? "you" : manned ? "a player" : lobby.bots ? "a bot" : "open";
-                GUILayout.Label($"Seat {seat + 1}: {who}");
-            }
-            mut var play = false;
-            mut var fresh = false;
-            mut var bots = false;
-            GUI.Disabled(!connected)
-            {
-                play = GUILayout.Button(lobby.resume ? "Resume" : "Play");
-                if (lobby.offersNewGame) fresh = GUILayout.Button("New game");
-                if (lobby.offersBots) bots = GUILayout.Button(lobby.bots ? "Bots: on" : "Bots: off");
-            }
-            var settings = GUILayout.Button("Settings");
-            var leave = GUILayout.Button(alone ? "Back to the title" : "Leave the room");
-            if (play) open = false;
-            if (fresh)
-            {
-                lobby.newGame = true;
-                open = false;
-            }
-            if (bots) lobby.toggleBots = true;
-            if (settings)
-            {
-                lobby.settingsFrom = Page.Room;
-                lobby.page = Page.Settings;
-            }
-            if (leave)
-            {
-                // Out of the room, and into a match of this machine's own. The
-                // room's match goes on without it when the game has host
-                // migration: another player's machine takes it over.
-                if (!alone) Session.Start();
-                lobby.page = Page.Title;
-                lobby.message = "";
-            }
-        }
-        // Play, Resume, New game, or Escape: back to the match
-        if (!open) lobby.page = Page.Playing;
-    }
+    // What the page asked for, or a view of the game's after this one did last frame
+    var ask = lobby.ask;
+    lobby.ask = Ask.None;
+    if (ask == Ask.Open) Session.Open();
+    if (ask == Ask.Join) Session.Join(lobby.code.Trim());
+    if (ask == Ask.Start) Session.Start();
+    if (ask == Ask.Copy) Clipboard.Copy(session.room);
 }
 
 // Bus volumes start over each frame. A default sound uses the master bus,
