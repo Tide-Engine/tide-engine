@@ -10,7 +10,11 @@ After playing that version, the owner requested polished 2D, harder puzzles
 based on planning and interdependent moves, a shared world without fixed
 roles, free dimension traversal for both makers, and recursion. They chose
 walking into doorways to enter and holding Shift while moving to push rooms.
-The current revision implements that request. Its particular layouts and
+They subsequently rejected the simultaneous room overview: each player should
+see their current dimension, with the containing world visible beyond it,
+as in Patrick's Parabox. They also requested improved graphics and a doorway
+sound that feels like entering a box instead of collecting a coin. The
+current presentation implements that follow-up. Its particular layouts and
 puzzle rules are game design choices within the prototype request, not new
 engine or language requirements.
 
@@ -70,18 +74,22 @@ All twelve workshops can be selected from the shelf for prototype evaluation.
 
 ## Presentation and controls
 
-`paint.tide` draws one shared top-down workshop scene: the physical workshop,
-live nested miniatures and enlarged room interiors appear on both screens
-in the same layout. Connection paths and parent labels identify where each
-room currently lives. Both makers remain visible across dimensions, with
-location/layer indicators and permanent identity colours. Recursive miniature
-drawing has a finite depth; it does not duplicate or limit simulation content.
-The isometric projection helper has been removed.
+`paint.tide` draws one top-down scene from the local maker's dimension.
+The workshop is the initial view. Entering a room enlarges its interior,
+with its containing world around the walls in the same scene. That outside
+uses the maker's latest entrance: shell entries resolve their current parent
+and location, and fixed references use their recorded parent and anchor.
+A self-reference can therefore put the same canonical room around itself;
+two makers in the same room can have different surrounding contexts if they
+used different entrances. Room shells retain live nested miniature interiors.
+Recursive drawing is bounded and never duplicates simulation content. The
+simultaneous enlarged room cards and connection-path overview are removed.
 
-The visual treatment uses paper, coloured room frames, wood parcels, distinct
-brass targets, leaf exits, doorway marks and latch feedback. Interpolation,
-shadows, particles, blocked-action and doorway feedback are local state only.
-Reduced motion bypasses movement interpolation and decorative motion.
+The visual treatment uses coloured room frames, richer wood surfaces and
+inset shadows, distinct brass targets, leaf exits, doorway marks and latch
+feedback. Camera transitions, interpolation, shadows, particles and failed
+action feedback are local state only. Reduced motion bypasses transitions,
+movement interpolation and decorative motion.
 
 `ui.tide` provides WASD/arrows, Shift to push a room, Z/Backspace shared undo,
 R reset, H layered hints and Enter to continue. Directions match the screen.
@@ -94,6 +102,14 @@ Original audio in `sound.tide` and `sfx/` is reproducible with
 `sfx/make_sounds.py`. Entrance, movement, pushes, failed actions, undo, reset
 and completion have soft cues. Sound/music/reduced-motion options are local;
 Rooms settings control volume. No presentation or audio enters the match hash.
+
+The doorway cue uses `enter.wav`, replacing the old ascending three-note swap
+chime with a 340 ms low wooden body and warm filtered rustle. The existing
+kind-2 cue covers entry and exit without changing simulation events. The clip
+is mono 24 kHz PCM16, 8,160 frames, with silent endpoints and no clipped
+samples. Its peak is -16.271 dBFS before the 0.38 playback gain. The other
+seven WAV files, including music, remain byte-identical after regeneration;
+the obsolete `swap.wav` has been removed.
 
 The existing opt-in `TIDE_PRIVATE_PROTOTYPES` builds this game;
 `inside_out_page` and `private_games` stage the page beside its gameplay
@@ -233,3 +249,56 @@ the downloaded published bytes with `wss://relay.tide-engine.dev` on WebGPU
 in 16.5 seconds, including join, shared controls, undo/reset, completion and
 phone touch. This uses the fixture's controlled frame clock and does not
 claim physical NAT or human latency coverage. No CI workflow was dispatched.
+
+## Focused-view revision validation, 2026-10-11
+
+The per-maker camera and material/audio changes leave the campaign and match
+rules unchanged. All eighteen simulation/campaign cases pass natively and
+under WASI. Native debug, web debug and web release game targets build without
+warnings. Inspected native captures at 1280 by 800, 900 by 800 and 390 by 844
+show one focused scene, the physical containing world, nested capstone rooms
+and the changed containing Mint on self-entry. The new catalog thumbnail comes
+from `focus-capstone-desktop-1.png`.
+
+Both real two-browser fixtures pass: WebGL 125.63 s and WebGPU 46.96 s,
+with no runtime, browser or graphics errors. They compare independent
+Workshop/Mint views, the canonical interior reached through opposite doors,
+actual outside geometry before/after an occupied-shell push, and physical
+versus self-recursive containing worlds. Entry/exit, partner undo/reset,
+held-input recovery, first-puzzle completion/progression, real shelf
+selection and phone touch all pass. An initial fixture failure compared a
+720 px baseline header with an 800 px return: height-dependent backdrop grain
+changed its pixels. Restoring both viewports before the unchanged strict
+comparison fixed the test; the intended puzzle selection was already correct.
+
+A bounded, device-free 330-frame native two-player run captured the actual
+entry and exit mix with music disabled through the normal guide. Each 5.5 s
+48 kHz stereo capture contains two isolated threshold cues. Correlation with
+the upsampled source is 0.99999955, measured gain is 0.379992, global peak is
+-24.675 dBFS, and neither mix clips. No audio device was opened; this verifies
+the asset and mixer path rather than a human listening judgment. The source
+`enter.wav` SHA-256 is
+`6dd808ceb4bad8a85c56ca231312e1c6608b93e8c8382d3dffc2b9677c115dda`.
+
+The site check has zero errors/warnings; its production build, eighteen
+analytics/admin tests and five production HTTP/SEO/access tests pass. Release,
+staged and production-site HTML are identical with SHA-256
+`593221e6e4a00a449cbfdefb6508383f07cf35cbf7217b3e37315bd096138f14`.
+The refreshed thumbnail SHA-256 is
+`adb64454b74621e664244b23931bfee1bcc01c1c21290ab6a18525745cceca3d`.
+
+Source `f8f61e9e` was merged/pushed to `dev` after local validation; `origin/dev`
+had no newer changes. The existing `tide-website` Fly app was updated directly,
+release 256, image `deployment-01M4P1D8MP14MTP7X08VBF1594`. Deployment checks
+passed and the machine reached healthy started state. Anonymous published
+game/thumbnail requests return 200 with the exact hashes above, retaining
+COOP same-origin, COEP require-corp and noindex. The collaborative preview
+points at the public URL. No CI workflow was dispatched.
+
+Two separate muted browsers exercised those downloaded published bytes on
+WebGPU with `wss://relay.tide-engine.dev` in 44.9 s: admission, independent
+dimension cameras, canonical interior parity, moved-shell surroundings,
+self-recursive entry/exit, shared undo/reset and held-input recovery,
+completion/progression, shelf selection and phone touch all pass with no
+runtime/browser/graphics errors. This uses the controlled frame clock;
+physical phones, cross-machine NAT and human latency remain unmeasured.
