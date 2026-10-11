@@ -578,3 +578,16 @@ thumbnail SHA-256 is
 `a41a9c7066f5810fa8dcf89ea87c9b6974716e83d47fb771c3dbeec0ec9344cc`.
 Decoding the inline pack confirms the exact current doorway WAV and absence
 of the previous WAV bytes. No CI was dispatched.
+
+The clean merge through `origin/dev` `27ddca74` brought shared compiler,
+asset-list/session/delta runtime changes and current Underfoot updates.
+Affected native and web debug/release targets were rebuilt without warnings;
+all twenty-one native/WASI fixtures pass again. Final two-browser checks pass,
+WebGL in 93.56 s and WebGPU in 63.20 s. All 64 public playable pages were
+rebuilt/restaged and match their packaged copies; all four thumbnails match,
+including the incoming Underfoot image. Docs check remains clean, all 227
+grammar checks pass, and the final production build and five HTTP/SEO/access
+checks pass. Integrated Inside Out HTML SHA-256 is
+`c10808dbe0d78fcf976aca136860da2bc6dbe82eacb4295a58495d9f551d0d5f`;
+the current thumbnail and doorway WAV hashes above are unchanged. No CI was
+dispatched.

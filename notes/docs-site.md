@@ -313,3 +313,10 @@ zero errors/warnings, the production build passes, and eighteen analytics/
 admin plus five HTTP/SEO/access tests pass. All 64 playable pages and four
 prototype thumbnails match their release/staged/packaged copies. Final
 hashes and game-specific evidence are recorded in `notes/inside-out.md`.
+
+Integration through `origin/dev` `27ddca74` brought compiler/shared asset
+runtime and Underfoot updates. All 64 playable pages were rebuilt/restaged;
+their release, static and production-package bytes agree, as do all four
+thumbnails. The site check stays clean, 227 grammar checks pass, and the final
+production build plus five HTTP/SEO/access tests pass. The final Inside Out
+hash is in `notes/inside-out.md`. No CI was dispatched.
