@@ -65,11 +65,12 @@ static uint64_t correction_hash(const void *world)
 }
 
 static uint8_t *correction_pack(const void *world, const void *base, const uint8_t *need,
-                                uint32_t need_size, uint32_t *size)
+                                uint32_t need_size, bool assets, uint32_t *size)
 {
     (void)base;
     (void)need;
     (void)need_size;
+    (void)assets;
     *size = sizeof(correction_world);
     uint8_t *bytes = malloc(*size);
     if (bytes) memcpy(bytes, world, *size);

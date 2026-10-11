@@ -7,6 +7,7 @@
 
 #include "tide/page.h"
 #include "tide/sha256.h"
+#include "tide/pack.h"
 
 // See tide/session.h.
 //
@@ -88,7 +89,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 13u
+#define PROTOCOL 14u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD };
@@ -110,6 +111,7 @@ enum {
     CLIENT_HAS_WORLD = 2,   // ...and can build it from what it has
     CLIENT_LACKS = 4,       // What its world lacks of the one whose hashes it was sent follows
     CLIENT_CAN_START = 8,   // ...or from a match it starts itself
+    CLIENT_ASSETS = 16,     // Its exact current asset-pack digest follows the flags.
 };
 // What a frame has after its hash, most often nothing: the players who joined
 // or left, a bit per slot whose input changed, and one per slot whose was late.
@@ -556,6 +558,7 @@ typedef struct shared_pack {
 } shared_pack;
 
 typedef struct connection {
+    uint8_t asset_pack[32];
     bool used;
     uint32_t transport;
     tide_address address;
@@ -883,13 +886,21 @@ static void start_snapshot(tide_server *s, connection *c)
         send_in_chunks(s, c, SEND_HASHES, bytes, size, NULL);
         return;
     }
+    uint8_t asset_pack[32];
+    tide_pack_digest(asset_pack);
+    if (memcmp(asset_pack, c->asset_pack, 32) == 0 && memcmp(asset_pack, (uint8_t[32]){0}, 32) != 0) {
+        uint32_t size;
+        uint8_t *bytes = g->pack_delta(s->world, NULL, NULL, 0, true, &size);
+        send_in_chunks(s, c, SEND_WORLD, bytes, size, NULL);
+        return;
+    }
     // The whole world: packed once a tick, however many join in it. An
     // earlier tick's pack that players are still being sent stays theirs.
     if (!s->pack || s->pack->tick != s->tick) {
         shared_pack *made = calloc(1, sizeof *made);
         if (!made) tide_out_of_memory();
         made->tick = s->tick;
-        made->bytes = g->pack_delta(s->world, NULL, NULL, 0, &made->size);
+        made->bytes = g->pack_delta(s->world, NULL, NULL, 0, false, &made->size);
         s->pack = made;
     }
     s->pack->refs++;
@@ -901,7 +912,10 @@ static void send_lacking(tide_server *s, connection *c, const uint8_t *lacks, co
 {
     const tide_game *g = s->game;
     uint32_t delta_size;
-    uint8_t *delta = g->pack_delta(c->hashed, NULL, lacks, size, &delta_size);
+    uint8_t asset_pack[32];
+    tide_pack_digest(asset_pack);
+    const bool assets = memcmp(asset_pack, c->asset_pack, 32) == 0 && memcmp(asset_pack, (uint8_t[32]){0}, 32) != 0;
+    uint8_t *delta = g->pack_delta(c->hashed, NULL, lacks, size, assets, &delta_size);
     free_world(g, c->hashed);
     free(c->hashed);
     c->hashed = NULL;
@@ -1046,6 +1060,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     const uint16_t their_time = tide_read_u16(r);
     const uint64_t cookie = tide_read_u64(r);
     const uint8_t flags = tide_read_u8(r);
+    const uint8_t *asset_pack = tide_read_bytes(r, 32);
     if (r->failed) return;
     for (uint32_t i = 0; i < s->players; i++) {
         kicked *k = &s->kicks[i];
@@ -1100,6 +1115,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
         c->waited_known = false;
         c->has_world = (flags & HELLO_HAS_WORLD) != 0;
         c->can_start = (flags & HELLO_CAN_START) != 0;
+        memcpy(c->asset_pack, asset_pack, 32);
         // One that had joined stays joined; one that hadn't still has to write back
         c->greeted = was_greeted;
         c->welcoming = true;
@@ -1142,6 +1158,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     *c = (connection){.used = true, .transport = transport, .address = from, .nonce = nonce, .last_heard = s->now,
                       .their_time = their_time, .their_arrived = s->arrived, .new_player = new_player, .welcoming = true,
                       .has_world = (flags & HELLO_HAS_WORLD) != 0, .can_start = (flags & HELLO_CAN_START) != 0};
+    memcpy(c->asset_pack, asset_pack, 32);
     c->local = s->desc.local_first && transport == 0;
     c->inputs = malloc((size_t)(s->w.inputs + 1u) * bytes);
     c->input_tick = malloc(s->w.inputs * sizeof *c->input_tick);
@@ -1183,6 +1200,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     const uint16_t their_time = tide_read_u16(r);
     const uint16_t echo = tide_read_u16(r);
     const uint8_t flags = tide_read_u8(r);
+    const uint8_t *asset_pack = flags & CLIENT_ASSETS ? tide_read_bytes(r, 32) : NULL;
     // What it has of what's being sent (see send_client)
     const uint32_t chunk_number = tide_read_varint(r);
     const uint32_t have = chunk_number ? tide_read_varint(r) : 0u;
@@ -1231,6 +1249,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     const bool wants = (flags & CLIENT_WANTS_WORLD) != 0;
     c->last_heard = s->now;
     if (newest) {
+        if (asset_pack) memcpy(c->asset_pack, asset_pack, 32);
         c->their_time = their_time;
         c->their_arrived = s->arrived;
     }
@@ -2253,6 +2272,7 @@ struct tide_client {
     double last_heard;
     double now;
     bool welcomed;
+    bool asset_failed; // Retry self-contained state after an unavailable asset reference.
     int32_t player;
     bool server_input_mine; // On the server's machine: its input is the server's too
     uint32_t tick_rate;
@@ -3588,6 +3608,7 @@ static void load_snapshot(tide_client *c)
     stop_receiving(c);
     c->answered = false;
     if (!ok) { // Asked for again, whole if it was built from a world of its own
+        c->asset_failed = true;
         free(world);
         if (base) c->base_failed = true;
         c->need_snapshot = true;
@@ -4035,7 +4056,7 @@ static void adjust_delay(tide_client *c)
 
 static void send_hello(tide_client *c)
 {
-    uint8_t data[32];
+    uint8_t data[64];
     tide_writer w = {data, sizeof data, 0, false, false};
     header(&w, MSG_HELLO);
     tide_write_u64(&w, c->game->hash);
@@ -4044,6 +4065,9 @@ static void send_hello(tide_client *c)
     tide_write_u64(&w, c->desc.cookie);
     tide_write_u8(&w, (c->desc.knew_kick ? HELLO_KNEW_KICK : 0u) | (c->base ? HELLO_HAS_WORLD : 0u)
                           | (can_start(c) ? HELLO_CAN_START : 0u));
+    uint8_t asset_pack[32] = {0};
+    if (!c->asset_failed) tide_pack_digest(asset_pack);
+    tide_write_bytes(&w, asset_pack, 32);
     send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
     c->last_hello = c->now;
 }
@@ -4060,7 +4084,12 @@ static void send_client(tide_client *c)
     const bool has = !c->base_failed && (c->loaded || c->base);
     const bool lacks = c->answered && !c->receiving;
     tide_write_u8(&w, (wants ? CLIENT_WANTS_WORLD : 0u) | (wants && has ? CLIENT_HAS_WORLD : 0u) | (lacks ? CLIENT_LACKS : 0u)
-                          | (wants && can_start(c) ? CLIENT_CAN_START : 0u));
+                          | (wants && can_start(c) ? CLIENT_CAN_START : 0u) | (wants || lacks ? CLIENT_ASSETS : 0u));
+    if (wants || lacks) {
+        uint8_t asset_pack[32] = {0};
+        if (!c->asset_failed) tide_pack_digest(asset_pack);
+        tide_write_bytes(&w, asset_pack, 32);
+    }
     // The chunks it has of what's being received, or that it has all of the last thing
     uint32_t chunk_number = 0;
     uint32_t chunk_ack = 0;

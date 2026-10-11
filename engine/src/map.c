@@ -109,6 +109,8 @@ int32_t tide_map_next(const tide_map m, const tide_map_kind *k, int64_t *order, 
 
 void *tide_map_insert(tide_map *m, const tide_map_kind *k, const void *probe, const uint32_t where, bool *added)
 {
+    tide_list_prepare(&m->entries, k->entry_size, where);
+    tide_list_prepare(&m->index, sizeof(uint32_t), where);
     const int32_t found = tide_map_find(*m, k, probe);
     if (found >= 0) {
         *added = false;
@@ -141,7 +143,8 @@ void *tide_map_insert(tide_map *m, const tide_map_kind *k, const void *probe, co
 
 void tide_map_erase(tide_map *m, const tide_map_kind *k, const int32_t i, const uint32_t where)
 {
-    (void)where;
+    tide_list_prepare(&m->entries, k->entry_size, where);
+    tide_list_prepare(&m->index, sizeof(uint32_t), where);
     void *e = tide_list_at_mut(m->entries, i, k->entry_size);
     if (!tide_map_live(e)) return;
     // Its slot, then the ones after it moved back over the gap, each as far as
