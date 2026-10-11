@@ -71,18 +71,6 @@ static void compact(tide_map *m, const tide_map_kind *k, const uint32_t where)
     m->entries = packed;
 }
 
-int32_t tide_map_find(const tide_map m, const tide_map_kind *k, const void *probe)
-{
-    if (!m.live || !slots(m)) return -1;
-    const uint32_t mask = slots(m) - 1u;
-    for (uint32_t s = k->hash_probe(probe) & mask;; s = (s + 1u) & mask) {
-        const uint32_t number = slot_at(m, s);
-        if (!number) return -1;
-        const void *e = tide_list_at(m.entries, (int32_t)(number - 1u), k->entry_size);
-        if (tide_map_live(e) && k->equal(key_of(k, e), probe)) return (int32_t)(number - 1u);
-    }
-}
-
 // Unsigned negation also handles a malformed INT64_MIN header without C's
 // signed overflow. Valid entries only have orders in [1, INT64_MAX].
 static uint64_t entry_order(const void *entry)

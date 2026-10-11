@@ -93,7 +93,23 @@ static inline uint32_t tide_map_hash_bytes(const void *data, const uint32_t size
 }
 
 // The entry whose key is `probe`, or -1.
-int32_t tide_map_find(tide_map m, const tide_map_kind *k, const void *probe);
+// Inline even at large call sites so fixed generated kinds specialize entry
+// addressing and hash/equality calls. The probe order and stored hash stay
+// identical to the generic path used inside insert.
+static inline __attribute__((always_inline)) int32_t tide_map_find(const tide_map m, const tide_map_kind *k, const void *probe)
+{
+    if (!m.live) return -1;
+    const uint32_t count = (uint32_t)tide_list_count(m.index);
+    if (!count) return -1;
+    const uint32_t mask = count - 1u;
+    for (uint32_t s = k->hash_probe(probe) & mask;; s = (s + 1u) & mask) {
+        const uint32_t *slot = tide_list_at(m.index, (int32_t)s, sizeof *slot);
+        const uint32_t number = slot ? *slot : 0u;
+        if (!number) return -1;
+        const void *e = tide_list_at(m.entries, (int32_t)(number - 1u), k->entry_size);
+        if (tide_map_live(e) && k->equal((const uint8_t *)e + k->key_offset, probe)) return (int32_t)(number - 1u);
+    }
+}
 
 // The entry for `probe`: the one that has it, or a new live one at the end,
 // zeroed but for being live, whose key the caller writes (`*added` says

@@ -32,6 +32,14 @@ static bool equal_int(const void *key, const void *probe)
 
 static const tide_map_kind kind = {sizeof(entry), offsetof(entry, key), hash_int, hash_int, equal_int};
 
+static uint32_t hash_collision(const void *key)
+{
+    (void)key;
+    return 4090u;
+}
+
+static const tide_map_kind collision_kind = {sizeof(entry), offsetof(entry, key), hash_collision, hash_collision, equal_int};
+
 static void start(void)
 {
     tide_heap_free(&world.heap);
@@ -73,6 +81,42 @@ TIDE_TEST(map_keys_find_their_values_in_a_world)
     TIDE_CHECK(get(world.scores, 1) == -1 && get(world.scores, -7) == -1);
     put(&world.scores, 14, 99, TIDE_IN_MATCH); // Replaces
     TIDE_CHECK(get(world.scores, 14) == 99 && tide_map_count(world.scores) == 1000);
+    tide_heap_free(&world.heap);
+}
+
+TIDE_TEST(map_collision_probes_cross_chunks_and_wrap_without_changing_snapshots)
+{
+    start();
+    for (int32_t key = 0; key < 1100; key++) {
+        bool added;
+        entry *e = tide_map_insert(&world.scores, &collision_kind, &key, TIDE_IN_MATCH, &added);
+        TIDE_REQUIRE(e != NULL && added);
+        e->key = key;
+        e->value = key * 3;
+    }
+    tide_heap snapshot = {0};
+    tide_heap_copy(&snapshot, &world.heap);
+    const tide_map kept = world.scores;
+    const uint64_t before = tide_heap_hash(0, &snapshot);
+    for (int32_t key = 0; key < 1100; key += 7) {
+        const int32_t at = tide_map_find(world.scores, &collision_kind, &key);
+        TIDE_REQUIRE(at == key);
+        tide_map_erase(&world.scores, &collision_kind, at, TIDE_IN_MATCH);
+    }
+    for (int32_t key = 0; key <= 1100; key++) {
+        const int32_t at = tide_map_find(world.scores, &collision_kind, &key);
+        TIDE_CHECK(at == (key == 1100 || key % 7 == 0 ? -1 : key));
+    }
+    tide_text_use(&snapshot, NULL);
+    for (int32_t key = 0; key < 1100; key++) {
+        const int32_t at = tide_map_find(kept, &collision_kind, &key);
+        TIDE_REQUIRE(at == key);
+        const entry *e = tide_map_entry(kept, at, &collision_kind);
+        TIDE_CHECK(e->value == key * 3);
+    }
+    TIDE_CHECK(tide_heap_hash(0, &snapshot) == before);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&snapshot);
     tide_heap_free(&world.heap);
 }
 
