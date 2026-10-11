@@ -7,10 +7,10 @@
   `cache_test.mjs`'s debug web-watch startup, after its native/web stripping,
   parallel-compilation and cache-invalidation checks passed. The only failure
   printed was `The operation was aborted due to timeout`, 26 seconds after
-  the watch case began. The unguarded initial page fetch was the only request
-  whose five-second timeout escaped the readiness loop; the log cannot
+  the watch case began. The initial page fetch was the only request whose
+  five-second timeout escaped to the script's top-level error handler; the log cannot
   distinguish waiting for headers from waiting for the body or establish why
-  the hosted request stalled. This was not the earlier browser cleanup failure.
+  the hosted request stalled. The runner used Node 24.21.0.
 - Page requests retain their five-second limit, including reading their body,
   and fail immediately on transport errors or timeouts. Build/pack polling
   retains its previous unavailable-request behavior and 120-second readiness
@@ -30,7 +30,10 @@
   longer initial page wait. Full Windows debug suites passed 2,085 native and
   2,057 web tests, including OpenGL, WebGL and WebGPU, using Node 24.16.0. The integration
   stage uses external clang rather than embedded LLVM; hosted Windows
-  confirmation remains outstanding. No Actions run or retry was dispatched.
+  confirmation remains outstanding. After merging incoming compiler changes
+  through `2ab45c2d`, rebuilding the CLI and repeating the debug/release watch
+  checks and injected body timeout also passed their expected outcomes.
+  No Actions run or retry was dispatched.
 
 ## Smaller standalone web releases (2026-10-10)
 
