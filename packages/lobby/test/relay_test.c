@@ -38,7 +38,9 @@ static void breathe(void)
 TIDE_TEST(lobby_players_meet_through_a_relay_on_this_machine)
 {
     const char *port = getenv("TIDE_LOBBY_PORT");
-    TIDE_REQUIRE(port && *port);
+    const char *silent = getenv("TIDE_LOBBY_SILENT_PORT");
+    TIDE_REQUIRE(port && *port && silent && *silent);
+    snprintf(lobby_silent, sizeof lobby_silent, "http://127.0.0.1:%s", silent);
     const tide_io *io = tide_platform_io_init("tests.tide.lobby");
     char origin[64];
     snprintf(origin, sizeof origin, "http://127.0.0.1:%s", port);

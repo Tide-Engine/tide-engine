@@ -69,7 +69,7 @@ Enumeration returns complete paths, sorted by their UTF-8 bytes. Recursion is of
 
 ## Errors and persistence
 
-`File` and `Directory` operations other than `Exists` use [errors as values](../language/errors.md): `fails IOError`. A missing file gives `IOError.NotFound`; reading an empty file succeeds with empty text or an empty list. Other error members are `AlreadyExists`, `AccessDenied`, `InvalidPath`, `NotDirectory`, `DirectoryNotEmpty`, `OutOfSpace`, `StorageUnavailable`, `InvalidData` and `Failed`.
+`File` and `Directory` operations other than `Exists` use [errors as values](../language/errors.md): `fails IOError`. A missing file gives `IOError.NotFound`; reading an empty file succeeds with empty text or an empty list. Other error members are `AlreadyExists`, `AccessDenied`, `InvalidPath`, `NotDirectory`, `DirectoryNotEmpty`, `OutOfSpace`, `StorageUnavailable`, `InvalidData`, `Failed`, and `TimedOut`, which only a [request with a time limit](#sending-a-request) gives.
 
 On the web, a virtual filesystem is loaded from IndexedDB before the game starts. Reads and mutations then operate immediately in memory. Persistent changes are committed automatically in the background, and hot reload retains the files and pending commits. Temporary files are held only by the page.
 
@@ -108,7 +108,7 @@ Wait for a flush before showing that a save is finished. Do this during play: cl
 | `IOError.InvalidPath` | The URL doesn't start with `http://` or `https://`. |
 | `IOError.Failed` | Anything else: no connection, a certificate the system doesn't trust, another status, a body over 64 MiB, or more than 5 redirects. |
 
-Redirects are followed. On the web it's the page's `fetch`, so the server's CORS rules apply, and a refusal is `Failed`. Natively it's an HTTP client of the engine's own over the system's TLS. Nothing times out: a server that never answers is a fetch that never ends, as a browser's is.
+Redirects are followed. On the web it's the page's `fetch`, so the server's CORS rules apply, and a refusal is `Failed`. Natively it's an HTTP client of the engine's own over the system's TLS. Nothing times out: a server that never answers is a fetch that never ends, as a browser's is. For a fetch with a time limit, send a request: `await Web.Request(url).SetTimeout(10).Send()`.
 
 ## Sending a request
 
@@ -137,6 +137,7 @@ async void Report(string url, List<byte> score, mut Board board)
 | `SetMethod(method)` | The method, like `"POST"`, `"PUT"` or `"DELETE"`, in any case |
 | `SetHeader(name, value)` | One more header |
 | `SetBody(bytes)` | The body, a `List<byte>` |
+| `SetTimeout(seconds)` | How long its answer may take; 0 or less is no limit, which is what a request starts with |
 | `await request.Send()` | Sends it, and gives a `WebResponse`: its `status` and its `body` |
 
 A service that speaks JSON takes and gives structs: `SetBody(Json.Write(report).ToBytes())` sends one, and `Json.Read<Answer>(response.body)` reads the reply as one, or gives nothing when the reply isn't what the game expects (see [JSON](../language/json.md)).
@@ -149,9 +150,23 @@ A request is a value, like any struct: a call changes nothing where it's written
 | --- | --- |
 | `IOError.InvalidPath` | The URL doesn't start with `http://` or `https://`. |
 | `IOError.InvalidData` | The request can't be sent as it's written: a method that isn't a word of letters, or is `CONNECT`, `TRACE` or `TRACK`; a header whose name isn't a token or whose value has more than printable ASCII; a body over 64 MiB. |
+| `IOError.TimedOut` | The request has a time limit, and its whole answer didn't come within it. |
 | `IOError.Failed` | Anything else: no connection, a certificate the system doesn't trust, an answer over 64 MiB, more than 5 redirects, or on the web a server whose CORS refuses the page. |
 
-The rest is `Web.Fetch`'s: local and asynchronous, the page's `fetch` on the web and the engine's own client natively, and nothing times out. Redirects are followed as a browser follows them: a 303, and a POST's 301 or 302, become a GET of where they point, and a 307 or 308 is the same request again. `Host`, `Content-Length`, `Connection` and `Transfer-Encoding` are the sender's own to say, so setting them does nothing, and a browser keeps a few more to itself (`User-Agent` among them). A line break in a header's name or value becomes a space. On the web, a request with headers of its own or a method beyond GET and POST is one the server has to allow (CORS), as for any page.
+**A request waits as long as it takes, unless it has a time limit.** A server that takes a request and never answers is a `Send` that never ends, and the task waiting for it waits too. `SetTimeout(seconds)` gives the request a limit: once that many seconds have passed with no whole answer, from `Send` to the last byte of the body, the request is stopped and `Send` fails with `IOError.TimedOut`. Nothing is tried again; that's the game's to decide.
+
+```csharp
+async void Ask(string url, mut Board board)
+{
+    var answer = await Web.Request(url).SetTimeout(10).Send();
+    if (answer is IOError.TimedOut) board.note = "The server took too long.";
+    else if (answer is WebResponse response) board.reply = response.body;
+}
+```
+
+The limit is this machine's own time, so it's no rule of the match. There's no way yet to cancel a request from code once it's sent: give one that might hang a limit.
+
+The rest is `Web.Fetch`'s: local and asynchronous, the page's `fetch` on the web and the engine's own client natively. Redirects are followed as a browser follows them: a 303, and a POST's 301 or 302, become a GET of where they point, and a 307 or 308 is the same request again. `Host`, `Content-Length`, `Connection` and `Transfer-Encoding` are the sender's own to say, so setting them does nothing, and a browser keeps a few more to itself (`User-Agent` among them). A line break in a header's name or value becomes a space. On the web, a request with headers of its own or a method beyond GET and POST is one the server has to allow (CORS), as for any page.
 
 What a machine fetches is its own, like a file it reads. A picture every player should see goes into the match through a command, and each machine decodes it there (see [Assets](./assets.md)):
 

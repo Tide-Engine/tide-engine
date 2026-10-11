@@ -107,10 +107,10 @@ static bool timed_unpack(void *world, const uint8_t *data, const uint32_t size)
 
 // Sessions send worlds as deltas (tide/delta.h): these are what pack them.
 static uint8_t *timed_pack_delta(const void *world, const void *base, const uint8_t *need, const uint32_t need_size,
-                                 uint32_t *size)
+                                 bool assets, uint32_t *size)
 {
     const uint64_t start = tide_time_now_ns();
-    uint8_t *data = real->pack_delta(world, base, need, need_size, size);
+    uint8_t *data = real->pack_delta(world, base, need, need_size, assets, size);
     current->pack_ms += since(start);
     current->packs++;
     return data;
@@ -332,7 +332,7 @@ static void collect(results *r, machine *machines, const uint32_t bots, const ti
     const void *world = tide_server_world(server);
     r->size = real->pack_world(world, NULL, 0);
     uint32_t sent = r->size;
-    uint8_t *whole = real->pack_delta ? real->pack_delta(world, NULL, NULL, 0, &sent) : NULL;
+    uint8_t *whole = real->pack_delta ? real->pack_delta(world, NULL, NULL, 0, false, &sent) : NULL;
     r->sent_size = whole ? sent : r->size;
     free(whole);
     r->tick = tide_server_tick(server);

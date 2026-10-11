@@ -165,10 +165,10 @@ static void backend_fetch_forget(void *user, const uint32_t ticket) { (void)user
 
 // Web.Request's Send: the same fetch of the page's, with what a request has
 static uint32_t backend_request_begin(void *user, const char *method, const char *url, const char *headers,
-                                      const uint8_t *body, const uint32_t size)
+                                      const uint8_t *body, const uint32_t size, const float timeout)
 {
     (void)user;
-    return tide_web_io_request_begin(method, url, headers, body, size);
+    return tide_web_io_request_begin(method, url, headers, body, size, timeout);
 }
 static bool backend_request_poll(void *user, const uint32_t ticket, tide_io_error *error, int32_t *status, uint8_t **data,
                                  uint32_t *size)
@@ -1128,10 +1128,10 @@ static bool backend_fetch_poll(void *user, const uint32_t ticket, tide_io_error 
 }
 static void backend_fetch_forget(void *user, const uint32_t ticket) { (void)user; tide_fetch_forget(ticket); }
 static uint32_t backend_request_begin(void *user, const char *method, const char *url, const char *headers,
-                                      const uint8_t *body, const uint32_t size)
+                                      const uint8_t *body, const uint32_t size, const float timeout)
 {
     (void)user;
-    return tide_request_begin(method, url, headers, body, size);
+    return tide_request_begin(method, url, headers, body, size, timeout);
 }
 static bool backend_request_poll(void *user, const uint32_t ticket, tide_io_error *error, int32_t *status, uint8_t **data,
                                  uint32_t *size)

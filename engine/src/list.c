@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "tide/text.h"
+#include "asset_store.h"
 
 // See tide/list.h.
 
@@ -26,6 +27,9 @@ static bool in_world(const uint32_t where)
 // borrows another's, which stays as it is.
 static bool own_block(const tide_list l, const uint32_t where)
 {
+    if (tide_pack_holds(l.at)) return false;
+    const tide_block *b = tide_block_at(l.at);
+    if (b && b->b == TIDE_LIST_ASSET) return false;
     return in_world(where) ? l.at >> 30 == where : l.at >> 30 == TIDE_IN_SCRATCH;
 }
 
@@ -53,6 +57,7 @@ const void *tide_list_cache_fill(tide_list_cache *c, const tide_list l, const in
     const tide_block *b =
         (const tide_block *)(const void *)((const uint8_t *)tide_page_data(p) + (OFFSET(l.at) - (p->first << TIDE_HEAP_PAGE_SHIFT)));
     *c = (tide_list_cache){l.at, moves, heap, b, 0, b->a, (const uint8_t *)(b + 1), false};
+    if (b->b == TIDE_LIST_ASSET) c->elements = (const uint8_t *)found - (size_t)(uint32_t)i * size;
     if (b->b & TIDE_LIST_CHUNKED) { // Its chunk's elements
         const uint32_t per = TIDE_LIST_CHUNK / size;
         c->first = (uint32_t)i / per * per;
@@ -85,13 +90,19 @@ void *tide_list_cache_fill_mut(tide_list_cache *c, const tide_list l, const int3
 
 int32_t tide_list_read_count(const tide_heap *heap, const tide_list l)
 {
+    if (tide_pack_holds(l.at)) return tide_list_count(l);
     return l.at ? (int32_t)tide_heap_block(heap, OFFSET(l.at))->a : 0;
 }
 
 const void *tide_list_read(const tide_heap *heap, const tide_list l, const int32_t i, const uint32_t size)
 {
+    if (tide_pack_holds(l.at)) return tide_list_at(l, i, size);
     if (i < 0 || i >= tide_list_read_count(heap, l)) return NULL;
     const tide_block *b = tide_heap_block(heap, OFFSET(l.at));
+    if (b->b == TIDE_LIST_ASSET) {
+        const tide_asset_data *data = tide_asset_find(heap, (const uint8_t *)(b + 1));
+        return data && data->element == size && data->count == b->a ? data->bytes + (size_t)(uint32_t)i * size : NULL;
+    }
     if (!(b->b & TIDE_LIST_CHUNKED)) return (const char *)(b + 1) + (size_t)i * size;
     uint32_t place;
     const uint32_t chunk = tide_list_chunk(b, (uint32_t)i, size, &place);
@@ -159,6 +170,7 @@ static void drop_block(const uint32_t where, const uint32_t at)
     tide_heap *heap = tide_heap_of(where);
     if (!heap || !at || at >> 30 != where) return;
     const tide_block *b = tide_heap_block(heap, OFFSET(at));
+    if (b->b == TIDE_LIST_ASSET) tide_asset_drop(heap, (const uint8_t *)(b + 1), OFFSET(at));
     if (b->b & TIDE_LIST_CHUNKED) {
         const uint32_t chunks = b->b & ~TIDE_LIST_CHUNKED;
         for (uint32_t k = 0; k < chunks; k++) tide_heap_release(heap, directory((tide_block *)(uintptr_t)b)[k]);
@@ -213,6 +225,8 @@ static void grow_chunks(tide_list *l, const uint32_t need, const uint32_t size, 
 // as big as one gets.
 static bool reserve(tide_list *l, const uint32_t more, const uint32_t size, const uint32_t where)
 {
+    const tide_block *asset = tide_block_at(l->at);
+    if (asset && asset->b == TIDE_LIST_ASSET) tide_list_prepare(l, size, where);
     const tide_block *b = tide_block_at(l->at);
     const uint32_t count = b ? b->a : 0;
     const bool own = !b || own_block(*l, where);
@@ -272,6 +286,7 @@ void tide_list_remove_at(tide_list *l, const int32_t i, const uint32_t size)
 {
     const int32_t count = tide_list_count(*l);
     if (i < 0 || i >= count) return;
+    tide_list_prepare(l, size, l->at >> 30 == TIDE_IN_VERIFIED ? TIDE_IN_SCRATCH : l->at >> 30);
     tide_block *b = tide_block_write(l->at);
     if (b->b & TIDE_LIST_CHUNKED) {
         for (int32_t k = i; k + 1 < count; k++) {
@@ -292,6 +307,11 @@ void tide_list_clear(tide_list *l, const uint32_t size)
 {
     const uint32_t count = (uint32_t)tide_list_count(*l);
     if (count == 0) return;
+    const tide_block *b = tide_block_at(l->at);
+    if (tide_pack_holds(l->at) || b->b == TIDE_LIST_ASSET) {
+        tide_list_release(l, l->at >> 30);
+        return;
+    }
     // It keeps its block, and its chunks, zeroed, for what's added next.
     for (uint32_t i = 0; i < count;) {
         uint32_t n;
@@ -312,9 +332,11 @@ static void cut(tide_list *l, const uint32_t count, const uint32_t size, const u
     if (!own_block(*l, where)) { // Another's block: a block of its own, with what it keeps
         const tide_list borrowed = *l;
         l->at = 0;
-        if (!count || !reserve(l, count, size, where)) return;
-        tide_block_write(l->at)->a = count;
-        copy_elements(*l, borrowed, count, size);
+        if (count && reserve(l, count, size, where)) {
+            tide_block_write(l->at)->a = count;
+            copy_elements(*l, borrowed, count, size);
+        }
+        if (!tide_pack_holds(borrowed.at)) drop_block(where, borrowed.at);
         return;
     }
     tide_heap *heap = tide_heap_of(where);
@@ -365,6 +387,7 @@ void tide_list_resize(tide_list *l, const int32_t count, const uint32_t size, co
 
 tide_list tide_list_copy(const tide_list l, const uint32_t size)
 {
+    if (tide_asset_list(l) || tide_asset_pack(l, size)) return l;
     tide_list out = {0};
     const int32_t count = tide_list_count(l);
     if (count <= 0) return out;
@@ -397,10 +420,43 @@ void tide_list_set(tide_list *to, const tide_list value, const uint32_t size, co
         return;
     }
     const int32_t count = tide_list_count(value);
+    tide_asset_data *data = tide_asset_list(value);
+    if (!data) data = tide_asset_pack(value, size);
+    const tide_asset_data *kept = to->at && to->at >> 30 == where ? tide_asset_list(*to) : NULL;
+    if (data && kept && memcmp(data->id, kept->id, 32) == 0) return;
+    if (data && (!to->at || !own_block(*to, where))) {
+        tide_heap *heap = tide_heap_of(where);
+        tide_list_release(to, where);
+        const uint32_t block = tide_heap_alloc(heap, 32u);
+        tide_asset_use(heap, data, block);
+        tide_block *header = tide_heap_write(heap, block);
+        header->a = data->count;
+        header->b = TIDE_LIST_ASSET;
+        memcpy(header + 1, data->id, 32);
+        to->at = where << 30 | block;
+        return;
+    }
     tide_list_clear(to, size);
     if (count == 0 || !reserve(to, (uint32_t)count, size, where)) return;
     tide_block_write(to->at)->a = (uint32_t)count;
     copy_elements(*to, value, (uint32_t)count, size);
+    if (data) tide_asset_origin_list(tide_heap_of(where), *to, data);
+}
+
+void tide_list_prepare(tide_list *l, const uint32_t size, const uint32_t where)
+{
+    if (!l || !l->at) return;
+    tide_asset_data *data = tide_asset_list(*l);
+    if (!data && !tide_pack_holds(l->at)) return;
+    const tide_list from = *l;
+    const int32_t count = tide_list_count(from);
+    l->at = 0;
+    if (count > 0 && reserve(l, (uint32_t)count, size, where)) {
+        tide_block_write(l->at)->a = (uint32_t)count;
+        copy_elements(*l, from, (uint32_t)count, size);
+    }
+    if (data && in_world(where)) tide_asset_origin_list(tide_heap_of(where), *l, data);
+    drop_block(where, from.at);
 }
 
 void tide_list_own(tide_list *l, const uint32_t size, const uint32_t where)
@@ -422,6 +478,7 @@ void tide_list_sort(tide_list *l, const uint32_t size, bool (*before)(const void
 {
     const uint32_t n = (uint32_t)tide_list_count(*l);
     if (n < 2) return;
+    tide_list_prepare(l, size, l->at >> 30 == TIDE_IN_VERIFIED ? TIDE_IN_SCRATCH : l->at >> 30);
     bool copied;
     char *flat = tide_list_flatten(*l, size, true, &copied);
     char *temp = tide_alloc((size_t)n * size);
@@ -634,7 +691,7 @@ void tide_list_out_end(tide_list_out *out, tide_list *l, const uint32_t where)
     if (out->keeps) {
         keep_with_parts(out, l, where);
     } else {
-        if (l->at && !own_block(*l, where)) l->at = 0; // Another's block, which stays as it is: none of it is kept
+        if (l->at && !own_block(*l, where)) tide_list_release(l, where);
         const uint32_t had = (uint32_t)tide_list_count(*l);
         uint32_t count = out->count;
         if (count < had) {
@@ -683,7 +740,9 @@ void tide_par_list_begin(tide_par_list *l, tide_list *list, const uint32_t size,
     const int32_t count = tide_list_count(*list);
     l->lo = 0;                                                       // The first block from 0 on...
     l->hi = floor_div(count - l->offset - l->block, l->block) + 1; // ...and past the last one wholly inside
-    if (!list->at || !tide_heap_of(list->at >> 30) || l->hi <= l->lo) return; // Nothing to go through
+    if (!list->at || l->hi <= l->lo) return; // Nothing to go through
+    tide_list_prepare(list, size, list->at >> 30);
+    if (!tide_heap_of(list->at >> 30)) return;
     // Tasks of 16 blocks or more, so that steps that each take long share
     // out well and steps that take little aren't swamped by their tasks
     const int64_t blocks = (int64_t)l->hi - l->lo;

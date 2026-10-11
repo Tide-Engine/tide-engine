@@ -123,7 +123,8 @@ typedef struct tide_game {
     // to free(). Unpacking makes `world` from them and the base they were made
     // from (NULL for none, never `world`): false if they don't make the world
     // they say.
-    uint8_t *(*pack_delta)(const void *world, const void *base, const uint8_t *need, uint32_t need_size, uint32_t *size);
+    uint8_t *(*pack_delta)(const void *world, const void *base, const uint8_t *need, uint32_t need_size, bool assets,
+                           uint32_t *size);
     bool (*unpack_delta)(void *world, const void *base, const uint8_t *data, uint32_t size);
     // The hashes of a world's pages (bytes to free()), and which of them
     // `base` lacks, into `out`: its size, as much as fits in `capacity`, past

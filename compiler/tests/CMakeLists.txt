@@ -15,6 +15,7 @@ function(tide_e2e_test name)
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
+tide_e2e_test(asset_sharing SOURCES e2e/asset_sharing.tide e2e/asset_sharing_c.c)
 tide_e2e_test(move_clamp)
 tide_e2e_test(map_iteration)
 tide_e2e_test(structural)
@@ -29,6 +30,7 @@ tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
+tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and for their callers' entities
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
@@ -88,7 +90,7 @@ tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists aft
 tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
 tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
-target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=2430772888184797451ull)
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=16503674684816165460ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
 tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)
@@ -101,7 +103,7 @@ if(TIDE_NODE)
             "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")
     set_tests_properties(tidec_skinned_default_identity PROPERTIES TIMEOUT 120)
 endif()
-target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=7267824136268331061ull)
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=8505980881375789176ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume

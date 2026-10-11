@@ -15,6 +15,9 @@ void tide_fetch_forget(uint32_t ticket);
 
 // Web.Request's Send (tide_io's request_begin and request_poll): a request
 // with a method, headers and a body, whose answer is its result whatever its
-// status. Its ticket is a fetch's: tide_fetch_forget lets it go.
-uint32_t tide_request_begin(const char *method, const char *url, const char *headers, const uint8_t *body, uint32_t size);
+// status. Its ticket is a fetch's: tide_fetch_forget lets it go. `timeout`
+// is the seconds it may take, 0 for no limit: past them its poll is
+// TIDE_IO_TIMED_OUT, and its thread stops where it next looks.
+uint32_t tide_request_begin(const char *method, const char *url, const char *headers, const uint8_t *body, uint32_t size,
+                            float timeout);
 bool tide_request_poll(uint32_t ticket, tide_io_error *error, int32_t *status, uint8_t **data, uint32_t *size);
