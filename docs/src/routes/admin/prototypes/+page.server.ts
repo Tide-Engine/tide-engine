@@ -6,8 +6,13 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'underfoot', title: 'Underfoot', kind: 'Puzzle · Carry the floor', players: '1–2 players',
+        description: 'Two pavers over a long drop, and never quite enough stone. Lift a loose stone, lay it over nothing, and get both to their lanterns. Eighteen puzzles with crates, ice, plates and portals you carry; alone you work both pavers.',
+        image: '/prototypes/underfoot/thumbnail.png',
+    },
+    {
         id: 'inside-out', title: 'Inside Out', kind: 'Cooperative puzzle · Nested rooms', players: '2 players',
-        description: 'Step into a pocket room and see the workshop beyond its walls. Move and nest rooms together, follow recursive doorways, and solve twelve puzzles built around planning and shared spaces.',
+        description: 'Push a pocket room until it cannot move, then zoom inside with your partner visible outside. Nest rooms, follow recursive doorways, and solve twelve puzzles built around planning and shared spaces.',
         image: '/prototypes/inside-out/thumbnail.png',
     },
     {

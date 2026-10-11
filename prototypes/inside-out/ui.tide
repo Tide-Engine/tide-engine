@@ -30,7 +30,6 @@ local singleton Hands
     bool music = true;
     bool guide;
     bool reduceMotion;
-    bool pushMode;
     float blockTime;
     float portalTime;
 }
@@ -132,7 +131,7 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
     Draw.RoundRect(at, float2(width, 268), 20, PAPER);
     Label("A SMALL ADVENTURE FOR TWO", at + float2(0, -96), 12, TEAL, Anchor.MiddleCenter);
     Label("Make room for each other.", at + float2(0, -56), Screen.width < 550 ? 24.0 : 30.0, INK, Anchor.MiddleCenter);
-    Paragraph("Step into a pocket room and see the workshop beyond its walls. Move rooms with your partner inside, and follow doorways back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
+    Paragraph("Push pocket rooms until they cannot move, then step inside. Zoom through rooms with your partner outside, and follow doorways back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
     var buttonWidth = (width - 68) * 0.5;
     if (PaperButton("Host a workshop", Rect(at.x - width * 0.5 + 28, at.y + 64, buttonWidth, 43), session.state == SessionState.Connected, true))
     {
@@ -265,12 +264,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         Send(Reset { serial = workshop.serial });
     if (PaperButton("Hint / H", Rect(left + (actionWidth + 8) * 2, bottom, actionWidth, 40), !hands.journal && !hands.guide) || playing && key.h.down)
         hands.hintOpen = !hands.hintOpen;
-    var pushY = narrow ? bottom + 50 : bottom;
-    var pushX = narrow ? left : left + (actionWidth + 8) * 3;
-    if (PaperButton(hands.pushMode ? "Push: ON" : "Push rooms", Rect(pushX, pushY, narrow ? 114.0 : 110.0, 40), playing, hands.pushMode))
-        hands.pushMode = !hands.pushMode;
-    var push = hands.pushMode || key.leftShift.pressed || key.rightShift.pressed;
-    if (narrow) Label("or hold Shift", float2(left + 122, pushY + 20), 10, MUTED);
+    if (narrow) Paragraph("Push a room until blocked, then step inside.", float2(left, bottom + 62), Math.Max(110, width - 164), 11, MUTED);
 
     // Every move is a bounded command from this browser's actual player.
     // A held direction waits before repeating, so precise taps stay precise.
@@ -282,7 +276,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
     else if (direction < 0) { hands.held = -1; hands.repeat = 0; }
     else if (!hands.release && (edge >= 0 || direction != hands.held || hands.repeat <= 0))
     {
-        Send(Move { serial = workshop.serial, direction = edge >= 0 ? edge : direction, push = push });
+        Send(Move { serial = workshop.serial, direction = edge >= 0 ? edge : direction });
         hands.repeat = hands.held == direction ? 0.16 : 0.28;
         hands.held = direction;
     }
@@ -296,11 +290,11 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         var at = pad + offset;
         var enabled = playing && !workshop.puzzle.solved;
         if (PaperButton("", Rect(at.x - arrowSize * 0.5, at.y - arrowSize * 0.5, arrowSize - 3, arrowSize - 3), enabled))
-            Send(Move { serial = workshop.serial, direction = d, push = push });
+            Send(Move { serial = workshop.serial, direction = d });
         DirectionMark(at + float2(-1.5, -7), d, 6, enabled ? TEAL : MUTED);
         Label(DirectionKey(d), at + float2(-1.5, 8), 11, enabled ? INK : MUTED, Anchor.MiddleCenter);
     }
-    if (!narrow) Label(push ? (hands.pushMode ? "PUSH MODE  /  Turn off Push rooms to enter a doorway." : "PUSH MODE  /  Shift + direction moves a room. Release Shift to enter.") : "WASD / arrows to walk. Step into a door to enter. Hold Shift to push a room.", float2(left, height - 14), 12, push ? AMBER : MUTED);
+    if (!narrow) Label("WASD / arrows to walk and push. When a room cannot move, step into its doorway to enter.", float2(left, height - 14), 12, MUTED);
 
     if (hands.hintOpen)
     {
@@ -313,7 +307,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         Paragraph(hintText, hintAt + float2(-hintWidth * 0.5 + 18, -hintHeight * 0.5 + 48), hintWidth - 36, 14);
         var hintButtons = hintAt.y + hintHeight * 0.5 - 43;
         Label("W up / D right / S down / A left", float2(hintAt.x - hintWidth * 0.5 + 18, hintButtons - 22), 11, MUTED);
-        Label("Shift + direction pushes a room", float2(hintAt.x - hintWidth * 0.5 + 18, hintButtons - 8), 11, MUTED);
+        Label("Push a room until blocked, then step inside", float2(hintAt.x - hintWidth * 0.5 + 18, hintButtons - 8), 11, MUTED);
         if (PaperButton(hands.hint < 2 ? "More help" : "Start hints over", Rect(hintAt.x + hintWidth * 0.5 - 126, hintButtons, 108, 29))) hands.hint = (hands.hint + 1) % 3;
         if (PaperButton("Close", Rect(hintAt.x - hintWidth * 0.5 + 18, hintButtons, 65, 29))) hands.hintOpen = false;
     }
@@ -358,11 +352,11 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("You both explore the same workshop.");
             GUILayout.Label("Your view follows your maker between rooms.");
             GUILayout.Label("The containing world is visible beyond the walls.");
-            GUILayout.Label("WASD / arrows: walk and push parcels.");
-            GUILayout.Label("Walk into a room doorway to enter.");
+            GUILayout.Label("WASD / arrows: walk and push parcels or rooms.");
+            GUILayout.Label("Rooms move first. Block a room to step inside.");
             GUILayout.Label("Walk out through an edge door to leave.");
-            GUILayout.Label("Hold Shift + direction to push a room.");
-            GUILayout.Label("Touch: turn on Push rooms, then use arrows.");
+            GUILayout.Label("A wall, another object or a latch can stop a room.");
+            GUILayout.Label("Touch: use the same directional arrows.");
             GUILayout.Label("Rooms can carry people and other rooms.");
             GUILayout.Label("An infinity door can lead into its own room.");
             GUILayout.Label("Its contents are shared across every visit.");
