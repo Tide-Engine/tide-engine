@@ -1,423 +1,388 @@
-// Twelve hand-built workshop puzzles. Checked-in witnesses use the actual
-// two-player directional Move commands in test/campaign.c.
-// Both travelers share canonical room interiors and can enter nested shells
-// or fixed recursive doorways. Physical shells have acyclic parentage.
-
-void WorkshopFloor(mut LevelLayout layout)
-{
-    for (var y = 0; y < OUTER_SIZE; y++)
-        for (var x = 0; x < OUTER_SIZE; x++)
-            layout.tiles[y * OUTER_SIZE + x] = x == 0 || y == 0 || x == OUTER_SIZE - 1 || y == OUTER_SIZE - 1 ? Tile.Wall : Tile.Floor;
-}
-
-void WorkshopRoom(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at, int2 dock, int doors = 15, int parent = -1, int dockParent = -1)
-{
-    layout.roomCount = Math.Max(layout.roomCount, room + 1);
-    layout.rooms[room].doors = doors;
-    layout.rooms[room].dock = dock;
-    layout.rooms[room].dockRoom = dockParent;
-    puzzle.rooms[room] = RoomShell { room = parent, position = at };
-    for (var y = 0; y < INNER_SIZE; y++)
-        for (var x = 0; x < INNER_SIZE; x++)
-            layout.rooms[room].tiles[y * INNER_SIZE + x] = x >= 1 && x <= 3 && y >= 1 && y <= 3 ? Tile.Floor : Tile.Wall;
-    for (var direction = 0; direction < 4; direction++)
-    {
-        if ((doors & (1 << direction)) == 0) continue;
-        var door = DoorCell(direction);
-        layout.rooms[room].tiles[CellIndex(door, INNER_SIZE)] = Tile.Floor;
-    }
-    layout.rooms[room].tiles[CellIndex(int2(2, 2), INNER_SIZE)] = Tile.Hatch;
-}
-
-void WorkshopPortal(mut LevelLayout layout, int parent, int2 at, int destination, int doors = 15)
-{
-    layout.portals[layout.portalCount] = PortalLayout { room = parent, position = at, destination = destination, doors = doors };
-    layout.portalCount += 1;
-}
-
-void WorkshopWalker(mut Puzzle puzzle, int seat, int2 at)
-{
-    puzzle.actors[seat] = Traveler { room = -1, position = at };
-}
-
-void WorkshopRow(mut LevelLayout layout, int room, int y)
-{
-    for (var x = 1; x <= 3; x++) WorkshopTile(layout, room, int2(x, y), Tile.Floor);
-}
-
+// Outward journeys through physically nested boxes and shared interiors.
 void WorkshopTile(mut LevelLayout layout, int room, int2 at, Tile tile)
 {
-    if (room < 0) layout.tiles[CellIndex(at, OUTER_SIZE)] = tile;
-    else layout.rooms[room].tiles[CellIndex(at, INNER_SIZE)] = tile;
+    if (room < 0) layout.tiles[at.y * layout.width + at.x] = tile;
+    else layout.rooms[room].tiles[at.y * layout.rooms[room].width + at.x] = tile;
 }
-
+void WorkshopBlank(mut LevelLayout layout, mut Puzzle puzzle)
+{
+    layout = LevelLayout { width = 7, height = 7 };
+    puzzle = Puzzle { };
+    for (var room = 0; room < MAX_ROOMS; room++) layout.rooms[room] = RoomLayout { };
+    for (var cell = 0; cell < 49; cell++) layout.tiles[cell] = Tile.Wall;
+}
+void WorkshopRoom(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at, int2 dock,
+    int width = 5, int height = 5, int doors = 15, int parent = -1, int dockParent = -1,
+    int north = -1, int east = -1, int south = -1, int west = -1)
+{
+    layout.roomCount = Math.Max(layout.roomCount, room + 1);
+    layout.rooms[room] = RoomLayout { width = width, height = height, doors = doors,
+        north = north, east = east, south = south, west = west, dock = dock, dockRoom = dockParent };
+    puzzle.rooms[room] = RoomShell { room = parent, position = at };
+    for (var cell = 0; cell < 49; cell++) layout.rooms[room].tiles[cell] = Tile.Wall;
+    for (var y = 1; y < height - 1; y++)
+        for (var x = 1; x < width - 1; x++) WorkshopTile(layout, room, int2(x, y), Tile.Floor);
+    for (var side = 0; side < 4; side++)
+        if ((doors & (1 << side)) != 0) WorkshopTile(layout, room, DoorCell(layout, room, side), Tile.Floor);
+}
+void WorkshopWalker(mut Puzzle puzzle, int seat, int room, int2 at)
+{
+    puzzle.actors[seat] = Traveler { room = room, position = at };
+}
 void WorkshopCargo(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at)
 {
     puzzle.crates[layout.crateCount] = Cargo { room = room, position = at, active = true };
     layout.crateCount += 1;
 }
-
-// Final layouts replayed through production typed commands by campaign.c.
-// The checked-in witnesses demonstrate the required dependencies.
-void WorkshopLateLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
+void WorkshopReference(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at, int destination)
 {
-    layout = LevelLayout { };
-    puzzle = Puzzle { };
-    for (var room = 0; room < MAX_ROOMS; room++) layout.rooms[room].dock = int2(-1);
-    WorkshopFloor(layout);
-
-    if (level == 9)
+    layout.references[layout.referenceCount] = ReferenceLayout { destination = destination };
+    puzzle.references[layout.referenceCount] = RoomShell { room = room, position = at };
+    layout.referenceCount += 1;
+}
+void WorkshopPatch(mut LevelLayout layout, int room, int x0, int y0, int x1, int y1, Tile tile = Tile.Floor)
+{
+    for (var y = y0; y <= y1; y++)
+        for (var x = x0; x <= x1; x++) WorkshopTile(layout, room, int2(x, y), tile);
+}
+void WorkshopClear(mut LevelLayout layout, int room)
+{
+    for (var cell = 0; cell < 49; cell++) layout.rooms[room].tiles[cell] = Tile.Wall;
+}
+void WorkshopContaining(mut LevelLayout layout, mut Puzzle puzzle, int room, int width = 7, int height = 5, int doors = 0)
+{
+    WorkshopTile(layout, -1, int2(3, 3), Tile.Floor);
+    WorkshopRoom(layout, puzzle, room, int2(3, 3), int2(3, 3), width, height, doors);
+}
+void WorkshopCarryingFloor(mut LevelLayout layout, int parent)
+{
+    WorkshopClear(layout, parent);
+    WorkshopPatch(layout, parent, 1, 2, 2, 4);
+    WorkshopPatch(layout, parent, 3, 2, 3, 4);
+    WorkshopPatch(layout, parent, 4, 2, 5, 2);
+}
+void WorkshopSeed(mut LevelLayout layout, mut Puzzle puzzle)
+{
+    for (var seat = 0; seat < 2; seat++)
     {
-        // Loan counter: the northern target cannot be filled from any ordinary
-        // standing tile. The small room must be nested for its north export.
-        // Its original dock then requires un-filling the occupied push access.
-        WorkshopWalker(puzzle, 0, int2(1, 3));
-        WorkshopWalker(puzzle, 1, int2(2, 4));
-        WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
-        WorkshopTile(layout, -1, int2(3, 4), Tile.Wall);
-        WorkshopRow(layout, 0, 0);
-        WorkshopRow(layout, 0, 4);
-        WorkshopTile(layout, 0, int2(2, 1), Tile.Wall);
-        WorkshopRoom(layout, puzzle, 1, int2(2, 3), int2(2, 3), 13);
-        layout.rooms[1].latched = true;
-        WorkshopTile(layout, 1, int2(1, 1), Tile.Switch);
-        WorkshopCargo(layout, puzzle, 1, int2(2, 2));
-        WorkshopCargo(layout, puzzle, 0, int2(1, 2));
-        WorkshopTile(layout, 0, int2(0, 1), Tile.Target);
-        WorkshopTile(layout, 0, int2(1, 2), Tile.Target);
-        WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
-        WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
-        return;
+        mut var actor = puzzle.actors[seat];
+        RebaseTrail(layout, puzzle, actor, actor.room, 0);
+        puzzle.actors[seat] = actor;
     }
-
-    if (level == 10)
-    {
-        // Shared address: A -> B -> A is a genuine shared-state cycle. The
-        // north standing tile above A's parcel has no physical approach.
-        // Delivering the other parcel closes the old north return, requiring
-        // a planned return through B's south edge and A's bottom walkway.
-        WorkshopWalker(puzzle, 0, int2(3, 4));
-        WorkshopWalker(puzzle, 1, int2(2, 3));
-        WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
-        WorkshopRow(layout, 0, 4);
-        WorkshopRoom(layout, puzzle, 1, int2(5, 2), int2(5, 2));
-        WorkshopTile(layout, -1, int2(3, 2), Tile.Wall);
-        WorkshopTile(layout, -1, int2(4, 3), Tile.Wall);
-        WorkshopTile(layout, -1, int2(5, 1), Tile.Wall);
-        WorkshopTile(layout, -1, int2(5, 3), Tile.Wall);
-        WorkshopTile(layout, -1, int2(4, 2), Tile.Wall);
-        WorkshopPortal(layout, 0, int2(3, 3), 1);
-        WorkshopPortal(layout, 1, int2(2, 2), 0);
-        WorkshopCargo(layout, puzzle, 0, int2(2, 1));
-        WorkshopCargo(layout, puzzle, 0, int2(1, 2));
-        WorkshopTile(layout, 0, int2(2, 3), Tile.Target);
-        WorkshopTile(layout, 0, int2(3, 2), Tile.Target);
-        WorkshopTile(layout, -1, int2(2, 4), Tile.Exit);
-        WorkshopTile(layout, -1, int2(4, 4), Tile.Exit);
-        return;
-    }
-
-    // Borrowed space: A's filled lower target is the only standing tile for
-    // docking the newly nested latched room. Post that parcel into the child,
-    // move the child, then the partner posts it back. A -> C -> A supplies
-    // essential north access; a third parcel first blocks C's return door.
-    WorkshopWalker(puzzle, 0, int2(1, 3));
-    WorkshopWalker(puzzle, 1, int2(2, 4));
-    WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
-    WorkshopRow(layout, 0, 4);
-    WorkshopTile(layout, 0, int2(0, 1), Tile.Floor);
-    WorkshopTile(layout, 0, int2(0, 4), Tile.Floor);
-    WorkshopRoom(layout, puzzle, 1, int2(2, 3), int2(0, 1), 15, -1, 0);
-    layout.rooms[1].latched = true;
-    WorkshopTile(layout, 1, int2(1, 1), Tile.Switch);
-    WorkshopRoom(layout, puzzle, 2, int2(5, 2), int2(5, 2));
-    WorkshopRow(layout, 2, 0);
-    WorkshopTile(layout, -1, int2(3, 2), Tile.Wall);
-        WorkshopTile(layout, -1, int2(4, 3), Tile.Wall);
-    WorkshopTile(layout, -1, int2(5, 1), Tile.Wall);
-    WorkshopTile(layout, -1, int2(5, 3), Tile.Wall);
-    WorkshopTile(layout, -1, int2(4, 2), Tile.Wall);
-    WorkshopPortal(layout, 0, int2(3, 3), 2);
-    WorkshopPortal(layout, 2, int2(2, 2), 0);
-    WorkshopCargo(layout, puzzle, 0, int2(0, 3));
-    WorkshopCargo(layout, puzzle, 0, int2(2, 1));
-    WorkshopCargo(layout, puzzle, 2, int2(2, 1));
-    WorkshopTile(layout, 0, int2(0, 3), Tile.Target);
-    WorkshopTile(layout, 0, int2(2, 3), Tile.Target);
-    WorkshopTile(layout, 2, int2(3, 1), Tile.Target);
-    WorkshopTile(layout, 0, int2(0, 2), Tile.Exit);
-    WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
 }
 
 void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
 {
-    layout = LevelLayout { };
-    puzzle = Puzzle { };
-    for (var room = 0; room < MAX_ROOMS; room++) layout.rooms[room].dock = int2(-1);
-    WorkshopFloor(layout);
-    WorkshopWalker(puzzle, 0, int2(1, 3));
-    WorkshopWalker(puzzle, 1, int2(2, 4));
+    WorkshopBlank(layout, puzzle);
     switch (Math.Clamp(level, 0, LEVEL_COUNT - 1))
     {
         case 0:
-            WorkshopWalker(puzzle, 0, int2(1, 2));
-            WorkshopWalker(puzzle, 1, int2(3, 3));
-            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(3, 2));
-            WorkshopTile(layout, -1, int2(3, 1), Tile.Wall);
-            WorkshopTile(layout, -1, int2(4, 2), Tile.Wall);
-            WorkshopCargo(layout, puzzle, 0, int2(2, 2));
-            WorkshopTile(layout, 0, int2(2, 1), Tile.Target);
-            WorkshopTile(layout, 0, int2(1, 2), Tile.Exit);
-            WorkshopTile(layout, -1, int2(1, 4), Tile.Exit);
+            WorkshopContaining(layout, puzzle, 1, 4, 3, 2);
+            WorkshopRoom(layout, puzzle, 0, int2(1, 1), int2(1, 1), 3, 3, 10, 1, 1);
+            WorkshopWalker(puzzle, 0, 0, int2(2, 1));
+            WorkshopWalker(puzzle, 1, 0, int2(0, 1));
+            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
+            WorkshopPatch(layout, -1, 4, 2, 4, 4);
+            WorkshopTile(layout, -1, int2(5, 3), Tile.Target);
+            WorkshopTile(layout, -1, int2(4, 2), Tile.Exit);
+            WorkshopTile(layout, -1, int2(4, 4), Tile.Exit);
             break;
         case 1:
-            WorkshopWalker(puzzle, 0, int2(3, 4));
-            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(4, 3));
-            layout.rooms[0].latched = true;
-            WorkshopTile(layout, 0, int2(1, 2), Tile.Switch);
-            WorkshopCargo(layout, puzzle, -1, int2(3, 3));
-            WorkshopTile(layout, -1, int2(3, 1), Tile.Target);
-            WorkshopCargo(layout, puzzle, 0, int2(3, 2));
-            WorkshopTile(layout, 0, int2(3, 1), Tile.Target);
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Exit);
-            WorkshopTile(layout, -1, int2(1, 5), Tile.Exit);
+            // The outside maker cannot re-enter after docking. Carry the
+            // inside maker to an export route, rather than move an empty box.
+            WorkshopContaining(layout, puzzle, 1, 7, 6);
+            WorkshopCarryingFloor(layout, 1);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 2), 5, 4, 3, 1, 1, 1, 1);
+            WorkshopTile(layout, 0, int2(1, 2), Tile.Wall);
+            WorkshopWalker(puzzle, 0, 0, int2(1, 0));
+            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
+            WorkshopCargo(layout, puzzle, 0, int2(2, 1));
+            WorkshopTile(layout, 1, int2(5, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(2, 4), Tile.Exit);
+            WorkshopTile(layout, 1, int2(4, 2), Tile.Exit);
             break;
         case 2:
-            WorkshopWalker(puzzle, 0, int2(3, 4));
-            WorkshopWalker(puzzle, 1, int2(4, 3));
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
-            WorkshopRow(layout, 0, 4);
-            WorkshopTile(layout, -1, int2(3, 2), Tile.Wall);
-            WorkshopTile(layout, -1, int2(2, 3), Tile.Wall);
-            WorkshopTile(layout, 0, int2(0, 3), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 1, int2(2, 2), int2(2, 2), 15, 0, 0);
-            layout.rooms[1].latched = true;
-            WorkshopTile(layout, 1, int2(2, 2), Tile.Switch);
-            WorkshopCargo(layout, puzzle, 0, int2(2, 3));
-            WorkshopTile(layout, 0, int2(2, 1), Tile.Target);
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, -1, int2(3, 5), Tile.Exit);
+            WorkshopContaining(layout, puzzle, 2, 7, 6);
+            WorkshopCarryingFloor(layout, 2);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 2), 5, 4, 3, 2, 2, 1, 1);
+            WorkshopTile(layout, 0, int2(1, 2), Tile.Wall);
+            WorkshopRoom(layout, puzzle, 1, int2(5, 2), int2(5, 2), 4, 5, 8, 2, 2, -1, -1, -1, 1);
+            WorkshopWalker(puzzle, 0, 1, int2(1, 3));
+            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
+            WorkshopCargo(layout, puzzle, 0, int2(2, 1));
+            WorkshopTile(layout, 1, int2(2, 1), Tile.Target);
+            WorkshopTile(layout, 2, int2(2, 4), Tile.Exit);
+            WorkshopTile(layout, 2, int2(4, 2), Tile.Exit);
             break;
         case 3:
-            // A parcel must be handed over before the latched room boxes
-            // trade places. Moving either room requires the partner inside it.
-            WorkshopWalker(puzzle, 1, int2(2, 4));
-            for (var cell = 0; cell < OUTER_SIZE * OUTER_SIZE; cell++) layout.tiles[cell] = Tile.Wall;
-            for (var y = 2; y <= 4; y++)
-                for (var x = 1; x <= 5; x++) WorkshopTile(layout, -1, int2(x, y), Tile.Floor);
-            for (var x = 2; x <= 4; x++) WorkshopTile(layout, -1, int2(x, 1), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(4, 3));
-            WorkshopRoom(layout, puzzle, 1, int2(4, 3), int2(2, 3));
-            layout.rooms[0].latched = true;
-            layout.rooms[1].latched = true;
-            WorkshopTile(layout, 0, int2(1, 1), Tile.Switch);
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Switch);
+            WorkshopContaining(layout, puzzle, 1, 7, 5);
+            WorkshopPatch(layout, 1, 1, 0, 5, 0);
+            WorkshopTile(layout, 1, int2(2, 1), Tile.Wall);
+            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(3, 2), 5, 5, 12, 1, 1);
+            WorkshopWalker(puzzle, 0, 0, int2(1, 1));
+            WorkshopWalker(puzzle, 1, 0, int2(3, 1));
             WorkshopCargo(layout, puzzle, 0, int2(2, 2));
-            WorkshopTile(layout, 1, int2(3, 2), Tile.Target);
-            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
-            WorkshopTile(layout, -1, int2(1, 4), Tile.Exit);
+            WorkshopTile(layout, 1, int2(1, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
+            WorkshopTile(layout, 1, int2(5, 3), Tile.Exit);
             break;
         case 4:
-            // The ordinary shell is surrounded on three sides. Only entering
-            // its self-door can reach the standing tile above the parcel.
-            WorkshopWalker(puzzle, 0, int2(2, 3));
-            WorkshopWalker(puzzle, 1, int2(4, 4));
-            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(2, 2));
-            WorkshopRow(layout, 0, 4);
-            WorkshopTile(layout, -1, int2(1, 2), Tile.Wall);
-            WorkshopTile(layout, -1, int2(2, 1), Tile.Wall);
-            WorkshopTile(layout, -1, int2(3, 2), Tile.Wall);
-            WorkshopPortal(layout, 0, int2(3, 3), 0);
+            WorkshopContaining(layout, puzzle, 2, 7, 5);
+            WorkshopClear(layout, 2);
+            WorkshopPatch(layout, 2, 1, 2, 5, 3);
+            WorkshopTile(layout, 2, int2(3, 1), Tile.Floor);
+            WorkshopTile(layout, 2, int2(3, 0), Tile.Floor);
+            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(4, 2), 4, 4, 15, 2, 2, 1, 1, 2, 2);
+            WorkshopRoom(layout, puzzle, 1, int2(4, 2), int2(2, 2), 5, 3, 10, 2, 2);
+            WorkshopWalker(puzzle, 0, 0, int2(1, 2));
+            WorkshopWalker(puzzle, 1, 1, int2(3, 1));
             WorkshopCargo(layout, puzzle, 0, int2(2, 1));
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Target);
-            WorkshopRoom(layout, puzzle, 1, int2(4, 3), int2(3, 3));
-            layout.rooms[1].latched = true;
-            WorkshopTile(layout, 1, int2(2, 2), Tile.Switch);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, -1, int2(4, 2), Tile.Exit);
+            WorkshopTile(layout, 1, int2(3, 1), Tile.Target);
+            WorkshopTile(layout, 2, int2(1, 3), Tile.Exit);
+            WorkshopTile(layout, 2, int2(5, 3), Tile.Exit);
             break;
         case 5:
-            // The exported parcel fills a target that is also the standing
-            // tile for docking its room. It must be put aside and restored.
-            WorkshopWalker(puzzle, 0, int2(3, 4));
-            WorkshopWalker(puzzle, 1, int2(4, 3));
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
-            WorkshopTile(layout, -1, int2(3, 2), Tile.Wall);
-            WorkshopTile(layout, -1, int2(2, 3), Tile.Wall);
-            WorkshopRow(layout, 0, 0);
-            WorkshopRow(layout, 0, 4);
-            WorkshopRoom(layout, puzzle, 1, int2(2, 2), int2(3, 2), 15, 0, 0);
-            layout.rooms[1].latched = true;
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Switch);
-            WorkshopCargo(layout, puzzle, 1, int2(2, 2));
-            WorkshopTile(layout, 0, int2(1, 2), Tile.Target);
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
+            WorkshopContaining(layout, puzzle, 1, 7, 5);
+            WorkshopClear(layout, 1);
+            WorkshopPatch(layout, 1, 2, 3, 4, 3);
+            WorkshopTile(layout, 1, int2(3, 2), Tile.Floor);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 2), int2(3, 2), 5, 6, 15, 1, 1, 1, 2, 3, 3);
+            WorkshopTile(layout, 0, int2(2, 3), Tile.Wall);
+            WorkshopReference(layout, puzzle, 0, int2(3, 2), 0);
+            WorkshopWalker(puzzle, 0, 0, int2(4, 2));
+            WorkshopWalker(puzzle, 1, 0, int2(2, 1));
+            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
+            WorkshopTile(layout, 0, int2(1, 4), Tile.Target);
+            WorkshopTile(layout, 1, int2(2, 3), Tile.Exit);
+            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
             break;
         case 6:
-            // Importing a latched shell changes where its parcel is posted.
-            // The holder then changes switches before the containing room moves.
-            WorkshopWalker(puzzle, 1, int2(2, 4));
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(4, 3));
-            WorkshopRoom(layout, puzzle, 1, int2(2, 3), int2(0, 2), 15, -1, 0);
-            layout.rooms[0].latched = true;
-            layout.rooms[1].latched = true;
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Switch);
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Switch);
-            WorkshopCargo(layout, puzzle, 1, int2(2, 2));
-            WorkshopTile(layout, 0, int2(2, 1), Tile.Target);
-            WorkshopTile(layout, 0, int2(3, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
+            WorkshopContaining(layout, puzzle, 2, 7, 5);
+            WorkshopTile(layout, 2, int2(4, 0), Tile.Floor);
+            WorkshopTile(layout, 2, int2(3, 1), Tile.Wall);
+            WorkshopTile(layout, 2, int2(5, 1), Tile.Wall);
+            WorkshopRoom(layout, puzzle, 0, int2(4, 2), int2(4, 1), 5, 4, 15, 2, 2, 2, 1, 3, 1);
+            WorkshopPatch(layout, 0, 1, 0, 3, 0);
+            WorkshopRoom(layout, puzzle, 1, int2(3, 2), int2(0, 1), 4, 5, 15, 2, 0, 1, 1, 1, 3);
+            WorkshopWalker(puzzle, 0, 0, int2(3, 2));
+            WorkshopWalker(puzzle, 1, 1, int2(1, 3));
+            WorkshopCargo(layout, puzzle, 1, int2(2, 1));
+            WorkshopTile(layout, 0, int2(2, 2), Tile.Target);
+            WorkshopTile(layout, 2, int2(1, 3), Tile.Exit);
+            WorkshopTile(layout, 2, int2(5, 3), Tile.Exit);
             break;
         case 7:
-            // Two fixed doors form a loop through shared room state. The
-            // physical north approaches are absent even after docking.
-            WorkshopWalker(puzzle, 0, int2(1, 2));
-            WorkshopWalker(puzzle, 1, int2(2, 3));
-            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(3, 2));
-            WorkshopRoom(layout, puzzle, 1, int2(4, 2), int2(4, 2));
-            WorkshopRow(layout, 1, 4);
-            layout.rooms[0].latched = true;
-            WorkshopTile(layout, 0, int2(3, 2), Tile.Switch);
-            for (var x = 1; x <= 5; x++) WorkshopTile(layout, -1, int2(x, 1), Tile.Wall);
-            WorkshopPortal(layout, 0, int2(3, 3), 1);
-            WorkshopPortal(layout, 1, int2(3, 3), 0);
-            WorkshopCargo(layout, puzzle, 0, int2(2, 1));
+            WorkshopContaining(layout, puzzle, 2, 7, 5, 4);
+            WorkshopPatch(layout, 2, 1, 0, 5, 0);
+            WorkshopTile(layout, 2, int2(3, 1), Tile.Wall);
+            WorkshopRoom(layout, puzzle, 0, int2(4, 2), int2(4, 1), 5, 4, 15, 2, 2, 2, 1, 3, 1);
+            WorkshopRoom(layout, puzzle, 1, int2(3, 2), int2(0, 1), 5, 3, 10, 2, 0);
+            WorkshopWalker(puzzle, 0, 1, int2(3, 1));
+            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
             WorkshopCargo(layout, puzzle, 1, int2(2, 1));
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Target);
-            WorkshopTile(layout, 1, int2(2, 3), Tile.Target);
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
+            WorkshopTile(layout, 2, int2(2, 2), Tile.Target);
+            WorkshopPatch(layout, -1, 2, 4, 4, 4);
+            WorkshopTile(layout, -1, int2(2, 4), Tile.Exit);
+            WorkshopTile(layout, -1, int2(4, 4), Tile.Exit);
             break;
         case 8:
-            // The outside delivery must precede nesting: afterward the same
-            // doorway exports into the receiving room. Its target is also a
-            // necessary pushing stance, so it must be emptied and restored.
-            WorkshopWalker(puzzle, 0, int2(3, 4));
-            WorkshopWalker(puzzle, 1, int2(3, 2));
-            WorkshopRoom(layout, puzzle, 0, int2(4, 3), int2(4, 2));
-            WorkshopTile(layout, -1, int2(4, 1), Tile.Wall);
-            WorkshopRoom(layout, puzzle, 1, int2(3, 3), int2(0, 2), 15, -1, 0);
-            layout.rooms[0].latched = true;
-            layout.rooms[1].latched = true;
-            WorkshopTile(layout, 0, int2(3, 2), Tile.Switch);
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Switch);
-            WorkshopCargo(layout, puzzle, 1, int2(2, 2));
-            WorkshopTile(layout, -1, int2(2, 3), Tile.Target);
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
+            WorkshopContaining(layout, puzzle, 2, 7, 5);
+            WorkshopClear(layout, 2);
+            WorkshopPatch(layout, 2, 2, 3, 5, 3);
+            WorkshopTile(layout, 2, int2(3, 2), Tile.Floor);
+            WorkshopTile(layout, 2, int2(5, 2), Tile.Floor);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 2), int2(3, 2), 5, 5, 15, 2, 2, 1, 2, 3, 2);
+            WorkshopPatch(layout, 0, 1, 4, 3, 4);
+            WorkshopRoom(layout, puzzle, 1, int2(5, 2), int2(5, 2), 4, 5, 15, 2, 2, 1, 2, 1, 2);
+            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
+            WorkshopReference(layout, puzzle, 0, int2(3, 3), 1);
+            WorkshopReference(layout, puzzle, 1, int2(1, 2), 0);
+            WorkshopWalker(puzzle, 0, 0, int2(2, 3));
+            WorkshopWalker(puzzle, 1, 1, int2(1, 3));
+            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
+            WorkshopCargo(layout, puzzle, 0, int2(1, 2));
+            WorkshopTile(layout, 0, int2(1, 3), Tile.Target);
+            WorkshopTile(layout, 0, int2(3, 2), Tile.Target);
+            WorkshopTile(layout, 2, int2(2, 3), Tile.Exit);
+            WorkshopTile(layout, 2, int2(4, 3), Tile.Exit);
             break;
         case 9:
-        case 10:
-        case 11:
-            WorkshopLateLevel(level, layout, puzzle);
+            WorkshopContaining(layout, puzzle, 1, 6, 6);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 2), 5, 6, 15, 1, 1, 2, 2, 2, 2);
+            WorkshopTile(layout, 1, int2(1, 4), Tile.Wall);
+            WorkshopTile(layout, 1, int2(2, 4), Tile.Wall);
+            WorkshopTile(layout, 0, int2(2, 1), Tile.Wall);
+            WorkshopPatch(layout, 0, 0, 3, 0, 5);
+            WorkshopTile(layout, 0, int2(1, 5), Tile.Floor);
+            WorkshopReference(layout, puzzle, 1, int2(2, 3), 0);
+            WorkshopWalker(puzzle, 0, 0, int2(2, 0));
+            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
+            WorkshopCargo(layout, puzzle, 0, int2(1, 2));
+            WorkshopCargo(layout, puzzle, 0, int2(2, 3));
+            WorkshopTile(layout, 0, int2(1, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(1, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
+            WorkshopTile(layout, 1, int2(4, 2), Tile.Exit);
             break;
-        default:
+        case 10:
+            WorkshopContaining(layout, puzzle, 2, 7, 6);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(1, 4), 5, 6, 15, 2, 1, 2, 2, 2, 2);
+            WorkshopRoom(layout, puzzle, 1, int2(5, 4), int2(5, 4), 3, 5, 15, 2, 2, 1, 1, 1, 2);
+            WorkshopClear(layout, 2);
+            WorkshopPatch(layout, 2, 2, 3, 5, 3);
+            WorkshopTile(layout, 2, int2(5, 4), Tile.Floor);
+            WorkshopPatch(layout, 1, 2, 2, 2, 4);
+            WorkshopTile(layout, 0, int2(0, 1), Tile.Floor);
+            WorkshopTile(layout, 0, int2(0, 3), Tile.Floor);
+            WorkshopTile(layout, 0, int2(1, 5), Tile.Floor);
+            WorkshopReference(layout, puzzle, 2, int2(4, 3), 0);
+            WorkshopReference(layout, puzzle, 0, int2(0, 1), 1);
+            WorkshopWalker(puzzle, 0, 0, int2(0, 2));
+            WorkshopWalker(puzzle, 1, 0, int2(4, 2));
+            WorkshopCargo(layout, puzzle, 0, int2(1, 3));
+            WorkshopTile(layout, 0, int2(1, 3), Tile.Target);
+            WorkshopTile(layout, 2, int2(2, 3), Tile.Exit);
+            WorkshopTile(layout, 2, int2(5, 3), Tile.Exit);
+            break;
+        case 11:
+            WorkshopContaining(layout, puzzle, 3, 7, 6);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 0), 5, 5, 15, 3, 2);
+            WorkshopRoom(layout, puzzle, 1, int2(4, 2), int2(4, 2), 5, 5, 15, 0, 0);
+            WorkshopRoom(layout, puzzle, 2, int2(5, 4), int2(5, 4), 5, 4, 15, 3, 3, 2, 1, 2, 2);
+            WorkshopClear(layout, 3);
+            WorkshopPatch(layout, 3, 2, 3, 5, 3);
+            WorkshopPatch(layout, 3, 4, 4, 5, 4);
+            WorkshopReference(layout, puzzle, 3, int2(4, 3), 1);
+            WorkshopReference(layout, puzzle, 1, int2(0, 3), 2);
+            WorkshopTile(layout, 1, int2(0, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(0, 3), Tile.Floor);
+            WorkshopPatch(layout, 2, 1, 0, 3, 0);
+            WorkshopTile(layout, 2, int2(3, 3), Tile.Floor);
+            WorkshopWalker(puzzle, 0, 0, int2(0, 2));
+            WorkshopWalker(puzzle, 1, 0, int2(2, 0));
+            WorkshopCargo(layout, puzzle, 0, int2(3, 2));
+            WorkshopTile(layout, 3, int2(5, 3), Tile.Target);
+            WorkshopTile(layout, 3, int2(2, 3), Tile.Exit);
+            WorkshopTile(layout, 3, int2(4, 4), Tile.Exit);
             break;
     }
+    WorkshopSeed(layout, puzzle);
 }
 string ChapterName(int level)
 {
-    if (level < 4) return "The shared workshop";
-    if (level < 8) return "Doors within doors";
-    return "Addresses and returns";
+    if (level < 4) return "Beyond the first walls";
+    if (level < 8) return "Borrowed space";
+    return "The same place again";
 }
-
 string LevelName(int level)
 {
     switch (level)
     {
-        case 0: return "First delivery";
-        case 1: return "Hold that thought";
-        case 2: return "Reserved space";
-        case 3: return "Passing place";
-        case 4: return "A door to itself";
-        case 5: return "Return post";
-        case 6: return "Packed together";
-        case 7: return "The round trip";
-        case 8: return "Change of address";
-        case 9: return "Loan counter";
-        case 10: return "Shared address";
-        case 11: return "Borrowed space";
+        case 0: return "A room outside";
+        case 1: return "No handle inside";
+        case 2: return "The other opening";
+        case 3: return "A place to stand";
+        case 4: return "Passing place";
+        case 5: return "The same corner";
+        case 6: return "Carried together";
+        case 7: return "Before it moves";
+        case 8: return "Two ways home";
+        case 9: return "Return address";
+        case 10: return "Folded landing";
+        case 11: return "Crossed return";
     }
-    return "Workshop";
+    return "Inside Out";
 }
-
-// The always-visible brief gives the objective, never a planned move order.
 string LevelLesson(int level)
 {
-    switch (level)
-    {
-        case 0: return "Fill the box target, dock the numbered room, and bring both makers to player goals.";
-        case 1: return "Deliver both parcels, dock the latched room, and find the two player goals.";
-        case 2: return "Deliver the parcel upstairs. Both rooms must finish on their own outlines.";
-        case 3: return "The parcel belongs in the other room. Match both numbered outlines and reach the player goals.";
-        case 4: return "Complete the delivery, dock the latched room, and find a player goal for each maker.";
-        case 5: return "The parcel belongs in the containing room. Match both room outlines and reach both player goals.";
-        case 6: return "Room 2 belongs inside Room 1. Deliver its parcel and match both numbered outlines.";
-        case 7: return "Complete a delivery in each room, dock the moving room, and reach the two player goals.";
-        case 8: return "Deliver the parcel to the workshop floor. Both rooms must reach their numbered outlines.";
-        case 9: return "Deliver both parcels and return each room to its numbered outline. Reach the two player goals.";
-        case 10: return "Complete both deliveries in Room 1 and bring both makers to the workshop's player goals.";
-        case 11: return "Deliver all three parcels, match every room outline, and reach both player goals in Room 1.";
-    }
-    return "Take your time. Every move can be undone.";
+    if (level == 0) return "Deliver the parcel beyond both boxes. Find a player goal for each maker.";
+    if (level == 1) return "Move the home onto its outline and deliver its parcel into the containing room.";
+    if (level == 2) return "Dock the home and deliver its parcel inside the other box.";
+    if (level == 3) return "Leave the parcel on the left target and the home on the right outline.";
+    if (level == 4) return "Trade the two boxes' places and deliver the parcel into the long room.";
+    if (level == 5) return "Deliver the parcel down the left corridor, then leave this room together.";
+    if (level == 6) return "Nest the narrow box, park the occupied larger box, and deliver the parcel inside it.";
+    if (level == 7) return "Deliver the parcel, pack the boxes onto their outlines, then leave both enclosing rooms.";
+    if (level == 8) return "Deliver both parcels in the same interior and return to the containing room.";
+    if (level == 9) return "Move the home onto its outline, keep one parcel inside, and deliver the other outward.";
+    if (level == 10) return "Park the home inside the narrow room, restore its parcel, and leave both rooms.";
+    if (level == 11) return "Park the home inside the third room and deliver the parcel into the larger containing space.";
+    return "Deliver every parcel, match the box outlines, and reach the larger space's player goals.";
 }
-
-// Three opt-in tiers: a question, a useful arrangement, and a recovery plan.
 string LevelHint(int level, int tier)
 {
     var detail = Math.Clamp(tier, 0, 2);
-    switch (level)
+    if (level == 0)
     {
-        case 0:
-            if (detail == 0) return "What needs to be parked before you both leave?";
-            if (detail == 1) return "The room outline is one square east. The parcel target is north of the parcel.";
-            return "Amber: move east once to dock the room. Teal: move north three times, then west to a player goal. Amber: west, south, south to the other player goal. A blocked room push enters its doorway instead.";
-        case 1:
-            if (detail == 0) return "Which delivery is taking up the room's route? Who can release its latch?";
-            if (detail == 1) return "Clear the outside parcel northward. A maker on the room's west switch can hold the latch while the room moves east.";
-            return "Clear the outside parcel onto its target. Inside, reach the west switch without moving the other parcel. Hold it while the partner docks the room two squares east. Then push the inside parcel north and take both player goals.";
-        case 2:
-            if (detail == 0) return "After making space for the parcel, where will you need to stand to put the small room back?";
-            if (detail == 1) return "Hold the small room's switch and move it west. Push the parcel north, then use the containing room's lower-left passage to get behind the small room.";
-            return "One maker holds the child room's switch. The other pushes that room west, delivers the parcel north, and circles through the open lower-left edge to its west doorway. Push the child east onto its outline before the holder leaves south.";
-        case 3:
-            if (detail == 0) return "When the boxes trade places, what delivery route will disappear?";
-            if (detail == 1) return "Deliver while the rooms touch. The upper middle square can hold the left room while the right room passes underneath.";
-            return "Hold the left switch, move that room east and send the parcel through. Park the left room in the upper bay. Change to the right switch, move its room west twice, then return to the left switch while its room goes east and south onto its outline.";
-        case 4:
-            if (detail == 0) return "The parcel needs a maker above it. Can a doorway lead to the room you are already in?";
-            if (detail == 1) return "Approach the striped self-door from its north side. It leads to this same room's north entrance, with the same parcel still present.";
-            return "Enter the self-door southward from the square above it. Push the parcel south twice. Leave that entry northward to return beside the striped door, then leave the physical room southward. The partner holds the other room's centre switch while it is pushed west.";
-        case 5:
-            if (detail == 0) return "A filled target looks finished. Does it also occupy a square you will need later?";
-            if (detail == 1) return "The exported parcel blocks the west pushing stance for its own room. Store it one square north while the room moves east.";
-            return "Enter the child before its switch is held, then keep a maker on that switch. Export its parcel west into the containing room. Leave the child southward, push the parcel north off its target, then dock the child east. Use the upper row to push the stored parcel south onto its target again.";
-        case 6:
-            if (detail == 0) return "Once a room is packed inside another, where does its parcel doorway lead?";
-            if (detail == 1) return "Hold Room 2's switch while it enters Room 1's west doorway. Then its holder can leave east and hold the containing room's south switch.";
-            return "Pack Room 2 through Room 1's west door. Change the holding job to Room 1's south switch and dock Room 1 east. Return inside the child and post its parcel east into the parent. Stop at the centre, get below it, and push north onto its target.";
-        case 7:
-            if (detail == 0) return "Neither parcel has an ordinary north approach. Which doorway changes the side you arrive from?";
-            if (detail == 1) return "Hold the east switch while the left room is docked east. Approach each striped doorway from above to arrive north of the other room's parcel.";
-            return "Dock the left room while its switch is held. Enter its striped door southward and push the other parcel south twice. Enter that room's striped door the same way and push the first parcel south twice. Leave the most recent entry northward, then take one player goal in each room.";
-        case 8:
-            if (detail == 0) return "Will Room 2's west doorway still lead to the workshop after it is packed away?";
-            if (detail == 1) return "Make the outside delivery before nesting. Its target is also the standing tile for pushing Room 2, so the parcel cannot stay there yet.";
-            return "Enter the child before holding its switch, then export its parcel west onto the outside target. Push that parcel north temporarily and pack the child east into Room 1. Restore the parcel from above. The holder leaves east and holds the parent switch while the partner docks the parent north.";
-        case 9:
-            if (detail == 0) return "The upper-left target has no ordinary pushing stance. Whose doorway could supply the missing approach?";
-            if (detail == 1) return "Nest Room 2 in Room 1's west door and post its parcel north. The other filled target blocks the stance needed to bring Room 2 back out.";
-            return "Hold Room 2's switch while it is packed east. Push its parcel north through the child door onto the corner target, then return to the switch. The partner stores Room 1's parcel south, pushes the child west out to its original outline, and restores the stored parcel from below.";
-        case 10:
-            if (detail == 0) return "Which return route will the eastward delivery close? Is the doorway you entered the only way back?";
-            if (detail == 1) return "Room 1's striped door leads to Room 2. Enter Room 2's centre door from above to arrive north of Room 1's parcel. Plan to return southward.";
-            return "One maker follows both striped doors to Room 1's north entrance. The partner delivers the west parcel east and leaves south. Push the north parcel south twice, then use south edge exits for both recorded entries. Room 1's bottom walkway leads back to the workshop player goals.";
-        case 11:
-            if (detail == 0) return "Which finished square will you need to stand on? What is blocking the other room's return doorway?";
-            if (detail == 1) return "Nest Room 2, post the lower-left parcel into it, and move the child north. Room 3's parcel must move sideways before its striped door can provide Room 1's north approach.";
-            return "Keep Room 2's switch held. Pack it east, post the lower-left parcel north into it, and dock it north. The holder can post that parcel back south later. Enter Room 3 through Room 1's striped door, push Room 3's parcel east from its west side, then enter its centre door southward. Push Room 1's north parcel south twice and reach both player goals.";
+        if (detail == 0) return "Where does your doorway lead? What is standing in the parcel's path?";
+        if (detail == 1) return "Let Amber leave through the east door and clear the outside landing. Teal can push the parcel east through both boxes.";
+        return "Amber: east three times, then north. Teal: east five times, then south. Both finish in the larger outside space.";
     }
-    return "Undo is shared: take back the last move, whoever made it.";
+    if (level == 1)
+    {
+        if (detail == 0) return "After the box moves, will the maker outside still have a way back in?";
+        if (detail == 1) return "Someone must stay inside the left box while the other reaches its south side and pushes it north.";
+        return "Keep the parcel's maker inside. Leave by the north door, circle around the left side, and push the occupied box north. Its east doorway now reaches the delivery route.";
+    }
+    if (level == 2)
+    {
+        if (detail == 0) return "Who can reach the outside pushing stance? Who must stay with the parcel?";
+        if (detail == 1) return "Empty the tall receiving room of its maker first. Move the occupied home north to align its east opening with the receiver.";
+        return "Amber: north twice, west four times, south twice, east, north. Teal: east six times delivers the parcel, then west twice returns. Amber finishes west, south.";
+    }
+    if (level == 3)
+    {
+        if (detail == 0) return "Does a finished parcel leave somewhere to stand beside the home?";
+        if (detail == 1) return "The parcel's target is also the stance for pushing the home east. Store the parcel one cell north, move the occupied home, then restore the parcel from above.";
+        return "Teal exports the parcel west. Amber leaves south, pushes that parcel north, and pushes the home east twice. Circle over the top to restore the parcel; approach the home from its right and push it west onto the outline. Teal can finally leave west.";
+    }
+    if (level == 4)
+    {
+        if (detail == 0) return "How can two boxes pass in a corridor that is only one cell wide at the top?";
+        if (detail == 1) return "Deliver before trading places. Use the bay at the top for the long room, and keep a maker above it to push it back out.";
+        return "Teal leaves east and brings the long room left beside the home. Amber posts the parcel east, then Teal steps behind the long room to stop its push while Amber enters. Deliver inside; park the long room north at the middle bay. Teal moves the home right, Amber releases the parked room, then Teal leaves the home west to put the long room on its left outline.";
+    }
+    if (level == 5)
+    {
+        if (detail == 0) return "Where is the standing tile above the parcel? Can a doorway lead back into this room?";
+        if (detail == 1) return "Move the small copy one cell left. Its south backstop makes entry from above reach the home room's shifted north door.";
+        return "Amber pushes the copy west, then leaves by the south door. Teal enters the copy from its north side and pushes the parcel down three cells. Return north through the same copy, take the right corridor, and leave south.";
+    }
+    if (level == 6)
+    {
+        if (detail == 0) return "If walking into the parked room pushes it farther, what could stop that push?";
+        if (detail == 1) return "The partner can be a backstop. Teal must deliver into the larger room, then leave its north door and stand behind it so Amber can enter from the south.";
+        return "Amber leaves south, nests the narrow occupied box east into the larger room, then parks that room north. Teal posts the parcel east into the larger room, leaves north and waits. Amber enters south, circles to the parcel's north side and pushes it down. Amber leaves south and waits beside the box so Teal can re-enter from the north; then both take the south route to their goals.";
+    }
+    if (level == 7)
+    {
+        if (detail == 0) return "Where would this parcel emerge after its box changes parent?";
+        if (detail == 1) return "Export the parcel west before nesting its home. Empty its target briefly to recover the stance for pushing the occupied box east.";
+        return "Amber posts the parcel west and stays inside. Teal leaves south, stores the parcel one cell north, and nests Amber's box east. Amber leaves the nested box through its right door, circles over the top to restore the parcel, then parks the containing box north. Both leave through the largest room's south door.";
+    }
+    if (level == 8)
+    {
+        if (detail == 0) return "Which parcel must move first to clear a standing tile for the other?";
+        if (detail == 1) return "Use the other room's movable copy to reach the home's west door. After moving that copy right, its north approach reaches the home's shifted north doorway.";
+        return "Amber walks east six times through the two copies, delivering the lower parcel right. Teal moves north twice and east twice, then enters south and delivers the remaining parcel down. Teal returns north through the copy and leaves the narrow room south. Amber returns west through the copy; leaving that room south brings Amber back to the original home's south door, then outward.";
+    }
+    if (level == 9)
+    {
+        if (detail == 0) return "What happens to a copy's outward address when its containing box moves?";
+        if (detail == 1) return "Put the copy inside its own home, then move the occupied home north. Empty the upper parcel's target temporarily to reach the stance for extracting the copy.";
+        return "Amber leaves north, circles left and pushes the copy east into the home. Shift the occupied home north onto its outline. Teal moves the upper parcel down, reaches the copy's right side and exports it west. Amber stores that copy north to free the outside route. Teal posts the other parcel west and restores the first from the lower alcove; then both leave the home.";
+    }
+    if (level == 10)
+    {
+        if (detail == 0) return "Can a box pass into its own interior before reaching the room on its outline?";
+        if (detail == 1) return "Push the home through its outside copy. Inside the resulting self-containment, the west-side copy of the narrow room can receive the home from below.";
+        return "Amber leaves west and pushes the home east into its own copy. Teal leaves the cycle, moves the parcel down to recover the west standing tile, then pushes the home north through the narrow-room copy. Restore the parcel from its lower alcove. Leave the home north, cross the narrow room's offset east corridor, and leave north into the larger space.";
+    }
+    if (level == 11)
+    {
+        if (detail == 0) return "Which doorway can change a closed pair of boxes into an outward route?";
+        if (detail == 1) return "Push the home into the box already inside it. The copy on that box's lower west edge can extract the home into the third room's north doorway.";
+        return "Amber leaves west and pushes the home east into its child, making a two-box cycle. Teal uses the north doorway to reach the child, then pushes the home south through the third-room copy. Post the parcel west into the third room and move the home right onto its outline, clearing the north doorway. Teal delivers the parcel south into the larger space and returns through that doorway to leave at the offset east goal. Amber finishes at the left goal.";
+    }
+    return "Explore the openings together. Shared undo returns to a clear arrangement.";
 }

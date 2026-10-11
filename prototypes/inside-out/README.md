@@ -1,14 +1,17 @@
 # Inside Out
 
-A cooperative puzzle workshop for **two friends in separate browsers**.
-Both makers begin in the same world. Either can step into a pocket room,
-push a room with their partner inside, or put a room inside another room.
-Some doorways lead back into the very room that contains them. Those visits
-share one set of parcels, switches and people.
+A cooperative puzzle game for **two friends in separate browsers**.
+Begin inside a small box, itself inside another room, and work your way out.
+Push rooms with your partner inside, fit them through tight passages, and
+move boxes into their own interiors. Repeated views of a room share one
+set of parcels, boxes and people.
+
+The 2D rooms have an unsettling institutional atmosphere: worn tiles,
+fluorescent light and quiet ventilation. There are no threats or jumpscares.
 
 Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
 catalog links to the same public page; friends need no admin account.
-Choose **Host a workshop**, then share the invite link or six-character room
+Choose **Host a room**, then share the invite link or six-character room
 code. Both players must connect before either can move. Use a voice call or
 chat alongside the game to discuss plans.
 
@@ -38,14 +41,14 @@ nested and recursive preview details collapse to markers after a few layers.
 | Continue after solving | Enter |
 
 Touch uses the same directional arrows. Rooms move first; when a wall,
-another object or a closed latch stops a room, walking into its open doorway
+another box or your partner stops a room, walking into its open doorway
 enters it. Directions match the screen: W is up, D right, S down and A left.
 After undo or reset, release a held direction before pressing it again.
 
 The shelf can revisit or skip any of the twelve puzzles. A plus beside a
 title marks one you have completed in this match. Hints start with a small
 nudge; ask for more to reveal an arrangement and then a more specific plan.
-They are optional. Music, sound and reduced motion are local settings.
+They are optional. Ambience, sound and reduced motion are local settings.
 
 ## The rules
 
@@ -60,15 +63,18 @@ They are optional. Music, sound and reduced motion are local settings.
 - A parcel or room pushed through another room's doorway enters its
   interior. Parcels pushed outward through an edge door emerge beside the
   containing room's physical shell.
-- An infinity doorway is a fixed entrance into an existing room. A self
-  doorway returns to the same interior from a different side. Moving a
-  parcel during one visit changes it for every visit.
+- A repeated box is another movable entrance into an existing room. Boxes
+  can enter themselves, and two boxes can contain one another. Moving a
+  parcel during one visit changes it for every visit. Every room still has
+  one designated primary box: parcels and boxes pushed out of that room
+  emerge beside this primary box, even if you entered through a copy.
+  A small number marks the primary box; a prime mark (`1′`) marks its copy.
 - A maker's return path remembers the entrance used. Leaving through an
   edge door returns beside that entrance; if a shell has moved, the return
   moves with it. Up to eight entrance layers are available.
-- A latched room moves only while a maker or parcel holds its brass switch.
-  There is no timing requirement. Moving it may need one of you to stay
-  inside while the other finds the correct pushing side.
+- Room sizes, wall shapes and edge doorway positions vary. There are no
+  switch locks. Make space and use walls, boxes or your partner as a
+  backstop when you need to enter a box instead of pushing it.
 - Fill every box-marked parcel target, park each shell on its matching numbered
   dock in the correct dimension, and put both makers on distinct player goals.
   Parcels must finish on targets. A filled target can be emptied while

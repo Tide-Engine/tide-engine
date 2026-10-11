@@ -2,16 +2,16 @@ using Rooms;
 
 enum ArtStage { Backdrop, Prepare, Board, Controls, Sound }
 
-const Color INK = Color(0.22, 0.27, 0.25);
-const Color PAPER = Color(0.98, 0.96, 0.89);
-const Color MUTED = Color(0.48, 0.50, 0.44);
+const Color INK = Color(0.79, 0.81, 0.67);
+const Color PAPER = Color(0.11, 0.14, 0.12);
+const Color MUTED = Color(0.50, 0.55, 0.45);
 const Color TEAL = Color(0.22, 0.53, 0.48);
 const Color AMBER = Color(0.85, 0.48, 0.27);
-const GUITheme WORKSHOP_THEME = GUITheme {
-    text = INK, panel = PAPER, control = Color(0.89, 0.88, 0.78),
-    hot = Color(0.82, 0.87, 0.78), pressed = Color(0.73, 0.81, 0.70),
-    field = Color(1, 0.99, 0.94), fieldHot = Color(0.90, 0.93, 0.84),
-    accent = TEAL, radius = 9
+const GUITheme ROOM_THEME = GUITheme {
+    text = INK, panel = PAPER, control = Color(0.21, 0.24, 0.18),
+    hot = Color(0.28, 0.32, 0.23), pressed = Color(0.15, 0.18, 0.13),
+    field = Color(0.09, 0.12, 0.09), fieldHot = Color(0.21, 0.25, 0.18),
+    accent = TEAL, radius = 2
 };
 
 local singleton Hands
@@ -89,12 +89,12 @@ bool PaperButton(string text, Rect rect, bool enabled = true, bool accent = fals
     {
         var control = GUI.Control(rect);
         var at = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-        var base = accent ? TEAL : Color(0.93, 0.92, 0.84);
-        var fill = !enabled ? Color(0.91, 0.90, 0.83) : control.pressed ? Math.Lerp(base, INK, 0.14) : control.hovered ? Math.Lerp(base, Color.white, 0.18) : base;
-        Draw.RoundRect(at + float2(0, 3), float2(rect.width, rect.height), 9, Color(0.32, 0.30, 0.21, 0.13));
-        Draw.RoundRect(at, float2(rect.width, rect.height), 9, fill);
-        if (control.focused) Draw.WireRoundRect(at, float2(rect.width, rect.height), 9, 2, AMBER);
-        Label(text, at, rect.height < 35 ? 12.0 : 14.0, !enabled ? MUTED : accent ? PAPER : INK, Anchor.MiddleCenter);
+        var base = accent ? Color(0.25, 0.38, 0.29) : Color(0.20, 0.24, 0.19);
+        var fill = !enabled ? Color(0.15, 0.18, 0.14) : control.pressed ? Math.Lerp(base, Color.black, 0.18) : control.hovered ? Math.Lerp(base, INK, 0.12) : base;
+        Draw.RoundRect(at + float2(0, 2), float2(rect.width, rect.height), 2, Color(0.03, 0.04, 0.03));
+        Draw.RoundRect(at, float2(rect.width, rect.height), 2, fill);
+        Draw.WireRoundRect(at, float2(rect.width, rect.height), 2, 1, control.focused ? AMBER : Color(0.34, 0.39, 0.29));
+        Label(text, at, rect.height < 35 ? 12.0 : 14.0, !enabled ? MUTED : INK, Anchor.MiddleCenter);
         clicked = control.clicked;
     }
     return clicked;
@@ -107,7 +107,7 @@ view PrepareHands(Session session, mut Hands hands)
     hands.player = session.player;
     hands.blockTime = Math.Max(0, hands.blockTime - Frame.dt);
     hands.portalTime = Math.Max(0, hands.portalTime - Frame.dt);
-    GUI.SetTheme(WORKSHOP_THEME);
+    GUI.SetTheme(ROOM_THEME);
 }
 
 local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
@@ -117,9 +117,9 @@ local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
     if (cue.kind == 2) hands.portalTime = 0.36;
 }
 
-string DimensionName(int room) { return room < 0 ? "Workshop" : RoomName(room); }
+string DimensionName(int room) { return room < 0 ? "Outer room" : RoomName(room); }
 
-override string Rooms.Tagline() { return "Two makers. Rooms within rooms. Find a way together."; }
+override string Rooms.Tagline() { return "Rooms within rooms. Find your way out together."; }
 override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 84, 19, 66, 34); }
 
 override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
@@ -127,19 +127,20 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
     Draw.SetScreen();
     var width = Math.Min(Screen.width - 32, 570);
     var at = float2(Screen.width * 0.5, Screen.height * 0.52);
-    Draw.Shape(Shape { center = at + float2(0, 9), size = float2(width, 268), radius = 20, soft = 15, color = Color(0.22, 0.24, 0.18, 0.22) });
-    Draw.RoundRect(at, float2(width, 268), 20, PAPER);
-    Label("A SMALL ADVENTURE FOR TWO", at + float2(0, -96), 12, TEAL, Anchor.MiddleCenter);
-    Label("Make room for each other.", at + float2(0, -56), Screen.width < 550 ? 24.0 : 30.0, INK, Anchor.MiddleCenter);
-    Paragraph("Push pocket rooms until they cannot move, then step inside. Zoom through rooms with your partner outside, and follow doorways back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
+    Draw.RoundRect(at + float2(0, 5), float2(width, 268), 2, Color(0.02, 0.03, 0.02));
+    Draw.RoundRect(at, float2(width, 268), 2, PAPER);
+    Draw.WireRoundRect(at, float2(width, 268), 2, 1, MUTED);
+    Label("A PLACE WITHIN A PLACE", at + float2(0, -96), 12, INK, Anchor.MiddleCenter);
+    Label("Find your way out together.", at + float2(0, -56), Screen.width < 550 ? 24.0 : 30.0, INK, Anchor.MiddleCenter);
+    Paragraph("You begin inside a box within another room. Move boxes, make space for each other, and follow rooms back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
     var buttonWidth = (width - 68) * 0.5;
-    if (PaperButton("Host a workshop", Rect(at.x - width * 0.5 + 28, at.y + 64, buttonWidth, 43), session.state == SessionState.Connected, true))
+    if (PaperButton("Host a room", Rect(at.x - width * 0.5 + 28, at.y + 64, buttonWidth, 43), session.state == SessionState.Connected, true))
     {
         Rooms.Host(lobby);
         lobby.page = Rooms.Page.Playing;
     }
     if (PaperButton("Join a friend", Rect(at.x + 6, at.y + 64, buttonWidth, 43))) Rooms.ShowJoin(lobby);
-    Label(lobby.message != "" ? lobby.message : "12 puzzles  /  online co-op  /  no clocks, no pressure", at + float2(0, 120), 12, MUTED, Anchor.MiddleCenter);
+    Label(lobby.message != "" ? lobby.message : "12 puzzles  /  2 players  /  explore at your pace", at + float2(0, 120), 12, MUTED, Anchor.MiddleCenter);
 }
 
 [Stage(ArtStage.Prepare, 1)]
@@ -227,7 +228,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
     {
         var boxWidth = Math.Min(width - 36, 520);
         var at = float2(width * 0.5, height - 139);
-        Draw.RoundRect(at, float2(boxWidth, 122), 16, PAPER);
+        Draw.RoundRect(at, float2(boxWidth, 122), 2, PAPER);
         Label("A place for your partner", at + float2(0, -38), 21, INK, Anchor.MiddleCenter);
         Label("The puzzle waits until both of you are here.", at + float2(0, -10), 13, MUTED, Anchor.MiddleCenter);
         if (session.room != "")
@@ -237,9 +238,9 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         }
         else if (session.server && !session.open)
         {
-            if (PaperButton("Open a workshop", Rect(at.x - boxWidth * 0.5 + 22, at.y + 11, boxWidth - 44, 36), true, true)) Session.Open();
+            if (PaperButton("Open a room", Rect(at.x - boxWidth * 0.5 + 22, at.y + 11, boxWidth - 44, 36), true, true)) Session.Open();
         }
-        else Label("Opening your workshop...", at + float2(0, 32), 13, MUTED, Anchor.MiddleCenter);
+        else Label("Opening your room...", at + float2(0, 32), 13, MUTED, Anchor.MiddleCenter);
         return;
     }
 
@@ -302,7 +303,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         var hintText = LevelHint(workshop.level, hands.hint);
         var hintHeight = Math.Max(160, 120 + WrappedLines(hintText, hintWidth - 36, 14) * 20);
         var hintAt = float2(width * 0.5, bottom - 12 - hintHeight * 0.5);
-        Draw.RoundRect(hintAt, float2(hintWidth, hintHeight), 14, PAPER);
+        Draw.RoundRect(hintAt, float2(hintWidth, hintHeight), 2, PAPER);
         Label($"A nudge  /  {hands.hint + 1} of 3", hintAt + float2(-hintWidth * 0.5 + 18, -hintHeight * 0.5 + 21), 12, TEAL);
         Paragraph(hintText, hintAt + float2(-hintWidth * 0.5 + 18, -hintHeight * 0.5 + 48), hintWidth - 36, 14);
         var hintButtons = hintAt.y + hintHeight * 0.5 - 43;
@@ -316,9 +317,9 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
     {
         var at = float2(width * 0.5, height - 164);
         var boxWidth = Math.Min(width - 32, 480);
-        Draw.Shape(Shape { center = at, size = float2(boxWidth, 139), radius = 18, soft = 14, color = Color(0.93, 0.91, 0.78) });
-        Draw.RoundRect(at, float2(boxWidth, 139), 18, PAPER);
-        Label(workshop.level == LEVEL_COUNT - 1 ? "A workshop well made." : "You made room for each other.", at + float2(0, -38), narrow ? 21.0 : 25.0, TEAL, Anchor.MiddleCenter);
+        Draw.RoundRect(at, float2(boxWidth, 139), 2, PAPER);
+        Draw.WireRoundRect(at, float2(boxWidth, 139), 2, 1, MUTED);
+        Label(workshop.level == LEVEL_COUNT - 1 ? "A way out, together." : "Another room beyond.", at + float2(0, -38), narrow ? 21.0 : 25.0, INK, Anchor.MiddleCenter);
         Label($"{workshop.puzzle.moves} shared moves  /  another way found", at + float2(0, -7), 13, MUTED, Anchor.MiddleCenter);
         if (workshop.level < LEVEL_COUNT - 1)
         {
@@ -333,7 +334,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         GUILayout.Modal(Anchor.MiddleCenter, hands.journal)
         {
             GUILayout.Label("THE PUZZLE SHELF");
-            GUILayout.Label("Choose your next workshop together.");
+            GUILayout.Label("Choose your next room together.");
             GUILayout.Label("Changing puzzles resets this one.");
             for (var level = 0; level < LEVEL_COUNT; level++)
                 if (GUILayout.Button($"{((workshop.completed & (1 << level)) != 0 ? "+" : " ")} {level + 1}. {LevelName(level)}"))
@@ -341,36 +342,38 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
                     Send(ChooseLevel { serial = workshop.serial, level = level });
                     hands.journal = false;
                 }
-            if (GUILayout.Button("Back to the workbench")) hands.journal = false;
+            if (GUILayout.Button("Back to the room")) hands.journal = false;
         }
     }
     if (hands.guide)
     {
         GUILayout.Modal(Anchor.MiddleCenter, hands.guide)
         {
-            GUILayout.Label("HOW TO MAKE ROOM");
-            GUILayout.Label("You both explore the same workshop.");
+            GUILayout.Label("FIND A WAY OUT");
+            GUILayout.Label("You begin inside boxes and work outward.");
             GUILayout.Label("Your view follows your maker between rooms.");
             GUILayout.Label("The containing world is visible beyond the walls.");
             GUILayout.Label("WASD / arrows: walk and push parcels or rooms.");
             GUILayout.Label("Rooms move first. Block a room to step inside.");
             GUILayout.Label("Walk out through an edge door to leave.");
-            GUILayout.Label("A wall, another object or a latch can stop a room.");
+            GUILayout.Label("A wall, another box or your partner can stop a room.");
             GUILayout.Label("Touch: use the same directional arrows.");
             GUILayout.Label("Rooms can carry people and other rooms.");
-            GUILayout.Label("An infinity door can lead into its own room.");
-            GUILayout.Label("Its contents are shared across every visit.");
+            GUILayout.Label("Boxes can move into their own interiors.");
+            GUILayout.Label("Copies of a room share its contents and people.");
+            GUILayout.Label("1 is a primary box. 1' is a movable copy.");
+            GUILayout.Label("Pushed objects exit beside the primary box.");
             GUILayout.Label("You return beside the entrance you used.");
             GUILayout.Label("You can enter up to eight layers deep.");
             GUILayout.Label("Box icons need parcels.");
             GUILayout.Label("Coloured outlines need their room boxes.");
             GUILayout.Label("Both makers must reach player-marked goals.");
-            GUILayout.Label("Box + player switches accept either to open a latch.");
+            GUILayout.Label("Doorways can be anywhere along a room edge.");
             GUILayout.Label("Z: shared undo. R: reset. H: three gentle hints.");
             GUILayout.Label("Talk to each other. There is no time limit.");
-            GUILayout.Toggle("Music", hands.music);
+            GUILayout.Toggle("Ambience", hands.music);
             GUILayout.Toggle("Reduced motion", hands.reduceMotion);
-            if (GUILayout.Button("Back to making")) hands.guide = false;
+            if (GUILayout.Button("Back to exploring")) hands.guide = false;
         }
     }
 }

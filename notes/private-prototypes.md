@@ -63,9 +63,9 @@ its `<id>_page` target and its `private_games` block, plus the id in
   `private_games` collects `cracked_page` or `cracked`. Its contract and
   validation are in `notes/cracked.md`.
 - Inside Out (`inside-out`): `prototypes/inside-out/`, the owner's two-player
-  online cooperative puzzle, added on 2026-10-11. Its revised shared workshop
-  lets both makers enter dimensions, move and nest rooms, and use
-  self-referential doorways. The owner requested polished 2D and planning
+  online cooperative puzzle, added on 2026-10-11. Both makers now start inside
+  nested boxes and work outward through varied rooms and offset doorways,
+  including movable self-nesting and cyclic containment. The owner requested polished 2D and planning
   puzzles after the initial build. It uses the same option, and
   `private_games` collects `inside_out_page` or `inside_out`, staging the
   public page at `/prototypes/inside-out/` beside its gameplay thumbnail.
@@ -78,6 +78,9 @@ its `<id>_page` target and its `private_games` block, plus the id in
   showing part of a maker standing beside the box,
   permits the partner to leave the view, and enters a facing doorway only after the
   automatic room push is blocked. Shift and the touch push toggle are removed.
+  Spatial constraints replace switch locks. The current atmosphere uses worn
+  institutional tiles, fluorescent accents and ventilation ambience, without
+  threats or jumpscares; the catalog description and thumbnail follow it.
 
 - Underfoot (`underfoot`): `prototypes/underfoot/`, a puzzle for one or two
   that the owner asked for on 2026-10-11 as a mashup of puzzle games, with

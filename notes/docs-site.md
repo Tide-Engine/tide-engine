@@ -1,5 +1,12 @@
 # The docs site
 
+Inside Out nested-box revision (2026-10-11): the existing catalog now describes
+starting inside nested rooms, varied shapes and offset doors, spatial planning
+and movable self-containing boxes. Its 2D gameplay treatment uses worn
+institutional tiles and fluorescent ambience. Public serving and catalog
+authentication remain unchanged; Underfoot, Inside Out, CRACKED and Two Forks
+are retained. Game-specific contracts and evidence are in `notes/inside-out.md`.
+
 Inside Out catalog addition (2026-10-11): the owner's two-player online puzzle
 prototype adds an eighth server-loaded card, `inside-out`, with a warm miniature
 workshop description. `inside_out_page` stages at

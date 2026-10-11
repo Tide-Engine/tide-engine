@@ -1,4 +1,4 @@
-"""Original soft wooden Foley and a seamless 24-second miniature-workshop loop.
+"""Original restrained Foley and a seamless fluorescent-room ambience loop.
 
 No external samples or dependencies. Run from any working directory.
 """
@@ -102,23 +102,24 @@ chime("reset", [(0, 440, 0.13), (0.12, 349.23, 0.13)], 0.9)
 chime("solve", [(0, 349.23, 0.16), (0.12, 440, 0.16), (0.24, 523.25, 0.16),
                 (0.38, 698.46, 0.13), (0.56, 880, 0.10)], 1.9)
 
-# Loop tones are integer-period frequencies. Notes' reverb tails wrap into the
-# start of the buffer, so the repeat has neither a cut tail nor a click.
-duration = 24
-music = [0.0] * (RATE * duration)
-notes = [349.23, 440, 523.25, 659.25, 523.25, 440, 293.66, 349.23,
-         440, 587.33, 523.25, 440, 349.23, 440, 523.25, 698.46]
-for note, freq in enumerate(notes):
-    start = note * 1.5
-    for sample in range(round(3.5 * RATE)):
+# One periodic noise buffer is filtered twice. The first pass settles the
+# filters onto their periodic solution; the second has the same smooth filter
+# history at the loop boundary. Integer-period hum and slow air modulation
+# also continue across that boundary. There are no stingers or sudden events.
+duration = 12
+rng = random.Random(81)
+noise = [rng.uniform(-1, 1) for _ in range(RATE * duration)]
+air = rumble = 0.0
+ambience = []
+for cycle in range(2):
+    for sample, value in enumerate(noise):
+        air = 0.965 * air + 0.035 * value
+        rumble = 0.998 * rumble + 0.002 * value
+        if cycle == 0:
+            continue
         t = sample / RATE
-        dry = pluck(freq, t, 2.4) * 0.105
-        echo = pluck(freq, t - 0.24, 2.4) * 0.020 + pluck(freq, t - 0.49, 2.4) * 0.012
-        music[(round(start * RATE) + sample) % len(music)] += dry + echo
-for sample in range(len(music)):
-    t = sample / RATE
-    for freq in [174.625, 220, 261.625]:
-        periodic = round(freq * duration) / duration
-        music[sample] += math.sin(math.tau * periodic * t) * (0.012 + 0.005 * math.sin(math.tau * t / duration))
-write("workshop", music)
-print("Generated eight original clips at 24 kHz; music peak", round(max(abs(s) for s in music), 4))
+        breeze = air * (0.035 + 0.006 * math.sin(math.tau * t / duration))
+        motor = 0.019 * math.sin(math.tau * 50 * t) + 0.006 * math.sin(math.tau * 100 * t)
+        ambience.append(breeze + rumble * 0.08 + motor)
+write("ambience", ambience)
+print("Generated eight original clips at 24 kHz; ambience peak", round(max(abs(s) for s in ambience), 4))
