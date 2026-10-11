@@ -1,0 +1,8 @@
+// expect: Draw.LOD sets it around a block: 'Draw.LOD(...) { ... }'
+// expect: to set it for the draws that follow, write 'Draw.SetLOD(...);'
+scene Main { }
+
+view Show()
+{
+    Draw.LOD(1);
+}

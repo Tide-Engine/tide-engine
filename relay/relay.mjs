@@ -45,6 +45,8 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 
+import { createLobbies } from './lobbies.mjs';
+
 // Codes are 6 characters without look-alikes (no 0, O, 1 or I): about a billion.
 export const CODE_LETTERS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const CODE = /^[2-9A-HJ-NP-Z]{6}$/;
@@ -128,9 +130,11 @@ export function cloudflareTurn(keyId, token, options = {}) {
 // Fly-Client-IP header. `clock`: where all its time comes from (SYSTEM_CLOCK's
 // `now` and `wait`), for tests. `statsToken`: the bearer token for the website's
 // aggregate snapshots; without one, /admin/stats refuses every request.
+// `lobbyLimits`: the lobbies' own (lobbies.mjs), which the same server answers for.
 export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limits = {}, clock = SYSTEM_CLOCK,
-    statsToken = process.env.TIDE_RELAY_STATS_TOKEN || '' } = {}) {
+    statsToken = process.env.TIDE_RELAY_STATS_TOKEN || '', lobbyLimits = {} } = {}) {
     const limit = { ...LIMITS, ...limits };
+    const lobbies = createLobbies({ limits: lobbyLimits, clock });
     const rooms = new Map(); // Code -> room
     const ended = new Map(); // Code -> {key, until}: rooms whose match ended, which no one takes over
     const perAddress = new Map();
@@ -143,6 +147,8 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
         migrationsRequested: 0, migrationsRejected: 0 };
 
     const server = createServer((request, response) => {
+        const asker = (trustProxy && request.headers['fly-client-ip']) || request.socket.remoteAddress || '?';
+        if (lobbies.handle(request, response, asker)) return;
         if ((request.url || '').split('?')[0] === '/admin/stats') {
             response.setHeader('content-type', 'application/json; charset=utf-8');
             response.setHeader('cache-control', 'no-store');
@@ -159,8 +165,10 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
             }
             let pendingJoins = 0;
             for (const room of rooms.values()) pendingJoins += room.joining.size + (room.claims?.length || 0);
+            const gathered = lobbies.stats();
             response.end(JSON.stringify({ instance, uptimeSeconds: (clock.now() - started) / 1000,
-                rooms: rooms.size, connections, pendingJoins, totals }));
+                rooms: rooms.size, connections, pendingJoins, lobbies: gathered.lobbies, lobbyMembers: gathered.lobbyMembers,
+                totals: { ...totals, ...gathered.totals } }));
             return;
         }
         response.writeHead(200, { 'content-type': 'text/plain' });
@@ -363,8 +371,12 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
             for (const code of [...ended.keys()]) endedRoom(code); // Forgets those whose time is up
         });
     })();
-    server.on('close', () => stopPings());
+    server.on('close', () => {
+        stopPings();
+        lobbies.close();
+    });
     server.rooms = rooms;
+    server.lobbies = lobbies.lobbies;
     server.ended = ended;
     return server;
 }

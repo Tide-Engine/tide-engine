@@ -1,0 +1,34 @@
+// A game that draws two of the package's pages its own way: the title, as an
+// override with buttons of its own, and the settings, as a view of its own
+// that reads the game's state, with the package's page replaced by nothing.
+// The other pages stay the package's.
+using Rooms;
+
+settings { title = "Pages test"; maxPlayers = 4; }
+
+scene Main { }
+
+override void Rooms.TitlePage(Session session, mut Lobby lobby)
+{
+    if (GUI.Button(Rect(10, 10, 100, 40), "Solo")) Play(lobby);
+    if (GUI.Button(Rect(10, 60, 100, 40), "Friends")) Host(lobby);
+    if (GUI.Button(Rect(10, 110, 100, 40), "Code")) ShowJoin(lobby);
+}
+
+override void Rooms.SettingsPage(mut Lobby lobby)
+{
+}
+
+local singleton Look
+{
+    int shown; // Frames the game's own settings were up
+}
+
+[After(Rooms.Pages)]
+view OwnSettings(mut Look look, mut Lobby lobby)
+{
+    if (lobby.page != Page.Settings) return;
+    look.shown += 1;
+    if (GUI.Button(Rect(10, 10, 100, 40), "Done")) LeaveSettings(lobby);
+    if (GUI.Button(Rect(10, 60, 100, 40), "Friends")) Host(lobby);
+}

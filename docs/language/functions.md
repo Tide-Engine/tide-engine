@@ -114,9 +114,21 @@ Methods take explicit singleton parameters and receivers by the same value and `
 
 A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
 
-Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
+Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
+
+### A value nobody takes
+
+A call written as a statement, whose function gives a value and does nothing else, is a warning: the value is lost, and the call with it. It's usually a method that gives a changed copy, taken for one that changes its value:
+
+```csharp
+request.SetHeader("Accept", "text/plain");            // Warning: 'SetHeader' gives a value that nothing takes
+request = request.SetHeader("Accept", "text/plain");  // Keeps it
+_ = request.SetHeader("Accept", "text/plain");        // Drops it, on purpose
+```
+
+`_ = value;` works anything out and drops it. A call that does something besides giving its value (it sends, spawns, draws, calls C, or changes a `mut` argument or its own value) is a statement as it always was, and so is one that can fail, which has a warning of its own.
 
 ## Sending and spawning
 

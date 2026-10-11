@@ -36,6 +36,7 @@ typedef struct checker {
     VEC(int) scope_marks;
     const expr *write_root;   // Checking an assignment's target: the name it writes through, which that doesn't read
     VEC(stmt *) unused;       // Locals nothing read by the end of their scope, warned about once every body is checked
+    VEC(const expr *) dropped; // Calls written as statements whose value nothing takes (warn_dropped_values)
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
@@ -2973,6 +2974,50 @@ static bool check_io_use(checker *c, const loc at, const char *what, const bool 
     return true;
 }
 
+// One of the declarations of Web.Request's own Tide code (web_prelude), by
+// its name: NULL in a program that doesn't have it, or whose own declaration
+// has the name.
+static decl *web_decl(const program *prog, const char *name, const decl_kind kind)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind == kind && str_eq_c(d->name, name) && d->unit && d->unit->src
+            && strcmp(d->unit->src->path, WEB_PRELUDE_PATH) == 0) return d;
+    }
+    return NULL;
+}
+
+// await request.Send(): the request goes out, by this machine, and the task
+// waits for its answer, as with Web.Fetch. An answer of any status is its
+// value, a WebResponse; it fails with IOError when none came.
+static type check_web_send(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (!check_io_use(c, e->at, "A request's Send", true)) return T_ERR;
+    if (e->args.count) {
+        diag_error(e->at, "Send takes nothing: 'var response = await request.Send();'");
+        diag_note("what a request sends is set before it: 'request.SetMethod(\"POST\").SetBody(bytes)'");
+        return T_ERR;
+    }
+    if (c->awaiting != e) {
+        diag_error(e->at, "Send is awaited: 'var response = await request.Send();'");
+        diag_note("it takes a while, so the task waits for it, and local code reads what came in a frame to come");
+        return T_ERR;
+    }
+    decl *const response = web_decl(c->prog, "WebResponse", DECL_STRUCT);
+    if (!response) return T_ERR;
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    const type paths = list_of(c->prog, (type){TY_STRING, NULL});
+    builtins_use_io(bytes.decl, paths.decl);
+    e->call = CALL_BUILTIN;
+    e->web_fetch = true;
+    e->web_request = true;
+    c->prog->uses_text = true;
+    decl *code = c->method ? c->method : c->system;
+    if (code) code->uses_fetch = true; // Its task's frame keeps the ticket
+    return result_of(c->prog, decl_type(response), (type){TY_ENUM, c->prog->io_error}, false);
+}
+
 // Frame.dt: how long this machine's frame is, which its host says before each
 // one and its local state keeps. Local code reads it, and the functions it
 // calls, which get the local state from their callers; an async function that
@@ -4514,12 +4559,12 @@ static type check_session_call(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
-    if (in_routine(c) || c->in_input || (!in_async_function(c) && !local_code(c))) {
+    // A function or a method asks as the code that calls it would: whether that may is each call's to say (check_acts)
+    if ((in_routine(c) && !inherits(c)) || c->in_input || (!c->method && !local_code(c))) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (in_routine(c)) {
-            diag_error(e->at, "%s can't call Session." STR_FMT " yet; views and local handlers do", routines(c),
-                       STR_ARG(e->name));
-            diag_note("call it in the view, and pass what the function decides back, like a 'mut bool' or its result");
+            diag_error(e->at, "%s can't call Session." STR_FMT "; views, local handlers and the functions they call do",
+                       routines(c), STR_ARG(e->name));
         } else if (c->in_input) {
             diag_error(e->at, "%s makes this machine's input, so it can't call Session." STR_FMT, input_code(c),
                        STR_ARG(e->name));
@@ -4532,6 +4577,11 @@ static type check_session_call(checker *c, expr *e)
     }
     if (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0) {
         diag_error(e->at, "Session." STR_FMT " is a statement of its own", STR_ARG(e->name));
+    }
+    if (inherits(c)) {
+        sb what = {0};
+        sb_printf(&what, "calls Session." STR_FMT, STR_ARG(e->name));
+        note_act(c, true, e->at, what.data, false, false);
     }
     e->call = CALL_SESSION;
     const int least = join || connect || kick ? 1 : 0;
@@ -4900,11 +4950,10 @@ static type check_clipboard_call(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
-    if (in_routine(c) || c->in_input || (!in_async_function(c) && !local_code(c))) {
+    if ((in_routine(c) && !inherits(c)) || c->in_input || (!c->method && !local_code(c))) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (in_routine(c)) {
-            diag_error(e->at, "%s can't call Clipboard.Copy yet; views and local handlers do", routines(c));
-            diag_note("call it in the view, and pass what the function decides back, like a 'mut bool' or its result");
+            diag_error(e->at, "%s can't call Clipboard.Copy; views, local handlers and the functions they call do", routines(c));
         } else if (c->in_input) {
             diag_error(e->at, "%s makes this machine's input, so it can't call Clipboard.Copy", input_code(c));
         } else {
@@ -4916,6 +4965,7 @@ static type check_clipboard_call(checker *c, expr *e)
     if (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0) {
         diag_error(e->at, "Clipboard.Copy is a statement of its own");
     }
+    if (inherits(c)) note_act(c, true, e->at, "calls Clipboard.Copy", false, false);
     e->call = CALL_CLIPBOARD;
     if (e->args.count != 1 || !order_named_args(e, "text", 0)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -6184,6 +6234,11 @@ static type check_method(checker *c, expr *e)
         const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
         const bool flush = str_eq_c(owner, "Storage");
         const bool fetch = str_eq_c(owner, "Web");
+        // Web.Request(url): a request to build and send, which is Tide's own code (web_prelude)
+        if (fetch && str_eq_c(e->name, "Request")) {
+            decl *const maker = web_decl(c->prog, WEB_REQUEST_MAKER, DECL_FUNCTION);
+            if (maker) return check_function_call(c, e, maker);
+        }
         if (io || flush || fetch) {
             if (!check_io_use(c, e->at, fetch ? "Web.Fetch" : str_to_cstr(owner), fetch)) return T_ERR;
             if (flush && c->awaiting != e) {
@@ -6479,6 +6534,10 @@ static type check_method(checker *c, expr *e)
             check_writable(c, e->object, &called, NULL);
         }
         return result;
+    }
+    // await request.Send(): a WebRequest on its way, and the task waits for its answer
+    if (obj.kind == TY_STRUCT && str_eq_c(e->name, "Send") && obj.decl == web_decl(c->prog, "WebRequest", DECL_STRUCT)) {
+        return check_web_send(c, e);
     }
     // camera.Snap(): a singleton that jumped, like a camera cut.
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);
@@ -9758,6 +9817,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_SKINNED:
         if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
             && (!e->object || !step_own(e->object, loop))) return false;
+        if (skinned_lookup(e->skin_operation) && !step_own(e->args.items[1], loop)) return false;
         break; // Read-only sampling and step-local poses use the executing thread's scratch area.
     case CALL_FUNCTION:
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
@@ -10795,7 +10855,8 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
-        || (call == CALL_SKINNED && (called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
+        || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
+            || called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
@@ -10980,6 +11041,12 @@ static void check_stmt(checker *c, stmt *s)
         const builtin_call call = called->call;
         const bool effect = stands_alone(e);
         if (!effect && e->type.kind != TY_ERROR) diag_error(e->at, "this expression does nothing on its own");
+        // A function's or a method's call whose value nothing takes: whether the call does anything
+        // else is known once every body is checked (warn_dropped_values)
+        if (effect && (called->call == CALL_FUNCTION || called->call == CALL_METHOD) && called == e
+            && e->type.kind != TY_VOID && e->type.kind != TY_ERROR && e->type.kind != TY_FAILABLE && builds(c->prog)) {
+            vec_push(c->dropped, e);
+        }
         // A call that can fail, whose error nothing looks at.
         if (e->type.kind == TY_FAILABLE && effect && builds(c->prog)) { // What an override replaced warns about nothing
             const expr *named = e->kind == E_AWAIT ? e->lhs : e;
@@ -11531,7 +11598,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
-    else if (str_eq_c(inner->text, "Animations")) *kind = ASSET_ANIMATIONS;
+    else if (str_eq_c(inner->text, "AnimationCatalog")) *kind = ASSET_ANIMATIONS;
     else if (str_eq_c(inner->text, "Animation")) *kind = ASSET_ANIMATION;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
     else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
@@ -11550,7 +11617,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V>, Animation or Animations (glTF 2.0 or FBX), not '" STR_FMT "'",
+                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '" STR_FMT "'",
                    STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
@@ -11561,12 +11628,12 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
                      : k->return_type.kind == TY_MAP ? map_value(k->return_type) : k->return_type;
         if (t.kind != TY_STRUCT || t.decl->skin_kind != (*kind == ASSET_ANIMATION ? SKIN_ANIMATION : SKIN_ANIMATIONS)) {
             diag_error(at, "an %s asset uses the built-in %s; '%s' names a different type",
-                       *kind == ASSET_ANIMATION ? "Animation" : "Animations",
+                       *kind == ASSET_ANIMATION ? "Animation" : "AnimationCatalog",
                        *kind == ASSET_ANIMATION ? "animation type" : "animation catalog", type_name(t));
             return false;
         }
         if (*kind == ASSET_ANIMATION && *many) {
-            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an Animations catalog");
+            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an AnimationCatalog");
             return false;
         }
     }
@@ -11736,12 +11803,26 @@ static void check_asset_decl(checker *c, decl *k)
         attribute *attr = &k->attributes.items[a];
         if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
             check_sampling_attribute(c, k, attr);
+        } else if (str_eq_c(attr->name, "LOD")) {
+            // Levels of detail (docs/spec.md): a mesh's, made as the game is built
+            if (attr->args.count || attr->values.count) {
+                diag_error(attr->at, "LOD takes nothing: '[LOD]'");
+            } else if (k->lod) {
+                diag_error(attr->at, "'" STR_FMT "' already has a LOD", STR_ARG(k->name));
+            } else if (typed && kind != ASSET_MESH && kind != ASSET_SKINNED) {
+                diag_error(attr->at, "LOD has simpler versions of a mesh made, for where it's drawn small, and '" STR_FMT "' is %s",
+                           STR_ARG(k->name), type_name(k->return_type));
+                diag_note("it goes before an asset that's a Mesh<V> or a SkinnedMesh<V>, like "
+                          "'[LOD] asset Mesh<Vertex3> rock = \"art/rock.glb\";'");
+            } else {
+                k->lod = true;
+            }
         }
     }
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
     const bool paths = catalog && k->value->kind == E_LIST;
     const int path_count = paths ? k->value->args.count : 1;
-    if (!path_count) diag_error(k->value->at, "an Animations file list can't be empty: name at least one file");
+    if (!path_count) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -14385,7 +14466,8 @@ static bool call_acts(const expr *e)
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
-    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+    case CALL_SKINNED: return skinned_lookup(e->skin_operation)
+        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
@@ -14451,6 +14533,20 @@ static int unused_order(const void *a, const void *b)
 // that moves by `move`. Assigned but never read counts as never read. The
 // note says what to do, and editors offer it: when the value is a call that
 // does something, the call stays, as a statement of its own.
+// A call written as a statement that gives a value and does nothing else:
+// the value is lost, and so is the call. `request.SetHeader(name, value);`
+// reads as if it changed the request, and gives a request nobody keeps.
+static void warn_dropped_values(checker *c)
+{
+    for (int i = 0; i < c->dropped.count; i++) {
+        const expr *e = c->dropped.items[i];
+        if (!e->method || call_acts(e)) continue; // It sends, draws, calls C, changes what it's given: a statement
+        diag_warning(e->at, "'" STR_FMT "' gives a value that nothing takes, and does nothing else", STR_ARG(e->method->name));
+        diag_note("keep what it gives, like 'value = value." STR_FMT "(...);', or write '_ = ...;' to drop it on purpose",
+                  STR_ARG(e->method->name));
+    }
+}
+
 static void warn_unused_locals(checker *c)
 {
     if (c->unused.count > 1) qsort(c->unused.items, (size_t)c->unused.count, sizeof(stmt *), unused_order);
@@ -16158,6 +16254,15 @@ static void check_attributes(checker *c)
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
+            if (str_eq_c(attr->name, "LOD")) {
+                if (d->kind != DECL_ASSET) { // An asset's was read with it
+                    diag_error(attr->at, "LOD has simpler versions of a mesh made, for where it's drawn small, and '" STR_FMT
+                               "' isn't a mesh", STR_ARG(d->name));
+                    diag_note("it goes before an asset that's a Mesh<V> or a SkinnedMesh<V>, like "
+                              "'[LOD] asset Mesh<Vertex3> rock = \"art/rock.glb\";'");
+                }
+                continue;
+            }
             if (str_eq_c(attr->name, "Bus")) { // The game's buses: read before the fields resolved (check)
                 if (d->kind != DECL_ENUM) {
                     diag_error(attr->at, "Bus marks the enum of the game's audio buses, and '" STR_FMT "' isn't an enum", STR_ARG(d->name));
@@ -16198,12 +16303,14 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Filter");
                 suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "LOD");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
                           "entities gain and lose, Channel and Unordered, which order a command's delivery, Filter and "
-                          "Wrap, which say how an asset that's drawn with is sampled, and Bus, which marks the enum of the audio buses");
+                          "Wrap, which say how an asset that's drawn with is sampled, LOD, which has a mesh asset's levels of "
+                          "detail made, and Bus, which marks the enum of the audio buses");
                 continue;
             }
             if (attr->values.count > 0) {
@@ -17177,10 +17284,14 @@ static void check_acts(checker *c)
         }
         if (to->acts[1] && !local) {
             const bool command = strncmp(to->acts_what[1], "sends the command", 17) == 0;
+            const bool asks = strncmp(to->acts_what[1], "calls ", 6) == 0; // Session's calls, and the clipboard's
             diag_error(at, "'" STR_FMT "' %s, and %s", STR_ARG(to->name), to->acts_what[1],
-                       command ? "commands are sent from views and local handlers to the match" : "the match can't use local state");
+                       command ? "commands are sent from views and local handlers to the match"
+                       : asks  ? "the match runs the same on every machine"
+                               : "the match can't use local state");
             diag_note_at(to->acts_at[1], "it does on line %d", to->acts_at[1].line);
             if (command) diag_note("match systems and handlers send events; a command carries a player's untrusted request");
+            else if (asks) diag_note("call it from a view or a local handler, like a menu's button");
             else diag_note("local state belongs to one machine, and the match runs the same on every one");
             continue;
         }
@@ -18201,6 +18312,7 @@ bool check(program *prog)
     if (diag_error_count() == 0) plan_shaders(prog);
     mark_c_callers(&c);
     warn_unused_locals(&c); // Once it's known which calls draw and call C
+    warn_dropped_values(&c);
     collect_device_uses(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     for (int i = 0; i < prog->decls.count; i++) {

@@ -1,0 +1,8 @@
+// expect: no version of Draw.SetLOD takes (Cull)
+// expect: Draw.SetLOD(int level)
+scene Main { }
+
+view Show()
+{
+    Draw.SetLOD(Cull.None);
+}

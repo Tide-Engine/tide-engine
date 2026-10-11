@@ -50,6 +50,13 @@ typedef struct fetch {
     struct fetch *next;
     uint32_t ticket;
     char *url;
+    // Web.Request's: a method, its headers' lines and a body to send, and an
+    // answer of any status is the result. NULL for Web.Fetch's GET.
+    char *method;
+    char *headers;
+    uint8_t *send;
+    size_t send_size;
+    int status;     // The answer's, for a request
     bool done;      // The thread is finished with it
     bool forgotten; // Nobody will poll it: the thread frees it when it's done
     tide_io_error error;
@@ -89,7 +96,34 @@ typedef struct request {
     rtc_socket socket;
     rtc_tls *tls;
     const fetch *of; // For `forgotten`
+    // What this exchange sends: the fetch's own, or after a redirect that
+    // turns a request into a GET, that
+    const char *method;
+    const uint8_t *send;
+    size_t send_size;
 } request;
+
+static void free_fetch(fetch *f)
+{
+    free(f->body);
+    free(f->url);
+    free(f->method);
+    free(f->headers);
+    free(f->send);
+    free(f);
+}
+
+// Whether the request's own headers have one called `name`, letters in any case.
+static bool has_header(const char *headers, const char *name)
+{
+    const size_t n = strlen(name);
+    for (const char *line = headers; line && *line; line = strstr(line, "\r\n"), line = line ? line + 2 : NULL) {
+        size_t i = 0;
+        while (i < n && line[i] && (line[i] | 0x20) == (name[i] | 0x20)) i++;
+        if (i == n && line[n] == ':') return true;
+    }
+    return false;
+}
 
 // http://host[:port][/path[?query]][#fragment]: false for anything else.
 static bool parse_url(const char *url, request *q)
@@ -196,11 +230,23 @@ static bool open_request(request *q)
     const bool default_port = q->port == (q->secure ? 443 : 80);
     char port[8] = "";
     if (!default_port) snprintf(port, sizeof port, ":%u", q->port);
-    const size_t size = strlen(q->target) + strlen(q->host) + 128;
+    // A request's own headers go as they are; what it didn't say of these two is said for it
+    const char *headers = q->of->headers ? q->of->headers : "";
+    const bool sends = q->send_size > 0 || strcmp(q->method, "POST") == 0 || strcmp(q->method, "PUT") == 0
+                    || strcmp(q->method, "PATCH") == 0;
+    char length[48] = "";
+    if (sends) snprintf(length, sizeof length, "Content-Length: %zu\r\n", q->send_size);
+    const size_t head = strlen(q->method) + strlen(q->target) + strlen(q->host) + strlen(headers) + 160;
+    const size_t size = head + q->send_size;
     char *text = tide_alloc(size);
-    const int n = snprintf(text, size, "GET %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: tide\r\nAccept: */*\r\nConnection: close\r\n\r\n",
-                           q->target, q->host, port);
-    bool ok = n > 0 && (size_t)n < size;
+    int n = snprintf(text, head, "%s %s HTTP/1.1\r\nHost: %s%s\r\n%s%s%s%sConnection: close\r\n\r\n", q->method, q->target,
+                     q->host, port, has_header(headers, "User-Agent") ? "" : "User-Agent: tide\r\n",
+                     has_header(headers, "Accept") ? "" : "Accept: */*\r\n", headers, length);
+    bool ok = n > 0 && (size_t)n < head;
+    if (ok && q->send_size) {
+        memcpy(text + n, q->send, q->send_size);
+        n += (int)q->send_size;
+    }
     for (size_t sent = 0; ok && sent < (size_t)n;) {
         const int moved = q->tls ? rtc_tls_send(q->tls, q->socket, text + sent, (size_t)n - sent)
                                  : rtc_tcp_send(q->socket, text + sent, (size_t)n - sent);
@@ -322,8 +368,16 @@ static tide_io_error exchange(request *q, answer *a, uint8_t **body, size_t *bod
     }
     const bool redirect = a->status == 301 || a->status == 302 || a->status == 303 || a->status == 307 || a->status == 308;
     if (redirect && a->location) { result = TIDE_IO_NONE; goto done; } // The body, if any, isn't wanted
-    if (a->status == 404) { result = TIDE_IO_NOT_FOUND; goto done; }
-    if (a->status < 200 || a->status > 299) goto done;
+    const bool any = q->of->method != NULL; // A request's answer is its result, whatever its status
+    if (!any && a->status == 404) { result = TIDE_IO_NOT_FOUND; goto done; }
+    if (a->status < 200 || (!any && a->status > 299)) goto done;
+    // Answers that have no body, whatever their headers say
+    if (strcmp(q->method, "HEAD") == 0 || a->status == 204 || a->status == 304) {
+        *body = NULL;
+        *body_size = 0;
+        result = TIDE_IO_NONE;
+        goto done;
+    }
     if (a->has_length && a->length > TIDE_FETCH_LIMIT) goto done;
     // The body: by its length, in chunks, or to the connection's end
     bytes out = {0};
@@ -401,7 +455,8 @@ done:
 // The whole fetch: requests, through redirects, to the body.
 static tide_io_error get(fetch *f)
 {
-    request q = {.socket = RTC_NO_SOCKET, .of = f};
+    request q = {.socket = RTC_NO_SOCKET, .of = f, .method = f->method ? f->method : "GET", .send = f->send,
+                 .send_size = f->send_size};
     char *url = f->url;
     tide_io_error result = TIDE_IO_FAILED;
     for (int hops = 0; hops <= REDIRECTS; hops++) {
@@ -411,6 +466,14 @@ static tide_io_error get(fetch *f)
         size_t size = 0;
         result = exchange(&q, &a, &body, &size);
         if (result == TIDE_IO_NONE && a.location) {
+            // As a browser's fetch goes on: a 303 is a GET of where it says, and so is a POST's 301 or 302;
+            // a 307 or 308 is the same request again
+            const bool head = strcmp(q.method, "HEAD") == 0;
+            if (!head && (a.status == 303 || ((a.status == 301 || a.status == 302) && strcmp(q.method, "POST") == 0))) {
+                q.method = "GET";
+                q.send = NULL;
+                q.send_size = 0;
+            }
             char *next = resolve(&q, a.location);
             free(a.location);
             if (url != f->url) free(url);
@@ -422,6 +485,7 @@ static tide_io_error get(fetch *f)
         if (result == TIDE_IO_NONE) {
             f->body = body;
             f->size = size;
+            f->status = a.status;
         }
         break;
     }
@@ -448,21 +512,46 @@ static void *fetch_thread(void *arg)
         *at = f->next;
     }
     unlock();
-    if (gone) {
-        free(f->body);
-        free(f->url);
-        free(f);
-    }
+    if (gone) free_fetch(f);
     return 0;
 }
+
+static char *copy_text(const char *text)
+{
+    char *copy = tide_alloc(strlen(text) + 1);
+    strcpy(copy, text);
+    return copy;
+}
+
+static uint32_t start(fetch *f);
 
 uint32_t tide_fetch_begin(const char *url)
 {
     fetch *f = tide_alloc_zeroed(1, sizeof *f);
-    f->url = tide_alloc(strlen(url) + 1);
-    strcpy(f->url, url);
+    f->url = copy_text(url);
+    return start(f);
+}
+
+uint32_t tide_request_begin(const char *method, const char *url, const char *headers, const uint8_t *body, const uint32_t size)
+{
+    fetch *f = tide_alloc_zeroed(1, sizeof *f);
+    f->url = copy_text(url);
+    f->method = copy_text(method);
+    f->headers = copy_text(headers);
+    if (size) {
+        f->send = tide_alloc(size);
+        memcpy(f->send, body, size);
+        f->send_size = size;
+    }
+    return start(f);
+}
+
+// Gives `f` a ticket and a thread of its own.
+static uint32_t start(fetch *f)
+{
     lock();
-    do { fetches.next_ticket++; } while (!fetches.next_ticket || fetches.next_ticket == TIDE_FETCH_INVALID_URL);
+    do { fetches.next_ticket++; }
+    while (!fetches.next_ticket || fetches.next_ticket == TIDE_FETCH_INVALID_URL || fetches.next_ticket == TIDE_REQUEST_INVALID);
     f->ticket = fetches.next_ticket;
     f->next = fetches.list;
     fetches.list = f;
@@ -487,6 +576,13 @@ uint32_t tide_fetch_begin(const char *url)
 
 bool tide_fetch_poll(const uint32_t ticket, tide_io_error *error, uint8_t **data, uint32_t *size)
 {
+    int32_t status;
+    return tide_request_poll(ticket, error, &status, data, size);
+}
+
+bool tide_request_poll(const uint32_t ticket, tide_io_error *error, int32_t *status, uint8_t **data, uint32_t *size)
+{
+    *status = 0;
     lock();
     fetch **at = &fetches.list;
     while (*at && (*at)->ticket != ticket) at = &(*at)->next;
@@ -505,6 +601,7 @@ bool tide_fetch_poll(const uint32_t ticket, tide_io_error *error, uint8_t **data
     *at = f->next;
     unlock();
     *error = f->error;
+    *status = f->status;
     *data = f->body;
     *size = (uint32_t)f->size;
     if (f->size > TIDE_FETCH_LIMIT) { // Never, but the limit is the wrapper's promise
@@ -513,8 +610,8 @@ bool tide_fetch_poll(const uint32_t ticket, tide_io_error *error, uint8_t **data
         *data = NULL;
         *size = 0;
     }
-    free(f->url);
-    free(f);
+    f->body = NULL; // The caller's now
+    free_fetch(f);
     return true;
 }
 
@@ -527,11 +624,7 @@ void tide_fetch_forget(const uint32_t ticket)
     if (f && f->done) *at = f->next; // Its thread is gone: free it here
     else if (f) f->forgotten = true;  // Its thread frees it, and stops when it looks
     unlock();
-    if (f && f->done) {
-        free(f->body);
-        free(f->url);
-        free(f);
-    }
+    if (f && f->done) free_fetch(f);
 }
 
 #endif

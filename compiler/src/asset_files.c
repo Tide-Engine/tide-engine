@@ -574,7 +574,7 @@ static const char *kind_name(const asset_kind kind)
 {
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
          : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
-         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "Animations"
+         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "AnimationCatalog"
          : kind == ASSET_ANIMATION ? "Animation" : "Grid2<Color>";
 }
 
@@ -603,11 +603,11 @@ static bool asset_model_format_diagnostic(const char *path, const char *why, con
     if (!why || !strstr(why, "JSON") || strstr(why, "GLB") || strstr(why, "FBX")) return false;
     if (source_extension(path, ".gltf") || source_extension(path, ".glb") || source_extension(path, ".fbx")) return false;
     if (source_extension(path, ".obj")) {
-        diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ", animations ? "an Animations" : "a SkinnedMesh");
+        diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ", animations ? "an AnimationCatalog" : "a SkinnedMesh");
         if (animations) diag_note("export the model's animations as glTF 2.0 or FBX; OBJ contains no animation data");
         else diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
     } else {
-        diag_error(at, "'%s' isn't a supported %s format", path, animations ? "Animations" : "SkinnedMesh");
+        diag_error(at, "'%s' isn't a supported %s format", path, animations ? "AnimationCatalog" : "SkinnedMesh");
         diag_note("export %s as glTF 2.0 (.gltf or .glb) or FBX (.fbx); scene files such as .blend, .dae and .usd aren't imported directly",
                   animations ? "the model's animations" : "the rigged model");
     }

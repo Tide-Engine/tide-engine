@@ -4,6 +4,17 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Building
 
+- The package's web-watch request diagnostics retain its existing guards
+  (2026-10-11). Run `38139106428`'s sole underlying failure was
+  the initial page's five-second request timeout in the Windows package job;
+  every platform suite passed. Individual requests still have that limit,
+  and build/pack publication keeps its 120-second readiness guard.
+  Failure output names the request, header/body phase, elapsed time and CLI
+  output. Injected header/body timeouts, permanent unavailability and invalid
+  responses cover failure behavior; evidence and validation are
+  in `notes/cli-and-packages.md`, Web-watch request diagnostics. The hosted stall's
+  underlying cause is unproven; no server behavior or browser test changed.
+
 - `last_light_browser_process` has nine cleanup regressions (2026-10-11):
   three portable real-process/stdio cases and six controlled Windows taskkill
   cases. The fault fixtures use EventEmitter children and Node's mock timers

@@ -35,6 +35,22 @@ TIDE_TEST(session_start_with_no_scene_is_main_and_the_title_is_the_settings)
     TIDE_CHECK(request.kind == TIDE_REQUEST_START && start.value.Main.size == 40);
     TIDE_CHECK(!tide_local_take_request(&local, &request, &start));
 
+    // From functions: a function a function calls, a struct's method, the clipboard, and a local handler's
+    frame();
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_OPEN && request.port == 7001 && local.Menu.hosted == 1);
+    frame();
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_JOIN && strcmp(request.text, "K7QF2M") == 0);
+    frame();
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_COPY && strcmp(request.text, "K7QF2M") == 0);
+    tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
+    frame();
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_START && start.value.Main.size == 30);
+    TIDE_CHECK(!tide_local_take_request(&local, &request, &start));
+
     tide_local_free(&local);
     tide_draw_free(&draw);
     tide_world_free(&world);

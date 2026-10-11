@@ -79,8 +79,10 @@ tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/t
 tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
+tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
 tide_e2e_test(animation_imports) # Cleaned exporter names, selected clips and combined source catalogs
+tide_e2e_test(animation_lookup) # Bool/out catalogs, failure defaults, evaluation order and owned outputs
 tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
 tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists after each entity and frame
 tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
@@ -451,6 +453,12 @@ if(TARGET tidec_core)
     target_include_directories(tidec_mesh_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_link_libraries(tidec_mesh_files_tests PRIVATE tide tidec_core) # The engine for the harness's clock
     add_test(NAME tidec_mesh_files COMMAND tidec_mesh_files_tests)
+    # A mesh's levels of detail on their own (src/mesh_lod.c)
+    add_executable(tidec_mesh_lod_tests mesh_lod_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_mesh_lod_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_mesh_lod_tests PRIVATE MESH_LOD_WORK="${CMAKE_CURRENT_BINARY_DIR}/mesh_lod")
+    target_link_libraries(tidec_mesh_lod_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_mesh_lod COMMAND tidec_mesh_lod_tests)
     add_executable(tidec_model_metadata_tests test_model_metadata.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_model_metadata_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_model_metadata_tests PRIVATE MODEL_METADATA_WORK="${CMAKE_CURRENT_BINARY_DIR}/model_metadata")

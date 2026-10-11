@@ -6,7 +6,7 @@ static str skinned_identifier(const char *source)
     char *name = str_to_cstr(str_from(source));
     if (name[0] >= 'A' && name[0] <= 'Z') name[0] += 'a' - 'A';
     const str result = str_from(name);
-    if (!lex_identifier_ok(result) || str_eq_c(result, "count") || str_eq_c(result, "Find") || str_eq_c(result, "At")) return (str){0};
+    if (!lex_identifier_ok(result) || str_eq_c(result, "count") || str_eq_c(result, "TryGetByName") || str_eq_c(result, "TryGetAt")) return (str){0};
     return result;
 }
 
@@ -32,8 +32,8 @@ static str skinned_inferred_identifier(const char *source)
     }
     if (!name.len) sb_put(&name, "_");
     const str result = {name.data, (int)name.len};
-    if (!lex_identifier_ok(result) || str_eq_c(result, "count") || str_eq_c(result, "Find")
-        || str_eq_c(result, "At") || str_eq_c(result, "data")) {
+    if (!lex_identifier_ok(result) || str_eq_c(result, "count") || str_eq_c(result, "TryGetByName")
+        || str_eq_c(result, "TryGetAt") || str_eq_c(result, "data")) {
         sb prefixed = {0};
         sb_put(&prefixed, "_");
         sb_putn(&prefixed, result.ptr, (size_t)result.len);
@@ -68,7 +68,7 @@ static str skinned_alias(const field *f, bool *exact)
 
 static decl *skinned_catalog(program *prog, const skinned_kind kind, const int status)
 {
-    decl *d = skinned_struct(prog, kind == SKIN_ANIMATIONS ? "Animations" : "Bones", kind);
+    decl *d = skinned_struct(prog, kind == SKIN_ANIMATIONS ? "AnimationCatalog" : "Bones", kind);
     skinned_data_field(prog, d);
     d->skin_metadata_status = status;
     return d;
@@ -89,7 +89,7 @@ static void skinned_contract_catalogs(program *prog, decl *mesh, const loc at)
             diag_error(f->at.line ? f->at : at, "a model contract's fields are required Animation or Bone values, without defaults");
             continue;
         }
-        if (str_eq_c(f->name, "count") || str_eq_c(f->name, "Find") || str_eq_c(f->name, "At")) {
+        if (str_eq_c(f->name, "count") || str_eq_c(f->name, "TryGetByName") || str_eq_c(f->name, "TryGetAt")) {
             diag_error(f->at, "contract member '" STR_FMT "' conflicts with a catalog operation", STR_ARG(f->name));
             continue;
         }
@@ -116,7 +116,7 @@ static int skinned_source_find(const model_metadata *metadata, const bool bones,
     int found = -1;
     for (uint32_t i = 0; i < count; i++) {
         const char *source = skinned_source_name(metadata, bones, i);
-        if (!source || !*source) continue; // Unnamed entries have no name lookup, only At.
+        if (!source || !*source) continue; // Unnamed entries have no name lookup, only TryGetAt.
         const str name = member->explicit_name ? str_from(source) : skinned_identifier(source);
         if (!str_eq(name, member->source_name)) continue;
         if (found != -1) return -2;
@@ -290,7 +290,7 @@ static void skinned_animation_asset(checker *c, decl *asset, const expr *path)
         else {
             diag_error(path->at, "an Animation asset requires exactly one clip, but '%s' contains %u", item->key,
                        metadata->animation_count);
-            diag_note("select a clip with [Name(\"original clip name\")], or import every clip with asset Animations");
+            diag_note("select a clip with [Name(\"original clip name\")], or import every clip with asset AnimationCatalog");
         }
     } else {
         for (uint32_t i = 0; i < metadata->animation_count; i++) {

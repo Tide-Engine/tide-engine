@@ -1297,15 +1297,29 @@ static void index_program(void)
     A.occs.count = n;
 }
 
-void analysis_run(const analysis_file *files, const int count)
+void analysis_run(const analysis_file *given, const int given_count)
 {
     arena_reset();
     memset(&A, 0, sizeof A);
+    // Web.Request's types are Tide's own code, a file of the game's for as long as the game names them
+    const analysis_file *files = given;
+    int count = given_count;
+    bool web = false;
+    for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
+    if (web) {
+        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 1));
+        if (given_count > 0) memcpy(all, given, sizeof(analysis_file) * (size_t)given_count);
+        analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
+        prelude.text = web_prelude(&prelude.len);
+        all[given_count] = prelude;
+        files = all;
+        count = given_count + 1;
+    }
     diag_reset();
     diag_set_sink(collect, NULL);
     diag_set_suggestion_sink(collect_suggestion, NULL);
 
-    A.file_count = count;
+    A.file_count = given_count; // The game's own: Web.Request's file is behind them, for what its declarations point to
     A.files = arena_alloc(sizeof(afile) * (size_t)(count > 0 ? count : 1));
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
@@ -1777,7 +1791,7 @@ static const method_form scene_calls[] = {
     {"RemovePlayer", "Scene.RemovePlayer(scene, PlayerID player)", "Stops a player seeing a private scene."},
 };
 
-// Session's calls, from views and local handlers.
+// Session's calls, from views and local handlers, and the functions they call.
 static const method_form session_calls[] = {
     {"Start", "Session.Start(scene = Main)",
      "Starts a match on this machine, in `scene`, or in `Main` with nothing named: it runs the server, and no one else "
@@ -2106,18 +2120,18 @@ static const method_form singleton_calls[] = {
 };
 
 static const method_form animation_catalog_calls[] = {
-    {"Find", "Find(string name) -> Animation?", "Looks up an animation by its exact original name. Missing or ambiguous names give null."},
-    {"At", "At(int index) -> Animation?", "Reads an animation in source order, counting from 0. An index outside the catalog gives null."},
+    {"TryGetByName", "TryGetByName(string name, out Animation result) -> bool", "Looks up an animation by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
+    {"TryGetAt", "TryGetAt(int index, out Animation result) -> bool", "Reads an animation in source order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
 static const method_form bone_catalog_calls[] = {
-    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
-    {"At", "At(int index) -> Bone?", "Reads a skeleton node in skeleton order, counting from 0. An index outside the catalog gives null."},
+    {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
+    {"TryGetAt", "TryGetAt(int index, out Bone result) -> bool", "Reads a skeleton node in skeleton order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
 static const method_form skeleton_calls[] = {
     {"RestPose", "RestPose() -> Pose", "Makes an owned pose with this skeleton's authored rest transforms."},
-    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
+    {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
 };
 
 static const method_form animation_calls[] = {
@@ -2899,9 +2913,9 @@ static void describe(const occurrence *o, sb *out)
                             "Side buffers and uncached URLs are read by a build.");
             }
             if (o->decl->asset_kind == ASSET_ANIMATIONS) {
-                sb_put(out, " An `Animations` asset imports a combined catalog from glTF or FBX paths, file lists or globs without typed render geometry. "
+                sb_put(out, " An `AnimationCatalog` asset imports a combined catalog from glTF or FBX paths, file lists or globs without typed render geometry. "
                             "Its cleaned clip names appear directly on the asset; filenames distinguish collisions. "
-                            "Find uses original source names and At uses flattened source order.");
+                            "TryGetByName uses original source names and TryGetAt uses flattened source order.");
                 sb_put(out, "\n\nThe editor inspects the glTF JSON or FBX catalog without importing geometry or animation samples. "
                             "Side buffers and uncached URLs are read by a build.");
             }
@@ -3113,7 +3127,7 @@ static void describe(const occurrence *o, sb *out)
                                                          "using and what other views claimed, and the input's Sample once "
                                                          "per tick. Both take a `Devices` parameter. In match code the "
                                                          "parameter receives the entity owner's devices, or the server's."
-                      : str_eq_c(o->name, "Clipboard") ? "\n\nThis machine's clipboard: Copy, from views and local handlers. "
+                      : str_eq_c(o->name, "Clipboard") ? "\n\nThis machine's clipboard: Copy, from views, local handlers and the functions they call. "
                                                          "Ctrl+V pastes into text fields by itself."
                       : str_eq_c(o->name, "Debug")     ? "\n\nOutput for whoever runs the game: Log prints a line, Assert stops "
                                                          "the program when its condition fails. Neither changes the match."
@@ -3307,6 +3321,13 @@ static void describe(const occurrence *o, sb *out)
              "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
              "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
              "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
+            {"LOD", "[LOD]",
+             "Has this mesh's levels of detail made as the game is built: simpler versions of it over its own vertices, each "
+             "about half the triangles of the one before. A draw of it then picks the simplest that's within a pixel of the "
+             "full mesh where it's drawn, each instance its own, with nothing to tune. It goes before an asset that's a "
+             "`Mesh<V>` or a `SkinnedMesh<V>` (alone, or a list or a map of them). Code still reads the full mesh: "
+             "`vertices` and `indices` are what they are without it. `Draw.LOD` names a level, and `Draw.LODCamera` the "
+             "camera to pick through."},
             {"Raw", "[Raw]",
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
              "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
@@ -6140,7 +6161,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (gpu && t.decl->skin_kind != SKIN_TRANSFORM) return;
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH) {
-            item(c, "animations", CK_PROPERTY, "Animations", "The immutable animation catalog: checked names where the asset or contract supplies them, and Find for exact source names.", NULL);
+            item(c, "animations", CK_PROPERTY, "AnimationCatalog", "The immutable animation catalog: checked names where the asset or contract supplies them, and TryGetByName for exact source names.", NULL);
             item(c, "skeleton", CK_PROPERTY, "Skeleton", "The immutable node hierarchy, rest transforms and bone catalog.", NULL);
             item(c, "defaultPose", CK_PROPERTY, "Pose", "Makes an owned pose with this model's authored rest transforms, including models without animation clips.", NULL);
         }
@@ -6393,10 +6414,13 @@ static void list_members(completion *c, const type t, const bool edges, const sc
 }
 
 // Whether code here can call Session.Start and the like: views and local
-// handlers, as the checker allows.
+// handlers, and the functions and methods they call, as the checker allows.
 static bool decides_session(const scope *sc)
 {
-    return sc->decl && sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local) && !sc->in_input;
+    if (!sc->decl || sc->in_input) return false;
+    if (sc->decl->kind == DECL_SYSTEM) return sc->decl->is_view || sc->decl->is_local;
+    return (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD) && !sc->decl->is_async && !sc->decl->is_operator
+        && !sc->decl->is_interpolate && !sc->decl->is_audio;
 }
 
 // After `a.b.`: resolves the chain of names before the dot.
@@ -6494,6 +6518,13 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         if (n == 1 && str_eq_c(base, "Clipboard") && decides_session(&sc)) {
             item(c, "Copy", CK_FUNCTION, CLIPBOARD_COPY_FORM, CLIPBOARD_COPY_DOC, "Copy($1)");
             return;
+        }
+        // Web.: Request, which is Tide's own code and so in no table; Fetch follows from the engine's
+        if (n == 1 && str_eq_c(base, "Web")) {
+            item(c, "Request", CK_FUNCTION, "WebRequest Web.Request(string url)",
+                 "A request to `url`, a GET until `SetMethod` says otherwise: `SetHeader` and `SetBody` add to it, and "
+                 "`await request.Send()` sends it, giving a `WebResponse` (its `status` and `body`) whatever the status. "
+                 "Fails with IOError when no answer came.", "Request($1)");
         }
         // Wait.: what async code waits for
         if (n == 1 && str_eq_c(base, "Wait") && sc.decl && sc.decl->is_async) {
@@ -6876,8 +6907,8 @@ static void complete_value_types(completion *c, const unsigned which)
         if (!(which & VT_GPU)) {
             item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
                  "An immutable glTF or FBX model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
-            item(c, "Animations", CK_STRUCT, "built-in type",
-                 "An immutable catalog of animation clips and their source skeleton, imported with asset Animations or read from a skinned model.", NULL);
+            item(c, "AnimationCatalog", CK_STRUCT, "built-in type",
+                 "An immutable catalog of animation clips and their source skeleton, imported with asset AnimationCatalog or read from a skinned model.", NULL);
             static const char *const names[] = {"Animation", "Skeleton", "Bone", "Pose", "BoneTransform", "Playback"};
             static const char *const docs[] = {
                 "An immutable animation value, sampled deterministically on the CPU.",
@@ -7995,6 +8026,11 @@ static out_argument out_argument_at(const int open, const int last, const loc at
             type_text[word - text - 5] = '\0';
             found.type_text = type_text;
             if (t.kind == TY_MAP && t.decl) found.type = t.decl->fields.items[1].type; // TryGet's: the map's value
+            if (t.kind == TY_STRUCT && t.decl) {
+                if (t.decl->skin_kind == SKIN_ANIMATIONS && A.prog->animation) found.type = type_of_decl(A.prog->animation);
+                else if ((t.decl->skin_kind == SKIN_BONES || t.decl->skin_kind == SKIN_SKELETON) && A.prog->bone)
+                    found.type = type_of_decl(A.prog->bone);
+            }
             if (t.kind == TY_WORLD && component) found.type = type_of_decl(component); // ...or the World's: the component
         }
     }
@@ -8544,6 +8580,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "An asset that's a Texture or a Grid2<Color> of numbers, kept as the file has them: a frag reads it by its name.",
                  "Raw");
+            item(&c, "LOD", CK_FUNCTION, "[LOD]",
+                 "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
+                 "LOD");
         }
         break;
 

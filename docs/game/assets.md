@@ -13,13 +13,13 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 | `Texture`, `Grid2<Color>`, cubemap faces | PNG, PSD, JPEG (`.jpg`, `.jpeg`), TGA, BMP | Decoded pixels; textures and cube faces use RGBA8 |
 | `Mesh<V>` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX, OBJ | Static vertices and triangles |
 | `SkinnedMesh<V>` | glTF 2.0, binary or ASCII FBX | Geometry, skeleton and animation; see [Animation](./animation.md) |
-| `Animations` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | Skeleton and every animation clip; see [Animation files](./animation.md#animation-files) |
+| `AnimationCatalog` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | Skeleton and every animation clip; see [Animation files](./animation.md#animation-files) |
 | `Animation` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | The only clip, or an exact `[Name("source name")]` selection |
 | `Clip` | WAV, Ogg Vorbis, MP3, FLAC | WAV/Vorbis bytes, or float PCM WAV converted from MP3/FLAC; see [Audio](./audio.md#clips) |
 | `string` | Any UTF-8 text file | Text |
 | `List<byte>` | Any file | Its original bytes |
 
-These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `Animations` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
+These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
 
 WebP, TIFF, animated images, SVG, HDR/EXR and GPU texture containers such as DDS/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
 
@@ -36,7 +36,7 @@ asset string rules = "rules.txt";           // UTF-8 text
 asset List<byte> table = "data/table.bin";  // Any file, as its bytes
 ```
 
-Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. Those four are the plain ones: `string`, `List<byte>`, `Grid2<Color>` and `Texture`. A sky is a [`Cubemap`](#cubemaps), a static model a [`Mesh`](#meshes), a model with bones a [`SkinnedMesh`](./animation.md), animation clips an [`Animations`](./animation.md#animation-files) asset, and a sound a [`Clip`](./audio.md#clips).
+Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. Those four are the plain ones: `string`, `List<byte>`, `Grid2<Color>` and `Texture`. A sky is a [`Cubemap`](#cubemaps), a static model a [`Mesh`](#meshes), a model with bones a [`SkinnedMesh`](./animation.md), animation clips an [`AnimationCatalog`](./animation.md#animation-files) asset, and a sound a [`Clip`](./audio.md#clips).
 
 ::: tide-example assets A sprite from a file
 <<< @/examples/assets.tide
@@ -253,6 +253,61 @@ view Props(Prop prop)
 ```
 
 A frag and a vert don't read a mesh's two lists: the draw sends them to the GPU as the mesh they are.
+
+### Levels of detail
+
+A model with thousands of triangles costs the same to draw when it's a dot on the horizon as when it fills the screen. `[LOD]` before a mesh asset has simpler versions of it made as the game is built, and each draw then picks one by how big the mesh is on screen:
+
+```csharp
+[LOD] asset Mesh<Corner> rock = "art/rock.glb";
+
+view Rocks(Scenery scenery)
+{
+    Draw.Instanced(rock, scenery.transforms, Look); // Each rock at its own level
+}
+```
+
+That's all there is to write. There are no distances to set, no levels to author and nothing more to pass a draw.
+
+- **It's opt-in.** A mesh without `[LOD]` is drawn as it always was, with nothing made for it.
+- **A level is fewer of the mesh's own triangles.** Each has about half the triangles of the one before, over the same vertices: none is added or moved, so the pack grows by the levels' triangles alone, about as much again as the mesh's own. Open edges stay where they are, and so do the seams where a texture or a color changes, so no hole opens and no texture tears.
+- **No level has fewer than 500 triangles.** A level only pays by the triangles it takes off a draw, and picking one costs a little for each instance. So a chain stops before it gets that small, and a mesh of under 1,000 triangles gets no levels at all: it draws exactly as if it weren't marked, with nothing picked.
+- **A draw picks the simplest level that looks the same.** Each level knows how far its surface is from the full mesh's. A draw takes the simplest one whose difference is under a pixel where the mesh is, so a mesh drawn large keeps all its detail at any distance.
+- **Each instance picks its own.** `Draw.Instanced` over a field of rocks draws the near ones whole and the far ones simple: one GPU draw for each level in use, the instances of each in the order the list has them. A view that runs for each entity is grouped the same way.
+- **Your code reads the full mesh.** `rock.vertices` and `rock.indices` are what they are without `[LOD]`, for the match too: a collider built from a rock's triangles is built from all of them, on every machine.
+- **It works on a [`SkinnedMesh<V>`](./animation.md) too:** `[LOD] asset SkinnedMesh<Corner> hero = "art/hero.glb";`. Its levels are made from the model at rest, weighing how each vertex follows its bones so joints keep the vertices that bend them, and a pose deforms a level as it deforms the full mesh.
+- **A list or a map of meshes** takes it for every file: `[LOD] asset List<Mesh<Corner>> rocks = "art/rocks/*.glb";`.
+- **They're made once.** tide keeps a mesh's levels in the game's `.tide/` folder, by what's in the file, so later builds don't make them again.
+
+**A game's vert isn't known to the pick.** Where the mesh is and how big it is come from the file's own geometry and the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been: draw such a mesh with `Draw.LOD(0)`, below, or leave `[LOD]` off it.
+
+**`Draw.LOD` names the level** instead of picking it, a [draw setting](./draw-settings.md) with the two forms the others have. `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last level is its last:
+
+```csharp
+Draw.LOD(0)
+{
+    Draw.Mesh(rock, transform, Look); // Whole, wherever it is
+}
+```
+
+With no number, `Draw.LOD() { ... }` and `Draw.SetLOD();`, each mesh picks again. Every instance of an instanced draw has the level that's named, so the draw is one GPU draw in the list's order, which is what instances drawn with a blend and no depth need.
+
+**`Draw.LODCamera` names the camera to pick through**, in place of the one the meshes are drawn through. A [shadow map](./render-targets.md) picks with its lamp's camera and its own pixels, so a mesh could cast the shadow of another level than the one the player sees. Told the player's camera, it casts what's shown:
+
+```csharp
+view Cast(Lamp lamp, Viewer viewer, Rock rock)
+{
+    lamp.shadow.SetCamera(lamp.transform, lamp.projection);                 // What the shadow is drawn through
+    lamp.shadow.SetLODCamera(viewer.position, viewer.rotation, 60);         // What picks its levels
+    lamp.shadow.Mesh(rocks[rock.model], float4x4.Translate(rock.position), Depth);
+}
+```
+
+It takes what `Draw.Camera` takes for a 3D camera: a position, a rotation and a field of view, or a transform and a projection (`Draw.CameraTransform()` and `Draw.CameraProjection()` give the window's). With nothing, `SetLODCamera()`, the destination's own camera picks again. A level that's named wins over a camera that's named.
+
+::: info
+That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level or a camera to pick by, are decided. How the levels are made, the pixel a level may be off by, the two settings' names and each rule above are how it works today, and may still change. A way to say how many pixels a level may be off by, for a weak machine, isn't in the language yet.
+:::
 
 ## Paths
 

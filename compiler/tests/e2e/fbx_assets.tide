@@ -49,12 +49,12 @@ system CheckAndAnimate(mut FbxProbe p)
         Expect(p, trianglesByName.count == 2 && trianglesByName.Has("fbx/static/triangle_binary.fbx"));
         Expect(p, trianglesByName["fbx/static/triangle_ascii.fbx"].indices.count == 3);
         Expect(p, inferred.animations.move.name == "Move" && inferred.animations.move.duration == 1);
-        Expect(p, inferred.skeleton.Find("Bone0") != null);
-        Expect(p, inferred.skeleton.Find("Root") != null);
-        Expect(p, rig.animations.move.name == "Move" && rig.skeleton.Find("Bone0") != null);
+        Expect(p, inferred.skeleton.TryGetByName("Bone0", out _));
+        Expect(p, inferred.skeleton.TryGetByName("Root", out _));
+        Expect(p, rig.animations.move.name == "Move" && rig.skeleton.TryGetByName("Bone0", out _));
         Expect(p, rigs.count == 2 && rigs[1].animations.move.duration == 1);
         Expect(p, rigsByName.count == 2 && rigsByName.Has("fbx/models/rig_ascii.fbx"));
-        Expect(p, rigsByName["fbx/models/rig_binary.fbx"].skeleton.Find("Bone0") != null);
+        Expect(p, rigsByName["fbx/models/rig_binary.fbx"].skeleton.TryGetByName("Bone0", out _));
         Expect(p, rig.vertices.count == 3 && rig.indices.count == 3);
         var rest = rig.skeleton.RestPose();
         Expect(p, rest[rig.skeleton.bones.hand].position.x == -1);

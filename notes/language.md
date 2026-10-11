@@ -1,5 +1,29 @@
 # Language features, as tidec builds them
 
+## AnimationCatalog and bool/out lookup, 2026-10-11
+
+The owner approved the catalog name `AnimationCatalog` and bool/out lookup.
+It replaces the former `Animations` type without an alias. Animation and bone
+catalogs use `TryGetAt(index, out result)` and
+`TryGetByName(name, out result)`; Skeleton uses the latter for bones.
+Success assigns the selected value; failure assigns the value type's `default`.
+Exact original names, ambiguity rejection, unnamed index access, checked dot
+members, flattened source order and each clip's source skeleton are preserved.
+The historical entries below describe the preceding API.
+
+`skinned_arguments` checks outputs through the ordinary out-argument machinery,
+including named source order, exact types, writable places, delayed locals,
+discards, capability checks and definite assignment. Lookup counts as a writer
+for ordering and discarded-call analysis, while its receiver is read-only.
+Generated adapters copy a selected Animation before assigning through its
+existing owned-struct helper; failures release any previous owned result.
+Bone failure writes the default Bone. No engine API, canonical asset bytes,
+pack format or sampling arithmetic changes. Editor and asset coverage are
+recorded in their notes. Warning-free native and web debug builds pass all
+2,150 native and 2,121 web CTests, including deterministic hashes and GPU
+checks. The docs site build passes. Final diagnostic/hover wording and equivalent
+lookup dispatch cleanup also pass the focused lookup/catalog/LSP checks.
+
 ## Delayed locals and switch expressions, 2026-10-11
 
 The owner approved both features after showing a local `Animation` selected by
@@ -221,7 +245,9 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A program with no such function generates the C it did, byte for byte: old and new tidec over every game's source list, with `--layout` and without (234 games).
   - Tests: `compiler/tests/e2e/function_acts` (the order among a system's own sends, a sum's calls, a block's; a struct's and a component's methods, a task and a command's handler; `Add`, `Remove` and `Destroy`; a spawn joining its caller's scene and going with it; one thread against a pool that says it has four, tick by tick, with events sent to entities spawned there; a view's functions sending a local event and a command and spawning and destroying local entities), natively and on the web; `compiler/tests/errors/function_acts_*.tide`, a file a diagnostic. `event_send_in_function` and `function_spawn`, which pinned the refusals, are gone.
   - **Editors:** completion offers `Spawn` and `Send` in a function or a method, with the events of both worlds, and an entity's `Add`, `Remove`, `Destroy` and `Send` after its dot there (`passed` in `list_members`, and the routine's branch of `complete_expression`, `compiler/lsp/analysis.c`), not in an operator, an `Interpolate` or an `audio` declaration, and never `Snap`. They were hidden in every function, async ones too, which could always send. `lsp_functions_send_and_spawn` checks them, and the diagnostic at a view's call.
-  - Not built: `Snap`, `Scene.Load` and `Scene.Unload`, session calls and starting tasks in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards.
+  - **A dropped value warns, and `_ = value;` drops one on purpose** (built 2026-10-11, both the owner's, from `request.SetHeader(...)` written as a statement, which gave a request nobody kept). `check_stmt`'s `S_EXPR` notes a function's or method's call whose type isn't void, an error or failable (`checker.dropped`), and `warn_dropped_values`, after `warn_unused_locals`, warns for those `call_acts` says do nothing: it has to wait, as whether a function draws, calls C or acts is known once every body is checked. `_ = value;` is the parser's (`parse_simple`): a `var` named `_dropped_<line>_<column>`, marked `discard` and read, so a value dropped goes through everything a variable's does (a call's order, an `await`, text and lists) and generated C needed nothing. No game in the repository had such a call. Tests: `compiler/tests/warnings/dropped_value.tide`.
+  - **Session calls and `Clipboard.Copy` in a function or a method** (built 2026-10-11; the owner, asked whether to lift "functions can't call Session yet": "yes lets improve the session stuff on Tide"). They're this machine's acts: `check_session_call` and the clipboard's check let an inheriting function through and `note_act(c, true, ...)` with "calls Session.Open" or "calls Clipboard.Copy", as a command's send does, so `mark_act_callers` and `check_acts` need no rule for them and the errors are theirs (the match, `Sample`, a frag, a parallel loop's step, a comparison); `check_acts` words the match's as "the match runs the same on every machine" for a `what` that starts with "calls ". An operator and `Interpolate` are refused where written. Generated C needed nothing: `takes_local` is true of `acts[1]`, so the function is handed `tide_l`, which `gen_session_call` and `tide_request_copy` already name. "A statement of its own" still holds in a function. `session.room` and a whole `Session` as text stay refused in functions and methods (`singleton_param_session_room`, `_text`, `_append`): the room is beside the `Session` value, in the local state, and a helper gains no implicit lookup; making the room part of the value is the runtime's side and wasn't done. tidels offers `Session.` and `Clipboard.` there (`decides_session`). Tests: `tidec_e2e_session_main` (a function a function calls, a struct's method, the clipboard, a local handler's function), `compiler/tests/errors/session_in_function`, `clipboard_in_function`, `session_function_in_sample`, `session_in_operator`; `singleton_param_session_operation`, which pinned the refusal, is gone; `lsp_functions_send_and_spawn`.
+  - Not built: `Snap`, `Scene.Load` and `Scene.Unload` and starting tasks in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards.
   - Provisional, awaiting the owner: everything under Functions and blocks in the spec. The owner's own words cover that it's bare, inherited from the caller, and an error only at a call from a place that can't; that it's all six operations and methods too is my reading of "there are depend on who calls them", said of `Spawn` and `Destroy`.
 - `virtual` and `override` follow C# (agreed 2026-10-05; `docs/spec.md`, Mods: Decided for what's agreed, Provisional for the picks made to build them). `virtual` before a declaration with code says another package can replace it, and `override` before one replaces the virtual declaration of that name and those parameters, while compiling. They're the first step of modding, and for any package. What's built, and what code relies on:
   - **The words** are read where `local` and `async` are (`at_replace_word` in `compiler/src/parser.c`): before a declaration's word or a function's type, and `virtual` before a method in a type's body. Data, constants, `extern` and the settings are refused before the declaration is read (`replace_refusal`), which then goes as it would without the word. After `override` a declaration's name can be qualified (`new_named_decl`, `parser.overriding`): `decl.override_name` is what's written, and `name` and `at` its last part.
