@@ -40,17 +40,6 @@ enum Page
     Settings // This machine's volume, from the title or the room's page
 }
 
-// What a page's button asks of the session or the machine, which the Pages
-// view does once the page is drawn: functions can't call Session themselves.
-enum Ask
-{
-    None,
-    Open,  // Session.Open: this machine's match, to others
-    Join,  // Session.Join, of the room whose code is `Lobby.code`
-    Start, // Session.Start: a match of this machine's own
-    Copy   // The room's code, to the clipboard
-}
-
 local singleton Lobby
 {
     bool started;       // The first frame decided where this machine starts
@@ -63,7 +52,6 @@ local singleton Lobby
     float copied = 10;  // Seconds since the room's code was copied
     Page settingsFrom = Page.Title; // The page Settings returns to
     float volume = 1;   // This machine's master volume: 0 mutes, 1 is full volume
-    Ask ask;            // What this frame's page asked for
 
     // For the frame a button was pressed in: Play on the title or New game,
     // and the bots' switch. The game sends its commands when it sees them.
@@ -142,7 +130,7 @@ void Play(mut Lobby lobby)
 // Opens this machine's match to others, and shows its room.
 void Host(mut Lobby lobby)
 {
-    lobby.ask = Ask.Open;
+    Session.Open();
     lobby.page = Page.Room;
     lobby.resume = false;
     lobby.message = "";
@@ -160,8 +148,7 @@ void Join(mut Lobby lobby, string code)
 {
     lobby.message = "";
     lobby.joining = true;
-    lobby.code = code;
-    lobby.ask = Ask.Join;
+    Session.Join(code);
 }
 
 // From the Join page to the title, and out of a match that was being joined.
@@ -170,7 +157,7 @@ void LeaveJoin(Session session, mut Lobby lobby)
     if (lobby.joining && session.state == SessionState.Connecting)
     {
         lobby.joining = false;
-        lobby.ask = Ask.Start;
+        Session.Start();
     }
     lobby.page = Page.Title;
     lobby.message = "";
@@ -190,15 +177,15 @@ void LeaveSettings(mut Lobby lobby)
 }
 
 // Opens a match this machine plays alone to others, from its room's page.
-void Invite(mut Lobby lobby)
+void Invite()
 {
-    lobby.ask = Ask.Open;
+    Session.Open();
 }
 
-// Copies the room's code, and has `copied` count from there.
-void CopyCode(mut Lobby lobby)
+// Copies the room's code, `room`, and has `copied` count from there.
+void CopyCode(mut Lobby lobby, string room)
 {
-    lobby.ask = Ask.Copy;
+    Clipboard.Copy(room);
     lobby.copied = 0;
 }
 
@@ -207,7 +194,7 @@ void CopyCode(mut Lobby lobby)
 // player's machine takes it over.
 void Leave(Session session, mut Lobby lobby)
 {
-    if (!session.server || session.open) lobby.ask = Ask.Start;
+    if (!session.server || session.open) Session.Start();
     lobby.page = Page.Title;
     lobby.message = "";
 }
@@ -275,7 +262,8 @@ virtual void JoinPage(Session session, mut Lobby lobby)
 }
 
 // The room and who's in it: the host's lobby, and the menu from a match.
-// `room` is its code, or "" while it has none.
+// `room` is its code, `session.room`, or "" while it has none: a function is
+// handed it, as the room is no part of the Session value.
 virtual void RoomPage(Session session, string room, mut Lobby lobby)
 {
     var connected = session.state == SessionState.Connected;
@@ -288,14 +276,14 @@ virtual void RoomPage(Session session, string room, mut Lobby lobby)
         {
             mut var invite = false;
             GUI.Disabled(!connected) { invite = GUILayout.Button("Invite friends"); }
-            if (invite) Invite(lobby);
+            if (invite) Invite();
         }
         else
         {
             GUILayout.Label(room != "" ? $"Code {room}" : "Opening a room...");
             mut var copy = false;
             GUI.Disabled(room == "") { copy = GUILayout.Button(lobby.copied < 1.5 ? "Copied" : "Copy the code"); }
-            if (copy) CopyCode(lobby);
+            if (copy) CopyCode(lobby, room);
         }
         for (var seat = 0; seat < lobby.seats; seat++)
         {
@@ -350,23 +338,14 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
             lobby.page = Page.Room;
             lobby.resume = true;
         }
+        return;
     }
-    else
-    {
-        // A menu over a match: the arrows and a gamepad move between its buttons
-        GUI.Navigate();
-        if (lobby.page == Page.Settings) SettingsPage(lobby);
-        if (lobby.page == Page.Join) JoinPage(session, lobby);
-        if (lobby.page == Page.Title) TitlePage(session, lobby);
-        if (lobby.page == Page.Room) RoomPage(session, session.room, lobby);
-    }
-    // What the page asked for, or a view of the game's after this one did last frame
-    var ask = lobby.ask;
-    lobby.ask = Ask.None;
-    if (ask == Ask.Open) Session.Open();
-    if (ask == Ask.Join) Session.Join(lobby.code.Trim());
-    if (ask == Ask.Start) Session.Start();
-    if (ask == Ask.Copy) Clipboard.Copy(session.room);
+    // A menu over a match: the arrows and a gamepad move between its buttons
+    GUI.Navigate();
+    if (lobby.page == Page.Settings) SettingsPage(lobby);
+    if (lobby.page == Page.Join) JoinPage(session, lobby);
+    if (lobby.page == Page.Title) TitlePage(session, lobby);
+    if (lobby.page == Page.Room) RoomPage(session, session.room, lobby);
 }
 
 // Bus volumes start over each frame. A default sound uses the master bus,
