@@ -1,0 +1,3 @@
+// expect: AnimationCatalog has no method 'At'
+// expect: use TryGetAt(index, out result), which returns a bool and assigns the selected value or default
+bool Read(AnimationCatalog clips) { return clips.At(0); }

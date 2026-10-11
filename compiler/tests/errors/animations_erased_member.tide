@@ -1,3 +1,3 @@
-// expect: Animations has no checked member 'move'
-Animation Read(Animations clips) { return clips.move; }
+// expect: AnimationCatalog has no checked member 'move'
+Animation Read(AnimationCatalog clips) { return clips.move; }
 scene Main { }
