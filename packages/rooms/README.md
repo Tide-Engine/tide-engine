@@ -62,7 +62,7 @@ override void Rooms.TitlePage(Session session, mut Lobby lobby)
 }
 ```
 
-A page that needs more than those parameters is a view of the game's: override the package's page with an empty body, and draw yours from a view that returns unless `lobby.page` is that page. The calls work there too, and what they ask of the session is done a frame later.
+A page that needs more than those parameters is a view of the game's: override the package's page with an empty body, and draw yours from a view that returns unless `lobby.page` is that page. The calls work there too.
 
 ## Outgrowing it
 

@@ -4514,12 +4514,12 @@ static type check_session_call(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
-    if (in_routine(c) || c->in_input || (!in_async_function(c) && !local_code(c))) {
+    // A function or a method asks as the code that calls it would: whether that may is each call's to say (check_acts)
+    if ((in_routine(c) && !inherits(c)) || c->in_input || (!c->method && !local_code(c))) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (in_routine(c)) {
-            diag_error(e->at, "%s can't call Session." STR_FMT " yet; views and local handlers do", routines(c),
-                       STR_ARG(e->name));
-            diag_note("call it in the view, and pass what the function decides back, like a 'mut bool' or its result");
+            diag_error(e->at, "%s can't call Session." STR_FMT "; views, local handlers and the functions they call do",
+                       routines(c), STR_ARG(e->name));
         } else if (c->in_input) {
             diag_error(e->at, "%s makes this machine's input, so it can't call Session." STR_FMT, input_code(c),
                        STR_ARG(e->name));
@@ -4532,6 +4532,11 @@ static type check_session_call(checker *c, expr *e)
     }
     if (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0) {
         diag_error(e->at, "Session." STR_FMT " is a statement of its own", STR_ARG(e->name));
+    }
+    if (inherits(c)) {
+        sb what = {0};
+        sb_printf(&what, "calls Session." STR_FMT, STR_ARG(e->name));
+        note_act(c, true, e->at, what.data, false, false);
     }
     e->call = CALL_SESSION;
     const int least = join || connect || kick ? 1 : 0;
@@ -4900,11 +4905,10 @@ static type check_clipboard_call(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
-    if (in_routine(c) || c->in_input || (!in_async_function(c) && !local_code(c))) {
+    if ((in_routine(c) && !inherits(c)) || c->in_input || (!c->method && !local_code(c))) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (in_routine(c)) {
-            diag_error(e->at, "%s can't call Clipboard.Copy yet; views and local handlers do", routines(c));
-            diag_note("call it in the view, and pass what the function decides back, like a 'mut bool' or its result");
+            diag_error(e->at, "%s can't call Clipboard.Copy; views, local handlers and the functions they call do", routines(c));
         } else if (c->in_input) {
             diag_error(e->at, "%s makes this machine's input, so it can't call Clipboard.Copy", input_code(c));
         } else {
@@ -4916,6 +4920,7 @@ static type check_clipboard_call(checker *c, expr *e)
     if (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0) {
         diag_error(e->at, "Clipboard.Copy is a statement of its own");
     }
+    if (inherits(c)) note_act(c, true, e->at, "calls Clipboard.Copy", false, false);
     e->call = CALL_CLIPBOARD;
     if (e->args.count != 1 || !order_named_args(e, "text", 0)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -17102,10 +17107,14 @@ static void check_acts(checker *c)
         }
         if (to->acts[1] && !local) {
             const bool command = strncmp(to->acts_what[1], "sends the command", 17) == 0;
+            const bool asks = strncmp(to->acts_what[1], "calls ", 6) == 0; // Session's calls, and the clipboard's
             diag_error(at, "'" STR_FMT "' %s, and %s", STR_ARG(to->name), to->acts_what[1],
-                       command ? "commands are sent from views and local handlers to the match" : "the match can't use local state");
+                       command ? "commands are sent from views and local handlers to the match"
+                       : asks  ? "the match runs the same on every machine"
+                               : "the match can't use local state");
             diag_note_at(to->acts_at[1], "it does on line %d", to->acts_at[1].line);
             if (command) diag_note("match systems and handlers send events; a command carries a player's untrusted request");
+            else if (asks) diag_note("call it from a view or a local handler, like a menu's button");
             else diag_note("local state belongs to one machine, and the match runs the same on every one");
             continue;
         }
