@@ -175,19 +175,8 @@ uint64_t tide_heap_hash(uint64_t h, const tide_heap *heap)
     // metadata must not pass merely because the descriptor's page is unchanged.
     // This commutative sum is independent of outside-state hash-table ordering.
     if (heap->assets && heap->assets->count) {
-        uint64_t leases = 0;
-        uint32_t count = 0;
-        for (uint32_t i = 0; i < heap->assets->slots; i++) {
-            const tide_asset_entry entry = heap->assets->entries[i];
-            if (!entry.data) continue;
-            const uint64_t id = tide_hash(entry.data->id, sizeof entry.data->id);
-            for (uint32_t j = 0; j < entry.users; j++) {
-                leases += tide_hash_more(id, &entry.blocks[j], sizeof entry.blocks[j]);
-                count++;
-            }
-        }
-        h = tide_hash_more(h, &leases, sizeof leases);
-        h = tide_hash_more(h, &count, sizeof count);
+        h = tide_hash_more(h, &heap->assets->leases, sizeof heap->assets->leases);
+        h = tide_hash_more(h, &heap->assets->descriptors, sizeof heap->assets->descriptors);
     }
     return h;
 }

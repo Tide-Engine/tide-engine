@@ -13,7 +13,7 @@ TIDE_TEST(asset_sharing_generated_mutation_ownership_and_self_contained_state)
     tide_world world = {0}, snapshot = {0}, back = {0};
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
-    TIDE_CHECK(world.Probe.checks == 15 && world.Probe.passed == 15);
+    TIDE_CHECK(world.Probe.checks == 17 && world.Probe.passed == 17);
     tide_world_copy(&snapshot, &world);
     uint32_t size;
     uint8_t *bytes = tide_game_api.pack_delta(&world, NULL, NULL, 0, true, &size);
@@ -28,7 +28,7 @@ TIDE_TEST(asset_sharing_generated_mutation_ownership_and_self_contained_state)
     TIDE_REQUIRE(tide_world_unpack(&back, bytes, full_size));
     TIDE_CHECK(tide_world_hash(&snapshot) == tide_world_hash(&back));
     tide_world_tick(&back);
-    TIDE_CHECK(back.Probe.checks == 15 && back.Probe.passed == 15);
+    TIDE_CHECK(back.Probe.checks == 17 && back.Probe.passed == 17);
     free(bytes);
     tide_world_free(&back); tide_world_free(&snapshot); tide_world_free(&world);
 }
@@ -77,7 +77,7 @@ TIDE_TEST(asset_sharing_new_connection_uses_generated_codec_under_loss)
     TIDE_CHECK(reference_transfers > 0 && full_transfers > 0 && !reject_once);
     const tide_world *verified = tide_client_verified_world(client);
     TIDE_REQUIRE(verified);
-    TIDE_CHECK(verified->Probe.checks == 15 && verified->Probe.passed == 15);
+    TIDE_CHECK(verified->Probe.checks == 17 && verified->Probe.passed == 17);
     tide_client_destroy(client); tide_server_destroy(server); tide_loopback_destroy(net);
     tide_pack_unload();
 }

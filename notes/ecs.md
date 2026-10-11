@@ -77,6 +77,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Completed-tick collider metadata (2026-10-11)
 
+Retained asset integration: the descriptor ID/location sum and count used by hashing are cached in the refcounted pool and updated on lease creation/removal, avoiding a registry walk each tick. Decode reconstructs those caches from received locations before its world-hash check. Empty asset dictionaries keep the original ordinary-heap unpack path, without new validation allocations. Native/WASI pinned hashes are unchanged; 112 native/104 web overlapping checks pass after merging optional fields and function task support. The `asset_sharing` fixture adds optional asset-list field ownership/clear/retention.
+
 Physics history stores plain collider records and frame lists in the match heap. Capture reads row identity and pre-flush Snap metadata; an owner-approved completion callback runs after all queued Snap/despawn/event changes and refreshes/removes records for the final endpoint. Frames are copied out before inner-list edits, and outer-list cells are reacquired after heap writes, retaining COW/cache safety. Context preparation/querying changes no match state. Rewind tests pin snapshot/pack/unpack/rollback and unchanged world hashes during queries.
 
 ## T? fields in the world (2026-10-11)

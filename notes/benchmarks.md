@@ -8,9 +8,11 @@ The unchanged `D:/Projects/Test` 100-character project runs 1,200 deterministic 
 
 The machine remains busy with other work; the owner deferred timing tests. No production speedup or ordinary-container overhead claim follows from this run. The earlier read-only prototype gain is encouraging, but production timing of cold detachment, owned reset/edit, read-only reassignment, hashing, views and encode/decode remains pending. Comparing both candidate encodings costs CPU only on eligible asset-origin transfer pages; end-to-end measurements must include it. Sources, structural rows and reproduction are in [asset-production](../bench/results/asset-production/README.md). Full native/web and docs validation results are recorded there once complete. No CI, sanitizers or other desktop/mobile platforms were run for this integration.
 
-## Asset-relative value encoding, 2026-10-11
-
 Production integration validation above passes all 2,189 native and 2,158 web debug CTests, including browser/GPU coverage, plus the docs build. Initial full-suite failures exposed a local-borrow lifetime issue (retired-pool lookup) and the invalid grid-header scan; both are corrected and covered. Descriptor and portable-wire hash pins were updated only after native/WASI agreement. Later dev integration validation is recorded separately.
+
+Integration with newer dev (`e377d0a9`, optional fields/function task starts/request timeouts) builds every native/web target warning-free and passes 112 native plus 104 web overlapping CTests, including the new features, asset/container ownership, sessions, migration/reload and ordinary sand/gallery controls. The docs build passes again. The asset fixture now stores, reads, clears and retains an asset-backed optional list through snapshots/transfers. Descriptor authentication uses a cached sum/count updated only on lease changes, preserving all pinned hashes; heaps with no asset dictionary avoid the new registry validation allocation/walk. The private project check rerun keeps every structural number and simulation/palette/packet hash unchanged, including both foreign packet decodes after unload. Its source/binary/input identities are refreshed in the artifact directory. A later clean merge of unrelated camera/prototype/docs work does not require repeating these checks.
+
+## Asset-relative value encoding, 2026-10-11
 
 The owner asked to try asset IDs plus changes for saves/transfers, especially
 new connections. A standalone C byte-value codec registers the exact immutable

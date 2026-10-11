@@ -66,6 +66,13 @@ integration with newer dev compiler changes; integration checks are recorded in
 the notes. CI, sanitizers, other desktop/mobile targets and controlled timing
 were not run.
 
+After merging newer dev compiler work, every native/web target builds and all
+112 native plus 104 web overlapping CTests pass. Optional asset-backed list
+fields are included in the generated ownership/serialization/join regression.
+The docs build passes again. The private project cross-check was rerun with
+cached descriptor authentication; all numbers and hashes above are unchanged,
+and the saved identities describe this integration run.
+
 Remaining measurement work: alternating release comparisons of the actual
 project and ordinary list controls, including cold detach, owned reset/edit,
 written-then-read reassignment, snapshot/hash, view/prepare and transfer

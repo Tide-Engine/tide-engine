@@ -1,20 +1,17 @@
 {
-  "kind": "untimed structural and cross-decode checks",
   "measured": "2026-10-11",
-  "base_commit": "16ef5aca54cbfcbf3215732d24750aa4f4ea6fb1",
-  "node": "v24.16.0",
   "files": [
     {
       "path": "compiler/src/codegen.c",
-      "sha256": "216ed0f5a8b48e9a367fdde43ba729712efa2d190277b89567d96c71c0f4acaa"
+      "sha256": "35e1d60e741bf949b7d2e5ac6704fb81c7f9f36d4793c5113ecc46062175b85c"
     },
     {
       "path": "engine/src/asset_store.c",
-      "sha256": "58b462dcbe2d3b8841bd1310eac42759e49b1430860e2e2e95255e461b3d6ab3"
+      "sha256": "4fbd9c0fb6b24240470ddb78f7ad1ec1a859406ca5f06173f333a35d356469f5"
     },
     {
       "path": "engine/src/asset_store.h",
-      "sha256": "3d50aa2741a9deedcb9a4c4bc774bebd281ca9303d4c2513c46b64ba4bcb65cb"
+      "sha256": "70bf6663f31217e942c052bb8360a269197f759398fb02128c4aaf653ca76f6a"
     },
     {
       "path": "engine/src/list.c",
@@ -22,7 +19,7 @@
     },
     {
       "path": "engine/src/heap.c",
-      "sha256": "cd9496ff5ae46f14bfab436d468852f8eb52ed0c0ca6079f55b61a6b0800f8c6"
+      "sha256": "9982a840ce20fd1b035849ea9b5835a1b5ef8da7a916b2dcf706f02a8b732aef"
     },
     {
       "path": "engine/src/delta.c",
@@ -42,11 +39,11 @@
     },
     {
       "path": "build/debug/bin/tide_asset_production_probe.exe",
-      "sha256": "ba6d8897450d5195229db1eec8c5c23ddc16eed467a7375e7423c2095bb0f79a"
+      "sha256": "103061e5d8694db92512b295ade2cb18601500752866cdc6261f091b87c5afb9"
     },
     {
       "path": "build/web-debug/bin/tide_asset_production_probe.wasm",
-      "sha256": "c482e8b4a1510a118823b5c6be1db0e72feb93777a0d32cdd3006129f94f4c10"
+      "sha256": "3cf39ebcdcb78f8f4d5fb2e33d20738cd14952ec116a00e7162554937d5aa679"
     },
     {
       "path": "build/debug/tide/tide_asset_production_probe/game.c",
@@ -73,5 +70,8 @@
       "sha256": "ae0baf4813cc34a5d76ade9db9b1d0cd10db0a343ba5b1690897ab20e71d44fa"
     }
   ],
+  "base_commit": "279d18d063d4916717eee2fa61fff911fcb1e6fc",
+  "node": "v24.16.0",
+  "kind": "untimed structural and cross-decode checks",
   "native_compiler": null
 }

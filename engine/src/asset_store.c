@@ -80,6 +80,14 @@ static void remove_block(tide_asset_entry *entry, const uint32_t block)
     }
 }
 
+static void lease(tide_asset_pool *pool, const tide_asset_data *data, const uint32_t block, const bool add)
+{
+    const uint64_t id = tide_hash(data->id, sizeof data->id);
+    const uint64_t hash = tide_hash_more(id, &block, sizeof block);
+    if (add) { pool->leases += hash; pool->descriptors++; }
+    else { pool->leases -= hash; pool->descriptors--; }
+}
+
 static tide_asset_pool *changed(const tide_asset_pool *was, tide_asset_data *data, const uint32_t block, const int change)
 {
     uint32_t count = was ? was->count : 0u;
@@ -93,6 +101,9 @@ static tide_asset_pool *changed(const tide_asset_pool *was, tide_asset_data *dat
     pool->refs = 1;
     pool->count = count;
     pool->slots = slots;
+    pool->leases = was ? was->leases : 0;
+    pool->descriptors = was ? was->descriptors : 0;
+    lease(pool, data, block, change > 0);
     for (uint32_t i = 0; was && i < was->slots; i++) {
         tide_asset_entry item = was->entries[i];
         if (!item.data || memcmp(item.data->id, data->id, 32) == 0) continue;
@@ -146,6 +157,7 @@ void tide_asset_use(tide_heap *heap, tide_asset_data *data, const uint32_t block
     tide_asset_entry *entry = pool ? entry_of(pool, data->id) : NULL;
     if (pool && __atomic_load_n(&pool->refs, __ATOMIC_RELAXED) == 1u && entry->data) {
         append(entry, block);
+        lease(pool, data, block, true);
         return;
     }
     replace(heap, changed(pool, data, block, 1));
@@ -158,6 +170,7 @@ void tide_asset_drop(tide_heap *heap, const uint8_t id[32], const uint32_t block
     if (!entry || !entry->data) return;
     if (__atomic_load_n(&pool->refs, __ATOMIC_RELAXED) == 1u && entry->users > 1u) {
         remove_block(entry, block);
+        lease(pool, entry->data, block, false);
         return;
     }
     replace(heap, changed(pool, entry->data, block, -1));
@@ -425,6 +438,7 @@ bool tide_asset_origin_bytes(const tide_asset_origin *origin, void *bytes, const
 bool tide_asset_validate_heap(const tide_heap *heap)
 {
     const tide_asset_pool *pool = heap->assets;
+    if (!pool || !pool->count) return true; // Ordinary heaps retain their existing unpack path.
     if (pool && pool->count > heap->used / 64u) return false;
     const uint32_t cells = (heap->used + 15u) / 16u;
     uint8_t *released = tide_alloc_zeroed((cells + 7u) / 8u + 1u, 1u);
