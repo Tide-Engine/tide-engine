@@ -76,7 +76,16 @@
     "failures": 0,
     "tail_addition": "Both complete tide_tests suites rerun after the test-only all-tail addition; native 3.00s, WASI 3.11s",
     "pose_bits": "e5d23f82e5d18f26",
-    "unavailable": "Linux/macOS/MinGW/Android/sanitizers and CI not run"
+    "unavailable": "Linux/macOS/MinGW/Android/sanitizers and CI not run",
+    "integration": {
+      "origin_dev": "53f92bf1",
+      "native_complete_build": "pass",
+      "web_complete_build": "pass",
+      "native_focused_tests": 36,
+      "web_focused_tests": 38,
+      "runtime_sha256": "b96131d31d615263f22114e69d698e9d54e323f3745aa4726e616c4a10f670c6",
+      "timing": "Measured artifacts remain frozen"
+    }
   },
   "installed_patch": {
     "initial_sha256": "fcf4e1764ec14d7206f887c857a7c25cb33da080d0b0d69080ef93bc54999fbc",
