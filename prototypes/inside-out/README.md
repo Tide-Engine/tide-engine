@@ -16,7 +16,8 @@ chat alongside the game to discuss plans.
 
 Each screen follows its own maker in one continuous scene. Step inside a
 room and the camera zooms into its actual doorway. Your whole current room
-stays in view, with one tile of containing-world context around its edges.
+stays in view, with a wider fixed rim of containing-world context around it.
+You can see part of a maker standing beside your box.
 The camera keeps that framing when your partner moves or leaves the screen.
 Your maker walks and shrinks through the doorway; leaving grows them back
 into the surrounding world. Your partner can watch that passage from outside.
@@ -68,8 +69,8 @@ They are optional. Music, sound and reduced motion are local settings.
 - A latched room moves only while a maker or parcel holds its brass switch.
   There is no timing requirement. Moving it may need one of you to stay
   inside while the other finds the correct pushing side.
-- Fill every brass parcel target, park each shell on its matching numbered
-  dock in the correct dimension, and put both makers on distinct leaf exits.
+- Fill every box-marked parcel target, park each shell on its matching numbered
+  dock in the correct dimension, and put both makers on distinct player goals.
   Parcels must finish on targets. A filled target can be emptied while
   arranging the solution.
 

@@ -348,18 +348,18 @@ string LevelLesson(int level)
 {
     switch (level)
     {
-        case 0: return "Fill the brass circle, dock the numbered room, and bring both makers to leaf exits.";
-        case 1: return "Deliver both parcels, dock the latched room, and find the two leaf exits.";
+        case 0: return "Fill the box target, dock the numbered room, and bring both makers to player goals.";
+        case 1: return "Deliver both parcels, dock the latched room, and find the two player goals.";
         case 2: return "Deliver the parcel upstairs. Both rooms must finish on their own outlines.";
-        case 3: return "The parcel belongs in the other room. Match both numbered outlines and reach the leaf exits.";
-        case 4: return "Complete the delivery, dock the latched room, and find a leaf exit for each maker.";
-        case 5: return "The parcel belongs in the containing room. Match both room outlines and reach both leaf exits.";
+        case 3: return "The parcel belongs in the other room. Match both numbered outlines and reach the player goals.";
+        case 4: return "Complete the delivery, dock the latched room, and find a player goal for each maker.";
+        case 5: return "The parcel belongs in the containing room. Match both room outlines and reach both player goals.";
         case 6: return "Room 2 belongs inside Room 1. Deliver its parcel and match both numbered outlines.";
-        case 7: return "Complete a delivery in each room, dock the moving room, and reach the two leaf exits.";
+        case 7: return "Complete a delivery in each room, dock the moving room, and reach the two player goals.";
         case 8: return "Deliver the parcel to the workshop floor. Both rooms must reach their numbered outlines.";
-        case 9: return "Deliver both parcels and return each room to its numbered outline. Reach the two leaf exits.";
-        case 10: return "Complete both deliveries in Room 1 and bring both makers to the workshop's leaf exits.";
-        case 11: return "Deliver all three parcels, match every room outline, and reach both leaf exits in Room 1.";
+        case 9: return "Deliver both parcels and return each room to its numbered outline. Reach the two player goals.";
+        case 10: return "Complete both deliveries in Room 1 and bring both makers to the workshop's player goals.";
+        case 11: return "Deliver all three parcels, match every room outline, and reach both player goals in Room 1.";
     }
     return "Take your time. Every move can be undone.";
 }
@@ -372,12 +372,12 @@ string LevelHint(int level, int tier)
     {
         case 0:
             if (detail == 0) return "What needs to be parked before you both leave?";
-            if (detail == 1) return "The room outline is one square east. The parcel circle is north of the parcel.";
-            return "Amber: move east once to dock the room. Teal: move north three times, then west to a leaf. Amber: west, south, south to the other leaf. A blocked room push enters its doorway instead.";
+            if (detail == 1) return "The room outline is one square east. The parcel target is north of the parcel.";
+            return "Amber: move east once to dock the room. Teal: move north three times, then west to a player goal. Amber: west, south, south to the other player goal. A blocked room push enters its doorway instead.";
         case 1:
             if (detail == 0) return "Which delivery is taking up the room's route? Who can release its latch?";
             if (detail == 1) return "Clear the outside parcel northward. A maker on the room's west switch can hold the latch while the room moves east.";
-            return "Clear the outside parcel onto its circle. Inside, reach the west switch without moving the other parcel. Hold it while the partner docks the room two squares east. Then push the inside parcel north and take both leaf exits.";
+            return "Clear the outside parcel onto its target. Inside, reach the west switch without moving the other parcel. Hold it while the partner docks the room two squares east. Then push the inside parcel north and take both player goals.";
         case 2:
             if (detail == 0) return "After making space for the parcel, where will you need to stand to put the small room back?";
             if (detail == 1) return "Hold the small room's switch and move it west. Push the parcel north, then use the containing room's lower-left passage to get behind the small room.";
@@ -391,33 +391,33 @@ string LevelHint(int level, int tier)
             if (detail == 1) return "Approach the striped self-door from its north side. It leads to this same room's north entrance, with the same parcel still present.";
             return "Enter the self-door southward from the square above it. Push the parcel south twice. Leave that entry northward to return beside the striped door, then leave the physical room southward. The partner holds the other room's centre switch while it is pushed west.";
         case 5:
-            if (detail == 0) return "A filled circle looks finished. Does it also occupy a square you will need later?";
+            if (detail == 0) return "A filled target looks finished. Does it also occupy a square you will need later?";
             if (detail == 1) return "The exported parcel blocks the west pushing stance for its own room. Store it one square north while the room moves east.";
-            return "Enter the child before its switch is held, then keep a maker on that switch. Export its parcel west into the containing room. Leave the child southward, push the parcel north off its circle, then dock the child east. Use the upper row to push the stored parcel south onto its circle again.";
+            return "Enter the child before its switch is held, then keep a maker on that switch. Export its parcel west into the containing room. Leave the child southward, push the parcel north off its target, then dock the child east. Use the upper row to push the stored parcel south onto its target again.";
         case 6:
             if (detail == 0) return "Once a room is packed inside another, where does its parcel doorway lead?";
             if (detail == 1) return "Hold Room 2's switch while it enters Room 1's west doorway. Then its holder can leave east and hold the containing room's south switch.";
-            return "Pack Room 2 through Room 1's west door. Change the holding job to Room 1's south switch and dock Room 1 east. Return inside the child and post its parcel east into the parent. Stop at the centre, get below it, and push north onto its circle.";
+            return "Pack Room 2 through Room 1's west door. Change the holding job to Room 1's south switch and dock Room 1 east. Return inside the child and post its parcel east into the parent. Stop at the centre, get below it, and push north onto its target.";
         case 7:
             if (detail == 0) return "Neither parcel has an ordinary north approach. Which doorway changes the side you arrive from?";
             if (detail == 1) return "Hold the east switch while the left room is docked east. Approach each striped doorway from above to arrive north of the other room's parcel.";
-            return "Dock the left room while its switch is held. Enter its striped door southward and push the other parcel south twice. Enter that room's striped door the same way and push the first parcel south twice. Leave the most recent entry northward, then take one leaf exit in each room.";
+            return "Dock the left room while its switch is held. Enter its striped door southward and push the other parcel south twice. Enter that room's striped door the same way and push the first parcel south twice. Leave the most recent entry northward, then take one player goal in each room.";
         case 8:
             if (detail == 0) return "Will Room 2's west doorway still lead to the workshop after it is packed away?";
-            if (detail == 1) return "Make the outside delivery before nesting. Its circle is also the standing tile for pushing Room 2, so the parcel cannot stay there yet.";
-            return "Enter the child before holding its switch, then export its parcel west onto the outside circle. Push that parcel north temporarily and pack the child east into Room 1. Restore the parcel from above. The holder leaves east and holds the parent switch while the partner docks the parent north.";
+            if (detail == 1) return "Make the outside delivery before nesting. Its target is also the standing tile for pushing Room 2, so the parcel cannot stay there yet.";
+            return "Enter the child before holding its switch, then export its parcel west onto the outside target. Push that parcel north temporarily and pack the child east into Room 1. Restore the parcel from above. The holder leaves east and holds the parent switch while the partner docks the parent north.";
         case 9:
-            if (detail == 0) return "The upper-left circle has no ordinary pushing stance. Whose doorway could supply the missing approach?";
-            if (detail == 1) return "Nest Room 2 in Room 1's west door and post its parcel north. The other filled circle blocks the stance needed to bring Room 2 back out.";
-            return "Hold Room 2's switch while it is packed east. Push its parcel north through the child door onto the corner circle, then return to the switch. The partner stores Room 1's parcel south, pushes the child west out to its original outline, and restores the stored parcel from below.";
+            if (detail == 0) return "The upper-left target has no ordinary pushing stance. Whose doorway could supply the missing approach?";
+            if (detail == 1) return "Nest Room 2 in Room 1's west door and post its parcel north. The other filled target blocks the stance needed to bring Room 2 back out.";
+            return "Hold Room 2's switch while it is packed east. Push its parcel north through the child door onto the corner target, then return to the switch. The partner stores Room 1's parcel south, pushes the child west out to its original outline, and restores the stored parcel from below.";
         case 10:
             if (detail == 0) return "Which return route will the eastward delivery close? Is the doorway you entered the only way back?";
             if (detail == 1) return "Room 1's striped door leads to Room 2. Enter Room 2's centre door from above to arrive north of Room 1's parcel. Plan to return southward.";
-            return "One maker follows both striped doors to Room 1's north entrance. The partner delivers the west parcel east and leaves south. Push the north parcel south twice, then use south edge exits for both recorded entries. Room 1's bottom walkway leads back to the workshop leaves.";
+            return "One maker follows both striped doors to Room 1's north entrance. The partner delivers the west parcel east and leaves south. Push the north parcel south twice, then use south edge exits for both recorded entries. Room 1's bottom walkway leads back to the workshop player goals.";
         case 11:
             if (detail == 0) return "Which finished square will you need to stand on? What is blocking the other room's return doorway?";
             if (detail == 1) return "Nest Room 2, post the lower-left parcel into it, and move the child north. Room 3's parcel must move sideways before its striped door can provide Room 1's north approach.";
-            return "Keep Room 2's switch held. Pack it east, post the lower-left parcel north into it, and dock it north. The holder can post that parcel back south later. Enter Room 3 through Room 1's striped door, push Room 3's parcel east from its west side, then enter its centre door southward. Push Room 1's north parcel south twice and take both leaves.";
+            return "Keep Room 2's switch held. Pack it east, post the lower-left parcel north into it, and dock it north. The holder can post that parcel back south later. Enter Room 3 through Room 1's striped door, push Room 3's parcel east from its west side, then enter its centre door southward. Push Room 1's north parcel south twice and reach both player goals.";
     }
     return "Undo is shared: take back the last move, whoever made it.";
 }
