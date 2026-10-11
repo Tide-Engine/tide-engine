@@ -38,8 +38,9 @@ bool tide_skinned_sample(tide_list data, int32_t animation, float seconds,
                          tide_list *transforms, uint32_t where);
 
 // Bind a clip or an existing pose to another export of the same rig. Required
-// nodes match unique exact names, parents and rest TRS, independently of source
-// node order. Unrelated nodes are ignored; target nodes start at target rest.
+// nodes match unique exact names and parents, independently of source node
+// order or authored default poses. Required source local transforms are copied
+// directly; unrelated target nodes start at target rest. No retargeting is done.
 // Sampling requires the selected clip's targets and ancestors. A pose requires
 // all its model's clip targets, changed transforms and ancestors. These are
 // bindings, not retargeting: missing, ambiguous or different required nodes

@@ -1,5 +1,13 @@
 # Assets and local files
 
+## Separate animation exports with different defaults (2026-10-11)
+
+The owner approved binding unique exact bone names and their complete parent chains while copying source local transforms directly, even when authored defaults differ. `D:/Projects/Test` reproduces the previous rejection: the character FBX has a skin and bind pose, while its idle/run/jump exports have neither and store take-specific defaults. Their named hierarchies match. The importer already retained usable animation data; requiring equal defaults at runtime was the blocker.
+
+`bind_nodes` now ignores default TRS differences. In-place sampling copies the full source defaults for required channel targets and ancestors before applying sampled channels; unrelated target nodes retain target rest. Binding a sampled source pose follows the same rule. This is direct local-transform binding, without proportion or coordinate-space retargeting. Missing/ambiguous required names, changed parent chains and unsafe unnamed wrappers still reject before changing output. Exact skeleton fingerprints, Bone identity and blending remain strict. No importer, canonical bytes, generated-C API or pack layout changes.
+
+The new runtime regression covers differing translation/rotation/scale, an unanimated required ancestor, sample-versus-pose binding parity, aliases and persistent snapshot ownership. Existing rejection/wrapper tests remain. All 48 native skinned checks, 2,079 native and 2,050 web debug CTests pass, including unchanged cross-platform pose bits and OpenGL/WebGL/WebGPU checks; the docs production build passes. A scratch copy of the owner's assets binds all six imported clips by both routes, and hidden native captures show run/jump poses on a 100-character grid. The owner's project sources were not changed. Linux/macOS/MinGW/Android/sanitizers and CI were not run. Owned-animation validation performance and remaining state-copy costs are recorded in `notes/benchmarks.md`.
+
 ## Levels of detail: design agreed, nothing built (2026-10-11)
 
 - `docs/spec.md`, Levels of detail, records it. The owner decided four points: opt-in with `[LOD]` on a mesh asset's declaration (opt-out was the first proposal; "that way no surprises for the user"), everything else automatic and baked at build time with a cache, a pick for each instance of `Draw.Instanced`, and skinned meshes included. The remaining rules there are picks awaiting the owner.
