@@ -23,6 +23,8 @@ prototype implements that follow-up.
 They then rejected camera framing that keeps both makers visible: each view
 should show its whole current room with one tile of outside context, and the
 partner may leave the screen. Discord or couch communication is sufficient.
+They then asked for a wider fixed margin that reveals part of a maker standing
+beside the containing box, and literal box/player symbols on goals and switches.
 Its particular layouts and puzzle rules are game design choices within the
 prototype request, not new engine or language requirements.
 
@@ -74,7 +76,7 @@ A latched room moves only while a maker or parcel occupies a Switch tile in
 that room. Switches have no timing requirement. Completion requires every
 shell on its numbered dock in the specified parent dimension, every parcel
 target occupied, every active parcel on a target, and both makers on distinct
-leaf exits. Filled targets can be emptied while arranging a solution.
+player-marked exits. Filled targets can be emptied while arranging a solution.
 
 There are exactly two real participants, no bot or solo substitute. Either
 absent participant disables gameplay commands. Existing Rooms, Session,
@@ -107,10 +109,11 @@ appearing abruptly in a stationary partner's recursive view. A serial change
 returning to zero moves also snaps first-action Undo, since presentation does
 not distinguish it from Reset; other Undo endpoints interpolate normally.
 There is no scene fade. The camera fits the local maker's whole current
-dimension, with one interior-grid tile of containing-world context around an
+dimension, with three interior-grid tiles of containing-world context around an
 inner room. Its scene viewport is a fixed square centered in the panel body,
 whose side is the shorter body axis; the settled inner tile is that side
-divided by seven. This keeps the rim bounded on wide and phone viewports.
+divided by eleven. This reveals a clipped portion of a maker in an adjacent
+containing-world cell while keeping the rim fixed on wide and phone viewports.
 The outer seven-cell workshop keeps its existing 0.96 body-side fit.
 Partner presence, position and dimension never change camera targets or
 start camera transitions. Makers outside the fixed viewport are clipped.
@@ -128,9 +131,12 @@ or infinity markers. Drawing never duplicates simulation content. The
 simultaneous enlarged room cards and connection-path overview are removed.
 
 The visual treatment uses coloured room frames, richer wood surfaces and
-inset shadows, distinct brass targets, leaf exits, doorway marks and latch
-feedback. Camera transitions, interpolation, shadows, particles and failed
-action feedback are local state only. Reduced motion bypasses transitions,
+inset shadows, brass box-icon parcel targets, player-icon exits, doorway marks
+and latch feedback.
+Switches display both box and player icons, since either occupant can release
+the latch. Filled target and switch colours retain their existing feedback.
+Camera transitions, interpolation, shadows, particles and failed-action
+feedback are local state only. Reduced motion bypasses transitions,
 movement interpolation and decorative motion.
 
 `ui.tide` provides WASD/arrows to walk and push, Z/Backspace shared undo,
@@ -230,11 +236,11 @@ runtime, browser and graphics errors fail. Rendered label crops verify shared
 actions without wasm inspection or a game-only debug export. The camera
 regression keeps one maker stationary while the partner moves far away,
 approaches, enters and exits. Static parcel, frame and parent-rim crops must
-remain byte-identical; rendered maker-colour pixels must disappear outside
-the view and return when that partner enters. Clipped screenshot requests
-on the same browser page run sequentially, since parallel captures race
-Chrome's temporary capture viewport. The fixture
-controls match time; physical devices, NAT reachability and real-time latency
+remain byte-identical; rendered maker-colour pixels must show a clipped nearby
+partner, disappear farther away and return inside after entry. Clipped
+screenshot requests on the same browser page run sequentially, since parallel
+captures race Chrome's temporary capture viewport. The fixture controls match
+time; physical devices, NAT reachability and real-time latency
 remain separate coverage. `TIDE_INSIDE_OUT_RELAY` optionally probes production
 signalling, retaining a local relay by default.
 
@@ -472,8 +478,8 @@ unmeasured. No CI workflow was dispatched.
 
 The owner chose the whole current room with a one-tile outside rim. The
 partner-fit helper, presence mask and camera transition trigger are removed.
-Inner rooms use the fixed square scene viewport and seven-cell span described
-above; the outer workshop retains its scale. Simulation, puzzle layouts,
+Inner rooms use the fixed square scene viewport and seven-cell span used in
+this revision; the outer workshop retains its scale. Simulation, puzzle layouts,
 doorway passage and audio are unchanged. The README and authenticated catalog
 description now describe the local framing, and the thumbnail comes from
 `rim-capstone-desktop-1.png`, with Peach nested in Mint and a recursive door.
@@ -531,3 +537,57 @@ off-screen movement with exact stationary local framing, smooth maker/camera
 doorway travel, occupied-shell context, recursion, shared commands, progression
 and phone touch. No runtime/browser/graphics errors or CI dispatch occurred.
 Physical phones, cross-machine NAT and human latency remain unmeasured.
+
+## Nearby outside maker and goal icons, 2026-10-11
+
+The owner asked to see part of a maker standing beside the current room box,
+and for goal tiles to show the occupant they require. Inner framing now uses
+an eleven-cell span, leaving three interior-grid tiles of actual containing
+world around the five-cell room. The fixed viewport and camera remain
+independent of partner movement. Parcel targets show a box icon, maker goals
+show a player icon, and switches show both because either can hold a latch
+open. Existing occupied colours remain. Guide, lesson and hint text follows
+the icons. No simulation rules, puzzle layouts, witnesses or audio changed.
+
+Native debug and web debug/release builds are warning-free. All twenty-one
+fixtures pass natively and under WASI, including both twelve-puzzle campaign
+replays. The two-browser checks pass, WebGL in 86.90 s and WebGPU in 63.06 s.
+The partner regression observes a clipped nearby maker at the fixed scene
+edge, zero maker pixels farther away, and a visible maker after entry. Four
+nonblank scenery patches remain byte-identical through all ten accepted
+partner moves. Existing progressive maker passage, camera zoom, canonical
+parity, occupied-shell context, recursion, commands, progression, shelf and
+phone-touch checks remain green. A final stale capstone hint was corrected;
+native/web targets and all twenty-one fixtures passed again after that text
+change.
+
+Bounded native captures at 1280 by 800 and 390 by 844 show the nearby maker
+partly clipped at the bottom edge, readable complete rooms and literal goal
+icons. Three scenery regions are byte-identical through the settled near,
+far, return, inside and outside states; the full focused scenes at near,
+return and outside are identical. The refreshed thumbnail comes directly
+from `wide-capstone-desktop-1.png`. Captures and pixel evidence are under
+ignored `build/inside-out-captures/`.
+
+Site check reports zero errors/warnings; the production build, eighteen
+analytics/admin tests and five HTTP/SEO/access tests pass. All 64 public
+game/example pages and all four prototype thumbnails match release, staged
+and packaged bytes. Inside Out HTML SHA-256 is
+`56defc3b4b91e9aa97082f679382707ef9adb76b779178dc3b858886d8c82f50`;
+thumbnail SHA-256 is
+`a41a9c7066f5810fa8dcf89ea87c9b6974716e83d47fb771c3dbeec0ec9344cc`.
+Decoding the inline pack confirms the exact current doorway WAV and absence
+of the previous WAV bytes. No CI was dispatched.
+
+The clean merge through `origin/dev` `27ddca74` brought shared compiler,
+asset-list/session/delta runtime changes and current Underfoot updates.
+Affected native and web debug/release targets were rebuilt without warnings;
+all twenty-one native/WASI fixtures pass again. Final two-browser checks pass,
+WebGL in 93.56 s and WebGPU in 63.20 s. All 64 public playable pages were
+rebuilt/restaged and match their packaged copies; all four thumbnails match,
+including the incoming Underfoot image. Docs check remains clean, all 227
+grammar checks pass, and the final production build and five HTTP/SEO/access
+checks pass. Integrated Inside Out HTML SHA-256 is
+`c10808dbe0d78fcf976aca136860da2bc6dbe82eacb4295a58495d9f551d0d5f`;
+the current thumbnail and doorway WAV hashes above are unchanged. No CI was
+dispatched.
