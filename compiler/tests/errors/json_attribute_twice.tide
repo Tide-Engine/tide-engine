@@ -1,0 +1,6 @@
+// expect: 'Lobby' already has a field with the key "name" in JSON: 'name'
+// expect: an object has each key once: give one of the two another key
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+struct Lobby { string name; [Json("name")] string title; }

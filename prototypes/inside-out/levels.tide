@@ -1,0 +1,271 @@
+// Twelve hand-built workshop puzzles. Every checked-in witness is replayed
+// through the real two-player Move/Swap commands by test/campaign.c.
+// Rooms are one outer tile, with a five-by-five interior. Their doors meet
+// only when the corresponding room boxes are cardinal neighbours.
+
+void WorkshopFloor(mut LevelLayout layout)
+{
+    for (var y = 0; y < OUTER_SIZE; y++)
+        for (var x = 0; x < OUTER_SIZE; x++)
+            layout.tiles[y * OUTER_SIZE + x] = x == 0 || y == 0 || x == OUTER_SIZE - 1 || y == OUTER_SIZE - 1 ? Tile.Wall : Tile.Floor;
+}
+
+void WorkshopRoom(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at, int2 dock, int doors = 15)
+{
+    layout.roomCount = Math.Max(layout.roomCount, room + 1);
+    layout.rooms[room].doors = doors;
+    layout.rooms[room].dock = dock;
+    puzzle.rooms[room] = at;
+    for (var y = 0; y < INNER_SIZE; y++)
+        for (var x = 0; x < INNER_SIZE; x++)
+            layout.rooms[room].tiles[y * INNER_SIZE + x] = x >= 1 && x <= 3 && y >= 1 && y <= 3 ? Tile.Floor : Tile.Wall;
+    for (var direction = 0; direction < 4; direction++)
+    {
+        if ((doors & (1 << direction)) == 0) continue;
+        var door = DoorCell(direction);
+        layout.rooms[room].tiles[CellIndex(door, INNER_SIZE)] = Tile.Floor;
+    }
+    layout.rooms[room].tiles[CellIndex(int2(2, 2), INNER_SIZE)] = Tile.Hatch;
+}
+
+void WorkshopTile(mut LevelLayout layout, int room, int2 at, Tile tile)
+{
+    if (room < 0) layout.tiles[CellIndex(at, OUTER_SIZE)] = tile;
+    else layout.rooms[room].tiles[CellIndex(at, INNER_SIZE)] = tile;
+}
+
+void WorkshopCargo(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at)
+{
+    puzzle.crates[layout.crateCount] = Cargo { room = room, position = at, active = true };
+    layout.crateCount += 1;
+}
+
+void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
+{
+    layout = LevelLayout { };
+    puzzle = Puzzle { smallSeat = 1 };
+    for (var room = 0; room < MAX_ROOMS; room++) layout.rooms[room].dock = int2(-1);
+    WorkshopFloor(layout);
+    puzzle.insideRoom = 0;
+    puzzle.inside = int2(1, 2);
+    puzzle.outside = int2(1, 3);
+    WorkshopTile(layout, -1, int2(1, 5), Tile.Exit);
+
+    switch (Math.Clamp(level, 0, LEVEL_COUNT - 1))
+    {
+        case 0:
+            puzzle.outside = int2(1, 2);
+            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(3, 2));
+            WorkshopCargo(layout, puzzle, 0, int2(2, 2));
+            WorkshopTile(layout, 0, int2(3, 2), Tile.Target);
+            WorkshopTile(layout, 0, int2(3, 3), Tile.Exit);
+            break;
+        case 1:
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(3, 3));
+            WorkshopRoom(layout, puzzle, 1, int2(4, 3), int2(4, 3));
+            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
+            break;
+        case 2:
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(3, 3));
+            WorkshopRoom(layout, puzzle, 1, int2(4, 3), int2(4, 3));
+            WorkshopCargo(layout, puzzle, 0, int2(3, 2));
+            WorkshopTile(layout, 1, int2(2, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
+            break;
+        case 3:
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(4, 3));
+            layout.rooms[0].latched = true;
+            WorkshopCargo(layout, puzzle, 0, int2(2, 2));
+            WorkshopTile(layout, 0, int2(3, 2), Tile.Switch);
+            WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
+            break;
+        case 4:
+            puzzle.outside = int2(5, 3);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3), 2);
+            WorkshopCargo(layout, puzzle, 0, int2(3, 2));
+            WorkshopTile(layout, -1, int2(4, 4), Tile.Target);
+            WorkshopTile(layout, 0, int2(2, 3), Tile.Exit);
+            break;
+        case 5:
+            puzzle.outside = int2(2, 3);
+            puzzle.inside = int2(2, 2);
+            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(3, 3));
+            WorkshopRoom(layout, puzzle, 1, int2(4, 3), int2(4, 3));
+            WorkshopCargo(layout, puzzle, -1, int2(3, 3));
+            WorkshopTile(layout, 1, int2(2, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
+            break;
+        case 6:
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(2, 3));
+            WorkshopRoom(layout, puzzle, 1, int2(3, 2), int2(3, 3));
+            WorkshopRoom(layout, puzzle, 2, int2(4, 3), int2(4, 3));
+            WorkshopCargo(layout, puzzle, 0, int2(3, 2));
+            WorkshopTile(layout, 2, int2(2, 2), Tile.Target);
+            WorkshopTile(layout, 2, int2(1, 3), Tile.Exit);
+            break;
+        case 7:
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(2, 3));
+            WorkshopRoom(layout, puzzle, 1, int2(3, 2), int2(3, 3));
+            WorkshopRoom(layout, puzzle, 2, int2(3, 4), int2(3, 4));
+            WorkshopCargo(layout, puzzle, 0, int2(3, 2));
+            WorkshopTile(layout, 2, int2(2, 2), Tile.Target);
+            WorkshopTile(layout, 2, int2(3, 3), Tile.Exit);
+            break;
+        case 8:
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(3, 2));
+            WorkshopRoom(layout, puzzle, 1, int2(4, 2), int2(4, 3));
+            layout.rooms[0].latched = true;
+            layout.rooms[1].latched = true;
+            WorkshopCargo(layout, puzzle, 0, int2(2, 2));
+            WorkshopTile(layout, 0, int2(3, 2), Tile.Switch);
+            WorkshopTile(layout, 1, int2(2, 2), Tile.Switch);
+            WorkshopTile(layout, 1, int2(1, 1), Tile.Hatch);
+            WorkshopTile(layout, 1, int2(2, 3), Tile.Target);
+            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
+            break;
+        case 9:
+            // A passing bay lets the large partner exchange the room boxes,
+            // but the delivery must happen while their doors still meet.
+            for (var cell = 0; cell < OUTER_SIZE * OUTER_SIZE; cell++) layout.tiles[cell] = Tile.Wall;
+            for (var y = 2; y <= 4; y++)
+                for (var x = 1; x <= 5; x++) WorkshopTile(layout, -1, int2(x, y), Tile.Floor);
+            for (var x = 2; x <= 4; x++) WorkshopTile(layout, -1, int2(x, 1), Tile.Floor);
+            WorkshopTile(layout, -1, int2(1, 4), Tile.Exit);
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(4, 3));
+            WorkshopRoom(layout, puzzle, 1, int2(4, 3), int2(2, 3));
+            WorkshopCargo(layout, puzzle, 0, int2(2, 2));
+            WorkshopTile(layout, 1, int2(3, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(3, 3), Tile.Exit);
+            break;
+        case 10:
+        case 11:
+            // A room is both a cargo ferry and the small partner's way home.
+            WorkshopRoom(layout, puzzle, 0, int2(2, 3), int2(2, 3));
+            WorkshopRoom(layout, puzzle, 1, int2(3, 3), int2(3, 3));
+            WorkshopRoom(layout, puzzle, 2, int2(4, 2), int2(4, 2));
+            layout.rooms[1].latched = true;
+            WorkshopTile(layout, 1, int2(2, 2), Tile.Switch);
+            WorkshopTile(layout, 1, int2(1, 1), Tile.Hatch);
+            WorkshopCargo(layout, puzzle, 0, int2(2, 2));
+            WorkshopTile(layout, 2, int2(2, 2), Tile.Target);
+            WorkshopTile(layout, 0, int2(1, 3), Tile.Exit);
+            if (level == 11)
+            {
+                // The last workshop has space around the north doorway: the
+                // incoming crate must leave its target to clear the dispatch.
+                for (var y = 0; y < INNER_SIZE; y++)
+                    for (var x = 1; x <= 3; x++) WorkshopTile(layout, 2, int2(x, y), Tile.Floor);
+                WorkshopTile(layout, 2, int2(2, 2), Tile.Target);
+                WorkshopTile(layout, 2, int2(1, 1), Tile.Hatch);
+                WorkshopCargo(layout, puzzle, 2, int2(3, 2));
+                WorkshopTile(layout, -1, int2(5, 4), Tile.Target);
+            }
+            break;
+    }
+}
+
+string ChapterName(int level)
+{
+    if (level < 4) return "Learning the workshop";
+    if (level < 8) return "Sending things through";
+    return "Thinking at both scales";
+}
+
+string LevelName(int level)
+{
+    switch (level)
+    {
+        case 0: return "First delivery";
+        case 1: return "Good neighbours";
+        case 2: return "Through the doorway";
+        case 3: return "A helpful doorstop";
+        case 4: return "Out for delivery";
+        case 5: return "Return post";
+        case 6: return "The sorting line";
+        case 7: return "Around the corner";
+        case 8: return "Pass the key";
+        case 9: return "Passing place";
+        case 10: return "The way home";
+        case 11: return "The whole workshop";
+    }
+    return "Workshop";
+}
+
+string LevelLesson(int level)
+{
+    switch (level)
+    {
+        case 0: return "You move the room; your partner moves inside it. Fill the crate target, park the room on its outline, then both reach a leaf exit.";
+        case 1: return "Push rooms together to connect their doors. Your partner travels through while the room moves around them.";
+        case 2: return "Crates fit through connected doors too. The room box carries everything inside it.";
+        case 3: return "A latched room moves only while someone or a crate holds its brass switch. There is no time limit.";
+        case 4: return "An unmatched door sends a crate out into the big workshop. People need a connected room to cross.";
+        case 5: return "The large partner can post a crate into a room. A second room gives the small partner room to push it farther.";
+        case 6: return "Build a route from three rooms. Stop the crate where you can still stand behind it.";
+        case 7: return "A delivery can change direction inside the connecting room. Plan where your partner needs to stand.";
+        case 8: return "One crate can unlock several rooms along its journey. Finish moving a room before taking away its key.";
+        case 9: return "Deliver first, then exchange the room boxes. Use the passing bay and leave space to push from the other side.";
+        case 10: return "Delivering the parcel is half the trip. Your partner needs the same ferry to get home.";
+        case 11: return "An incoming parcel and an outgoing parcel share the workshop. A filled target can be useful temporary storage.";
+    }
+    return "Take your time. Every move can be undone.";
+}
+
+// Hint tiers start with a question about the relationship, then identify the
+// useful arrangement, then give the decisive sequence without auto-solving.
+string LevelHint(int level, int tier)
+{
+    var detail = Math.Clamp(tier, 0, 2);
+    switch (level)
+    {
+        case 0:
+            if (detail == 0) return "The two leaf exits belong to different scales. What else needs to be parked before you leave?";
+            if (detail == 1) return "Push the room right onto its outline. Inside, push the crate right onto its circle.";
+            return "Large: one step right, then walk to the workshop leaf exit. Small: push right once, walk below the crate, then right to the room leaf exit.";
+        case 1:
+            if (detail == 0) return "Where will the small partner's right-hand doorway lead when the boxes touch?";
+            if (detail == 1) return "Push the left room one tile right. Its east door then meets the other room's west door.";
+            return "Large: push right once and head to your leaf exit. Small: walk right through both doors, then down and right to the second room's leaf exit.";
+        case 2:
+            if (detail == 0) return "The crate's target belongs to the other room. Can you send it through the same route as a person?";
+            if (detail == 1) return "Join the rooms and push the crate all the way through the east door. Stop at the centre of the second room.";
+            return "Large: push the left room right once. Small: keep pushing right until the crate sits on the centre target, then step down onto the leaf exit.";
+        case 3:
+            if (detail == 0) return "Someone must hold the switch while the large partner moves the room. Does it have to be a person?";
+            if (detail == 1) return "The crate can keep the switch pressed even when the small partner walks away.";
+            return "Small: push the crate right onto the brass switch. Large: push the room right twice. Leave the crate there and both walk to your leaf exits.";
+        case 4:
+            if (detail == 0) return "The target is too large for anything currently in the big workshop. What happens to a crate at an open door?";
+            if (detail == 1) return "Push the crate out of the room's east door. The large partner can then get above it.";
+            return "Small: push right until the crate leaves the room. Large: stand above that crate and push down once onto the target. Both find your leaf exits.";
+        case 5:
+            if (detail == 0) return "Posting puts the crate at a doorway. Where must the small partner stand to push it into the room?";
+            if (detail == 1) return "Post the crate into the right room first. Then move the small partner's room below and right, against that same door.";
+            return "Large: push the parcel right; stand above the other room to push it down, then left of it to push it right. Small: cross right and push the parcel to the centre target.";
+        case 6:
+            if (detail == 0) return "The gap is a missing piece of the route. Which room belongs between the other two?";
+            if (detail == 1) return "Stand above the middle room and push it down. All three east-west doors then line up.";
+            return "Large: push the middle room down one tile. Small: push the crate right through the middle room and onto the last room's centre target.";
+        case 7:
+            if (detail == 0) return "The last room lies below the relay. Where should the crate stop so you can change its direction?";
+            if (detail == 1) return "Push the relay room down. Stop the crate at its centre, walk above it, and push south.";
+            return "Small: send the crate right to the middle room's centre, circle above it, then push down through the south door to the final target.";
+        case 8:
+            if (detail == 0) return "The crate is a key as well as a parcel. Which room needs its help first?";
+            if (detail == 1) return "Hold the first switch, move its room right and up, then send the crate onto the second room's switch.";
+            return "Move the first room onto its outline while its switch is held. Send the crate to the second switch; move that room down onto its outline; only then push the crate down onto its target.";
+        case 9:
+            if (detail == 0) return "The final boxes will be separated. When is the right moment to deliver the crate?";
+            if (detail == 1) return "Push the left room right and deliver into the right room. Park the left box above the middle while you move the right box left.";
+            return "Deliver while the boxes touch. Push the left box up into the bay; push the right box left twice. Move the parked box right along the bay, then down onto its outline.";
+        case 10:
+            if (detail == 0) return "Once the crate leaves the ferry, its switch is empty. Who can unlock the return journey?";
+            if (detail == 1) return "Send the crate onto the ferry's switch and push the ferry up. Deliver right, then bring the small partner back onto that switch.";
+            return "After delivering to the upper-right room, return through its west door and stand on the ferry's switch. Large: push the ferry down. Small: cross left into the starting room and find your leaf exit.";
+        case 11:
+            if (detail == 0) return "The incoming parcel blocks the place you need to stand for the outgoing parcel. Must a target stay filled forever?";
+            if (detail == 1) return "Deliver to the upper-right room, move that parcel one tile up, and send the other parcel out east. Put the first parcel back before returning.";
+            return "Small: temporarily push the centre parcel north, post the right-hand parcel out east, then walk above the first parcel and push it back onto its target. Large: push the exported parcel down twice. Use the ferry's switch to bring the small partner home.";
+    }
+    return "Undo is shared: take back the last move, whoever made it.";
+}

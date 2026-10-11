@@ -115,7 +115,7 @@ static void frame(FILE *raw, const int who, const uint64_t origin, tide_loopback
     // Same logical canvas as lag.mjs. Measuring text needs no context.
     tide_gui_begin(&m->gui, &m->devices, tide_f2(960, 600), tide_platform_measure_text);
     tide_local_events(m->local, heard);
-    tide_frame(view.current, view.previous, view.alpha, view.verified, m->local, &m->draw, &m->gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, m->local, &m->draw, &m->gui);
     tide_session_mark_presented(m->session);
     tide_gui_end(&m->gui, &m->draw);
     const double work_ms = (double)(tide_time_now_ns() - began) * 1e-6;

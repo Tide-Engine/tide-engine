@@ -46,7 +46,7 @@ static void frame(const int32_t mode)
     tide_draw_reset(&draw);
     tide_draw_screen_size(&draw, tide_f2(800.0f, 600.0f));
     tide_gui_begin(&gui, &devices, tide_f2(800.0f, 600.0f), NULL); // The window the view's Draw.CameraProjection() is fitted to
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_text_use(&world.heap, &local.heap);
 }
 

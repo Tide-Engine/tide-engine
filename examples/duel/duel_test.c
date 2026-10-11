@@ -144,7 +144,7 @@ static float rendered_blue_x(tide_local *local, tide_draw_list *draw, tide_gui *
     const tide_devices devices = {0};
     tide_draw_reset(draw);
     tide_gui_begin(gui, &devices, tide_f2(960, 540), NULL);
-    tide_frame(&world, NULL, 1, &world, local, draw, gui);
+    tide_frame(&world, NULL, 1, &world, NULL, 1.0f, local, draw, gui);
     tide_gui_end(gui, draw);
     for (uint32_t i = 0; i < draw->count; i++) {
         const tide_draw_command *command = &draw->commands[i];
@@ -843,7 +843,7 @@ static void frame(const tide_world *w, const float seconds)
     tide_local_frame_time(&local, seconds);
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1280, 720), NULL);
-    tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

@@ -1,0 +1,5 @@
+// expect: Json.Read takes one argument, the JSON to read: 'Json.Read<Info>(text)'
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.count = (Json.Read<Info>() ?? Info { }).players; }

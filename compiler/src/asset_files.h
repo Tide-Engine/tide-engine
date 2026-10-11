@@ -27,7 +27,7 @@ typedef enum asset_kind {
     // the declaration's vertex struct
     ASSET_MESH,
     ASSET_SKINNED,
-    ASSET_ANIMATIONS, // Animations: glTF skeleton/clip data, without typed render geometry
+    ASSET_ANIMATIONS, // AnimationCatalog: glTF skeleton/clip data, without typed render geometry
     ASSET_ANIMATION, // Animation: one selected clip from an animation source.
 } asset_kind;
 

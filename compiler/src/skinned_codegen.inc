@@ -65,15 +65,18 @@ static void gen_skin_expr(gen *g, sb *o, const expr *e)
     }
     if (op == SKIN_OP_ANIMATION_NAME || op == SKIN_OP_ANIMATION_DURATION) {
         sb_printf(o, "tide_skin_animation_%s(", op == SKIN_OP_ANIMATION_NAME ? "name" : "duration");
-    } else if (op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_FIND_BONE || op == SKIN_OP_AT_ANIMATION || op == SKIN_OP_AT_BONE) {
-        sb_printf(o, "tide_skin_result%d_%s(", e->type.decl->index,
-                  op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_FIND_BONE ? "find" : "at");
-        if (op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_AT_ANIMATION) gen_skin_catalog(g, o, e->object);
+    } else if (skinned_lookup(op)) {
+        sb_printf(o, "tide_skin_%s_try_%s(",
+                  op == SKIN_OP_TRY_GET_ANIMATION_BY_NAME || op == SKIN_OP_TRY_GET_ANIMATION_AT ? "catalog" : "bone",
+                  op == SKIN_OP_TRY_GET_ANIMATION_BY_NAME || op == SKIN_OP_TRY_GET_BONE_BY_NAME ? "find" : "at");
+        if (op == SKIN_OP_TRY_GET_ANIMATION_BY_NAME || op == SKIN_OP_TRY_GET_ANIMATION_AT) gen_skin_catalog(g, o, e->object);
         else gen_skin_data(g, o, e->object);
         sb_put(o, ", ");
-        if (op == SKIN_OP_FIND_ANIMATION || op == SKIN_OP_FIND_BONE) gen_expr(g, o, e->args.items[0]);
+        if (op == SKIN_OP_TRY_GET_ANIMATION_BY_NAME || op == SKIN_OP_TRY_GET_BONE_BY_NAME) gen_expr(g, o, e->args.items[0]);
         else gen_as(g, o, e->args.items[0], (type){TY_INT, NULL});
-        sb_put(o, ")");
+        sb_put(o, ", &(");
+        gen_expr(g, o, e->args.items[1]);
+        sb_printf(o, "), %s)", place_where(g, e->args.items[1]));
         return;
     } else if (op == SKIN_OP_REST_POSE) {
         sb_put(o, "tide_skin_rest(");

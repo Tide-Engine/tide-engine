@@ -183,7 +183,7 @@ static void run_checks(const char *when)
     local.Art.targetPass = 0;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
 
     uint32_t instances = 0;
@@ -233,7 +233,7 @@ static void run_target_checks(const char *when)
         local.Art.targetPass = pass;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         uint32_t got[8];
         tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 8, got);
@@ -284,7 +284,7 @@ static void run_screen_target_checks(const char *when)
         local.Art.targetPass = 6;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(w, h), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         tide_float2 points[COUNT];
         uint32_t got[COUNT];
@@ -376,7 +376,7 @@ static void run_wrap_checks(const char *when)
     local.Art.targetPass = 7;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -449,7 +449,7 @@ static void run_image_checks(const char *when)
     local.Art.targetPass = 10;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -513,7 +513,7 @@ static void run_shadow_checks(const char *when)
         local.Art.targetPass = 8;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         tide_float2 points[COUNT];
         uint32_t got[COUNT];
@@ -573,7 +573,7 @@ static void run_stencil_checks(const char *when)
         local.Art.targetPass = 9;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         tide_float2 points[COUNT];
         uint32_t got[COUNT];
@@ -644,7 +644,7 @@ static void run_output_checks(const char *when)
     local.Art.targetPass = 11;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -693,7 +693,7 @@ static void run_values_checks(const char *when)
     local.Art.targetPass = 12;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -760,7 +760,7 @@ static void run_height_checks(const char *when)
     local.Art.targetPass = 13;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -823,7 +823,7 @@ static void run_mipmap_checks(const float lit, const char *when)
     local.Mips.lit = lit;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[2 * COUNT];
@@ -876,7 +876,7 @@ static void run_alpha_checks(const char *when)
     local.Art.targetPass = 15;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -916,7 +916,7 @@ static void run_raw_checks(const char *when)
     local.Art.targetPass = 16;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -980,7 +980,7 @@ static void run_cube_checks(const float lit, const char *when)
     local.Cubes.lit = lit;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[2 * 64];
@@ -1093,7 +1093,7 @@ static void run_list_checks(const float turn, const char *when)
     local.Tables.turn = turn;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -1211,7 +1211,7 @@ static void run_roll_checks(const int64_t state, const char *when)
     const int32_t rolled = (int32_t)tide_random_next(&dice); // What tide_frame rolls for its draws
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     world.Time.seed = 0;
@@ -1319,7 +1319,7 @@ static void run_normal_checks(const char *when)
     local.Art.targetPass = 20;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
 
@@ -1425,7 +1425,7 @@ static void run_model_checks(const char *when)
     local.Art.targetPass = 21;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     // The quad by its name, in an instanced draw, from the list, from the map and by its lists: one mesh in the list
@@ -1517,7 +1517,7 @@ static void run_place_checks(const char *when)
     local.Art.targetPass = 22;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];

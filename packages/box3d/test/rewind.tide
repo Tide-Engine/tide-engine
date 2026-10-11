@@ -1,0 +1,104 @@
+using Box3D;
+settings { maxRewind = 0.25; }
+component Target { }
+component Wall { }
+component Sensor { }
+component Cap { }
+singleton Request { ViewTime time; Entity sensor; long ignore; bool jump; bool remove; bool optOut; bool populate; int bench; }
+singleton Observed
+{
+    local int historicalHits;
+    local int currentHits;
+    local long prepareNs;
+    local long historicalNs;
+    local long currentNs;
+    local Query saved;
+    local bool savedHit;
+    local bool roundRay;
+    local bool roundInsideRay;
+    local bool partRay;
+    local Entity partHit;
+    local bool prepared;
+    local bool ray;
+    local bool ignored;
+    local bool wall;
+    local bool boxCast;
+    local bool roundCast;
+    local bool boxOverlap;
+    local bool roundOverlap;
+    local bool capsuleCast;
+    local bool capsuleOverlap;
+    local bool inside;
+    local float fraction;
+    local float wallFraction;
+    local Entity hit;
+    local Entity wallHit;
+    local int insideCount;
+}
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { type = BodyType.Kinematic, position = float3(4, 0, 0), velocity = float3(2, 0, 0), rewind = true }, Box, Target);
+    Spawn(Body { type = BodyType.Static, position = float3(2, 0, 0) }, Box { size = float3(0.25, 2, 2) }, Wall);
+    Spawn(Body { type = BodyType.Static, position = float3(4, 0, 0), rewind = true }, Box { size = float3(2, 2, 2), sensor = true }, Sensor);
+    Spawn(Body { type = BodyType.Static, position = float3(8, 0, 0), rewind = true }, Sphere);
+}
+event(Spawned) AddPart(with Target)
+{
+    Spawn(Sphere { offset = float3(0, 2, 0), radius = 0.2 }, Part { of = this }, Cap);
+}
+[Before(PhysicsStages.Step)]
+system Change(Request request, mut Body body, with Target)
+{
+    if (request.jump) { body.position.x = 5; this.Snap(); }
+    if (request.remove) this.Destroy();
+    if (request.optOut) body.rewind = false;
+}
+[After(PhysicsStages.Step)]
+system Populate(mut Request request)
+{
+    if (!request.populate) return;
+    request.populate = false;
+    for (int i = 0; i < 1024; i++)
+        Spawn(Body { type = BodyType.Static, position = float3(30 + i % 32, 10 + i / 32, 0), rewind = i % 2 == 0 }, Box);
+}
+[NativeName("rewind_clock")]
+extern long Clock();
+view Probe(Physics physics, Request request, mut Observed observed)
+{
+    long begin = Clock();
+    observed.prepared = physics.Rewind(request.time, out var query);
+    observed.prepareNs = Clock() - begin;
+    observed.savedHit = observed.saved.Raycast(float3(3, 0, 0), float3(6, 0, 0), out _);
+    observed.saved = query;
+    observed.historicalHits = 0;
+    observed.currentHits = 0;
+    long historyStart = Clock();
+    for (int i = 0; i < request.bench; i++)
+        if (query.Raycast(float3(3, 0, 0), float3(6, 0, 0), out _)) observed.historicalHits++;
+    observed.historicalNs = Clock() - historyStart;
+    long currentStart = Clock();
+    for (int i = 0; i < request.bench; i++)
+        if (physics.Raycast(float3(3, 0, 0), float3(6, 0, 0), out _)) observed.currentHits++;
+    observed.currentNs = Clock() - currentStart;
+
+    observed.roundRay = query.Raycast(float3(6, 0, 0), float3(10, 0, 0), out _);
+    observed.roundInsideRay = query.Raycast(float3(8, 0, 0), float3(10, 0, 0), out _);
+    observed.partRay = query.Raycast(float3(3, 2, 0), float3(6, 2, 0), out var part);
+    observed.partHit = part.part;
+    observed.ray = query.Raycast(float3(3, 0, 0), float3(6, 0, 0), out var ray);
+    observed.fraction = ray.fraction;
+    observed.hit = ray.entity;
+    observed.ignored = query.Raycast(float3(3, 0, 0), float3(6, 0, 0), out _, Body { id = request.ignore });
+    observed.wall = query.Raycast(float3(0, 0, 0), float3(6, 0, 0), out var wall);
+    observed.wallFraction = wall.fraction;
+    observed.wallHit = wall.entity;
+    observed.boxCast = query.Cast(Box { size = float3(0.2) }, float3(3, 0, 0), quaternion.identity, float3(6, 0, 0), out _);
+    observed.roundCast = query.Cast(Sphere { radius = 0.1 }, float3(3, 0, 0), quaternion.identity, float3(6, 0, 0), out _);
+    observed.boxOverlap = query.Overlap(Box { size = float3(0.2) }, float3(4, 0, 0), quaternion.identity, out _);
+    observed.roundOverlap = query.Overlap(Sphere { radius = 0.1 }, float3(4, 0, 0), quaternion.identity, out _);
+    observed.capsuleCast = query.Cast(Capsule { radius = 0.1, height = 0.4 }, float3(3, 0, 0), quaternion.identity, float3(6, 0, 0), out _);
+    observed.capsuleOverlap = query.Overlap(Capsule { radius = 0.1, height = 0.4 }, float3(4, 0, 0), quaternion.identity, out _);
+    observed.inside = query.Inside(request.sensor, out var visitors);
+    observed.insideCount = visitors.count;
+}

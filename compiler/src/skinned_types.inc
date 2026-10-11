@@ -72,7 +72,7 @@ static void skinned_builtins(program *prog)
     prog->pose = skinned_struct(prog, "Pose", SKIN_POSE);
     skinned_data_field(prog, prog->pose);
     vec_push(prog->pose->fields, skinned_field("transforms", list_of(prog, decl_type(t)), true));
-    prog->animations = skinned_struct(prog, "Animations", SKIN_ANIMATIONS);
+    prog->animations = skinned_struct(prog, "AnimationCatalog", SKIN_ANIMATIONS);
     skinned_data_field(prog, prog->animations);
     prog->bones = skinned_struct(prog, "Bones", SKIN_BONES);
     skinned_data_field(prog, prog->bones);
@@ -94,7 +94,7 @@ static void skinned_builtins(program *prog)
 
 static bool skinned_type_named(program *prog, const str name, type *out)
 {
-    static const char *const names[] = {"Animation", "Bone", "Pose", "Skeleton", "BoneTransform", "Playback", "Animations"};
+    static const char *const names[] = {"Animation", "Bone", "Pose", "Skeleton", "BoneTransform", "Playback", "AnimationCatalog"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (!str_eq_c(name, names[i])) continue;
         skinned_builtins(prog);

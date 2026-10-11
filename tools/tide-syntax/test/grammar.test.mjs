@@ -274,6 +274,15 @@ const cases = {
         ['try File.WriteAllBytes(Path.Combine(root,', [['File', 'support.class'], ['WriteAllBytes', 'entity.name.function.call'], ['Path', 'support.class'], ['Combine', 'entity.name.function.call']]],
         ['try await Storage.Flush();', [['Storage', 'support.class'], ['Flush', 'entity.name.function.call']]],
         ['fail IOError.OutOfSpace;', [['IOError', 'support.class'], ['OutOfSpace', '!support.class']]],
+        ['[Json("max_players")] int maxPlayers;', [['Json', 'entity.name.function.attribute'], ['int', 'storage.type.primitive']]],
+        ['var info = Json.Read<LobbyInfo>(text) ?? LobbyInfo { };', [['Json', 'support.class'], ['Read', '!support.class']]],
+        ['var all = Json.Read<List<LobbyInfo>>(text.ToBytes()) ?? [];', [['Json', 'support.class'], ['List', 'support.class'],
+                                                                         ['ToBytes', 'entity.name.function.call']]],
+        ['if (int.TryParse(text.Split(",")[0], out var count)) return Json.Write(all);', [
+            ['int', 'storage.type.primitive'], ['TryParse', 'entity.name.function.call'], ['Split', 'entity.name.function.call'],
+            ['Write', 'entity.name.function.call']]],
+        ['return string.FromBytes(text.ToBytes()) ?? Json.Write(info);', [['string', 'storage.type.primitive'],
+                                                                          ['FromBytes', 'entity.name.function.call']]],
     ],
     "operators that aren't what they look like": [
         ['int value = Parse(text)!;', [['!', 'keyword.operator.or-default'], ['!', '!keyword.operator.logical']]],
