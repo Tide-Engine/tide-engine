@@ -105,6 +105,28 @@ A name is lower-case letters and digits, and it's never a folder: a folder of th
 
 A name no package has is an error that lists the ones there are. They're folders of the installation's `src/packages` folder, each named as its line is, where the editors' go to definition takes you.
 
+## Packages for some builds only
+
+`#if` lines say which builds a package is in, by the build's [symbols](../language/namespaces.md#symbols-of-your-own): `DEBUG`, which every build but a `--release` one has, and what the command line names with `--define`.
+
+```
+rooms
+#if STEAM
+github.com/someone/tide-steam 9c1d7be0a4f25d6c8e3b17f04a92d5c6e8f0a1b2
+#else
+../our-lobby
+#endif
+#if DEBUG
+../cheats
+#endif
+```
+
+`tide build --release --define STEAM` builds with `rooms` and the Steam package; `tide run` builds with `rooms`, the lobby in the folder and the cheats. A package a build leaves out is no part of it: none of its code, C or libraries compiles or links, and its `PACKAGE_` symbol isn't defined, so the game's own code can follow with `#if PACKAGE_STEAM`.
+
+Conditions are written as in code: symbols with `!`, `&&`, `||`, `==` and `!=`, parentheses, `true` and `false`, and versions of `tide` like `TIDE_0_4_OR_NEWER`, with `#elif` and `#else` branches, and `#if`s inside one another. Any other line that starts with `#` is still a comment. A `package` or `tide` line is the same in every build, so it goes outside them, and a condition can't read a `PACKAGE_` symbol, as those come from this file.
+
+`tide add`, `tide update`, `tide fetch` and `tide eject` see every line, whichever build it's for: `tide update` moves a package no matter which branch lists it, and `tide fetch` downloads them all. Editors read the file as `tide run` does, with `DEBUG` and nothing a command line would define.
+
 ## Making a package your own
 
 A package's code isn't the game's to edit: one from git is a commit, and one that comes with `tide` is replaced by the next upgrade. `tide eject` copies a package into the game and builds with the copy:
