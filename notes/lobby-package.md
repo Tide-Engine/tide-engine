@@ -37,7 +37,7 @@ Each is `virtual` functions whose bodies are Tide's own service. The identity, l
 - **The menu is the rooms package's shape:** `Begin` decides once where a machine starts and works out `playing`; `Pages` draws the page that's up as a `GUILayout.Modal`, or the Menu button; a page that follows another in the same frame is drawn then (Join, Browse, Searching, Title, Lobby is the order). Escape on the lobby's page only closes it where this machine is in the lobby's match: with no match there's nothing behind it to go to.
 - **In the tests' frames, a page that Escape brought up has no focus until Tab,** and one that came up by itself (a lobby that was made) or from another page's button has it on its first button: `menu_test.c`'s counts of Tab go by it. A scripted run of the standard host had the focus on the first button after Escape too, so a script's counts are one less there.
 - **Names:** every type starts with `Lobby`, `Match` or `Ticket`, and the singleton is `LobbyClient`, so a game that lists `rooms` too, whose singleton is `Rooms.Lobby`, imports both namespaces (`tide_lobby_beside_rooms`). `Title`, `Tagline`, `MenuButton`, `TitlePage` and `JoinPage` are in both packages: an override names its package (`override string Lobbies.Tagline()`).
-- **Tide's own JSON:** a struct for each body, in `service.tide`. `Json.Write` writes every field, so `LobbyUpdate` writes a part for each thing that changes (`NameSaid`, `MaxSaid` and so on) and joins them (`Merged`): a key that's left out stays as it is on the relay. `LobbyInfo` reads `public` as `listed` (`[Json("public")]`).
+- **Tide's own JSON:** a struct for each body, in `service.tide`. `LobbyUpdate` writes one `ChangeSaid`, whose `name`, `max`, `listed`, `open` and `match` are `T?` fields: `Json.Write` leaves out the ones with no value, and a key that's left out stays as it is on the relay. (Until fields could be a `T?`, 2026-10-11, it wrote a struct for each part and joined the texts.) `LobbyInfo` reads `public` as `listed` (`[Json("public")]`).
 
 ## The relay's API, as it changed for this
 
@@ -63,7 +63,7 @@ Each is `virtual` functions whose bodies are Tide's own service. The identity, l
 
 - The namespace `Lobbies`, every name in it, and three files.
 - One singleton, `LobbyClient`, for the service's state and the menu's.
-- The slots' functions and their shapes: answers as structs with a `LobbyFailure`, `LobbyClient` handed to read, `LobbyUpdate` taking a `LobbyChange` with a `sets` flag for each field.
+- The slots' functions and their shapes: answers as structs with a `LobbyFailure`, `LobbyClient` handed to read, `LobbyUpdate` taking a `LobbyChange` whose fields are `T?` (a `sets` flag beside each, before fields could be one): what has a value is what changes.
 - **Identity:** the service makes the secret; it's kept in a file, in plain text; and a second program on the machine becomes a player of its own when the service says its player is there already. The alternative was no file while a game is developed, which `#if DEBUG` would have picked, but a game whose code reads `DEBUG` can't join a release build's matches.
 - The ready flag as the member's `ready` key, `"1"` or absent.
 - A quick match's `mode` as the lobby data key `mode`, beside the request's `attributes`.
@@ -74,7 +74,7 @@ Each is `virtual` functions whose bodies are Tide's own service. The identity, l
 
 ## Not built
 
-- **The relay with lobbies isn't deployed.** Until the relay on Fly is updated (the owner's), `ServiceUrl()`'s default answers no lobby request, and the menu says "Couldn't sign in to the lobby service." A game points `ServiceUrl()` at `node relay/main.mjs` meanwhile.
+- **The relay on Fly has the lobbies** (deployed 2026-10-11 at dev `f4fd43fe`, by the agent at the owner's word, from a clean export after its 37 tests): sign-in, making, listing and the sweep of an abandoned lobby were checked against `https://relay.tide-engine.dev`. A change to `relay/lobbies.mjs` reaches games only with another `fly deploy --ha=false` from `relay/`, which restarts the machine and ends the rooms and lobbies in its memory.
 - A Steam or EOS package, and an identity the service verifies.
 - Parties that outlast a lobby: `LobbyClient` has one lobby. `seats` goes through to the relay, and a party's members would each join what's found. The relay allows a player four lobbies, for a party and the match's.
 - A queue: tickets are found at once.

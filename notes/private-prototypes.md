@@ -77,6 +77,13 @@ its `<id>_page` target and its `private_games` block, plus the id in
   keeps outside makers visible, and enters a facing doorway only after the
   automatic room push is blocked. Shift and the touch push toggle are removed.
 
+- Underfoot (`underfoot`): `prototypes/underfoot/`, a puzzle for one or two
+  that the owner asked for on 2026-10-11 as a mashup of puzzle games, with
+  free rein and a challenge. It uses the same option; `private_games` collects
+  `underfoot_page` or `underfoot`, and the page stages at
+  `/prototypes/underfoot/` beside its gameplay thumbnail. Its rules, puzzles,
+  tests and validation are in `notes/underfoot.md`.
+
 Removal (2026-10-11): the owner asked for every prototype but Two Forks to be
 deleted. The Last Light, Cabin Nine, Dead Signal, Deadbell, Afterburn
 (`rocket-league`) and Aerial are gone, with their tests, their
