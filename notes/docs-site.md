@@ -271,3 +271,12 @@ Forks. All 225 grammar checks and the full WebGL docs/gallery smoke pass;
 Svelte check has zero errors/warnings, eighteen analytics/admin checks pass,
 and the final production build and five HTTP/SEO/access checks pass.
 Inside Out's final packaged HTML hash is recorded in `notes/inside-out.md`.
+
+Final integration through `origin/dev` `7c4e0835` brought unrelated CRACKED
+and Underfoot updates, which were rebuilt/restaged before deployment. All
+64 playable pages and four prototype thumbnails match the final package;
+the production build and five HTTP/SEO/access checks pass again. Source
+`9d25977b` deployed directly to the existing Fly app as release 258 and passed
+health checks. Anonymous Inside Out HTML/thumbnail requests return 200 with
+the tested final hashes, and two-browser gameplay of those downloaded bytes
+through the production relay passes. No CI was dispatched.

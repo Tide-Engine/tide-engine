@@ -425,3 +425,28 @@ Final release, staged and packaged Inside Out HTML has SHA-256
 `c112d75234015c1ff4ea5f6fc27e00e78dc82e27d8e1b30439a94021f0d8ad33`.
 Decoding the packaged asset pack confirms the exact new doorway WAV and
 the absence of the previous doorway WAV bytes. No CI was dispatched.
+
+The final merge through `origin/dev` `7c4e0835` brought unrelated CRACKED
+and Underfoot graphics/game changes without Inside Out overlap. Their
+web-release pages were rebuilt/restaged; all 64 playable pages and all four
+prototype thumbnails match the final packaged bytes. The production docs
+build and five HTTP/SEO/access checks pass again. No Inside Out game test
+restart was needed for those unrelated incoming changes.
+
+Source `9d25977b` was pushed to `dev` and deployed directly to the existing
+`tide-website` Fly app, release 258, image
+`deployment-01M4P4XTA0MGC534C21G0PTWBC`. Deployment and machine health checks
+passed. Anonymous Inside Out HTML and thumbnail requests return 200 with
+the exact final hashes above, retaining noindex, COOP same-origin and COEP
+require-corp. The published asset pack contains the exact new doorway WAV
+and none of the previous doorway WAV bytes. The collaborative preview
+navigates to the public URL; snapshot requests fail inside the preview client.
+
+Two separate muted browsers exercised the downloaded published bytes on
+WebGPU with `wss://relay.tide-engine.dev` in 63.4 s. Progressive maker motion
+from the stationary outside view, spatial entry/exit zoom, canonical interior
+parity, occupied-shell context, self-recursion, admission, shared undo/reset,
+held-input recovery, completion/progression, shelf selection and phone touch
+all pass without runtime, browser or graphics errors. This uses a controlled
+frame clock; physical phones, cross-machine NAT and human latency remain
+unmeasured. No CI workflow was dispatched.
