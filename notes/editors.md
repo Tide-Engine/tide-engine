@@ -1,5 +1,24 @@
 # The language server and the editors
 
+## T? fields, 2026-10-11
+
+A field declared `T?` is kept as a struct of its value and whether there is
+one (`decl.optional_of`: `notes/language.md`, T? fields), which editors never
+show. The checker gives a member that reads one the `T?` as its type, so
+hover (`int? best`), inlay hints for a `var` (`: int?`), references, rename,
+the unwrap quick fix and diagnostics came with it. `analysis.c` has two places
+that go by a field's declared type instead: `member_type`, what's after a dot
+in completion, now gives the `T?` (`read_type`), so nothing is offered after
+a `T?` until it's unwrapped (it offered `value` and `ok`); and go to type
+definition looks through the kept struct to what it holds. Field completion
+shows `int?` as the detail, from the kept struct's name. The shared grammar
+already scoped `?` after a type; `tools/tide-syntax/test` has a struct of
+`T?` fields now (five lines, 225 checks). `lsp_optional_fields`
+(`compiler/lsp/tests/lsp_test.c`) covers hovers where a field is declared,
+read, written and in a struct's value, hints, references and rename,
+completion after a dot and in a value, nothing after a wrapped one, the quick
+fix, and the diagnostics for a `mut` argument, `List<int?>` and a grid.
+
 ## JSON and text primitives, 2026-10-11
 
 `Json.Read`, `Json.Write` and `string.FromBytes` take and give types of the

@@ -528,6 +528,37 @@ static void text_paths(const decl *d, const char *prefix, path_list *out)
     }
 }
 
+// The T? fields of `d`'s values that keep text or lists, as member paths from
+// `prefix`, each before the ones in its own value: "picks", "slot.label". `d`
+// itself, as "", when it's what a T? field is kept as.
+typedef struct optional_path {
+    const char *path;
+    const decl *stored;
+} optional_path;
+
+typedef VEC(optional_path) optional_path_list;
+
+static void optional_paths(const decl *d, const char *prefix, optional_path_list *out)
+{
+    if (d->optional_of && prefix[0] == 0 && decl_has_text(d)) {
+        const optional_path whole = {"", d};
+        vec_push(*out, whole);
+    }
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->type.kind != TY_STRUCT || !decl_has_text(f->type.decl)) continue;
+        sb path = {0};
+        sb_printf(&path, "%s%s", prefix, field_cname(f));
+        if (f->type.decl->optional_of) {
+            const optional_path op = {path.data, f->type.decl};
+            vec_push(*out, op);
+        }
+        sb inner = {0};
+        sb_printf(&inner, "%s.", path.data);
+        optional_paths(f->type.decl, inner.data, out);
+    }
+}
+
 // The Random fields of `d`'s values, as member paths from `prefix`: "random",
 // "stats.dice". The engine seeds the ones a game leaves at their default
 // (gen_seeding). Those in lists are the game's to seed.
@@ -535,7 +566,7 @@ static void random_paths(const program *prog, const decl *d, const char *prefix,
 {
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
-        if (f->type.kind != TY_STRUCT) continue;
+        if (f->type.kind != TY_STRUCT || f->type.decl->optional_of) continue; // A T? field starts with no value: nothing to seed
         sb path = {0};
         sb_printf(&path, "%s%s", prefix, field_cname(f));
         if (f->type.decl == prog->random) {
@@ -702,6 +733,26 @@ static void name_program(gen *g)
         part->gen_name = b.data;
     }
     for (int i = 0; i < prog->results.count; i++) prog->results.items[i]->gen_name = result_cname(prog->results.items[i]);
+    // What a T? field is kept as: tide_optional_<T>, with what C names can't hold as underscores (tide_optional_int,
+    // tide_optional_Combat_Health, tide_optional_List_int), and its place among them after one that's taken
+    for (int i = 0; i < prog->optional_fields.count; i++) {
+        decl *d = prog->optional_fields.items[i];
+        const str of = d->fields.items[0].type.kind == TY_STRING ? str_from("string") : str_from(type_name(d->fields.items[0].type));
+        sb b = {0};
+        sb_put(&b, "tide_optional");
+        bool gap = true;
+        for (int k = 0; k < of.len; k++) {
+            const char c = of.ptr[k];
+            const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+            if (plain && gap) sb_put(&b, "_");
+            if (plain) sb_putn(&b, &c, 1);
+            gap = !plain;
+        }
+        bool taken = false;
+        for (int k = 0; k < i; k++) taken |= strcmp(prog->optional_fields.items[k]->gen_name, b.data) == 0;
+        if (taken) sb_printf(&b, "_%d", i);
+        d->gen_name = b.data;
+    }
     for (int i = 0; i < prog->maps.count; i++) { // A map's entries, as a foreach gives them
         decl *entry = prog->maps.items[i]->entry;
         if (!entry) continue;
@@ -1261,6 +1312,7 @@ static const char *routine_cname(const decl *m)
 }
 
 static void gen_as(gen *g, sb *o, expr *e, type want);
+static bool is_stored_optional(type t);
 static void gen_long_literal(sb *o, int64_t v);
 static void gen_value_of(gen *g, sb *o, expr *e, type want);
 
@@ -1445,6 +1497,12 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_put(o, ")");
         return;
     }
+    if (is_stored_optional(want)) { // Into a field declared T?: what it's kept as, zeros when there's no value
+        sb_printf(o, "%s_of(", type_cname(want.decl));
+        gen_value_of(g, o, e, (type){TY_OPTIONAL, want.decl->optional_of});
+        sb_put(o, ")");
+        return;
+    }
     if (want.kind == TY_OPTIONAL && have.kind != TY_OPTIONAL) { // A value where a T? goes: int? best = 5
         sb_printf(o, "((%s){.value = ", c_type(want));
         gen_as(g, o, e, want.decl->fields.items[0].type);
@@ -1557,6 +1615,7 @@ static expr *declared_default(const field *f)
 // holds a struct that has one.
 static bool has_defaults(const decl *d)
 {
+    if (d->optional_of) return false; // A T? field with no value is zeros, whatever its value's defaults are
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
         if (declared_default(f) || (f->type.kind == TY_STRUCT && has_defaults(f->type.decl))) return true;
@@ -1569,6 +1628,10 @@ static bool has_defaults(const decl *d)
 // anything else is zero, padding included.
 static void gen_value(gen *g, sb *o, const decl *d, const field_init *inits, const int init_count)
 {
+    if (d->optional_of) { // A T? field with no value: zeros
+        sb_printf(o, "(%s){0}", type_cname(d));
+        return;
+    }
     sb_printf(o, "(%s){", type_cname(d));
     int written = 0;
     for (int i = 0; i < d->fields.count; i++) {
@@ -1737,6 +1800,36 @@ static bool is_text_field(const expr *e)
     if (e->type.kind != TY_STRING) return false;
     if (e->kind == E_MEMBER) return e->field != NULL;
     return e->kind == E_NAME && e->bind == BIND_FIELD;
+}
+
+// What a field declared `T?` is kept as: a struct of the value and whether
+// there is one (optional_field_type in check.c), tide_optional<n>.
+static bool is_stored_optional(const type t)
+{
+    return t.kind == TY_STRUCT && t.decl && t.decl->optional_of;
+}
+
+// A field declared `T?`, of a component, singleton, struct, event or input:
+// read as the T? it is through tide_optional<n>_get, and changed through
+// tide_optional<n>_of, which keeps one with no value as zeros.
+static bool is_optional_field(const expr *e)
+{
+    if (e->type.kind != TY_OPTIONAL || !e->field || !is_stored_optional(e->field->type)) return false;
+    return e->kind == E_MEMBER || (e->kind == E_NAME && e->bind == BIND_FIELD);
+}
+
+static bool type_has_list(type t);
+static void gen_raw_place(gen *g, sb *o, const expr *e);
+
+// A T? field read: the T? of what's kept, with lists of its own, as any value taken out of a place has.
+static void gen_optional_read(gen *g, sb *o, const expr *e)
+{
+    const type stored = e->field->type;
+    sb_printf(o, "%s_get(", type_cname(stored.decl));
+    if (type_has_list(stored)) sb_printf(o, "tide_copy_%s(", type_cname(stored.decl));
+    gen_raw_place(g, o, e);
+    if (type_has_list(stored)) sb_put(o, ")");
+    sb_put(o, ")");
 }
 
 // A function's `mut string` parameter: a tide_textref.
@@ -2009,7 +2102,7 @@ static void gen_element_assign(gen *g, const stmt *s, expr *left)
     if (swizzle) sb_printf(o, "{ %s tide_t = ", c_type(target->type));
     else if (arrow) sb_printf(o, "*%s = ", path.data);
     else sb_printf(o, "%s = ", path.data);
-    if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
+    if (s->op == T_ASSIGN) gen_as(g, o, s->value, is_optional_field(target) ? target->field->type : target->type);
     else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
     sb_put(o, ";");
     if (swizzle) {
@@ -3133,6 +3226,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (is_optional_field(e) && e != g->raw_place) {
+            gen_optional_read(g, o, e);
+            break;
+        }
         if (e->bind == BIND_FIELD) {
             // Inside the input's Sample or Sanitize, or a method: a mut method has its value by address.
             const bool by_address = g->routine && g->routine->is_mut_method;
@@ -3171,6 +3268,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "tide_text_view(");
             gen_raw_place(g, o, e);
             sb_put(o, ")");
+            break;
+        }
+        if (is_optional_field(e) && e != g->raw_place) {
+            gen_optional_read(g, o, e);
             break;
         }
         if (e->object->type.kind == TY_MESH) { // tree.vertices, tree.indices: the pack's lists, by their handles
@@ -6164,6 +6265,23 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_printf(o, ", %s);\n", place_where(g, target));
             break;
         }
+        if (is_optional_field(target)) { // maybe = value, maybe = null: what it's kept as, its text and lists the place's own
+            const type stored = target->field->type;
+            indent(g, o);
+            if (decl_has_text(stored.decl)) {
+                sb_printf(o, "tide_assign_%s(&(", type_cname(stored.decl));
+                gen_raw_place(g, o, target);
+                sb_put(o, "), ");
+                gen_as(g, o, s->value, stored);
+                sb_printf(o, ", %s);\n", place_where(g, target));
+            } else {
+                gen_raw_place(g, o, target);
+                sb_put(o, " = ");
+                gen_as(g, o, s->value, stored);
+                sb_put(o, ";\n");
+            }
+            break;
+        }
         const bool field = is_text_field(target);
         const bool ref = is_text_ref(target);
         const bool holder = (target->type.kind == TY_STRUCT || target->type.kind == TY_COMPONENT
@@ -7719,11 +7837,13 @@ static void gen_text_helpers(gen *g)
     // singletons, then the maps' entries (what a foreach gives)
     const int models = prog->decls.count + prog->skinned_types.count;
     const int parts = models + prog->local_parts.count;
-    for (int i = 0; i < parts + prog->maps.count; i++) {
+    const int entries = parts + prog->maps.count;
+    for (int i = 0; i < entries + prog->optional_fields.count; i++) {
         const decl *d = i < prog->decls.count ? prog->decls.items[i]
                       : i < models            ? prog->skinned_types.items[i - prog->decls.count]
                       : i < parts             ? prog->local_parts.items[i - models]
-                                              : prog->maps.items[i - parts]->entry;
+                      : i < entries           ? prog->maps.items[i - parts]->entry
+                                              : prog->optional_fields.items[i - entries]; // What T? fields are kept as
         if (!d) continue;
         const bool value_type = d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON
                              || d->kind == DECL_EVENT;
@@ -7759,6 +7879,27 @@ static void gen_text_helpers(gen *g)
             else if (hp->grid) sb_printf(o, "    tide_grid_set(&to->%s, value.%s, &%s, where);\n", hp->path, hp->path, grid_shape_name(hp->grid));
             else sb_printf(o, "    tide_text_set(&to->%s, tide_text_view(value.%s), where);\n", hp->path, hp->path);
         }
+        // A T? field left with no value keeps nothing: its lists go back to the heap, and it's zeros, as one
+        // nothing ever set is
+        optional_path_list optionals = {0};
+        optional_paths(d, "", &optionals);
+        for (int k = 0; k < optionals.count; k++) {
+            const optional_path *op = &optionals.items[k];
+            const char *dot = op->path[0] ? "." : "";
+            sb_printf(o, "    if (!to->%s%s%s) {\n", op->path, dot, field_cname(&op->stored->fields.items[1]));
+            path_list held = {0};
+            sb prefix = {0};
+            sb_printf(&prefix, "%s%s", op->path, dot);
+            text_paths(op->stored, prefix.data, &held);
+            for (int h = 0; h < held.count; h++) {
+                const heap_path *hp = &held.items[h];
+                if (hp->list) sb_printf(o, "        tide_list%d_release(&to->%s, where);\n", hp->list->index, hp->path);
+                else if (hp->map) sb_printf(o, "        tide_map%d_release(&to->%s, where);\n", hp->map->index, hp->path);
+                else if (!hp->grid) sb_printf(o, "        tide_text_release(&to->%s, where);\n", hp->path);
+            }
+            if (op->path[0]) sb_printf(o, "        to->%s = (%s){0};\n    }\n", op->path, type_cname(op->stored));
+            else sb_printf(o, "        *to = (%s){0};\n    }\n", type_cname(op->stored));
+        }
         sb_put(o, "}\n\n");
         // A copy to read, out of a place: its lists the copy's own. A grid is
         // never copied (see check.c), so a copy reads the same one.
@@ -7790,6 +7931,29 @@ static void gen_text_helpers(gen *g)
             }
             sb_put(o, "}\n\n");
         }
+    }
+}
+
+// T? fields: what each is kept as to the T? code reads, and back. One with no
+// value is kept as zeros, whatever the T? it came from held beside its `ok`,
+// so two worlds that are equal hash the same; text is the place's own tide_text
+// where it's kept and a tide_str in the T?.
+static void gen_optional_helpers(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (prog->optional_fields.count > 0) sb_put(o, "// T? fields: kept as the value and whether there is one, zeros when there's none\n\n");
+    for (int i = 0; i < prog->optional_fields.count; i++) {
+        const decl *d = prog->optional_fields.items[i];
+        const char *name = type_cname(d);
+        const char *result = result_cname(d->optional_of);
+        const bool text = d->fields.items[0].type.kind == TY_STRING;
+        const char *value = field_cname(&d->fields.items[0]);
+        const char *ok = field_cname(&d->fields.items[1]);
+        sb_printf(o, "TIDE_HELPER %s %s_get(const %s v)\n{\n    if (!v.%s) return (%s){0};\n", result, name, name, ok, result);
+        sb_printf(o, "    return (%s){.value = %sv.%s%s, .ok = true};\n}\n\n", result, text ? "tide_text_view(" : "", value, text ? ")" : "");
+        sb_printf(o, "TIDE_HELPER %s %s_of(const %s v)\n{\n    if (!v.ok) return (%s){0};\n", name, name, result, name);
+        sb_printf(o, "    return (%s){.%s = %sv.value%s, .%s = true};\n}\n\n", name, value, text ? "tide_text_temp(" : "", text ? ")" : "", ok);
     }
 }
 
@@ -7828,6 +7992,12 @@ static void gen_show_helpers(gen *g)
         const char *beside = shown_beside(prog, d);
         sb_printf(o, "TIDE_HELPER tide_str tide_text_%s(tide_str a, %s v%s%s);\n", name, name,
                   beside ? ", const char *" : "", beside ? beside : "");
+    }
+    for (int k = 0; k < prog->optional_fields.count; k++) { // T? fields
+        if (!prog->optional_fields.items[k]->shown) continue;
+        any = true;
+        const char *name = type_cname(prog->optional_fields.items[k]);
+        sb_printf(o, "TIDE_HELPER tide_str tide_text_%s(tide_str a, %s v);\n", name, name);
     }
     for (int k = 0; k < prog->lists.count; k++) {
         if (!prog->lists.items[k]->shown) continue;
@@ -7891,6 +8061,18 @@ static void gen_show_helpers(gen *g)
             sb_put(o, "    (void)v;\n"); // No fields to show
         }
         sb_put(o, "    return tide_str_add_cstr(a, \" }\");\n}\n\n");
+    }
+    for (int k = 0; k < prog->optional_fields.count; k++) { // A T? field: its value as it shows anywhere, or null
+        const decl *d = prog->optional_fields.items[k];
+        if (!d->shown) continue;
+        const char *name = type_cname(d);
+        const field *f = &d->fields.items[0];
+        sb_printf(o, "TIDE_HELPER tide_str tide_text_%s(tide_str a, const %s v)\n{\n", name, name);
+        sb_printf(o, "    if (!v.%s) return tide_str_add_cstr(a, \"null\");\n", field_cname(&d->fields.items[1]));
+        sb value = {0};
+        sb_printf(&value, f->type.kind == TY_STRING ? "tide_text_view(v.%s)" : "v.%s", field_cname(f));
+        gen_show_part(g, o, f->type, value.data);
+        sb_put(o, "    return a;\n}\n\n");
     }
     for (int k = 0; k < prog->lists.count; k++) {
         if (!prog->lists.items[k]->shown) continue;
@@ -8101,28 +8283,53 @@ static void gen_json_helpers(gen *g)
                         sb_printf(o, "        case %d:\n", n++);
                         sb place = {0};
                         sb_printf(&place, "v->%s", field_cname(f));
-                        gen_json_read_part(o, f->type, place.data, "            ");
+                        if (is_stored_optional(f->type)) { // A T? field: `null` is none, and anything else its value
+                            const field *held = &f->type.decl->fields.items[0];
+                            sb_printf(o, "            %s = (%s){0};\n            if (!tide_json_null(j)) {\n", place.data, type_cname(f->type.decl));
+                            if (held->type.kind == TY_STRUCT && has_defaults(held->type.decl)) {
+                                sb_printf(o, "                %s.%s = ", place.data, field_cname(held));
+                                gen_default(g, o, held->type);
+                                sb_put(o, ";\n");
+                            }
+                            sb value = {0};
+                            sb_printf(&value, "%s.%s", place.data, field_cname(held));
+                            gen_json_read_part(o, held->type, value.data, "                ");
+                            sb_printf(o, "                %s.%s = true;\n            }\n", place.data, field_cname(&f->type.decl->fields.items[1]));
+                        } else {
+                            gen_json_read_part(o, f->type, place.data, "            ");
+                        }
                         sb_put(o, "            break;\n");
                     }
                     sb_put(o, "        default:\n            if (!tide_json_skip(j)) return false;\n            break;\n        }\n    }\n"
                               "    return !j->failed;\n}\n\n");
                 } else {
-                    const char *open = "{";
+                    // A T? field with no value has no key, so which key comes first is only known as it's written
+                    bool leaves_out = false;
+                    for (int k = 0; k < d->fields.count; k++) leaves_out |= !d->fields.items[k].hidden && is_stored_optional(d->fields.items[k].type);
+                    if (leaves_out) sb_put(o, "    bool first = true;\n    a = tide_str_add_cstr(a, \"{\");\n");
+                    const char *open = leaves_out ? "" : "{";
                     for (int k = 0; k < d->fields.count; k++) {
                         const field *f = &d->fields.items[k];
                         if (f->hidden) continue;
                         const str key = json_field_key(f);
+                        const bool optional = is_stored_optional(f->type);
+                        const char *in = optional ? "        " : "    ";
+                        if (optional) sb_printf(o, "    if (v->%s.%s) {\n", field_cname(f), field_cname(&f->type.decl->fields.items[1]));
+                        if (leaves_out) sb_printf(o, "%sif (!first) a = tide_str_add_cstr(a, \",\");\n%sfirst = false;\n", in, in);
                         if (json_key_plain(key)) {
-                            sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\\\"" STR_FMT "\\\":\");\n", open, STR_ARG(key));
+                            sb_printf(o, "%sa = tide_str_add_cstr(a, \"%s\\\"" STR_FMT "\\\":\");\n", in, open, STR_ARG(key));
                         } else {
-                            sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\");\n    a = tide_json_add_text(a, tide_str_from_cstr(", open);
+                            if (open[0]) sb_printf(o, "%sa = tide_str_add_cstr(a, \"%s\");\n", in, open);
+                            sb_printf(o, "%sa = tide_json_add_text(a, tide_str_from_cstr(", in);
                             gen_c_literal(o, key, false);
-                            sb_put(o, "));\n    a = tide_str_add_cstr(a, \":\");\n");
+                            sb_printf(o, "));\n%sa = tide_str_add_cstr(a, \":\");\n", in);
                         }
                         sb value = {0};
-                        sb_printf(&value, "v->%s", field_cname(f));
-                        gen_json_write_part(o, f->type, value.data, "    ");
-                        open = ",";
+                        if (optional) sb_printf(&value, "v->%s.%s", field_cname(f), field_cname(&f->type.decl->fields.items[0]));
+                        else sb_printf(&value, "v->%s", field_cname(f));
+                        gen_json_write_part(o, optional ? f->type.decl->fields.items[0].type : f->type, value.data, in);
+                        if (optional) sb_put(o, "    }\n");
+                        if (!leaves_out) open = ",";
                     }
                     if (fields == 0) sb_put(o, "    (void)v;\n    return tide_str_add_cstr(a, \"{}\");\n}\n\n");
                     else sb_put(o, "    return tide_str_add_cstr(a, \"}\");\n}\n\n");
@@ -13087,6 +13294,7 @@ static bool has_enums(const type t)
 // field bounds to apply or padding to clear, in `d` or the structs it holds.
 static bool needs_repair(const decl *d)
 {
+    if (d->optional_of) return true; // A T? field: one with no value is zeros
     const int *pad = field_padding(d);
     for (int i = 0; i <= d->fields.count; i++) {
         if (pad[i]) return true;
@@ -13285,6 +13493,10 @@ static void gen_clear_padding(gen *g, const decl *d, const char *in, const int d
         if (f->type.kind == TY_STRUCT) {
             char inner[256];
             snprintf(inner, sizeof inner, "%s%s.", in, field_cname(f));
+            if (is_stored_optional(f->type)) { // A T? field with no value is zeros, whatever came with it
+                line(g, &g->c, "if (!%s%s) %s%s = (%s){0};", inner, field_cname(&f->type.decl->fields.items[1]), in, field_cname(f),
+                     type_cname(f->type.decl));
+            }
             gen_clear_padding(g, f->type.decl, inner, depth);
         } else if (f->type.kind == TY_ARRAY && array_holds_struct(f->type)) { // The padding of the structs in it, each element's
             type et = f->type;
@@ -16261,11 +16473,32 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
             snprintf(inner, sizeof inner, "%s.%s", at, t.kind == TY_RECT ? sides[i] : channels[i]);
             gen_bits(g, inner, (type){TY_FLOAT, NULL}, mode, bits);
         }
+    } else if (is_stored_optional(t) && !delta) { // A T? field: whether there's a value, and the value only when there is
+        const field *value = &t.decl->fields.items[0];
+        const char *ok = field_cname(&t.decl->fields.items[1]);
+        if (mode == BITS_WRITE) {
+            line(g, o, "tide_bits_put_bool(&b, in->%s.%s);", at, ok);
+            line(g, o, "if (in->%s.%s) {", at, ok);
+        } else {
+            line(g, o, "in->%s = (%s){0};", at, type_cname(t.decl));
+            line(g, o, "if (tide_bits_get_bool(&b)) {");
+        }
+        g->indent++;
+        if (mode == BITS_READ) line(g, o, "in->%s.%s = true;", at, ok);
+        snprintf(inner, sizeof inner, "%s.%s", at, field_cname(value));
+        gen_bits(g, inner, value->type, mode, bits);
+        g->indent--;
+        line(g, o, "}");
+        *bits += 1;
     } else if (t.kind == TY_STRUCT) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
             snprintf(inner, sizeof inner, "%s.%s", at, field_cname(f));
             gen_bits(g, inner, f->type, mode, bits);
+        }
+        // A T? field as what changed: one with no value is zeros, whatever came with it
+        if (is_stored_optional(t) && mode == BITS_READ_DELTA) {
+            line(g, o, "if (!in->%s.%s) in->%s = (%s){0};", at, field_cname(&t.decl->fields.items[1]), at, type_cname(t.decl));
         }
     } else if (t.kind == TY_RECORD) { // The devices: what match code reads of them
         const program *prog = g->prog;
@@ -18409,6 +18642,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_io_adapters(&g);
     gen_array_helpers(&g);
     gen_text_helpers(&g);
+    gen_optional_helpers(&g);
     gen_skinned_adapters(&g);
     gen_show_helpers(&g);
     gen_json_helpers(&g);

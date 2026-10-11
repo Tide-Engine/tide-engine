@@ -577,6 +577,8 @@ typedef struct decl {
     bool is_set;          // Maps: a Set<K>, with no values
     struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
     struct decl *optional; // Maps: the V? that Get gives, once something calls it
+    struct decl *optional_of; // Structs: the T? this one keeps for a field, `int? target;`: its fields are the value and whether there is one
+    struct decl *stored;      // A T?: the struct a field of it is kept as (optional_of), once a field is one
     bool tries;           // Maps: some code calls TryGet, so generated C has its helper
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
 
@@ -1356,6 +1358,7 @@ typedef struct program {
     decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
+    VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.
     decl *devices;       // The built-in Devices record.
     VEC(decl *) records; // Built-in records: Devices, Keyboard, Mouse, Gamepad, Dpad, Button.

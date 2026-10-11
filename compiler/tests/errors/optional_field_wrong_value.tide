@@ -1,0 +1,4 @@
+// expect: can't assign string to int?
+struct Slot { int? item; }
+void Use() { mut Slot slot = Slot { }; slot.item = "x"; }
+scene Main { }
