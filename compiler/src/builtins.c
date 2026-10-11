@@ -1086,6 +1086,7 @@ static void build_signatures(void)
     describe(add("Path", "GetDirectoryName", T_STR, "tide_path_get_directory_name", 1, T_STR, T_NONE, T_NONE), "path", "Returns the parent path, or an empty string.");
     describe(add("Path", "GetExtension", T_STR, "tide_path_get_extension", 1, T_STR, T_NONE, T_NONE), "path", "Returns the extension, including its dot, or an empty string.");
     describe(add("Storage", "Flush", T_NONE, "tide_storage_flush_begin", 0, T_NONE, T_NONE, T_NONE), NULL, "Await until preceding filesystem changes are committed to persistent storage. Fails with IOError.");
+    // Web.Request(url) is in no table: it's a call of Tide's own code (see web_prelude in builtins.h)
     describe(add("Web", "Fetch", T_BYTES, "tide_web_fetch_begin", 1, T_STR, T_NONE, T_NONE), "url",
              "Await a URL's bytes, fetched over HTTP or HTTPS by this machine: `var bytes = await Web.Fetch(url)`. "
              "Local code only, like File. Fails with IOError: NotFound for a page that isn't there (404), InvalidPath "
@@ -1918,4 +1919,67 @@ const setting *settings_list(int *count)
 {
     *count = (int)SETTING_COUNT;
     return settings;
+}
+
+static const char web_prelude_text[] =
+    "// What Web.Request(url) gives: a request to send, built up a call at a time.\n"
+    "// Each call gives the request with that one thing changed, so they chain:\n"
+    "// 'await Web.Request(url).SetMethod(\"POST\").SetBody(bytes).Send()'.\n"
+    "struct WebRequest\n"
+    "{\n"
+    "    string url;\n"
+    "    string method = \"GET\";\n"
+    "    string headers; // A line each: \"Name: value\"\n"
+    "    List<byte> body;\n"
+    "\n"
+    "    // The request with this method, like \"POST\" or \"DELETE\".\n"
+    "    WebRequest SetMethod(string value)\n"
+    "    {\n"
+    "        return WebRequest { url = url, method = value, headers = headers, body = body };\n"
+    "    }\n"
+    "\n"
+    "    // The request with this header too, like SetHeader(\"Content-Type\", \"text/plain\").\n"
+    "    WebRequest SetHeader(string name, string value)\n"
+    "    {\n"
+    "        var line = $\"{name.Replace(\"\\n\", \" \")}: {value.Replace(\"\\n\", \" \")}\\n\";\n"
+    "        return WebRequest { url = url, method = method, headers = $\"{headers}{line}\", body = body };\n"
+    "    }\n"
+    "\n"
+    "    // The request with these bytes as its body.\n"
+    "    WebRequest SetBody(List<byte> bytes)\n"
+    "    {\n"
+    "        return WebRequest { url = url, method = method, headers = headers, body = bytes };\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "// What a request's Send gives: the answer's status, like 200 or 404, and its body.\n"
+    "struct WebResponse\n"
+    "{\n"
+    "    int status;\n"
+    "    List<byte> body;\n"
+    "}\n"
+    "\n"
+    "WebRequest " WEB_REQUEST_MAKER "(string url)\n"
+    "{\n"
+    "    return WebRequest { url = url };\n"
+    "}\n";
+
+const char *web_prelude(size_t *len)
+{
+    *len = sizeof web_prelude_text - 1;
+    return web_prelude_text;
+}
+
+static bool has_text(const char *text, const size_t len, const char *word)
+{
+    const size_t n = strlen(word);
+    for (size_t i = 0; i + n <= len; i++) {
+        if (text[i] == word[0] && memcmp(text + i, word, n) == 0) return true;
+    }
+    return false;
+}
+
+bool web_prelude_wanted(const char *text, const size_t len)
+{
+    return has_text(text, len, "Web.Request") || has_text(text, len, "WebRequest") || has_text(text, len, "WebResponse");
 }

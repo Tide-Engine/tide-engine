@@ -4054,20 +4054,44 @@ static void gen_await(gen *g, expr *e, const char *name)
         // outlives the frame's next wait is spilled from like any other
         line(g, o, "tide_f->tide_fetch_ticket = 0;");
         line(g, o, "tide_fetch_resume%d:;", k);
-        indent(g, o);
-        sb_put(o, "if (!tide_f->tide_fetch_ticket) tide_f->tide_fetch_ticket = (int32_t)tide_web_fetch_begin(tide_l->tide_io, ");
-        gen_as(g, o, call->args.items[0], call->arg_want.items[0]);
-        sb_put(o, ");\n");
-        line(g, o, "tide_io_list_result tide_fetched%d;", k);
-        line(g, o, "if (!tide_web_fetch_poll(tide_l->tide_io, (uint32_t)tide_f->tide_fetch_ticket, &tide_fetched%d)) {", k);
+        if (call->web_request) {
+            // await request.Send(): the request is worked out once, as it's sent, and its answer is
+            // the value whatever its status
+            line(g, o, "if (!tide_f->tide_fetch_ticket) {");
+            g->indent++;
+            indent(g, o);
+            sb_printf(o, "const %s tide_request%d = ", c_type(call->object->type), k);
+            gen_expr(g, o, call->object);
+            sb_put(o, ";\n");
+            line(g, o, "tide_f->tide_fetch_ticket = (int32_t)tide_web_request_begin(tide_l->tide_io, tide_text_view(tide_request%d.url), "
+                       "tide_text_view(tide_request%d.method), tide_text_view(tide_request%d.headers), tide_request%d.body);",
+                 k, k, k, k);
+            g->indent--;
+            line(g, o, "}");
+            line(g, o, "tide_web_answer tide_fetched%d;", k);
+            line(g, o, "if (!tide_web_request_poll(tide_l->tide_io, (uint32_t)tide_f->tide_fetch_ticket, &tide_fetched%d)) {", k);
+        } else {
+            indent(g, o);
+            sb_put(o, "if (!tide_f->tide_fetch_ticket) tide_f->tide_fetch_ticket = (int32_t)tide_web_fetch_begin(tide_l->tide_io, ");
+            gen_as(g, o, call->args.items[0], call->arg_want.items[0]);
+            sb_put(o, ");\n");
+            line(g, o, "tide_io_list_result tide_fetched%d;", k);
+            line(g, o, "if (!tide_web_fetch_poll(tide_l->tide_io, (uint32_t)tide_f->tide_fetch_ticket, &tide_fetched%d)) {", k);
+        }
         g->indent++;
         gen_spill_live(g);
         line(g, o, "tide_f->tide_state = %d;", k);
         line(g, o, "return tide_l->tide_frames + 1;");
         g->indent--;
         line(g, o, "}");
-        line(g, o, "%s %s = {.ok = tide_fetched%d.ok, .error = (IOError)tide_fetched%d.error, .value = tide_fetched%d.value};",
-             c_type(e->type), name, k, k, k);
+        if (call->web_request) {
+            line(g, o, "%s %s = {.ok = tide_fetched%d.ok, .error = (IOError)tide_fetched%d.error, "
+                       ".value = {.status = tide_fetched%d.status, .body = tide_fetched%d.body}};",
+                 c_type(e->type), name, k, k, k, k);
+        } else {
+            line(g, o, "%s %s = {.ok = tide_fetched%d.ok, .error = (IOError)tide_fetched%d.error, .value = tide_fetched%d.value};",
+                 c_type(e->type), name, k, k, k);
+        }
         line(g, o, "tide_web_fetch_forget(tide_l->tide_io, (uint32_t)tide_f->tide_fetch_ticket);");
         line(g, o, "tide_f->tide_fetch_ticket = 0;");
         e->hoisted = name;

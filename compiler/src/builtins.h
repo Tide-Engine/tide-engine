@@ -28,6 +28,17 @@ bool builtin_frame_clock(str name);
 void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
                   const decl *font);
 void builtins_use_io(const decl *bytes, const decl *paths);
+
+// Web.Request's types, which are Tide's own code: WebRequest, with the
+// methods that build one, and WebResponse. A program that names any of them
+// compiles this source with its files, after them (tidec and tidels both).
+// It's Tide so that a request is a struct like a game's, with every rule a
+// struct with text and a list has; the compiler knows two things of it,
+// Web.Request(url), which is WEB_REQUEST_MAKER's call, and a request's Send.
+#define WEB_PRELUDE_PATH "<tide>/web.tide"
+#define WEB_REQUEST_MAKER "WebRequestTo"
+const char *web_prelude(size_t *len);
+bool web_prelude_wanted(const char *text, size_t len);
 // Its Format enum, which RenderTarget.Window takes, the same way.
 void builtins_use_format(const decl *format);
 void builtins_use_stencil(const decl *test, const decl *op);

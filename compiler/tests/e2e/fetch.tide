@@ -24,6 +24,7 @@ local singleton Fetches
     bool endless;     // /endless goes on past the limit: Failed
     int empty;        // /empty (204): no bytes, and no error
     int nothing;      // /nothing: a body of 0 bytes
+    int requests;     // Web.Request's cases, a bit each that went as it should (see Requests)
     int frames;       // Frames from the first fetch to the last
 }
 
@@ -46,7 +47,69 @@ async void Run(mut Fetches f)
     f.empty = empty.count;
     var nothing = await Web.Fetch(f.origin + "/nothing") ?? [1, 1];
     f.nothing = nothing.count;
+    f.requests = await Requests(f.origin);
     f.done = true;
+}
+
+// Whether /echo's answer says the request had this method (by its length)
+// and this many bytes of X-Tide header, no X-Evil header, and `body` bytes
+// of body after them, which are 1, 2, 3 and on.
+bool Echoed(WebResponse answer, int status, int method, int header, int body)
+{
+    if (answer.status != status || answer.body.count != 3 + body) return false;
+    if (answer.body[0] != method || answer.body[1] != header || answer.body[2] != 0) return false;
+    for (var i = 0; i < body; i++)
+    {
+        if (answer.body[3 + i] != i + 1) return false;
+    }
+    return true;
+}
+
+// await request.Send(), against /echo: a bit for each case that's right.
+async int Requests(string origin)
+{
+    mut var right = 0;
+    var echo = origin + "/echo";
+    // A POST with a header and a body, built in one line
+    var posted = await Web.Request(echo).SetMethod("POST").SetHeader("X-Tide", "hello").SetBody([1, 2, 3]).Send();
+    if (posted is WebResponse a && Echoed(a, 200, 4, 5, 3)) right |= 1;
+    // A request with nothing set is a GET
+    var got = await Web.Request(echo).Send();
+    if (got is WebResponse b && Echoed(b, 200, 3, 0, 0)) right |= 2;
+    // An answer of another status is an answer, with its body
+    var conflict = await Web.Request(echo + "?status=409").SetMethod("PUT").SetBody([1, 2]).Send();
+    if (conflict is WebResponse c && Echoed(c, 409, 3, 0, 2)) right |= 4;
+    var missing = await Web.Request(origin + "/missing").Send();
+    if (missing is WebResponse d && d.status == 404) right |= 8;
+    // A request kept in a variable across a wait, changed a field and a call at a time
+    mut var request = Web.Request(echo);
+    request.method = "DELETE";
+    request = request.SetHeader("X-Tide", "ab");
+    var first = await request.Send();
+    request = request.SetMethod("patch").SetBody([1, 2, 3, 4]);
+    var second = await request.Send();
+    if (first is WebResponse e && Echoed(e, 200, 6, 2, 0) && second is WebResponse g && Echoed(g, 200, 5, 2, 4)) right |= 16;
+    // HEAD has no body, whatever the server would send
+    var head = await Web.Request(echo).SetMethod("HEAD").Send();
+    if (head is WebResponse h && h.status == 200 && h.body.count == 0) right |= 32;
+    // Redirects, as a page's fetch follows them: a 303 becomes a GET, a 307 is the request again
+    var seeOther = await Web.Request(origin + "/see-other").SetMethod("POST").SetBody([1, 2, 3]).Send();
+    if (seeOther is WebResponse j && Echoed(j, 200, 3, 0, 0)) right |= 64;
+    var again = await Web.Request(origin + "/again").SetMethod("POST").SetBody([1, 2, 3]).Send();
+    if (again is WebResponse k && Echoed(k, 200, 4, 0, 3)) right |= 128;
+    // A value with a line break in it is one header, not two
+    var broken = await Web.Request(echo).SetHeader("X-Tide", "a\nX-Evil: 1").Send();
+    if (broken is WebResponse m && Echoed(m, 200, 3, 11, 0)) right |= 256;
+    // The connection's own headers are the sender's to say
+    var length = await Web.Request(echo).SetMethod("POST").SetHeader("Content-Length", "999").SetBody([1, 2, 3]).Send();
+    if (length is WebResponse n && Echoed(n, 200, 4, 0, 3)) right |= 512;
+    // What can't be sent as it's written, and what gets no answer
+    if (await Web.Request(echo).SetMethod("GE T").Send() is IOError.InvalidData) right |= 1024;
+    if (await Web.Request(echo).SetMethod("TRACE").Send() is IOError.InvalidData) right |= 2048;
+    if (await Web.Request(echo).SetHeader("Bad Name", "x").Send() is IOError.InvalidData) right |= 4096;
+    if (await Web.Request("ftp://example.com/file").Send() is IOError.InvalidPath) right |= 8192;
+    if (await Web.Request("http://127.0.0.1:1/nothing").SetMethod("POST").Send() is IOError.Failed) right |= 16384;
+    return right;
 }
 
 // The host says where the server is, so the fetching starts once it has
