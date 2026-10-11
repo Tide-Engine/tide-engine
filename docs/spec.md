@@ -1103,6 +1103,8 @@ Animation current = zombie.state switch
 };
 ```
 
+- `EnumType.Count()` returns the number of declared members as a compile-time `int`. Members with the same numeric value each count; gaps and explicit values do not change the count. This is a static operation, not an enum member, and takes no arguments. A declared member named `Count` remains accessible as `EnumType.Count`.
+- Explicit conversions use `int(value)` and `EnumType(number)`. Parenthesized cast syntax such as `(int)value` is rejected with guidance on the conversion to write.
 - An enum member may omit its type with a leading dot when context supplies one unambiguous enum type: `zombie.state = .Idle;`. Typed initializers, fields, parameters, returns, container elements and switch cases supply their expected type; `==` and `!=` can use the other operand's enum type. A typed conditional supplies that type to both branches. This is the same value as `ZombieState.Idle`, including on the GPU. Without an expected enum type, or when overloads leave more than one possible enum, write the qualified member; member names do not choose between enum overloads.
 
 ```csharp
@@ -1151,6 +1153,7 @@ system Advance(mut Match match)
 ### Open
 
 - Ordering enums (`<`).
+- Enumerating members as values, such as `EnumType.Values()`, remains a proposal; it is not implemented.
 - A warning when a switch on an enum has no `default` and misses a member.
 - Patterns and guards in switch expressions.
 

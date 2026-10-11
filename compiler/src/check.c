@@ -6108,6 +6108,7 @@ static type check_window_target(checker *c, expr *e)
 static bool mesh_vertex_ok(const decl *vertex, loc at);
 #include "skinned_ops.inc"
 
+static decl *named_enum(const checker *c, const expr *e);
 // Sample's filter and wrap have fixed enum types even though this call's
 // shader binding is checked separately from the ordinary signature table.
 static void check_sample_args(checker *c, expr *e, const bool cube)
@@ -6124,6 +6125,24 @@ static void check_sample_args(checker *c, expr *e, const bool cube)
 
 static type check_method(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "Count")) {
+        decl *d = named_enum(c, e->object);
+        if (d) {
+            e->call = CALL_ENUM_COUNT;
+            e->type_decl = d;
+            e->object->bind = BIND_TYPE;
+            e->object->type_decl = d;
+            e->object->type = (type){TY_ENUM, d};
+            if (e->object->kind == E_MEMBER) mark_namespaces(e->object->object);
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            if (e->args.count || e->type_arg.len) {
+                diag_error(e->at, "%s.Count() takes no arguments or type arguments", type_name(e->object->type));
+                return T_ERR;
+            }
+            e->int_value = d->members.count;
+            return T_INT_;
+        }
+    }
     bool static_skin_handled = false;
     const type static_skin = check_skinned_static(c, e, &static_skin_handled);
     if (static_skin_handled) return static_skin;
@@ -10237,6 +10256,10 @@ static bool fold_int(const expr *e, int64_t *out)
         *out = e->type.kind == TY_LONG ? l : e->type.kind == TY_BYTE ? (uint8_t)l : tide_i_from_l(l);
         return true;
     case E_METHOD: {
+        if (e->call == CALL_ENUM_COUNT) {
+            *out = e->int_value;
+            return true;
+        }
         if (e->call == CALL_CONSTRUCT && e->ctor == CTOR_ENUM) return fold_enum(e, out); // Combat.Stance(2)
         if (e->call != CALL_BUILTIN || !type_is_integer(e->type) || e->args.count < 1 || e->args.count > 3) return false;
         int64_t args[3];
@@ -11035,6 +11058,7 @@ static bool is_constant(const checker *c, const expr *e)
                 || lookup(c->prog, c->unit, e->name, NAME_TYPE, &other) == c->prog->random)
             && all_constant(c, e);
     case E_METHOD: // Math.Max(...), and Combat.Stance(2)
+        if (str_eq_c(e->name, "Count") && named_enum(c, e->object)) return all_constant(c, e);
         return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)) && all_constant(c, e);
     case E_MEMBER: // Checking tells a member of an enum or a constant from anything else
         return e->enum_shorthand || (e->object->kind == E_NAME && builtin_owner(e->object->name)) || is_constant(c, e->object) || names_only(e);

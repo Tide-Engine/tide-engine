@@ -44,7 +44,7 @@ owned list copies, async waits and snapshot replay. The `delayed_*` and
 `switch_value_*` error fixtures pin invalid reads/writes, repeating paths,
 missing fallback, duplicate/type/nonconstant labels and result mismatches.
 Validation on Windows with Node 24.16: warning-free full native and web debug
-builds; final integrated suites 2,115/2,115 native and 2,087/2,087 web, including OpenGL,
+builds; integrated suites 2,115/2,115 native and 2,087/2,087 web, including OpenGL,
 WebGL and WebGPU CPU/pixel parity and unchanged determinism checks. The final
 comparison coverage addition passes 32 focused native and 31 web checks,
 including the full native language-server suite, the positive fresh-local
@@ -57,6 +57,11 @@ labels and the destination/common arm type to shorthand results. E2E, GPU
 parity and LSP formatting cover both typed results and inference from an
 ordinary qualified arm. Merge conflicts in the spec and subsystem notes keep
 both feature descriptions; the compiler/editor implementations merge cleanly.
+The subsequent enum-count/cast-guidance merge also keeps both spec/notes
+descriptions. Warning-free native/web rebuilds and 42 focused checks on each
+target pass, covering both features' E2E and errors, enum counts/casts, shader
+goldens, OpenGL/WebGL/WebGPU parity and the full native language-server suite.
+All 219 grammar checks and the production docs build pass again after that merge.
 
 ## Contextual enum members, 2026-10-11
 
@@ -91,6 +96,34 @@ platforms, sanitizers and Android were not run on this Windows machine.
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language
+
+- Enum member counts and cast guidance (2026-10-11, requested by the owner):
+  `EnumType.Count()` is a compile-time `int` counting declared members, including
+  aliases and a member named `Count`. Explicit numeric values, gaps, negative
+  values and backing storage do not change it; `EnumType.Count` remains the
+  user's member. Qualified and built-in enum types work. The existing
+  `named_enum` lookup preserves local/parameter/field shadowing; calls take no
+  value or type arguments and are static, not enum-value methods.
+  `CALL_ENUM_COUNT` retains the source call for editors, folds in integer
+  constant expressions and emits a literal in C. No runtime API or layout
+  changes. E2E enums cover aliases, sparse values, forward declarations, enum
+  initializers, constants, field defaults, array lengths, case labels, built-in
+  enums and advancing/wrapping a zero-based enum. Error fixtures pin arguments,
+  type arguments, instance calls and discarded results.
+  The parser recognizes unambiguous `(Type)value` forms, including qualified
+  targets and grouped operands, rejects them and prints the exact `Type(value)`
+  replacement. Existing parenthesized arithmetic, indexing, postfix steps and
+  failable unwraps keep their parsing; ambiguous following operators remain
+  expressions. Cast int/float/enum/qualified error fixtures and the LSP recovery
+  regression pin the guidance. Enum `Values()` remains unimplemented.
+  Editor and GPU integration are recorded in their notes. Validation: complete
+  native debug (2,094 CTest entries) and web debug (2,066) suites pass after
+  merging dev's contextual enums and texture work, using Node 24.19.0.
+  The first native run caught Count completion leaking into enum case
+  labels; after the editor-only fix, the full 215-test language-server suite
+  was rebuilt and rerun successfully. Shader probes pass on native OpenGL,
+  WebGL and WebGPU, and the production docs build passes. Other native platforms
+  and Android were not run locally; CI was not dispatched.
 
 - Sample argument bookkeeping (2026-10-11): `skinned_arguments` preserves the
   existing `expr.written` source list when it appends an omitted Playback.Clamp.
