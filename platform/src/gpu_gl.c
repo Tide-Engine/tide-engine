@@ -274,6 +274,41 @@ static void gl_texture_write(const tide_gpu_id texture, const void *pixels)
     texture_pixels(&textures[texture], pixels, true);
 }
 
+static tide_gpu_id gl_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
+{
+    const GLenum format = blocks.format == TIDE_BLOCKS_BC1 ? GL_COMPRESSED_RGB_S3TC_DXT1 : GL_COMPRESSED_RGBA_S3TC_DXT5;
+    GLint count = 0;
+    glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &count);
+    if (count <= 0 || count > 4096) return 0;
+    GLint *formats = tide_alloc((size_t)count * sizeof *formats);
+    glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, formats);
+    bool supported = false;
+    for (GLint i = 0; i < count; i++) if ((GLenum)formats[i] == format) supported = true;
+    free(formats);
+    if (!supported) return 0;
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    textures = room(textures, &texture_names, texture, sizeof(gl_texture));
+    textures[texture] = (gl_texture){.format = TIDE_GPU_RGBA8, .mipped = true, .width = width, .height = height};
+    bind_texture(texture);
+    int w = width, h = height;
+    uint32_t offset = 0;
+    for (uint32_t level = 0; level < blocks.levels; level++) {
+        const uint32_t bytes = ((uint32_t)w + 3u) / 4u * (((uint32_t)h + 3u) / 4u)
+                             * (blocks.format == TIDE_BLOCKS_BC1 ? 8u : 16u);
+        glCompressedTexImage2D(GL_TEXTURE_2D, (GLint)level, format, w, h, 0, (GLsizei)bytes, blocks.pixels + offset);
+        offset += bytes;
+        if (w > 1) w /= 2;
+        if (h > 1) h /= 2;
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, (GLint)blocks.levels - 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    return texture;
+}
+
 // Some of a texture's pixels, read where they are among all of them: its rows are the texture's own width apart.
 static void gl_texture_write_part(const tide_gpu_id texture, const void *pixels, const int x, const int y, const int width,
                                   const int height)
@@ -946,6 +981,7 @@ const tide_gpu tide_gpu_gl = {
     .buffer_write = gl_buffer_write,
     .buffer_free = gl_buffer_free,
     .texture = gl_texture_make,
+    .texture_blocks = gl_texture_blocks,
     .texture_write = gl_texture_write,
     .texture_write_part = gl_texture_write_part,
     .texture_free = gl_texture_free,

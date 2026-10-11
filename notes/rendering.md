@@ -1,5 +1,7 @@
 # The platform layer and the renderer
 
+Texture compression/residency (2026-10-11): the private `tide_gpu.texture_blocks` factory uploads complete immutable BC1/BC3 chains or returns zero for RGBA fallback. GPU accounting uses the actual representation, and compressed objects are recreated on content/draw epoch changes. Inactive pack images/cubes now have a 128 MiB / 4096-image / 60-rendered-list cache; other texture lifetimes remain unchanged. The cache owns no CPU pack pointers. Contracts, measurements, coverage and remaining streaming gaps are in `notes/textures.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform
