@@ -8,7 +8,14 @@
 // figure for a keeper. One cold light in the north-west casts hard shadows
 // through a shadow map, candles add to it, and light comes in three flat steps.
 // What is cut or painted on a top face is a decal from art/decals.png, which
-// art/make_art.py makes. Where there is no ground there is the pit: the floor's
+// art/make_art.py makes.
+//
+// It is drawn the way a console of the nineties would have: a small frame of
+// about 270 lines, each of its pixels a square of the window's; every corner
+// moved onto a pixel, so what moves wobbles a little; paint in chunky texels
+// worked out from a hash; and colours cut to a few shades each, in a pattern.
+// Where surfaces meet in a crease the frame is darkened, from a second image
+// of how far the camera sees along each pixel. Where there is no ground there is the pit: the floor's
 // sides go down into it and darken, and what is down there looks back.
 asset Texture markSheet = "art/decals.png";
 
@@ -22,7 +29,11 @@ const float DEPTH = 3.0;             // How far down the floor's sides are built
 const float SLAB = 0.16;             // A loose slab's thickness
 const float FLIGHT = 0.15;
 const float LAMP_SPAN = 12.5;
-const int LAMP_PIXELS = 2048;
+const int LAMP_PIXELS = 1024;
+const float LINES = 270;             // About how many lines the frame is drawn in
+const float SHADES = 31;             // How many shades of each colour the window gets
+const float TEXELS = 12;             // Texels a meter
+const float SEES = 100;              // How far the camera sees, in meters
 const float LAMP_AWAY = 30;
 
 const Color STONE = Color(0.47, 0.50, 0.52);
@@ -88,6 +99,10 @@ struct Candles
 local singleton Crypt
 {
     RenderTarget scene;
+    RenderTarget eyes;       // How far the camera sees along each pixel of the frame
+    DepthTexture eyeDepth;
+    float2 size;             // The frame's pixels, across and down
+    float2 grid;             // Half of that: what moves a corner onto a pixel
     RenderTarget map;
     DepthTexture depth;
     float4x4 toLamp;
@@ -407,11 +422,39 @@ float3 InCrypt(float3 base, float3 normal, float3 world, float moon, float glow,
     return base * light * pit + base * glow;
 }
 
+// A corner is moved onto the nearest of the frame's pixels, as a console that
+// kept no fractions of one would have put it. `this.clip` is where the engine
+// would put the corner, and `clip` where it goes.
+vert Snap(mut Corner corner, out float4 clip, Crypt crypt)
+{
+    float4 at = this.clip;
+    float depth = Math.Max(at.w, 0.0001);
+    float2 seen = Math.Floor(at.xy / depth * crypt.grid + float2(0.5)) / crypt.grid;
+    clip = float4(seen * depth, at.z, at.w);
+}
+
+vert SnapPatch(mut Patch patch, out float4 clip, Crypt crypt)
+{
+    float4 at = this.clip;
+    float depth = Math.Max(at.w, 0.0001);
+    float2 seen = Math.Floor(at.xy / depth * crypt.grid + float2(0.5)) / crypt.grid;
+    clip = float4(seen * depth, at.z, at.w);
+}
+
+// A number from 0 to 1 for a texel of a surface, the same every frame: stone
+// and wood are a little lighter or darker a texel at a time.
+float Speck(float3 world, float3 normal)
+{
+    float2 on = Math.Abs(normal.y) > 0.5 ? float2(world.x, world.z) : Math.Abs(normal.x) > 0.5 ? float2(world.z, world.y) : float2(world.x, world.y);
+    return (Math.Hash(int2(int(Math.Floor(on.x * TEXELS)), int(Math.Floor(on.y * TEXELS)))) & 255) / 255.0;
+}
+
 frag SolidLook(Corner corner, out Color color, Solid solid, Instance instance, Crypt crypt)
 {
     float3 normal = instance.Normal(corner.normal);
     mut float3 base = float3(corner.color.r, corner.color.g, corner.color.b);
     if (corner.own < 0.5) base = base * float3(solid.tint.r, solid.tint.g, solid.tint.b);
+    base = base * (0.88 + 0.20 * Speck(this.world, normal));
     float moon = Moonlight(crypt.depth, this.world, normal, crypt.toLamp);
     float3 lit = InCrypt(base, normal, this.world, moon, solid.glow + corner.glow, crypt.candles);
     color = Color(lit.x, lit.y, lit.z, 1);
@@ -420,16 +463,53 @@ frag SolidLook(Corner corner, out Color color, Solid solid, Instance instance, C
 frag DecalLook(Patch patch, out Color color, Texture source, Decal decal, Crypt crypt)
 {
     float2 uv = float2(decal.part.x + (decal.part.z - decal.part.x) * patch.uv.x, decal.part.y + (decal.part.w - decal.part.y) * patch.uv.y);
-    Color cut = source.Sample(uv);
+    Color cut = source.Sample(uv, Filter.Point);
     float3 up = float3(0, 1, 0);
     float moon = Moonlight(crypt.depth, this.world, up, crypt.toLamp);
     float3 lit = InCrypt(float3(cut.r * decal.tint.r, cut.g * decal.tint.g, cut.b * decal.tint.b), up, this.world, moon, decal.glow, crypt.candles);
     color = Color(lit.x, lit.y, lit.z, cut.a * decal.tint.a);
 }
 
-frag Present(Vertex vertex, out Color color, Texture source)
+// Which of sixteen steps a pixel takes between two shades: a pattern four
+// pixels across, so two shades stand for the ones between them.
+float Turn(float2 pixel)
 {
-    color = source.Sample(vertex.uv);
+    int x = int(pixel.x) & 3;
+    int y = int(pixel.y) & 3;
+    int low = ((x ^ y) & 1) * 2 + (y & 1);
+    int high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
+    return (low * 4 + high + 0.5) / 16;
+}
+
+// How much nearer the camera the frame is on both sides of a pixel than at it:
+// nothing on a flat face whichever way it slopes, and something in a crease.
+float Crease(DepthTexture depth, float2 uv, float2 off, float here)
+{
+    float bend = (2 * here - depth.Sample(uv + off) - depth.Sample(uv - off)) * SEES;
+    return bend > 1.2 ? 0.0 : Math.Saturate(bend / 0.22);
+}
+
+// The frame, to the window: each of its pixels a square of the window's,
+// darker where surfaces meet, and its colours cut to a few shades each.
+frag Present(Vertex vertex, out Color color, Texture source, Crypt crypt)
+{
+    float2 pixel = float2(Math.Floor(vertex.uv.x * crypt.size.x), Math.Floor(vertex.uv.y * crypt.size.y));
+    float2 uv = (pixel + float2(0.5)) / crypt.size;
+    Color seen = source.Sample(uv, Filter.Point);
+    float here = crypt.eyeDepth.Sample(uv);
+    float2 one = float2(1) / crypt.size;
+    mut float crease = 0;
+    for (var ring = 1; ring <= 2; ring++)
+    {
+        float reach = ring * 1.6;
+        crease += Crease(crypt.eyeDepth, uv, float2(one.x * reach, 0), here);
+        crease += Crease(crypt.eyeDepth, uv, float2(0, one.y * reach), here);
+        crease += Crease(crypt.eyeDepth, uv, float2(one.x, one.y) * (reach * 0.7), here);
+        crease += Crease(crypt.eyeDepth, uv, float2(one.x, -one.y) * (reach * 0.7), here);
+    }
+    float open = here >= 0.99999 ? 1.0 : 1 - Math.Saturate(crease / 8) * 0.75;
+    float turn = Turn(pixel);
+    color = Color(Math.Floor(seen.r * open * SHADES + turn) / SHADES, Math.Floor(seen.g * open * SHADES + turn) / SHADES, Math.Floor(seen.b * open * SHADES + turn) / SHADES, 1);
 }
 
 // ---- views ------------------------------------------------------------------
@@ -491,10 +571,25 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture, m
     if (!crypt.made)
     {
         crypt.made = true;
-        crypt.scene = RenderTarget.Window(samples: 4);
+        crypt.scene = RenderTarget(16, 16, 1);
+        crypt.eyes = RenderTarget(16, 16, 1, Format.Depth);
+        crypt.eyeDepth = crypt.eyes.depth;
         crypt.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
         crypt.depth = crypt.map.depth;
         MakeMeshes(crypt);
+    }
+
+    // The frame is drawn in about LINES lines, in pixels of its own, each a
+    // whole number of the window's across.
+    var each = Math.Max(2.0, Math.Round(screen.y / LINES));
+    var frame = float2(Math.Ceil(screen.x / each), Math.Ceil(screen.y / each));
+    if (frame.x != crypt.size.x || frame.y != crypt.size.y)
+    {
+        crypt.scene.Resize(int(frame.x), int(frame.y));
+        crypt.eyes.Resize(int(frame.x), int(frame.y));
+        crypt.eyeDepth = crypt.eyes.depth;
+        crypt.size = frame;
+        crypt.grid = frame * 0.5;
     }
 
     if (playing)
@@ -688,14 +783,20 @@ view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture, m
     var focus = float3(0, 0, (lens.origin.y - screen.y * 0.5) / (Math.Sin(PITCH) * tile));
     var forward = float3(0, -Math.Sin(PITCH), Math.Cos(PITCH));
     var turn = quaternion.LookRotation(forward, float3(0, 1, 0));
+    var camera = float4x4.TRS(focus - forward * 40, turn, float3(1));
+    var sees = float4x4.Ortho(see.x, see.y, 0.1, SEES + 0.1);
+    crypt.eyes.Clear(Color.white);
+    crypt.eyes.SetCamera(camera, sees);
+    crypt.eyes.Instanced(crypt.box, crypt.boxFaces, crypt.solids);
+    crypt.eyes.Instanced(crypt.keeper, crypt.keeperFaces, crypt.keepers);
     crypt.scene.Clear(NIGHT);
-    crypt.scene.SetCamera(float4x4.TRS(focus - forward * 40, turn, float3(1)), float4x4.Ortho(see.x, see.y, 0.1, 100));
-    crypt.scene.Instanced(crypt.box, crypt.boxFaces, crypt.solids, SolidLook);
-    crypt.scene.Instanced(crypt.keeper, crypt.keeperFaces, crypt.keepers, SolidLook);
+    crypt.scene.SetCamera(camera, sees);
+    crypt.scene.Instanced(crypt.box, crypt.boxFaces, crypt.solids, Snap, SolidLook);
+    crypt.scene.Instanced(crypt.keeper, crypt.keeperFaces, crypt.keepers, Snap, SolidLook);
     crypt.scene.Depth(Depth.Read),
     crypt.scene.Cull(Cull.None)
     {
-        crypt.scene.Instanced(crypt.patch, crypt.patchFaces, crypt.decals, markSheet, DecalLook);
+        crypt.scene.Instanced(crypt.patch, crypt.patchFaces, crypt.decals, markSheet, Filter.Point, SnapPatch, DecalLook);
     }
     Draw.Blit(crypt.scene.color, Draw.window, Present);
 
