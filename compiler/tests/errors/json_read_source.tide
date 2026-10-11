@@ -1,0 +1,5 @@
+// expect: Json.Read reads a string or a List<byte> of UTF-8, not int
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.count = (Json.Read<Info>(seen.count) ?? Info { }).players; }

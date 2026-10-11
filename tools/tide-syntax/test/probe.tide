@@ -253,6 +253,20 @@ async void SaveBytes(List<byte> bytes) fails IOError
     fail IOError.OutOfSpace;
 }
 
+// JSON as a struct, and text as bytes, pieces and numbers.
+struct LobbyInfo
+{
+    [Json("max_players")] int maxPlayers;
+}
+
+string Answer(string text)
+{
+    var info = Json.Read<LobbyInfo>(text) ?? LobbyInfo { };
+    var all = Json.Read<List<LobbyInfo>>(text.ToBytes()) ?? [];
+    if (int.TryParse(text.Split(",")[0], out var count)) return Json.Write(all);
+    return string.FromBytes(text.ToBytes()) ?? Json.Write(info);
+}
+
 // A query is a second entity set in a system header, and a normal name elsewhere.
 system BulletHits(Body shot, query (Body body, with Fighter, without Ghost) fighters, Time time)
 {

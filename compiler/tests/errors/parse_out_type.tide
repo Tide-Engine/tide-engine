@@ -1,0 +1,5 @@
+// expect: 'float.TryParse' makes its 'value' float, not int
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { if (float.TryParse(seen.text, out seen.count)) seen.text = ""; }

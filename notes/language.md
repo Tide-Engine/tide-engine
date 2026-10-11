@@ -1,5 +1,126 @@
 # Language features, as tidec builds them
 
+## JSON as a game's types, and text as bytes, pieces and numbers, 2026-10-11
+
+The owner approved typed JSON generated at compile time ("yeah I like that
+static thing; makes it simple, straight forward"; a dynamic JSON value was
+explicitly not wanted now) and the names of the text primitives ("these are
+good to have anyways"). Everything else is the agent's pick, Provisional in
+`docs/spec.md` (JSON; Text, Bytes, pieces and numbers).
+
+**Surface.** `Json.Read<T>(string | List<byte>) -> T?`, `Json.Write(T) ->
+string`, `[Json("key")]` on a struct's field, `text.ToBytes() -> List<byte>`,
+`string.FromBytes(List<byte>) -> string?`, `text.Split(string | char) ->
+List<string>`, and `int.TryParse`, `long.TryParse` and `float.TryParse`
+`(string text, out T value) -> bool`. `T` for JSON is a struct, a `List<T>` or
+a `Map<string, T>` of bool, byte, int, long, float, char, string, enums,
+structs of the game's, lists, arrays and maps by text.
+
+**Parser.** `at_type_argument` (`parser.c`) takes a type with types of its own
+after a method's name, `Json.Read<List<Score>>(text)`, `Map<string, int>`'s
+comma only inside an inner `<>`, so `F(a.x < lo, hi > (y))` still reads as two
+comparisons. The type is parsed by `parse_type` and closed by `close_angle`
+as `world.Get<Health>` always was.
+
+**Checker** (`check.c`, the block before `check_method`). `Json` is a
+built-in owner (`builtin_owner`, `is_builtin_name`: a game declares nothing of
+that name). `check_json_call` resolves the type in `<>` with `resolve_type`,
+checks the root and everything in it (`json_takes`, `json_holds`, which names
+the field that holds what JSON has nothing for), registers the type in
+`program.json_roots` (one entry a type, with which of the three functions are
+used) and names the call's C function (`tide_json_read<n>`,
+`tide_json_read_bytes<n>`, `tide_json_write<n>`). `mark_json` sets
+`decl.json_reads` or `decl.json_writes` on the type and the types in it, as
+`mark_shown` does, behind `builds(prog)`. `check_from_bytes` is
+`string.FromBytes`, reached before the built-in owners as `string` is no type
+keyword's owner. `int`/`long`/`float.TryParse` are in the signature table
+(`builtins.c`, through `add_gui`, which reads `out` in a parameter list);
+`check_parse_call` checks the `out` argument as `check_gui_call` does a
+widget's. `ToBytes` and `Split` are text's methods in the table; the check
+makes `List<byte>` and `List<string>` (`builtins_use_io`) only where one is
+called. All of them are `CALL_JSON`: c_callee with its arguments as values,
+text a `tide_str`, an `out` one by address. `stands_alone` lets a `TryParse`
+be a statement. `[Json]` is `check_json_attribute`; a field's key is
+`json_field_key` (`ast.h`), read off the attribute, so `field` gained nothing.
+Each is refused in code the GPU runs (`gpu_refuses`).
+
+**Codegen** (`codegen.c`, `gen_json_helpers`, after `gen_show_helpers`). For
+each marked enum, struct, list, map and array, a reader
+`bool tide_json_get_<type>(tide_json *j, <stored> *v)` and a writer
+`tide_str tide_json_put_<type>(tide_str a, ...)`, declared before any is
+defined, so a struct with a list of itself works; then each root's functions,
+which give a zeroed `tide_result<n>` unless the whole text was one value.
+Readers fill values where they're kept (a list's slot from `tide_list_add`, a
+struct's field, text as a `tide_text` in the scratch area), so no value is
+copied through the stack on the way and recursion costs a frame of pointers.
+A struct's reader starts from its declared defaults (`gen_default`), a `null`
+is read by `tide_json_null` before each part, and keys go through one
+`tide_json_field` call against a static table of the struct's keys. Writers
+take structs and arrays by address. `string.FromBytes` has one adapter,
+`tide_text_from_bytes`, in a game that calls it. The header includes
+`tide/json.h` only when `json_roots` has entries. `writes` counts a
+`CALL_JSON` with an `out` argument, so a `TryParse` keeps its turn like
+`Map.TryGet`; a statement of one goes through `gen_expr`.
+
+**A game with none of it generates the C it did, byte for byte**: old and new
+tidec over every source list in `build/debug` (259; the two that differ are
+the new JSON e2e and safety programs, which the old compiler refuses), with
+`--layout` and without.
+
+**Runtime** (the agent's, listed in `notes/runtime-ownership.md`):
+`engine/src/json.c` with `tide/json.h` (the reader and the three writing
+helpers), `tide_str_parse_int/long/float` and `tide_utf8_valid` in
+`tide/text.h`, and `tide_str_to_bytes`, `tide_str_from_bytes`,
+`tide_str_split` and `tide_str_split_char` in `tide/list.h`
+(`engine/src/text.c`, beside the search they use).
+
+**Numbers.** Text already showed floats exactly (`shortest_digits` in
+`text.c`, Burger and Dybvig), so writing reuses `tide_str_add_float`; only
+negative zero (`-0`) and the values JSON has no number for (`null`) are the
+writer's own. Reading had nothing in-house: the GUI's number fields use
+`strtof`, which is local and left as it is (Open in the spec). `json.c` reads
+a number's digits once into `number` (128 kept, a flag for a nonzero digit
+past them, a 64-bit power of ten that saturates) and makes a float by long
+division of two big integers (`wide`, 40 words): 24 bits, a round bit, and
+whether anything is left, rounded to even, with the floats under the smallest
+normal one taking fewer bits. Past 39 decimal digits it's no float, under
+1e-46 it's zero, so the integers are bounded whatever the text. Over 100,000
+random texts of up to forty digits with exponents it agreed with this
+machine's `strtof` on every one (a one-off check, not kept as a test: the
+kept ones pin bits).
+
+**Safety** is in `notes/memory-safety.md`.
+
+**Also fixed**: `gen_print_value` wrote a `case` for every member of an enum,
+so one with two names for a number (`Custom = 7, Alias = 7`) in a component
+generated C that didn't compile. Found by the JSON e2e's enum.
+
+**Tests.** `compiler/tests/e2e/json` (90 checks in Tide: every kind of field,
+defaults, nulls, unknown and repeated keys, round trips, bytes, what's
+refused, escapes and pairs, enums by number and alias, nesting at the limit,
+lists and maps as the value, 21 floats at the edges, NaN and infinities,
+`ToBytes`/`FromBytes`/`Split`/`TryParse`; in C, the floats' pinned bits, the
+written text, a copy, the world as bytes, and `JSON_HASH`, which native and
+web share), natively and on the web. `compiler/tests/safety/json`.
+`compiler/tests/errors/json_*`, `string_*`, `parse_*` and
+`text_split_arguments`, 27 files, a diagnostic each. `tests/test_json.c`
+(eight runtime tests: the float table, every float's text read back and
+against `strtof`, ints, each reader call, a hundred texts that are and aren't
+JSON, depth, the two limits, a world's list in chunks, the writers) and
+`text_splits_and_goes_to_bytes_and_back`; `crossplatform_numbers_from_text`
+in `tests/test_crossplatform.c` pins 100,000 texts' bits and every float's
+text. Editors: `lsp_json_and_text_primitives` (`notes/editors.md`).
+
+**Validation** (Windows, Node 24): warning-free native and web debug builds;
+2,170 native and 2,141 web tests pass, the web's with the same `JSON_HASH` and
+cross-platform hash; 221 grammar checks; the docs production build. Linux,
+macOS, MinGW, Android and the sanitizers were not run here, and no workflow
+was dispatched.
+
+**Not built**: a dynamic JSON value; `T?` fields (the language has none yet);
+vectors, colors, sets and maps by an int or an enum; telling why a read gave
+nothing; indented output or leaving out defaults; `Join`, `byte.TryParse`, a
+`Parse` that fails; `TryParse` in the GUI's own number fields.
 ## AnimationCatalog and bool/out lookup, 2026-10-11
 
 The owner approved the catalog name `AnimationCatalog` and bool/out lookup.
