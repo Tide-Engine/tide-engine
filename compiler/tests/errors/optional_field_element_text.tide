@@ -1,0 +1,5 @@
+// expect: a list's element is a copy, so it can't be changed where it is: it holds text or a list
+struct Slot { string? label; }
+component Bag { List<Slot> slots; }
+system Name(mut Bag bag) { bag.slots[0].label = "first"; }
+scene Main { }

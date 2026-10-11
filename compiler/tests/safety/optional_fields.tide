@@ -1,0 +1,118 @@
+// expect: optional: none 0 "" 0 1 8
+// expect: optional: kept 5 "kept kept" 3 past 0 -1
+// expect: optional: churn 34320 1024 local 64
+// ticks: 64
+
+// T? fields that held something and hold nothing: what's read of one is
+// never what it held, whatever went through the heap since. Text and lists
+// set, taken away and set again every tick, a field assigned to itself and
+// to another's, structs with T? fields in lists read and written far past
+// their ends, and the same in the local world's.
+
+struct Limits
+{
+    int min = 1;
+    int max = 8;
+}
+
+struct Slot
+{
+    int? item;
+    string? label;
+    List<int>? picks;
+    Limits? limits;
+}
+
+singleton Bag
+{
+    int? number;
+    string? text;
+    List<int>? list;
+    Slot? slot;
+    Slot held;
+    List<Slot> slots;
+    Map<int, Slot> named;
+    int churned;
+    int cleared;
+    int tick;
+}
+
+local singleton Seen
+{
+    string? text;
+    List<string>? lines;
+    int frames;
+}
+
+scene Main { }
+
+string Long(int n)
+{
+    mut var text = "";
+    for (var i = 0; i < n; i++) text += "x";
+    return text;
+}
+
+system Fill(mut Bag bag)
+{
+    // Everything set, with enough text and elements to take blocks of the heap
+    bag.number = 0x7fffffff;
+    bag.text = Long(300);
+    bag.list = [1, 2, 3, 4, 5, 6, 7, 8];
+    bag.slot = Slot { item = 9, label = Long(100), picks = [9, 9, 9], limits = Limits { min = 100, max = 200 } };
+    bag.held = Slot { item = 5, label = "kept", picks = [1, 2, 3] };
+    // Taken away: what's read is nothing, and the default where one is asked for
+    bag.number = null;
+    bag.text = null;
+    bag.list = null;
+    bag.slot = null;
+    if (bag.tick == 0)
+    {
+        Debug.Log($"optional: none {bag.number!} \"{bag.text!}\" {bag.list!.count} {bag.slot!.limits!.min} {bag.slot!.limits!.max}");
+    }
+    // The heap gives the same blocks out again: a field with none still reads as none
+    bag.held.label = Long(300);
+    bag.churned += (bag.text ?? "").length + (bag.list ?? []).count + (bag.slot!.label ?? "").length + (bag.number ?? 0);
+    // To itself, to another's and back
+    bag.held.label = "kept";
+    bag.held.label = bag.held.label;
+    bag.held.picks = bag.held.picks;
+    bag.held = bag.held;
+    bag.text = bag.held.label;
+    bag.held.label = (bag.text ?? "") + " " + (bag.held.label ?? "");
+    bag.text = null;
+    // In lists and maps, and far past them
+    bag.slots.Add(Slot { item = bag.tick, label = Long(bag.tick), picks = [bag.tick] });
+    if (bag.tick % 2 == 1) bag.slots[bag.tick / 2] = Slot { };
+    bag.slots[0x7fffffff].item = 1;
+    bag.slots[-1].item = 1;
+    bag.slots[bag.tick].item = null;
+    bag.named[bag.tick % 4] = Slot { label = Long(40) };
+    bag.named[bag.tick % 3] = Slot { };
+    foreach (var slot in bag.slots)
+    {
+        bag.churned += (slot.label ?? "").length + (slot.picks ?? []).count + (slot.item ?? 0);
+        if (slot.label == null) bag.cleared++;
+    }
+    bag.churned += (bag.slots[0x7fffffff].label ?? "").length + (bag.named[99].label ?? "").length;
+    bag.tick++;
+    if (bag.tick == 64)
+    {
+        var past = bag.slots[0x7fffffff];
+        Debug.Log($"optional: kept {bag.held.item!} \"{bag.held.label!}\" {bag.held.picks!.count} past {past.item!} {past.item ?? -1}");
+    }
+}
+
+view Watch(Bag bag, mut Seen seen)
+{
+    seen.text = Long(200);
+    seen.lines = [Long(50), Long(60)];
+    seen.text = null;
+    if (seen.frames % 2 == 0) seen.lines = null;
+    seen.frames += (seen.text ?? "").length + ((seen.lines ?? []).count == 2 || seen.lines == null ? 1 : 1000);
+    if (bag.tick == 64 && seen.frames > 0)
+    {
+        Debug.Log($"optional: churn {bag.churned} {bag.cleared} local {seen.frames / 2}");
+        seen.frames = -1000000;
+    }
+}

@@ -144,9 +144,9 @@ override async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChang
     await Wait.Frames(2);
     mut var lobby = client.lobby;
     lobby.version += 1;
-    if (change.setsName) lobby.name = change.name;
-    if (change.setsOpen) lobby.open = change.open;
-    if (change.setsMatch) lobby.match = change.match;
+    lobby.name = change.name ?? lobby.name;
+    lobby.open = change.open ?? lobby.open;
+    lobby.match = change.match ?? lobby.match;
     return LobbyAnswer { ok = true, lobby = lobby };
 }
 

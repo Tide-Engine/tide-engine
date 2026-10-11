@@ -1388,6 +1388,54 @@ static type optional_type(const checker *c, const type t, const loc at)
     return result_of(c->prog, t, (type){TY_VOID, NULL}, true);
 }
 
+// What a field declared `T?` is kept as: a struct of the value and whether
+// there is one, so everything that lays out, hashes, packs, copies and carries
+// over a struct's fields does a T? field's with no code of its own. One for
+// each T, named as the T? is. Code never sees the struct: reading the field
+// gives the T? (read_type), and what's assigned to it is a T (or `null`).
+static type optional_field_type(const checker *c, const type t, const loc at)
+{
+    const type optional = optional_type(c, t, at);
+    if (optional.kind == TY_ERROR) return T_ERR;
+    if (!optional.decl->stored) {
+        decl *d = NEW(decl);
+        d->kind = DECL_STRUCT;
+        d->builtin = true;
+        d->name = optional.decl->name;
+        d->at = at;
+        d->optional_of = optional.decl;
+        field f = {0};
+        f.name = str_from("value");
+        f.type = t;
+        vec_push(d->fields, f);
+        f.name = str_from("ok");
+        f.type = (type){TY_BOOL, NULL};
+        vec_push(d->fields, f);
+        optional.decl->stored = d;
+        vec_push(c->prog->optional_fields, d);
+    }
+    return (type){TY_STRUCT, optional.decl->stored};
+}
+
+// Whether `t` is what a T? field is kept as (optional_field_type).
+static bool is_stored_optional(const type t)
+{
+    return t.kind == TY_STRUCT && t.decl && t.decl->optional_of;
+}
+
+// A field's type as code reads it: the T? of a field kept as one, and any
+// other type as it is.
+static type read_type(const type t)
+{
+    return is_stored_optional(t) ? (type){TY_OPTIONAL, t.decl->optional_of} : t;
+}
+
+// Whether `e` names a field declared `T?`, where it's kept.
+static bool is_optional_field(const expr *e)
+{
+    return (e->kind == E_MEMBER || e->kind == E_NAME) && e->field && is_stored_optional(e->field->type);
+}
+
 // A T?'s or a failable call's value, and a failable call's error.
 static type wrapped_value(const type t)
 {
@@ -1418,6 +1466,8 @@ static const char *wrapped_what(const expr *e)
         snprintf(buf, sizeof buf, "'" STR_FMT "'", STR_ARG(e->method->name));
     } else if (e->kind == E_NAME) {
         snprintf(buf, sizeof buf, "'" STR_FMT "'", STR_ARG(e->name));
+    } else if (e->kind == E_MEMBER && e->field) { // A field declared T?
+        snprintf(buf, sizeof buf, "'" STR_FMT "'", STR_ARG(e->member));
     } else {
         snprintf(buf, sizeof buf, "this");
     }
@@ -2018,7 +2068,8 @@ static bool element_path_in_place(const expr *target)
 {
     const char *why = NULL;
     const expr *cell = NULL;
-    if (holds_heap(target->type) || holds_grid(target->type)) why = "it holds text or a list, which an element's bytes can't take as they are";
+    const type kept = is_optional_field(target) ? target->field->type : target->type; // A T? field: what it's kept as
+    if (holds_heap(kept) || holds_grid(kept)) why = "it holds text or a list, which an element's bytes can't take as they are";
     for (const expr *e = target; !why && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_MEMBER && (!e->field || e->swizzle_len > 0)) why = "it's a part of a value, not a field";
         if (e->kind == E_INDEX && e->object->type.kind == TY_GRID) cell = e;
@@ -2135,9 +2186,10 @@ static void check_raw_uses(const checker *c)
 // resolution, while the list itself still waits for the chosen parameter's type.
 static type check_switch_value(checker *c, expr *e, type want);
 
-static type check_expr_want_any(checker *c, expr *e, const type want, const bool checked)
+static type check_expr_want_any(checker *c, expr *e, const type stored, const bool checked)
 {
-    if (e->kind == E_SWITCH && !checked) return check_switch_value(c, e, want);
+    const type want = read_type(stored); // A field declared T? takes what a T? does
+    if (e->kind == E_SWITCH && !checked) return check_switch_value(c, e, read_type(want));
     // As in C#, `default` of a T? is nothing.
     if (want.kind == TY_OPTIONAL && (e->kind == E_NULL || e->kind == E_DEFAULT)) {
         e->type = want;
@@ -2178,8 +2230,9 @@ static type check_expr_want_any(checker *c, expr *e, const type want, const bool
 // An expression where a value of `want` goes: [a, b] and `default` take their
 // type from it. A T? or a failable call's value only goes where its own type
 // does; elsewhere it has to be unwrapped.
-static type check_expr_want_checked(checker *c, expr *e, const type want, const bool checked)
+static type check_expr_want_checked(checker *c, expr *e, const type stored, const bool checked)
 {
+    const type want = read_type(stored);
     const type t = check_expr_want_any(c, e, want, checked);
     if (is_wrapped(t) && !(t.kind == want.kind && t.decl == want.decl)) {
         unwrap_error(e, t);
@@ -6233,6 +6286,8 @@ static bool json_holds(const type t, type *why, const decl **in, const field **a
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_STRING: case TY_ENUM:
         return true;
     case TY_STRUCT:
+        // A T? field: what its value is, or `null` and a key left out for none
+        if (t.decl->optional_of) return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth);
         if (t.decl->builtin || t.decl->skin_kind || depth == JSON_TYPE_DEPTH) break;
         for (int i = 0; i < depth; i++) {
             if (outer[i] == t.decl) return true;
@@ -9531,8 +9586,10 @@ static type check_expr_any(checker *c, expr *e)
         break;
     }
     }
+    const bool optional_text = is_stored_optional(t) && decl_holds_text(t.decl);
+    t = read_type(t); // A field declared T?: the T? it is, whatever it's kept as
     if (c->method && !c->method->makes_text && t.kind != TY_ERROR
-        && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID
+        && (optional_text || t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID
             || (t.kind == TY_STRUCT && decl_holds_text(t.decl)))) {
         c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
         c->method->makes_text_at = e->at;
@@ -9653,6 +9710,14 @@ static bool check_compare_write(checker *c, const expr *target)
 
 static bool check_writable(checker *c, expr *target, const decl *called, const param *arg_of)
 {
+    // A field declared T? is kept as its value and whether there is one, which no 'mut' or 'out' parameter points at
+    if (arg_of && is_optional_field(target)) {
+        diag_error(target->at, "a T? field can't be passed as '%s': the call would change it where it's kept, which isn't as a T?",
+                   arg_of->is_out ? "out" : "mut");
+        diag_note("pass a local and assign it after: '%s value%s; ...; " STR_FMT " = value;'", type_name(read_type(target->field->type)),
+                  arg_of->is_out ? "" : " = ...", STR_ARG(target->field->name));
+        return false;
+    }
     if (c->parallel && !check_step_write(c, target)) return false;
     if (c->compare && !check_compare_write(c, target)) return false;
     const expr *pixel = target;
@@ -12183,6 +12248,10 @@ static void check_default(checker *c, const field *f)
                    type_name(f->type));
         return;
     }
+    if (value->kind == E_NULL && is_stored_optional(f->type)) { // int? target = null: nothing, as it is with no default
+        value->type = read_type(f->type);
+        return;
+    }
     // An asset's name is as good as a constant's here: the pack's value, the
     // same on every machine, read when the default is given
     c->assets_constant = true;
@@ -12460,13 +12529,32 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
     }
 }
 
+// Whether `d`'s field `f` can be a T? of `t`: what a struct holds side by
+// side with its other fields. A grid is its holder's own and never copied,
+// and resident state is a package's C's.
+static bool optional_field_ok(const decl *d, const field *f, const type t, const loc at)
+{
+    (void)d;
+    if (t.kind == TY_GRID) {
+        diag_error(at, "a field can't be a grid or nothing: a grid is always there, empty until a cell is set");
+        diag_note("drop the '?': '%s " STR_FMT ";'", type_name(t), STR_ARG(f->name));
+        return false;
+    }
+    if (holds_render_resource(t)) {
+        diag_error(at, "a field can't be a rendering resource or nothing: 'default' is the one that's none");
+        diag_note("drop the '?': '%s " STR_FMT ";', and compare it with 'default'", type_name(t), STR_ARG(f->name));
+        return false;
+    }
+    return true;
+}
+
 // A field's type: a built-in type or a struct.
 static void resolve_field_types(const checker *c, const decl *d)
 {
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-        if (builtin_type_named(f->type_name, &f->type)) {
+        if (builtin_type_named(f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
             if (f->type.kind != TY_RESIDENT) continue;
             // Resident state (tide/resident.h): a match singleton's, one of them, for the C of a package that comes with tide
             f->type = T_ERR;
@@ -12488,12 +12576,9 @@ static void resolve_field_types(const checker *c, const decl *d)
         }
         f->type = T_ERR;
         const type_ref *const r = type_ref_or_text(f->type_ref, f->type_name);
-        if (r->optional) {
-            diag_error(at, "fields can't be T? yet: they always hold a value");
-            diag_note("keep a bool beside it that says whether it's set, like 'bool hasTarget;'");
-            continue;
-        }
-        const type t = resolve_type(c, r, PLACE_FIELD, at);
+        // int? target: the type it holds, which is a field's as any is, then what a T? of it is kept as
+        const type_ref inner = r->optional ? without_question(r) : *r;
+        const type t = resolve_type(c, &inner, PLACE_FIELD, at);
         switch (t.kind) {
         case TY_ERROR: break;
         case TY_ACTION: diag_error(at, "fields can't hold an Action; it's only ever a function's last parameter"); break;
@@ -12513,7 +12598,9 @@ static void resolve_field_types(const checker *c, const decl *d)
             diag_note("to share fields between types, declare a struct, like 'struct Name { ... }', and use it in both");
             break;
         }
-        default: f->type = t;
+        default:
+            if (!r->optional) f->type = t;
+            else if (optional_field_ok(d, f, t, at)) f->type = optional_field_type(c, t, at);
         }
     }
 }
@@ -18493,6 +18580,8 @@ bool check(program *prog)
             check_enum(&c, prog->decls.items[i]);
         }
     }
+    // What T? fields are kept as: structs no declaration names, each after what its value holds
+    for (int i = 0; i < prog->optional_fields.count; i++) order_struct(prog, prog->optional_fields.items[i]);
     c.fields_ordered = true;
     // Arrays made while resolving fields, including those in a container's
     // arguments, now see every forward struct's fields and no containment cycle.

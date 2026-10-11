@@ -1,5 +1,113 @@
 # Language features, as tidec builds them
 
+## T? fields, 2026-10-11
+
+The owner asked for them ("we have optional types or whatever but not fields
+which is very weird; so we need to add those for consistency"): that a field
+can be a `T?` is theirs, and every rule of how is the agent's pick, Provisional
+in `docs/spec.md` (Errors, Provisional: T? fields; JSON).
+
+**How it's kept.** A field declared `T?` has, as its type, a struct the
+checker makes for that `T`: `value`, of type `T`, and `ok`, a bool
+(`optional_field_type` in `check.c`; `decl.optional_of` is the `T?` it's for,
+that `T?`'s `decl.stored` is the struct, and `program.optional_fields` lists
+them). It's a `DECL_STRUCT` that's `builtin`, named as the `T?` is ("int?"),
+in no list of names, ordered among `program.structs` after what its value
+holds (`order_struct`). So everything that lays a struct's fields out, pads,
+hashes, packs, snapshots, sends as deltas, carries over a reload, owns text
+and lists, and repairs an input does a `T?` field's with no code of its own.
+In generated C it's `tide_optional_<T>` (`name_program` in `codegen.c`: the
+type's name with what C names can't hold as underscores, `tide_optional_int`,
+`tide_optional_Combat_Stats`, `tide_optional_List_int`, text
+`tide_optional_string`, and its place in the list after one that's taken),
+in the header with the structs: the value, `bool ok`, padding written out.
+
+**What code sees.** Never the struct. `check_expr_any` ends by turning the
+struct into the `T?` (`read_type`), so a member or a method's own field is a
+`TY_OPTIONAL` with `e->field` the field (`is_optional_field`), and everything
+the language has for a `T?` local works on it unchanged. What takes a value
+for a field (`check_expr_want_any`, `type_assignable` in `types.c`) takes what
+the `T?` does. `check_default` lets `null` be a default. `check_writable`
+refuses one as a `mut` or `out` argument (the C types differ, so nothing can
+point at it as a `T?`), and `element_path_in_place` asks what the field is
+kept as, so `rows[i].label = "x"` of a `string?` is refused as a `string`'s
+is. `optional_field_ok` refuses a grid and a rendering resource. `T??`,
+`List<int?>` (any `<>`) and `int?[4]` are the parser's errors
+(`parse_decl_type`, `parse_type`), which say a struct with a `T?` field goes
+there. `wrapped_what` names a field in the unwrap error.
+
+**Generated C.** `tide_optional_<T>_get(kept)` gives the `tide_result<n>`
+code reads (zeros unless `ok`; text through `tide_text_view`), and
+`tide_optional_<T>_of(result)` what's kept (zeros unless `ok`; text through
+`tide_text_temp`): `gen_optional_helpers`, both `TIDE_HELPER`s in the `.c`.
+A read is `gen_optional_read` from `gen_expr`'s `E_MEMBER` and `E_NAME`,
+beside text's `tide_text_view`, with `tide_copy_<struct>` first where the
+value has a list, as any value taken out of a place is copied. A write is
+`gen_as` with the struct as what's wanted (so a struct's value, a default, a
+spawn and a send all go through `_of`), and in `S_ASSIGN` and
+`gen_element_assign` the field's own branch: `tide_assign_<struct>` where it
+keeps text or lists. `has_defaults` and `gen_value` give zeros for one with
+no value, whatever its value's struct defaults to.
+
+**A field with no value is zeros.** `_of` gives zeros; `tide_assign_<X>`
+(`gen_text_helpers`) ends by releasing the text and lists of each `T?` field
+it left with no value (`optional_paths`) and zeroing it, since assigning an
+empty list keeps a block; an input is put right before `Sanitize`
+(`gen_clear_padding`, and `needs_repair` is true of one); a command's and a
+whole input's bits are read into zeros, and a delta's read ends with it
+(`gen_bits`). `random_paths` skips them, so nothing seeds a `Random?`.
+`type_blends` (`types.c`) says no, so views snap them. `gen_show_helpers`
+has a `tide_text_<struct>` for each one shown: the value, or `null`.
+
+**JSON** (`json_holds` in `check.c`; the struct reader and writer in
+`gen_json_helpers`): no reader or writer of the kept struct's own. A struct's
+reader sets the field to zeros, then, unless the value is `null`, reads the
+value (a struct's from its defaults) and sets `ok`; its writer, for a struct
+with any `T?` field, keeps a `first` flag instead of fixed commas and leaves
+out a field with no value. A struct with none generates what it did.
+
+**A game with none generates the C it did, byte for byte**: old and new tidec
+over every source list in `build/debug` (270, with `--layout` and without).
+The six that differ have `T?` fields, which the old compiler refuses: the new
+e2e and safety programs, the three that build the lobby package, and the
+migration test's. `last_light`'s two fail the same way with both, run outside
+the game's folder.
+
+**Tests.** `compiler/tests/e2e/optional_fields` (86 checks in Tide: every
+kind of `T`, defaults, `null`, `default`, literals, methods, text and list
+ownership and copies, lists, maps and arrays of structs with them, past the
+end, as text, JSON both ways, C through `extern`, a scene's, events, a query's
+rows, the World, a task across waits; in C: a component set and cleared is
+the bytes of one never set and the world's hash where nothing's in the heap,
+a copy, the world as bytes, a delta, `OPTIONAL_FIELDS_HASH`, which native and
+web share, the input from C with bytes beside no value and as bits whole and
+as what changed, commands' sizes on the wire and cut short, local fields,
+local events and a local component, and a view between two ticks), natively
+and on the web. `compiler/tests/safety/optional_fields`.
+`compiler/tests/errors/optional_field_*`, 28 files, a diagnostic each
+(`optional_field.tide`, the error that fields couldn't be one, is gone).
+`migrate_carries_optional_fields_as_a_value_or_nothing`
+(`platform/tests/migrate.c`). Editors: `lsp_optional_fields`, and five lines
+of the grammar's (`notes/editors.md`).
+
+**The lobby package** (`packages/lobby`) wrote a lobby's change a struct at a
+time and joined the texts, as `Json.Write` wrote every field. It writes one
+`ChangeSaid` of `T?` fields now, and `LobbyChange` has `T?` fields where it
+had a `sets` flag beside each (`notes/lobby-package.md`).
+
+**Validation** (Windows, Node 24): warning-free native and web debug builds;
+2,217 native and 2,186 web tests pass, the web's with the same
+`OPTIONAL_FIELDS_HASH`; 225 grammar checks; the docs production build. Linux,
+macOS, MinGW, Android and the sanitizers were not run here, and no workflow
+was dispatched.
+
+**Not built**: a `T?` as what a list, a map, a set, a grid or an array holds;
+a `T?` field as a `mut` or `out` argument; `??=`; `cond ? value : null`
+(no local has it either); blending a value between two ticks that both have
+one; a reload from `T` to `T?`; `null` written in JSON; a shorter delta for
+an input's `T?` (its value's change is sent beside the flag's); a `T?` on the
+GPU.
+
 ## JSON as a game's types, and text as bytes, pieces and numbers, 2026-10-11
 
 The owner approved typed JSON generated at compile time ("yeah I like that
@@ -117,7 +225,7 @@ cross-platform hash; 221 grammar checks; the docs production build. Linux,
 macOS, MinGW, Android and the sanitizers were not run here, and no workflow
 was dispatched.
 
-**Not built**: a dynamic JSON value; `T?` fields (the language has none yet);
+**Not built**: a dynamic JSON value; `T?` fields (built since: see T? fields, above);
 vectors, colors, sets and maps by an int or an enum; telling why a read gave
 nothing; indented output or leaving out defaults; `Join`, `byte.TryParse`, a
 `Parse` that fails; `TryParse` in the GUI's own number fields.

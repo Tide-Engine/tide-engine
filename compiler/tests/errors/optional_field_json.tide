@@ -1,0 +1,4 @@
+// expect: JSON has nothing for Entity, which 'Slot.other' holds
+struct Slot { Entity? other; }
+void Use() { var text = Json.Write(Slot { }); Debug.Log(text); }
+scene Main { }

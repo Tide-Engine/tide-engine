@@ -1,0 +1,4 @@
+// expect: operator '+' can't be used with int? and int
+struct Slot { int? item; }
+void Use() { mut Slot slot = Slot { }; slot.item += 1; }
+scene Main { }

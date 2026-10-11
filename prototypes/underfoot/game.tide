@@ -1,0 +1,358 @@
+using Rooms;
+
+settings
+{
+    title = "Underfoot";
+    appId = "dev.tideengine.underfoot";
+    tickRate = 30;
+    maxPlayers = 2;
+    hostMigration = true;
+}
+
+const int BOARD_W = 9;
+const int BOARD_H = 7;
+const int CELLS = 63;
+const int MAX_CRATES = 6;
+const int LEVEL_COUNT = 18;
+const int UNDO_LIMIT = 256;
+
+enum Ground : byte { Void, Stone, Ice, PortalP, PortalQ, PlateA, PlateB, Rubble, Wall }
+enum Cue { Step, Push, Lift, Lay, Blocked, Slide, Portal, Sink, Gate, Undo, Reset, Solve }
+
+// What a puzzle is made of and never changes: which ground is set for good,
+// where the gates are (1 is plate A's, 2 plate B's), where the lanterns are, and
+// the fewest moves that solve it.
+struct Layout
+{
+    bool[63] fixed;
+    int[63] gate;
+    bool[63] goal;
+    int par;
+}
+
+// Everything a move can change. A crate that has sunk is at -1.
+struct Board
+{
+    Ground[63] ground;
+    int[2] paver;
+    Ground[2] held;
+    int[2] facing;
+    int[6] crate;
+    int moves;
+    bool solved;
+}
+
+singleton Yard
+{
+    Layout layout;
+    Board board;
+    Board[256] history;
+    int historyCount;
+    int level;
+    int serial;
+    int completed;
+    int[18] best;
+    bool initialized;
+    Map<PlayerID, int> seats;
+    PlayerID[2] players;
+    bool[2] present;
+}
+
+scene Main { }
+// `action` is the action a paver's cue came of, for whoever shows why one was refused.
+event PuzzleCue { Cue kind; int paver; int cell; int action = -1; }
+command Act { int serial; int paver; int action; }
+command Undo { int serial; }
+command Reset { int serial; }
+command Next { int serial; }
+command ChooseLevel { int serial; int level; }
+
+int SeatOf(Yard yard, PlayerID player)
+{
+    if (!yard.seats.Has(player)) return -1;
+    var seat = yard.seats[player];
+    return seat >= 0 && seat < 2 && yard.present[seat] ? seat : -1;
+}
+bool Together(Yard yard) { return yard.present[0] && yard.present[1]; }
+
+int Step(int cell, int direction)
+{
+    var x = cell % BOARD_W + (direction == 1 ? 1 : 0) - (direction == 3 ? 1 : 0);
+    var y = cell / BOARD_W + (direction == 2 ? 1 : 0) - (direction == 0 ? 1 : 0);
+    return cell < 0 || x < 0 || y < 0 || x >= BOARD_W || y >= BOARD_H ? -1 : y * BOARD_W + x;
+}
+int PaverAt(Board board, int cell)
+{
+    for (var paver = 0; paver < 2; paver++)
+        if (board.paver[paver] == cell) return paver;
+    return -1;
+}
+int CrateAt(Board board, int cell)
+{
+    for (var crate = 0; crate < MAX_CRATES; crate++)
+        if (board.crate[crate] == cell) return crate;
+    return -1;
+}
+bool Loose(Ground ground)
+{
+    return ground == Ground.Stone || ground == Ground.Ice || ground == Ground.PortalP || ground == Ground.PortalQ
+        || ground == Ground.PlateA || ground == Ground.PlateB;
+}
+int PlateBit(Ground ground) { return ground == Ground.PlateA ? 1 : ground == Ground.PlateB ? 2 : 0; }
+
+// Bit 0 is plate A's gates, bit 1 plate B's: a plate is down under a paver or a crate.
+int Pressed(Board board)
+{
+    mut var pressed = 0;
+    for (var paver = 0; paver < 2; paver++)
+        if (board.paver[paver] >= 0) pressed |= PlateBit(board.ground[board.paver[paver]]);
+    for (var crate = 0; crate < MAX_CRATES; crate++)
+        if (board.crate[crate] >= 0) pressed |= PlateBit(board.ground[board.crate[crate]]);
+    return pressed;
+}
+bool Shut(Layout layout, int cell, int pressed)
+{
+    var gate = layout.gate[cell];
+    return gate != 0 && (pressed & (1 << (gate - 1))) == 0;
+}
+// Firm ground is what a paver can lift from: set stone, or a sunken crate.
+bool Firm(Layout layout, Board board, int cell)
+{
+    return layout.fixed[cell] || board.ground[cell] == Ground.Rubble;
+}
+
+// What a thing does once it is on a new cell: a crate over nothing sinks and
+// becomes ground, a portal sends it to its free twin, and ice carries it on.
+// The gates are as they were when the move began.
+void Settle(Layout layout, mut Board board, int index, bool crate, int direction, int pressed)
+{
+    for (var guard = 0; guard < CELLS; guard++)
+    {
+        var cell = crate ? board.crate[index] : board.paver[index];
+        var ground = board.ground[cell];
+        if (crate && ground == Ground.Void)
+        {
+            board.ground[cell] = Ground.Rubble;
+            board.crate[index] = -1;
+            return;
+        }
+        if (ground == Ground.PortalP || ground == Ground.PortalQ)
+        {
+            var twin = ground == Ground.PortalP ? Ground.PortalQ : Ground.PortalP;
+            for (var other = 0; other < CELLS; other++)
+            {
+                if (board.ground[other] != twin) continue;
+                if (PaverAt(board, other) < 0 && CrateAt(board, other) < 0)
+                {
+                    if (crate) board.crate[index] = other;
+                    else board.paver[index] = other;
+                }
+                break;
+            }
+            return;
+        }
+        if (ground != Ground.Ice) return;
+        var next = Step(cell, direction);
+        if (next < 0 || board.ground[next] == Ground.Wall || Shut(layout, next, pressed)) return;
+        if (PaverAt(board, next) >= 0 || CrateAt(board, next) >= 0) return;
+        if (!crate && board.ground[next] == Ground.Void) return;
+        if (crate) board.crate[index] = next;
+        else board.paver[index] = next;
+    }
+}
+
+bool Walk(Layout layout, mut Board board, int paver, int direction)
+{
+    var to = Step(board.paver[paver], direction);
+    if (to < 0) return false;
+    var pressed = Pressed(board);
+    var ground = board.ground[to];
+    if (ground == Ground.Wall || ground == Ground.Void || Shut(layout, to, pressed)) return false;
+    if (PaverAt(board, to) >= 0) return false;
+    var crate = CrateAt(board, to);
+    if (crate >= 0)
+    {
+        var beyond = Step(to, direction);
+        if (beyond < 0 || board.ground[beyond] == Ground.Wall || Shut(layout, beyond, pressed)) return false;
+        if (PaverAt(board, beyond) >= 0 || CrateAt(board, beyond) >= 0) return false;
+        board.crate[crate] = beyond;
+        Settle(layout, board, crate, true, direction, pressed);
+    }
+    board.paver[paver] = to;
+    Settle(layout, board, paver, false, direction, pressed);
+    return true;
+}
+
+// One hand: lift the loose ground ahead, or lay what is held over nothing.
+bool Handle(Layout layout, mut Board board, int paver, int direction)
+{
+    var here = board.paver[paver];
+    var to = Step(here, direction);
+    if (to < 0) return false;
+    var ground = board.ground[to];
+    if (ground == Ground.Wall || layout.gate[to] != 0) return false;
+    if (PaverAt(board, to) >= 0 || CrateAt(board, to) >= 0) return false;
+    if (board.held[paver] == Ground.Void)
+    {
+        if (!Firm(layout, board, here) || !Loose(ground) || layout.fixed[to]) return false;
+        board.held[paver] = ground;
+        board.ground[to] = Ground.Void;
+        return true;
+    }
+    if (ground != Ground.Void) return false;
+    board.ground[to] = board.held[paver];
+    board.held[paver] = Ground.Void;
+    return true;
+}
+
+bool IsSolved(Layout layout, Board board)
+{
+    for (var paver = 0; paver < 2; paver++)
+        if (board.paver[paver] < 0 || !layout.goal[board.paver[paver]]) return false;
+    return true;
+}
+
+// Actions 0 to 3 walk north, east, south and west; 4 to 7 lift or lay that way.
+bool ActBoard(Layout layout, mut Board board, int paver, int action)
+{
+    if (board.solved || paver < 0 || paver > 1 || action < 0 || action > 7) return false;
+    var done = action < 4 ? Walk(layout, board, paver, action) : Handle(layout, board, paver, action - 4);
+    if (!done) return false;
+    board.moves += 1;
+    board.solved = IsSolved(layout, board);
+    return true;
+}
+
+void Remember(mut Yard yard, Board before)
+{
+    if (yard.historyCount == UNDO_LIMIT)
+    {
+        for (var i = 1; i < UNDO_LIMIT; i++) yard.history[i - 1] = yard.history[i];
+        yard.historyCount -= 1;
+    }
+    yard.history[yard.historyCount] = before;
+    yard.historyCount += 1;
+}
+void OpenLevel(mut Yard yard, int level)
+{
+    yard.level = Math.Clamp(level, 0, LEVEL_COUNT - 1);
+    LoadLevel(yard.level, yard.layout, yard.board);
+    yard.historyCount = 0;
+    yard.serial += 1;
+    yard.initialized = true;
+}
+bool Authorized(Yard yard, PlayerID sender, int serial)
+{
+    return yard.initialized && serial == yard.serial && SeatOf(yard, sender) >= 0;
+}
+
+system BeginYard(mut Yard yard)
+{
+    if (!yard.initialized) OpenLevel(yard, 0);
+}
+event(PlayerJoined joined) JoinYard(mut Yard yard)
+{
+    if (SeatOf(yard, joined.player) >= 0) return;
+    mut var seat = -1;
+    if (yard.seats.Has(joined.player)) seat = yard.seats[joined.player];
+    else
+    {
+        if (!yard.present[0]) seat = 0;
+        else if (!yard.present[1]) seat = 1;
+        if (seat < 0) return;
+        yard.seats.Remove(yard.players[seat]);
+        yard.seats[joined.player] = seat;
+    }
+    if (seat < 0 || seat > 1 || yard.present[seat]) return;
+    yard.players[seat] = joined.player;
+    yard.present[seat] = true;
+}
+event(PlayerLeft left) LeaveYard(mut Yard yard)
+{
+    var seat = SeatOf(yard, left.player);
+    if (seat >= 0) yard.present[seat] = false;
+}
+
+// Whether a paver that set off towards `ahead` and ended at `landed` went
+// through a portal on the way, or only slid there.
+bool Jumped(Board before, int ahead, int landed, int direction)
+{
+    mut var cell = ahead;
+    for (var guard = 0; guard < BOARD_W; guard++)
+    {
+        if (cell < 0 || cell == landed) return false;
+        if (before.ground[cell] == Ground.PortalP || before.ground[cell] == Ground.PortalQ) return true;
+        cell = Step(cell, direction);
+    }
+    return false;
+}
+
+// A paver alone works both pavers; two each work their own.
+command(Act act, PlayerID sender) TakeAction(mut Yard yard)
+{
+    if (!Authorized(yard, sender, act.serial)) return;
+    if (act.paver < 0 || act.paver > 1 || act.action < 0 || act.action > 7 || yard.board.solved) return;
+    if (Together(yard) && act.paver != SeatOf(yard, sender)) return;
+    var before = yard.board;
+    yard.board.facing[act.paver] = act.action % 4;
+    var ahead = Step(before.paver[act.paver], act.action % 4);
+    if (!ActBoard(yard.layout, yard.board, act.paver, act.action))
+    {
+        Send(PuzzleCue { kind = Cue.Blocked, paver = act.paver, cell = ahead, action = act.action });
+        return;
+    }
+    Remember(yard, before);
+    var after = yard.board;
+    mut var kind = Cue.Step;
+    mut var where = after.paver[act.paver];
+    if (act.action >= 4)
+    {
+        kind = after.held[act.paver] == Ground.Void ? Cue.Lay : Cue.Lift;
+        where = ahead;
+    }
+    else
+    {
+        if (after.paver[act.paver] != ahead) kind = Jumped(before, ahead, after.paver[act.paver], act.action) ? Cue.Portal : Cue.Slide;
+        for (var crate = 0; crate < MAX_CRATES; crate++)
+        {
+            if (before.crate[crate] == after.crate[crate]) continue;
+            if (after.crate[crate] < 0) kind = Cue.Sink;
+            else if (kind != Cue.Portal) kind = Cue.Push;
+        }
+    }
+    Send(PuzzleCue { kind = kind, paver = act.paver, cell = where });
+    if (Pressed(before) != Pressed(after)) Send(PuzzleCue { kind = Cue.Gate, paver = act.paver, cell = where });
+    if (after.solved)
+    {
+        yard.completed |= 1 << yard.level;
+        if (yard.best[yard.level] == 0 || after.moves < yard.best[yard.level]) yard.best[yard.level] = after.moves;
+        Send(PuzzleCue { kind = Cue.Solve, paver = act.paver, cell = where });
+    }
+}
+command(Undo undo, PlayerID sender) UndoMove(mut Yard yard)
+{
+    if (!Authorized(yard, sender, undo.serial) || yard.historyCount <= 0) return;
+    yard.historyCount -= 1;
+    yard.board = yard.history[yard.historyCount];
+    Send(PuzzleCue { kind = Cue.Undo, paver = SeatOf(yard, sender), cell = -1 });
+}
+// Starting over is a move like any other, so undo takes it back.
+command(Reset reset, PlayerID sender) ResetPuzzle(mut Yard yard)
+{
+    if (!Authorized(yard, sender, reset.serial) || yard.board.moves == 0) return;
+    Remember(yard, yard.board);
+    LoadLevel(yard.level, yard.layout, yard.board);
+    Send(PuzzleCue { kind = Cue.Reset, paver = SeatOf(yard, sender), cell = -1 });
+}
+command(Next next, PlayerID sender) NextPuzzle(mut Yard yard)
+{
+    if (!Authorized(yard, sender, next.serial) || !yard.board.solved || yard.level >= LEVEL_COUNT - 1) return;
+    OpenLevel(yard, yard.level + 1);
+    Send(PuzzleCue { kind = Cue.Reset, paver = SeatOf(yard, sender), cell = -1 });
+}
+command(ChooseLevel choice, PlayerID sender) VisitPuzzle(mut Yard yard)
+{
+    if (!Authorized(yard, sender, choice.serial) || choice.level < 0 || choice.level >= LEVEL_COUNT) return;
+    OpenLevel(yard, choice.level);
+    Send(PuzzleCue { kind = Cue.Reset, paver = SeatOf(yard, sender), cell = -1 });
+}
