@@ -17,6 +17,8 @@ chat alongside the game to discuss plans.
 Each screen follows its own maker in one continuous scene. Step inside a
 room and the camera zooms into its actual doorway, with the containing world
 and a maker in the immediate containing world kept in view beyond its walls.
+Your maker walks and shrinks through the doorway; leaving grows them back
+into the surrounding world. Your partner can watch that passage from outside.
 The outside follows the doorway you used: a moved shell changes your surroundings,
 and a recursive doorway can put the same room
 around itself. Amber and Teal keep their identity colours wherever they

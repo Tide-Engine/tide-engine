@@ -37,6 +37,203 @@ struct RoomSurround
     bool reference;
 }
 
+// A maker has one visible pose while crossing a doorway. Its position and
+// size live in the actual containing room, so every camera projects the same
+// passage rather than interpolating unrelated grid coordinates.
+struct MakerPassage
+{
+    bool active;
+    bool entering;
+    bool sourceInside;
+    bool visualInside;
+    bool bridge;
+    int child = -1;
+    RoomSurround gate;
+    RoomSurround fromGate;
+    float2 source;
+    float sourceScale = 1;
+    float2 target;
+    float2 lip;
+    float2 fromLip;
+    float age;
+    float2 position;
+    float scale = 1;
+    float2 aliasSource;
+    float2 aliasPosition;
+    float aliasFrom;
+    float aliasAlpha;
+}
+
+float2 PassageAnchor(RoomSurround gate, Picture picture)
+{
+    return gate.shell >= 0 && gate.shell < MAX_ROOMS ? picture.rooms[gate.shell] : gate.anchor;
+}
+
+bool SameGate(RoomSurround a, RoomSurround b)
+{
+    return a.room == b.room && a.shell == b.shell && a.portal == b.portal && a.reference == b.reference;
+}
+
+bool SameEntrance(Traveler a, Traveler b)
+{
+    if (a.depth != b.depth) return false;
+    if (a.depth <= 0 || a.depth > MAX_DEPTH) return true;
+    var first = a.trail[a.depth - 1];
+    var second = b.trail[b.depth - 1];
+    return first.shell == second.shell && first.room == second.room && CellEqual(first.position, second.position);
+}
+
+float PassageEase(float value)
+{
+    var t = Math.Clamp(value, 0, 1);
+    return t * t * (3 - 2 * t);
+}
+
+float2 DoorLip(float2 doorCell)
+{
+    return (doorCell - float2(2)) * ((INNER_SIZE + 0.22) / (INNER_SIZE - 1)) * ROOM_SCALE;
+}
+
+MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after)
+{
+    var destination = ReturnSurround(workshop, after, picture);
+    var previous = ReturnSurround(workshop, before, picture);
+    mut var trip = MakerPassage { child = after.room, target = float2(after.position) };
+    if (before.room >= 0 && after.room >= 0 && before.depth == after.depth &&
+        previous.room == destination.room && !SameGate(previous, destination))
+    {
+        trip.entering = true;
+        trip.bridge = true;
+        trip.sourceInside = true;
+        trip.gate = destination;
+        trip.fromGate = previous;
+        trip.lip = DoorLip(float2(after.position));
+        trip.fromLip = DoorLip(float2(before.position));
+    }
+    else if (after.depth > before.depth && destination.room == before.room)
+    {
+        trip.entering = true;
+        trip.gate = destination;
+        trip.lip = DoorLip(float2(after.position));
+    }
+    else if (previous.room == after.room && before.room >= 0)
+    {
+        trip.child = before.room;
+        trip.gate = previous;
+        trip.sourceInside = true;
+        trip.lip = DoorLip(float2(before.position));
+    }
+    else if (after.room != before.room && destination.room == before.room)
+    {
+        trip.entering = true;
+        trip.gate = destination;
+        trip.lip = DoorLip(float2(after.position));
+    }
+    else if (before.room >= 0 && after.room >= 0 && previous.room == destination.room)
+    {
+        // One production action can leave a room and immediately enter an
+        // adjacent doorway, without changing trail depth.
+        trip.entering = true;
+        trip.bridge = true;
+        trip.sourceInside = true;
+        trip.gate = destination;
+        trip.fromGate = previous;
+        trip.lip = DoorLip(float2(after.position));
+        trip.fromLip = DoorLip(float2(before.position));
+    }
+    else return trip;
+    trip.active = true;
+    var old = picture.passages[seat];
+    if (old.active && old.gate.room == trip.gate.room)
+    {
+        trip.source = old.position;
+        trip.sourceScale = old.scale;
+        if (SameGate(old.gate, trip.gate)) trip.sourceInside = old.visualInside;
+    }
+    else if (before.room == trip.gate.room && !trip.sourceInside)
+    {
+        trip.source = picture.actors[seat];
+        trip.sourceScale = picture.actorScale[seat];
+    }
+    else
+    {
+        var from = trip.bridge ? previous : trip.gate;
+        trip.source = PassageAnchor(from, picture) + (picture.actors[seat] - float2(2)) * ROOM_SCALE;
+        trip.sourceScale = picture.actorScale[seat] * ROOM_SCALE;
+    }
+    trip.position = trip.source;
+    trip.scale = trip.sourceScale;
+    trip.visualInside = trip.sourceInside;
+    trip.aliasSource = trip.entering ? trip.lip / ROOM_SCALE + float2(2) :
+        (trip.source - PassageAnchor(trip.gate, picture)) / ROOM_SCALE + float2(2);
+    trip.aliasFrom = trip.entering ? 0.0 : 1.0;
+    if (old.active && old.child == trip.child && old.gate.reference)
+    {
+        trip.aliasSource = old.aliasPosition;
+        trip.aliasFrom = old.aliasAlpha;
+    }
+    trip.aliasPosition = trip.aliasSource;
+    trip.aliasAlpha = trip.aliasFrom;
+    return trip;
+}
+
+void PassagePose(mut MakerPassage trip, Picture picture)
+{
+    var progress = Math.Min(1, trip.age / 0.42);
+    var anchor = PassageAnchor(trip.gate, picture);
+    var lip = anchor + trip.lip;
+    var destination = trip.entering ? anchor + (trip.target - float2(2)) * ROOM_SCALE : trip.target;
+    if (trip.bridge)
+    {
+        var oldLip = PassageAnchor(trip.fromGate, picture) + trip.fromLip;
+        if (progress < 0.25)
+        {
+            var blend = PassageEase(progress / 0.25);
+            trip.position = Math.Lerp(trip.source, oldLip, blend);
+            trip.scale = Math.Lerp(trip.sourceScale, ROOM_SCALE, blend);
+        }
+        else if (progress < 0.75)
+        {
+            var blend = PassageEase((progress - 0.25) / 0.50);
+            trip.position = Math.Lerp(oldLip, lip, blend);
+            trip.scale = Math.Lerp(ROOM_SCALE, 1, 1 - Math.Abs(blend * 2 - 1));
+        }
+        else
+        {
+            trip.position = Math.Lerp(lip, destination, PassageEase((progress - 0.75) / 0.25));
+            trip.scale = ROOM_SCALE;
+        }
+        trip.visualInside = progress >= 0.75;
+    }
+    else if (trip.entering && !trip.sourceInside)
+    {
+        var first = PassageEase(progress / 0.65);
+        trip.position = progress < 0.65 ? Math.Lerp(trip.source, lip, first) : Math.Lerp(lip, destination, PassageEase((progress - 0.65) / 0.35));
+        trip.scale = progress < 0.65 ? Math.Lerp(trip.sourceScale, ROOM_SCALE, first) : ROOM_SCALE;
+        trip.visualInside = progress >= 0.65;
+    }
+    else if (!trip.entering && trip.sourceInside)
+    {
+        var last = PassageEase((progress - 0.35) / 0.65);
+        trip.position = progress < 0.35 ? Math.Lerp(trip.source, lip, PassageEase(progress / 0.35)) : Math.Lerp(lip, destination, last);
+        trip.scale = progress < 0.35 ? Math.Lerp(trip.sourceScale, ROOM_SCALE, PassageEase(progress / 0.35)) : Math.Lerp(ROOM_SCALE, 1, last);
+        trip.visualInside = progress < 0.35;
+    }
+    else
+    {
+        var blend = PassageEase(progress);
+        trip.position = Math.Lerp(trip.source, destination, blend);
+        trip.scale = Math.Lerp(trip.sourceScale, trip.entering ? ROOM_SCALE : 1.0, blend);
+        trip.visualInside = trip.sourceInside;
+    }
+    // A fixed reference also has canonical copies elsewhere. Their edge
+    // passage crossfades with the actual gateway pose instead of popping to a
+    // different cell/scale when a stationary observer sees a recursive copy.
+    var aliasBlend = trip.entering ? PassageEase((progress - (trip.bridge ? 0.75 : 0.65)) / (trip.bridge ? 0.25 : 0.35)) : PassageEase(progress / 0.35);
+    trip.aliasPosition = Math.Lerp(trip.aliasSource, trip.entering ? trip.target : trip.lip / ROOM_SCALE + float2(2), aliasBlend);
+    trip.aliasAlpha = Math.Lerp(trip.aliasFrom, trip.entering ? 1.0 : 0.0, aliasBlend);
+}
+
 RoomSurround AncestorSurround(Workshop workshop, Traveler actor, int room, int layer, Picture picture)
 {
     mut var surround = RoomSurround { };
