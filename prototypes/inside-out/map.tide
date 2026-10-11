@@ -1,0 +1,86 @@
+// One stable viewport follows the local maker. Parent tiles remain in world
+// space around the expanded pocket, rather than becoming another panel.
+struct MapLens
+{
+    float2 center;
+    float2 size;
+    float2 origin;
+    float tile;
+}
+
+MapLens WorkshopLens(float2 screen, int room, float zoom = 1)
+{
+    var narrow = screen.x < 720;
+    var width = Math.Min(screen.x - 36, 1180);
+    var left = (screen.x - width) * 0.5;
+    var top = screen.x < 1050 ? 154.0 : 126.0;
+    var height = Math.Max(200, screen.y - top - (narrow ? 200 : 110));
+    var center = float2(left + width * 0.5, top + height * 0.5);
+    var size = float2(width, height);
+    var cells = room < 0 ? OUTER_SIZE : INNER_SIZE;
+    var side = Math.Min(size.x - 24, size.y - 62) * (room < 0 ? 0.96 : 0.68);
+    var tile = Math.Max(5, side / cells) * zoom;
+    var origin = center + float2(0, 9) - float2((cells - 1) * tile * 0.5);
+    return MapLens { center = center, size = size, origin = origin, tile = tile };
+}
+
+float2 MapPoint(float2 cell, MapLens lens) { return lens.origin + cell * lens.tile; }
+
+struct RoomSurround
+{
+    int room = -1;
+    float2 anchor;
+    int shell = -1;
+    int portal = -1;
+    bool reference;
+}
+
+RoomSurround ReturnSurround(Workshop workshop, Traveler actor, Picture picture)
+{
+    mut var surround = RoomSurround { };
+    if (actor.room < 0 || actor.room >= workshop.layout.roomCount) return surround;
+    mut var entry = Entry { shell = actor.room };
+    if (actor.depth > 0 && actor.depth <= MAX_DEPTH) entry = actor.trail[actor.depth - 1];
+    if (entry.shell >= 0 && entry.shell < workshop.layout.roomCount)
+    {
+        surround.room = workshop.puzzle.rooms[entry.shell].room;
+        surround.anchor = picture.rooms[entry.shell];
+        surround.shell = entry.shell;
+    }
+    else
+    {
+        surround.room = entry.room;
+        surround.anchor = float2(entry.position);
+        surround.portal = PortalAt(workshop.layout, entry.room, entry.position);
+        surround.reference = true;
+    }
+    return surround;
+}
+
+MapLens ContainingLens(MapLens focus, RoomSurround surround)
+{
+    var tile = focus.tile * INNER_SIZE * 1.12;
+    var center = focus.origin + float2((INNER_SIZE - 1) * focus.tile * 0.5);
+    var origin = center - surround.anchor * tile;
+    return MapLens { center = center, size = focus.size, origin = origin, tile = tile };
+}
+
+void InfinityMark(float2 at, float size, Color tone)
+{
+    // Geometric loops remain clear even on fonts without an infinity glyph.
+    Draw.WireEllipse(at + float2(-size * 0.18, 0), float2(size * 0.25, size * 0.17), Math.Max(1, size * 0.055), tone);
+    Draw.WireEllipse(at + float2(size * 0.18, 0), float2(size * 0.25, size * 0.17), Math.Max(1, size * 0.055), tone);
+}
+
+void DoorNotches(float2 center, float width, int doors, Color tone)
+{
+    for (var direction = 0; direction < 4; direction++)
+    {
+        if ((doors & (1 << direction)) == 0) continue;
+        var delta = float2(Direction(direction));
+        var edge = center + delta * width * 0.5;
+        var across = float2(-delta.y, delta.x);
+        Draw.Line(edge - across * width * 0.12, edge + across * width * 0.12, Math.Max(2, width * 0.10), Color(1, 0.95, 0.71));
+        Draw.Line(edge - across * width * 0.09, edge + across * width * 0.09, Math.Max(1, width * 0.035), tone);
+    }
+}

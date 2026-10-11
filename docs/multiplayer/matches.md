@@ -159,6 +159,8 @@ An override has the parameters of what it replaces, so a page that needs more (t
 
 `tide eject rooms` copies the package into the game, as `packages/rooms`, and points the game's `tide.packages` line at the copy: it's the game's own from there, to change as you like, and `tide upgrade` no longer updates it. It's a page of Tide, written with nothing a game can't use.
 
+A game whose players gather before a match, see who's ready, browse what's open or press one button to find a match lists the `lobby` package instead: see [Lobbies and matchmaking](./lobbies.md).
+
 ## Rooms
 
 Players find each other's matches by a room's code, like `K7QF2M`: 6 letters and digits, without look-alikes like `0` and `O`. Opening a match opens a room, and `Session.room` is its code at once, for the game to show; other players join it with `Session.Join(code)`, from a browser or a desktop game alike.
