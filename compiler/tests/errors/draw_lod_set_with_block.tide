@@ -1,0 +1,11 @@
+// expect: Draw.SetLOD sets it for the draws that follow, and takes no block
+// expect: write 'Draw.LOD(...) { ... }'
+scene Main { }
+
+view Show()
+{
+    Draw.SetLOD(1)
+    {
+        Draw.Circle(float2(0, 0), 1, Color.white);
+    }
+}

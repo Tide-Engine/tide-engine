@@ -2,9 +2,11 @@
 
 #include "asset_files.h"
 #include "asset_usage.h"
+#include "mesh_lod.h"
 #include "pack_fingerprint.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
+#include "tide/skinned_data.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14837,7 +14839,122 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
 // with its triangles: its two blocks' offsets. A field a file has something
 // for, by its name, is filled from it. Any other is zeros here, and the
 // struct's own default once the pack is loaded (gen_assets).
-static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, uint32_t offsets[2])
+// How a skinned mesh's vertices follow their bones, for its levels of detail (mesh_lod_source.apart): each
+// vertex's influences, a palette and a weight each.
+typedef struct bone_weights {
+    uint32_t vertices;
+    uint32_t *first, *count;
+    uint32_t *palette;
+    float *weight;
+} bone_weights;
+
+// How differently two vertices follow their bones: 0 for the same weights on the same bones, 1 for bones that
+// share nothing.
+static float bones_apart(void *user, const uint32_t from, const uint32_t to)
+{
+    const bone_weights *w = user;
+    if (from >= w->vertices || to >= w->vertices) return 0.0f;
+    float apart = 0.0f;
+    for (uint32_t i = 0; i < w->count[from]; i++) {
+        const uint32_t palette = w->palette[w->first[from] + i];
+        float theirs = 0.0f;
+        for (uint32_t k = 0; k < w->count[to]; k++) {
+            if (w->palette[w->first[to] + k] == palette) theirs += w->weight[w->first[to] + k];
+        }
+        bool counted = false; // A palette named twice is counted once, with all of its weight
+        for (uint32_t k = 0; k < i && !counted; k++) counted = w->palette[w->first[from] + k] == palette;
+        if (counted) continue;
+        float mine = 0.0f;
+        for (uint32_t k = i; k < w->count[from]; k++) {
+            if (w->palette[w->first[from] + k] == palette) mine += w->weight[w->first[from] + k];
+        }
+        apart += mine > theirs ? mine - theirs : theirs - mine;
+    }
+    for (uint32_t i = 0; i < w->count[to]; i++) { // ...and the bones only `to` follows
+        const uint32_t palette = w->palette[w->first[to] + i];
+        bool shared = false;
+        for (uint32_t k = 0; k < w->count[from] && !shared; k++) shared = w->palette[w->first[from] + k] == palette;
+        if (!shared) apart += w->weight[w->first[to] + i];
+    }
+    return apart * 0.5f;
+}
+
+// The bones' weights of a skinned model's `vertices` vertices, from its bytes: none (`first` NULL) for bytes
+// that aren't a model of that many, which then has its levels made as a mesh that follows no bones.
+static bone_weights bone_weights_of(const uint8_t *model, const size_t size, const uint32_t vertices)
+{
+    bone_weights w = {0};
+    tide_skinned_data_view view;
+    if (!model || !tide_skinned_data_open(model, size, &view)) return w;
+    uint32_t *first = calloc(vertices ? vertices : 1u, sizeof(uint32_t)), *count = calloc(vertices ? vertices : 1u, sizeof(uint32_t));
+    if (!first || !count) abort();
+    uint64_t all = 0;
+    bool ok = true;
+    for (uint32_t v = 0; ok && v < vertices; v++) {
+        tide_skinned_vertex_data vertex;
+        ok = tide_skinned_data_vertex(&view, v, &vertex) && all + vertex.influences <= UINT32_MAX;
+        if (!ok) break;
+        first[v] = (uint32_t)all;
+        count[v] = vertex.influences;
+        all += vertex.influences;
+    }
+    uint32_t *palette = calloc(all ? (size_t)all : 1u, sizeof(uint32_t));
+    float *weight = calloc(all ? (size_t)all : 1u, sizeof(float));
+    if (!palette || !weight) abort();
+    for (uint32_t v = 0; ok && v < vertices; v++) {
+        tide_skinned_vertex_data vertex;
+        ok = tide_skinned_data_vertex(&view, v, &vertex);
+        for (uint32_t i = 0; ok && i < count[v]; i++) {
+            tide_skinned_influence_data influence;
+            ok = tide_skinned_data_influence(&view, vertex.first_influence + i, &influence);
+            palette[first[v] + i] = influence.palette;
+            weight[first[v] + i] = influence.weight;
+        }
+    }
+    if (!ok) {
+        free(first), free(count), free(palette), free(weight);
+        return w;
+    }
+    return (bone_weights){.vertices = vertices, .first = first, .count = count, .palette = palette, .weight = weight};
+}
+
+// The levels of detail of an asset marked [LOD] (docs/spec.md, Levels of detail): made of what the file has, once
+// a file (mesh_lod_cached). `skinned` is a skinned model's bytes, whose bones' weights are weighed too. False for
+// a mesh that has none, which is packed as one with no [LOD] is. `key` gets what tells these levels from any other.
+static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned, const size_t skinned_size, tide_mesh_levels *levels,
+                        uint8_t key[32])
+{
+    static const char version[] = "tide levels of detail 1";
+    tide_sha256 s;
+    tide_sha256_init(&s);
+    tide_sha256_add(&s, version, sizeof version);
+    tide_sha256_add(&s, m->hash, sizeof m->hash);
+    if (skinned) {
+        uint8_t model[32];
+        tide_sha256_of(skinned, skinned_size, model);
+        tide_sha256_add(&s, model, sizeof model);
+    }
+    tide_sha256_end(&s, key);
+    bone_weights bones = skinned ? bone_weights_of(skinned, skinned_size, m->vertices) : (bone_weights){0};
+    const mesh_lod_source source = {
+        .vertices = m->vertices, .position = m->position, .normal = m->normal, .uv = m->has_uvs ? m->uv : NULL,
+        .uv2 = m->has_uvs2 ? m->uv2 : NULL, .color = m->has_colors ? m->color : NULL, .index = m->index, .indices = m->indices,
+        .apart = bones.first ? bones_apart : NULL, .user = &bones};
+    const mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
+    free(bones.first), free(bones.count), free(bones.palette), free(bones.weight);
+    if (made->levels == 0) return false;
+    *levels = (tide_mesh_levels){.radius = made->radius, .count = made->levels, .index = made->index, .index_count = made->indices};
+    memcpy(levels->center, made->center, sizeof levels->center);
+    for (uint32_t i = 0; i < made->levels && i < TIDE_MESH_LEVELS; i++) {
+        levels->error[i] = made->error[i];
+        levels->first[i] = made->first[i];
+        levels->indices[i] = made->count[i];
+    }
+    return true;
+}
+
+static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, const bool lod, const bool skinned,
+                      uint32_t offsets[2])
 {
     const mesh_file *m = &item->mesh;
     int *pad = arena_alloc(sizeof(int) * (size_t)(vertex->fields.count + 1));
@@ -14871,8 +14988,13 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
     tide_sha256_init(&s);
     tide_sha256_add(&s, m->hash, sizeof m->hash);
     tide_sha256_add(&s, described, strlen(described));
+    // ...and by its levels of detail, where it has any: the same file without them is another mesh to the list
+    tide_mesh_levels levels;
+    uint8_t leveled[32];
+    const bool has = lod && mesh_levels(g, m, skinned ? item->skinned : NULL, skinned ? item->skinned_size : 0u, &levels, leveled);
+    if (has) tide_sha256_add(&s, leveled, sizeof leveled);
     tide_sha256_end(&s, content);
-    tide_pack_mesh(b, content, bytes, (uint32_t)whole.size, m->vertices, m->index, m->indices, offsets);
+    tide_pack_mesh_levels(b, content, bytes, (uint32_t)whole.size, m->vertices, m->index, m->indices, has ? &levels : NULL, offsets);
     free(bytes);
 }
 
@@ -14925,7 +15047,7 @@ static void build_pack(gen *g)
             const uint32_t laid = mesh_layout_number(g, vertex);
             if (!v->many) {
                 uint32_t at[3];
-                pack_mesh(g, &b, &v->items[0], vertex, at + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[0], vertex, d->lod, skinned, at + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
@@ -14939,7 +15061,7 @@ static void build_pack(gen *g)
             uint32_t *names = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
             if (!meshes || !names) abort();
             for (int k = 0; k < v->count; k++) {
-                pack_mesh(g, &b, &v->items[k], vertex, meshes + stride * k + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[k], vertex, d->lod, skinned, meshes + stride * k + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;

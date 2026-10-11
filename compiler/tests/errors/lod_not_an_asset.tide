@@ -1,0 +1,10 @@
+// expect: LOD has simpler versions of a mesh made, for where it's drawn small, and 'Rock' isn't a mesh
+// expect: it goes before an asset that's a Mesh<V> or a SkinnedMesh<V>
+[LOD] component Rock
+{
+    float3 position;
+}
+
+scene Main
+{
+}

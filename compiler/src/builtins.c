@@ -665,6 +665,31 @@ static void build_signatures(void)
                 "way. Only 3D meshes' triangles have a back: the 2D draws draw whichever way they're wound.",
                 1, &T_CULL);
     add_unset("Draw", "SetCull", "tide_draw_unset_cull", "Back to `Cull.Back`, as each frame starts.");
+    // Levels of detail (docs/spec.md): a mesh asset marked [LOD] has simpler versions, which a draw picks among
+    add_setting("Draw", "LOD", "tide_draw_push_lod", "tide_draw_set_lod", NULL, "level",
+                "Which level of detail the meshes marked `[LOD]` draw at, in place of the one each would pick by how "
+                "big it is on screen: `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last "
+                "level is its last. Every instance of an instanced draw has it, in the order they're given. A mesh "
+                "with no levels draws as it always does.",
+                1, &T_WHOLE);
+    add_setting("Draw", "LOD", "tide_draw_push_no_lod", "tide_draw_unset_lod", NULL, "",
+                "Back to each mesh marked `[LOD]` picking its own level of detail, by how big it is on screen, as each "
+                "frame starts.", 0);
+    add_setting("Draw", "LODCamera", "tide_draw_push_lod_camera_3d", "tide_draw_set_lod_camera_3d", NULL,
+                "position, rotation, fieldOfView",
+                "The camera the meshes marked `[LOD]` pick their level of detail through, in place of the one they're "
+                "drawn through, which stays as it is: a shadow map told the player's camera casts, for each mesh, the "
+                "level the player sees. It's taken as the window's camera, so the pixels it counts are the window's.",
+                3, &T_F3, &T_Q, &T_F);
+    add_setting("Draw", "LODCamera", "tide_draw_push_lod_camera_matrices", "tide_draw_set_lod_camera_matrices", NULL,
+                "transform, projection",
+                "The camera the meshes marked `[LOD]` pick their level of detail through, as matrices: what "
+                "`Draw.CameraTransform()` and `Draw.CameraProjection()` give of the camera to pick by. The draws still "
+                "go through their destination's own camera.",
+                2, &T_F4X4, &T_F4X4);
+    add_setting("Draw", "LODCamera", "tide_draw_push_no_lod_camera", "tide_draw_unset_lod_camera", NULL, "",
+                "Back to picking levels of detail through the camera the meshes are drawn through, as each frame "
+                "starts.", 0);
     add_setting("Draw", "Camera", "tide_draw_push_camera", "tide_draw_set_camera", NULL, "center, size",
                 "The 2D camera, which the shapes, text and 2D meshes go through: `center` is the world position at the "
                 "middle of the screen and `size` is half the visible height, like Unity's orthographic size. The 3D "

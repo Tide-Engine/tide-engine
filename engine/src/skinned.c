@@ -1396,6 +1396,7 @@ static void prepare_atlas_poses(void *context, const uint32_t thread)
 
 void tide_draw_prepare(const tide_draw_list *draw, const tide_jobs *jobs)
 {
+    if (draw) tide_draw_gather_levels(draw);
     if (!draw || !draw->skinned) return;
     struct tide_skinned_draw_cache *c = draw->skinned;
     uint64_t nodes = 0u;

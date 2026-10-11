@@ -728,6 +728,14 @@ uint32_t tide_draw_grid_data(tide_draw_list *d, const tide_grid g, const tide_gr
     return slot;
 }
 
+// The levels of detail of a mesh the list just copied, where its indices are a mesh's of the pack that was
+// built with them (an asset marked [LOD]): the draws after it pick among them.
+static void mesh_levels(tide_draw_list *d, const uint32_t mesh, const tide_list indices)
+{
+    tide_mesh_levels levels;
+    if (indices.at >> 30 == TIDE_IN_SCRATCH && tide_pack_list_levels(indices, &levels)) tide_draw_mesh_levels(d, mesh, &levels);
+}
+
 static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const tide_list indices)
 {
     const int32_t vertex_count = tide_list_count(vertices);
@@ -752,6 +760,7 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
         tide_draw_mesh_fill(d, mesh, v, (uint32_t)vertex_count, i, (uint32_t)index_count);
         tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
         tide_list_unflatten(vertices, v, sizeof(tide_vertex3), false, vertices_copied);
+        mesh_levels(d, mesh, indices);
     }
     return mesh;
 }
@@ -789,6 +798,7 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
         tide_draw_mesh_fill_bytes(d, mesh, v, size, (uint32_t)vertex_count, i, (uint32_t)index_count);
         tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
         tide_list_unflatten(vertices, v, size, false, vertices_copied);
+        mesh_levels(d, mesh, indices);
     }
     tide_draw_shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling);
 }

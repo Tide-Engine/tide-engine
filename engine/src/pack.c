@@ -239,7 +239,7 @@ uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const v
 
 // A list's block of `count` elements of `element` bytes each, with what's in it said after them (tide/pack.h).
 static uint32_t versioned_list(tide_pack_builder *b, const void *elements, const uint32_t element, const uint32_t count,
-                               uint64_t version)
+                               uint64_t version, const uint32_t levels)
 {
     const uint64_t bytes = ((uint64_t)element * count + 7u) & ~7ull;
     if (bytes + 16u + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
@@ -250,14 +250,38 @@ static uint32_t versioned_list(tide_pack_builder *b, const void *elements, const
     h->next = (uint32_t)(sizeof(tide_block) + bytes);
     if (count) memcpy(h + 1, elements, (size_t)element * count);
     if (!version) version = 1u; // 0 is no list's
-    const uint32_t said[2] = {element, 0u};
+    const uint32_t said[2] = {element, levels}; // ...and where its levels of detail are, for a mesh's indices that have them
     memcpy((uint8_t *)(h + 1) + bytes, &version, sizeof version);
     memcpy((uint8_t *)(h + 1) + bytes + sizeof version, said, sizeof said);
     return at;
 }
 
-void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void *vertices, const uint32_t vertex, const uint32_t count,
-                    const uint32_t *indices, const uint32_t index_count, uint32_t offsets[2])
+// A mesh's levels of detail as a block: the ball, how many levels, how many indices, each level's error, first
+// index and count, a word of nothing, then the indices (LEVELS_HEAD bytes before them, in pack_load.c too).
+static uint32_t levels_block(tide_pack_builder *b, const tide_mesh_levels *levels)
+{
+    uint32_t words[28] = {0};
+    memcpy(&words[0], levels->center, sizeof levels->center);
+    memcpy(&words[3], &levels->radius, sizeof levels->radius);
+    words[4] = levels->count;
+    words[5] = levels->index_count;
+    for (uint32_t i = 0; i < levels->count; i++) {
+        memcpy(&words[6u + i * 3u], &levels->error[i], sizeof(float));
+        words[7u + i * 3u] = levels->first[i];
+        words[8u + i * 3u] = levels->indices[i];
+    }
+    const uint64_t bytes = sizeof words + (uint64_t)levels->index_count * sizeof(uint32_t);
+    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
+    const uint32_t at = block(b, (uint32_t)bytes);
+    uint8_t *to = (uint8_t *)(header(b, at) + 1);
+    memcpy(to, words, sizeof words);
+    memcpy(to + sizeof words, levels->index, (size_t)levels->index_count * sizeof(uint32_t));
+    return at;
+}
+
+void tide_pack_mesh_levels(tide_pack_builder *b, const uint8_t content[32], const void *vertices, const uint32_t vertex,
+                           const uint32_t count, const uint32_t *indices, const uint32_t index_count,
+                           const tide_mesh_levels *levels, uint32_t offsets[2])
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_MESH);
     if (had) {
@@ -267,9 +291,17 @@ void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void 
     }
     uint64_t versions[2];
     memcpy(versions, content, sizeof versions);
-    offsets[0] = versioned_list(b, vertices, vertex, count, versions[0]);
-    offsets[1] = versioned_list(b, indices, (uint32_t)sizeof(uint32_t), index_count, versions[1]);
+    // Where they are, plus 1: a block can be the region's first, at 0, which is what a mesh with none says
+    const uint32_t simpler = levels && levels->count && levels->count <= TIDE_MESH_LEVELS && levels->index ? levels_block(b, levels) + 1u : 0u;
+    offsets[0] = versioned_list(b, vertices, vertex, count, versions[0], 0);
+    offsets[1] = versioned_list(b, indices, (uint32_t)sizeof(uint32_t), index_count, versions[1], simpler);
     add_shared(b, content, TIDE_PACK_MESH, offsets[0], offsets[1], vertex);
+}
+
+void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void *vertices, const uint32_t vertex, const uint32_t count,
+                    const uint32_t *indices, const uint32_t index_count, uint32_t offsets[2])
+{
+    tide_pack_mesh_levels(b, content, vertices, vertex, count, indices, index_count, NULL, offsets);
 }
 
 uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
