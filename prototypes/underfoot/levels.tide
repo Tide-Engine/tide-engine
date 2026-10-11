@@ -1,0 +1,352 @@
+// The puzzles. A board is seven rows of nine cells, two characters a cell: its
+// ground, then what stands on it.
+//
+//   ground   # wall   ~ nothing   . set stone   o loose stone   G lantern
+//            i I ice (loose, set)   p q P Q portals   a A b B plates   1 2 gates
+//   on it    @ the first paver   & the second   x a crate
+//
+// tools/solve.c reads this file as it is and searches every board; the fewest
+// moves it finds are LevelPar's numbers, which test/campaign.c holds it to.
+// A puzzle's second and third hints are facts of that shortest way, written
+// out by tools/hints.py: change a board and both are made again.
+
+string LevelRows(int level)
+{
+    switch (Math.Clamp(level, 0, LEVEL_COUNT - 1))
+    {
+        // = 1 One loose tile
+        case 0: return
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# .@. . ~ . G # # " +
+            "# .&. o # . G # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 2 Twice over
+        case 1: return
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# .@. ~ . . ~ G # " +
+            "# .&o # . . # G # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 3 Four hands
+        case 2: return
+            "# # # # # # # # # " +
+            "# # . . ~ G o # # " +
+            "# # # # G # ~ # # " +
+            "# # o@# # ~ . # # " +
+            "# # . . o&. # # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 4 Ballast
+        case 3: return
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# .@.x. ~ ~ . G # " +
+            "# .&o . # # . G # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 5 Dead weight
+        case 4: return
+            "# # # # # # # # # " +
+            "# # .&. ~ ~ G # # " +
+            "# # ~ # . # # # # " +
+            "# # .x. .xo # # # " +
+            "# # ~ o # G@# # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 6 Sunk cost
+        case 5: return
+            "# # # # # # # # # " +
+            "# # # G . ~ # # # " +
+            "# # .&# . .x. # # " +
+            "# # ~ # .x# ~ # # " +
+            "# # . ~ . G ~ # # " +
+            "# # ~ oxo@# # # # " +
+            "# # # # # # # # # ";
+        // = 7 A plate is a tile
+        case 6: return
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# .@. . ~ 1 . G # " +
+            "# .&a . # # . G # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 8 Doorstop
+        case 7: return
+            "# # # # # # # # # " +
+            "# # . ~ ~ G . # # " +
+            "# # .&# # .x~ # # " +
+            "# ~ ~ 1 . o . # # " +
+            "# A # . . # . # # " +
+            "# .@.x. G 1 # # # " +
+            "# # # # # # # # # ";
+        // = 9 Turnstile
+        case 8: return
+            "# # # # # # # # # " +
+            "# a ~ G . ~ # # # " +
+            "# # .@# Ax# G # # " +
+            "# # 1 .x. # ~ # # " +
+            "# o . # ~ # ~ # # " +
+            "# # # # . ~ .&# # " +
+            "# # # # # # # # # ";
+        // = 10 Black ice
+        case 9: return
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# .@. I I i . # # " +
+            "# .&# # G # G # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 11 Cold feet
+        case 10: return
+            "# # # # # # # # # " +
+            "# o I@~ ~ .x. # # " +
+            "# # G # # . o # # " +
+            "# . i # # # ~ # # " +
+            "# . ~ . .&# G # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 12 Thaw
+        case 11: return
+            "# # # # # # # # # " +
+            "# . ~ i ~ ~ G # # " +
+            "# I # . # # # # # " +
+            "# ~ . .x# # o # # " +
+            "# .xi # . ~ . # # " +
+            "# # . .&G@# i # # " +
+            "# # # # # # # # # ";
+        // = 13 Carry-on
+        case 12: return
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# .@. P # Q ~ G # " +
+            "# .&o . # . # G # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 14 Short cut
+        case 13: return
+            "# # # # # # # # # " +
+            "# # # # ~ o ~ # # " +
+            "# # ~ .x~ # ~ # # " +
+            "# # p&q@. # . # # " +
+            "# # o G # # G # # " +
+            "# # # # # # # # # " +
+            "# # # # # # # # # ";
+        // = 15 Revolving door
+        case 14: return
+            "# # # # # # # # # " +
+            "# o # ~ q . . # # " +
+            "# G # .@# . # # # " +
+            "# ~ # .x# ~ ~ # # " +
+            "# ~ # . # # . # # " +
+            "# .&.xp # G ~ # # " +
+            "# # # # # # # # # ";
+        // = 16 Forwarding address
+        case 15: return
+            "# # # # # # # # # " +
+            "# # # # # p Ax. # " +
+            "# ~ ~ 1&~ q .x# # " +
+            "# ~ . # # o . # # " +
+            "# o@~ # # . # ~ # " +
+            "# . . # G G . . # " +
+            "# # # # # # # # # ";
+        // = 17 Lost property
+        case 16: return
+            "# # # # # # # # # " +
+            "# # # # .x~ ~ . # " +
+            "# ~ . ~ . . # G # " +
+            "# ~ # # .x# G@# # " +
+            "# . ~ . p&# ~ # # " +
+            "# # # ~ Qxo . . # " +
+            "# # # # # # # # # ";
+        // = 18 Underfoot
+        case 17: return
+            "# # # # # # # # # " +
+            "# G . . ~ # p .x# " +
+            "# ~ ix# # # a # # " +
+            "# # ~ 1&q I . . # " +
+            "# # # # # # # . # " +
+            "# G 1 . ~ ~ .@~ # " +
+            "# # # # # # # # # ";
+    }
+    return "";
+}
+
+string LevelName(int level)
+{
+    switch (level)
+    {
+        case 0: return "One loose tile";
+        case 1: return "Twice over";
+        case 2: return "Four hands";
+        case 3: return "Ballast";
+        case 4: return "Dead weight";
+        case 5: return "Sunk cost";
+        case 6: return "A plate is a tile";
+        case 7: return "Doorstop";
+        case 8: return "Turnstile";
+        case 9: return "Black ice";
+        case 10: return "Cold feet";
+        case 11: return "Thaw";
+        case 12: return "Carry-on";
+        case 13: return "Short cut";
+        case 14: return "Revolving door";
+        case 15: return "Forwarding address";
+        case 16: return "Lost property";
+        case 17: return "Underfoot";
+    }
+    return "";
+}
+
+int LevelPar(int level)
+{
+    switch (level)
+    {
+        case 0: return 14;
+        case 1: return 20;
+        case 2: return 29;
+        case 3: return 16;
+        case 4: return 30;
+        case 5: return 42;
+        case 6: return 16;
+        case 7: return 49;
+        case 8: return 79;
+        case 9: return 8;
+        case 10: return 49;
+        case 11: return 70;
+        case 12: return 12;
+        case 13: return 34;
+        case 14: return 58;
+        case 15: return 64;
+        case 16: return 72;
+        case 17: return 94;
+    }
+    return 0;
+}
+
+string ChapterName(int level)
+{
+    if (level < 3) return "Loose tiles";
+    if (level < 6) return "Crates";
+    if (level < 9) return "Plates and gates";
+    if (level < 12) return "Ice";
+    if (level < 15) return "Portals";
+    return "Everything at once";
+}
+
+string LevelHint(int level, int tier)
+{
+    switch (level * 3 + Math.Clamp(tier, 0, 2))
+    {
+        case 0: return "A loose tile lifts from any floor beside it, and lays over water. The tile you want is not the one in your path.";
+        case 1: return "The shortest way is 14 moves. It ends with Ember on F3 and Tide on F2. Along it Ember lifts once.";
+        case 2: return "The whole of the shortest way: Ember, on C2, lifts the tile at C3. Ember, on C2, lays the tile at D2. Then both walk to their lanterns.";
+        case 3: return "A tile you have crossed can be lifted again from the far side, once nobody still needs it.";
+        case 4: return "The shortest way is 20 moves. It ends with Ember on G2 and Tide on G3. Along it Ember lifts once, Tide lifts once.";
+        case 5: return "The whole of the shortest way: Ember, on B2, lifts the tile at B3. Ember, on B2, lays the tile at C2. Tide, on D2, lifts the tile at C2. Tide, on E2, lays the tile at F2. Then both walk to their lanterns.";
+        case 6: return "Each of you starts beside a tile the other one needs. Hand them across the gaps; do not try to walk them round.";
+        case 7: return "The shortest way is 29 moves. It ends with Ember on E1 and Tide on D2. Along it Ember lifts 3 times, Tide lifts 3 times.";
+        case 8: return "The shortest way opens like this. Ember, on B4, lifts the tile at B3. Tide, on E4, lifts the tile at D4. Ember, on C4, lays the tile at D4. Tide, on E4, lays the tile at E3. Ember, on E4, lifts the tile at D4. Tide, on F3, lifts the tile at E3.";
+        case 9: return "A crate pushed into the water fills it for good. Then the tile only has to cover what is left.";
+        case 10: return "The shortest way is 16 moves. It ends with Ember on G3 and Tide on G2. Along it Ember lifts once, a crate is pushed twice and one sinks.";
+        case 11: return "The whole of the shortest way: Ember pushes the crate at B2 east. Ember, on B2, lifts the tile at B3. Ember pushes the crate at C2 east, and it sinks. Ember, on D2, lays the tile at E2. Then both walk to their lanterns.";
+        case 12: return "Only one of these crates is worth more underwater. The other just has to get out of the way first.";
+        case 13: return "The shortest way is 30 moves. It ends with Ember on E4 and Tide on F1. Along it Ember lifts 3 times, Tide lifts twice, a crate is pushed 3 times and one sinks.";
+        case 14: return "The shortest way opens like this. Ember pushes the crate at D3 west. Ember, on D3, lifts the tile at E3. Ember, on D2, lays the tile at D1. Tide, on C1, lifts the tile at D1. Tide, on B1, lays the tile at B2. Tide pushes the crate at B3 south, and it sinks.";
+        case 15: return "One crate becomes floor and the other only steps aside. Decide where the first one sinks before you move a tile.";
+        case 16: return "The shortest way is 42 moves. It ends with Ember on E4 and Tide on C1. Along it Ember lifts 4 times, Tide lifts 3 times, a crate is pushed twice and one sinks.";
+        case 17: return "The shortest way opens like this. Ember, on D4, lifts the tile at D5. Ember, on D4, lays the tile at C4. Ember, on B4, lifts the tile at C4. Ember, on B4, lays the tile at B5. Ember pushes the crate at C5 east, and it sinks. Ember, on D5, lifts the tile at C5.";
+        case 18: return "The plate is loose. Lay it where stepping off it takes you straight through the gate.";
+        case 19: return "The shortest way is 16 moves. It ends with Ember on G3 and Tide on G2. Along it Ember lifts once.";
+        case 20: return "The whole of the shortest way: Ember, on B2, lifts the plate at B3. Ember, on C2, lays the plate at D2. Then both walk to their lanterns.";
+        case 21: return "Someone has to stand on the plate while the other pushes a crate through the gate. Work out who ends up where.";
+        case 22: return "The shortest way is 49 moves. It ends with Ember on E1 and Tide on D5. Along it Ember lifts twice, Tide lifts once, a crate is pushed 5 times and one sinks.";
+        case 23: return "The shortest way opens like this. Ember pushes the crate at B5 east. Ember pushes the crate at C5 east. Ember pushes the crate at E2 north. Ember, on E2, lifts the tile at E3. Ember, on E2, lays the tile at F2. Ember, on F1, lifts the tile at F2.";
+        case 24: return "The gate is open because a crate sits on the plate, and that crate is needed elsewhere. Plan what passes the gate before it moves, and what holds the plate after.";
+        case 25: return "The shortest way is 79 moves. It ends with Ember on F2 and Tide on C1. Along it Ember lifts 7 times, Tide lifts once, a crate is pushed 7 times and 2 sink.";
+        case 26: return "The shortest way opens like this. Ember, on B4, lifts the tile at A4. Ember, on B2, lays the tile at B1. Ember, on C1, lifts the tile at B1. Ember pushes the crate at D2 south. Ember pushes the crate at D3 south, and it sinks. Ember, on D5, lays the tile at E5.";
+        case 27: return "Nothing stops on ice but an edge. Make one.";
+        case 28: return "The shortest way is 8 moves. It ends with Ember on F3 and Tide on D3. Along it Ember lifts once.";
+        case 29: return "The whole of the shortest way: Ember steps east from B2 and slides at F2. Ember, on F2, lifts the ice at E2. Tide steps east from B2 and slides at D2. Then both walk to their lanterns.";
+        case 30: return "Loose ice is a tile you cannot stand still on. Lay it where you only ever pass through.";
+        case 31: return "The shortest way is 49 moves. It ends with Ember on F4 and Tide on B2. Along it Ember lifts 6 times, Tide lifts twice, a crate is pushed once.";
+        case 32: return "The shortest way opens like this. Ember, on B1, lifts the tile at A1. Ember, on B3, lays the tile at B4. Ember, on B2, lifts the ice at B3. Ember, on B1, lays the ice at C1. Tide, on A4, lifts the tile at B4. Tide, on A3, lays the tile at B3.";
+        case 33: return "Loose ice is a bridge you can lay ahead of you and take up behind. Count the pieces against the gaps.";
+        case 34: return "The shortest way is 70 moves. It ends with Ember on F1 and Tide on D5. Along it Ember lifts 6 times, Tide lifts 5 times.";
+        case 35: return "The shortest way opens like this. Tide steps north from B5 and slides at B3. Ember, on B5, lifts the ice at B4. Ember, on D4, lays the ice at E4. Ember steps east from D4 and slides at F4. Ember, on F4, lifts the tile at F3. Ember steps west from F4 and slides at D4.";
+        case 36: return "Whatever you carry comes through the portal with you.";
+        case 37: return "The shortest way is 12 moves. It ends with Ember on G3 and Tide on G2. Along it Ember lifts once.";
+        case 38: return "The whole of the shortest way: Ember, on B2, lifts the tile at B3. Ember steps east from B2 and comes out at E2. Ember, on E2, lays the tile at F2. Tide steps east from B2 and comes out at E2. Then both walk to their lanterns.";
+        case 39: return "A portal in someone's hand takes its twin out of play. Move one end, and the same step leads somewhere new.";
+        case 40: return "The shortest way is 34 moves. It ends with Ember on C4 and Tide on F4. Along it Ember lifts once, Tide lifts 5 times, a crate is pushed twice and one sinks.";
+        case 41: return "The shortest way opens like this. Tide, on C4, lifts the tile at B4. Tide steps north from C4 and comes out at B3. Ember, on D3, lifts the portal at C3. Ember, on D3, lays the portal at D2. Tide, on B3, lays the tile at B2. Ember steps north from D3 and comes out at B3.";
+        case 42: return "Crates go through portals too, and the far end is wherever you lay it.";
+        case 43: return "The shortest way is 58 moves. It ends with Ember on A2 and Tide on E5. Along it Ember lifts 5 times, Tide lifts 5 times, a crate is pushed 6 times and one sinks.";
+        case 44: return "The shortest way opens like this. Ember pushes the crate at C3 south. Ember pushes the crate at C4 south. Ember, on C4, lifts the portal at C5. Ember, on C2, lays the portal at C1. Ember pushes the crate at D1 east. Ember steps east from C1 and comes out at C1.";
+        case 45: return "Only the portal's far end needs to travel. Keep carrying it to where the next arrival is wanted.";
+        case 46: return "The shortest way is 64 moves. It ends with Ember on E5 and Tide on D5. Along it Ember lifts twice, Tide lifts 6 times, a crate is pushed twice.";
+        case 47: return "The shortest way opens like this. Ember, on A5, lifts the tile at A4. Ember, on B5, lays the tile at B4. Ember, on B3, lifts the tile at B4. Ember, on B3, lays the tile at B2. Tide, on C2, lifts the tile at B2. Tide, on C2, lays the tile at D2.";
+        case 48: return "Whoever carries a portal decides where the other one leads. Take turns being the one who moves the door.";
+        case 49: return "The shortest way is 72 moves. It ends with Ember on F3 and Tide on G2. Along it Ember lifts 7 times, Tide lifts 8 times, a crate is pushed 4 times and one sinks.";
+        case 50: return "The shortest way opens like this. Tide, on C4, lifts the portal at D4. Tide, on C4, lays the portal at C5. Tide pushes the crate at D5 east. Tide steps east from C5 and comes out at C5. Tide steps south from C4 and comes out at D5. Tide, on D5, lifts the portal at C5.";
+        case 51: return "Everything loose here is a tile when you need one: the plate, the portals, the ice. The plate has two jobs, and it cannot do both at once.";
+        case 52: return "The shortest way is 94 moves. It ends with Ember on A1 and Tide on A5. Along it Ember lifts 13 times, Tide lifts 3 times, a crate is pushed twice.";
+        case 53: return "The shortest way opens like this. Tide steps east from C3 and comes out at F1. Tide, on F3, lifts the plate at F2. Tide, on G4, lays the plate at G5. Ember, on G4, lifts the plate at G5. Tide steps west from F3 and slides at F1. Ember, on F3, lays the plate at F2.";
+    }
+    return "";
+}
+
+void LoadLevel(int level, mut Layout layout, mut Board board)
+{
+    layout = Layout { par = LevelPar(level) };
+    board = Board { };
+    board.paver = [-1, -1];
+    board.facing = [2, 2];
+    for (var crate = 0; crate < MAX_CRATES; crate++) board.crate[crate] = -1;
+    var rows = LevelRows(level);
+    mut var crates = 0;
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        var mark = rows[cell * 2];
+        var thing = rows[cell * 2 + 1];
+        mut var ground = Ground.Stone;
+        mut var fixed = true;
+        switch (mark)
+        {
+            case '~': ground = Ground.Void; fixed = false; break;
+            case '.': break;
+            case 'o': fixed = false; break;
+            case 'i': ground = Ground.Ice; fixed = false; break;
+            case 'I': ground = Ground.Ice; break;
+            case 'p': ground = Ground.PortalP; fixed = false; break;
+            case 'P': ground = Ground.PortalP; break;
+            case 'q': ground = Ground.PortalQ; fixed = false; break;
+            case 'Q': ground = Ground.PortalQ; break;
+            case 'a': ground = Ground.PlateA; fixed = false; break;
+            case 'A': ground = Ground.PlateA; break;
+            case 'b': ground = Ground.PlateB; fixed = false; break;
+            case 'B': ground = Ground.PlateB; break;
+            case '1': layout.gate[cell] = 1; break;
+            case '2': layout.gate[cell] = 2; break;
+            case 'G': layout.goal[cell] = true; break;
+            default: ground = Ground.Wall; break;
+        }
+        board.ground[cell] = ground;
+        layout.fixed[cell] = fixed;
+        if (thing == '@') board.paver[0] = cell;
+        else if (thing == '&') board.paver[1] = cell;
+        else if (thing == 'x' && crates < MAX_CRATES)
+        {
+            board.crate[crates] = cell;
+            crates++;
+        }
+    }
+}
