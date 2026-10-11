@@ -14,12 +14,13 @@ chat alongside the game to discuss plans.
 
 ## Playing
 
-The top-down scene is shared: both screens show the workshop, every pocket
-room and both makers. Amber and Teal keep their identity colours wherever
-they travel. Each room has a coloured number, a live miniature in its shell,
-and an enlarged interior. Connection paths show where its shell currently
-lives. Nested and recursive previews stop drawing after a few layers;
-the underlying room remains the same shared space.
+Each screen follows its own maker and shows one dimension. Step inside a
+room and its interior fills the view, with the containing world visible
+beyond its walls. The outside follows the doorway you used: a moved shell
+changes your surroundings, and a recursive doorway can put the same room
+around itself. Amber and Teal keep their identity colours wherever they
+travel. A room shell contains a live miniature of its shared interior;
+nested and recursive previews stop drawing after a few layers.
 
 | Action | Keyboard |
 | --- | --- |
