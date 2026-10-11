@@ -77,8 +77,7 @@ void Cuboid(mut Sculpture sculpture, float2 at, float2 footprint, float height, 
     sculpture.objects.Add(SceneObject {
         transform = float4x4.TRS(position, quaternion.identity, size), tone = paint,
         aoScale = Math.Max(1, scale), aperture = sculpture.aperture,
-        apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground,
-        texels = float3(clipped.x, height, clipped.y) * (SCENE_TEXELS / Math.Max(1, scale)) });
+        apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground });
 }
 
 void FloorLine(mut Sculpture sculpture, float2 from, float2 to, float width, Color tone, float floor, float scale)
@@ -94,8 +93,7 @@ void FloorLine(mut Sculpture sculpture, float2 from, float2 to, float width, Col
     sculpture.objects.Add(SceneObject {
         transform = float4x4.TRS((start + end) * .5 + float3(0, height * .5, 0), rotation, float3(width, height, length)),
         tone = paint, aoScale = Math.Max(1, scale), aperture = sculpture.aperture,
-        apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground,
-        texels = float3(width, height, length) * (SCENE_TEXELS / Math.Max(1, scale)) });
+        apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground });
 }
 
 void FloorOutline(mut Sculpture sculpture, float2 at, float2 size, float width, Color tone, float floor, float scale)

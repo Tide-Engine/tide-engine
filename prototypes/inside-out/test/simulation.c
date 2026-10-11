@@ -518,8 +518,11 @@ TIDE_TEST(inside_out_primary_two_box_cycle_rebases_without_invented_outer_anchor
     move(1, 1);
     move(1, 1);
     traveler = &world.Workshop.puzzle.actors.at[1];
-    TIDE_CHECK(traveler->room == 2 && traveler->depth == 1 && traveler->trail.at[0].box == 2);
-    TIDE_CHECK(same_cell(traveler->position, tide_i2(3, 0)));
+    // B was pushed out beside A. Their doorways face each other, so leaving
+    // A walks straight into B instead of pushing it along.
+    TIDE_CHECK(world.Workshop.puzzle.rooms.at[1].room == 2 && same_cell(world.Workshop.puzzle.rooms.at[1].position, tide_i2(3, 0)));
+    TIDE_CHECK(traveler->room == 1 && traveler->depth == 2 && traveler->trail.at[0].box == 2 && traveler->trail.at[1].box == 1);
+    TIDE_CHECK(same_cell(traveler->position, tide_i2(0, 2)));
     for (int step = 0; step < 6; step++) TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Undo, 0, 0));
     TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
     tide_world_free(&world);
