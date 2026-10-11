@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'the-last-light', 'cabin-nine', 'deadbell', 'dead-signal', 'rocket-league', 'aerial'];
+const prototypeIds = ['two-forks', 'cracked'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -46,14 +46,8 @@ test('production website shares prototypes while protecting analytics, catalog a
     }
     // Even a stale deployment that contains these bytes must not serve them.
     for (const name of ['/samples/two-forks/index.html', '/samples/two-forks/game.wasm', '/samples/thumbnails/two-forks.png', '/sample_two_forks.html', '/two-forks/index.html',
-        '/samples/the-last-light/index.html', '/examples/the-last-light/index.html', '/the_last_light.html',
-        '/samples/cabin-nine/index.html', '/samples/cabin-nine/game.wasm', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html',
-        '/samples/dead-signal/index.html', '/samples/dead-signal/game.wasm', '/samples/thumbnails/dead-signal.png',
-        '/dead_signal.html', '/sample_dead_signal.html', '/dead-signal/index.html', '/examples/dead-signal/sfx/radio.ogg',
-        '/samples/deadbell/index.html', '/samples/deadbell/game.wasm', '/samples/thumbnails/deadbell.png',
-        '/deadbell.html', '/sample_deadbell.html', '/deadbell_smoke.html',
-        '/samples/rocket-league/index.html', '/rocket_league.html', '/samples/rocket-league/game.wasm',
-        '/samples/aerial/index.html', '/aerial.html', '/samples/aerial/game.wasm']) {
+        '/samples/cracked/index.html', '/samples/cracked/game.wasm', '/samples/thumbnails/cracked.png',
+        '/cracked.html', '/cracked/index.html', '/examples/cracked/sfx/radio.ogg']) {
         files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
@@ -121,12 +115,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(catalog.status, 200);
     const catalogHtml = await catalog.text();
     assert.match(catalogHtml, /Two Forks/);
-    assert.match(catalogHtml, /The Last Light/);
-    assert.match(catalogHtml, /Cabin Nine/);
-    assert.match(catalogHtml, /Deadbell/);
-    assert.match(catalogHtml, /Dead Signal/);
-    assert.match(catalogHtml, /Afterburn/);
-    assert.match(catalogHtml, /data-prototype="aerial"/);
+    assert.match(catalogHtml, /CRACKED/);
     assert.deepEqual([...catalogHtml.matchAll(/data-prototype="([^"]+)"/g)].map((match) => match[1]).sort(), [...prototypeIds].sort());
     for (const id of prototypeIds) {
         assert.match(catalogHtml, new RegExp(`href="/prototypes/${id}/"`));
@@ -165,13 +154,13 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.match(response.headers.get('location'), /^\/admin\/login\?next=/);
         assert.equal(response.headers.get('cache-control'), 'private, no-store');
     }
-    for (const route of ['/samples/two%2dforks/index.html', '/samples/cabin%2dnine/index.html',
-        '/samples/dead%2dsignal/index.html', '/dead%5fsignal.html', '/samples/dead%62ell/index.html', '/samples/rocket%2dleague/index.html',
-        '/samples/%61erial/index.html']) {
+    for (const route of ['/samples/two%2dforks/index.html', '/sample%5ftwo%5fforks.html', '/samples/%63racked/index.html']) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(response.status, 404, route);
     }
-    const encodedPublic = await fetch(`${origin}/prototypes/two%2dforks/index.html`, { redirect: 'manual' });
+    // An id outside the catalog is an ordinary unknown path.
+    assert.equal((await fetch(`${origin}/prototypes/not-a-game/`, { redirect: 'manual' })).status, 404);
+    const encodedPublic =await fetch(`${origin}/prototypes/two%2dforks/index.html`, { redirect: 'manual' });
     assert.equal(encodedPublic.status, 200);
     assert.equal(encodedPublic.headers.get('x-robots-tag'), 'noindex');
     for (const id of prototypeIds) {
@@ -197,9 +186,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|the-last-light|cabin-nine|deadbell|dead-signal|rocket-league|prototypes\/aerial/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|The Last Light|the-last-light|Cabin Nine|cabin-nine|Deadbell|deadbell|Dead Signal|dead-signal|Afterburn|rocket-league|prototypes\/aerial/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);

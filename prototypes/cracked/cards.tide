@@ -1,0 +1,500 @@
+using Rooms;
+
+// CRACKED: the cards. Whoever lost a round picks one of five (the Unity
+// game's UpgradeView and UpgradeCard): the picker's are theirs to click, to
+// tap, or to choose with the keys and a gamepad, and everyone else watches.
+// The cards a player has taken are a strip of small ones (PreviousUpgradesUI).
+
+// The cards' pictures, the Unity game's sprites: one image of 8 by 5 cells of
+// 96 pixels, a card's at its number in the database.
+asset Texture upgradeIcons = "art/ui/upgrades.png";
+
+const int ICON_COLUMNS = 8;
+const int ICON_ROWS = 5;
+
+// UpgradeCard's colors: the paper, each rarity's, and each kind of card's.
+const Color CARD_PAPER = Color(0.851, 0.702, 0.541);
+const Color CARD_UNCOMMON = Color(0, 0.639, 1);
+const Color CARD_RARE = Color(1, 0, 0.859);
+const Color CARD_LEGENDARY = Color(1, 0.114, 0);
+const Color CARD_INK = Color(0.17, 0.12, 0.09);
+const Color CARD_GOOD = Color(0.07, 0.34, 0.16);
+const Color CARD_BAD = Color(0.55, 0.1, 0.1);
+const float CARD_RARITY_LERP = 0.5;
+const float CARD_TYPE_LERP = 0.25;
+const float CARD_SHAPE = 0.71;       // A card's width for its height: 321 by 452
+
+local singleton Deck
+{
+    int revision = -1;       // The deal that's shown
+    float age;               // Since it was dealt
+    int sent = -1;           // The deal this machine's player has picked from
+    int chosen = -1;         // ...and which card
+    float[CARDS] lift;       // How far each card is raised, from 0 to 1
+    int tookSeat = -1;       // The last card anyone took
+    int tookUpgrade;
+    float took = 100;        // Since then
+}
+
+Color UiRarityColor(Rarity rarity)
+{
+    switch (rarity)
+    {
+        case Rarity.Uncommon: return CARD_UNCOMMON;
+        case Rarity.Rare: return CARD_RARE;
+        case Rarity.Legendary: return CARD_LEGENDARY;
+    }
+    return CARD_PAPER;
+}
+
+string UiRarityName(Rarity rarity)
+{
+    switch (rarity)
+    {
+        case Rarity.Uncommon: return "UNCOMMON";
+        case Rarity.Rare: return "RARE";
+        case Rarity.Legendary: return "LEGENDARY";
+    }
+    return "COMMON";
+}
+
+// UpgradeScriptable.upgradeType, which only the cards' color reads: what a
+// card is about.
+Color UiTypeColor(int upgrade)
+{
+    switch (upgrade)
+    {
+        // Damaging
+        case 3: case 8: case 10: case 12: case 19: case 22: case 24: case 27: case 31: case 34: case 35:
+            return Color(0.851, 0.541, 0.58);
+        // Blocking
+        case 0: case 5: case 6: case 9:
+            return Color(0.804, 0.847, 0.851);
+        // Defense
+        case 4: case 7: case 14: case 32: case 33: case 36:
+            return Color(0.541, 0.78, 0.851);
+        // Movement
+        case 25: case 28: case 30:
+            return Color(0.898, 0.643, 0.486);
+        // Effects
+        case 1: case 11: case 21: case 26:
+            return Color(0.686, 0.541, 0.851);
+    }
+    return CARD_PAPER;
+}
+
+// UpgradeCard.Init's color: the paper, towards the rarity's, then towards the kind's.
+Color UiCardColor(int upgrade)
+{
+    var rarity = Math.Lerp(CARD_PAPER, UiRarityColor(UpgradeRarity(upgrade)), CARD_RARITY_LERP);
+    return Math.Lerp(rarity, UiTypeColor(upgrade), CARD_TYPE_LERP);
+}
+
+// A card's picture: its cell of the image, `size` across, around `center`.
+void UiIcon(int upgrade, float2 center, float size, Color color)
+{
+    if (upgrade < 0 || upgrade >= UPGRADES || size <= 0) return;
+    // Half a pixel in from the cell's edges, so its neighbors never bleed in
+    var cell = float2(1.0 / ICON_COLUMNS, 1.0 / ICON_ROWS);
+    var inset = float2(0.5 / (ICON_COLUMNS * 96), 0.5 / (ICON_ROWS * 96));
+    var from = float2(upgrade % ICON_COLUMNS, upgrade / ICON_COLUMNS) * cell + inset;
+    var to = from + cell - inset * 2;
+    var half = size * 0.5;
+    List<Vertex> corners = [
+        Vertex { position = center + float2(-half, -half), uv = from, color = color },
+        Vertex { position = center + float2(half, -half), uv = float2(to.x, from.y), color = color },
+        Vertex { position = center + float2(half, half), uv = to, color = color },
+        Vertex { position = center + float2(-half, half), uv = float2(from.x, to.y), color = color },
+    ];
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], upgradeIcons);
+}
+
+// A card's lines, each centered under the last and broken where it's wider
+// than `width`: what a card gives is green, and what it costs red. It returns
+// where the next line would go, and draws nothing when asked only that.
+float UiCardLines(string text, float2 top, float width, float size, bool centered, bool draw)
+{
+    mut var rest = text;
+    mut var y = top.y;
+    while (rest.length > 0)
+    {
+        var cut = rest.IndexOf('\n');
+        var line = cut < 0 ? rest : rest.Substring(0, cut);
+        rest = cut < 0 ? "" : rest.Substring(cut + 1);
+        var color = line.StartsWith("+") ? CARD_GOOD : line.StartsWith("-") ? CARD_BAD : CARD_INK;
+        mut var words = line;
+        mut var row = "";
+        while (words.length > 0)
+        {
+            var space = words.IndexOf(' ');
+            var word = space < 0 ? words : words.Substring(0, space);
+            words = space < 0 ? "" : words.Substring(space + 1);
+            var next = row == "" ? word : $"{row} {word}";
+            if (row != "" && Draw.MeasureText(next, size, Font.Bold).x > width)
+            {
+                if (draw) Draw.Text(row, float2(top.x, y), size, color, centered ? Anchor.UpperCenter : Anchor.UpperLeft, Font.Bold);
+                y += Math.Round(size * 1.2);
+                row = word;
+            }
+            else row = next;
+        }
+        if (row == "") continue;
+        if (draw) Draw.Text(row, float2(top.x, y), size, color, centered ? Anchor.UpperCenter : Anchor.UpperLeft, Font.Bold);
+        y += Math.Round(size * 1.2);
+    }
+    return y;
+}
+
+// As big as `size`, or as much smaller as fits `width`.
+float UiFit(string words, float size, float width)
+{
+    var wide = Draw.MeasureText(words, size, Font.Bold).x;
+    return wide <= width ? size : Math.Max(9, Math.Floor(size * width / wide));
+}
+
+// A card, standing: its picture over its name and its lines, as the Unity
+// game's tarot card has them. `lift` is how far it's raised towards whoever
+// is about to pick it, and `key` the number that picks it, or 0.
+void UiCard(Rect rect, int upgrade, float lift, int key)
+{
+    var size = float2(rect.width, rect.height);
+    var center = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+    var k = rect.height / 452;              // The Unity card is 452 high
+    var color = UiCardColor(upgrade);
+    var rarity = UpgradeRarity(upgrade);
+    var edge = UiRarityColor(rarity);
+    var radius = Math.Round(26 * k);
+    var inset = Math.Round(14 * k);
+    Draw.Shape(Shape { center = center + float2(0, 8 + 10 * lift), size = size, radius = radius, color = Color(0, 0, 0, 0.5), soft = 14 + 14 * lift });
+    if (lift > 0)
+    {
+        Draw.Blend(Blend.Add)
+        {
+            Draw.Shape(Shape { center = center, size = size + float2(8), radius = radius + 4, color = UiFade(UiMix(edge, Color.white, 0.5), 0.5 * lift), soft = 22 });
+        }
+    }
+    Draw.Shape(Shape { center = center, size = size, radius = radius, color = UiMix(color, Color.white, 0.16), color2 = UiMix(color, Color.black, 0.1) });
+    // The picture's half is darker, so its white drawing stands out
+    var split = rect.y + Math.Round(rect.height * 0.5);
+    var window = Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2, split - rect.y - inset);
+    var middle = float2(window.x + window.width * 0.5, window.y + window.height * 0.5);
+    Draw.Shape(Shape { center = middle, size = float2(window.width, window.height), radius = Math.Round(14 * k), color = UiMix(color, UI_BACK, 0.62), color2 = UiMix(color, UI_BACK, 0.8) });
+    Draw.Blend(Blend.Add)
+    {
+        Draw.Shape(Shape { center = middle, size = float2(window.height * 0.9), ellipse = true, color = UiFade(UiMix(edge, color, 0.4), 0.3), soft = window.height * 0.2 });
+    }
+    var picture = Math.Min(window.width, window.height) * 0.86;
+    UiIcon(upgrade, middle + float2(0, 3 * k + 2), picture, Color(0, 0, 0, 0.45));
+    UiIcon(upgrade, middle, picture, Color.white);
+    // The card's thin line, inside its edge and across its middle
+    Draw.WireRoundRect(center, size - float2(inset), radius - inset * 0.5, Math.Max(1.5, 2.5 * k), UiFade(CARD_INK, 0.8));
+    Draw.WireRoundRect(center, size, radius, Math.Max(1.5, 3 * k), lift > 0 ? UiMix(UiFade(CARD_INK, 0.5), Color.white, lift) : UiFade(CARD_INK, 0.5));
+
+    var wide = rect.width - inset * 2.6;
+    var name = UpgradeName(upgrade);
+    var title = UiFit(name, Math.Round(34 * k), wide);
+    mut var y = split + Math.Round(14 * k);
+    Draw.Text(name, float2(center.x, y), title, CARD_INK, Anchor.UpperCenter, Font.Bold);
+    y += Math.Round(40 * k);
+    Draw.Rect(float2(center.x, y), float2(wide * 0.8, Math.Max(1, Math.Round(2 * k))), UiFade(CARD_INK, 0.3));
+    y += Math.Round(10 * k);
+    // Its lines, as big as leaves them all on the card
+    mut var lines = Math.Max(10, Math.Round(23 * k));
+    var floor = rect.y + rect.height - inset - Math.Round(26 * k);
+    while (lines > 9 && UiCardLines(UpgradeText(upgrade), float2(center.x, y), wide, lines, true, false) > floor) lines -= 1;
+    UiCardLines(UpgradeText(upgrade), float2(center.x, y), wide, lines, true, true);
+    Draw.Text(UiRarityName(rarity), float2(center.x, rect.y + rect.height - inset - Math.Round(8 * k)), Math.Max(9, Math.Round(15 * k)),
+              UiMix(edge, CARD_INK, rarity == Rarity.Common ? 0.75 : 0.45), Anchor.LowerCenter, Font.Bold);
+
+    if (key <= 0) return;
+    var badge = float2(rect.x + inset + Math.Round(18 * k), rect.y + inset + Math.Round(18 * k));
+    Draw.Circle(badge, Math.Max(9, Math.Round(15 * k)), UiFade(UI_BACK, 0.8));
+    Draw.Text($"{key}", badge, Math.Max(10, Math.Round(19 * k)), Color.white, Anchor.MiddleCenter, Font.Bold);
+}
+
+// A card, lying down, for a screen too narrow for five side by side: its
+// picture at the left, and its name and lines beside it.
+void UiCardRow(Rect rect, int upgrade, float lift, int key)
+{
+    var size = float2(rect.width, rect.height);
+    var center = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+    var color = UiCardColor(upgrade);
+    var rarity = UpgradeRarity(upgrade);
+    var edge = UiRarityColor(rarity);
+    var radius = 14.0;
+    Draw.Shape(Shape { center = center + float2(0, 4), size = size, radius = radius, color = Color(0, 0, 0, 0.5), soft = 8 + 8 * lift });
+    if (lift > 0)
+    {
+        Draw.Blend(Blend.Add)
+        {
+            Draw.Shape(Shape { center = center, size = size + float2(6), radius = radius + 3, color = UiFade(UiMix(edge, Color.white, 0.5), 0.5 * lift), soft = 14 });
+        }
+    }
+    Draw.Shape(Shape { center = center, size = size, radius = radius, color = UiMix(color, Color.white, 0.16), color2 = UiMix(color, Color.black, 0.1) });
+    var window = rect.height - 12;
+    var middle = float2(rect.x + 6 + window * 0.5, center.y);
+    Draw.Shape(Shape { center = middle, size = float2(window), radius = 10, color = UiMix(color, UI_BACK, 0.62), color2 = UiMix(color, UI_BACK, 0.8) });
+    UiIcon(upgrade, middle + float2(0, 2), window * 0.84, Color(0, 0, 0, 0.45));
+    UiIcon(upgrade, middle, window * 0.84, Color.white);
+    Draw.WireRoundRect(center, size, radius, 2, lift > 0 ? UiMix(UiFade(CARD_INK, 0.5), Color.white, lift) : UiFade(CARD_INK, 0.5));
+
+    var left = rect.x + window + 16;
+    var wide = rect.x + rect.width - 10 - left;
+    var name = UpgradeName(upgrade);
+    var title = UiFit(name, Math.Min(18, Math.Round(rect.height * 0.2)), wide - 70);
+    Draw.Text(name, float2(left, rect.y + 7), title, CARD_INK, Anchor.UpperLeft, Font.Bold);
+    Draw.Text(UiRarityName(rarity), float2(rect.x + rect.width - 10, rect.y + 9), 9, UiMix(edge, CARD_INK, rarity == Rarity.Common ? 0.75 : 0.45), Anchor.UpperRight, Font.Bold);
+    var y = rect.y + 9 + title + 3;
+    mut var lines = 13.0;
+    while (lines > 9 && UiCardLines(UpgradeText(upgrade), float2(left, y), wide, lines, false, false) > rect.y + rect.height - 5) lines -= 1;
+    UiCardLines(UpgradeText(upgrade), float2(left, y), wide, lines, false, true);
+    if (key <= 0) return;
+    Draw.Circle(float2(rect.x + 16, rect.y + 16), 9, UiFade(UI_BACK, 0.8));
+    Draw.Text($"{key}", float2(rect.x + 16, rect.y + 16), 11, Color.white, Anchor.MiddleCenter, Font.Bold);
+}
+
+// The cards a seat has taken, small, in a row from `at` that turns where it
+// would pass `width`: each its picture on its card's color. It returns the
+// row's bottom.
+float UiTaken(Arena arena, int seat, float2 at, float width, float chip)
+{
+    mut var x = at.x;
+    mut var y = at.y;
+    foreach (var pick in arena.picks)
+    {
+        if (pick / 64 != seat) continue;
+        var upgrade = pick % 64;
+        if (x + chip > at.x + width && x > at.x)
+        {
+            x = at.x;
+            y += chip + 4;
+        }
+        var center = float2(x + chip * 0.5, y + chip * 0.5);
+        Draw.Shape(Shape { center = center, size = float2(chip), radius = chip * 0.24, color = UiMix(UiCardColor(upgrade), UI_BACK, 0.55),
+                           outline = 1.5, outlineColor = UiFade(UiMix(UiRarityColor(UpgradeRarity(upgrade)), Color.white, 0.25), 0.9) });
+        UiIcon(upgrade, center, chip * 0.82, Color.white);
+        x += chip + 4;
+    }
+    return y + chip;
+}
+
+int UiTakenCount(Arena arena, int seat)
+{
+    mut var count = 0;
+    foreach (var pick in arena.picks)
+        if (pick / 64 == seat) count += 1;
+    return count;
+}
+
+// Who a seat is, as the others see them: their team, and their place in it.
+string UiSeatName(Arena arena, int seat)
+{
+    var kind = arena.seats[seat].bot ? "BOT" : "PLAYER";
+    return $"{UiTeamName(TeamOf(seat))} {kind} {seat / TEAMS + 1}";
+}
+
+// A card was taken, which the server says: its name is told for a moment,
+// whoever picked it.
+local event(verified CardPicked picked) DeckCardPicked(mut Deck deck)
+{
+    deck.tookSeat = picked.seat;
+    deck.tookUpgrade = picked.upgrade;
+    deck.took = 0;
+}
+
+// While a round is played: this machine's player's cards, under the Menu
+// button, and the card someone just took.
+[Stage(Layers.Hud, 25)]
+view DeckOwned(Arena arena, mut Overlay hud, mut Deck deck, Lobby lobby)
+{
+    Draw.SetScreen();
+    deck.took += Math.Min(Frame.dt, 0.1);
+    if (lobby.page != Page.Playing) return;
+    var k = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var narrow = screen.x < 560;
+    if (hud.seat >= 0 && arena.phase != Phase.Upgrade && arena.phase != Phase.GameOver && UiTakenCount(arena, hud.seat) > 0)
+    {
+        // Beside nothing: the screen's left edge, under the Menu button, or under the rounds where they're under it too
+        var small = Math.Round(26 * k);
+        var top = narrow ? hud.top : 52.0;
+        var bottom = UiTaken(arena, hud.seat, float2(8, top), narrow ? screen.x - 16 : (small + 4) * 4, small);
+        if (narrow) hud.top = bottom + 6;
+    }
+    if (deck.took > 2.6 || deck.tookSeat < 0 || arena.phase == Phase.GameOver) return;
+    // Under the rounds: whose card, its picture and its name
+    var shown = Math.Saturate(deck.took * 6) * Math.Saturate((2.6 - deck.took) * 3);
+    var team = TeamOf(deck.tookSeat);
+    var who = deck.tookSeat == hud.seat ? "YOU" : UiSeatName(arena, deck.tookSeat);
+    var words = $"{who} TOOK {UpgradeName(deck.tookUpgrade).ToUpper()}";
+    var size = UiSize(13, k);
+    var chip = Math.Round(30 * k);
+    var wide = Math.Min(screen.x - 16, Draw.MeasureText(words, size, Font.Bold).x + chip + size * 2.4);
+    var at = float2(screen.x * 0.5, (arena.phase == Phase.Upgrade ? screen.y - Math.Round(34 * k) : hud.top + chip * 0.5 + 6) - (1 - UiEaseOut(deck.took * 4)) * 10);
+    Draw.Tint(UiFade(Color.white, shown))
+    {
+        Draw.Shape(Shape { center = at, size = float2(wide, chip + 10), radius = (chip + 10) * 0.5, color = UI_PANEL, outline = 1.5, outlineColor = UiFade(UiTeam(team), 0.8) });
+        UiIcon(deck.tookUpgrade, float2(at.x - wide * 0.5 + chip * 0.5 + 8, at.y), chip, UiTeam(team));
+        Draw.Text(words, float2(at.x + chip * 0.5 + 2, at.y), UiFit(words, size, wide - chip - size * 1.6), UI_INK, Anchor.MiddleCenter, Font.Bold);
+    }
+}
+
+// The five cards, over a darkened world. The picker's machine makes them
+// controls: a click or a tap picks one, the arrows, Tab, a d-pad or a stick
+// go from one to the next and Enter or the south button takes it, and the
+// keys 1 to 5 take theirs at once. The pick is a command, sent once for a
+// deal: the match checks who sent it and for which deal.
+[Stage(Layers.Hud, 40)]
+view DeckCards(Arena arena, Devices devices, Overlay hud, Lobby lobby, mut Deck deck)
+{
+    Draw.SetScreen();
+    var dt = Math.Min(Frame.dt, 0.1);
+    if (arena.phase != Phase.Upgrade || arena.upgrading < 0)
+    {
+        deck.revision = -1;
+        return;
+    }
+    if (deck.revision != arena.revision)
+    {
+        deck.revision = arena.revision;
+        deck.age = 0;
+        deck.chosen = -1;
+        for (var i = 0; i < CARDS; i++) deck.lift[i] = 0;
+    }
+    deck.age += dt;
+    if (lobby.page != Page.Playing) return;
+
+    var k = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var picker = arena.upgrading;
+    var team = TeamOf(picker);
+    var color = UiTeam(team);
+    var mine = picker == hud.seat;
+    var picked = deck.sent == arena.revision;
+    var rows = screen.x < screen.y * 0.9 || screen.x < 620;   // Lying down, one under another
+    Draw.Rect(screen * 0.5, screen, UiFade(UI_BACK, 0.78 * Math.Saturate(deck.age * 4)));
+
+    // Whose turn it is, and how long they have
+    var head = hud.top + Math.Round(22 * k);
+    var bot = arena.seats[picker].bot;
+    var title = mine ? "CHOOSE A CARD" : $"{UiSeatName(arena, picker)} IS CHOOSING";
+    var size = UiFit(title, UiSize(rows ? 22 : 30, k), screen.x - 24);
+    Draw.Text(title, float2(screen.x * 0.5, head + 2), size, UiFade(UI_BACK, 0.8), Anchor.MiddleCenter, Font.Bold);
+    Draw.Text(title, float2(screen.x * 0.5, head), size, mine ? Color.white : color, Anchor.MiddleCenter, Font.Bold);
+    var allowed = bot ? BOT_SELECTION_DELAY : SELECTION_TIMEOUT;
+    var left = Math.Max(0, allowed - arena.selectionAge);
+    var clock = float2(screen.x * 0.5, head + Math.Round((rows ? 24 : 30) * k));
+    var bar = float2(Math.Min(screen.x - 48, Math.Round(260 * k)), Math.Max(3, Math.Round(4 * k)));
+    Draw.RoundRect(clock, bar, bar.y * 0.5, Color(1, 1, 1, 0.14));
+    var share = Math.Saturate(left / allowed);
+    Draw.RoundRect(clock - float2(bar.x * (1 - share) * 0.5, 0), float2(Math.Max(bar.y, bar.x * share), bar.y), bar.y * 0.5, left < 10 && !bot ? UI_ROSE : color);
+    var under = mine ? (picked ? "Taken" : $"The first card is yours in {int(Math.Ceil(left))}")
+              : bot ? "The bot takes a moment" : $"{int(Math.Ceil(left))} seconds left";
+    Draw.Text(under, clock + float2(0, Math.Round(14 * k)), UiSize(12, k), UI_QUIET, Anchor.MiddleCenter);
+
+    // Where the cards are: five side by side, or five rows on a narrow screen
+    var foot = Math.Round((UiTakenCount(arena, picker) > 0 ? 78 : 30) * k);
+    var top = clock.y + Math.Round(34 * k);
+    var room = screen.y - foot - top;
+    mut var tall = 0.0;
+    mut var wide = 0.0;
+    mut var gap = 0.0;
+    if (rows)
+    {
+        gap = 8;
+        tall = Math.Floor(Math.Min(118, (room - gap * (CARDS - 1)) / CARDS));
+        wide = Math.Min(screen.x - 20, 460);
+    }
+    else
+    {
+        gap = Math.Round(16 * k);
+        tall = Math.Min(room - 30 * k, Math.Round(330 * k));
+        wide = Math.Floor(Math.Min(tall * CARD_SHAPE, (screen.x - 40 - gap * (CARDS - 1)) / CARDS));
+        tall = Math.Floor(wide / CARD_SHAPE);
+    }
+
+    // The picker's controls, in the cards' order, which keeps each one's hover
+    // and focus its own. Everyone else has them disabled: nothing of them is
+    // true, and the focus skips them.
+    var open = mine && !picked && deck.age > 0.35;
+    if (open) GUI.Navigate();
+    mut var chosen = -1;
+    mut var raised = -1;
+    GUI.Disabled(!open)
+    {
+        for (var i = 0; i < CARDS; i++)
+        {
+            var rect = rows ? Rect(Math.Round((screen.x - wide) * 0.5), Math.Round(top + i * (tall + gap)), wide, tall)
+                            : Rect(Math.Round((screen.x - (wide * CARDS + gap * (CARDS - 1))) * 0.5 + i * (wide + gap)), Math.Round(top + (room - tall) * 0.4), wide, tall);
+            var card = GUI.Control(rect);
+            var lit = card.hovered || card.focused;
+            deck.lift[i] = Math.Saturate(deck.lift[i] + (lit || deck.chosen == i ? dt : -dt) / 0.12);
+            if (lit) raised = i;
+            if (card.clicked) chosen = i;
+        }
+    }
+    if (open)
+    {
+        var keys = devices.keyboard;
+        if (keys.digit1.down) chosen = 0;
+        if (keys.digit2.down) chosen = 1;
+        if (keys.digit3.down) chosen = 2;
+        if (keys.digit4.down) chosen = 3;
+        if (keys.digit5.down) chosen = 4;
+    }
+    if (open && chosen >= 0)
+    {
+        deck.sent = arena.revision;
+        deck.chosen = chosen;
+        Send(PickCard { card = chosen, revision = arena.revision });
+    }
+    if (deck.chosen >= 0) raised = deck.chosen;
+
+    // The cards, each a moment after the one before (UpgradeCard's intro),
+    // and the raised one last, over its neighbors
+    for (var pass = 0; pass < 2; pass++)
+    {
+        for (var i = 0; i < CARDS; i++)
+        {
+            if ((i == raised) != (pass == 1)) continue;
+            var dealt = UiEaseBack((deck.age - 0.1 - i * 0.09) / 0.35);
+            if (deck.age < 0.1 + i * 0.09) continue;
+            var lift = deck.lift[i];
+            var faded = picked && deck.chosen != i || !mine ? 0.82 : 1.0;
+            Draw.Tint(Color(faded, faded, faded, 1))
+            {
+                if (rows)
+                {
+                    var rect = Rect(Math.Round((screen.x - wide) * 0.5), Math.Round(top + i * (tall + gap)), wide, tall);
+                    Draw.Transform(float2(rect.x + wide * 0.5 + (1 - dealt) * 40, rect.y + tall * 0.5), 0, float2(1 + 0.025 * lift))
+                    {
+                        UiCardRow(Rect(-wide * 0.5, -tall * 0.5, wide, tall), arena.cards[i], lift, open && !hud.fingers ? i + 1 : 0);
+                    }
+                }
+                else
+                {
+                    var x = Math.Round((screen.x - (wide * CARDS + gap * (CARDS - 1))) * 0.5 + i * (wide + gap));
+                    var y = Math.Round(top + (room - tall) * 0.4);
+                    // It opens from its middle, and comes up when it's about to be picked
+                    Draw.Transform(float2(x + wide * 0.5, y + tall * 0.5 - lift * 12 * k), 0, float2(dealt, 1) * (1 + 0.08 * lift))
+                    {
+                        UiCard(Rect(-wide * 0.5, -tall * 0.5, wide, tall), arena.cards[i], lift, open && !hud.fingers ? i + 1 : 0);
+                    }
+                }
+            }
+        }
+    }
+
+    // What the picker has already, under the cards
+    if (UiTakenCount(arena, picker) > 0)
+    {
+        var chip = Math.Round(30 * k);
+        var count = UiTakenCount(arena, picker);
+        var across = Math.Min(screen.x - 24, count * (chip + 4) - 4);
+        var row = screen.y - foot + Math.Round(12 * k);
+        Draw.Text(mine ? "YOUR CARDS" : $"{UiSeatName(arena, picker)}'S CARDS", float2(screen.x * 0.5, row), UiSize(10, k), UI_QUIET, Anchor.MiddleCenter, Font.Bold);
+        UiTaken(arena, picker, float2(Math.Round((screen.x - across) * 0.5), row + Math.Round(10 * k)), across + 1, chip);
+    }
+    if (open && !rows)
+        Draw.Text(hud.fingers ? "Tap a card" : "Click a card, or press its number", float2(screen.x * 0.5, top + (room - tall) * 0.4 + tall + Math.Round(22 * k)), UiSize(12, k), UI_QUIET, Anchor.MiddleCenter);
+}

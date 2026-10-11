@@ -1,0 +1,343 @@
+// CRACKED: the upgrade database, in the Unity game's order (Upgrade
+// Database.asset), each card as its asset has it: what it does to a player's
+// stats (IPlayerModifier), and the modifiers and effects it adds.
+
+enum Rarity { Common, Uncommon, Rare, Legendary }
+
+Rarity UpgradeRarity(int upgrade)
+{
+    switch (upgrade)
+    {
+        case 0: case 1: case 4: case 7: case 8: case 11: case 13: case 16: case 20: case 23: case 28: case 30:
+            return Rarity.Common;
+        case 2: case 3: case 5: case 6: case 9: case 10: case 14: case 22: case 27: case 32: case 33: case 36: case 37:
+            return Rarity.Uncommon;
+    }
+    return Rarity.Rare;
+}
+
+// UpgradeScriptable.weight: how likely a card is to be offered.
+float UpgradeWeight(int upgrade)
+{
+    switch (UpgradeRarity(upgrade))
+    {
+        case Rarity.Common: return 100;
+        case Rarity.Uncommon: return 60;
+        case Rarity.Rare: return 25;
+    }
+    return 8;
+}
+
+string UpgradeName(int upgrade)
+{
+    switch (upgrade)
+    {
+        case 0: return "Aegis Shell";
+        case 1: return "Arcane Orbs";
+        case 2: return "Arcstorm";
+        case 3: return "Blast Rune";
+        case 4: return "Crystal Bastion";
+        case 5: return "Dash Guard";
+        case 6: return "Echo Guard";
+        case 7: return "Focused Channel";
+        case 8: return "Fragile Fury";
+        case 9: return "Frost Guard";
+        case 10: return "Fusion Glyph";
+        case 11: return "Lingering Pain";
+        case 12: return "Mana Coil";
+        case 13: return "Mirrorbounce";
+        case 14: return "Monolith";
+        case 15: return "Rapid Cast";
+        case 16: return "Rebound Hex";
+        case 17: return "Scattercurse";
+        case 18: return "Seeker Spark";
+        case 19: return "Shatterburst";
+        case 20: return "Snapfire";
+        case 21: return "Spell Bloom";
+        case 22: return "Spellweaver";
+        case 23: return "Swift Sigil";
+        case 24: return "Ghost Round";
+        case 25: return "Jetburst";
+        case 26: return "Poison Cloud";
+        case 27: return "Power Kick";
+        case 28: return "Rabbit";
+        case 29: return "Reflex Reload";
+        case 30: return "Sky Bound";
+        case 31: return "Stagger Shot";
+        case 32: return "Static Surge";
+        case 33: return "Straight Shot";
+        case 34: return "Swift Rounds";
+        case 35: return "Vital Leech";
+        case 36: return "Vital Mist";
+        case 37: return "Wild Surge";
+    }
+    return "";
+}
+
+// A card's lines, as the Unity game's cards have them.
+string UpgradeText(int upgrade)
+{
+    switch (upgrade)
+    {
+        case 0: return "- Block Cooldown\n+ HP";
+        case 1: return "+ Bullet size\n+ Small player\n- Reload speed";
+        case 2: return "+ 5 Bullets\n- Damage\n- Reload speed";
+        case 3: return "Bullets fragment on impact\n- Bullet speed\n- Reload speed";
+        case 4: return "+ HP\n- Attack speed\n- Reload speed";
+        case 5: return "Dash on block";
+        case 6: return "Second Delayed Block";
+        case 7: return "+ HP\n+ Bullet speed\n- Reload speed";
+        case 8: return "+ MORE Damage\n- Health\n- Reload speed";
+        case 9: return "Slows and damages on block\n+ Faster Movement";
+        case 10: return "Doubles Damage\n- 2 Bullets\n- Reload speed";
+        case 11: return "Spreads incoming damage over time";
+        case 12: return "+ Bullet speed\n+ Damage\n- Atk Speed\n- Reload speed";
+        case 13: return "Half Speed On Bounce\n+ 2 Bounces\n+ Fire Rate\n- Reload speed";
+        case 14: return "++ HP";
+        case 15: return "Much Faster Reloading";
+        case 16: return "+2 bounces\n- Reload speed";
+        case 17: return "+ Mega attack speed\n+ 12 magazine size\n- DMG\n- Reload speed";
+        case 18: return "+ Homing\n- Damage\n- Reload speed";
+        case 19: return "Adds a shotgun vibe to your attack";
+        case 20: return "+ Bullet speed\n- Reload speed";
+        case 21: return "+ Damages over time\n+ Bullets grow\n- Reload speed";
+        case 22: return "Doubles Damage\n- Atk spd\n- Reload speed";
+        case 23: return "+ Bullet speed\n- Atk speed\n- Reload speed";
+        case 24: return "+ Wall Penetration\n+ Damage";
+        case 25: return "+ Jetpack";
+        case 26: return "+ Bullets Create Poison";
+        case 27: return "+ Bullet Knockback\n- Damage";
+        case 28: return "+ Jump Height\n+ Reload Speed";
+        case 29: return "+ Reload On Successful Hit\n- Reload Speed";
+        case 30: return "+ Extra Jump";
+        case 31: return "+ Stun Players\n+ Reload Speed";
+        case 32: return "+ Shocks Nearby Players\n+ Faster Movement";
+        case 33: return "Zero Gravity Bullets\n+ Bullet Speed";
+        case 34: return "+ MORE Bullet Speed\n- Reload Speed";
+        case 35: return "+ Life Steal\n+ Fire Rate\n+ Reload Speed";
+        case 36: return "+ Healing On Block\n+ Reload Speed";
+        case 37: return "+ 5 bounces\n- DMG\n- Reload speed";
+    }
+    return "";
+}
+
+void BulletModifier(mut Arena arena, int s, BulletModKind kind, float a, float b, float c, int n)
+{
+    arena.bulletMods.Add(BulletMod { seat = s, kind = kind, a = a, b = b, c = c, n = n });
+}
+
+void FireRate(mut Arena arena, int s, float multiplier)
+{
+    arena.seats[s].settings.fireRate = int(Math.Ceil(arena.seats[s].settings.fireRate * multiplier));
+}
+
+void Magazine(mut Arena arena, int s, float multiplier, int addition)
+{
+    arena.seats[s].settings.magazineSize = Math.Max(int(Math.Ceil(arena.seats[s].settings.magazineSize * multiplier)) + addition, 1);
+}
+
+// NormalUpgrade.ApplyUpgrade.
+void ApplyUpgrade(mut Arena arena, int s, int upgrade)
+{
+    switch (upgrade)
+    {
+        case 0:
+            arena.seats[s].settings.shieldCooldown *= 0.7;
+            arena.seats[s].settings.health *= 1.3;
+            break;
+        case 1:
+            arena.seats[s].settings.reloadTime += 0.25;
+            arena.seats[s].settings.size *= 0.75;
+            BulletModifier(arena, s, BulletModKind.Bigger, 1, 0.1, 0, 0);
+            break;
+        case 2:
+            arena.seats[s].settings.reloadTime += 0.25;
+            Magazine(arena, s, 1, 5);
+            FireRate(arena, s, 3);
+            arena.seats[s].settings.spread = Math.Ceil(arena.seats[s].settings.spread) + 5;
+            BulletModifier(arena, s, BulletModKind.Damage, 0.3, 0, 0, 0);
+            break;
+        case 3:
+            arena.seats[s].settings.reloadTime += 0.25;
+            BulletModifier(arena, s, BulletModKind.Explode, 5, 0, 0, 6);
+            BulletModifier(arena, s, BulletModKind.FireForce, 0.7, 0, 0, 0);
+            break;
+        case 4:
+            arena.seats[s].settings.reloadTime += 0.25;
+            arena.seats[s].settings.health *= 2;
+            FireRate(arena, s, 0.75);
+            break;
+        case 5:
+            AddTrait(arena, Trait { seat = s, kind = TraitKind.DashOnBlock, a = 0.2, b = 10 });
+            break;
+        case 6:
+            AddTrait(arena, Trait { seat = s, kind = TraitKind.DelayedBlock, a = 0.35 });
+            break;
+        case 7:
+            arena.seats[s].settings.reloadTime += 0.25;
+            arena.seats[s].settings.health *= 1.4;
+            BulletModifier(arena, s, BulletModKind.FireForce, 1.5, 0, 0, 0);
+            break;
+        case 8:
+            arena.seats[s].settings.reloadTime += 0.25;
+            arena.seats[s].settings.health *= 0.5;
+            BulletModifier(arena, s, BulletModKind.Damage, 2, 0, 0, 0);
+            break;
+        case 9:
+            arena.seats[s].settings.speed *= 1.7;
+            AddTrait(arena, Trait { seat = s, kind = TraitKind.FreezeOnBlock, a = 4.5, b = 2, c = 0.5, n = 20 });
+            break;
+        case 10:
+            arena.seats[s].settings.reloadTime += 0.5;
+            Magazine(arena, s, 1, -2);
+            BulletModifier(arena, s, BulletModKind.Damage, 2, 0, 0, 0);
+            break;
+        case 11:
+            AddTrait(arena, Trait { seat = s, kind = TraitKind.LingeringPain, a = -10 });
+            break;
+        case 12:
+            arena.seats[s].settings.reloadTime += 0.5;
+            FireRate(arena, s, 0.5);
+            BulletModifier(arena, s, BulletModKind.FireForce, 2, 0, 0, 0);
+            BulletModifier(arena, s, BulletModKind.Damage, 1.6, 0, 0, 0);
+            break;
+        case 13:
+            arena.seats[s].settings.reloadTime += 0.25;
+            FireRate(arena, s, 1.25);
+            BulletModifier(arena, s, BulletModKind.MoreBounce, 0, 0, 0, 2);
+            BulletModifier(arena, s, BulletModKind.SlowOnBounce, 0.5, 0, 0, 0);
+            break;
+        case 14:
+            arena.seats[s].settings.health *= 1.8;
+            arena.seats[s].settings.size += 0.2;
+            break;
+        case 15:
+            arena.seats[s].settings.reloadTime *= 0.4;
+            break;
+        case 16:
+            arena.seats[s].settings.reloadTime += 0.25;
+            BulletModifier(arena, s, BulletModKind.MoreBounce, 0, 0, 0, 2);
+            break;
+        case 17:
+            arena.seats[s].settings.reloadTime += 0.25;
+            FireRate(arena, s, 11);
+            Magazine(arena, s, 1, 12);
+            arena.seats[s].settings.spread = Math.Ceil(arena.seats[s].settings.spread) + 5;
+            BulletModifier(arena, s, BulletModKind.Damage, 0.34, 0, 0, 0);
+            break;
+        case 18:
+            arena.seats[s].settings.reloadTime += 0.25;
+            BulletModifier(arena, s, BulletModKind.HeatSeek, 10, 45, 5, 0);
+            BulletModifier(arena, s, BulletModKind.Damage, 0.75, 0, 0, 0);
+            break;
+        case 19:
+            Magazine(arena, s, 0.5, 0);
+            arena.seats[s].settings.reloadTime += 0.25;
+            arena.shootMods.Add(ShootMod { seat = s, kind = ShootModKind.Multi, a = 20, n = 5 });
+            BulletModifier(arena, s, BulletModKind.Damage, 0.6, 0, 0, 0);
+            break;
+        case 20:
+            arena.seats[s].settings.reloadTime += 0.25;
+            BulletModifier(arena, s, BulletModKind.FireForce, 2.5, 0, 0, 0);
+            break;
+        case 21:
+            arena.seats[s].settings.reloadTime += 0.25;
+            BulletModifier(arena, s, BulletModKind.DamageOverTime, 5, 0, 0, 0);
+            BulletModifier(arena, s, BulletModKind.SizeOverTime, 0.5, 0, 0, 0);
+            break;
+        case 22:
+            arena.seats[s].settings.reloadTime += 0.5;
+            FireRate(arena, s, 0.35);
+            BulletModifier(arena, s, BulletModKind.Damage, 2, 0, 0, 0);
+            break;
+        case 23:
+            FireRate(arena, s, 0.5);
+            arena.seats[s].settings.reloadTime += 0.25;
+            BulletModifier(arena, s, BulletModKind.FireForce, 2, 0, 0, 0);
+            break;
+        case 24:
+            BulletModifier(arena, s, BulletModKind.MorePenetration, 0, 0, 0, 1);
+            BulletModifier(arena, s, BulletModKind.Damage, 1.25, 0, 0, 0);
+            break;
+        case 25:
+            arena.seats[s].settings.hasJetpack = true;
+            arena.seats[s].settings.jetpackCapacity += 2;
+            break;
+        case 26:
+            BulletModifier(arena, s, BulletModKind.PoisonCloud, 0, 0, 0, 0);
+            break;
+        case 27:
+            BulletModifier(arena, s, BulletModKind.Knockback, 3, 0, 0, 0);
+            BulletModifier(arena, s, BulletModKind.Damage, 0.8, 0, 0, 0);
+            break;
+        case 28:
+            arena.seats[s].settings.jumpForce *= 2;
+            arena.seats[s].settings.reloadTime *= 0.85;
+            break;
+        case 29:
+            BulletModifier(arena, s, BulletModKind.ReloadOnHit, 0, 0, 0, 0);
+            break;
+        case 30:
+            arena.seats[s].settings.extraJumps += 1;
+            break;
+        case 31:
+            arena.seats[s].settings.reloadTime *= 0.8;
+            BulletModifier(arena, s, BulletModKind.DazeOnHit, 0.45, 0, 0, 0);
+            break;
+        case 32:
+            arena.seats[s].settings.speed *= 1.7;
+            AddTrait(arena, Trait { seat = s, kind = TraitKind.Electrify, a = 4, b = 1, n = 10 });
+            break;
+        case 33:
+            BulletModifier(arena, s, BulletModKind.NoGravity, 0, 0, 0, 0);
+            BulletModifier(arena, s, BulletModKind.Speed, 1.5, 0, 0, 0);
+            break;
+        case 34:
+            arena.seats[s].settings.reloadTime += 0.25;
+            BulletModifier(arena, s, BulletModKind.FireForce, 5, 0, 0, 0);
+            break;
+        case 35:
+            arena.seats[s].settings.reloadTime *= 0.8;
+            FireRate(arena, s, 1.2);
+            BulletModifier(arena, s, BulletModKind.LifeSteal, 0.5, 0, 0, 0);
+            break;
+        case 36:
+            arena.seats[s].settings.reloadTime *= 0.8;
+            AddTrait(arena, Trait { seat = s, kind = TraitKind.HealOnBlock });
+            break;
+        case 37:
+            arena.seats[s].settings.reloadTime += 0.5;
+            BulletModifier(arena, s, BulletModKind.MoreBounce, 0, 0, 0, 5);
+            BulletModifier(arena, s, BulletModKind.Damage, 0.75, 0, 0, 0);
+            break;
+    }
+}
+
+// UpgradeDatabase.PopulateRandomUpgradesIndex: cards by their weight, each
+// once.
+void DealCards(mut Arena arena)
+{
+    mut List<int> left = [];
+    for (var upgrade = 0; upgrade < UPGRADES; upgrade++) left.Add(upgrade);
+    mut var dice = arena.cardDice;
+    for (var card = 0; card < CARDS; card++)
+    {
+        mut var total = 0.0;
+        for (var i = 0; i < left.count; i++) total += UpgradeWeight(left[i]);
+        var target = dice.NextFloat(0, total);
+        mut var picked = left.count - 1;
+        mut var sum = 0.0;
+        for (var i = 0; i < left.count; i++)
+        {
+            sum += UpgradeWeight(left[i]);
+            if (target > sum) continue;
+            picked = i;
+            break;
+        }
+        arena.cards[card] = left[picked];
+        left.RemoveAt(picked);
+    }
+    arena.cardDice = dice;
+    arena.revision += 1;
+    arena.selectionAge = 0;
+}
