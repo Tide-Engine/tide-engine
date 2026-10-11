@@ -1,0 +1,8 @@
+
+100% tests passed, 0 tests failed out of 2050
+
+Label Time Summary:
+safety    =  79.78 sec*proc (21 tests)
+webgpu    = 792.08 sec*proc (10 tests)
+
+Total Test time (real) = 173.01 sec

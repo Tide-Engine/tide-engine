@@ -1,0 +1,73 @@
+{
+  "aggregation": "Median of three process medians and median paired speedup; p95 is median of process p95s, not pooled.",
+  "counts": [
+    {
+      "characters": 1000,
+      "metrics": {
+        "view_record_ms": {
+          "cpu": 2.45715,
+          "gpu": 0.21935,
+          "paired_speedup": 11.040346478231138,
+          "gpu_p95": 0.2939
+        },
+        "cpu_submit_ms": {
+          "cpu": 0.4475,
+          "gpu": 0.0076,
+          "paired_speedup": 58.73684210526316,
+          "gpu_p95": 0.0139
+        },
+        "gpu_ms": {
+          "cpu": 1.15917,
+          "gpu": 0.805888,
+          "paired_speedup": 1.4383760522554,
+          "gpu_p95": 0.809984
+        },
+        "total_readback_ms": {
+          "cpu": 4.3982,
+          "gpu": 1.33705,
+          "paired_speedup": 3.2894805729030328,
+          "gpu_p95": 1.6107
+        }
+      },
+      "cpu_draw_calls": 2,
+      "gpu_draw_calls": 2,
+      "cpu_upload_bytes": 4096000,
+      "gpu_upload_bytes": 0,
+      "clip_prepare_ms": 0.6355
+    },
+    {
+      "characters": 10000,
+      "metrics": {
+        "view_record_ms": {
+          "cpu": 25.0526,
+          "gpu": 2.36885,
+          "paired_speedup": 10.575849040673745,
+          "gpu_p95": 2.7004
+        },
+        "cpu_submit_ms": {
+          "cpu": 6.1343,
+          "gpu": 0.0322,
+          "paired_speedup": 184.39906832298135,
+          "gpu_p95": 0.0463
+        },
+        "gpu_ms": {
+          "cpu": 13.6929,
+          "gpu": 7.11629,
+          "paired_speedup": 1.916854951829796,
+          "gpu_p95": 7.61754
+        },
+        "total_readback_ms": {
+          "cpu": 43.5922,
+          "gpu": 9.9702,
+          "paired_speedup": 4.372249302922709,
+          "gpu_p95": 10.4847
+        }
+      },
+      "cpu_draw_calls": 11,
+      "gpu_draw_calls": 2,
+      "cpu_upload_bytes": 40960000,
+      "gpu_upload_bytes": 0,
+      "clip_prepare_ms": 0.5742
+    }
+  ]
+}

@@ -11,6 +11,26 @@ struct Corner
     Color color;
 }
 
+// Experiment only: four influences from the unchanged benchmark fixture.
+// A resident 60 Hz palette table replaces per-character CPU pose capture.
+struct GpuCorner
+{
+    float3 position;
+    float3 normal;
+    Color color;
+    int4 joints;
+    float4 weights;
+}
+
+local singleton GpuClip
+{
+    List<GpuCorner> vertices;
+    List<int> indices;
+    List<float4x4> palettes;
+    int bones;
+    int frames;
+}
+
 asset SkinnedMesh<Corner> character = "model.gltf";
 asset Mesh<Corner> staticCharacter = "model.gltf";
 
@@ -29,6 +49,40 @@ local singleton Workload
 local component Character { int index; }
 
 frag Lit(Corner corner, out Color color)
+{
+    color = corner.color * (0.65 + 0.35 * Math.Abs(corner.normal.z));
+    color.a = 1;
+}
+
+float4x4 ClipMatrix(List<float4x4> palettes, int bones, int joint, int first, int next, float alpha)
+{
+    var a = palettes[first * bones + joint];
+    var b = palettes[next * bones + joint];
+    return float4x4(Math.Lerp(a.c0, b.c0, alpha), Math.Lerp(a.c1, b.c1, alpha),
+                   Math.Lerp(a.c2, b.c2, alpha), Math.Lerp(a.c3, b.c3, alpha));
+}
+
+vert GpuSkin(mut GpuCorner corner, GpuClip clip, Character item, Workload work)
+{
+    float phase = Math.Frac(work.seconds + float(item.index) / float(work.count)) * float(clip.frames);
+    int first = int(Math.Floor(phase));
+    int next = (first + 1) % clip.frames;
+    float alpha = phase - float(first);
+    var a = ClipMatrix(clip.palettes, clip.bones, corner.joints.x, first, next, alpha);
+    var b = ClipMatrix(clip.palettes, clip.bones, corner.joints.y, first, next, alpha);
+    var c = ClipMatrix(clip.palettes, clip.bones, corner.joints.z, first, next, alpha);
+    var d = ClipMatrix(clip.palettes, clip.bones, corner.joints.w, first, next, alpha);
+    var skin = a * corner.weights.x + b * corner.weights.y + c * corner.weights.z + d * corner.weights.w;
+    corner.position = Math.Mul(skin, float4(corner.position, 1)).xyz;
+    // Match the ordinary skinned shader's cofactor normal transform.
+    var x = Math.Cross(skin.c1.xyz, skin.c2.xyz);
+    var y = Math.Cross(skin.c2.xyz, skin.c0.xyz);
+    var z = Math.Cross(skin.c0.xyz, skin.c1.xyz);
+    float sign = Math.Dot(skin.c0.xyz, x) < 0 ? -1 : 1;
+    corner.normal = Math.Normalize(Math.Mul(float3x3(x, y, z), corner.normal) * sign);
+}
+
+frag GpuLit(GpuCorner corner, out Color color)
 {
     color = corner.color * (0.65 + 0.35 * Math.Abs(corner.normal.z));
     color.a = 1;
@@ -58,7 +112,7 @@ view Prepare(mut Workload work)
 }
 
 [Stage(Stages.Objects)]
-view Show(Character item, Workload work)
+view Show(Character item, Workload work, GpuClip clip)
 {
     int i = item.index;
     float x = (float(i % work.columns) + 0.5) * (160.0 / 9.0 / float(work.columns)) - 80.0 / 9.0;
@@ -67,6 +121,7 @@ view Show(Character item, Workload work)
     if (work.mode == 0) Draw.Mesh(staticCharacter, transform, Lit);
     else if (work.mode == 1) Draw.SkinnedMesh(character, transform, Lit);
     else if (work.mode == 2) Draw.SkinnedMesh(character, transform, work.sharedPose, Lit);
+    else if (work.mode == 4) Draw.Mesh(clip.vertices, clip.indices, transform, GpuSkin, GpuLit);
     else
     {
         var pose = character.animations.move.Sample(work.seconds + float(i) / float(work.count), Playback.Loop);
