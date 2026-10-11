@@ -1,7 +1,7 @@
 asset Clip workshopMusic = "sfx/workshop.wav";
 asset Clip woodenStep = "sfx/step.wav";
 asset Clip woodenPush = "sfx/push.wav";
-asset Clip littleSwap = "sfx/swap.wav";
+asset Clip pocketEnter = "sfx/swap.wav";
 asset Clip littleUndo = "sfx/undo.wav";
 asset Clip littleReset = "sfx/reset.wav";
 asset Clip littleSolve = "sfx/solve.wav";
@@ -23,7 +23,7 @@ local event(PuzzleCue cue) HearPuzzle(Hands hands)
     if (hands.quiet) return;
     if (cue.kind == 0) Audio.Play(woodenStep, cue.seat == hands.seat ? 0.30 : 0.15, cue.seat == 0 ? 0.95 : 1.10);
     else if (cue.kind == 1) Audio.Play(woodenPush, 0.37);
-    else if (cue.kind == 2) Audio.Play(littleSwap, 0.44);
+    else if (cue.kind == 2) Audio.Play(pocketEnter, 0.44);
     else if (cue.kind == 3) Audio.Play(littleUndo, 0.28);
     else if (cue.kind == 4) Audio.Play(littleReset, 0.27);
     else if (cue.kind == 5) Audio.Play(littleSolve, 0.53);

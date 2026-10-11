@@ -19,36 +19,139 @@ static bool equal_cell(const tide_int2 a, const tide_int2 b)
     return a.x == b.x && a.y == b.y;
 }
 
-static bool play_witness(const int level, const char *const witness, int *const actions)
+typedef struct CampaignEvidence {
+    int recursive_entries;
+    int shell_parent_changes;
+    int partner_latch_pushes;
+    int temporary_target_unfills;
+    int cargo_parent_changes;
+    int max_depth;
+    int shell_moves[4];
+} CampaignEvidence;
+
+static Tile fixture_tile(const LevelLayout *const layout, const int room, const tide_int2 at)
+{
+    const int size = room < 0 ? 7 : 5;
+    if (at.x < 0 || at.y < 0 || at.x >= size || at.y >= size) return Tile_Wall;
+    return room < 0 ? layout->tiles.at[at.y * size + at.x] : layout->rooms.at[room].tiles.at[at.y * size + at.x];
+}
+
+static int entry_room(const LevelLayout *const layout, const Entry *const entry)
+{
+    if (entry->shell >= 0) return entry->shell;
+    for (int i = 0; i < layout->portalCount; i++)
+        if (layout->portals.at[i].room == entry->room && equal_cell(layout->portals.at[i].position, entry->position))
+            return layout->portals.at[i].destination;
+    return -2;
+}
+
+static bool record_evidence(const Puzzle *const before, const int seat, const int direction, const bool push, CampaignEvidence *const evidence)
+{
+    const Puzzle after = world.Workshop.puzzle;
+    const LevelLayout *const layout = &world.Workshop.layout;
+    const Traveler *const traveler = &after.actors.at[seat];
+    if (traveler->depth > evidence->max_depth) evidence->max_depth = traveler->depth;
+    if (traveler->depth > before->actors.at[seat].depth) {
+        for (int entry = 0; entry < before->actors.at[seat].depth; entry++) {
+            if (entry_room(layout, &before->actors.at[seat].trail.at[entry]) == traveler->room) {
+                evidence->recursive_entries++;
+                break;
+            }
+        }
+    }
+    for (int room = 0; room < layout->roomCount; room++) {
+        if (before->rooms.at[room].room == after.rooms.at[room].room && equal_cell(before->rooms.at[room].position, after.rooms.at[room].position)) continue;
+        evidence->shell_moves[room]++;
+        if (before->rooms.at[room].room != after.rooms.at[room].room) evidence->shell_parent_changes++;
+        const Traveler *const partner = &before->actors.at[1 - seat];
+        if (!layout->rooms.at[room].latched || partner->room != room || fixture_tile(layout, room, partner->position) != Tile_Switch) continue;
+        bool parcel_holds_switch = false;
+        for (int item = 0; item < layout->crateCount; item++)
+            if (before->crates.at[item].active && before->crates.at[item].room == room
+                && fixture_tile(layout, room, before->crates.at[item].position) == Tile_Switch) parcel_holds_switch = true;
+        if (parcel_holds_switch) continue;
+        evidence->partner_latch_pushes++;
+
+        // A counter alone could count a decorative holding job. Re-run the
+        // same real command with its sole holder removed: this push must fail.
+        world.Workshop.puzzle = *before;
+        world.Workshop.puzzle.actors.at[1 - seat].room = -1;
+        world.Workshop.puzzle.actors.at[1 - seat].position = tide_i2(0, 0);
+        const Puzzle without_holder = world.Workshop.puzzle;
+        const int history_count = world.Workshop.historyCount;
+        const bool accepted = inside_out_test_act_push(TIDE_COMMAND_ID_Move, seat, direction, push);
+        const bool blocked = memcmp(&without_holder, &world.Workshop.puzzle, sizeof without_holder) == 0
+            && world.Workshop.historyCount == history_count;
+        world.Workshop.puzzle = after;
+        world.Workshop.historyCount = history_count;
+        if (!accepted || !blocked) {
+            fprintf(stderr, "A counted cooperative latch push succeeded without its partner holder.\n");
+            return false;
+        }
+    }
+    for (int item = 0; item < layout->crateCount; item++) {
+        if (!before->crates.at[item].active) continue;
+        if (before->crates.at[item].room == after.crates.at[item].room && equal_cell(before->crates.at[item].position, after.crates.at[item].position)) continue;
+        if (before->crates.at[item].room != after.crates.at[item].room) evidence->cargo_parent_changes++;
+        if (fixture_tile(layout, before->crates.at[item].room, before->crates.at[item].position) == Tile_Target) evidence->temporary_target_unfills++;
+    }
+    return true;
+}
+
+static bool play_witness(const int level, const char *const witness, int *const actions, CampaignEvidence *const evidence)
 {
     int used = 0;
     unsigned seats = 0;
-    unsigned scales = 0;
+    unsigned dimensions = 0;
+    bool push = false;
     const char *const upper_keys = "NESW";
     const char *const lower_keys = "nesw";
     for (const char *action = witness; *action; action++) {
+        if (*action == '+') { push = true; continue; }
         const char *const upper = strchr(upper_keys, *action);
         const char *const lower = strchr(lower_keys, *action);
         if (!upper && !lower) continue;
         const int seat = upper ? 0 : 1;
         const int direction = upper ? (int)(upper - upper_keys) : (int)(lower - lower_keys);
         const Puzzle before = world.Workshop.puzzle;
-        if (!inside_out_test_act(TIDE_COMMAND_ID_Move, seat, direction) || world.Workshop.puzzle.moves != before.moves + 1) {
-            fprintf(stderr, "Level %d witness action %d (%c) blocked: outer (%d,%d), inner room %d (%d,%d).\n",
-                level + 1, used + 1, *action, before.outside.x, before.outside.y,
-                before.insideRoom, before.inside.x, before.inside.y);
+        if (!inside_out_test_act_push(TIDE_COMMAND_ID_Move, seat, direction, push) || world.Workshop.puzzle.moves != before.moves + 1) {
+            fprintf(stderr, "Level %d witness action %d (%s%c) blocked: actor room %d (%d,%d), depth %d.\n",
+                level + 1, used + 1, push ? "+" : "", *action, before.actors.at[seat].room,
+                before.actors.at[seat].position.x, before.actors.at[seat].position.y, before.actors.at[seat].depth);
+            for (int other = 0; other < 2; other++) fprintf(stderr, "  actor%d room%d (%d,%d) depth%d\n", other,
+                before.actors.at[other].room, before.actors.at[other].position.x, before.actors.at[other].position.y, before.actors.at[other].depth);
+            for (int room = 0; room < world.Workshop.layout.roomCount; room++) fprintf(stderr, "  shell%d parent%d (%d,%d)\n", room,
+                before.rooms.at[room].room, before.rooms.at[room].position.x, before.rooms.at[room].position.y);
+            for (int item = 0; item < world.Workshop.layout.crateCount; item++) fprintf(stderr, "  cargo%d room%d (%d,%d)\n", item,
+                before.crates.at[item].room, before.crates.at[item].position.x, before.crates.at[item].position.y);
             return false;
         }
         seats |= 1u << seat;
-        scales |= 1u << (seat == before.smallSeat ? 1 : 0);
+        dimensions |= before.actors.at[seat].room < 0 ? 1 : 2;
+        if (evidence && !record_evidence(&before, seat, direction, push, evidence)) return false;
+        push = false;
         used++;
     }
     if (actions) *actions = used;
-    return world.Workshop.puzzle.solved && seats == 3 && scales == 3;
+    return world.Workshop.puzzle.solved && seats == 3 && dimensions == 3;
 }
 
 TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
 {
+    // Minimum evidence tags deliberately describe actual replayed dependencies,
+    // not optimality, human difficulty or the absence of alternative solutions.
+    static const CampaignEvidence minimum[12] = {
+        {0}, {.partner_latch_pushes = 2}, {.partner_latch_pushes = 2, .max_depth = 2},
+        {.partner_latch_pushes = 4, .cargo_parent_changes = 1},
+        {.recursive_entries = 1, .partner_latch_pushes = 1, .max_depth = 2},
+        {.partner_latch_pushes = 1, .temporary_target_unfills = 1, .cargo_parent_changes = 1, .max_depth = 2},
+        {.shell_parent_changes = 1, .partner_latch_pushes = 2, .cargo_parent_changes = 1, .max_depth = 2},
+        {.recursive_entries = 1, .partner_latch_pushes = 1, .max_depth = 3},
+        {.shell_parent_changes = 1, .partner_latch_pushes = 2, .temporary_target_unfills = 1, .cargo_parent_changes = 1, .max_depth = 2},
+        {.shell_parent_changes = 2, .partner_latch_pushes = 2, .temporary_target_unfills = 1, .cargo_parent_changes = 1},
+        {.recursive_entries = 1, .max_depth = 3},
+        {.recursive_entries = 1, .shell_parent_changes = 1, .partner_latch_pushes = 2, .temporary_target_unfills = 1, .cargo_parent_changes = 2, .max_depth = 3}
+    };
     for (int level = 0; level < 12; level++) {
         inside_out_test_start(2);
         TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, level));
@@ -56,20 +159,25 @@ TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
         const Puzzle initial = world.Workshop.puzzle;
         const LevelLayout layout = world.Workshop.layout;
 
-        // Necessity of both scales is structural: neither avatar starts on an
-        // exit, only an action at its scale can move it, and completion needs
-        // both exits. Hatch swaps ownership but does not move either avatar.
-        TIDE_CHECK(layout.tiles.at[initial.outside.y * 7 + initial.outside.x] != Tile_Exit);
-        TIDE_CHECK(layout.rooms.at[initial.insideRoom].tiles.at[initial.inside.y * 5 + initial.inside.x] != Tile_Exit);
+        TIDE_CHECK(initial.actors.at[0].room == -1 && initial.actors.at[1].room == -1);
         TIDE_CHECK(!initial.solved);
-        TIDE_CHECK(layout.roomCount >= 1 && layout.roomCount <= 3);
-        TIDE_CHECK(layout.crateCount <= 2);
+        TIDE_CHECK(layout.roomCount >= 1 && layout.roomCount <= 4);
+        TIDE_CHECK(layout.crateCount <= 8);
         for (int room = layout.roomCount; room < 4; room++) TIDE_CHECK(layout.rooms.at[room].dock.x == -1);
 
         int actions = 0;
-        TIDE_REQUIRE(play_witness(level, inside_out_solutions[level], &actions));
-        TIDE_CHECK(!equal_cell(world.Workshop.puzzle.outside, initial.outside));
-        TIDE_CHECK(world.Workshop.puzzle.insideRoom != initial.insideRoom || !equal_cell(world.Workshop.puzzle.inside, initial.inside));
+        CampaignEvidence evidence = {0};
+        TIDE_REQUIRE(play_witness(level, inside_out_solutions[level], &actions, &evidence));
+        TIDE_CHECK(evidence.recursive_entries >= minimum[level].recursive_entries);
+        TIDE_CHECK(evidence.shell_parent_changes >= minimum[level].shell_parent_changes);
+        TIDE_CHECK(evidence.partner_latch_pushes >= minimum[level].partner_latch_pushes);
+        TIDE_CHECK(evidence.temporary_target_unfills >= minimum[level].temporary_target_unfills);
+        TIDE_CHECK(evidence.cargo_parent_changes >= minimum[level].cargo_parent_changes);
+        TIDE_CHECK(evidence.max_depth >= minimum[level].max_depth);
+        if (level == 2 || level == 3) TIDE_CHECK(evidence.shell_moves[0] >= 2 || evidence.shell_moves[1] >= 2);
+        for (int seat = 0; seat < 2; seat++)
+            TIDE_CHECK(world.Workshop.puzzle.actors.at[seat].room != initial.actors.at[seat].room
+                || !equal_cell(world.Workshop.puzzle.actors.at[seat].position, initial.actors.at[seat].position));
         const Puzzle solved = world.Workshop.puzzle;
 
         // A solved state is reviewable and reversible; no automatic level
@@ -79,22 +187,24 @@ TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
         TIDE_CHECK(world.Workshop.puzzle.moves == actions - 1);
         TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Reset, 0, 0));
         TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
-        TIDE_REQUIRE(play_witness(level, inside_out_solutions[level], NULL));
+        TIDE_REQUIRE(play_witness(level, inside_out_solutions[level], NULL, NULL));
         TIDE_CHECK(memcmp(&solved, &world.Workshop.puzzle, sizeof solved) == 0);
-        printf("  Workshop %2d: %2d successful production moves, both seats and both scales.\n", level + 1, actions);
+        printf("  Workshop %2d: %2d moves; recursive entries %d, shell parent changes %d, partner latch pushes %d, target unfills %d, cargo transfers %d, depth %d.\n",
+            level + 1, actions, evidence.recursive_entries, evidence.shell_parent_changes, evidence.partner_latch_pushes,
+            evidence.temporary_target_unfills, evidence.cargo_parent_changes, evidence.max_depth);
         tide_world_free(&world);
     }
 }
 
-TIDE_TEST(inside_out_campaign_role_exchange_keeps_every_puzzle_solvable)
+TIDE_TEST(inside_out_campaign_players_can_exchange_their_jobs)
 {
-    // In Return Post the small partner starts on a hatch and the other stands
-    // beside the room. Both can try the opposite scale without changing the
-    // geometry, including the subsequently imported doorway crate.
+    // Independent avatars can take the other player's entire job. There are
+    // no fixed large/small roles or a special ownership exchange operation.
     inside_out_test_start(2);
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, 5));
-    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Swap, 0, 0));
-    TIDE_CHECK(world.Workshop.puzzle.smallSeat == 0);
+    const Traveler first = world.Workshop.puzzle.actors.at[0];
+    world.Workshop.puzzle.actors.at[0] = world.Workshop.puzzle.actors.at[1];
+    world.Workshop.puzzle.actors.at[1] = first;
     char swapped[256];
     const size_t length = strlen(inside_out_solutions[5]);
     TIDE_REQUIRE(length < sizeof swapped);
@@ -103,6 +213,6 @@ TIDE_TEST(inside_out_campaign_role_exchange_keeps_every_puzzle_solvable)
         swapped[i] = mark >= 'A' && mark <= 'Z' ? (char)(mark + ('a' - 'A'))
             : mark >= 'a' && mark <= 'z' ? (char)(mark - ('a' - 'A')) : mark;
     }
-    TIDE_REQUIRE(play_witness(5, swapped, NULL));
+    TIDE_REQUIRE(play_witness(5, swapped, NULL, NULL));
     tide_world_free(&world);
 }

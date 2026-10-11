@@ -7,7 +7,7 @@ export const prerender = false;
 const prototypes = [
     {
         id: 'inside-out', title: 'Inside Out', kind: 'Cooperative puzzle · Nested rooms', players: '2 players',
-        description: 'A warm miniature workshop built for two. One player explores inside movable rooms while the other rearranges them outside. Connect doorways, pass crates between scales, and find the way together.',
+        description: 'Explore a warm pocket workshop together. Both makers can enter and move rooms, nest them inside each other, and follow a doorway back into the same room. Solve twelve puzzles built around planning and shared spaces.',
         image: '/prototypes/inside-out/thumbnail.png',
         horror: false,
     },
