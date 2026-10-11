@@ -155,6 +155,10 @@ event(Spawned) Start(mut Seen seen, with Main)
     held = seen.selected switch { 2 => seen.items, _ => default };
     seen.extras += CountBefore(seen.selected switch { 2 => seen.items, _ => default }, Grow(seen));
     seen.extras += held.count;
+    State typedState = seen.selected switch { 2 => .Jump, _ => .Idle };
+    var inferredState = seen.selected switch { 2 => .Run, _ => State.Idle };
+    seen.extras += typedState == State.Jump && inferredState == State.Run ? 1 : 100;
+    seen.extras += int(typedState switch { .Jump => State.Run, _ => .Idle });
     seen.items.Sort(a, b)
     {
         int difference;

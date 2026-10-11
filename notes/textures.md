@@ -1,5 +1,12 @@
 # Textures and how they are sampled
 
+Contextual enum shorthand (2026-10-11): the compiler's fixed Sample argument
+checker supplies Filter/Wrap types to `.Point`, `.Trilinear` and `.Repeat`,
+including named arguments in written order. Texture/grid/cubemap Sample keep
+their existing shader-binding, constant-member and trilinear restrictions.
+The declared/cubemap shader fixtures preserve their existing GLSL/WGSL goldens.
+There is no sampler, runtime or GPU contract change; see `notes/language.md`.
+
 ## Automatic compression and bounded GPU residency (2026-10-11)
 
 - The owner selected GPU compression/residency for larger scenes and explicitly chose "Compress ordinary color textures automatically". No language syntax or generated runtime call changes. Current eligibility is an implementation choice: ordinary color `Texture` assets, including lists/maps, whose dimensions are powers of two and both at least 128. Small/non-power-of-two images, `[Raw]`, cubemap faces, grids and targets stay uncompressed.

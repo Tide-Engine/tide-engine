@@ -259,6 +259,23 @@ int tf_SwitchProbe(int t_selector) {
     }
     int t_scoped = (tide_choice38 + tide_choice40);
     int t_trace = ((t_selector == 1) ? 1124 : ((t_selector == 2) ? 1234 : 1034));
+    int tide_choice47 = t_selector;
+    int tide_choice48 = tide_choice47;
+    int tide_choice49;
+    switch (tide_choice48) {
+        case 1: {
+            tide_choice49 = 1;
+            break;
+        }
+        default: {
+            tide_choice49 = 0;
+            break;
+        }
+    }
+    int t_pickedMode = tide_choice49;
+    if ((int(t_pickedMode) != ((t_selector == 1) ? 1 : 0))) {
+        return (-100);
+    }
     if (((((t_calls != t_trace) || t_skipped) || (t_count != 2)) || (tide_i(7) != tide_i(7)))) {
         return (-100);
     }
@@ -277,13 +294,13 @@ void ts_Shade(tt_Vertex t_vertex, inout vec4 t_color) {
             break;
         }
         case 2: {
-            int tide_choice47 = 2;
-            tide_choice1 = tf_SwitchProbe(tide_choice47);
+            int tide_choice50 = 2;
+            tide_choice1 = tf_SwitchProbe(tide_choice50);
             break;
         }
         default: {
-            int tide_choice48 = 0;
-            tide_choice1 = tf_SwitchProbe(tide_choice48);
+            int tide_choice51 = 0;
+            tide_choice1 = tf_SwitchProbe(tide_choice51);
             break;
         }
     }
@@ -525,6 +542,21 @@ fn tf_SwitchProbe(t_selector: i32) -> i32 {
     }
     var t_scoped: i32 = (tide_choice38 + tide_choice40);
     var t_trace: i32 = select(select(1034, 1234, (t_selector == 2)), 1124, (t_selector == 1));
+    var tide_choice47: i32 = t_selector;
+    var tide_choice48: i32 = tide_choice47;
+    var tide_choice49: i32;
+    switch (tide_choice48) {
+        case 1 {
+            tide_choice49 = 1;
+        }
+        default {
+            tide_choice49 = 0;
+        }
+    }
+    var t_pickedMode: i32 = tide_choice49;
+    if ((i32(t_pickedMode) != select(0, 1, (t_selector == 1)))) {
+        return (-100);
+    }
     if (((((t_calls != t_trace) || t_skipped) || (t_count != 2)) || (tide_i(7) != tide_i(7)))) {
         return (-100);
     }
@@ -542,12 +574,12 @@ fn ts_Shade(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
             tide_choice1 = tf_SwitchProbe(tide_choice2);
         }
         case 2 {
-            var tide_choice47: i32 = 2;
-            tide_choice1 = tf_SwitchProbe(tide_choice47);
+            var tide_choice50: i32 = 2;
+            tide_choice1 = tf_SwitchProbe(tide_choice50);
         }
         default {
-            var tide_choice48: i32 = 0;
-            tide_choice1 = tf_SwitchProbe(tide_choice48);
+            var tide_choice51: i32 = 0;
+            tide_choice1 = tf_SwitchProbe(tide_choice51);
         }
     }
     t_picked = tide_choice1;
