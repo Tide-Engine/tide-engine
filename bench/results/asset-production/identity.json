@@ -1,0 +1,77 @@
+{
+  "kind": "untimed structural and cross-decode checks",
+  "measured": "2026-10-11",
+  "base_commit": "16ef5aca54cbfcbf3215732d24750aa4f4ea6fb1",
+  "node": "v24.16.0",
+  "files": [
+    {
+      "path": "compiler/src/codegen.c",
+      "sha256": "216ed0f5a8b48e9a367fdde43ba729712efa2d190277b89567d96c71c0f4acaa"
+    },
+    {
+      "path": "engine/src/asset_store.c",
+      "sha256": "58b462dcbe2d3b8841bd1310eac42759e49b1430860e2e2e95255e461b3d6ab3"
+    },
+    {
+      "path": "engine/src/asset_store.h",
+      "sha256": "3d50aa2741a9deedcb9a4c4bc774bebd281ca9303d4c2513c46b64ba4bcb65cb"
+    },
+    {
+      "path": "engine/src/list.c",
+      "sha256": "524677d55fa029315666618a7ac3c1affac0e25d6d70bf3888defa41a1739e64"
+    },
+    {
+      "path": "engine/src/heap.c",
+      "sha256": "cd9496ff5ae46f14bfab436d468852f8eb52ed0c0ca6079f55b61a6b0800f8c6"
+    },
+    {
+      "path": "engine/src/delta.c",
+      "sha256": "6043c9e0b4afe0174ba29a50591885a5bb47f2ac922b11641c2296223c3ed323"
+    },
+    {
+      "path": "engine/src/session.c",
+      "sha256": "794473652668b69fc5095a620a825c1ccce3c1a422f151d22d20d6efd8c70432"
+    },
+    {
+      "path": "engine/src/pack_load.c",
+      "sha256": "00e7630abe81d2efa17b1305f511a5aa5c42176029667ae02da6551a3e2228dd"
+    },
+    {
+      "path": "bench/results/asset-production/probe.c",
+      "sha256": "5b088187920cd96258db8b2b90574a1ef04f668819fe1821d43a04cc88c6bd73"
+    },
+    {
+      "path": "build/debug/bin/tide_asset_production_probe.exe",
+      "sha256": "ba6d8897450d5195229db1eec8c5c23ddc16eed467a7375e7423c2095bb0f79a"
+    },
+    {
+      "path": "build/web-debug/bin/tide_asset_production_probe.wasm",
+      "sha256": "c482e8b4a1510a118823b5c6be1db0e72feb93777a0d32cdd3006129f94f4c10"
+    },
+    {
+      "path": "build/debug/tide/tide_asset_production_probe/game.c",
+      "sha256": "7cb985db10762d8e8f7f573d459a4ea69838000dfc84e23f553f13b87ce1cb98"
+    },
+    {
+      "path": "build/debug/tide/tide_asset_production_probe/game.h",
+      "sha256": "fd37eeed88f895e99f6e7c713fd6d950ec7ef564c17f8651e9036deedab2d9eb"
+    },
+    {
+      "path": "build/debug/tide/tide_asset_production_probe/game.pack",
+      "sha256": "31f9bbab5442e3de29d40aaddd9f4a72107f4573e9d5e276b9845f4c21ad7b4b"
+    },
+    {
+      "path": "build/web-debug/tide/tide_asset_production_probe/game.pack",
+      "sha256": "31f9bbab5442e3de29d40aaddd9f4a72107f4573e9d5e276b9845f4c21ad7b4b"
+    },
+    {
+      "path": "D:/Projects/Test/Game.tide",
+      "sha256": "4d43ce4ff664d1a5cdbe3ce195f8ddb1aae06a5584978663914a1a5f84b70e35"
+    },
+    {
+      "path": "D:/Projects/Test/Player.tide",
+      "sha256": "ae0baf4813cc34a5d76ade9db9b1d0cd10db0a343ba5b1690897ab20e71d44fa"
+    }
+  ],
+  "native_compiler": null
+}
