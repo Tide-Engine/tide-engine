@@ -213,6 +213,7 @@ tide_e2e_test(cursor) # Cursor.Lock, asked each frame, and Cursor.locked, which 
 tide_e2e_test(frame_time) # Frame.dt: the frame's length a host gives, read by local code with a match and with none
 tide_e2e_test(session_main) # Session.Start() with no scene is Main, and Application.title the title setting
 tide_e2e_test(net)
+tide_e2e_test(view_time)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept

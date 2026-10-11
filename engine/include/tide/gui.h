@@ -27,7 +27,7 @@ typedef struct tide_textref tide_textref;
 //
 //     tide_draw_reset(&draw);
 //     tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
-//     tide_frame(match, previous, alpha, verified, &local, &draw, &gui);
+//     tide_frame(match, previous, alpha, verified, NULL, 1.0f, &local, &draw, &gui);
 //     tide_gui_end(&gui, &draw); // The GUI's commands go last, over the world
 //     tide_platform_draw(&draw);
 //

@@ -59,6 +59,7 @@ Singletons start with their defaults when the world is created. Systems take the
 | `int tick` | The tick, which counts from 0 |
 | `float t` | The seconds since the match started: `tick * dt` |
 | `int tickRate` | The ticks in a second: 1 / `dt` to the nearest whole number |
+| `float maxRewind` | Configured collider history in seconds, from `settings`; 0 disables it |
 
 `t` is worked out from the tick each time, so it never drifts, and [views](./views.md#smooth-at-any-tick-rate) see it move every frame. A float holds about 7 digits, so it gets coarser as the match goes on (after a day, its steps are about 8 milliseconds): a timer that has to be exact counts in `tick`.
 

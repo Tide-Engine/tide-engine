@@ -51,7 +51,7 @@ TIDE_TEST(verified_views_one_world)
     play(&world, 260u, true);
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     const Seen *seen = &local.Seen;
     TIDE_CHECK(seen->drawn == bits(1, 2, 3, 5) && seen->both == seen->drawn && seen->confirmed == seen->drawn);
     TIDE_CHECK(seen->mismatch == 0 && seen->ahead == 0 && seen->confirmedOnly == 0 && seen->scoreAhead == 0);
@@ -77,7 +77,7 @@ TIDE_TEST(verified_views_two_worlds)
     TIDE_REQUIRE(!tide_entity_is_null(four) && tide_entity_equal(four, five)); // One handle, two entities
     TIDE_REQUIRE(tide_entity_is_null(target(&drawn, 3)) && !tide_entity_is_null(target(&confirmed, 3)));
     tide_draw_reset(&draw);
-    tide_frame(&drawn, NULL, 1.0f, &confirmed, &local, &draw, &gui);
+    tide_frame(&drawn, NULL, 1.0f, &confirmed, NULL, 1.0f, &local, &draw, &gui);
     const Seen *seen = &local.Seen;
     // Drawn: 1 and 2, the target the shield would have kept from coming, and 4
     TIDE_CHECK(seen->drawn == bits(1, 2, 4, 6));
@@ -123,7 +123,7 @@ static void run(const double until)
         const tide_view_worlds view = tide_client_view(clients[0]);
         if (!tide_entity_is_null(target(view.current, 6))) unconfirmed_frames++;
         tide_draw_reset(&draw);
-        tide_frame(view.current, view.previous, view.alpha, view.verified, &local, &draw, &gui);
+        tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, &local, &draw, &gui);
         // What's confirmed is never what only a prediction had
         TIDE_CHECK(local.Seen.sureMost <= 1 && (local.Seen.confirmed & bits(4, 6, 0, 0)) == 0);
         TIDE_CHECK((local.Seen.corpses & (1 << 1)) == 0 && local.Seen.mismatch == 0);

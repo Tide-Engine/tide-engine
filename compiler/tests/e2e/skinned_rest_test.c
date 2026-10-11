@@ -19,7 +19,7 @@ TIDE_TEST(skinned_rest_draws_without_clips_and_preserves_operand_order)
     tide_world_tick(&world);
     tide_local_init(&local);
     const uint32_t mark = tide_scratch_mark();
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Calls.models == 2 && local.Calls.transforms == 2 && local.Calls.poses == 1);
     TIDE_CHECK(local.Calls.omittedOrder == 12 && local.Calls.explicitOrder == 123);
     TIDE_CHECK(local.Calls.independent);

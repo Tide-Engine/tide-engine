@@ -208,7 +208,7 @@ static void frame(const float alpha)
     tide_audio_reset(&audio);
     tide_local_audio(&local, &audio);
 #endif
-    tide_frame(in_match ? &world : NULL, in_match ? &before : NULL, alpha, in_match ? &verified : NULL, &local, &draw, &gui);
+    tide_frame(in_match ? &world : NULL, in_match ? &before : NULL, alpha, in_match ? &verified : NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 #ifdef TIDE_HAS_AUDIO
     play();

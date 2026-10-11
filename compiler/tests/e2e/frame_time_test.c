@@ -13,7 +13,7 @@ static const tide_start arena = {.scene = 0};
 static void draw_frame(const tide_world *w)
 {
     tide_draw_reset(&draw);
-    tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 // A frame as a host runs one: its length first, then the views.

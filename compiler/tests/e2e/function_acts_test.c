@@ -32,7 +32,7 @@ static void frame(const tide_world *w)
 {
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(640, 480), NULL);
-    tide_frame(w, NULL, 1, w, &local, &draw, &gui);
+    tide_frame(w, NULL, 1, w, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

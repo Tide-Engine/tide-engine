@@ -2963,10 +2963,10 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, " These are this machine's own entities, as they are.");
             } else if (of && of->is_view && o->param->query_verified_entities) {
                 sb_put(out, " Everything in it is `verified`: it goes through the entities of the world the server has "
-                            "confirmed, as its last tick has them.");
+                            "confirmed, interpolated between confirmed ticks.");
             } else if (of && of->is_view && o->param->query_verified_join) {
                 sb_put(out, " It goes through the entities the view draws that are the same entity in the world the "
-                            "server has confirmed: what's `verified` is as the last confirmed tick has it, and the rest "
+                            "server has confirmed: verified bindings interpolate between confirmed ticks, and the rest "
                             "blended between ticks, like the view's own parameters.");
             } else if (of && of->is_view) {
                 sb_put(out, " Its rows are the match as the view draws it: blended between the last two ticks, like the "
@@ -8787,7 +8787,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool backed = keyword && keyword->kind == T_COLON && f.open >= 4;
         if (backed) keyword = &DOC->toks[f.open - 4];
         const bool is_struct = keyword && keyword->kind == T_IDENT && str_eq_c(keyword->text, "struct");
-        const bool has_methods = is_struct || (keyword && keyword->kind == T_COMPONENT);
+        const bool has_methods = is_struct || (keyword && (keyword->kind == T_COMPONENT || keyword->kind == T_SINGLETON));
         if (keyword && keyword->kind == T_IDENT && str_eq_c(keyword->text, "enum")) {
             // Members are names; after '=', an int, which a constant can give.
             bool value = false;

@@ -87,7 +87,7 @@ TIDE_TEST(increments_in_systems_and_views)
     tide_local_init(&local);
     for (int frame = 0; frame < 3; frame++) {
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     }
     TIDE_CHECK(local.Seen.frames == 3);
     TIDE_CHECK(local.Seen.odd == 2);

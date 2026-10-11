@@ -62,7 +62,7 @@ typedef struct tide_host_game {
     void (*sample_input)(const tide_devices *devices, const void *local, void *input);
     // tide_frame: `verified` is the last world the server confirmed, which the
     // local fields of the match's entities are kept by, with `world`
-    void (*frame)(const void *world, const void *previous, float alpha, const void *verified, void *local,
+    void (*frame)(const void *world, const void *previous, float alpha, const void *verified, const void *verified_previous, float verified_alpha, void *local,
                   tide_draw_list *draw, tide_gui *gui);
     // tide_local_events, before `frame`: what the match sent since the last one
     // (tide_session_events), which the game's local handlers hear as the frame
@@ -846,7 +846,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
-    game->frame(match, view.previous, view.alpha, view.verified, tide_run_local, &tide_run_draw, &tide_run_gui);
+    game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);

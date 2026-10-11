@@ -93,11 +93,13 @@ static void local_free(void *l)
 }
 
 static void frame(const void *w, const void *previous, float alpha, const void *verified,
-                  void *l, tide_draw_list *draw, tide_gui *gui)
+                  const void *verified_previous, float verified_alpha, void *l, tide_draw_list *draw, tide_gui *gui)
 {
     (void)previous;
     (void)alpha;
     (void)verified;
+    (void)verified_previous;
+    (void)verified_alpha;
     (void)draw;
     printf("reload-test: frame=%u tick=%u r=%u\n", (unsigned)++((local *)l)->frames,
            w ? (unsigned)((const world *)w)->ticks : 0u, (unsigned)gui->devices.keyboard.r.pressed);

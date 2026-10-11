@@ -18,7 +18,7 @@ static int frame(void *user, const float seconds)
     tide_local_frame_time(&local, seconds);
     tide_draw_list draw = {0};
     tide_gui gui = {0};
-    tide_frame(NULL, NULL, 1, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_draw_free(&draw);
     tide_draw_free(&gui.list);
     if (!local.Fetches.done) return TIDE_KEEP_RUNNING;

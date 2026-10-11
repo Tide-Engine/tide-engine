@@ -21,7 +21,7 @@ static void frame(tide_local *l, const float seconds)
 {
     tide_local_frame_time(l, seconds);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, l, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, l, &draw, &gui);
 }
 
 static int32_t cell(const tide_world *w, const tide_grid grid, const int x, const int y)
@@ -307,7 +307,7 @@ TIDE_TEST(rolls_in_views_are_this_machines)
     // With no match, a view still rolls, and the seed reads 0
     tide_draw_reset(&draw);
     tide_local_frame_time(&local, DT);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Fx.seed == 0 && local.Fx.frames == 22);
     tide_local_free(&local);
     tide_local_free(&twin);

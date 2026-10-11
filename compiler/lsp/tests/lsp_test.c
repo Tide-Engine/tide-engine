@@ -3626,6 +3626,26 @@ TIDE_TEST(lsp_methods_and_functions)
     "    Spawn(Ground);\n"                                                     \
     "}\n"
 
+TIDE_TEST(lsp_singleton_methods_and_presented_view_time)
+{
+    start();
+#define SINGLETON_METHODS "settings { maxRewind = 0.25; }\n" \
+        "singleton Physics { float distance; bool Raycast(float value) { return value > distance; }\n" \
+        "mut void Reset() { distance = 0; } }\ninput Controls { bool fire; }\nscene Main { }\n"
+    const char *members = complete("singleton Physics { float distance; bool Raycast(float value) { return value > distance; } }\n"
+        "scene Main { }\nview Show(Physics physics) { physics.$ }\n");
+    TIDE_CHECK(offers(members, "Raycast") && offers(members, "distance"));
+    TIDE_CHECK(offers(complete("singleton Physics { float distance; bool Raycast(float value) { return $ } }\nscene Main { }\n"), "distance"));
+    open_document(SINGLETON_METHODS "system Fire(Controls controls, Physics physics) { if (controls.fire && controls.viewTime.valid) physics.Raycast(1); }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    open_document(SINGLETON_METHODS "view Show(Physics physics) { physics.Ray$cast(1); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Method of singleton `Physics`"));
+    open_document(SINGLETON_METHODS "system Change(Physics physics) { physics.Reset(); }\n");
+    TIDE_CHECK(has(last_sent(), "read-only"));
+    TIDE_CHECK(offers(complete(SINGLETON_METHODS "system Fire(Controls controls) { controls.viewTime.$ }\n"), "valid"));
+#undef SINGLETON_METHODS
+}
+
 TIDE_TEST(lsp_extern_functions)
 {
     start();
