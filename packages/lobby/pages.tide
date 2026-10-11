@@ -1,0 +1,345 @@
+// The menu: a title page (Play alone, Create a lobby, Browse lobbies, Quick
+// match, Join by ID), the list of lobbies, a page to type a lobby's ID into,
+// the wait for a quick match, the lobby's page (who's in it and who's ready,
+// Start the match, Leave) and a Menu button in the match, all of the GUI's
+// own widgets, in whatever theme the game sets.
+//
+// It's drawn over a live match, as the rooms package's is: `Main` is the
+// match's scene, so a match of this machine's own starts with the program,
+// closed, and runs behind the title. Playing alone is closing the menu. A
+// lobby's match is its owner's, opened to the lobby, which the members' machines
+// leave their own for. A machine told which match to be in (`--host`,
+// `--join <code>`, `?host`, `?join=<code>`) has no menu in its way.
+//
+// Each page is a function a game overrides to draw it its own way, keeping
+// the others, and what its buttons do is the calls in lobby.tide and the few
+// here that only move between pages.
+namespace Lobbies;
+
+// How many lobbies the Browse page shows at once.
+const int LISTED = 6;
+
+// The title page's name for the game: its title setting, unless the game says otherwise.
+virtual string Title()
+{
+    return Application.title;
+}
+
+// The line under the title.
+virtual string Tagline()
+{
+    return "Play alone, or find others in a lobby.";
+}
+
+// Where the Menu button is while the game is played, in the screen's pixels
+// from the top left. The bottom right corner is the stats' (tide run --stats).
+virtual Rect MenuButton(float2 screen)
+{
+    return Rect(8, screen.y - 52, 84, 44);
+}
+
+// Before the game's views: where this machine starts, and whether the
+// player's hands are on the game this frame.
+view Begin(Session session, Devices devices, mut LobbyClient client)
+{
+    if (!client.started)
+    {
+        // A machine told to host or to join is on its way into that match:
+        // no page. Any other opens on the title.
+        client.started = true;
+        var told = session.server && session.open || !session.server && session.state != SessionState.Offline;
+        client.page = told ? LobbyMenu.Playing : LobbyMenu.Title;
+    }
+    // Last frame's press was read by the game's views then
+    client.newGame = false;
+    // The pointer that pressed the page's last button is let go before it
+    // plays the game. A key that clicked it is the GUI's until it's let go,
+    // so it's never read here.
+    client.playing = client.page == LobbyMenu.Playing && session.state == SessionState.Connected
+                  && (client.playing || !devices.pointer.press.pressed);
+}
+
+// What the pages' buttons do that asks nothing of the service.
+
+// A game of this machine's own, from its start: the game sees `newGame`.
+void PlayAlone(mut LobbyClient client)
+{
+    client.newGame = true;
+    client.page = LobbyMenu.Playing;
+}
+
+// Into the match that's running behind the page.
+void ResumeMatch(mut LobbyClient client)
+{
+    client.page = LobbyMenu.Playing;
+}
+
+// The menu, from a match: the lobby's page in a lobby, and the title without.
+void ShowMenu(mut LobbyClient client)
+{
+    client.page = client.lobby.id != "" ? LobbyMenu.Lobby : LobbyMenu.Title;
+    client.resume = true;
+}
+
+// Out of a match this machine joined with no lobby (it was told which, as it
+// started), into one of its own, on the title.
+void QuitMatch(mut LobbyClient client)
+{
+    client.resume = false;
+    client.page = LobbyMenu.Title;
+    Clear(client);
+    MatchLeave();
+}
+
+// To the title, from a page that's before a lobby: what was asked for there
+// is nobody's.
+void ShowTitle(mut LobbyClient client)
+{
+    CancelLobby(client);
+    client.page = LobbyMenu.Title;
+    Clear(client);
+}
+
+// To the list of lobbies, asked for afresh.
+void ShowBrowser(mut LobbyClient client)
+{
+    client.page = LobbyMenu.Browse;
+    client.listFrom = 0;
+    Clear(client);
+    RefreshLobbies(client);
+}
+
+// To the page a lobby's ID is typed into.
+void ShowJoin(mut LobbyClient client)
+{
+    client.page = LobbyMenu.Join;
+    Clear(client);
+}
+
+// The lobbies after those the Browse page shows, and from the first again
+// after the last.
+void MoreLobbies(mut LobbyClient client)
+{
+    client.listFrom += LISTED;
+    if (client.listFrom >= client.lobbies.count) client.listFrom = 0;
+}
+
+// Copies the lobby's ID, and has `copied` count from there.
+void CopyLobbyId(mut LobbyClient client)
+{
+    Clipboard.Copy(client.lobby.id);
+    client.copied = 0;
+}
+
+// The pages. Each is a function a game overrides to draw that page its own
+// way, with its own controls or the GUI's, and keeps the others.
+
+// The game's name, and the ways in.
+virtual void TitlePage(Session session, mut LobbyClient client)
+{
+    var connected = session.state == SessionState.Connected;
+    var busy = client.busy != LobbyBusy.Idle;
+    mut var open = true;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label(Title());
+        GUILayout.Label(Tagline());
+        mut var play = false;
+        mut var create = false;
+        mut var browse = false;
+        mut var quick = false;
+        mut var join = false;
+        mut var quit = false;
+        GUI.Disabled(!connected) { play = GUILayout.Button(client.resume ? "Resume" : "Play alone"); }
+        GUI.Disabled(busy)
+        {
+            create = GUILayout.Button("Create a lobby");
+            browse = GUILayout.Button("Browse lobbies");
+            quick = GUILayout.Button("Quick match");
+            join = GUILayout.Button("Join by ID");
+        }
+        // In someone else's match, which this machine was told to join as it started
+        if (connected && !session.server) quit = GUILayout.Button("Leave the match");
+        if (client.busy == LobbyBusy.Creating) GUILayout.Label("Creating a lobby...");
+        else if (client.message != "") GUILayout.Label(client.message);
+        if (play && client.resume) ResumeMatch(client);
+        else if (play) PlayAlone(client);
+        if (create) HostLobby(client);
+        if (browse) ShowBrowser(client);
+        if (quick) FindMatch(client);
+        if (join) ShowJoin(client);
+        if (quit) QuitMatch(client);
+    }
+    // Escape: into the match that's running behind the title
+    if (!open && connected) ResumeMatch(client);
+}
+
+// The lobbies there are, a few at a time, to join one.
+virtual void BrowsePage(mut LobbyClient client)
+{
+    var busy = client.busy != LobbyBusy.Idle;
+    mut var open = true;
+    mut var join = "";
+    mut var refresh = false;
+    mut var more = false;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label("Lobbies");
+        if (client.lobbies.count == 0) GUILayout.Label(client.listing ? "Looking..." : "No lobby is open. Create one from the title.");
+        GUI.Disabled(busy)
+        {
+            for (var i = client.listFrom; i < client.lobbies.count && i < client.listFrom + LISTED; i++)
+            {
+                var entry = client.lobbies[i];
+                var name = entry.name != "" ? entry.name : entry.id;
+                GUILayout.Horizontal()
+                {
+                    GUILayout.Label($"{name} ({entry.players}/{entry.max})");
+                    if (GUILayout.Button("Join")) join = entry.id;
+                }
+            }
+            if (client.lobbies.count > LISTED) more = GUILayout.Button("More");
+        }
+        GUI.Disabled(busy || client.listing) { refresh = GUILayout.Button("Refresh"); }
+        if (client.busy == LobbyBusy.Joining) GUILayout.Label("Joining...");
+        else if (client.message != "") GUILayout.Label(client.message);
+        if (GUILayout.Button("Back")) open = false;
+    }
+    if (join != "") JoinLobby(client, join);
+    if (refresh) RefreshLobbies(client);
+    if (more) MoreLobbies(client);
+    // Back, or Escape
+    if (!open) ShowTitle(client);
+}
+
+// A lobby's ID to type, and the wait to be let in.
+virtual void JoinPage(mut LobbyClient client)
+{
+    var busy = client.busy == LobbyBusy.Joining;
+    mut var open = true;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label(busy ? "Joining" : "Join a lobby");
+        if (busy)
+        {
+            GUILayout.Label($"Lobby {client.typed.Trim()}...");
+            if (GUILayout.Button("Cancel")) open = false;
+        }
+        else
+        {
+            GUILayout.TextField("ID", client.typed, out var entered);
+            // A lobby's ID is capitals, however it's typed
+            client.typed = client.typed.ToUpper();
+            var id = client.typed.Trim();
+            mut var go = false;
+            GUI.Disabled(id == "") { go = GUILayout.Button("Join"); }
+            GUILayout.Label(client.message != "" ? client.message : "Type the ID of your friend's lobby.");
+            if (GUILayout.Button("Back")) open = false;
+            if (go || entered && id != "") JoinLobby(client, id);
+        }
+    }
+    // Back, Cancel, or Escape
+    if (!open) ShowTitle(client);
+}
+
+// The wait for a quick match.
+virtual void SearchPage(mut LobbyClient client)
+{
+    mut var open = true;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label("Quick match");
+        GUILayout.Label("Looking for players...");
+        if (GUILayout.Button("Cancel")) open = false;
+    }
+    // Cancel, or Escape
+    if (!open) ShowTitle(client);
+}
+
+// The lobby this player is in: its ID to share, its members and who's ready,
+// and what its owner does. From a match it's the menu, with Resume.
+virtual void LobbyPage(Session session, mut LobbyClient client)
+{
+    var connected = session.state == SessionState.Connected;
+    var playing = client.match != "" && !client.joining && connected;
+    var ready = IsReady(Mine(client));
+    mut var open = true;
+    mut var kick = "";
+    mut var copy = false;
+    mut var resume = false;
+    mut var toggle = false;
+    mut var start = false;
+    mut var end = false;
+    mut var door = false;
+    mut var rejoin = false;
+    mut var leave = false;
+    GUILayout.Modal(Anchor.MiddleCenter, open)
+    {
+        GUILayout.Label(client.lobby.name != "" ? client.lobby.name : "Lobby");
+        GUILayout.Label($"ID {client.lobby.id}");
+        copy = GUILayout.Button(client.copied < 1.5 ? "Copied" : "Copy the ID");
+        foreach (var member in client.lobby.members)
+        {
+            var name = member.name != "" ? member.name : "Player";
+            var role = member.id == client.lobby.owner ? ", owner" : "";
+            var you = member.id == client.lobby.you ? " (you)" : "";
+            var state = IsReady(member) ? "ready" : "not ready";
+            GUILayout.Horizontal()
+            {
+                GUILayout.Label($"{name}{you}{role}: {state}");
+                if (client.owned && member.id != client.lobby.you)
+                {
+                    if (GUILayout.Button("Kick")) kick = member.id;
+                }
+            }
+        }
+        if (playing) resume = GUILayout.Button("Resume");
+        toggle = GUILayout.Button(ready ? "Ready: yes" : "Ready: no");
+        if (client.owned)
+        {
+            if (client.match != "" || client.hosting) end = GUILayout.Button("End the match");
+            else
+            {
+                GUI.Disabled(!connected) { start = GUILayout.Button("Start the match"); }
+            }
+            door = GUILayout.Button(client.lobby.open ? "Lobby: open" : "Lobby: closed");
+        }
+        else if (client.lobby.match != "" && client.lobby.match == client.left) rejoin = GUILayout.Button("Rejoin the match");
+        leave = GUILayout.Button("Leave the lobby");
+        if (client.hosting && client.match == "") GUILayout.Label("Opening the match...");
+        else if (client.joining) GUILayout.Label("Joining the match...");
+        else if (client.message != "") GUILayout.Label(client.message);
+    }
+    if (copy) CopyLobbyId(client);
+    if (kick != "") Kick(client, kick);
+    if (toggle) SetReady(client, !ready);
+    if (start) StartMatch(client);
+    if (end) EndMatch(client);
+    if (door) SetLobbyOpen(client, !client.lobby.open);
+    if (rejoin) RejoinMatch(client);
+    if (resume) ResumeMatch(client);
+    if (leave) LeaveLobby(client);
+    // Escape: back to the match, where this machine is in the lobby's
+    if (!open && playing && !leave) ResumeMatch(client);
+}
+
+// The page that's up, over everything the game draws, with the devices its
+// own while it is. It runs with no match too, as while one is being joined.
+// A page that follows another in the same frame is drawn then.
+[After(Begin)]
+view Pages(Session session, Devices devices, mut LobbyClient client)
+{
+    client.copied += Math.Min(Frame.dt, 0.1);
+    if (client.page == LobbyMenu.Playing)
+    {
+        if (GUI.Button(MenuButton(float2(Screen.width, Screen.height)), "Menu") || devices.keyboard.escape.down) ShowMenu(client);
+        return;
+    }
+    // A menu over a match: the arrows and a gamepad move between its buttons
+    GUI.Navigate();
+    if (client.page == LobbyMenu.Join) JoinPage(client);
+    if (client.page == LobbyMenu.Browse) BrowsePage(client);
+    if (client.page == LobbyMenu.Searching) SearchPage(client);
+    if (client.page == LobbyMenu.Title) TitlePage(session, client);
+    if (client.page == LobbyMenu.Lobby) LobbyPage(session, client);
+}
