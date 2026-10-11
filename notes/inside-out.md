@@ -251,6 +251,16 @@ Its pack contains each unchanged current WAV exactly once; removed music,
 coin and tonal-doorway assets remain absent. No CI was dispatched. Physical
 phone/GPU coverage, audio listening and external NAT conditions remain separate.
 
+Source `482c066b` deployed directly to the existing Fly site as release 264,
+image `deployment-01M4PHAKNDKRHZZ2MGVTEA16JV`, with passing health checks.
+All four public prototype pages and thumbnails return 200 and match the
+production package; Inside Out's page/thumbnail have the final hashes above.
+Noindex, COOP same-origin and COEP require-corp remain intact. The downloaded
+public 3D page passes the full two-player WebGPU fixture through the production
+relay in 99.6 s, including recursive passages, occupied transport, exact undo,
+three solutions and phone touch. The collaborative preview reloads the public
+title screen without console errors. No CI was dispatched.
+
 ## Nested-box revision validation (2026-10-11; 2D presentation superseded)
 
 Final native desktop, 900px and phone captures include the primary self-cycle

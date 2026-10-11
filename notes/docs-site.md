@@ -7,7 +7,16 @@ and audio are preserved. Game-only geometry, shadow mapping and SSAO use
 existing rendering APIs. Public routes and catalog authentication are unchanged.
 Current validation and deployment evidence are recorded in `notes/inside-out.md`.
 
-Inside Out nested-box revision (2026-10-11): the existing catalog now describes
+Source `482c066b` deployed to the existing Fly site as release 264, image
+`deployment-01M4PHAKNDKRHZZ2MGVTEA16JV`, with passing machine health checks.
+All four public prototype pages and thumbnails match the production package.
+Inside Out uses the final 3D renderer and refreshed gameplay thumbnail.
+Local two-browser WebGL/WebGPU play, site build and HTTP checks pass; no CI
+was dispatched. The downloaded public 3D page also passes the full two-player
+WebGPU fixture through the production relay in 99.6 seconds; the collaborative
+preview reloads its title screen without console errors.
+
+Inside Out nested-box revision (2026-10-11; 2D presentation superseded): the existing catalog now describes
 starting inside nested rooms, varied shapes and offset doors, spatial planning
 and movable self-containing boxes. Its 2D gameplay treatment uses worn
 institutional tiles and fluorescent ambience. Public serving and catalog
