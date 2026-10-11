@@ -92,7 +92,7 @@ All local; nothing of it is in the match's hash.
   composer offset and damping), which writes `Hand.yaw`, `pitch` and `aim`
   for the input, locks the cursor while the player plays (not while cards
   are dealt or a game is over) and sets the audio's listener; the map's
-  blocks, an instanced draw a mesh, through a 2,048 pixel shadow map read nine times a pixel, lit plainly (the sun by how a face is turned to it, and a pale sky light that is all a shadow has; no ambient occlusion: the first version shaded in two steps, which drew dark bands along every bevel that the owner took for broken AO); the
+  blocks, an instanced draw a mesh, through a 2,048 pixel shadow map read nine times a pixel, lit plainly (the sun by how a face is turned to it, wrapped a little past square so a bevel is a soft turn, and a pale sky light that is all a shadow has), with ambient occlusion from a depth of the eye's own (`Lay`, then `Occlude` at half size, blurred: pairs of looks either side of a pixel, which need no normal; the owner asked for SSAO, 2026-10-11; the first version shaded in two steps, which drew dark bands along every bevel that the owner took for broken AO); the
   sky, a cubemap a map; the floor under the map as Grid.mat has it (black lines a meter apart with the sky between them, gone 20 m from the eye: the owner, 2026-10-11, of a first version that was a black plane: "it should be only a grid, almost like you are floating in the sky"); and the frame's bloom and grade.
 - `mage.tide`: the Magician, skinned, with the Unity materials by slot (the
   model carries its slot in `uv.x`), the liquid in its head as its health,

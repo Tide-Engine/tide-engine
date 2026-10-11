@@ -164,7 +164,25 @@ local singleton Post
     RenderTarget bright;
     RenderTarget spread;
     Texture glow;
+    Texture shade;       // How much of the sky's light corners keep: Depths' blurred
     float2 pixel;        // A logical pixel of the window, as a uv
+    bool made;
+}
+
+// How far the eye sees along each pixel, without the scene's samples (a
+// frag can't read a depth that has several a pixel): what's solid, drawn
+// once more with no frag. The shade in corners is worked out of it.
+local singleton Depths
+{
+    RenderTarget map;
+    DepthTexture depth;
+    RenderTarget shade;      // The corners' shade, at half the window's size,
+    RenderTarget soft;       // and its blur's other pass
+    float4x4 toWorld = float4x4.identity;    // From the eye's clip space to the world
+    float3 eye;
+    float3 forward = float3(0, 0, 1);
+    float2 size = float2(1, 1);  // The window's, in logical pixels
+    float2 reach;            // A meter, a meter off, as a uv
     bool made;
 }
 
@@ -263,12 +281,14 @@ float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp,
 Color Lit(Color paint, float3 normal, float3 world, Light light, float sun, float gloss)
 {
     float3 toEye = Math.Normalize(light.eye - world);
-    float direct = Math.Saturate(Math.Dot(normal, SUN)) * sun;
+    // The sun wraps a little past what faces it squarely, so a bevel between a lit face and
+    // an unlit one is a soft turn and not a dark band
+    float direct = Math.Saturate((Math.Dot(normal, SUN) + 0.3) / 1.3) * sun;
     // The sky's light is paler than the sky: a blue one would take a red block's color in its shade
-    float3 fill = (float3(light.above.r, light.above.g, light.above.b) * 0.45 + float3(0.55)) * (0.5 + 0.16 * normal.y);
+    float3 fill = (float3(light.above.r, light.above.g, light.above.b) * 0.45 + float3(0.55)) * (0.6 + 0.16 * normal.y);
     float3 base = float3(paint.r, paint.g, paint.b);
     float shine = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 40) * gloss * direct;
-    float3 lit = base * (fill + float3(light.sun.r, light.sun.g, light.sun.b) * (direct * 1.15)) + float3(shine);
+    float3 lit = base * (fill + float3(light.sun.r, light.sun.g, light.sun.b) * (direct * 1.0)) + float3(shine);
     return Color(lit.x, lit.y, lit.z, paint.a);
 }
 // A block: its map's paint, lit.
@@ -333,19 +353,69 @@ frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step)
     color = Color(sum.r, sum.g, sum.b, 1);
 }
 
+// Where a pixel of the eye's depth is in the world.
+float3 Seen(DepthTexture depth, float2 uv, float4x4 toWorld)
+{
+    float4 world = Math.Mul(toWorld, float4(uv.x * 2 - 1, 1 - uv.y * 2, depth.Sample(uv) * 2 - 1, 1));
+    return world.xyz / world.w;
+}
+
+// Ambient occlusion from the eye's depth: how folded in the surface around a
+// pixel is, within AO_REACH of it. Six pairs of looks, each pair either side
+// of the pixel on a spiral, turned differently for each pixel so that the
+// blur after it has no pattern to keep. On a flat surface a pair's two
+// places are opposite ways from the pixel's; in a corner they fold towards
+// the eye, and the sharper the fold the more it shades. It needs no normal,
+// which a depth's own steps would stripe. A pair with a place too far off,
+// across an edge, shades nothing. White where nothing is near, and for the sky.
+const float AO_REACH = 0.8;      // Meters
+const int AO_PAIRS = 6;
+
+frag Occlude(Vertex vertex, out Color color, Texture source, Depths depths)
+{
+    if (depths.depth.Sample(vertex.uv) >= 0.99999)
+    {
+        color = Color.white;
+        return;
+    }
+    float3 here = Seen(depths.depth, vertex.uv, depths.toWorld);
+    float3 toEye = Math.Normalize(depths.eye - here);
+    float away = Math.Max(Math.Dot(here - depths.eye, depths.forward), 0.3);
+    float2 reach = depths.reach * (AO_REACH / away);
+    int2 cell = int2(int(vertex.uv.x * depths.size.x), int(vertex.uv.y * depths.size.y));
+    float turn = (Math.Hash(cell) & 1023) / 1023.0 * Math.PI;
+    mut float shade = 0;
+    for (int i = 0; i < AO_PAIRS; i++)
+    {
+        float out = (i + 0.7) / AO_PAIRS;
+        float angle = turn + i * 2.399963;
+        float2 off = float2(Math.Cos(angle), Math.Sin(angle)) * reach * out;
+        float3 a = Seen(depths.depth, vertex.uv + off, depths.toWorld) - here;
+        float3 b = Seen(depths.depth, vertex.uv - off, depths.toWorld) - here;
+        float longest = Math.Max(Math.Length(a), Math.Length(b));
+        float fold = Math.Dot(Math.Normalize(a), Math.Normalize(b)) + 1;
+        // Folded towards the eye is a corner; away from it is an edge, which is lit
+        float inward = Math.Saturate(Math.Dot(a + b, toEye) / (AO_REACH * 0.08));
+        shade += Math.Saturate(fold * 0.9) * inward * Math.Saturate(2 - longest / AO_REACH);
+    }
+    float kept = 1 - Math.Saturate(shade / AO_PAIRS * 1.5);
+    color = Color(kept, kept, kept, 1);
+}
 // The picture as the window gets it: the world and its bloom, then the
 // Unity volume's grade (exposure, contrast, saturation) and its vignette.
 frag Present(Vertex vertex, out Color color, Texture source, Post post)
 {
     Color seen = source.Sample(vertex.uv);
     Color glow = post.glow.Sample(vertex.uv);
-    mut float3 lit = float3(seen.r, seen.g, seen.b) + float3(glow.r, glow.g, glow.b) * 0.9;
+    // Corners keep less of the light; what glows is over that
+    float shade = 0.35 + 0.65 * post.shade.Sample(vertex.uv).r;
+    mut float3 lit = float3(seen.r, seen.g, seen.b) * shade + float3(glow.r, glow.g, glow.b) * 0.9;
     lit = lit * 1.08;
     lit = (lit - float3(0.5)) * 1.05 + float3(0.5);
     float grey = Math.Dot(lit, float3(0.2126, 0.7152, 0.0722));
     lit = float3(grey) + (lit - float3(grey)) * 1.25;
     float2 off = vertex.uv - float2(0.5);
-    float dark = 1 - Math.SmoothStep(0.25, 1.1, Math.Length(off) * 1.45) * 0.42;
+    float dark = 1 - Math.SmoothStep(0.25, 1.1, Math.Length(off) * 1.45) * 0.24;
     lit = lit * dark;
     // What's brighter than white whitens slowly, so a glow keeps its color longer than a clamp would let it
     float most = Math.Max(lit.x, Math.Max(lit.y, lit.z));
@@ -799,6 +869,38 @@ view Cast(Scenery scenery, Models models, mut Shadow shadow)
     shadow.map.Instanced(models.cube, models.cubeFaces, scenery.boxes);
 }
 
+// The eye's depth: every block once more, through the eye, with no frag.
+// The mages add themselves (mage.tide).
+[Stage(Layers.Shadow, 1)]
+view Lay(Scenery scenery, Models models, Look look, Light light, mut Depths depths, mut Post post)
+{
+    if (!depths.made)
+    {
+        depths.made = true;
+        depths.map = RenderTarget.Window(Format.Depth);
+        depths.depth = depths.map.depth;
+        depths.shade = RenderTarget.Window(0.5);
+        depths.soft = RenderTarget.Window(0.5);
+        post.shade = depths.shade.color;
+    }
+    depths.map.Clear(Color.white);
+    depths.map.SetCamera(light.eye, look.turned, CAMERA_FOV);
+    depths.toWorld = Math.Inverse(depths.map.WorldToClip());
+    depths.eye = light.eye;
+    depths.forward = Math.Rotate(look.turned, float3(0, 0, 1));
+    depths.size = float2(Math.Max(Screen.width, 1), Math.Max(Screen.height, 1));
+    var half = Math.Tan(Math.Radians(CAMERA_FOV) * 0.5);
+    depths.reach = float2(depths.size.y / depths.size.x, 1) * (0.5 / half);
+    depths.map.Instanced(blockPlane, scenery.planes);
+    depths.map.Instanced(blockPlaneSquare, scenery.squares);
+    depths.map.Instanced(blockCube, scenery.cubes);
+    depths.map.Instanced(blockCubeU, scenery.us);
+    depths.map.Instanced(blockCubeL, scenery.ls);
+    depths.map.Instanced(blockBeamLong, scenery.longs);
+    depths.map.Instanced(blockBeamShort, scenery.shorts);
+    depths.map.Instanced(blockTrapezoid, scenery.trapezoids);
+    depths.map.Instanced(models.cube, models.cubeFaces, scenery.boxes);
+}
 // The world's picture starts here: the sky, the floor and the map, each
 // mesh's blocks in one draw.
 [Stage(Layers.World)]
@@ -846,8 +948,12 @@ view World(Scenery scenery, Models models, Look look, Light light, mut Post post
 // The picture goes to the window: its bright parts blurred across and down,
 // at a quarter of the size, then everything through `Present`.
 [Stage(Layers.Effects, 100)]
-view Show(Post post)
+view Show(Post post, Depths depths)
 {
+    // The corners' shade, then blurred across and down
+    Draw.Blit(post.scene.color, depths.shade, Occlude);
+    Draw.Blit(depths.shade.color, depths.soft, Blur, BlurStep { along = float2(post.pixel.x * 2, 0) });
+    Draw.Blit(depths.soft.color, depths.shade, Blur, BlurStep { along = float2(0, post.pixel.y * 2) });
     Draw.Blit(post.scene.color, post.bright, Bright);
     Draw.Blit(post.bright.color, post.spread, Blur, BlurStep { along = float2(post.pixel.x * 4, 0) });
     Draw.Blit(post.spread.color, post.bright, Blur, BlurStep { along = float2(0, post.pixel.y * 4) });
