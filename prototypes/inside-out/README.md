@@ -15,8 +15,9 @@ chat alongside the game to discuss plans.
 ## Playing
 
 Each screen follows its own maker in one continuous scene. Step inside a
-room and the camera zooms into its actual doorway, with the containing world
-and a maker in the immediate containing world kept in view beyond its walls.
+room and the camera zooms into its actual doorway. Your whole current room
+stays in view, with one tile of containing-world context around its edges.
+The camera keeps that framing when your partner moves or leaves the screen.
 Your maker walks and shrinks through the doorway; leaving grows them back
 into the surrounding world. Your partner can watch that passage from outside.
 The outside follows the doorway you used: a moved shell changes your surroundings,

@@ -1,0 +1,17 @@
+// expect: an operator works a value out of its operands, so it can't call 'Soon', which starts 'Later'
+// expect: it does on line 7
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+void Soon() { Later(); }
+struct Money
+{
+    int cents;
+    Money operator +(Money a, Money b)
+    {
+        Soon();
+        return Money { cents = a.cents + b.cents };
+    }
+}
+scene Main { }

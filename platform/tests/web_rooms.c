@@ -89,11 +89,12 @@ static bool read_input(const uint8_t *data, const uint32_t size, void *input)
 
 // The world as bytes, to send it: plain data, all of it, whatever the
 // receiver has.
-static uint8_t *pack(const void *w, const void *base, const uint8_t *need, const uint32_t need_size, uint32_t *size)
+static uint8_t *pack(const void *w, const void *base, const uint8_t *need, const uint32_t need_size, bool assets, uint32_t *size)
 {
     (void)base;
     (void)need;
     (void)need_size;
+    (void)assets;
     uint8_t *out = malloc(sizeof(world));
     if (!out) abort();
     memcpy(out, w, sizeof(world));

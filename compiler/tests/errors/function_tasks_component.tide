@@ -1,0 +1,16 @@
+// expect: 'Push' gets its 'body' again each time it goes on, so it takes the caller's own: a parameter
+// expect: a function's component may be any entity's, or a copy, and the task gets the one of the entity it belongs to: start 'Push' from the system, view or handler that has it
+component Body { float speed; }
+scene Main { }
+
+async void Push(Body body)
+{
+    await Wait.Ticks(1);
+}
+
+void Shove(Body body) { Push(body); }
+
+system Start(Body body)
+{
+    Shove(body);
+}

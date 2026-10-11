@@ -106,9 +106,12 @@ TIDE_WEB_IMPORT(io_fetch_forget) void tide_web_io_fetch_forget(uint32_t ticket);
 // Web.Request's Send, as the same fetch: a method, headers (a line each,
 // "Name: value\r\n") and a body with it. Its ticket is polled, read and
 // forgotten as a fetch's, but an answer of any status is no error: status
-// gives it once the poll says it's done (0 with no answer).
+// gives it once the poll says it's done (0 with no answer). `timeout` is the
+// seconds it may take, 0 for no limit: past them the page aborts it, and its
+// poll is TIDE_IO_TIMED_OUT.
 TIDE_WEB_IMPORT(io_request_begin)
-uint32_t tide_web_io_request_begin(const char *method, const char *url, const char *headers, const void *body, uint32_t size);
+uint32_t tide_web_io_request_begin(const char *method, const char *url, const char *headers, const void *body, uint32_t size,
+                                   float timeout);
 TIDE_WEB_IMPORT(io_request_status) int32_t tide_web_io_request_status(uint32_t ticket);
 
 // Gamepads in the browser's standard mapping: axes -1 to 1 (y down), buttons

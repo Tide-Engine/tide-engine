@@ -54,6 +54,12 @@ typedef struct tide_heap {
     // that is at each of its places, with a reference for each. Before the
     // first, page[-1] holds the table this one replaced, until it's settled.
     tide_page **page;
+    // Immutable asset payloads named by content IDs in list blocks. These
+    // pools are shared by snapshots. Logical descriptor leases are checked
+    // by the heap hash; native pointers and optional origins are not.
+    struct tide_asset_pool *assets;
+    struct tide_asset_retired *assets_retired;
+    struct tide_asset_origins *origins; // Optional serialization hints, shared by snapshots.
 } tide_heap;
 
 // A block with room for `bytes` bytes after its header. Offsets are never 0.

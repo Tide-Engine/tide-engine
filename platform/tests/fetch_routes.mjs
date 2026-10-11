@@ -42,6 +42,21 @@ export default function routes(request, response) {
         response.writeHead(200, { 'content-type': 'text/plain', 'content-length': hello.length });
         response.end(hello);
         return true;
+    case '/silent': // Takes the request and never answers: the client's time limit ends it
+        request.resume();
+        return true;
+    case '/stall': // Says how long its body is, sends less, and stops there
+        request.resume();
+        response.writeHead(200, { 'content-type': 'text/plain', 'content-length': hello.length });
+        response.write(hello.slice(0, 5));
+        return true;
+    case '/slow': // Answers a moment later, well within any limit that's meant to pass
+        request.resume();
+        setTimeout(() => {
+            response.writeHead(200, { 'content-type': 'text/plain', 'content-length': hello.length });
+            response.end(hello);
+        }, 100);
+        return true;
     case '/error':
         response.writeHead(500, { 'content-length': 4 });
         response.end('oops');

@@ -1,0 +1,87 @@
+asset Texture unusedPicture = "assets/hero.png"; // Debug keeps unused declarations.
+asset List<byte> table = "assets/table.bin";
+asset List<List<byte>> nested = "assets/table.bin";
+asset Map<string, string> notes = "assets/notes/*.txt";
+asset List<string> texts = "assets/notes/*.txt";
+
+extern void c_asset_edit(mut List<byte> bytes, int count);
+extern void c_asset_out(out List<byte> bytes);
+
+singleton Probe
+{
+    List<List<byte>> copies;
+    Grid2<int> cells;
+    List<byte>? optional;
+    int checks;
+    int passed;
+    bool done;
+}
+
+void Expect(mut Probe probe, bool condition)
+{
+    probe.checks++;
+    if (condition) probe.passed++;
+}
+
+system Check(mut Probe probe)
+{
+    if (probe.done) return;
+    probe.done = true;
+    // Live grid chunks use their allocation headers as ordinary cells.
+    probe.cells[0, 0] = 2147483647;
+    probe.cells[3, 0] = 1073741824;
+    for (int i = 0; i < 100; i++) probe.copies.Add(table);
+    probe.copies[0][3] = 77;
+    mut List<byte> local = probe.copies[1];
+    local[3] = 78;
+    Expect(probe, probe.copies[1][3] == table[3] && local[3] == 78);
+    probe.copies[2].RemoveAt(3);
+    Expect(probe, probe.copies[2][3] == table[4]);
+    probe.copies[3].Resize(7);
+    Expect(probe, probe.copies[3].count == 7 && probe.copies[3][6] == table[6]);
+    probe.copies[4].Add(91);
+    Expect(probe, probe.copies[4].count == 301 && probe.copies[4][300] == 91);
+    probe.copies[5].Insert(3, 92);
+    Expect(probe, probe.copies[5][3] == 92 && probe.copies[5][4] == table[3]);
+    mut List<byte> cEdited = probe.copies[6];
+    c_asset_edit(cEdited, 300);
+    probe.copies[6] = cEdited;
+    Expect(probe, probe.copies[6][3] == 93 && table[3] == 21);
+    mut List<byte> sorted = probe.copies[7];
+    sorted.Sort(a, b) { return a > b; }
+    probe.copies[7] = sorted;
+    Expect(probe, probe.copies[7][0] == 255 && table[0] == 0);
+    probe.copies[8].Clear();
+    Expect(probe, probe.copies[8].count == 0 && probe.copies[9].count == 300);
+    c_asset_out(out var made);
+    probe.copies[10] = made;
+    Expect(probe, probe.copies[10].count == 2 && probe.copies[10][1] == 95);
+    mut List<List<byte>> children = nested;
+    children[0][3] = 96;
+    Expect(probe, children[0][3] == 96 && nested[0][3] == 21);
+    mut Map<string, string> named = notes;
+    named["assets/notes/a.txt"] = "changed";
+    Expect(probe, notes["assets/notes/a.txt"] == "alpha" && named["assets/notes/a.txt"] == "changed");
+    named.Clear();
+    Expect(probe, named.count == 0 && notes.count == 2);
+    mut List<string> words = texts;
+    words[0] = "changed";
+    words.Clear();
+    Expect(probe, words.count == 0 && texts[0] == "alpha");
+    mut List<byte> empty = table;
+    empty.Clear();
+    Expect(probe, empty.count == 0 && table.count == 300);
+    probe.copies[0] = table;
+    Expect(probe, probe.copies[0][3] == 21 && probe.copies[1][3] == 21);
+    // New dev's optional-field storage must keep the same asset ownership.
+    probe.optional = table;
+    var held = probe.optional!;
+    mut List<byte> edited = held;
+    edited[3] = 97;
+    Expect(probe, held[3] == 21 && edited[3] == 97);
+    probe.optional = null;
+    Expect(probe, probe.optional == null);
+    probe.optional = table; // Retain it through snapshots, packing and join.
+}
+
+scene Main { }

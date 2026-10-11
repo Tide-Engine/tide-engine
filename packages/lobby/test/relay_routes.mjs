@@ -17,5 +17,9 @@ const clock = {
 const lobbies = createLobbies({ clock, limits: { requestsPerSecond: 1000, requestBurst: 10000 } });
 
 export default function routes(request, response) {
+    if (request.url.startsWith('/silent/')) { // A service that takes a request and never answers it
+        request.resume();
+        return true;
+    }
     return lobbies.handle(request, response, request.socket.remoteAddress || '?');
 }
