@@ -253,3 +253,12 @@ requests return 200 and match the validated release hashes. The packaged
 catalog still contains only Inside Out, CRACKED and Two Forks.
 Two-browser WebGPU gameplay of the downloaded page with the production relay
 passes, including the focused-camera and recursion checks. No CI was dispatched.
+
+Inside Out spatial-zoom revision (2026-10-11): the authenticated catalog
+description now explains automatic pushing followed by blocked doorway entry.
+Its new gameplay thumbnail shows Peach nested in Mint with the partner outside.
+The public URL and discovery/authentication boundaries remain the same.
+Svelte check reports zero errors/warnings, the production build passes, and
+all eighteen analytics/admin plus five production HTTP/SEO/access tests pass.
+Release, staged and packaged Inside Out HTML are byte-identical. Game-specific
+camera, movement, campaign and audio evidence is in `notes/inside-out.md`.

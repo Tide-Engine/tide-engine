@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { inflateSync } from 'node:zlib';
 import { createRelay } from '../../../relay/relay.mjs';
 import { stopBrowser } from './browser-process.mjs';
 import { installFrameControl } from './frame-control.mjs';
@@ -89,6 +90,48 @@ const browserCommand = async (method, params = {}, timeout = 20_000) => {
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const assertImagesEqual = (actual, expected, message) => assert.equal(Buffer.compare(actual, expected), 0, message);
 const assertImagesDiffer = (actual, expected, message) => assert.notEqual(Buffer.compare(actual, expected), 0, message);
+// Count the rendered Mint wood in a real Chrome screenshot. This checks the
+// spatial zoom itself, without a camera debug export or wasm inspection.
+const mintArea = png => {
+    let width, height, channels;
+    const chunks = [];
+    for (let at = 8; at < png.length;) {
+        const length = png.readUInt32BE(at);
+        const type = png.toString('ascii', at + 4, at + 8);
+        if (type === 'IHDR') {
+            width = png.readUInt32BE(at + 8); height = png.readUInt32BE(at + 12);
+            assert.equal(png[at + 16], 8, 'screenshot uses 8-bit colour');
+            channels = png[at + 17] === 2 ? 3 : png[at + 17] === 6 ? 4 : 0;
+            assert.ok(channels, 'screenshot uses RGB or RGBA');
+            assert.equal(png[at + 20], 0, 'screenshot is not interlaced');
+        } else if (type === 'IDAT') chunks.push(png.subarray(at + 8, at + 8 + length));
+        at += length + 12;
+    }
+    const packed = inflateSync(Buffer.concat(chunks));
+    const stride = width * channels;
+    let previous = Buffer.alloc(stride), total = 0;
+    const paeth = (a, b, c) => {
+        const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+    };
+    for (let y = 0; y < height; y++) {
+        const at = y * (stride + 1), filter = packed[at], row = Buffer.alloc(stride);
+        assert.ok(filter <= 4, 'valid screenshot PNG filter');
+        for (let x = 0; x < stride; x++) {
+            const left = x >= channels ? row[x - channels] : 0;
+            const above = previous[x], corner = x >= channels ? previous[x - channels] : 0;
+            const predictor = filter === 0 ? 0 : filter === 1 ? left : filter === 2 ? above :
+                filter === 3 ? Math.floor((left + above) / 2) : paeth(left, above, corner);
+            row[x] = (packed[at + 1 + x] + predictor) & 255;
+        }
+        for (let x = 0; x < stride; x += channels) {
+            const r = row[x], g = row[x + 1], b = row[x + 2];
+            if (r > 55 && r < 145 && g > r + 30 && g > b + 12) total++;
+        }
+        previous = row;
+    }
+    return total;
+};
 let pumping;
 // Concurrent predicates share one round. Neither player gets another frame
 // until both have finished drawing, including their GPU completion fences.
@@ -318,24 +361,31 @@ try {
         const rect = playfield(client);
         return { x: rect.x + 12, y: rect.y + 40, width: rect.width - 24, height: rect.height - 62 };
     };
-    const parcelClip = client => {
-        const body = cameraBody(client);
-        // Mint's central parcel and its floor stay clear of the makers at
-        // the opposite door cells (0,2) and (4,2). Parent contexts may differ.
-        const tile = Math.min(body.width, body.height) * 0.68 / 5;
-        const side = Math.floor(tile * 0.94);
-        return { x: Math.round(body.x + body.width / 2 - side / 2),
-            y: Math.round(body.y + body.height / 2 - side / 2), width: side, height: side };
+    const focusedGeometry = (client, outsideWest = false) => {
+        const rect = playfield(client);
+        // Authored test scenes either have both makers inside, or Amber one
+        // containing-world cell west of occupied Mint. The latter widens the
+        // camera to include him; it is unchanged by pushing that room east.
+        const baseTile = Math.min(rect.width - 24, rect.height - 62) * 0.62 / 5;
+        const parentTile = Math.min(baseTile / 0.16, (rect.width - 40) / (outsideWest ? 1.85 : 0.9), (rect.height - 78) / 0.9);
+        return { tile: parentTile * 0.16, x: rect.x + rect.width / 2 + (outsideWest ? 0.475 * parentTile : 0),
+            y: rect.y + rect.height / 2 + 9 };
     };
-    const contextClip = client => {
+    const parcelClip = (client, outsideWest = false) => {
+        const { tile, x, y } = focusedGeometry(client, outsideWest);
+        // Mint's central parcel/floor stays clear of the makers at its doors.
+        const side = Math.floor(tile * 0.94);
+        return { x: Math.round(x - side / 2), y: Math.round(y - side / 2), width: side, height: side };
+    };
+    const contextClip = (client, outsideWest = false) => {
         const body = cameraBody(client);
-        const grid = Math.min(body.width, body.height) * 0.68;
-        const side = Math.floor(Math.max(20, (body.width - grid) / 2 - 14));
+        const geometry = focusedGeometry(client, outsideWest);
+        const x = Math.ceil(geometry.x + geometry.tile * 2.5 + 14);
         // The workshop dock east of Mint changes position relative to the
         // focused interior when Amber pushes its occupied shell. Neither
         // maker is in this strip, so their movement/entry effects cannot
         // make a placeholder parent view pass the comparison.
-        return { x: body.x + body.width - side - 4, y: body.y + 4, width: side, height: body.height - 8 };
+        return { x, y: body.y + 4, width: Math.floor(body.x + body.width - x - 4), height: body.height - 8 };
     };
     const titleClip = { x: 315, y: 24, width: 320, height: 25 };
     const moveLabel = client => client.crop(movesClip(client));
@@ -392,16 +442,24 @@ try {
     await small.screenshot('desktop-little-maker');
 
     stage = 'both keyboard roles, shared undo and reset';
-    await host.key('ShiftLeft', 'Shift', true);
     await host.tapKey('KeyD', 'd');
-    await host.key('ShiftLeft', 'Shift', false);
     await advanceMatch();
     const oneMove = await moveLabel(host);
-    assertImagesDiffer(oneMove, zeroMoves, 'Shift makes amber push the room');
+    assertImagesDiffer(oneMove, zeroMoves, 'walking east automatically pushes the room');
     assertImagesEqual(await moveLabel(small), oneMove, 'teal sees the shared room move');
     await small.tapKey('KeyW', 'w');
-    await advanceMatch(10);
-    assertImagesDiffer(await moveLabel(host), oneMove, 'teal freely enters the room through its doorway');
+    const zoomEarly = await saveCrop(small, 'zoom-entry-early', cameraBody(small));
+    await small.frames(4);
+    const zoomMiddle = await saveCrop(small, 'zoom-entry-middle', cameraBody(small));
+    await small.frames(6);
+    const zoomLate = await saveCrop(small, 'zoom-entry-late', cameraBody(small));
+    await advanceMatch(24);
+    const zoomSettled = await saveCrop(small, 'zoom-entry-settled', cameraBody(small));
+    const zoomAreas = [zoomEarly, zoomMiddle, zoomLate, zoomSettled].map(mintArea);
+    assert.ok(zoomAreas[1] > zoomAreas[0] && zoomAreas[2] > zoomAreas[1] && zoomAreas[3] >= zoomAreas[2],
+        `Mint grows through intermediate camera frames: ${zoomAreas.join(', ')}`);
+    assert.ok(zoomAreas[3] > zoomAreas[0] * 2, 'entry zoom starts at the actual miniature scale');
+    assertImagesDiffer(await moveLabel(host), oneMove, 'teal enters when the north wall blocks the room push');
     const mintTitle = await saveCrop(small, 'camera-mint-title', dimensionClip(small));
     assertImagesDiffer(mintTitle, workshopTitle, 'entering Mint changes Teal\'s current-dimension title');
     assertImagesEqual(await dimensionLabel(host), workshopTitle, 'Amber outside keeps the Workshop title');
@@ -448,9 +506,9 @@ try {
 
     stage = 'both makers can enter the same shared room';
     await host.tapKey('KeyD', 'd');
+    await host.tapKey('KeyD', 'd');
     await small.tapKey('KeyW', 'w');
-    await small.tapKey('KeyA', 'a');
-    await advanceMatch(10);
+    await advanceMatch(24);
     const sharedRoomMoves = await moveLabel(host);
     assertImagesDiffer(sharedRoomMoves, oneMove, 'both makers can walk into the pocket room through opposite doors');
     assertImagesEqual(await moveLabel(small), sharedRoomMoves, 'both entrants share one command timeline');
@@ -458,11 +516,21 @@ try {
     assertImagesEqual(await dimensionLabel(small), mintTitle, 'both makers in Mint see the same dimension title');
     assertImagesEqual(await saveCrop(host, 'camera-shared-mint-amber', parcelClip(host)),
         await saveCrop(small, 'camera-shared-mint-teal', parcelClip(small)),
-        'opposite doorway visits render the same canonical parcel and floor');
+        'two doorway visits render the same canonical parcel and floor');
     await host.screenshot('desktop-both-in-room');
     await small.screenshot('desktop-both-in-room-teal');
     await host.tapKey('KeyA', 'a');
-    await advanceMatch(10);
+    const exitEarly = await saveCrop(host, 'zoom-exit-early', cameraBody(host));
+    await host.frames(4);
+    const exitMiddle = await saveCrop(host, 'zoom-exit-middle', cameraBody(host));
+    await host.frames(6);
+    const exitLate = await saveCrop(host, 'zoom-exit-late', cameraBody(host));
+    await advanceMatch(24);
+    const exitSettled = await saveCrop(host, 'zoom-exit-settled', cameraBody(host));
+    const exitAreas = [exitEarly, exitMiddle, exitLate, exitSettled].map(mintArea);
+    assert.ok(exitAreas[0] > exitAreas[1] && exitAreas[1] > exitAreas[2] && exitAreas[2] >= exitAreas[3],
+        `Mint shrinks through intermediate exit frames: ${exitAreas.join(', ')}`);
+    assert.ok(exitAreas[0] > exitAreas[3] * 2, 'exit zoom returns to the actual miniature scale');
     assertImagesEqual(await dimensionLabel(host), workshopTitle, 'walking back through the west edge restores Amber\'s outside camera');
     assertImagesEqual(await dimensionLabel(small), mintTitle, 'Teal remains focused on Mint when Amber exits');
     await host.tapKey('KeyZ', 'z');
@@ -477,23 +545,21 @@ try {
     stage = 'an occupied room carries its actual outside context';
     await small.tapKey('KeyW', 'w');
     await small.tapKey('KeyA', 'a');
-    await advanceMatch(10);
+    await advanceMatch(24);
     assertImagesEqual(await dimensionLabel(small), mintTitle, 'Teal enters Mint before its shell is pushed');
-    const beforeContext = await saveCrop(small, 'camera-parent-before-push', contextClip(small));
-    const beforeParcel = await small.crop(parcelClip(small));
-    await host.key('ShiftLeft', 'Shift', true);
+    const beforeContext = await saveCrop(small, 'camera-parent-before-push', contextClip(small, true));
+    const beforeParcel = await small.crop(parcelClip(small, true));
     await host.tapKey('KeyD', 'd');
-    await host.key('ShiftLeft', 'Shift', false);
-    await advanceMatch(10);
+    await advanceMatch(24);
     assertImagesEqual(await dimensionLabel(host), workshopTitle, 'the maker pushing the shell remains outside');
     assertImagesEqual(await dimensionLabel(small), mintTitle, 'the carried maker stays in the same canonical room');
-    assertImagesEqual(await small.crop(parcelClip(small)), beforeParcel, 'moving a shell preserves its interior parcel');
-    assertImagesDiffer(await saveCrop(small, 'camera-parent-after-push', contextClip(small)), beforeContext,
+    assertImagesEqual(await small.crop(parcelClip(small, true)), beforeParcel, 'moving a shell preserves its interior parcel');
+    assertImagesDiffer(await saveCrop(small, 'camera-parent-after-push', contextClip(small, true)), beforeContext,
         'the occupied room\'s visible outside context follows its physical shell position');
     await small.screenshot('desktop-camera-carried-room');
     await small.tapKey('KeyZ', 'z');
-    await advanceMatch(10);
-    assertImagesEqual(await small.crop(contextClip(small)), beforeContext, 'shared undo restores the containing world around the room');
+    await advanceMatch(24);
+    assertImagesEqual(await small.crop(contextClip(small, true)), beforeContext, 'shared undo restores the containing world around the room');
     await host.tapKey('KeyR', 'r');
     await advanceMatch(10);
     assertImagesEqual(await dimensionLabel(small), workshopTitle, 'reset returns the carried maker\'s camera outside');
@@ -502,9 +568,7 @@ try {
     // Both begin outside. Amber pushes the shell, Teal walks into it and
     // delivers the parcel, and both reach leaves. The production witness
     // is eight moves and includes free dimension traversal.
-    await host.key('ShiftLeft', 'Shift', true);
     await host.tapKey('KeyD', 'd');
-    await host.key('ShiftLeft', 'Shift', false);
     await advanceMatch(2);
     for (const [client, keys] of [[small, 'wwwa'], [host, 'ass']]) {
         for (const key of keys) {
@@ -547,7 +611,7 @@ try {
         await small.tapKey(`Key${key.toUpperCase()}`, key);
         await advanceMatch(2);
     }
-    await advanceMatch(16);
+    await advanceMatch(24);
     const physicalMintTitle = await dimensionLabel(host);
     assertImagesDiffer(physicalMintTitle, recursiveOutsideTitle, 'Amber first views physical Mint from the Workshop');
     assertImagesDiffer(await dimensionLabel(small), physicalMintTitle, 'Teal\'s independent Peach camera differs from Amber\'s Mint camera');
@@ -557,7 +621,7 @@ try {
     // The production NNNES prefix enters Mint's self-door from above.
     // Its destination is the same shared Mint, with Mint as the parent.
     await host.tapKey('KeyS', 's');
-    await advanceMatch(16);
+    await advanceMatch(24);
     const recursiveContext = await saveCrop(host, 'camera-recursion-self-parent', contextClip(host));
     assertImagesEqual(await dimensionLabel(host), physicalMintTitle, 'the self-door still focuses the same named Mint dimension');
     assertImagesEqual(await host.crop(parcelClip(host)), canonicalFloor,
@@ -567,14 +631,14 @@ try {
     await host.screenshot('desktop-camera-self-entry');
     await small.screenshot('desktop-camera-self-entry-partner');
     await host.tapKey('KeyW', 'w');
-    await advanceMatch(16);
+    await advanceMatch(24);
     assertImagesEqual(await dimensionLabel(host), physicalMintTitle, 'leaving the self-door restores its previous dimension title');
     assertImagesEqual(await host.crop(contextClip(host)), physicalContext, 'leaving the self-door restores its actual Workshop parent');
     await small.tapKey('KeyZ', 'z');
-    await advanceMatch(16);
+    await advanceMatch(24);
     assertImagesEqual(await host.crop(contextClip(host)), recursiveContext, 'partner undo restores the self-recursive camera context');
     await small.tapKey('KeyR', 'r');
-    await advanceMatch(16);
+    await advanceMatch(24);
     assertImagesEqual(await dimensionLabel(host), recursiveOutsideTitle, 'reset unwinds the self-recursive camera to the Workshop');
     assertImagesEqual(await dimensionLabel(small), recursiveOutsideTitle, 'shared reset also returns the partner\'s camera outside');
     // Return through the shelf to puzzle two for the existing phone witness.
@@ -618,7 +682,7 @@ try {
         assert.equal(screen.canvasHeight, screen.height, `${client.name}: canvas fits phone height`);
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`Inside Out (${backend}): two real WebRTC players, minimum-two-player waiting, per-player Workshop/room cameras, canonical interior parity, moved-shell parent context, self-recursive entry/exit, shared undo/reset and held-input recovery, first-puzzle solution and progression, phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    console.log(`Inside Out (${backend}): two real WebRTC players, minimum-two-player waiting, automatic push/blocked entry, progressive spatial entry/exit zoom, canonical interior parity, moved-shell parent context, self-recursive entry/exit, shared undo/reset and held-input recovery, first-puzzle solution and progression, phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
 } catch (error) {
     process.exitCode = 1;
     console.error(`Inside Out failed during ${stage}: ${error.stack ?? error}`);
