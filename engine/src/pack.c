@@ -201,11 +201,21 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const i
 uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
                            const uint8_t *rgba)
 {
+    return tide_pack_texture_blocks(b, content, width, height, rgba, (tide_texture_blocks){0});
+}
+
+uint32_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
+                                  const uint8_t *rgba, const tide_texture_blocks blocks)
+{
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXTURE);
     if (had) return had->offset;
     const uint64_t bytes = (uint64_t)(width > 0 ? width : 0) * (uint64_t)(height > 0 ? height : 0) * 4u;
-    if (bytes + 2u * sizeof(int32_t) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
-    const uint32_t at = block(b, (uint32_t)(2u * sizeof(int32_t) + bytes));
+    uint32_t levels, compressed_bytes;
+    const bool compressed = blocks.pixels && tide_texture_blocks_size(width, height, blocks.format, &levels, &compressed_bytes)
+                         && levels == blocks.levels && compressed_bytes == blocks.bytes;
+    const uint64_t payload = bytes + 2u * sizeof(int32_t) + (compressed ? 16u + blocks.bytes : 0u);
+    if (payload > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
+    const uint32_t at = block(b, (uint32_t)payload);
     tide_block *h = header(b, at);
     uint64_t version = 0;
     memcpy(&version, content, sizeof version);
@@ -215,6 +225,13 @@ uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], cons
     const int32_t size[2] = {width, height};
     memcpy(h + 1, size, sizeof size);
     if (bytes) memcpy((uint8_t *)(h + 1) + sizeof size, rgba, (size_t)bytes);
+    if (compressed) {
+        const uint32_t metadata[4] = {TIDE_TEXTURE_BLOCK_MAGIC, blocks.format, blocks.levels, blocks.bytes};
+        uint8_t *trailer = (uint8_t *)(h + 1) + sizeof size + (size_t)bytes;
+        memcpy(trailer, metadata, sizeof metadata);
+        memcpy(trailer + sizeof metadata, blocks.pixels, blocks.bytes);
+        h->next = (uint32_t)payload;
+    }
     add_shared(b, content, TIDE_PACK_TEXTURE, at, (uint32_t)bytes, 0);
     return at;
 }

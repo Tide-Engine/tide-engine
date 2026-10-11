@@ -5117,6 +5117,36 @@ TIDE_TEST(lsp_inlay_hints_for_built_ins)
     TIDE_CHECK(!has(hints, "\"label\":\"x:\"") && !has(hints, "\"label\":\"a:\"") && !has(hints, "\"label\":\"r:\""));
 }
 
+// Sample's omitted playback is a compiler default, not a written literal.
+TIDE_TEST(lsp_skinned_sample_hints_only_written_arguments)
+{
+    start();
+    open_document("Pose AtTime(Animation current, float seconds) { return current.Sample(seconds); }\n"
+                  "Pose AtZero(Animation current) { return current.Sample(0); }\n"
+                  "Pose AtNamedZero(Animation current) { return current.Sample(seconds: 0); }\n"
+                  "Pose AtReordered(Animation current) { return current.Sample(playback: Playback.Loop, seconds: 0); }\n"
+                  "Pose AtDefault(Animation current) { return current.Sample(0, default); }\n"
+                  "void Update(mut Pose pose, Animation current, float seconds)\n{\n"
+                  "    pose.Sample(current, seconds);\n"
+                  "    pose.Sample(current, 0);\n"
+                  "    pose.Sample(seconds: 0, animation: current);\n"
+                  "    pose.Sample(current, 0, default);\n}\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
+    TIDE_CHECK(count(hints, "\"label\":\"seconds:\"") == 4);
+    TIDE_CHECK(count(hints, "\"label\":\"playback:\"") == 2); // Only the two explicit defaults
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":1,\"character\":55},\"label\":\"seconds:\",\"kind\":2"));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":61},\"label\":\"playback:\",\"kind\":2"));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":10,\"character\":28},\"label\":\"playback:\",\"kind\":2"));
+    char *first = malloc(strlen(hints) + 1);
+    strcpy(first, hints);
+    TIDE_CHECK(strcmp(first, request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                       "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}")) == 0);
+    free(first);
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 65, ""), "Playback.Clamp"));
+}
+
 // A grid's cells[x, y] is cells[int2(x, y)] to the checker: x is still x.
 TIDE_TEST(lsp_grid_positions_keep_their_names)
 {
