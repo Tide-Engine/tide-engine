@@ -1,5 +1,7 @@
 #include "json.h"
 
+#include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -120,7 +122,12 @@ static size_t put_utf8(char *out, const uint32_t cp)
 static bool read_string(reader *r, const char **out, size_t *out_len)
 {
     const char *start = r->p;
-    while (r->p < r->end && *r->p != '"') r->p += *r->p == '\\' ? 2 : 1;
+    while (r->p < r->end && *r->p != '"') {
+        if (*r->p++ == '\\') {
+            if (r->p == r->end) return false;
+            r->p++;
+        }
+    }
     if (r->p >= r->end) return false;
     char *s = pool_alloc((size_t)(r->p - start) + 1);
     size_t n = 0;
@@ -128,6 +135,27 @@ static bool read_string(reader *r, const char **out, size_t *out_len)
     while (in.p < in.end) {
         const char c = *in.p++;
         if (c != '\\') {
+            const unsigned char first = (unsigned char)c;
+            if (first < 0x20) return false;
+            if (first >= 0x80) {
+                const int bytes = first >= 0xC2 && first <= 0xDF ? 2
+                                  : first >= 0xE0 && first <= 0xEF ? 3
+                                  : first >= 0xF0 && first <= 0xF4 ? 4 : 0;
+                if (!bytes || in.end - in.p < bytes - 1) return false;
+                uint32_t cp = first & (bytes == 2 ? 0x1F : bytes == 3 ? 0x0F : 0x07);
+                for (int i = 0; i < bytes - 1; i++) {
+                    const unsigned char next = (unsigned char)in.p[i];
+                    if ((next & 0xC0) != 0x80) return false;
+                    cp = (cp << 6) | (next & 0x3F);
+                }
+                if ((bytes == 3 && cp < 0x800) || (bytes == 4 && cp < 0x10000)
+                    || (cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) return false;
+                s[n++] = c;
+                memcpy(s + n, in.p, (size_t)bytes - 1);
+                n += (size_t)bytes - 1;
+                in.p += bytes - 1;
+                continue;
+            }
             s[n++] = c;
             continue;
         }
@@ -145,12 +173,20 @@ static bool read_string(reader *r, const char **out, size_t *out_len)
         case 'u': {
             uint32_t cp;
             if (!read_hex4(&in, &cp)) return false;
-            if (cp >= 0xD800 && cp < 0xDC00 && in.end - in.p >= 6 && in.p[0] == '\\' && in.p[1] == 'u') {
-                in.p += 2;
-                uint32_t low;
-                if (!read_hex4(&in, &low)) return false;
-                cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+            if (cp >= 0xD800 && cp < 0xDC00) {
+                reader pair = in;
+                uint32_t low = 0;
+                if (pair.end - pair.p >= 6 && pair.p[0] == '\\' && pair.p[1] == 'u') {
+                    pair.p += 2;
+                    if (read_hex4(&pair, &low) && low >= 0xDC00 && low <= 0xDFFF) {
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                        in = pair;
+                    }
+                }
             }
+            // Editors can send unpaired UTF-16 units while typing. Replace
+            // them without consuming an unrelated following escape.
+            if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
             n += put_utf8(s + n, cp);
             break;
         }
@@ -166,6 +202,41 @@ static bool read_string(reader *r, const char **out, size_t *out_len)
 
 static json *read_value(reader *r);
 
+static bool digit(const reader *r)
+{
+    return r->p < r->end && *r->p >= '0' && *r->p <= '9';
+}
+
+static json *read_number(reader *r)
+{
+    const char *start = r->p;
+    if (*r->p == '-') r->p++;
+    if (!digit(r)) return NULL;
+    if (*r->p == '0') r->p++;
+    else while (digit(r)) r->p++;
+    if (r->p < r->end && *r->p == '.') {
+        r->p++;
+        if (!digit(r)) return NULL;
+        while (digit(r)) r->p++;
+    }
+    if (r->p < r->end && (*r->p == 'e' || *r->p == 'E')) {
+        r->p++;
+        if (r->p < r->end && (*r->p == '+' || *r->p == '-')) r->p++;
+        if (!digit(r)) return NULL;
+        while (digit(r)) r->p++;
+    }
+    const size_t n = (size_t)(r->p - start);
+    char *buf = pool_alloc(n + 1);
+    memcpy(buf, start, n);
+    char *end;
+    const double d = strtod(buf, &end);
+    if (end != buf + n || !isfinite(d)) return NULL;
+    json *v = pool_alloc(sizeof(json));
+    v->kind = JSON_NUMBER;
+    v->number = d;
+    return v;
+}
+
 static json *read_container(reader *r, const bool object)
 {
     json *v = pool_alloc(sizeof(json));
@@ -179,9 +250,9 @@ static json *read_container(reader *r, const bool object)
     }
     for (;;) {
         const char *key = NULL;
+        size_t key_len = 0;
         if (object) {
             skip_space(r);
-            size_t key_len;
             if (r->p >= r->end || *r->p != '"') return NULL;
             r->p++;
             if (!read_string(r, &key, &key_len)) return NULL;
@@ -200,9 +271,15 @@ static json *read_container(reader *r, const bool object)
                 const char **keys = pool_alloc(sizeof(char *) * (size_t)cap);
                 if (v->count) memcpy(keys, v->keys, sizeof(char *) * (size_t)v->count);
                 v->keys = keys;
+                size_t *lengths = pool_alloc(sizeof(size_t) * (size_t)cap);
+                if (v->count) memcpy(lengths, v->key_lens, sizeof(size_t) * (size_t)v->count);
+                v->key_lens = lengths;
             }
         }
-        if (object) v->keys[v->count] = key;
+        if (object) {
+            v->keys[v->count] = key;
+            v->key_lens[v->count] = key_len;
+        }
         v->items[v->count++] = item;
         skip_space(r);
         if (r->p < r->end && *r->p == ',') {
@@ -242,16 +319,7 @@ static json *read_value(reader *r)
         v = pool_alloc(sizeof(json));
         v->kind = JSON_NULL;
     } else if (c == '-' || (c >= '0' && c <= '9')) {
-        char buf[64];
-        size_t n = 0;
-        while (r->p < r->end && n + 1 < sizeof buf && strchr("+-0123456789.eE", *r->p)) buf[n++] = *r->p++;
-        buf[n] = '\0';
-        char *end;
-        const double d = strtod(buf, &end);
-        if (end == buf) return NULL;
-        v = pool_alloc(sizeof(json));
-        v->kind = JSON_NUMBER;
-        v->number = d;
+        v = read_number(r);
     }
     r->depth--;
     return v;
@@ -269,8 +337,9 @@ json *json_parse(const char *text, const size_t len)
 const json *json_get(const json *object, const char *key)
 {
     if (!object || object->kind != JSON_OBJECT) return NULL;
+    const size_t len = strlen(key);
     for (int i = 0; i < object->count; i++) {
-        if (strcmp(object->keys[i], key) == 0) return object->items[i];
+        if (object->key_lens[i] == len && memcmp(object->keys[i], key, len) == 0) return object->items[i];
     }
     return NULL;
 }
@@ -289,12 +358,14 @@ const json *json_path(const json *root, ...)
 
 const char *json_str(const json *v)
 {
-    return v && v->kind == JSON_STRING ? v->string : NULL;
+    return v && v->kind == JSON_STRING && !memchr(v->string, '\0', v->string_len) ? v->string : NULL;
 }
 
 int json_int(const json *v, const int fallback)
 {
-    return v && v->kind == JSON_NUMBER ? (int)v->number : fallback;
+    if (!v || v->kind != JSON_NUMBER || !isfinite(v->number) || v->number < INT_MIN || v->number > INT_MAX) return fallback;
+    const int value = (int)v->number;
+    return value == v->number ? value : fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -386,7 +457,7 @@ void jb_json(jbuf *b, const json *v)
         for (int i = 0; i < v->count; i++) {
             if (i) jb_put(b, ",");
             if (v->kind == JSON_OBJECT) {
-                jb_string(b, v->keys[i]);
+                jb_string_n(b, v->keys[i], v->key_lens[i]);
                 jb_put(b, ":");
             }
             jb_json(b, v->items[i]);

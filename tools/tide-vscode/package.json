@@ -169,6 +169,7 @@
     }
   },
   "scripts": {
+    "test": "node --test test/*.test.mjs",
     "build": "esbuild src/extension.js --bundle --platform=node --format=cjs --external:vscode --minify --outfile=out/extension.js"
   },
   "dependencies": {

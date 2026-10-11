@@ -13,6 +13,7 @@
 #include "packages.h"
 
 enum {
+    INVALID_REQUEST = -32600,
     METHOD_NOT_FOUND = -32601,
     PARSE_ERROR = -32700,
     INVALID_PARAMS = -32602,
@@ -1713,6 +1714,14 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
     const json *id = json_get(msg, "id");
     const json *params = json_get(msg, "params");
 
+    // Shutdown finishes the protocol's work; only exit is handled afterward.
+    // Ignore notifications and answer later requests without touching state.
+    if (s->shutdown && method && strcmp(method, "exit") != 0) {
+        if (id) reply_error(s, id, INVALID_REQUEST, "the server has shut down; send exit");
+        json_release();
+        return;
+    }
+
     // Changes that waited are analysed before anything but another change:
     // what's sent comes in the order it would have without waiting
     if (s->unsettled_count > 0 && method && strcmp(method, "textDocument/didOpen") != 0
@@ -1890,6 +1899,10 @@ static bool mentions(const char *text, const size_t len, const char *word)
 
 void lsp_handle_ahead(lsp_server *s, const char *message, const size_t len, const lsp_message *later, const int later_count)
 {
+    if (s->shutdown) {
+        lsp_handle(s, message, len);
+        return;
+    }
     // Few messages cancel anything, so most are handled without a second parse
     bool cancels = false;
     for (int i = 0; i < later_count && !cancels; i++) cancels = mentions(later[i].text, later[i].len, "$/cancelRequest");

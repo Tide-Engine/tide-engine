@@ -24,6 +24,7 @@ repositories {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     intellijPlatform {
         // The oldest platform LSP4IJ supports, so the plugin runs from there on.
         intellijIdeaCommunity("2024.2.6")
@@ -67,6 +68,11 @@ intellijPlatform {
 }
 
 tasks {
+    // Packaging (including the manually requested CI build) runs the adapter
+    // regressions too; no IDE is started by these tests.
+    buildPlugin {
+        dependsOn(test)
+    }
     // The test IDE opens projects without asking.
     runIde {
         jvmArgs("-Didea.trust.all.projects=true", "-Djb.consents.confirmation.enabled=false")

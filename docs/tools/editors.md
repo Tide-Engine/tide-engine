@@ -33,7 +33,7 @@ Renaming a file or a folder in the Explorer asks `tidels` first, so the paths of
 
 The extension runs `tidels` from your `PATH`, or from where `tide` is installed; in a folder with a `build/tools/tidels`, like Tide's own repo once it's built, it runs that one. The `tide.server.path` setting runs another one: in it, `~` is your home folder, and `${workspaceFolder}` and relative paths are the folder whose settings set it. After updating the server, run **Tide: Restart Language Server**. The `tide.trace.server` setting shows what the editor and the server say to each other, in the **Tide Trace** output.
 
-In a folder you haven't trusted (VS Code's Restricted Mode), nothing from it runs: the server is the `tidels` that comes with `tide`, and games don't run, since running one runs its code. Trusting the folder restarts the server.
+In a folder you haven't trusted (VS Code's Restricted Mode), nothing from it runs: the server is the `tidels` that comes with `tide`, or one your user settings name outside the workspace. Servers on `PATH` inside the workspace are skipped too, including paths through symlinks or junctions. Games don't run, since running one runs its code. Trusting the folder restarts the server.
 
 ### Running the game
 

@@ -36,6 +36,16 @@ function inFolder(file, folder) {
     return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
 }
 
+// Check both spellings: a PATH entry or a user setting may point through a
+// symlink/junction, and an open workspace folder may itself be one.
+function inWorkspace(file) {
+    const real = p => {
+        try { return fs.realpathSync(p); } catch { return p; }
+    };
+    const resolved = real(file);
+    return openFolders().some(folder => inFolder(file, folder) || inFolder(resolved, real(folder)));
+}
+
 // The setting tide.<key> for `resource` (a game's folder, or none for the
 // language server, which serves them all), and the workspace folder it comes
 // from: the one whose settings set it (the resource's, or for the server, the
@@ -88,11 +98,11 @@ function settingProgram(key, what, resource) {
     const named = `tide.${key} is set to ${value}`;
     const file = settingPath(value, folder);
     if (!file) return { error: `${named}, which is in a folder that isn't open.` };
-    if (!vscode.workspace.isTrusted && openFolders().some(f => inFolder(file, f))) {
+    const executable = process.platform === 'win32' && !isFile(file) && isFile(file + '.exe') ? file + '.exe' : file;
+    if (!vscode.workspace.isTrusted && inWorkspace(executable)) {
         return { error: `${named}, which is in this workspace: it runs once you trust the workspace.`, untrusted: true };
     }
-    if (process.platform === 'win32' && !isFile(file) && isFile(file + '.exe')) return { file: file + '.exe' };
-    return isFile(file) ? { file } : { error: `${named}, and there's no ${what} there.` };
+    return isFile(executable) ? { file: executable } : { error: `${named}, and there's no ${what} there.` };
 }
 
 // A program that comes with tide: on PATH, else where the installers put
@@ -101,13 +111,15 @@ function settingProgram(key, what, resource) {
 // the editor runs.
 function installedProgram(name) {
     const exe = name + suffix;
+    const allowed = file => isFile(file) && (vscode.workspace.isTrusted || !inWorkspace(file));
     for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-        if (dir && path.isAbsolute(dir) && isFile(path.join(dir, exe))) return path.join(dir, exe);
+        if (dir && path.isAbsolute(dir) && allowed(path.join(dir, exe))) return path.join(dir, exe);
     }
+    if (process.platform === 'win32' && !path.isAbsolute(process.env.LOCALAPPDATA ?? '')) return null;
     const installed = process.platform === 'win32'
-        ? path.join(process.env.LOCALAPPDATA ?? '', 'Tide', 'bin', exe)
+        ? path.join(process.env.LOCALAPPDATA, 'Tide', 'bin', exe)
         : path.join(os.homedir(), '.tide', 'bin', exe);
-    return isFile(installed) ? installed : null;
+    return allowed(installed) ? installed : null;
 }
 
 // Says a program is missing, offering to install tide or to change `setting`.
@@ -362,10 +374,10 @@ async function pickGame(last) {
     }
     if (last) return last;
     const games = manifestGames();
-    const folders = [
+    const folders = [...new Set([
         ...games.filter(g => g.path.endsWith('/')).map(g => path.resolve(g.path)),
         ...openFolders().filter(f => !games.some(g => inFolder(g.path, f))),
-    ];
+    ])];
     if (folders.length <= 1) {
         if (!folders.length) vscode.window.showErrorMessage('Tide: open a .tide file of the game to run.');
         return folders[0];
@@ -395,6 +407,8 @@ class Run {
         this.process = null;
         this.line = ''; // Typed, not sent yet
         this.ended = false;
+        this.disposed = false;
+        this.stopping = false;
         const args = KINDS[kind].args;
         this.terminal = vscode.window.createTerminal({
             name: `${path.basename(folder)} (tide ${args.slice(0, 2).join(' ')})`,
@@ -415,6 +429,7 @@ class Run {
     }
 
     start(tide, folder, args, onPage) {
+        if (this.disposed) return;
         this.print(`${folder}> tide ${args.join(' ')}\n`);
         // Outside Windows, tide and the game it starts get a process group of
         // their own, which stop() ends. TIDE_INTERACTIVE: someone can answer
@@ -429,9 +444,9 @@ class Run {
         let seen = ''; // tide's output until it says where the page is
         child.stdout.setEncoding('utf8');
         child.stdout.on('data', text => {
-            if (onPage && seen !== null) {
+            if (!this.disposed && onPage && seen !== null) {
                 seen += text;
-                const page = /tide: the game is at (http:\/\/\S+)/.exec(seen); // See tide_run_web in compiler/cli/build.c
+                const page = /tide: the game is at (http:\/\/\S+)\s/.exec(seen); // Wait for the address's delimiter, even across chunks
                 if (page) {
                     seen = null;
                     onPage(page[1]);
@@ -478,22 +493,35 @@ class Run {
 
     // Stops tide, and the game it started, which would keep running without it.
     stop() {
-        const pid = this.process?.pid;
-        if (!pid) return;
+        const child = this.process;
+        const pid = child?.pid;
+        if (!pid || this.stopping) return;
+        this.stopping = true;
         if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true }).on('error', () => this.process?.kill());
+            let attempted = false;
+            const fallback = () => {
+                if (attempted || child.exitCode !== null || child.signalCode !== null) return;
+                attempted = true;
+                child.kill();
+            };
+            spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true })
+                .on('error', fallback)
+                .on('close', code => { if (code !== 0) fallback(); });
         } else {
             try {
                 process.kill(-pid, 'SIGTERM');
             } catch {
-                this.process?.kill();
+                child.kill();
             }
         }
     }
 
     dispose() {
+        this.disposed = true;
         this.stop();
         this.terminal.dispose();
+        this.output.dispose();
+        this.closed.dispose();
     }
 }
 
