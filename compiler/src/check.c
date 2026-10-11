@@ -11684,6 +11684,20 @@ static void check_asset_decl(checker *c, decl *k)
         attribute *attr = &k->attributes.items[a];
         if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
             check_sampling_attribute(c, k, attr);
+        } else if (str_eq_c(attr->name, "LOD")) {
+            // Levels of detail (docs/spec.md): a mesh's, made as the game is built
+            if (attr->args.count || attr->values.count) {
+                diag_error(attr->at, "LOD takes nothing: '[LOD]'");
+            } else if (k->lod) {
+                diag_error(attr->at, "'" STR_FMT "' already has a LOD", STR_ARG(k->name));
+            } else if (typed && kind != ASSET_MESH && kind != ASSET_SKINNED) {
+                diag_error(attr->at, "LOD has simpler versions of a mesh made, for where it's drawn small, and '" STR_FMT "' is %s",
+                           STR_ARG(k->name), type_name(k->return_type));
+                diag_note("it goes before an asset that's a Mesh<V> or a SkinnedMesh<V>, like "
+                          "'[LOD] asset Mesh<Vertex3> rock = \"art/rock.glb\";'");
+            } else {
+                k->lod = true;
+            }
         }
     }
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
@@ -16088,6 +16102,15 @@ static void check_attributes(checker *c)
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
+            if (str_eq_c(attr->name, "LOD")) {
+                if (d->kind != DECL_ASSET) { // An asset's was read with it
+                    diag_error(attr->at, "LOD has simpler versions of a mesh made, for where it's drawn small, and '" STR_FMT
+                               "' isn't a mesh", STR_ARG(d->name));
+                    diag_note("it goes before an asset that's a Mesh<V> or a SkinnedMesh<V>, like "
+                              "'[LOD] asset Mesh<Vertex3> rock = \"art/rock.glb\";'");
+                }
+                continue;
+            }
             if (str_eq_c(attr->name, "Bus")) { // The game's buses: read before the fields resolved (check)
                 if (d->kind != DECL_ENUM) {
                     diag_error(attr->at, "Bus marks the enum of the game's audio buses, and '" STR_FMT "' isn't an enum", STR_ARG(d->name));
@@ -16128,12 +16151,14 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Filter");
                 suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "LOD");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
                           "entities gain and lose, Channel and Unordered, which order a command's delivery, Filter and "
-                          "Wrap, which say how an asset that's drawn with is sampled, and Bus, which marks the enum of the audio buses");
+                          "Wrap, which say how an asset that's drawn with is sampled, LOD, which has a mesh asset's levels of "
+                          "detail made, and Bus, which marks the enum of the audio buses");
                 continue;
             }
             if (attr->values.count > 0) {

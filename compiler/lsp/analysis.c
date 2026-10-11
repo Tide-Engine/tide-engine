@@ -3307,6 +3307,13 @@ static void describe(const occurrence *o, sb *out)
              "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
              "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
              "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
+            {"LOD", "[LOD]",
+             "Has this mesh's levels of detail made as the game is built: simpler versions of it over its own vertices, each "
+             "about half the triangles of the one before. A draw of it then picks the simplest that's within a pixel of the "
+             "full mesh where it's drawn, each instance its own, with nothing to tune. It goes before an asset that's a "
+             "`Mesh<V>` or a `SkinnedMesh<V>` (alone, or a list or a map of them). Code still reads the full mesh: "
+             "`vertices` and `indices` are what they are without it. `Draw.LOD` names a level, and `Draw.LODCamera` the "
+             "camera to pick through."},
             {"Raw", "[Raw]",
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
              "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
@@ -8547,6 +8554,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "An asset that's a Texture or a Grid2<Color> of numbers, kept as the file has them: a frag reads it by its name.",
                  "Raw");
+            item(&c, "LOD", CK_FUNCTION, "[LOD]",
+                 "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
+                 "LOD");
         }
         break;
 

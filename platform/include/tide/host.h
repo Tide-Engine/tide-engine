@@ -833,6 +833,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     const tide_view_worlds view = tide_session_view(s);
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
+    tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
     tide_audio_reset(&tide_run_audio);
     // The GUI and the views read the devices, less a press that's on the stats
     const tide_devices *seen = &tide_run_devices;

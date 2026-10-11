@@ -1614,3 +1614,131 @@ TIDE_TEST(pack_skinned_content_preflight_keeps_the_loaded_pack)
     free(copy);
     free(bytes);
 }
+
+// A mesh's levels of detail are a block the mesh's indices name: simpler
+// lists of triangles over its own vertices, with how far off each is and the
+// ball the mesh is in. The lists code reads are the full mesh's either way,
+// and the same file without levels is another mesh.
+static uint32_t leveled_blocks[2], unleveled_blocks[2];
+
+static uint8_t *build_levels(size_t *size, const bool lead)
+{
+    tide_pack_builder b = {0};
+    uint8_t h[32];
+    uint32_t chars;
+    if (lead) {
+        hash_of("lead", h);
+        tide_pack_name(&b, "Game.lead", TIDE_PACK_TEXT, tide_pack_bytes(&b, h, "moved along", 11, &chars), 11, chars);
+    }
+    const corner tree[4] = {{{0, 0, 0}, {0, 0, 1}, 0}, {{1, 0, 0}, {0, 0, 1}, 0}, {{1, 1, 0}, {0, 0, 1}, 0}, {{0, 1, 0}, {0, 0, 1}, 0}};
+    static const uint32_t whole[12] = {0, 2, 1, 0, 3, 2, 0, 3, 1, 1, 3, 2};
+    static const uint32_t simpler[9] = {0, 2, 1, 0, 3, 2, 0, 2, 1};
+    const tide_mesh_levels levels = {.center = {0.5f, 0.5f, 0.0f}, .radius = 0.75f, .count = 2, .error = {0.01f, 0.25f},
+                                     .first = {0, 6}, .indices = {6, 3}, .index = simpler, .index_count = 9};
+    hash_of("tree.glb with levels", h);
+    tide_pack_mesh_levels(&b, h, tree, sizeof(corner), 4, whole, 12, &levels, leveled_blocks);
+    hash_of("tree.glb", h);
+    tide_pack_mesh_levels(&b, h, tree, sizeof(corner), 4, whole, 12, NULL, unleveled_blocks);
+    tide_pack_name(&b, "Game.tree", TIDE_PACK_MESH, leveled_blocks[0], leveled_blocks[1], CORNER_LAYOUT);
+    tide_pack_name(&b, "Game.plain", TIDE_PACK_MESH, unleveled_blocks[0], unleveled_blocks[1], CORNER_LAYOUT);
+    // The same as the built-in vertex, which a draw takes with no shader
+    const tide_vertex3 flat[4] = {{.position = {0, 0, 0}}, {.position = {1, 0, 0}}, {.position = {1, 1, 0}}, {.position = {0, 1, 0}}};
+    uint32_t flat_blocks[2];
+    hash_of("flat.glb with levels", h);
+    tide_pack_mesh_levels(&b, h, flat, sizeof(tide_vertex3), 4, whole, 12, &levels, flat_blocks);
+    tide_pack_name(&b, "Game.flat", TIDE_PACK_MESH, flat_blocks[0], flat_blocks[1], 3u);
+    return tide_pack_end(&b, size);
+}
+
+TIDE_TEST(pack_meshes_have_levels_of_detail_beside_their_lists)
+{
+    for (int lead = 0; lead < 2; lead++) { // A pack whose first block is the levels', and one where it's elsewhere
+        size_t size;
+        uint8_t *bytes = build_levels(&size, lead != 0);
+        TIDE_REQUIRE(tide_pack_load(bytes, size));
+        const tide_mesh_lists tree = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
+        const tide_mesh_lists plain = tide_pack_mesh_of(tide_pack_find("Game.plain", TIDE_PACK_MESH), sizeof(corner));
+        // The lists are the full mesh's
+        TIDE_REQUIRE(tide_list_count(tree.vertices) == 4 && tide_list_count(tree.indices) == 12 && tide_list_count(plain.indices) == 12);
+        TIDE_CHECK(*(const uint32_t *)tide_list_at(tree.indices, 11, sizeof(uint32_t)) == 2u);
+        TIDE_CHECK(tree.indices.at != plain.indices.at);
+        tide_mesh_levels found = {0};
+        TIDE_REQUIRE(tide_pack_list_levels(tree.indices, &found));
+        TIDE_CHECK(found.count == 2 && found.index_count == 9 && found.radius == 0.75f && found.center[1] == 0.5f);
+        TIDE_CHECK(found.error[0] == 0.01f && found.error[1] == 0.25f);
+        TIDE_CHECK(found.first[0] == 0 && found.indices[0] == 6 && found.first[1] == 6 && found.indices[1] == 3);
+        TIDE_REQUIRE(found.index != NULL);
+        TIDE_CHECK(found.index[0] == 0 && found.index[1] == 2 && found.index[8] == 1);
+        // The mesh with none, a mesh's vertices, and what's no list of the pack's have none
+        tide_mesh_levels none = {.count = 9};
+        TIDE_CHECK(!tide_pack_list_levels(plain.indices, &none) && none.count == 9);
+        TIDE_CHECK(!tide_pack_list_levels(tree.vertices, &none) && !tide_pack_list_levels((tide_list){0}, &none));
+        // A draw of its lists has them, and picks among them
+        tide_draw_list d = {0};
+        tide_draw_reset(&d);
+        tide_draw_set_lod(&d, 2);
+        const tide_mesh_lists flat = tide_pack_mesh_of(tide_pack_find("Game.flat", TIDE_PACK_MESH), sizeof(tide_vertex3));
+        tide_draw_mesh3_lists(&d, flat.vertices, flat.indices, tide_identity_f4x4());
+        TIDE_REQUIRE(d.count >= 1 && d.commands[d.count - 1u].kind == TIDE_DRAW_MESH_3D);
+        const tide_draw_mesh_data *drawn = &d.meshes[d.commands[d.count - 1u].mesh3.mesh - 1u];
+        TIDE_CHECK(drawn->level == 2 && drawn->index_count == 3 && drawn->base != 0);
+        tide_draw_free(&d);
+        tide_pack_unload();
+        TIDE_CHECK(!tide_pack_list_levels(tree.indices, &none));
+        free(bytes);
+    }
+}
+
+// What a pack says of its levels is read with care: a count that's too many,
+// a level past the indices, a block cut short, an error that's no number and
+// a place outside the region are all a mesh with no levels, which draws whole.
+TIDE_TEST(pack_levels_of_detail_spoiled_are_none)
+{
+    size_t size;
+    uint8_t *bytes = build_levels(&size, true);
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    uint8_t *region = bytes + header.region_at;
+    // Where the levels are: the word after the indices' element size, less 1
+    tide_block faces;
+    memcpy(&faces, region + leveled_blocks[1], sizeof faces);
+    uint8_t *names = region + leveled_blocks[1] + faces.next + sizeof(uint64_t) + sizeof(uint32_t);
+    uint32_t named;
+    memcpy(&named, names, sizeof named);
+    TIDE_REQUIRE(named != 0 && (named - 1u) % 4u == 0);
+    uint32_t *words = (uint32_t *)(void *)(region + (named - 1u) + sizeof(tide_block));
+    uint32_t kept[28];
+    memcpy(kept, words, sizeof kept);
+    const struct {
+        uint32_t word, value;
+    } spoils[] = {
+        {4, 0}, {4, 8}, {4, UINT32_MAX},        // How many levels
+        {5, 1000000u}, {5, UINT32_MAX},         // How many indices
+        {7, 10}, {8, 12}, {8, 5}, {11, 7},      // A level past the indices, or not whole triangles
+        {6, 0x7FC00000u}, {9, 0}, {9, 0xFF800000u}, // An error that's no number, or under the level before's
+        {3, 0x7FC00000u}, {3, 0xBF800000u}, {1, 0x7F800000u}, // A ball that's none
+    };
+    tide_mesh_levels found;
+    for (size_t i = 0; i < sizeof spoils / sizeof spoils[0]; i++) {
+        words[spoils[i].word] = spoils[i].value;
+        TIDE_REQUIRE(tide_pack_load(bytes, size));
+        const tide_mesh_lists tree = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
+        TIDE_CHECK(tide_list_count(tree.indices) == 12); // The mesh is whole whatever its levels say
+        TIDE_CHECK(!tide_pack_list_levels(tree.indices, &found));
+        memcpy(words, kept, sizeof kept);
+    }
+    // Named somewhere it isn't: past the region, and where no word starts
+    const uint32_t places[] = {header.region_size + 1u, header.region_size - 3u, named + 2u, UINT32_MAX};
+    for (size_t i = 0; i < sizeof places / sizeof places[0]; i++) {
+        memcpy(names, &places[i], sizeof named);
+        TIDE_REQUIRE(tide_pack_load(bytes, size));
+        const tide_mesh_lists tree = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
+        TIDE_CHECK(!tide_pack_list_levels(tree.indices, &found));
+    }
+    memcpy(names, &named, sizeof named);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_mesh_lists tree = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
+    TIDE_CHECK(tide_pack_list_levels(tree.indices, &found) && found.count == 2);
+    tide_pack_unload();
+    free(bytes);
+}

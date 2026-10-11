@@ -936,6 +936,53 @@ bool tide_pack_list_version(const tide_list list, const uint32_t element, uint64
     return versioned_at(pack.region, pack.size, (list.at & 0x3FFFFFFFu) - TIDE_PACK_BASE, &count, &said, version) && said == element;
 }
 
+// The bytes before a levels block's indices (the builder's levels_block).
+enum { LEVELS_HEAD = 28 * 4 };
+
+bool tide_pack_list_levels(const tide_list indices, tide_mesh_levels *levels)
+{
+    if (!pack.region || !tide_pack_holds(indices.at)) return false;
+    const uint32_t offset = (indices.at & 0x3FFFFFFFu) - TIDE_PACK_BASE;
+    uint32_t count, said;
+    uint64_t version;
+    if (!versioned_at(pack.region, pack.size, offset, &count, &said, &version) || said != sizeof(uint32_t)) return false;
+    // Where they are is the word after the element's bytes, which versioned_at found whole
+    tide_block b;
+    memcpy(&b, pack.region + offset, sizeof b);
+    uint32_t at;
+    memcpy(&at, pack.region + offset + b.next + sizeof version + sizeof said, sizeof at);
+    // 1 + where they are: 0 is a mesh with none
+    if (at == 0 || (--at & 3u) || (uint64_t)at + sizeof b + LEVELS_HEAD > pack.size) return false;
+    uint32_t words[LEVELS_HEAD / 4];
+    memcpy(words, pack.region + at + sizeof b, sizeof words);
+    tide_mesh_levels found = {.count = words[4], .index_count = words[5]};
+    if (found.count == 0 || found.count > TIDE_MESH_LEVELS
+        || (uint64_t)at + sizeof b + LEVELS_HEAD + (uint64_t)found.index_count * sizeof(uint32_t) > pack.size) {
+        return false;
+    }
+    memcpy(found.center, &words[0], sizeof found.center);
+    memcpy(&found.radius, &words[3], sizeof found.radius);
+    float before = 0.0f;
+    for (uint32_t i = 0; i < found.count; i++) {
+        memcpy(&found.error[i], &words[6u + i * 3u], sizeof(float));
+        found.first[i] = words[7u + i * 3u];
+        found.indices[i] = words[8u + i * 3u];
+        // A level is whole triangles within the indices, off by a number no less than the level before's
+        if (found.indices[i] % 3u || found.first[i] > found.index_count || found.indices[i] > found.index_count - found.first[i]
+            || !(found.error[i] >= before) || found.error[i] > 3.0e38f) {
+            return false;
+        }
+        before = found.error[i];
+    }
+    if (!(found.radius >= 0.0f) || found.radius > 3.0e38f) return false;
+    for (uint32_t i = 0; i < 3u; i++) {
+        if (!(found.center[i] >= -3.0e38f && found.center[i] <= 3.0e38f)) return false;
+    }
+    found.index = (const uint32_t *)(const void *)(pack.region + at + sizeof b + LEVELS_HEAD);
+    *levels = found;
+    return true;
+}
+
 bool tide_pack_skinned_proof(const tide_list data, uint64_t *identity, uint64_t *version)
 {
     if (!pack.region || !pack.skinned_places) return false;

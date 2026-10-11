@@ -173,6 +173,15 @@ uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const v
 void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void *vertices, uint32_t vertex, uint32_t count,
                     const uint32_t *indices, uint32_t index_count, uint32_t offsets[2]);
 
+// The same, with the mesh's levels of detail (a mesh marked [LOD]: see
+// tide_mesh_levels), or NULL for none: a block of their own, which the
+// indices' block names in the word after its element's bytes (1 + where the
+// block is, or 0 for a mesh with none). `content` is
+// then of the levels too, so the same file with and without them is two
+// meshes. The lists code reads are the full mesh's either way.
+void tide_pack_mesh_levels(tide_pack_builder *b, const uint8_t content[32], const void *vertices, uint32_t vertex, uint32_t count,
+                           const uint32_t *indices, uint32_t index_count, const tide_mesh_levels *levels, uint32_t offsets[2]);
+
 // A list of `count` meshes, whose `offsets` are two each (tide_pack_mesh's):
 // its block's offset. Not shared: a declaration's own.
 uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
@@ -327,6 +336,14 @@ bool tide_pack_skinned_content(const uint8_t *bytes, size_t size, const char *qu
 // indices, tide_pack_mesh), for the draw list: false for any other list, and
 // for one whose elements aren't `element` bytes each.
 bool tide_pack_list_version(tide_list list, uint32_t element, uint64_t *version);
+
+// The levels of detail of the mesh whose indices `indices` is (a list of the
+// pack's, of a mesh built with tide_pack_mesh_levels): false for any other
+// list, for a mesh with none, and for a block that isn't whole. Their
+// indices are the pack's own, for as long as it's loaded, and are whatever
+// the file has: an index past the mesh's vertices is the reader's to leave
+// out, as it is in the mesh's own list.
+bool tide_pack_list_levels(tide_list indices, tide_mesh_levels *levels);
 
 // Runtime draw support: true only for immutable canonical model bytes that
 // passed complete skinned-record validation in the currently loaded pack.
