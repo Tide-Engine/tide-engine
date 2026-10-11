@@ -3127,9 +3127,18 @@ static bool as_predicted(const tide_client *c, const pending_frame *f)
     const bool deltas = g->read_input_delta && g->world_input;
     uint8_t *base = c->scratch;
     uint8_t *theirs = c->scratch + g->input_size;
-    if (deltas && !g->read_input(own, own_size, c->input)) return false;
+    if (g->world_input && !g->read_input(own, own_size, c->input)) return false;
     for (uint32_t slot = 0; slot <= c->players; slot++) {
-        if (!tide_players_has(&mask, slot)) continue;
+        if (!tide_players_has(&mask, slot)) {
+            // No delta means the server kept its previous value, which may
+            // differ from our sample after it rejected an old view timestamp.
+            // Check that held input too before reusing a predicted world.
+            if (g->world_input && tide_players_has(&mine, slot)) {
+                g->world_input(world_at(c, f->tick), slot, theirs);
+                if (memcmp(theirs, c->input, g->input_size) != 0) return false;
+            }
+            continue;
+        }
         const uint32_t size = tide_read_varint(&r);
         const uint8_t *bytes = tide_read_bytes(&r, size);
         if (!bytes) return false;

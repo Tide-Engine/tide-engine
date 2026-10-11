@@ -1,0 +1,137 @@
+[
+  {
+    "case": "grid",
+    "variant": "base",
+    "output": "characters=100 pack=5689760 world=13117620 tick_ms=2.406917 hash_ms=6.218424 draw_ms=30.278460 draw_commands=1 hash=10175709146634639136\nkeep_ms=0.042570 semantic=5991125559186960660\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "case": "grid",
+    "variant": "naive",
+    "output": "characters=100 pack=5689760 world=7220 tick_ms=0.115882 hash_ms=0.001434 draw_ms=28.817337 draw_commands=1 hash=333521554642157352\nkeep_ms=0.002487 semantic=5991125559186960660\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "case": "grid",
+    "variant": "reuse",
+    "output": "characters=100 pack=5689760 world=7220 tick_ms=0.119800 hash_ms=0.001796 draw_ms=29.915040 draw_commands=1 hash=333521554642157352\nkeep_ms=0.002670 semantic=5991125559186960660\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "case": "asset-assign",
+    "variant": "base",
+    "output": "case=asset-assign shared=0 reuse=0 count=16384 assign_ms=0.346662 write_ms=0.000170 flush_ms=0.000132 hash_ms=1.457281 heap_bytes=3146600 hash=6187691235229406473 digest=7905670141349505464"
+  },
+  {
+    "case": "asset-assign",
+    "variant": "naive",
+    "output": "case=asset-assign shared=1 reuse=0 count=16384 assign_ms=0.001074 write_ms=0.000067 flush_ms=0.000077 hash_ms=0.000223 heap_bytes=104 hash=7114561716897664030 digest=7905670141349505464"
+  },
+  {
+    "case": "asset-assign",
+    "variant": "reuse",
+    "output": "case=asset-assign shared=1 reuse=1 count=16384 assign_ms=0.000824 write_ms=0.000056 flush_ms=0.000068 hash_ms=0.000182 heap_bytes=104 hash=7114561716897664030 digest=7905670141349505464"
+  },
+  {
+    "case": "first-write-small",
+    "variant": "base",
+    "output": "case=first-write shared=0 reuse=0 count=4096 assign_ms=0.046701 write_ms=0.000663 flush_ms=0.000088 hash_ms=0.246850 heap_bytes=532716 hash=15769471835999582257 digest=12206908101462680928"
+  },
+  {
+    "case": "first-write-small",
+    "variant": "naive",
+    "output": "case=first-write shared=1 reuse=0 count=4096 assign_ms=0.022625 write_ms=0.041314 flush_ms=0.006443 hash_ms=0.491031 heap_bytes=1057132 hash=17137536482973107423 digest=12206908101462680928"
+  },
+  {
+    "case": "first-write-small",
+    "variant": "reuse",
+    "output": "case=first-write shared=1 reuse=1 count=4096 assign_ms=0.036422 write_ms=0.000682 flush_ms=0.000077 hash_ms=0.242229 heap_bytes=532716 hash=15769471835999582257 digest=12206908101462680928"
+  },
+  {
+    "case": "first-write",
+    "variant": "base",
+    "output": "case=first-write shared=0 reuse=0 count=16384 assign_ms=0.254702 write_ms=0.001073 flush_ms=0.000102 hash_ms=1.445377 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write",
+    "variant": "naive",
+    "output": "case=first-write shared=1 reuse=0 count=16384 assign_ms=0.279361 write_ms=0.332033 flush_ms=0.088273 hash_ms=2.915181 heap_bytes=6293096 hash=15784208271779107966 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write",
+    "variant": "reuse",
+    "output": "case=first-write shared=1 reuse=1 count=16384 assign_ms=0.240846 write_ms=0.001109 flush_ms=0.000097 hash_ms=1.460854 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write-large",
+    "variant": "base",
+    "output": "case=first-write shared=0 reuse=0 count=65536 assign_ms=0.954144 write_ms=0.002690 flush_ms=0.000123 hash_ms=2.910415 heap_bytes=6293096 hash=10761285080580336541 digest=1499686451738701591"
+  },
+  {
+    "case": "first-write-large",
+    "variant": "naive",
+    "output": "case=first-write shared=1 reuse=0 count=65536 assign_ms=0.563276 write_ms=0.688663 flush_ms=0.261780 hash_ms=5.844708 heap_bytes=12586088 hash=7975780413511979968 digest=1499686451738701591"
+  },
+  {
+    "case": "first-write-large",
+    "variant": "reuse",
+    "output": "case=first-write shared=1 reuse=1 count=65536 assign_ms=0.717732 write_ms=0.002585 flush_ms=0.000168 hash_ms=2.977402 heap_bytes=6293096 hash=10761285080580336541 digest=1499686451738701591"
+  },
+  {
+    "case": "first-write-once",
+    "variant": "base",
+    "output": "case=first-write-once shared=0 reuse=0 count=16384 assign_ms=0.201246 write_ms=0.001100 flush_ms=0.000090 hash_ms=1.452433 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write-once",
+    "variant": "naive",
+    "output": "case=first-write-once shared=1 reuse=0 count=16384 assign_ms=0.001007 write_ms=0.198934 flush_ms=0.000125 hash_ms=1.455242 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write-once",
+    "variant": "reuse",
+    "output": "case=first-write-once shared=1 reuse=1 count=16384 assign_ms=0.001063 write_ms=0.161480 flush_ms=0.000142 hash_ms=1.449896 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "written-then-read",
+    "variant": "base",
+    "output": "case=written-then-read shared=0 reuse=0 count=16384 assign_ms=0.384308 write_ms=0.000197 flush_ms=0.000141 hash_ms=1.458361 heap_bytes=3146600 hash=6187691235229406473 digest=7905670141349505464"
+  },
+  {
+    "case": "written-then-read",
+    "variant": "naive",
+    "output": "case=written-then-read shared=1 reuse=0 count=16384 assign_ms=0.000792 write_ms=0.000061 flush_ms=0.000058 hash_ms=0.003493 heap_bytes=3146600 hash=14839638697410783894 digest=7905670141349505464"
+  },
+  {
+    "case": "written-then-read",
+    "variant": "reuse",
+    "output": "case=written-then-read shared=1 reuse=1 count=16384 assign_ms=0.274402 write_ms=0.000186 flush_ms=0.000123 hash_ms=1.461083 heap_bytes=3146600 hash=6187691235229406473 digest=7905670141349505464"
+  },
+  {
+    "case": "mutable-copy",
+    "variant": "base",
+    "output": "case=mutable-copy shared=0 reuse=0 count=256 assign_ms=0.024872 write_ms=0.000066 flush_ms=0.000077 hash_ms=0.016005 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "case": "mutable-copy",
+    "variant": "naive",
+    "output": "case=mutable-copy shared=1 reuse=0 count=256 assign_ms=0.029444 write_ms=0.000093 flush_ms=0.000085 hash_ms=0.017645 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "case": "mutable-copy",
+    "variant": "reuse",
+    "output": "case=mutable-copy shared=1 reuse=1 count=256 assign_ms=0.029822 write_ms=0.000095 flush_ms=0.000091 hash_ms=0.015772 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "case": "mutable-edit",
+    "variant": "base",
+    "output": "case=mutable-edit shared=0 reuse=0 count=65536 assign_ms=0.000084 write_ms=0.225947 flush_ms=0.000104 hash_ms=0.129053 heap_bytes=590072 hash=16282305956618942386 digest=3324213199838427161"
+  },
+  {
+    "case": "mutable-edit",
+    "variant": "naive",
+    "output": "case=mutable-edit shared=1 reuse=0 count=65536 assign_ms=0.000087 write_ms=0.185567 flush_ms=0.000097 hash_ms=0.128331 heap_bytes=590072 hash=16282305956618942386 digest=3324213199838427161"
+  },
+  {
+    "case": "mutable-edit",
+    "variant": "reuse",
+    "output": "case=mutable-edit shared=1 reuse=1 count=65536 assign_ms=0.000083 write_ms=0.189370 flush_ms=0.000106 hash_ms=0.126993 heap_bytes=590072 hash=16282305956618942386 digest=3324213199838427161"
+  }
+]
