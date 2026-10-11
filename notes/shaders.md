@@ -1,5 +1,26 @@
 # Code the GPU runs: frags and verts
 
+## Delayed locals and switch values, 2026-10-11
+
+The CPU's definite-assignment rules also check delayed locals in frags, verts
+and their helpers. Switch expressions lower to a captured selector and a
+result variable assigned by one GLSL/WGSL switch arm. Each arm declares its
+own out locals and emits its own effect prelude. Surrounding operands are
+captured in source order; conditional and short-circuit branches retain their
+laziness. Mutable/out arguments remain writable places. Statements declare
+outer out locals before their preludes.
+
+Loop headers containing switch expressions lower to a loop that reevaluates
+the selector each iteration, with a for's step at the next iteration's start
+so continue still reaches it. Existing GPU type, increment and for-header
+out-declaration restrictions remain. No runtime or shader binding changed.
+`compiler/tests/shaders/switch_values` pins GLSL and WGSL. `SwitchProbe` in
+`platform/tests/shaders.tide` checks delayed branch initialization, single
+selection and source-order effects, skipped/nested branches, arm-local out
+variables and for/while/continue behavior against CPU results in both stages.
+Final native OpenGL, web WebGL and WebGPU results are recorded with language
+validation in `notes/language.md`; other platforms require CI.
+
 Contextual enum shorthand (2026-10-11): owner-approved `.Member` resolves to
 the ordinary checked enum member before GPU lowering. The `lit` and `maps`
 fixtures use it in comparisons and helper arguments; `declared` and `cubemaps`
@@ -10,6 +31,16 @@ language and editor contracts are in `notes/language.md` and `notes/editors.md`.
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform
+
+- Enum counts (2026-10-11): `CALL_ENUM_COUNT` emits the checked declaration
+  count as an integer literal in GLSL and WGSL, matching generated C and
+  compile-time folding. No uniforms, runtime functions or enum layout changes.
+  `compiler/tests/shaders/enum_count` pins both stages/languages with plain and
+  qualified enum types, byte-backed sparse values and aliases, constants and
+  integer conversion/modulo wrapping. The existing CPU-versus-GPU enum probe in
+  `platform/tests/shaders.tide` checks ordinary/byte member counts and wrapping
+  through the same code in a frag and a vert. Golden checks and the CPU/GPU
+  probe pass in the full native/web debug suites on OpenGL, WebGL and WebGPU.
 
 - **Degree literals on the GPU** (2026-10-10): lowercase `deg` on a decimal
   literal is an ordinary float in radians. GLSL and WGSL emit the parser's

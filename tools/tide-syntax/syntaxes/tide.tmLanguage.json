@@ -765,6 +765,10 @@
     "operators": {
       "patterns": [
         {
+          "name": "keyword.operator.switch-arm.tide",
+          "match": "=>"
+        },
+        {
           "name": "keyword.operator.assignment.compound.tide",
           "match": "<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^="
         },

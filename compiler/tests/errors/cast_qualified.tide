@@ -1,0 +1,6 @@
+// expect: Tide converts values with 'Game.Direction(value)', not '(Game.Direction)value'
+// expect: write 'Game.Direction(number)' instead
+namespace Game;
+enum Direction { North, East }
+Direction Next(int number) { return (Game.Direction)number; }
+scene Main { }

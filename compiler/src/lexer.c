@@ -930,7 +930,7 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
         case '.': t.kind = T_DOT; break;
         case '?': t.kind = n == '?' ? (len = 2, T_COALESCE) : T_QUESTION; break;
         case ':': t.kind = T_COLON; break;
-        case '=': t.kind = n == '=' ? (len = 2, T_EQ) : T_ASSIGN; break;
+        case '=': t.kind = n == '=' ? (len = 2, T_EQ) : n == '>' ? (len = 2, T_ARROW) : T_ASSIGN; break;
         case '!': t.kind = n == '=' ? (len = 2, T_NE) : T_NOT; break;
         case '<':
         case '>': {
@@ -1068,6 +1068,7 @@ const char *tok_kind_name(const tok_kind kind)
     case T_QUESTION: return "'?'";
     case T_COLON: return "':'";
     case T_ASSIGN: return "'='";
+    case T_ARROW: return "'=>'";
     case T_PLUS_ASSIGN: return "'+='";
     case T_MINUS_ASSIGN: return "'-='";
     case T_STAR_ASSIGN: return "'*='";

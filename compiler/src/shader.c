@@ -2343,6 +2343,10 @@ static bool is_const(const expr *e)
         return !e->method && is_const(e->lhs) && is_const(e->rhs);
     case E_CONDITIONAL:
         return is_const(e->cond) && is_const(e->lhs) && is_const(e->rhs);
+    case E_SWITCH:
+        if (!is_const(e->object)) return false;
+        for (int i = 0; i < e->args.count; i++) if (!is_const(e->args.items[i])) return false;
+        return true;
     case E_CALL:
     case E_METHOD:
         if (e->call != CALL_CONSTRUCT && e->call != CALL_BUILTIN) return false;
@@ -3898,6 +3902,9 @@ static void ex_call(emit *em, const expr *e)
 {
     const char *what = NULL;
     switch (e->call) {
+    case CALL_ENUM_COUNT:
+        sb_printf(em->o, "%lld", (long long)e->int_value);
+        return;
     case CALL_SKINNED:
         refuse(em, e->at, "skeleton lookup and animation sampling run on the CPU, before Draw.SkinnedMesh");
         return;
@@ -3976,7 +3983,15 @@ static void ex_call(emit *em, const expr *e)
 
 static void ex(emit *em, const expr *e)
 {
+    if (e->hoisted) {
+        sb_put(em->o, e->hoisted);
+        return;
+    }
     switch (e->kind) {
+    case E_SWITCH:
+        if (switch_choice(e) >= 0) ex_as(em, e->args.items[switch_choice(e)], e->type);
+        else refuse(em, e->at, "this switch expression needs to run inside a statement");
+        return;
     case E_INT:
         if (e->type.kind == TY_LONG) type_fits(em, e->type, e->at);
         else put_int(em, int_literal(e));
@@ -4556,6 +4571,7 @@ static void st_outs(emit *em, const expr *e)
         return;
     }
     st_outs(em, e->object);
+    if (e->kind == E_SWITCH) return; // The selected arm declares its own out locals.
     st_outs(em, e->cond);
     st_outs(em, e->lhs);
     st_outs(em, e->rhs);
@@ -4603,6 +4619,39 @@ static bool has_steps(const expr *e)
 
 typedef VEC(expr *) step_list;
 
+static bool has_switch_value(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_SWITCH || has_switch_value(e->object) || has_switch_value(e->cond)
+        || has_switch_value(e->lhs) || has_switch_value(e->rhs)) return true;
+    for (int i = 0; i < e->args.count; i++) if (has_switch_value(e->args.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (has_switch_value(e->inits.items[i].value)) return true;
+    return false;
+}
+
+static const char *switch_temp(emit *em, const type t)
+{
+    sb name = {0};
+    sb_printf(&name, "tide_choice%d", em->temps++);
+    line(em);
+    if (em->l == WGSL) sb_printf(em->o, "var %s: %s", name.data, ty(em, t));
+    else sb_printf(em->o, "%s %s", ty(em, t), name.data);
+    return name.data;
+}
+
+static void keep_switch_operand(emit *em, expr *e, step_list *made)
+{
+    if (!e || e->hoisted || e->type.kind == TY_VOID || e->type.kind == TY_ERROR || is_data(e->type)
+        || e->bind == BIND_TYPE || e->bind == BIND_NAMESPACE || e->type.kind == TY_TEXTURE
+        || e->type.kind == TY_DEPTH_TEXTURE || e->type.kind == TY_CUBEMAP) return;
+    const char *name = switch_temp(em, e->type);
+    sb_put(em->o, " = ");
+    ex(em, e);
+    sb_put(em->o, ";\n");
+    e->hoisted = name;
+    vec_push(*made, e);
+}
+
 // `++i` and `i++` in a statement's expression `e`, each run before the
 // statement, in the order written, into a variable the statement then reads:
 // WGSL has neither as a value, and GLSL leaves open which operand is worked
@@ -4612,6 +4661,69 @@ typedef VEC(expr *) step_list;
 static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, step_list *made)
 {
     if (!e) return;
+    if (e->kind == E_SWITCH) {
+        if (!type_fits(em, e->type, e->at) || !type_fits(em, e->object->type, e->object->at)) return;
+        st_steps(em, s, e->object, sometimes, made);
+        keep_switch_operand(em, e->object, made);
+        const char *name = switch_temp(em, e->type);
+        sb_put(em->o, ";\n");
+        line(em);
+        sb_put(em->o, "switch (");
+        ex(em, e->object);
+        sb_put(em->o, ") {\n");
+        em->indent++;
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *label = e->inits.items[i].value;
+            line(em);
+            if (label) sb_printf(em->o, em->l == WGSL ? "case %lld {\n" : "case %lld: {\n", (long long)label->int_value);
+            else sb_put(em->o, em->l == WGSL ? "default {\n" : "default: {\n");
+            em->indent++;
+            st_outs(em, e->args.items[i]);
+            st_steps(em, s, e->args.items[i], false, made);
+            line(em);
+            sb_printf(em->o, "%s = ", name);
+            ex_as(em, e->args.items[i], e->type);
+            sb_put(em->o, ";\n");
+            if (em->l == GLSL) { line(em); sb_put(em->o, "break;\n"); }
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+        }
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
+        e->hoisted = name;
+        vec_push(*made, e);
+        return;
+    }
+    const bool shorted = e->kind == E_BINARY && !e->method && (e->op == T_AND || e->op == T_OR);
+    const bool ordering = has_switch_value(s->target) || has_switch_value(s->cond) || has_switch_value(s->value);
+    if ((e->kind == E_CONDITIONAL || shorted) && ordering) {
+        expr *cond = shorted ? e->lhs : e->cond;
+        st_steps(em, s, cond, sometimes, made);
+        keep_switch_operand(em, cond, made);
+        const char *name = switch_temp(em, e->type);
+        sb_put(em->o, ";\n");
+        line(em);
+        sb_put(em->o, "if (");
+        ex(em, cond);
+        sb_put(em->o, ") {\n");
+        for (int side = 0; side < 2; side++) {
+            expr *arm = shorted ? ((side == 0) == (e->op == T_AND) ? e->rhs : cond) : side == 0 ? e->lhs : e->rhs;
+            em->indent++;
+            st_steps(em, s, arm, false, made);
+            line(em);
+            sb_printf(em->o, "%s = ", name);
+            ex_as(em, arm, e->type);
+            sb_put(em->o, ";\n");
+            em->indent--;
+            line(em);
+            sb_put(em->o, side == 0 ? "} else {\n" : "}\n");
+        }
+        e->hoisted = name;
+        vec_push(*made, e);
+        return;
+    }
     if (e->kind == E_STEP) {
         const char *op = e->op == T_PLUS_PLUS ? "++" : "--";
         const expr *var = step_variable(e->lhs);
@@ -4656,14 +4768,28 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
     }
     const bool unit = e->kind == E_CONDITIONAL || (e->kind == E_BINARY && !e->method && (e->op == T_AND || e->op == T_OR));
     st_steps(em, s, e->object, sometimes, made);
+    if (ordering && (e->kind == E_CALL || e->kind == E_METHOD) && !e->arg_mut
+        && !(e->method && e->method->is_mut_method)) keep_switch_operand(em, e->object, made);
     st_steps(em, s, e->cond, sometimes, made);
     st_steps(em, s, e->lhs, sometimes || e->kind == E_CONDITIONAL, made);
+    if (ordering && (e->kind == E_BINARY || e->kind == E_UNARY || e->kind == E_INDEX)) keep_switch_operand(em, e->lhs, made);
     st_steps(em, s, e->rhs, sometimes || unit, made);
-    for (int i = 0; i < e->args.count; i++) st_steps(em, s, e->args.items[i], sometimes, made);
-    for (int i = 0; i < e->inits.count; i++) st_steps(em, s, e->inits.items[i].value, sometimes, made);
+    if (ordering && e->kind == E_BINARY) keep_switch_operand(em, e->rhs, made);
+    for (int n = 0; n < e->args.count; n++) {
+        const int i = e->arg_order.count ? e->arg_order.items[n] : n;
+        expr *arg = e->args.items[i];
+        st_steps(em, s, arg, sometimes, made);
+        const bool writable = arg->is_out || (e->method && i < e->method->params.count && e->method->params.items[i].mode == PARAM_MUT)
+                           || (e->arg_mut & (1u << (i < 32 ? i : 31)));
+        if (ordering && !writable) keep_switch_operand(em, arg, made);
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        st_steps(em, s, e->inits.items[i].value, sometimes, made);
+        if (ordering) keep_switch_operand(em, e->inits.items[i].value, made);
+    }
 }
 
-static void st_one(emit *em, const stmt *s);
+static void st_one(emit *em, const stmt *s, bool outs_ready);
 
 // Whether GLSL's for takes `s` on its line as it is: not a write into an
 // array, which is a statement there (st_assign), nor a call that changes
@@ -4894,6 +5020,7 @@ static void st_switch(emit *em, const stmt *s)
 static void st(emit *em, const stmt *s)
 {
     step_list made = {0};
+    bool outs_ready = false;
     if (s->kind == S_FOR || s->kind == S_WHILE) { // Its line runs again each round, where a statement before it runs once
         const stmt *v = s->init;
         if (has_steps(s->cond) || (v && (has_steps(v->value) || has_steps(v->target)))
@@ -4902,16 +5029,71 @@ static void st(emit *em, const stmt *s)
             diag_note("a for's step can be 'i++'; change any other variable in the loop's body");
             return;
         }
-    } else if (s->kind != S_BLOCK && (has_steps(s->target) || has_steps(s->value) || has_steps(s->cond))) {
+        if (has_switch_value(s->cond) || (v && has_switch_value(v->value))
+            || (s->step && (has_switch_value(s->step->value) || has_switch_value(s->step->target)))) {
+            if (s->kind == S_FOR && (has_outs(s->cond) || (v && has_outs(v->value))
+                || (s->step && (has_outs(s->step->value) || has_outs(s->step->target))))) {
+                refuse(em, s->at, "a for the GPU runs declares nothing with 'out' on its own line");
+                diag_note("make the call before the loop, or in its body");
+                return;
+            }
+            // Put the step at the next iteration's start so continue still runs it.
+            line(em);
+            sb_put(em->o, "{\n");
+            em->indent++;
+            if (s->init) st(em, s->init);
+            const char *first = NULL;
+            if (s->step) {
+                first = switch_temp(em, (type){TY_BOOL, NULL});
+                sb_put(em->o, " = true;\n");
+            }
+            line(em);
+            sb_put(em->o, em->l == WGSL ? "loop {\n" : "while (true) {\n");
+            em->indent++;
+            if (s->step) {
+                line(em);
+                sb_printf(em->o, "if (!%s) {\n", first);
+                em->indent++;
+                st(em, s->step);
+                em->indent--;
+                line(em);
+                sb_put(em->o, "}\n");
+                line(em);
+                sb_printf(em->o, "%s = false;\n", first);
+            }
+            if (s->cond) {
+                st_outs(em, s->cond);
+                st_steps(em, s, s->cond, false, &made);
+                line(em);
+                sb_put(em->o, "if (!(");
+                ex(em, s->cond);
+                sb_put(em->o, ")) { break; }\n");
+                for (int i = 0; i < made.count; i++) made.items[i]->hoisted = NULL;
+            }
+            st(em, s->then_stmt);
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+            return;
+        }
+    } else if (s->kind != S_BLOCK && (has_steps(s->target) || has_steps(s->value) || has_steps(s->cond)
+               || has_switch_value(s->target) || has_switch_value(s->value) || has_switch_value(s->cond))) {
+        st_outs(em, s->target);
+        st_outs(em, s->cond);
+        st_outs(em, s->value);
+        outs_ready = true;
         st_steps(em, s, s->target, false, &made);
         st_steps(em, s, s->cond, false, &made);
         st_steps(em, s, s->value, false, &made);
     }
-    st_one(em, s);
+    st_one(em, s, outs_ready);
     for (int i = 0; i < made.count; i++) made.items[i]->hoisted = NULL; // The CPU's code makes its own
 }
 
-static void st_one(emit *em, const stmt *s)
+static void st_one(emit *em, const stmt *s, bool outs_ready)
 {
     if (s->kind == S_BLOCK) {
         line(em);
@@ -4927,7 +5109,7 @@ static void st_one(emit *em, const stmt *s)
             diag_note("make the call before the loop, or in its body");
             return;
         }
-    } else {
+    } else if (!outs_ready) {
         st_outs(em, s->cond);
         st_outs(em, s->value);
         st_outs(em, s->target);

@@ -1,0 +1,3 @@
+// expect: 'value' may already be assigned
+scene Main { }
+int F(int n) { int value; while (n > 0) { value = 1; } return 0; }
