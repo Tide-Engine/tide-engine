@@ -80,6 +80,7 @@ component Body
     float stepGravityScale = 1;
     float stepLinearDamping;
     float stepAngularDamping;
+    bool rewind; // Opt this body and all its shapes into bounded collider history
 }
 
 // A box on the entity's body, `size` wide, high and deep around `offset`.
@@ -214,6 +215,190 @@ singleton Physics
     List<long> goneShapes; // Parts' shapes whose entities were destroyed, until the next step
     Map<long, Entity> parts; // Each part's shape's entity
     Map<Entity, Sensors> sensors; // The sensors of each entity that has any
+
+    float historyDt;
+    float historyLimit;
+    int historyTick;
+    Map<long, bool> selected;
+    List<Collider> pending;
+    List<HistoryFrame> history;
+
+    // A prepared, read-only scene: opted-in bodies at the presented time,
+    // all other geometry at the current physics step. Invalid times fail.
+    bool Rewind(ViewTime time, out Query query)
+    {
+        query = default;
+        if (!time.valid || time.tick < 0 || !(time.alpha >= 0 && time.alpha <= 1) ||
+            !(historyDt > 0) || !(historyLimit > 0)) return false;
+        float age = (float(long(historyTick) - long(time.tick) + 1) - time.alpha) * historyDt;
+        if (!(age >= 0 && age <= historyLimit)) return false;
+        mut int upper = -1;
+        mut int lower = -1;
+        for (int i = 0; i < history.count; i++)
+        {
+            if (history[i].tick == time.tick) upper = i;
+            if (history[i].tick == time.tick - 1) lower = i;
+        }
+        if (upper < 0 || (time.alpha < 1 && lower < 0)) return false;
+        if (!Ready()) return false;
+        mut List<Collider> scene = [];
+        foreach (var owner in owners)
+        {
+            if (selected.Has(owner.key) || gone.Contains(owner.key)) continue;
+            ReadColliders(owner.key, out var current);
+            foreach (var record in current)
+            {
+                mut var collider = record;
+                if (goneShapes.Contains(collider.shape)) continue;
+                collider.entity = owner.value;
+                collider.part = PartOf(parts, collider.shape, owner.value);
+                scene.Add(collider);
+            }
+        }
+        mut Map<long, Collider> previousShapes = default;
+        if (time.alpha < 1)
+            foreach (var before in history[lower].colliders) previousShapes[before.shape] = before;
+        foreach (var record in history[upper].colliders)
+        {
+            mut var collider = record;
+            // Despawned bodies remain in history; live bodies can opt out.
+            if (owners.Has(collider.body) && !selected.Has(collider.body)) continue;
+            if (time.alpha < 1 && previousShapes.TryGet(collider.shape, out var before) &&
+                before.body == collider.body && before.snaps == collider.snaps)
+                collider = BlendCollider(before, collider, time.alpha);
+            scene.Add(collider);
+        }
+        // Native handle order also determines overlap order and equal-distance ties.
+        SortScene(scene);
+        BuildScene(scene, out var nodes);
+        query = Query { colliders = scene, nodes = nodes };
+        return true;
+    }
+
+    // Whether C has the match's world to ask: its resident pages are restored
+    // when it doesn't, as before a tick. False for a match no step was taken in.
+    bool Ready()
+    {
+        if (stamp == 0) return false;
+        if (!FindWorld(stamp))
+        {
+            RebuildWorld(state);
+        }
+        return true;
+    }
+
+    RayHit Met(Found found)
+    {
+        Entity entity = owners[found.body];
+        return RayHit { entity = entity, part = PartOf(parts, found.shape, entity), point = found.point, normal = found.normal,
+                        fraction = found.fraction };
+    }
+
+    // The first thing on the way from one point to another: whether there's any,
+    // and what. A ray says nothing of a shape it starts inside, and passes
+    // through sensors.
+    bool Raycast(float3 from, float3 to, out RayHit hit)
+    {
+        hit = default;
+        if (!Ready()) return false;
+        Found found = CastRay(stamp, from, to, gone, gone.count, goneShapes, goneShapes.count);
+        if (found.body == 0) return false;
+        hit = Met(found);
+        return true;
+    }
+
+    // The first thing a shape meets that's moved from one place to another,
+    // turned by `rotation` all the way: a box, a sphere or a capsule as one on a
+    // body is, with its size and its offset. `hit.point` is where the two touch.
+    // What the shape is in at `from` is met there, with a fraction of 0 and no
+    // normal.
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    {
+        hit = default;
+        if (!Ready()) return false;
+        Found found = CastBox(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
+                              goneShapes.count);
+        if (found.body == 0) return false;
+        hit = Met(found);
+        return true;
+    }
+
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    {
+        hit = default;
+        if (!Ready()) return false;
+        Found found = CastSphere(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
+                                 goneShapes.count);
+        if (found.body == 0) return false;
+        hit = Met(found);
+        return true;
+    }
+
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    {
+        hit = default;
+        if (!Ready()) return false;
+        Found found = CastCapsule(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
+                                  goneShapes.count);
+        if (found.body == 0) return false;
+        hit = Met(found);
+        return true;
+    }
+
+    // The entities of the bodies C found, in its order: their bodies' ids'.
+    void Owners(List<long> bodies, out List<Entity> found)
+    {
+        found = [];
+        for (int i = 0; i < bodies.count; i++) found.Add(owners[bodies[i]]);
+    }
+
+    // The entities whose bodies a shape at a place overlaps or touches: whether
+    // there's any, and which, each once, in the order of their bodies' ids.
+    bool Overlap(Box shape, float3 at, quaternion rotation, out List<Entity> found)
+    {
+        found = [];
+        if (!Ready()) return false;
+        OverlapBox(out var bodies, stamp, shape, at, rotation, gone, gone.count, goneShapes,
+                   goneShapes.count);
+        Owners(bodies, out found);
+        return found.count > 0;
+    }
+
+    bool Overlap(Sphere shape, float3 at, quaternion rotation, out List<Entity> found)
+    {
+        found = [];
+        if (!Ready()) return false;
+        OverlapSphere(out var bodies, stamp, shape, at, rotation, gone, gone.count, goneShapes,
+                      goneShapes.count);
+        Owners(bodies, out found);
+        return found.count > 0;
+    }
+
+    bool Overlap(Capsule shape, float3 at, quaternion rotation, out List<Entity> found)
+    {
+        found = [];
+        if (!Ready()) return false;
+        OverlapCapsule(out var bodies, stamp, shape, at, rotation, gone, gone.count, goneShapes,
+                       goneShapes.count);
+        Owners(bodies, out found);
+        return found.count > 0;
+    }
+
+    // The entities whose bodies have a shape in an entity's sensors, as the last
+    // step found them: whether there's any, and which, each once, in the order of
+    // their bodies' ids. `sensor` is the entity the sensor shape is a component
+    // of: a body's, or a part's. None, for an entity with no sensor.
+    bool Inside(Entity sensor, out List<Entity> found)
+    {
+        found = [];
+        if (sensors.count == 0 || !sensors.TryGet(sensor, out var heldSensors)) return false;
+        if (!Ready()) return false;
+        SensorBodies(out var bodies, stamp, heldSensors.box, heldSensors.sphere, heldSensors.capsule, gone, gone.count,
+                     goneShapes, goneShapes.count);
+        Owners(bodies, out found);
+        return found.count > 0;
+    }
+
 }
 
 // The package's own: what its systems and its questions pass to C and back
@@ -542,10 +727,10 @@ extern system Leave(mut Body body, Physics physics);
 
 // The entity a shape is on: a part's, or else its body's own, and none for a
 // shape that's gone.
-Entity PartOf(Physics physics, long shape, Entity owner)
+Entity PartOf(Map<long, Entity> parts, long shape, Entity owner)
 {
     if (shape == 0) return default;
-    if (physics.parts.count > 0 && physics.parts.TryGet(shape, out var part)) return part;
+    if (parts.count > 0 && parts.TryGet(shape, out var part)) return part;
     return owner;
 }
 
@@ -558,8 +743,8 @@ system Report(Physics physics)
         Contact contact = ReadTouch(i);
         Entity a = physics.owners[contact.a];
         Entity b = physics.owners[contact.b];
-        Entity partA = PartOf(physics, contact.shapeA, a);
-        Entity partB = PartOf(physics, contact.shapeB, b);
+        Entity partA = PartOf(physics.parts, contact.shapeA, a);
+        Entity partB = PartOf(physics.parts, contact.shapeB, b);
         if (contact.began)
         {
             a.Send(Touched { other = b, part = partA, otherPart = partB });
@@ -611,126 +796,364 @@ event(Destroyed) RemovePart(Part part, mut Physics physics)
 // since isn't there yet, nor a body that was spawned since, and an entity
 // that was destroyed since is found no more.
 
-// Whether C has the match's world to ask: its resident pages are restored
-// when it doesn't, as before a tick. False for a match no step was taken in.
-bool Ready(Physics physics)
+
+// Immutable geometry records: local shape points and the body's pose.
+struct Collider
 {
-    if (physics.stamp == 0) return false;
-    if (!FindWorld(physics.stamp))
+    long body;
+    long shape;
+    Entity entity;
+    Entity part;
+    int snaps;
+    float3 position;
+    quaternion rotation;
+    float3[8] points;
+    int count;
+    float radius;
+    bool sensor;
+}
+
+struct HistoryFrame
+{
+    int tick;
+    List<Collider> colliders;
+}
+
+struct SceneBounds { float3 min; float3 max; bool valid; }
+struct SceneNode { float3 min; float3 max; int collider; int next; }
+[NativeName("b3t_collider_bounds")]
+extern SceneBounds ColliderBounds(in Collider collider);
+// A detached read-only query scene. Preparing it never moves live bodies.
+struct Query
+{
+    List<Collider> colliders;
+    List<SceneNode> nodes;
+
+    List<int> Candidates(SceneBounds bounds)
     {
-        RebuildWorld(physics.state);
+        mut List<int> found = [];
+        if (!bounds.valid) return found;
+        mut int i = 0;
+        while (i < nodes.count)
+        {
+            var node = nodes[i];
+            if (node.max.x < bounds.min.x || node.min.x > bounds.max.x || node.max.y < bounds.min.y || node.min.y > bounds.max.y || node.max.z < bounds.min.z || node.min.z > bounds.max.z)
+                i = node.next > i && node.next <= nodes.count ? node.next : i + 1;
+            else
+            {
+                if (node.collider >= 0) found.Add(node.collider);
+                i++;
+            }
+        }
+        SortCandidates(found);
+        return found;
     }
-    return true;
+
+
+    bool Raycast(float3 from, float3 to, out RayHit hit)
+    {
+        return Raycast(from, to, out hit, default);
+    }
+
+    bool Raycast(float3 from, float3 to, out RayHit hit, Body ignore)
+    {
+        hit = default;
+        mut bool any = false;
+        mut long nearestShape = 0;
+        foreach (var index in Candidates(SceneBounds { min = Math.Min(from, to), max = Math.Max(from, to), valid = true }))
+        {
+            var collider = colliders[index];
+            if (collider.sensor || collider.body == ignore.id) continue;
+            var met = SceneRay(collider, from, to);
+            if (met.body == 0 || (any && (met.fraction > hit.fraction ||
+                (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
+            hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
+                           normal = met.normal, fraction = met.fraction };
+            nearestShape = met.shape;
+            any = true;
+        }
+        return any;
+    }
+
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    {
+        return Cast(shape, from, rotation, to, out hit, default);
+    }
+
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    {
+        hit = default;
+        mut bool any = false;
+        mut long nearestShape = 0;
+        foreach (var index in Candidates(BoxBounds(shape, rotation, from, to)))
+        {
+            var collider = colliders[index];
+            if (collider.sensor || collider.body == ignore.id) continue;
+            var met = SceneCastBox(collider, shape, from, rotation, to);
+            if (met.body == 0 || (any && (met.fraction > hit.fraction ||
+                (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
+            hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
+                           normal = met.normal, fraction = met.fraction };
+            nearestShape = met.shape;
+            any = true;
+        }
+        return any;
+    }
+
+    bool Overlap(Box shape, float3 at, quaternion rotation, out List<Entity> found)
+    {
+        found = [];
+        foreach (var index in Candidates(BoxBounds(shape, rotation, at, at)))
+        {
+            var collider = colliders[index];
+            if (collider.sensor || found.Contains(collider.entity)) continue;
+            if (SceneOverlapBox(collider, shape, at, rotation)) found.Add(collider.entity);
+        }
+        return found.count > 0;
+    }
+
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    {
+        return Cast(shape, from, rotation, to, out hit, default);
+    }
+
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    {
+        hit = default;
+        mut bool any = false;
+        mut long nearestShape = 0;
+        foreach (var index in Candidates(SphereBounds(shape, rotation, from, to)))
+        {
+            var collider = colliders[index];
+            if (collider.sensor || collider.body == ignore.id) continue;
+            var met = SceneCastSphere(collider, shape, from, rotation, to);
+            if (met.body == 0 || (any && (met.fraction > hit.fraction ||
+                (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
+            hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
+                           normal = met.normal, fraction = met.fraction };
+            nearestShape = met.shape;
+            any = true;
+        }
+        return any;
+    }
+
+    bool Overlap(Sphere shape, float3 at, quaternion rotation, out List<Entity> found)
+    {
+        found = [];
+        foreach (var index in Candidates(SphereBounds(shape, rotation, at, at)))
+        {
+            var collider = colliders[index];
+            if (collider.sensor || found.Contains(collider.entity)) continue;
+            if (SceneOverlapSphere(collider, shape, at, rotation)) found.Add(collider.entity);
+        }
+        return found.count > 0;
+    }
+
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    {
+        return Cast(shape, from, rotation, to, out hit, default);
+    }
+
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    {
+        hit = default;
+        mut bool any = false;
+        mut long nearestShape = 0;
+        foreach (var index in Candidates(CapsuleBounds(shape, rotation, from, to)))
+        {
+            var collider = colliders[index];
+            if (collider.sensor || collider.body == ignore.id) continue;
+            var met = SceneCastCapsule(collider, shape, from, rotation, to);
+            if (met.body == 0 || (any && (met.fraction > hit.fraction ||
+                (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
+            hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
+                           normal = met.normal, fraction = met.fraction };
+            nearestShape = met.shape;
+            any = true;
+        }
+        return any;
+    }
+
+    bool Overlap(Capsule shape, float3 at, quaternion rotation, out List<Entity> found)
+    {
+        found = [];
+        foreach (var index in Candidates(CapsuleBounds(shape, rotation, at, at)))
+        {
+            var collider = colliders[index];
+            if (collider.sensor || found.Contains(collider.entity)) continue;
+            if (SceneOverlapCapsule(collider, shape, at, rotation)) found.Add(collider.entity);
+        }
+        return found.count > 0;
+    }
+
+    bool Inside(Entity sensor, out List<Entity> found)
+    {
+        found = [];
+        mut List<int> visitors = [];
+        foreach (var volume in colliders)
+        {
+            if (!volume.sensor || volume.part != sensor) continue;
+            foreach (var index in Candidates(ColliderBounds(volume)))
+            {
+                var collider = colliders[index];
+                if (collider.sensor || collider.body == volume.body || visitors.Contains(index)) continue;
+                if (SceneTouch(volume, collider)) visitors.Add(index);
+            }
+        }
+        SortCandidates(visitors);
+        foreach (var index in visitors)
+        {
+            var entity = colliders[index].entity;
+            if (!found.Contains(entity)) found.Add(entity);
+        }
+        return found.count > 0;
+    }
 }
 
-RayHit Met(Physics physics, Found found)
+
+struct SceneLeaf { SceneBounds bounds; int collider; float key; }
+struct SceneBranch { int first; int count; }
+void BuildScene(List<Collider> colliders, out List<SceneNode> nodes)
 {
-    Entity entity = physics.owners[found.body];
-    return RayHit { entity = entity, part = PartOf(physics, found.shape, entity), point = found.point, normal = found.normal,
-                    fraction = found.fraction };
+    nodes = [];
+    mut List<SceneLeaf> leaves = [];
+    for (int i = 0; i < colliders.count; i++)
+    {
+        var bounds = ColliderBounds(colliders[i]);
+        if (bounds.valid) leaves.Add(SceneLeaf { bounds = bounds, collider = i });
+    }
+    if (leaves.count == 0) return;
+    mut var low = leaves[0].bounds.min;
+    mut var high = leaves[0].bounds.max;
+    foreach (var leaf in leaves)
+    {
+        low = Math.Min(low, leaf.bounds.min);
+        high = Math.Max(high, leaf.bounds.max);
+    }
+    mut int axis = 0;
+    mut float extent = high.x - low.x;
+    if (high.y - low.y > extent) { axis = 1; extent = high.y - low.y; }
+    if (high.z - low.z > extent) { axis = 2; extent = high.z - low.z; }
+    for (int i = 0; i < leaves.count; i++)
+    {
+        mut var leaf = leaves[i];
+        leaf.key = 0.5 * leaf.bounds.min.x + 0.5 * leaf.bounds.max.x;
+        if (axis == 1) leaf.key = 0.5 * leaf.bounds.min.y + 0.5 * leaf.bounds.max.y;
+        if (axis == 2) leaf.key = 0.5 * leaf.bounds.min.z + 0.5 * leaf.bounds.max.z;
+        leaves[i] = leaf;
+    }
+    leaves.Sort(a, b) { return a.key < b.key || (a.key == b.key && a.collider < b.collider); }
+    mut List<SceneBranch> branches = [SceneBranch { first = 0, count = leaves.count }];
+    while (branches.count > 0)
+    {
+        var branch = branches[branches.count - 1];
+        branches.RemoveAt(branches.count - 1);
+        int first = branch.first;
+        int count = branch.count;
+        mut var node = SceneNode { min = leaves[first].bounds.min, max = leaves[first].bounds.max,
+            collider = -1, next = nodes.count + count * 2 - 1 };
+        for (int i = first + 1; i < first + count; i++)
+        {
+            node.min = Math.Min(node.min, leaves[i].bounds.min);
+            node.max = Math.Max(node.max, leaves[i].bounds.max);
+        }
+        if (count == 1) node.collider = leaves[first].collider;
+        else
+        {
+            int middle = count / 2;
+            branches.Add(SceneBranch { first = first + middle, count = count - middle });
+            branches.Add(SceneBranch { first = first, count = middle });
+        }
+        nodes.Add(node);
+    }
 }
 
-// The first thing on the way from one point to another: whether there's any,
-// and what. A ray says nothing of a shape it starts inside, and passes
-// through sensors.
-bool Raycast(Physics physics, float3 from, float3 to, out RayHit hit)
+
+void SortCandidates(mut List<int> candidates)
 {
-    hit = default;
-    if (!Ready(physics)) return false;
-    Found found = CastRay(physics.stamp, from, to, physics.gone, physics.gone.count, physics.goneShapes, physics.goneShapes.count);
-    if (found.body == 0) return false;
-    hit = Met(physics, found);
-    return true;
+    candidates.Sort(a, b) { return a < b; }
 }
 
-// The first thing a shape meets that's moved from one place to another,
-// turned by `rotation` all the way: a box, a sphere or a capsule as one on a
-// body is, with its size and its offset. `hit.point` is where the two touch.
-// What the shape is in at `from` is met there, with a fraction of 0 and no
-// normal.
-bool Cast(Physics physics, Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+[NativeName("b3t_box_bounds")]
+extern SceneBounds BoxBounds(in Box shape, quaternion rotation, float3 from, float3 to);
+
+[NativeName("b3t_sphere_bounds")]
+extern SceneBounds SphereBounds(in Sphere shape, quaternion rotation, float3 from, float3 to);
+
+[NativeName("b3t_capsule_bounds")]
+extern SceneBounds CapsuleBounds(in Capsule shape, quaternion rotation, float3 from, float3 to);
+
+[NativeName("b3t_read_colliders")]
+extern void ReadColliders(long body, out List<Collider> colliders);
+[NativeName("b3t_blend_collider")]
+extern Collider BlendCollider(in Collider before, in Collider current, float alpha);
+[NativeName("b3t_scene_ray")]
+extern Found SceneRay(in Collider collider, float3 from, float3 to);
+[NativeName("b3t_scene_touch")]
+extern bool SceneTouch(in Collider a, in Collider b);
+[NativeName("b3t_scene_cast_box")]
+extern Found SceneCastBox(in Collider collider, in Box shape, float3 from, quaternion rotation, float3 to);
+[NativeName("b3t_scene_overlap_box")]
+extern bool SceneOverlapBox(in Collider collider, in Box shape, float3 at, quaternion rotation);
+[NativeName("b3t_scene_cast_sphere")]
+extern Found SceneCastSphere(in Collider collider, in Sphere shape, float3 from, quaternion rotation, float3 to);
+[NativeName("b3t_scene_overlap_sphere")]
+extern bool SceneOverlapSphere(in Collider collider, in Sphere shape, float3 at, quaternion rotation);
+[NativeName("b3t_scene_cast_capsule")]
+extern Found SceneCastCapsule(in Collider collider, in Capsule shape, float3 from, quaternion rotation, float3 to);
+[NativeName("b3t_scene_overlap_capsule")]
+extern bool SceneOverlapCapsule(in Collider collider, in Capsule shape, float3 at, quaternion rotation);
+
+[Stage(PhysicsStages.Step, 11)]
+system BeginHistory(Time time, mut Physics physics)
 {
-    hit = default;
-    if (!Ready(physics)) return false;
-    Found found = CastBox(physics.stamp, shape, from, rotation, to, physics.gone, physics.gone.count, physics.goneShapes,
-                          physics.goneShapes.count);
-    if (found.body == 0) return false;
-    hit = Met(physics, found);
-    return true;
+    if (!(time.maxRewind > 0))
+    {
+        if (physics.historyLimit > 0)
+        {
+            physics.historyLimit = 0;
+            physics.historyDt = 0;
+            physics.historyTick = 0;
+            physics.selected.Clear();
+            physics.pending = [];
+            physics.history = [];
+        }
+        return;
+    }
+    physics.historyTick = time.tick + 1;
+    physics.historyDt = time.dt;
+    physics.historyLimit = time.maxRewind;
+    physics.selected.Clear();
+    physics.pending = [];
+    // Keep the extra lower endpoint required by fractional timestamps.
+    while (physics.history.count > 1 &&
+           float(long(physics.historyTick) - long(physics.history[1].tick)) * time.dt > time.maxRewind)
+        physics.history.RemoveAt(0);
 }
 
-bool Cast(Physics physics, Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+[Stage(PhysicsStages.Step, 12)]
+[NativeName("b3t_capture_history")]
+extern system CaptureHistory(Body body, mut Physics physics);
+
+[Stage(PhysicsStages.Step, 13)]
+system EndHistory(mut Physics physics)
 {
-    hit = default;
-    if (!Ready(physics)) return false;
-    Found found = CastSphere(physics.stamp, shape, from, rotation, to, physics.gone, physics.gone.count, physics.goneShapes,
-                             physics.goneShapes.count);
-    if (found.body == 0) return false;
-    hit = Met(physics, found);
-    return true;
+    if (!(physics.historyLimit > 0)) return;
+    for (int i = 0; i < physics.pending.count; i++)
+    {
+        mut var collider = physics.pending[i];
+        collider.part = PartOf(physics.parts, collider.shape, collider.entity);
+        physics.pending[i] = collider;
+        physics.selected[collider.body] = true;
+    }
+    physics.history.Add(HistoryFrame { tick = physics.historyTick, colliders = physics.pending });
 }
 
-bool Cast(Physics physics, Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
-{
-    hit = default;
-    if (!Ready(physics)) return false;
-    Found found = CastCapsule(physics.stamp, shape, from, rotation, to, physics.gone, physics.gone.count, physics.goneShapes,
-                              physics.goneShapes.count);
-    if (found.body == 0) return false;
-    hit = Met(physics, found);
-    return true;
-}
+[Stage(PhysicsStages.Step, 14)]
+[NativeName("b3t_seal_history")]
+extern system SealHistory(mut Physics physics);
 
-// The entities of the bodies C found, in its order: their bodies' ids'.
-void Owners(Physics physics, List<long> bodies, out List<Entity> found)
+void SortScene(mut List<Collider> scene)
 {
-    found = [];
-    for (int i = 0; i < bodies.count; i++) found.Add(physics.owners[bodies[i]]);
-}
-
-// The entities whose bodies a shape at a place overlaps or touches: whether
-// there's any, and which, each once, in the order of their bodies' ids.
-bool Overlap(Physics physics, Box shape, float3 at, quaternion rotation, out List<Entity> found)
-{
-    found = [];
-    if (!Ready(physics)) return false;
-    OverlapBox(out var bodies, physics.stamp, shape, at, rotation, physics.gone, physics.gone.count, physics.goneShapes,
-               physics.goneShapes.count);
-    Owners(physics, bodies, out found);
-    return found.count > 0;
-}
-
-bool Overlap(Physics physics, Sphere shape, float3 at, quaternion rotation, out List<Entity> found)
-{
-    found = [];
-    if (!Ready(physics)) return false;
-    OverlapSphere(out var bodies, physics.stamp, shape, at, rotation, physics.gone, physics.gone.count, physics.goneShapes,
-                  physics.goneShapes.count);
-    Owners(physics, bodies, out found);
-    return found.count > 0;
-}
-
-bool Overlap(Physics physics, Capsule shape, float3 at, quaternion rotation, out List<Entity> found)
-{
-    found = [];
-    if (!Ready(physics)) return false;
-    OverlapCapsule(out var bodies, physics.stamp, shape, at, rotation, physics.gone, physics.gone.count, physics.goneShapes,
-                   physics.goneShapes.count);
-    Owners(physics, bodies, out found);
-    return found.count > 0;
-}
-
-// The entities whose bodies have a shape in an entity's sensors, as the last
-// step found them: whether there's any, and which, each once, in the order of
-// their bodies' ids. `sensor` is the entity the sensor shape is a component
-// of: a body's, or a part's. None, for an entity with no sensor.
-bool Inside(Physics physics, Entity sensor, out List<Entity> found)
-{
-    found = [];
-    if (physics.sensors.count == 0 || !physics.sensors.TryGet(sensor, out var sensors)) return false;
-    if (!Ready(physics)) return false;
-    SensorBodies(out var bodies, physics.stamp, sensors.box, sensors.sphere, sensors.capsule, physics.gone, physics.gone.count,
-                 physics.goneShapes, physics.goneShapes.count);
-    Owners(physics, bodies, out found);
-    return found.count > 0;
+    scene.Sort(a, b) { return a.body < b.body || (a.body == b.body && a.shape < b.shape); }
 }

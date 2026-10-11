@@ -1,0 +1,5 @@
+// expect: a field's key in JSON is 120 bytes at the most, and this one is 130
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+struct Lobby { [Json("kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk")] int maxPlayers; }

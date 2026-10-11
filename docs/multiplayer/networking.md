@@ -120,6 +120,15 @@ Players find each other in rooms, by a code (see [Matches](./matches.md#rooms)),
 
 ## Coming later
 
-- Drawing other players from confirmed state, blended between confirmed ticks rather than predicted ahead: what a view reads `verified` steps at the tick rate for now.
 - Selective state visibility and clients simulating only the parts of the world they receive.
 - Dedicated servers with no window and no player of their own, and a public match browser. Room codes and a [ready-made lobby](./matches.md#a-menu-that-comes-with-tide) are available now.
+
+## Collider rewind
+
+Draw remote players with `verified Body body` to interpolate confirmed positions without extrapolating guessed input around corners. The player's own movement can still use the predicted view. Verified event handlers receive exact event state.
+
+The physics packages offer a read-only query context for hit validation. Enable bounded history with `settings { maxRewind = 0.25; }` and opt bodies in with `Body { rewind = true }`. `physics.Rewind(controls.viewTime, out var query)` prepares one scene for all the queries in that shot; `query.Raycast(...)`, `Cast`, `Overlap` and `Inside` have the current physics query forms. Non-opted bodies use current geometry, so walls still block a historical player. Opt moving doors in when they should also rewind.
+
+With `maxRewind` enabled, every input has an engine-supplied, read-only `ViewTime viewTime`. Its `tick` is the upper confirmed endpoint, `alpha` is the interpolation fraction, and `valid` says whether a frame has been presented. The timestamp describes the last frame actually presented, not a future predicted tick. The server treats its wire value as an untrusted claim: it rejects malformed fractions, future ticks, times before that connection's snapshot, times beyond what it advertised and times outside the configured window. `Rewind` also checks retained physics history and returns false when the requested interval is unavailable. It never silently substitutes current geometry or clamps the time.
+
+The game still validates the shooter, origin, aim, weapon, ammunition and firing cadence from authoritative simulation state. A timestamp does not make a client-supplied hit trustworthy, or prove what a modified client really displayed. See [2D physics](../physics/box2d.md#rewinding-queries) and [3D physics](../physics/box3d.md#rewinding-queries).

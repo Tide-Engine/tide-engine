@@ -1,0 +1,316 @@
+// Json.Read<T> and Json.Write: JSON to and from a game's own types, and the
+// text primitives beside them (ToBytes, string.FromBytes, Split, TryParse).
+
+enum Mode
+{
+    Casual,
+    Ranked,
+    Custom = 7,
+    Alias = 7,
+}
+
+enum Small : byte
+{
+    Off,
+    On,
+}
+
+struct Limits
+{
+    int min = 1;
+    int max = 8;
+}
+
+struct LobbyInfo
+{
+    string id;
+    string name = "unnamed";
+    int players;
+    List<string> tags;
+    [Json("max_players")] int maxPlayers = 4;
+    bool open;
+    float rating = 1.5;
+    long created;
+    byte flags;
+    char grade = 'c';
+    Mode mode = Mode.Ranked;
+    Small light;
+    Limits limits;
+    int[3] scores;
+    Map<string, int> counts;
+    List<Limits> history;
+}
+
+struct Tree
+{
+    string name;
+    List<Tree> kids;
+}
+
+struct Numbers
+{
+    List<float> floats;
+    List<long> longs;
+    List<byte> bytes;
+}
+
+struct Odd
+{
+    [Json("a \"quoted\" key")] int quoted;
+    [Json("énorme")] int accented;
+    Map<string, List<int>> rows;
+    Map<string, Limits> ranges;
+    List<List<string>> grid;
+    List<Mode> modes;
+    int[2] pair;
+}
+
+struct Empty { }
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure; // 1-based; 0 if every check passed
+}
+
+// What the match keeps of what it read: its hash is the same on every platform.
+component Kept
+{
+    LobbyInfo info;
+    List<float> floats;
+    string written;
+    string numbers;
+    List<string> pieces;
+    List<byte> bytes;
+    float parsed;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Results, Kept);
+}
+
+void Expect(mut Results r, bool ok)
+{
+    r.checks++;
+    if (ok) r.passed++;
+    else if (r.firstFailure == 0) r.firstFailure = r.checks;
+}
+
+bool Reads(string json)
+{
+    return Json.Read<LobbyInfo>(json) != null;
+}
+
+LobbyInfo Read(string json)
+{
+    return Json.Read<LobbyInfo>(json) ?? LobbyInfo { id = "failed" };
+}
+
+float Parsed(string text)
+{
+    float.TryParse(text, out var value);
+    return value;
+}
+
+void Structs(mut Results r, mut Kept kept)
+{
+    // Every kind of field, in any order, with spaces, and a key nothing has
+    var json = " { \"name\" : \"Lobby \\\"one\\\"\", \"id\":\"a1\", \"players\": 3 , \"tags\":[\"fast\",\"\",\"new\\nline\"],"
+             + "\"max_players\":16,\"open\":true,\"rating\":0.1,\"created\":-9007199254740993,\"flags\":255,\"grade\":\"é\","
+             + "\"mode\":\"Custom\",\"light\":\"On\",\"limits\":{\"max\":5},\"scores\":[1,2,3,4],\"counts\":{\"a\":1,\"b\":2,\"a\":3},"
+             + "\"history\":[{\"min\":2},{},null],\"extra\":{\"deep\":[1,{\"x\":null},\"s\",true,false,1e5]}}\n";
+    var info = Read(json);
+    Expect(r, info.id == "a1" && info.name == "Lobby \"one\"" && info.players == 3);
+    Expect(r, info.tags.count == 3 && info.tags[0] == "fast" && info.tags[1] == "" && info.tags[2] == "new\nline");
+    Expect(r, info.maxPlayers == 16 && info.open && info.rating == 0.1 && info.created == -9007199254740993L);
+    Expect(r, info.flags == 255 && info.grade == 'é' && info.mode == Mode.Custom && info.light == Small.On);
+    Expect(r, info.limits.min == 1 && info.limits.max == 5);
+    Expect(r, info.scores[0] == 1 && info.scores[1] == 2 && info.scores[2] == 3);
+    Expect(r, info.counts.count == 2 && info.counts["a"] == 3 && info.counts["b"] == 2); // A key twice: the last one
+    Expect(r, info.history.count == 3 && info.history[0].min == 2 && info.history[0].max == 8);
+    Expect(r, info.history[1].min == 1 && info.history[2].min == 1 && info.history[2].max == 8); // {} and null: the defaults
+    kept.info = info;
+
+    // What's left out keeps its default, and so does a null
+    var bare = Read("{\"name\":null,\"players\":null,\"tags\":null,\"limits\":null,\"mode\":null}");
+    Expect(r, bare.id == "" && bare.name == "unnamed" && bare.players == 0 && bare.tags.count == 0 && bare.maxPlayers == 4);
+    Expect(r, bare.rating == 1.5 && bare.grade == 'c' && bare.mode == Mode.Ranked && bare.limits.max == 8 && !bare.open);
+    Expect(r, Read("{}").name == "unnamed" && Read("\n" + '\t' + " {} " + '\r' + "\n").maxPlayers == 4);
+
+    // Written and read back: the same value
+    var text = Json.Write(info);
+    kept.written = text;
+    var again = Read(text);
+    Expect(r, again.id == info.id && again.name == info.name && again.tags.count == 3 && again.tags[2] == "new\nline");
+    Expect(r, again.rating == info.rating && again.created == info.created && again.grade == 'é' && again.mode == Mode.Custom);
+    Expect(r, again.counts["a"] == 3 && again.history.count == 3 && again.scores[2] == 3 && again.light == Small.On);
+    Expect(r, Json.Write(again) == text);
+    Expect(r, Json.Write(Limits { min = -3 }) == "{\"min\":-3,\"max\":8}");
+    Expect(r, Json.Write(Empty { }) == "{}" && Json.Read<Empty>("{\"a\":[1,2]}") != null);
+    Expect(r, text.StartsWith("{\"id\":\"a1\",\"name\":\"Lobby \\\"one\\\"\",\"players\":3,\"tags\":[\"fast\",\"\",\"new\\nline\"],\"max_players\":16,"));
+
+    // From bytes, the same
+    if (Json.Read<LobbyInfo>(text.ToBytes()) is LobbyInfo fromBytes) Expect(r, fromBytes.id == "a1" && fromBytes.counts["b"] == 2);
+    else Expect(r, false);
+    List<byte> nothing = [];
+    Expect(r, Json.Read<LobbyInfo>(nothing) == null);
+}
+
+void Refused(mut Results r)
+{
+    // What isn't JSON, or isn't the type's
+    Expect(r, !Reads("") && !Reads(" ") && !Reads("null") && !Reads("[]") && !Reads("3") && !Reads("\"text\""));
+    Expect(r, !Reads("{") && !Reads("{}}") && !Reads("{} {}") && !Reads("{\"id\"}") && !Reads("{\"id\":}") && !Reads("{,}"));
+    Expect(r, !Reads("{\"id\":\"a\",}") && !Reads("{id:\"a\"}") && !Reads("{'id':'a'}") && !Reads("{\"id\":\"a\" \"name\":\"b\"}"));
+    Expect(r, !Reads("{\"players\":\"3\"}") && !Reads("{\"players\":3.5}") && !Reads("{\"players\":true}") && !Reads("{\"id\":3}"));
+    Expect(r, !Reads("{\"players\":2147483648}") && !Reads("{\"players\":-2147483649}") && Reads("{\"players\":-2147483648}"));
+    Expect(r, !Reads("{\"flags\":256}") && !Reads("{\"flags\":-1}") && !Reads("{\"created\":9223372036854775808}"));
+    Expect(r, Reads("{\"created\":-9223372036854775808}") && Reads("{\"players\":3.0}") && Reads("{\"players\":30e-1}") && Reads("{\"players\":-0}"));
+    Expect(r, !Reads("{\"players\":01}") && !Reads("{\"players\":+1}") && !Reads("{\"players\":1.}") && !Reads("{\"players\":.5}"));
+    Expect(r, !Reads("{\"rating\":1e}") && !Reads("{\"rating\":1e999}") && !Reads("{\"rating\":NaN}") && !Reads("{\"rating\":Infinity}"));
+    Expect(r, !Reads("{\"open\":1}") && !Reads("{\"open\":\"true\"}") && !Reads("{\"open\":True}") && !Reads("{\"open\":tru}"));
+    Expect(r, !Reads("{\"mode\":\"Nope\"}") && !Reads("{\"mode\":true}") && Reads("{\"mode\":7}") && !Reads("{\"light\":256}"));
+    Expect(r, !Reads("{\"grade\":\"ab\"}") && Reads("{\"grade\":\"\"}") && !Reads("{\"grade\":7}"));
+    Expect(r, !Reads("{\"tags\":{}}") && !Reads("{\"tags\":[1]}") && !Reads("{\"tags\":[\"a\",]}") && !Reads("{\"tags\":[\"a\" \"b\"]}"));
+    Expect(r, !Reads("{\"limits\":[]}") && !Reads("{\"counts\":[]}") && !Reads("{\"counts\":{\"a\":\"b\"}}") && !Reads("{\"scores\":{}}"));
+    // Strings: escapes, pairs, and what's no character
+    Expect(r, !Reads("{\"id\":\"a}") && !Reads("{\"id\":\"\\x\"}") && !Reads("{\"id\":\"\\u12\"}") && !Reads("{\"id\":\"\\u12G4\"}"));
+    Expect(r, !Reads("{\"id\":\"\\ud83d\"}") && !Reads("{\"id\":\"\\ude00\"}") && !Reads("{\"id\":\"\\ud83d\\u0041\"}") && !Reads("{\"id\":\"a\nb\"}"));
+    Expect(r, Read("{\"id\":\"\\ud83d\\ude00\"}").id == "😀" && Read("{\"id\":\"\\u00e9\\u20AC\"}").id == "é€");
+    Expect(r, Read("{\"id\":\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"}").id.length == 8 && Read("{\"id\":\"😀é\"}").id.length == 2);
+    Expect(r, Read("{\"extra\":\"\\ud83d\\ude00\"}").name == "unnamed" && !Reads("{\"extra\":\"\\ud83d\"}") && !Reads("{\"extra\":[1,}"));
+    // An enum's number where no member has it, an alias's first name
+    Expect(r, Json.Write(LobbyInfo { mode = Mode(3) }).Contains("\"mode\":3,") && Read("{\"mode\":3}").mode == Mode(3));
+    Expect(r, Json.Write(LobbyInfo { mode = Mode.Alias }).Contains("\"mode\":\"Custom\"") && Read("{\"mode\":\"Alias\"}").mode == Mode.Custom);
+}
+
+void Nesting(mut Results r)
+{
+    // A struct with a list of itself, as deep as the JSON goes, up to 32 arrays and objects
+    var tree = Json.Read<Tree>("{\"name\":\"root\",\"kids\":[{\"name\":\"a\",\"kids\":[{\"name\":\"leaf\"}]},{\"name\":\"b\"}]}") ?? Tree { };
+    Expect(r, tree.name == "root" && tree.kids.count == 2 && tree.kids[0].kids[0].name == "leaf" && tree.kids[1].kids.count == 0);
+    Expect(r, Json.Write(tree) == "{\"name\":\"root\",\"kids\":[{\"name\":\"a\",\"kids\":[{\"name\":\"leaf\",\"kids\":[]}]},{\"name\":\"b\",\"kids\":[]}]}");
+    mut var deep = "";
+    mut var close = "";
+    for (var i = 0; i < 15; i++)
+    {
+        deep += "{\"kids\":[";
+        close += "]}";
+    }
+    Expect(r, Json.Read<Tree>(deep + "{}" + close) != null);           // 31 deep
+    Expect(r, Json.Read<Tree>(deep + "{\"kids\":[]}" + close) != null); // 32
+    Expect(r, Json.Read<Tree>(deep + "{\"kids\":[{}]}" + close) == null); // 33
+    mut var skipped = "";
+    mut var skippedClose = "";
+    for (var i = 0; i < 31; i++)
+    {
+        skipped += "[";
+        skippedClose += "]";
+    }
+    Expect(r, Json.Read<Tree>("{\"other\":" + skipped + skippedClose + "}") != null);
+    Expect(r, Json.Read<Tree>("{\"other\":[" + skipped + skippedClose + "]}") == null); // What's skipped nests no deeper
+
+    // Lists and maps as the value itself, and inside each other
+    var limits = Json.Read<List<Limits>>("[{\"min\":4},{\"max\":2}]") ?? [];
+    Expect(r, limits.count == 2 && limits[0].min == 4 && limits[1].max == 2 && Json.Write(limits) == "[{\"min\":4,\"max\":8},{\"min\":1,\"max\":2}]");
+    var names = Json.Read<List<string>>(" [ \"a\" , \"b\" ] ") ?? [];
+    Expect(r, names.count == 2 && names[1] == "b" && Json.Write(names) == "[\"a\",\"b\"]" && Json.Read<List<string>>("{}") == null);
+    var axes = Json.Read<Map<string, float>>("{\"x\":1.5,\"y\":-2,\"\":0}") ?? default;
+    Expect(r, axes.count == 3 && axes["x"] == 1.5 && axes["y"] == -2 && Json.Write(axes) == "{\"x\":1.5,\"y\":-2,\"\":0}");
+    Expect(r, Json.Read<Map<string, float>>("[]") == null);
+    var odd = Json.Read<Odd>("{\"a \\\"quoted\\\" key\":1,\"\\u00e9norme\":2,\"rows\":{\"r\":[1,2],\"s\":[]},\"ranges\":{\"k\":{\"min\":9}},"
+                           + "\"grid\":[[\"a\"],[],[\"b\",\"c\"]],\"modes\":[\"Casual\",7,\"Ranked\"],\"pair\":[5,6,7]}") ?? Odd { };
+    Expect(r, odd.quoted == 1 && odd.accented == 2 && odd.rows["r"].count == 2 && odd.rows["r"][1] == 2 && odd.rows.Has("s"));
+    Expect(r, odd.ranges["k"].min == 9 && odd.ranges["k"].max == 8 && odd.grid.count == 3 && odd.grid[2][1] == "c");
+    Expect(r, odd.modes.count == 3 && odd.modes[1] == Mode.Custom && odd.pair[0] == 5 && odd.pair[1] == 6);
+    Expect(r, Json.Write(odd) == "{\"a \\\"quoted\\\" key\":1,\"énorme\":2,\"rows\":{\"r\":[1,2],\"s\":[]},\"ranges\":{\"k\":{\"min\":9,\"max\":8}},"
+                               + "\"grid\":[[\"a\"],[],[\"b\",\"c\"]],\"modes\":[\"Casual\",\"Custom\",\"Ranked\"],\"pair\":[5,6]}");
+}
+
+void Floats(mut Results r, mut Kept kept)
+{
+    // Every float is the nearest to what's written, and reads back from what's written of it
+    var read = Json.Read<Numbers>("{\"floats\":[0,-0,1,0.1,3.14159274101257324,16777217,1e-45,7e-46,7.1e-46,3.4028235e38,1.17549435e-38,"
+                                + "1.1754942e-38,340282356779733661637539395458142568447,1E+2,1e-999,123456789012345678901234567890e-30,"
+                                + "0.000000000000000000000000000000000000000000001401298464324817070923729583289916131280261941876515771757068283889791082685,"
+                                + "9007199791611905,1.00000017881393421514957253748434595763683319091796875,1.00000017881393432617187500000000000000000000000001,"
+                                + "1.000000178813934326171875],"
+                                + "\"longs\":[9223372036854775807,-9223372036854775808,1e18,12.0],\"bytes\":[0,255]}") ?? Numbers { };
+    Expect(r, read.floats.count == 21 && read.longs.count == 4 && read.bytes.count == 2);
+    Expect(r, read.floats[1] == 0 && 1 / read.floats[1] < 0 && read.floats[3] == 0.1 && read.floats[4] == 3.1415927 && read.floats[5] == 16777216);
+    Expect(r, read.floats[6] > 0 && read.floats[6] == read.floats[8] && read.floats[7] == 0 && read.floats[9] > 3.4e38);
+    Expect(r, read.floats[12] == read.floats[9] && read.floats[11] < read.floats[10] && read.floats[17] > 9007199254740992.0);
+    Expect(r, read.floats[13] == 100 && read.floats[14] == 0 && read.floats[15] > 0.12345678 && read.floats[15] < 0.1234568);
+    Expect(r, read.floats[16] == read.floats[6] && read.floats[18] == 1.0000001 && read.floats[19] == 1.0000002);
+    Expect(r, read.floats[20] == read.floats[19]); // Halfway between two floats: the even one
+    Expect(r, read.longs[0] == 9223372036854775807L && read.longs[1] + read.longs[0] == -1 && read.longs[2] == 1000000000000000000L && read.longs[3] == 12);
+    kept.floats = read.floats;
+    kept.numbers = Json.Write(read);
+    var back = Json.Read<Numbers>(kept.numbers) ?? Numbers { };
+    mut var same = back.floats.count == read.floats.count;
+    for (var i = 0; i < read.floats.count; i++) same = same && back.floats[i] == read.floats[i];
+    Expect(r, same && 1 / back.floats[1] < 0);
+    // What JSON has no number for is null, which reads as the default
+    var bad = Numbers { floats = [0.0 / Parsed("0"), 1 / Parsed("0"), -1 / Parsed("0"), 2.5] };
+    Expect(r, Json.Write(bad) == "{\"floats\":[null,null,null,2.5],\"longs\":[],\"bytes\":[]}");
+    Expect(r, (Json.Read<Numbers>(Json.Write(bad)) ?? Numbers { }).floats[1] == 0);
+}
+
+void Text(mut Results r, mut Kept kept)
+{
+    // A text's bytes, and the text bytes are
+    var bytes = "aé€😀".ToBytes();
+    Expect(r, bytes.count == 10 && bytes[0] == 97 && bytes[1] == 0xC3 && bytes[9] == 0x80 && "".ToBytes().count == 0);
+    Expect(r, (string.FromBytes(bytes) ?? "no") == "aé€😀" && (string.FromBytes([]) ?? "no") == "");
+    kept.bytes = bytes;
+    Expect(r, (string.FromBytes(kept.bytes) ?? "no").length == 4);
+    Expect(r, string.FromBytes([0xC3]) == null && string.FromBytes([0x80]) == null && string.FromBytes([0xC0, 0x80]) == null);
+    Expect(r, string.FromBytes([0xED, 0xA0, 0x80]) == null && string.FromBytes([0xF4, 0x90, 0x80, 0x80]) == null && string.FromBytes([0xFF]) == null);
+    Expect(r, string.FromBytes([0xE0, 0x80, 0x80]) == null && string.FromBytes([0xF0, 0x9F, 0x98]) == null && string.FromBytes([0xF0, 0x9F, 0x98, 0x80]) != null);
+    Expect(r, !Reads("{\"id\":\"" + (string.FromBytes([0x41]) ?? "") + "\"") && Json.Read<LobbyInfo>([0x7B, 0x22, 0x69, 0x64, 0x22, 0x3A, 0x22, 0xC3, 0x22, 0x7D]) == null);
+
+    // Pieces
+    var parts = "a,b,,c".Split(",");
+    Expect(r, parts.count == 4 && parts[0] == "a" && parts[2] == "" && parts[3] == "c");
+    Expect(r, "".Split(",").count == 1 && "abc".Split("").count == 1 && "abc".Split("abc").count == 2 && ",".Split(',').count == 2);
+    Expect(r, "one--two--".Split("--").count == 3 && "one--two--".Split("--")[1] == "two" && "é€é".Split('€')[1] == "é" && "ab".Split('\0')[0] == "ab");
+    kept.pieces = "x=1;y=2".Split(';');
+    Expect(r, kept.pieces.count == 2 && kept.pieces[1].Split('=')[1] == "2");
+
+    // Numbers out of text
+    Expect(r, int.TryParse("42", out var n) && n == 42 && int.TryParse("-2147483648", out var low) && low == -2147483648);
+    Expect(r, !int.TryParse("2147483648", out var over) && over == 0 && !int.TryParse("", out _) && !int.TryParse("-", out _));
+    Expect(r, !int.TryParse(" 1", out _) && !int.TryParse("1 ", out _) && !int.TryParse("+1", out _) && !int.TryParse("1.0", out _) && !int.TryParse("0x10", out _));
+    Expect(r, int.TryParse("007", out var bond) && bond == 7 && long.TryParse("-9223372036854775808", out var least) && least + 1 < 0);
+    Expect(r, !long.TryParse("9223372036854775808", out _) && long.TryParse("9223372036854775807", out var most) && most == 9223372036854775807L);
+    mut float f = 9;
+    Expect(r, float.TryParse("-12.5", out f) && f == -12.5 && float.TryParse(".5", out f) && f == 0.5 && float.TryParse("5.", out f) && f == 5);
+    Expect(r, float.TryParse("1e-3", out f) && f == 0.001 && float.TryParse("2.5E+10", out f) && f == 25000000000.0 && float.TryParse("0003", out f) && f == 3);
+    Expect(r, !float.TryParse("", out f) && f == 0 && !float.TryParse(".", out f) && !float.TryParse("1e", out f) && !float.TryParse("1e400", out f));
+    Expect(r, !float.TryParse("NaN", out f) && !float.TryParse("inf", out f) && !float.TryParse("1f", out f) && !float.TryParse(" 1", out f) && !float.TryParse("+1", out f));
+    Expect(r, float.TryParse("3.4028235e38", out f) && f > 3.4e38 && !float.TryParse("3.4028236e38", out f) && float.TryParse("1e-60", out f) && f == 0);
+    // What text shows of a float reads back as that float
+    mut var all = true;
+    mut var x = 0.37;
+    for (var i = 0; i < 200; i++)
+    {
+        x = x * 1.7 + 0.011;
+        if (x > 1e30) x = x * 1e-37;
+        all = all && float.TryParse($"{x}", out var back) && back == x && float.TryParse($"{-x / 3}", out var third) && third == -x / 3;
+    }
+    Expect(r, all);
+    kept.parsed = Parsed("0.1") + Parsed("16777217") + Parsed("1.17549435e-38");
+}
+
+system Check(mut Results r, mut Kept kept)
+{
+    Structs(r, kept);
+    Refused(r);
+    Nesting(r);
+    Floats(r, kept);
+    Text(r, kept);
+}

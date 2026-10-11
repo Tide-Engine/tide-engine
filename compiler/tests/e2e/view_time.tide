@@ -1,0 +1,16 @@
+const float RewindWindow = 0.5;
+settings { maxRewind = RewindWindow / 2; }
+input Controls { int fire; }
+component Actor { }
+singleton Seen { int fire; bool valid; ViewTime last; }
+scene Main { }
+event(PlayerJoined joined) Join()
+{
+    Spawn(Actor, Owner { player = joined.player });
+}
+system Observe(Controls controls, mut Seen seen, with Actor, with Owner)
+{
+    seen.fire = controls.fire;
+    seen.valid = controls.viewTime.valid;
+    seen.last = controls.viewTime;
+}

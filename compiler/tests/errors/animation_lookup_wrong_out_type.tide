@@ -1,0 +1,2 @@
+// expect: 'TryGetAt' makes its 'result' Animation, not Bone
+bool Read(AnimationCatalog clips, out Bone result) { return clips.TryGetAt(0, out result); }

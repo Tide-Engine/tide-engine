@@ -58,7 +58,7 @@ static void frame(const int i)
     const tide_view_worlds view = tide_session_view(machines[i]);
     tide_local_events(&locals[i], heard);
     tide_draw_reset(&draw);
-    tide_frame(view.current, view.previous, view.alpha, view.verified, &locals[i], &draw, &gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, &locals[i], &draw, &gui);
 }
 
 // Whether machine `i` heard each of the `count` movers its match has spawn

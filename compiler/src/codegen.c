@@ -19,6 +19,14 @@
 
 #include "tide/player.h"  // How many players a game takes without a maxPlayers setting
 
+// Each C system gets a distinct slot; only once-per-tick calls expose it.
+static int extern_system_count(const program *prog)
+{
+    int count = 0;
+    for (int i = 0; i < prog->systems.count; i++) count += prog->systems.items[i]->extern_system;
+    return count;
+}
+
 // Emits C for a checked program. Everything specific to the game is generated
 // here: component structs, archetype storage, deferred structural changes and
 // events, system, view and handler bodies, dispatch loops, the tick and
@@ -976,7 +984,7 @@ static bool array_unwritten(const program *prog, const decl *a);
 // The built-in structs that are in generated C only for a game that names them (as the enum Depth is)
 static bool builtin_struct_unnamed(const program *prog, const decl *d)
 {
-    return (d == prog->sound || d == prog->samples || d == prog->effect) && !d->named;
+    return (d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time) && !d->named;
 }
 
 static bool enum_generated(const program *prog, const decl *d)
@@ -2729,7 +2737,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     for (int i = 0; i < e->args.count && i < m->params.count; i++) {
         mut_list |= m->params.items[i].mode == PARAM_MUT && type_has_list(m->params.items[i].type);
     }
-    const type self = {m->owner && m->owner->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, m->owner};
+    const type self = {m->owner && m->owner->kind == DECL_COMPONENT ? TY_COMPONENT
+                      : m->owner && m->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, m->owner};
     const bool copy_self = m->owner && !m->is_mut_method && mut_list && type_has_list(self);
     sb_printf(o, "%s(", routine_cname(m));
     int args = 0;
@@ -3405,6 +3414,19 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             if (set) {
                 sb_put(o, ", ");
                 gen_as(g, o, e->args.items[1], (type){TY_COMPONENT, e->type_decl});
+            }
+            sb_put(o, ")");
+        } else if (e->call == CALL_JSON) { // Json.Read<T>(text), int.TryParse(text, out value): the variable it makes, by address
+            sb_printf(o, "%s(", e->c_callee);
+            for (int i = 0; i < e->args.count; i++) {
+                if (i) sb_put(o, ", ");
+                if (e->arg_out & (1u << i)) {
+                    sb_put(o, "&(");
+                    gen_expr(g, o, e->args.items[i]);
+                    sb_put(o, ")");
+                } else {
+                    gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+                }
             }
             sb_put(o, ")");
         } else if (e->call == CALL_TEXT) { // name.Contains("cat"): the text first
@@ -4359,9 +4381,11 @@ static bool writes(const expr *e)
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get"); // TryGet writes its `out` argument
     case CALL_GRID: return true; // Clear
-    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+    case CALL_SKINNED: return skinned_lookup(e->skin_operation)
+        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_RANDOM: case CALL_ROLL: return true; // Each of a Random's methods steps it
     case CALL_WORLD: return str_eq_c(e->name, "TryGet"); // Its `out` argument
+    case CALL_JSON: return e->arg_out != 0; // int.TryParse(text, out value)
     default: return false;
     }
 }
@@ -4588,7 +4612,8 @@ static void call_operands(expr *e, operand_list *ops)
         case CALL_GRID:
         case CALL_RANDOM: operand_push(ops, e->object, writes(e) ? PLACE : use_of(e->object)); break;
         case CALL_SKINNED:
-            if (e->skin_operation != SKIN_OP_DECODE) operand_push(ops, e->object, writes(e) ? PLACE : TAKEN);
+            if (e->skin_operation != SKIN_OP_DECODE) operand_push(ops, e->object,
+                e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND ? PLACE : TAKEN);
             break;
         case CALL_SNAP: operand_push(ops, e->object, e->type_decl ? PLACE : TAKEN); break; // A singleton counts its snaps
         case CALL_TEXT:
@@ -6248,7 +6273,7 @@ static void gen_stmt(gen *g, const stmt *s)
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
                    || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_MAP
                    || s->value->call == CALL_GRID || s->value->call == CALL_WORLD || s->value->call == CALL_AUDIO
-                   || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
+                   || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN || s->value->call == CALL_JSON) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
@@ -6690,6 +6715,7 @@ static void gen_header(gen *g)
     if (prog->uses_resident) sb_put(o, "#include \"tide/resident.h\"\n"); // A Resident field: only in a game that has one
     sb_put(o, "\n");
     if (prog->random->named) sb_put(o, "#include \"tide/random.h\"\n\n"); // Random, in the games that have one
+    if (prog->json_roots.count > 0) sb_put(o, "#include \"tide/json.h\"\n\n"); // Json.Read and Json.Write, the same
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
     sb_put(o, "// an input for each, and the server's after them.\n");
     sb_printf(o, "#define TIDE_GAME_PLAYERS %uu\n\n", (unsigned)(prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT));
@@ -6859,6 +6885,7 @@ static void gen_header(gen *g)
         if (arch_local(g, a)) continue;
         sb_printf(o, "    tide_table %s;\n", arch_name(g, a));
     }
+    if (extern_system_count(prog)) sb_put(o, "    struct tide_tick_completion *tide_completions; // Tick-local, never saved\n");
     sb_put(o, "    tide_queue commands; // Of tide_command\n");
     sb_put(o, "    uint32_t tide_chain; // While changes apply: how far down a chain of events what's recorded now is\n");
     gen_task_tables(g, false);
@@ -7066,6 +7093,7 @@ static void gen_header(gen *g)
     sb_put(o, "// entities go, before the views run, once an entity is in neither `w` nor `verified`,\n");
     sb_put(o, "// so one a wrong prediction destroyed keeps them until the server says so too.\n");
     sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
+              "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui);\n\n");
     sb_put(o, "// What the match sent since the last frame, for the game's local handlers: the next\n");
     sb_put(o, "// tide_frame runs them first, before its views. `events` is a session's\n");
@@ -7909,6 +7937,297 @@ static void gen_show_helpers(gen *g)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Json.Read<T> and Json.Write (tide/json.h): a reader for each type a game
+// reads (decl.json_reads) and a writer for each it writes (decl.json_writes),
+// each calling those of the types in it, then the functions the calls
+// themselves are (program.json_roots). A game that calls neither has none.
+
+// The function that reads (tide_json_get_...) or writes (tide_json_put_...)
+// a struct, an enum, a list, a map or an array.
+static const char *json_helper(const type t, const bool reads)
+{
+    sb b = {0};
+    sb_printf(&b, "tide_json_%s_", reads ? "get" : "put");
+    if (t.kind == TY_LIST) sb_printf(&b, "list%d", t.decl->index);
+    else if (t.kind == TY_MAP) sb_printf(&b, "map%d", t.decl->index);
+    else if (t.kind == TY_ARRAY) sb_printf(&b, "array%d", t.decl->index);
+    else sb_put(&b, type_cname(t.decl));
+    return b.data;
+}
+
+// What reads a value of type `t` from the reader `j` into `place`, C for
+// where it's kept (text a tide_text), in a function that gives false once
+// anything is wrong. `null` leaves the place as it is.
+static void gen_json_read_part(sb *o, const type t, const char *place, const char *in)
+{
+    switch (t.kind) {
+    case TY_BOOL: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_bool(j, &%s)) return false;\n", in, place); return;
+    case TY_CHAR: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_char(j, &%s)) return false;\n", in, place); return;
+    case TY_FLOAT: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_float(j, &%s)) return false;\n", in, place); return;
+    case TY_STRING: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_text(j, &%s)) return false;\n", in, place); return;
+    case TY_BYTE:
+    case TY_INT:
+    case TY_LONG: {
+        const char *least = t.kind == TY_BYTE ? "0" : t.kind == TY_INT ? "INT32_MIN" : "INT64_MIN";
+        const char *most = t.kind == TY_BYTE ? "255" : t.kind == TY_INT ? "INT32_MAX" : "INT64_MAX";
+        sb_printf(o, "%sif (!tide_json_null(j)) {\n%s    int64_t n;\n%s    if (!tide_json_int(j, %s, %s, &n)) return false;\n", in, in, in,
+                  least, most);
+        sb_printf(o, "%s    %s = (%s)n;\n%s}\n", in, place, c_type(t), in);
+        return;
+    }
+    default: sb_printf(o, "%sif (!tide_json_null(j) && !%s(j, &%s)) return false;\n", in, json_helper(t, true), place); return;
+    }
+}
+
+// `a` followed by `v`, a value of type `t` in C as it's kept, as JSON.
+static void gen_json_write_part(sb *o, const type t, const char *v, const char *in)
+{
+    switch (t.kind) {
+    case TY_BOOL: sb_printf(o, "%sa = tide_str_add_bool(a, %s);\n", in, v); return;
+    case TY_BYTE:
+    case TY_INT: sb_printf(o, "%sa = tide_str_add_int(a, %s, 0);\n", in, v); return;
+    case TY_LONG: sb_printf(o, "%sa = tide_str_add_long(a, %s, 0);\n", in, v); return;
+    case TY_CHAR: sb_printf(o, "%sa = tide_json_add_char(a, %s);\n", in, v); return;
+    case TY_FLOAT: sb_printf(o, "%sa = tide_json_add_float(a, %s);\n", in, v); return;
+    case TY_STRING: sb_printf(o, "%sa = tide_json_add_text(a, tide_text_view(%s));\n", in, v); return;
+    case TY_STRUCT:
+    case TY_ARRAY: sb_printf(o, "%sa = %s(a, &%s);\n", in, json_helper(t, false), v); return; // Where it is: nothing copies it
+    default: sb_printf(o, "%sa = %s(a, %s);\n", in, json_helper(t, false), v); return;
+    }
+}
+
+// Whether a key goes into a C literal between JSON's quotes as it is: nothing in it that either escapes.
+static bool json_key_plain(const str key)
+{
+    for (int i = 0; i < key.len; i++) {
+        const char c = key.ptr[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' || c == ' ')) return false;
+    }
+    return true;
+}
+
+// What a place for a value of type `t` starts as, where it's kept: text and containers empty.
+static void gen_json_default(gen *g, sb *o, const type t)
+{
+    if (t.kind == TY_STRING) sb_put(o, "(tide_text){0}");
+    else gen_default(g, o, t);
+}
+
+static void gen_json_prototype(sb *o, const type t, const char *stored, const bool reads, const bool by_value, const char *end)
+{
+    if (reads) sb_printf(o, "TIDE_HELPER bool %s(tide_json *j, %s *v)%s", json_helper(t, true), stored, end);
+    else sb_printf(o, "TIDE_HELPER tide_str %s(tide_str a, %s%s%sv)%s", json_helper(t, false), by_value ? "" : "const ", stored,
+                   by_value ? " " : " *", end);
+}
+
+static void gen_json_helpers(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (prog->from_bytes) { // string.FromBytes: the engine's answer as the string? it gives
+        const char *result = c_type(prog->from_bytes_result);
+        sb_printf(o, "TIDE_HELPER %s tide_text_from_bytes(const tide_list bytes)\n{\n    %s r = {0};\n", result, result);
+        sb_put(o, "    r.ok = tide_str_from_bytes(bytes, &r.value);\n    return r;\n}\n\n");
+    }
+    if (prog->json_roots.count == 0) return;
+    sb_put(o, "// Json.Read and Json.Write: a reader and a writer for each type they're called with, and each type in it\n\n");
+    for (int pass = 0; pass < 2; pass++) { // Declared first: a struct can hold a list of itself
+        const char *end = pass ? "\n{\n" : ";\n";
+        for (int reads = 0; reads < 2; reads++) {
+            // Enums: a member's name, or the number of a value no member has
+            for (int i = 0; i < prog->decls.count; i++) {
+                const decl *d = prog->decls.items[i];
+                if (d->kind != DECL_ENUM || !(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_ENUM, (decl *)d};
+                gen_json_prototype(o, t, c_type(t), reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    if (d->members.count > 0) {
+                        sb_put(o, "    static const char *const names[] = {");
+                        for (int k = 0; k < d->members.count; k++) sb_printf(o, "%s\"" STR_FMT "\"", k ? ", " : "", STR_ARG(d->members.items[k].name));
+                        sb_put(o, "};\n    static const int64_t numbers[] = {");
+                        for (int k = 0; k < d->members.count; k++) sb_printf(o, "%s%lld", k ? ", " : "", (long long)d->members.items[k].number);
+                        sb_put(o, "};\n");
+                    }
+                    const char *most = d->width == 1 ? "255" : d->width == 2 ? "65535" : "INT32_MAX";
+                    sb_printf(o, "    int64_t n;\n    if (tide_json_number_next(j)) {\n        if (!tide_json_int(j, %s, %s, &n)) return false;\n",
+                              d->width == 1 || d->width == 2 ? "0" : "INT32_MIN", most);
+                    if (d->members.count > 0) {
+                        sb_printf(o, "    } else {\n        int32_t i;\n        if (!tide_json_name(j, names, %d, &i)) return false;\n"
+                                     "        n = numbers[i];\n    }\n", d->members.count);
+                    } else {
+                        sb_put(o, "    } else {\n        return false;\n    }\n");
+                    }
+                    sb_printf(o, "    *v = (%s)n;\n    return true;\n}\n\n", c_type(t));
+                } else {
+                    for (int k = 0; k < d->members.count; k++) {
+                        bool named = false; // By an earlier member: the first of a number's names is the one written
+                        for (int before = 0; before < k; before++) named |= d->members.items[before].number == d->members.items[k].number;
+                        if (named) continue;
+                        sb_printf(o, "    if ((int64_t)v == %lldLL) return tide_str_add_cstr(a, \"\\\"" STR_FMT "\\\"\");\n",
+                                  (long long)d->members.items[k].number, STR_ARG(d->members.items[k].name));
+                    }
+                    sb_put(o, "    return tide_str_add_long(a, (int64_t)v, 0);\n}\n\n");
+                }
+            }
+            // Structs: an object, a key for each field
+            for (int i = 0; i < prog->decls.count; i++) {
+                const decl *d = prog->decls.items[i];
+                if (d->kind != DECL_STRUCT || !(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_STRUCT, (decl *)d};
+                gen_json_prototype(o, t, c_type(t), reads, false, end);
+                if (!pass) continue;
+                int fields = 0;
+                for (int k = 0; k < d->fields.count; k++) fields += !d->fields.items[k].hidden;
+                if (reads) {
+                    if (fields > 0) {
+                        sb_put(o, "    static const char *const keys[] = {");
+                        for (int k = 0, n = 0; k < d->fields.count; k++) {
+                            if (d->fields.items[k].hidden) continue;
+                            sb_put(o, n++ ? ", " : "");
+                            gen_c_literal(o, json_field_key(&d->fields.items[k]), false);
+                        }
+                        sb_put(o, "};\n");
+                    }
+                    sb_put(o, "    *v = ");
+                    gen_default(g, o, t);
+                    sb_put(o, ";\n    if (!tide_json_object(j)) return false;\n");
+                    sb_printf(o, "    for (int32_t k; (k = tide_json_field(j, %s, %d)) != TIDE_JSON_DONE;) {\n        switch (k) {\n",
+                              fields > 0 ? "keys" : "NULL", fields);
+                    for (int k = 0, n = 0; k < d->fields.count; k++) {
+                        const field *f = &d->fields.items[k];
+                        if (f->hidden) continue;
+                        sb_printf(o, "        case %d:\n", n++);
+                        sb place = {0};
+                        sb_printf(&place, "v->%s", field_cname(f));
+                        gen_json_read_part(o, f->type, place.data, "            ");
+                        sb_put(o, "            break;\n");
+                    }
+                    sb_put(o, "        default:\n            if (!tide_json_skip(j)) return false;\n            break;\n        }\n    }\n"
+                              "    return !j->failed;\n}\n\n");
+                } else {
+                    const char *open = "{";
+                    for (int k = 0; k < d->fields.count; k++) {
+                        const field *f = &d->fields.items[k];
+                        if (f->hidden) continue;
+                        const str key = json_field_key(f);
+                        if (json_key_plain(key)) {
+                            sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\\\"" STR_FMT "\\\":\");\n", open, STR_ARG(key));
+                        } else {
+                            sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\");\n    a = tide_json_add_text(a, tide_str_from_cstr(", open);
+                            gen_c_literal(o, key, false);
+                            sb_put(o, "));\n    a = tide_str_add_cstr(a, \":\");\n");
+                        }
+                        sb value = {0};
+                        sb_printf(&value, "v->%s", field_cname(f));
+                        gen_json_write_part(o, f->type, value.data, "    ");
+                        open = ",";
+                    }
+                    if (fields == 0) sb_put(o, "    (void)v;\n    return tide_str_add_cstr(a, \"{}\");\n}\n\n");
+                    else sb_put(o, "    return tide_str_add_cstr(a, \"}\");\n}\n\n");
+                }
+            }
+            // Lists: an array, an element made for each value it has
+            for (int k = 0; k < prog->lists.count; k++) {
+                const decl *d = prog->lists.items[k];
+                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_LIST, (decl *)d};
+                const type e = list_elem(d);
+                const char *ec = elem_ctype(e);
+                gen_json_prototype(o, t, "tide_list", reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    *v = (tide_list){0};\n    if (!tide_json_array(j)) return false;\n");
+                    sb_printf(o, "    while (tide_json_item(j, sizeof(%s))) {\n        %s *e = tide_list_add(v, sizeof(%s), TIDE_IN_SCRATCH);\n"
+                                 "        if (!e) return false;\n", ec, ec, ec);
+                    if (e.kind == TY_STRUCT) { // Its fields' defaults, for a null
+                        sb_put(o, "        *e = ");
+                        gen_default(g, o, e);
+                        sb_put(o, ";\n");
+                    }
+                    gen_json_read_part(o, e, "(*e)", "        ");
+                    sb_put(o, "    }\n    return !j->failed;\n}\n\n");
+                } else {
+                    sb_put(o, "    const int32_t count = tide_list_count(v);\n    a = tide_str_add_cstr(a, \"[\");\n");
+                    sb_printf(o, "    for (int32_t i = 0; i < count; i++) {\n        const %s *e = tide_list_at(v, i, sizeof(%s));\n"
+                                 "        if (!e) break;\n        if (i > 0) a = tide_str_add_cstr(a, \",\");\n", ec, ec);
+                    gen_json_write_part(o, e, "(*e)", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
+                }
+            }
+            // Maps by text: an object, an entry for each key, the last one of a key written twice
+            for (int k = 0; k < prog->maps.count; k++) {
+                const decl *d = prog->maps.items[k];
+                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_MAP, (decl *)d};
+                const type value = d->fields.items[1].type;
+                gen_json_prototype(o, t, "tide_map", reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    *v = (tide_map){0};\n    if (!tide_json_object(j)) return false;\n    tide_text key;\n");
+                    sb_printf(o, "    while (tide_json_key(j, &key, sizeof(tide_map%d_entry))) {\n        %s value = ", k, elem_ctype(value));
+                    gen_json_default(g, o, value);
+                    sb_put(o, ";\n");
+                    gen_json_read_part(o, value, "value", "        ");
+                    sb_printf(o, "        tide_map%d_set(v, tide_text_view(key), %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", k,
+                              value.kind == TY_STRING ? "tide_text_view(value)" : "value");
+                } else {
+                    sb_put(o, "    bool first = true;\n    a = tide_str_add_cstr(a, \"{\");\n");
+                    sb_printf(o, "    for (int32_t i = 0; i < tide_map_entries(v); i++) {\n"
+                                 "        const tide_map%d_entry *e = tide_map_entry(v, i, &tide_map%d_kind);\n"
+                                 "        if (!tide_map_live(e)) continue;\n        if (!first) a = tide_str_add_cstr(a, \",\");\n"
+                                 "        first = false;\n        a = tide_json_add_text(a, tide_text_view(e->key));\n"
+                                 "        a = tide_str_add_cstr(a, \":\");\n", k, k);
+                    gen_json_write_part(o, value, "e->value", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"}\");\n}\n\n");
+                }
+            }
+            // Arrays: an array, whose values go to the elements in order; the ones past its length are skipped
+            for (int k = 0; k < prog->arrays.count; k++) {
+                const decl *d = prog->arrays.items[k];
+                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_ARRAY, (decl *)d};
+                const type e = d->fields.items[0].type;
+                gen_json_prototype(o, t, array_cname(d), reads, false, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    if (!tide_json_array(j)) return false;\n    for (int32_t i = 0; tide_json_item(j, 0); i++) {\n");
+                    sb_printf(o, "        if (i >= %d) {\n            if (!tide_json_skip(j)) return false;\n            continue;\n        }\n",
+                              d->array_length);
+                    gen_json_read_part(o, e, "v->at[i]", "        ");
+                    sb_put(o, "    }\n    return !j->failed;\n}\n\n");
+                } else {
+                    sb_printf(o, "    a = tide_str_add_cstr(a, \"[\");\n    for (int32_t i = 0; i < %d; i++) {\n"
+                                 "        if (i > 0) a = tide_str_add_cstr(a, \",\");\n", d->array_length);
+                    gen_json_write_part(o, e, "v->at[i]", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
+                }
+            }
+        }
+        if (!pass) sb_put(o, "\n");
+    }
+    // The calls: a T? that's nothing unless the whole text was one value of the type, and a value's text
+    for (int i = 0; i < prog->json_roots.count; i++) {
+        const json_root *r = &prog->json_roots.items[i];
+        const char *stored = r->type.kind == TY_LIST ? "tide_list" : r->type.kind == TY_MAP ? "tide_map" : c_type(r->type);
+        for (int bytes = 0; bytes < 2; bytes++) {
+            if (!(bytes ? r->reads_bytes : r->reads_text)) continue;
+            const char *result = c_type(r->result);
+            sb_printf(o, "TIDE_HELPER %s tide_json_read%s%d(const %s source)\n{\n    tide_json j;\n    tide_json_begin%s(&j, source);\n",
+                      result, bytes ? "_bytes" : "", i, bytes ? "tide_list" : "tide_str", bytes ? "_bytes" : "");
+            sb_printf(o, "    %s r = {0};\n    r.ok = !tide_json_null(&j) && %s(&j, &r.value) && tide_json_end(&j);\n", result,
+                      json_helper(r->type, true));
+            sb_printf(o, "    if (!r.ok) r = (%s){0};\n    return r;\n}\n\n", result);
+        }
+        if (r->writes) {
+            const bool by_value = r->type.kind != TY_STRUCT;
+            sb_printf(o, "TIDE_HELPER tide_str tide_json_write%d(const %s value)\n{\n    return %s(TIDE_STR_EMPTY, %svalue);\n}\n\n", i, stored,
+                      json_helper(r->type, false), by_value ? "" : "&");
+        }
+    }
+}
+
 // Whether spawns of archetype `a` carry text.
 static bool spawn_has_text(const gen *g, const int a)
 {
@@ -7996,11 +8315,101 @@ static void gen_correction_math(gen *g)
 // Views see the match between its last two ticks: for each type with fields
 // that blend, a function that blends a value, and for each such component,
 // one that finds an entity's in last tick's world.
+static void gen_blend_snapshot(gen *g, const type t, const char *place, const int depth)
+{
+    sb *o = &g->c;
+    if (t.kind == TY_STRING) {
+        sb_printf(o, "    %s = tide_text_temp(tide_text_view(%s));\n", place, place);
+    } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) {
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (!type_has_text(f->type)) continue;
+            sb child = {0};
+            sb_printf(&child, "%s.%s", place, field_cname(f));
+            gen_blend_snapshot(g, f->type, child.data, depth + 1);
+        }
+    } else if (t.kind == TY_GRID) {
+        sb_printf(o, "    %s = tide_blend_grid_snapshot(%s, &%s);\n", place, place, grid_shape_name(t.decl));
+    } else if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) {
+        const bool list = t.kind == TY_LIST;
+        const decl *d = t.decl;
+        char entry[64];
+        snprintf(entry, sizeof entry, "tide_map%d_entry", d->index);
+        const char *element = list ? elem_ctype(list_elem(d)) : entry;
+        if (list) sb_printf(o, "    %s = tide_list_copy(%s, sizeof(%s));\n", place, place, element);
+        else sb_printf(o, "    %s = tide_map%d_copy(%s);\n", place, d->index, place);
+        if (list ? !type_has_text(list_elem(d)) : (!type_has_text(d->fields.items[0].type) &&
+            (d->is_set || !type_has_text(d->fields.items[1].type)))) return;
+        sb entries = {0};
+        sb_printf(&entries, "%s%s", place, list ? "" : ".entries");
+        sb_printf(o, "    for (int32_t tide_b%d = 0; tide_b%d < tide_list_count(%s); tide_b%d++) {\n"
+                     "        %s *tide_e%d = tide_list_at(%s, tide_b%d, sizeof(%s));\n",
+                  depth, depth, entries.data, depth, element, depth, entries.data, depth, element);
+        if (!list) sb_printf(o, "        if (!tide_map_live(tide_e%d)) continue;\n", depth);
+        sb child = {0};
+        if (list) {
+            sb_printf(&child, "(*tide_e%d)", depth);
+            gen_blend_snapshot(g, list_elem(d), child.data, depth + 1);
+        } else {
+            sb_printf(&child, "tide_e%d->key", depth);
+            gen_blend_snapshot(g, d->fields.items[0].type, child.data, depth + 1);
+            if (!d->is_set) {
+                child = (sb){0};
+                sb_printf(&child, "tide_e%d->value", depth);
+                gen_blend_snapshot(g, d->fields.items[1].type, child.data, depth + 1);
+            }
+        }
+        sb_put(o, "    }\n");
+    }
+}
+
+// Custom interpolators may inspect either endpoint's containers. Ordinary
+// interpolation never reads containers, so only these types need owned copies.
+static bool blend_reads_heap(const decl *d)
+{
+    if (d->interpolate && decl_has_text(d)) return true;
+    for (int i = 0; i < d->fields.count; i++) {
+        const type t = d->fields.items[i].type;
+        if ((t.kind == TY_STRUCT || t.kind == TY_ARRAY) && blend_reads_heap(t.decl)) return true;
+    }
+    return false;
+}
+static const char *view_blender(const decl *d)
+{
+    sb name = {0};
+    sb_printf(&name, "tide_blend_%s%s", blend_reads_heap(d) ? "owned_" : "", type_cname(d));
+    return name.data;
+}
+static const char *blend_worlds(const decl *d, const bool verified)
+{
+    return !blend_reads_heap(d) ? "" : verified ? ", tide_vprev, tide_verified" : ", tide_prev, tide_w";
+}
+
 static void gen_blend_helpers(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
     g->indent = 1;
+    if (prog->grids.count) {
+        sb_put(o, "TIDE_HELPER tide_grid tide_blend_grid_snapshot(tide_grid value, const tide_grid_shape *shape)\n{\n"
+                  "    if (!value.at || value.at >> 30 == TIDE_IN_SCRATCH) return value;\n"
+                  "    const tide_grid_dir *source = tide_grid_dir_of(value);\n"
+                  "    if (!source) return (tide_grid){0};\n"
+                  "    const uint64_t bytes = sizeof(*source) + (uint64_t)source->room * sizeof(tide_grid_record) + (uint64_t)source->slots * sizeof(uint32_t);\n"
+                  "    if (bytes > UINT32_MAX - sizeof(tide_block)) tide_out_of_memory();\n"
+                  "    uint32_t at = 0;\n"
+                  "    tide_block *block = tide_scratch_block((uint32_t)bytes, \"interpolated grid\", &at);\n"
+                  "    tide_grid_dir *copy = (tide_grid_dir *)(void *)(block + 1);\n"
+                  "    memcpy(copy, source, (size_t)bytes);\n"
+                  "    const tide_heap *heap = tide_heap_read(value.at >> 30);\n"
+                  "    const uint32_t chunk_bytes = tide_grid_chunk_bytes(shape);\n"
+                  "    for (uint32_t i = 0; i < source->records; i++) {\n"
+                  "        uint32_t cells_at = 0;\n"
+                  "        tide_block *cells = tide_scratch_block(chunk_bytes - (uint32_t)sizeof(tide_block), \"interpolated grid cells\", &cells_at);\n"
+                  "        memcpy(cells, tide_grid_chunk_at(heap, tide_grid_records(source)[i].block), chunk_bytes);\n"
+                  "        tide_grid_records(copy)[i].block = cells_at & 0x3FFFFFFFu;\n"
+                  "    }\n    return (tide_grid){at};\n}\n\n");
+    }
     for (int i = 0; i < prog->structs.count; i++) {
         const decl *d = prog->structs.items[i];
         if (!decl_blends(d) || builtin_struct_unnamed(prog, d)) continue; // Sound and the rest: only in a game that names them
@@ -8021,12 +8430,27 @@ static void gen_blend_helpers(gen *g)
             if (d->snapped) sb_put(o, "    if (before->tide_snaps != v->tide_snaps) return; // It jumped\n");
             gen_blend_fields(g, d);
             sb_put(o, "}\n\n");
+            if (blend_reads_heap(d)) {
+                sb_printf(o, "TIDE_HELPER void tide_blend_owned_%s(%s *v, const %s *before, float t, "
+                             "const tide_world *previous, const tide_world *current)\n{\n"
+                             "    if (!before) return;\n"
+                             "    const tide_heap *match = tide_heap_read(TIDE_IN_MATCH);\n"
+                             "    tide_heap *local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                             "    tide_text_use((tide_heap *)(uintptr_t)&previous->heap, local);\n"
+                             "    %s old = *before;\n", name, name, name, name);
+                const type t = {side ? TY_SINGLETON : TY_COMPONENT, (decl *)d};
+                gen_blend_snapshot(g, t, "old", 0);
+                sb_printf(o, "    tide_text_use((tide_heap *)(uintptr_t)&current->heap, local);\n    %s now = *v;\n", name);
+                gen_blend_snapshot(g, t, "now", 0);
+                sb_printf(o, "    tide_text_use((tide_heap *)(uintptr_t)match, local);\n"
+                             "    tide_blend_%s(&now, &old, t);\n    *v = now;\n}\n\n", name);
+            }
             if (side) continue;
             // An entity's in last tick's world, into `out`, unless it wasn't there or it jumped since
             sb_printf(o, "TIDE_HELPER const %s *tide_prev_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n",
                       name, name, name);
             sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
-            if (decl_corrects(d)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
+            if (entities_born(prog)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
             sb_printf(o, "    return tide_load_%s(w, e, out) ? out : NULL;\n}\n\n", name);
         }
     }
@@ -10869,9 +11293,8 @@ static bool decl_blends(const decl *d)
 static bool param_blends(const param *p)
 {
     const type_kind k = p->type.kind;
-    // A `verified` one is as the last confirmed tick has it
     return (k == TY_COMPONENT || k == TY_SINGLETON) && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && !p->type.decl->is_local
-        && !p->verified && decl_blends(p->type.decl);
+        && decl_blends(p->type.decl);
 }
 
 // A view's singleton parameter it gets a copy of: one it sees blended, or the
@@ -11253,14 +11676,14 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
         const char *c = type_cname(p->type.decl);
         sb_printf(o, "%s%s tide_v%d;\n%stide_gather_%s(&tide_v%d, (const uint8_t *const *)tide_%s_%s, tide_i);\n", pad, c, i, pad, c,
                   i, g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
-        // A view of the confirmed world's entities sees them as the last confirmed tick has them
-        const bool drawn = sys->is_view && !sys->verified_entities;
+        const bool drawn = sys->is_view;
         if (drawn && param_blends(p)) {
-            sb_printf(o, "%sif (tide_blend) { %s tide_p%d; tide_blend_%s(&tide_v%d, tide_prev_%s(tide_prev, tide_w, tide_ent[tide_i], "
-                         "&tide_p%d), tide_alpha); }\n",
-                      pad, c, i, c, i, c, i);
+            sb_printf(o, "%sif (%s) { %s tide_p%d; %s(&tide_v%d, tide_prev_%s(%s, %s, tide_ent[tide_i], "
+                         "&tide_p%d), %s%s); }\n", pad, p->verified ? "tide_vblend" : "tide_blend", c, i, view_blender(p->type.decl), i, c,
+                      p->verified ? "tide_vprev" : "tide_prev", p->verified ? "tide_verified" : "tide_w", i,
+                      p->verified ? "tide_valpha" : "tide_alpha", blend_worlds(p->type.decl, p->verified));
         }
-        if (drawn && decl_corrects(p->type.decl)) {
+        if (drawn && !p->verified && decl_corrects(p->type.decl)) {
             sb_printf(o, "%stide_correct_view_%s(tide_l, tide_w, tide_ent[tide_i], &tide_v%d);\n", pad, c, i);
         }
         if (sys->is_view && p->verified) {
@@ -11327,6 +11750,11 @@ static void gen_row_join(gen *g, const decl *sys, const char *pad)
         if (!joined(sys, p) || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
         sb value = {0};
         sb_printf(&value, "tide_v%d", i);
+        if (param_blends(p)) {
+            const char *c = type_cname(p->type.decl);
+            sb_printf(o, "%sif (tide_vblend) { %s tide_p; %s(&%s, tide_prev_%s(tide_vprev, tide_verified, "
+                         "tide_ent[tide_i], &tide_p), tide_valpha%s); }\n", pad, c, view_blender(p->type.decl), value.data, c, blend_worlds(p->type.decl, true));
+        }
         gen_confirmed_copy(o, p->type.decl, value.data, pad);
         if (has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
     }
@@ -12707,6 +13135,11 @@ static bool input_lets_go(const decl *input)
 // `in` and `def` are C accesses to values of type `t`.
 static void gen_repair_value(gen *g, const char *in, const char *def, const type t)
 {
+    if (t.kind == TY_STRUCT && t.decl == g->prog->view_time) {
+        line(g, &g->c, "if (!(%s.alpha >= 0.0f && %s.alpha <= 1.0f) || %s.tick < 0) %s = (ViewTime){0};",
+             in, in, in, in);
+        return;
+    }
     char a[256];
     char b[256];
     const int columns = matrix_dim(t);
@@ -13842,9 +14275,11 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
     sb_printf(o, "// " STR_FMT "'s query '" STR_FMT "': its rows as the frame draws them, made once for the view's run\n",
               STR_ARG(sys->qualified), STR_ARG(q->name));
     sb_printf(o, "static const %s *tide_query_%s_%d(const tide_world *tide_w, const tide_world *tide_prev, const float tide_alpha, "
-                 "const tide_world *tide_verified, tide_local *tide_l, uint32_t *tide_count)\n{\n", type, decl_cname(sys), qi);
+                 "const tide_world *tide_verified, const tide_world *tide_vprev, const float tide_valpha, "
+                 "tide_local *tide_l, uint32_t *tide_count)\n{\n", type, decl_cname(sys), qi);
     sb_put(o, "    (void)tide_w; (void)tide_prev; (void)tide_alpha; (void)tide_verified; (void)tide_l;\n");
     sb_put(o, "    const bool tide_blend = tide_prev && tide_alpha < 1.0f;\n    (void)tide_blend;\n");
+    sb_put(o, "    const bool tide_vblend = tide_vprev && tide_valpha < 1.0f;\n    (void)tide_vblend;\n");
     sb_put(o, "    const uint64_t tide_most = UINT64_C(0)");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (query_admits(g, q, a)) sb_printf(o, " + %s->%s.count", world, arch_name(g, a));
@@ -13930,13 +14365,17 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
             sb place = {0};
             sb_printf(&place, "tide_row->%s", field_cname(value));
             if (!p->verified || confirmed) sb_printf(o, "%stide_gather_%s(&%s, tide_col%d, tide_i);\n", pad, c, place.data, i);
-            if (p->verified) { // As the last confirmed tick has it: what it keeps in a heap is in that world's
+            if (p->verified) {
+                if (decl_blends(comp)) {
+                    sb_printf(o, "%sif (tide_vblend) { %s tide_p; %s(&%s, tide_prev_%s(tide_vprev, tide_verified, "
+                                 "tide_ent[tide_i], &tide_p), tide_valpha%s); }\n", pad, c, view_blender(comp), place.data, c, blend_worlds(comp, true));
+                }
                 gen_confirmed_copy(o, comp, place.data, pad);
                 continue;
             }
             if (decl_blends(comp)) {
-                sb_printf(o, "%sif (tide_blend) { %s tide_p; tide_blend_%s(&%s, tide_prev_%s(tide_prev, tide_w, tide_ent[tide_i], &tide_p), "
-                             "tide_alpha); }\n", pad, c, c, place.data, c);
+                sb_printf(o, "%sif (tide_blend) { %s tide_p; %s(&%s, tide_prev_%s(tide_prev, tide_w, tide_ent[tide_i], &tide_p), "
+                             "tide_alpha%s); }\n", pad, c, view_blender(comp), place.data, c, blend_worlds(comp, false));
             }
             if (decl_corrects(comp)) sb_printf(o, "%stide_correct_view_%s(tide_l, tide_w, tide_ent[tide_i], &%s);\n", pad, c, place.data);
         }
@@ -13974,7 +14413,13 @@ static void gen_extern_rows_call(gen *g, const decl *sys, const int a, const cha
         sb_put(o, held ? "tide_held, " : "NULL, ");
     }
     gen_c_literal(o, tool_name(sys), false);
-    sb_printf(o, ");\n%s%s(&tide_r", pad, sys->c_name);
+    sb_printf(o, ");\n%stide_r.entities = &tide_w->entities;\n", pad);
+    if (a < 0) {
+        int slot = 0;
+        for (int i = 0; g->prog->systems.items[i] != sys; i++) slot += g->prog->systems.items[i]->extern_system;
+        sb_printf(o, "%stide_r.completion = &tide_w->tide_completions[%d];\n", pad, slot);
+    }
+    sb_printf(o, "%s%s(&tide_r", pad, sys->c_name);
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind == TY_SINGLETON) sb_printf(o, ", &tide_w->%s", type_cname(p->type.decl));
@@ -14130,18 +14575,15 @@ static void gen_system_run(gen *g, const decl *sys)
         // A view with `verified` parameters is handed the world the server has confirmed too
         sb_printf(o, "static void tide_run_view_%s(const tide_world *tide_w, const tide_world *tide_prev, float tide_alpha, "
                      "%stide_local *tide_l, tide_draw_list *tide_draw, tide_gui *tide_ui)\n{\n",
-                  name, sys->takes_verified ? "const tide_world *tide_verified, " : "");
+                  name, sys->takes_verified ? "const tide_world *tide_verified, const tide_world *tide_vprev, float tide_valpha, " : "");
         if (reads_match(sys)) sb_put(o, "    if (!tide_w) return; // It reads the match, and there's none.\n");
         if (sys->takes_verified) sb_put(o, "    if (!tide_verified) return; // ...nor a world the server confirmed\n");
         // The devices it reads keep what it claimed last frame, and its claims are its own
         sb_printf(o, "    tide_gui_view(tide_ui, %du);\n", view_number + 1);
         // What it reads of the match, between last tick and this one. The
         // confirmed world's entities are as its last tick has them.
-        if (sys->verified_entities) {
-            sb_put(o, "    const bool tide_blend = false; // The confirmed world, as it is\n"
-                      "    (void)tide_blend;\n    (void)tide_prev;\n    (void)tide_alpha;\n");
-        }
-        else sb_put(o, "    const bool tide_blend = tide_prev && tide_alpha < 1.0f;\n    (void)tide_blend;\n");
+        sb_put(o, "    const bool tide_blend = tide_prev && tide_alpha < 1.0f;\n    (void)tide_blend;\n");
+        if (sys->takes_verified) sb_put(o, "    const bool tide_vblend = tide_vprev && tide_valpha < 1.0f;\n    (void)tide_vblend;\n");
         // What it takes `verified` with text in a list's or a map's elements gets copies of those
         // (gen_confirmed_copy), which go once it has run for every entity
         for (int i = 0; i < sys->params.count && !confirmed_mark; i++) {
@@ -14149,6 +14591,11 @@ static void gen_system_run(gen *g, const decl *sys)
             const type_kind k = p->type.kind;
             confirmed_mark = p->verified && (k == TY_COMPONENT || k == TY_SINGLETON) && (p->mode == PARAM_READ || p->mode == PARAM_MUT)
                           && confirmed_copies(p->type.decl);
+            confirmed_mark |= (k == TY_COMPONENT || k == TY_SINGLETON) && param_blends(p) && blend_reads_heap(p->type.decl);
+            if (k == TY_QUERY) for (int j = 0; j < p->query.count; j++) {
+                const param *binding = &p->query.items[j];
+                if (binding->mode == PARAM_READ) confirmed_mark |= blend_reads_heap(binding->type.decl);
+            }
         }
         if (confirmed_mark) sb_put(o, "    const uint32_t tide_confirmed_mark = tide_scratch_mark();\n");
         for (int i = 0; i < sys->params.count; i++) {
@@ -14156,7 +14603,9 @@ static void gen_system_run(gen *g, const decl *sys)
             if (!view_copies(p)) continue;
             const char *s = type_cname(p->type.decl);
             sb_printf(o, "    %s tide_v%d = %s->%s;\n", s, i, p->verified ? "tide_verified" : "tide_w", s);
-            if (param_blends(p)) sb_printf(o, "    if (tide_blend) tide_blend_%s(&tide_v%d, &tide_prev->%s, tide_alpha);\n", s, i, s);
+            if (param_blends(p)) sb_printf(o, "    if (%s) %s(&tide_v%d, &%s->%s, %s%s);\n",
+                p->verified ? "tide_vblend" : "tide_blend", view_blender(p->type.decl), i, p->verified ? "tide_vprev" : "tide_prev", s,
+                p->verified ? "tide_valpha" : "tide_alpha", blend_worlds(p->type.decl, p->verified));
             if (decl_corrects(p->type.decl) && !p->verified) sb_printf(o, "    tide_correct_view_%s(tide_l, tide_w, &tide_v%d);\n", s, i);
             if (p->verified) {
                 sb value = {0};
@@ -14187,7 +14636,7 @@ static void gen_system_run(gen *g, const decl *sys)
                 if (p->type.kind != TY_QUERY || !p->query_rows) continue;
                 sb_printf(o, "    const %s *tide_q%d = NULL;\n    uint32_t tide_q%dn = 0u;\n", query_row_type(sys, i), i, i);
                 sb_printf(&fill, "tide_q%d = tide_query_%s_%d(tide_w, tide_prev, tide_alpha, %s, tide_l, &tide_q%dn); ", i, name, i,
-                          sys->takes_verified ? "tide_verified" : "NULL", i);
+                          sys->takes_verified ? "tide_verified, tide_vprev, tide_valpha" : "NULL, NULL, 1.0f", i);
             }
             // What the view makes for an entity goes after each: the rows stay under that mark
             if (prog->uses_text) sb_put(&fill, "tide_mark = tide_scratch_mark(); ");
@@ -14327,6 +14776,9 @@ static void gen_print_value(sb *o, const type t, const char *access)
         sb_printf(o, "        switch (%s) {\n", access);
         for (int i = 0; i < t.decl->members.count; i++) {
             const enum_member *m = &t.decl->members.items[i];
+            bool named = false; // By an earlier member: two names of one number are one case
+            for (int before = 0; before < i; before++) named |= t.decl->members.items[before].number == m->number;
+            if (named) continue;
             sb_printf(o, "        case %s: printf(\"" STR_FMT "." STR_FMT "\"); break;\n", enum_member_cname(t.decl, m),
                       STR_ARG(t.decl->qualified), STR_ARG(m->name));
         }
@@ -15283,6 +15735,7 @@ static void gen_api(gen *g)
                  "    w->Time.tickRate = dt >= 1e-9f ? (int32_t)(1.0f / dt + 0.5f) : 0;\n",
               prog->uses_seed ? "tide_world_start_seeded" : "tide_world_start", prog->uses_seed ? ", uint32_t seed" : "", use_match);
     if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
+    if (prog->uses_rewind_limit) sb_printf(o, "    w->Time.maxRewind = %.9ef;\n", (double)prog->max_rewind);
     // From 0 to 2147483647, like Math.Hash's, so % of it never goes negative
     if (prog->uses_seed) sb_put(o, "    w->Time.seed = (int32_t)(seed & 0x7FFFFFFFu);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
@@ -15386,6 +15839,8 @@ static void gen_api(gen *g)
 
     sb_put(o, "void tide_world_tick(tide_world *w)\n{\n    tide_world_tick_on(w, NULL);\n}\n\n");
     sb_printf(o, "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n%s", use_match);
+    const int completions = extern_system_count(prog);
+    if (completions) sb_printf(o, "    tide_tick_completion tide_completions[%d] = {0};\n    w->tide_completions = tide_completions;\n", completions);
     // A host that shows where ticks' time goes gave its jobs a profile
     // (tide/profile.h): the systems' part of the tick, and what follows them
     sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
@@ -15401,6 +15856,7 @@ static void gen_api(gen *g)
     }
     sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     sb_put(o, "    tide_apply_commands(w);\n");
+    if (completions) sb_printf(o, "    tide_rows_finish_tick(tide_completions, %du, &w->entities);\n    w->tide_completions = NULL;\n", completions);
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
     // Time.t is worked out from the tick each time, never added to, so it doesn't drift
     sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n");
@@ -15465,8 +15921,9 @@ static void gen_api(gen *g)
     sb_put(o, "}\n\n");
 
     sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
+              "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
-    sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n");
+    sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n    (void)verified_previous;\n    (void)verified_alpha;\n");
     if (prog->seed_local) sb_put(o, "    local->tide_match_seed = w ? w->Time.seed : 0;\n");
     // What the frame's draws send for code the GPU runs that rolls or reads the seed: one roll of this
     // machine's generator, which every draw of the frame has (so they still join), and the drawn world's seed
@@ -15500,7 +15957,7 @@ static void gen_api(gen *g)
         const decl *view = prog->views.items[i];
         // With no verified world given, the one views draw is all there is: it's the confirmed one
         sb_printf(o, "    tide_run_view_%s(w, previous, alpha, %slocal, draw, gui);\n", decl_cname(view),
-                  view->takes_verified ? "verified ? verified : w, " : "");
+                  view->takes_verified ? "verified ? verified : w, verified ? verified_previous : previous, verified ? verified_alpha : alpha, " : "");
         sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
         gen_c_literal(o, tool_name(view), false);
         sb_put(o, ", tide_at);\n");
@@ -17002,6 +17459,13 @@ static void gen_game_api(gen *g)
         }
     }
     const uint32_t bytes = (bits + 7u) / 8u; // As a delta, the most an input can take
+    if (input && prog->max_rewind > 0.0f) {
+        sb_put(o, "static tide_view_time tide_game_view_time(const void *p)\n{\n"
+                  "    const ViewTime v = ((const tide_input *)p)->viewTime;\n"
+                  "    return (tide_view_time){v.tick, v.alpha, v.valid};\n}\n"
+                  "static void tide_game_set_view_time(void *p, tide_view_time v)\n{\n"
+                  "    ((tide_input *)p)->viewTime = (ViewTime){.tick = v.tick, .alpha = v.alpha, .valid = v.valid};\n}\n\n");
+    }
     sb_put(o, "const tide_game tide_game_api = {\n");
     sb_printf(o, "    .hash = 0x%016llXull,\n", (unsigned long long)g->game_hash);
     sb_put(o, "    .world_size = sizeof(tide_world),\n");
@@ -17018,6 +17482,7 @@ static void gen_game_api(gen *g)
     sb_put(o, "    .hash_pages = tide_game_hash_pages,\n    .need_pages = tide_game_need_pages,\n");
     sb_put(o, "    .player_joined = tide_game_joined,\n    .player_left = tide_game_left,\n");
     if (input) {
+        if (prog->max_rewind > 0.0f) sb_put(o, "    .view_time = tide_game_view_time,\n    .set_view_time = tide_game_set_view_time,\n");
         sb_put(o, "    .set_input = tide_game_set_input,\n    .set_server_input = tide_game_set_server_input,\n");
         sb_put(o, "    .write_input = tide_game_write_input,\n    .read_input = tide_game_read_input,\n");
         sb_put(o, "    .write_input_delta = tide_game_write_input_delta,\n    .read_input_delta = tide_game_read_input_delta,\n");
@@ -17035,6 +17500,7 @@ static void gen_game_api(gen *g)
     if (prog->channels.count) sb_printf(o, "    .command_channels = %uu,\n", (unsigned)prog->channels.count + 1u);
     // Its settings: here rather than in the header, so they don't change the game's hash
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
+    if (prog->max_rewind > 0.0f) sb_printf(o, "    .max_rewind = %.9ef,\n", (double)prog->max_rewind);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
     if (prog->delay_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_DELAY,\n");
     if (prog->stats) sb_put(o, "    .stats = true,\n");
@@ -17945,6 +18411,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_text_helpers(&g);
     gen_skinned_adapters(&g);
     gen_show_helpers(&g);
+    gen_json_helpers(&g);
     gen_columns(&g);
     gen_component_access(&g);
     gen_local_fields(&g);

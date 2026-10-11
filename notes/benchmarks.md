@@ -1,5 +1,96 @@
 # Benchmarks
 
+## Owned storage reuse after asset writes, 2026-10-11
+
+The owner asked to investigate the asset-sharing prototype's bulk reset/edit
+regression. The naive policy releases an owned list on asset assignment, then
+allocates another on the next write before the pending old blocks are flushed.
+A scoped candidate copies the asset into an already-owned destination through
+the existing `tide_list_set`; empty/still-shared destinations retain the asset
+reference and detach on first write. Ordinary owned sources are unchanged.
+Only known-asset assignment adds an ownership check; there is no data comparison,
+new runtime entry point, allocator/layout change or production storage change.
+
+Instrumented native 16 KiB reset/edit runs confirm the mechanism: naive has
+192 pending blocks after assignment and 6,291,456 dirty bytes before hashing;
+baseline/reuse each have zero pending blocks and 3,145,728 dirty bytes. Reuse
+restores the original 3,146,600-byte heap high-water mark from naive's 6,293,096,
+with original heap hash and identical independently checked final values.
+These diagnostic clocks were collected under competing work and are not speed
+evidence. All 27 WASI checks pass across three policies and nine workloads,
+including 4/16/64 KiB reset/edit, fresh first-write, ordinary owned copies/edits
+and the unchanged 100-character grid. Every retained snapshot is hash-checked
+before/after mutation; assets and every list's expected values are checked.
+Native diagnostic values/layouts agree with their three WASI counterparts;
+grid semantic/palette outputs agree across all WASI policies.
+
+After continuous work in other checkouts caused a 45-minute quiet-guard timeout,
+the owner explicitly deferred timing/tests to later and requested merging this
+experiment. The restarted timing runner was stopped; neither attempt produced
+a comparison row. No speedup, ordinary-list overhead or preservation of the
+previous grid timing gain is established for this candidate. The rotated
+81-row native comparison, full native/WASI comparison and timing analysis remain
+ready to run later. The existing correctness/mechanism/export verifier passes.
+No full production suites, browser/GPU, other platforms, sanitizers or CI were
+rerun for these standalone artifacts; production code is unchanged.
+
+The policy keeps once-edited destinations owned even when later repeatedly
+assigned assets without editing. That retains original copy/hash costs instead
+of recovering naive sharing's read-only benefit; `written-then-read` is included
+in the deferred comparison. Stable identities/pack lifetimes, reload, portable
+reference packing, nested containers and all mutation paths remain prerequisites
+for a production sharing implementation. This is a measured allocation-mechanism
+fix in a prototype, with its runtime performance gate still pending. Sources,
+checks, diagnostic counters, raw identities, reproduction scripts and the
+checks-only verifier are in
+[asset-owned-reuse](../bench/results/asset-owned-reuse/README.md).
+
+## Asset sharing ownership gate, 2026-10-11
+
+The owner approved considering known asset sharing with detach-on-write for
+ordinary asset values as well as immutable animation data, and required proof
+before adopting the broader storage change. A scratch generated-code/C-wrapper
+experiment retains current pack handles until writing; no production compiler,
+runtime, installed package or user game source is changed. It measures ownership
+placement, not a complete stable-reference/reload implementation.
+
+Three alternating release pairs of the unchanged 100-character game, with
+one pre-tick snapshot retained, reduce the median of process-mean CPU
+tick+hash+view/preparation sums from 4.139521 to 1.023344 ms (75.3% lower).
+Every pair improves, with ratios 3.87x/4.06x/4.16x. Tick/hash/views are separately
+1.633971/0.879640/1.625910 -> 0.010648/0.000272/1.011959 ms; retaining the
+snapshot separately is 0.022408 -> 0.000112. Packed native world size is
+13,117,656 -> 7,256 bytes. All game/palette digests agree across both variants
+and native/WASI. Raw world hashes intentionally differ across representations.
+This excludes GPU rendering, networking, restore/replay, Rooms UI and session
+startup; no FPS claim is made.
+
+The corrected ordinary-container controls include snapshotting, cleanup before
+hashing, cold detachment and bulk repeated asset reset followed by editing.
+Cached owned-edit total is close (0.087626 -> 0.088710 ms), with writes about
+1.5% higher; cold first-write totals have mixed pairwise changes and essentially
+equal medians. Bulk reset-and-edit is 1.93x slower (0.256220 -> 0.493319 ms),
+with doubled heap high-water size while old blocks await the batch flush.
+This fails the blanket rollout gate despite the read-only gain. Sharing known
+unchanged data is supported; a complete general candidate must address or
+explicitly justify that adverse workload, preserve stable identities/value
+semantics through reload/snapshots, cover every mutation path and remeasure.
+No general container-storage feature is landed by this experiment.
+
+All 66 valid comparison rows, the 30 initial rows and fixture correction,
+strictly compiled native/WASI checks, source/binary/library/input identities,
+reproduction scripts and verifier are retained in
+[asset-sharing-prototype](../bench/results/asset-sharing-prototype/README.md).
+An initial C fixture wrongly read a byte asset as a float list; the native/web
+digest mismatch exposed its overread. Its mutable-edit results are invalid,
+explicitly excluded and retained for audit; both corrected experiments were
+remeasured and the float results independently checked. Final comparison runs
+each followed a complete 90-second quiet window with no detected competing
+build/test/benchmark work. Other desktop activity/clocks remain uncontrolled.
+Full production suites, browsers/GPU, other platforms, sanitizers and CI were
+not rerun for these standalone experimental artifacts; no production code
+changed.
+
 ## Owned key reductions and validated binding, 2026-10-11
 
 The owner's unchanged 100-character `D:/Projects/Test` scenario now uses

@@ -140,6 +140,16 @@ run's captured audio peaks at -1.8 dB. No CI run was asked for or
 dispatched: Linux, macOS, MinGW, Android and the sanitizers are a requested
 run's.
 
+Merging `origin/dev` through `02bb9822` (confirmed-view interpolation,
+physics rewind, `Json`, and the Inside Out prototype) conflicted only in the
+catalog's lists, which now have both games. Both whole trees built again with
+no warning; `cracked_tests` passed natively and under WASI with the same
+hash, with the rooms, Two Forks and Inside Out tests (its two browser
+playtests among them, once the three Last Light helpers they import were
+moved beside them), and the docs check, build and tests passed again. A
+capture after the merge is the picture it was. The two full suites weren't
+run a second time.
+
 ## Not built, and not checked
 
 - The pushable blocks stand still (DESIGN.md). That's the port's biggest gap

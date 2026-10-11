@@ -36,7 +36,7 @@ A struct's fields change through whatever holds it, so the signature still says 
 
 ## Methods
 
-Structs and components can have methods. Their fields are in scope by name, and so are their other methods. A method only reads the fields, unless it's `mut`:
+Structs, components and singletons can have methods. Their fields are in scope by name, and so are their other methods. A method only reads the fields, unless it's `mut`:
 
 ```csharp
 struct Stats
@@ -60,7 +60,7 @@ system Burn(mut Unit unit)
 
 Calling a `mut` method changes what it's called on, so it needs write access, like an assignment: `unit.stats.Hurt(1)` needs `mut Unit unit`. A read-only method can't call a `mut` one.
 
-Singletons and inputs have no methods of their own: keep the data and its methods in a struct, and the struct in them.
+Singleton methods use their explicit receiver and have no entity `this`, implicit world access or local sidecar fields. Inputs have only `Sample` and `Sanitize`.
 
 A method marked `virtual` can be replaced by another package, and so can a function: see [Virtual and override](overrides.md).
 
@@ -110,13 +110,25 @@ system AdvanceRound(mut Round round)
 }
 ```
 
-Methods take explicit singleton parameters by the same value and `mut` rules. Singletons still have no methods of their own.
+Methods take explicit singleton parameters and receivers by the same value and `mut` rules.
 
 A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
 
 Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
+
+### A value nobody takes
+
+A call written as a statement, whose function gives a value and does nothing else, is a warning: the value is lost, and the call with it. It's usually a method that gives a changed copy, taken for one that changes its value:
+
+```csharp
+request.SetHeader("Accept", "text/plain");            // Warning: 'SetHeader' gives a value that nothing takes
+request = request.SetHeader("Accept", "text/plain");  // Keeps it
+_ = request.SetHeader("Accept", "text/plain");        // Drops it, on purpose
+```
+
+`_ = value;` works anything out and drops it. A call that does something besides giving its value (it sends, spawns, draws, calls C, or changes a `mut` argument or its own value) is a statement as it always was, and so is one that can fail, which has a warning of its own.
 
 ## Sending and spawning
 

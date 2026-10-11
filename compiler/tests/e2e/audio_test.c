@@ -28,7 +28,7 @@ static void frame(tide_audio_frame *into)
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), NULL);
     tide_local_audio(&local, into);
     tide_local_events(&local, &events);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

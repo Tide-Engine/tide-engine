@@ -1,0 +1,7 @@
+// expect: JSON has nothing for Entity, which 'Lobby.owner' holds
+// expect: JSON holds bool, the integers, float, char, string, enums, structs of these, List<T>, arrays and Map<string, T>
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+struct Lobby { string id; Entity owner; }
+system Run(mut Seen seen) { seen.text = Json.Write(Lobby { }); }

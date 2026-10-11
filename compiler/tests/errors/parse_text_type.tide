@@ -1,0 +1,5 @@
+// expect: no version of long.TryParse takes (int, out var)
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { if (long.TryParse(seen.count, out var n)) seen.count = int(n); }

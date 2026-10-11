@@ -63,6 +63,7 @@ component Body
     float spin;                       // In radians a second
     float2 impulse;                   // A push at the next step, once
     float turn;                       // The same, around
+    bool rewind;                      // Opt this body and its parts into collider history
     bool asleep;                      // At rest, and not stepped until something wakes it
     float gravityScale = 1;           // 0 for a body that floats
     float linearDamping;              // How fast it slows by itself
@@ -410,12 +411,12 @@ event(Touched touched) Score(mut Goal goal, World world)
 // How many are standing on the plate
 system Weigh(mut Plate plate, Physics physics)
 {
-    Inside(physics, this, out var found);
+    physics.Inside(this, out var found);
     plate.load = found.count;
 }
 ```
 
-- `Inside(physics, sensor, out found)` takes the entity the sensor shape is a component of: a body's, or a [part's](#more-shapes-on-a-body). An entity with no sensor has nobody in it.
+- `physics.Inside(sensor, out found)` takes the entity the sensor shape is a component of: a body's, or a [part's](#more-shapes-on-a-body). An entity with no sensor has nobody in it.
 - It returns whether anybody is there. `found` has each entity once, a static body's too, in an order that's the same on every machine.
 - It's one of the functions that ask the world something: see [Asking the world](#asking-the-world) for what they see and when.
 
@@ -447,7 +448,7 @@ bool Overlap(Physics physics, Circle shape, float2 at, float angle, out List<Ent
 system Fly(mut Shot shot, Physics physics, Time time)
 {
     var to = shot.at + shot.velocity * time.dt;
-    if (Raycast(physics, shot.at, to, out var hit))
+    if (physics.Raycast(shot.at, to, out var hit))
     {
         hit.entity.Send(Struck { at = hit.point });
         this.Destroy();
@@ -465,7 +466,7 @@ system Stand(Body body, mut Player player, Physics physics)
 {
     var feet = Circle { radius = 0.3 };
     var under = body.position + float2(0, -0.4);
-    player.grounded = Cast(physics, feet, body.position, 0, under, out _, ignore: body);
+    player.grounded = physics.Cast(feet, body.position, 0, under, out _, ignore: body);
 }
 ```
 
@@ -475,12 +476,12 @@ system Stand(Body body, mut Player player, Physics physics)
 // Everything within three meters is thrown outwards
 event(Exploded) Blast(Body body, Physics physics)
 {
-    Overlap(physics, Circle { radius = 3 }, body.position, 0, out var found);
+    physics.Overlap(Circle { radius = 3 }, body.position, 0, out var found);
     foreach (var caught in found) caught.Send(Thrown { from = body.position });
 }
 ```
 
-- **One body can be left out.** `Raycast` and `Cast` take a last argument, the `Body` they don't meet: `Raycast(physics, body.position, target, out var hit, ignore: body)`. A ray from a body's own middle meets that body at once otherwise.
+- **One body can be left out.** `Raycast` and `Cast` take a last argument, the `Body` they don't meet: `physics.Raycast(body.position, target, out var hit, ignore: body)`. A ray from a body's own middle meets that body at once otherwise.
 - **Sensors aren't met**, nor found by `Overlap`: they stop nothing. [`Inside`](#sensors) is what asks a sensor.
 - **A ray or a shape that starts in something meets it there**, at `fraction` 0, with no `normal`. A shape that only touches something where it starts is in it, for this: a crate at rest touches the floor, so its own box cast along the floor meets the floor at once. Cast a slightly smaller one to slide it along what it rests on.
 - **Of two things as near as each other, the one that was made first is the answer**, and `Overlap` and `Inside` give their entities in the order their bodies were made in: the same on every machine, whatever order Box2D comes to them in.
@@ -503,7 +504,7 @@ view Hover(Devices devices, Physics physics, mut Pointed pointed)
 {
     var at = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     pointed.over = default;
-    if (Overlap(physics, Circle { radius = 0.1 }, at, 0, out var found)) pointed.over = found[0];
+    if (physics.Overlap(Circle { radius = 0.1 }, at, 0, out var found)) pointed.over = found[0];
 }
 ```
 
@@ -592,3 +593,36 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 - `Touched` and `Parted` don't say which of an entity's own `Box` and `Circle` it was, and a parting from an entity that was destroyed doesn't say which entity.
 - The fields of a body that are read when it's made don't follow later changes, and a shape's fields don't either: a sensor stays a sensor.
 - Removing `Body` from an entity that stays leaves its body in the world, and removing `Box` or `Circle` leaves the shape on it.
+
+## Rewinding queries
+
+`physics.Raycast(...)`, `physics.Cast(...)`, `physics.Overlap(...)` and `physics.Inside(...)` query current geometry. To validate a shot against confirmed presentation, prepare a separate context once:
+
+```csharp
+settings { maxRewind = 0.25; } // Seconds; 0 (the default) disables history
+
+// On players or moving geometry that should rewind:
+// Spawn(Body { rewind = true }, ...);
+
+system Fire(Controls controls, Body body, Physics physics)
+{
+    if (!controls.fire.down) return;
+    // Validate weapon, origin, aim and firing cadence from match state first.
+    if (!physics.Rewind(controls.viewTime, out var query)) return;
+    if (query.Raycast(body.position, controls.aim, out var hit, body))
+    {
+        // Validate the hit entity is still alive, then apply the game's damage.
+        ...
+    }
+}
+```
+
+The context has every current query form, including all shape casts, overlaps, sensor `Inside` queries and existing ignore-body overloads. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
+
+`Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
+
+`Rewind` returns false for disabled history, invalid, stale or future times, or an unavailable endpoint. The output then contains no queryable geometry. No time is clamped and no current-world fallback is substituted. History begins after the first completed physics step and follows the same snapshot, rollback and serialization path as the match. Geometry is that of the physics step, as with current queries; write movement before `PhysicsStages.Step` when presentation and collider poses should agree.
+
+The history window covers the full age of the frame when the server executes the shot: confirmation delivery, time since the last drawn frame, input lead and delivery of the input all contribute. Low frame rates, stalls, jitter and packet loss can push a shot outside `maxRewind` even when its ping seems small. The engine uses the actual presented tick and fraction, rather than estimating the shot time by subtracting ping.
+
+The server validates the input timestamp, but the game remains responsible for authoritative shot validation. It must never accept a client-supplied collider pose, origin or hit just because the timestamp passed validation.

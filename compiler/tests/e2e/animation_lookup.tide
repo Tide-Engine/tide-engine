@@ -1,0 +1,68 @@
+asset AnimationCatalog movement = ["animation_imports/movement/walk.gltf", "animation_imports/movement/run.gltf"];
+asset AnimationCatalog names = "animation_imports/names.gltf";
+asset SkinnedMesh<Vertex3> hero = "skinned/models/a.gltf";
+
+singleton Probe {
+    AnimationCatalog catalog = movement;
+    SkinnedMesh<Vertex3> model = hero;
+    Animation clip;
+    Bone bone;
+    int checks;
+    int passed;
+    int firstFailure;
+    int order;
+    int ticks;
+}
+scene Main { }
+void Expect(mut Probe p, bool yes) {
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+AnimationCatalog StampCatalog(mut Probe p) { p.order = p.order * 10 + 1; return p.catalog; }
+int DropCatalog(mut Probe p) { p.order = p.order * 10 + 2; p.catalog = default; return 3; }
+string StampName(mut Probe p) { p.order = p.order * 10 + 3; return "Root|Run"; }
+
+system Check(mut Probe p) {
+    if (p.ticks == 0) {
+        Expect(p, movement.TryGetByName("Root|Run", out var run) && run.name == "Root|Run");
+        Expect(p, movement.TryGetAt(3, out Animation indexed) && indexed.name == run.name);
+        Expect(p, !movement.TryGetByName("rootRun", out var missing) && missing.name == "" && missing.duration == 0);
+        Expect(p, !movement.TryGetByName("Root|0.Targeting Pose", out _));
+        Expect(p, !movement.TryGetByName("", out _));
+        Expect(p, !movement.TryGetAt(-1, out _) && !movement.TryGetAt(4, out _));
+        Expect(p, !movement.TryGetAt(int(-2147483648), out _) && !movement.TryGetAt(2147483647, out _));
+        Expect(p, names.TryGetAt(13, out var unnamed) && unnamed.name == "");
+        Expect(p, !names.TryGetByName("Same", out var ambiguous) && ambiguous.duration == 0);
+        mut var replace = run;
+        Expect(p, movement.TryGetAt(result: out replace, index: 1) && replace.name == "Root|Walk");
+        Expect(p, !movement.TryGetAt(4, out replace) && replace.name == "" && replace.duration == 0);
+        Animation delayed;
+        movement.TryGetByName("Root|Run", out delayed);
+        Expect(p, delayed.name == "Root|Run");
+        Expect(p, hero.skeleton.TryGetByName("Arm", out var arm));
+        Expect(p, hero.skeleton.bones.TryGetByName("Arm", out var byName)
+            && hero.defaultPose[byName].scale.x == 1);
+        Expect(p, hero.skeleton.bones.TryGetAt(2, out var byIndex)
+            && hero.defaultPose[byIndex].scale.x == 1);
+        mut var badBone = arm;
+        Expect(p, !hero.skeleton.bones.TryGetAt(3, out badBone)
+            && Math.Transform(hero.animations.move.Sample(0.5).Model(badBone), float3(0)).x == 0);
+        Expect(p, !hero.skeleton.TryGetByName("arm", out _) && !hero.skeleton.TryGetByName("", out _));
+        Expect(p, !hero.skeleton.bones.TryGetAt(-1, out _) && !hero.skeleton.bones.TryGetAt(2147483647, out _));
+        p.order = 0;
+        Expect(p, StampCatalog(p).TryGetAt(index: DropCatalog(p), result: out p.clip)
+            && p.order == 12 && p.clip.name == "Root|Run" && p.catalog.count == 0);
+        p.catalog = movement;
+        p.order = 0;
+        Expect(p, StampCatalog(p).TryGetByName(result: out var ordered, name: StampName(p))
+            && p.order == 13 && ordered.name == "Root|Run");
+        Expect(p, !p.catalog.TryGetAt(4, out p.clip) && p.clip.name == "" && p.clip.duration == 0);
+        p.model.skeleton.TryGetByName("Arm", out p.bone);
+    }
+    Expect(p, p.catalog.TryGetByName("Root|Run", out p.clip) && p.clip.duration == 1);
+    Expect(p, !p.catalog.TryGetByName("absent", out p.clip) && p.clip.name == "" && p.clip.duration == 0);
+    Expect(p, p.model.animations.TryGetAt(0, out p.clip)
+        && p.clip.Sample(0.5)[p.bone].position.x == -12);
+    p.ticks++;
+}

@@ -1,0 +1,212 @@
+{
+  "date": "2026-10-11",
+  "head": "d0abaf9a2876a8c521df9199eead303a4fecb0dc",
+  "cpu": "AMD Ryzen 9 7900X 12-Core Processor            ",
+  "clang": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "container_rounds": 150,
+  "warmup": 30,
+  "measured_rounds": 120,
+  "grid_frames": 330,
+  "grid_measured_frames": 300,
+  "identities": [
+    {
+      "path": "build/release/engine/tide.lib",
+      "bytes": 3497560,
+      "sha256": "cf697ed24d41648be3de9dcc6c6ea08f9926847ec2c63f24a6879e6ea8997269"
+    },
+    {
+      "path": "build/web-debug/engine/libtide.a",
+      "bytes": 2226634,
+      "sha256": "a33b1b17c7d21d62b8be4cb3d1ce8192e4902232a4d2bf0869e472f96b6941e7"
+    },
+    {
+      "path": "build/owned-animation/gen/game.pack",
+      "bytes": 5689760,
+      "sha256": "31f9bbab5442e3de29d40aaddd9f4a72107f4573e9d5e276b9845f4c21ad7b4b"
+    },
+    {
+      "path": "build/owned-animation/gen/game_pack.c",
+      "bytes": 21987201,
+      "sha256": "17f347b21f1d8d2047a720df75bde229ce6fd59b4d65d8459f21766d88b2b617"
+    },
+    {
+      "path": "build/asset-reuse-prototype/harness.c",
+      "bytes": 3521,
+      "sha256": "225f755207221aa869587f94c615067b733018c416ab0e9cd1f6efadfb9a67a7"
+    },
+    {
+      "path": "build/asset-reuse-prototype/containers.c",
+      "bytes": 7336,
+      "sha256": "8311a1db84969ea5f8609a6466ba17f952019328ce58facbd670bbced485a967"
+    },
+    {
+      "path": "build/asset-reuse-prototype/base/game.c",
+      "bytes": 213248,
+      "sha256": "7aa8faeaf4a164d8e473c86ce7d9079eef2eb58408e4559593b056c17506d00b"
+    },
+    {
+      "path": "build/asset-reuse-prototype/base/game.h",
+      "bytes": 26336,
+      "sha256": "bb11cdba21bde70a2f6843bfc5ea6ea615512c7dd1d5b1ba78a8ae101da0ed49"
+    },
+    {
+      "path": "build/asset-reuse-prototype/containers-base.exe",
+      "bytes": 83456,
+      "sha256": "079b69f4402235ba89f37b2910d8dd6fa6ba7420d55e6ed3f6b4eddeab7d843c"
+    },
+    {
+      "path": "build/asset-reuse-prototype/grid-base.exe",
+      "bytes": 5925888,
+      "sha256": "1c8f0401f89fbd31a4dfadc7a56ca8679f9fc8c0893ce9eb22b96c047dddb148"
+    },
+    {
+      "path": "build/asset-reuse-prototype/containers-base.wasm",
+      "bytes": 428014,
+      "sha256": "8f8aeaa41e225fe41c48f910b977e6a9e0bf3e11abdb51d26347a0a56f5a708f"
+    },
+    {
+      "path": "build/asset-reuse-prototype/grid-base.wasm",
+      "bytes": 6662197,
+      "sha256": "d0d44991c862554e82508a97fb765e2fc25f07178aff4e15a855ae1d912d0ab9"
+    },
+    {
+      "path": "build/asset-reuse-prototype/naive/game.c",
+      "bytes": 213433,
+      "sha256": "31e0aeb13369f97000ca8aaa88943e49ff953b0486c6f9720737e9d01c11991a"
+    },
+    {
+      "path": "build/asset-reuse-prototype/naive/game.h",
+      "bytes": 26336,
+      "sha256": "bb11cdba21bde70a2f6843bfc5ea6ea615512c7dd1d5b1ba78a8ae101da0ed49"
+    },
+    {
+      "path": "build/asset-reuse-prototype/containers-naive.exe",
+      "bytes": 83968,
+      "sha256": "a3589856535a2f1dfbe4b00c5952a45bb138c0215ff07ee5ddc43a717ca5463b"
+    },
+    {
+      "path": "build/asset-reuse-prototype/grid-naive.exe",
+      "bytes": 5925888,
+      "sha256": "6b2f61e73b698d32e9495639dcbffea031e4c2af45f6c2c2c4aabfb498a2c1e0"
+    },
+    {
+      "path": "build/asset-reuse-prototype/containers-naive.wasm",
+      "bytes": 428333,
+      "sha256": "e38d24bc73f2ff879ed18acbf25406f46e73f2641059e6a4774296c1ce2a7967"
+    },
+    {
+      "path": "build/asset-reuse-prototype/grid-naive.wasm",
+      "bytes": 6662705,
+      "sha256": "a40d7847b250cfadd6e78fd0a50c61e8cf87b123f0670051f2f1b1d0fa34d937"
+    },
+    {
+      "path": "build/asset-reuse-prototype/reuse/game.c",
+      "bytes": 213549,
+      "sha256": "26a630109d70a92f284b1ec13a12a3aa79adab744562e68ecae3ef85cd5bd082"
+    },
+    {
+      "path": "build/asset-reuse-prototype/reuse/game.h",
+      "bytes": 26336,
+      "sha256": "bb11cdba21bde70a2f6843bfc5ea6ea615512c7dd1d5b1ba78a8ae101da0ed49"
+    },
+    {
+      "path": "build/asset-reuse-prototype/containers-reuse.exe",
+      "bytes": 83968,
+      "sha256": "9c0c329822b4b1ef83ee3f79f4780c44391f0ee4b79d4105b161a023359caf4d"
+    },
+    {
+      "path": "build/asset-reuse-prototype/grid-reuse.exe",
+      "bytes": 5925888,
+      "sha256": "174b1c5c60db34f211d86a01c05871dab0487dd18bb5155712da04bb214c7adb"
+    },
+    {
+      "path": "build/asset-reuse-prototype/containers-reuse.wasm",
+      "bytes": 428355,
+      "sha256": "67f059a39f3cc4a4f3943cae6d38e4142e62cabf10d0833157c156612755c70c"
+    },
+    {
+      "path": "build/asset-reuse-prototype/grid-reuse.wasm",
+      "bytes": 6662945,
+      "sha256": "144a20e6abfedc8e24c87b7234fb17cd0c3e27d43626cb6742242614cbeac592"
+    },
+    {
+      "path": "build/asset-reuse-prototype/diagnostic.c",
+      "bytes": 8297,
+      "sha256": "99d351b1106488e32a8c6eecc0c63e2f78c755cf4cb9e6a796397713534a3e29"
+    },
+    {
+      "path": "build/asset-reuse-prototype/diagnostic-base.exe",
+      "bytes": 83968,
+      "sha256": "a46b457e0cbb5140f5664c9ac5e1560a2514bc121948fd238ba81dbde6a8c9f6"
+    },
+    {
+      "path": "build/asset-reuse-prototype/diagnostic-naive.exe",
+      "bytes": 84480,
+      "sha256": "066662c4b847484fe16c53b953e55c828d0647ff92c793cbf05410546c54d965"
+    },
+    {
+      "path": "build/asset-reuse-prototype/diagnostic-reuse.exe",
+      "bytes": 84480,
+      "sha256": "4d7dbd11509d643d5101e48700c5122c9fb8a8ef4e6878fe8822465ab896d229"
+    }
+  ],
+  "exports": [
+    {
+      "path": "analyze.mjs",
+      "bytes": 8921,
+      "sha256": "81d87c52ebf20add1a9ac69d44fd08dfcbf44b709d610390b0410a7740c34b40"
+    },
+    {
+      "path": "build.ps1",
+      "bytes": 2256,
+      "sha256": "a85052ef740c9ed4cba1726242a6e6ada892cf3513775cbbdc56f9069fdd7b5c"
+    },
+    {
+      "path": "check-web.ps1",
+      "bytes": 2365,
+      "sha256": "abb20ed29c60888807cb592d371ea512b41ebbe4176ffe8a7100e2906ec8457b"
+    },
+    {
+      "path": "containers.c",
+      "bytes": 7336,
+      "sha256": "8311a1db84969ea5f8609a6466ba17f952019328ce58facbd670bbced485a967"
+    },
+    {
+      "path": "diagnostic.c",
+      "bytes": 8297,
+      "sha256": "99d351b1106488e32a8c6eecc0c63e2f78c755cf4cb9e6a796397713534a3e29"
+    },
+    {
+      "path": "diagnostic.json",
+      "bytes": 946,
+      "sha256": "f34ff0ab75cc8fd52a1c2864d1fc2bf5e344a73c1e7e47a20174f027736e3f70"
+    },
+    {
+      "path": "diagnostic.ps1",
+      "bytes": 1176,
+      "sha256": "555c2066d65e24a2ff27688db91ba82fa83062f5b0e9bd10f58a2d1bad6acfee"
+    },
+    {
+      "path": "harness.c",
+      "bytes": 3521,
+      "sha256": "225f755207221aa869587f94c615067b733018c416ab0e9cd1f6efadfb9a67a7"
+    },
+    {
+      "path": "measure.ps1",
+      "bytes": 3310,
+      "sha256": "8e1a195eccf9a775dffdc7bed1fa794ef680d218b7ecc73113a39eec09623da2"
+    },
+    {
+      "path": "README.md",
+      "bytes": 8411,
+      "sha256": "3b7cac33e4c519ca89b700e398f56884ed87e0eefad8b149cfe7342093b4f60c"
+    },
+    {
+      "path": "wasi-checks.json",
+      "bytes": 7383,
+      "sha256": "1834772311fbe57746d96fe33314bea32d340ea7b2a8bdb8adc7f6dcb07ebbe7"
+    }
+  ],
+  "quiet_guard_timeouts_before_measurement": 1,
+  "timing_status": "deferred by owner; both guard attempts produced zero comparison rows"
+}

@@ -27,7 +27,7 @@ static void show(const int count)
 {
     local.Shown.count = count;
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 // Whether the world's bytes are what Run's filling left up to `filled`, and zeros from there up to `count`.
