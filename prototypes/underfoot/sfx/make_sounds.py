@@ -1,4 +1,4 @@
-"""Underfoot's sounds: stone, wood, ice and a slow night loop, all made here.
+"""Underfoot's sounds: stone, wood, ice and a slow, low loop for a crypt, all made here.
 
 No samples and no dependencies. Run from any directory; it writes beside itself.
 """
@@ -94,8 +94,8 @@ def whole(freq):
     return round(freq * DURATION) / DURATION
 
 
-chords = [[146.83, 220.0, 261.63, 329.63], [116.54, 174.61, 220.0, 293.66],
-          [130.81, 196.0, 246.94, 329.63], [110.0, 164.81, 220.0, 277.18]]
+chords = [[73.42, 110.0, 146.83, 174.61], [69.30, 103.83, 138.59, 164.81],
+          [73.42, 110.0, 155.56, 174.61], [65.41, 98.0, 138.59, 155.56]]
 for index, chord in enumerate(chords):
     start = index * 8.0
     for i in range(round(11.0 * RATE)):
@@ -107,17 +107,18 @@ for index, chord in enumerate(chords):
         tone = 0.0
         for voice, freq in enumerate(chord):
             f = whole(freq)
-            tone += math.sin(math.tau * f * clock + voice) * (0.020 if voice else 0.028)
-            tone += math.sin(math.tau * whole(freq * 2.004) * clock) * 0.005
-        music[at] += tone * env
+            tone += math.sin(math.tau * f * clock + voice) * (0.024 if voice else 0.034)
+            tone += math.sin(math.tau * whole(freq * 2.006) * clock) * 0.004
+        music[at] += tone * env * (0.85 + 0.15 * math.sin(math.tau * clock / 16))
 
-melody = [(0.0, 587.33), (2.5, 440.0), (4.0, 659.25), (6.5, 523.25), (9.0, 440.0), (11.0, 587.33),
-          (13.5, 349.23), (16.5, 493.88), (18.0, 659.25), (21.0, 392.0), (24.5, 554.37), (26.0, 440.0),
-          (28.5, 329.63), (30.0, 440.0)]
+# A music box that has lost most of its teeth.
+melody = [(0.0, 659.25), (1.2, 698.46), (2.4, 659.25), (5.0, 493.88), (9.5, 622.25), (10.7, 659.25),
+          (14.0, 466.16), (17.0, 659.25), (18.2, 698.46), (21.5, 415.30), (25.0, 622.25), (26.2, 587.33),
+          (29.5, 440.0)]
 for start, freq in melody:
     for i in range(round(4.0 * RATE)):
         t = i / RATE
-        dry = bell(freq, t, 3.2, 1.9) * 0.070
+        dry = bell(freq, t, 3.2, 1.6) * 0.050
         echo = bell(freq, t - 0.33, 3.2, 2.2) * 0.020 + bell(freq, t - 0.66, 3.2, 2.6) * 0.010
         music[(round(start * RATE) + i) % len(music)] += dry + echo
 write("night", music, 0.5)

@@ -1198,7 +1198,8 @@ TIDE_TEST(pack_skinned_verified_versions_follow_loaded_bytes_and_owned_copies)
     TIDE_CHECK(!tide_pack_skinned_version((tide_list){0}, &version));
     TIDE_CHECK(!tide_pack_skinned_version(model.data, NULL));
 
-    const tide_list copy = tide_list_copy(model.data, 1u);
+    tide_list copy = tide_list_copy(model.data, 1u);
+    tide_list_prepare(&copy, 1u, TIDE_IN_SCRATCH);
     TIDE_CHECK(!tide_pack_skinned_version(copy, &version));
     tide_list pose = {0};
     tide_draw_list draw = {0};
@@ -1309,7 +1310,8 @@ TIDE_TEST(pack_skinned_proof_identities_follow_loaded_blocks)
     TIDE_CHECK(other != 0u && other != identity);
     TIDE_REQUIRE(tide_pack_skinned_proof(model.data, NULL, &same));
     TIDE_CHECK(same == version && tide_pack_skinned_proof(model.data, NULL, NULL));
-    const tide_list copy = tide_list_copy(model.data, 1u);
+    tide_list copy = tide_list_copy(model.data, 1u);
+    tide_list_prepare(&copy, 1u, TIDE_IN_SCRATCH);
     same = identity;
     other = version;
     TIDE_CHECK(!tide_pack_skinned_proof(copy, &same, &other));

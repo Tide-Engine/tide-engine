@@ -223,6 +223,11 @@ bool tide_pack_load(const uint8_t *bytes, size_t size);
 
 // Lets go of the loaded pack: before a game's library is unloaded.
 void tide_pack_unload(void);
+// Exact source-pack identity for negotiating asset-relative state transfers.
+// Zero with no loaded pack. Computed once when loading, never per tick.
+void tide_pack_digest(uint8_t digest[32]);
+// Internal: only the original portable file region, before runtime relocation.
+const uint8_t *tide_pack_file_span(uint32_t offset, uint64_t bytes);
 
 // The entry a declaration's name has in the loaded pack, of `kind`, or NULL:
 // for a pack from another build of the game, or none loaded.
