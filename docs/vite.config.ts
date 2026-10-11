@@ -54,7 +54,7 @@ const prototypeAssets: Plugin = {
             for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
                 const name = `${directory}/${entry.name}`;
                 if (name === 'static/admin' || name === 'static/prototypes') continue;
-                if (/(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine|dead[-_]signal|deadbell|rocket[-_]league|aerial)(?:[\/._-]|$)/i.test(name)) {
+                if (/(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine|dead[-_]signal|deadbell|rocket[-_]league|aerial|inside[-_]out)(?:[\/._-]|$)/i.test(name)) {
                     throw new Error(`Prototype asset must live under static/prototypes/: ${name}`);
                 }
                 if (entry.isDirectory()) check(name);

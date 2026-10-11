@@ -1,5 +1,27 @@
 # The docs site
 
+Inside Out catalog addition (2026-10-11): the owner's two-player online puzzle
+prototype adds an eighth server-loaded card, `inside-out`, with a warm miniature
+workshop description. `inside_out_page` stages at
+`static/prototypes/inside-out/`, collected by `private_games` when
+`TIDE_PRIVATE_PROTOTYPES` is enabled. Its public URL is
+`/prototypes/inside-out/`; the catalog retains admin authentication.
+The public-root/retired-alias patterns, build asset gate and existing admin/HTTP
+tests include the id, with public game/assets and omission from Samples, search
+and sitemap. Encoded public HTML checks now cover all eight games. Game rules,
+content and gameplay validation belong in `notes/inside-out.md`.
+Validation: all 18 analytics/admin unit checks and five production
+SEO/access-form/admin HTTP checks pass with Node 24.21. Svelte check reports
+no errors or warnings; the production site build and complete WebGL
+example/gallery rendering smoke pass with all games staged, including the
+current isometric Inside Out page and gameplay thumbnail. The browser
+gameplay tests are recorded in `notes/inside-out.md`; deployment is a separate
+step using the existing Fly site.
+After merging `origin/dev`'s confirmed-frame/compiler and user-documentation
+changes, every release page was rebuilt and restaged. Site check/build, the
+five production HTTP/SEO tests and complete WebGL example/gallery smoke pass
+again with the merged docs and current prototype.
+
 Delayed initialization and switch expressions (2026-10-11): Basics explains
 explicitly typed delayed locals, read-before-assignment and once-only
 initialization, when mut is needed, switch value syntax, final fallback,
