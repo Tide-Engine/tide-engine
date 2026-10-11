@@ -289,3 +289,17 @@ site check has zero errors/warnings; its production build and all eighteen
 analytics/admin plus five production HTTP/SEO/access tests pass. Release,
 staged and packaged Inside Out page/thumbnail bytes match; their hashes and
 game-specific camera validation are in `notes/inside-out.md`.
+
+The clean merge through `origin/dev` `e377d0a9` brought shared compiler,
+platform/web and docs updates plus current Underfoot changes. All 64 playable
+pages were rebuilt/restaged and match their production-package copies; all
+four prototype thumbnails match as well. Docs check has zero errors/warnings,
+226 grammar tests pass, and the production build plus five HTTP/SEO/access
+checks pass again. The integrated Inside Out hash is in `notes/inside-out.md`.
+
+Source `ebbd0649` deployed directly to the existing Fly site as release 259
+and passed health checks. Public Inside Out HTML and thumbnail return 200
+with the tested integrated hashes; the catalog retains all four prototypes.
+Two-browser gameplay of the downloaded page through the production relay
+passes, including fixed local framing while the partner goes off-screen.
+No CI was dispatched.
