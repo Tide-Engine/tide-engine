@@ -1,5 +1,12 @@
 # The docs site
 
+Contextual enums (2026-10-11): Language basics and the spec document the
+owner-approved `.Idle` spelling, expected-type contexts and qualified spelling
+for missing context or ambiguous overloads. Editors documents expected enum
+preselection and leading-dot member completion. The shared grammar recognizes
+shorthand without changing leading-point floats or ordinary member scopes;
+all 216 grammar tests and the production docs build pass. No deployment.
+
 Editor review (2026-10-11): the Editors page clarifies Restricted Mode's user
 setting and PATH exclusions, including symlinks/junctions. The docs production
 build and all 215 shared grammar checks pass; implementation, regressions and

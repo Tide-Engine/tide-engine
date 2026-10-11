@@ -1,5 +1,12 @@
 # Textures and how they are sampled
 
+Contextual enum shorthand (2026-10-11): the compiler's fixed Sample argument
+checker supplies Filter/Wrap types to `.Point`, `.Trilinear` and `.Repeat`,
+including named arguments in written order. Texture/grid/cubemap Sample keep
+their existing shader-binding, constant-member and trilinear restrictions.
+The declared/cubemap shader fixtures preserve their existing GLSL/WGSL goldens.
+There is no sampler, runtime or GPU contract change; see `notes/language.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform
