@@ -101,8 +101,10 @@ the same opt-in option and `private_games`: `aerial_page` stages its page at
 stays as it is. Its contract and tests are in `notes/aerial.md`.
 
 Inside Out (`prototypes/inside-out/`) adds the owner's two-player online
-cooperative puzzle prototype on 2026-10-11. One player works inside movable
-rooms while the other rearranges those rooms in a larger workshop. It uses the
+cooperative puzzle prototype on 2026-10-11. Its revised shared workshop lets
+both makers enter dimensions, nest rooms and use self-referential doorways.
+The owner requested polished 2D and planning puzzles after the initial build.
+It uses the
 same opt-in option and `private_games` integration: `inside_out_page` stages
 the game under `/prototypes/inside-out/`, beside its gameplay thumbnail. The
 public sharing URL needs no admin session; its two-player catalog card stays

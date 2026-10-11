@@ -87,6 +87,8 @@ const browserCommand = async (method, params = {}, timeout = 20_000) => {
 };
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const assertImagesEqual = (actual, expected, message) => assert.equal(Buffer.compare(actual, expected), 0, message);
+const assertImagesDiffer = (actual, expected, message) => assert.notEqual(Buffer.compare(actual, expected), 0, message);
 let pumping;
 // Concurrent predicates share one round. Neither player gets another frame
 // until both have finished drawing, including their GPU completion fences.
@@ -170,7 +172,7 @@ try {
         const key = async (code, key, down, frameCount = 1) => {
             await command('Input.dispatchKeyEvent', { type: down ? 'keyDown' : 'keyUp', code, key,
                 ...(down && key.length === 1 ? { text: key } : {}),
-                windowsVirtualKeyCode: code === 'Escape' ? 27 : key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0 });
+                windowsVirtualKeyCode: code === 'Escape' ? 27 : code === 'ShiftLeft' ? 16 : key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0 });
             await frames(frameCount);
         };
         const tapKey = async (code, value, frameCount = 1) => {
@@ -287,7 +289,7 @@ try {
         return client;
     }
 
-    const host = await player('big-maker');
+    const host = await player('amber-maker');
     const navigate = async (client, query = '') => {
         const url = `${origin}/prototypes/inside-out/?backend=${backend}${query}`;
         await client.command('Page.navigate', { url });
@@ -298,11 +300,11 @@ try {
     // presentation, not wasm memory or a test-only simulation export.
     const movesClip = client => {
         const { width } = client.state.screen;
-        const narrow = width < 760;
-        const contentWidth = Math.min(width - 36, 1100);
+        const narrow = width < 720;
+        const contentWidth = Math.min(width - 36, 1180);
         const left = (width - contentWidth) / 2;
-        const panelWidth = narrow ? contentWidth : (contentWidth - 24) / 2;
-        return { x: left + panelWidth - 110, y: (narrow ? 154 : 126) + 9, width: 96, height: 25 };
+        const panelWidth = narrow ? contentWidth : contentWidth * 0.56 - 8;
+        return { x: left + panelWidth - 110, y: (width < 1050 ? 154 : 126) + 9, width: 96, height: 25 };
     };
     const titleClip = { x: 315, y: 24, width: 320, height: 25 };
     const moveLabel = client => client.crop(movesClip(client));
@@ -312,14 +314,15 @@ try {
     await host.screenshot('desktop-title');
     await navigate(host, '&host');
     await host.until(value => /^[0-9A-Z]{6}$/.test(value.room ?? ''), 'host receives room code');
+    await host.until(value => value.state === 2 && value.verified >= 4, 'host has initialized and rendered its waiting puzzle');
     const room = host.state.room;
     const waiting = await moveLabel(host);
     await host.tapKey('KeyD', 'd');
-    assert.deepEqual(await moveLabel(host), waiting, 'a missing partner stops puzzle moves');
+    assertImagesEqual(await moveLabel(host), waiting, 'a missing partner stops puzzle moves');
     await host.screenshot('desktop-waiting');
 
     stage = 'two initialized players join through real WebRTC';
-    const small = await player('little-maker');
+    const small = await player('teal-maker');
     // Finish cold rendering before starting a live join. Click the actual
     // custom title's Join a friend button, then type into Rooms.JoinPage.
     await navigate(small);
@@ -329,8 +332,8 @@ try {
     }
     await small.tapKey('Enter', 'Enter');
     const connected = value => value.state === 2 && value.peers.includes('connected') && value.messages > 5 && value.sent > 5;
-    await host.until(connected, 'big maker exchanging real WebRTC packets');
-    await small.until(connected, 'little maker exchanging real WebRTC packets');
+    await host.until(connected, 'amber maker exchanging real WebRTC packets');
+    await small.until(connected, 'teal maker exchanging real WebRTC packets');
     assert.equal(small.state.room, room);
     for (const client of clients) assert.ok(client.state.channels.some(channel =>
         channel.state === 'open' && !channel.ordered && channel.retransmits === 0),
@@ -344,58 +347,78 @@ try {
     };
     await advanceMatch();
     const zeroMoves = await moveLabel(host);
-    assert.deepEqual(await moveLabel(small), zeroMoves, 'both players start at zero moves');
+    assertImagesEqual(await moveLabel(small), zeroMoves, 'both players start at zero moves');
     const firstTitle = await host.crop(titleClip);
     await host.screenshot('desktop-big-maker');
     await small.screenshot('desktop-little-maker');
 
     stage = 'both keyboard roles, shared undo and reset';
+    await host.key('ShiftLeft', 'Shift', true);
     await host.tapKey('KeyD', 'd');
+    await host.key('ShiftLeft', 'Shift', false);
     await advanceMatch();
     const oneMove = await moveLabel(host);
-    assert.notDeepEqual(oneMove, zeroMoves, 'big maker moves the room');
-    assert.deepEqual(await moveLabel(small), oneMove, 'little maker sees the shared room move');
-    await small.tapKey('KeyD', 'd');
+    assertImagesDiffer(oneMove, zeroMoves, 'Shift makes amber push the room');
+    assertImagesEqual(await moveLabel(small), oneMove, 'teal sees the shared room move');
+    await small.tapKey('KeyW', 'w');
     await advanceMatch();
-    assert.notDeepEqual(await moveLabel(host), oneMove, 'little maker moves the crate inside');
+    assertImagesDiffer(await moveLabel(host), oneMove, 'teal freely enters the room through its doorway');
     await small.tapKey('KeyZ', 'z');
     await advanceMatch();
-    assert.deepEqual(await moveLabel(host), oneMove, 'partner undo restores the shared previous puzzle');
-    assert.deepEqual(await moveLabel(small), oneMove, 'undo agrees on both screens');
+    assertImagesEqual(await moveLabel(host), oneMove, 'partner undo restores the shared previous puzzle');
+    assertImagesEqual(await moveLabel(small), oneMove, 'undo agrees on both screens');
     await host.tapKey('KeyR', 'r');
     await advanceMatch();
-    assert.deepEqual(await moveLabel(host), zeroMoves, 'reset restores the initial move count');
-    assert.deepEqual(await moveLabel(small), zeroMoves, 'reset reaches the partner');
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'reset restores the initial move count');
+    assertImagesEqual(await moveLabel(small), zeroMoves, 'reset reaches the partner');
 
     stage = 'held movement cannot cross partner reset or undo';
     await host.key('KeyD', 'd', true);
     await advanceMatch();
     await small.tapKey('KeyR', 'r');
     await advanceMatch();
-    assert.deepEqual(await moveLabel(host), zeroMoves, 'partner reset suppresses a held direction');
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'partner reset suppresses a held direction');
     await advanceMatch();
-    assert.deepEqual(await moveLabel(host), zeroMoves, 'held movement remains suppressed until released');
-    assert.deepEqual(await moveLabel(small), zeroMoves, 'partner sees the puzzle remain reset');
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'held movement remains suppressed until released');
+    assertImagesEqual(await moveLabel(small), zeroMoves, 'partner sees the puzzle remain reset');
     await host.key('KeyD', 'd', false);
     // Send undo immediately after the fresh press, before movement repeat.
     // Both browsers continue drawing throughout the held-key recovery.
     await host.key('KeyD', 'd', true);
     await small.tapKey('KeyZ', 'z');
     await advanceMatch();
-    assert.deepEqual(await moveLabel(host), zeroMoves, 'partner undo suppresses the still-held fresh direction');
-    assert.deepEqual(await moveLabel(small), zeroMoves, 'shared undo stays restored while the partner holds movement');
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'partner undo suppresses the still-held fresh direction');
+    assertImagesEqual(await moveLabel(small), zeroMoves, 'shared undo stays restored while the partner holds movement');
     await host.key('KeyD', 'd', false);
     await host.tapKey('KeyD', 'd');
     await advanceMatch();
-    assert.deepEqual(await moveLabel(host), oneMove, 'release and a new press allow movement again');
+    assertImagesEqual(await moveLabel(host), oneMove, 'release and a new press allow movement again');
     await host.tapKey('KeyR', 'r');
     await advanceMatch();
-    assert.deepEqual(await moveLabel(host), zeroMoves, 'held-input regression leaves the first puzzle reset');
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'held-input regression leaves the first puzzle reset');
+
+    stage = 'both makers can enter the same shared room';
+    await host.tapKey('KeyD', 'd');
+    await small.tapKey('KeyW', 'w');
+    await small.tapKey('KeyA', 'a');
+    await advanceMatch();
+    const sharedRoomMoves = await moveLabel(host);
+    assertImagesDiffer(sharedRoomMoves, oneMove, 'both makers can walk into the pocket room through opposite doors');
+    assertImagesEqual(await moveLabel(small), sharedRoomMoves, 'both entrants share one command timeline');
+    await host.screenshot('desktop-both-in-room');
+    await host.tapKey('KeyR', 'r');
+    await advanceMatch();
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'reset returns both makers to the workshop');
 
     stage = 'exact first-puzzle solution and cooperative progression';
-    // Checked-in native/WASI witness: outside room delivery, inside crate
-    // delivery and exit, then the outside maker's exit. Exactly eight moves.
-    for (const [client, keys] of [[host, 'd'], [small, 'dsd'], [host, 'asss']]) {
+    // Both begin outside. Amber pushes the shell, Teal walks into it and
+    // delivers the parcel, and both reach leaves. The production witness
+    // is eight moves and includes free dimension traversal.
+    await host.key('ShiftLeft', 'Shift', true);
+    await host.tapKey('KeyD', 'd');
+    await host.key('ShiftLeft', 'Shift', false);
+    await advanceMatch(2);
+    for (const [client, keys] of [[small, 'wwwa'], [host, 'ass']]) {
         for (const key of keys) {
             await client.tapKey(`Key${key.toUpperCase()}`, key);
             await advanceMatch(2);
@@ -403,17 +426,17 @@ try {
     }
     await advanceMatch();
     const completedMoves = await moveLabel(host);
-    assert.notDeepEqual(completedMoves, zeroMoves, 'the cooperative witness changed the puzzle');
-    assert.deepEqual(await moveLabel(small), completedMoves, 'the completed move count agrees');
+    assertImagesDiffer(completedMoves, zeroMoves, 'the cooperative witness changed the puzzle');
+    assertImagesEqual(await moveLabel(small), completedMoves, 'the completed move count agrees');
     await host.screenshot('desktop-first-puzzle-complete-big');
     await small.screenshot('desktop-first-puzzle-complete-little');
     await small.tapKey('Enter', 'Enter');
     await advanceMatch();
     const secondTitle = await host.crop(titleClip);
-    assert.notDeepEqual(secondTitle, firstTitle, 'Enter advances only after the actual puzzle is solved');
-    assert.deepEqual(await small.crop(titleClip), secondTitle, 'both players enter the next puzzle');
-    assert.deepEqual(await moveLabel(host), zeroMoves, 'the next puzzle starts at zero moves');
-    assert.deepEqual(await moveLabel(small), zeroMoves, 'the next puzzle resets both screens');
+    assertImagesDiffer(secondTitle, firstTitle, 'Enter advances only after the actual puzzle is solved');
+    assertImagesEqual(await small.crop(titleClip), secondTitle, 'both players enter the next puzzle');
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'the next puzzle starts at zero moves');
+    assertImagesEqual(await moveLabel(small), zeroMoves, 'the next puzzle resets both screens');
 
     stage = 'phone layout and real touch movement';
     await host.resize(390, 844);
@@ -423,16 +446,16 @@ try {
     const phoneZero = await moveLabel(host);
     await host.screenshot('phone-big-maker');
     await small.screenshot('phone-little-maker');
-    // D points down-right in the diagonal pad, matching the isometric grid.
-    const touchX = host.state.screen.width - 68 + 40 * 0.57 - 1.5;
-    const touchY = host.state.screen.height - 52 + 40 * 0.57 - 1.5;
+    // The cardinal D button moves right on the shared top-down scene.
+    const touchX = host.state.screen.width - 66 + 40 - 1.5;
+    const touchY = host.state.screen.height - 67 - 1.5;
     await host.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchX, y: touchY, id: 1 }] });
     await host.frames();
     await host.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await advanceMatch();
     const phoneMoved = await moveLabel(host);
-    assert.notDeepEqual(phoneMoved, phoneZero, 'touch moves the big maker and room in puzzle two');
-    assert.deepEqual(await moveLabel(small), phoneMoved, 'the touch move reaches the partner');
+    assertImagesDiffer(phoneMoved, phoneZero, 'touch moves a maker in puzzle two');
+    assertImagesEqual(await moveLabel(small), phoneMoved, 'the touch move reaches the partner');
     await host.screenshot('phone-touch-big-maker');
     await small.screenshot('phone-touch-little-maker');
     for (const client of clients) {

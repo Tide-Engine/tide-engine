@@ -14,7 +14,7 @@ Validation: all 18 analytics/admin unit checks and five production
 SEO/access-form/admin HTTP checks pass with Node 24.21. Svelte check reports
 no errors or warnings; the production site build and complete WebGL
 example/gallery rendering smoke pass with all games staged, including the
-current isometric Inside Out page and gameplay thumbnail. The browser
+initial isometric Inside Out page and gameplay thumbnail. The browser
 gameplay tests are recorded in `notes/inside-out.md`; deployment is a separate
 step using the existing Fly site.
 After merging `origin/dev`'s confirmed-frame/compiler and user-documentation
@@ -228,3 +228,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **Rooms volume settings, 2026-10-09:** the Matches page documents the title/room Settings buttons, the volume slider and `Page.Settings`, and the local `Lobby.volume` range/default and lifetime. Back/Escape returns to the menu that opened Settings. The package README describes the same behavior. `npm run build` passed.
 
 Confirmed presentation/physics rewind (2026-10-11): Views, confirmed-state guidance, networking, input and both physics package pages describe confirmed interpolation, opt-in read-only rewind queries and timestamp trust boundaries. C hosts forward both intervals before marking presentation. Singleton methods and the changed frame ABI are documented with the spec; the production docs build passes. Implementation and full native/web validation are in the subsystem notes.
+
+Inside Out shared-world revision (2026-10-11): the existing public prototype
+and authenticated catalog now describe two freely travelling makers, nested
+rooms and canonical recursive doorways. Its gameplay thumbnail uses the
+new flat workshop capture. Site check/build and all 23 analytics/admin,
+production HTTP/SEO/access checks pass; staged and production HTML matches
+the web-release game. Game-specific contracts and validation are recorded in
+`notes/inside-out.md`. The public URL and catalog access boundaries are retained.

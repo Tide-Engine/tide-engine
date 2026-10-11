@@ -1,125 +1,88 @@
 # Inside Out
 
-A cooperative puzzle prototype for **two friends in separate browsers**.
-One of you rearranges little room boxes on a workshop table. The other walks
-inside those same rooms, pushing parcels and travelling through their doors.
-The workshop is warm and quiet, with colourful miniatures and original soft
-movement sounds. There are no timers, lives or score penalties.
+A cooperative puzzle workshop for **two friends in separate browsers**.
+Both makers begin in the same world. Either can step into a pocket room,
+push a room with their partner inside, or put a room inside another room.
+Some doorways lead back into the very room that contains them. Those visits
+share one set of parcels, switches and people.
 
-Open `/prototypes/inside-out/` on the deployed Tide site. The admin prototype
-catalog links to the same public page; invited players need no admin account.
-One player chooses **Host a workshop** and shares the invite link or room code.
-The other opens that link or chooses **Join a friend** and enters the code.
-Both players must be connected before
-either can move. Use a voice call or chat alongside the game to discuss plans.
+Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
+catalog links to the same public page; friends need no admin account.
+Choose **Host a workshop**, then share the invite link or six-character room
+code. Both players must connect before either can move. Use a voice call or
+chat alongside the game to discuss plans.
 
 ## Playing
 
-Both screens show the large workshop and a room interior in a fixed
-isometric cutaway view. Raised room boxes have live miniatures in their open
-tops; wooden parcels and little maker figures occupy the same puzzle grids.
-High rear walls and low front walls keep the room's contents visible. Both
-boards face the same way, so switching scales preserves your bearings.
-The small partner's occupied room follows them automatically; room tabs on
-wider screens let either player inspect the others. Your role indicator tells
-you which scale your movement controls affect.
+The top-down scene is shared: both screens show the workshop, every pocket
+room and both makers. Amber and Teal keep their identity colours wherever
+they travel. Each room has a coloured number, a live miniature in its shell,
+and an enlarged interior. Connection paths show where its shell currently
+lives. Nested and recursive previews stop drawing after a few layers;
+the underlying room remains the same shared space.
 
 | Action | Keyboard |
 | --- | --- |
-| Move / push | WASD or arrow keys |
-| Exchange scales at a hatch | E |
+| Walk and push a parcel | WASD or arrow keys |
+| Enter a room | Walk into an open doorway |
+| Leave a room | Walk outward through an edge doorway |
+| Push a room shell | Hold Shift while moving |
 | Undo the last shared move | Z or Backspace |
 | Reset this puzzle | R |
 | Show / hide hints | H |
 | Continue after solving | Enter |
 
-The diagonal touch pad shows where each direction goes: **W/Up moves
-upper-right, D/Right lower-right, S/Down lower-left, and A/Left upper-left**.
-The same direction compasses appear beside both boards on wider screens.
-Hints use the grid directions: up is W, right is D, down is S and left is A.
-After undo, reset or exchanging scales, release a held direction before
-pressing it again.
+The **Push rooms** button toggles the same modifier for touch controls.
+Turn it off to enter a room again. Directions match the screen: W is up,
+D right, S down and A left. After undo or reset, release a held direction
+before pressing it again.
 
-The on-screen buttons provide the same actions. The puzzle shelf can revisit
-or skip any of the twelve puzzles. Hints have three increasingly specific
-tiers, with cards that wrap and resize to fit their text. Sound and music can
-be toggled, and the Rooms menu's Settings page controls volume.
+The shelf can revisit or skip any of the twelve puzzles. A plus beside a
+title marks one you have completed in this match. Hints start with a small
+nudge; ask for more to reveal an arrangement and then a more specific plan.
+They are optional. Music, sound and reduced motion are local settings.
 
 ## The rules
 
-- A large partner pushes one room box or workshop crate at a time. Boxes
-  cannot be pulled and pushes never move a chain of objects.
-- A room carries its small partner and every parcel inside it when it moves.
-  A move outside never changes their interior positions.
-- Rooms connect when their boxes are cardinal neighbours and their facing
-  doors meet. The small partner and parcels can cross the connected doors.
-- A parcel pushed through an unmatched door emerges beside that box in the
-  workshop. People need a connected room to cross. The large partner can
-  push a workshop parcel through a matching door into a room.
-- A latched room can move only while its brass switch is occupied by the
-  small partner or a parcel. Stepping off does not move or destroy the room.
-- To exchange scales, the small partner stands on a hatch and the large
-  partner stands beside their room box. Press E. You exchange control of the
-  existing avatars; nothing else changes size or position.
-- Solve a puzzle by filling every brass crate target, parking every room on
-  its coloured numbered outline, and putting both partners on their leaf
-  exits. A filled target may be emptied again while you work.
+- Both makers can enter any open room. People in the same room block each
+  other, even if they arrived through different recursive doorways.
+- A moving shell carries its entire interior without changing anything's
+  position within that room. A shell can contain another shell.
+- Holding Shift pushes one room instead of entering it. Parcels are pushed
+  normally. Nothing can be pulled, and pushes cannot move a chain.
+- A parcel or room pushed through another room's doorway enters its
+  interior. Parcels pushed outward through an edge door emerge beside the
+  containing room's physical shell.
+- An infinity doorway is a fixed entrance into an existing room. A self
+  doorway returns to the same interior from a different side. Moving a
+  parcel during one visit changes it for every visit.
+- A maker's return path remembers the entrance used. Leaving through an
+  edge door returns beside that entrance; if a shell has moved, the return
+  moves with it. Up to eight entrance layers are available.
+- A latched room moves only while a maker or parcel holds its brass switch.
+  There is no timing requirement. Moving it may need one of you to stay
+  inside while the other finds the correct pushing side.
+- Fill every brass parcel target, park each shell on its matching numbered
+  dock in the correct dimension, and put both makers on distinct leaf exits.
+  Parcels must finish on targets. A filled target can be emptied while
+  arranging the solution.
 
-Undo belongs to both players and takes back the last successful move or scale
-exchange, whoever made it. The last 128 actions are available. Reset always
-restores the complete initial puzzle. A completed puzzle waits for you to
-continue, so you can inspect it or undo its final move. Losing a partner stops
-gameplay until a second participant is present again.
+Shared undo takes back the last successful action, whoever made it, and
+retains 128 actions. Reset restores the complete starting arrangement.
+Completion waits for you to continue. Losing a participant stops gameplay
+until both seats are present again.
 
-## The twelve workshops
+## Development
 
-| Workshop | What it explores |
-| --- | --- |
-| First delivery | Move the room outside and its parcel inside. |
-| Good neighbours | Connect two rooms to give your partner a route. |
-| Through the doorway | Send a parcel into the other room. |
-| A helpful doorstop | A parcel keeps a room's movement switch pressed. |
-| Out for delivery | Export a parcel and deliver it at the larger scale. |
-| Return post | Import a parcel, then connect a room behind it to push inward. |
-| The sorting line | Assemble a three-room delivery route. |
-| Around the corner | Change a parcel's direction in the middle room. |
-| Pass the key | One travelling parcel unlocks two rooms in sequence. |
-| Passing place | Deliver first, then exchange the room boxes using a bay. |
-| The way home | Return a latched ferry for your partner after delivery. |
-| The whole workshop | Clear an incoming parcel off its target to dispatch another, then restore it and return home. |
+The prototype uses Tide and the existing Rooms package. Its deterministic
+match rules are in `game.tide`; campaign layouts and optional hints are in
+`levels.tide`. Presentation, controls and original audio are local state.
+There are no new engine or runtime APIs.
 
-The opening workshops introduce one relationship at a time. The final four
-combine inside and outside planning. Their pace depends on your conversation
-and discoveries; the prototype does not time or rush them.
-
-## Solvability evidence
-
-`test/solutions.h` contains a hand-built solution for every puzzle.
-`test/campaign.c` sends each individual move through the production generated
-two-player command handlers, checks that it succeeds, verifies completion,
-undoes the final move, resets and replays the full solution. The role-exchange
-check solves Return Post with the players controlling the opposite scales.
-No alternate movement simulator supplies the evidence. These are valid
-solution witnesses, rather than claims of shortest paths.
-
-Every initial puzzle puts both avatars away from their required exits. Only
-movement at the respective scale can change that avatar's position; a hatch
-changes ownership alone. Thus both scales must act to complete every puzzle.
-The match requires two real connected players and has no bot replacement.
-
-## Building and testing
-
-Enable `TIDE_PRIVATE_PROTOTYPES=ON` when configuring this checkout. Build
-`inside_out`, `inside_out_tests`, and on web `inside_out_page`. The existing
-`private_games` target includes the public page staging. Run the scoped
-`inside_out_tests` check on native and web, plus the browser integration
-checks registered for the prototype. Notes and validation evidence live in
-`notes/inside-out.md`.
-
-The browser fixture normally uses its own local relay. Set
-`TIDE_INSIDE_OUT_RELAY` to an existing WebSocket relay URL to probe that service
-with the same two-player checks.
-
-During agent runs use `TIDE_HIDDEN=1`, only binaries from this checkout, and
-bounded `--capture`, `--frames` or `--script` options. Browser launches require
-`--mute-audio` even when headless.
+Enable `TIDE_PRIVATE_PROTOTYPES` when configuring the repository. Build
+`inside_out` and `inside_out_tests` with the native and web debug presets.
+`inside_out_page` stages the web build into the public prototype directory.
+`inside_out_play_webgl` and `inside_out_play_webgpu` test two real browser
+players with muted audio. The campaign test replays checked-in witnesses
+through production commands; it establishes solvability, not optimality
+or measured human difficulty. Contracts and validation: `notes/inside-out.md`.
