@@ -36,9 +36,11 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_compile_options(tide_audio_import PRIVATE -w)
     install(FILES third_party/dr_libs/LICENSE DESTINATION licenses/dr_libs COMPONENT tide)
     install(FILES third_party/stb_image/LICENSE DESTINATION licenses/stb_image COMPONENT tide)
+    install(FILES third_party/stb_dxt/LICENSE DESTINATION licenses/stb_dxt COMPONENT tide)
     add_library(tidec_core STATIC ${TIDEC_SOURCES} ${TIDEC_ENGINE_SOURCES})
     target_link_libraries(tidec_core PUBLIC tide_fbx tide_audio_import)
     target_include_directories(tidec_core SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_image")
+    target_include_directories(tidec_core SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_dxt")
     # Expected asset digests and emitted loaders share this exact private walker.
     set(TIDEC_PACK_FINGERPRINT_C "${CMAKE_CURRENT_BINARY_DIR}/pack_fingerprint_source.c")
     add_custom_command(OUTPUT "${TIDEC_PACK_FINGERPRINT_C}"

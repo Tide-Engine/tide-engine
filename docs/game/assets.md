@@ -110,11 +110,21 @@ view Show(mut Player player)
 ```
 
 - A `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
-- It's a byte a channel, as the GPU keeps it: a quarter of what the same image takes as a `Grid2<Color>`, and nothing copies it on its way to the GPU.
+- Its exact fallback keeps a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images also have a smaller compressed GPU copy, described below.
 - No code reads it. It has no cells and no size to ask. An image whose pixels or size the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
+
+### GPU compression
+
+Ordinary color `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled colors can differ slightly from the source, especially around sharp color changes or faint transparency.
+
+On supported GPUs, a full mip chain takes roughly one eighth of RGBA memory for BC1, or one quarter for BC3. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. OpenGL and WebGL use S3TC when available; WebGPU uses its optional BC feature. Unsupported devices use the exact RGBA fallback.
+
+The pack currently includes both representations, so this reduces GPU memory and upload bytes while increasing pack size. Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
+
+The renderer keeps recently hidden pack images in a bounded GPU cache, avoiding another upload when they return soon. This is whole-image residency; mip streaming and virtual textures aren't built yet.
 
 ### Image formats
 
