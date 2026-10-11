@@ -140,6 +140,50 @@ target_include_directories(tide_rooms_pages PRIVATE "${PROJECT_SOURCE_DIR}/tests
 add_test(NAME tide_rooms_pages COMMAND tide_rooms_pages)
 set_tests_properties(tide_rooms_pages PROPERTIES TIMEOUT 120)
 
+# Lobby: the client of the relay's lobbies and its menu, in Tide alone. Its
+# tests' games are built with the package as tide builds one that lists it.
+set(lobby_files lobby/lobby.tide lobby/service.tide lobby/pages.tide)
+# With no service: a game that fills the identity, lobby and matchmaking slots itself, and draws a page its own way
+tide_add_game(tide_lobby_menu SOURCES lobby/test/game.tide NAME game PACKAGES Lobbies ${lobby_files}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" lobby/test/menu_test.c)
+target_include_directories(tide_lobby_menu PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_lobby_menu COMMAND tide_lobby_menu)
+set_tests_properties(tide_lobby_menu PROPERTIES TIMEOUT 120)
+# A game that lists it beside rooms, with both namespaces imported: tidec checks it, with no name of one in the
+# other's way
+add_test(NAME tide_lobby_beside_rooms
+    COMMAND "${TIDEC_PATH}" "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/both.tide"
+        --package Rooms "${CMAKE_CURRENT_SOURCE_DIR}/rooms/rooms.tide"
+        --package Lobbies "${CMAKE_CURRENT_SOURCE_DIR}/lobby/lobby.tide" "${CMAKE_CURRENT_SOURCE_DIR}/lobby/service.tide"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lobby/pages.tide" --schedule)
+set_tests_properties(tide_lobby_beside_rooms PROPERTIES FAIL_REGULAR_EXPRESSION "warning:")
+# With Tide's own service: four players through the relay's lobbies on this machine (relay/lobbies.mjs), natively
+# through the platform's HTTP client against the relay lobby/test/relay.mjs starts, and in a page through the
+# page's fetch, with the lobbies answering beside the test's own server
+if(TIDE_PLATFORM)
+    if(TIDE_WEB)
+        tide_add_game(tide_lobby_relay_web SOURCES lobby/test/relay.tide NAME game PACKAGES Lobbies ${lobby_files}
+            HOST lobby/test/relay_web.c WINDOW)
+        target_link_libraries(tide_lobby_relay_web PRIVATE tide_platform)
+        tide_web_page(tide_lobby_relay_web SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        add_test(NAME tide_lobby_relay_web
+            COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
+                "$<TARGET_FILE_DIR:tide_lobby_relay_web>/tide_lobby_relay_web.html"
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_lobby_relay_web-browser" "backend=webgl"
+                --routes "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/relay_routes.mjs")
+        # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
+        set_tests_properties(tide_lobby_relay_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
+    elseif(NOT TIDE_ANDROID AND TIDE_NODE)
+        tide_add_game(tide_lobby_relay SOURCES lobby/test/relay.tide NAME game PACKAGES Lobbies ${lobby_files}
+            HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" lobby/test/relay_test.c)
+        target_include_directories(tide_lobby_relay PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+        target_link_libraries(tide_lobby_relay PRIVATE tide_platform)
+        add_test(NAME tide_lobby_relay
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/relay.mjs" "$<TARGET_FILE:tide_lobby_relay>")
+        set_tests_properties(tide_lobby_relay PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
 # the package's files before their own: a game needn't use all of a package.

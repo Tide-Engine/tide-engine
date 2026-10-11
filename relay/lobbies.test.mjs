@@ -192,6 +192,57 @@ test('a kicked member is out, and stays out', async () => {
     assert.equal((await bob.post('/v1/lobbies/quick', { game: g })).status, 404);
 });
 
+test('the relay makes a player for a game that asks, and each is another', async () => {
+    const make = async () => {
+        const response = await fetch(`${base}/v1/players`, { method: 'POST' });
+        return { status: response.status, ...await response.json() };
+    };
+    const one = await make(), two = await make();
+    assert.equal(one.status, 200);
+    assert.match(one.secret, /^[0-9A-Za-z_-]{16,128}$/);
+    assert.match(one.id, /^[0-9a-f]{16}$/);
+    assert.ok(one.secret !== two.secret && one.id !== two.id);
+    // The secret is that player's from then on: its lobby says the same ID
+    const response = await fetch(`${base}/v1/lobbies`, { method: 'POST', body: JSON.stringify({ game: game() }),
+        headers: { authorization: `Bearer ${one.secret}` } });
+    assert.equal((await response.json()).you, one.id);
+    assert.equal((await fetch(`${base}/v1/players`, { headers: { authorization: `Bearer ${one.secret}` } })).status, 404);
+});
+
+test('a list of keys takes them away, as a null does', async () => {
+    const g = game(), ann = player(), bob = player();
+    const lobby = await ann.post('/v1/lobbies', { game: g, data: { mode: 'duel', map: 'pit', round: '1' } });
+    const changed = await ann.post(`/v1/lobbies/${lobby.id}/update`, { data: { round: '2' }, remove: ['map', 'nothing'] });
+    assert.deepEqual(changed.data, { mode: 'duel', round: '2' });
+    // What a change sets and removes at once is removed
+    assert.deepEqual((await ann.post(`/v1/lobbies/${lobby.id}/update`, { data: { map: 'sea' }, remove: ['map'] })).data,
+        { mode: 'duel', round: '2' });
+    assert.deepEqual((await ann.post(`/v1/lobbies/${lobby.id}/update`, { remove: ['round'] })).data, { mode: 'duel' });
+    await bob.post(`/v1/lobbies/${lobby.id}/join`, { member: { data: { ready: 'yes', team: 'red' } } });
+    const mine = await bob.post(`/v1/lobbies/${lobby.id}/member`, { remove: ['ready'] });
+    assert.deepEqual(mine.members[1].data, { team: 'red' });
+    assert.equal((await bob.post(`/v1/lobbies/${lobby.id}/member`, { remove: 'team' })).status, 400);
+    assert.equal((await bob.post(`/v1/lobbies/${lobby.id}/member`, { remove: [1] })).status, 400);
+});
+
+test('a player who was in the lobby already is told so', async () => {
+    const g = game(), ann = player(), bob = player();
+    const ask = { game: g, filter: { mode: 'duel' }, create: { max: 2, data: { mode: 'duel' } } };
+    const lobby = await ann.post('/v1/lobbies/quick', ask);
+    assert.equal(lobby.already, undefined);
+    // Ann again, as from another program: the lobby she's in, and that she was
+    const again = await ann.post('/v1/lobbies/quick', ask);
+    assert.deepEqual([again.id, again.already, again.members.length], [lobby.id, true, 1]);
+    assert.equal((await ann.post(`/v1/lobbies/${lobby.id}/join`)).already, true);
+    const joined = await bob.post(`/v1/lobbies/${lobby.id}/join`);
+    assert.equal(joined.already, undefined);
+    // Full now, and still hers
+    assert.equal((await ann.post('/v1/lobbies/quick', ask)).id, lobby.id);
+    // Another kind of lobby isn't the one she's in
+    const other = await ann.post('/v1/lobbies/quick', { game: g, filter: { mode: 'race' }, create: { data: { mode: 'race' } } });
+    assert.ok(other.id !== lobby.id && other.already === undefined);
+});
+
 test('an answer the member has seen waits for a change, or a while', async () => {
     const g = game(), ann = player(), bob = player();
     const lobby = await ann.post('/v1/lobbies', { game: g });
