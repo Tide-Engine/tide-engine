@@ -18,6 +18,7 @@ tide <command> [folder] [options]
 | `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
+| `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
 | `tide upgrade` | Updates tide to the newest version |
@@ -351,6 +352,16 @@ tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
 | `tide update physics` | One, by its name, its repository's name or its source |
 
 Both add the lines of the packages the game's packages need that it doesn't list yet.
+
+## eject
+
+`tide eject <package>` copies one of the game's packages, from git or one that comes with `tide`, into `packages/<its folder's name>` in the game's folder, and makes its line in `tide.packages` that folder. The package is the game's own from there: its files change with the game's, and `tide update` and `tide upgrade` no longer move it. It's named as for `tide update`.
+
+```sh
+tide eject rooms    # the rooms line becomes ./packages/rooms
+```
+
+A package that's a folder already is left where it is, and a folder already at `packages/<name>` is an error, with nothing copied.
 
 `tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, and adds the same lines: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
 

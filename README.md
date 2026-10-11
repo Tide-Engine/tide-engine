@@ -95,6 +95,7 @@ Then, in that folder:
 | `tide shaders` | Shows the shaders the game's frags and verts compile to |
 | `tide add github.com/owner/repo` | Adds a package, at its newest commit, to `tide.packages` |
 | `tide update` | Moves the packages to the newest commits of what they follow |
+| `tide eject rooms` | Copies a package into the game's folder, to change as the game's own |
 
 `tide help` lists every option. `tide` keeps its work in a hidden `.tide`
 folder next to your files, which you can delete any time; it's ignored by git.

@@ -439,3 +439,140 @@ int tide_update(const char *folder, const char *const *names, const int count)
     packages_free_file(&game);
     return add_needed(folder) && !failed ? 0 : 1;
 }
+
+// ---------------------------------------------------------------------------
+// tide eject
+
+// Puts `text` on line `number` in place of its source and commit: all of the
+// line before any comment.
+static void set_line(packages_text *t, const int number, const char *text)
+{
+    char *line = t->text;
+    for (int i = 1; i < number && line; i++) {
+        line = strchr(line, '\n');
+        if (line) line++;
+    }
+    if (!line) return;
+    size_t end = strcspn(line, "\n");
+    bool comment = false;
+    for (size_t i = 0; i < end; i++) {
+        if (line[i] == '#' && (i == 0 || is_space(line[i - 1]))) {
+            end = i;
+            comment = true;
+            break;
+        }
+    }
+    while (!comment && end > 0 && is_space(line[end - 1])) end--; // A "\r" stays the line's end
+    size_t from = 0;
+    while (from < end && is_space(line[from])) from++;
+    const size_t at = (size_t)(line - t->text);
+    const size_t size = strlen(t->text) + strlen(text) + 2;
+    char *out = malloc(size);
+    if (!out) abort();
+    snprintf(out, size, "%.*s%s%s%s", (int)(at + from), t->text, text, comment ? " " : "", t->text + at + end);
+    free(t->text);
+    t->text = out;
+}
+
+typedef struct copy_walk {
+    const char *from;
+    const char *to;
+    bool top; // The package's own folder, where what tide made isn't the package's
+    bool ok;
+} copy_walk;
+
+static void copy_entry(void *user, const char *name, const bool is_dir)
+{
+    copy_walk *w = user;
+    if (!w->ok) return;
+    if (w->top && (strcmp(name, ".tide") == 0 || strcmp(name, ".tide-fetched") == 0 || strcmp(name, ".git") == 0
+                   || strcmp(name, "build") == 0)) {
+        return;
+    }
+    char *from = path_join(w->from, name);
+    char *to = path_join(w->to, name);
+    if (is_dir) {
+        copy_walk inner = {from, to, false, sys_mkdirs(to)};
+        if (inner.ok) sys_list(from, copy_entry, &inner);
+        w->ok = inner.ok;
+    } else {
+        size_t size = 0;
+        char *data = sys_read_file(from, &size);
+        w->ok = data && sys_write_file(to, data, size);
+        free(data);
+    }
+    if (!w->ok) fprintf(stderr, "tide: can't copy %s to %s\n", from, to);
+    free(from);
+    free(to);
+}
+
+int tide_eject(const char *folder, const char *name)
+{
+    packages_file game;
+    if (!packages_read(folder, &game, report, NULL)) return 1;
+    const package_line *line = NULL;
+    for (int i = 0; i < game.count && !line; i++) {
+        if (names_line(name, &game.lines[i], game.folder)) line = &game.lines[i];
+    }
+    if (!line) {
+        fprintf(stderr, "tide: tide.packages has no package called %s\n", name);
+        fprintf(stderr, "  = note: eject copies one of the game's packages into the game's folder: `tide add %s` adds it "
+                        "first\n", name);
+        return 1;
+    }
+    char *own = package_name(line, game.folder);
+    if (line->local) {
+        printf("tide: %s is a folder on this machine already (%s): it's changed there\n", own, line->source);
+        return 0;
+    }
+    if (!line->builtin && !line->commit) {
+        fprintf(stderr, "tide: tide.packages:%d names no commit of %s to copy\n", line->line, own);
+        fprintf(stderr, "  = note: `tide update %s` writes the newest one\n", own);
+        return 1;
+    }
+    if (!line->builtin) {
+        char *repo_dir = packages_repo_dir(line);
+        const bool here = repo_dir && (packages_fetched(repo_dir) || fetch_package(NULL, line, repo_dir));
+        free(repo_dir);
+        if (!here) return 1;
+    }
+    char *from = packages_folder(line, game.folder);
+    if (!from || !sys_is_dir(from)) {
+        fprintf(stderr, "tide: %s isn't on this machine to copy\n", own);
+        return 1;
+    }
+
+    // packages/<its folder's name>: the last part of what the line says
+    const char *last = strrchr(line->source, '/');
+    const char *part = last ? last + 1 : line->source;
+    const size_t size = strlen(part) + 16;
+    char *source = malloc(size);
+    if (!source) abort();
+    snprintf(source, size, "./packages/%s", part);
+    char *to = path_join(game.folder, source + 2);
+    if (sys_exists(to)) {
+        fprintf(stderr, "tide: %s is there already, so %s wasn't copied\n", to, own);
+        fprintf(stderr, "  = note: a package is ejected into packages/ in the game's folder, under its own folder's name\n");
+        return 1;
+    }
+    copy_walk walk = {from, to, true, sys_mkdirs(to)};
+    if (walk.ok) sys_list(from, copy_entry, &walk);
+    else fprintf(stderr, "tide: can't make the folder %s\n", to);
+    if (!walk.ok) {
+        sys_remove_tree(to);
+        return 1;
+    }
+
+    packages_text t = load(folder);
+    set_line(&t, line->line, source);
+    if (!save(&t)) return 1;
+    printf("tide: %s is the game's own now, in %s: change what you like\n", own, source + 2);
+    if (line->builtin) printf("  = note: `tide upgrade` no longer updates it\n");
+    else printf("  = note: `tide update` no longer moves it\n");
+    free(own);
+    free(from);
+    free(to);
+    free(source);
+    packages_free_file(&game);
+    return add_needed(folder) ? 0 : 1;
+}

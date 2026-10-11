@@ -420,6 +420,43 @@ file(WRITE "${game}/tide.packages" "dice\nrolls\nlonely\n")
 tide("${game}" ARGS schedule . FAILS
     EXPECT "a package that comes with tide can't use a folder on this machine (../rolls)")
 
+# tide eject copies a package into the game's packages/ folder and makes its
+# line that folder, with what's around it kept: the game builds with the copy,
+# which is its own to change.
+file(WRITE "${game}/tide.packages" "dice # the dice\nrolls\ngithub.com/test/maths ${M1}\n")
+file(WRITE "${builtin}/dice/.tide/work" "tide's own")
+file(WRITE "${builtin}/dice/art/pips.txt" "six")
+tide("${game}" ARGS eject Dice
+    EXPECT "Dice is the game's own now, in packages/dice" "`tide upgrade` no longer updates it")
+expect_file("${game}/tide.packages" "./packages/dice # the dice\nrolls\ngithub.com/test/maths ${M1}\n")
+expect_file("${game}/packages/dice/tide.packages" "package Dice\nrolls\n")
+expect_file("${game}/packages/dice/art/pips.txt" "six")
+if(EXISTS "${game}/packages/dice/.tide")
+    message(FATAL_ERROR "tide eject copied the .tide folder, which is tide's own work")
+endif()
+file(APPEND "${game}/packages/dice/die.tide" "\nsystem Reroll(mut Die die)\n{\n    die.face += 1;\n}\n")
+tide("${game}" ARGS schedule . EXPECT "Dice.Roll" "Dice.Reroll" "Count")
+tide("${game}" ARGS eject dice EXPECT "Dice is a folder on this machine already (./packages/dice)")
+# One from git: its commit goes with its source
+tide("${game}" ARGS eject maths
+    EXPECT "Maths is the game's own now, in packages/maths" "`tide update` no longer moves it")
+expect_file("${game}/tide.packages" "./packages/dice # the dice\nrolls\n./packages/maths\n")
+expect_file("${game}/packages/maths/tide.packages" "package Maths")
+if(EXISTS "${game}/packages/maths/.tide-fetched")
+    message(FATAL_ERROR "tide eject copied .tide-fetched, which says a download is whole")
+endif()
+tide("${game}" ARGS schedule . EXPECT "Dice.Roll" "Dice.Reroll" "Count")
+tide("${game}" ARGS update EXPECT "tide.packages has no packages from git to update")
+# A folder in the way is left alone, and so is the file
+file(WRITE "${game}/packages/rolls/mine.txt" "kept")
+tide("${game}" ARGS eject rolls FAILS EXPECT "packages/rolls is there already, so Rolls wasn't copied")
+expect_file("${game}/tide.packages" "./packages/dice # the dice\nrolls\n./packages/maths\n")
+expect_file("${game}/packages/rolls/mine.txt" "kept")
+tide("${game}" ARGS eject cards FAILS
+    EXPECT "tide.packages has no package called cards" "`tide add cards` adds it first")
+tide("${game}" ARGS eject FAILS EXPECT "eject takes the name of one of the game's packages")
+file(REMOVE_RECURSE "${game}/packages" "${builtin}/dice/.tide" "${builtin}/dice/art")
+
 # They're the installation's: the tide the build made, where it was built, has neither.
 file(WRITE "${game}/tide.packages" "dice\nrolls\n")
 tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")

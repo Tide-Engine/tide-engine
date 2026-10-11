@@ -1,6 +1,6 @@
 #pragma once
 
-// `tide add` and `tide update`: changing the tide.packages of the game in
+// `tide add`, `tide update` and `tide eject`: changing the tide.packages of the game in
 // `folder` (see packages.h). Both add the lines of what its packages need
 // that it doesn't list yet. Return the exit code.
 
@@ -17,3 +17,8 @@ int tide_fetch(const char *folder);
 // or with none every package from git, to the newest commit of what it
 // follows.
 int tide_update(const char *folder, const char *const *names, int count);
+
+// Copies one of the game's packages (named as for tide_update), from git or
+// one that comes with tide, into packages/ in the game's folder, and makes
+// its line that folder: the package is the game's own to change from there.
+int tide_eject(const char *folder, const char *name);
