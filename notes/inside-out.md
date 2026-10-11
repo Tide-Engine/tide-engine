@@ -20,6 +20,9 @@ automatic room pushing with doorway entry when blocked, and an unmistakably
 unpitched entrance sound. They clarified that the maker must move smoothly
 through the doorway too, rather than teleport as the camera zooms. The current
 prototype implements that follow-up.
+They then rejected camera framing that keeps both makers visible: each view
+should show its whole current room with one tile of outside context, and the
+partner may leave the screen. Discord or couch communication is sufficient.
 Its particular layouts and puzzle rules are game design choices within the
 prototype request, not new engine or language requirements.
 
@@ -103,8 +106,16 @@ the current alias pose and opacity. This avoids a larger canonical maker
 appearing abruptly in a stationary partner's recursive view. A serial change
 returning to zero moves also snaps first-action Undo, since presentation does
 not distinguish it from Reset; other Undo endpoints interpolate normally.
-There is no scene fade. The camera widens and shifts when needed to keep a
-maker in the immediate containing world visible. Up to three real ancestor
+There is no scene fade. The camera fits the local maker's whole current
+dimension, with one interior-grid tile of containing-world context around an
+inner room. Its scene viewport is a fixed square centered in the panel body,
+whose side is the shorter body axis; the settled inner tile is that side
+divided by seven. This keeps the rim bounded on wide and phone viewports.
+The outer seven-cell workshop keeps its existing 0.96 body-side fit.
+Partner presence, position and dimension never change camera targets or
+start camera transitions. Makers outside the fixed viewport are clipped.
+The viewport stays fixed during doorway zoom, so the approaching local maker
+remains visible. Up to three real ancestor
 contexts surround the current room, in the same scene. That outside
 uses the maker's latest entrance: shell entries resolve their current parent
 and location, and fixed references use their recorded parent and anchor.
@@ -216,7 +227,13 @@ Light when that prototype was removed on 2026-10-11; their original unit tests
 left with that game and their history remains in git. Checkpoints require
 fresh verified ticks and packet exchange;
 runtime, browser and graphics errors fail. Rendered label crops verify shared
-actions without wasm inspection or a game-only debug export. The fixture
+actions without wasm inspection or a game-only debug export. The camera
+regression keeps one maker stationary while the partner moves far away,
+approaches, enters and exits. Static parcel, frame and parent-rim crops must
+remain byte-identical; rendered maker-colour pixels must disappear outside
+the view and return when that partner enters. Clipped screenshot requests
+on the same browser page run sequentially, since parallel captures race
+Chrome's temporary capture viewport. The fixture
 controls match time; physical devices, NAT reachability and real-time latency
 remain separate coverage. `TIDE_INSIDE_OUT_RELAY` optionally probes production
 signalling, retaining a local relay by default.
@@ -450,3 +467,39 @@ held-input recovery, completion/progression, shelf selection and phone touch
 all pass without runtime, browser or graphics errors. This uses a controlled
 frame clock; physical phones, cross-machine NAT and human latency remain
 unmeasured. No CI workflow was dispatched.
+
+## Local dimension framing validation, 2026-10-11
+
+The owner chose the whole current room with a one-tile outside rim. The
+partner-fit helper, presence mask and camera transition trigger are removed.
+Inner rooms use the fixed square scene viewport and seven-cell span described
+above; the outer workshop retains its scale. Simulation, puzzle layouts,
+doorway passage and audio are unchanged. The README and authenticated catalog
+description now describe the local framing, and the thumbnail comes from
+`rim-capstone-desktop-1.png`, with Peach nested in Mint and a recursive door.
+
+Native debug and web debug/release builds pass without warnings. All
+twenty-one simulation/campaign fixtures pass natively and under WASI.
+The final real two-browser checks pass, WebGL in 109.39 s and WebGPU in
+66.05 s. The new regression accepts all ten partner moves and compares four
+nonblank scenery patches exactly while the partner walks far away, approaches,
+enters and exits. Amber's rendered pixels are absent in the outside positions
+and present after entering the local room. Existing progressive camera zoom,
+maker passage, canonical parity, occupied-shell context, recursion, shared
+commands, progression, shelf and phone-touch assertions still pass.
+
+The first browser attempt exposed a fixture error: four simultaneous clipped
+screenshots on one page raced Chrome's temporary capture viewport. The saved
+page was translated by exactly one crop origin. Capturing those crops
+sequentially fixed the failure without changing crop geometry or assertions.
+Desktop and 390 by 844 native captures show readable complete rooms, bounded
+rims and visible doorway motion, including self-reference. A read-only camera
+audit found no critical blocker. Physical-phone/NAT coverage remains separate.
+
+Site check has zero errors/warnings; the production build, eighteen
+analytics/admin tests and five HTTP/SEO/access tests pass. Release, staged
+and packaged HTML match SHA-256
+`67de50e12c7e96b3d0e1128b3959a8800b88199156e0ef18056fbf19bb2bbeb9`.
+The staged and packaged thumbnail SHA-256 is
+`48f24a67cf3d60c14bfbb7559d280ae4604a456029997532f43124fb0aae1707`.
+The inline pack retains the exact current doorway WAV. No CI was dispatched.

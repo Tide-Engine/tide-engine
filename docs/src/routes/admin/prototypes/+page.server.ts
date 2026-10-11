@@ -12,7 +12,7 @@ const prototypes = [
     },
     {
         id: 'inside-out', title: 'Inside Out', kind: 'Cooperative puzzle · Nested rooms', players: '2 players',
-        description: 'Push a pocket room until it cannot move, then zoom inside with your partner visible outside. Nest rooms, follow recursive doorways, and solve twelve puzzles built around planning and shared spaces.',
+        description: 'Push a pocket room until it cannot move, then zoom inside. Each maker sees their current room and a small rim of the world outside. Nest rooms, follow recursive doorways, and solve twelve puzzles built around planning and shared spaces.',
         image: '/prototypes/inside-out/thumbnail.png',
     },
     {

@@ -20,7 +20,6 @@ local singleton Picture
     int focusShell = -2;
     int focusPortal = -2;
     int focusDepth = -1;
-    int focusOutside;
     float cameraBlend = 1;
     MapLens cameraLens;
     MapLens cameraFrom;
@@ -520,12 +519,11 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var localSeat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
     var actor = workshop.puzzle.actors[localSeat];
     var surround = ReturnSurround(workshop, actor, picture);
-    var outside = actor.room < 0 ? 0 : OutsideMakers(workshop, surround, localSeat);
-    var target = FocusLens(screen, workshop, actor, surround, picture, localSeat);
+    var target = WorkshopLens(screen, actor.room);
     var firstView = picture.focusRoom == -2;
     var resized = picture.cameraLens.size.x != target.size.x || picture.cameraLens.size.y != target.size.y || picture.cameraLens.center.y != target.center.y;
     var crossing = actor.room != picture.focusRoom || surround.room != picture.focusParent ||
-        surround.shell != picture.focusShell || surround.portal != picture.focusPortal || actor.depth != picture.focusDepth || outside != picture.focusOutside;
+        surround.shell != picture.focusShell || surround.portal != picture.focusPortal || actor.depth != picture.focusDepth;
     var transitioning = picture.cameraBlend < 1;
     if (firstView || levelChanged || resized || hands.reduceMotion)
     {
@@ -564,7 +562,6 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     picture.focusShell = surround.shell;
     picture.focusPortal = surround.portal;
     picture.focusDepth = actor.depth;
-    picture.focusOutside = outside;
     var eased = picture.cameraBlend * picture.cameraBlend * (3 - 2 * picture.cameraBlend);
     if (picture.cameraBlend < 1) picture.cameraLens = BlendLens(picture.cameraFrom, target, eased);
     else
@@ -583,6 +580,11 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     Draw.Clip(body)
     {
         Draw.RoundRect(lens.center + float2(0, 9), lens.size - float2(24, 62), 7, Color(0.88, 0.84, 0.73));
+    }
+    var viewSide = Math.Min(body.width, body.height);
+    var viewCenter = lens.center + float2(0, 9);
+    Draw.Clip(Rect(viewCenter.x - viewSide * 0.5, viewCenter.y - viewSide * 0.5, viewSide, viewSide))
+    {
         mut MapLens[4] contexts = default;
         mut RoomSurround[3] ancestors = default;
         mut int[4] dimensions = default;
