@@ -878,6 +878,52 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
 }
 
+// Levels of detail: the [LOD] attribute, completed and explained where an
+// asset's attributes go, and the two settings that name a level and a camera
+// to pick by, each with both forms, on Draw and on a target.
+TIDE_TEST(lsp_levels_of_detail)
+{
+    start();
+    open_document("scene Main { }\nlocal singleton Look { RenderTarget shadow; }\nview V(Look look)\n{\n"
+                  "    Draw.LOD(0)\n    {\n        Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "    Draw.SetLOD(2);\n    Draw.SetLOD();\n"
+                  "    Draw.LOD()\n    {\n    }\n"
+                  "    look.shadow.SetLODCamera(float3(0, 0, 0), quaternion.identity, 60);\n"
+                  "    look.shadow.LODCamera(Draw.CameraTransform(), Draw.CameraProjection())\n    {\n    }\n"
+                  "    look.shadow.SetLODCamera();\n    look.shadow.LOD(1)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *draw = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(offers(draw, "LOD") && offers(draw, "SetLOD") && offers(draw, "LODCamera") && offers(draw, "SetLODCamera"));
+    TIDE_CHECK(has(draw, "LOD(${1:level})\\n{\\n\\t$0\\n}") && has(draw, "\"SetLOD(${1:level})\""));
+    const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget shadow; }\nview V(Look look)\n{\n"
+                                  "    look.shadow.$\n}\n");
+    TIDE_CHECK(offers(target, "LOD") && offers(target, "SetLODCamera"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetLO$D(1);\n}\n");
+    const char *set = request("textDocument/hover");
+    TIDE_CHECK(has(set, "Draw.SetLOD(int level)") && has(set, "Draw.SetLOD()") && has(set, "`0` is the full mesh"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetLODCam$era();\n}\n");
+    const char *camera = request("textDocument/hover");
+    TIDE_CHECK(has(camera, "Draw.SetLODCamera(float3 position, quaternion rotation, float fieldOfView)"));
+    TIDE_CHECK(has(camera, "Draw.SetLODCamera(float4x4 transform, float4x4 projection)") && has(camera, "the pixels it counts are the window's"));
+
+    // Each form written as the other is a rename away
+    open_document("scene Main { }\nview V()\n{\n    Draw.LOD(1);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.LOD sets it around a block") && has(last_sent(), "Draw.SetLOD(...);"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetLOD'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+
+    // The attribute: offered before an asset, explained on hover, and refused where it isn't a mesh's
+    const char *offered = complete("[$] asset Texture masks = \"art/tile.png\";\nscene Main { }\n");
+    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter"));
+    open_document("[LO$D] component Rock { float3 position; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "LOD has simpler versions of a mesh made") && has(last_sent(), "'Rock' isn't a mesh"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "[LOD]") && has(hover, "levels of detail made as the game is built") && has(hover, "Draw.LODCamera"));
+    open_document("[Lod] component Rock { float3 position; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
+}
+
 // Which side of a 3D mesh's triangles draws is one too, as its depth is: both
 // forms, its sides, what the front is on hover, each form's mistake a rename
 // away, and the old owners' spellings a rename away too.

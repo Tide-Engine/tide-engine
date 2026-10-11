@@ -35,8 +35,10 @@ view Follow(Player player, with ownership)
 | `Draw.Screen()` | `Draw.SetScreen()` | The screen's pixels in the camera's place (see [On the screen](./views.md#on-the-screen)) |
 | `Draw.Depth(mode)` | `Draw.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](./3d.md#depth)) |
 | `Draw.Cull(side)` | `Draw.SetCull(side)` | Which side of a 3D mesh's triangles isn't drawn: the back, unless this says otherwise (see [Which side draws](./3d.md#which-side-draws)) |
+| `Draw.LOD(level)`, `Draw.LOD()` | `Draw.SetLOD(level)`, `Draw.SetLOD()` | Which level of detail the meshes marked `[LOD]` draw at, in place of the one each picks; with no level, each picks again (see [Levels of detail](./assets.md#levels-of-detail)) |
+| `Draw.LODCamera(...)`, `Draw.LODCamera()` | `Draw.SetLODCamera(...)`, `Draw.SetLODCamera()` | The camera those meshes pick their level through, in place of the one they're drawn through; with nothing, their own again |
 
-Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw.SetStencil()`, `Draw.SetClip()`, `Draw.SetDepth()`, `Draw.SetCull()`; `Draw.SetCamera()` puts both cameras back, the 2D and the 3D, and `Draw.SetTransform()` both transforms.
+Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw.SetStencil()`, `Draw.SetClip()`, `Draw.SetDepth()`, `Draw.SetCull()`, `Draw.SetLOD()`, `Draw.SetLODCamera()`; `Draw.SetCamera()` puts both cameras back, the 2D and the 3D, and `Draw.SetTransform()` both transforms. The two for levels of detail have a block form with no arguments too, which does the same around some draws.
 
 Writing one form as the other is a compile error that names the right one: `Draw.Blend(Blend.Add);` with no block says to write `Draw.SetBlend`, and `Draw.SetBlend(Blend.Add) { }` says `Draw.Blend`. Your editor offers the rename.
 

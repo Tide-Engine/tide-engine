@@ -1,0 +1,6 @@
+// expect: 'ball' already has a LOD
+[LOD] [LOD] asset Mesh<Vertex3> ball = "../e2e/assets/lod/ball.glb";
+
+scene Main
+{
+}
