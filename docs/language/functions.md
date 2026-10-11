@@ -118,6 +118,18 @@ Engine-owned singleton instances, such as `Time` and `Session`, stay read-only w
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 
+### A value nobody takes
+
+A call written as a statement, whose function gives a value and does nothing else, is a warning: the value is lost, and the call with it. It's usually a method that gives a changed copy, taken for one that changes its value:
+
+```csharp
+request.SetHeader("Accept", "text/plain");            // Warning: 'SetHeader' gives a value that nothing takes
+request = request.SetHeader("Accept", "text/plain");  // Keeps it
+_ = request.SetHeader("Accept", "text/plain");        // Drops it, on purpose
+```
+
+`_ = value;` works anything out and drops it. A call that does something besides giving its value (it sends, spawns, draws, calls C, or changes a `mut` argument or its own value) is a statement as it always was, and so is one that can fail, which has a warning of its own.
+
 ## Sending and spawning
 
 A function or a method can `Send`, `Spawn`, `Add`, `Remove` and `Destroy`, written as a system writes them. It does it as the code that calls it: what a system could do itself, a function it calls can do for it.

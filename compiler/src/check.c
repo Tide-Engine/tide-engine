@@ -36,6 +36,7 @@ typedef struct checker {
     VEC(int) scope_marks;
     const expr *write_root;   // Checking an assignment's target: the name it writes through, which that doesn't read
     VEC(stmt *) unused;       // Locals nothing read by the end of their scope, warned about once every body is checked
+    VEC(const expr *) dropped; // Calls written as statements whose value nothing takes (warn_dropped_values)
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
@@ -11025,6 +11026,12 @@ static void check_stmt(checker *c, stmt *s)
         const builtin_call call = called->call;
         const bool effect = stands_alone(e);
         if (!effect && e->type.kind != TY_ERROR) diag_error(e->at, "this expression does nothing on its own");
+        // A function's or a method's call whose value nothing takes: whether the call does anything
+        // else is known once every body is checked (warn_dropped_values)
+        if (effect && (called->call == CALL_FUNCTION || called->call == CALL_METHOD) && called == e
+            && e->type.kind != TY_VOID && e->type.kind != TY_ERROR && e->type.kind != TY_FAILABLE && builds(c->prog)) {
+            vec_push(c->dropped, e);
+        }
         // A call that can fail, whose error nothing looks at.
         if (e->type.kind == TY_FAILABLE && effect && builds(c->prog)) { // What an override replaced warns about nothing
             const expr *named = e->kind == E_AWAIT ? e->lhs : e;
@@ -14466,6 +14473,20 @@ static int unused_order(const void *a, const void *b)
 // that moves by `move`. Assigned but never read counts as never read. The
 // note says what to do, and editors offer it: when the value is a call that
 // does something, the call stays, as a statement of its own.
+// A call written as a statement that gives a value and does nothing else:
+// the value is lost, and so is the call. `request.SetHeader(name, value);`
+// reads as if it changed the request, and gives a request nobody keeps.
+static void warn_dropped_values(checker *c)
+{
+    for (int i = 0; i < c->dropped.count; i++) {
+        const expr *e = c->dropped.items[i];
+        if (!e->method || call_acts(e)) continue; // It sends, draws, calls C, changes what it's given: a statement
+        diag_warning(e->at, "'" STR_FMT "' gives a value that nothing takes, and does nothing else", STR_ARG(e->method->name));
+        diag_note("keep what it gives, like 'value = value." STR_FMT "(...);', or write '_ = ...;' to drop it on purpose",
+                  STR_ARG(e->method->name));
+    }
+}
+
 static void warn_unused_locals(checker *c)
 {
     if (c->unused.count > 1) qsort(c->unused.items, (size_t)c->unused.count, sizeof(stmt *), unused_order);
@@ -18197,6 +18218,7 @@ bool check(program *prog)
     if (diag_error_count() == 0) plan_shaders(prog);
     mark_c_callers(&c);
     warn_unused_locals(&c); // Once it's known which calls draw and call C
+    warn_dropped_values(&c);
     collect_device_uses(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     for (int i = 0; i < prog->decls.count; i++) {

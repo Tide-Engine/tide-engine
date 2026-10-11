@@ -1200,6 +1200,20 @@ static stmt *parse_simple(parser *p)
 {
     expr *e = parse_expr(p);
     if (e->kind == E_STEP) return e->step; // ++i or i++ alone: its assignment, as nothing takes its value
+    if (e->kind == E_NAME && str_eq_c(e->name, "_") && at(p, T_ASSIGN)) {
+        // `_ = Compute();`: the value is worked out and dropped, on purpose. It's a variable no code
+        // can name, so everything a variable's value goes through is this one's too.
+        advance(p);
+        stmt *s = new_stmt(S_VAR, e->at);
+        char *name = arena_alloc(48);
+        snprintf(name, 48, "_dropped_%d_%d", e->at.line, e->at.col);
+        s->name = str_from(name);
+        s->name_at = e->at;
+        s->discard = true;
+        s->read = true; // Nothing reads it, which is the point
+        s->value = parse_expr(p);
+        return s;
+    }
     if (is_assign_op(peek(p)->kind)) {
         const token *op = advance(p);
         stmt *s = new_stmt(S_ASSIGN, op->at);
