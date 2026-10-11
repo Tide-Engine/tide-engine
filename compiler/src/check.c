@@ -36,6 +36,7 @@ typedef struct checker {
     VEC(int) scope_marks;
     const expr *write_root;   // Checking an assignment's target: the name it writes through, which that doesn't read
     VEC(stmt *) unused;       // Locals nothing read by the end of their scope, warned about once every body is checked
+    VEC(const expr *) dropped; // Calls written as statements whose value nothing takes (warn_dropped_values)
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
@@ -294,7 +295,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
-        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect;
+        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -6172,6 +6173,287 @@ static void check_sample_args(checker *c, expr *e, const bool cube)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Json.Read<T> and Json.Write: JSON to and from a game's own types, by
+// functions generated C has for each type a game reads or writes (codegen.c,
+// gen_json_helpers; tide/json.h).
+
+// The longest key a field has in JSON, in bytes: what a reader tells apart (tide/json.h).
+#define JSON_KEY_MOST 120
+// How deep the types JSON holds are looked into: a type nested past this is refused.
+#define JSON_TYPE_DEPTH 32
+
+str json_field_key(const field *f)
+{
+    for (int i = 0; i < f->attributes.count; i++) {
+        const attribute *a = &f->attributes.items[i];
+        if (str_eq_c(a->name, "Json") && a->values.count == 1 && a->values.items[0]->kind == E_STRING) return a->values.items[0]->text;
+    }
+    return f->name;
+}
+
+// [Json("max_players")] on a struct's field: its key in JSON, which no other
+// field of the struct has.
+static void check_json_attribute(const decl *d, const field *f, const attribute *a)
+{
+    if (d->kind != DECL_STRUCT) {
+        diag_error(a->at, "[Json] goes on a struct's field: Json reads and writes structs, and '" STR_FMT "' is %s",
+                   STR_ARG(d->name), decl_what(d));
+        return;
+    }
+    if (a->args.count || a->values.count != 1 || a->values.items[0]->kind != E_STRING) {
+        diag_error(a->at, "[Json] takes the field's key in JSON, in quotes: [Json(\"max_players\")]");
+        return;
+    }
+    const str key = a->values.items[0]->text;
+    if (key.len > JSON_KEY_MOST) {
+        diag_error(a->values.items[0]->at, "a field's key in JSON is %d bytes at the most, and this one is %d", JSON_KEY_MOST, key.len);
+        return;
+    }
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *other = &d->fields.items[i];
+        if (other == f || !str_eq(json_field_key(other), key)) continue;
+        if (other > f && !str_eq(json_field_key(other), other->name)) continue; // Two [Json]s: said once, at the second
+        diag_error(a->values.items[0]->at, "'" STR_FMT "' already has a field with the key \"" STR_FMT "\" in JSON: '" STR_FMT "'",
+                   STR_ARG(d->name), STR_ARG(key), STR_ARG(other->name));
+        diag_note("an object has each key once: give one of the two another key");
+        return;
+    }
+}
+
+// Whether JSON has something for a value of type `t`, and for everything in
+// it: a bool, a number, a char or text (a string), an enum (its member's
+// name), a struct (an object), a list or an array (an array) and a map by
+// text (an object). `*why` is the type it has nothing for, and `*in` and
+// `*at` the struct and the field that hold it, if one does. `outer` is the
+// structs being looked into, so one with a list of itself ends.
+static bool json_holds(const type t, type *why, const decl **in, const field **at, const decl **outer, const int depth)
+{
+    switch (t.kind) {
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_STRING: case TY_ENUM:
+        return true;
+    case TY_STRUCT:
+        if (t.decl->builtin || t.decl->skin_kind || depth == JSON_TYPE_DEPTH) break;
+        for (int i = 0; i < depth; i++) {
+            if (outer[i] == t.decl) return true;
+        }
+        outer[depth] = t.decl;
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->hidden) continue;
+            *in = NULL;
+            if (!json_holds(f->type, why, in, at, outer, depth + 1)) {
+                if (!*in) { // The field itself, or what its list holds
+                    *in = t.decl;
+                    *at = f;
+                }
+                return false;
+            }
+        }
+        return true;
+    case TY_LIST: case TY_ARRAY:
+        if (depth == JSON_TYPE_DEPTH) break;
+        outer[depth] = NULL;
+        return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth + 1);
+    case TY_MAP:
+        if (map_key(t).kind != TY_STRING || depth == JSON_TYPE_DEPTH) break;
+        outer[depth] = NULL;
+        return json_holds(map_value(t), why, in, at, outer, depth + 1);
+    default: break;
+    }
+    *why = t;
+    *in = NULL;
+    return false;
+}
+
+// `t` and the types in it are read, or written: codegen writes their readers, or their writers.
+static void mark_json(const type t, const bool reads)
+{
+    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP) return;
+    bool *marked = reads ? &t.decl->json_reads : &t.decl->json_writes;
+    if (*marked) return;
+    *marked = true;
+    if (t.kind == TY_ENUM) return;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (!t.decl->fields.items[i].hidden) mark_json(t.decl->fields.items[i].type, reads);
+    }
+}
+
+// Whether `call` (Json.Read or Json.Write) takes a value of type `t`: a
+// struct, a list or a map by text, of what JSON holds. Says what's in the way.
+static bool json_takes(const type t, const loc at, const char *call)
+{
+    if (t.kind == TY_ERROR) return false;
+    const bool reads = strcmp(call, "Json.Read") == 0;
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && !(t.kind == TY_MAP && map_key(t).kind == TY_STRING)) {
+        diag_error(at, "%s %s a struct, a List<T> or a Map<string, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
+        if (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT || t.kind == TY_INPUT) {
+            diag_note("copy what the JSON has of it %s a struct, which is a value of its own", reads ? "from" : "into");
+        } else {
+            diag_note("a value alone goes in a struct's field: 'struct Answer { %s value; }'", type_name(t));
+        }
+        return false;
+    }
+    const decl *outer[JSON_TYPE_DEPTH + 1];
+    const decl *in = NULL;
+    const field *field_at = NULL;
+    type why = T_ERR;
+    if (json_holds(t, &why, &in, &field_at, outer, 0)) return true;
+    if (in) {
+        diag_error(at, "JSON has nothing for %s, which '" STR_FMT "." STR_FMT "' holds", type_name(why), STR_ARG(in->name),
+                   STR_ARG(field_at->name));
+    } else {
+        diag_error(at, "JSON has nothing for %s", type_name(why));
+    }
+    if (why.kind == TY_MAP) diag_note("an object's keys are text: a map JSON holds is a Map<string, T>");
+    else if (why.kind == TY_SET) diag_note("JSON has arrays: keep the keys in a List<T>");
+    else diag_note("JSON holds bool, the integers, float, char, string, enums, structs of these, List<T>, arrays and Map<string, T>");
+    return false;
+}
+
+// The functions generated C has for Json.Read and Json.Write of `t`.
+static int json_root_of(program *prog, const type t)
+{
+    for (int i = 0; i < prog->json_roots.count; i++) {
+        const type other = prog->json_roots.items[i].type;
+        if (other.kind == t.kind && other.decl == t.decl) return i;
+    }
+    json_root root = {0};
+    root.type = t;
+    vec_push(prog->json_roots, root);
+    return prog->json_roots.count - 1;
+}
+
+// Json.Read<LobbyInfo>(text) and Json.Write(info).
+static type check_json_call(checker *c, expr *e)
+{
+    const bool reads = str_eq_c(e->name, "Read");
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (reads && arg->kind == E_LIST) check_expr_want(c, arg, list_of(c->prog, (type){TY_BYTE, NULL})); // [0x7B, 0x7D]: bytes
+        else check_expr(c, arg);
+    }
+    if (!reads && !str_eq_c(e->name, "Write")) {
+        diag_error(e->at, "Json has no function '" STR_FMT "'", STR_ARG(e->name));
+        diag_note("it has 'Json.Read<T>(json)', which gives a T? from a string or a List<byte>, and 'Json.Write(value)', "
+                  "which gives a string");
+        return T_ERR;
+    }
+    if (gpu_refuses(c, e->at, reads ? "read JSON" : "write JSON", "JSON is text, which is the CPU's: read it in a view or a "
+                    "system, and give the frag the numbers")) {
+        return T_ERR;
+    }
+    type t;
+    if (reads) {
+        if (e->type_arg.len == 0) {
+            diag_error(e->at, "Json.Read takes the type it reads in '<>': 'Json.Read<LobbyInfo>(text)'");
+            return T_ERR;
+        }
+        t = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+        if (e->args.count != 1) {
+            diag_error(e->at, "Json.Read takes one argument, the JSON to read: 'Json.Read<" STR_FMT ">(text)'", STR_ARG(e->type_arg));
+            return T_ERR;
+        }
+        const type source = e->args.items[0]->type;
+        if (source.kind == TY_ERROR) return T_ERR;
+        if (source.kind != TY_STRING && !(source.kind == TY_LIST && list_element(source).kind == TY_BYTE)) {
+            diag_error(e->args.items[0]->at, "Json.Read reads a string or a List<byte> of UTF-8, not %s", type_name(source));
+            return T_ERR;
+        }
+        if (!json_takes(t, e->type_arg_qual_at, "Json.Read")) return T_ERR;
+    } else {
+        if (e->type_arg.len > 0) {
+            diag_error(e->type_arg_qual_at, "Json.Write takes no type in '<>': it writes its value's type, 'Json.Write(value)'");
+            return T_ERR;
+        }
+        if (e->args.count != 1) {
+            diag_error(e->at, "Json.Write takes one argument, the value to write: 'Json.Write(value)'");
+            return T_ERR;
+        }
+        t = e->args.items[0]->type;
+        if (!json_takes(t, e->args.items[0]->at, "Json.Write")) return T_ERR;
+    }
+    const int root = json_root_of(c->prog, t);
+    const bool bytes = reads && e->args.items[0]->type.kind == TY_LIST;
+    type result = (type){TY_STRING, NULL};
+    if (reads) {
+        result = optional_type(c, t, e->at);
+        if (result.kind == TY_ERROR) return T_ERR;
+        c->prog->json_roots.items[root].result = result;
+    }
+    json_root *r = &c->prog->json_roots.items[root];
+    r->reads_text |= reads && !bytes;
+    r->reads_bytes |= bytes;
+    r->writes |= !reads;
+    if (builds(c->prog)) mark_json(t, reads);
+    sb callee = {0};
+    sb_printf(&callee, "tide_json_%s%d", !reads ? "write" : bytes ? "read_bytes" : "read", root);
+    e->call = CALL_JSON;
+    e->c_callee = callee.data;
+    e->arg_want.count = 0;
+    vec_push(e->arg_want, e->args.items[0]->type);
+    c->prog->uses_text = true; // What it makes is in the scratch area
+    return result;
+}
+
+// string.FromBytes(bytes): the text those bytes are, or nothing when they aren't UTF-8.
+static type check_from_bytes(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (arg->kind == E_LIST) check_expr_want(c, arg, list_of(c->prog, (type){TY_BYTE, NULL})); // [0x68, 0x69]: bytes
+        else check_expr(c, arg);
+    }
+    if (!str_eq_c(e->name, "FromBytes")) {
+        diag_error(e->at, "string has no function '" STR_FMT "'", STR_ARG(e->name));
+        diag_note("it has 'string.FromBytes(bytes)', the text a List<byte> of UTF-8 is; what a text has is called on "
+                  "the text, like 'name.Trim()'");
+        return T_ERR;
+    }
+    if (gpu_refuses(c, e->at, "work with text", "text is the CPU's")) return T_ERR;
+    const type bytes = e->args.count == 1 ? e->args.items[0]->type : T_ERR;
+    if (e->args.count == 1 && bytes.kind == TY_ERROR) return T_ERR;
+    if (e->args.count != 1 || bytes.kind != TY_LIST || list_element(bytes).kind != TY_BYTE) {
+        diag_error(e->at, "string.FromBytes takes the text's bytes, a List<byte> of UTF-8: 'string.FromBytes(bytes)'");
+        return T_ERR;
+    }
+    const type result = optional_type(c, (type){TY_STRING, NULL}, e->at);
+    if (result.kind == TY_ERROR) return T_ERR;
+    c->prog->from_bytes = true;
+    c->prog->from_bytes_result = result;
+    e->call = CALL_JSON;
+    e->c_callee = "tide_text_from_bytes";
+    e->arg_want.count = 0;
+    vec_push(e->arg_want, bytes);
+    c->prog->uses_text = true;
+    return result;
+}
+
+// int.TryParse(text, out value), and long's and float's: the variable the
+// call makes is checked as a function's `out` argument is.
+static type check_parse_call(checker *c, expr *e, const type result)
+{
+    if (gpu_refuses(c, e->at, "work with text", "text is the CPU's")) return T_ERR;
+    sb name = {0};
+    sb_printf(&name, STR_FMT "." STR_FMT, STR_ARG(e->object->name), STR_ARG(e->name));
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        const bool makes = (e->arg_out & (1u << i)) != 0;
+        if (!makes && !arg->is_out) continue;
+        decl *called = NEW(decl);
+        called->name = (str){name.data, (int)name.len};
+        param *value = NEW(param);
+        value->name = builtin_param_name(e, i);
+        value->type = e->arg_want.items[i];
+        value->mode = makes ? PARAM_MUT : PARAM_READ;
+        value->is_out = makes;
+        if (arg->is_out) finish_out_arg(c, arg, makes ? value->type : T_ERR);
+        check_out_param(c, called, value, arg);
+    }
+    e->call = CALL_JSON;
+    return result;
+}
+
 static type check_method(checker *c, expr *e)
 {
     if (str_eq_c(e->name, "Count")) {
@@ -6200,7 +6482,8 @@ static type check_method(checker *c, expr *e)
         param *world = find_param(c, e->object->name);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
     }
-    if (e->type_arg.len > 0) {
+    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads
+    if (e->type_arg.len > 0 && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))) {
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
         diag_note("the World's methods do: 'world.Get<Health>(entity)', in code that takes 'World world'");
     }
@@ -6225,11 +6508,15 @@ static type check_method(checker *c, expr *e)
 
     if (names_random(c, e->object)) return check_roll(c, e); // Random.NextInt(6): a roll, with no generator of the game's
 
+    // string.FromBytes(bytes): the type's own, where what a text has is called on the text
+    if (e->object->kind == E_NAME && str_eq_c(e->object->name, "string")) return check_from_bytes(c, e);
+
     // Math.Dot(a, b), quaternion.AxisAngle(axis, angle), Draw.Circle(center,
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
         if (builtin_old_draw_owner(owner)) return old_draw_owner(c, e);
+        if (str_eq_c(owner, "Json")) return check_json_call(c, e);
         const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
         const bool flush = str_eq_c(owner, "Storage");
         const bool fetch = str_eq_c(owner, "Web");
@@ -6317,6 +6604,7 @@ static type check_method(checker *c, expr *e)
             e->draw_dims = 2;
         }
         if (plays) e->call = CALL_AUDIO;
+        if (e->arg_out && !gui) return check_parse_call(c, e, result); // int.TryParse(text, out value)
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
     }
@@ -6499,6 +6787,9 @@ static type check_method(checker *c, expr *e)
     }
     // name.Contains("cat"), name.Substring(0, 3): text's methods
     if (obj.kind == TY_STRING) {
+        if (str_eq_c(e->name, "ToBytes") || str_eq_c(e->name, "Split")) { // The lists they give, as the program has them
+            builtins_use_io(list_of(c->prog, (type){TY_BYTE, NULL}).decl, list_of(c->prog, (type){TY_STRING, NULL}).decl);
+        }
         for (int i = 0; i < e->args.count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
         }
@@ -6540,8 +6831,8 @@ static type check_method(checker *c, expr *e)
     }
     // camera.Snap(): a singleton that jumped, like a camera cut.
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);
-    // stats.IsDead(), unit.Heal(5): a struct's or component's method.
-    if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT) {
+    // stats.IsDead(), unit.Heal(5), physics.Raycast(...): explicit value receivers.
+    if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) {
         decl *m = find_method(obj.decl, e->name);
         if (!m) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -7654,6 +7945,7 @@ static type check_member(checker *c, expr *e)
                     if (e->object->kind == E_NAME) suggest_replacement(e->object->name, "Random");
                     return T_ERR;
                 }
+                if (obj.decl == c->prog->time && str_eq_c(f->name, "maxRewind")) c->prog->uses_rewind_limit = true;
                 e->field = f;
                 if (obj.decl->query_row && e->object->bind == BIND_LOCAL && e->object->local->query) {
                     param *query = e->object->local->query;
@@ -9382,6 +9674,14 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     for (const expr *part = target; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+        if (part->kind == E_MEMBER && part->object->type.decl == c->prog->view_time) {
+            diag_error(target->at, "ViewTime is engine-stamped and read-only");
+            return false;
+        }
+        if (part->kind == E_MEMBER && c->prog->max_rewind > 0 && part->object->type.kind == TY_INPUT && str_eq_c(part->member, "viewTime")) {
+            diag_error(target->at, "input viewTime is engine-stamped and read-only");
+            return false;
+        }
         // name[0]: a character read out of the text, which only changes whole
         if (part->kind == E_INDEX && part->object->type.kind == TY_STRING) {
             diag_error(target->at, "text doesn't change a character at a time: 'text[i]' reads one");
@@ -9436,6 +9736,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         if (part->kind != E_MEMBER && part->kind != E_INDEX) break;
     }
     expr *root = assign_root(target);
+    if (root && root->bind == BIND_FIELD && c->in_input && c->prog->max_rewind > 0 && str_eq_c(root->name, "viewTime")) {
+        diag_error(target->at, "input viewTime is engine-stamped and read-only");
+        return false;
+    }
     if (root && root->bind == BIND_LOCAL && root->local->query) {
         diag_error(root->at, "query row '" STR_FMT "' is read-only", STR_ARG(root->name));
         if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
@@ -9803,6 +10107,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_SKINNED:
         if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
             && (!e->object || !step_own(e->object, loop))) return false;
+        if (skinned_lookup(e->skin_operation) && !step_own(e->args.items[1], loop)) return false;
         break; // Read-only sampling and step-local poses use the executing thread's scratch area.
     case CALL_FUNCTION:
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
@@ -10840,13 +11145,15 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
-        || (call == CALL_SKINNED && (called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
+        || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
+            || called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
         || (call == CALL_GRID && !str_eq_c(called->name, "Sample"))
         || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
+        || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0
         || e->kind == E_TRY // Passes an error on, even from a variable
         || called->kind == E_AWAIT;
 }
@@ -11025,6 +11332,12 @@ static void check_stmt(checker *c, stmt *s)
         const builtin_call call = called->call;
         const bool effect = stands_alone(e);
         if (!effect && e->type.kind != TY_ERROR) diag_error(e->at, "this expression does nothing on its own");
+        // A function's or a method's call whose value nothing takes: whether the call does anything
+        // else is known once every body is checked (warn_dropped_values)
+        if (effect && (called->call == CALL_FUNCTION || called->call == CALL_METHOD) && called == e
+            && e->type.kind != TY_VOID && e->type.kind != TY_ERROR && e->type.kind != TY_FAILABLE && builds(c->prog)) {
+            vec_push(c->dropped, e);
+        }
         // A call that can fail, whose error nothing looks at.
         if (e->type.kind == TY_FAILABLE && effect && builds(c->prog)) { // What an override replaced warns about nothing
             const expr *named = e->kind == E_AWAIT ? e->lhs : e;
@@ -11352,6 +11665,45 @@ static const field *set_before(const program *prog, const int b, const int i)
 // settings { tickRate = 30; }: the engine's settings for the game (builtins.h),
 // each set to a constant of its type. A game's blocks are one list of what it
 // sets, wherever they're written: a setting is set once among them all.
+static bool setting_float(const expr *e, float *out, const int depth)
+{
+    if (!e || depth > 64) return false;
+    if (e->type.kind == TY_INT || e->type.kind == TY_LONG) {
+        int64_t value;
+        if (fold_int(e, &value)) { *out = (float)value; return true; }
+    }
+    if (e->kind == E_INT) { *out = (float)e->int_value; return true; }
+    if (e->kind == E_FLOAT) {
+        if (e->is_degrees) *out = e->float_value;
+        else {
+            char *digits = arena_alloc((size_t)e->text.len + 1u);
+            int n = 0;
+            for (int i = 0; i < e->text.len; i++) if (e->text.ptr[i] != '_') digits[n++] = e->text.ptr[i];
+            digits[n] = '\0';
+            *out = strtof(digits, NULL);
+        }
+        return true;
+    }
+    if (e->bind == BIND_CONST) return setting_float(e->constant->value, out, depth + 1);
+    if (e->kind == E_UNARY) {
+        if (!setting_float(e->lhs, out, depth + 1)) return false;
+        if (e->op == T_MINUS) *out = -*out;
+        return e->op == T_MINUS || e->op == T_PLUS;
+    }
+    if (e->kind == E_BINARY) {
+        float a, b;
+        if (!setting_float(e->lhs, &a, depth + 1) || !setting_float(e->rhs, &b, depth + 1)) return false;
+        switch (e->op) {
+        case T_PLUS: *out = a + b; return true;
+        case T_MINUS: *out = a - b; return true;
+        case T_STAR: *out = a * b; return true;
+        case T_SLASH: *out = a / b; return true;
+        default: return false;
+        }
+    }
+    return false;
+}
+
 static void check_settings(checker *c)
 {
     program *prog = c->prog;
@@ -11398,7 +11750,12 @@ static void check_settings(checker *c)
                 diag_error(value->at, "'" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
                 continue;
             }
-            if (str_eq_c(f->name, "tickRate")) {
+            if (str_eq_c(f->name, "maxRewind")) {
+                float seconds;
+                if (!setting_float(value, &seconds, 0) || !(seconds >= 0.0f) || seconds - seconds != 0.0f) {
+                    diag_error(value->at, "maxRewind is a finite nonnegative number of seconds, like 'maxRewind = 0.25;'");
+                } else prog->max_rewind = seconds;
+            } else if (str_eq_c(f->name, "tickRate")) {
                 int64_t rate;
                 if (!fold_int(value, &rate)) {
                     diag_error(value->at, "tickRate is an int known while compiling, like 'tickRate = 30;'");
@@ -11532,7 +11889,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
-    else if (str_eq_c(inner->text, "Animations")) *kind = ASSET_ANIMATIONS;
+    else if (str_eq_c(inner->text, "AnimationCatalog")) *kind = ASSET_ANIMATIONS;
     else if (str_eq_c(inner->text, "Animation")) *kind = ASSET_ANIMATION;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
     else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
@@ -11551,7 +11908,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V>, Animation or Animations (glTF 2.0 or FBX), not '" STR_FMT "'",
+                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '" STR_FMT "'",
                    STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
@@ -11562,12 +11919,12 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
                      : k->return_type.kind == TY_MAP ? map_value(k->return_type) : k->return_type;
         if (t.kind != TY_STRUCT || t.decl->skin_kind != (*kind == ASSET_ANIMATION ? SKIN_ANIMATION : SKIN_ANIMATIONS)) {
             diag_error(at, "an %s asset uses the built-in %s; '%s' names a different type",
-                       *kind == ASSET_ANIMATION ? "Animation" : "Animations",
+                       *kind == ASSET_ANIMATION ? "Animation" : "AnimationCatalog",
                        *kind == ASSET_ANIMATION ? "animation type" : "animation catalog", type_name(t));
             return false;
         }
         if (*kind == ASSET_ANIMATION && *many) {
-            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an Animations catalog");
+            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an AnimationCatalog");
             return false;
         }
     }
@@ -11756,7 +12113,7 @@ static void check_asset_decl(checker *c, decl *k)
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
     const bool paths = catalog && k->value->kind == E_LIST;
     const int path_count = paths ? k->value->args.count : 1;
-    if (!path_count) diag_error(k->value->at, "an Animations file list can't be empty: name at least one file");
+    if (!path_count) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -12050,6 +12407,10 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             check_field_raw(f, a);
             continue;
         }
+        if (str_eq_c(a->name, "Json")) {
+            check_json_attribute(d, f, a);
+            continue;
+        }
         if (!clamp && !min && !max) {
             diag_error(a->at, "unknown field attribute '" STR_FMT "'", STR_ARG(a->name));
             suggestion s = suggest_start(a->name);
@@ -12063,6 +12424,7 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Filter");
             suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
+            suggest_consider_c(&s, "Json");
             suggest_note(&s);
             continue;
         }
@@ -12857,7 +13219,7 @@ static void check_correction_interpolates(const program *prog)
     }
 }
 
-// Where methods go (structs and components), their names, and their signatures.
+// Where methods go, their names, and their signatures.
 static void check_method_decls(checker *c, decl *d)
 {
     for (int i = 0; i < d->methods.count; i++) {
@@ -12875,8 +13237,8 @@ static void check_method_decls(checker *c, decl *d)
             check_interpolate_decl(c, d, m);
             continue;
         }
-        if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT) {
-            diag_error(m->at, "methods work on structs and components");
+        if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON) {
+            diag_error(m->at, "methods work on structs, components and singletons");
             if (d->kind == DECL_INPUT) diag_note("an input has Sample and Sanitize");
             else diag_note("put the data and its methods in a struct, and the struct in the singleton");
         }
@@ -14400,7 +14762,8 @@ static bool call_acts(const expr *e)
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
-    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+    case CALL_SKINNED: return skinned_lookup(e->skin_operation)
+        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
@@ -14466,6 +14829,20 @@ static int unused_order(const void *a, const void *b)
 // that moves by `move`. Assigned but never read counts as never read. The
 // note says what to do, and editors offer it: when the value is a call that
 // does something, the call stays, as a statement of its own.
+// A call written as a statement that gives a value and does nothing else:
+// the value is lost, and so is the call. `request.SetHeader(name, value);`
+// reads as if it changed the request, and gives a request nobody keeps.
+static void warn_dropped_values(checker *c)
+{
+    for (int i = 0; i < c->dropped.count; i++) {
+        const expr *e = c->dropped.items[i];
+        if (!e->method || call_acts(e)) continue; // It sends, draws, calls C, changes what it's given: a statement
+        diag_warning(e->at, "'" STR_FMT "' gives a value that nothing takes, and does nothing else", STR_ARG(e->method->name));
+        diag_note("keep what it gives, like 'value = value." STR_FMT "(...);', or write '_ = ...;' to drop it on purpose",
+                  STR_ARG(e->method->name));
+    }
+}
+
 static void warn_unused_locals(checker *c)
 {
     if (c->unused.count > 1) qsort(c->unused.items, (size_t)c->unused.count, sizeof(stmt *), unused_order);
@@ -14524,6 +14901,10 @@ static void add_builtins(program *prog)
     const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
+    field rewind_field = {0};
+    rewind_field.name = str_from("maxRewind");
+    rewind_field.type_name = str_from("float");
+    vec_push(time->fields, rewind_field);
     // int seed: the match's seed, from 0 to 2147483647, which the machine that
     // starts the match picks. Last, as it's only there in games that use it
     // (see drop_unused_seed).
@@ -14533,6 +14914,19 @@ static void add_builtins(program *prog)
     vec_push(time->fields, seed_field);
     prog->seed = &time->fields.items[time->fields.count - 1];
     prog->time = time;
+
+    decl *view_time = NEW(decl);
+    view_time->kind = DECL_STRUCT;
+    view_time->name = str_from("ViewTime");
+    view_time->builtin = true;
+    static const char *const view_fields[][2] = {{"tick", "int"}, {"alpha", "float"}, {"valid", "bool"}};
+    for (int i = 0; i < 3; i++) {
+        field f = {0};
+        f.name = str_from(view_fields[i][0]);
+        f.type_name = str_from(view_fields[i][1]);
+        vec_push(view_time->fields, f);
+    }
+    prog->view_time = view_time;
 
     // struct Random { long state; }: a random number generator's state, as
     // tide/random.h's tide_random, which generated C uses for it. Its methods
@@ -15007,6 +15401,7 @@ static void add_builtins(program *prog)
 
     VEC(decl *) decls = {0};
     vec_push(decls, time);
+    vec_push(decls, view_time);
     vec_push(decls, random);
     vec_push(decls, owner);
     vec_push(decls, visibility);
@@ -15237,7 +15632,7 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
-        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web")
+        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
 
@@ -17526,6 +17921,10 @@ static void drop_unused_seed(program *prog)
         for (int k = 0; k < d->fields.count; k++) prog->uses_seed |= holds_random(prog, d->fields.items[k].type);
     }
     if (!prog->uses_seed) prog->time->fields.count--;
+    if (!prog->uses_rewind_limit) {
+        if (prog->uses_seed) prog->time->fields.items[4] = prog->time->fields.items[5];
+        prog->time->fields.count--;
+    }
 }
 
 // The players who see a scene are bits of its hidden tide_players, 32 a word:
@@ -18072,6 +18471,18 @@ bool check(program *prog)
         asset_files_save_hashes(prog->game_folder, named, count);
     }
     check_settings(&c);
+    if (prog->max_rewind > 0.0f && prog->input) {
+        if (field_named(prog->input, str_from("viewTime"))) {
+            diag_error(prog->input->at, "viewTime is supplied by the engine; remove the input field declaration");
+        } else {
+            field f = {0};
+            f.name = str_from("viewTime");
+            f.type_name = str_from("ViewTime");
+            f.type = (type){TY_STRUCT, prog->view_time};
+            prog->view_time->named = true;
+            vec_push(prog->input->fields, f);
+        }
+    }
     add_scene_player_words(prog);
     diag_phase("declarations");
     for (int i = 0; i < prog->decls.count; i++) {
@@ -18197,6 +18608,7 @@ bool check(program *prog)
     if (diag_error_count() == 0) plan_shaders(prog);
     mark_c_callers(&c);
     warn_unused_locals(&c); // Once it's known which calls draw and call C
+    warn_dropped_values(&c);
     collect_device_uses(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     for (int i = 0; i < prog->decls.count; i++) {

@@ -131,7 +131,7 @@ static int frame(void *user, const float seconds)
     for (int repeat = 0; repeat < 2; repeat++) {
         tide_draw_reset(&draw);
         tide_gui_begin(&gui, &devices, tide_f2(128, 128), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         tide_gui_end(&gui, &draw);
         tide_float2 points[COUNT];
         uint32_t pixels[COUNT];

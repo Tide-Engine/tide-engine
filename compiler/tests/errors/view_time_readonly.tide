@@ -1,0 +1,4 @@
+// expect: input viewTime is engine-stamped and read-only
+settings { maxRewind = 0.25; }
+input Controls { int fire; Sample() { viewTime = default; } }
+scene Main { }

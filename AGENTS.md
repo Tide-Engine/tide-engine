@@ -57,7 +57,7 @@ Test the change once locally before merging, according to scope:
 | Compiler, engine, platform or build | Full native and web debug suites |
 | Repository game, including a benchmark or prototype | Its targets and tests, native and web |
 | `docs/` only | `npm run build` in `docs/` |
-| `relay/` only | `node --test relay/relay.test.mjs` |
+| `relay/` only | `node --test relay/relay.test.mjs relay/lobbies.test.mjs` |
 | `builds/` only | `node --test builds/builds.test.mjs`; also `builds/page.test.mjs` with a web-capable tide when the builder or what it runs changes |
 | `tools/` only | That tool's tests |
 | Unbuilt text, including this guide and notes | No build or test suite; check references and the diff |
@@ -167,6 +167,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `examples/towers/`, `examples/sumo/` | `notes/physics-games.md` |
 | Prototype catalog and staging | `notes/private-prototypes.md` |
 | `prototypes/cracked/` | `notes/cracked.md` |
+| `prototypes/inside-out/` | `notes/inside-out.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |

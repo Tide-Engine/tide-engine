@@ -62,6 +62,10 @@ its `<id>_page` target and its `private_games` block, plus the id in
   when `TIDE_PRIVATE_PROTOTYPES` is on and it has a `CMakeLists.txt`, and
   `private_games` collects `cracked_page` or `cracked`. Its contract and
   validation are in `notes/cracked.md`.
+- Inside Out (`inside-out`): `prototypes/inside-out/`, the owner's two-player
+  cooperative puzzle, added on 2026-10-11 through `dev` by another session.
+  It uses the same option, and `private_games` collects `inside_out_page` or
+  `inside_out`. Its rules and validation are in `notes/inside-out.md`.
 
 Removal (2026-10-11): the owner asked for every prototype but Two Forks to be
 deleted. The Last Light, Cabin Nine, Dead Signal, Deadbell, Afterburn
@@ -69,4 +73,9 @@ deleted. The Last Light, Cabin Nine, Dead Signal, Deadbell, Afterburn
 browser-playtest fixtures, their thumbnails, their notes and their catalog
 cards. Their ids left the site's patterns too, so their old addresses are
 unknown paths with no compatibility handling. Their sources, notes and the
-Last Light browser-fixture history are in git.
+Last Light browser-fixture history are in git. Inside Out isn't one of them:
+the owner asked for it the same day, and it reached `dev` while the removal
+was being made. Its browser playtest used three of The Last Light's test
+helpers (`browser-process.mjs`, `browser-devtools.mjs`,
+`frame-control.mjs`), which moved to `prototypes/inside-out/test/` as they
+were; the helpers' own unit tests are gone with The Last Light.

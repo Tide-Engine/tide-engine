@@ -546,14 +546,23 @@ static expr *parse_primary(parser *p)
 // Whether the '<' the parser is at starts a method's type, as in
 // world.Get<Health>(e), rather than a comparison: a name, maybe qualified,
 // then '>' and the call's '('. As in C#, what follows the '>' decides, and
-// no comparison reads that way (it would compare a bool).
+// no comparison reads that way (it would compare a bool). The type can take
+// types of its own, as in Json.Read<List<Score>>(text): names, dots and
+// commas up to the '>' that closes the first '<', which a '>>' can be part of.
 static bool at_type_argument(const parser *p)
 {
     int i = 1;
     if (peek_at(p, i)->kind != T_IDENT) return false;
-    i++;
-    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
-    return peek_at(p, i)->kind == T_GT && peek_at(p, i + 1)->kind == T_LPAREN;
+    int depth = 1;
+    while (depth > 0) {
+        const tok_kind k = peek_at(p, i)->kind;
+        if (k == T_LT) depth++;
+        else if (k == T_GT) depth--;
+        else if (k == T_SHR) depth -= 2;
+        else if (k != T_IDENT && k != T_DOT && !(k == T_COMMA && depth > 1)) return false; // Map<string, int>'s comma
+        i++;
+    }
+    return depth == 0 && peek_at(p, i)->kind == T_LPAREN;
 }
 
 static stmt *new_stmt(stmt_kind kind, loc at);
@@ -1200,6 +1209,20 @@ static stmt *parse_simple(parser *p)
 {
     expr *e = parse_expr(p);
     if (e->kind == E_STEP) return e->step; // ++i or i++ alone: its assignment, as nothing takes its value
+    if (e->kind == E_NAME && str_eq_c(e->name, "_") && at(p, T_ASSIGN)) {
+        // `_ = Compute();`: the value is worked out and dropped, on purpose. It's a variable no code
+        // can name, so everything a variable's value goes through is this one's too.
+        advance(p);
+        stmt *s = new_stmt(S_VAR, e->at);
+        char *name = arena_alloc(48);
+        snprintf(name, 48, "_dropped_%d_%d", e->at.line, e->at.col);
+        s->name = str_from(name);
+        s->name_at = e->at;
+        s->discard = true;
+        s->read = true; // Nothing reads it, which is the point
+        s->value = parse_expr(p);
+        return s;
+    }
     if (is_assign_op(peek(p)->kind)) {
         const token *op = advance(p);
         stmt *s = new_stmt(S_ASSIGN, op->at);

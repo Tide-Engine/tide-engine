@@ -1,0 +1,2 @@
+// expect: 'TryGetByName' makes its 'result' Bone, not Animation
+bool Read(Skeleton skeleton, out Animation result) { return skeleton.TryGetByName("Arm", out result); }

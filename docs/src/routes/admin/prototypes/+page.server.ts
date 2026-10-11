@@ -6,6 +6,11 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'inside-out', title: 'Inside Out', kind: 'Cooperative puzzle · Nested rooms', players: '2 players',
+        description: 'A warm miniature workshop built for two. One player explores inside movable rooms while the other rearranges them outside. Connect doorways, pass crates between scales, and find the way together.',
+        image: '/prototypes/inside-out/thumbnail.png',
+    },
+    {
         id: 'cracked', title: 'CRACKED', kind: 'Arena shooter · roguelike upgrades', players: '1–8 players',
         description: 'Two teams of fishbowl-headed mages trade bouncing spells across arenas that rotate between rounds. The losing side picks upgrade cards. A port of the Unity game, with bots when you\'re alone.',
         image: '/prototypes/cracked/thumbnail.png',

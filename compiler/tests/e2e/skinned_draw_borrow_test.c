@@ -35,7 +35,7 @@ static void start(const int mode)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     local.Cases.mode = mode;
     expected_mark = tide_scratch_mark();
     observations = bad_marks = 0u;
@@ -87,7 +87,7 @@ static float pose_x(void)
 TIDE_TEST(skinned_draw_borrows_unchanged_model_and_pose_without_owned_copies)
 {
     start(0);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(observations == 3u && bad_marks == 0u);
     TIDE_CHECK(instances() == 2u);
     TIDE_CHECK(pose_x() == 0.0f);
@@ -98,7 +98,7 @@ TIDE_TEST(skinned_draw_borrows_unchanged_model_and_pose_without_owned_copies)
 TIDE_TEST(skinned_draw_snapshots_model_before_a_later_operand_replaces_it)
 {
     start(1);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Cases.changes == 1);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Cases.model.vertices) == 0);
     TIDE_REQUIRE(instances() == 1u);
@@ -110,7 +110,7 @@ TIDE_TEST(skinned_draw_snapshots_pose_before_later_tide_and_c_operands_edit_it)
 {
     for (int mode = 2; mode <= 3; mode++) {
         start(mode);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         TIDE_CHECK(local.Cases.changes == 1);
         TIDE_CHECK(pose_x() == (mode == 2 ? -7.0f : -11.0f));
         TIDE_REQUIRE(instances() == 1u);
@@ -122,7 +122,7 @@ TIDE_TEST(skinned_draw_snapshots_pose_before_later_tide_and_c_operands_edit_it)
 TIDE_TEST(skinned_draw_captures_borrowed_pose_before_the_next_statement_edits_it)
 {
     start(4);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_REQUIRE(instances() == 2u && draw.run_count == 1u);
     TIDE_CHECK(palette_x(0) == 0.0f && palette_x(1) == -17.0f);
     TIDE_CHECK(pose_x() == -17.0f);

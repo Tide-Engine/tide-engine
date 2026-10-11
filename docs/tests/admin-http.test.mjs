@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -47,7 +47,9 @@ test('production website shares prototypes while protecting analytics, catalog a
     // Even a stale deployment that contains these bytes must not serve them.
     for (const name of ['/samples/two-forks/index.html', '/samples/two-forks/game.wasm', '/samples/thumbnails/two-forks.png', '/sample_two_forks.html', '/two-forks/index.html',
         '/samples/cracked/index.html', '/samples/cracked/game.wasm', '/samples/thumbnails/cracked.png',
-        '/cracked.html', '/cracked/index.html', '/examples/cracked/sfx/radio.ogg']) {
+        '/cracked.html', '/cracked/index.html', '/examples/cracked/sfx/radio.ogg',
+        '/samples/inside-out/index.html', '/inside_out.html', '/samples/inside-out/game.wasm',
+        '/samples/thumbnails/inside-out.png']) {
         files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
@@ -116,6 +118,8 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     const catalogHtml = await catalog.text();
     assert.match(catalogHtml, /Two Forks/);
     assert.match(catalogHtml, /CRACKED/);
+    assert.match(catalogHtml, /data-prototype="inside-out"/);
+    assert.match(catalogHtml, /Inside Out/);
     assert.deepEqual([...catalogHtml.matchAll(/data-prototype="([^"]+)"/g)].map((match) => match[1]).sort(), [...prototypeIds].sort());
     for (const id of prototypeIds) {
         assert.match(catalogHtml, new RegExp(`href="/prototypes/${id}/"`));
@@ -154,15 +158,20 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.match(response.headers.get('location'), /^\/admin\/login\?next=/);
         assert.equal(response.headers.get('cache-control'), 'private, no-store');
     }
-    for (const route of ['/samples/two%2dforks/index.html', '/sample%5ftwo%5fforks.html', '/samples/%63racked/index.html']) {
+    for (const route of ['/samples/two%2dforks/index.html', '/sample%5ftwo%5fforks.html', '/samples/%63racked/index.html',
+        '/samples/inside%2dout/index.html', '/inside%5fout.html']) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(response.status, 404, route);
     }
     // An id outside the catalog is an ordinary unknown path.
     assert.equal((await fetch(`${origin}/prototypes/not-a-game/`, { redirect: 'manual' })).status, 404);
-    const encodedPublic =await fetch(`${origin}/prototypes/two%2dforks/index.html`, { redirect: 'manual' });
-    assert.equal(encodedPublic.status, 200);
-    assert.equal(encodedPublic.headers.get('x-robots-tag'), 'noindex');
+    for (const id of prototypeIds) {
+        const encodedId = id.replace(/./, (character) => `%${character.charCodeAt(0).toString(16)}`);
+        const encodedPublic = await fetch(`${origin}/prototypes/${encodedId}/index.html`, { redirect: 'manual' });
+        assert.equal(encodedPublic.status, 200, id);
+        assert.equal(encodedPublic.headers.get('x-robots-tag'), 'noindex');
+        assert.deepEqual(Buffer.from(await encodedPublic.arrayBuffer()), files.get(`/prototypes/${id}/index.html`));
+    }
     for (const id of prototypeIds) {
         const wasmPath = `${origin}/prototypes/${id}/game.wasm`;
         const head = await fetch(wasmPath, { method: 'HEAD' });
@@ -186,9 +195,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);

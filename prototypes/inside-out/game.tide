@@ -1,0 +1,356 @@
+using Rooms;
+
+settings
+{
+    title = "Inside Out";
+    tickRate = 30;
+    maxPlayers = 2;
+    hostMigration = true;
+}
+
+const int OUTER_SIZE = 7;
+const int INNER_SIZE = 5;
+const int MAX_ROOMS = 4;
+const int MAX_CRATES = 8;
+const int LEVEL_COUNT = 12;
+const int UNDO_LIMIT = 128;
+
+enum Tile { Floor, Wall, Target, Exit, Hatch, Switch }
+struct RoomLayout
+{
+    Tile[25] tiles;
+    int doors;
+    int2 dock = int2(-1);
+    bool latched;
+}
+struct LevelLayout
+{
+    Tile[49] tiles;
+    RoomLayout[4] rooms;
+    int roomCount;
+    int crateCount;
+}
+struct Cargo { int room; int2 position; bool active; }
+struct Puzzle
+{
+    int2 outside;
+    int insideRoom;
+    int2 inside;
+    int smallSeat = 1;
+    int2[4] rooms;
+    Cargo[8] crates;
+    int moves;
+    bool solved;
+}
+singleton Workshop
+{
+    LevelLayout layout;
+    Puzzle puzzle;
+    Puzzle[128] history;
+    int historyCount;
+    int level;
+    int serial;
+    int completed;
+    bool initialized;
+    Map<PlayerID, int> seats;
+    PlayerID[2] players;
+    bool[2] present;
+}
+
+scene Main { }
+event PuzzleCue { int kind; int seat; }
+command Move { int serial; int direction; }
+command Swap { int serial; }
+command Undo { int serial; }
+command Reset { int serial; }
+command Next { int serial; }
+command ChooseLevel { int serial; int level; }
+
+int SeatOf(Workshop workshop, PlayerID player)
+{
+    if (!workshop.seats.Has(player)) return -1;
+    var seat = workshop.seats[player];
+    return seat >= 0 && seat < 2 && workshop.present[seat] ? seat : -1;
+}
+bool Together(Workshop workshop) { return workshop.present[0] && workshop.present[1]; }
+bool CellEqual(int2 a, int2 b) { return a.x == b.x && a.y == b.y; }
+bool OnGrid(int2 at, int size) { return at.x >= 0 && at.y >= 0 && at.x < size && at.y < size; }
+int CellIndex(int2 at, int size) { return at.y * size + at.x; }
+int2 Direction(int direction)
+{
+    if (direction == 0) return int2(0, -1);
+    if (direction == 1) return int2(1, 0);
+    if (direction == 2) return int2(0, 1);
+    if (direction == 3) return int2(-1, 0);
+    return int2(0);
+}
+int2 DoorCell(int direction)
+{
+    if (direction == 0) return int2(2, 0);
+    if (direction == 1) return int2(4, 2);
+    if (direction == 2) return int2(2, 4);
+    return int2(0, 2);
+}
+int RoomAt(LevelLayout layout, Puzzle puzzle, int2 at)
+{
+    for (var room = 0; room < Math.Min(MAX_ROOMS, layout.roomCount); room++)
+        if (CellEqual(puzzle.rooms[room], at)) return room;
+    return -1;
+}
+int CargoAt(LevelLayout layout, Puzzle puzzle, int room, int2 at)
+{
+    for (var crate = 0; crate < Math.Min(MAX_CRATES, layout.crateCount); crate++)
+        if (puzzle.crates[crate].active && puzzle.crates[crate].room == room && CellEqual(puzzle.crates[crate].position, at)) return crate;
+    return -1;
+}
+Tile TileAt(LevelLayout layout, int room, int2 at)
+{
+    if (room < 0) return OnGrid(at, OUTER_SIZE) ? layout.tiles[CellIndex(at, OUTER_SIZE)] : Tile.Wall;
+    if (room >= layout.roomCount || room >= MAX_ROOMS || !OnGrid(at, INNER_SIZE)) return Tile.Wall;
+    return layout.rooms[room].tiles[CellIndex(at, INNER_SIZE)];
+}
+bool RoomUnlocked(LevelLayout layout, Puzzle puzzle, int room)
+{
+    if (room < 0 || room >= layout.roomCount || room >= MAX_ROOMS) return false;
+    if (!layout.rooms[room].latched) return true;
+    if (puzzle.insideRoom == room && TileAt(layout, room, puzzle.inside) == Tile.Switch) return true;
+    for (var crate = 0; crate < Math.Min(MAX_CRATES, layout.crateCount); crate++)
+        if (puzzle.crates[crate].active && puzzle.crates[crate].room == room && TileAt(layout, room, puzzle.crates[crate].position) == Tile.Switch) return true;
+    return false;
+}
+bool OuterEmpty(LevelLayout layout, Puzzle puzzle, int2 at)
+{
+    return TileAt(layout, -1, at) != Tile.Wall && RoomAt(layout, puzzle, at) < 0 && CargoAt(layout, puzzle, -1, at) < 0 && !CellEqual(puzzle.outside, at);
+}
+bool InnerEmpty(LevelLayout layout, Puzzle puzzle, int room, int2 at)
+{
+    return TileAt(layout, room, at) != Tile.Wall && CargoAt(layout, puzzle, room, at) < 0 && !(puzzle.insideRoom == room && CellEqual(puzzle.inside, at));
+}
+
+// Crossing an edge consumes one grid step. An unmatched doorway opens into
+// the workshop only for cargo; the small player needs another connected room.
+bool InnerDestination(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, bool cargo, out int nextRoom, out int2 next)
+{
+    nextRoom = room;
+    next = from + Direction(direction);
+    if (room < 0 || room >= layout.roomCount || room >= MAX_ROOMS || direction < 0 || direction > 3) return false;
+    if (OnGrid(next, INNER_SIZE)) return TileAt(layout, room, next) != Tile.Wall;
+    if (!CellEqual(from, DoorCell(direction)) || (layout.rooms[room].doors & (1 << direction)) == 0) return false;
+    var outer = puzzle.rooms[room] + Direction(direction);
+    var neighbor = RoomAt(layout, puzzle, outer);
+    if (neighbor < 0)
+    {
+        if (!cargo || !OuterEmpty(layout, puzzle, outer)) return false;
+        nextRoom = -1;
+        next = outer;
+        return true;
+    }
+    var opposite = (direction + 2) % 4;
+    if ((layout.rooms[neighbor].doors & (1 << opposite)) == 0) return false;
+    nextRoom = neighbor;
+    next = DoorCell(opposite);
+    return TileAt(layout, nextRoom, next) != Tile.Wall;
+}
+
+bool PushCargo(LevelLayout layout, mut Puzzle puzzle, int crate, int direction)
+{
+    var item = puzzle.crates[crate];
+    mut var room = item.room;
+    mut var next = item.position + Direction(direction);
+    if (item.room >= 0)
+    {
+        if (!InnerDestination(layout, puzzle, item.room, item.position, direction, true, out room, out next)) return false;
+        if (room >= 0 && !InnerEmpty(layout, puzzle, room, next)) return false;
+    }
+    else
+    {
+        if (TileAt(layout, -1, next) == Tile.Wall || CargoAt(layout, puzzle, -1, next) >= 0 || CellEqual(puzzle.outside, next)) return false;
+        var destinationRoom = RoomAt(layout, puzzle, next);
+        if (destinationRoom >= 0)
+        {
+            var opposite = (direction + 2) % 4;
+            if ((layout.rooms[destinationRoom].doors & (1 << opposite)) == 0) return false;
+            room = destinationRoom;
+            next = DoorCell(opposite);
+            if (!InnerEmpty(layout, puzzle, room, next)) return false;
+        }
+    }
+    puzzle.crates[crate].room = room;
+    puzzle.crates[crate].position = next;
+    return true;
+}
+
+bool IsSolved(LevelLayout layout, Puzzle puzzle)
+{
+    if (TileAt(layout, -1, puzzle.outside) != Tile.Exit || TileAt(layout, puzzle.insideRoom, puzzle.inside) != Tile.Exit) return false;
+    for (var cell = 0; cell < OUTER_SIZE * OUTER_SIZE; cell++)
+        if (layout.tiles[cell] == Tile.Target && CargoAt(layout, puzzle, -1, int2(cell % OUTER_SIZE, cell / OUTER_SIZE)) < 0) return false;
+    for (var room = 0; room < Math.Min(MAX_ROOMS, layout.roomCount); room++)
+    {
+        var dock = layout.rooms[room].dock;
+        if (dock.x >= 0 && !CellEqual(puzzle.rooms[room], dock)) return false;
+        for (var cell = 0; cell < INNER_SIZE * INNER_SIZE; cell++)
+            if (layout.rooms[room].tiles[cell] == Tile.Target && CargoAt(layout, puzzle, room, int2(cell % INNER_SIZE, cell / INNER_SIZE)) < 0) return false;
+    }
+    return true;
+}
+
+bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction)
+{
+    if (puzzle.solved || seat < 0 || seat > 1 || direction < 0 || direction > 3) return false;
+    if (seat == puzzle.smallSeat)
+    {
+        if (!InnerDestination(layout, puzzle, puzzle.insideRoom, puzzle.inside, direction, false, out var room, out var next)) return false;
+        var crate = CargoAt(layout, puzzle, room, next);
+        if (crate >= 0 && !PushCargo(layout, puzzle, crate, direction)) return false;
+        puzzle.insideRoom = room;
+        puzzle.inside = next;
+    }
+    else
+    {
+        var next = puzzle.outside + Direction(direction);
+        if (TileAt(layout, -1, next) == Tile.Wall) return false;
+        var room = RoomAt(layout, puzzle, next);
+        if (room >= 0)
+        {
+            var destination = next + Direction(direction);
+            if (!RoomUnlocked(layout, puzzle, room) || !OuterEmpty(layout, puzzle, destination)) return false;
+            puzzle.rooms[room] = destination;
+        }
+        else
+        {
+            var crate = CargoAt(layout, puzzle, -1, next);
+            if (crate >= 0 && !PushCargo(layout, puzzle, crate, direction)) return false;
+        }
+        puzzle.outside = next;
+    }
+    puzzle.moves += 1;
+    puzzle.solved = IsSolved(layout, puzzle);
+    return true;
+}
+bool CanSwap(LevelLayout layout, Puzzle puzzle)
+{
+    if (puzzle.solved || puzzle.insideRoom < 0 || puzzle.insideRoom >= layout.roomCount || puzzle.insideRoom >= MAX_ROOMS) return false;
+    var delta = puzzle.outside - puzzle.rooms[puzzle.insideRoom];
+    return TileAt(layout, puzzle.insideRoom, puzzle.inside) == Tile.Hatch && Math.Abs(delta.x) + Math.Abs(delta.y) == 1;
+}
+bool SwapPuzzle(LevelLayout layout, mut Puzzle puzzle)
+{
+    if (!CanSwap(layout, puzzle)) return false;
+    puzzle.smallSeat = 1 - puzzle.smallSeat;
+    puzzle.moves += 1;
+    return true;
+}
+
+void Remember(mut Workshop workshop, Puzzle before)
+{
+    if (workshop.historyCount == UNDO_LIMIT)
+    {
+        for (var i = 1; i < UNDO_LIMIT; i++) workshop.history[i - 1] = workshop.history[i];
+        workshop.historyCount -= 1;
+    }
+    workshop.history[workshop.historyCount] = before;
+    workshop.historyCount += 1;
+}
+void OpenLevel(mut Workshop workshop, int level)
+{
+    workshop.level = Math.Clamp(level, 0, LEVEL_COUNT - 1);
+    LoadLevel(workshop.level, workshop.layout, workshop.puzzle);
+    workshop.historyCount = 0;
+    workshop.serial += 1;
+    workshop.initialized = true;
+}
+bool Authorized(Workshop workshop, PlayerID sender, int serial)
+{
+    return workshop.initialized && Together(workshop) && serial == workshop.serial && SeatOf(workshop, sender) >= 0;
+}
+bool Pushed(Puzzle before, Puzzle after)
+{
+    for (var room = 0; room < MAX_ROOMS; room++)
+        if (!CellEqual(before.rooms[room], after.rooms[room])) return true;
+    for (var crate = 0; crate < MAX_CRATES; crate++)
+        if (before.crates[crate].room != after.crates[crate].room || !CellEqual(before.crates[crate].position, after.crates[crate].position)) return true;
+    return false;
+}
+
+system BeginWorkshop(mut Workshop workshop)
+{
+    if (!workshop.initialized) OpenLevel(workshop, 0);
+}
+event(PlayerJoined joined) JoinWorkshop(mut Workshop workshop)
+{
+    if (SeatOf(workshop, joined.player) >= 0) return;
+    mut var seat = -1;
+    if (workshop.seats.Has(joined.player)) seat = workshop.seats[joined.player];
+    else
+    {
+        if (!workshop.present[0]) seat = 0;
+        else if (!workshop.present[1]) seat = 1;
+        if (seat < 0) return;
+        workshop.seats.Remove(workshop.players[seat]);
+        workshop.seats[joined.player] = seat;
+    }
+    workshop.players[seat] = joined.player;
+    workshop.present[seat] = true;
+    workshop.serial += 1;
+}
+event(PlayerLeft left) LeaveWorkshop(mut Workshop workshop)
+{
+    var seat = SeatOf(workshop, left.player);
+    if (seat < 0) return;
+    workshop.present[seat] = false;
+    workshop.serial += 1;
+}
+command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
+{
+    if (!Authorized(workshop, sender, move.serial)) return;
+    var seat = SeatOf(workshop, sender);
+    var before = workshop.puzzle;
+    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction))
+    {
+        Send(PuzzleCue { kind = 6, seat = seat });
+        return;
+    }
+    Remember(workshop, before);
+    Send(PuzzleCue { kind = Pushed(before, workshop.puzzle) ? 1 : 0, seat = seat });
+    if (workshop.puzzle.solved)
+    {
+        workshop.completed |= 1 << workshop.level;
+        Send(PuzzleCue { kind = 5, seat = seat });
+    }
+}
+command(Swap swap, PlayerID sender) ExchangeScales(mut Workshop workshop)
+{
+    if (!Authorized(workshop, sender, swap.serial)) return;
+    var before = workshop.puzzle;
+    if (!SwapPuzzle(workshop.layout, workshop.puzzle)) return;
+    Remember(workshop, before);
+    workshop.serial += 1;
+    Send(PuzzleCue { kind = 2, seat = SeatOf(workshop, sender) });
+}
+command(Undo undo, PlayerID sender) UndoMove(mut Workshop workshop)
+{
+    if (!Authorized(workshop, sender, undo.serial) || workshop.historyCount <= 0) return;
+    workshop.historyCount -= 1;
+    workshop.puzzle = workshop.history[workshop.historyCount];
+    workshop.serial += 1;
+    Send(PuzzleCue { kind = 3, seat = SeatOf(workshop, sender) });
+}
+command(Reset reset, PlayerID sender) ResetPuzzle(mut Workshop workshop)
+{
+    if (!Authorized(workshop, sender, reset.serial)) return;
+    OpenLevel(workshop, workshop.level);
+    Send(PuzzleCue { kind = 4, seat = SeatOf(workshop, sender) });
+}
+command(Next next, PlayerID sender) NextPuzzle(mut Workshop workshop)
+{
+    if (!Authorized(workshop, sender, next.serial) || !workshop.puzzle.solved || workshop.level >= LEVEL_COUNT - 1) return;
+    OpenLevel(workshop, workshop.level + 1);
+    Send(PuzzleCue { kind = 4, seat = SeatOf(workshop, sender) });
+}
+command(ChooseLevel choice, PlayerID sender) ExplorePuzzle(mut Workshop workshop)
+{
+    if (!Authorized(workshop, sender, choice.serial) || choice.level < 0 || choice.level >= LEVEL_COUNT) return;
+    OpenLevel(workshop, choice.level);
+    Send(PuzzleCue { kind = 4, seat = SeatOf(workshop, sender) });
+}

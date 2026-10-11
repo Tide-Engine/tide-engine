@@ -12,10 +12,10 @@ typedef enum skinned_operation {
     SKIN_OP_BONE_COUNT,
     SKIN_OP_ANIMATION_NAME,
     SKIN_OP_ANIMATION_DURATION,
-    SKIN_OP_FIND_ANIMATION,
-    SKIN_OP_FIND_BONE,
-    SKIN_OP_AT_ANIMATION,
-    SKIN_OP_AT_BONE,
+    SKIN_OP_TRY_GET_ANIMATION_BY_NAME,
+    SKIN_OP_TRY_GET_BONE_BY_NAME,
+    SKIN_OP_TRY_GET_ANIMATION_AT,
+    SKIN_OP_TRY_GET_BONE_AT,
     SKIN_OP_REST_POSE,
     SKIN_OP_ANIMATION_SAMPLE,
     SKIN_OP_POSE_SAMPLE,
@@ -24,3 +24,9 @@ typedef enum skinned_operation {
     SKIN_OP_POSE_INDEX,
     SKIN_OP_DECODE,
 } skinned_operation;
+
+static inline bool skinned_lookup(const skinned_operation op)
+{
+    return op == SKIN_OP_TRY_GET_ANIMATION_BY_NAME || op == SKIN_OP_TRY_GET_BONE_BY_NAME
+        || op == SKIN_OP_TRY_GET_ANIMATION_AT || op == SKIN_OP_TRY_GET_BONE_AT;
+}

@@ -961,6 +961,26 @@ static void build_signatures(void)
     describe(add("string", "Replace", T_STR, "tide_str_replace_char", 2, T_CHR, T_CHR, T_NONE),
              "from, to", "The text with every character `from` in it replaced by `to`; `'\\0'`, which is no character, takes them out.");
 
+    // Text as bytes and in pieces (tide/list.h), and numbers out of text (tide/text.h): the same on every
+    // platform, so the match can use them
+    describe(add("string", "ToBytes", T_BYTES, "tide_str_to_bytes", 0, T_NONE, T_NONE, T_NONE),
+             NULL, "The text's bytes, as UTF-8: what `string.FromBytes` reads back.");
+    describe(add("string", "Split", T_PATHS, "tide_str_split", 1, T_STR, T_NONE, T_NONE),
+             "separator", "The pieces of the text between each `separator` and the next, empty ones too: one piece, the "
+             "whole text, when the separator isn't in it or is empty.");
+    describe(add("string", "Split", T_PATHS, "tide_str_split_char", 1, T_CHR, T_NONE, T_NONE),
+             "separator", "The pieces of the text between each of that character and the next, empty ones too.");
+    add_gui("int", "TryParse", T_BOOL, "tide_str_parse_int", "string text, out int value", 0,
+            "Whether the whole text is an int, which goes to `value`: digits, with a `-` before them for a negative "
+            "one. Anything else (spaces, a `+`, a point, a number past an int's range) gives false, and 0.");
+    add_gui("long", "TryParse", T_BOOL, "tide_str_parse_long", "string text, out long value", 0,
+            "Whether the whole text is a long, which goes to `value`: digits, with a `-` before them for a negative "
+            "one. Anything else gives false, and 0.");
+    add_gui("float", "TryParse", T_BOOL, "tide_str_parse_float", "string text, out float value", 0,
+            "Whether the whole text is a number, which goes to `value` as the nearest float: `-12.5`, `.5`, `1e-3`. "
+            "The same bits on every platform. Anything else (spaces, a `+`, `NaN`, a number past a float's range) "
+            "gives false, and 0.");
+
     // The GUI, in views: tide/gui.h. Codegen passes the view's GUI first, then
     // the widget's ID, then a mut argument's address.
     add_widget("Label", T_NONE, "label", "string text", 0, "Text.");
@@ -1207,6 +1227,7 @@ bool builtin_owner(const str name)
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Audio")
+        || str_eq_c(name, "Json")
         || builtin_type_named(name, &ignored);
 }
 
@@ -1864,6 +1885,8 @@ bool builtin_describe(const str owner, const str name, sb *out)
 // Settings
 
 static const setting settings[] = {
+    {"maxRewind", TY_FLOAT, "0", "Maximum historical physics query age in seconds. Zero disables collider history. "
+     "Input viewTime is engine-stamped and server-validated; games still validate firing and aim."},
     {"title", TY_STRING, "the game's name",
      "The window's title. Without it, it's the game's name: its folder's under tide, its target's under CMake. "
      "`--title` and CMake's `TITLE` take precedence."},

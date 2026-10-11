@@ -1,5 +1,5 @@
 asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
-asset Animations movement = "animations/clips/a.gltf";
+asset AnimationCatalog movement = "animations/clips/a.gltf";
 asset Texture image = "assets/hero.png";
 
 local singleton Calls

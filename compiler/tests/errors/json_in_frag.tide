@@ -1,0 +1,10 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't write JSON
+// expect: JSON is text, which is the CPU's
+scene Main { }
+struct Info { int players; }
+struct Corner { float2 position; }
+frag Told(Corner corner, out Color color)
+{
+    var text = Json.Write(Info { });
+    color = Color.white;
+}

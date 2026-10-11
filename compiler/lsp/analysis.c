@@ -886,8 +886,11 @@ static void walk_value(const expr *e)
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .object_type = e->object->type,
                         .call = e->call};
         if (e->call != CALL_NONE) vec_push(A.calls, e);
-        // world.Get<Health>(e): the component in <>
-        if (e->type_arg.len > 0) type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, type_of_decl(e->type_decl));
+        // world.Get<Health>(e): the component in <>; Json.Read<LobbyInfo>(text): the type its T? holds
+        if (e->type_arg.len > 0) {
+            const type read = e->call == CALL_JSON && e->type.kind == TY_OPTIONAL ? e->type.decl->fields.items[0].type : type_of_decl(e->type_decl);
+            type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, read);
+        }
         if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
             o.kind = OCC_TYPE;
             o.decl = e->type_decl;
@@ -897,7 +900,7 @@ static void walk_value(const expr *e)
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->call == CALL_GUI
-                   || e->call == CALL_TEXT || e->call == CALL_RANDOM || e->call == CALL_ROLL) {
+                   || e->call == CALL_TEXT || e->call == CALL_RANDOM || e->call == CALL_ROLL || e->call == CALL_JSON) {
             o.kind = OCC_FUNCTION;
             o.owner = e->call == CALL_TEXT ? str_from("string") : e->call == CALL_RANDOM || e->call == CALL_ROLL ? str_from("Random")
                       : e->targeted ? target_owner(e) : e->object->name;
@@ -1845,6 +1848,28 @@ static const method_form session_calls[] = {
     "shortly after a click or a key, as when a button is pressed. Pasting needs no call: Ctrl+V types what's on the " \
     "clipboard into the text field that has the focus."
 
+// Json's calls and string's own: in no table of the engine's, as they take and give types of the game's.
+#define JSON_READ_DOC                                                                                                  \
+    "Reads JSON as a `T`: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds (bool, the integers, float, " \
+    "char, string, enums by their member's name, structs, lists, arrays and maps by text). A field's key is its "      \
+    "name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and so "    \
+    "does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, a "  \
+    "value isn't its field's kind, or a number doesn't fit its field. The same on every machine, so the match can "    \
+    "read what a command brought."
+#define JSON_WRITE_DOC                                                                                                 \
+    "The value as JSON, with no spaces: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds. A float is "   \
+    "written with the fewest digits that read back as the same float, and `null` where it's NaN or infinite. "        \
+    "`Json.Read<T>` of the text gives the value back."
+static const method_form json_calls[] = {
+    {"Read", "Json.Read<T>(string json) -> T?", JSON_READ_DOC},
+    {"Read", "Json.Read<T>(List<byte> json) -> T?", JSON_READ_DOC},
+    {"Write", "Json.Write(T value) -> string", JSON_WRITE_DOC},
+};
+#define FROM_BYTES_FORM "string.FromBytes(List<byte> bytes) -> string?"
+#define FROM_BYTES_DOC                                                                                                 \
+    "The text those bytes are, as UTF-8, or nothing when they aren't: unwrapped with `??` or `is`. What "             \
+    "`text.ToBytes()` gives reads back as the text."
+
 // What async code waits for, after `await`.
 static const method_form wait_calls[] = {
     {"Ticks", "await Wait.Ticks(int ticks)",
@@ -2120,18 +2145,18 @@ static const method_form singleton_calls[] = {
 };
 
 static const method_form animation_catalog_calls[] = {
-    {"Find", "Find(string name) -> Animation?", "Looks up an animation by its exact original name. Missing or ambiguous names give null."},
-    {"At", "At(int index) -> Animation?", "Reads an animation in source order, counting from 0. An index outside the catalog gives null."},
+    {"TryGetByName", "TryGetByName(string name, out Animation result) -> bool", "Looks up an animation by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
+    {"TryGetAt", "TryGetAt(int index, out Animation result) -> bool", "Reads an animation in source order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
 static const method_form bone_catalog_calls[] = {
-    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
-    {"At", "At(int index) -> Bone?", "Reads a skeleton node in skeleton order, counting from 0. An index outside the catalog gives null."},
+    {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
+    {"TryGetAt", "TryGetAt(int index, out Bone result) -> bool", "Reads a skeleton node in skeleton order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
 static const method_form skeleton_calls[] = {
     {"RestPose", "RestPose() -> Pose", "Makes an owned pose with this skeleton's authored rest transforms."},
-    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
+    {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
 };
 
 static const method_form animation_calls[] = {
@@ -2913,9 +2938,9 @@ static void describe(const occurrence *o, sb *out)
                             "Side buffers and uncached URLs are read by a build.");
             }
             if (o->decl->asset_kind == ASSET_ANIMATIONS) {
-                sb_put(out, " An `Animations` asset imports a combined catalog from glTF or FBX paths, file lists or globs without typed render geometry. "
+                sb_put(out, " An `AnimationCatalog` asset imports a combined catalog from glTF or FBX paths, file lists or globs without typed render geometry. "
                             "Its cleaned clip names appear directly on the asset; filenames distinguish collisions. "
-                            "Find uses original source names and At uses flattened source order.");
+                            "TryGetByName uses original source names and TryGetAt uses flattened source order.");
                 sb_put(out, "\n\nThe editor inspects the glTF JSON or FBX catalog without importing geometry or animation samples. "
                             "Side buffers and uncached URLs are read by a build.");
             }
@@ -2977,10 +3002,10 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, " These are this machine's own entities, as they are.");
             } else if (of && of->is_view && o->param->query_verified_entities) {
                 sb_put(out, " Everything in it is `verified`: it goes through the entities of the world the server has "
-                            "confirmed, as its last tick has them.");
+                            "confirmed, interpolated between confirmed ticks.");
             } else if (of && of->is_view && o->param->query_verified_join) {
                 sb_put(out, " It goes through the entities the view draws that are the same entity in the world the "
-                            "server has confirmed: what's `verified` is as the last confirmed tick has it, and the rest "
+                            "server has confirmed: verified bindings interpolate between confirmed ticks, and the rest "
                             "blended between ticks, like the view's own parameters.");
             } else if (of && of->is_view) {
                 sb_put(out, " Its rows are the match as the view draws it: blended between the last two ticks, like the "
@@ -3116,6 +3141,7 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId."
                       : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
                       : str_eq_c(o->name, "Web") ? "\n\nThis machine's network: `await Web.Fetch(url)` gives a URL's bytes, from local code, failing with IOError."
+                      : str_eq_c(o->name, "Json") ? "\n\nJSON to and from the game's own structs: `Json.Read<T>(json)` gives a `T?`, and `Json.Write(value)` its text. The same on every machine."
                       : str_eq_c(o->name, "Path") ? "\n\nPure lexical path operations, without accessing the filesystem."
                       : str_eq_c(o->name, "Cursor")    ? "\n\nThe mouse's cursor. `Cursor.Lock()` hides it and keeps it in "
                                                          "place, for a camera that looks around: a view calls it every "
@@ -3176,6 +3202,20 @@ static void describe(const occurrence *o, sb *out)
                 code_block(out, wait_calls[i].form);
                 sb_printf(out, "\n\n%s", wait_calls[i].doc);
             }
+        } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Json")) {
+            bool first = true;
+            for (size_t i = 0; i < sizeof json_calls / sizeof json_calls[0]; i++) {
+                if (!str_eq_c(o->name, json_calls[i].name)) continue;
+                sb_printf(&code, "%s%s", first ? "" : "\n", json_calls[i].form);
+                first = false;
+            }
+            if (!first) {
+                code_block(out, code.data);
+                sb_printf(out, "\n\n%s", str_eq_c(o->name, "Read") ? JSON_READ_DOC : JSON_WRITE_DOC);
+            }
+        } else if (o->kind == OCC_FUNCTION && o->call == CALL_JSON && str_eq_c(o->owner, "string")) {
+            code_block(out, FROM_BYTES_FORM);
+            sb_put(out, "\n\n" FROM_BYTES_DOC);
         } else if (o->kind == OCC_FUNCTION && o->owner.len == 0 && str_eq_c(o->name, "Send")) {
             code_block(out, "Send(event)");
             sb_put(out, "\n\nSends an event to the whole world. Its handlers run at the end of the tick, in the order "
@@ -3328,6 +3368,10 @@ static void describe(const occurrence *o, sb *out)
              "`Mesh<V>` or a `SkinnedMesh<V>` (alone, or a list or a map of them). Code still reads the full mesh: "
              "`vertices` and `indices` are what they are without it. `Draw.LOD` names a level, and `Draw.LODCamera` the "
              "camera to pick through."},
+            {"Json", "[Json(\"key\")]",
+             "This field's key in JSON, where it isn't the field's name: `[Json(\"max_players\")] int maxPlayers;`. "
+             "`Json.Read` fills the field from that key and `Json.Write` writes it under it. It goes before a struct's "
+             "field, and no two fields of a struct have one key."},
             {"Raw", "[Raw]",
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
              "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
@@ -6161,7 +6205,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (gpu && t.decl->skin_kind != SKIN_TRANSFORM) return;
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH) {
-            item(c, "animations", CK_PROPERTY, "Animations", "The immutable animation catalog: checked names where the asset or contract supplies them, and Find for exact source names.", NULL);
+            item(c, "animations", CK_PROPERTY, "AnimationCatalog", "The immutable animation catalog: checked names where the asset or contract supplies them, and TryGetByName for exact source names.", NULL);
             item(c, "skeleton", CK_PROPERTY, "Skeleton", "The immutable node hierarchy, rest transforms and bone catalog.", NULL);
             item(c, "defaultPose", CK_PROPERTY, "Pose", "Makes an owned pose with this model's authored rest transforms, including models without animation clips.", NULL);
         }
@@ -6519,6 +6563,17 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             item(c, "Copy", CK_FUNCTION, CLIPBOARD_COPY_FORM, CLIPBOARD_COPY_DOC, "Copy($1)");
             return;
         }
+        // Json.: its two calls, in any code the CPU runs; string.: the type's own call
+        if (n == 1 && str_eq_c(base, "Json")) {
+            if (gpu) return;
+            item(c, "Read", CK_FUNCTION, json_calls[0].form, JSON_READ_DOC, "Read<$1>($2)");
+            item(c, "Write", CK_FUNCTION, json_calls[2].form, JSON_WRITE_DOC, "Write($1)");
+            return;
+        }
+        if (n == 1 && str_eq_c(base, "string")) {
+            if (!gpu) item(c, "FromBytes", CK_FUNCTION, FROM_BYTES_FORM, FROM_BYTES_DOC, "FromBytes($1)");
+            return;
+        }
         // Web.: Request, which is Tide's own code and so in no table; Fetch follows from the engine's
         if (n == 1 && str_eq_c(base, "Web")) {
             item(c, "Request", CK_FUNCTION, "WebRequest Web.Request(string url)",
@@ -6593,6 +6648,7 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             // On the GPU: Math, and what the built-in types have, like Color.white
             type owner;
             if (gpu && !str_eq_c(base, "Math") && !builtin_type_named(base, &owner)) return;
+            if (gpu && (str_eq_c(base, "int") || str_eq_c(base, "long") || str_eq_c(base, "float"))) return; // TryParse reads text
             // Cursor.: views lock it and read whether it holds; the input's Sample only reads
             const bool cursor = str_eq_c(base, "Cursor");
             if (cursor && !frame && !(sc.in_input && !sc.in_sanitize)) return;
@@ -6907,8 +6963,8 @@ static void complete_value_types(completion *c, const unsigned which)
         if (!(which & VT_GPU)) {
             item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
                  "An immutable glTF or FBX model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
-            item(c, "Animations", CK_STRUCT, "built-in type",
-                 "An immutable catalog of animation clips and their source skeleton, imported with asset Animations or read from a skinned model.", NULL);
+            item(c, "AnimationCatalog", CK_STRUCT, "built-in type",
+                 "An immutable catalog of animation clips and their source skeleton, imported with asset AnimationCatalog or read from a skinned model.", NULL);
             static const char *const names[] = {"Animation", "Skeleton", "Bone", "Pose", "BoneTransform", "Playback"};
             static const char *const docs[] = {
                 "An immutable animation value, sampled deterministically on the CPU.",
@@ -7144,6 +7200,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     // Where a statement starts, what a local can be; elsewhere, what makes a value.
     const bool local_code = view || (sc.decl && sc.decl->is_local);
     item(c, "Path", CK_MODULE, "Pure path operations", NULL, NULL);
+    item(c, "Json", CK_MODULE, "Reads and writes JSON as the game's own structs", NULL, NULL);
     if (local_code || (routine && sc.decl->kind == DECL_FUNCTION)) {
         item(c, "File", CK_MODULE, "Reads and writes this machine's files", NULL, NULL);
         item(c, "Directory", CK_MODULE, "Lists and manages this machine's directories", NULL, NULL);
@@ -8026,6 +8083,11 @@ static out_argument out_argument_at(const int open, const int last, const loc at
             type_text[word - text - 5] = '\0';
             found.type_text = type_text;
             if (t.kind == TY_MAP && t.decl) found.type = t.decl->fields.items[1].type; // TryGet's: the map's value
+            if (t.kind == TY_STRUCT && t.decl) {
+                if (t.decl->skin_kind == SKIN_ANIMATIONS && A.prog->animation) found.type = type_of_decl(A.prog->animation);
+                else if ((t.decl->skin_kind == SKIN_BONES || t.decl->skin_kind == SKIN_SKELETON) && A.prog->bone)
+                    found.type = type_of_decl(A.prog->bone);
+            }
             if (t.kind == TY_WORLD && component) found.type = type_of_decl(component); // ...or the World's: the component
         }
     }
@@ -8601,6 +8663,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "This Grid2<Color>'s cells are numbers, kept as they are as a texture: a frag reads it by its name.", "Raw");
+            item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
+                 "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
+                 "Json(\"$1\")");
             item(&c, "Name", CK_FUNCTION, "[Name(\"source name\")]",
                  "The exact original animation or node name an Animation or Bone field promises in a SkinnedMesh contract.",
                  "Name(\"$1\")");
@@ -8821,7 +8886,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool backed = keyword && keyword->kind == T_COLON && f.open >= 4;
         if (backed) keyword = &DOC->toks[f.open - 4];
         const bool is_struct = keyword && keyword->kind == T_IDENT && str_eq_c(keyword->text, "struct");
-        const bool has_methods = is_struct || (keyword && keyword->kind == T_COMPONENT);
+        const bool has_methods = is_struct || (keyword && (keyword->kind == T_COMPONENT || keyword->kind == T_SINGLETON));
         if (keyword && keyword->kind == T_IDENT && str_eq_c(keyword->text, "enum")) {
             // Members are names; after '=', an int, which a constant can give.
             bool value = false;
@@ -9258,7 +9323,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
-                                           "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
+                                           "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
 
@@ -9609,12 +9674,23 @@ static int type_argument_close(const int i)
 }
 
 // The '<' that the '>' at token `i` closes, if they hold a method's type, or -1.
+// The type can take types of its own, as in Json.Read<List<Score>>(text),
+// whose last '>' is half of a '>>': then the '<' is the one after a method's name.
 static int type_argument_open(const int i)
 {
-    if (i < 0 || DOC->toks[i].kind != T_GT) return -1;
+    if (i < 0 || (DOC->toks[i].kind != T_GT && DOC->toks[i].kind != T_SHR)) return -1;
     int k = i - 1;
     while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_DOT)) k--;
-    return k > 0 && type_argument_close(k) == i ? k : -1;
+    if (DOC->toks[i].kind == T_GT && k > 0 && type_argument_close(k) == i) return k;
+    int depth = DOC->toks[i].kind == T_SHR ? 2 : 1;
+    for (k = i - 1; k > 2; k--) {
+        const tok_kind kind = DOC->toks[k].kind;
+        if (kind == T_GT) depth++;
+        else if (kind == T_SHR) depth += 2;
+        else if (kind == T_LT && --depth == 0) break;
+        else if (kind != T_LT && kind != T_IDENT && kind != T_DOT && kind != T_COMMA) return -1;
+    }
+    return k > 2 && depth == 0 && DOC->toks[k - 1].kind == T_IDENT && DOC->toks[k - 2].kind == T_DOT ? k : -1;
 }
 
 // The component written between the '<' at token `open` and the '>' at
@@ -9862,6 +9938,17 @@ static int call_param_names(const expr *call, str *names, const int max)
     case CALL_CLIPBOARD:
         vec_push(list.labels, CLIPBOARD_COPY_FORM);
         break;
+    case CALL_JSON: // Json's and string's own, then int.TryParse and the like, which the engine's table has
+        if (call->object && str_eq_c(call->object->name, "Json")) {
+            for (size_t i = 0; i < sizeof json_calls / sizeof json_calls[0]; i++) {
+                if (str_eq_c(call->name, json_calls[i].name)) vec_push(list.labels, json_calls[i].form);
+            }
+        } else if (call->object && str_eq_c(call->object->name, "string")) {
+            vec_push(list.labels, FROM_BYTES_FORM);
+        } else if (call->object) {
+            builtin_signatures(call->object->name, call->name, collect_label, &list);
+        }
+        break;
     case CALL_SKINNED: {
         size_t forms_count;
         const method_form *forms = methods_of(call->object->type, &forms_count);
@@ -10046,6 +10133,12 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, STR_FMT "(DeclarationOrPhase, ...)", STR_ARG(name));
             add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
         }
+    } else if (str_eq_c(owner, "Json")) { // Json.Read<LobbyInfo>(, Json.Write(
+        for (size_t i = 0; i < sizeof json_calls / sizeof json_calls[0]; i++) {
+            if (str_eq_c(name, json_calls[i].name)) add_signature(&s, json_calls[i].form, json_calls[i].doc);
+        }
+    } else if (str_eq_c(owner, "string") && str_eq_c(name, "FromBytes")) {
+        add_signature(&s, FROM_BYTES_FORM, FROM_BYTES_DOC);
     } else if (owner.len > 0 && (builtin_owner(owner) || str_eq_c(owner, "Random"))) { // Math.Clamp(, Draw.Circle(, Random.NextInt(
         if (str_eq_c(owner, "Draw") && str_eq_c(name, "Blit")) add_signature(&s, BLIT_FORM, BLIT_DOC);
         else builtin_signatures(owner, name, visit_signature, &s);

@@ -82,6 +82,7 @@ tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
 tide_e2e_test(animation_imports) # Cleaned exporter names, selected clips and combined source catalogs
+tide_e2e_test(animation_lookup) # Bool/out catalogs, failure defaults, evaluation order and owned outputs
 tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
 tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists after each entity and frame
 tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
@@ -182,6 +183,8 @@ tide_e2e_test(lists_resize) # Resize: a list sized in one call, a few elements o
 tide_e2e_test(lists_out SOURCES e2e/lists_out.tide e2e/lists_out_c.c) # `out List<T>`: lists C makes
 tide_e2e_test(resident SOURCES e2e/resident.tide e2e/resident_c.c) # A match singleton's Resident field: a C library's state as the world's pages
 tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out` parameters and arguments, as C#'s
+tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=7485469572211020663ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
@@ -214,6 +217,7 @@ tide_e2e_test(cursor) # Cursor.Lock, asked each frame, and Cursor.locked, which 
 tide_e2e_test(frame_time) # Frame.dt: the frame's length a host gives, read by local code with a match and with none
 tide_e2e_test(session_main) # Session.Start() with no scene is Main, and Application.title the title setting
 tide_e2e_test(net)
+tide_e2e_test(view_time)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept

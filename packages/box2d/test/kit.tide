@@ -255,7 +255,7 @@ system AskUnder(Body body, mut Asker asker, Physics physics)
     for (var i = 0; i < RAYS; i++)
     {
         var from = body.position + float2((i + 0.5) / RAYS * 0.8 - 0.4, 0);
-        if (!Raycast(physics, from, from + float2(0, -50), out var hit, ignore: body)) continue;
+        if (!physics.Raycast(from, from + float2(0, -50), out var hit, ignore: body)) continue;
         if (asker.under >= 0 && hit.fraction * 50 >= asker.under) continue;
         asker.under = hit.fraction * 50;
         asker.on = hit.entity;
@@ -335,25 +335,25 @@ struct Answers
 Answers Probe(Physics physics)
 {
     mut var answers = Answers { };
-    answers.wall = Of(Raycast(physics, float2(0, 0.5), float2(8, 0.5), out var wall), wall);
-    answers.ball = Of(Raycast(physics, float2(0, 0.5), float2(-8, 0.5), out var ball), ball);
-    answers.through = Of(Raycast(physics, float2(0, 6), float2(0, -1), out var through), through);
-    answers.miss = Of(Raycast(physics, float2(0, 20), float2(100, 20), out var miss), miss);
-    answers.cap = Of(Raycast(physics, float2(10, 6), float2(10, 0), out var cap), cap);
-    answers.bar = Of(Raycast(physics, float2(10.8, 6), float2(10.8, 0), out var bar), bar);
-    answers.inside = Of(Raycast(physics, float2(5, 2), float2(9, 2), out var inside), inside);
-    answers.twins = Of(Raycast(physics, float2(20.5, 5), float2(20.5, 0), out var twins), twins);
-    answers.others = Of(Raycast(physics, float2(31.5, 5), float2(31.5, 0), out var others), others);
-    answers.wide = Of(Cast(physics, Box { size = float2(4, 0.5) }, float2(20.5, 5), 0, float2(20.5, 0), out var wide), wide);
-    answers.turned = Of(Cast(physics, Box { size = float2(1, 1) }, float2(60, 5), Math.PI / 4, float2(60, -1), out var turned), turned);
-    answers.round = Of(Cast(physics, Circle { radius = 0.5, offset = float2(0, 0.5) }, float2(0, 1), 0, float2(8, 1), out var round), round);
-    answers.ghost = Of(Raycast(physics, float2(40, 6), float2(40, -0.5), out var ghost), ghost);
-    answers.faller = Of(Raycast(physics, float2(50, 0.5), float2(50, 20), out var faller), faller);
-    Overlap(physics, Box { size = float2(4, 0.5) }, float2(20.5, 0.5), 0, out var pair);
+    answers.wall = Of(physics.Raycast(float2(0, 0.5), float2(8, 0.5), out var wall), wall);
+    answers.ball = Of(physics.Raycast(float2(0, 0.5), float2(-8, 0.5), out var ball), ball);
+    answers.through = Of(physics.Raycast(float2(0, 6), float2(0, -1), out var through), through);
+    answers.miss = Of(physics.Raycast(float2(0, 20), float2(100, 20), out var miss), miss);
+    answers.cap = Of(physics.Raycast(float2(10, 6), float2(10, 0), out var cap), cap);
+    answers.bar = Of(physics.Raycast(float2(10.8, 6), float2(10.8, 0), out var bar), bar);
+    answers.inside = Of(physics.Raycast(float2(5, 2), float2(9, 2), out var inside), inside);
+    answers.twins = Of(physics.Raycast(float2(20.5, 5), float2(20.5, 0), out var twins), twins);
+    answers.others = Of(physics.Raycast(float2(31.5, 5), float2(31.5, 0), out var others), others);
+    answers.wide = Of(physics.Cast(Box { size = float2(4, 0.5) }, float2(20.5, 5), 0, float2(20.5, 0), out var wide), wide);
+    answers.turned = Of(physics.Cast(Box { size = float2(1, 1) }, float2(60, 5), Math.PI / 4, float2(60, -1), out var turned), turned);
+    answers.round = Of(physics.Cast(Circle { radius = 0.5, offset = float2(0, 0.5) }, float2(0, 1), 0, float2(8, 1), out var round), round);
+    answers.ghost = Of(physics.Raycast(float2(40, 6), float2(40, -0.5), out var ghost), ghost);
+    answers.faller = Of(physics.Raycast(float2(50, 0.5), float2(50, 20), out var faller), faller);
+    physics.Overlap(Box { size = float2(4, 0.5) }, float2(20.5, 0.5), 0, out var pair);
     answers.pair = Few(pair);
-    Overlap(physics, Circle { radius = 0.4 }, float2(10, 1.5), 0, out var tee);
+    physics.Overlap(Circle { radius = 0.4 }, float2(10, 1.5), 0, out var tee);
     answers.tee = Few(tee);
-    Overlap(physics, Box { size = float2(2, 2) }, float2(70, 30), 0.3, out var none);
+    physics.Overlap(Box { size = float2(2, 2) }, float2(70, 30), 0.3, out var none);
     answers.none = Few(none);
     return answers;
 }
@@ -370,13 +370,13 @@ struct Mine
 Mine ProbeOwn(Physics physics, Body body, Box box)
 {
     mut var own = Mine { };
-    own.self = Of(Raycast(physics, body.position, body.position + float2(8, 0), out var self), self);
-    own.past = Of(Raycast(physics, body.position, body.position + float2(8, 0), out var past, ignore: body), past);
+    own.self = Of(physics.Raycast(body.position, body.position + float2(8, 0), out var self), self);
+    own.past = Of(physics.Raycast(body.position, body.position + float2(8, 0), out var past, ignore: body), past);
     // A shape that touches something where it starts meets it there, and a crate at rest touches the floor: it's
     // a little smaller than the crate that's moved along it
     var slim = Box { size = box.size - float2(0.1), offset = box.offset };
-    own.step = Of(Cast(physics, slim, body.position, body.angle, body.position + float2(-2, 0), out var step, body), step);
-    own.reach = Of(Cast(physics, slim, body.position, body.angle, body.position + float2(8, 0), out var reach, ignore: body), reach);
+    own.step = Of(physics.Cast(slim, body.position, body.angle, body.position + float2(-2, 0), out var step, body), step);
+    own.reach = Of(physics.Cast(slim, body.position, body.angle, body.position + float2(8, 0), out var reach, ignore: body), reach);
     return own;
 }
 
@@ -416,7 +416,7 @@ system AskOwnBefore(Body body, Box box, Physics physics, mut Asked asked, with P
 [Before(PhysicsStages.Step)]
 system AskTrapBefore(Physics physics, mut Asked asked, with Trap)
 {
-    Inside(physics, this, out var found);
+    physics.Inside(this, out var found);
     asked.trapBefore = Few(found);
 }
 
@@ -424,7 +424,7 @@ system AskTrapBefore(Physics physics, mut Asked asked, with Trap)
 system AskEyeBefore(Physics physics, mut Asked asked, Kit kit, with Eye)
 {
     if (kit.which != Case.Asks) return;
-    Inside(physics, this, out var found);
+    physics.Inside(this, out var found);
     asked.eyeBefore = Few(found);
 }
 
@@ -443,7 +443,7 @@ system AskOwnAfter(Body body, Box box, Physics physics, mut Asked asked, with Pr
 [After(PhysicsStages.Step)]
 system AskTrapAfter(Physics physics, mut Asked asked, with Trap)
 {
-    Inside(physics, this, out var found);
+    physics.Inside(this, out var found);
     asked.trapAfter = Few(found);
 }
 
@@ -451,7 +451,7 @@ system AskTrapAfter(Physics physics, mut Asked asked, with Trap)
 system AskEyeAfter(Physics physics, mut Asked asked, Kit kit, with Eye)
 {
     if (kit.which != Case.Asks) return;
-    Inside(physics, this, out var found);
+    physics.Inside(this, out var found);
     asked.eyeAfter = Few(found);
 }
 
@@ -467,13 +467,13 @@ view SeeOwn(Body body, Box box, Physics physics, mut Seen seen, with Prober)
 
 view SeeTrap(Physics physics, mut Seen seen, with Trap)
 {
-    Inside(physics, this, out var found);
+    physics.Inside(this, out var found);
     seen.trap = Few(found);
 }
 
 view SeeEye(Physics physics, mut Seen seen, Kit kit, with Eye)
 {
     if (kit.which != Case.Asks) return;
-    Inside(physics, this, out var found);
+    physics.Inside(this, out var found);
     seen.eye = Few(found);
 }

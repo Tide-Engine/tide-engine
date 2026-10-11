@@ -88,7 +88,7 @@ static tide_entity prop(void)
 static void frame(void)
 {
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 static bool pixel_is(const uint8_t *pixel, const uint8_t r, const uint8_t g, const uint8_t b)

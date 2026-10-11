@@ -101,3 +101,52 @@ view DrawShot(Camera camera, Shot shot, Time time)
     Draw.Rect(shot.center, float2(1, 1), Color.blue);
     Draw.Rect(float2(time.t, time.tickRate), float2(1, 1), Color.blue); // The match's seconds, between ticks too
 }
+
+local singleton ConfirmedSeen
+{
+    float bodyX;
+    float heading;
+    float radius;
+    int lives;
+    float jumperX;
+    float cameraY;
+    float shotY;
+    float queryX;
+    float mixedX;
+    float mixedQueryX;
+}
+
+view ConfirmedBody(verified Body body, mut ConfirmedSeen seen, without verified Jumper)
+{
+    if (body.position.x > 50) return;
+    seen.bodyX = body.position.x;
+    seen.heading = body.heading.degrees;
+    seen.radius = body.radius;
+    seen.lives = body.lives;
+}
+
+view ConfirmedJump(verified Body body, with verified Jumper, mut ConfirmedSeen seen)
+{
+    seen.jumperX = body.position.x;
+}
+
+view ConfirmedShot(verified Camera camera, verified Shot shot, mut ConfirmedSeen seen)
+{
+    seen.cameraY = camera.center.y;
+    seen.shotY = shot.center.y;
+}
+
+view ConfirmedQueries(mut ConfirmedSeen seen, query (verified Body body, without verified Jumper) bodies,
+    query (with Body, verified Body body, without Jumper) mixed)
+{
+    seen.queryX = 0;
+    foreach (var row in bodies) seen.queryX += row.body.position.x;
+    seen.mixedQueryX = 0;
+    foreach (var row in mixed) seen.mixedQueryX += row.body.position.x;
+}
+
+view MixedBody(Body drawn, verified Body body, mut ConfirmedSeen seen, without Jumper)
+{
+    if (drawn.position.x > 50) return;
+    seen.mixedX = body.position.x;
+}

@@ -104,7 +104,7 @@ TIDE_TEST(fails_closes_containers_it_leaves)
     tide_local_init(&local);
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(gui.depth == 0);
     tide_gui_end(&gui, &draw);
     TIDE_CHECK(local.Picked.good == 1);

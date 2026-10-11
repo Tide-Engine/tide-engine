@@ -208,3 +208,28 @@ if(TARGET tide_platform)
 endif()
 add_test(NAME tide_box3d_parts COMMAND tide_box3d_parts)
 set_tests_properties(tide_box3d_parts PROPERTIES TIMEOUT 300)
+
+tide_add_game(tide_box2d_rewind SOURCES box2d/bridge.c box2d/test/rewind.tide NAME rewind PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/rewind_test.c)
+target_include_directories(tide_box2d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_rewind PRIVATE tide_box2d)
+add_test(NAME tide_box2d_rewind COMMAND tide_box2d_rewind)
+
+tide_add_game(tide_box3d_rewind SOURCES box3d/bridge.c box3d/test/rewind.tide NAME rewind PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/rewind_test.c)
+target_include_directories(tide_box3d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_rewind PRIVATE tide_box3d)
+add_test(NAME tide_box3d_rewind COMMAND tide_box3d_rewind)
+
+# A client's actual confirmed frame -> sampled input -> server's historical hit,
+# with server ticks, each client's updates and presentation paced independently.
+foreach(dimension 2 3)
+    tide_add_game(tide_box${dimension}d_rewind_network
+        SOURCES box${dimension}d/bridge.c box${dimension}d/test/rewind_network.tide
+        NAME rewind_network PACKAGES Box${dimension}D box${dimension}d/box${dimension}d.tide
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/rewind_network_test.c)
+    target_include_directories(tide_box${dimension}d_rewind_network PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tide_box${dimension}d_rewind_network PRIVATE tide_box${dimension}d)
+    add_test(NAME tide_box${dimension}d_rewind_network COMMAND tide_box${dimension}d_rewind_network)
+    set_tests_properties(tide_box${dimension}d_rewind_network PROPERTIES TIMEOUT 120)
+endforeach()
