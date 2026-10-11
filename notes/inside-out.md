@@ -229,6 +229,15 @@ Site check has zero errors/warnings; 227 grammar, 18 analytics/admin and five
 production HTTP/SEO/access checks pass. The production build and complete
 WebGL example/gallery rendering smoke pass. No CI was dispatched.
 
+Source `7a44440f` deployed to the existing Fly site as release 263, image
+`deployment-01M4PF2HHN71TH2ZJ2C4S8M4XF`, with passing machine health checks.
+All four anonymous prototype pages and thumbnails return 200 and match the
+tested package. Inside Out retains noindex, COOP same-origin and COEP
+require-corp; its page and thumbnail have the exact hashes above. The full
+two-player WebGPU fixture on downloaded public bytes through the production
+relay passes in 47.7 seconds. The collaborative preview displays the updated
+title screen without console errors. No CI was dispatched.
+
 ## Earlier published build (superseded)
 
 The original isometric twelve-puzzle campaign passed fourteen native and

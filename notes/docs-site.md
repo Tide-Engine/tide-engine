@@ -15,6 +15,12 @@ build and full WebGL example/gallery smoke pass. Inside Out native/WASI and
 both two-browser GPU backends pass; exact asset hashes are in its notes.
 No CI was dispatched.
 
+Source `7a44440f` deployed directly to the existing Fly site as release 263,
+image `deployment-01M4PF2HHN71TH2ZJ2C4S8M4XF`, with passing health checks.
+All four public prototype pages/thumbnails match the package. Inside Out's
+downloaded page passes two-player WebGPU play through the production relay
+in 47.7 seconds. The collaborative preview displays its updated title screen.
+
 Inside Out catalog addition (2026-10-11): the owner's two-player online puzzle
 prototype adds an eighth server-loaded card, `inside-out`, with a warm miniature
 workshop description. `inside_out_page` stages at
