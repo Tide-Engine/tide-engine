@@ -55,15 +55,15 @@ frag Lit(Corner corner, out Color color, Land land, Body body, Legend legend)
     if (land.tiles.TryGet(Ground.Water, out var water)) sum += water.tint * water.cost;
     foreach (var entry in land.tiles)
     {
-        if (entry.key == Ground.Grass) continue;
+        if (entry.key == .Grass) continue;
         sum.g += entry.value.height;
     }
     foreach (var ground in body.seen)
     {
-        if (ground == Ground.Rock) sum.r += 0.25;
+        if (ground == .Rock) sum.r += 0.25;
     }
     var tiles = land.tiles;
-    sum.g += Height(tiles, Ground.Rock);
+    sum.g += Height(tiles, .Rock);
     mut var found = Tile { };
     var there = land.tiles.TryGet(Ground.Grass, out found);
     sum.b += legend.weights[byte(legend.pick)] * land.hues.count + land.lit.count + body.seen.count;

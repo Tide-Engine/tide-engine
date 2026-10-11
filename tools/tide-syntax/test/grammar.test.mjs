@@ -518,6 +518,13 @@ test('degree literals are whole float tokens with a lowercase suffix', () => {
     check(lines[5], ['.5deg', '!constant.numeric.float']);
 });
 
+test('leading-dot enum members retain their value scope', () => {
+    const lines = tokenize('state = .Idle;\nreturn .Run;\ncase .idle:\nPick(.Jump);\nstate == .Run;\nvar n = .5;\nstate.idle;');
+    for (const [i, name] of ['Idle', 'Run', 'idle', 'Jump', 'Run'].entries()) check(lines[i], [name, 'constant.other.enum']);
+    check(lines[5], ['.5', 'constant.numeric.float']);
+    check(lines[6], ['idle', 'variable.other.member']);
+});
+
 // The editors indent after a line that opens a brace, but not one in text or a comment.
 test('indenting ignores braces in text and comments', () => {
     const configuration = JSON.parse(fs.readFileSync(path.join(here, '..', 'language-configuration.json'), 'utf8'));

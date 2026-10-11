@@ -246,7 +246,8 @@ system Advance(mut Match match)
 ```
 
 - A member without a value is one more than the one before it, and the first is 0. A value is an int, which can come from constants: `Playing = FIRST_LEVEL + 1`.
-- Members are always written with their enum: `Phase.Playing`.
+- Write a member with its enum, `Phase.Playing`, or use `.Playing` when the expected enum type is clear: `match.phase = .Playing;`. Typed declarations, field defaults, function arguments and returns, container elements and `case .Warmup:` inside an enum switch supply that type. Comparisons can use it too: `match.phase == .Playing`. A typed conditional can use shorthand in both branches: `Phase next = ready ? .Playing : .Warmup;`.
+- Without an expected enum type, keep the qualified spelling: `var phase = Phase.Playing;`. If overloads could take different enums, qualify the argument; the compiler does not pick an enum by searching for its member name.
 - `==` and `!=` compare two values of the same enum.
 - An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
 - Write conversions as `int(phase)`, not `(int)phase`. The compiler explains the replacement when it encounters a parenthesized cast.

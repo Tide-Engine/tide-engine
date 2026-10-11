@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "tide/texture_blocks.h"
 
 typedef uint32_t tide_gpu_id; // A buffer, texture, pipeline or target; 0 is none, and the window as a target
 
@@ -290,6 +291,9 @@ typedef struct tide_gpu {
     // `pixels` is all of the texture's either way, its rows one after the other, of which a part's are read
     // where they are. How it's read is each draw's to say (sample).
     tide_gpu_id (*texture)(tide_gpu_format format, int width, int height, const void *pixels);
+    // Complete immutable BC1/BC3 mip chain, or 0 when unsupported. No upload
+    // or allocation on unsupported devices; the renderer then uses RGBA.
+    tide_gpu_id (*texture_blocks)(int width, int height, tide_texture_blocks blocks);
     void (*texture_write)(tide_gpu_id texture, const void *pixels);
     void (*texture_write_part)(tide_gpu_id texture, const void *pixels, int x, int y, int width, int height);
     // Its smaller images, each half the last one's size down to one pixel

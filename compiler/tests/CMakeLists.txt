@@ -108,6 +108,7 @@ tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with st
 # its stack, on the audio thread's, doesn't build
 target_compile_options(tidec_e2e_effects PRIVATE -Wframe-larger-than=65536)
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
+tide_e2e_test(texture_compression)
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
@@ -474,6 +475,10 @@ if(TARGET tidec_core)
     target_compile_definitions(tidec_image_files_tests PRIVATE IMAGE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/assets/images")
     target_link_libraries(tidec_image_files_tests PRIVATE tide tidec_core)
     add_test(NAME tidec_image_files COMMAND tidec_image_files_tests)
+    add_executable(tidec_texture_compress_tests texture_compress_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_texture_compress_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_texture_compress_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_texture_compress COMMAND tidec_texture_compress_tests)
     add_executable(tidec_audio_files_tests audio_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_audio_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_audio_files_tests PRIVATE AUDIO_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/audio_import"
