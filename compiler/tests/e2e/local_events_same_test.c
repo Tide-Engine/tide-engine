@@ -22,7 +22,7 @@ static void tick_heard(tide_world *w)
     tide_world_tick_events(w, NULL, &events);
     tide_local_events(&local, &events);
     tide_draw_reset(&draw);
-    tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 TIDE_TEST(local_events_cost_the_world_nothing)
@@ -44,7 +44,7 @@ static void frame(const tide_client *first)
     const tide_view_worlds view = tide_client_view(first);
     tide_local_events(&local, &events);
     tide_draw_reset(&draw);
-    tide_frame(view.current, view.previous, view.alpha, view.verified, &local, &draw, &gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, &local, &draw, &gui);
 }
 
 TIDE_TEST(local_events_cost_the_network_nothing)

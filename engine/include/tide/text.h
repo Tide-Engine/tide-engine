@@ -258,7 +258,7 @@ static inline const tide_heap *tide_heap_read(const uint32_t where)
 // said TIDE_IN_MATCH, as that world's own does: the same block, read there.
 static inline uint32_t tide_confirmed(const uint32_t at)
 {
-    return at ? (at & 0x3FFFFFFFu) | TIDE_IN_VERIFIED << 30 : 0u;
+    return at && at >> 30 == TIDE_IN_MATCH ? at | TIDE_IN_VERIFIED << 30 : at;
 }
 
 // Reading: a view of the text, which lasts until the running code is done.

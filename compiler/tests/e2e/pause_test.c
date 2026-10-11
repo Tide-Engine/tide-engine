@@ -16,7 +16,7 @@ static void frame(void)
     tide_draw_reset(&draw);
     tide_pointer_poll(&devices, true); // As the platform polls it: the pointer follows the mouse
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

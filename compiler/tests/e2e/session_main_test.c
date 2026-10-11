@@ -12,7 +12,7 @@ static tide_gui gui;
 static void frame(void)
 {
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 TIDE_TEST(session_start_with_no_scene_is_main_and_the_title_is_the_settings)

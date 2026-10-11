@@ -1,3 +1,3 @@
-// expect: an Animations file list can't be empty
-asset Animations run = [];
+// expect: an AnimationCatalog file list can't be empty
+asset AnimationCatalog run = [];
 scene Main { }

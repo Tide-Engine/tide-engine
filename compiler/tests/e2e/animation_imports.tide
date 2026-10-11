@@ -1,8 +1,11 @@
+Animation LookupClip(AnimationCatalog clips, string name) { clips.TryGetByName(name, out var result); return result; }
+Animation ClipAt(AnimationCatalog clips, int index) { clips.TryGetAt(index, out var result); return result; }
+
 const string runPath = "animation_imports/movement/run.gltf";
-asset Animations movement = ["animation_imports/movement/walk.gltf", runPath, runPath];
-asset Animations globbed = "animation_imports/movement/*.gltf";
-asset Animations mixed = ["animation_imports/movement/*.gltf", runPath];
-asset Animations names = "animation_imports/names.gltf";
+asset AnimationCatalog movement = ["animation_imports/movement/walk.gltf", runPath, runPath];
+asset AnimationCatalog globbed = "animation_imports/movement/*.gltf";
+asset AnimationCatalog mixed = ["animation_imports/movement/*.gltf", runPath];
+asset AnimationCatalog names = "animation_imports/names.gltf";
 asset SkinnedMesh<Vertex3> model = "animation_imports/names.gltf";
 asset Animation single = "animation_imports/single.gltf";
 [Name("Root|Run")]
@@ -15,7 +18,7 @@ struct Required {
 asset SkinnedMesh<Vertex3, Required> required = "animation_imports/names.gltf";
 
 singleton Probe {
-    Animations saved = movement;
+    AnimationCatalog saved = movement;
     Animation selected = run;
     Pose pose;
     int checks;
@@ -24,7 +27,7 @@ singleton Probe {
 }
 scene Main { }
 void Expect(mut Probe p, bool yes) { p.checks++; if (yes) p.passed++; }
-Animation ThroughHelper(Animations value) { return value.Find("Root|Run")!; }
+Animation ThroughHelper(AnimationCatalog value) { return LookupClip(value, "Root|Run"); }
 
 system Check(mut Probe p) {
     if (p.ticks == 0) {
@@ -33,10 +36,10 @@ system Check(mut Probe p) {
         Expect(p, retained.rootWalk.name == "Root|Walk" && retained.rootRun.name == "Root|Run");
         Expect(p, movement.walkRoot0TargetingPose.name == "Root|0.Targeting Pose");
         Expect(p, movement.runRoot0TargetingPose.name == "Root|0.Targeting Pose");
-        Expect(p, movement.Find("Root|0.Targeting Pose") == null);
-        Expect(p, movement.Find("Root|Run")!.name == "Root|Run" && movement.Find("rootRun") == null);
-        Expect(p, movement.At(0)!.name == "Root|0.Targeting Pose" && movement.At(3)!.name == "Root|Run");
-        Expect(p, movement.At(-1) == null && movement.At(4) == null);
+        Expect(p, !movement.TryGetByName("Root|0.Targeting Pose", out _));
+        Expect(p, LookupClip(movement, "Root|Run").name == "Root|Run" && !movement.TryGetByName("rootRun", out _));
+        Expect(p, ClipAt(movement, 0).name == "Root|0.Targeting Pose" && ClipAt(movement, 3).name == "Root|Run");
+        Expect(p, !movement.TryGetAt(-1, out _) && !movement.TryGetAt(4, out _));
         Expect(p, ThroughHelper(movement).name == "Root|Run");
         Expect(p, single.name == "Root|Run" && run.name == "Root|Run" && run.duration == 1);
         Expect(p, names.rootRun.name == "Root|Run" && names.root0TargetingPose.name == "Root|0.Targeting Pose");
@@ -44,17 +47,17 @@ system Check(mut Probe p) {
         Expect(p, names._tide_private.name == "tide_private");
         Expect(p, names.badName___7.name == "bad name" && names.badName_8.name == "bad-name");
         Expect(p, names.badName_7.name == "badName_7" && names.badName__7.name == "badName__7");
-        Expect(p, names.same_11.name == "Same" && names.same_12.name == "Same" && names.Find("Same") == null);
-        Expect(p, names._.name == "!!!" && names.At(13)!.name == "" && names.Find("") == null);
+        Expect(p, names.same_11.name == "Same" && names.same_12.name == "Same" && !names.TryGetByName("Same", out _));
+        Expect(p, names._.name == "!!!" && ClipAt(names, 13).name == "" && !names.TryGetByName("", out _));
         Expect(p, model.animations.rootRun.Sample(0.5)[model.skeleton.bones.rightHand].position.x == -12
             && required.defaultPose[required.skeleton.bones.hand].scale.x == 1);
         var escaped = model.animations;
-        Expect(p, escaped.rootRun.name == "Root|Run" && escaped.Find("Same") == null && escaped.count == 14);
+        Expect(p, escaped.rootRun.name == "Root|Run" && !escaped.TryGetByName("Same", out _) && escaped.count == 14);
         SkinnedMesh<Vertex3, Required> converted = model;
         Expect(p, converted.animations.run.name == "Root|Run");
         p.pose = run.Sample(0.5);
     }
-    Expect(p, p.saved.count == 4 && p.saved.Find("Root|Run")!.name == "Root|Run" && p.selected.name == "Root|Run");
+    Expect(p, p.saved.count == 4 && LookupClip(p.saved, "Root|Run").name == "Root|Run" && p.selected.name == "Root|Run");
     p.pose.Sample(p.selected, float(p.ticks % 4) * 0.25, Playback.Loop);
     p.ticks++;
 }

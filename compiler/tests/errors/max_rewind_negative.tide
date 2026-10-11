@@ -1,0 +1,3 @@
+// expect: maxRewind is a finite nonnegative
+settings { maxRewind = -0.25; }
+scene Main { }

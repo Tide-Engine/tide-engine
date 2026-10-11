@@ -260,3 +260,7 @@ input PlayerInput
 Every input goes through these steps before the match reads it, including this machine's, so systems can rely on them without checking again. Devices are repaired the same way, since the engine knows their ranges.
 
 An input holds numbers, bools, chars, enums, vectors and structs of those; not text or lists. A match takes as many players as the game's `maxPlayers` setting says, 16 without one (see [Matches](../multiplayer/matches.md#how-many-players)).
+
+## Presented view time
+
+With `settings { maxRewind = 0.25; }`, your input gains `ViewTime viewTime`; do not declare this field yourself. It is read-only and stamped by the engine after `Sample`, from the last actually presented confirmed frame. `tick` names the upper endpoint, `alpha` its interpolation fraction, and `valid` is false before a frame is presented. Use it with [collider rewind](../multiplayer/networking.md#collider-rewind); the server validates the wire value as an untrusted claim.

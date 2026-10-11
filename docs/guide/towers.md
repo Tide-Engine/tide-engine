@@ -85,9 +85,9 @@ float Free(Physics physics, Kind kind, float2 from, int quarter, float2 way, flo
 {
     mut var free = 1.0;
     var angle = Angle(quarter);
-    if (Cast(physics, Slim(First(kind), quarter, slack), from, angle, from + way, out var hit)) free = hit.fraction;
+    if (physics.Cast(Slim(First(kind), quarter, slack), from, angle, from + way, out var hit)) free = hit.fraction;
     var second = Second(kind);
-    if (second.size.x > 0 && Cast(physics, Slim(second, quarter, slack), from, angle, from + way, out var other))
+    if (second.size.x > 0 && physics.Cast(Slim(second, quarter, slack), from, angle, from + way, out var other))
     {
         free = Math.Min(free, other.fraction);
     }

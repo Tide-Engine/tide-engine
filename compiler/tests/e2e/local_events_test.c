@@ -52,7 +52,7 @@ TIDE_TEST(local_events_plain_host)
     TIDE_CHECK(tide_world_hash(&world) == tide_world_hash(&quiet));
     tide_local_events(&local, &events);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Heard.spawned == 0xE && local.Heard.sureSpawned == 0xE && local.Heard.entities == 4);
     for (int32_t id = 1; id <= 3; id++) TIDE_CHECK(tide_get_Target_local(&local, target(&world, id)).born == id);
     // Its handlers' queries go through the world as it started: all three targets
@@ -75,12 +75,12 @@ TIDE_TEST(local_events_plain_host)
         tide_local_events(&local, &events);
         TIDE_CHECK(events.count == 0);
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         if (tick < 30u) TIDE_CHECK(local.Heard.struck == 0);
     }
     tide_local_events(&local, &events);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     const Heard *heard = &local.Heard;
     // The shield was up at 90, 150 and 240: kinds 1 and 4, no 2 or 3
     TIDE_CHECK(heard->struck == 2 && heard->kinds == ((1 << 1) | (1 << 4)));
@@ -167,7 +167,7 @@ static void frame(tide_local *l, const tide_client *c, tide_event_log *events)
     const tide_view_worlds view = tide_client_view(c);
     tide_local_events(l, events);
     tide_draw_reset(&draw);
-    tide_frame(view.current, view.previous, view.alpha, view.verified, l, &draw, &gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, l, &draw, &gui);
 }
 
 static void first_frame(void)
@@ -408,7 +408,7 @@ TIDE_TEST(local_events_single_machine)
         const tide_view_worlds view = tide_session_view(s);
         tide_local_events(&own, tide_session_events(s));
         tide_draw_reset(&draw);
-        tide_frame(view.current, view.previous, view.alpha, view.verified, &own, &draw, &gui);
+        tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, &own, &draw, &gui);
         TIDE_CHECK(own.Heard.sureStruck <= own.Heard.struck);
     }
     const tide_world *match = tide_session_server_world(s);

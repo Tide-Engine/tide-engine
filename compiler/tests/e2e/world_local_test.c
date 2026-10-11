@@ -15,7 +15,7 @@ static void start(void)
 static void frame(const tide_world *w)
 {
     tide_draw_reset(&draw);
-    tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 TIDE_TEST(world_views_read_the_match)

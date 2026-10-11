@@ -1,0 +1,4 @@
+// expect: viewTime is supplied by the engine
+settings { maxRewind = 0.25; }
+input Controls { int viewTime; }
+scene Main { }

@@ -240,11 +240,11 @@ TIDE_TEST(evaluation_order_local_fields_in_a_view)
     tide_world_init(&world, 1.0f);
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_REQUIRE(tide_has_Box_local(&local, slot(9)));
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).seen == 1); // Pack(0, 1)
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).seen == 12);
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).hits == 2);
 }
