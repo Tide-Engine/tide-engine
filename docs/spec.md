@@ -1090,6 +1090,8 @@ Built 2026-10-06; the picks below await the owner.
 ### Decided
 
 - Enums and `switch` follow C#'s syntax.
+- `EnumType.Count()` returns the number of declared members as a compile-time `int`. Members with the same numeric value each count; gaps and explicit values do not change the count. This is a static operation, not an enum member, and takes no arguments. A declared member named `Count` remains accessible as `EnumType.Count`.
+- Explicit conversions use `int(value)` and `EnumType(number)`. Parenthesized cast syntax such as `(int)value` is rejected with guidance on the conversion to write.
 
 ```csharp
 enum Phase
@@ -1136,6 +1138,7 @@ system Advance(mut Match match)
 ### Open
 
 - Ordering enums (`<`).
+- Enumerating members as values, such as `EnumType.Values()`, remains a proposal; it is not implemented.
 - A warning when a switch on an enum has no `default` and misses a member.
 
 ## Loops

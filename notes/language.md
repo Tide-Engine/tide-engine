@@ -4,6 +4,33 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Language
 
+- Enum member counts and cast guidance (2026-10-11, requested by the owner):
+  `EnumType.Count()` is a compile-time `int` counting declared members, including
+  aliases and a member named `Count`. Explicit numeric values, gaps, negative
+  values and backing storage do not change it; `EnumType.Count` remains the
+  user's member. Qualified and built-in enum types work. The existing
+  `named_enum` lookup preserves local/parameter/field shadowing; calls take no
+  value or type arguments and are static, not enum-value methods.
+  `CALL_ENUM_COUNT` retains the source call for editors, folds in integer
+  constant expressions and emits a literal in C. No runtime API or layout
+  changes. E2E enums cover aliases, sparse values, forward declarations, enum
+  initializers, constants, field defaults, array lengths, case labels, built-in
+  enums and advancing/wrapping a zero-based enum. Error fixtures pin arguments,
+  type arguments, instance calls and discarded results.
+  The parser recognizes unambiguous `(Type)value` forms, including qualified
+  targets and grouped operands, rejects them and prints the exact `Type(value)`
+  replacement. Existing parenthesized arithmetic, indexing, postfix steps and
+  failable unwraps keep their parsing; ambiguous following operators remain
+  expressions. Cast int/float/enum/qualified error fixtures and the LSP recovery
+  regression pin the guidance. Enum `Values()` remains unimplemented.
+  Editor and GPU integration are recorded in their notes. Validation: complete
+  native debug (2,088 CTest entries) and web debug (2,059) suites pass, using
+  Node 24.19.0. The native run caught Count completion leaking into enum case
+  labels; after the editor-only fix, the full 214-test language-server suite
+  was rebuilt and rerun successfully. Shader probes pass on native OpenGL,
+  WebGL and WebGPU, and the production docs build passes. Other native platforms
+  and Android were not run locally; CI was not dispatched.
+
 - Sample argument bookkeeping (2026-10-11): `skinned_arguments` preserves the
   existing `expr.written` source list when it appends an omitted Playback.Clamp.
   `expr.args` still contains the same full parameter values; named evaluation

@@ -3898,6 +3898,9 @@ static void ex_call(emit *em, const expr *e)
 {
     const char *what = NULL;
     switch (e->call) {
+    case CALL_ENUM_COUNT:
+        sb_printf(em->o, "%lld", (long long)e->int_value);
+        return;
     case CALL_SKINNED:
         refuse(em, e->at, "skeleton lookup and animation sampling run on the CPU, before Draw.SkinnedMesh");
         return;

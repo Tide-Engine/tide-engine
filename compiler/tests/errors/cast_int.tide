@@ -1,0 +1,5 @@
+// expect: Tide converts values with 'int(value)', not '(int)value'
+// expect: write 'int(direction)' instead
+enum Direction { North, East }
+int Number(Direction direction) { return (int)direction; }
+scene Main { }

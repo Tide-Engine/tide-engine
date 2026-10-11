@@ -1,5 +1,15 @@
 # The docs site
 
+Enum count and cast guidance (2026-10-11): Basics documents `EnumType.Count()`
+as the compile-time number of declarations, including aliases and a member named
+`Count`, and shows explicit conversions plus advancing/wrapping with `%` for
+valid, consecutive zero-based enum values. It explains why sparse/negative/aliased
+values need a different traversal. Editors documents count completion/hover and
+the replacement spelling in parenthesized-cast diagnostics. The spec marks the
+owner's count/conversion decisions as decided; `Values()` remains an open,
+unimplemented proposal. `npm run build` passes with the existing allowed
+missing-example 404s. No site deployment was requested.
+
 Sample playback hints (2026-10-11): Editors clarifies that inlay parameter
 labels describe written literals; omitted defaults and named arguments have no
 label. The production docs build passes with the existing allowed missing-example
