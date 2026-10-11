@@ -286,3 +286,19 @@ staged and production-site HTML are identical with SHA-256
 `593221e6e4a00a449cbfdefb6508383f07cf35cbf7217b3e37315bd096138f14`.
 The refreshed thumbnail SHA-256 is
 `adb64454b74621e664244b23931bfee1bcc01c1c21290ab6a18525745cceca3d`.
+
+Source `f8f61e9e` was merged/pushed to `dev` after local validation; `origin/dev`
+had no newer changes. The existing `tide-website` Fly app was updated directly,
+release 256, image `deployment-01M4P1D8MP14MTP7X08VBF1594`. Deployment checks
+passed and the machine reached healthy started state. Anonymous published
+game/thumbnail requests return 200 with the exact hashes above, retaining
+COOP same-origin, COEP require-corp and noindex. The collaborative preview
+points at the public URL. No CI workflow was dispatched.
+
+Two separate muted browsers exercised those downloaded published bytes on
+WebGPU with `wss://relay.tide-engine.dev` in 44.9 s: admission, independent
+dimension cameras, canonical interior parity, moved-shell surroundings,
+self-recursive entry/exit, shared undo/reset and held-input recovery,
+completion/progression, shelf selection and phone touch all pass with no
+runtime/browser/graphics errors. This uses the controlled frame clock;
+physical phones, cross-machine NAT and human latency remain unmeasured.

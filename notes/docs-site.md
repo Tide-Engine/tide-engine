@@ -246,3 +246,10 @@ web-release page is restaged; Svelte check has zero errors/warnings, the
 production build passes, and all 23 analytics/admin and production HTTP/SEO/
 access checks pass. Camera, audio and gameplay evidence belongs in
 `notes/inside-out.md`.
+
+That focused-view revision deployed directly from `f8f61e9e` to the existing
+Fly site (release 256); health checks passed. Anonymous game and thumbnail
+requests return 200 and match the validated release hashes. The packaged
+catalog still contains only Inside Out, CRACKED and Two Forks.
+Two-browser WebGPU gameplay of the downloaded page with the production relay
+passes, including the focused-camera and recursion checks. No CI was dispatched.
