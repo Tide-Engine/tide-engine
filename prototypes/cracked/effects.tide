@@ -1,0 +1,556 @@
+using Rooms;
+
+// What flies, glows and bursts in CRACKED: the bullets and their trails, a
+// shield's bubble, the clouds, and everything the match only says happened
+// (a shot, a hit, a death) and this machine makes sparks of. None of it is in
+// the match. A local handler hears an event once, however often this machine
+// runs its tick again, and leaves what it makes in `Air`, which the views
+// here move on and draw.
+
+// Something small that flies, glows, fades and is gone.
+struct Spark
+{
+    float3 position;
+    float3 velocity;
+    Color color = Color.white;
+    float age;
+    float life = 0.5;
+    float size = 0.08;
+    float weight;        // How much of gravity pulls it
+    float drag;          // How fast it slows, a second
+    bool shard;          // A piece of glass: a box that's lit, not a glow
+}
+
+// A ball that's drawn: a glow that's added to what's behind it, a bullet, a
+// cloud's puff, a shield.
+struct Orb
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+    float soft = 2;      // How fast it fades from its middle to its edge
+}
+
+// A ring that spreads, flat or standing: a shield going up, a freeze, a
+// jump in the air.
+struct Wave
+{
+    float3 at;
+    quaternion turned = quaternion.identity;
+    float from = 0.2;
+    float reach = 2;
+    Color color = Color.white;
+    float age;
+    float life = 0.4;
+}
+
+// Lightning from one player to another.
+struct Bolt
+{
+    int from;
+    int to;
+    float age;
+}
+
+// A number that floats up from where someone was hurt.
+struct Label
+{
+    float3 at;
+    Color color = Color.white;
+    float age;
+    string words;
+}
+
+// What an event's handler leaves for the view that knows where things are:
+// a handler reads a seat, but not the map of players or the lists.
+struct Burst
+{
+    int kind;            // 0 a shot, 1 a death, 2 a shield, 3 a second jump, 4 a freeze
+    int seat;
+}
+
+local singleton Air
+{
+    List<Spark> sparks;
+    List<Orb> glows;         // As they're drawn: added light,
+    List<Orb> shards;        // lit pieces,
+    List<Orb> shots;         // the bullets,
+    List<Orb> puffs;         // the clouds,
+    List<Orb> bubbles;       // and the shields
+    List<Orb> flats;         // The rings, each a flat square its frag makes a ring of
+    List<Orb> beams;         // The lightning's pieces
+    List<Wave> waves;
+    List<Bolt> bolts;
+    List<Label> labels;
+    float[SEATS] shield;     // How far each seat's bubble is out, 0 to 1
+    float[SEATS] flash;      // How white each seat is from being hurt, fading
+    float[SEATS] threw;      // Seconds since each seat fired
+    float[SEATS] smoke;      // Seconds until each seat's jetpack or dash leaves another puff
+}
+
+// A glow: bright in its middle, nothing at its edge, added to what's there.
+frag GlowLook(Corner corner, out Color color, Orb orb, Instance instance, Light light)
+{
+    float3 normal = instance.Normal(corner.normal);
+    float facing = Math.Saturate(Math.Dot(normal, Math.Normalize(light.eye - this.world)));
+    // By how far from its middle it is on the screen: at its rim, how it faces the eye changes too fast to fade by
+    color = Color(orb.tint.r, orb.tint.g, orb.tint.b, orb.tint.a * Math.Pow(facing * facing, orb.soft));
+}
+
+// A bullet: the Unity game's red ball with an orange light of its own,
+// brighter than white, so the bloom takes it.
+frag ShotLook(Corner corner, out Color color, Orb orb, Instance instance, Light light)
+{
+    float3 normal = instance.Normal(corner.normal);
+    float facing = Math.Saturate(Math.Dot(normal, Math.Normalize(light.eye - this.world)));
+    float hot = 0.55 + 0.45 * facing * facing;
+    color = Color(orb.tint.r * hot, orb.tint.g * hot, orb.tint.b * hot, 1);
+}
+
+// A cloud's puff: soft at its edge, lighter on top.
+frag PuffLook(Corner corner, out Color color, Orb orb, Instance instance, Light light)
+{
+    float3 normal = instance.Normal(corner.normal);
+    float facing = Math.Saturate(Math.Dot(normal, Math.Normalize(light.eye - this.world)));
+    float lit = 0.72 + 0.28 * normal.y;
+    color = Color(orb.tint.r * lit, orb.tint.g * lit, orb.tint.b * lit, orb.tint.a * Math.Pow(facing, orb.soft));
+}
+
+// A shield: a clear cyan ball, with the Unity material's magenta where it
+// turns away from the eye, and a band that runs up it.
+frag BubbleLook(Corner corner, out Color color, Orb orb, Instance instance, Light light)
+{
+    float3 normal = instance.Normal(corner.normal);
+    float edge = 1 - Math.Saturate(Math.Abs(Math.Dot(normal, Math.Normalize(light.eye - this.world))));
+    float rim = Math.Pow(edge, 2.2);
+    float band = Math.Pow(Math.Saturate(1 - Math.Abs(Math.Frac(corner.position.y * 0.5 - light.beat * 0.4) - 0.5) * 6), 2) * 0.35;
+    float3 inside = float3(orb.tint.r, orb.tint.g, orb.tint.b);
+    float3 outline = float3(0.97, 0, 1) * 1.6;
+    float3 paint = inside + (outline - inside) * rim + float3(band);
+    color = Color(paint.x, paint.y, paint.z, orb.tint.a * (0.16 + 0.84 * rim + band));
+}
+
+// A piece of glass or of a map: lit like the blocks, with no shadow asked.
+frag ShardLook(Corner corner, out Color color, Orb orb, Instance instance, Light light)
+{
+    color = Lit(orb.tint, instance.Normal(corner.normal), this.world, light, 1, 0.6);
+}
+
+// A ring on a flat square: `soft` is how much of its radius its band is.
+frag RingLook(Corner corner, out Color color, Orb orb)
+{
+    float far = Math.Length(float2(corner.position.x, corner.position.z)) * 2;
+    float shown = Math.Saturate((1 - far) * 10) * Math.Saturate((far - (1 - orb.soft)) * 10);
+    color = Color(orb.tint.r, orb.tint.g, orb.tint.b, orb.tint.a * shown);
+}
+
+frag BeamLook(Corner corner, out Color color, Orb orb)
+{
+    color = orb.tint;
+}
+
+// Where a seat's bullets leave from, as FirePoint has it for the match.
+float3 Muzzle(Seat seat)
+{
+    var forward = Forward(seat.yaw);
+    var right = float3(forward.z, 0, -forward.x);
+    return seat.position + (right * FIRE_POINT.x + float3(0, FIRE_POINT.y, 0) + forward * FIRE_POINT.z) * seat.settings.size;
+}
+
+// The middle of a seat's body, and of its head.
+float3 Chest(Seat seat)
+{
+    return seat.position + Math.Rotate(seat.rotation, float3(0, 1.1 * seat.settings.size, 0));
+}
+
+float3 Head(Seat seat)
+{
+    return seat.position + Math.Rotate(seat.rotation, float3(0, 1.55 * seat.settings.size, 0));
+}
+
+Color TeamColor(int team)
+{
+    return team == 0 ? Color(0.1144, 0.4852, 0.7991) : Color(0.8679, 0.2236, 0.2170);
+}
+
+// Sparks thrown every way from a place, or mostly along a way.
+void Sparks(mut Fx fx, mut Air air, float3 at, float3 along, int count, float speed, Color color, float size, float weight)
+{
+    if (air.sparks.count > 900) return;
+    for (var i = 0; i < count; i++)
+    {
+        var way = fx.random.NextFloat3Direction();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        air.sparks.Add(Spark { position = at, velocity = (way + along) * speed * (0.3 + pace), color = color, life = 0.2 + long * 0.35,
+                               size = size, weight = weight, drag = 2 });
+    }
+}
+
+local event(Fired fired) Flashed(Arena arena, mut Fx fx, mut Air air)
+{
+    var seat = arena.seats[fired.seat];
+    air.threw[fired.seat] = 0;
+    var at = Muzzle(seat);
+    Sparks(fx, air, at, seat.aim * 1.5, 7, 5, Color(3, 0.9, 0.2), 0.05, 0.2);
+    air.sparks.Add(Spark { position = at, color = Color(2.6, 1.0, 0.3, 0.7), life = 0.08, size = 0.38 });
+}
+
+// A bullet met something: sparks off a wall, a burst where it ended, and a
+// shield's own color where one turned it.
+local event(BulletHit hit) Struck(mut Fx fx, mut Air air)
+{
+    var big = Math.Clamp(hit.size / 0.2, 0.6, 3);
+    if (hit.what == 2)
+    {
+        Sparks(fx, air, hit.at, float3(0), 10, 7, Color(0.3, 2.4, 2.4), 0.06, 0.3);
+        air.sparks.Add(Spark { position = hit.at, color = Color(0.4, 2, 2.2, 0.6), life = 0.14, size = 0.45 * big });
+        return;
+    }
+    var burst = hit.what == 1;
+    Sparks(fx, air, hit.at, float3(0, 0.4, 0), burst ? 12 : 5, burst ? 7 : 4, Color(3, 0.8, 0.15), 0.05 * big, 1);
+    air.sparks.Add(Spark { position = hit.at, color = Color(2.6, 0.7, 0.2, 0.6), life = burst ? 0.16 : 0.1, size = (burst ? 0.5 : 0.3) * big });
+}
+
+// Someone was hurt: they flash white, as the Unity game's team material
+// does, a number floats up, and this machine's camera feels its own player's.
+local event(Hurt hurt) Winced(Arena arena, mut Air air, mut Look look)
+{
+    air.flash[hurt.seat] = 1;
+    if (air.labels.count < 40)
+        air.labels.Add(Label { at = Head(arena.seats[hurt.seat]) + float3(0, 0.5, 0), color = Color(1, 0.86, 0.3), words = $"{hurt.damage}" });
+    if (hurt.seat == look.seat) look.shake = Math.Min(1, look.shake + 0.25 + hurt.damage * 0.01);
+}
+
+// A death is shown once the server has said so: the head's glass goes to
+// pieces, and what was in it splashes.
+local event(verified Died died) Shattered(Arena arena, mut Fx fx, mut Air air, mut Look look)
+{
+    var seat = arena.seats[died.seat];
+    var at = Head(seat);
+    var size = seat.settings.size;
+    for (var i = 0; i < 26; i++)
+    {
+        var way = fx.random.NextFloat3Direction();
+        var pace = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        air.sparks.Add(Spark { position = at + way * 0.2 * size, velocity = way * (2 + pace * 5) + float3(0, 2.5, 0) + seat.velocity * 0.5,
+                               color = Color(0.3, 0.85, 0.95, 1), life = 0.9 + pace * 0.9, size = (0.06 + big * 0.1) * size, weight = 1, drag = 0.4,
+                               shard = true });
+    }
+    for (var i = 0; i < 22; i++)
+    {
+        var way = fx.random.NextFloat3Direction();
+        var pace = fx.random.NextFloat();
+        var tone = fx.random.NextFloat();
+        air.sparks.Add(Spark { position = at, velocity = float3(way.x, Math.Abs(way.y) + 0.6, way.z) * (1.5 + pace * 4),
+                               color = Mix(Color(1.6, 0, 0.05), Color(1.3, 0, 1.9), tone), life = 0.5 + pace * 0.5, size = 0.1 * size, weight = 1,
+                               drag = 0.6 });
+    }
+    air.sparks.Add(Spark { position = at, color = Color(1.4, 0.4, 1.8, 0.5), life = 0.16, size = 0.7 * size });
+    if (died.seat == look.seat) look.shake = 1;
+}
+
+local event(Shielded shielded) Raised(Arena arena, mut Air air)
+{
+    var seat = arena.seats[shielded.seat];
+    air.waves.Add(Wave { at = seat.position + float3(0, 0.15, 0), from = 0.6, reach = 2.6 * seat.settings.size, color = Color(0.2, 1.8, 1.9, 0.9),
+                         life = 0.3 });
+}
+
+local event(Jumped jumped) Leapt(Arena arena, mut Fx fx, mut Air air)
+{
+    if (!jumped.again) return;
+    var seat = arena.seats[jumped.seat];
+    air.waves.Add(Wave { at = seat.position, from = 0.3, reach = 1.5, color = Color(1.3, 1.3, 1.4, 0.8), life = 0.3 });
+    Sparks(fx, air, seat.position, float3(0, -0.8, 0), 8, 2.5, Color(1.2, 1.2, 1.3, 0.7), 0.09, 0);
+}
+
+local event(FreezeBurst burst) Froze(Arena arena, mut Fx fx, mut Air air)
+{
+    var seat = arena.seats[burst.seat];
+    var at = Chest(seat);
+    air.waves.Add(Wave { at = seat.position + float3(0, 0.2, 0), from = 0.5, reach = 9, color = Color(0.6, 1.5, 2.4, 0.9), life = 0.5 });
+    air.waves.Add(Wave { at = at, from = 0.5, reach = 7, color = Color(0.9, 1.6, 2.2, 0.6), life = 0.4 });
+    Sparks(fx, air, at, float3(0, 0.3, 0), 22, 9, Color(0.8, 1.7, 2.4), 0.07, 0.2);
+}
+
+local event(Zapped zapped) Arced(mut Air air)
+{
+    if (air.bolts.count < 16) air.bolts.Add(Bolt { from = zapped.seat, to = zapped.other });
+}
+
+local event(CloudMade made) Billowed(mut Fx fx, mut Air air)
+{
+    var color = made.heal ? Color(0.36, 1, 0.38) : Color(0.56, 0.73, 0.37);
+    air.waves.Add(Wave { at = made.at, from = 0.4, reach = 3, color = Fade(Shade(color, 1.4), 0.7), life = 0.4 });
+    Sparks(fx, air, made.at, float3(0, 0.5, 0), 10, 3, Fade(color, 0.8), 0.12, -0.1);
+}
+
+// The clocks the mages' looks go by, and the puffs a jetpack and a dash
+// leave: per seat, from what the match has of each.
+[Stage(Layers.Prepare, 1)]
+view Seats(Arena arena, mut Fx fx, mut Air air)
+{
+    var dt = fx.dt;
+    for (var s = 0; s < SEATS; s++)
+    {
+        var seat = arena.seats[s];
+        air.flash[s] = Math.Max(0, air.flash[s] - dt * 2);     // White for half a second
+        air.threw[s] += dt;
+        var up = seat.alive && seat.shieldActive ? 1.0 : 0.0;
+        air.shield[s] += (up - air.shield[s]) * Math.Saturate(dt * (up > 0 ? 22 : 14));
+        if (!seat.alive || seat.dead) continue;
+        air.smoke[s] -= dt;
+        if (air.smoke[s] > 0) continue;
+        // A jetpack burns: fire under the feet
+        if (seat.settings.hasJetpack && !seat.grounded && seat.pad.jump && seat.jetpackFuel > 0 && seat.timeSinceJump > 0.2)
+        {
+            air.smoke[s] = 0.02;
+            var side = fx.random.NextFloat2Direction() * 0.12;
+            var pace = fx.random.NextFloat();
+            air.sparks.Add(Spark { position = seat.position + float3(side.x, 0.5, side.y), velocity = float3(side.x * 4, -5 - pace * 4, side.y * 4) + seat.velocity,
+                                   color = Mix(Color(3, 1.2, 0.2), Color(2.5, 0.3, 0.05), pace), life = 0.18 + pace * 0.15, size = 0.16, drag = 1 });
+        }
+        // A dash, or a throw past the speed it could run at: a streak behind it
+        else if (seat.uncapVelocity > 0 && Math.Length(seat.velocity) > seat.settings.maxVelocity * 1.2)
+        {
+            air.smoke[s] = 0.025;
+            var side = fx.random.NextFloat3Direction() * 0.25;
+            air.sparks.Add(Spark { position = Chest(seat) + side, velocity = seat.velocity * 0.1, color = Fade(Shade(TeamColor(seat.team), 2.2), 0.6),
+                                   life = 0.3, size = 0.3 });
+        }
+    }
+}
+
+// The bullets: each a ball that glows, with a short tail behind it, as long
+// as it flies in a twentieth of a second and narrowing to nothing.
+[Stage(Layers.World, 5)]
+view Shots(Arena arena, Models models, Post post, mut Air air)
+{
+    air.shots.Clear();
+    air.glows.Clear();
+    foreach (var bullet in arena.bullets)
+    {
+        var size = bullet.props.size;
+        air.shots.Add(Orb { transform = float4x4.TRS(bullet.position, quaternion.identity, float3(size)), tint = Color(3.4, 0.55, 0.08) });
+        air.glows.Add(Orb { transform = float4x4.TRS(bullet.position, quaternion.identity, float3(size * 3.2)), tint = Color(1.6, 0.3, 0.04, 0.55),
+                            soft = 2.5 });
+        for (var k = 1; k <= 6; k++)
+        {
+            var back = k / 6.0;
+            air.glows.Add(Orb { transform = float4x4.TRS(bullet.position - bullet.velocity * (back * 0.06), quaternion.identity,
+                                                         float3(size * (1 - back * 0.85) * 1.5)),
+                                tint = Color(2.2, 0.45, 0.06, 0.6 * (1 - back)), soft = 1.5 });
+        }
+    }
+    post.scene.Instanced(models.ball, models.ballFaces, air.shots, ShotLook);
+}
+
+// The clouds a bullet or a block left: puffs within the cloud's reach that
+// swell as it starts, drift, and thin out over its last two seconds.
+[Stage(Layers.Effects)]
+view Mists(Arena arena, Models models, Light light, Post post, mut Air air)
+{
+    air.puffs.Clear();
+    for (var c = 0; c < arena.clouds.count; c++)
+    {
+        var cloud = arena.clouds[c];
+        var color = cloud.kind == CloudKind.Heal ? Color(0.36, 1, 0.38) : Color(0.56, 0.73, 0.37);
+        var thick = Math.Saturate(cloud.time / 0.3) * Math.Saturate((5 - cloud.time) / 2);
+        // Where its puffs are is from where the cloud is, so it's the same cloud every frame
+        var seed = int(cloud.position.x * 31) + int(cloud.position.z * 17);
+        for (var k = 0; k < 9; k++)
+        {
+            var turn = Chance(seed, k) * Math.TAU + light.beat * 0.08 * (k % 2 == 0 ? 1 : -1);
+            var out = k == 0 ? 0.0 : (0.3 + 0.5 * Chance(seed + 1, k)) * cloud.radius;
+            var high = (Chance(seed + 2, k) - 0.35) * cloud.radius * 0.5 + Math.Sin(light.beat + k) * 0.08;
+            var big = (0.42 + 0.28 * Chance(seed + 3, k)) * cloud.radius * (0.6 + 0.4 * Math.Saturate(cloud.time / 0.6));
+            air.puffs.Add(Orb { transform = float4x4.TRS(cloud.position + float3(Math.Cos(turn) * out, high, Math.Sin(turn) * out), quaternion.identity,
+                                                         float3(big, big * 0.8, big)),
+                                tint = Fade(color, 0.5 * thick), soft = 1.3 });
+        }
+    }
+    post.scene.Depth(Depth.Read)
+    {
+        post.scene.Instanced(models.ball, models.ballFaces, air.puffs, PuffLook);
+    }
+}
+
+// The shields: a bubble around each player who has one up, which pops out
+// and back in.
+[Stage(Layers.Effects, 1)]
+view Shields(Arena arena, Models models, Post post, mut Air air)
+{
+    air.bubbles.Clear();
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (air.shield[s] < 0.02 || !arena.seats[s].alive) continue;
+        var seat = arena.seats[s];
+        var size = seat.settings.size;
+        var out = EaseOutBack(air.shield[s]);
+        air.bubbles.Add(Orb { transform = float4x4.TRS(seat.position + Math.Rotate(seat.rotation, float3(0, SHIELD_CENTER * size, 0)), quaternion.identity,
+                                                       float3(SHIELD_RADIUS * size * out)),
+                              tint = Color(0, 1, 0.96, Math.Saturate(air.shield[s] * 1.5)) });
+    }
+    post.scene.Depth(Depth.Read)
+    {
+        post.scene.Instanced(models.ball, models.ballFaces, air.bubbles, BubbleLook);
+    }
+}
+
+// Everything that's light: the sparks move on, the rings spread, the
+// lightning jumps, and all of it is added to the picture in a draw each.
+[Stage(Layers.Effects, 2)]
+view Glows(Arena arena, Models models, Post post, mut Fx fx, mut Air air)
+{
+    var dt = fx.dt;
+    air.shards.Clear();
+    mut var i = 0;
+    while (i < air.sparks.count)
+    {
+        mut var spark = air.sparks[i];
+        spark.age += dt;
+        if (spark.age >= spark.life || spark.position.y < FLOOR_Y)
+        {
+            air.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.velocity.y -= 14 * spark.weight * dt;
+        spark.velocity = spark.velocity * Math.Max(0, 1 - spark.drag * dt);
+        spark.position += spark.velocity * dt;
+        air.sparks[i] = spark;
+        var left = 1 - spark.age / spark.life;
+        if (spark.shard)
+            air.shards.Add(Orb { transform = float4x4.TRS(spark.position, quaternion.Euler(float3(spark.age * 9, spark.age * 7 + i, 0)),
+                                                          float3(spark.size, spark.size * 0.35, spark.size) * Math.Saturate(left * 4)),
+                                 tint = spark.color });
+        else
+            air.glows.Add(Orb { transform = float4x4.TRS(spark.position, quaternion.identity, float3(spark.size * (0.4 + 0.6 * left))),
+                                tint = Fade(spark.color, left * 1.5), soft = 1.6 });
+        i++;
+    }
+
+    air.flats.Clear();
+    i = 0;
+    while (i < air.waves.count)
+    {
+        mut var wave = air.waves[i];
+        wave.age += dt;
+        if (wave.age >= wave.life)
+        {
+            air.waves.RemoveAt(i);
+            continue;
+        }
+        air.waves[i] = wave;
+        var t = wave.age / wave.life;
+        var wide = wave.from + (wave.reach - wave.from) * EaseOut(t);
+        air.flats.Add(Orb { transform = float4x4.TRS(wave.at, wave.turned, float3(wide, 1, wide)), tint = Fade(wave.color, 1 - t),
+                            soft = 0.08 + 0.25 * (1 - t) });
+        i++;
+    }
+
+    // Lightning: a line of pieces between two players, which jumps about
+    // each frame for the quarter second it lasts
+    air.beams.Clear();
+    i = 0;
+    while (i < air.bolts.count)
+    {
+        mut var bolt = air.bolts[i];
+        bolt.age += dt;
+        if (bolt.age >= 0.25 || !arena.seats[bolt.from].alive || !arena.seats[bolt.to].alive)
+        {
+            air.bolts.RemoveAt(i);
+            continue;
+        }
+        air.bolts[i] = bolt;
+        var from = Chest(arena.seats[bolt.from]);
+        var to = Chest(arena.seats[bolt.to]);
+        var far = Math.Distance(from, to);
+        mut var last = from;
+        for (var k = 1; k <= 8; k++)
+        {
+            var jitter = fx.random.NextFloat3Direction();
+            var next = k == 8 ? to : from + (to - from) * (k / 8.0) + jitter * Math.Min(far * 0.06, 0.5);
+            var along = next - last;
+            var length = Math.Length(along);
+            if (length > 0.001)
+                air.beams.Add(Orb { transform = float4x4.TRS((last + next) * 0.5, quaternion.LookRotation(along / length, float3(0, 1, 0)),
+                                                             float3(0.07, 0.07, length)),
+                                    tint = Color(1.6, 2.4, 3, 1 - bolt.age / 0.25) });
+            last = next;
+        }
+        air.glows.Add(Orb { transform = float4x4.TRS(to, quaternion.identity, float3(0.8)), tint = Color(1.2, 2, 2.6, 0.7), soft = 2 });
+        i++;
+    }
+
+    post.scene.Instanced(models.cube, models.cubeFaces, air.shards, ShardLook);
+    post.scene.Blend(Blend.Add),
+    post.scene.Depth(Depth.Read),
+    post.scene.Cull(Cull.None)
+    {
+        post.scene.Instanced(models.plate, models.plateFaces, air.flats, RingLook);
+        post.scene.Instanced(models.cube, models.cubeFaces, air.beams, BeamLook);
+    }
+    post.scene.Blend(Blend.Add),
+    post.scene.Depth(Depth.Read)
+    {
+        post.scene.Instanced(models.ball, models.ballFaces, air.glows, GlowLook);
+    }
+}
+
+// Over the picture, in the window's pixels: the numbers that float up from
+// who was hurt, and over every other player a bar of their health and a pip
+// for each bullet they have left, as the Unity game's world HUD has them.
+[Stage(Layers.Effects, 110)]
+view Overhead(Arena arena, Look look, Fx fx, mut Air air)
+{
+    Draw.Screen()
+    {
+        for (var s = 0; s < SEATS; s++)
+        {
+            var seat = arena.seats[s];
+            if (!seat.alive || seat.dead || s == look.follow) continue;
+            var over = Head(seat) + float3(0, 0.55 * seat.settings.size, 0);
+            var far = Math.Distance(over, look.eye);
+            var on = Draw.WorldToScreen(over);
+            if (on.z <= 0 || on.z >= 1 || far > 60 || Math.Dot(over - look.eye, look.forward) < 0.5) continue;
+            var scale = Math.Clamp(9 / far, 0.45, 1.2);
+            var wide = 64 * scale;
+            var tall = 7 * scale;
+            var at = float2(on.x, on.y);
+            var share = Math.Saturate(float(seat.health) / Math.Max(seat.maxHealth, 1));
+            Draw.RoundRect(at, float2(wide + 3, tall + 3), (tall + 3) * 0.5, Color(0, 0, 0, 0.55));
+            if (share > 0)
+                Draw.RoundRect(at - float2(wide * (1 - share) * 0.5, 0), float2(Math.Max(wide * share, tall), tall), tall * 0.5,
+                               seat.poisonLevel > 0 ? Color(0.68, 1, 0.18) : TeamColor(seat.team) + Color(0.15, 0.15, 0.15, 0));
+            var pips = Math.Min(seat.settings.magazineSize, 12);
+            for (var p = 0; p < pips; p++)
+            {
+                var place = at + float2((p - (pips - 1) * 0.5) * 7 * scale, tall + 4 * scale);
+                Draw.Circle(place, 2.4 * scale, p < seat.magazine && !seat.reloading ? Color(1, 0.55, 0.15) : Color(0, 0, 0, 0.5));
+            }
+        }
+
+        mut var i = 0;
+        while (i < air.labels.count)
+        {
+            mut var label = air.labels[i];
+            label.age += fx.dt;
+            if (label.age >= 0.9)
+            {
+                air.labels.RemoveAt(i);
+                continue;
+            }
+            air.labels[i] = label;
+            i++;
+            var t = label.age / 0.9;
+            var over = label.at + float3(0, t * 0.9, 0);
+            var on = Draw.WorldToScreen(over);
+            if (on.z <= 0 || on.z >= 1 || Math.Dot(over - look.eye, look.forward) < 0.5) continue;
+            var size = Math.Clamp(160 / Math.Distance(over, look.eye), 14, 34) * (1 + 0.5 * Math.Saturate(1 - t * 6));
+            var at = float2(on.x, on.y);
+            Draw.Text(label.words, at + float2(1.5, 1.5), size, Color(0, 0, 0, 0.6 * (1 - t)), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text(label.words, at, size, Fade(label.color, (1 - t) * 2), Anchor.MiddleCenter, Font.Bold);
+        }
+    }
+}

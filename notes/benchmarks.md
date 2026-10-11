@@ -1,5 +1,100 @@
 # Benchmarks
 
+## Asset-relative value encoding, 2026-10-11
+
+The owner asked to try asset IDs plus changes for saves/transfers, especially
+new connections. A standalone C byte-value codec registers the exact immutable
+baseline by SHA-256, encodes an unchanged known reference by ID, and uses the
+existing delta codec's XOR/unchanged-region compression against the asset for
+owned values. Full encoding uses that same codec without a baseline. The smaller
+complete full/patch frame wins, including ID overhead. A receiver with that exact
+asset version needs no prior world or edit history, reconstructs ordinary owned
+mutable bytes and verifies their hash; missing/wrong IDs fail and the independent
+full form works without an asset. Production compiler/runtime/protocol, installed
+package and user game are unchanged; this is no approved production wire format.
+
+For the first canonical `movementAnims` model blob in the owner's frozen pack
+(114,224 bytes), existing compressed full encoding is 107,471 bytes. An unchanged
+known reference is 37, owned unchanged 50, one-byte edit 59, and 64 sparse edits
+441 (full 107,482). Replacing 4 KiB with deterministic noise is 4,160 versus
+107,516; a constant-XOR block compresses to 300 versus 107,247. Dense replacement
+uses full at 114,383 bytes, and zeros use full at 158. Appending 257 repeated bytes
+is 313 versus 107,478; truncation is 55 versus 107,298. Middle deletion shifts the
+remaining bytes and still needs 57,012 versus 107,737: no edit-script compressor
+is implemented. The 16-byte reference control is adverse (37 versus 35 full),
+while its owned form chooses full. These are exact value-frame bytes rather than
+raw-size ratios, whole-world/save sizes, actual join traffic/time or FPS.
+
+Warning-free native/WASI builds and all 38 value cases pass: twelve workloads on
+each of 1 MiB noise, repeating-pattern and private animation-byte fixtures, plus
+two tiny-value controls. Every reconstructed byte and logical length is checked,
+receiver edits leave the asset unchanged, and complete output rows (including
+encoded-message SHA-256s) agree across platforms. Each executes 11,252 rejection
+assertions for cut frames, trailing bytes, invalid modes, corrupt result hashes,
+missing/wrong versions and an oversized logical length; failures preserve caller
+output/guards. An initial fixture decoder used uninitialized output, contrary
+to `tide_delta_get`'s zeroed-buffer contract; the growing-value check exposed it,
+and the final decoder uses `calloc`. No timing evidence came from that run.
+
+The owner has deferred runtime timing measurements while the machine is busy.
+No clocks were recorded in this batch. The optional guarded timing runner and
+analyzer are ready, with alternating encode/decode order, hashing/compression/
+allocation inside timing, and exact message/value checks outside it. Encoding
+both candidate forms may cost more CPU; existing eligible joins already reuse
+initial-world pages, so an end-to-end comparison remains necessary. Persisted
+provenance, stable registry/lifetimes and reload, exact world/allocator/hash
+reconstruction, save compatibility, missing-asset recovery, nested/typed values
+and all mutation paths remain integration gaps. No production suites, browser/
+GPU, other platforms, sanitizers or CI were rerun for these standalone artifacts.
+Sources, raw rows, input/library/binary identities, byte-size table, verifier and
+reproduction are in
+[asset-relative-delta](../bench/results/asset-relative-delta/README.md).
+
+## Owned storage reuse after asset writes, 2026-10-11
+
+The owner asked to investigate the asset-sharing prototype's bulk reset/edit
+regression. The naive policy releases an owned list on asset assignment, then
+allocates another on the next write before the pending old blocks are flushed.
+A scoped candidate copies the asset into an already-owned destination through
+the existing `tide_list_set`; empty/still-shared destinations retain the asset
+reference and detach on first write. Ordinary owned sources are unchanged.
+Only known-asset assignment adds an ownership check; there is no data comparison,
+new runtime entry point, allocator/layout change or production storage change.
+
+Instrumented native 16 KiB reset/edit runs confirm the mechanism: naive has
+192 pending blocks after assignment and 6,291,456 dirty bytes before hashing;
+baseline/reuse each have zero pending blocks and 3,145,728 dirty bytes. Reuse
+restores the original 3,146,600-byte heap high-water mark from naive's 6,293,096,
+with original heap hash and identical independently checked final values.
+These diagnostic clocks were collected under competing work and are not speed
+evidence. All 27 WASI checks pass across three policies and nine workloads,
+including 4/16/64 KiB reset/edit, fresh first-write, ordinary owned copies/edits
+and the unchanged 100-character grid. Every retained snapshot is hash-checked
+before/after mutation; assets and every list's expected values are checked.
+Native diagnostic values/layouts agree with their three WASI counterparts;
+grid semantic/palette outputs agree across all WASI policies.
+
+After continuous work in other checkouts caused a 45-minute quiet-guard timeout,
+the owner explicitly deferred timing/tests to later and requested merging this
+experiment. The restarted timing runner was stopped; neither attempt produced
+a comparison row. No speedup, ordinary-list overhead or preservation of the
+previous grid timing gain is established for this candidate. The rotated
+81-row native comparison, full native/WASI comparison and timing analysis remain
+ready to run later. The existing correctness/mechanism/export verifier passes.
+No full production suites, browser/GPU, other platforms, sanitizers or CI were
+rerun for these standalone artifacts; production code is unchanged.
+
+The policy keeps once-edited destinations owned even when later repeatedly
+assigned assets without editing. That retains original copy/hash costs instead
+of recovering naive sharing's read-only benefit; `written-then-read` is included
+in the deferred comparison. Stable identities/pack lifetimes, reload, portable
+reference packing, nested containers and all mutation paths remain prerequisites
+for a production sharing implementation. This is a measured allocation-mechanism
+fix in a prototype, with its runtime performance gate still pending. Sources,
+checks, diagnostic counters, raw identities, reproduction scripts and the
+checks-only verifier are in
+[asset-owned-reuse](../bench/results/asset-owned-reuse/README.md).
+
 ## Asset sharing ownership gate, 2026-10-11
 
 The owner approved considering known asset sharing with detach-on-write for

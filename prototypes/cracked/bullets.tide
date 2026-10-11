@@ -1,0 +1,345 @@
+// CRACKED: bullets. BulletBase of the Unity game and the bullet modifiers
+// its upgrade database uses, a tick at a time. A bullet has no body: it's a
+// ball that's cast along its way each tick, against the map's boxes and the
+// players' hitboxes and shields.
+
+const float PENETRATION_SPEED = 0.2;    // _penetrationSpeedMultiplier
+
+// What happened to a bullet, for a machine to show and sound: 0 it hit
+// something, 1 it burst (its last hit, or its time was up), 2 a shield sent
+// it back.
+event BulletHit { float3 at; float size; int what; int seat; }
+event CloudMade { float3 at; bool heal; }
+
+// The pellets Blast Rune's ExplodeOnImpact throws.
+BulletProps Pellet()
+{
+    return BulletProps { maxWallPenetrations = 0, maxBounces = 0, bounceFactor = 1, size = 0.1, damage = 17, knockback = 5, lifetime = 3, gravity = 10 };
+}
+
+// BulletBase.Initialize: a bullet as its shooter's modifiers make it.
+void SpawnBullet(mut Arena arena, int s, bool original, int seed, float3 at, float3 way, float force, BulletProps props, bool modified)
+{
+    mut var bullet = Bullet { id = arena.nextBullet, seat = s, random = Random(seed), props = props, position = at, original = original };
+    arena.nextBullet += 1;
+    mut var speed = force;
+    if (modified)
+    {
+        for (var i = 0; i < arena.bulletMods.count; i++)
+        {
+            if (arena.bulletMods[i].seat != s) continue;
+            var mod = arena.bulletMods[i];
+            switch (mod.kind)
+            {
+                case BulletModKind.Bigger: bullet.props.size = bullet.props.size * mod.a + mod.b; break;
+                case BulletModKind.Damage: bullet.props.damage = bullet.props.damage * mod.a + mod.b; break;
+                case BulletModKind.FireForce: speed = speed * mod.a + mod.b; break;
+                case BulletModKind.Speed: speed *= mod.a; break;
+                case BulletModKind.MoreBounce: bullet.props.maxBounces += mod.n; break;
+                case BulletModKind.MorePenetration: bullet.props.maxWallPenetrations += mod.n; break;
+                case BulletModKind.Knockback: bullet.props.knockback = bullet.props.knockback * mod.a + mod.b; break;
+                case BulletModKind.NoGravity: bullet.props.gravity = 0; break;
+            }
+        }
+    }
+    bullet.props.damage = Math.Max(1, bullet.props.damage);
+    bullet.velocity = way * speed;
+    arena.bullets.Add(bullet);
+}
+
+// Vector3.Slerp of two directions.
+float3 SlerpWay(float3 from, float3 to, float t)
+{
+    var share = Math.Saturate(t);
+    var angle = Math.Acos(Math.Clamp(Math.Dot(from, to), -1, 1));
+    var sine = Math.Sin(angle);
+    if (sine < 0.0001) return Math.Normalize(from + (to - from) * share);
+    return (from * Math.Sin((1 - share) * angle) + to * Math.Sin(share * angle)) / sine;
+}
+
+// What a bullet met on its way: a map's piece, or a player.
+struct Met
+{
+    bool found;
+    Hit hit;
+    int seat = -1;       // The player it met
+}
+
+// Whether a bullet's ball is in any player: their hitbox, or their shield
+// while it's up (Physics.CheckSphere on the Player and PlayerShield layers).
+bool InPlayer(Arena arena, float3 at, float radius)
+{
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (!arena.seats[s].alive) continue;
+        if (InHitbox(arena, s, at, radius)) return true;
+        var size = arena.seats[s].settings.size;
+        if (arena.seats[s].shieldActive
+            && Math.Distance(at, arena.seats[s].position + BodyUp(arena, s) * (SHIELD_CENTER * size)) <= radius + SHIELD_RADIUS * size) return true;
+    }
+    return false;
+}
+
+// The nearest thing in a bullet's way.
+Met Meet(Arena arena, Bullet bullet, float3 delta)
+{
+    mut var met = Met { };
+    var length = Math.Length(delta);
+    if (length <= 0.0000001) return met;
+    var way = delta / length;
+    if (CastBullet(arena.pieces, bullet.position, delta, bullet.props.size, out var wall))
+    {
+        met.found = true;
+        met.hit = wall;
+    }
+    if (bullet.waitTillLeavesPlayer) return met;
+    // A bullet that hasn't bounced doesn't meet who shot it
+    var spared = bullet.original && bullet.bounces == 0 ? bullet.seat : -1;
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (!arena.seats[s].alive || s == spared) continue;
+        var size = arena.seats[s].settings.size;
+        if (Math.DistanceSq(bullet.position, arena.seats[s].position) > (length + 4 * size + bullet.props.size) * (length + 4 * size + bullet.props.size)) continue;
+        mut var touched = SweepCapsule(bullet.position, way, length, bullet.props.size,
+                                       CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, -1),
+                                       CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, 1), HITBOX_RADIUS * size, out mut var hit);
+        if (arena.seats[s].shieldActive)
+        {
+            var middle = arena.seats[s].position + BodyUp(arena, s) * (SHIELD_CENTER * size);
+            if (SweepCapsule(bullet.position, way, length, bullet.props.size, middle, middle, SHIELD_RADIUS * size, out var shield)
+                && (!touched || shield.distance < hit.distance))
+            {
+                touched = true;
+                hit = shield;
+            }
+        }
+        if (!touched || (met.found && hit.distance >= met.hit.distance)) continue;
+        met.found = true;
+        met.hit = hit;
+        met.hit.piece = -1;
+        met.seat = s;
+    }
+    return met;
+}
+
+// BulletBase.OnPredictedCollisionEnter.
+void Collide(mut Arena arena, mut Bullet bullet, Met met, bool penetrating)
+{
+    var shooter = bullet.seat;
+    var hit = met.hit;
+    if (met.seat >= 0 && arena.seats[met.seat].shieldActive)
+    {
+        if (!bullet.waitTillLeavesPlayer)
+        {
+            bullet.velocity = -bullet.velocity;
+            bullet.waitTillLeavesPlayer = true;
+            bullet.bounces += 1;
+            ResetShieldTimer(arena, met.seat);
+            Send(BulletHit { at = hit.point, size = bullet.props.size, what = 2, seat = met.seat });
+        }
+        return;
+    }
+    if (!penetrating) bullet.velocity = Math.Reflect(bullet.velocity, hit.normal) * bullet.props.bounceFactor;
+
+    if (met.seat >= 0)
+    {
+        var target = met.seat;
+        for (var i = 0; i < arena.bulletMods.count; i++)
+        {
+            if (arena.bulletMods[i].seat != shooter) continue;
+            var mod = arena.bulletMods[i];
+            if (mod.kind == BulletModKind.ReloadOnHit)
+            {
+                arena.seats[shooter].reloading = false;
+                arena.seats[shooter].magazine = Math.Max(arena.seats[shooter].settings.magazineSize, 1);
+            }
+            if (mod.kind == BulletModKind.DazeOnHit)
+            {
+                // As long as the shooter's own daze has left, and this one's
+                mut var dazed = 0.0;
+                for (var k = 0; k < arena.traits.count; k++)
+                    if (arena.traits[k].seat == shooter && arena.traits[k].kind == TraitKind.Daze) dazed += arena.traits[k].timer;
+                AddTrait(arena, Trait { seat = target, kind = TraitKind.Daze, a = dazed + mod.a });
+            }
+            if (mod.kind == BulletModKind.LifeSteal && !arena.seats[target].shieldActive && arena.seats[target].health > 0)
+                ChangeHealthDirectly(arena, shooter, int(Math.Ceil(bullet.props.damage * mod.a)));
+        }
+        ChangeHealth(arena, target, int(Math.Ceil(-bullet.props.damage)));
+        bullet.spent = true;
+    }
+    if (met.hit.piece >= 0 && arena.pieces[met.hit.piece].damageFloor) bullet.spent = true;
+
+    // What it hit is knocked back: a player, or a block that can be pushed
+    var flat = Math.Normalize(float3(hit.normal.x, 0.1, hit.normal.z));
+    mut var knock = flat * -bullet.props.knockback;
+    knock.y = Math.Abs(knock.y);
+    if (met.seat >= 0) KnockbackAt(arena, met.seat, knock, hit.point);
+    else if (met.hit.piece >= 0 && arena.pieces[met.hit.piece].block >= 0) KnockBlock(arena, arena.pieces[met.hit.piece].block, knock, hit.point);
+
+    for (var i = 0; i < arena.bulletMods.count; i++)
+    {
+        if (arena.bulletMods[i].seat != shooter) continue;
+        var mod = arena.bulletMods[i];
+        if (mod.kind == BulletModKind.SlowOnBounce) bullet.velocity = bullet.velocity * mod.a;
+        if (mod.kind == BulletModKind.PoisonCloud)
+        {
+            arena.clouds.Add(Cloud { kind = CloudKind.Poison, position = bullet.position, radius = 1.25, perSecond = 2 });
+            Send(CloudMade { at = bullet.position, heal = false });
+        }
+        if (mod.kind == BulletModKind.Explode && bullet.original)
+        {
+            var pellet = Pellet();
+            var facing = quaternion.LookRotation(hit.normal, Math.Abs(hit.normal.y) > 0.999 ? float3(0, 0, 1) : float3(0, 1, 0));
+            for (var k = 0; k < mod.n; k++)
+            {
+                var azimuth = bullet.random.NextFloat(-90, 90);
+                var elevation = bullet.random.NextFloat(-90, 90);
+                var way = Math.Rotate(Math.Mul(facing, quaternion.Euler(Math.Radians(elevation), Math.Radians(azimuth), 0)), float3(0, 0, 1));
+                var seed = bullet.random.NextInt();
+                var at = bullet.position + float3(0, pellet.size * 0.5, 0);
+                SpawnBullet(arena, shooter, false, seed + k, at + way * 0.1, way, mod.a, pellet, false);
+            }
+        }
+    }
+    Send(BulletHit { at = hit.point, size = bullet.props.size, what = bullet.spent ? 1 : 0, seat = met.seat });
+    if (!penetrating)
+    {
+        bullet.bounces += 1;
+        if (bullet.bounces >= bullet.props.maxBounces)
+        {
+            if (!bullet.spent) Send(BulletHit { at = hit.point, size = bullet.props.size, what = 1, seat = -1 });
+            bullet.spent = true;
+        }
+    }
+}
+
+// BulletBase.Simulate, for one bullet. It's taken out of the list, moved and
+// put back by whoever calls: what it hits is changed in the arena meanwhile.
+void Fly(mut Arena arena, mut Bullet bullet, float dt)
+{
+    if (bullet.waitTillLeavesPlayer && !InPlayer(arena, bullet.position, bullet.props.size)) bullet.waitTillLeavesPlayer = false;
+    if (!arena.seats[bullet.seat].alive)
+    {
+        bullet.spent = true;
+        return;
+    }
+
+    // MoveBullet
+    var delta = bullet.velocity * dt;
+    mut var moved = false;
+    if (bullet.insideWall)
+    {
+        bullet.insideWall = BulletInWall(arena.pieces, bullet.position, bullet.props.size);
+        if (bullet.insideWall)
+        {
+            bullet.position += delta * PENETRATION_SPEED;
+            moved = true;
+        }
+    }
+    if (!moved)
+    {
+        var met = Meet(arena, bullet, delta);
+        if (!met.found) bullet.position += delta;
+        else if (met.seat < 0 && bullet.props.maxWallPenetrations > bullet.penetrations)
+        {
+            bullet.penetrations += 1;
+            bullet.insideWall = true;
+            Collide(arena, bullet, met, true);
+            bullet.position += delta;
+        }
+        else
+        {
+            Collide(arena, bullet, met, false);
+            bullet.position += Math.Normalize(delta) * (met.hit.distance - 0.01);
+        }
+    }
+    if (bullet.props.gravity > 0) bullet.velocity.y -= bullet.props.gravity * dt;
+    if (bullet.spent) return;
+
+    // The modifiers' OnSimulate
+    for (var i = 0; i < arena.bulletMods.count; i++)
+    {
+        if (arena.bulletMods[i].seat != bullet.seat) continue;
+        var mod = arena.bulletMods[i];
+        if (mod.kind == BulletModKind.DamageOverTime) bullet.props.damage += mod.a * dt;
+        if (mod.kind == BulletModKind.SizeOverTime) bullet.props.size += mod.a * dt;
+        if (mod.kind != BulletModKind.HeatSeek || bullet.lifetime < 0.2) continue;
+        var cone = Math.Cos(Math.Radians(mod.b));
+        for (var s = 0; s < SEATS; s++)
+        {
+            if (!arena.seats[s].alive || (s == bullet.seat && bullet.bounces == 0)) continue;
+            var to = arena.seats[s].position + float3(0, 1, 0) - bullet.position;
+            if (Math.LengthSq(to) >= mod.a * mod.a) continue;
+            var seek = Math.Normalize(to);
+            var going = Math.Normalize(bullet.velocity);
+            if (!(Math.Dot(seek, going) > cone)) continue;
+            if (RayBlocked(arena.pieces, bullet.position, seek, mod.a)) continue;
+            bullet.velocity = Math.Normalize(SlerpWay(going, seek, dt * mod.c)) * Math.Length(bullet.velocity);
+        }
+    }
+    bullet.lifetime += dt;
+    if (bullet.lifetime >= bullet.props.lifetime)
+    {
+        bullet.spent = true;
+        Send(BulletHit { at = bullet.position, size = bullet.props.size, what = 1, seat = -1 });
+    }
+}
+
+// Every bullet's tick, then the ones that are done go. A bullet made this
+// tick, a pellet, flies from the next.
+void Bullets(mut Arena arena, float dt)
+{
+    var count = arena.bullets.count;
+    for (var i = 0; i < count; i++)
+    {
+        mut var bullet = arena.bullets[i];
+        Fly(arena, bullet, dt);
+        arena.bullets[i] = bullet;
+    }
+    mut var kept = 0;
+    for (var i = 0; i < arena.bullets.count; i++)
+    {
+        if (arena.bullets[i].spent) continue;
+        if (kept != i) arena.bullets[kept] = arena.bullets[i];
+        kept += 1;
+    }
+    arena.bullets.Resize(kept);
+}
+
+// HealInArea and PoisonInArea, on the clouds a block or a bullet leaves: at
+// work for three seconds, and gone after five.
+void Clouds(mut Arena arena, float dt)
+{
+    mut var i = 0;
+    while (i < arena.clouds.count)
+    {
+        arena.clouds[i].time += dt;
+        if (arena.clouds[i].time >= 5)
+        {
+            arena.clouds.RemoveAt(i);
+            continue;
+        }
+        if (arena.clouds[i].time < 3)
+        {
+            var cloud = arena.clouds[i];
+            if (cloud.kind == CloudKind.Poison)
+            {
+                for (var s = 0; s < SEATS; s++)
+                    if (arena.seats[s].alive && InHitbox(arena, s, cloud.position, cloud.radius)) arena.seats[s].poisonLevel += cloud.perSecond * dt;
+            }
+            else
+            {
+                arena.clouds[i].accumulated += cloud.perSecond * dt;
+                if (arena.clouds[i].accumulated >= 1)
+                {
+                    var whole = int(Math.Floor(arena.clouds[i].accumulated));
+                    arena.clouds[i].accumulated -= whole;
+                    for (var s = 0; s < SEATS; s++)
+                        if (arena.seats[s].alive && arena.seats[s].timeSinceWasShot > 2 && InHitbox(arena, s, cloud.position, cloud.radius))
+                            ChangeHealthDirectly(arena, s, whole);
+                }
+            }
+        }
+        i++;
+    }
+}

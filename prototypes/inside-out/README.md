@@ -116,6 +116,10 @@ Enable `TIDE_PRIVATE_PROTOTYPES=ON` when configuring this checkout. Build
 checks registered for the prototype. Notes and validation evidence live in
 `notes/inside-out.md`.
 
+The browser fixture normally uses its own local relay. Set
+`TIDE_INSIDE_OUT_RELAY` to an existing WebSocket relay URL to probe that service
+with the same two-player checks.
+
 During agent runs use `TIDE_HIDDEN=1`, only binaries from this checkout, and
 bounded `--capture`, `--frames` or `--script` options. Browser launches require
 `--mute-audio` even when headless.

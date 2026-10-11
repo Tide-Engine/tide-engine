@@ -1,0 +1,121 @@
+// CRACKED: a bot, for the team nobody plays. The Unity game's walks a baked
+// navmesh (PlayerAIController); this one has none, and goes for the nearest
+// enemy the straightest way that has floor under it, jumping a gap it can
+// clear. How it aims, when it fires and
+// when it blocks are that controller's.
+
+// PlayerAIController.GetLaunchAngle: the low arc that reaches a place, or
+// straight at it when nothing does.
+float3 LaunchWay(float3 from, float3 to, float speed, float gravity)
+{
+    var across = float3(to.x - from.x, 0, to.z - from.z);
+    var far = Math.Length(across);
+    var straight = Math.Normalize(to - from);
+    if (far < 0.001 || gravity <= 0) return straight;
+    var up = to.y - from.y;
+    var v2 = speed * speed;
+    var under = v2 * v2 - gravity * (gravity * far * far + 2 * up * v2);
+    if (under < 0) return straight;
+    var angle = Math.Atan2(v2 - Math.Sqrt(under), gravity * far);
+    return across / far * Math.Cos(angle) + float3(0, Math.Sin(angle), 0);
+}
+
+// How fast and how heavy a seat's bullets leave: what its modifiers make of
+// the defaults.
+void Ballistics(Arena arena, int s, out float speed, out float gravity)
+{
+    speed = arena.seats[s].settings.fireForce;
+    gravity = BulletProps { }.gravity;
+    for (var i = 0; i < arena.bulletMods.count; i++)
+    {
+        if (arena.bulletMods[i].seat != s) continue;
+        var mod = arena.bulletMods[i];
+        if (mod.kind == BulletModKind.FireForce) speed = speed * mod.a + mod.b;
+        if (mod.kind == BulletModKind.Speed) speed *= mod.a;
+        if (mod.kind == BulletModKind.NoGravity) gravity = 0;
+    }
+}
+
+// Whether a map's piece is within three meters under a place: not the floor
+// under the map, which is nowhere to stand.
+bool FloorUnder(Arena arena, float3 at)
+{
+    var from = at + float3(0, 0.5, 0);
+    for (var i = 0; i < arena.pieces.count; i++)
+    {
+        if (!arena.pieces[i].solid || arena.pieces[i].damageFloor) continue;
+        if (!Reaches(arena.pieces[i], from, float3(0, -1, 0), 3, 0.1)) continue;
+        if (SweepBox(from, float3(0, -1, 0), 3, 0.1, arena.pieces[i].position, arena.pieces[i].rotation, arena.pieces[i].half, out _)) return true;
+    }
+    return false;
+}
+
+Pad BotPad(Arena arena, int s, float seconds)
+{
+    var me = arena.seats[s];
+    mut var pad = Pad { yaw = me.yaw, pitch = me.pitch, aim = me.aim };
+    if (me.dead) return pad;
+    // The nearest enemy that's alive
+    mut var target = -1;
+    mut var nearest = 1000000.0;
+    for (var other = 0; other < SEATS; other++)
+    {
+        if (other == s || !arena.seats[other].alive || arena.seats[other].dead || TeamOf(other) == TeamOf(s)) continue;
+        var far = Math.Distance(arena.seats[other].position, me.position);
+        if (far >= nearest) continue;
+        nearest = far;
+        target = other;
+    }
+    // About to land on the floor under the map: blocking saves the fall's damage
+    if (me.position.y < -6) pad.shield = true;
+    if (target < 0) return pad;
+
+    var their = arena.seats[target].position;
+    var to = their - me.position;
+    var flat = Math.Normalize(float3(to.x, 0, to.z));
+    pad.yaw = Math.Degrees(Math.Atan2(flat.x, flat.z));
+    pad.pitch = 20;
+    // It goes for them the straightest way that has floor under it: ahead,
+    // or to either side of that. With no floor near but some a jump away, it
+    // jumps, once every 1.2 seconds; with none at all it stays where it is.
+    if (nearest > 0.25)
+    {
+        mut var found = false;
+        for (var turn = 0; turn < 5 && !found; turn++)
+        {
+            var angle = turn == 0 ? 0.0 : turn == 1 ? 45deg : turn == 2 ? -45deg : turn == 3 ? 90deg : -90deg;
+            var way = Math.Rotate(quaternion.AxisAngle(float3(0, 1, 0), angle), flat);
+            if (!FloorUnder(arena, me.position + way * 1.2)) continue;
+            pad.move = float2(way.x, way.z);
+            found = true;
+        }
+        if (!found && me.grounded && me.timeSinceJump > 1.2 && FloorUnder(arena, me.position + flat * 4))
+        {
+            pad.move = float2(flat.x, flat.z);
+            pad.jump = true;
+            pad.jumpDown = true;
+        }
+        // In the air it keeps going the way it jumped
+        if (!found && !me.grounded) pad.move = float2(flat.x, flat.z);
+    }
+    if (!me.grounded && me.settings.hasJetpack) pad.jump = true;
+
+    // It wants to fire about half the time, in spells, and does when a shot
+    // at the feet, the body or the head has nothing of the map in its way
+    if (Math.Perlin(float2(seconds, s * 7.31)) <= 0) return pad;
+    var from = FirePoint(arena, s);
+    Ballistics(arena, s, out var speed, out var gravity);
+    for (var part = 0; part < 3; part++)
+    {
+        var at = their + float3(0, part == 0 ? 0.2 : part == 1 ? 1.2 : 1.9, 0);
+        if (RayBlocked(arena.pieces, from, Math.Normalize(at - from), Math.Distance(at, from))) continue;
+        var way = LaunchWay(from, at, speed, gravity);
+        // Within two and a half degrees of it
+        var off = Math.Hash(int2(int(seconds * 30), s));
+        var wide = float3((off % 101 - 50) / 50.0, (off / 101 % 101 - 50) / 50.0, (off / 10201 % 101 - 50) / 50.0) * 0.0437;
+        pad.aim = Math.Normalize(way + wide);
+        pad.fire = true;
+        break;
+    }
+    return pad;
+}
