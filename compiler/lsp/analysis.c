@@ -2120,18 +2120,18 @@ static const method_form singleton_calls[] = {
 };
 
 static const method_form animation_catalog_calls[] = {
-    {"Find", "Find(string name) -> Animation?", "Looks up an animation by its exact original name. Missing or ambiguous names give null."},
-    {"At", "At(int index) -> Animation?", "Reads an animation in source order, counting from 0. An index outside the catalog gives null."},
+    {"TryGetByName", "TryGetByName(string name, out Animation result) -> bool", "Looks up an animation by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
+    {"TryGetAt", "TryGetAt(int index, out Animation result) -> bool", "Reads an animation in source order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
 static const method_form bone_catalog_calls[] = {
-    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
-    {"At", "At(int index) -> Bone?", "Reads a skeleton node in skeleton order, counting from 0. An index outside the catalog gives null."},
+    {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
+    {"TryGetAt", "TryGetAt(int index, out Bone result) -> bool", "Reads a skeleton node in skeleton order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
 static const method_form skeleton_calls[] = {
     {"RestPose", "RestPose() -> Pose", "Makes an owned pose with this skeleton's authored rest transforms."},
-    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
+    {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
 };
 
 static const method_form animation_calls[] = {
@@ -2913,9 +2913,9 @@ static void describe(const occurrence *o, sb *out)
                             "Side buffers and uncached URLs are read by a build.");
             }
             if (o->decl->asset_kind == ASSET_ANIMATIONS) {
-                sb_put(out, " An `Animations` asset imports a combined catalog from glTF or FBX paths, file lists or globs without typed render geometry. "
+                sb_put(out, " An `AnimationCatalog` asset imports a combined catalog from glTF or FBX paths, file lists or globs without typed render geometry. "
                             "Its cleaned clip names appear directly on the asset; filenames distinguish collisions. "
-                            "Find uses original source names and At uses flattened source order.");
+                            "TryGetByName uses original source names and TryGetAt uses flattened source order.");
                 sb_put(out, "\n\nThe editor inspects the glTF JSON or FBX catalog without importing geometry or animation samples. "
                             "Side buffers and uncached URLs are read by a build.");
             }
@@ -6161,7 +6161,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (gpu && t.decl->skin_kind != SKIN_TRANSFORM) return;
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH) {
-            item(c, "animations", CK_PROPERTY, "Animations", "The immutable animation catalog: checked names where the asset or contract supplies them, and Find for exact source names.", NULL);
+            item(c, "animations", CK_PROPERTY, "AnimationCatalog", "The immutable animation catalog: checked names where the asset or contract supplies them, and TryGetByName for exact source names.", NULL);
             item(c, "skeleton", CK_PROPERTY, "Skeleton", "The immutable node hierarchy, rest transforms and bone catalog.", NULL);
             item(c, "defaultPose", CK_PROPERTY, "Pose", "Makes an owned pose with this model's authored rest transforms, including models without animation clips.", NULL);
         }
@@ -6907,8 +6907,8 @@ static void complete_value_types(completion *c, const unsigned which)
         if (!(which & VT_GPU)) {
             item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
                  "An immutable glTF or FBX model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
-            item(c, "Animations", CK_STRUCT, "built-in type",
-                 "An immutable catalog of animation clips and their source skeleton, imported with asset Animations or read from a skinned model.", NULL);
+            item(c, "AnimationCatalog", CK_STRUCT, "built-in type",
+                 "An immutable catalog of animation clips and their source skeleton, imported with asset AnimationCatalog or read from a skinned model.", NULL);
             static const char *const names[] = {"Animation", "Skeleton", "Bone", "Pose", "BoneTransform", "Playback"};
             static const char *const docs[] = {
                 "An immutable animation value, sampled deterministically on the CPU.",
@@ -8026,6 +8026,11 @@ static out_argument out_argument_at(const int open, const int last, const loc at
             type_text[word - text - 5] = '\0';
             found.type_text = type_text;
             if (t.kind == TY_MAP && t.decl) found.type = t.decl->fields.items[1].type; // TryGet's: the map's value
+            if (t.kind == TY_STRUCT && t.decl) {
+                if (t.decl->skin_kind == SKIN_ANIMATIONS && A.prog->animation) found.type = type_of_decl(A.prog->animation);
+                else if ((t.decl->skin_kind == SKIN_BONES || t.decl->skin_kind == SKIN_SKELETON) && A.prog->bone)
+                    found.type = type_of_decl(A.prog->bone);
+            }
             if (t.kind == TY_WORLD && component) found.type = type_of_decl(component); // ...or the World's: the component
         }
     }

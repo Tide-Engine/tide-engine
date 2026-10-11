@@ -72,7 +72,7 @@ static type check_skinned_member(checker *c, expr *e, const type obj, bool *hand
         suggestion sg = suggest_start(e->member);
         for (int i = 0; i < d->skin_catalog.count; i++) suggest_consider(&sg, d->skin_catalog.items[i].name);
         suggest_note(&sg);
-        diag_note("Find(name) looks up an exact original name dynamically; a SkinnedMesh contract guarantees named members through helpers");
+        diag_note("TryGetByName(name, out result) looks up an exact original name dynamically; a SkinnedMesh contract guarantees named members through helpers");
         return T_ERR;
     }
     diag_error(e->at, "%s has no member '" STR_FMT "'", type_name(obj), STR_ARG(e->member));
@@ -80,7 +80,7 @@ static type check_skinned_member(checker *c, expr *e, const type obj, bool *hand
 }
 
 static bool skinned_arguments(checker *c, expr *e, const char *names, const int optional,
-                               const type *types, const int count)
+                               const type *types, const int count, const int out_index)
 {
     if (!order_named_args(e, names, optional)) return false;
     if (e->args.count < count - optional || e->args.count > count) {
@@ -94,7 +94,19 @@ static bool skinned_arguments(checker *c, expr *e, const char *names, const int 
     const int written = e->args.count;
     for (int i = 0; i < written; i++) {
         const int k = e->arg_order.count ? e->arg_order.items[i] : i;
-        const type got = check_expr_want(c, e->args.items[k], types[k]);
+        expr *arg = e->args.items[k];
+        if (k == out_index) {
+            if (arg->is_out) {
+                begin_out_arg(c, arg);
+                finish_out_arg(c, arg, types[k]);
+            } else check_expr_want(c, arg, types[k]);
+            decl called = {0};
+            called.name = e->name;
+            const param result = {.name = str_from("result"), .type = types[k], .mode = PARAM_MUT, .is_out = true};
+            if (!check_out_param(c, &called, &result, arg) || arg->type.kind == TY_ERROR) valid = false;
+            continue;
+        }
+        const type got = check_expr_want(c, arg, types[k]);
         if (got.kind == TY_ERROR) valid = false;
         else if (!type_assignable(types[k], got)) {
             diag_error(e->args.items[k]->at, "'" STR_FMT "' argument %d is %s, not %s", STR_ARG(e->name), k + 1, type_name(types[k]), type_name(got));
@@ -133,7 +145,7 @@ static type check_skinned_static(checker *c, expr *e, bool *handled)
     }
     if (!mesh_vertex_ok(model.decl->skin_vertex.decl, e->at)) return T_ERR;
     const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
-    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1)) return T_ERR;
+    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1, -1)) return T_ERR;
     e->object->type = model;
     e->object->type_decl = model.decl;
     e->object->bind = BIND_TYPE;
@@ -154,20 +166,24 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
     type args[3] = {{TY_ERROR, NULL}, {TY_ERROR, NULL}, {TY_ERROR, NULL}};
     type result = T_ERR;
     const char *names = "";
-    int count = 0, optional = 0;
+    int count = 0, optional = 0, out_index = -1;
     bool changes = false;
-    if ((animations || bones) && str_eq_c(e->name, "Find")) {
-        e->skin_operation = animations ? SKIN_OP_FIND_ANIMATION : SKIN_OP_FIND_BONE;
+    if ((animations || bones) && str_eq_c(e->name, "TryGetByName")) {
+        e->skin_operation = animations ? SKIN_OP_TRY_GET_ANIMATION_BY_NAME : SKIN_OP_TRY_GET_BONE_BY_NAME;
         args[0] = (type){TY_STRING, NULL};
-        names = "name";
-        count = 1;
-        result = optional_type(c, decl_type(animations ? c->prog->animation : c->prog->bone), e->at);
-    } else if ((animations || kind == SKIN_BONES) && str_eq_c(e->name, "At")) {
-        e->skin_operation = animations ? SKIN_OP_AT_ANIMATION : SKIN_OP_AT_BONE;
+        args[1] = decl_type(animations ? c->prog->animation : c->prog->bone);
+        names = "name, result";
+        count = 2;
+        out_index = 1;
+        result = T_BOOL_;
+    } else if ((animations || kind == SKIN_BONES) && str_eq_c(e->name, "TryGetAt")) {
+        e->skin_operation = animations ? SKIN_OP_TRY_GET_ANIMATION_AT : SKIN_OP_TRY_GET_BONE_AT;
         args[0] = T_INT_;
-        names = "index";
-        count = 1;
-        result = optional_type(c, decl_type(animations ? c->prog->animation : c->prog->bone), e->at);
+        args[1] = decl_type(animations ? c->prog->animation : c->prog->bone);
+        names = "index, result";
+        count = 2;
+        out_index = 1;
+        result = T_BOOL_;
     } else if (kind == SKIN_SKELETON && str_eq_c(e->name, "RestPose")) {
         e->skin_operation = SKIN_OP_REST_POSE;
         result = decl_type(c->prog->pose);
@@ -199,9 +215,13 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
     } else {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         diag_error(e->at, "%s has no method '" STR_FMT "'", type_name(obj), STR_ARG(e->name));
+        if ((animations || bones) && str_eq_c(e->name, "Find"))
+            diag_note("use TryGetByName(name, out result), which returns a bool and assigns the selected value or default");
+        else if ((animations || kind == SKIN_BONES) && str_eq_c(e->name, "At"))
+            diag_note("use TryGetAt(index, out result), which returns a bool and assigns the selected value or default");
         return T_ERR;
     }
-    if (!skinned_arguments(c, e, names, optional, args, count)) return T_ERR;
+    if (!skinned_arguments(c, e, names, optional, args, count, out_index)) return T_ERR;
     e->call = CALL_SKINNED;
     if (changes) {
         decl called = {0};

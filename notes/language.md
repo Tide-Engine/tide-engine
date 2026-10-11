@@ -1,5 +1,29 @@
 # Language features, as tidec builds them
 
+## AnimationCatalog and bool/out lookup, 2026-10-11
+
+The owner approved the catalog name `AnimationCatalog` and bool/out lookup.
+It replaces the former `Animations` type without an alias. Animation and bone
+catalogs use `TryGetAt(index, out result)` and
+`TryGetByName(name, out result)`; Skeleton uses the latter for bones.
+Success assigns the selected value; failure assigns the value type's `default`.
+Exact original names, ambiguity rejection, unnamed index access, checked dot
+members, flattened source order and each clip's source skeleton are preserved.
+The historical entries below describe the preceding API.
+
+`skinned_arguments` checks outputs through the ordinary out-argument machinery,
+including named source order, exact types, writable places, delayed locals,
+discards, capability checks and definite assignment. Lookup counts as a writer
+for ordering and discarded-call analysis, while its receiver is read-only.
+Generated adapters copy a selected Animation before assigning through its
+existing owned-struct helper; failures release any previous owned result.
+Bone failure writes the default Bone. No engine API, canonical asset bytes,
+pack format or sampling arithmetic changes. Editor and asset coverage are
+recorded in their notes. Warning-free native and web debug builds pass all
+2,150 native and 2,121 web CTests, including deterministic hashes and GPU
+checks. The docs site build passes. Final diagnostic/hover wording and equivalent
+lookup dispatch cleanup also pass the focused lookup/catalog/LSP checks.
+
 ## Delayed locals and switch expressions, 2026-10-11
 
 The owner approved both features after showing a local `Animation` selected by

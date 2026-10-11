@@ -89,7 +89,7 @@ TIDE_TEST(asset_usage_retains_checked_defaults_helpers_operators_shaders_and_col
         "struct Corner { float3 position; int extra = vertexDefault.length; }\n"
         "asset Mesh<Corner> mesh = \"assets/meshes/quad.glb\";\n"
         "asset SkinnedMesh<Corner> skin = \"skinned/models/a.gltf\";\n"
-        "asset Animations unusedClips = \"animations/clips/a.gltf\";\n"
+        "asset AnimationCatalog unusedClips = \"animations/clips/a.gltf\";\n"
         "singleton State { int count = direct.length; string text = NESTED.text; }\n"
         "system Tick(mut State state) { state.count = list.count + map.count + mesh.vertices.count + skin.vertices.count + (Count { } + 1); }\n"
         "Color SampleAsset(float2 uv) { return sampled.Sample(uv); }\n"
@@ -120,7 +120,7 @@ TIDE_TEST(asset_usage_codegen_opt_in_prunes_pack_globals_watch_paths_and_model_i
     static const char text[] =
         "asset string kept = \"assets/rules.txt\";\n"
         "asset List<byte> unused = \"assets/table.bin\";\n"
-        "asset Animations unusedClips = \"animations/clips/a.gltf\";\n"
+        "asset AnimationCatalog unusedClips = \"animations/clips/a.gltf\";\n"
         "singleton State { int count = kept.length; }\nscene Main { }\n";
     TIDE_REQUIRE(folder_make(ASSET_USAGE_WORK));
     for (int strip = 0; strip < 2; strip++) {
@@ -222,8 +222,8 @@ TIDE_TEST(asset_usage_all_unused_removes_an_old_pack_and_asset_api)
 TIDE_TEST(asset_usage_unused_animation_content_does_not_change_the_stripped_header)
 {
     static const char *const sources[] = {
-        "asset Animations unused = \"animations/clips/a.gltf\";\nscene Main { }\n",
-        "asset Animations unused = \"animations/clips/b.gltf\";\nscene Main { }\n"
+        "asset AnimationCatalog unused = \"animations/clips/a.gltf\";\nscene Main { }\n",
+        "asset AnimationCatalog unused = \"animations/clips/b.gltf\";\nscene Main { }\n"
     };
     TIDE_REQUIRE(folder_make(ASSET_USAGE_WORK));
     char *first = NULL;

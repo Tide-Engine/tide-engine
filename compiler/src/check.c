@@ -9804,6 +9804,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_SKINNED:
         if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
             && (!e->object || !step_own(e->object, loop))) return false;
+        if (skinned_lookup(e->skin_operation) && !step_own(e->args.items[1], loop)) return false;
         break; // Read-only sampling and step-local poses use the executing thread's scratch area.
     case CALL_FUNCTION:
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
@@ -10841,7 +10842,8 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
-        || (call == CALL_SKINNED && (called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
+        || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
+            || called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
@@ -11539,7 +11541,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
-    else if (str_eq_c(inner->text, "Animations")) *kind = ASSET_ANIMATIONS;
+    else if (str_eq_c(inner->text, "AnimationCatalog")) *kind = ASSET_ANIMATIONS;
     else if (str_eq_c(inner->text, "Animation")) *kind = ASSET_ANIMATION;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
     else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
@@ -11558,7 +11560,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V>, Animation or Animations (glTF 2.0 or FBX), not '" STR_FMT "'",
+                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '" STR_FMT "'",
                    STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
@@ -11569,12 +11571,12 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
                      : k->return_type.kind == TY_MAP ? map_value(k->return_type) : k->return_type;
         if (t.kind != TY_STRUCT || t.decl->skin_kind != (*kind == ASSET_ANIMATION ? SKIN_ANIMATION : SKIN_ANIMATIONS)) {
             diag_error(at, "an %s asset uses the built-in %s; '%s' names a different type",
-                       *kind == ASSET_ANIMATION ? "Animation" : "Animations",
+                       *kind == ASSET_ANIMATION ? "Animation" : "AnimationCatalog",
                        *kind == ASSET_ANIMATION ? "animation type" : "animation catalog", type_name(t));
             return false;
         }
         if (*kind == ASSET_ANIMATION && *many) {
-            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an Animations catalog");
+            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an AnimationCatalog");
             return false;
         }
     }
@@ -11763,7 +11765,7 @@ static void check_asset_decl(checker *c, decl *k)
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
     const bool paths = catalog && k->value->kind == E_LIST;
     const int path_count = paths ? k->value->args.count : 1;
-    if (!path_count) diag_error(k->value->at, "an Animations file list can't be empty: name at least one file");
+    if (!path_count) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -14407,7 +14409,8 @@ static bool call_acts(const expr *e)
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
-    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+    case CALL_SKINNED: return skinned_lookup(e->skin_operation)
+        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
