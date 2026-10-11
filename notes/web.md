@@ -1,5 +1,7 @@
 # Web builds
 
+Texture compression (2026-10-11): WebGL enables `WEBGL_compressed_texture_s3tc` before querying supported formats; WebGPU requests `texture-compression-bc` only when advertised, alongside optional timestamps. Timestamp failure retains BC support on a fresh adapter; an adapter without requested optional features still gets a plain device request. BC uploads include physical block extents for tail mips. Missing format support uses the existing RGBA upload path. Test pages can disable compression with `?texture-compression=off` (or `Tide.textureCompression = false`); renderer fallback checks run on both web backends and repeat after WebGPU device loss. The checked-in release runtime was regenerated with the pinned toolchain (66,519 bytes). Contracts and final validation are in `notes/textures.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Building

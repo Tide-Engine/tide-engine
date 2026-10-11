@@ -86,7 +86,7 @@ The argument after the texture says how it's read between pixels: `Filter.Biline
 
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone. Neither is one past 16384 cells a side.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
-- What a grid costs is game state, 16 bytes a cell of colors and 4 a cell of floats, with a copy on the GPU at a byte a channel (values are clamped to 0 to 1) or 16 bits a float. An asset's `Texture` is a byte a channel and nothing else: for an image that's only drawn, a sprite or a tile sheet, declare it as one. A grid is for pixels code reads and writes.
+- What a grid costs is game state, 16 bytes a cell of colors and 4 a cell of floats, with a copy on the GPU at a byte a channel (values are clamped to 0 to 1) or 16 bits a float. An asset's `Texture` keeps a byte per channel as its fallback, with [automatic GPU compression](./assets.md#gpu-compression) for eligible color images: for an image that's only drawn, a sprite or a tile sheet, declare it as one. A grid is for pixels code reads and writes.
 
 A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
 
@@ -180,7 +180,7 @@ Draw.Mesh(floor, faces, float4x4.identity, tiles, Filter.Trilinear, Wrap.Repeat)
 - Drawn at its own size or bigger, it's the same as `Filter.Bilinear`.
 - **It's a filter like the others**: a draw's argument, a `Sample`'s in a [frag](./shaders.md#textures), a declaration's `[Filter(Filter.Trilinear)]`, and what a `Texture` carries from there (below).
 - **Nothing to make or keep up to date.** The copies are made the first time a draw reads the texture this way, and again when its pixels changed: a grid whose cells were written, a [render target](./render-targets.md) that was drawn into. A texture no draw reads this way has none.
-- **What it costs**: a third more memory on the GPU for that texture, and making the copies, which is quick for an image that never changes and adds up for a big grid that changes every frame.
+- **What it costs**: for uncompressed textures, a third more memory on the GPU and making the copies, which is quick for an image that never changes and adds up for a big grid that changes every frame. Automatically compressed assets already include their smaller images, prepared during the build; selecting Trilinear adds no upload or generation work on a GPU that supports their format.
 - It's for what's seen at a distance or at many sizes: floors and walls in 3D, a map you zoom out of, a target shown as a thumbnail. Pixel art at its own size wants `Filter.Point`.
 - A `Grid2<float>` has them wherever the device can draw into floats, which is nearly everywhere (see [float images](./render-targets.md#what-a-target-holds)); where it can't, it's read as `Filter.Bilinear`.
 
