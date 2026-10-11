@@ -110,6 +110,47 @@ Wait for a flush before showing that a save is finished. Do this during play: cl
 
 Redirects are followed. On the web it's the page's `fetch`, so the server's CORS rules apply, and a refusal is `Failed`. Natively it's an HTTP client of the engine's own over the system's TLS. Nothing times out: a server that never answers is a fetch that never ends, as a browser's is.
 
+## Sending a request
+
+`Web.Fetch` is a GET that wants a page. To talk to a service, build a request and send it: `Web.Request(url)` gives a `WebRequest`, each call on it gives the request with one more thing set, and `await request.Send()` sends it.
+
+```csharp
+async void Report(string url, List<byte> score, mut Board board)
+{
+    var answer = await Web.Request(url)
+        .SetMethod("POST")
+        .SetHeader("Content-Type", "application/octet-stream")
+        .SetBody(score)
+        .Send();
+    if (answer is WebResponse response)
+    {
+        board.accepted = response.status == 200;
+        board.reply = response.body;
+    }
+    else board.accepted = false; // No answer came
+}
+```
+
+| Call | What it sets |
+| --- | --- |
+| `Web.Request(url)` | A request to that URL: a GET, with no headers and no body |
+| `SetMethod(method)` | The method, like `"POST"`, `"PUT"` or `"DELETE"`, in any case |
+| `SetHeader(name, value)` | One more header |
+| `SetBody(bytes)` | The body, a `List<byte>` |
+| `await request.Send()` | Sends it, and gives a `WebResponse`: its `status` and its `body` |
+
+A request is a value, like any struct: a call changes nothing where it's written, it gives a new request. So a request kept in a variable is built on by assigning, `request = request.SetHeader("Accept", "text/plain");`, and its fields can be set as they are (`request.method = "PUT";`). Keep one and send it as often as you like.
+
+**An answer is an answer, whatever its status.** A 404 or a 500 comes back as a `WebResponse` with that `status` and the body the server sent, for the game to read. `Send` fails only when no answer came:
+
+| Result | When |
+| --- | --- |
+| `IOError.InvalidPath` | The URL doesn't start with `http://` or `https://`. |
+| `IOError.InvalidData` | The request can't be sent as it's written: a method that isn't a word of letters, or is `CONNECT`, `TRACE` or `TRACK`; a header whose name isn't a token or whose value has more than printable ASCII; a body over 64 MiB. |
+| `IOError.Failed` | Anything else: no connection, a certificate the system doesn't trust, an answer over 64 MiB, more than 5 redirects, or on the web a server whose CORS refuses the page. |
+
+The rest is `Web.Fetch`'s: local and asynchronous, the page's `fetch` on the web and the engine's own client natively, and nothing times out. Redirects are followed as a browser follows them: a 303, and a POST's 301 or 302, become a GET of where they point, and a 307 or 308 is the same request again. `Host`, `Content-Length`, `Connection` and `Transfer-Encoding` are the sender's own to say, so setting them does nothing, and a browser keeps a few more to itself (`User-Agent` among them). A line break in a header's name or value becomes a space. On the web, a request with headers of its own or a method beyond GET and POST is one the server has to allow (CORS), as for any page.
+
 What a machine fetches is its own, like a file it reads. A picture every player should see goes into the match through a command, and each machine decodes it there (see [Assets](./assets.md)):
 
 ```csharp

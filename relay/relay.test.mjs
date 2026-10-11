@@ -406,9 +406,10 @@ test('aggregate statistics require the configured bearer token and GET', async t
     const initial = await r.stats();
     assert.equal(initial.connections, 0);
     assert.match(initial.instance, /^[0-9a-f-]{36}$/);
-    assert.deepEqual(Object.keys(initial).sort(), ['connections', 'instance', 'pendingJoins', 'rooms', 'totals', 'uptimeSeconds']);
+    assert.deepEqual(Object.keys(initial).sort(), ['connections', 'instance', 'lobbies', 'lobbyMembers', 'pendingJoins', 'rooms', 'totals', 'uptimeSeconds']);
     assert.deepEqual(initial.totals, { roomsCreated: 0, joinsAccepted: 0, joinsMissing: 0, joinsFull: 0,
-        migrationsRequested: 0, migrationsRejected: 0 });
+        migrationsRequested: 0, migrationsRejected: 0,
+        lobbiesCreated: 0, lobbyJoins: 0, lobbyQuickJoins: 0, lobbyMembersGone: 0 });
     assert.equal(initial.uptimeSeconds, 0);
     const disabled = await statisticsRelay(t, { statsToken: '' });
     const closed = await fetch(`${disabled.base}/admin/stats`, { headers: { authorization: `Bearer ${STATS_TOKEN}` } });
@@ -443,7 +444,8 @@ test('statistics count registered rooms and signaling connections through joins 
     assert.equal(joining.connections, 4);
     assert.equal(joining.pendingJoins, 1);
     assert.deepEqual(joining.totals, { roomsCreated: 1, joinsAccepted: 1, joinsMissing: 1, joinsFull: 1,
-        migrationsRequested: 0, migrationsRejected: 0 });
+        migrationsRequested: 0, migrationsRejected: 0,
+        lobbiesCreated: 0, lobbyJoins: 0, lobbyQuickJoins: 0, lobbyMembersGone: 0 });
     assert.equal(JSON.stringify(joining).includes('STAT22'), false);
     assert.equal(JSON.stringify(joining).includes('private-key'), false);
     assert.equal(JSON.stringify(joining).includes('127.0.0.1'), false);
@@ -484,7 +486,8 @@ test('statistics distinguish migration requests, rejections and ended rooms', as
     assert.equal(finished.pendingJoins, 0);
     assert.equal(r.server.ended.size, 1);
     assert.deepEqual(finished.totals, { roomsCreated: 1, joinsAccepted: 1, joinsMissing: 0, joinsFull: 0,
-        migrationsRequested: 3, migrationsRejected: 2 });
+        migrationsRequested: 3, migrationsRejected: 2,
+        lobbiesCreated: 0, lobbyJoins: 0, lobbyQuickJoins: 0, lobbyMembersGone: 0 });
     const next = await r.connect();
     next.send({ migrate: 'STAT23', key: 'other' });
     assert.deepEqual(await next.next(), { hosting: 'STAT23' });

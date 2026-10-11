@@ -2421,6 +2421,53 @@
     const fetchTickets = new Map();
     const fetchLimit = 64 * 1024 * 1024;
     let nextFetch = 0;
+    // Starts a fetch of `url` and gives its ticket. With no `init` it's
+    // Web.Fetch's GET, which only a 2xx answer ends well; with one, a request
+    // whose answer is its result whatever its status.
+    function startFetch(url, init) {
+        do { nextFetch = (nextFetch + 1) >>> 0; } while (!nextFetch || nextFetch >= 0xFFFFFFFE || fetchTickets.has(nextFetch));
+        const ticket = nextFetch, control = new AbortController();
+        const entry = { done: false, error: 0, status: 0, bytes: null, control };
+        fetchTickets.set(ticket, entry);
+        (async () => {
+            try {
+                const response = await fetch(url, { ...(init || {}), signal: control.signal });
+                entry.status = response.status;
+                if (!init && response.status === 404) { entry.error = ioError.notFound; return; }
+                if (!init && !response.ok) { entry.error = ioError.failed; return; }
+                if (Number(response.headers.get('content-length')) > fetchLimit) {
+                    control.abort();
+                    entry.error = ioError.failed;
+                    return;
+                }
+                const parts = [];
+                let total = 0;
+                if (response.body) {
+                    const reader = response.body.getReader();
+                    for (;;) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        total += value.length;
+                        if (total > fetchLimit) {
+                            control.abort();
+                            entry.error = ioError.failed;
+                            return;
+                        }
+                        parts.push(value);
+                    }
+                }
+                const bytes = new Uint8Array(total);
+                let at = 0;
+                for (const part of parts) { bytes.set(part, at); at += part.length; }
+                entry.bytes = bytes;
+            } catch (error) {
+                entry.error = ioError.failed; // No connection, CORS, or aborted
+            } finally {
+                entry.done = true;
+            }
+        })();
+        return ticket;
+    }
     function storageError(error) {
         return error && error.name === 'QuotaExceededError' ? ioError.space
             : error && error.name === 'SecurityError' ? ioError.denied : ioError.unavailable;
@@ -2698,49 +2745,22 @@
             return true;
         },
         io_flush_forget(ticket) { flushTickets.delete(ticket); },
-        io_fetch_begin(ptr) {
-            do { nextFetch = (nextFetch + 1) >>> 0; } while (!nextFetch || nextFetch === 0xFFFFFFFF || fetchTickets.has(nextFetch));
-            const ticket = nextFetch, control = new AbortController();
-            const entry = { done: false, error: 0, bytes: null, control };
-            fetchTickets.set(ticket, entry);
-            const url = string(ptr);
-            (async () => {
-                try {
-                    const response = await fetch(url, { signal: control.signal });
-                    if (response.status === 404) { entry.error = ioError.notFound; return; }
-                    if (!response.ok) { entry.error = ioError.failed; return; }
-                    if (Number(response.headers.get('content-length')) > fetchLimit) {
-                        control.abort();
-                        entry.error = ioError.failed;
-                        return;
-                    }
-                    const parts = [];
-                    let total = 0;
-                    if (response.body) {
-                        const reader = response.body.getReader();
-                        for (;;) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-                            total += value.length;
-                            if (total > fetchLimit) {
-                                control.abort();
-                                entry.error = ioError.failed;
-                                return;
-                            }
-                            parts.push(value);
-                        }
-                    }
-                    const bytes = new Uint8Array(total);
-                    let at = 0;
-                    for (const part of parts) { bytes.set(part, at); at += part.length; }
-                    entry.bytes = bytes;
-                } catch (error) {
-                    entry.error = ioError.failed; // No connection, CORS, or aborted
-                } finally {
-                    entry.done = true;
-                }
-            })();
-            return ticket;
+        io_fetch_begin(ptr) { return startFetch(string(ptr), null); },
+        // Web.Request's Send: the same fetch, with a method, headers (a line each,
+        // "Name: value\r\n") and a body, and an answer of any status is its
+        // result, which io_request_status gives once it's done
+        io_request_begin(method, url, headers, body, size) {
+            const init = { method: string(method), headers: [] };
+            for (const line of string(headers).split('\r\n')) {
+                const colon = line.indexOf(':');
+                if (colon > 0) init.headers.push([line.slice(0, colon), line.slice(colon + 1).trim()]);
+            }
+            if (size) init.body = u8().slice(body, body + size);
+            return startFetch(string(url), init);
+        },
+        io_request_status(ticket) {
+            const entry = fetchTickets.get(ticket);
+            return entry && entry.done ? entry.status : 0;
         },
         io_fetch_poll(ticket, size) {
             const entry = fetchTickets.get(ticket);

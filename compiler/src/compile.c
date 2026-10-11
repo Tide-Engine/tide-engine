@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "builtins.h"
 #include "lexer.h"
 
 static char *read_file(const char *path, size_t *len)
@@ -48,6 +49,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     for (int i = 0; i < count; i++) {
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
+    bool web = false; // A file names Web.Request's types, which are Tide's own code
     for (int i = 0; i < count; i++) {
         source *src = NEW(source);
         src->path = inputs[i].path;
@@ -59,10 +61,19 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         }
         src->text = text;
         diag_add_source(src);
+        web |= web_prelude_wanted(text, src->len);
 
         token *toks = lex(src);
         if (!toks) return false;
         if (!parse_file(prog, src, toks, false)) return false;
+    }
+    if (web) {
+        source *src = NEW(source);
+        src->path = WEB_PRELUDE_PATH;
+        src->text = web_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
     }
 
     diag_phase("lexing and parsing");
