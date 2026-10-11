@@ -83,6 +83,13 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('switch expression arm arrows', () => {
+    const lines = tokenize('int result;\nresult = mode switch { 0 => 1, _ => 2 };');
+    check(lines[1], ['switch', 'keyword.control']);
+    check(lines[1], ['=>', 'keyword.operator.switch-arm', 1]);
+    check(lines[1], ['=>', 'keyword.operator.switch-arm', 2]);
+});
+
 // The probe's line that starts with `start`, after its indentation.
 function probeLine(start) {
     const found = probe.filter(l => l.text.trimStart().startsWith(start));
@@ -516,6 +523,13 @@ test('degree literals are whole float tokens with a lowercase suffix', () => {
     check(lines[4], ['180deg', 'string.quoted.double']);
     check(lines[4], ['90deg', 'comment.line']);
     check(lines[5], ['.5deg', '!constant.numeric.float']);
+});
+
+test('leading-dot enum members retain their value scope', () => {
+    const lines = tokenize('state = .Idle;\nreturn .Run;\ncase .idle:\nPick(.Jump);\nstate == .Run;\nvar n = .5;\nstate.idle;');
+    for (const [i, name] of ['Idle', 'Run', 'idle', 'Jump', 'Run'].entries()) check(lines[i], [name, 'constant.other.enum']);
+    check(lines[5], ['.5', 'constant.numeric.float']);
+    check(lines[6], ['idle', 'variable.other.member']);
 });
 
 // The editors indent after a line that opens a brace, but not one in text or a comment.

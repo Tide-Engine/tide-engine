@@ -1,0 +1,7 @@
+// expect: 'Pick(?)' could be more than one 'Pick'
+enum A { Idle }
+enum B { Idle }
+int Pick(A state) { return int(state); }
+int Pick(B state) { return int(state); }
+scene Main { }
+view V() { Debug.Log(Pick(.Idle)); }

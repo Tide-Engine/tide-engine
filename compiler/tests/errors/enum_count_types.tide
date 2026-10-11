@@ -1,0 +1,4 @@
+// expect: Direction.Count() takes no arguments or type arguments
+enum Direction { North, East }
+const int COUNT = Direction.Count<int>();
+scene Main { }

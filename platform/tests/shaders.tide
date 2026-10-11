@@ -516,6 +516,7 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     int number = int(mode);
     if (Mode(number) != Mode.Bright || Mode(number - 1) != Mode.Plain) ok = false;
     if (Shade(number + 257) != Shade.Dark || int(Shade(number + 511)) != 0 || int(Shade(number - 2)) != 255) ok = false;
+    if (Mode.Count() != 2 || Shade.Count() != 3 || Mode((number + 1) % Mode.Count()) != Mode.Plain) ok = false;
 
     // Colors
     Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;
@@ -824,6 +825,7 @@ struct Matrices
 
 struct Rest
 {
+    int switches;    // Delayed initialization and switch expressions, CPU against both GPU stages
     float4 mins;      // Of a number, then of each size of vector, summed
     float4 maxes;
     float4 clamps;
@@ -1024,9 +1026,58 @@ bool SameMatrices(Matrices a, Matrices b)
 
 // What Math does on the GPU as tide/math.h does it, where a shader language's
 // own function would do otherwise, or says it may do anything
+const int SWITCH_PICK = 1 switch { 1 => 7, _ => 8 };
+enum SwitchMode { Run, Jump }
+int SwitchMark(mut int calls, int digit)
+{
+    calls = calls * 10 + digit;
+    return digit;
+}
+bool SwitchFill(out int value) { value = 6; return true; }
+
+int SwitchProbe(int selector)
+{
+    int later;
+    switch (selector)
+    {
+        case 1: later = 10; break;
+        default: later = 20; break;
+    }
+    mut var calls = 0;
+    var chosen = SwitchMark(calls, 1) + SwitchMark(calls, selector) switch
+    {
+        1 => SwitchMark(calls, 2),
+        _ => SwitchMark(calls, 3),
+    } + SwitchMark(calls, 4);
+    var skipped = false && (selector switch { 1 => SwitchMark(calls, 5) > 0, _ => true });
+    var conditional = selector == 1 ? (selector switch { 1 => 7, _ => 8 })
+                                   : (selector switch { 2 => 9, _ => 10 });
+    mut var count = 0;
+    for (var i = 0; i switch { 0 => true, 1 => true, _ => false }; i++)
+    {
+        int each;
+        each = i;
+        if (i == 0) continue;
+        count += each;
+    }
+    while (count switch { 1 => true, _ => false }) count += 1;
+    var nested = selector switch { 1 => (selector switch { 1 => 11, _ => 12 }), _ => 13 };
+    var scoped = (SwitchFill(out var before) ? before : 0) + selector switch
+    {
+        1 => SwitchFill(out var value) ? value : 0,
+        _ => SwitchFill(out var value) ? value + 1 : 0,
+    };
+    var trace = selector == 1 ? 1124 : selector == 2 ? 1234 : 1034;
+    SwitchMode pickedMode = SwitchMode(selector) switch { .Jump => .Jump, _ => .Run };
+    if (int(pickedMode) != (selector == 1 ? 1 : 0)) return -100;
+    if (calls != trace || skipped || count != 2 || SWITCH_PICK != 7) return -100;
+    return later + chosen + conditional + nested + scoped;
+}
+
 Rest RestOf(Given given)
 {
     mut Rest rest = Rest { };
+    rest.switches = SwitchProbe(given.one) + SwitchProbe(0) + SwitchProbe(2);
     float a = given.amount;
     float2 p2 = given.point.xy;
     float3 p3 = given.point;
@@ -1112,6 +1163,7 @@ Rest RestOf(Given given)
 
 bool SameRest(Rest a, Rest b)
 {
+    if (a.switches != b.switches || a.switches != 174) return false;
     mut bool same = Close4(a.mins, b.mins) && Close4(a.maxes, b.maxes) && Close4(a.clamps, b.clamps) && Close4(a.smooths, b.smooths);
     same = same && Close4(a.powers, b.powers) && Close4(a.arcs, b.arcs) && Close4(a.units, b.units) && Close4(a.ends, b.ends);
     same = same && Close4(a.saturated, b.saturated) && Close2(a.capped, b.capped) && Close4(a.bad, b.bad) && Close4(a.bad2, b.bad2) && Close3(a.badVector, b.badVector);

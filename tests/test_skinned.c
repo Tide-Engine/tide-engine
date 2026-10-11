@@ -750,7 +750,7 @@ TIDE_TEST(skinned_separate_animation_exports_bind_by_required_rig)
         "{\"name\":\"mesh\"},{\"name\":\"hand\",\"translation\":[0,3,0]},"
         "{\"name\":\"arm\",\"translation\":[-2,0,0],\"rotation\":[0,0,0,-1],\"children\":[1]}");
     TIDE_REQUIRE(tide_skinned_sample_into(target, sign, 0, 1, &pose, TIDE_IN_SCRATCH));
-    TIDE_CHECK(bone(pose, 1).rotation.value.w == 1.0f);
+    TIDE_CHECK(bone(pose, 1).rotation.value.w == -1.0f);
     tide_list sign_pose = {0};
     TIDE_REQUIRE(tide_skinned_rest(sign, &sign_pose, TIDE_IN_SCRATCH));
     TIDE_REQUIRE(tide_skinned_pose_into(target, sign, sign_pose, &pose, TIDE_IN_SCRATCH));
@@ -775,8 +775,6 @@ TIDE_TEST(skinned_separate_bindings_reject_changed_or_ambiguous_required_nodes)
     const uint64_t before = pose_hash(pose);
     const uint32_t place = pose.at;
     static const char *const wrong[] = {
-        "{\"name\":\"mesh\"},{\"name\":\"hand\",\"translation\":[0,3,0]},"
-        "{\"name\":\"arm\",\"translation\":[-5,0,0],\"children\":[1]}",
         "{\"name\":\"mesh\"},{\"name\":\"hand\",\"translation\":[0,3,0]},"
         "{\"name\":\"missing\",\"translation\":[-2,0,0],\"children\":[1]}",
         "{\"name\":\"arm\"},{\"name\":\"hand\",\"translation\":[0,3,0]},"
@@ -812,6 +810,47 @@ TIDE_TEST(skinned_separate_bindings_reject_changed_or_ambiguous_required_nodes)
     TIDE_REQUIRE(tide_skinned_rest(unrequired_duplicate, &source_pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(!tide_skinned_pose_into(target, unrequired_duplicate, source_pose, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(pose_hash(pose) == before);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(skinned_separate_exports_copy_different_default_poses_without_retargeting)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list target = model(), source = separate_model(
+        "{\"name\":\"mesh\"},{\"name\":\"hand\",\"translation\":[1,7,2],\"scale\":[2,3,4]},"
+        "{\"name\":\"arm\",\"translation\":[-5,6,8],\"rotation\":[0,0,1,0],\"scale\":[3,2,1],\"children\":[1]}");
+    TIDE_REQUIRE(tide_skinned_valid(source));
+    TIDE_CHECK(!tide_skinned_compatible(target, source));
+    tide_list sampled = {0}, into = {0}, rebound = {0};
+    // Clip 1 animates only the hand's translation. The required arm must
+    // use the source's complete local transform, rather than the target rest.
+    TIDE_REQUIRE(tide_skinned_sample(source, 1, 1, &sampled, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_sample_into(target, source, 1, 1, &into, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_pose_into(target, source, sampled, &rebound, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(into) == pose_hash(rebound));
+    const tide_bone_transform arm = bone(into, 1), hand = bone(into, 2);
+    TIDE_CHECK(arm.position.x == 5 && arm.position.y == 6 && arm.position.z == 8);
+    TIDE_CHECK(arm.rotation.value.z == -1 && arm.rotation.value.w == 0);
+    TIDE_CHECK(arm.scale.x == 3 && arm.scale.y == 2 && arm.scale.z == 1);
+    TIDE_CHECK(hand.position.x == 0 && hand.position.y == 3 && hand.position.z == 0);
+    TIDE_CHECK(hand.scale.x == 2 && hand.scale.y == 3 && hand.scale.z == 4);
+    // Persistent output and source aliases keep ordinary snapshot ownership.
+    tide_heap heap = {0}, snapshot = {0};
+    tide_text_use(&heap, NULL);
+    tide_list stored = {0};
+    TIDE_REQUIRE(tide_skinned_rest(target, &stored, TIDE_IN_MATCH));
+    const tide_list previous = stored;
+    tide_heap_copy(&snapshot, &heap);
+    TIDE_REQUIRE(tide_skinned_sample_into(target, source, 1, 1, &stored, TIDE_IN_MATCH));
+    TIDE_CHECK(pose_hash(stored) == pose_hash(into));
+    const tide_bone_transform *old = tide_list_read(&snapshot, previous, 1, sizeof *old);
+    TIDE_REQUIRE(old);
+    TIDE_CHECK(old->position.x == 2 && old->scale.x == 1);
+    TIDE_REQUIRE(tide_skinned_pose_into(target, source, sampled, &sampled, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(sampled) == pose_hash(into));
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&snapshot);
+    tide_heap_free(&heap);
     tide_scratch_reset(mark);
 }
 

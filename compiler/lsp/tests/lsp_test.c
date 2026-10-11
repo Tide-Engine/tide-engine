@@ -2341,6 +2341,70 @@ TIDE_TEST(lsp_enums_and_switch)
 
 // A switch on an enum completes by its members: after `case`, where the code
 // around doesn't parse yet, and whole cases where one can start.
+TIDE_TEST(lsp_enum_assignment_completion_and_shorthand)
+{
+    start();
+#define ENUM_SOURCE "enum ZombieState { Idle, Run, Jump }\n" \
+                    "enum Other { Idle }\nsingleton Zombie { ZombieState state; }\nscene Main { }\n"
+    const char *reply = complete(ENUM_SOURCE "system Animate(mut Zombie zombie) { zombie.state = $; }\n");
+    TIDE_CHECK(has(reply, "\"label\":\"ZombieState\",\"kind\":13,\"detail\":\"enum (expected type)\",\"sortText\":\"000\",\"preselect\":true"));
+    TIDE_CHECK(offers(reply, "ZombieState.Idle") && offers(reply, "ZombieState.Run"));
+    TIDE_CHECK(count(reply, "\"preselect\":true") == 1);
+    check_repeat_at("file:///test.tide", "textDocument/completion", cursor_line, cursor_character, "");
+    reply = complete(ENUM_SOURCE "system Animate(mut Zombie zombie) { switch (zombie.state) { case ZombieState.Jump: zombie.state = $; break; } }\n");
+    TIDE_CHECK(has(reply, "\"label\":\"ZombieState\",\"kind\":13,\"detail\":\"enum (expected type)\",\"sortText\":\"000\",\"preselect\":true"));
+    reply = complete(ENUM_SOURCE "system Animate(mut Zombie zombie) { zombie.state = .$; }\n");
+    TIDE_CHECK(offers(reply, "Idle") && offers(reply, "Run") && offers(reply, "Jump"));
+    TIDE_CHECK(count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "system Animate(mut Zombie zombie) { zombie.state = .Ru$; }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "ZombieState Next() { return .$; }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "view V() { ZombieState state = .$; Debug.Log(state); }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "system Animate(mut Zombie zombie) { switch (zombie.state) { case .$: break; } }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "system Animate(mut Zombie zombie) { switch (zombie.state) { case .Idle: break; case .$: break; } }\n");
+    TIDE_CHECK(has(reply, "\"label\":\"Run\",\"kind\":20,\"sortText\":\"00001\",\"preselect\":true"));
+    reply = complete(ENUM_SOURCE "system Animate(mut Zombie zombie) { if (zombie.state == .$) Debug.Log(1); }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "ZombieState Pick(ZombieState state) { return state; }\nview V() { Debug.Log(Pick(.$)); }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "ZombieState Pick(ZombieState state) { return state; }\nview V() { Debug.Log(Pick(state: .$)); }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "view V() { Draw.MeasureText(\"text\", 12, .$); }\n");
+    TIDE_CHECK(offers(reply, "Bold") && offers(reply, "Regular") && count(reply, "\"label\"") == 2);
+    reply = complete(ENUM_SOURCE "void Add(mut List<ZombieState> states) { states.Add(.$); }\n");
+    TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
+    reply = complete(ENUM_SOURCE "Color Sample(Texture source, float2 uv) { return source.Sample(uv, .$); }\n");
+    TIDE_CHECK(offers(reply, "Point") && offers(reply, "Trilinear") && count(reply, "\"label\"") == 3);
+    open_document(ENUM_SOURCE "view V() { var size = Draw.MeasureText(\"text\", 12, .Bold); Debug.Log($$\"{size}\"); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // Other assignment types retain ordinary completion.
+    reply = complete(ENUM_SOURCE "view V() { int n = $; Debug.Log(n); }\n");
+    TIDE_CHECK(!has(reply, "\"preselect\":true"));
+    // The implicit enum name isn't a source occurrence; the member still is.
+    open_document(ENUM_SOURCE "system Animate(mut Zombie zombie) { zombie.state = .Id$le; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/hover");
+    TIDE_CHECK(has(reply, "ZombieState.Idle"));
+    reply = request_with("textDocument/rename", "\"newName\":\"Rest\"");
+    const char *renamed = apply_reply(ENUM_SOURCE "system Animate(mut Zombie zombie) { zombie.state = .Idle; }\n", "file:///test.tide");
+    TIDE_CHECK(has(renamed, "ZombieState { Rest, Run, Jump }") && has(renamed, "zombie.state = .Rest;"));
+    TIDE_CHECK(has(renamed, "Other { Idle }"));
+    const char *original = ENUM_SOURCE "system Animate(mut Zombie zombie)\n{\n    zombie.state = .Idle;\n}\n";
+    format_reply(original);
+    const char *formatted = apply_reply(original, NULL);
+    TIDE_CHECK(has(formatted, "zombie.state = .Idle;"));
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+    // Incomplete malformed files don't have an assignment target to inspect.
+    reply = complete("=.$");
+    TIDE_CHECK(has(reply, "\"items\":[]"));
+    clear_sent();
+    lsp_free(&server);
+#undef ENUM_SOURCE
+}
+
 TIDE_TEST(lsp_switch_cases_complete_enum_members)
 {
     start();
@@ -2472,6 +2536,44 @@ TIDE_TEST(lsp_enum_conversion)
     TIDE_CHECK(!has(request("textDocument/hover"), "`Phase(number)`"));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Stage\""), "\"error\""));
 #undef PHASES
+}
+
+TIDE_TEST(lsp_enum_count_and_cast_diagnostic)
+{
+    start();
+#define COUNT_GAME "enum Direction { North, East = 10, Count = 10 }\nsingleton Match { int n; }\nscene Main { }\n"
+    const char *completion = complete(COUNT_GAME "system S(mut Match match) { match.n = Direction.$; }\n");
+    TIDE_CHECK(offers(completion, "Count")); // The user's member still exists
+    TIDE_CHECK(offers(completion, "Count()"));
+    TIDE_CHECK(has(completion, "Count() -> int"));
+    open_document(COUNT_GAME "system S(mut Match match) { match.n = Direction.Co$unt(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Direction.Count() -> int"));
+    TIDE_CHECK(has(hover, "Compile-time constant: 3"));
+    TIDE_CHECK(has(hover, "same numeric value"));
+    open_document(COUNT_GAME "system S(mut Match match) { match.n = Direction.Count($); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Direction.Count() -> int"));
+    open_document(COUNT_GAME "int Number(Direction direction) { return direction.Count($); }\n");
+    TIDE_CHECK(!has(request("textDocument/signatureHelp"), "Direction.Count() -> int"));
+
+    static const char qualified[] = "namespace Game;\nenum Direction { North, East }\n"
+                                    "singleton Match { int n; }\nscene Main { }\n"
+                                    "system S(mut Match match) { match.n = Game.Direc$tion.Count(); }\n";
+    open_document(qualified);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
+    request_with("textDocument/rename", "\"newName\":\"Heading\"");
+    TIDE_CHECK(has(apply_reply(qualified, "file:///test.tide"), "Game.Heading.Count()"));
+
+    open_document(COUNT_GAME "int Number(Direction direction) { return (int)direct$ion; }\n");
+    TIDE_CHECK(has(last_sent(), "Tide converts values with 'int(value)'"));
+    TIDE_CHECK(has(last_sent(), "write 'int(direction)' instead"));
+    // Parentheses beside subtraction, a step and indexing remain expressions.
+    open_document(COUNT_GAME "int Number(int value) { mut int n = (value) - 1; int[2] values = [n, value];"
+                             " return ((values)[0]) + (n)++; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef COUNT_GAME
 }
 
 TIDE_TEST(lsp_scheduling_phases)
@@ -3769,6 +3871,50 @@ TIDE_TEST(lsp_operators)
 // #if and the rest: the formatter leaves directives and what they leave out as
 // they are, which reads as comments, and each branch folds.
 // ++i and i++ where a value goes: no diagnostic, and the formatter leaves them against their variable.
+TIDE_TEST(lsp_delayed_locals_and_switch_expressions)
+{
+    start();
+    static const char messy[] = "scene Main { }\n"
+                                "enum Mode { Run, Jump }\n"
+                                "int Pick(Mode mode)\n"
+                                "{\n"
+                                "int current;\n"
+                                "current=mode switch\n"
+                                "{\n"
+                                "Mode.Run=>1,\n"
+                                "Mode.Jump=>2,\n"
+                                "_=>3,\n"
+                                "};\n"
+                                "return current;\n"
+                                "}\n"
+                                "Mode PickMode(Mode mode)\n{\nreturn mode switch\n{\n.Run=>.Jump,\n_=>.Run,\n};\n}\n";
+    static const char expected[] = "scene Main { }\n"
+                                   "enum Mode { Run, Jump }\n"
+                                   "int Pick(Mode mode)\n"
+                                   "{\n"
+                                   "    int current;\n"
+                                   "    current = mode switch\n"
+                                   "    {\n"
+                                   "        Mode.Run => 1,\n"
+                                   "        Mode.Jump => 2,\n"
+                                   "        _ => 3,\n"
+                                   "    };\n"
+                                   "    return current;\n"
+                                   "}\n"
+                                   "Mode PickMode(Mode mode)\n{\n    return mode switch\n    {\n        .Run => .Jump,\n        _ => .Run,\n    };\n}\n";
+    open_document(messy);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 4, 6, ""), "int current"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 4, 6,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 6, ""), "Mode.Run"));
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+}
+
 TIDE_TEST(lsp_increments_as_values)
 {
     start();
