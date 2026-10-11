@@ -96,6 +96,8 @@ and render resources are machine-local; layouts, rules and audio are unchanged.
 `render.tide` uses a common scene/depth for every visible occurrence: Rgba8
 material plus Rgba16f normal/occurrence-scale MRT, a fixed-focus 1024-square
 directional shadow map with four comparison taps, and half-resolution SSAO.
+Each shadow tap compensates for the receiver plane's light-space depth slope,
+so the fixed map footprint does not make miniature floors shadow themselves.
 Eight normal-oriented hemisphere samples reconstruct world positions from
 hardware depth and inverse camera projection. Metric radii/biases follow
 the originating occurrence's tile scale. Two separable bilateral passes
@@ -207,7 +209,7 @@ Native and WASI retain all 33 fixtures, including twelve production-command
 solutions, exchanged jobs, exact undo/reset/replay and the exhaustive second
 puzzle co-op check. No match, layout, hint or audio file changed. Native,
 web debug and web release builds are warning-free. Both two-browser fixtures
-pass: WebGL 125.98 s and WebGPU 89.89 s. They retain actual online admission,
+pass: WebGL 131.81 s and WebGPU 99.18 s. They retain actual online admission,
 three production completions, phone touch, continuous doorway growth/shrink,
 nearby/offscreen partner framing, carried interiors, physical self-nesting,
 undo and unchanged-room/depth/entrance cycle exits.
@@ -225,22 +227,26 @@ share each occurrence's ground plane so lids, heads and trim stack vertically.
 CPU cropping includes a conservative caster guard based on its top above
 the minimum containing floor; artificial cut faces cannot shadow the view
 under the fixed light and camera. The refreshed 960x540 gameplay thumbnail
-is 128,622 bytes, SHA-256
-`61bcfef843b34a0e24ffdbd7eb5560a5193d4cd272419f461d3028ee7c0f511c`.
+is 123,388 bytes, SHA-256
+`d644e726fc134a33a6dad017119f1a2eee6b8ce0e54754dd41763ace2688f5e3`.
 
 Controlled full/no-AO/no-shadow native captures prove both effects: removing
-AO changes 30,461 initial scene pixels (maximum channel delta 55); removing
-cast shadows changes 37,026 (maximum 92). An empty 5,280-pixel floor patch
+AO changes 30,471 initial scene pixels (maximum channel delta 55); removing
+cast shadows changes 37,375 (maximum 92). An empty 5,280-pixel floor patch
 changes zero pixels with AO removed, and both comparisons change zero pixels
 outside the scene. Temporary comparison edits were restored byte-for-byte.
-The final caster-guard build's initial and outside images are RGB-identical
-to these measured baselines. Evidence lives in ignored `3d-lighting-*` and
-`volume-*` captures under `build/inside-out-captures/`.
+A miniature review caught scale-dependent PCF self-shadowing. Receiver-plane
+tap depth correction removes that checker while preserving contact bias and
+cast shadows: adjacent luminance variation in the miniature drops 40%, with
+no changes to the empty floor or surrounding UI. The original AO blur remains.
+Final lighting comparisons and desktop/phone captures use this corrected
+renderer. Evidence lives in ignored `3d-final-lighting-*`, `3d-shadow-plane-*`
+and `volume-*` captures under `build/inside-out-captures/`.
 
 The production site build, zero-error/warning check, eighteen analytics/admin,
 227 grammar and five HTTP/SEO/access tests pass. All 64 release/staged/package
-playable pages and four thumbnails agree. Inside Out is 1,385,947 bytes,
-SHA-256 `2b71dad7d5b74c912fc55801122d44eba762f5dfbf414cbf10ef05bae4947483`.
+playable pages and four thumbnails agree. Inside Out is 1,386,431 bytes,
+SHA-256 `7d7e8d231adfa7aa7844a6e162c8bc0fddcc783e02ddf3d6d439741aa5deeb8b`.
 Its pack contains each unchanged current WAV exactly once; removed music,
 coin and tonal-doorway assets remain absent. No CI was dispatched. Physical
 phone/GPU coverage, audio listening and external NAT conditions remain separate.
