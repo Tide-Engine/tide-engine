@@ -1,5 +1,18 @@
 # The language server and the editors
 
+## Tasks from functions, and a request's time limit, 2026-10-11
+
+Neither needed code in tidels. Completion always offered async functions
+inside a function or a method, so nothing was hidden; the checker's new
+diagnostics (a view calling a function that starts a match task, and the rest:
+`notes/language.md`, Functions and methods start tasks) reach editors as any
+do. `lsp_functions_send_and_spawn` checks the offer, that a function that
+starts a task and the system that calls it say nothing, and the diagnostic at
+a view's call. `SetTimeout`, `WebRequest.timeout` and `IOError.TimedOut` come
+from the prelude's source and the checker's enum, so completion, hover and the
+doc comment are the ones any struct's method has: `lsp_web_requests` checks
+the three and the hover.
+
 ## T? fields, 2026-10-11
 
 A field declared `T?` is kept as a struct of its value and whether there is

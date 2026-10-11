@@ -1,0 +1,17 @@
+// expect: a comparison runs again and again as the list sorts, in an order nothing promises, and 'Before' starts 'Later'
+// expect: a comparison only compares its two elements: call it before the sort, or after
+singleton Tally { List<int> scores; }
+scene Main { }
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+bool Before(int a, int b)
+{
+    Later();
+    return a < b;
+}
+system Rank(mut Tally tally)
+{
+    tally.scores.Sort(a, b) { return Before(a, b); }
+}

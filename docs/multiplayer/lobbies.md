@@ -75,7 +75,7 @@ The game sets `client.name`, this player's name, from a view. Until it does, the
 
 ## What the game asks
 
-Each is a call with `mut LobbyClient` first, from a view or a page of the game's. The service is asked after the frame's views, and `LobbyClient` says what became of it some frames later: `busy` while it waits, then the lobby, or `message` and `failure`.
+Each is a call with `mut LobbyClient` first, from a view or a page of the game's. The service is asked at once, and `LobbyClient` says what became of it some frames later: `busy` while it waits, then the lobby, or `message` and `failure`.
 
 ```csharp
 view Lobby(mut LobbyClient client)
@@ -176,6 +176,8 @@ override string Lobbies.ServiceUrl()
 ```
 
 `Lobbies.ServiceGame()` says which game's lobbies these are, the game's `title` unless it says otherwise: players of two games never see each other's.
+
+A request the service hasn't answered in `client.timeout` seconds (10) counts as one that couldn't reach it, so a service that takes requests and never answers shows as `LobbyFailure.Unreachable`, as one that's down does. The request a member watches its lobby with is held by Tide's service until the lobby changes, for about 20 seconds at the most, so it has a limit of its own, `client.watchTimeout` (30). Both are fields a game sets, and 0 is no limit.
 
 A player is a secret the service makes the first time the game asks it anything. The machine keeps it in `lobby-identity.json` among the game's [saved files](../game/files.md), so a player has the same ID the next time the game runs. Two programs of one game on a machine share that file: the second to join a lobby the first is in joins as a player of its run's own. `Lobbies.IdentityFile()` names the file, and `""` keeps none.
 

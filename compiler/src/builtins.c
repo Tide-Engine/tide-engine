@@ -1954,24 +1954,32 @@ static const char web_prelude_text[] =
     "    string method = \"GET\";\n"
     "    string headers; // A line each: \"Name: value\"\n"
     "    List<byte> body;\n"
+    "    float timeout;  // Seconds its answer may take; 0 or less is no limit\n"
     "\n"
     "    // The request with this method, like \"POST\" or \"DELETE\".\n"
     "    WebRequest SetMethod(string value)\n"
     "    {\n"
-    "        return WebRequest { url = url, method = value, headers = headers, body = body };\n"
+    "        return WebRequest { url = url, method = value, headers = headers, body = body, timeout = timeout };\n"
     "    }\n"
     "\n"
     "    // The request with this header too, like SetHeader(\"Content-Type\", \"text/plain\").\n"
     "    WebRequest SetHeader(string name, string value)\n"
     "    {\n"
     "        var line = $\"{name.Replace(\"\\n\", \" \")}: {value.Replace(\"\\n\", \" \")}\\n\";\n"
-    "        return WebRequest { url = url, method = method, headers = $\"{headers}{line}\", body = body };\n"
+    "        return WebRequest { url = url, method = method, headers = $\"{headers}{line}\", body = body, timeout = timeout };\n"
     "    }\n"
     "\n"
     "    // The request with these bytes as its body.\n"
     "    WebRequest SetBody(List<byte> bytes)\n"
     "    {\n"
-    "        return WebRequest { url = url, method = method, headers = headers, body = bytes };\n"
+    "        return WebRequest { url = url, method = method, headers = headers, body = bytes, timeout = timeout };\n"
+    "    }\n"
+    "\n"
+    "    // The request with a time limit: Send fails with IOError.TimedOut when its\n"
+    "    // whole answer hasn't come in this many seconds. 0 or less is no limit.\n"
+    "    WebRequest SetTimeout(float seconds)\n"
+    "    {\n"
+    "        return WebRequest { url = url, method = method, headers = headers, body = body, timeout = seconds };\n"
     "    }\n"
     "}\n"
     "\n"
@@ -2004,5 +2012,7 @@ static bool has_text(const char *text, const size_t len, const char *word)
 
 bool web_prelude_wanted(const char *text, const size_t len)
 {
-    return has_text(text, len, "Web.Request") || has_text(text, len, "WebRequest") || has_text(text, len, "WebResponse");
+    // IOError.TimedOut is a request's own error, which only a program with this code has (add_builtins in check.c)
+    return has_text(text, len, "Web.Request") || has_text(text, len, "WebRequest") || has_text(text, len, "WebResponse")
+        || has_text(text, len, "IOError.TimedOut");
 }

@@ -39,6 +39,7 @@ static seat seats[4] = {{.name = "Ann"}, {.name = "Bob"}, {.name = "Cat"}, {.nam
 #define SEEN(s) ((s)->local.Remote)
 
 static int lobby_failures;
+static char lobby_silent[80]; // Where a service is that takes requests and never answers, which a host says
 
 static void lobby_check(const bool ok, const char *what)
 {
@@ -325,6 +326,14 @@ static int lobby_relay_step(const float seconds)
             return 0;
         }
         lobby_check(true, "lobbies everyone left are gone");
+
+        // A service that takes a request and never answers it: the client's own time limit says so
+        set_text(DAN, &CLIENT(DAN).service, lobby_silent);
+        CLIENT(DAN).timeout = 0.25f;
+        order(DAN, Order_Create, "Nowhere", "duel");
+        WAIT(SEEN(DAN).order == Order_None && settled(DAN));
+        lobby_check(out(DAN) && CLIENT(DAN).failure == Lobbies_LobbyFailure_Unreachable,
+                    "a service that never answers is unreachable once the client's time limit passes");
         lobby_at = -1;
         return lobby_failures ? -1 : 1;
     }

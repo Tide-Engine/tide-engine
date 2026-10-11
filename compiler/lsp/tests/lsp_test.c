@@ -8622,6 +8622,17 @@ TIDE_TEST(lsp_web_requests)
     TIDE_CHECK(offers(web, "Request") && offers(web, "Fetch"));
     const char *built = complete(TASK "    var request = Web.Request(\"http://example.com\");\n    request.$\n}\n");
     TIDE_CHECK(offers(built, "SetMethod") && offers(built, "SetHeader") && offers(built, "SetBody") && offers(built, "url"));
+    // Its time limit, as a call and as the field it sets, and the error a request past it fails with
+    TIDE_CHECK(offers(built, "SetTimeout") && offers(built, "timeout"));
+    TIDE_CHECK(has(built, "WebRequest SetTimeout(float seconds)"));
+    // ...which is a member in a program that has a request, and in no other: every game's header declares IOError
+    TIDE_CHECK(offers(complete(TASK "    var request = Web.Request(\"http://example.com\");\n    var late = IOError.$\n}\n"), "TimedOut"));
+    const char *plain = complete(TASK "    var late = IOError.$\n}\n");
+    TIDE_CHECK(offers(plain, "Failed") && !offers(plain, "TimedOut"));
+    open_document(TASK "    var answer = await Web.Request(\"http://example.com\").SetTimeout(5).Send();\n"
+                       "    if (answer is IOError.TimedOut) return;\n}\nview Start() { Go(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(3, 60), "WebRequest SetTimeout(float seconds)"));
     const char *answer = complete(TASK "    var answer = await Web.Request(\"http://example.com\").Send() ?? WebResponse { };\n"
                                        "    answer.$\n}\n");
     TIDE_CHECK(offers(answer, "status") && offers(answer, "body"));
@@ -8809,6 +8820,16 @@ TIDE_TEST(lsp_functions_send_and_spawn)
     TIDE_CHECK(!offers(op_session, "Open"));
     open_document(ACTS "void Host() { Session.Open(); }\nsystem Fight(Body body) { if (body.radius > 20) Host(); }\n");
     TIDE_CHECK(has(last_sent(), "'Host' calls Session.Open, and the match runs the same on every machine"));
+    // A task, started as the code that calls the function could: an async function is offered there, nothing is
+    // wrong with the function or the system that calls it, and a view is told at its call
+#define LATER "async void Later(int n)\n{\n    await Wait.Ticks(n);\n}\n"
+    TIDE_CHECK(offers(complete(ACTS LATER "void Soon()\n{\n    $\n}\n"), "Later"));
+    open_document(ACTS LATER "void Soon() { Later(2); }\nsystem Fight(Body body) { if (body.radius > 20) Soon(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(ACTS LATER "void Soon() { Later(2); }\nsystem Fight(Body body) { if (body.radius > 20) Soon(); }\n"
+                             "view Show(Body body) { if (body.radius > 20) Soon(); }\n");
+    TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Soon' starts 'Later', a task that changes the match"));
+#undef LATER
 #undef ACTS
 }
 
