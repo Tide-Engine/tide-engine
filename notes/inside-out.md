@@ -591,3 +591,20 @@ checks pass. Integrated Inside Out HTML SHA-256 is
 `c10808dbe0d78fcf976aca136860da2bc6dbe82eacb4295a58495d9f551d0d5f`;
 the current thumbnail and doorway WAV hashes above are unchanged. No CI was
 dispatched.
+
+Source `0fa243a2` was pushed to `dev` and deployed directly to the existing
+Fly site as release 260, image `deployment-01M4P75RDBACPVV6P25S6HRV16`.
+Deployment/machine health checks pass. Anonymous Inside Out page and thumbnail
+requests return 200 with the exact integrated hashes, retaining noindex,
+COOP same-origin and COEP require-corp. The public inline pack contains the
+exact current doorway WAV and none of the previous WAV bytes. The collaborative
+preview navigates to the updated URL; snapshot inspection still fails inside
+the preview client.
+
+The downloaded published bytes pass the complete two-player WebGPU fixture
+with `wss://relay.tide-engine.dev` in 62.4 s. Nearby partner clipping and distant
+off-screen movement preserve exact local framing; smooth maker/camera travel,
+canonical interior parity, moved-shell context, recursion, admission, shared
+commands, progression, shelf and phone touch pass without runtime/browser/
+graphics errors. The probe uses a controlled frame clock. Physical phones,
+cross-machine NAT and human latency remain unmeasured. No CI was dispatched.
