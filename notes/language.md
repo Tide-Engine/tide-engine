@@ -1,5 +1,136 @@
 # Language features, as tidec builds them
 
+## Functions and methods start tasks, 2026-10-11
+
+The owner's two standing rules (a function does what the code that calls it
+could, with an error only at a call from code that can't; no "not yet" where a
+feature could work) and no word of theirs on this one: the lead agent said it
+would lift the restriction and the owner didn't object. Every rule is the
+agent's pick, Provisional in `docs/spec.md` (Functions and blocks; Tasks). It
+was the first of the lobby package's engine limits (`notes/lobby-package.md`).
+
+**Surface.** An async function called as a statement in a plain function or a
+method starts a task, as in a system. No new syntax.
+
+**Checker** (`check.c`). `check_task_call` lets an inheriting function through
+(`inherits`) and notes `decl.starts_tasks`, `starts_at` and `starts_what`
+("starts 'Countdown'") on it, the fields a system's own start always set. An
+operator and `Interpolate` are refused where the start is written, with
+messages of their own; a frag or vert keeps the old one. The call is still a
+`task_call`, with the function as `from`.
+
+- **Which world.** A task's world is `decl.task_side`, which follows from what
+  the task does, what it awaits or starts and what the functions it calls do;
+  a function that starts a decided task acts in that world (`acts[0]` or
+  `acts[1]`, with "starts 'X', a task that changes the match" as its `what`).
+  Each depends on the others, so `settle_task_sides` settles them together to a
+  fixed point, from `check_acts`, before its errors: `mark_act_callers`, then
+  an async caller's side from a callee's acts, an async caller's from what it
+  awaits or starts, and a plain starter's acts from its task's side. It only
+  assigns where nothing was decided; what disagrees is said by the loops that
+  always said it (`check_acts`, `resolve_tasks`). It runs only in a program
+  where a function starts a task, so no other program's errors change order.
+- **The errors are `check_acts`'s**, at each call from code with abilities of
+  its own, exactly as a send's: a view or a local handler calling what starts a
+  match task, the match calling what starts a local one, `Sample` and
+  `Sanitize`, a frag or a vert, an operator or `Interpolate`, a parallel loop's
+  step and a comparison. `check_acts` also looks at callees that only start
+  tasks nothing decides (`tasks`), which have no `acts`. `check_audio_bodies`
+  says "start tasks" for an `audio` declaration.
+- **A task nothing decides** (`TASK_EITHER`) starts in the world of whatever
+  calls the function. `decl.runs_in[2]`, an async function's worlds, is filled
+  for functions and methods that start tasks too, from their callers
+  (`runs_world`, in `resolve_tasks`' loop, over `c->calls`), and a task's
+  `runs_in` comes from its starter's.
+- **The schedule.** `check_acts` sets `starts_tasks`, `spawns` and
+  `writes_text` on a system, view or handler that calls such a function, what
+  `check_task_call` sets for a start written in it: one thread, in order.
+  `mark_act_callers` carries `starts_tasks` through callers, and its early run
+  (before systems' bodies) makes a grid foreach whose step calls one go in
+  order (`own_cell_only_expr`). `call_acts` counts the call as one that acts.
+- **A task's singleton through a function** (`param.task_own`,
+  `check_task_params`). A task's component and singleton parameters are
+  `task_ref`: not kept in its frame, got again from the world each time it goes
+  on. A start had to pass the caller's own parameter, which a function's never
+  was. A function's **singleton** parameter is now taken, marked `task_own`,
+  and `check_task_params` carries the mark to the parameters of functions that
+  pass theirs on to it, then requires every call to pass a parameter of its own
+  (a system's, a task's `task_ref`, or a function's `task_own`): a copy is the
+  error, at the call, with the line that starts the task. This is what the
+  lobby's `CreateLobby(mut LobbyClient client, ...)` needed. A function's
+  **component** parameter is still refused, with a note that says why: code
+  that runs for an entity holds copies of its components (`gen_entity_copies`
+  stores and reloads them around a start), a function's may be any entity's,
+  and the task loads the one of the entity it belongs to.
+
+**Codegen** (`codegen.c`). `takes_task(m)` is a plain function or method with
+`starts_tasks`. It's handed, after `tide_scene` and before `tide_dice`:
+`const tide_entity tide_task_this, const bool tide_task_this_local, const
+tide_entity tide_task_scene` (what a task belongs to), and where both worlds
+call it (`task_either`: `runs_in[0] && runs_in[1]`) also `tide_world
+*tide_task_w, const bool tide_task_local`. Its worlds go through the
+parameters there were: `takes_local` is also true of one whose callers run
+locally, `takes_world` of one that has callers at all (a local task reads the
+match, so it's handed `const tide_world *tide_w`), and `changes_world` of one
+only the match calls.
+
+- **What a call passes** (`gen_routine_call`): `task_owner(g, local)`, which is
+  a task's own `tide_this, tide_this_local, tide_scene`, a function's own
+  `tide_task_*`, or for a system, view or handler what `gen_task_start` always
+  wrote (the entity it runs for, and its scene when that's of the task's
+  world). `has_local` and `has_world` say whether the calling code has `tide_l`
+  and `tide_w`: a local handler has no `tide_w` and the match's code no
+  `tide_l`, and a function that starts tasks is handed `NULL` there, the only
+  calls that pass one. `own_routine(g)` is the function whose own code is being
+  generated, through functions that take an Action, which are copied into
+  their caller and use the caller's names.
+- **The start** (`gen_task_start`, with `gen_task_start_in` the block it always
+  wrote): in a function, the task's own world, or for a task nothing decides
+  the worlds the function runs in: one, both behind `if (tide_task_local)`, or
+  none, where nothing that runs calls the function, no world has a table for
+  the task, and only the arguments are worked out (`(void)(...)`), so a
+  package's functions a game never calls still compile without a warning.
+- **Order in the file.** A function that starts a task fills the task's frame,
+  whose type is known once the tasks' code has been generated once
+  (`gen_tasks`). So `gen_routines` leaves `takes_task` functions out and
+  `gen_task_routines` writes them inside `gen_tasks`, after the frames and the
+  declarations of the start functions; everything else calls them through
+  `gen_routine_prototypes`' declarations.
+- `call_keeps_order` counts a call of one that gives a value, as one that sends.
+
+**A program where no function starts a task generates the C it did, byte for
+byte**: old and new tidec over every source list in `build/debug`, with
+`--layout` and without: 265 of 272 the same, five that use what's new and the
+old compiler refuses (`tidec_e2e_fetch`, `tidec_e2e_function_tasks`,
+`lobby_try`, `tide_lobby_menu`, `tide_lobby_relay`), and `last_light`'s two
+failing with both, run outside the game's folder.
+
+**Tests.** `compiler/tests/e2e/function_tasks` (three tests, natively and on
+the web: a function's start, two through another function, a sum's left to
+right, a struct's method's, an Action function's and its block's, each in the
+order written and waiting in the match's table; a task that rolls, the same in
+a second world; a task's own call of a function that starts another; a task a
+fuse through a function, ending with its fuse; a crate a task spawned joining
+its arena and going with it; the local world's from a view through one
+function and two, from a view of the match's entities, each task its entity's
+and gone with it, and from a local handler, which has no match to hand on; one
+task nothing decides started by the same function from the match and from this
+machine; two functions nothing calls). `compiler/tests/errors/function_tasks_*`,
+13 files, a diagnostic each (`async_start_in_function`, which pinned the
+refusal, is gone). Editors: `lsp_functions_send_and_spawn` (nothing was hidden:
+completion always offered async functions in a function; the diagnostics at a
+view's call are checked).
+
+**Validation** (Windows, Node 24, with the request's time limit of the same
+day, `notes/assets-and-files.md`): warning-free native and web debug builds;
+2,230 of 2,230 native and 2,199 of 2,199 web tests, 37 of 37 relay tests, and
+the docs production build. Linux, macOS, MinGW, Android and the sanitizers
+were not run here, and no workflow was dispatched.
+
+**Not built:** a function's component handed on to a task (above); a method's
+own value (`this` of a singleton's method) handed on; `Snap`, `Scene.Load` and
+`Scene.Unload` in a function; cancelling a task (no design).
+
 ## T? fields, 2026-10-11
 
 The owner asked for them ("we have optional types or whatever but not fields
@@ -476,7 +607,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Editors:** completion offers `Spawn` and `Send` in a function or a method, with the events of both worlds, and an entity's `Add`, `Remove`, `Destroy` and `Send` after its dot there (`passed` in `list_members`, and the routine's branch of `complete_expression`, `compiler/lsp/analysis.c`), not in an operator, an `Interpolate` or an `audio` declaration, and never `Snap`. They were hidden in every function, async ones too, which could always send. `lsp_functions_send_and_spawn` checks them, and the diagnostic at a view's call.
   - **A dropped value warns, and `_ = value;` drops one on purpose** (built 2026-10-11, both the owner's, from `request.SetHeader(...)` written as a statement, which gave a request nobody kept). `check_stmt`'s `S_EXPR` notes a function's or method's call whose type isn't void, an error or failable (`checker.dropped`), and `warn_dropped_values`, after `warn_unused_locals`, warns for those `call_acts` says do nothing: it has to wait, as whether a function draws, calls C or acts is known once every body is checked. `_ = value;` is the parser's (`parse_simple`): a `var` named `_dropped_<line>_<column>`, marked `discard` and read, so a value dropped goes through everything a variable's does (a call's order, an `await`, text and lists) and generated C needed nothing. No game in the repository had such a call. Tests: `compiler/tests/warnings/dropped_value.tide`.
   - **Session calls and `Clipboard.Copy` in a function or a method** (built 2026-10-11; the owner, asked whether to lift "functions can't call Session yet": "yes lets improve the session stuff on Tide"). They're this machine's acts: `check_session_call` and the clipboard's check let an inheriting function through and `note_act(c, true, ...)` with "calls Session.Open" or "calls Clipboard.Copy", as a command's send does, so `mark_act_callers` and `check_acts` need no rule for them and the errors are theirs (the match, `Sample`, a frag, a parallel loop's step, a comparison); `check_acts` words the match's as "the match runs the same on every machine" for a `what` that starts with "calls ". An operator and `Interpolate` are refused where written. Generated C needed nothing: `takes_local` is true of `acts[1]`, so the function is handed `tide_l`, which `gen_session_call` and `tide_request_copy` already name. "A statement of its own" still holds in a function. `session.room` and a whole `Session` as text stay refused in functions and methods (`singleton_param_session_room`, `_text`, `_append`): the room is beside the `Session` value, in the local state, and a helper gains no implicit lookup; making the room part of the value is the runtime's side and wasn't done. tidels offers `Session.` and `Clipboard.` there (`decides_session`). Tests: `tidec_e2e_session_main` (a function a function calls, a struct's method, the clipboard, a local handler's function), `compiler/tests/errors/session_in_function`, `clipboard_in_function`, `session_function_in_sample`, `session_in_operator`; `singleton_param_session_operation`, which pinned the refusal, is gone; `lsp_functions_send_and_spawn`.
-  - Not built: `Snap`, `Scene.Load` and `Scene.Unload` and starting tasks in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards.
+  - Not built: `Snap`, `Scene.Load` and `Scene.Unload` in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards. Starting tasks in a function is built since: Functions and methods start tasks, at the top.
   - Provisional, awaiting the owner: everything under Functions and blocks in the spec. The owner's own words cover that it's bare, inherited from the caller, and an error only at a call from a place that can't; that it's all six operations and methods too is my reading of "there are depend on who calls them", said of `Spawn` and `Destroy`.
 - `virtual` and `override` follow C# (agreed 2026-10-05; `docs/spec.md`, Mods: Decided for what's agreed, Provisional for the picks made to build them). `virtual` before a declaration with code says another package can replace it, and `override` before one replaces the virtual declaration of that name and those parameters, while compiling. They're the first step of modding, and for any package. What's built, and what code relies on:
   - **The words** are read where `local` and `async` are (`at_replace_word` in `compiler/src/parser.c`): before a declaration's word or a function's type, and `virtual` before a method in a type's body. Data, constants, `extern` and the settings are refused before the declaration is read (`replace_refusal`), which then goes as it would without the word. After `override` a declaration's name can be qualified (`new_named_decl`, `parser.overriding`): `decl.override_name` is what's written, and `name` and `at` its last part.

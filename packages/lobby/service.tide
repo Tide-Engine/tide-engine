@@ -107,10 +107,11 @@ string ServiceOf(LobbyClient client)
 }
 
 // A request to the service, as the player whose `secret` this is, with a
-// JSON `body` or none.
-async ServiceAnswer Call(string method, string url, string secret, string body)
+// JSON `body` or none. One that isn't answered within `limit` seconds wasn't
+// reached, as one that couldn't connect.
+async ServiceAnswer Call(string method, string url, string secret, string body, float limit)
 {
-    mut var request = Web.Request(url).SetMethod(method);
+    mut var request = Web.Request(url).SetMethod(method).SetTimeout(limit);
     if (secret != "") request = request.SetHeader("Authorization", $"Bearer {secret}");
     if (body != "") request = request.SetHeader("Content-Type", "application/json").SetBody(body.ToBytes());
     var sent = await request.Send();

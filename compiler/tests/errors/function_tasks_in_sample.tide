@@ -1,0 +1,16 @@
+// expect: Sample runs outside the simulation, and 'Soon' starts 'Later'
+// expect: it does on line 7
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+void Soon() { Later(); }
+input PlayerInput
+{
+    bool jump;
+    Sample()
+    {
+        Soon();
+    }
+}
+scene Main { }

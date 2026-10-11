@@ -21,6 +21,7 @@ typedef enum tide_io_error {
     TIDE_IO_STORAGE_UNAVAILABLE = 8,
     TIDE_IO_INVALID_DATA = 9,
     TIDE_IO_FAILED = 10,
+    TIDE_IO_TIMED_OUT = 11, // A request's own time limit passed with no whole answer
 } tide_io_error;
 
 typedef void (*tide_io_entry_fn)(void *user, const char *path);
@@ -63,9 +64,14 @@ typedef struct tide_io {
     // a fetch's, which fetch_forget lets go, and never TIDE_REQUEST_INVALID either. poll is false while
     // it's going; true consumes it, with its error, or NONE, the answer's
     // status and its body, allocated as a fetch's and under the same limit.
-    // Redirects are followed as a browser's fetch follows them.
+    // Redirects are followed as a browser's fetch follows them. `timeout` is
+    // the seconds the whole of it may take, from begin to the answer's last
+    // byte, redirects among them, by a clock that never steps back: 0 for no
+    // limit, and never negative or more than TIDE_REQUEST_TIMEOUT_MOST. Past
+    // it, poll gives TIDE_IO_TIMED_OUT and no answer, and the provider stops
+    // and frees what the request held.
     uint32_t (*request_begin)(void *user, const char *method, const char *url, const char *headers, const uint8_t *body,
-                              uint32_t size);
+                              uint32_t size, float timeout);
     bool (*request_poll)(void *user, uint32_t ticket, tide_io_error *error, int32_t *status, uint8_t **data, uint32_t *size);
 } tide_io;
 
@@ -80,6 +86,8 @@ typedef struct tide_io {
 // that's no "Name: value", a body past TIDE_FETCH_LIMIT): polling it is
 // TIDE_IO_INVALID_DATA at once. Providers never give it.
 #define TIDE_REQUEST_INVALID 0xFFFFFFFEu
+// The longest a request's time limit is, in seconds: a longer one is this long.
+#define TIDE_REQUEST_TIMEOUT_MOST 1000000.0f
 
 typedef struct tide_io_void_result {
     tide_io_error error;
@@ -142,7 +150,9 @@ void tide_web_fetch_forget(const tide_io *io, uint32_t ticket);
 // whatever its status: its status and its body, a List<byte> in the scratch
 // area. `ok` is false only when no answer came: TIDE_IO_INVALID_PATH for a
 // URL that isn't one, TIDE_IO_INVALID_DATA for a request that can't be sent
-// as written, TIDE_IO_FAILED for the rest.
+// as written, TIDE_IO_TIMED_OUT when its `timeout` passed first, and
+// TIDE_IO_FAILED for the rest. `timeout` is the request's own, in seconds
+// (SetTimeout): 0 or less, or no number, is no limit.
 typedef struct tide_web_answer {
     tide_list body;
     int32_t status;
@@ -150,5 +160,6 @@ typedef struct tide_web_answer {
     bool ok;
 } tide_web_answer;
 
-uint32_t tide_web_request_begin(const tide_io *io, tide_str url, tide_str method, tide_str headers, tide_list body);
+uint32_t tide_web_request_begin(const tide_io *io, tide_str url, tide_str method, tide_str headers, tide_list body,
+                                float timeout);
 bool tide_web_request_poll(const tide_io *io, uint32_t ticket, tide_web_answer *answer);

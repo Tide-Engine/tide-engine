@@ -57,6 +57,12 @@ static int check_fetches(tide_local *local)
         "a header's name that's no token is InvalidData",
         "a URL that isn't http:// or https:// is InvalidPath",
         "a request nobody answers is Failed",
+        "a request with a time limit that's never answered is TimedOut",
+        "an answer that stops in its body is TimedOut at the limit too",
+        "an answer within the limit is the answer",
+        "a limit of 0 or less is none",
+        "the limit stays through the calls after it, and a field sets it",
+        "a request after one that timed out is answered",
     };
     for (size_t i = 0; i < sizeof requests / sizeof requests[0]; i++) {
         fetch_check((local->Fetches.requests >> i & 1) == 1, requests[i]);
