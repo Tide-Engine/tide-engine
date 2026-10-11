@@ -177,6 +177,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `packages/box2d/` | `notes/box2d.md` |
 | `packages/box3d/`, resident state | `notes/box3d.md` |
 | `packages/rooms/` | `notes/rooms-package.md` |
+| `packages/lobby/`, the client of the relay's lobbies and its menu | `notes/lobby-package.md` |
 | Reload/migration runtime, CLI serving and generated layouts | `notes/hot-reload.md` |
 | `compiler/lsp/`, `tools/` | `notes/editors.md` |
 | Temporary runtime maintenance, generated-C boundary, CPU skinning/pose contracts | `notes/runtime-ownership.md` |

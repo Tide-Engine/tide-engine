@@ -1,0 +1,99 @@
+# The lobby package
+
+What's built, what code relies on, the tests, the gaps, and which decisions are the owner's. `AGENTS.md` has the rules every session needs and the index of these files. The service it's the client of is in `notes/webrtc-and-rooms.md` (Lobbies on the relay); the menu it's modelled on is in `notes/rooms-package.md`.
+
+## What it is
+
+`packages/lobby/` (built 2026-10-11), namespace `Lobbies`, three files of Tide and no C: lobbies and a quick match for a game, as a client of Tide's own lobby service and a menu over it. A game lists `lobby` in its `tide.packages`.
+
+- `lobby.tide`: the data (`LobbyInfo`, `LobbyMember`, `LobbyEntry`, `LobbyOptions`, `LobbyQuery`, `LobbyChange`, `LobbyIdentity`, `LobbyAnswer`, `LobbyListing`, `MatchRequest`, `MatchTicket`), the local singleton `LobbyClient`, the four slots as `virtual` functions, what a game asks as plain functions, the flows as tasks, and the views `Follow` and `Serve`.
+- `service.tide`: Tide's own service as the slots ask it: the JSON each request is written as, `Call`, the readers, and `Escape` for a URL's parts.
+- `pages.tide`: the menu, with `Begin`, `Pages` and a `virtual` function for each page.
+
+**The owner's decisions** (2026-10-11): a new package that comes with tide, with `rooms` unchanged beside it; four slots (identity, lobby, matchmaking, transport), each replaceable apart by another package's `override`, picked for a build by `#if` lines in `tide.packages`; a lobby as a group of members with a match optionally attached, a party being a lobby with none; matchmaking shaped as a ticket, with find-or-create as its first form; parties and a real queue not ruled out; immediate-mode pages, each a `virtual` function, customized by the theme, by overriding a page, or by `tide eject`; Tide's own service over plain HTTP with JSON (`Web.Request`, `Json`), with Tide's rooms as its transport; `Main` staying the match's scene with the menu over a live match. No Steam package is built.
+
+**Everything else is Claude's pick, Provisional**, and listed under Picks below.
+
+## The slots
+
+Each is `virtual` functions whose bodies are Tide's own service. The identity, lobby and matchmaking functions are `async`, take `LobbyClient` to read (never `mut`) and give an answer; only the flows change `LobbyClient`. What code relies on:
+
+- **Identity:** `IdentitySignIn(client, fresh)` gives a `LobbyIdentity` (`id`, `name`, `secret`, and `failure` with no `id`). Tide's own reads `IdentityFile()` (`lobby-identity.json` under the game's saved files; `""` keeps none), or asks the service for a player (`POST /v1/players`) and writes the file. `fresh` asks for a player of this run's own, kept nowhere.
+- **Lobby:** `LobbyCreate`, `LobbyList`, `LobbyJoin`, `LobbyQuickJoin`, `LobbyLeave`, `LobbyUpdate`, `LobbySetMember`, `LobbyKick`, `LobbyTransfer` and `LobbyWatch`, each a request of `relay/lobbies.mjs`. `LobbyWatch(client, id, version)` is the relay's held `GET`: the flow `Watch` asks again each time it's answered, which is how a member sees changes and how the relay knows it's there.
+- **Matchmaking:** `TicketStart(client, request)`, `TicketCheck(client, ticket)` and `TicketCancel(client, ticket)`, over a `MatchTicket` (`id`, `status`: `Searching`, `Found` or `Failed`, and the `lobby` it ends in). Tide's own is `LobbyQuickJoin` with the request's `mode` and `attributes` as the filter and as the made lobby's data, so its ticket is `Found` or `Failed` at once and `TicketCheck` is never reached. The flow `Search` asks `TicketCheck` for as long as a ticket says `Searching`, which is what a queue's would.
+- **Transport:** `MatchOpen()` (`Session.Open`), `MatchAddress(session, room)` (the room's code once the session is open, `""` before), `MatchJoin(address)` (`Session.Join`) and `MatchLeave()` (`Session.Start`). Plain functions: they're the session's calls, which a function makes since 2026-10-11.
+- **The slots are replaced apart, with one tie:** Tide's own lobby functions send `client.me.secret`, so they go with Tide's identity, or one that brings a secret the relay takes (16 to 128 letters, digits, `-` and `_`). Another service's lobbies with Tide's rooms, or Tide's lobbies with another transport, need nothing of each other: a lobby's `match` is text the transport wrote and reads.
+- **Where and whose:** `ServiceUrl()` (`https://relay.tide-engine.dev`), `ServiceGame()` (`Application.title`), and `LobbyClient.service`, which a host sets where the address is only known as the program runs (the tests' port). Tide code reads no environment, so `TIDE_RELAY`, which `platform/src/rooms.c` reads for rooms, isn't read here.
+
+## What code relies on
+
+- **A function can't start a task, so what a game asks is queued.** `CreateLobby`, `JoinLobby` and the rest are plain functions, as a page (a `virtual` function) calls them: each adds a `LobbyAsk` to `LobbyClient.asks`, and the view `Serve`, after `Pages` and `Follow`, starts the flow for each. So a request goes out in the frame it was asked in, after the frame's views.
+- **An answer to something nobody waits for is dropped by `epoch`.** `LobbyClient.epoch` counts the lobbies asked for and left. A flow is started with it, and one that finds it moved does nothing with its answer but leave a lobby it joined (`Settle`, `Search`). That's cancelling without a handle to a task: `CancelLobby`, `LeaveLobby` and `Drop` only add one.
+- **One lobby is asked for at a time:** `busy` is `Creating`, `Joining` or `Searching` from the call to `Settle`, and the calls that ask for a lobby do nothing meanwhile, or in a lobby. A member's and an owner's changes aren't in line: each is a request of its own, and `Apply` keeps the newest version of the lobby whichever answer comes first.
+- **Leaving is done here before the service knows:** `LeaveLobby` forgets the lobby at once and sends the request after. One that never arrives costs nothing: the relay takes out a member who stopped asking.
+- **`Watch` gives a lobby up after `WATCH_TRIES` (5) answers in a row that aren't one,** a second apart: `Drop` with `Unreachable`. A refusal that says the player is out (`Kicked`, `NotMember`, `NotFound`, in `Out`) drops it at once, with its own line. A request has no time limit (`Web.Request`), so a service that accepts the connection and never answers isn't noticed.
+- **Two programs of a game on one machine are two players.** They share `lobby-identity.json`. The relay says `already: true` when a join, or a quick join, was by a player who was in that lobby before it asked; a flow that wasn't in it (it only asks from outside one) takes that as another program playing as its player, signs in `fresh`, and asks again (`Join`, `Search`). A player who restarts the game within the relay's 45 seconds and rejoins the same lobby is taken for a second program, and joins as a new player while the old one is swept out.
+- **The lobby's match, in `Follow`,** each frame, from a few fields: `hosting` (this machine's match is the lobby's, or is being opened to it), `leaving` and `opening` (what the transport was asked on the way there, once each), `match` (the match this machine is in, as the lobby names it), `left` (a match it left or lost, which isn't joined again by itself) and `told`/`telling` (what the owner last asked the lobby's match to be). `StartMatch` only sets `hosting`. An owner that's hosting with no `MatchAddress` yet leaves a match it had joined for one of its own (`MatchLeave`: someone else's match isn't its to open, which a machine started with `--join` is in), then asks `MatchOpen`; one whose match was open already (`--host`) asks nothing. With an address it asks the lobby to name it, and is in the match when the lobby says so. A member joins what the lobby names unless it's `left`, and leaves when the lobby names none. An owner whose lobby still names a match it left asks it to name none. `MatchLost` (the `Disconnected` handler) sets `left`, so a match that can't be joined isn't tried in a loop: **Rejoin the match** clears it.
+- **The menu is the rooms package's shape:** `Begin` decides once where a machine starts and works out `playing`; `Pages` draws the page that's up as a `GUILayout.Modal`, or the Menu button; a page that follows another in the same frame is drawn then (Join, Browse, Searching, Title, Lobby is the order). Escape on the lobby's page only closes it where this machine is in the lobby's match: with no match there's nothing behind it to go to.
+- **In the tests' frames, a page that Escape brought up has no focus until Tab,** and one that came up by itself (a lobby that was made) or from another page's button has it on its first button: `menu_test.c`'s counts of Tab go by it. A scripted run of the standard host had the focus on the first button after Escape too, so a script's counts are one less there.
+- **Names:** every type starts with `Lobby`, `Match` or `Ticket`, and the singleton is `LobbyClient`, so a game that lists `rooms` too, whose singleton is `Rooms.Lobby`, imports both namespaces (`tide_lobby_beside_rooms`). `Title`, `Tagline`, `MenuButton`, `TitlePage` and `JoinPage` are in both packages: an override names its package (`override string Lobbies.Tagline()`).
+- **Tide's own JSON:** a struct for each body, in `service.tide`. `Json.Write` writes every field, so `LobbyUpdate` writes a part for each thing that changes (`NameSaid`, `MaxSaid` and so on) and joins them (`Merged`): a key that's left out stays as it is on the relay. `LobbyInfo` reads `public` as `listed` (`[Json("public")]`).
+
+## The relay's API, as it changed for this
+
+`relay/lobbies.mjs` (see `notes/webrtc-and-rooms.md`), each with tests in `relay/lobbies.test.mjs`:
+
+- `POST /v1/players` makes a player, `{id, secret}`, with a secret of 24 random bytes: the one request that says no secret. Local Tide code has nothing to make a secret of (its generator isn't seeded, and repeats in a run with no window).
+- `remove`, a list of keys, in `/member` and `/update`, takes keys away as a `null` value does: `Json.Write` has no `null`.
+- `already: true` in a join's answer and a quick join's, when the player was in that lobby before it asked. A quick join now answers with a matching lobby the player is in, with or without room, before it looks for another.
+
+## Tests
+
+- `tide_lobby_menu` (`test/game.tide`, `menu_test.c`), natively and under Node for the web: a game that overrides the identity, lobby and matchmaking slots with answers made from what they're asked, a frame or a few later, as another service's package would, and draws `SearchPage` itself. Six tests: where the pages leave a machine by how it started; the pages by the keyboard (Play alone, Resume, Create, Copy, Ready, Start, the room's code told to the lobby, End, the door, Leave, an ID typed and a full lobby); a member following the lobby's match (joining it, losing it, Rejoin, leaving, the owner ending it); a machine in a match it joined leaving it from the title, and leaving it before it opens one of its own for a lobby, and one whose match was open asking nothing; what becomes of a lobby (a second program's player, the owner's calls, Kick's button, being kicked, a service that stops answering, an answer nobody waits for); a ticket that searches before it's found, the game's own page, a search that finds nobody, and the list with More.
+- `tide_lobby_relay` (`test/relay.tide`, `relay_check.h`, `relay_test.c`, started by `test/relay.mjs` with `createRelay` on the machine's clock) and `tide_lobby_relay_web` (`relay_web.c` in headless Chrome, with `test/relay_routes.mjs` giving `cmake/run_web_served_test.mjs --routes` the relay's lobbies): four players, each a `tide_local` of its own in one program, against the real service. 29 checks: a player made and kept; a second program being the kept player; a lobby made; lists by data; a second program joining as a player of its own, seen by the first through its held answer; member data set and removed; the owner's changes, and a member's refused; a closed lobby; the match attached, joined by the members and ended; a kick while the kicked waits, and no way back; the lobby handed over and its owner leaving; a quick match making a lobby, the next joining it, another mode and a full lobby making others; every lobby gone once left.
+  - **Nothing waits a time.** The scenario is one function that leaves at each `WAIT` and comes back the next frame, going on once every player a step concerns sees it; a step not reached in `LOBBY_WAIT_FRAMES` fails with how every player stands. Natively a frame lets a millisecond pass (`breathe`), for the answers' threads. No step waits out the relay's 20 or 45 seconds: those are `relay/lobbies.test.mjs`'s, on its clock.
+  - The session is the host's to say (`tide_local_set_session`), as in the rooms package's tests: no room is opened, and what each player asks of the session is read.
+- `tide_lobby_beside_rooms` (`test/both.tide`): tidec's schedule of a game that lists `rooms` and `lobby` and imports both, with no warning.
+- The docs' examples were compiled by hand with the package, with a second package overriding `LobbyJoin` and `MatchJoin` through `extern` functions.
+- **Tried by hand, with no window** (2026-10-11, Windows): a scratch game that lists the package, `--players 2 --script`, and `node relay/main.mjs` on this machine. The two programs share `lobby-identity.json`. Player 2 left the match such a run starts everyone in (Leave the match), player 1 pressed Quick match and got a lobby, player 2 pressed it and joined as a player of its own, set ready, and player 1's Start the match put both in player 1's room (`AAAAAA`), on the same tick, with the lobby's page behind Menu. The pictures were looked at: each page fits 640 by 480. That's the transport with real sessions, which the tests only read the requests of.
+
+- Validation on Windows (2026-10-11): 2,190 of 2,190 native and 2,161 of 2,161 web debug tests, 37 of 37 relay tests, and the docs production build.
+
+## Picks (Provisional, awaiting the owner)
+
+- The namespace `Lobbies`, every name in it, and three files.
+- One singleton, `LobbyClient`, for the service's state and the menu's.
+- The slots' functions and their shapes: answers as structs with a `LobbyFailure`, `LobbyClient` handed to read, `LobbyUpdate` taking a `LobbyChange` with a `sets` flag for each field.
+- **Identity:** the service makes the secret; it's kept in a file, in plain text; and a second program on the machine becomes a player of its own when the service says its player is there already. The alternative was no file while a game is developed, which `#if DEBUG` would have picked, but a game whose code reads `DEBUG` can't join a release build's matches.
+- The ready flag as the member's `ready` key, `"1"` or absent.
+- A quick match's `mode` as the lobby data key `mode`, beside the request's `attributes`.
+- **The match:** the owner starts it by hand, with no rule about who's ready; a member who joins later joins the match too; End the match takes every member out of it; a lobby's kick takes the kicked machine out of the match by its own doing, with no `Session.Kick`.
+- The menu's pages and words, six lobbies to a Browse page, Escape on the lobby's page doing nothing with no match, and Leave the match on the title of a machine that's in someone else's match with no lobby.
+- `Explain` as the one place failures are worded, and `NewLobby` and `QuickRequest` as what the buttons ask for.
+- 5 tries, a second apart, before a lobby that can't be asked about is given up.
+
+## Not built
+
+- **The relay with lobbies isn't deployed.** Until the relay on Fly is updated (the owner's), `ServiceUrl()`'s default answers no lobby request, and the menu says "Couldn't sign in to the lobby service." A game points `ServiceUrl()` at `node relay/main.mjs` meanwhile.
+- A Steam or EOS package, and an identity the service verifies.
+- Parties that outlast a lobby: `LobbyClient` has one lobby. `seats` goes through to the relay, and a party's members would each join what's found. The relay allows a player four lobbies, for a party and the match's.
+- A queue: tickets are found at once.
+- Lobby chat, and an owner's page for the lobby's name, size and data (the calls are there).
+- A lobby's member tied to the match's player: a kick from the lobby and a `Session.Kick` are apart, and a host migration that changes the room's code isn't followed.
+- A scrolling list (the GUI has no scroll area), and `TIDE_RELAY` for the service's address.
+- Android, Linux and macOS runs of the tests: CI's.
+
+## Engine limits met
+
+None was fixed in the compiler: each has a way around that's small, and none of the fixes would have been.
+
+- **A function or method can't start a task** (`docs/spec.md`, Tasks): the `asks` queue and `Serve`, above. It also means a game's page can't `await` anything.
+- **An override has the parameters of what it replaces,** and code has no singleton it isn't handed: another service's slot functions keep their state in C, or in `LobbyClient`'s fields, which they're only handed to read. The test's own service had to answer from its arguments alone.
+- **`Json.Write` writes every field and has no `null`,** and a struct has no optional field: bodies in parts, joined as text, and `remove` on the relay.
+- **Local code has no source of secrets:** `Random` in local code is stirred by frame lengths, which a run with no window repeats. The relay makes the secret.
+- **Tide code reads no environment variable or command-line argument:** `LobbyClient.service` for a host to set.
+- **No way to cancel a task or a request from code:** `epoch`.
+- **A request has no time limit and an answer no headers** (`notes/assets-and-files.md`): a held request is all a member has, and a silent service isn't noticed.
+- **`#if DEBUG` in a package splits a game's builds:** not used for the identity.
+- **No URL encoding in the language:** `Escape`, over bytes.
+- **A browser allows six requests at once to one address:** each open lobby holds one, so the seventh tab of a game in one browser waits. The test's four players in one page hold three at most.
