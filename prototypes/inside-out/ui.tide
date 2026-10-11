@@ -20,7 +20,6 @@ local singleton Hands
     int seat = -1;
     int level = -1;
     int serial = -1;
-    int inspect = -1;
     int held = -1;
     bool release;
     float repeat;
@@ -31,6 +30,9 @@ local singleton Hands
     bool music = true;
     bool guide;
     bool reduceMotion;
+    bool pushMode;
+    float blockTime;
+    float portalTime;
 }
 
 void Label(string text, float2 at, float size = 16, Color color = INK, Anchor anchor = Anchor.MiddleLeft)
@@ -104,10 +106,21 @@ bool PaperButton(string text, Rect rect, bool enabled = true, bool accent = fals
 view PrepareHands(Session session, mut Hands hands)
 {
     hands.player = session.player;
+    hands.blockTime = Math.Max(0, hands.blockTime - Frame.dt);
+    hands.portalTime = Math.Max(0, hands.portalTime - Frame.dt);
     GUI.SetTheme(WORKSHOP_THEME);
 }
 
-override string Rooms.Tagline() { return "Two makers. Two scales. One wonderfully impossible workshop."; }
+local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
+{
+    if (cue.seat != hands.seat) return;
+    if (cue.kind == 6) hands.blockTime = 0.20;
+    if (cue.kind == 2) hands.portalTime = 0.36;
+}
+
+string DimensionName(int room) { return room < 0 ? "Workshop" : RoomName(room); }
+
+override string Rooms.Tagline() { return "Two makers. Rooms within rooms. Find a way together."; }
 override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 84, 19, 66, 34); }
 
 override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
@@ -119,7 +132,7 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
     Draw.RoundRect(at, float2(width, 268), 20, PAPER);
     Label("A SMALL ADVENTURE FOR TWO", at + float2(0, -96), 12, TEAL, Anchor.MiddleCenter);
     Label("Make room for each other.", at + float2(0, -56), Screen.width < 550 ? 24.0 : 30.0, INK, Anchor.MiddleCenter);
-    Paragraph("One of you moves the rooms. The other explores inside. Connect doorways, share crates, and find your way out together.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
+    Paragraph("Step into a pocket room and see the workshop beyond its walls. Move rooms with your partner inside, and follow doorways back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
     var buttonWidth = (width - 68) * 0.5;
     if (PaperButton("Host a workshop", Rect(at.x - width * 0.5 + 28, at.y + 64, buttonWidth, 43), session.state == SessionState.Connected, true))
     {
@@ -144,7 +157,6 @@ view Roster(Workshop workshop, mut Hands hands, mut Rooms.Lobby lobby)
         hands.level = workshop.level;
         hands.hint = 0;
         hands.hintOpen = false;
-        hands.inspect = -1;
     }
     if (hands.serial != workshop.serial)
     {
@@ -168,7 +180,7 @@ int KeyDirection(Devices devices, bool edge)
 void DirectionMark(float2 at, int direction, float size, Color tone)
 {
     var step = Direction(direction);
-    var axis = float2(step.x - step.y, (step.x + step.y) * 0.5);
+    var axis = float2(step);
     var cross = float2(-axis.y, axis.x);
     var tip = at + axis * size;
     Draw.Line(at - axis * size, tip, 1.5, tone);
@@ -189,7 +201,7 @@ void Compass(float2 at, int held)
     for (var d = 0; d < 4; d++)
     {
         var step = Direction(d);
-        var axis = float2(step.x - step.y, (step.x + step.y) * 0.5);
+        var axis = float2(step);
         DirectionMark(at + axis * 13, d, 5, held == d ? TEAL : MUTED);
         Label(DirectionKey(d), at + axis * 27, 10, held == d ? TEAL : MUTED, Anchor.MiddleCenter);
     }
@@ -203,9 +215,9 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
     if (lobby.page != Rooms.Page.Playing) return;
     var width = Screen.width;
     var height = Screen.height;
-    bool narrow = width < 760;
+    bool narrow = width < 720;
+    bool compactHeader = width < 1050;
     bool together = Together(workshop);
-    bool small = hands.seat == workshop.puzzle.smallSeat;
     bool playing = lobby.playing && together && hands.seat >= 0 && !hands.journal && !hands.guide;
     var key = devices.keyboard;
     var bottom = height - (narrow ? 140.0 : 64.0);
@@ -232,21 +244,33 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         return;
     }
 
-    Label(small ? "YOU: THE LITTLE MAKER" : "YOU: THE BIG MAKER", float2(left, narrow ? 111.0 : 82.0), narrow ? 11.0 : 12.0, hands.seat == 0 ? AMBER : TEAL);
-    var toolbarY = narrow ? 64.0 : 19.0;
-    if (PaperButton("Puzzles", Rect(narrow ? left + 82 : width - 244, toolbarY, 78, 34))) hands.journal = !hands.journal;
-    if (PaperButton("?", Rect(narrow ? left + 171 : width - 155, toolbarY, 28, 34))) hands.guide = !hands.guide;
-    if (PaperButton(hands.quiet ? "Muted" : "Sound", Rect(narrow ? left : width - 326, toolbarY, 72, 34))) hands.quiet = !hands.quiet;
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var actor = workshop.puzzle.actors[seat];
+        var name = seat == 0 ? "Amber" : "Teal";
+        var who = seat == hands.seat ? $"You: {name}" : name;
+        var location = DimensionName(actor.room);
+        var status = actor.depth > 1 ? $"{location} / {actor.depth} layers" : location;
+        var x = left + seat * (compactHeader ? (width - 28) * 0.5 : 260.0);
+        Label($"{who}  /  {status}", float2(x, compactHeader ? 111.0 : 86.0), narrow ? 10.0 : 12.0, seat == 0 ? AMBER : TEAL);
+    }
+    var toolbarY = compactHeader ? 64.0 : 19.0;
+    if (PaperButton("Puzzles", Rect(compactHeader ? left + 82 : width - 244, toolbarY, 78, 34))) hands.journal = !hands.journal;
+    if (PaperButton("?", Rect(compactHeader ? left + 171 : width - 155, toolbarY, 28, 34))) hands.guide = !hands.guide;
+    if (PaperButton(hands.quiet ? "Muted" : "Sound", Rect(compactHeader ? left : width - 326, toolbarY, 72, 34))) hands.quiet = !hands.quiet;
 
     if (PaperButton("Undo / Z", Rect(left, bottom, actionWidth, 40), workshop.historyCount > 0 && playing) || playing && (key.z.down || key.backspace.down))
         Send(Undo { serial = workshop.serial });
     if (PaperButton("Reset / R", Rect(left + actionWidth + 8, bottom, actionWidth, 40), playing) || playing && key.r.down)
         Send(Reset { serial = workshop.serial });
-    var swap = CanSwap(workshop.layout, workshop.puzzle);
-    if (PaperButton("Swap / E", Rect(left + (actionWidth + 8) * 2, bottom, actionWidth, 40), playing && swap, swap) || playing && key.e.down)
-        Send(Swap { serial = workshop.serial });
-    if (PaperButton("Hint / H", Rect(left + (actionWidth + 8) * 3, bottom, actionWidth, 40), !hands.journal && !hands.guide) || playing && key.h.down)
+    if (PaperButton("Hint / H", Rect(left + (actionWidth + 8) * 2, bottom, actionWidth, 40), !hands.journal && !hands.guide) || playing && key.h.down)
         hands.hintOpen = !hands.hintOpen;
+    var pushY = narrow ? bottom + 50 : bottom;
+    var pushX = narrow ? left : left + (actionWidth + 8) * 3;
+    if (PaperButton(hands.pushMode ? "Push: ON" : "Push rooms", Rect(pushX, pushY, narrow ? 114.0 : 110.0, 40), playing, hands.pushMode))
+        hands.pushMode = !hands.pushMode;
+    var push = hands.pushMode || key.leftShift.pressed || key.rightShift.pressed;
+    if (narrow) Label("or hold Shift", float2(left + 122, pushY + 20), 10, MUTED);
 
     // Every move is a bounded command from this browser's actual player.
     // A held direction waits before repeating, so precise taps stay precise.
@@ -258,25 +282,25 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
     else if (direction < 0) { hands.held = -1; hands.repeat = 0; }
     else if (!hands.release && (edge >= 0 || direction != hands.held || hands.repeat <= 0))
     {
-        Send(Move { serial = workshop.serial, direction = edge >= 0 ? edge : direction });
+        Send(Move { serial = workshop.serial, direction = edge >= 0 ? edge : direction, push = push });
         hands.repeat = hands.held == direction ? 0.16 : 0.28;
         hands.held = direction;
     }
 
     // Pointer controls also make the prototype playable without a keyboard.
     var arrowSize = narrow ? 40.0 : 42.0;
-    var pad = float2(width - (narrow ? 68.0 : 90.0), height - (narrow ? 52.0 : 65.0));
+    var pad = float2(width - (narrow ? 66.0 : 90.0), height - (narrow ? 67.0 : 65.0));
     for (var d = 0; d < 4; d++)
     {
-        var offset = float2(d == 0 || d == 1 ? arrowSize * 0.57 : -arrowSize * 0.57, d == 0 || d == 3 ? -arrowSize * 0.57 : arrowSize * 0.57);
+        var offset = float2(Direction(d)) * arrowSize;
         var at = pad + offset;
         var enabled = playing && !workshop.puzzle.solved;
         if (PaperButton("", Rect(at.x - arrowSize * 0.5, at.y - arrowSize * 0.5, arrowSize - 3, arrowSize - 3), enabled))
-            Send(Move { serial = workshop.serial, direction = d });
+            Send(Move { serial = workshop.serial, direction = d, push = push });
         DirectionMark(at + float2(-1.5, -7), d, 6, enabled ? TEAL : MUTED);
         Label(DirectionKey(d), at + float2(-1.5, 8), 11, enabled ? INK : MUTED, Anchor.MiddleCenter);
     }
-    if (!narrow) Label(small ? "Walk inside. Push crates. Cross matching doors." : "Walk outside. Push rooms. Give your partner a way through.", float2(left, height - 14), 12, MUTED);
+    if (!narrow) Label(push ? (hands.pushMode ? "PUSH MODE  /  Turn off Push rooms to enter a doorway." : "PUSH MODE  /  Shift + direction moves a room. Release Shift to enter.") : "WASD / arrows to walk. Step into a door to enter. Hold Shift to push a room.", float2(left, height - 14), 12, push ? AMBER : MUTED);
 
     if (hands.hintOpen)
     {
@@ -288,8 +312,8 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         Label($"A nudge  /  {hands.hint + 1} of 3", hintAt + float2(-hintWidth * 0.5 + 18, -hintHeight * 0.5 + 21), 12, TEAL);
         Paragraph(hintText, hintAt + float2(-hintWidth * 0.5 + 18, -hintHeight * 0.5 + 48), hintWidth - 36, 14);
         var hintButtons = hintAt.y + hintHeight * 0.5 - 43;
-        Label("Grid: W north/up / D east/right", float2(hintAt.x - hintWidth * 0.5 + 18, hintButtons - 28), 11, MUTED);
-        Label("S south/down / A west/left", float2(hintAt.x - hintWidth * 0.5 + 18, hintButtons - 14), 11, MUTED);
+        Label("W up / D right / S down / A left", float2(hintAt.x - hintWidth * 0.5 + 18, hintButtons - 22), 11, MUTED);
+        Label("Shift + direction pushes a room", float2(hintAt.x - hintWidth * 0.5 + 18, hintButtons - 8), 11, MUTED);
         if (PaperButton(hands.hint < 2 ? "More help" : "Start hints over", Rect(hintAt.x + hintWidth * 0.5 - 126, hintButtons, 108, 29))) hands.hint = (hands.hint + 1) % 3;
         if (PaperButton("Close", Rect(hintAt.x - hintWidth * 0.5 + 18, hintButtons, 65, 29))) hands.hintOpen = false;
     }
@@ -301,7 +325,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         Draw.Shape(Shape { center = at, size = float2(boxWidth, 139), radius = 18, soft = 14, color = Color(0.93, 0.91, 0.78) });
         Draw.RoundRect(at, float2(boxWidth, 139), 18, PAPER);
         Label(workshop.level == LEVEL_COUNT - 1 ? "A workshop well made." : "You made room for each other.", at + float2(0, -38), narrow ? 21.0 : 25.0, TEAL, Anchor.MiddleCenter);
-        Label($"{workshop.puzzle.moves} moves  /  beautifully done, both of you", at + float2(0, -7), 13, MUTED, Anchor.MiddleCenter);
+        Label($"{workshop.puzzle.moves} shared moves  /  another way found", at + float2(0, -7), 13, MUTED, Anchor.MiddleCenter);
         if (workshop.level < LEVEL_COUNT - 1)
         {
             if (PaperButton("Next puzzle / Enter", Rect(at.x - 122, at.y + 18, 244, 43), together, true) || playing && key.enter.down)
@@ -318,7 +342,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("Choose your next workshop together.");
             GUILayout.Label("Changing puzzles resets this one.");
             for (var level = 0; level < LEVEL_COUNT; level++)
-                if (GUILayout.Button($"{level + 1}. {LevelName(level)}"))
+                if (GUILayout.Button($"{((workshop.completed & (1 << level)) != 0 ? "+" : " ")} {level + 1}. {LevelName(level)}"))
                 {
                     Send(ChooseLevel { serial = workshop.serial, level = level });
                     hands.journal = false;
@@ -331,20 +355,23 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         GUILayout.Modal(Anchor.MiddleCenter, hands.guide)
         {
             GUILayout.Label("HOW TO MAKE ROOM");
-            GUILayout.Label("WASD / arrows: move your maker and push.");
-            GUILayout.Label("Follow the diagonal direction compass.");
-            GUILayout.Label("Hints: north/up W; east/right D.");
-            GUILayout.Label("South/down S; west/left A.");
-            GUILayout.Label("Big maker: push the coloured room boxes.");
-            GUILayout.Label("Little maker: explore the room interior.");
-            GUILayout.Label("Matching doors connect adjacent rooms.");
-            GUILayout.Label("Crates change scale through an open door.");
-            GUILayout.Label("Brass circles need crates.");
+            GUILayout.Label("You both explore the same workshop.");
+            GUILayout.Label("Your view follows your maker between rooms.");
+            GUILayout.Label("The containing world is visible beyond the walls.");
+            GUILayout.Label("WASD / arrows: walk and push parcels.");
+            GUILayout.Label("Walk into a room doorway to enter.");
+            GUILayout.Label("Walk out through an edge door to leave.");
+            GUILayout.Label("Hold Shift + direction to push a room.");
+            GUILayout.Label("Touch: turn on Push rooms, then use arrows.");
+            GUILayout.Label("Rooms can carry people and other rooms.");
+            GUILayout.Label("An infinity door can lead into its own room.");
+            GUILayout.Label("Its contents are shared across every visit.");
+            GUILayout.Label("You return beside the entrance you used.");
+            GUILayout.Label("You can enter up to eight layers deep.");
+            GUILayout.Label("Brass circles need parcels.");
             GUILayout.Label("Coloured outlines need their room boxes.");
             GUILayout.Label("Both makers must reach their leaf-marked exits.");
             GUILayout.Label("A switch inside releases a latched room.");
-            GUILayout.Label("E: swap roles at a hatch.");
-            GUILayout.Label("The big maker must stand beside that room.");
             GUILayout.Label("Z: shared undo. R: reset. H: three gentle hints.");
             GUILayout.Label("Talk to each other. There is no time limit.");
             GUILayout.Toggle("Music", hands.music);

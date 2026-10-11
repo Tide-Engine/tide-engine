@@ -6995,6 +6995,65 @@ TIDE_TEST(lsp_completion_keeps_complete_member_chains)
     jb_free(&source);
 }
 
+TIDE_TEST(lsp_asset_type_completion)
+{
+    start();
+    static const char *const declarations[] = {
+        "asset $", "asset Tex$", "asset Anim$", "asset Ski$", "asset\n    $",
+        "[LOD] asset Me$", "namespace Art { asset Tex$ }",
+    };
+    static const char *const types[] = {
+        "string", "Texture", "Clip", "Grid2", "Mesh", "SkinnedMesh", "AnimationCatalog", "Animation", "Cubemap", "List", "Map",
+    };
+    for (size_t i = 0; i < sizeof declarations / sizeof declarations[0]; i++) {
+        open_document(declarations[i]);
+        const char *reply = request("textDocument/completion");
+        for (size_t k = 0; k < sizeof types / sizeof types[0]; k++) TIDE_CHECK(offers(reply, types[k]));
+        TIDE_CHECK(!offers(reply, "int") && !offers(reply, "Pose") && !offers(reply, "Set") && !offers(reply, "component"));
+        TIDE_CHECK(has(reply, "\"insertText\":\"Grid2<Color>\""));
+        TIDE_CHECK(has(reply, "\"insertText\":\"Mesh<${1:Vertex3}>\""));
+        TIDE_CHECK(has(reply, "\"insertText\":\"Map<string, ${1:Texture}>\""));
+    }
+    static const char *const collections[] = {"asset List<$", "asset List<Tex$", "asset Map<string, $", "asset Map<string, Anim$"};
+    for (size_t i = 0; i < sizeof collections / sizeof collections[0]; i++) {
+        open_document(collections[i]);
+        const char *reply = request("textDocument/completion");
+        TIDE_CHECK(offers(reply, "Texture") && offers(reply, "Mesh") && offers(reply, "SkinnedMesh") && offers(reply, "AnimationCatalog"));
+        TIDE_CHECK(!offers(reply, "Animation") && !offers(reply, "Cubemap") && !offers(reply, "Map"));
+        TIDE_CHECK(has(reply, "\"insertText\":\"List<byte>\""));
+        TIDE_CHECK(offers(reply, "byte") == (i < 2));
+    }
+    open_document("asset Map<str$");
+    const char *reply = request("textDocument/completion");
+    TIDE_CHECK(offers(reply, "string") && count(reply, "\"label\"") == 1);
+    static const char *const pixels[] = {"asset Grid2<Col$", "asset List<Grid2<$", "asset Map<string, Grid2<$"};
+    for (size_t i = 0; i < sizeof pixels / sizeof pixels[0]; i++) {
+        open_document(pixels[i]);
+        reply = request("textDocument/completion");
+        TIDE_CHECK(offers(reply, "Color") && count(reply, "\"label\"") == 1);
+    }
+    open_document("asset Map<string, List<by$");
+    reply = request("textDocument/completion");
+    TIDE_CHECK(offers(reply, "byte") && count(reply, "\"label\"") == 1);
+    static const char *const meshes[] = {"Mesh<$", "SkinnedMesh<Cor$", "List<Mesh<$", "Map<string, SkinnedMesh<$", "SkinnedMesh<Vertex3, $"};
+    for (size_t i = 0; i < sizeof meshes / sizeof meshes[0]; i++) {
+        char source[512];
+        snprintf(source, sizeof source, "struct Corner { float3 position; }\nstruct Rig { Animation idle; }\nenum Choice { One }\nasset %s", meshes[i]);
+        open_document(source);
+        reply = request("textDocument/completion");
+        TIDE_CHECK(offers(reply, "Corner") && offers(reply, "Rig") && offers(reply, "Vertex3"));
+        TIDE_CHECK(!offers(reply, "Choice") && !offers(reply, "Texture") && !offers(reply, "Map"));
+    }
+    // A complete type/name, initializer and the next declaration keep their own contexts.
+    open_document("asset Texture logo $;");
+    TIDE_CHECK(!offers(request("textDocument/completion"), "Texture"));
+    open_document("asset Texture logo = $;");
+    TIDE_CHECK(!offers(request("textDocument/completion"), "Texture"));
+    open_document("asset Texture logo = missing;\n$");
+    reply = request("textDocument/completion");
+    TIDE_CHECK(offers(reply, "component") && !offers(reply, "Texture"));
+}
+
 TIDE_TEST(lsp_completion_keeps_deep_block_context)
 {
     start();

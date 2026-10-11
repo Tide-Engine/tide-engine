@@ -1,244 +1,304 @@
 # Inside Out
 
-The owner requested a public two-player cooperative puzzle prototype on
-2026-10-11, inspired by their favourite spatial and discovery puzzle games.
-They accepted the Inside Out idea: one player moves around inside a room that
-the other player can move as a box. The owner selected online play from
-separate browsers and a warm miniature-workshop mood. The prototype's
-particular puzzle rules, levels and presentation are agent design choices
-within that request, not engine or language requirements.
+The owner requested a public online co-op puzzle prototype for two friends
+in separate browsers on 2026-10-11. They chose a warm miniature workshop.
+The first published build assigned one player to the outer workshop and
+one to its room interiors, with twelve introductory puzzles. A follow-up
+briefly changed its presentation to isometric 2.5D.
 
-## Game and campaign contract
+After playing that version, the owner requested polished 2D, harder puzzles
+based on planning and interdependent moves, a shared world without fixed
+roles, free dimension traversal for both makers, and recursion. They chose
+walking into doorways to enter and holding Shift while moving to push rooms.
+They subsequently rejected the simultaneous room overview: each player should
+see their current dimension, with the containing world visible beyond it,
+as in Patrick's Parabox. They also requested improved graphics and a doorway
+sound that feels like entering a box instead of collecting a coin. The
+current presentation implements that follow-up. Its particular layouts and
+puzzle rules are game design choices within the prototype request, not new
+engine or language requirements.
 
-`prototypes/inside-out/game.tide` contains the production movement rules and
-two-seat match. `levels.tide` owns twelve hand-built layouts and their names,
-lessons and three-tier hints. The workshop is a 7-by-7 grid and each room has
-a 5-by-5 interior. Production limits are four rooms and eight crates; authored
-levels use at most three rooms and two crates. Initial state, immutable
-layouts, bounded shared undo history, completion flags and player seats are
-deterministic match state. Room movement preserves interior coordinates.
+## Shared world and recursive rooms
 
-Each facing door is at its room edge's midpoint. Cardinally adjacent boxes
-with compatible door masks connect their interiors. Both the small avatar
-and cargo can cross. Cargo leaving an unmatched door exports to the adjacent
-empty workshop cell. The small avatar cannot enter the workshop this way.
-A workshop crate pushed into a room through a compatible door imports at
-that door's interior edge cell. A second room lets the small partner approach
-the imported crate from behind and push it farther inward. No crate or room
-push chains exist. Walls, boxes, crates and avatars block their corresponding
-destination cells.
+`game.tide` contains a deterministic two-seat match. Both makers begin in
+the outer workshop and keep their amber/teal identities. Each Traveler has
+its dimension, grid position and a bounded entrance trail. No big/small seat
+or role-exchange command remains. Both can inhabit the same room and block
+one another at the same coordinate, regardless of the entrance used.
 
-A latched room moves only while its inner Switch tile has the small avatar
-or a crate on it. It has no timing requirement. Hatch exchanges which seat
-owns the small and large avatars when the small avatar stands on the hatch
-and the large avatar stands cardinally beside the occupied room box.
-Ownership changes alone; crate types, geometry and positions do not.
-Role exchange is an optional social tool, not an artificial completion gate.
+The workshop is 7 by 7 and room interiors are 5 by 5. Limits are four physical
+room shells, eight parcels, four fixed portals and eight entrance layers.
+Room identity is canonical: its interior exists once in match state. A shell
+has a parent dimension and cell. Moving it carries its occupants, parcels
+and contained rooms without changing their interior coordinates. Shells can
+be pushed into other rooms, but placement rejects physical ancestor cycles.
+Fixed doorway references may form cycles or point into their own room.
 
-Completion requires every authored room dock, every inner and outer crate
-target and both avatars' Exit tiles. Targets can be emptied while solving.
-Both avatars start away from Exit, so actions at both scales are necessary
-for every level. Shared undo restores up to 128 successful movement/role
-exchange actions. Reset restores the authored initial puzzle. Solved puzzles
-wait for an explicit Next; undo remains available. Every level is directly
-selectable from the shelf for prototype evaluation.
+Walking into a shell through an enabled facing doorway enters its opposite
+edge cell. Shift changes this to a shell push; parcels are always pushed
+normally. Each action moves one object, with no pulling or push chains.
+Pushing a parcel or shell into another doorway imports it into that room.
+Pushing outward through an interior edge door exports an object beside the
+containing room's physical shell. Walls, makers and occupied destination
+cells block the action. Destination resolution follows at most one gateway,
+so recursive graphs cannot hang the simulation.
 
-There are exactly two real participants and no single-player bot substitute.
-Either absent seat disables gameplay actions. Existing Rooms, Session,
-typed command sender/sequence validation and host migration are used without
-new engine or runtime APIs. Stale board serials cannot carry an action across
-reset, selection, undo, role exchange or player availability changes.
+A fixed infinity doorway refers to an existing interior rather than cloning
+it. Entering a self-reference reaches a different doorway in the same shared
+room. Parcels, switches and makers remain the same objects on every visit.
+The maker records each shell reference or fixed entrance anchor in its trail.
+Walking outward through an edge door pops that trail and returns beside the
+entrance, using a shell's latest location. Further entry at layer eight is
+blocked without changing state; undo remains available.
 
-## Campaign progression
+If a shell changes parent while occupied, exiting it enters the new parent.
+A now-mismatching return prefix is rebuilt from the parent's finite physical
+ancestry, so the maker can leave that parent too. Matching recursive prefixes
+are retained. Popped entries are reset to their defaults for canonical bytes.
+Every movement operates on a trial Puzzle and commits only after all guards
+pass: failed door, collision, depth or cycle checks leave it byte-identical.
 
-1. First delivery separates movement at the two scales: a room dock and an
-   inner crate target must both be filled before the partners exit.
-2. Good neighbours introduces connecting room doors.
-3. Through the doorway introduces parcel transfer between rooms.
-4. A helpful doorstop introduces a persistent crate-held movement switch.
-5. Out for delivery exports a parcel and makes the large partner deliver it.
-6. Return post imports a parcel at a doorway, then assembles the approach
-   room needed for the small partner to push it inward.
-7. The sorting line builds a three-room straight delivery route.
-8. Around the corner turns a parcel south inside the relay room.
-9. Pass the key uses the same parcel to unlock two latched rooms in sequence,
-   then parks the parcel after both boxes reach their docks.
-10. Passing place requires dispatch while two rooms are connected, followed
-    by a Sokoban room-order exchange through a passing bay.
-11. The way home uses a latched room as a ferry, first held by the parcel and
-    later by the returning small partner.
-12. The whole workshop extends the ferry problem with a second outgoing
-    parcel: temporarily unfill the incoming parcel's target, export the
-    outgoing parcel, restore the target, then return the small partner home.
+A latched room moves only while a maker or parcel occupies a Switch tile in
+that room. Switches have no timing requirement. Completion requires every
+shell on its numbered dock in the specified parent dimension, every parcel
+target occupied, every active parcel on a target, and both makers on distinct
+leaf exits. Filled targets can be emptied while arranging a solution.
 
-Every hint starts with a relationship or planning question, then names a
-useful arrangement, then provides the decisive sequence. No hint executes
-actions or changes the puzzle. Puzzle witnesses are not embedded in the
-public playable game.
+There are exactly two real participants, no bot or solo substitute. Either
+absent participant disables gameplay commands. Existing Rooms, Session,
+typed sender/sequence validation and host migration are used without new
+engine/runtime APIs. Stale board serials cannot carry commands across undo,
+reset, selection or participant changes. Shared history retains 128 actions.
+Reset loads the exact authored puzzle. Completion waits for explicit Next.
+All twelve workshops can be selected from the shelf for prototype evaluation.
 
 ## Presentation and controls
 
-At the owner's follow-up request for 3D, the workshop and active room use an
-isometric 2.5D presentation with the same fixed orientation at both scales.
-`iso.tide` projects grid positions into screen space and builds shaded faces
-with Draw.Mesh; `paint.tide` draws raised room boxes with live five-by-five
-miniatures in their open tops, wooden parcel blocks and minifigure makers.
-The larger interior uses high rear walls and low foreground cutaway walls.
-Rendering elevation, shadows and depth ordering do not change the grid rules
-or the simulation. Room tabs on wider screens permit inspection.
-Filled brass circles identify crate targets, coloured numbered outlines
-identify room docks, leaves identify avatar exits, curved arrows identify
-hatches and small locks identify latched rooms. Live miniature switches show
-their occupancy. User controls and room inspection belong to `ui.tide`.
+`paint.tide` draws one top-down scene from the local maker's dimension.
+The workshop is the initial view. Entering a room enlarges its interior,
+with its containing world around the walls in the same scene. That outside
+uses the maker's latest entrance: shell entries resolve their current parent
+and location, and fixed references use their recorded parent and anchor.
+A self-reference can therefore put the same canonical room around itself;
+two makers in the same room can have different surrounding contexts if they
+used different entrances. Room shells retain live nested miniature interiors.
+Recursive drawing is bounded and never duplicates simulation content. The
+simultaneous enlarged room cards and connection-path overview are removed.
 
-WASD/arrows move, E swaps scales, Z/Backspace undoes, R resets, H toggles hints
-and Enter continues after completion. The diagonal touch pad and wide-screen
-board compasses match the fixed projection: W/Up is upper-right, D/Right is
-lower-right, S/Down is lower-left and A/Left is upper-left. Serial changes
-(undo, reset, selection, scale exchange and participant changes) clear the
-local repeat state and require release of a held direction before a new move
-can be sent. Screen buttons offer the same actions and a shelf for all
-puzzles. Hint cards wrap to their available width and size their height from
-the wrapped line count so the tier's full text and buttons stay separated.
-Original audio in
-`sound.tide` and `sfx/` is reproducible with `sfx/make_sounds.py`; sound/music
-toggles are local and volume uses Rooms settings. No audio or presentation
-state enters the match hash.
+The visual treatment uses coloured room frames, richer wood surfaces and
+inset shadows, distinct brass targets, leaf exits, doorway marks and latch
+feedback. Camera transitions, interpolation, shadows, particles and failed
+action feedback are local state only. Reduced motion bypasses transitions,
+movement interpolation and decorative motion.
 
-The prototype joins the admin catalog while its staged page is publicly
-accessible at `/prototypes/inside-out/`. Invited players need no admin session.
-The existing opt-in `TIDE_PRIVATE_PROTOTYPES` and `private_games` staging are
-used; site integration is described in `notes/private-prototypes.md` and
+`ui.tide` provides WASD/arrows, Shift to push a room, Z/Backspace shared undo,
+R reset, H layered hints and Enter to continue. Directions match the screen.
+The Push rooms toggle provides the modifier for touch buttons. After a serial
+change, held directions must be released before sending a fresh action.
+Hints are optional and wrap/grow to fit their text. Default level descriptions
+state objectives without exposing the decisive solving sequence.
+
+Original audio in `sound.tide` and `sfx/` is reproducible with
+`sfx/make_sounds.py`. Entrance, movement, pushes, failed actions, undo, reset
+and completion have soft cues. Sound/music/reduced-motion options are local;
+Rooms settings control volume. No presentation or audio enters the match hash.
+
+The doorway cue uses `enter.wav`, replacing the old ascending three-note swap
+chime with a 340 ms low wooden body and warm filtered rustle. The existing
+kind-2 cue covers entry and exit without changing simulation events. The clip
+is mono 24 kHz PCM16, 8,160 frames, with silent endpoints and no clipped
+samples. Its peak is -16.271 dBFS before the 0.38 playback gain. The other
+seven WAV files, including music, remain byte-identical after regeneration;
+the obsolete `swap.wav` has been removed.
+
+The existing opt-in `TIDE_PRIVATE_PROTOTYPES` builds this game;
+`inside_out_page` and `private_games` stage the page beside its gameplay
+thumbnail. The catalog is authenticated while the playable page remains
+public at <https://tide-engine.dev/prototypes/inside-out/>. Site serving and
+catalog boundaries remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
-## Solvability and validation
+## Solvability and testing contract
 
-`test/solutions.h` contains one manually derived successful witness for every
-authored layout. Uppercase directions act as seat 0; lowercase directions
-act as seat 1. `test/campaign.c` replays every move through the actual generated
-Move command handler in a world with two joined players. It asserts every
-individual move succeeds, both seats and both scales act, and production
-completion becomes true. It then undoes the final action, restores the exact
-initial puzzle with Reset and replays to the same completed puzzle bytes.
-A second test exchanges roles on Return Post and replays with seat ownership
-reversed. No mirror rule implementation or level solver supplies this proof;
-the witnesses establish existence, without claiming minimum move counts.
+The replacement campaign keeps one short introduction, then develops blocked
+pushing stances, parking order, latch handoffs, nested delivery addresses and
+recursive access. Its witnessed successful move counts are:
 
-The simulation fixtures separately cover authorization, malformed and stale
-actions, room contents following a moved box, Switch occupancy, aligned
-doorways and entry pushes, cargo changing scale, blocked destinations and
-non-chain pushes, hatch exchange with undo, every completion condition,
-bounded history, snapshots, packed state and deterministic replay.
+| Puzzle | Moves |
+| --- | ---: |
+| First delivery | 8 |
+| Hold that thought | 21 |
+| Reserved space | 32 |
+| Passing place | 68 |
+| A door to itself | 28 |
+| Return post | 36 |
+| Packed together | 38 |
+| The round trip | 21 |
+| Change of address | 42 |
+| Loan counter | 29 |
+| Shared address | 28 |
+| Borrowed space | 30 |
 
-On 2026-10-11 the scoped native and web debug simulation suites pass all
-fourteen cases, including the campaign witnesses and exchanged-role replay.
-The twelve witnesses take 8, 12, 10, 9, 16, 18, 21, 25, 28, 33, 37 and 59
-successful production moves respectively. Every witness also passes full
-Reset/replay and final-move undo. The move counts describe these witnesses,
-not measured player duration or optimal solutions. Browser and presentation
-validation is recorded below.
+Reserved space requires undocking an initially parked child to clear a parcel
+route. Return post temporarily empties a filled target to recover the stance
+needed to dock its child. Change of address exports before nesting changes
+the parcel's physical destination. Loan counter uses a nested child's north
+export to reach a target whose ordinary pushing stances are blocked, then
+temporarily un-fills another target before exporting and redocking the child.
+Shared address reaches an inaccessible north stance through A-to-B-to-A;
+the partner's completed delivery closes its old return route. Borrowed space
+posts a parcel into the newly nested child to recover the child's docking
+stance, returns the parcel through the partner, and uses a third room's
+recursive doorway to deliver another parcel. Outer walls keep the recursive
+access rooms immovable, preventing the physical north-entrance bypass.
 
-`test/browser.mjs` runs two visible Chrome/Edge players through a local relay
-and actual unordered, unreliable WebRTC data channels. It uses The Last Light's
-DevTools-pipe, bounded browser-process cleanup and serialized frame-control
-helpers, unmodified: they're beside it in `test/` since 2026-10-11, when The
-Last Light was deleted (`notes/private-prototypes.md`); their own unit tests
-went with that game. Both rendered players advance
-one controlled 30 Hz frame together and finish their GPU work before the next
-round. Readiness requires fresh match packets and verified ticks; browser,
-runtime and graphics errors fail the check. Static rendered move-count/title
-crops check shared changes without a game-only debug export or wasm-memory
-inspection. Desktop and phone screenshots remain available for visual review.
+Campaign evidence pins recursive entries in puzzles 5, 8, 11 and 12 (depths
+2, 3, 3 and 3), shell parent changes in 7, 9, 10 and 12, and temporary target
+unfills in 6, 9, 10 and 12. Twenty-one witnessed pushes require the partner's
+sole switch hold: removing that holder and replaying the same production
+command must block without changing bytes or history. These probes establish
+the dependencies in the witnesses; they do not exhaust all possible solutions
+or prove that every layout is impossible with one maker.
 
-The final isometric fixture passes on WebGL and WebGPU in web debug and web
-release with Node 24.21 and muted Chrome on this Windows machine (2026-10-11).
-It verifies waiting for the second player, movement from both keyboard roles,
-partner undo, shared reset, held-key suppression across partner reset/undo,
-release/new-press recovery, the actual eight-move first-puzzle witness,
-synchronized Next progression and a
-real phone touch move received by the partner. Both canvases fill their phone
-viewports; desktop completion and phone captures were visually inspected.
-The CTest entries are `inside_out_play_webgl` and `inside_out_play_webgpu`,
-with 180-second guards and serial scheduling. The fixture controls match time
-to separate software rendering waits from session deadlines; real-time
-transport behavior remains the engine's session/browser-room coverage.
-After merging `origin/dev` at `ebeea92c`, the final debug CTests take 70.33
-seconds on WebGL and 14.21 seconds on WebGPU, within their unchanged guards.
-Native and WASI simulation checks again pass all fourteen cases after the
-incoming confirmed-frame ABI/compiler changes. Every release docs/example,
-sample and prototype page was rebuilt and staged; docs check/build, five
-production HTTP/SEO checks and the complete WebGL example/gallery smoke pass.
-Static captures reuse completed checkpoints;
-gameplay key edges receive one delivered frame, while title/modal typing keeps
-its two-frame settling. Major checkpoints require six fresh verified ticks;
-individual witness moves use two and the completed witness uses six. The
-fixture verifies the resulting completion and progression rather than spending
-extra frames at every unobserved intermediate state.
+`levels.tide` owns all layouts, objectives and three-tier hints.
+`test/solutions.h` stores witnesses that are absent from the public game.
+`test/campaign.c` replays them through actual generated Move command handlers
+in a world with two joined players. Every individual action must succeed,
+both seats must act, and production completion must become true. Final-action
+undo and Reset/replay check exact state restoration. Witness length proves
+existence, not shortest solutions or human difficulty.
 
-Native two-process captures checked the isometric first and final workshops,
-the puzzle shelf, guide and third-tier hint on 1280-by-800 desktop and
-390-by-844 phone layouts. Cutaway walls leave destinations visible; the live
-miniatures include switch occupancy. The direction pad and both desktop
-compasses follow the fixed projection, and hints name the corresponding grid
-keys. Hint cards grow to fit their wrapped text. The catalog thumbnail is a
-capture of the actual first workshop. The game-specific HTML shell preserves
-the embedded pack and runtime while supplying the game's title, warm loading
-background and touch canvas behavior.
-An additional two-process Return Post capture checks a scale exchange: each
-player keeps their amber/teal identity colour, and their role label and active
-interior ownership change to match the exchanged controls.
+Simulation fixtures exercise free entry/exit for both actors, nested shells,
+self-reference and shared interior state, bounded trails and failed actions,
+latch cooperation, authorization, malformed/stale commands, completion,
+shared history, snapshots, packing and deterministic replay.
 
-All eight original source WAVs decode as mono 24 kHz PCM. Their maximum sample
-magnitudes range from 0.144 to 0.319 of full scale. A bounded native two-player
-mixed-audio capture is non-silent and peaks at 0.063 without clipping. These
-checks inspect PCM and mixer output without opening an audio device; subjective
-listening is still part of playtesting.
+`test/browser.mjs` runs the real game in two separate muted Chrome/Edge
+windows through a relay and unordered, unreliable WebRTC channels. It uses
+the repository's existing bounded DevTools-pipe/process cleanup and serialized
+frame helpers, now beside it in `test/`. They moved unmodified from The Last
+Light when that prototype was removed on 2026-10-11; their original unit tests
+left with that game and their history remains in git. Checkpoints require
+fresh verified ticks and packet exchange;
+runtime, browser and graphics errors fail. Rendered label crops verify shared
+actions without wasm inspection or a game-only debug export. The fixture
+controls match time; physical devices, NAT reachability and real-time latency
+remain separate coverage. `TIDE_INSIDE_OUT_RELAY` optionally probes production
+signalling, retaining a local relay by default.
 
-No human pair has yet evaluated whether the late
-puzzles are satisfying or whether discovery and discussion last long enough;
-that is the purpose of this public prototype. Native platforms beyond this
-Windows machine and physical phone hardware remain separate coverage.
+Native two-process scripts and browser captures are kept under ignored
+`build/inside-out-captures/`. Runs use `TIDE_HIDDEN=1`, bounded frames/scripts
+and muted browsers. They never open the owner's audio devices.
 
-## Public deployment (2026-10-11)
+## Earlier published build (superseded)
 
-The feature was committed, merged with `origin/dev` and pushed directly to
-`dev` using the owner's procedure. Incoming compiler, standard-host frame ABI
-and docs changes merged cleanly. The affected native/web game targets and all
-site game/example staging targets were rebuilt; the scoped game, browser and
-site checks above passed again before publication.
+The original isometric twelve-puzzle campaign passed fourteen native and
+WASI fixtures plus WebGL/WebGPU co-op checks. Its witnesses took 8 to 59 moves.
+The owner found those puzzles too easy; those lengths were never a human
+difficulty measurement. That campaign and fixed-role presentation are replaced.
 
-The existing `tide-website` Fly app was deployed with
-`fly deploy --remote-only --ha=false`. Its rolling update completed with a
-healthy machine (version 252), using image
-`deployment-01M4NW4CRPNFH1X3P4MRYWDY2B`. No GitHub workflow was dispatched.
-Anonymous requests to `https://tide-engine.dev/prototypes/inside-out/` and its
-thumbnail both return 200. The served HTML matches the staged/built page
-byte-for-byte (SHA256
-`57a970dbf68a347b5502dca6eec59db4249c88b691a0881ee5e077ac2d39f21a`),
-and the thumbnail bytes match the checked-in capture. The page retains
-`noindex`, same-origin opener isolation and require-corp embedder isolation.
+The initial public Fly deployment succeeded on 2026-10-11, machine version252,
+image `deployment-01M4NW4CRPNFH1X3P4MRYWDY2B`. Anonymous page/thumbnail requests
+returned 200 and the page hash was
+`57a970dbf68a347b5502dca6eec59db4249c88b691a0881ee5e077ac2d39f21a`.
+Two browsers exercised those downloaded bytes with the production relay in
+17.1 seconds. Later independent JSON/text and session changes passed scoped
+integration checks. This evidence describes the earlier build only.
 
-The browser fixture accepts optional `TIDE_INSIDE_OUT_RELAY` for a service
-probe, retaining its local relay by default. A final WebGPU run used the
-anonymously downloaded deployed HTML and `wss://relay.tide-engine.dev`.
-Two separate muted browser windows connected through the production relay
-and passed keyboard actions from both roles, shared undo/reset, held-input
-recovery, the first-puzzle solution, progression and phone touch in 17.1
-seconds (220/210 completed frames). The fixture serves those exact downloaded
-bytes locally and controls match time, as in its standard checks; this probes
-production signalling and peer traffic without claiming physical-device/NAT
-or real-time latency coverage. Captures are in the ignored
-`build/inside-out-captures/production-relay/` directory.
+## Shared-world revision validation, 2026-10-11
 
-While saving this evidence, `dev` advanced with the independent JSON/text
-language feature. That merge was clean. The affected game targets were rebuilt
-again, all fourteen native and WASI cases passed, and the updated web debug
-WebGPU co-op fixture passed in 13.25 seconds. The published artifact remains
-the identical bytes verified above; these later changes are repository
-integration and test/documentation evidence.
+All eighteen game fixtures pass natively and under WASI: sixteen simulation
+cases plus the full twelve-puzzle production-command campaign and its
+identity-swapped replay. Native debug, web debug and web release game builds
+pass without warnings. The final browser fixtures pass on WebGL (32.74 s)
+and WebGPU (17.41 s), covering real two-browser admission, Shift pushing,
+free entry by both makers into one interior, synchronized undo/reset and
+held-input recovery, the first witnessed completion/progression and phone
+touch movement. No runtime or graphics errors were reported.
 
-The final sync also merged the independent owned-asset benchmark evidence and
-the held-input prediction-reuse fix (`822edee7`). The latter touches the
-session dependency: both game targets were rebuilt, all fourteen native and
-WASI cases passed, and the two-browser web debug WebGPU fixture passed in
-12.73 seconds. No prototype conflicts or rule changes were needed.
+Native captures at 1280 by 800, 900 by 800 and 390 by 844 were inspected.
+The final capstone capture shows both makers, a shell physically nested in
+Mint and the Mint/Lilac reference cycle. The refreshed catalog thumbnail
+comes from that actual gameplay capture. A separate self-door capture shows
+the maker entering the same canonical room twice. These are desktop/browser
+viewport checks; physical phones, cross-machine NAT and human difficulty
+remain unmeasured.
+
+The site check has zero errors/warnings; production build, eighteen
+analytics/admin tests and five production HTTP/SEO/access tests pass. The
+staged page, release page and production site copy have identical SHA-256
+`fcd07e6e5347c708a75713e1e6ba8257b37082cade06c8181f1503e289865d7a`.
+The new thumbnail SHA-256 is
+`0db7607f0c8c8c579514a7c9d735fd46dcd8d989cb81df8557ff518fae959920`.
+
+Integration with `origin/dev` through `f4fd43fe` preserved the newly reduced
+prototype catalog and the relocated browser helpers. Only documentation
+conflicted; the fixture import paths merged cleanly. Native eighteen-case
+validation, WASI and both real browser checks pass again (WebGL 26.32 s,
+WebGPU 16.74 s), and all 37 relay/lobby Node cases pass. The site check/build
+and 23 HTTP/admin/analytics/SEO/access tests pass with the new catalog. All
+three current prototype pages were staged; ignored HTML left by the removed
+prototypes was cleared before packaging. The Inside Out page hash is unchanged.
+
+The existing Fly site was updated directly from source `0530c23f` on
+2026-10-11, release 255, image `deployment-01M4NZJJYP3NF97YMDSPHKSDDF`.
+Its machine reached healthy state. Anonymous game/thumbnail requests return
+200 with the exact page and thumbnail hashes above; the page retains noindex,
+COOP same-origin and COEP require-corp. Two separate muted browsers exercised
+the downloaded published bytes with `wss://relay.tide-engine.dev` on WebGPU
+in 16.5 seconds, including join, shared controls, undo/reset, completion and
+phone touch. This uses the fixture's controlled frame clock and does not
+claim physical NAT or human latency coverage. No CI workflow was dispatched.
+
+## Focused-view revision validation, 2026-10-11
+
+The per-maker camera and material/audio changes leave the campaign and match
+rules unchanged. All eighteen simulation/campaign cases pass natively and
+under WASI. Native debug, web debug and web release game targets build without
+warnings. Inspected native captures at 1280 by 800, 900 by 800 and 390 by 844
+show one focused scene, the physical containing world, nested capstone rooms
+and the changed containing Mint on self-entry. The new catalog thumbnail comes
+from `focus-capstone-desktop-1.png`.
+
+Both real two-browser fixtures pass: WebGL 125.63 s and WebGPU 46.96 s,
+with no runtime, browser or graphics errors. They compare independent
+Workshop/Mint views, the canonical interior reached through opposite doors,
+actual outside geometry before/after an occupied-shell push, and physical
+versus self-recursive containing worlds. Entry/exit, partner undo/reset,
+held-input recovery, first-puzzle completion/progression, real shelf
+selection and phone touch all pass. An initial fixture failure compared a
+720 px baseline header with an 800 px return: height-dependent backdrop grain
+changed its pixels. Restoring both viewports before the unchanged strict
+comparison fixed the test; the intended puzzle selection was already correct.
+
+A bounded, device-free 330-frame native two-player run captured the actual
+entry and exit mix with music disabled through the normal guide. Each 5.5 s
+48 kHz stereo capture contains two isolated threshold cues. Correlation with
+the upsampled source is 0.99999955, measured gain is 0.379992, global peak is
+-24.675 dBFS, and neither mix clips. No audio device was opened; this verifies
+the asset and mixer path rather than a human listening judgment. The source
+`enter.wav` SHA-256 is
+`6dd808ceb4bad8a85c56ca231312e1c6608b93e8c8382d3dffc2b9677c115dda`.
+
+The site check has zero errors/warnings; its production build, eighteen
+analytics/admin tests and five production HTTP/SEO/access tests pass. Release,
+staged and production-site HTML are identical with SHA-256
+`593221e6e4a00a449cbfdefb6508383f07cf35cbf7217b3e37315bd096138f14`.
+The refreshed thumbnail SHA-256 is
+`adb64454b74621e664244b23931bfee1bcc01c1c21290ab6a18525745cceca3d`.
+
+Source `f8f61e9e` was merged/pushed to `dev` after local validation; `origin/dev`
+had no newer changes. The existing `tide-website` Fly app was updated directly,
+release 256, image `deployment-01M4P1D8MP14MTP7X08VBF1594`. Deployment checks
+passed and the machine reached healthy started state. Anonymous published
+game/thumbnail requests return 200 with the exact hashes above, retaining
+COOP same-origin, COEP require-corp and noindex. The collaborative preview
+points at the public URL. No CI workflow was dispatched.
+
+Two separate muted browsers exercised those downloaded published bytes on
+WebGPU with `wss://relay.tide-engine.dev` in 44.9 s: admission, independent
+dimension cameras, canonical interior parity, moved-shell surroundings,
+self-recursive entry/exit, shared undo/reset and held-input recovery,
+completion/progression, shelf selection and phone touch all pass with no
+runtime/browser/graphics errors. This uses the controlled frame clock;
+physical phones, cross-machine NAT and human latency remain unmeasured.
