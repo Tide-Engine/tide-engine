@@ -2,6 +2,11 @@
 
 Automatic texture compression (2026-10-11): Assets, Meshes and textures, and the spec explain automatic eligible color BC1/BC3 assets, lossiness, exact Raw/RGBA fallback, prepared mips and bounded whole-image GPU residency. They distinguish GPU savings from the current pack-size increase and unbuilt mip streaming. Implementation evidence and final validation are in `notes/textures.md`.
 
+Sample playback hints (2026-10-11): Editors clarifies that inlay parameter
+labels describe written literals; omitted defaults and named arguments have no
+label. The production docs build passes with the existing allowed missing-example
+placeholders. Checker and editor regression details are in `notes/editors.md`.
+
 Editor review (2026-10-11): the Editors page clarifies Restricted Mode's user
 setting and PATH exclusions, including symlinks/junctions. The docs production
 build and all 215 shared grammar checks pass; implementation, regressions and
