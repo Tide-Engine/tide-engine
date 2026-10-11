@@ -21,9 +21,9 @@ MapLens WorkshopLens(float2 screen, int room)
     var size = float2(width, height);
     var cells = room < 0 ? OUTER_SIZE : INNER_SIZE;
     var side = Math.Min(size.x - 24, size.y - 62);
-    // Frame the local dimension only, with one interior tile of outside
-    // context. The partner's position never changes this scale or center.
-    var tile = Math.Max(5, room < 0 ? side * 0.96 / cells : side / (cells + 2));
+    // Fixed room framing includes a slice of a maker beside its outer shell.
+    // The partner's position never changes this scale or center.
+    var tile = Math.Max(5, room < 0 ? side * 0.96 / cells : side / (cells + 6));
     var origin = center + float2(0, 9) - float2((cells - 1) * tile * 0.5);
     return MapLens { center = center, size = size, origin = origin, tile = tile };
 }

@@ -303,3 +303,13 @@ with the tested integrated hashes; the catalog retains all four prototypes.
 Two-browser gameplay of the downloaded page through the production relay
 passes, including fixed local framing while the partner goes off-screen.
 No CI was dispatched.
+
+Inside Out nearby-maker/icon revision (2026-10-11): its catalog description
+now explains the glimpse of a partner beside the current room. The refreshed
+gameplay thumbnail shows the wider fixed containing-world context and box/
+player goal icons. Public serving and catalog authentication remain unchanged;
+Underfoot, Inside Out, CRACKED and Two Forks are retained. Svelte check has
+zero errors/warnings, the production build passes, and eighteen analytics/
+admin plus five HTTP/SEO/access tests pass. All 64 playable pages and four
+prototype thumbnails match their release/staged/packaged copies. Final
+hashes and game-specific evidence are recorded in `notes/inside-out.md`.

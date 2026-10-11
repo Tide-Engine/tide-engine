@@ -362,10 +362,10 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("Its contents are shared across every visit.");
             GUILayout.Label("You return beside the entrance you used.");
             GUILayout.Label("You can enter up to eight layers deep.");
-            GUILayout.Label("Brass circles need parcels.");
+            GUILayout.Label("Box icons need parcels.");
             GUILayout.Label("Coloured outlines need their room boxes.");
-            GUILayout.Label("Both makers must reach their leaf-marked exits.");
-            GUILayout.Label("A switch inside releases a latched room.");
+            GUILayout.Label("Both makers must reach player-marked goals.");
+            GUILayout.Label("Box + player switches accept either to open a latch.");
             GUILayout.Label("Z: shared undo. R: reset. H: three gentle hints.");
             GUILayout.Label("Talk to each other. There is no time limit.");
             GUILayout.Toggle("Music", hands.music);
