@@ -1361,6 +1361,10 @@ static bool fits(const signature *s, const expr *e)
         const type want = real_type(s->params[a]);
         const expr *arg = e->args.items[i];
         const bool mut = s->mut & (1u << a);
+        if (arg->enum_shorthand) {
+            if (mut || want.kind != TY_ENUM) return false;
+            continue;
+        }
         if (arg->is_out && (out_untyped(arg) || (s->out & (1u << a)))) continue;
         // A type the program doesn't have, like Grid2<Color> where no grid is one: nothing is it
         if (mesh_type(want)) return false;
@@ -1392,8 +1396,10 @@ static bool default_ambiguous(const int first, const expr *e)
         for (int i = 0; i < e->args.count; i++) {
             const type t = real_type(s->params[mine[i]]);
             const type u = real_type(other->params[theirs[i]]);
-            if (e->args.items[i]->kind != E_DEFAULT || (t.kind == u.kind && t.decl == u.decl)) continue;
-            diag_error(e->args.items[i]->at, "'default' could be %s or %s here: %s.%s has a version for each",
+            if ((e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand)
+                || (t.kind == u.kind && t.decl == u.decl)) continue;
+            diag_error(e->args.items[i]->at, "'%s' could be %s or %s here: %s.%s has a version for each",
+                       e->args.items[i]->enum_shorthand ? "enum shorthand" : "default",
                        signature_type_name(s->params[mine[i]]), signature_type_name(other->params[theirs[i]]), s->owner, s->name);
             diag_note("write the value itself instead, so the call says which version it means");
             return true;
@@ -1432,7 +1438,7 @@ type resolve_builtin_call(const str owner, expr *e)
     int defaults = 0; // `default` arguments take the type of the version the others pick
     for (int i = 0; i < e->args.count; i++) {
         const expr *arg = e->args.items[i];
-        if (arg->kind == E_DEFAULT) defaults++;
+        if (arg->kind == E_DEFAULT || arg->enum_shorthand) defaults++;
         // `out var entered` takes its parameter's type, where a version has an `out` parameter
         else if (out_untyped(arg) && builtin_takes_out(owner, e->name)) continue;
         else if (arg->type.kind == TY_ERROR) return (type){TY_ERROR, NULL};

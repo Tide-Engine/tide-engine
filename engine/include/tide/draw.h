@@ -1,4 +1,5 @@
 #pragma once
+#include "tide/texture_blocks.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -847,6 +848,7 @@ typedef struct tide_draw_texture {
     uint8_t *pixels;
     tide_target_size target; // A target's: the rendered image's size, where the others have a width and a height
     tide_draw_texture_changes *changes; // What changed of its pixels, where its writer says: NULL for the others
+    tide_texture_blocks compressed; // Optional immutable pack mip chain; RGBA remains the fallback.
 } tide_draw_texture;
 
 // TIDE_PIXELS_TARGET is one of a render target's color images, the one its id

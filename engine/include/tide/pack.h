@@ -12,6 +12,7 @@
 #include "tide/map.h"
 #include "tide/mesh.h"
 #include "tide/text.h"
+#include "tide/texture_blocks.h"
 
 // The pack: a game's assets as the values `asset` declarations resolve to,
 // built once (by tidec, or by tide under tide run) and loaded as the game
@@ -148,6 +149,10 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], int32_t
 // offset: the version the draw list tells it by in its header (the content's
 // first bytes, never 0), then its width and its height, then its pixels.
 uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const uint8_t *rgba);
+// Build-tool support: exact RGBA plus validated-format, complete BC mip chain.
+// The blocks are copied; generated game code needs no new runtime call.
+uint32_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height,
+                                 const uint8_t *rgba, tide_texture_blocks blocks);
 
 // A sound's file of `size` bytes as it is (a WAV), shared by `content`. Its
 // block's offset: the version it's told by in its header (the content's
@@ -253,6 +258,9 @@ tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e);
 // them there (TIDE_PIXELS_PACK), with no copy of its own: a list that drew
 // with one isn't rendered after its pack went.
 bool tide_pack_texture_find(uint64_t named, tide_texture *image);
+// Optional borrowed blocks for the current pack, with the same lifetime as
+// texture_find's pixels. Malformed/missing metadata gives no blocks.
+tide_texture_blocks tide_pack_texture_blocks_find(uint64_t named);
 // A cubemap's entry as the value the game reads: a Cubemap of the pack's,
 // which names its declaration as a Texture of the pack's does. One for no
 // entry is no cube.

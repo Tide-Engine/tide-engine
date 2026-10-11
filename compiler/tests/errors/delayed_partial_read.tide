@@ -1,0 +1,4 @@
+// expect: 'value' is read before it's assigned
+scene Main { }
+struct Pair { int a; int b; }
+Pair F() { mut Pair value; value.a = 1; return value; }

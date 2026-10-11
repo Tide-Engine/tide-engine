@@ -1,8 +1,135 @@
 # Language features, as tidec builds them
 
+## Delayed locals and switch expressions, 2026-10-11
+
+The owner approved both features after showing a local `Animation` selected by
+a statement switch. Explicitly typed locals may omit initialization. `var`
+still needs a value. A delayed read-only local is initialized once on every
+reachable path before reading it; `mut` permits subsequent writes. A statement
+switch needs an assigning or terminating default, including for enums.
+
+`assigned.c` tracks definite and possible assignments separately and excludes
+unreachable paths from joins. Read-only delayed locals are whole values;
+mutable structs retain the existing field-by-field assignment analysis.
+Reachable loop back edges are visited again to reject repeated initialization,
+while declarations reset their state for each iteration. Callback blocks are
+also checked for repeating initialization. Sort's existing capture-write
+restriction still rejects initialization of an outer delayed local; a local
+declared inside its comparison can be initialized each invocation.
+Plain assignments and `out` calls initialize a delayed local; compound writes
+and `mut` calls require an initialized mutable value. Generated C gives storage its safe type
+default, including padding, without making a source-level read legal.
+
+Switch expressions use `selector switch { constant => value, _ => fallback }`.
+The checker validates constant labels, duplicate folded values, a single final
+fallback and compatible result types, supplying contextual types to default,
+null and collection literals. Each arm owns its out-local scope. Parsing binds
+switch after unary operators and before arithmetic. Constant folding supports
+integer and boolean results; fully constant expressions also work in field
+defaults and constants. Pattern matching and guards remain unbuilt.
+
+C lowering captures the selector once and evaluates only the selected arm,
+preserving surrounding operand order. An arm captures an owned collection
+value before later operands can change its source, and marks that temporary
+as already copied. Existing task-frame declarations preserve selectors,
+branch-local temporaries and delayed locals across awaits, snapshots and
+replay. No runtime API or ABI changed. GPU and editor details are in
+`notes/shaders.md` and `notes/editors.md`.
+
+Coverage: `e2e/switch_values` checks branch initialization, fresh loop locals,
+mutable struct fields, out calls, Animation values, constant defaults,
+integer/byte/char/enum selectors (including unnamed enum numbers and the
+minimum long), inferred/contextual values, lazy effects and operand order,
+owned list copies, async waits and snapshot replay. The `delayed_*` and
+`switch_value_*` error fixtures pin invalid reads/writes, repeating paths,
+missing fallback, duplicate/type/nonconstant labels and result mismatches.
+Validation on Windows with Node 24.16: warning-free full native and web debug
+builds; integrated suites 2,115/2,115 native and 2,087/2,087 web, including OpenGL,
+WebGL and WebGPU CPU/pixel parity and unchanged determinism checks. The final
+comparison coverage addition passes 32 focused native and 31 web checks,
+including the full native language-server suite, the positive fresh-local
+callback and the existing comparison-capture rejection. All 219 grammar
+checks and the production docs build pass. Linux, macOS, MinGW and Android
+coverage remains CI's job; no workflow was dispatched.
+
+Integration with contextual enum shorthand supplies the selector's enum to
+labels and the destination/common arm type to shorthand results. E2E, GPU
+parity and LSP formatting cover both typed results and inference from an
+ordinary qualified arm. Merge conflicts in the spec and subsystem notes keep
+both feature descriptions; the compiler/editor implementations merge cleanly.
+The subsequent enum-count/cast-guidance merge also keeps both spec/notes
+descriptions. Warning-free native/web rebuilds and 42 focused checks on each
+target pass, covering both features' E2E and errors, enum counts/casts, shader
+goldens, OpenGL/WebGL/WebGPU parity and the full native language-server suite.
+All 219 grammar checks and the production docs build pass again after that merge.
+
+## Contextual enum members, 2026-10-11
+
+Owner-approved `.Idle` shorthand uses the expected enum type. The parser keeps
+an `E_MEMBER` with `enum_shorthand` and an implicit `E_NAME` receiver; no new
+expression kind, runtime ABI or generated representation is needed. The checker
+binds that receiver from typed initialization/assignment, field and parameter
+defaults, returns, ordinary arguments, container elements/keys, comparisons and
+switch labels. Typed conditionals carry the expected enum into both branches;
+otherwise one ordinary branch can supply the other's type. Overload resolution
+defers shorthand like `default`, requires enum parameters and never picks an
+enum by its member names. Missing/non-enum context and ambiguous overloads need
+the qualified spelling. Built-in signatures and fixed Sample filter/wrap
+parameters use the same members; implicit built-in enum names retain generated
+declarations, bold-font and trilinear flags. Checking still runs ordinary
+assignment/capability rules. Source evaluation order and enum numeric values
+are unchanged.
+
+Regression coverage: `enum_shorthand_uses_expected_types` in the native/web
+`enums` E2E, the `text` E2E's built-in enum arguments and return, four
+`enum_shorthand_*` error fixtures, and unchanged GLSL/WGSL goldens for `lit`,
+`maps`, `declared` and `cubemaps`. Editor behavior and validation are recorded
+in `notes/editors.md`. The spec and Language basics page document the feature;
+untyped `var state = .Idle` remains an error. This adds no general backward
+type inference, enum-member search or attribute-specific shorthand contexts.
+
+Final validation after merging dev: full Windows native debug (2,085 tests)
+and web debug (2,057 tests, including WebGL/WebGPU) pass with Node 24.16.0.
+The docs production build and all 217 shared grammar checks pass. Other native
+platforms, sanitizers and Android were not run on this Windows machine.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language
+
+- Enum member counts and cast guidance (2026-10-11, requested by the owner):
+  `EnumType.Count()` is a compile-time `int` counting declared members, including
+  aliases and a member named `Count`. Explicit numeric values, gaps, negative
+  values and backing storage do not change it; `EnumType.Count` remains the
+  user's member. Qualified and built-in enum types work. The existing
+  `named_enum` lookup preserves local/parameter/field shadowing; calls take no
+  value or type arguments and are static, not enum-value methods.
+  `CALL_ENUM_COUNT` retains the source call for editors, folds in integer
+  constant expressions and emits a literal in C. No runtime API or layout
+  changes. E2E enums cover aliases, sparse values, forward declarations, enum
+  initializers, constants, field defaults, array lengths, case labels, built-in
+  enums and advancing/wrapping a zero-based enum. Error fixtures pin arguments,
+  type arguments, instance calls and discarded results.
+  The parser recognizes unambiguous `(Type)value` forms, including qualified
+  targets and grouped operands, rejects them and prints the exact `Type(value)`
+  replacement. Existing parenthesized arithmetic, indexing, postfix steps and
+  failable unwraps keep their parsing; ambiguous following operators remain
+  expressions. Cast int/float/enum/qualified error fixtures and the LSP recovery
+  regression pin the guidance. Enum `Values()` remains unimplemented.
+  Editor and GPU integration are recorded in their notes. Validation: complete
+  native debug (2,094 CTest entries) and web debug (2,066) suites pass after
+  merging dev's contextual enums and texture work, using Node 24.19.0.
+  The first native run caught Count completion leaking into enum case
+  labels; after the editor-only fix, the full 215-test language-server suite
+  was rebuilt and rerun successfully. Shader probes pass on native OpenGL,
+  WebGL and WebGPU, and the production docs build passes. Other native platforms
+  and Android were not run locally; CI was not dispatched.
+
+- Sample argument bookkeeping (2026-10-11): `skinned_arguments` preserves the
+  existing `expr.written` source list when it appends an omitted Playback.Clamp.
+  `expr.args` still contains the same full parameter values; named evaluation
+  order and generated operations are unchanged. This corrects editor hints for
+  the synthetic default; regression and validation are in `notes/editors.md`.
 
 - Conservative release asset pruning (2026-10-10): `codegen_options.strip_unused_assets` defaults false and invokes `program_strip_unused_assets` before any codegen asset metadata is collected. Checking remains unchanged and validates every declaration. The collector follows checked bindings, constants, all emitted helpers/methods, type and omitted argument defaults, operators, statement/expression children and GPU sampler/data metadata; generated types are conservative roots for implicit defaults and runtime Decode. It compacts only `program.assets` in declaration order, with iterative pointer-visited traversal for shared/cyclic graphs. This is declaration pruning, not routine reachability: a reference in an unused helper or type default retains its asset. External C-host/API/pack uses require caller opt-out, which is the default and the automatic CLI/CMake policy whenever C/C++ or prebuilt libraries are present. All seven `tidec_asset_usage` tests passed; asset pack, loader, fingerprint and watch behavior is recorded in `assets-and-files.md`.
 - Decimal numeric literals accept a lowercase `deg` suffix (2026-10-10, approved by the owner): `180deg`, `22.5deg`, `.5deg`, `1e2deg` and digit separators. They are ordinary `float` values in radians; unary minus works normally, and variables still use `Math.Radians`. The suffix is exclusive with `f`/`L`, is not allowed on hex/binary literals, and cannot follow a variable or expression. `lex_number` makes these `T_FLOAT`; `parse_primary` strips separators, reads the degree value directly as binary32 with `strtof`, rejects a nonfinite input, then multiplies through the existing `tide_radians_f`. `expr.is_degrees` and `float_value` keep that single converted value while `text` keeps the full source spelling for editors. C codegen emits a round-tripping, nine-digit single-precision literal; GPU lowering uses the same stored value (`notes/shaders.md`). No runtime API or angle type was added. Lexer tests (`tidec_lexer`), `compiler/tests/errors/degree_*` and `compiler/tests/e2e/math` cover suffix boundaries, malformed forms, overflow, float typing, defaults, arithmetic, named scalar Euler calls and bit-identical results to `Math.Radians` on the CPU, including binary32 input rounding, signed zero, underflow and subnormals.

@@ -15,6 +15,45 @@
 #include "tide/skinned_data.h"
 #include "tide_test.h"
 
+TIDE_TEST(pack_compressed_texture_metadata_is_checked_without_changing_exact_pixels)
+{
+    uint32_t levels, compressed_bytes;
+    TIDE_REQUIRE(tide_texture_blocks_size(128, 128, TIDE_BLOCKS_BC1, &levels, &compressed_bytes));
+    uint8_t *rgba = malloc(128u * 128u * 4u), *blocks = calloc(compressed_bytes, 1u);
+    TIDE_REQUIRE(rgba != NULL && blocks != NULL);
+    memset(rgba, 255, 128u * 128u * 4u);
+    uint8_t hash[32] = {17};
+    tide_pack_builder builder = {0};
+    const uint32_t at = tide_pack_texture_blocks(&builder, hash, 128, 128, rgba,
+        (tide_texture_blocks){blocks, TIDE_BLOCKS_BC1, levels, compressed_bytes});
+    tide_pack_name(&builder, "compressed", TIDE_PACK_TEXTURE, at, 0, 0);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&builder, &size), *copy = malloc(size);
+    TIDE_REQUIRE(bytes != NULL && copy != NULL);
+    tide_pack_header file;
+    memcpy(&file, bytes, sizeof file);
+    const size_t trailer = file.region_at + at + sizeof(tide_block) + 8u + 128u * 128u * 4u;
+    for (uint32_t variant = 0; variant < 7; variant++) {
+        memcpy(copy, bytes, size);
+        const uint32_t invalid = variant == 1 ? 0u : UINT32_MAX;
+        if (variant >= 1 && variant <= 4) memcpy(copy + trailer + (variant - 1u) * 4u, &invalid, sizeof invalid);
+        if (variant == 5 || variant == 6) {
+            const uint32_t next = variant == 5 ? UINT32_MAX : 8u + 128u * 128u * 4u;
+            memcpy(copy + file.region_at + at + offsetof(tide_block, next), &next, sizeof next);
+        }
+        TIDE_REQUIRE(tide_pack_load(copy, size));
+        const tide_texture_ref image = tide_pack_texture_of(tide_pack_find("compressed", TIDE_PACK_TEXTURE));
+        const tide_texture_blocks loaded = tide_pack_texture_blocks_find(image.image.version & TIDE_TEXTURE_NAME);
+        TIDE_CHECK(variant ? loaded.pixels == NULL : loaded.bytes == compressed_bytes && loaded.levels == levels);
+        tide_texture exact;
+        TIDE_REQUIRE(tide_pack_texture_find(image.image.version & TIDE_TEXTURE_NAME, &exact));
+        TIDE_CHECK(exact.width == 128 && exact.height == 128 && !memcmp(exact.pixels, rgba, 128u * 128u * 4u));
+    }
+    tide_pack_unload();
+    TIDE_CHECK(!tide_pack_texture_blocks_find(123).pixels);
+    free(copy), free(bytes), free(rgba), free(blocks);
+}
+
 // Grid2<Color>, as tidec shapes it: cells of 16 bytes, chunks of 32 by 32.
 static const tide_grid_shape color_shape = {16u, 2u, {5u, 5u, 0u}};
 

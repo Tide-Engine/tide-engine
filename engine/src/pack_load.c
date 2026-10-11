@@ -1068,6 +1068,26 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
     return true;
 }
 
+tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
+{
+    if (!named || !pack.texture_places) return (tide_texture_blocks){0};
+    const packed_texture *t = texture_place(named);
+    if (t->named != named || t->clip) return (tide_texture_blocks){0};
+    const uint64_t rgba_bytes = (uint64_t)(uint32_t)t->width * (uint32_t)t->height * 4u;
+    const uint64_t trailer_at = (uint64_t)t->offset + sizeof(tide_block) + 8u + rgba_bytes;
+    tide_block block;
+    memcpy(&block, pack.region + t->offset, sizeof block);
+    if ((uint64_t)block.next < 8u + rgba_bytes + 16u
+        || (uint64_t)t->offset + sizeof block + block.next > pack.file_size
+        || trailer_at + 16u > pack.file_size) return (tide_texture_blocks){0};
+    uint32_t metadata[4], levels, bytes;
+    memcpy(metadata, pack.region + (size_t)trailer_at, sizeof metadata);
+    if (metadata[0] != TIDE_TEXTURE_BLOCK_MAGIC || !tide_texture_blocks_size(t->width, t->height, metadata[1], &levels, &bytes)
+        || metadata[2] != levels || metadata[3] != bytes
+        || 8u + rgba_bytes + 16u + bytes > block.next) return (tide_texture_blocks){0};
+    return (tide_texture_blocks){pack.region + (size_t)trailer_at + 16u, metadata[1], levels, bytes};
+}
+
 tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e)
 {
     if (!e || e->kind != TIDE_PACK_CUBEMAP) return (tide_cubemap_ref){0};
