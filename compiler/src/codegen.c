@@ -15013,7 +15013,8 @@ static bone_weights bone_weights_of(const uint8_t *model, const size_t size, con
 static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned, const size_t skinned_size, tide_mesh_levels *levels,
                         uint8_t key[32])
 {
-    static const char version[] = "tide levels of detail 1";
+    static const char version[] = "tide levels of detail 2, of 500 triangles at the least";
+    _Static_assert(MESH_LOD_TRIANGLES_LEAST == 500, "the levels' version says the fewest triangles one has");
     tide_sha256 s;
     tide_sha256_init(&s);
     tide_sha256_add(&s, version, sizeof version);
@@ -15028,7 +15029,7 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
     const mesh_lod_source source = {
         .vertices = m->vertices, .position = m->position, .normal = m->normal, .uv = m->has_uvs ? m->uv : NULL,
         .uv2 = m->has_uvs2 ? m->uv2 : NULL, .color = m->has_colors ? m->color : NULL, .index = m->index, .indices = m->indices,
-        .apart = bones.first ? bones_apart : NULL, .user = &bones};
+        .apart = bones.first ? bones_apart : NULL, .user = &bones, .triangles_least = MESH_LOD_TRIANGLES_LEAST};
     const mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
     free(bones.first), free(bones.count), free(bones.palette), free(bones.weight);
     if (made->levels == 0) return false;

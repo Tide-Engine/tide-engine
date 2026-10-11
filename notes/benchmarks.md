@@ -1,5 +1,42 @@
 # Benchmarks
 
+## Owned key reductions and validated binding, 2026-10-11
+
+The owner's unchanged 100-character `D:/Projects/Test` scenario now uses
+vectorizable complete validation for owned animation keys and private node
+readers after both separate-binding node tables pass. There is no retained
+proof/cache, skipped content validation, ownership change or interpolation
+arithmetic change. This builds on, rather than replaces, the earlier separate
+export binding and owned-channel-span improvement below.
+
+Three alternating release pairs, after a complete 90-second quiet period,
+exercise idle/run/jump over 30 warmup and 300 measured manual-world frames per
+process at 60 Hz. CPU view recording plus serial palette preparation falls
+from a median of process means of 2.765558 to 1.495396 ms (45.9% lower, 1.85×).
+Before means are [2.649967, 2.774680, 2.765558], after [1.495396, 1.478381,
+1.540453]. All six processes have 100 characters, one mesh command, 5,689,760
+pack bytes, 13,117,656 packed-world bytes, state mask 7, final world hash
+`10175709146634639136` and accumulated palette/influence texture hash
+`5069683498435541530`. No competing builds/tests/benchmarks were detected during
+the measured processes; the guard reset while waiting for other work. Other
+desktop activity and clocks were not controlled. Tick/hash are observed
+separately, without a speedup claim. This excludes GPU rendering, networking,
+rollback, Rooms UI and session startup; no FPS claim is made. The longer run
+and newer pack distinguish these rows from the prior short comparison below.
+Raw rows, harness, identities and reproduction are in
+[owned-animation-scans](../bench/results/owned-animation-scans/README.md).
+
+Full warning-free native debug 2,136/web debug 2,107 suites pass, including
+exact pose bits and OpenGL/WebGL/WebGPU checks. Both complete runtime test
+executables pass again after the final test-only tail-length addition.
+The local installed runtime received only these performance hunks, retaining
+its older drawing interface; a checkout-built harness using a separate library
+compiled entirely from installed sources/headers confirms matching world and
+palette hashes across all three states. Project sources remain untouched.
+Animation assignments still create large component-owned match data, with
+copying, hash, snapshot and networking costs. This improves the existing path;
+state/time plus shared asset selection in the view still avoids those copies.
+
 ## Owned separate-animation grid, 2026-10-11
 
 The owner's `D:/Projects/Test` assigns an `Animation` component field every tick and samples it in a view. A scratch 10×10 grid exposes repeated key-span validation in this owned-model path, independently of the previous default-pose binding rejection. `channel_valid` now scans the already checked spans once, retaining finite/nonnegative/strictly increasing time checks and finite checks on every value/cubic tangent before mutation. Sampling arithmetic, state bytes, hashes and draw counts are unchanged.

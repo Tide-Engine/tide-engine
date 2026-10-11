@@ -1,5 +1,41 @@
 # Assets and local files
 
+## Owned-animation validation and separate binding (2026-10-11)
+
+The owner's existing `D:/Projects/Test` Animation component usage is retained.
+The runtime now expresses full owned/unproven key validation as vectorizable
+reductions and reuses complete node-table validation within separate binding.
+All descriptors/spans, first-time nonnegativity, strictly increasing finite
+times, finite values/tangents and both skeletons' nodes still pass before any
+output mutation. Private node reads remain inside those unchanged opened
+models. Exact name/parent matching, wrapper rejection, source-default copying,
+interpolation expressions and ordinary List/struct ownership stay unchanged;
+no persistent proof or cache is inferred from an owned model's handle/hash.
+
+`skinned_owned_key_scans_check_every_lane_and_tail_before_writing` corrupts
+every scalar of long rotation and cubic rotation/translation tracks, including
+tangents, every key time, signed-zero duplicates and finite unordered times.
+Scratch and heap sampling plus separate-rig sampling reject without changing
+poses or heap hashes. `skinned_binding_validates_all_nodes_before_private_reads`
+independently spoils every node's parent/name bounds and all ten TRS scalars on
+both sides of sample/pose binding, then verifies successful restored binding.
+Existing aliases, snapshots, pack invalidation, wrappers and exact CPU/GPU
+checks remain. Performance evidence and the still-large owned match state are
+recorded in `notes/benchmarks.md`.
+
+Warning-free full native debug 2,136/2,136 and web debug 2,107/2,107 CTests
+pass, including the existing exact pose bits and OpenGL/WebGL/WebGPU checks.
+After the final test-only key-count/tail addition, both complete runtime test
+executables pass again. No compiler, canonical asset layout or API changes.
+Linux/macOS/MinGW/Android/sanitizer coverage and CI were not run here.
+
+Integration with `origin/dev` through `53f92bf1` keeps incoming Session/Clipboard,
+package tooling and the LOD triangle floor. The merge is clean; this runtime
+source is byte-identical to the measured candidate. Both complete native/web
+debug builds pass, followed by 36 native/38 web runtime, skinned/GPU, LOD,
+Session and Rooms checks. The saved timing binaries remain frozen; no timing
+comparison is claimed for the merged compiler/tool changes.
+
 ## Separate animation exports with different defaults (2026-10-11)
 
 Integration with `origin/dev` through `6682a94d` retains incoming automatic texture compression, enum shorthand and omitted-playback editor hints. The notes insertion conflict preserves both entries; runtime binding code had no conflict. Complete native/web builds and the merged docs build pass, followed by 50 native and 56 web dependency checks: the complete runtime suites, animation/catalog/FBX and skinning paths, texture compression, and OpenGL/WebGL/WebGPU draw/shader checks. The earlier performance binaries/results remain frozen; no post-merge timing comparison is claimed.
@@ -42,6 +78,18 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
     - **A light mesh, the test ball of 960 triangles, 40,000 instances.** From 5 to 600 units, a draw each: 5.03 ms whole and 4.07 ms picked (38.4 M triangles to 3.6 M, in 7 draw calls for 2). From 3 to 30 units, where two thirds stay whole: 5.73 ms whole and 6.60 ms picked, so picking costs more than it saves there. As one `tide_draw_instances` call: 2.11 ms far and 5.10 ms near, the best of each.
     - **Where the cost is:** recording 40,000 single draws of a mesh with no levels takes 1.60 ms, and 2.1 to 2.25 ms where each picks: 13 to 16 ns a draw more, for the pick, the level's place, and commands that change level, which `tide_draw_gather_levels` then sorts as the frame is rendered. One instanced call records in 0.44 to 0.52 ms against 0.14 ms with no levels: about 8 ns an instance. `lod_view_kept` keeps the camera's part of the pick between single draws (it was worked out at each, 18 ns a draw more); what's left to take is the gathering. A mesh with no levels records in the time it did (1.59 against 1.60 ms).
     - **So:** it pays by the triangles it takes off. A model of thousands of triangles drawn small wins several times over; one of a thousand triangles, on a GPU this fast, gains little a draw each and wants `Draw.Instanced`, or no `[LOD]`. One GPU, one run: no other machine, backend or a phone was measured.
+  - **No level under 500 triangles** (2026-10-11; the owner, of those numbers: "fixed floor is fine"; 500 is Claude's pick). `MESH_LOD_TRIANGLES_LEAST` in `mesh_lod.h`, which `mesh_levels` in `codegen.c` gives the source as `triangles_least`: `mesh_lod_make` ends the chain where the next level would aim under it, so a mesh of under 1,000 triangles has none and is packed, drawn and recorded as one with no `[LOD]`. A source that says 0 has no floor, which is what the maker's own tests go by. The cache's version text says the number (a `_Static_assert` beside it), so levels made before it are made again. The test models grew for it: `ball.glb` is 9,024 triangles (four levels, of 4,511, 2,255, 1,126 and 563) and `arm.glb` 2,048 (two), and `light.glb` is the old ball of 960, marked and with none. `mesh_lod_makes_no_level_under_the_fewest_triangles` pins the rule, and `lod_assets_have_levels_beside_the_full_mesh` the counts.
+    - **Measured with it** (the same scratch program and machine, once each; whole, then picked a draw each, then picked as one instanced call, in ms; about 39 M triangles whole in each):
+
+      | Triangles | Levels | Instances | 5 to 600 units | 3 to 30 units |
+      |---|---|---|---|---|
+      | 960 | 0 | 40,000 | 6.34, 6.38, 2.98 | 6.82, 6.73, 4.19 |
+      | 3,968 | 2 | 10,000 | 3.58, 2.55, 2.31 | 3.49, 2.86, 2.81 |
+      | 16,128 | 5 | 2,500 | 2.97, 1.58, 0.93 | 3.12, 1.62, 0.95 |
+      | 65,024 | 7 | 600 | 2.88, 1.04, 0.48 | 3.44, 1.35, 1.16 |
+      | 261,120 | 7 | 150 | 2.85, 0.89, 0.51 | 2.80, 0.88, 0.85 |
+
+      Picked is no slower than whole in any row now. The first row's mesh has no levels, so its three numbers are the same draws as an unmarked mesh's (its two a-draw-each numbers differ by the run's noise; the instanced one is faster as one call records in 0.18 ms where 40,000 take 2.2). The machine was busier than for the numbers above, so set rows against each other, not against those.
   - **Validation:** full native debug (2,135 tests) and web debug (2,106) suites pass after merging `origin/dev` through `cac116ff` (texture compression and idle GPU assets among it, in the same renderer and pack files), with the pixel test on OpenGL 3.3, WebGL 2 and WebGPU, and the docs site builds. Linux, macOS, MinGW, Android and the sanitizers are a requested CI run's.
   - **Not built:** a setting in the language for the pixels a level may be off by (`tide_draw_lod_pixels` is there for C); levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. No measurement of a real exporter's model has been made: the fixtures are generated. The first level of the test ball (480 triangles of 960) says it's off by 0.032 of a radius, most of it its normals' and uvs' share, which is where its weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) would be tuned against real art.
 
