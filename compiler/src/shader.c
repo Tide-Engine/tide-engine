@@ -349,9 +349,38 @@ static int leaf_offset(const decl *d, const field *f)
     return n;
 }
 
+// A field declared `T?` in a struct `d`, or in a struct it holds, and the struct it's in: NULL if there's none.
+static const field *optional_field_in(const decl *d, const decl **in)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        type held = f->type;
+        while (held.kind == TY_ARRAY) held = held.decl->fields.items[0].type;
+        if (held.kind != TY_STRUCT) continue;
+        if (held.decl->optional_of) {
+            *in = d;
+            return f;
+        }
+        const field *inner = optional_field_in(held.decl, in);
+        if (inner) return inner;
+    }
+    return NULL;
+}
+
 // Whether the GPU has values of type `t`; says why not, at `at`.
 static bool type_fits(emit *em, const type t, const loc at)
 {
+    // A struct with a T? field: a value or nothing is the CPU's to handle. A component or a singleton with one
+    // is read there a field at a time, and the T? field itself is what's refused (TY_OPTIONAL, below).
+    const decl *holder = NULL;
+    const field *optional = t.kind == TY_STRUCT && !t.decl->optional_of ? optional_field_in(t.decl, &holder) : NULL;
+    if (optional) {
+        refuse(em, at, "'%s' can't go to the GPU: its field '" STR_FMT "' is a T?, and the GPU has no values that may be missing",
+               type_name(t), STR_ARG(optional->name));
+        diag_note("keep what the GPU reads in a struct of its own, with a value and a bool beside it where '" STR_FMT "." STR_FMT
+                  "' is a T?", STR_ARG(holder->name), STR_ARG(optional->name));
+        return false;
+    }
     if (t.kind == TY_STRUCT && t.decl->skin_kind && t.decl->skin_kind != SKIN_TRANSFORM) {
         refuse(em, at, "%s belongs to the CPU: sample and edit a Pose before Draw.SkinnedMesh", type_name(t));
         return false;

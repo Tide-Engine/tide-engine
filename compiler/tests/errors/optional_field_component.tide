@@ -1,0 +1,4 @@
+// expect: fields can't hold components
+component Health { int value; }
+struct Slot { Health? health; }
+scene Main { }

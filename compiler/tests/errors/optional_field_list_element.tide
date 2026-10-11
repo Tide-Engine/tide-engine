@@ -1,0 +1,3 @@
+// expect: what a List holds is always there, so it can't be a T?
+component Targets { List<int?> ids; }
+scene Main { }

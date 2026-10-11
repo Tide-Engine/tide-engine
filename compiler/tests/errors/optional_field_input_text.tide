@@ -1,0 +1,3 @@
+// expect: an input can't hold text
+input Controls { string? name; }
+scene Main { }

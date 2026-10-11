@@ -220,6 +220,7 @@ bool type_blends(const type t)
     if (type_dim(t) >= 2) return type_is_float_based(t);
     if (matrix_dim(t) > 0) return true;
     if (t.kind != TY_STRUCT) return false;
+    if (t.decl->optional_of) return false; // A T? field: a value or nothing, which nothing is between
     if (t.decl->interpolate) return true; // Its own way
     for (int i = 0; i < t.decl->fields.count; i++) {
         const field *f = &t.decl->fields.items[i];
@@ -302,6 +303,8 @@ bool type_assignable(const type to, const type from)
             && skin_catalog_guarantees(to.decl->skin_animations, from.decl->skin_animations)
             && skin_catalog_guarantees(to.decl->skin_skeleton->skin_bones, from.decl->skin_skeleton->skin_bones);
     }
+    // A field declared T?, kept as a struct of the value and whether there is one: what a T? takes
+    if (to.kind == TY_STRUCT && to.decl->optional_of) return type_assignable((type){TY_OPTIONAL, to.decl->optional_of}, from);
     // A value goes where a T? goes: int? best = 5.
     if (to.kind == TY_OPTIONAL && from.kind != TY_OPTIONAL && from.kind != TY_FAILABLE) {
         return type_assignable(to.decl->fields.items[0].type, from);

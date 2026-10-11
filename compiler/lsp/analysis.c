@@ -4795,9 +4795,9 @@ void analysis_type_definition(const int line, const int character, jbuf *out)
         default: t = o->type; break;
         }
     }
-    // What a list, grid or T? holds, and a failable call's value
+    // What a list, grid or T? holds (a field's T? too, as it's kept), and a failable call's value
     while ((t.kind == TY_LIST || t.kind == TY_GRID || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE || t.kind == TY_MAP
-            || t.kind == TY_SET) && t.decl) {
+            || t.kind == TY_SET || (t.kind == TY_STRUCT && t.decl && t.decl->optional_of)) && t.decl) {
         t = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type; // A map's value
     }
     const decl *d = t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_STRUCT
@@ -6027,6 +6027,13 @@ static type list_type(const type element)
     return (type){TY_ERROR, NULL};
 }
 
+// A field's type as code reads it: the T? of a field declared one, which is kept as a struct of its value and
+// whether there is one (decl.optional_of), and any other type as it is.
+static type read_type(const type t)
+{
+    return t.kind == TY_STRUCT && t.decl && t.decl->optional_of ? (type){TY_OPTIONAL, t.decl->optional_of} : t;
+}
+
 static type member_type(const type t, const str member)
 {
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
@@ -6054,7 +6061,7 @@ static type member_type(const type t, const str member)
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
-            if (!field_of(t.decl, i)->hidden && str_eq(field_of(t.decl, i)->name, member)) return field_of(t.decl, i)->type;
+            if (!field_of(t.decl, i)->hidden && str_eq(field_of(t.decl, i)->name, member)) return read_type(field_of(t.decl, i)->type);
         }
     }
     const int dim = type_dim(t);
