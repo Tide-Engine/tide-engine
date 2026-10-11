@@ -1,5 +1,24 @@
 # The docs site
 
+Delayed initialization and switch expressions (2026-10-11): Basics explains
+explicitly typed delayed locals, read-before-assignment and once-only
+initialization, when mut is needed, switch value syntax, final fallback,
+compatible/contextual arm types, scopes and precedence. The spec separates
+the owner's approved design from implemented provisional details and the
+unbuilt patterns/guards. All 219 grammar checks and the production docs build
+pass, using the existing allowed placeholders for unstaged game/example
+pages. Compiler/editor/GPU validation stays in their subsystem notes.
+
+Enum count and cast guidance (2026-10-11): Basics documents `EnumType.Count()`
+as the compile-time number of declarations, including aliases and a member named
+`Count`, and shows explicit conversions plus advancing/wrapping with `%` for
+valid, consecutive zero-based enum values. It explains why sparse/negative/aliased
+values need a different traversal. Editors documents count completion/hover and
+the replacement spelling in parenthesized-cast diagnostics. The spec marks the
+owner's count/conversion decisions as decided; `Values()` remains an open,
+unimplemented proposal. `npm run build` passes with the existing allowed
+missing-example 404s. No site deployment was requested.
+
 Contextual enums (2026-10-11): Language basics and the spec document the
 owner-approved `.Idle` spelling, expected-type contexts and qualified spelling
 for missing context or ambiguous overloads. Editors documents expected enum

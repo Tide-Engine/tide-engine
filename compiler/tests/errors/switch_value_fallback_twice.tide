@@ -1,0 +1,3 @@
+// expect: a switch expression has one '_' arm
+scene Main { }
+int F(int n) { return n switch { _ => 4, _ => 2 }; }

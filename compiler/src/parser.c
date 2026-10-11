@@ -657,6 +657,33 @@ static expr *parse_postfix(parser *p)
 
 static expr *parse_unary(parser *p)
 {
+    // (int)value or (Game.Phase)value: unmistakable cast syntax. Do not
+    // consume operators that can follow a valid parenthesized expression,
+    // such as (phase) - 1, (value)++, (items)[i] or (result)!.
+    if (at(p, T_LPAREN) && peek_at(p, 1)->kind == T_IDENT) {
+        int close = 2;
+        while (peek_at(p, close)->kind == T_DOT && peek_at(p, close + 1)->kind == T_IDENT) close += 2;
+        if (peek_at(p, close)->kind == T_RPAREN) {
+            const tok_kind next = peek_at(p, close + 1)->kind;
+            if (next == T_IDENT || next == T_THIS || next == T_INT || next == T_FLOAT || next == T_CHAR
+                || next == T_TRUE || next == T_FALSE || next == T_DEFAULT || next == T_NULL
+                || next == T_LPAREN || next == T_TILDE) {
+                const token *open = advance(p);
+                const token *name = peek(p);
+                const token *end = peek_at(p, close - 2);
+                const str target = {name->text.ptr, (int)(end->text.ptr + end->text.len - name->text.ptr)};
+                for (int i = 0; i < close; i++) advance(p);
+                const token *value = peek(p);
+                parse_unary(p);
+                const token *last = &p->toks[p->pos - 1];
+                const str operand = {value->text.ptr, (int)(last->text.ptr + last->text.len - value->text.ptr)};
+                diag_error(open->at, "Tide converts values with '" STR_FMT "(value)', not '(" STR_FMT ")value'",
+                           STR_ARG(target), STR_ARG(target));
+                diag_note("write '" STR_FMT "(" STR_FMT ")' instead", STR_ARG(target), STR_ARG(operand));
+                longjmp(p->fail, 1);
+            }
+        }
+    }
     // try Parse(text): binds like a unary operator, as C#'s await does.
     if (at(p, T_TRY)) {
         const token *keyword = advance(p);
@@ -757,6 +784,26 @@ static expr *parse_binary(parser *p, const int min_prec)
 {
     expr *lhs = parse_unary(p);
     for (;;) {
+        if (at(p, T_SWITCH) && min_prec <= 11) {
+            const token *word = advance(p);
+            expr *e = new_expr(E_SWITCH, word->at);
+            e->object = lhs;
+            expect(p, T_LBRACE, "'{' and the switch expression's arms");
+            while (!at(p, T_RBRACE) && !at(p, T_EOF)) {
+                field_init arm = {.at = peek(p)->at};
+                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "_")) advance(p);
+                else arm.value = parse_expr(p);
+                expect(p, T_ARROW, "'=>' after a switch expression's case");
+                vec_push(e->inits, arm);
+                vec_push(e->args, parse_expr(p));
+                if (!accept(p, T_COMMA)) break;
+            }
+            const token *close = expect(p, T_RBRACE, "'}' after the switch expression's arms");
+            e->end = close->at;
+            e->end.col++;
+            lhs = e;
+            continue;
+        }
         if (at(p, T_IS) && IS_PRECEDENCE >= min_prec) {
             lhs = parse_is(p, lhs);
             continue;
@@ -1072,6 +1119,11 @@ static stmt *parse_var(parser *p)
     const token *name = expect_ident(p, "variable name");
     s->name = name->text;
     s->name_at = name->at;
+    if (at(p, T_SEMI) && s->type_name.len > 0) {
+        advance(p);
+        s->delayed = true;
+        return s;
+    }
     if (!at(p, T_ASSIGN)) {
         diag_error(name->at, "local variable '" STR_FMT "' needs an initial value", STR_ARG(s->name));
         longjmp(p->fail, 1);

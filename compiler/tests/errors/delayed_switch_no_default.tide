@@ -1,0 +1,3 @@
+// expect: 'value' is read before it's assigned
+scene Main { }
+int F(int n) { int value; switch (n) { case 1: value = 1; break; } return value; }

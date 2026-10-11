@@ -1,0 +1,5 @@
+// expect: the switch is on E, so its cases are too, not Other
+scene Main { }
+enum E { A }
+enum Other { A }
+int F(E n) { return n switch { Other.A => 2, _ => 4 }; }

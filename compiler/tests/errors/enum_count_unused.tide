@@ -1,0 +1,4 @@
+// expect: this expression does nothing on its own
+enum Direction { North, East }
+scene Main { }
+system S() { Direction.Count(); }

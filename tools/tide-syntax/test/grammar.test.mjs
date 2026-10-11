@@ -83,6 +83,13 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('switch expression arm arrows', () => {
+    const lines = tokenize('int result;\nresult = mode switch { 0 => 1, _ => 2 };');
+    check(lines[1], ['switch', 'keyword.control']);
+    check(lines[1], ['=>', 'keyword.operator.switch-arm', 1]);
+    check(lines[1], ['=>', 'keyword.operator.switch-arm', 2]);
+});
+
 // The probe's line that starts with `start`, after its indentation.
 function probeLine(start) {
     const found = probe.filter(l => l.text.trimStart().startsWith(start));
