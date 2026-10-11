@@ -28,7 +28,7 @@ static void frame(void)
     tide_local_init(&local);
     local.Art.target = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12}};
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     draw_count = 0;
     uint32_t target = 0;
     for (uint32_t i = 0; i < draw.count; i++) {

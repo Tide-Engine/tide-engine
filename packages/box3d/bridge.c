@@ -65,7 +65,8 @@ typedef struct body {
     float step_gravity_scale;
     float step_linear_damping;
     float step_angular_damping;
-    uint8_t unused_too[4];
+    bool rewind;
+    uint8_t unused_too[3];
 } body;
 
 typedef struct box {
@@ -145,10 +146,17 @@ typedef struct physics {
     uint8_t unused_maps[4];
     tide_map parts;
     tide_map sensors;
+    float history_dt;
+    float history_limit;
+    int32_t history_tick;
+    uint8_t history_padding[4];
+    tide_map selected;
+    tide_list pending;
+    tide_list history;
 } physics;
 
 _Static_assert(sizeof(body) == 176 && sizeof(box) == 40 && sizeof(sphere) == 32 && sizeof(capsule) == 36 && sizeof(touch) == 40
-                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 176 && offsetof(physics, moved) == 88,
+                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 224 && offsetof(physics, moved) == 88,
                "box3d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 12
@@ -2036,4 +2044,360 @@ static void relink_arena(void *context, tide_arena *a)
     load_struct();
     live.stamp = (int64_t)tide_arena_stamp(a);
     live.chain = (uint64_t)live.stamp;
+}
+
+// Historical scenes contain plain geometry, never native world pointers.
+typedef struct collider {
+    int64_t body, shape;
+    tide_entity entity, part;
+    int32_t snaps;
+    tide_float3 position;
+    tide_quaternion rotation;
+    tide_float3 points[8];
+    int32_t count;
+    float radius;
+    bool sensor;
+    uint8_t padding[7];
+} collider;
+_Static_assert(sizeof(collider) == 176 && offsetof(physics, pending) == 216, "historical scene ABI changed");
+
+static b3Vec3 scene_vec(const tide_float3 p) { return vec(p); }
+static tide_float3 scene_float(const b3Vec3 p) { return float3(p); }
+
+static bool scene_real(const collider *c)
+{
+    if (c->count < 1 || c->count > 8 || !finite3(c->position) || !finite1(c->radius) || c->radius < 0 || !sound(c->rotation)) return false;
+    for (int i = 0; i < c->count; i++) if (!finite3(c->points[i])) return false;
+    return true;
+}
+
+// The caller supplies a validated native body; geometry remains in its local frame.
+static int scene_read(const world *w, const int64_t native_id, collider **out)
+{
+    *out = NULL;
+    if (!w) return 0;
+    const b3BodyId on = body_of(w, native_id);
+    if (!b3Body_IsValid(on)) return 0;
+    const int count = b3Body_GetShapeCount(on);
+    if (count <= 0 || (size_t)count > SIZE_MAX / sizeof(b3ShapeId) || (size_t)count > SIZE_MAX / sizeof(collider)) return 0;
+    b3ShapeId *shapes = malloc((size_t)count * sizeof *shapes);
+    collider *records = calloc((size_t)count, sizeof *records);
+    if (!shapes || !records) { free(shapes); free(records); return 0; }
+    const int got = b3Body_GetShapes(on, shapes, count);
+    const b3WorldTransform pose = b3Body_GetTransform(on);
+    int used = 0;
+    for (int i = 0; i < got; i++) {
+        const b3ShapeId id = shapes[i];
+        collider c = {0};
+        c.body = native_id;
+        c.shape = handle(id.index1, id.generation);
+        c.position = (tide_float3){(float)pose.p.x, (float)pose.p.y, (float)pose.p.z};
+        c.rotation = turn(pose.q);
+        c.sensor = b3Shape_IsSensor(id);
+        switch (b3Shape_GetType(id)) {
+        case b3_sphereShape: {
+            const b3Sphere shape = b3Shape_GetSphere(id);
+            c.points[0] = scene_float(shape.center); c.count = 1; c.radius = shape.radius;
+            break;
+        }
+        case b3_capsuleShape: {
+            const b3Capsule shape = b3Shape_GetCapsule(id);
+            c.points[0] = scene_float(shape.center1); c.points[1] = scene_float(shape.center2);
+            c.count = 2; c.radius = shape.radius;
+            break;
+        }
+        case b3_hullShape: {
+            const b3HullData *shape = b3Shape_GetHull(id);
+            if (!shape || shape->vertexCount < 1 || shape->vertexCount > 8) continue;
+            c.count = shape->vertexCount; c.radius = 0;
+            const b3Vec3 *points = b3GetHullPoints(shape);
+            if (!points) continue;
+            for (int k = 0; k < c.count; k++) c.points[k] = scene_float(points[k]);
+            break;
+        }
+        default: continue;
+        }
+        if (scene_real(&c)) records[used++] = c;
+    }
+    free(shapes);
+    *out = records;
+    return used;
+}
+
+void b3t_read_colliders(const int64_t handle, tide_list_out *out)
+{
+    collider *records;
+    const int count = scene_read(active, handle, &records);
+    if (count) memcpy(tide_list_out_room(out, (uint32_t)count), records, (size_t)count * sizeof *records);
+    tide_list_out_count(out, (uint32_t)count);
+    free(records);
+}
+
+void b3t_capture_history(tide_rows *rows, physics *p)
+{
+    if (!(p->history_limit > 0)) return;
+    const world *w = at(p->stamp);
+    const tide_entity *entities = tide_rows_entities(rows);
+    for (uint32_t i = 0; i < tide_rows_count(rows); i++) {
+        body b;
+        tide_rows_get(rows, 0, i, &b);
+        if (!b.rewind) continue;
+        collider *records;
+        const int count = scene_read(w, b.id, &records);
+        for (int k = 0; k < count; k++) {
+            records[k].entity = entities[i];
+            records[k].snaps = rows->entities ? (int32_t)tide_entity_snaps(rows->entities, entities[i]) : 0;
+            void *record = tide_list_add(&p->pending, sizeof(collider), TIDE_IN_MATCH);
+            if (!record) { p->history_limit = 0; free(records); return; }
+            memcpy(record, &records[k], sizeof(collider));
+        }
+        free(records);
+    }
+}
+
+// Geometry was captured by the physics step; identity/Snap metadata is final
+// only after the tick's queued changes have applied.
+typedef struct history_frame { int32_t tick; tide_list colliders; } history_frame;
+_Static_assert(sizeof(history_frame) == 8, "history frame ABI changed");
+static void seal_history(void *context, const tide_entities *entities)
+{
+    physics *p = context;
+    const int32_t last = tide_list_count(p->history) - 1;
+    const history_frame *stored = tide_list_at(p->history, last, sizeof(history_frame));
+    if (!stored) return;
+    history_frame frame = *stored;
+    for (int32_t i = tide_list_count(frame.colliders); i-- > 0;) {
+        const collider *stored_c = tide_list_at(frame.colliders, i, sizeof(collider));
+        if (!stored_c) continue;
+        collider c = *stored_c;
+        if (!tide_entity_alive(entities, c.entity) || !tide_entity_alive(entities, c.part)) {
+            tide_list_remove_at(&frame.colliders, i, sizeof(collider));
+            continue;
+        }
+        const int32_t snaps = (int32_t)tide_entity_snaps(entities, c.entity);
+        if (c.snaps != snaps) {
+            c.snaps = snaps;
+            memcpy(tide_list_at_mut(frame.colliders, i, sizeof(collider)), &c, sizeof(collider));
+        }
+    }
+    memcpy(tide_list_at_mut(p->history, last, sizeof(history_frame)), &frame, sizeof(frame));
+}
+void b3t_seal_history(tide_rows *rows, physics *p)
+{
+    if (p->history_limit > 0) tide_rows_after_tick(rows, seal_history, p);
+}
+
+collider b3t_blend_collider(const collider *before, const collider *current, const float alpha)
+{
+    collider c = *current;
+    if (!scene_real(before) || !scene_real(current) || !(alpha >= 0 && alpha <= 1)) return c;
+    c.position.x = before->position.x + (current->position.x - before->position.x) * alpha;
+    c.position.y = before->position.y + (current->position.y - before->position.y) * alpha;
+    c.position.z = before->position.z + (current->position.z - before->position.z) * alpha;
+    c.rotation = tide_slerp_q(before->rotation, current->rotation, alpha);
+    return c;
+}
+
+static b3ShapeProxy scene_proxy(const collider *c, b3Vec3 points[8])
+{
+    for (int i = 0; i < c->count; i++) points[i] = b3RotateVector(quat(c->rotation), scene_vec(c->points[i]));
+    return (b3ShapeProxy){points, c->count, c->radius};
+}
+
+static bool scene_overlap(const collider *c, b3ShapeProxy query, const tide_float3 position)
+{
+    if (!scene_real(c) || !finite3(position)) return false;
+    b3Vec3 points[8];
+    const b3ShapeProxy target = scene_proxy(c, points);
+    const b3Vec3 relative = b3Sub(scene_vec(position), scene_vec(c->position));
+    if (!finite3(scene_float(relative))) return false;
+    const b3DistanceInput input = {.proxyA = target, .proxyB = query, .transform = {relative, b3Quat_identity}, .useRadii = true};
+    b3SimplexCache cache = {0};
+    return b3ShapeDistance(&input, &cache, NULL, 0).distance <= 0.0f;
+}
+
+static found scene_cast(const collider *c, b3ShapeProxy query, const tide_float3 from, const tide_float3 to, const bool ray)
+{
+    found result = {0};
+    if (!scene_real(c) || !finite3(from) || !finite3(to)) return result;
+    const b3Vec3 translation = b3Sub(scene_vec(to), scene_vec(from));
+    const b3Vec3 relative = b3Sub(scene_vec(from), scene_vec(c->position));
+    if (!finite3(scene_float(translation)) || !finite3(scene_float(relative))) return result;
+    if (scene_overlap(c, query, from)) {
+        if (ray) return result;
+        result.body = c->body; result.shape = c->shape; result.point = from;
+        return result;
+    }
+    b3Vec3 points[8];
+    const b3ShapeCastPairInput input = {.proxyA = scene_proxy(c, points), .proxyB = query,
+        .transform = {relative, b3Quat_identity}, .translationB = translation, .maxFraction = 1.0f};
+    const b3CastOutput hit = b3ShapeCast(&input);
+    if (!hit.hit) return result;
+    result.body = c->body; result.shape = c->shape;
+    result.point = scene_float(b3Add(scene_vec(c->position), hit.point));
+    result.normal = scene_float(hit.normal); result.fraction = hit.fraction;
+    return result;
+}
+
+bool b3t_scene_touch(const collider *a, const collider *b)
+{
+    if (!scene_real(b)) return false;
+    b3Vec3 points[8];
+    return scene_overlap(a, scene_proxy(b, points), b->position);
+}
+
+found b3t_scene_ray(const collider *c, const tide_float3 from, const tide_float3 to)
+{
+    found result = {0};
+    if (!scene_real(c) || !finite3(from) || !finite3(to)) return result;
+    const b3Vec3 start = b3InvRotateVector(quat(c->rotation), b3Sub(scene_vec(from), scene_vec(c->position)));
+    const b3Vec3 finish = b3InvRotateVector(quat(c->rotation), b3Sub(scene_vec(to), scene_vec(c->position)));
+    const b3Vec3 direction = b3Sub(finish, start);
+    if (!finite3(scene_float(start)) || !finite3(scene_float(direction))) return result;
+    const b3Vec3 point = {0};
+    if (scene_overlap(c, (b3ShapeProxy){&point, 1, 0}, from)) return result;
+    const b3RayCastInput input = {.origin = start, .translation = direction, .maxFraction = 1.0f};
+    b3CastOutput hit = {0};
+    if (c->count == 1) {
+        const b3Sphere shape = {scene_vec(c->points[0]), c->radius};
+        hit = b3RayCastSphere(&shape, &input);
+    }
+    else if (c->count == 2) {
+        const b3Capsule shape = {scene_vec(c->points[0]), scene_vec(c->points[1]), c->radius};
+        hit = b3RayCastCapsule(&shape, &input);
+    }
+    else {
+        tide_float3 lo = c->points[0], hi = lo;
+        for (int i = 1; i < c->count; i++) { if (c->points[i].x < lo.x) lo.x = c->points[i].x; if (c->points[i].x > hi.x) hi.x = c->points[i].x; }
+        for (int i = 1; i < c->count; i++) { if (c->points[i].y < lo.y) lo.y = c->points[i].y; if (c->points[i].y > hi.y) hi.y = c->points[i].y; }
+        for (int i = 1; i < c->count; i++) { if (c->points[i].z < lo.z) lo.z = c->points[i].z; if (c->points[i].z > hi.z) hi.z = c->points[i].z; }
+        float enter = 0.0f, leave = 1.0f;
+        bool inside = true;
+        if (start.x < lo.x || start.x > hi.x) inside = false;
+        if (direction.x == 0) { if (start.x < lo.x || start.x > hi.x) return result; }
+        else {
+            float near = (lo.x - start.x) / direction.x, far = (hi.x - start.x) / direction.x;
+            float sign = -1.0f;
+            if (near > far) { const float temp = near; near = far; far = temp; sign = 1.0f; }
+            if (near > enter) { enter = near; hit.normal = (b3Vec3){0}; hit.normal.x = sign; }
+            if (far < leave) leave = far;
+            if (enter > leave) return result;
+        }
+        if (start.y < lo.y || start.y > hi.y) inside = false;
+        if (direction.y == 0) { if (start.y < lo.y || start.y > hi.y) return result; }
+        else {
+            float near = (lo.y - start.y) / direction.y, far = (hi.y - start.y) / direction.y;
+            float sign = -1.0f;
+            if (near > far) { const float temp = near; near = far; far = temp; sign = 1.0f; }
+            if (near > enter) { enter = near; hit.normal = (b3Vec3){0}; hit.normal.y = sign; }
+            if (far < leave) leave = far;
+            if (enter > leave) return result;
+        }
+        if (start.z < lo.z || start.z > hi.z) inside = false;
+        if (direction.z == 0) { if (start.z < lo.z || start.z > hi.z) return result; }
+        else {
+            float near = (lo.z - start.z) / direction.z, far = (hi.z - start.z) / direction.z;
+            float sign = -1.0f;
+            if (near > far) { const float temp = near; near = far; far = temp; sign = 1.0f; }
+            if (near > enter) { enter = near; hit.normal = (b3Vec3){0}; hit.normal.z = sign; }
+            if (far < leave) leave = far;
+            if (enter > leave) return result;
+        }
+        if (inside) return result;
+        hit.hit = true; hit.fraction = enter; hit.point = b3Add(start, b3MulSV(enter, direction));
+    }
+    if (!hit.hit) {
+        return result;
+    }
+    result.body = c->body; result.shape = c->shape;
+    result.point = scene_float(b3Add(scene_vec(c->position), b3RotateVector(quat(c->rotation), hit.point)));
+    result.normal = scene_float(b3RotateVector(quat(c->rotation), hit.normal)); result.fraction = hit.fraction;
+    return result;
+}
+found b3t_scene_cast_box(const collider *c, const box *shape, const tide_float3 from, const tide_quaternion rotation, const tide_float3 to)
+{
+    probe p = box_probe(shape, rotation); if (!sound(rotation) || !p.good) return (found){0};
+    p.proxy.points = p.points;
+    return scene_cast(c, p.proxy, from, to, false);
+}
+bool b3t_scene_overlap_box(const collider *c, const box *shape, const tide_float3 from, const tide_quaternion rotation)
+{
+    probe p = box_probe(shape, rotation); if (!sound(rotation) || !p.good) return false;
+    p.proxy.points = p.points;
+    return scene_overlap(c, p.proxy, from);
+}
+found b3t_scene_cast_sphere(const collider *c, const sphere *shape, const tide_float3 from, const tide_quaternion rotation, const tide_float3 to)
+{
+    probe p = sphere_probe(shape, rotation); if (!sound(rotation) || !p.good) return (found){0};
+    p.proxy.points = p.points;
+    return scene_cast(c, p.proxy, from, to, false);
+}
+bool b3t_scene_overlap_sphere(const collider *c, const sphere *shape, const tide_float3 from, const tide_quaternion rotation)
+{
+    probe p = sphere_probe(shape, rotation); if (!sound(rotation) || !p.good) return false;
+    p.proxy.points = p.points;
+    return scene_overlap(c, p.proxy, from);
+}
+found b3t_scene_cast_capsule(const collider *c, const capsule *shape, const tide_float3 from, const tide_quaternion rotation, const tide_float3 to)
+{
+    probe p = capsule_probe(shape, rotation); if (!sound(rotation) || !p.good) return (found){0};
+    p.proxy.points = p.points;
+    return scene_cast(c, p.proxy, from, to, false);
+}
+bool b3t_scene_overlap_capsule(const collider *c, const capsule *shape, const tide_float3 from, const tide_quaternion rotation)
+{
+    probe p = capsule_probe(shape, rotation); if (!sound(rotation) || !p.good) return false;
+    p.proxy.points = p.points;
+    return scene_overlap(c, p.proxy, from);
+}
+
+// Immutable preorder BVH. A missed branch jumps to its end; queries allocate
+// only their short candidate list and preserve the original native handle order.
+typedef struct scene_bounds { tide_float3 min, max; bool valid; uint8_t padding[3]; } scene_bounds;
+typedef struct scene_node { tide_float3 min, max; int32_t collider, next; } scene_node;
+_Static_assert(sizeof(scene_bounds) == 28 && sizeof(scene_node) == 32, "scene index ABI changed");
+static scene_bounds proxy_bounds(const b3Vec3 *points, const int count, const float radius,
+                                 const tide_float3 from, const tide_float3 to)
+{
+    scene_bounds bounds = {0};
+    if (count < 1 || count > 8 || !finite3(from) || !finite3(to) || !finite1(radius) || radius < 0) return bounds;
+    bounds.min = bounds.max = scene_float(points[0]);
+    for (int i = 1; i < count; i++) { if (points[i].x < bounds.min.x) bounds.min.x = points[i].x; if (points[i].x > bounds.max.x) bounds.max.x = points[i].x; }
+    bounds.min.x += (from.x < to.x ? from.x : to.x) - radius;
+    bounds.max.x += (from.x > to.x ? from.x : to.x) + radius;
+    for (int i = 1; i < count; i++) { if (points[i].y < bounds.min.y) bounds.min.y = points[i].y; if (points[i].y > bounds.max.y) bounds.max.y = points[i].y; }
+    bounds.min.y += (from.y < to.y ? from.y : to.y) - radius;
+    bounds.max.y += (from.y > to.y ? from.y : to.y) + radius;
+    for (int i = 1; i < count; i++) { if (points[i].z < bounds.min.z) bounds.min.z = points[i].z; if (points[i].z > bounds.max.z) bounds.max.z = points[i].z; }
+    bounds.min.z += (from.z < to.z ? from.z : to.z) - radius;
+    bounds.max.z += (from.z > to.z ? from.z : to.z) + radius;
+    bounds.valid = finite3(bounds.min) && finite3(bounds.max);
+    return bounds;
+}
+scene_bounds b3t_collider_bounds(const collider *c)
+{
+    if (!scene_real(c)) return (scene_bounds){0};
+    b3Vec3 points[8];
+    const b3ShapeProxy proxy = scene_proxy(c, points);
+    return proxy_bounds(points, proxy.count, proxy.radius, c->position, c->position);
+}
+scene_bounds b3t_box_bounds(const box *shape, const tide_quaternion rotation, const tide_float3 from, const tide_float3 to)
+{
+    const probe p = box_probe(shape, rotation);
+    if (!p.good || !sound(rotation)) return (scene_bounds){0};
+    return proxy_bounds(p.points, p.proxy.count, p.proxy.radius, from, to);
+}
+
+scene_bounds b3t_sphere_bounds(const sphere *shape, const tide_quaternion rotation, const tide_float3 from, const tide_float3 to)
+{
+    const probe p = sphere_probe(shape, rotation);
+    if (!p.good || !sound(rotation)) return (scene_bounds){0};
+    return proxy_bounds(p.points, p.proxy.count, p.proxy.radius, from, to);
+}
+
+scene_bounds b3t_capsule_bounds(const capsule *shape, const tide_quaternion rotation, const tide_float3 from, const tide_float3 to)
+{
+    const probe p = capsule_probe(shape, rotation);
+    if (!p.good || !sound(rotation)) return (scene_bounds){0};
+    return proxy_bounds(p.points, p.proxy.count, p.proxy.radius, from, to);
 }

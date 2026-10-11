@@ -169,11 +169,24 @@ void tide_rows_begin(tide_rows *rows, tide_table *table, const tide_columns *col
                      const uint32_t count, const bool whole, const tide_rows_component *components, const uint32_t component_count,
                      tide_page **held, const char *system)
 {
-    *rows = (tide_rows){table, columns, components, held, system, component_count, chunk, first, table ? count : 0u, whole};
+    *rows = (tide_rows){table, columns, components, held, system, component_count, chunk, first, table ? count : 0u, whole, NULL, NULL};
     for (uint32_t i = 0; i < component_count; i++) {
         const tide_rows_component *c = &components[i];
         if (c->held < 0) continue;
         memset(&held[c->held], 0, (size_t)(c->size / tide_lane_width(c->size)) * sizeof *held);
+    }
+}
+
+void tide_rows_after_tick(tide_rows *rows, void (*finish)(void *, const tide_entities *), void *context)
+{
+    if (!rows->completion) return;
+    *rows->completion = (tide_tick_completion){finish, context};
+}
+
+void tide_rows_finish_tick(tide_tick_completion *completions, const uint32_t count, const tide_entities *entities)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        if (completions[i].finish) completions[i].finish(completions[i].context, entities);
     }
 }
 

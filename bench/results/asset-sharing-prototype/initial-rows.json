@@ -1,0 +1,212 @@
+[
+  {
+    "round": 1,
+    "case": "grid",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:14.7885991Z",
+    "output": "characters=100 pack=5689760 world=13117656 tick_ms=1.453462 hash_ms=0.801349 draw_ms=1.552282 draw_commands=1 hash=10175709146634639136\r\nkeep_ms=0.017654 semantic=5991125559186960660\r\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "round": 1,
+    "case": "grid",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:15.2661044Z",
+    "output": "characters=100 pack=5689760 world=7256 tick_ms=0.013924 hash_ms=0.000267 draw_ms=1.012013 draw_commands=1 hash=333521554642157352\r\nkeep_ms=0.000112 semantic=5991125559186960660\r\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "round": 1,
+    "case": "asset-assign",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:15.3720579Z",
+    "output": "case=asset-assign shared=0 assign_ms=0.102968 write_ms=0.000022 hash_ms=0.151567 heap_bytes=3146600 hash=6187691235229406473 digest=7905670141349505464"
+  },
+  {
+    "round": 1,
+    "case": "asset-assign",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:15.4321535Z",
+    "output": "case=asset-assign shared=1 assign_ms=0.000141 write_ms=0.000021 hash_ms=0.000031 heap_bytes=104 hash=7114561716897664030 digest=7905670141349505464"
+  },
+  {
+    "round": 1,
+    "case": "first-write",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:15.5169810Z",
+    "output": "case=first-write shared=0 assign_ms=0.099769 write_ms=0.000412 hash_ms=0.150359 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "round": 1,
+    "case": "first-write",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:15.6402644Z",
+    "output": "case=first-write shared=1 assign_ms=0.067747 write_ms=0.087551 hash_ms=0.308088 heap_bytes=6293096 hash=1173578338072112073 digest=18304614207522063991"
+  },
+  {
+    "round": 1,
+    "case": "mutable-copy",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:15.6872964Z",
+    "output": "case=mutable-copy shared=0 assign_ms=0.003936 write_ms=0.000023 hash_ms=0.001815 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "round": 1,
+    "case": "mutable-copy",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:15.7343398Z",
+    "output": "case=mutable-copy shared=1 assign_ms=0.004942 write_ms=0.000021 hash_ms=0.001937 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "round": 1,
+    "case": "mutable-edit",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:15.7971445Z",
+    "output": "case=mutable-edit shared=0 assign_ms=0.000022 write_ms=0.073053 hash_ms=0.014010 heap_bytes=2163320 hash=15732147009703116635 digest=1899649707991441479"
+  },
+  {
+    "round": 1,
+    "case": "mutable-edit",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:15.8596642Z",
+    "output": "case=mutable-edit shared=1 assign_ms=0.000020 write_ms=0.081391 hash_ms=0.014208 heap_bytes=2163320 hash=15732147009703116635 digest=1899649707991441479"
+  },
+  {
+    "round": 2,
+    "case": "grid",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:16.2568816Z",
+    "output": "characters=100 pack=5689760 world=7256 tick_ms=0.010689 hash_ms=0.000272 draw_ms=1.026851 draw_commands=1 hash=333521554642157352\r\nkeep_ms=0.000112 semantic=5991125559186960660\r\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "round": 2,
+    "case": "grid",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:17.6824383Z",
+    "output": "characters=100 pack=5689760 world=13117656 tick_ms=1.357244 hash_ms=0.748657 draw_ms=1.496610 draw_commands=1 hash=10175709146634639136\r\nkeep_ms=0.014995 semantic=5991125559186960660\r\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "round": 2,
+    "case": "asset-assign",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:17.7271358Z",
+    "output": "case=asset-assign shared=1 assign_ms=0.000143 write_ms=0.000020 hash_ms=0.000030 heap_bytes=104 hash=7114561716897664030 digest=7905670141349505464"
+  },
+  {
+    "round": 2,
+    "case": "asset-assign",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:17.8119611Z",
+    "output": "case=asset-assign shared=0 assign_ms=0.100231 write_ms=0.000015 hash_ms=0.151007 heap_bytes=3146600 hash=6187691235229406473 digest=7905670141349505464"
+  },
+  {
+    "round": 2,
+    "case": "first-write",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:17.9330601Z",
+    "output": "case=first-write shared=1 assign_ms=0.066012 write_ms=0.086175 hash_ms=0.304308 heap_bytes=6293096 hash=1173578338072112073 digest=18304614207522063991"
+  },
+  {
+    "round": 2,
+    "case": "first-write",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:18.0157343Z",
+    "output": "case=first-write shared=0 assign_ms=0.098632 write_ms=0.000425 hash_ms=0.149742 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "round": 2,
+    "case": "mutable-copy",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:18.0589111Z",
+    "output": "case=mutable-copy shared=1 assign_ms=0.003405 write_ms=0.000028 hash_ms=0.001608 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "round": 2,
+    "case": "mutable-copy",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:18.1043093Z",
+    "output": "case=mutable-copy shared=0 assign_ms=0.003474 write_ms=0.000021 hash_ms=0.001633 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "round": 2,
+    "case": "mutable-edit",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:18.1653487Z",
+    "output": "case=mutable-edit shared=1 assign_ms=0.000024 write_ms=0.080403 hash_ms=0.014249 heap_bytes=2163320 hash=15732147009703116635 digest=1899649707991441479"
+  },
+  {
+    "round": 2,
+    "case": "mutable-edit",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:18.2245368Z",
+    "output": "case=mutable-edit shared=0 assign_ms=0.000022 write_ms=0.072734 hash_ms=0.014013 heap_bytes=2163320 hash=15732147009703116635 digest=1899649707991441479"
+  },
+  {
+    "round": 3,
+    "case": "grid",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:19.5535558Z",
+    "output": "characters=100 pack=5689760 world=13117656 tick_ms=1.337954 hash_ms=0.743790 draw_ms=1.500800 draw_commands=1 hash=10175709146634639136\r\nkeep_ms=0.014858 semantic=5991125559186960660\r\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "round": 3,
+    "case": "grid",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:19.9480475Z",
+    "output": "characters=100 pack=5689760 world=7256 tick_ms=0.010685 hash_ms=0.000319 draw_ms=1.014220 draw_commands=1 hash=333521554642157352\r\nkeep_ms=0.000122 semantic=5991125559186960660\r\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  {
+    "round": 3,
+    "case": "asset-assign",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:20.0307068Z",
+    "output": "case=asset-assign shared=0 assign_ms=0.099588 write_ms=0.000014 hash_ms=0.150012 heap_bytes=3146600 hash=6187691235229406473 digest=7905670141349505464"
+  },
+  {
+    "round": 3,
+    "case": "asset-assign",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:20.0766049Z",
+    "output": "case=asset-assign shared=1 assign_ms=0.000178 write_ms=0.000023 hash_ms=0.000037 heap_bytes=104 hash=7114561716897664030 digest=7905670141349505464"
+  },
+  {
+    "round": 3,
+    "case": "first-write",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:20.1600633Z",
+    "output": "case=first-write shared=0 assign_ms=0.099898 write_ms=0.000425 hash_ms=0.150499 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "round": 3,
+    "case": "first-write",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:20.2824570Z",
+    "output": "case=first-write shared=1 assign_ms=0.066041 write_ms=0.085990 hash_ms=0.303897 heap_bytes=6293096 hash=1173578338072112073 digest=18304614207522063991"
+  },
+  {
+    "round": 3,
+    "case": "mutable-copy",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:20.3257000Z",
+    "output": "case=mutable-copy shared=0 assign_ms=0.003503 write_ms=0.000019 hash_ms=0.001630 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "round": 3,
+    "case": "mutable-copy",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:20.3690511Z",
+    "output": "case=mutable-copy shared=1 assign_ms=0.003402 write_ms=0.000022 hash_ms=0.001614 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "round": 3,
+    "case": "mutable-edit",
+    "variant": "base",
+    "utc": "2026-10-11T14:37:20.4313847Z",
+    "output": "case=mutable-edit shared=0 assign_ms=0.000023 write_ms=0.073487 hash_ms=0.014106 heap_bytes=2163320 hash=15732147009703116635 digest=1899649707991441479"
+  },
+  {
+    "round": 3,
+    "case": "mutable-edit",
+    "variant": "shared",
+    "utc": "2026-10-11T14:37:20.4912379Z",
+    "output": "case=mutable-edit shared=1 assign_ms=0.000020 write_ms=0.079713 hash_ms=0.013913 heap_bytes=2163320 hash=15732147009703116635 digest=1899649707991441479"
+  }
+]

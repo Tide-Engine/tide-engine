@@ -27,7 +27,7 @@ static void frame(void)
 {
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     devices.keyboard.text.count = 0; // Typed characters last one frame
 }

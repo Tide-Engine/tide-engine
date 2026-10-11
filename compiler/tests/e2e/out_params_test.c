@@ -196,7 +196,7 @@ TIDE_TEST(out_in_handlers_and_views)
     TIDE_CHECK(world.Poked.half == 21);
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Seen.frames == 1);
     TIDE_CHECK(local.Seen.whole == 8);
     TIDE_CHECK(local.Seen.rest == 0.5f);

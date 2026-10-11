@@ -86,6 +86,11 @@ singleton Log
     float healed;
     int alive;
     float2 sampled;
+
+    int Count() { return bumps; }
+    int Count(int extra) { return Count() + extra; }
+    mut void Bump() { bumps += 1; }
+    mut void RecordBump() { Bump(); }
 }
 
 input PlayerInput
@@ -157,7 +162,9 @@ system Record(Unit unit, mut Log log)
 {
     log.width = Wider(unit.stats.damage).Width();
     log.literal_width = Range { lo = 1, hi = 4 }.Width(); // On a value that isn't stored
-    Bump(log.bumps);
+    log.RecordBump();
+    var count = log.Count(0);
+    if (count < 0) log.bumps = 0;
     if (unit.IsAlive()) log.alive += 1;
 }
 

@@ -30,7 +30,7 @@ TIDE_TEST(skinned_struct_temporaries_reclaim_scratch_after_each_entity_and_frame
     for (uint32_t frame = 0; frame < 16u; frame++) {
         observed = 0u;
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         TIDE_CHECK(observed == 32u);
         TIDE_CHECK(bad_marks == 0u);
         TIDE_CHECK(tide_scratch_mark() == expected_mark);

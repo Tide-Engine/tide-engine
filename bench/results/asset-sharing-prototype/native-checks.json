@@ -1,0 +1,52 @@
+[
+  {
+    "case": "asset-assign",
+    "variant": "base",
+    "output": "case=asset-assign shared=0 assign_ms=0.128585 write_ms=0.000022 flush_ms=0.000020 hash_ms=0.164069 heap_bytes=3146600 hash=6187691235229406473 digest=7905670141349505464"
+  },
+  {
+    "case": "asset-assign",
+    "variant": "shared",
+    "output": "case=asset-assign shared=1 assign_ms=0.000218 write_ms=0.000022 flush_ms=0.000023 hash_ms=0.000040 heap_bytes=104 hash=7114561716897664030 digest=7905670141349505464"
+  },
+  {
+    "case": "first-write",
+    "variant": "base",
+    "output": "case=first-write shared=0 assign_ms=0.181245 write_ms=0.000591 flush_ms=0.000029 hash_ms=0.177791 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write",
+    "variant": "shared",
+    "output": "case=first-write shared=1 assign_ms=0.128761 write_ms=0.149336 flush_ms=0.046433 hash_ms=0.343193 heap_bytes=6293096 hash=15784208271779107966 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write-once",
+    "variant": "base",
+    "output": "case=first-write-once shared=0 assign_ms=0.895467 write_ms=0.001076 flush_ms=0.000019 hash_ms=0.174001 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "first-write-once",
+    "variant": "shared",
+    "output": "case=first-write-once shared=1 assign_ms=0.000158 write_ms=0.817873 flush_ms=0.000023 hash_ms=0.164876 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "case": "mutable-copy",
+    "variant": "base",
+    "output": "case=mutable-copy shared=0 assign_ms=0.003649 write_ms=0.000028 flush_ms=0.000025 hash_ms=0.001707 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "case": "mutable-copy",
+    "variant": "shared",
+    "output": "case=mutable-copy shared=1 assign_ms=0.003535 write_ms=0.000027 flush_ms=0.000017 hash_ms=0.001628 heap_bytes=33908 hash=6027334286868922844 digest=18380035493348213897"
+  },
+  {
+    "case": "mutable-edit",
+    "variant": "base",
+    "output": "case=mutable-edit shared=0 assign_ms=0.000024 write_ms=0.074616 flush_ms=0.000024 hash_ms=0.014243 heap_bytes=590072 hash=16282305956618942386 digest=3324213199838427161"
+  },
+  {
+    "case": "mutable-edit",
+    "variant": "shared",
+    "output": "case=mutable-edit shared=1 assign_ms=0.000023 write_ms=0.076755 flush_ms=0.000032 hash_ms=0.014134 heap_bytes=590072 hash=16282305956618942386 digest=3324213199838427161"
+  }
+]

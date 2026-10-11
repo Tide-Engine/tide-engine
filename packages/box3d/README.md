@@ -74,15 +74,15 @@ Functions that ask what's in the world and change nothing. Each takes the `Physi
 // Stands on something: a ray a little way down from the feet
 system Land(Physics physics, Body body, mut Walker walker)
 {
-    walker.grounded = Raycast(physics, body.position, body.position - float3(0, 1.1, 0), out var under);
+    walker.grounded = physics.Raycast(body.position, body.position - float3(0, 1.1, 0), out var under);
     if (walker.grounded) walker.on = under.entity;
 }
 ```
 
-- **`Raycast(physics, from, to, out RayHit hit)`**: the first thing on the way from one point to another. `RayHit` has the `entity`, the `part` its shape is on (the entity itself, for a shape of its own), the `point`, the shape's `normal` there, and the `fraction` of the way, from 0 to 1. A ray says nothing of a shape it starts inside.
-- **`Cast(physics, shape, from, rotation, to, out RayHit hit)`**: the first thing a `Box`, a `Sphere` or a `Capsule` meets that's moved from one place to another, turned by `rotation` all the way; the shape is as one on a body is, with its size and its `offset`. `hit.point` is where the two touch. What the shape is in at `from`, or within a few millimeters of, is met there: a fraction of 0, and no normal.
-- **`Overlap(physics, shape, at, rotation, out List<Entity> found)`**: the entities whose bodies a shape at a place overlaps or touches, each once.
-- **`Inside(physics, sensor, out List<Entity> found)`**: the entities whose bodies have a shape in an entity's sensors, as the last step found them. `sensor` is the entity the sensor shape is a component of: a body's, or a part's.
+- **`physics.Raycast(from, to, out RayHit hit)`**: the first thing on the way from one point to another. `RayHit` has the `entity`, the `part` its shape is on (the entity itself, for a shape of its own), the `point`, the shape's `normal` there, and the `fraction` of the way, from 0 to 1. A ray says nothing of a shape it starts inside.
+- **`physics.Cast(shape, from, rotation, to, out RayHit hit)`**: the first thing a `Box`, a `Sphere` or a `Capsule` meets that's moved from one place to another, turned by `rotation` all the way; the shape is as one on a body is, with its size and its `offset`. `hit.point` is where the two touch. What the shape is in at `from`, or within a few millimeters of, is met there: a fraction of 0, and no normal.
+- **`physics.Overlap(shape, at, rotation, out List<Entity> found)`**: the entities whose bodies a shape at a place overlaps or touches, each once.
+- **`physics.Inside(sensor, out List<Entity> found)`**: the entities whose bodies have a shape in an entity's sensors, as the last step found them. `sensor` is the entity the sensor shape is a component of: a body's, or a part's.
 
 They can be asked from a system, a handler, a view, and the functions those call, wherever the system is in the tick.
 
@@ -185,3 +185,34 @@ The owner asked for these five things (2026-10-06): shapes on entities of their 
 - Queries take no filter: everything solid is found, and every sensor passed by. They find the nearest thing, and not everything on the way.
 - A per-body setting for whether it may sleep, locks on the axes a body moves and turns on, and joints.
 - The resident arena is fixed in size (64 MiB for Box3D), and exhaustion stops the program. There is one arena for the package in a process; switching between worlds restores their pages. Resident support for arbitrary user C libraries and deltas of the canonical state against a base aren't built.
+
+## Rewinding queries
+
+`physics.Raycast(...)`, `physics.Cast(...)`, `physics.Overlap(...)` and `physics.Inside(...)` query current geometry. To validate a shot against confirmed presentation, prepare a separate context once:
+
+```csharp
+settings { maxRewind = 0.25; } // Seconds; 0 (the default) disables history
+
+// On players or moving geometry that should rewind:
+// Spawn(Body { rewind = true }, ...);
+
+system Fire(Controls controls, Body body, Physics physics)
+{
+    if (!controls.fire.down) return;
+    // Validate weapon, origin, aim and firing cadence from match state first.
+    if (!physics.Rewind(controls.viewTime, out var query)) return;
+    if (query.Raycast(body.position, controls.aim, out var hit, body))
+    {
+        // Validate the hit entity is still alive, then apply the game's damage.
+        ...
+    }
+}
+```
+
+The context has every current query form, including all shape casts, overlaps, sensor `Inside` queries and existing ignore-body overloads. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
+
+`Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
+
+`Rewind` returns false for disabled history, invalid, stale or future times, or an unavailable endpoint. The output then contains no queryable geometry. No time is clamped and no current-world fallback is substituted. History begins after the first completed physics step and follows the same snapshot, rollback and serialization path as the match. Geometry is that of the physics step, as with current queries; write movement before `PhysicsStages.Step` when presentation and collider poses should agree.
+
+The server validates the input timestamp, but the game remains responsible for authoritative shot validation. It must never accept a client-supplied collider pose, origin or hit just because the timestamp passed validation.

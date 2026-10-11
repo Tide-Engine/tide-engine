@@ -1,0 +1,4 @@
+// expect: a setting's value must be a constant expression
+float Limit() { return 0.25; }
+settings { maxRewind = Limit(); }
+scene Main { }

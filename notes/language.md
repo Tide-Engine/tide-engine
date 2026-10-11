@@ -121,6 +121,29 @@ was dispatched.
 vectors, colors, sets and maps by an int or an enum; telling why a read gave
 nothing; indented output or leaving out defaults; `Join`, `byte.TryParse`, a
 `Parse` that fails; `TryParse` in the GUI's own number fields.
+## AnimationCatalog and bool/out lookup, 2026-10-11
+
+The owner approved the catalog name `AnimationCatalog` and bool/out lookup.
+It replaces the former `Animations` type without an alias. Animation and bone
+catalogs use `TryGetAt(index, out result)` and
+`TryGetByName(name, out result)`; Skeleton uses the latter for bones.
+Success assigns the selected value; failure assigns the value type's `default`.
+Exact original names, ambiguity rejection, unnamed index access, checked dot
+members, flattened source order and each clip's source skeleton are preserved.
+The historical entries below describe the preceding API.
+
+`skinned_arguments` checks outputs through the ordinary out-argument machinery,
+including named source order, exact types, writable places, delayed locals,
+discards, capability checks and definite assignment. Lookup counts as a writer
+for ordering and discarded-call analysis, while its receiver is read-only.
+Generated adapters copy a selected Animation before assigning through its
+existing owned-struct helper; failures release any previous owned result.
+Bone failure writes the default Bone. No engine API, canonical asset bytes,
+pack format or sampling arithmetic changes. Editor and asset coverage are
+recorded in their notes. Warning-free native and web debug builds pass all
+2,150 native and 2,121 web CTests, including deterministic hashes and GPU
+checks. The docs site build passes. Final diagnostic/hover wording and equivalent
+lookup dispatch cleanup also pass the focused lookup/catalog/LSP checks.
 
 ## Delayed locals and switch expressions, 2026-10-11
 
@@ -405,3 +428,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Not built:** values, package versions as symbols, a place in the game's folder to list defines (so an editor knows them), `DEBUG` for a game's C.
 
 - **Combined animation imports and writable names** (2026-10-11): `check_asset_decl` records resolved constant path expressions in `decl.asset_paths`; only plain `Animations` accepts a literal file list or a glob as one combined inferred catalog. `[Name("source")]` on singular `Animation` selects a unique original clip; implicit selection requires exactly one clip. The checker, codegen and editor share cleaned members and flattened source ordinals, with filename prefixes for cross-source alias collisions. Contract matching remains first-letter-only or exact `[Name]`; dynamic `Find` remains exact and ambiguity-sensitive. `Animation` retains its existing raw model data/index ABI. `Animations.data` is now a nested source-byte list; the generated private catalog adapters borrow a model blob for direct operations and wrap it only when a catalog escapes. Ordinary nested-list ownership supplies snapshots/serialization without engine changes. Inferred conversions check source ordinals before carrying indexed members to a different catalog type. See `notes/assets-and-files.md` for fixtures and validation.
+
+## Confirmed interpolation and singleton methods (2026-10-11)
+
+The owner approved singleton methods. Structs, components and singletons now support ordinary readonly/mut methods, overloads and sibling calls, preserving caller capabilities and explicit singleton parameters. Singleton methods have no entity `this`; custom `Interpolate` still belongs to structs/components. Readonly receiver snapshots preserve container aliases through calls that also mutate the receiver. `methods`, `singleton_params`, readonly-error fixtures and LSP completion/hover tests cover these contracts.
+
+Verified view parameters, mixed joins and query bindings interpolate against confirmed previous/current endpoints and their own fraction. Membership/discrete fields use the upper endpoint; Snap, birth identity and custom interpolation apply, without prediction correction smoothing. Verified handlers remain exact. Custom interpolators reading heap values get independent endpoint snapshots, including nested text/list/map/set values and readonly grid chunks. Scratch cleanup and both world hashes are pinned by `verified_heap`; ordinary numeric interpolation keeps its existing path. `tide_confirmed` retags only match offsets, preserving scratch/local values returned by custom interpolation.
+
+`settings.maxRewind` is finite nonnegative constant seconds, default zero; positive values reserve the input field `ViewTime viewTime`. The checker blocks explicit/member and Sample/Sanitize field writes. ViewTime contains upper tick, fraction and validity. Input repair invalidates malformed timestamps before ordinary float repair. `Time.maxRewind` is retained only when used. Constant, negative/nonfinite/dynamic, reserved-name and readonly diagnostics are covered.

@@ -1,0 +1,116 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "tide/list.h"
+#include "tide/pack.h"
+#include "tide/sha256.h"
+#include "tide/time.h"
+#ifndef SHARED
+#define SHARED 0
+#endif
+
+// Prototype only: current pack handles, without cross-pack stable identities.
+// No modified runtime is linked. This measures ownership/copy placement.
+static tide_list copy(tide_list value, uint32_t size)
+{
+    if (SHARED && tide_pack_holds(value.at)) return value;
+    return tide_list_copy(value, size);
+}
+static void assign(tide_list *to, tide_list value, uint32_t size)
+{
+    if (SHARED && tide_pack_holds(value.at)) {
+        tide_list_release(to, TIDE_IN_MATCH);
+        *to = value;
+    } else {
+        if (SHARED && tide_pack_holds(to->at)) to->at = 0;
+        tide_list_set(to, value, size, TIDE_IN_MATCH);
+    }
+}
+static void prepare_write(tide_list *value, uint32_t size)
+{
+    if (SHARED && tide_pack_holds(value->at)) {
+        const tide_list from = *value;
+        value->at = 0;
+        tide_list_set(value, from, size, TIDE_IN_MATCH);
+    }
+}
+static uint64_t digest(tide_list value, uint32_t size)
+{
+    uint64_t hash = TIDE_HASH_START;
+    for (int32_t i = 0; i < tide_list_count(value); i++)
+        hash = tide_hash_more(hash, tide_list_at(value, i, size), size);
+    return tide_hash_end(hash);
+}
+int main(int argc, char **argv)
+{
+    if (argc != 2) return 2;
+    const bool edit = strcmp(argv[1], "mutable-edit") == 0;
+    const bool first = strcmp(argv[1], "first-write") == 0;
+    const bool mutable_copy = strcmp(argv[1], "mutable-copy") == 0;
+    if (!edit && !first && !mutable_copy && strcmp(argv[1], "asset-assign") != 0) return 2;
+    const uint32_t count = edit ? 65536u : mutable_copy ? 256u : 16384u;
+    const uint32_t size = edit ? sizeof(float) : 1u;
+    uint8_t *bytes = calloc(count, size);
+    if (!bytes) return 1;
+    if (edit) { for (uint32_t i = 0; i < count; i++) ((float *)bytes)[i] = (float)(i % 127u); }
+    else { for (uint32_t i = 0; i < count; i++) bytes[i] = (uint8_t)(i * 17u); }
+    uint8_t sha[32];
+    tide_sha256_of(bytes, count * size, sha);
+    tide_pack_builder builder = {0};
+    uint32_t chars;
+    const uint32_t at = tide_pack_bytes(&builder, sha, bytes, count * size, &chars);
+    tide_pack_name(&builder, "Data.bytes", TIDE_PACK_BYTES, at, count * size, 1u);
+    size_t pack_size;
+    uint8_t *pack = tide_pack_end(&builder, &pack_size);
+    if (!tide_pack_load(pack, pack_size)) return 1;
+    tide_list asset = {tide_pack_handle(tide_pack_find("Data.bytes", TIDE_PACK_BYTES))};
+    tide_heap heap = {0}, kept = {0};
+    tide_text_use(&heap, NULL);
+    tide_list source = {0}, values[64] = {{0}};
+    if (edit || mutable_copy) tide_list_set(&source, asset, size, TIDE_IN_MATCH);
+    if (edit) tide_list_set(&values[0], source, size, TIDE_IN_MATCH);
+    double assign_ns = 0, write_ns = 0, hash_ns = 0;
+    uint64_t hash = 0;
+    for (uint32_t round = 0; round < 150u; round++) {
+        tide_heap_copy(&kept, &heap);
+        const uint32_t mark = tide_scratch_mark();
+        uint64_t a = tide_time_now_ns();
+        if (!edit) for (uint32_t i = 0; i < 64u; i++) {
+            const tide_list value = copy(mutable_copy ? source : asset, size);
+            assign(&values[i], value, size);
+        }
+        uint64_t b = tide_time_now_ns();
+        if (first) for (uint32_t i = 0; i < 64u; i++) {
+            prepare_write(&values[i], size);
+            uint8_t *value = tide_list_at_mut(values[i], 1, size);
+            if (!value) return 1;
+            *value = (uint8_t)round;
+        }
+        if (edit) {
+            tide_list_cache cache = {0};
+            for (uint32_t i = 0; i < count; i++) {
+                prepare_write(&values[0], size);
+                float *value = tide_list_cached_at_mut(&cache, values[0], (int32_t)i, size);
+                if (!value) return 1;
+                *value += 0.125f;
+            }
+        }
+        uint64_t c = tide_time_now_ns();
+        hash = tide_heap_hash(TIDE_HASH_START, &heap);
+        uint64_t d = tide_time_now_ns();
+        if (round >= 30u) { assign_ns += (double)(b-a); write_ns += (double)(c-b); hash_ns += (double)(d-c); }
+        tide_heap_flush(&heap);
+        tide_scratch_reset(mark);
+    }
+    printf("case=%s shared=%d assign_ms=%.6f write_ms=%.6f hash_ms=%.6f heap_bytes=%u hash=%llu digest=%llu\n",
+        argv[1], SHARED, assign_ns / 120000000.0, write_ns / 120000000.0, hash_ns / 120000000.0,
+        tide_heap_packed_size(&heap), (unsigned long long)hash, (unsigned long long)digest(values[0], size));
+    if (memcmp(tide_list_at(asset, 0, 1u), bytes, (size_t)count * size)) return 1;
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&kept);
+    tide_heap_free(&heap);
+    tide_pack_unload();
+    free(pack);
+    free(bytes);
+    return 0;
+}

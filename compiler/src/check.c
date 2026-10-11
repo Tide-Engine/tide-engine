@@ -295,7 +295,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
-        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect;
+        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -6831,8 +6831,8 @@ static type check_method(checker *c, expr *e)
     }
     // camera.Snap(): a singleton that jumped, like a camera cut.
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);
-    // stats.IsDead(), unit.Heal(5): a struct's or component's method.
-    if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT) {
+    // stats.IsDead(), unit.Heal(5), physics.Raycast(...): explicit value receivers.
+    if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) {
         decl *m = find_method(obj.decl, e->name);
         if (!m) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -7945,6 +7945,7 @@ static type check_member(checker *c, expr *e)
                     if (e->object->kind == E_NAME) suggest_replacement(e->object->name, "Random");
                     return T_ERR;
                 }
+                if (obj.decl == c->prog->time && str_eq_c(f->name, "maxRewind")) c->prog->uses_rewind_limit = true;
                 e->field = f;
                 if (obj.decl->query_row && e->object->bind == BIND_LOCAL && e->object->local->query) {
                     param *query = e->object->local->query;
@@ -9673,6 +9674,14 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     for (const expr *part = target; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+        if (part->kind == E_MEMBER && part->object->type.decl == c->prog->view_time) {
+            diag_error(target->at, "ViewTime is engine-stamped and read-only");
+            return false;
+        }
+        if (part->kind == E_MEMBER && c->prog->max_rewind > 0 && part->object->type.kind == TY_INPUT && str_eq_c(part->member, "viewTime")) {
+            diag_error(target->at, "input viewTime is engine-stamped and read-only");
+            return false;
+        }
         // name[0]: a character read out of the text, which only changes whole
         if (part->kind == E_INDEX && part->object->type.kind == TY_STRING) {
             diag_error(target->at, "text doesn't change a character at a time: 'text[i]' reads one");
@@ -9727,6 +9736,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         if (part->kind != E_MEMBER && part->kind != E_INDEX) break;
     }
     expr *root = assign_root(target);
+    if (root && root->bind == BIND_FIELD && c->in_input && c->prog->max_rewind > 0 && str_eq_c(root->name, "viewTime")) {
+        diag_error(target->at, "input viewTime is engine-stamped and read-only");
+        return false;
+    }
     if (root && root->bind == BIND_LOCAL && root->local->query) {
         diag_error(root->at, "query row '" STR_FMT "' is read-only", STR_ARG(root->name));
         if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
@@ -10094,6 +10107,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_SKINNED:
         if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
             && (!e->object || !step_own(e->object, loop))) return false;
+        if (skinned_lookup(e->skin_operation) && !step_own(e->args.items[1], loop)) return false;
         break; // Read-only sampling and step-local poses use the executing thread's scratch area.
     case CALL_FUNCTION:
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
@@ -11131,7 +11145,8 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
-        || (call == CALL_SKINNED && (called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
+        || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
+            || called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
@@ -11650,6 +11665,45 @@ static const field *set_before(const program *prog, const int b, const int i)
 // settings { tickRate = 30; }: the engine's settings for the game (builtins.h),
 // each set to a constant of its type. A game's blocks are one list of what it
 // sets, wherever they're written: a setting is set once among them all.
+static bool setting_float(const expr *e, float *out, const int depth)
+{
+    if (!e || depth > 64) return false;
+    if (e->type.kind == TY_INT || e->type.kind == TY_LONG) {
+        int64_t value;
+        if (fold_int(e, &value)) { *out = (float)value; return true; }
+    }
+    if (e->kind == E_INT) { *out = (float)e->int_value; return true; }
+    if (e->kind == E_FLOAT) {
+        if (e->is_degrees) *out = e->float_value;
+        else {
+            char *digits = arena_alloc((size_t)e->text.len + 1u);
+            int n = 0;
+            for (int i = 0; i < e->text.len; i++) if (e->text.ptr[i] != '_') digits[n++] = e->text.ptr[i];
+            digits[n] = '\0';
+            *out = strtof(digits, NULL);
+        }
+        return true;
+    }
+    if (e->bind == BIND_CONST) return setting_float(e->constant->value, out, depth + 1);
+    if (e->kind == E_UNARY) {
+        if (!setting_float(e->lhs, out, depth + 1)) return false;
+        if (e->op == T_MINUS) *out = -*out;
+        return e->op == T_MINUS || e->op == T_PLUS;
+    }
+    if (e->kind == E_BINARY) {
+        float a, b;
+        if (!setting_float(e->lhs, &a, depth + 1) || !setting_float(e->rhs, &b, depth + 1)) return false;
+        switch (e->op) {
+        case T_PLUS: *out = a + b; return true;
+        case T_MINUS: *out = a - b; return true;
+        case T_STAR: *out = a * b; return true;
+        case T_SLASH: *out = a / b; return true;
+        default: return false;
+        }
+    }
+    return false;
+}
+
 static void check_settings(checker *c)
 {
     program *prog = c->prog;
@@ -11696,7 +11750,12 @@ static void check_settings(checker *c)
                 diag_error(value->at, "'" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
                 continue;
             }
-            if (str_eq_c(f->name, "tickRate")) {
+            if (str_eq_c(f->name, "maxRewind")) {
+                float seconds;
+                if (!setting_float(value, &seconds, 0) || !(seconds >= 0.0f) || seconds - seconds != 0.0f) {
+                    diag_error(value->at, "maxRewind is a finite nonnegative number of seconds, like 'maxRewind = 0.25;'");
+                } else prog->max_rewind = seconds;
+            } else if (str_eq_c(f->name, "tickRate")) {
                 int64_t rate;
                 if (!fold_int(value, &rate)) {
                     diag_error(value->at, "tickRate is an int known while compiling, like 'tickRate = 30;'");
@@ -11830,7 +11889,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
-    else if (str_eq_c(inner->text, "Animations")) *kind = ASSET_ANIMATIONS;
+    else if (str_eq_c(inner->text, "AnimationCatalog")) *kind = ASSET_ANIMATIONS;
     else if (str_eq_c(inner->text, "Animation")) *kind = ASSET_ANIMATION;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
     else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
@@ -11849,7 +11908,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V>, Animation or Animations (glTF 2.0 or FBX), not '" STR_FMT "'",
+                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '" STR_FMT "'",
                    STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
@@ -11860,12 +11919,12 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
                      : k->return_type.kind == TY_MAP ? map_value(k->return_type) : k->return_type;
         if (t.kind != TY_STRUCT || t.decl->skin_kind != (*kind == ASSET_ANIMATION ? SKIN_ANIMATION : SKIN_ANIMATIONS)) {
             diag_error(at, "an %s asset uses the built-in %s; '%s' names a different type",
-                       *kind == ASSET_ANIMATION ? "Animation" : "Animations",
+                       *kind == ASSET_ANIMATION ? "Animation" : "AnimationCatalog",
                        *kind == ASSET_ANIMATION ? "animation type" : "animation catalog", type_name(t));
             return false;
         }
         if (*kind == ASSET_ANIMATION && *many) {
-            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an Animations catalog");
+            diag_error(at, "an Animation asset selects one clip: declare each clip separately, or use an AnimationCatalog");
             return false;
         }
     }
@@ -12054,7 +12113,7 @@ static void check_asset_decl(checker *c, decl *k)
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
     const bool paths = catalog && k->value->kind == E_LIST;
     const int path_count = paths ? k->value->args.count : 1;
-    if (!path_count) diag_error(k->value->at, "an Animations file list can't be empty: name at least one file");
+    if (!path_count) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -13160,7 +13219,7 @@ static void check_correction_interpolates(const program *prog)
     }
 }
 
-// Where methods go (structs and components), their names, and their signatures.
+// Where methods go, their names, and their signatures.
 static void check_method_decls(checker *c, decl *d)
 {
     for (int i = 0; i < d->methods.count; i++) {
@@ -13178,8 +13237,8 @@ static void check_method_decls(checker *c, decl *d)
             check_interpolate_decl(c, d, m);
             continue;
         }
-        if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT) {
-            diag_error(m->at, "methods work on structs and components");
+        if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON) {
+            diag_error(m->at, "methods work on structs, components and singletons");
             if (d->kind == DECL_INPUT) diag_note("an input has Sample and Sanitize");
             else diag_note("put the data and its methods in a struct, and the struct in the singleton");
         }
@@ -14703,7 +14762,8 @@ static bool call_acts(const expr *e)
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
-    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+    case CALL_SKINNED: return skinned_lookup(e->skin_operation)
+        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
@@ -14841,6 +14901,10 @@ static void add_builtins(program *prog)
     const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
+    field rewind_field = {0};
+    rewind_field.name = str_from("maxRewind");
+    rewind_field.type_name = str_from("float");
+    vec_push(time->fields, rewind_field);
     // int seed: the match's seed, from 0 to 2147483647, which the machine that
     // starts the match picks. Last, as it's only there in games that use it
     // (see drop_unused_seed).
@@ -14850,6 +14914,19 @@ static void add_builtins(program *prog)
     vec_push(time->fields, seed_field);
     prog->seed = &time->fields.items[time->fields.count - 1];
     prog->time = time;
+
+    decl *view_time = NEW(decl);
+    view_time->kind = DECL_STRUCT;
+    view_time->name = str_from("ViewTime");
+    view_time->builtin = true;
+    static const char *const view_fields[][2] = {{"tick", "int"}, {"alpha", "float"}, {"valid", "bool"}};
+    for (int i = 0; i < 3; i++) {
+        field f = {0};
+        f.name = str_from(view_fields[i][0]);
+        f.type_name = str_from(view_fields[i][1]);
+        vec_push(view_time->fields, f);
+    }
+    prog->view_time = view_time;
 
     // struct Random { long state; }: a random number generator's state, as
     // tide/random.h's tide_random, which generated C uses for it. Its methods
@@ -15324,6 +15401,7 @@ static void add_builtins(program *prog)
 
     VEC(decl *) decls = {0};
     vec_push(decls, time);
+    vec_push(decls, view_time);
     vec_push(decls, random);
     vec_push(decls, owner);
     vec_push(decls, visibility);
@@ -17843,6 +17921,10 @@ static void drop_unused_seed(program *prog)
         for (int k = 0; k < d->fields.count; k++) prog->uses_seed |= holds_random(prog, d->fields.items[k].type);
     }
     if (!prog->uses_seed) prog->time->fields.count--;
+    if (!prog->uses_rewind_limit) {
+        if (prog->uses_seed) prog->time->fields.items[4] = prog->time->fields.items[5];
+        prog->time->fields.count--;
+    }
 }
 
 // The players who see a scene are bits of its hidden tide_players, 32 a word:
@@ -18389,6 +18471,18 @@ bool check(program *prog)
         asset_files_save_hashes(prog->game_folder, named, count);
     }
     check_settings(&c);
+    if (prog->max_rewind > 0.0f && prog->input) {
+        if (field_named(prog->input, str_from("viewTime"))) {
+            diag_error(prog->input->at, "viewTime is supplied by the engine; remove the input field declaration");
+        } else {
+            field f = {0};
+            f.name = str_from("viewTime");
+            f.type_name = str_from("ViewTime");
+            f.type = (type){TY_STRUCT, prog->view_time};
+            prog->view_time->named = true;
+            vec_push(prog->input->fields, f);
+        }
+    }
     add_scene_player_words(prog);
     diag_phase("declarations");
     for (int i = 0; i < prog->decls.count; i++) {

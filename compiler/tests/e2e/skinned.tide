@@ -1,3 +1,6 @@
+Animation LookupClip(AnimationCatalog clips, string name) { clips.TryGetByName(name, out var result); return result; }
+Animation ClipAt(AnimationCatalog clips, int index) { clips.TryGetAt(index, out var result); return result; }
+
 // Checked imported catalogs, ordinary playback values, persistent poses,
 // contracts across helpers and collections, and explicit runtime decoding.
 struct Locomotion
@@ -43,7 +46,7 @@ void Expect(mut Probe p, bool yes)
 
 Animation DynamicClip(SkinnedMesh<Vertex3> model)
 {
-    return model.animations.Find("Move")!;
+    return LookupClip(model.animations, "Move");
 }
 
 Animation ContractClip(SkinnedMesh<Vertex3, Locomotion> model)
@@ -67,15 +70,15 @@ system CheckAndAnimate(mut Probe p)
         Expect(p, known.animations.squash.name == "Squash");
         Expect(p, hero.animations.count == 2 && hero.skeleton.bones.count == 3);
         Expect(p, hero.animations.move.duration == 1);
-        Expect(p, hero.animations.At(0)!.name == "Move" && hero.animations.At(1)!.name == "Squash");
-        Expect(p, hero.animations.At(-1) == null && hero.animations.At(2) == null);
-        Expect(p, hero.animations.Find("Move")!.name == "Move" && hero.animations.Find("move") == null);
-        Expect(p, hero.skeleton.Find("Arm") != null && hero.skeleton.bones.Find("arm") == null);
-        Expect(p, hero.skeleton.bones.At(-1) == null && hero.skeleton.bones.At(3) == null);
+        Expect(p, ClipAt(hero.animations, 0).name == "Move" && ClipAt(hero.animations, 1).name == "Squash");
+        Expect(p, !hero.animations.TryGetAt(-1, out _) && !hero.animations.TryGetAt(2, out _));
+        Expect(p, LookupClip(hero.animations, "Move").name == "Move" && !hero.animations.TryGetByName("move", out _));
+        Expect(p, hero.skeleton.TryGetByName("Arm", out _) && !hero.skeleton.bones.TryGetByName("arm", out _));
+        Expect(p, !hero.skeleton.bones.TryGetAt(-1, out _) && !hero.skeleton.bones.TryGetAt(3, out _));
         Expect(p, ContractClip(rig).name == "Move" && rig.animations.squash.name == "Squash");
         Expect(p, DynamicClip(hero).name == "Move" && DynamicClip(rig).name == "Move");
         var erased = Erase(hero);
-        Expect(p, erased.animations.Find("Squash")!.name == "Squash");
+        Expect(p, LookupClip(erased.animations, "Squash").name == "Squash");
         SkinnedMesh<Vertex3, Locomotion> promised = hero;
         Expect(p, promised.animations.walk.name == "Move");
         Expect(p, models.count == 2 && ContractClip(models[0]).name == "Move");

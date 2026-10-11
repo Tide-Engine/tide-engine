@@ -19,4 +19,8 @@ BeforeLeave
 Box3D.Leave
 BeforeReport
 Box3D.Report
+Box3D.BeginHistory
+Box3D.CaptureHistory
+Box3D.EndHistory
+Box3D.SealHistory
 AfterTheStep
