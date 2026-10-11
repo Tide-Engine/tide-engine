@@ -121,12 +121,34 @@ and from reading the solutions.
 
 ## Presentation
 
-`paint.tide` draws a night sky, the yard as dark rock with lit ledges over
-open cells, set stone grey and square, loose stone pale, rounded and raised.
-Plates are wider than a crate so their rim shows under one, and glow when held
-down. A portal whose twin is in someone's hand is drawn grey. The cell a paver
-faces is outlined when a hand would do something there. Positions ease towards
-the match's; a jump through a portal snaps. Reduced motion stops the easing
+`paint.tide` draws the yard as a slab of rock hung in a night sky, and the
+sky shows through wherever there is no ground. Everything a player handles is
+a sprite: paving stones, ice, portals, plates, crates, gates, lanterns and the
+two pavers (front, back and side) are in `art/atlas.png`, 23 sprites of 288
+pixels around a 192 pixel cell. `art/make_art.py` makes them, the sky
+(`sky.jpg`) and the slab's grain (`rock.png`) from nothing but numpy and
+Pillow: shapes given as distances, lit from the top left, bevelled, with a
+little grain. Nothing is drawn by hand or borrowed. Plates, gates and a
+portal's light are grey in the atlas and coloured as they are drawn.
+
+What tells a player whether ground lifts is what it lies in, not a different
+kind of tile: every piece is the same paving stone, a set one bedded flush in
+rock, a loose one paler and thick, its side showing over the gap. Each gap has
+a faint outline where a stone could go. The rim of rock round a board is a
+third of a cell thick, so the cells are as large as the screen allows. Words
+along the top sit on a plain bar.
+
+A plate glows when held down and shows its rim under a crate. A portal's
+light turns while it leads somewhere and is a dull ring while its twin is in a
+hand. Corner marks in the paver's colour show the cell its hands would act
+on. A paver on its lantern holds it, lit. Positions ease towards the match's
+and pavers hop as they walk; a jump through a portal snaps. A lifted or laid
+stone flies between the cell and the paver's hands, and a crate that sinks is
+seen going. When hands are refused, a line at the foot of the screen says why
+(set stone, something standing on it, loose footing, full hands): `Refusal`
+in `ui.tide` works it out from the board, for the player whose paver it was.
+The board glides up to leave room for a hint or the solved card instead of
+hiding under either. Reduced motion stops the easing
 and the decoration. `ui.tide` has the title (Play alone, Host a friend, Join a
 friend, over the Rooms package's pages), the roster of who works which paver
 and what each carries, the hint panel (the board draws smaller above it), the
@@ -222,6 +244,25 @@ tests, a catalog card and site patterns), Linux, macOS, Android and sanitizers,
 real phones, two machines across a real network, and anyone actually playing.
 The sounds were made and are played but were never heard: every run here was
 muted.
+
+Two polish passes followed on 2026-10-11. The owner first asked that the
+visuals not get in the way of playing: the first build drew rock and nothing
+in nearly the same dark blue inside a full ring of rock cells, so where a
+stone could go was hard to read. That pass separated the three, thinned the
+rim, and added the refusal lines, flying stones and room for the solved card
+(`PuzzleCue` gained `action`). The owner then said it still looked bad, the
+bright loose tiles out of place, and to give it the best that could be done.
+The second pass is the look described under Presentation: one paving stone
+for all ground, and generated sprites and sky in place of flat shapes.
+
+After the second pass: native debug and web debug build without warnings; the
+12 cases pass natively and under WASI; the browser play test passes on WebGL
+and WebGPU. It found two things the new look had broken in what it reads, the
+celebration's sparks and the slab's shadow drifting into the header, and both
+now stay below it; the header's bar is also what makes two machines draw it
+alike. The release page is 3.8 MB with the art (2.7 MB before). Captures at
+1280 by 800, 1280 by 720, 960 by 540 and the browser's 390 by 844 were looked
+at, and the thumbnail was taken again. Native release was not rebuilt.
 
 The page is public at `/prototypes/underfoot/` once the Docs workflow next
 deploys the site; that workflow was not started. Catalog and staging are in

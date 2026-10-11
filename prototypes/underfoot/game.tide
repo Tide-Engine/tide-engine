@@ -59,7 +59,8 @@ singleton Yard
 }
 
 scene Main { }
-event PuzzleCue { Cue kind; int paver; int cell; }
+// `action` is the action a paver's cue came of, for whoever shows why one was refused.
+event PuzzleCue { Cue kind; int paver; int cell; int action = -1; }
 command Act { int serial; int paver; int action; }
 command Undo { int serial; }
 command Reset { int serial; }
@@ -297,7 +298,7 @@ command(Act act, PlayerID sender) TakeAction(mut Yard yard)
     var ahead = Step(before.paver[act.paver], act.action % 4);
     if (!ActBoard(yard.layout, yard.board, act.paver, act.action))
     {
-        Send(PuzzleCue { kind = Cue.Blocked, paver = act.paver, cell = ahead });
+        Send(PuzzleCue { kind = Cue.Blocked, paver = act.paver, cell = ahead, action = act.action });
         return;
     }
     Remember(yard, before);
