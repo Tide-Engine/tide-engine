@@ -130,6 +130,7 @@ struct Pad
     float3 aim = float3(0, 0, 1);   // From the fire point to where the camera looks
     float yaw;           // The camera's orbit, in degrees
     float pitch = 17.5;
+    int hover = -1;      // The card their pointer is on while they pick
 }
 
 // A seat: a player's or a bot's place in a team, and their avatar while a
@@ -143,6 +144,7 @@ struct Seat
     int team = -1;
     int away;            // Ticks since its player left: gone for good after the grace
     bool alive;          // Its avatar is in the map (dead or not)
+    int life;            // How many avatars it has had: another one is somewhere else at once
 
     // PlayerMovement
     float3 position;     // The feet
