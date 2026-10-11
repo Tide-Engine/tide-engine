@@ -1304,6 +1304,10 @@ typedef struct tide_draw_list {
     uint32_t leveled;  // Whether the frame drew a level: its runs may want gathering (tide_draw_gather_levels)
     uint8_t *level_room; // Where the instances of a draw are sorted by their levels
     uint32_t level_room_capacity;
+    // What the last pick went by, kept for the draws after it through the same camera into as many pixels: a
+    // view that runs for each entity asks once a draw. `frame` + 1, the camera's place, and the pixels as bits
+    uint32_t lod_seen[4];
+    float lod_view[6]; // How many times a pixel a unit of the world is, its camera's w row, and that row's length
 } tide_draw_list;
 
 // Empties the list for a new frame. It keeps its memory for the next, and the
