@@ -165,18 +165,15 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `cmake/Tide.cmake`, `run_tidec.cmake`, generated host API/header | `notes/tide-programs.md` |
 | Docs site, pages/examples, SEO, hosting and docs workflow | `notes/docs-site.md` |
 | `examples/towers/`, `examples/sumo/` | `notes/physics-games.md` |
-| `prototypes/deadbell/` | `notes/deadbell.md` |
-| `prototypes/the-last-light/`, private catalog/staging | `notes/private-prototypes.md` |
-| `prototypes/cabin-nine/` | `notes/cabin-nine.md` |
-| `prototypes/dead-signal/` | `notes/dead-signal.md` |
-| `prototypes/rocket-league/` (Afterburn) | `notes/rocket-league.md` |
-| `prototypes/aerial/` | `notes/aerial.md` |
+| Prototype catalog and staging | `notes/private-prototypes.md` |
+| `prototypes/cracked/` | `notes/cracked.md` |
 | `prototypes/inside-out/` | `notes/inside-out.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
 | `packages/box3d/`, resident state | `notes/box3d.md` |
 | `packages/rooms/` | `notes/rooms-package.md` |
+| `packages/lobby/`, the client of the relay's lobbies and its menu | `notes/lobby-package.md` |
 | Reload/migration runtime, CLI serving and generated layouts | `notes/hot-reload.md` |
 | `compiler/lsp/`, `tools/` | `notes/editors.md` |
 | Temporary runtime maintenance, generated-C boundary, CPU skinning/pose contracts | `notes/runtime-ownership.md` |

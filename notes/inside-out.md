@@ -160,7 +160,10 @@ shared history, snapshots, packing and deterministic replay.
 `test/browser.mjs` runs the real game in two separate muted Chrome/Edge
 windows through a relay and unordered, unreliable WebRTC channels. It uses
 the repository's existing bounded DevTools-pipe/process cleanup and serialized
-frame helpers. Checkpoints require fresh verified ticks and packet exchange;
+frame helpers, now beside it in `test/`. They moved unmodified from The Last
+Light when that prototype was removed on 2026-10-11; their original unit tests
+left with that game and their history remains in git. Checkpoints require
+fresh verified ticks and packet exchange;
 runtime, browser and graphics errors fail. Rendered label crops verify shared
 actions without wasm inspection or a game-only debug export. The fixture
 controls match time; physical devices, NAT reachability and real-time latency

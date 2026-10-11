@@ -88,35 +88,30 @@ angle is in radians; the scalar form equals `quaternion.Euler(float3(x, y, z))`
 with the same Z-X-Y rotation order. Existing examples keep their current form.
 The production docs build passed; no site deployment was requested.
 
-Aerial catalog addition (2026-10-10): the owner's second Rocket League
-prototype adds a seventh server-loaded card, `aerial`, for one to six
-players, above Afterburn's. `aerial_page` stages under
-`static/prototypes/aerial/` and is one of `private_games` when
-`TIDE_PRIVATE_PROTOTYPES` is on. `admin.js`'s public-root and retired-alias
-patterns and the build's asset gate have the id, and the admin and production
-HTTP tests go through all seven: anonymous access to the game with no admin
-password, the catalog behind sign-in, and nothing of it in Samples, search or
-the sitemap. The id is an ordinary word, so those last checks look for
-`prototypes/aerial`, not the bare word, and a public path with a segment
-`aerial` outside `/prototypes/` is refused like any retired alias. The manual
-docs workflow picks it up as it is; nothing was deployed. The game itself:
-`notes/aerial.md`.
-
-Afterburn catalog addition (2026-10-09): the owner's Rocket League prototype
-request adds a sixth server-loaded card, `rocket-league`, titled Afterburn,
-for one or two players. Its `rocket_league_page` target stages under
-`static/prototypes/rocket-league/`, and `private_games` includes it when
-`TIDE_PRIVATE_PROTOTYPES` is enabled. The public-root and retired-alias
-patterns in `admin.js` and the build asset gate cover the new id. Existing
-admin/production HTTP tests now exercise all six ids, including anonymous
-game access with no admin password and omission from Samples/search/sitemap.
-The existing manual workflow picks it up without modification. Site build and
-Svelte check passed, with 31 admin/HTTP/analytics/SEO/access regressions using
-the staged page and actual gameplay thumbnail (2026-10-10). This addition does
-not deploy the site. Game implementation/validation: `notes/rocket-league.md`.
-The 2026-10-10 fidelity correction refreshes the thumbnail from its final
-native gameplay capture. Site build/check and those 31 regressions pass with
-the corrected staged game; serving/catalog behavior is unchanged.
+Prototype catalog reset (2026-10-11): the owner asked for every prototype but
+Two Forks to be deleted and for CRACKED, a port of their Unity game
+(`prototypes/cracked/`), to be registered the same way. The catalog's server
+load has two cards, `cracked` first and `two-forks`; the six removed cards
+(The Last Light, Cabin Nine, Dead Signal, Deadbell, Afterburn, Aerial) and
+their checked-in thumbnails are gone. The public-root and outside-root
+patterns in `admin.js` and the build's asset gate in `vite.config.ts` hold
+exactly `two-forks` and `cracked`, so a deleted game's address is an unknown
+path with no compatibility handling. `cracked` is an ordinary word, so the
+sitemap, Samples and search checks look for `prototypes/cracked` and the
+title `CRACKED`, not the bare word, and a public path with a segment
+`cracked` outside `/prototypes/` is refused. The card's unused `horror` flag
+and the candle fallback drawn for a card without a picture were removed with
+the last cards that used them; every card has a thumbnail.
+`static/prototypes/cracked/thumbnail.png` is checked in beside the staged
+page. The admin and production HTTP tests go through both ids, and the
+production test also asks for an id outside the catalog and expects 404.
+Validation on Windows with Node 24.15 (below the 24.16 that
+`notes/testing.md` asks for; no newer Node was installed): `npm run check`
+with no errors or warnings, `npm run build` with the existing allowed
+missing-example 404s, `test:analytics` 18/18, `test:admin-http` 1/1,
+`test:seo` 3/3, `test:access` 8/8 and `test:access-http` 1/1, using fixture
+pages as no game was staged. The manual docs workflow needs no change;
+nothing was deployed. Catalog and staging: `notes/private-prototypes.md`.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
@@ -160,11 +155,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `docs/releases.js` records only successful GET redirects for recognized package archives, including installers and upgrades. Metadata, HEAD, checksums and failed requests don't count. Each request has its release version, platform and channel; retries can count again, and a redirect doesn't prove completion or installation. Recording runs independently of the download response, so analytics cannot delay or break a download. History starts when this version is deployed; it does not import older GitHub totals.
   - The website samples the relay every minute through Fly private networking at `TIDE_RELAY_STATS_URL` (`http://purrengine-relay.internal:8080/admin/stats`), with a shared Fly secret `TIDE_RELAY_STATS_TOKEN` in both apps. Both apps must belong to the same Fly organization. Requests have a four-second timeout and a 16 KiB response cap. Private sampling doesn't start an idle relay. Missing reports are unavailable/stale, never invented zero counts; the previous report and its time remain visible. Daily averages and peaks are of the samples, so short-lived activity between samples can be missed. Relay connections are signaling sockets, not players in matches (see `webrtc-and-rooms.md`); no player reporting protocol is added.
   - Tests: `npm run test:analytics` covers persistent counts, retention, bounds, failed writes, draining writes, auth, sessions, CSRF, encoded paths and relay failures; `npm run test:admin-http` checks the actual production handler and collector. Both run in the existing manually requested Docs workflow, alongside its release, SEO and access tests. The UI was checked with headless Chrome at desktop and phone widths, including range changes, logout, empty states and relay status. The dashboard refreshes each minute and exposes exact daily totals beneath the charts.
-- **Shareable prototypes, 2026-10-09:** the owner first requested a private admin catalog, then asked for public game URLs so other players need no admin access. `/admin/prototypes` stays beside Analytics and lists Two Forks, The Last Light, Cabin Nine, Dead Signal and Deadbell. The Last Light, Cabin Nine and Deadbell are exactly two players; Dead Signal requires two to four. Dead Signal and Deadbell joined the catalog through `dev` during integration and use the same public sharing contract. Catalog data stays in its server load, absent from public Samples, search and sitemap. Cards open public games in a new tab; a build without that game's HTML says In development. The catalog explains that Play links can be shared with anyone and that hosting/joining uses the normal room flow.
-  - Every game's HTML and files stage beneath `docs/static/prototypes/<id>/`, served publicly as `/prototypes/<id>/`, including thumbnails and future external wasm, packs, sounds and textures. Self-contained web pages stage as `index.html`. `private_games` retains its target name and stages the games; the Docs workflow builds it alongside the public examples. Cabin Nine, Dead Signal and Deadbell remain opt-in through `TIDE_PRIVATE_PROTOTYPES=ON`, which the manually requested Docs workflow enables; ordinary builds keep them off. Generated HTML stays ignored; authored assets can be checked in under the public prototype directory.
-  - `admin.js` lets the five public game roots through before checking admin configuration or sessions. Bare game, directory and `index.html` URLs have `X-Robots-Tag: noindex`, including encoded spellings; assets use ordinary static caching, HEAD, ranges and conditional requests. Old game URLs are unsupported: the owner explicitly declined compatibility redirects. The `/admin/prototypes` catalog and data routes, analytics and all other admin routes keep their existing password/session guard and private/no-store/noindex headers. Without `TIDE_ADMIN_PASSWORD`, admin fails closed while games remain available. Development uses the same routing.
-  - Retired `/samples/<prototype>/`, thumbnail and raw executable aliases still return 404 even if a stale deployment contains their bytes. The site build rejects named prototype assets outside `static/prototypes/` or the legacy admin root, so new builds have one public game address. The games are public to anyone with the URL; omission from the gallery, search and sitemap and the noindex header are discovery choices, not access control.
-  - Validation with Node 24.19: `npm run check` has no errors or warnings, the site build passes, and 24 analytics/admin, production prototype HTTP, SEO and access-form HTTP checks passed the initial sharing change. They cover all five games' actual compiled HTML/thumbnail bytes, anonymous HTML/assets, missing admin configuration, encoded paths, HEAD/ranges/conditional requests and retained admin/catalog protection. Native/web builds and full suites pass (2,016/2,016 and 1,993/1,993); after integrating the two newer catalog entries, scoped prototype checks pass 8/8 native and 13/13 web. All five staged HTML files match their compiled pages, with no generated HTML under the old admin root. The earlier private-access requirement for playable files is superseded. Removing the unwanted compatibility redirects also removes their dedicated test; the remaining 23 HTTP/admin/analytics/SEO/access checks and site build pass. No workflow or deployment was dispatched; deployment still requires a manually requested docs workflow.
+- **Shareable prototypes, 2026-10-09:** the owner first requested a private admin catalog, then asked for public game URLs so other players need no admin access. `/admin/prototypes` stays beside Analytics and lists CRACKED and Two Forks (2026-10-11; the six games it listed before were deleted, see the entry at the top of this file). Catalog data stays in its server load, absent from public Samples, search and sitemap. Cards open public games in a new tab; a build without that game's HTML says In development. The catalog explains that Play links can be shared with anyone and that hosting/joining uses the normal room flow. The catalog and staging contract is in `notes/private-prototypes.md`.
+  - Every game's HTML and files stage beneath `docs/static/prototypes/<id>/`, served publicly as `/prototypes/<id>/`, including thumbnails and future external wasm, packs, sounds and textures. Self-contained web pages stage as `index.html`. `private_games` retains its target name and stages the games; the Docs workflow builds it alongside the public examples. Games under `prototypes/` are opt-in through `TIDE_PRIVATE_PROTOTYPES=ON`, which the manually requested Docs workflow enables; ordinary builds keep them off. Generated HTML stays ignored; authored assets can be checked in under the public prototype directory.
+  - `admin.js` lets the public game roots (`two-forks`, `cracked`) through before checking admin configuration or sessions. Bare game, directory and `index.html` URLs have `X-Robots-Tag: noindex`, including encoded spellings; assets use ordinary static caching, HEAD, ranges and conditional requests. Old game URLs are unsupported: the owner explicitly declined compatibility redirects. The `/admin/prototypes` catalog and data routes, analytics and all other admin routes keep their existing password/session guard and private/no-store/noindex headers. Without `TIDE_ADMIN_PASSWORD`, admin fails closed while games remain available. Development uses the same routing.
+  - A catalog id anywhere outside `/prototypes/` (`/samples/<id>/`, a thumbnail, a raw executable name) still returns 404 even if a stale deployment contains those bytes. The site build rejects files named for a catalog game outside `static/prototypes/` or the legacy admin root, so new builds have one public game address. Both patterns hold the current catalog ids only. The games are public to anyone with the URL; omission from the gallery, search and sitemap and the noindex header are discovery choices, not access control.
+  - Validation of the original sharing change (2026-10-09, Node 24.19, the five games of that day): `npm run check`, the site build and the analytics/admin, production prototype HTTP, SEO and access-form HTTP checks passed, with full native/web suites (2,016/2,016 and 1,993/1,993). They covered anonymous HTML/assets, missing admin configuration, encoded paths, HEAD/ranges/conditional requests and retained admin/catalog protection. Removing the unwanted compatibility redirects also removed their dedicated test. The same tests now go through the two current ids.
 - Every response has `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (`docs/headers.js`, in `npm run dev` too), so pages are cross-origin isolated and the demos in them run on threads. A page in a frame is only isolated when the page around it is, and moving between pages loads no new one, so every page has them: everything a page loads comes from the site itself (fonts included), or has to say it may be embedded (CORP or CORS).
 - `.github/workflows/docs.yml` is part of every run of the Build workflow, whose `Docs` job calls it (`workflow_call`; the owner, 2026-10-08, who kept having to start both: "can the docs be part of this?"), so `gh workflow run build.yml --ref dev` is the release and the site. It still runs alone when asked to, for a change to the docs only: `gh workflow run docs.yml --ref dev`. Either way a run on `dev` builds and deploys it (the `FLY_API_TOKEN` secret, a deploy token for the app, which the Build workflow hands it), and a run on another ref builds without deploying. Pushes and pull requests start nothing.
   - In a Build run the site is beside the release, not part of it: neither waits for the other, so the site deploys whatever the packages and suites do, and a nightly is published whether or not the site built. A failure of either fails the run.
