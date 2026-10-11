@@ -4,6 +4,7 @@
 // together under runner control; browser/GPU waits consume only wall time.
 // Audio never reaches the device.
 // node browser.mjs <inside_out.html> <capture directory> [webgl|webgpu]
+// Set TIDE_INSIDE_OUT_RELAY to probe an existing relay instead of the local one.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -39,7 +40,7 @@ const trackConnection = socket => {
 };
 relay.on('connection', trackConnection);
 await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve));
-const relayUrl = `ws://127.0.0.1:${relay.address().port}`;
+const relayUrl = process.env.TIDE_INSIDE_OUT_RELAY || `ws://127.0.0.1:${relay.address().port}`;
 const server = createServer((request, response) => {
     response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
