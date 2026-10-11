@@ -2204,6 +2204,38 @@ typedef struct lod_view {
     float w_length;  // ...and how much of it a unit of the world is, at the most
 } lod_view;
 
+static lod_view lod_view_of(const tide_draw_list *d);
+
+// The same for a draw of one instance, which a view that runs for each entity records a frame's worth of: the
+// camera's part is kept while the camera, the frame and the pixels are the ones it was worked out for.
+static lod_view lod_view_kept(tide_draw_list *d)
+{
+    const tide_draw_place *p = &d->place;
+    lod_view view = {.level = p->lod};
+    if (view.level) return view;
+    float height = d->screen.y;
+    if (d->target && !p->lod_camera) {
+        const tide_target_size size = d->targets[d->target - 1u].size;
+        if (!(size.window > 0.0f)) height = size.height * (size.scale > 0.0f ? size.scale : 1.0f);
+        else height *= size.window;
+    }
+    uint32_t seen[4] = {d->frame + 1u, p->lod_camera ? p->lod_camera : p->camera_3d};
+    memcpy(&seen[2], &height, sizeof height);
+    memcpy(&seen[3], &d->lod_pixels, sizeof d->lod_pixels);
+    if (memcmp(seen, d->lod_seen, sizeof seen) != 0) {
+        const lod_view fresh = lod_view_of(d);
+        memcpy(d->lod_seen, seen, sizeof seen);
+        d->lod_view[0] = fresh.picks ? fresh.scale : 0.0f;
+        memcpy(&d->lod_view[1], fresh.w, sizeof fresh.w);
+        d->lod_view[5] = fresh.w_length;
+    }
+    view.scale = d->lod_view[0];
+    memcpy(view.w, &d->lod_view[1], sizeof view.w);
+    view.w_length = d->lod_view[5];
+    view.picks = view.scale > 0.0f;
+    return view;
+}
+
 static lod_view lod_view_of(const tide_draw_list *d)
 {
     const tide_draw_place *p = &d->place;
@@ -2422,7 +2454,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
     }
     // A mesh with levels of detail: each instance's own, by the transform that starts it (none is the identity).
     // The instances of a level are a run, the finest first, in the order they were given
-    const lod_view view = lod_view_of(d);
+    const lod_view view = count == 1u ? lod_view_kept(d) : lod_view_of(d);
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
     const uint32_t size = tide_shader_instance_size(shader);
@@ -2563,7 +2595,7 @@ static inline __attribute__((always_inline)) void mesh_instances(tide_draw_list 
 // The mesh one instance of `mesh`, which has levels of detail, draws: its own, or the level picked for it.
 static uint32_t one_level(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const tide_float4x4 *through)
 {
-    const lod_view view = lod_view_of(d);
+    const lod_view view = lod_view_kept(d);
     const tide_float4x4 world = through ? tide_mul_f4x4(*through, *transform) : *transform;
     const uint32_t level = pick_level(&d->meshes[mesh - 1u], &view, &world);
     d->leveled = 1;
