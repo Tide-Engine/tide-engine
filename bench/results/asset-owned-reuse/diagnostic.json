@@ -1,0 +1,14 @@
+[
+  {
+    "variant": "base",
+    "output": "diagnostic_only=1 pending_after_assign=0 dirty_bytes_before_hash=3145728\ncase=first-write shared=0 reuse=0 count=16384 assign_ms=0.140901 write_ms=0.000453 flush_ms=0.000019 hash_ms=0.156875 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  },
+  {
+    "variant": "naive",
+    "output": "diagnostic_only=1 pending_after_assign=192 dirty_bytes_before_hash=6291456\ncase=first-write shared=1 reuse=0 count=16384 assign_ms=0.074656 write_ms=0.096570 flush_ms=0.028633 hash_ms=0.322188 heap_bytes=6293096 hash=15784208271779107966 digest=18304614207522063991"
+  },
+  {
+    "variant": "reuse",
+    "output": "diagnostic_only=1 pending_after_assign=0 dirty_bytes_before_hash=3145728\ncase=first-write shared=1 reuse=1 count=16384 assign_ms=0.090057 write_ms=0.000465 flush_ms=0.000022 hash_ms=0.159123 heap_bytes=3146600 hash=13994219447731205103 digest=18304614207522063991"
+  }
+]
