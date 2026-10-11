@@ -28,6 +28,7 @@ local singleton SceneRender
     float4x4 toClip;
     float4x4 fromClip;
     float4x4 toLamp;
+    float4x4 fromLamp;
     float3 lightDirection;
     float2 screenSize;
     float4 board;
@@ -179,7 +180,18 @@ frag SceneBlur(Vertex vertex, out Color color, Texture source, SceneBlurStep ste
     color = Color(ao, ao, ao);
 }
 
-float SceneSun(DepthTexture shadow, float4x4 toLamp, float3 world, float3 normal, float scale, float tile, float3 direction)
+float SceneShadowTap(DepthTexture shadow, float4x4 fromLamp, float3 normal, float2 uv, float depth, float2 offset, float depthSlope)
+{
+    var sampleUV = uv + offset;
+    if (sampleUV.x < 0 || sampleUV.y < 0 || sampleUV.x > 1 || sampleUV.y > 1) return 1;
+    var shifted = Math.Mul(fromLamp, float4(offset.x * 2, -offset.y * 2, 0, 0));
+    var delta = float3(shifted.x, shifted.y, shifted.z);
+    mut var expected = depth;
+    if (Math.Abs(depthSlope) > 0.00001) expected -= Math.Dot(normal, delta) / depthSlope;
+    return shadow.Compare(sampleUV, expected);
+}
+
+float SceneSun(DepthTexture shadow, float4x4 toLamp, float4x4 fromLamp, float3 world, float3 normal, float scale, float tile, float3 direction)
 {
     var slope = 1 - Math.Max(0, Math.Dot(normal, -direction));
     var bias = Math.Max(0.06, Math.Min(scale * 0.016, tile * 0.04)) * (1 + slope);
@@ -188,8 +200,14 @@ float SceneSun(DepthTexture shadow, float4x4 toLamp, float3 world, float3 normal
     var depth = clip.z / clip.w * 0.5 + 0.5;
     if (uv.x < 0 || uv.y < 0 || uv.x > 1 || uv.y > 1 || depth < 0 || depth > 1) return 1;
     var pixel = 0.75 / 1024;
-    return (shadow.Compare(uv + float2(-pixel, -pixel), depth) + shadow.Compare(uv + float2(pixel, -pixel), depth) +
-        shadow.Compare(uv + float2(-pixel, pixel), depth) + shadow.Compare(uv + float2(pixel, pixel), depth)) * 0.25;
+    var axis = Math.Mul(fromLamp, float4(0, 0, 2, 0));
+    var depthSlope = Math.Dot(normal, float3(axis.x, axis.y, axis.z));
+    // Each tap lies on the same receiver plane. Its expected depth changes
+    // with the light's slope, even when a miniature floor is perfectly flat.
+    return (SceneShadowTap(shadow, fromLamp, normal, uv, depth, float2(-pixel, -pixel), depthSlope) +
+        SceneShadowTap(shadow, fromLamp, normal, uv, depth, float2(pixel, -pixel), depthSlope) +
+        SceneShadowTap(shadow, fromLamp, normal, uv, depth, float2(-pixel, pixel), depthSlope) +
+        SceneShadowTap(shadow, fromLamp, normal, uv, depth, float2(pixel, pixel), depthSlope)) * 0.25;
 }
 
 frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender render)
@@ -202,7 +220,7 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     var point = SceneWorld(render.sceneDepth, render.fromClip, uv);
     var ao = render.occlusion.Sample(uv, Filter.Bilinear).r;
     var facing = Math.Max(0, Math.Dot(normal, -render.lightDirection));
-    var sunlight = SceneSun(render.shadow, render.toLamp, point, normal, encoded.a * render.tile, render.tile, render.lightDirection);
+    var sunlight = SceneSun(render.shadow, render.toLamp, render.fromLamp, point, normal, encoded.a * render.tile, render.tile, render.lightDirection);
     var shade = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight);
     var material = source.Sample(uv, Filter.Point);
     color = Color(material.r * shade, material.g * shade, material.b * shade, material.a);
@@ -247,6 +265,7 @@ view SceneLighting(Sculpture sculpture, mut SceneRender render)
     render.lamp.Clear(Color.white);
     render.lamp.SetCamera(lamp, float4x4.Ortho(span, span, 0.1, span * 6));
     render.toLamp = render.lamp.WorldToClip();
+    render.fromLamp = Math.Inverse(render.toLamp);
     render.lamp.SetDepth(Depth.ReadWrite);
     render.lamp.SetBlend(Blend.Replace);
     render.lamp.Instanced(sculpture.vertices, sculpture.indices, sculpture.objects, SceneShadow);
