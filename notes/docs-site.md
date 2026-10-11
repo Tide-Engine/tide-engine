@@ -1,5 +1,10 @@
 # The docs site
 
+Sample playback hints (2026-10-11): Editors clarifies that inlay parameter
+labels describe written literals; omitted defaults and named arguments have no
+label. The production docs build passes with the existing allowed missing-example
+placeholders. Checker and editor regression details are in `notes/editors.md`.
+
 Editor review (2026-10-11): the Editors page clarifies Restricted Mode's user
 setting and PATH exclusions, including symlinks/junctions. The docs production
 build and all 215 shared grammar checks pass; implementation, regressions and

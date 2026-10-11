@@ -1,5 +1,27 @@
 # The language server and the editors
 
+## Sample playback hints, 2026-10-11
+
+`skinned_arguments` now retains the written arguments before appending an
+omitted `Playback.Clamp`, using the existing `expr.settled`/`written` contract.
+Previously positional and source-ordered named Sample calls exposed the
+synthetic integer default to tidels as a literal at the method name, producing
+`playback:` before `Sample`. Both Animation.Sample and Pose.Sample now omit
+that hint while explicit literals keep their parameter labels and locations.
+Reordered named arguments retain their existing source list and evaluation order.
+No runtime API, default value or language semantics changed.
+
+`lsp_skinned_sample_hints_only_written_arguments` reproduced the extra playback
+labels before the fix and passes afterward. It covers variable/literal seconds,
+omitted and explicit default playback, source-ordered and reordered named
+arguments, exact hint positions, repeated responses and subsequent Sample hover.
+The Editors page documents that parameter labels describe written literals only.
+Validation: full Windows debug native and web suites pass 2,079 and 2,050
+CTest checks, including native GPU and WebGL/WebGPU coverage, with Node 24.16.
+The language-server suite passes all 213 checks; the docs production build passes
+with the existing allowed missing-example placeholders. The server is rebuilt
+at `build/tools/tidels.exe`; editor rendering was not separately exercised.
+
 ## Editor host follow-up, 2026-10-11
 
 Closed the host/process coverage gaps from the review below with repeatable
