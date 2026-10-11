@@ -1,0 +1,58 @@
+using Box2D;
+settings { maxPlayers = 2; maxRewind = 0.25; }
+input Controls { int shot; int direction; float aimX; float aimY; }
+component Target { }
+component Shooter { int last; }
+struct Shot
+{
+    PlayerID player;
+    int id;
+    int tick;
+    ViewTime time;
+    bool prepared;
+    bool hit;
+    float fraction;
+    float x;
+    bool currentHit;
+    float currentFraction;
+}
+singleton Shots { List<Shot> items; }
+singleton Display { local bool ready; local float x; }
+scene Main { }
+event(PlayerJoined joined) Join()
+{
+    Spawn(Shooter, Owner { player = joined.player });
+    if (joined.player == PlayerID(0))
+        Spawn(Body { type = BodyType.Kinematic, position = float2(10, 0), rewind = true },
+              Box { size = float2(0.2) }, Target, Owner { player = joined.player });
+}
+[Before(PhysicsStages.Step)]
+system Move(Controls controls, mut Body body, with Target)
+{
+    // The owning client changes direction on its own frame schedule. The
+    // watcher predicts that input and can be corrected around reversals.
+    body.velocity.x = controls.direction * 12;
+}
+[Before(PhysicsStages.Step)]
+system Fire(Controls controls, Owner owner, Time time, Physics physics, mut Shooter shooter, mut Shots shots)
+{
+    if (controls.shot <= shooter.last) return;
+    shooter.last = controls.shot;
+    mut Shot shot = Shot { player = owner.player, id = controls.shot, tick = time.tick, time = controls.viewTime };
+    shot.prepared = physics.Rewind(controls.viewTime, out var query);
+    if (shot.prepared)
+    {
+        shot.hit = query.Raycast(float2(controls.aimX - 1, controls.aimY), float2(controls.aimX + 1, controls.aimY), out var hit);
+        shot.fraction = hit.fraction;
+        shot.x = hit.point.x;
+    }
+    shot.currentHit = physics.Raycast(float2(controls.aimX - 1, controls.aimY), float2(controls.aimX + 1, controls.aimY), out var current);
+    shot.currentFraction = current.fraction;
+    shots.items.Add(shot);
+}
+view Present(verified Body body, with verified Target, mut Display display)
+{
+    display.ready = true;
+    display.x = body.position.x;
+    Draw.Rect(body.position.xy, float2(0.2), Color.white);
+}
