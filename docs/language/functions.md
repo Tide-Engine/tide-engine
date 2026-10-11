@@ -114,7 +114,7 @@ Methods take explicit singleton parameters by the same value and `mut` rules. Si
 
 A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
 
-Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
+Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 

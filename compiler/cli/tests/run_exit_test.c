@@ -78,6 +78,7 @@ int tide_run_android(const char *root, const build_options *opts, const char *co
 // Startup and unrelated commands have no work in this fixture. Abort if
 // dispatch reaches an unrelated command, so an unexpected path cannot pass.
 void packages_set_builtin_folder(const char *folder) { (void)folder; }
+void packages_set_symbols(const char *const *names, const int count) { (void)names; (void)count; }
 void tide_cleanup(const char *root) { (void)root; }
 const char *tide_channel(const char *root) { (void)root; abort(); }
 bool tide_installation_whole(const char *root, const char *version) { (void)root; (void)version; abort(); }

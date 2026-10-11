@@ -462,3 +462,90 @@ file(WRITE "${game}/tide.packages" "dice\nrolls\n")
 tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
 set(TIDE "${built}")
 tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: no package called dice comes with this tide")
+
+# ---------------------------------------------------------------------------
+# #if lines: which packages a build has, by its symbols
+
+set(game "${WORK}/conditions")
+file(WRITE "${game}/main.tide" "scene Main { }\n")
+foreach(name Steam Ours Extra)
+    string(TOLOWER "${name}" folder)
+    file(WRITE "${game}/../conditions-${folder}/tide.packages" "package ${name}\n")
+    file(WRITE "${game}/../conditions-${folder}/poll.tide"
+        "namespace ${name};\n\nsingleton Polls\n{\n    int count;\n}\n\nsystem Poll(mut Polls polls)\n{\n    polls.count += 1;\n}\n")
+endforeach()
+file(WRITE "${game}/tide.packages" "# if this were a directive, it would say so
+#if STEAM   # Valve's
+../conditions-steam
+#elif DEMO && !DEBUG
+../conditions-extra
+#else
+../conditions-ours
+#endif
+")
+# No symbol but DEBUG: the #else's. A symbol the command line names: its branch. --release has no DEBUG.
+tide("${game}" ARGS schedule . EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --define STEAM EXPECT "Steam.Poll" WITHOUT "Ours.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --define DEMO EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --release --define DEMO EXPECT "Extra.Poll" WITHOUT "Steam.Poll" "Ours.Poll")
+tide("${game}" ARGS schedule . --release --define DEMO --define STEAM EXPECT "Steam.Poll" WITHOUT "Ours.Poll" "Extra.Poll")
+# A package's own symbol follows the build's packages
+file(WRITE "${game}/main.tide" "scene Main { }\n#if PACKAGE_STEAM\nsystem OnSteam(mut Steam.Polls polls)\n{\n    polls.count += 2;\n}\n#endif\n")
+tide("${game}" ARGS schedule . WITHOUT "OnSteam")
+tide("${game}" ARGS schedule . --define STEAM EXPECT "OnSteam")
+# Nested, and the same package in two branches, which are never one build's
+file(WRITE "${game}/tide.packages" "#if !STEAM
+#if DEBUG
+../conditions-ours
+#else
+../conditions-extra
+#endif
+#else
+../conditions-ours
+../conditions-steam
+#endif
+")
+tide("${game}" ARGS schedule . EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --release EXPECT "Extra.Poll" WITHOUT "Steam.Poll" "Ours.Poll")
+tide("${game}" ARGS schedule . --release --define STEAM EXPECT "Steam.Poll" "Ours.Poll" WITHOUT "Extra.Poll")
+# In one build, twice is twice
+file(WRITE "${game}/tide.packages" "../conditions-ours\n#if DEBUG\n../conditions-ours\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:3: error: ../conditions-ours is listed twice")
+tide("${game}" ARGS schedule . --release EXPECT "Ours.Poll")
+# What's wrong with the lines themselves
+file(WRITE "${game}/tide.packages" "#if STEAM\n../conditions-steam\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: this #if never ends" "end it with a line that says `#endif`")
+file(WRITE "${game}/tide.packages" "../conditions-ours\n#else\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:2: error: this #else has no #if before it")
+file(WRITE "${game}/tide.packages" "#if STEAM &&\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: a condition is missing")
+file(WRITE "${game}/tide.packages" "#if STEAM DEMO\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: the condition ends before 'DEMO'")
+file(WRITE "${game}/tide.packages" "#if PACKAGE_OURS\n../conditions-steam\n#endif\n../conditions-ours\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:1: error: 'PACKAGE_OURS' is a symbol this file's packages make, so no line of it depends on one")
+file(WRITE "${game}/tide.packages" "#if TIDE_NEWER\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: 'TIDE_NEWER' isn't a symbol Tide knows")
+file(WRITE "${game}/tide.packages" "#if TIDE_0_1_OR_NEWER\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . EXPECT "Steam.Poll")
+file(WRITE "${game}/tide.packages" "#ifdef STEAM\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: #ifdef is C's: a condition here is an #if's" "write `#if SYMBOL`")
+file(WRITE "${game}/tide.packages" "#if STEAM\n../conditions-steam\n#else\n#elif DEMO\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:4: error: this #elif comes after the #else of the #if on line 1")
+file(WRITE "${game}/tide.packages" "#if DEBUG\ntide 0.1\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:2: error: a `tide` line can't be inside an #if")
+
+# The commands keep every line, a build's or not: update moves them, fetch
+# downloads them, eject finds them, and add sees them listed
+file(WRITE "${game}/main.tide" "scene Main { }\n")
+file(WRITE "${game}/tide.packages" "#if STEAM\ngithub.com/test/maths ${M1}\n#endif\n")
+tide("${game}" ARGS update EXPECT "Maths is up to date, at 1111111 (main)")
+tide("${game}" ARGS update maths EXPECT "Maths is up to date, at 1111111 (main)")
+tide("${game}" ARGS add github.com/test/maths EXPECT "Maths is in tide.packages already, on line 2")
+file(REMOVE_RECURSE "${WORK}/cache/github.com/test/maths")
+tide("${game}" ARGS fetch EXPECT "the game's 1 package is on this machine")
+if(NOT EXISTS "${WORK}/cache/github.com/test/maths/${M1}/.tide-fetched")
+    message(FATAL_ERROR "tide fetch left a package an #if leaves out of this build to another build's network")
+endif()
+tide("${game}" ARGS eject maths EXPECT "Maths is the game's own now, in packages/maths")
+expect_file("${game}/tide.packages" "#if STEAM\n./packages/maths\n#endif\n")
