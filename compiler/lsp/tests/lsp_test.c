@@ -2474,6 +2474,44 @@ TIDE_TEST(lsp_enum_conversion)
 #undef PHASES
 }
 
+TIDE_TEST(lsp_enum_count_and_cast_diagnostic)
+{
+    start();
+#define COUNT_GAME "enum Direction { North, East = 10, Count = 10 }\nsingleton Match { int n; }\nscene Main { }\n"
+    const char *completion = complete(COUNT_GAME "system S(mut Match match) { match.n = Direction.$; }\n");
+    TIDE_CHECK(offers(completion, "Count")); // The user's member still exists
+    TIDE_CHECK(offers(completion, "Count()"));
+    TIDE_CHECK(has(completion, "Count() -> int"));
+    open_document(COUNT_GAME "system S(mut Match match) { match.n = Direction.Co$unt(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Direction.Count() -> int"));
+    TIDE_CHECK(has(hover, "Compile-time constant: 3"));
+    TIDE_CHECK(has(hover, "same numeric value"));
+    open_document(COUNT_GAME "system S(mut Match match) { match.n = Direction.Count($); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Direction.Count() -> int"));
+    open_document(COUNT_GAME "int Number(Direction direction) { return direction.Count($); }\n");
+    TIDE_CHECK(!has(request("textDocument/signatureHelp"), "Direction.Count() -> int"));
+
+    static const char qualified[] = "namespace Game;\nenum Direction { North, East }\n"
+                                    "singleton Match { int n; }\nscene Main { }\n"
+                                    "system S(mut Match match) { match.n = Game.Direc$tion.Count(); }\n";
+    open_document(qualified);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
+    request_with("textDocument/rename", "\"newName\":\"Heading\"");
+    TIDE_CHECK(has(apply_reply(qualified, "file:///test.tide"), "Game.Heading.Count()"));
+
+    open_document(COUNT_GAME "int Number(Direction direction) { return (int)direct$ion; }\n");
+    TIDE_CHECK(has(last_sent(), "Tide converts values with 'int(value)'"));
+    TIDE_CHECK(has(last_sent(), "write 'int(direction)' instead"));
+    // Parentheses beside subtraction, a step and indexing remain expressions.
+    open_document(COUNT_GAME "int Number(int value) { mut int n = (value) - 1; int[2] values = [n, value];"
+                             " return ((values)[0]) + (n)++; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef COUNT_GAME
+}
+
 TIDE_TEST(lsp_scheduling_phases)
 {
     start();

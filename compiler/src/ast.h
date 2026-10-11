@@ -792,6 +792,7 @@ typedef enum is_pattern {
 typedef enum builtin_call {
     CALL_NONE,
     CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
+    CALL_ENUM_COUNT, // Enum.Count(): the number of declared members, a compile-time int
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
     CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
     CALL_AUDIO,     // Audio.Play(...): calls c_callee with the frame's audio list first (tide_l->tide_audio)

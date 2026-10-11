@@ -8,6 +8,12 @@ enum Phase
 }
 
 enum Weapon { Sword, Bow }
+enum Aliases { First = -10, Same = -10, Last = 50, Count = 100 }
+enum Direction { North, East, South, West }
+const int DIRECTIONS = Direction.Count();
+const int ALIASES = Aliases.Count();
+const int FORWARD_COUNT = Later.Count();
+enum Later { A = Direction.Count(), B }
 
 struct Loadout
 {
@@ -51,6 +57,13 @@ singleton Picks
     Tile tile;
     int wrappedConstant;
     int cases;
+    int members = Phase.Count();
+    int aliases = ALIASES;
+    int forwardCount = FORWARD_COUNT;
+    int[Direction.Count()] counts;
+    Direction direction;
+    int countedCase;
+    int builtinCount;
     string shown;
 }
 
@@ -60,6 +73,17 @@ Weapon WeaponNumbered(int number) { return Weapon(number); }
 
 system Pick(mut Picks picks, Time time)
 {
+    picks.direction = Direction((int(picks.direction) + 1) % DIRECTIONS);
+    picks.counts[Direction.Count() - 1] = Voxel.Count() + Tile.Count();
+    picks.builtinCount = Prediction.Count();
+    switch (Direction.Count())
+    {
+        case Direction.Count():
+            picks.countedCase = 1;
+            break;
+        default:
+            break;
+    }
     picks.rolled = WeaponNumbered(time.tick % 2);
     byte one = 1;
     picks.small = Weapon(one); // A byte is an int where one goes

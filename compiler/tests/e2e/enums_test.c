@@ -75,6 +75,21 @@ TIDE_TEST(enums_keep_numbers_no_member_has)
     TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&world.heap, world.Picks.shown)), "Playing 3 Stone 255") == 0);
 }
 
+TIDE_TEST(enums_count_members_and_wrap)
+{
+    tide_world_init(&world, 1.0f);
+    TIDE_CHECK(world.Picks.members == 3);
+    TIDE_CHECK(world.Picks.aliases == 4); // Sparse, negative and aliased values; Count is a member too
+    TIDE_CHECK(world.Picks.forwardCount == 2);
+    TIDE_CHECK(Later_A == 4 && Later_B == 5);
+    ticks(1);
+    TIDE_CHECK(world.Picks.direction == Direction_East);
+    TIDE_CHECK(world.Picks.counts.at[3] == 5);
+    TIDE_CHECK(world.Picks.countedCase == 1 && world.Picks.builtinCount == 2);
+    ticks(3);
+    TIDE_CHECK(world.Picks.direction == Direction_North);
+}
+
 // A byte's and a ushort's enums keep a number's low bits, as byte(x) does.
 TIDE_TEST(enums_stored_small_keep_low_bits)
 {

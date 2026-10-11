@@ -1,5 +1,22 @@
 # The language server and the editors
 
+## Enum count and cast guidance, 2026-10-11
+
+Enum-type completion offers `Count()` with its static, compile-time int contract;
+the distinct label preserves a declared member named `Count`. Named-phase and
+switch-case completion still offer members only. Hover gives the declaration count and
+explains that aliases count separately; signature help describes the zero-argument
+call. The retained enum-type receiver supports qualified-name navigation and
+rename. Both editor integrations receive the same shared language-server output.
+Parser diagnostics for `(int)direction` include `int(direction)` as their note.
+
+`lsp_enum_count_and_cast_diagnostic` covers member/method coexistence, hover,
+static-only signature help, qualified navigation/rename, cast diagnostics with parser recovery
+and valid parenthesized subtraction, indexing and postfix increments. This is
+protocol coverage; the full native language-server suite passes (214 tests).
+The full-suite regression also pins member-only switch-case completion. Actual
+editor host rendering was not separately exercised.
+
 ## Sample playback hints, 2026-10-11
 
 `skinned_arguments` now retains the written arguments before appending an
