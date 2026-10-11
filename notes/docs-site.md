@@ -17,6 +17,10 @@ example/gallery rendering smoke pass with all games staged, including the
 current isometric Inside Out page and gameplay thumbnail. The browser
 gameplay tests are recorded in `notes/inside-out.md`; deployment is a separate
 step using the existing Fly site.
+After merging `origin/dev`'s confirmed-frame/compiler and user-documentation
+changes, every release page was rebuilt and restaged. Site check/build, the
+five production HTTP/SEO tests and complete WebGL example/gallery smoke pass
+again with the merged docs and current prototype.
 
 Delayed initialization and switch expressions (2026-10-11): Basics explains
 explicitly typed delayed locals, read-before-assignment and once-only

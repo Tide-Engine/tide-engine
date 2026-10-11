@@ -152,16 +152,21 @@ The final isometric fixture passes on WebGL and WebGPU in web debug and web
 release with Node 24.21 and muted Chrome on this Windows machine (2026-10-11).
 It verifies waiting for the second player, movement from both keyboard roles,
 partner undo, shared reset, held-key suppression across partner reset/undo,
-release/new-press recovery, the
-actual eight-move first-puzzle witness, synchronized Next progression and a
+release/new-press recovery, the actual eight-move first-puzzle witness,
+synchronized Next progression and a
 real phone touch move received by the partner. Both canvases fill their phone
 viewports; desktop completion and phone captures were visually inspected.
 The CTest entries are `inside_out_play_webgl` and `inside_out_play_webgpu`,
 with 180-second guards and serial scheduling. The fixture controls match time
 to separate software rendering waits from session deadlines; real-time
 transport behavior remains the engine's session/browser-room coverage.
-The final debug CTests take 85.67 seconds on WebGL and 17.32 seconds on WebGPU,
-within their unchanged guards. Static captures reuse completed checkpoints;
+After merging `origin/dev` at `ebeea92c`, the final debug CTests take 70.33
+seconds on WebGL and 14.21 seconds on WebGPU, within their unchanged guards.
+Native and WASI simulation checks again pass all fourteen cases after the
+incoming confirmed-frame ABI/compiler changes. Every release docs/example,
+sample and prototype page was rebuilt and staged; docs check/build, five
+production HTTP/SEO checks and the complete WebGL example/gallery smoke pass.
+Static captures reuse completed checkpoints;
 gameplay key edges receive one delivered frame, while title/modal typing keeps
 its two-frame settling. Major checkpoints require six fresh verified ticks;
 individual witness moves use two and the completed witness uses six. The
@@ -177,6 +182,9 @@ keys. Hint cards grow to fit their wrapped text. The catalog thumbnail is a
 capture of the actual first workshop. The game-specific HTML shell preserves
 the embedded pack and runtime while supplying the game's title, warm loading
 background and touch canvas behavior.
+An additional two-process Return Post capture checks a scale exchange: each
+player keeps their amber/teal identity colour, and their role label and active
+interior ownership change to match the exchanged controls.
 
 All eight original source WAVs decode as mono 24 kHz PCM. Their maximum sample
 magnitudes range from 0.144 to 0.319 of full scale. A bounded native two-player
