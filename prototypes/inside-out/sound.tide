@@ -1,4 +1,4 @@
-asset Clip workshopMusic = "sfx/workshop.wav";
+asset Clip roomAmbience = "sfx/ambience.wav";
 asset Clip woodenStep = "sfx/step.wav";
 asset Clip woodenPush = "sfx/push.wav";
 asset Clip doorwayRustle = "sfx/enter.wav";
@@ -12,7 +12,7 @@ local singleton Hearing { Sound music; }
 [Stage(ArtStage.Sound)]
 view WorkshopSound(Hands hands, mut Hearing hearing)
 {
-    hearing.music.clip = workshopMusic;
+    hearing.music.clip = roomAmbience;
     hearing.music.loop = true;
     hearing.music.playing = hands.music && !hands.quiet;
     hearing.music.volume = 0.27;

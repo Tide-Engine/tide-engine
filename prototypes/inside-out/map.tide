@@ -1,6 +1,14 @@
-// Every interior uses exactly this fraction of its containing tile. Camera
-// entry/exit are inverse affine transforms of the same miniature geometry.
-const float ROOM_SCALE = 0.16;
+// A box's longest edge fills one containing cell. Its miniature, focused
+// room and doorway passage all use this same rectangular transform.
+const float PASSAGE_SECONDS = 0.55;
+float RoomScale(LevelLayout layout, int room)
+{
+    return 1.0 / Math.Max(RoomWidth(layout, room), RoomHeight(layout, room));
+}
+float2 RoomDimensions(LevelLayout layout, int room)
+{
+    return float2(RoomWidth(layout, room), RoomHeight(layout, room));
+}
 
 struct MapLens
 {
@@ -10,7 +18,7 @@ struct MapLens
     float tile;
 }
 
-MapLens WorkshopLens(float2 screen, int room)
+MapLens WorkshopLens(LevelLayout layout, float2 screen, int room)
 {
     var narrow = screen.x < 720;
     var width = Math.Min(screen.x - 36, 1180);
@@ -19,12 +27,12 @@ MapLens WorkshopLens(float2 screen, int room)
     var height = Math.Max(200, screen.y - top - (narrow ? 200 : 110));
     var center = float2(left + width * 0.5, top + height * 0.5);
     var size = float2(width, height);
-    var cells = room < 0 ? OUTER_SIZE : INNER_SIZE;
+    var cells = Math.Max(RoomWidth(layout, room), RoomHeight(layout, room));
     var side = Math.Min(size.x - 24, size.y - 62);
     // Fixed room framing includes a slice of a maker beside its outer shell.
     // The partner's position never changes this scale or center.
     var tile = Math.Max(5, room < 0 ? side * 0.96 / cells : side / (cells + 6));
-    var origin = center + float2(0, 9) - float2((cells - 1) * tile * 0.5);
+    var origin = center + float2(0, 9) - RoomCenter(layout, room) * tile;
     return MapLens { center = center, size = size, origin = origin, tile = tile };
 }
 
@@ -34,8 +42,7 @@ struct RoomSurround
 {
     int room = -1;
     float2 anchor;
-    int shell = -1;
-    int portal = -1;
+    int box = -1;
     bool reference;
 }
 
@@ -50,6 +57,9 @@ struct MakerPassage
     bool visualInside;
     bool bridge;
     int child = -1;
+    int side;
+    int fromChild = -1;
+    int fromSide;
     RoomSurround gate;
     RoomSurround fromGate;
     float2 source;
@@ -68,12 +78,12 @@ struct MakerPassage
 
 float2 PassageAnchor(RoomSurround gate, Picture picture)
 {
-    return gate.shell >= 0 && gate.shell < MAX_ROOMS ? picture.rooms[gate.shell] : gate.anchor;
+    return gate.box >= 0 && gate.box < 8 ? picture.boxes[gate.box] : gate.anchor;
 }
 
 bool SameGate(RoomSurround a, RoomSurround b)
 {
-    return a.room == b.room && a.shell == b.shell && a.portal == b.portal && a.reference == b.reference;
+    return a.room == b.room && a.box == b.box;
 }
 
 bool SameEntrance(Traveler a, Traveler b)
@@ -82,7 +92,7 @@ bool SameEntrance(Traveler a, Traveler b)
     if (a.depth <= 0 || a.depth > MAX_DEPTH) return true;
     var first = a.trail[a.depth - 1];
     var second = b.trail[b.depth - 1];
-    return first.shell == second.shell && first.room == second.room && CellEqual(first.position, second.position);
+    return first.box == second.box;
 }
 
 float PassageEase(float value)
@@ -91,12 +101,21 @@ float PassageEase(float value)
     return t * t * (3 - 2 * t);
 }
 
-float2 DoorLip(float2 doorCell)
+int PassageSide(float2 outward)
 {
-    return (doorCell - float2(2)) * ((INNER_SIZE + 0.22) / (INNER_SIZE - 1)) * ROOM_SCALE;
+    if (Math.Abs(outward.x) > Math.Abs(outward.y)) return outward.x < 0 ? 3 : 1;
+    return outward.y < 0 ? 0 : 2;
 }
 
-MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after)
+float2 DoorLip(LevelLayout layout, int room, int side)
+{
+    // Move only the outward coordinate to the footprint edge. An offset
+    // doorway retains its exact tangent, including a corner entrance.
+    return (float2(DoorCell(layout, room, side)) - RoomCenter(layout, room) +
+        float2(Direction(side)) * 0.5) * RoomScale(layout, room);
+}
+
+MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after, bool capturedSource = false)
 {
     var destination = ReturnSurround(workshop, after, picture);
     var previous = ReturnSurround(workshop, before, picture);
@@ -109,27 +128,28 @@ MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler
         trip.sourceInside = true;
         trip.gate = destination;
         trip.fromGate = previous;
-        trip.lip = DoorLip(float2(after.position));
-        trip.fromLip = DoorLip(float2(before.position));
+        trip.fromChild = before.room;
+        trip.fromSide = PassageSide(destination.anchor - previous.anchor);
+        trip.side = (trip.fromSide + 2) % 4;
     }
     else if (after.depth > before.depth && destination.room == before.room)
     {
         trip.entering = true;
         trip.gate = destination;
-        trip.lip = DoorLip(float2(after.position));
+        trip.side = PassageSide(float2(before.position) - destination.anchor);
     }
     else if (previous.room == after.room && before.room >= 0)
     {
         trip.child = before.room;
         trip.gate = previous;
         trip.sourceInside = true;
-        trip.lip = DoorLip(float2(before.position));
+        trip.side = PassageSide(float2(after.position) - previous.anchor);
     }
     else if (after.room != before.room && destination.room == before.room)
     {
         trip.entering = true;
         trip.gate = destination;
-        trip.lip = DoorLip(float2(after.position));
+        trip.side = PassageSide(float2(before.position) - destination.anchor);
     }
     else if (before.room >= 0 && after.room >= 0 && previous.room == destination.room)
     {
@@ -140,11 +160,16 @@ MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler
         trip.sourceInside = true;
         trip.gate = destination;
         trip.fromGate = previous;
-        trip.lip = DoorLip(float2(after.position));
-        trip.fromLip = DoorLip(float2(before.position));
+        trip.fromChild = before.room;
+        trip.fromSide = PassageSide(destination.anchor - previous.anchor);
+        trip.side = (trip.fromSide + 2) % 4;
     }
     else return trip;
     trip.active = true;
+    var scale = RoomScale(workshop.layout, trip.child);
+    var center = RoomCenter(workshop.layout, trip.child);
+    trip.lip = DoorLip(workshop.layout, trip.child, trip.side);
+    if (trip.bridge) trip.fromLip = DoorLip(workshop.layout, trip.fromChild, trip.fromSide);
     var old = picture.passages[seat];
     if (old.active && old.gate.room == trip.gate.room)
     {
@@ -154,22 +179,23 @@ MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler
     }
     else if (before.room == trip.gate.room && !trip.sourceInside)
     {
-        trip.source = picture.actors[seat];
-        trip.sourceScale = picture.actorScale[seat];
+        trip.source = capturedSource ? float2(before.position) : picture.actors[seat];
+        trip.sourceScale = capturedSource ? 1.0 : picture.actorScale[seat];
     }
     else
     {
         var from = trip.bridge ? previous : trip.gate;
-        trip.source = PassageAnchor(from, picture) + (picture.actors[seat] - float2(2)) * ROOM_SCALE;
-        trip.sourceScale = picture.actorScale[seat] * ROOM_SCALE;
+        var cell = capturedSource ? float2(before.position) : picture.actors[seat];
+        trip.source = PassageAnchor(from, picture) + (cell - RoomCenter(workshop.layout, before.room)) * RoomScale(workshop.layout, before.room);
+        trip.sourceScale = (capturedSource ? 1.0 : picture.actorScale[seat]) * RoomScale(workshop.layout, before.room);
     }
     trip.position = trip.source;
     trip.scale = trip.sourceScale;
     trip.visualInside = trip.sourceInside;
-    trip.aliasSource = trip.entering ? trip.lip / ROOM_SCALE + float2(2) :
-        (trip.source - PassageAnchor(trip.gate, picture)) / ROOM_SCALE + float2(2);
+    trip.aliasSource = trip.entering ? trip.lip / scale + center :
+        (trip.source - PassageAnchor(trip.gate, picture)) / scale + center;
     trip.aliasFrom = trip.entering ? 0.0 : 1.0;
-    if (old.active && old.child == trip.child && old.gate.reference)
+    if (old.active && old.child == trip.child)
     {
         trip.aliasSource = old.aliasPosition;
         trip.aliasFrom = old.aliasAlpha;
@@ -179,83 +205,123 @@ MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler
     return trip;
 }
 
-void PassagePose(mut MakerPassage trip, Picture picture)
+void PassagePose(LevelLayout layout, mut MakerPassage trip, Picture picture)
 {
-    var progress = Math.Min(1, trip.age / 0.42);
+    var progress = Math.Min(1, trip.age / PASSAGE_SECONDS);
+    var scale = RoomScale(layout, trip.child);
+    var center = RoomCenter(layout, trip.child);
     var anchor = PassageAnchor(trip.gate, picture);
     var lip = anchor + trip.lip;
-    var destination = trip.entering ? anchor + (trip.target - float2(2)) * ROOM_SCALE : trip.target;
+    var destination = trip.entering ? anchor + (trip.target - center) * scale : trip.target;
+    var approach = lip + float2(Direction(trip.side)) * 0.24;
     if (trip.bridge)
     {
         var oldLip = PassageAnchor(trip.fromGate, picture) + trip.fromLip;
-        if (progress < 0.25)
+        var fromScale = RoomScale(layout, trip.fromChild);
+        var halfway = (oldLip + lip) * 0.5;
+        if (progress < 0.20)
         {
-            var blend = PassageEase(progress / 0.25);
+            var blend = PassageEase(progress / 0.20);
             trip.position = Math.Lerp(trip.source, oldLip, blend);
-            trip.scale = Math.Lerp(trip.sourceScale, ROOM_SCALE, blend);
+            trip.scale = Math.Lerp(trip.sourceScale, fromScale, blend);
         }
-        else if (progress < 0.75)
+        else if (progress < 0.50)
         {
-            var blend = PassageEase((progress - 0.25) / 0.50);
-            trip.position = Math.Lerp(oldLip, lip, blend);
-            trip.scale = Math.Lerp(ROOM_SCALE, 1, 1 - Math.Abs(blend * 2 - 1));
+            var blend = PassageEase((progress - 0.20) / 0.30);
+            trip.position = Math.Lerp(oldLip, halfway, blend);
+            trip.scale = Math.Lerp(fromScale, 1, blend);
+        }
+        else if (progress < 0.80)
+        {
+            var blend = PassageEase((progress - 0.50) / 0.30);
+            trip.position = Math.Lerp(halfway, lip, blend);
+            trip.scale = Math.Lerp(1, scale, blend);
         }
         else
         {
-            trip.position = Math.Lerp(lip, destination, PassageEase((progress - 0.75) / 0.25));
-            trip.scale = ROOM_SCALE;
+            trip.position = Math.Lerp(lip, destination, PassageEase((progress - 0.80) / 0.20));
+            trip.scale = scale;
         }
-        trip.visualInside = progress >= 0.75;
+        trip.visualInside = progress >= 0.80;
     }
     else if (trip.entering && !trip.sourceInside)
     {
-        var first = PassageEase(progress / 0.65);
-        trip.position = progress < 0.65 ? Math.Lerp(trip.source, lip, first) : Math.Lerp(lip, destination, PassageEase((progress - 0.65) / 0.35));
-        trip.scale = progress < 0.65 ? Math.Lerp(trip.sourceScale, ROOM_SCALE, first) : ROOM_SCALE;
-        trip.visualInside = progress >= 0.65;
+        if (progress < 0.35)
+        {
+            trip.position = Math.Lerp(trip.source, approach, PassageEase(progress / 0.35));
+            trip.scale = trip.sourceScale;
+        }
+        else if (progress < 0.70)
+        {
+            var blend = PassageEase((progress - 0.35) / 0.35);
+            trip.position = Math.Lerp(approach, lip, blend);
+            trip.scale = Math.Lerp(trip.sourceScale, scale, blend);
+        }
+        else
+        {
+            trip.position = Math.Lerp(lip, destination, PassageEase((progress - 0.70) / 0.30));
+            trip.scale = scale;
+        }
+        trip.visualInside = progress >= 0.70;
     }
     else if (!trip.entering && trip.sourceInside)
     {
-        var last = PassageEase((progress - 0.35) / 0.65);
-        trip.position = progress < 0.35 ? Math.Lerp(trip.source, lip, PassageEase(progress / 0.35)) : Math.Lerp(lip, destination, last);
-        trip.scale = progress < 0.35 ? Math.Lerp(trip.sourceScale, ROOM_SCALE, PassageEase(progress / 0.35)) : Math.Lerp(ROOM_SCALE, 1, last);
-        trip.visualInside = progress < 0.35;
+        if (progress < 0.30)
+        {
+            var blend = PassageEase(progress / 0.30);
+            trip.position = Math.Lerp(trip.source, lip, blend);
+            trip.scale = Math.Lerp(trip.sourceScale, scale, blend);
+        }
+        else if (progress < 0.65)
+        {
+            var blend = PassageEase((progress - 0.30) / 0.35);
+            trip.position = Math.Lerp(lip, approach, blend);
+            trip.scale = Math.Lerp(scale, 1, blend);
+        }
+        else
+        {
+            trip.position = Math.Lerp(approach, destination, PassageEase((progress - 0.65) / 0.35));
+            trip.scale = 1;
+        }
+        trip.visualInside = progress < 0.30;
     }
     else
     {
         var blend = PassageEase(progress);
         trip.position = Math.Lerp(trip.source, destination, blend);
-        trip.scale = Math.Lerp(trip.sourceScale, trip.entering ? ROOM_SCALE : 1.0, blend);
+        trip.scale = Math.Lerp(trip.sourceScale, trip.entering ? scale : 1.0, blend);
         trip.visualInside = trip.sourceInside;
     }
-    // A fixed reference also has canonical copies elsewhere. Their edge
-    // passage crossfades with the actual gateway pose instead of popping to a
-    // different cell/scale when a stationary observer sees a recursive copy.
-    var aliasBlend = trip.entering ? PassageEase((progress - (trip.bridge ? 0.75 : 0.65)) / (trip.bridge ? 0.25 : 0.35)) : PassageEase(progress / 0.35);
-    trip.aliasPosition = Math.Lerp(trip.aliasSource, trip.entering ? trip.target : trip.lip / ROOM_SCALE + float2(2), aliasBlend);
+    // Canonical copies can occur through a movable reference or a containment
+    // cycle. Their edge passage crossfades with the actual gateway pose, using
+    // the same policy for every box rather than popping recursive aliases.
+    var aliasBlend = trip.entering ? PassageEase((progress - (trip.bridge ? 0.80 : 0.70)) / (trip.bridge ? 0.20 : 0.30)) : PassageEase(progress / 0.30);
+    trip.aliasPosition = Math.Lerp(trip.aliasSource, trip.entering ? trip.target : trip.lip / scale + center, aliasBlend);
     trip.aliasAlpha = Math.Lerp(trip.aliasFrom, trip.entering ? 1.0 : 0.0, aliasBlend);
+    if (!trip.entering && trip.gate.room == trip.child && progress > 0.65)
+    {
+        // A self exit reaches another occurrence of the same shared room.
+        // Its canonical copies arrive at the parent pose before completion,
+        // rather than suddenly reappearing when the passage is retired.
+        trip.aliasPosition = trip.position;
+        trip.aliasAlpha = PassageEase((progress - 0.65) / 0.35);
+    }
 }
 
 RoomSurround AncestorSurround(Workshop workshop, Traveler actor, int room, int layer, Picture picture)
 {
     mut var surround = RoomSurround { };
     if (room < 0 || room >= workshop.layout.roomCount) return surround;
-    mut var entry = Entry { shell = room };
+    mut var entry = Entry { box = room };
     var step = actor.depth - 1 - layer;
     if (step >= 0 && step < MAX_DEPTH && EntryDestination(workshop.layout, actor.trail[step]) == room)
         entry = actor.trail[step];
-    if (entry.shell >= 0 && entry.shell < workshop.layout.roomCount)
+    if (ValidBox(workshop.layout, entry.box))
     {
-        surround.room = workshop.puzzle.rooms[entry.shell].room;
-        surround.anchor = picture.rooms[entry.shell];
-        surround.shell = entry.shell;
-    }
-    else
-    {
-        surround.room = entry.room;
-        surround.anchor = float2(entry.position);
-        surround.portal = PortalAt(workshop.layout, entry.room, entry.position);
-        surround.reference = true;
+        surround.room = BoxPlacement(workshop.layout, workshop.puzzle, entry.box).room;
+        surround.anchor = picture.boxes[entry.box];
+        surround.box = entry.box;
+        surround.reference = entry.box >= MAX_ROOMS;
     }
     return surround;
 }
@@ -265,18 +331,18 @@ RoomSurround ReturnSurround(Workshop workshop, Traveler actor, Picture picture)
     return AncestorSurround(workshop, actor, actor.room, 0, picture);
 }
 
-MapLens InteriorLens(MapLens parent, float2 anchor)
+MapLens InteriorLens(LevelLayout layout, int room, MapLens parent, float2 anchor)
 {
-    var tile = parent.tile * ROOM_SCALE;
+    var tile = parent.tile * RoomScale(layout, room);
     var center = MapPoint(anchor, parent);
     return MapLens { center = parent.center, size = parent.size,
-        origin = center - float2((INNER_SIZE - 1) * tile * 0.5), tile = tile };
+        origin = center - RoomCenter(layout, room) * tile, tile = tile };
 }
 
-MapLens ContainingLens(MapLens focus, RoomSurround surround)
+MapLens ContainingLens(LevelLayout layout, int room, MapLens focus, RoomSurround surround)
 {
-    var tile = focus.tile / ROOM_SCALE;
-    var center = focus.origin + float2((INNER_SIZE - 1) * focus.tile * 0.5);
+    var tile = focus.tile / RoomScale(layout, room);
+    var center = focus.origin + RoomCenter(layout, room) * focus.tile;
     var origin = center - surround.anchor * tile;
     return MapLens { center = focus.center, size = focus.size, origin = origin, tile = tile };
 }
@@ -299,24 +365,4 @@ bool InPlayfield(float2 at, float side, MapLens viewport)
     var right = viewport.center + viewport.size * 0.5 - float2(12, 22);
     return at.x + side * 0.5 >= left.x && at.x - side * 0.5 <= right.x &&
         at.y + side * 0.5 >= left.y && at.y - side * 0.5 <= right.y;
-}
-
-void InfinityMark(float2 at, float size, Color tone)
-{
-    // Geometric loops remain clear even on fonts without an infinity glyph.
-    Draw.WireEllipse(at + float2(-size * 0.18, 0), float2(size * 0.25, size * 0.17), Math.Max(1, size * 0.055), tone);
-    Draw.WireEllipse(at + float2(size * 0.18, 0), float2(size * 0.25, size * 0.17), Math.Max(1, size * 0.055), tone);
-}
-
-void DoorNotches(float2 center, float width, int doors, Color tone)
-{
-    for (var direction = 0; direction < 4; direction++)
-    {
-        if ((doors & (1 << direction)) == 0) continue;
-        var delta = float2(Direction(direction));
-        var edge = center + delta * width * 0.5;
-        var across = float2(-delta.y, delta.x);
-        Draw.Line(edge - across * width * 0.12, edge + across * width * 0.12, Math.Max(2, width * 0.10), Color(1, 0.95, 0.71));
-        Draw.Line(edge - across * width * 0.09, edge + across * width * 0.09, Math.Max(1, width * 0.035), tone);
-    }
 }

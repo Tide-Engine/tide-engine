@@ -8,45 +8,46 @@ settings
     hostMigration = true;
 }
 
-const int OUTER_SIZE = 7;
-const int INNER_SIZE = 5;
 const int MAX_ROOMS = 4;
 const int MAX_CRATES = 8;
-const int MAX_PORTALS = 4;
+const int MAX_REFERENCES = 4;
+const int MAX_BOXES = 8;
 const int MAX_DEPTH = 8;
 const int LEVEL_COUNT = 12;
 const int UNDO_LIMIT = 128;
 
-enum Tile { Floor, Wall, Target, Exit, Hatch, Switch }
+enum Tile { Floor, Wall, Target, Exit }
 struct RoomLayout
 {
-    Tile[25] tiles;
+    Tile[49] tiles;
+    int width = 5;
+    int height = 5;
     int doors;
+    int north = -1;
+    int east = -1;
+    int south = -1;
+    int west = -1;
     int2 dock = int2(-1);
     int dockRoom = -1;
-    bool latched;
 }
-struct PortalLayout
+struct ReferenceLayout
 {
-    int room = -1;
-    int2 position;
     int destination;
-    int doors = 15;
 }
 struct LevelLayout
 {
     Tile[49] tiles;
+    int width = 7;
+    int height = 7;
     RoomLayout[4] rooms;
-    PortalLayout[4] portals;
+    ReferenceLayout[4] references;
     int roomCount;
     int crateCount;
-    int portalCount;
+    int referenceCount;
 }
 struct Entry
 {
-    int shell = -1;
-    int room = -1;
-    int2 position;
+    int box = -1;
 }
 struct Traveler
 {
@@ -61,6 +62,7 @@ struct Puzzle
 {
     Traveler[2] actors;
     RoomShell[4] rooms;
+    RoomShell[4] references;
     Cargo[8] crates;
     int moves;
     bool solved;
@@ -81,7 +83,7 @@ singleton Workshop
 }
 
 scene Main { }
-event PuzzleCue { int kind; int seat; }
+event PuzzleCue { int kind; int seat; int direction = -1; Traveler source; }
 command Move { int serial; int direction; }
 command Undo { int serial; }
 command Reset { int serial; }
@@ -96,9 +98,23 @@ int SeatOf(Workshop workshop, PlayerID player)
 }
 bool Together(Workshop workshop) { return workshop.present[0] && workshop.present[1]; }
 bool CellEqual(int2 a, int2 b) { return a.x == b.x && a.y == b.y; }
-bool OnGrid(int2 at, int size) { return at.x >= 0 && at.y >= 0 && at.x < size && at.y < size; }
 int CellIndex(int2 at, int size) { return at.y * size + at.x; }
-int RoomSize(int room) { return room < 0 ? OUTER_SIZE : INNER_SIZE; }
+int RoomWidth(LevelLayout layout, int room)
+{
+    return Math.Clamp(room == -1 ? layout.width : layout.rooms[room].width, 1, 7);
+}
+int RoomHeight(LevelLayout layout, int room)
+{
+    return Math.Clamp(room == -1 ? layout.height : layout.rooms[room].height, 1, 7);
+}
+bool OnRoomGrid(LevelLayout layout, int room, int2 at)
+{
+    return (room == -1 || ValidRoom(layout, room)) && at.x >= 0 && at.y >= 0 && at.x < RoomWidth(layout, room) && at.y < RoomHeight(layout, room);
+}
+float2 RoomCenter(LevelLayout layout, int room)
+{
+    return float2(RoomWidth(layout, room) - 1, RoomHeight(layout, room) - 1) * 0.5;
+}
 int2 Direction(int direction)
 {
     if (direction == 0) return int2(0, -1);
@@ -107,27 +123,53 @@ int2 Direction(int direction)
     if (direction == 3) return int2(-1, 0);
     return int2(0);
 }
-int2 DoorCell(int direction)
+int2 DoorCell(LevelLayout layout, int room, int direction)
 {
-    if (direction == 0) return int2(2, 0);
-    if (direction == 1) return int2(4, 2);
-    if (direction == 2) return int2(2, 4);
-    return int2(0, 2);
+    if (direction < 0 || direction > 3 || (room != -1 && !ValidRoom(layout, room))) return int2(-1);
+    var width = RoomWidth(layout, room);
+    var height = RoomHeight(layout, room);
+    mut var offset = -1;
+    if (room >= 0)
+    {
+        if (direction == 0) offset = layout.rooms[room].north;
+        else if (direction == 1) offset = layout.rooms[room].east;
+        else if (direction == 2) offset = layout.rooms[room].south;
+        else offset = layout.rooms[room].west;
+    }
+    var length = direction % 2 == 0 ? width : height;
+    if (offset == -1) offset = length / 2;
+    if (offset < 0 || offset >= length) return int2(-1);
+    if (direction == 0) return int2(offset, 0);
+    if (direction == 1) return int2(width - 1, offset);
+    if (direction == 2) return int2(offset, height - 1);
+    return int2(0, offset);
 }
 bool ValidRoom(LevelLayout layout, int room)
 {
     return room >= 0 && room < layout.roomCount && room < MAX_ROOMS;
 }
-int RoomAt(LevelLayout layout, Puzzle puzzle, int parent, int2 at)
+bool ValidBox(LevelLayout layout, int box)
 {
-    for (var room = 0; room < Math.Min(MAX_ROOMS, layout.roomCount); room++)
-        if (puzzle.rooms[room].room == parent && CellEqual(puzzle.rooms[room].position, at)) return room;
-    return -1;
+    return box >= 0 && (box < MAX_ROOMS ? ValidRoom(layout, box) : box < MAX_BOXES && box - MAX_ROOMS < layout.referenceCount);
 }
-int PortalAt(LevelLayout layout, int parent, int2 at)
+int BoxDestination(LevelLayout layout, int box)
 {
-    for (var portal = 0; portal < Math.Min(MAX_PORTALS, layout.portalCount); portal++)
-        if (layout.portals[portal].room == parent && CellEqual(layout.portals[portal].position, at)) return portal;
+    if (!ValidBox(layout, box)) return -2;
+    return box < MAX_ROOMS ? box : layout.references[box - MAX_ROOMS].destination;
+}
+RoomShell BoxPlacement(LevelLayout layout, Puzzle puzzle, int box)
+{
+    if (!ValidBox(layout, box)) return RoomShell { };
+    return box < MAX_ROOMS ? puzzle.rooms[box] : puzzle.references[box - MAX_ROOMS];
+}
+int BoxAt(LevelLayout layout, Puzzle puzzle, int parent, int2 at)
+{
+    for (var box = 0; box < MAX_BOXES; box++)
+    {
+        if (!ValidBox(layout, box)) continue;
+        var placement = BoxPlacement(layout, puzzle, box);
+        if (placement.room == parent && CellEqual(placement.position, at)) return box;
+    }
     return -1;
 }
 int ActorAt(Puzzle puzzle, int room, int2 at)
@@ -144,23 +186,13 @@ int CargoAt(LevelLayout layout, Puzzle puzzle, int room, int2 at)
 }
 Tile TileAt(LevelLayout layout, int room, int2 at)
 {
-    if (room == -1) return OnGrid(at, OUTER_SIZE) ? layout.tiles[CellIndex(at, OUTER_SIZE)] : Tile.Wall;
-    if (!ValidRoom(layout, room) || !OnGrid(at, INNER_SIZE)) return Tile.Wall;
-    return layout.rooms[room].tiles[CellIndex(at, INNER_SIZE)];
-}
-bool RoomUnlocked(LevelLayout layout, Puzzle puzzle, int room)
-{
-    if (!ValidRoom(layout, room)) return false;
-    if (!layout.rooms[room].latched) return true;
-    for (var seat = 0; seat < 2; seat++)
-        if (puzzle.actors[seat].room == room && TileAt(layout, room, puzzle.actors[seat].position) == Tile.Switch) return true;
-    for (var crate = 0; crate < Math.Min(MAX_CRATES, layout.crateCount); crate++)
-        if (puzzle.crates[crate].active && puzzle.crates[crate].room == room && TileAt(layout, room, puzzle.crates[crate].position) == Tile.Switch) return true;
-    return false;
+    if (!OnRoomGrid(layout, room, at)) return Tile.Wall;
+    var index = CellIndex(at, RoomWidth(layout, room));
+    return room == -1 ? layout.tiles[index] : layout.rooms[room].tiles[index];
 }
 bool EmptyCell(LevelLayout layout, Puzzle puzzle, int room, int2 at)
 {
-    return TileAt(layout, room, at) != Tile.Wall && RoomAt(layout, puzzle, room, at) < 0 && PortalAt(layout, room, at) < 0 && CargoAt(layout, puzzle, room, at) < 0 && ActorAt(puzzle, room, at) < 0;
+    return TileAt(layout, room, at) != Tile.Wall && BoxAt(layout, puzzle, room, at) < 0 && CargoAt(layout, puzzle, room, at) < 0 && ActorAt(puzzle, room, at) < 0;
 }
 
 // Objects exit through their containing room's physical shell. Travelers
@@ -170,8 +202,8 @@ bool PhysicalStep(LevelLayout layout, Puzzle puzzle, int room, int2 from, int di
     nextRoom = room;
     next = from + Direction(direction);
     if (direction < 0 || direction > 3) return false;
-    if (OnGrid(next, RoomSize(room))) return TileAt(layout, room, next) != Tile.Wall;
-    if (!ValidRoom(layout, room) || !CellEqual(from, DoorCell(direction)) || (layout.rooms[room].doors & (1 << direction)) == 0) return false;
+    if (OnRoomGrid(layout, room, next)) return TileAt(layout, room, next) != Tile.Wall;
+    if (!ValidRoom(layout, room) || !CellEqual(from, DoorCell(layout, room, direction)) || (layout.rooms[room].doors & (1 << direction)) == 0) return false;
     nextRoom = puzzle.rooms[room].room;
     next = puzzle.rooms[room].position + Direction(direction);
     return TileAt(layout, nextRoom, next) != Tile.Wall;
@@ -184,30 +216,19 @@ bool Gateway(LevelLayout layout, Puzzle puzzle, int room, int2 at, int direction
     destination = room;
     entry = at;
     trail = Entry { };
-    var shell = RoomAt(layout, puzzle, room, at);
-    var portal = PortalAt(layout, room, at);
-    if (shell < 0 && portal < 0) return false;
+    var box = BoxAt(layout, puzzle, room, at);
+    if (!ValidBox(layout, box)) return false;
     var opposite = (direction + 2) % 4;
-    if (shell >= 0)
-    {
-        destination = shell;
-        trail = Entry { shell = shell };
-    }
-    else
-    {
-        var door = layout.portals[portal];
-        if ((door.doors & (1 << opposite)) == 0) return false;
-        destination = door.destination;
-        trail = Entry { room = room, position = at };
-    }
+    destination = BoxDestination(layout, box);
+    trail = Entry { box = box };
     if (!ValidRoom(layout, destination) || (layout.rooms[destination].doors & (1 << opposite)) == 0) return false;
-    entry = DoorCell(opposite);
+    entry = DoorCell(layout, destination, opposite);
     return TileAt(layout, destination, entry) != Tile.Wall;
 }
 bool ObjectDestination(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, out int nextRoom, out int2 next)
 {
     if (!PhysicalStep(layout, puzzle, room, from, direction, out nextRoom, out next)) return false;
-    if (RoomAt(layout, puzzle, nextRoom, next) >= 0 || PortalAt(layout, nextRoom, next) >= 0)
+    if (BoxAt(layout, puzzle, nextRoom, next) >= 0)
     {
         if (!Gateway(layout, puzzle, nextRoom, next, direction, out var destination, out var entry, out _)) return false;
         nextRoom = destination;
@@ -224,24 +245,21 @@ bool PushCargo(LevelLayout layout, mut Puzzle puzzle, int crate, int direction)
     puzzle.crates[crate].position = next;
     return true;
 }
-bool AcyclicPlacement(LevelLayout layout, Puzzle puzzle, int shell, int parent)
+bool PushBox(LevelLayout layout, mut Puzzle puzzle, int box, int direction)
 {
-    mut var room = parent;
-    for (var step = 0; step <= MAX_ROOMS; step++)
+    if (!ValidBox(layout, box) || !ValidRoom(layout, BoxDestination(layout, box))) return false;
+    var placement = BoxPlacement(layout, puzzle, box);
+    if (!ObjectDestination(layout, puzzle, placement.room, placement.position, direction, out var room, out var next)) return false;
+    if (box < MAX_ROOMS)
     {
-        if (room == -1) return true;
-        if (room == shell || !ValidRoom(layout, room)) return false;
-        room = puzzle.rooms[room].room;
+        puzzle.rooms[box].room = room;
+        puzzle.rooms[box].position = next;
     }
-    return false;
-}
-bool PushShell(LevelLayout layout, mut Puzzle puzzle, int shell, int direction)
-{
-    if (!RoomUnlocked(layout, puzzle, shell)) return false;
-    var box = puzzle.rooms[shell];
-    if (!ObjectDestination(layout, puzzle, box.room, box.position, direction, out var room, out var next) || !AcyclicPlacement(layout, puzzle, shell, room)) return false;
-    puzzle.rooms[shell].room = room;
-    puzzle.rooms[shell].position = next;
+    else
+    {
+        puzzle.references[box - MAX_ROOMS].room = room;
+        puzzle.references[box - MAX_ROOMS].position = next;
+    }
     return true;
 }
 bool TravelerStep(LevelLayout layout, Puzzle puzzle, Traveler actor, int direction, out int room, out int2 next, out int depth)
@@ -249,29 +267,20 @@ bool TravelerStep(LevelLayout layout, Puzzle puzzle, Traveler actor, int directi
     room = actor.room;
     next = actor.position + Direction(direction);
     depth = actor.depth;
-    if (OnGrid(next, RoomSize(room))) return TileAt(layout, room, next) != Tile.Wall;
-    if (!ValidRoom(layout, room) || depth <= 0 || depth > MAX_DEPTH || !CellEqual(actor.position, DoorCell(direction)) || (layout.rooms[room].doors & (1 << direction)) == 0) return false;
+    if (OnRoomGrid(layout, room, next)) return TileAt(layout, room, next) != Tile.Wall;
+    if (!ValidRoom(layout, room) || depth <= 0 || depth > MAX_DEPTH || !CellEqual(actor.position, DoorCell(layout, room, direction)) || (layout.rooms[room].doors & (1 << direction)) == 0) return false;
     var back = actor.trail[depth - 1];
-    if (back.shell >= 0)
-    {
-        if (!ValidRoom(layout, back.shell)) return false;
-        room = puzzle.rooms[back.shell].room;
-        next = puzzle.rooms[back.shell].position + Direction(direction);
-    }
-    else
-    {
-        room = back.room;
-        next = back.position + Direction(direction);
-    }
+    if (!ValidBox(layout, back.box)) return false;
+    var placement = BoxPlacement(layout, puzzle, back.box);
+    room = placement.room;
+    next = placement.position + Direction(direction);
     depth -= 1;
     return TileAt(layout, room, next) != Tile.Wall;
 }
 
 int EntryDestination(LevelLayout layout, Entry entry)
 {
-    if (entry.shell >= 0) return ValidRoom(layout, entry.shell) ? entry.shell : -2;
-    var portal = PortalAt(layout, entry.room, entry.position);
-    return portal >= 0 ? layout.portals[portal].destination : -2;
+    return BoxDestination(layout, entry.box);
 }
 bool RebaseTrail(LevelLayout layout, Puzzle puzzle, mut Traveler actor, int room, int depth)
 {
@@ -279,22 +288,26 @@ bool RebaseTrail(LevelLayout layout, Puzzle puzzle, mut Traveler actor, int room
     if (room == -1) actor.depth = 0;
     else if (depth == 0 || EntryDestination(layout, actor.trail[depth - 1]) != room)
     {
-        // A shell may have changed parent while someone was inside. Its
-        // occupant returns into that new parent's physical ancestry, rather
-        // than keeping a stale path or becoming stranded with no exit.
+        // Changed box parentage invalidates an old prefix. Rebuild the
+        // canonical primary ancestry; a genuine cycle contributes each
+        // room once and never invents a containing outer room.
         mut int[4] ancestors = default;
         mut var count = 0;
         mut var parent = room;
-        while (parent != -1 && count < MAX_ROOMS)
+        while (parent != -1)
         {
             if (!ValidRoom(layout, parent)) return false;
+            mut var repeated = false;
+            for (var prior = 0; prior < count; prior++)
+                if (ancestors[prior] == parent) repeated = true;
+            if (repeated) break;
+            if (count >= MAX_ROOMS) return false;
             ancestors[count] = parent;
             count += 1;
             parent = puzzle.rooms[parent].room;
         }
-        if (parent != -1) return false;
         actor.depth = count;
-        for (var step = 0; step < count; step++) actor.trail[count - step - 1] = Entry { shell = ancestors[step] };
+        for (var step = 0; step < count; step++) actor.trail[count - step - 1] = Entry { box = ancestors[step] };
     }
     for (var entry = actor.depth; entry < MAX_DEPTH; entry++) actor.trail[entry] = Entry { };
     return true;
@@ -307,14 +320,16 @@ bool IsSolved(LevelLayout layout, Puzzle puzzle)
     if (puzzle.actors[0].room == puzzle.actors[1].room && CellEqual(puzzle.actors[0].position, puzzle.actors[1].position)) return false;
     for (var crate = 0; crate < Math.Min(MAX_CRATES, layout.crateCount); crate++)
         if (puzzle.crates[crate].active && TileAt(layout, puzzle.crates[crate].room, puzzle.crates[crate].position) != Tile.Target) return false;
-    for (var cell = 0; cell < OUTER_SIZE * OUTER_SIZE; cell++)
-        if (layout.tiles[cell] == Tile.Target && CargoAt(layout, puzzle, -1, int2(cell % OUTER_SIZE, cell / OUTER_SIZE)) < 0) return false;
+    var outerWidth = RoomWidth(layout, -1);
+    for (var cell = 0; cell < outerWidth * RoomHeight(layout, -1); cell++)
+        if (layout.tiles[cell] == Tile.Target && CargoAt(layout, puzzle, -1, int2(cell % outerWidth, cell / outerWidth)) < 0) return false;
     for (var room = 0; room < Math.Min(MAX_ROOMS, layout.roomCount); room++)
     {
         var dock = layout.rooms[room].dock;
         if (dock.x >= 0 && (puzzle.rooms[room].room != layout.rooms[room].dockRoom || !CellEqual(puzzle.rooms[room].position, dock))) return false;
-        for (var cell = 0; cell < INNER_SIZE * INNER_SIZE; cell++)
-            if (layout.rooms[room].tiles[cell] == Tile.Target && CargoAt(layout, puzzle, room, int2(cell % INNER_SIZE, cell / INNER_SIZE)) < 0) return false;
+        var width = RoomWidth(layout, room);
+        for (var cell = 0; cell < width * RoomHeight(layout, room); cell++)
+            if (layout.rooms[room].tiles[cell] == Tile.Target && CargoAt(layout, puzzle, room, int2(cell % width, cell / width)) < 0) return false;
     }
     return true;
 }
@@ -331,28 +346,27 @@ bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction)
         trial.actors[seat] = actor;
         depth = actor.depth;
     }
-    var shell = RoomAt(layout, trial, room, next);
-    var portal = PortalAt(layout, room, next);
+    var box = BoxAt(layout, trial, room, next);
     mut var pushed = false;
-    if (shell >= 0)
+    if (box >= 0)
     {
         // A physical room moves whenever its destination is available. If
         // pushing fails, doorway entry starts from the unchanged candidate.
         mut var pushTrial = trial;
-        if (PushShell(layout, pushTrial, shell, direction))
+        if (PushBox(layout, pushTrial, box, direction))
         {
             trial = pushTrial;
             pushed = true;
         }
     }
-    if (!pushed && (shell >= 0 || portal >= 0))
+    if (!pushed && box >= 0)
     {
         if (depth >= MAX_DEPTH || !Gateway(layout, trial, room, next, direction, out var destination, out var entry, out var back)) return false;
         room = destination;
         next = entry;
         trial.actors[seat].trail[depth] = back;
         depth += 1;
-        if (RoomAt(layout, trial, room, next) >= 0 || PortalAt(layout, room, next) >= 0) return false;
+        if (BoxAt(layout, trial, room, next) >= 0) return false;
     }
     var occupant = ActorAt(trial, room, next);
     if (occupant >= 0 && occupant != seat) return false;
@@ -395,6 +409,8 @@ bool Pushed(Puzzle before, Puzzle after)
 {
     for (var room = 0; room < MAX_ROOMS; room++)
         if (before.rooms[room].room != after.rooms[room].room || !CellEqual(before.rooms[room].position, after.rooms[room].position)) return true;
+    for (var reference = 0; reference < MAX_REFERENCES; reference++)
+        if (before.references[reference].room != after.references[reference].room || !CellEqual(before.references[reference].position, after.references[reference].position)) return true;
     for (var crate = 0; crate < MAX_CRATES; crate++)
         if (before.crates[crate].room != after.crates[crate].room || !CellEqual(before.crates[crate].position, after.crates[crate].position)) return true;
     return false;
@@ -440,8 +456,11 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
         return;
     }
     Remember(workshop, before);
-    var travel = before.actors[seat].room != workshop.puzzle.actors[seat].room || before.actors[seat].depth != workshop.puzzle.actors[seat].depth;
-    Send(PuzzleCue { kind = travel ? 2 : Pushed(before, workshop.puzzle) ? 1 : 0, seat = seat });
+    var source = before.actors[seat];
+    var travel = source.room != workshop.puzzle.actors[seat].room || source.depth != workshop.puzzle.actors[seat].depth ||
+        !OnRoomGrid(workshop.layout, source.room, source.position + Direction(move.direction));
+    Send(PuzzleCue { kind = travel ? 2 : Pushed(before, workshop.puzzle) ? 1 : 0, seat = seat,
+        direction = travel ? move.direction : -1, source = travel ? source : Traveler { } });
     if (workshop.puzzle.solved)
     {
         workshop.completed |= 1 << workshop.level;

@@ -1,252 +1,218 @@
 # Inside Out
 
 The owner requested a public online co-op puzzle prototype for two friends
-in separate browsers on 2026-10-11. They chose a warm miniature workshop.
-The first published build assigned one player to the outer workshop and
-one to its room interiors, with twelve introductory puzzles. A follow-up
-briefly changed its presentation to isometric 2.5D.
+in separate browsers on 2026-10-11. The initial workshop, fixed player roles,
+isometric experiment, switch locks and fixed recursive entrances are
+superseded. The current direction is polished 2D, harder planning and
+interdependent moves, physically nested starting rooms, varied sizes and
+offset doors, and movable boxes including self-nesting. The owner chose
+spatial constraints instead of locks, and an unsettling institutional /
+PSX-inspired atmosphere without threats or jumpscares. These are game design
+choices within the prototype request, not engine or language requirements.
 
-After playing that version, the owner requested polished 2D, harder puzzles
-based on planning and interdependent moves, a shared world without fixed
-roles, free dimension traversal for both makers, and recursion. They chose
-walking into doorways to enter and holding Shift while moving to push rooms
-in that revision.
-They subsequently rejected the simultaneous room overview: each player should
-see their current dimension, with the containing world visible beyond it,
-as in Patrick's Parabox. They also requested improved graphics and a doorway
-sound that feels like entering a box instead of collecting a coin.
-They then requested a continuous spatial zoom with visible outside makers,
-automatic room pushing with doorway entry when blocked, and an unmistakably
-unpitched entrance sound. They clarified that the maker must move smoothly
-through the doorway too, rather than teleport as the camera zooms. The current
-prototype implements that follow-up.
-They then rejected camera framing that keeps both makers visible: each view
-should show its whole current room with one tile of outside context, and the
-partner may leave the screen. Discord or couch communication is sufficient.
-They then asked for a wider fixed margin that reveals part of a maker standing
-beside the containing box, and literal box/player symbols on goals and switches.
-Its particular layouts and puzzle rules are game design choices within the
-prototype request, not new engine or language requirements.
+## Shared world and recursive boxes
 
-## Shared world and recursive rooms
+`game.tide` contains one deterministic two-seat match. Both makers start
+inside the same small box, itself inside an ordinary containing room box
+that can be left. The root is called Outer room. Makers retain amber/teal
+identities. Their coordinates use one canonical interior: they block one
+another even when they arrived through different copies.
 
-`game.tide` contains a deterministic two-seat match. Both makers begin in
-the outer workshop and keep their amber/teal identities. Each Traveler has
-its dimension, grid position and a bounded entrance trail. No big/small seat
-or role-exchange command remains. Both can inhabit the same room and block
-one another at the same coordinate, regardless of the entrance used.
+Root and room dimensions are authored independently, bounded to 1..7 on
+each axis, with 49-cell storage and actual-width row stride. Each room has
+a four-side door mask and per-side offsets; -1 selects the midpoint.
+Invalid offsets and destinations block atomically. RoomLayout array elements
+require explicit literals to obtain defaults: a zeroed LevelLayout does
+not apply field defaults inside its room array.
 
-The workshop is 7 by 7 and room interiors are 5 by 5. Limits are four physical
-room shells, eight parcels, four fixed portals and eight entrance layers.
-Room identity is canonical: its interior exists once in match state. A shell
-has a parent dimension and cell. Moving it carries its occupants, parcels
-and contained rooms without changing their interior coordinates. Shells can
-be pushed into other rooms, but placement rejects physical ancestor cycles.
-Fixed doorway references may form cycles or point into their own room.
+Limits: four canonical interiors / primary boxes, four movable reference
+boxes, eight parcels and eight explicit entrance layers. IDs 0..3 are primary;
+IDs 4..7 are references. `LevelLayout.references` stores destinations;
+`Puzzle.references` stores live parents and positions. References use their
+canonical room's doors and offsets. Small stencils distinguish primary 1
+from copy 1′ (and 2..4), with identical materials and opening geometry.
 
-Walking into a physical shell first tries to push it. If that push cannot
-happen, the same direction tries its enabled facing doorway and enters at
-the opposite edge cell. Walls, occupied cells and a closed latch can stop
-the push. A failed push uses a separate candidate, so entry starts from
-unchanged state. No modifier or force-entry command remains. Fixed infinity
-doorways are entered directly; parcels are always pushed normally. Each
-action moves one object, with no pulling or push chains.
-Pushing a parcel or shell into another doorway imports it into that room.
-Pushing outward through an interior edge door exports an object beside the
-containing room's physical shell. Walls, makers and occupied destination
-cells block the action. Destination resolution follows at most one gateway,
-so recursive graphs cannot hang the simulation.
+Every instance tries to move first. Walls, boxes, parcels and the partner's
+body can be backstops. A failed push tries the facing doorway using unchanged
+state. There are no switch locks, modifiers, pulling or push chains. A moving
+box carries its interior and occupants without changing interior coordinates.
+Objects pushed into another doorway enter its canonical interior. Objects
+pushed out emerge beside that room's primary box; makers return through the
+instance they entered. This distinction is stated in the guide and README.
+Resolution crosses at most one boundary and one gateway per action;
+occupied door cells block unbounded gateway chains.
 
-A fixed infinity doorway refers to an existing interior rather than cloning
-it. Entering a self-reference reaches a different doorway in the same shared
-room. Parcels, switches and makers remain the same objects on every visit.
-The maker records each shell reference or fixed entrance anchor in its trail.
-Walking outward through an edge door pops that trail and returns beside the
-entrance, using a shell's latest location. Further entry at layer eight is
-blocked without changing state; undo remains available.
+Self-placement and two-room cycles are allowed without cloning interiors.
+`Entry.box` resolves the live entered instance, so a moved occupied box
+changes its maker's return location. A mismatching prefix rebuilds from
+primary ancestry, stops at the first repeated room, and retains finite
+unique-room ancestry instead of inventing an outer anchor. Matching visits
+retain their explicit trails. Depth-eight entry blocks unchanged; undo
+remains available. Popped slots reset to defaults for canonical bytes.
 
-If a shell changes parent while occupied, exiting it enters the new parent.
-A now-mismatching return prefix is rebuilt from the parent's finite physical
-ancestry, so the maker can leave that parent too. Matching recursive prefixes
-are retained. Popped entries are reset to their defaults for canonical bytes.
-Every movement operates on a trial Puzzle and commits only after all guards
-pass: failed door, collision, depth or cycle checks leave it byte-identical.
+Movement commits a trial Puzzle after all guards pass. Completion requires
+designated primary boxes on numbered docks in the specified parent, every
+parcel target occupied, every active parcel on a target and both makers on
+distinct player goals. Targets may be emptied during planning. Shared history
+retains 128 actions. Reset restores boxes, references and trails exactly;
+completion waits for Next. Exactly two real participants are required.
+Existing Rooms, Session, sender/sequence validation and host migration remain
+without new runtime APIs. Missing seats disable commands; stale serials
+cannot cross undo/reset/selection/participant changes. All twelve puzzles
+can be selected from the public shelf.
 
-A latched room moves only while a maker or parcel occupies a Switch tile in
-that room. Switches have no timing requirement. Completion requires every
-shell on its numbered dock in the specified parent dimension, every parcel
-target occupied, every active parcel on a target, and both makers on distinct
-player-marked exits. Filled targets can be emptied while arranging a solution.
+## Presentation, controls and audio
 
-There are exactly two real participants, no bot or solo substitute. Either
-absent participant disables gameplay commands. Existing Rooms, Session,
-typed sender/sequence validation and host migration are used without new
-engine/runtime APIs. Stale board serials cannot carry commands across undo,
-reset, selection or participant changes. Shared history retains 128 actions.
-Reset loads the exact authored puzzle. Completion waits for explicit Next.
-All twelve workshops can be selected from the shelf for prototype evaluation.
+Miniatures and focused rooms share one transform: inner tile scale is
+1 / max(width,height). The longest box edge fills its containing cell.
+Frames sit inside the rectangle with real doorway gaps. Offset door lips
+preserve their tangent rather than projecting radially toward the midpoint.
 
-## Presentation and controls
+Camera and maker passage share a 0.55-second clock: approach 0..35%,
+doorway shrink 35..70%, interior step 70..100%, reversed on exit. The camera
+holds the miniature during approach, then zooms continuously. Aperture
+clipping and solid-wall occlusion prevent silhouettes showing through walls.
+Same-room recursion and adjacent handoffs use these transforms. Interrupted
+travel begins from the rendered pose; input stays responsive. Reduced motion,
+level changes and zero-move reset discard stale passages. There is no fade.
 
-`paint.tide` draws one top-down scene from the local maker's dimension.
-The workshop is the initial view. Room interiors and their miniatures use
-identical drawing geometry: an inner tile is 0.16 of its containing tile.
-Entry starts at the miniature's actual location and interpolates scale and
-translation over 0.55 seconds; exit starts from the inverse transform.
-Each maker has a separate 0.42-second local doorway passage: its containing
-world position and scale interpolate through the doorway lip, shrinking to
-the 0.16 interior scale on entry and reversing on exit. Both views project
-that pose; active canonical copies are suppressed during the passage. Later
-steps update the destination smoothly, keeping input responsive. Depth-only
-self-entry and adjacent-room handoffs also use passage geometry. Reduced
-motion, level changes and resets to zero moves discard stale passages;
-other interrupted travel can start from the current rendered pose.
-Fixed-reference aliases arrive from their doorway edge during the final
-part of entry, with complementary maker opacity between that edge pose and
-the gateway pose. Exit reverses this handoff, and interrupted travel retains
-the current alias pose and opacity. This avoids a larger canonical maker
-appearing abruptly in a stationary partner's recursive view. A serial change
-returning to zero moves also snaps first-action Undo, since presentation does
-not distinguish it from Reset; other Undo endpoints interpolate normally.
-There is no scene fade. The camera fits the local maker's whole current
-dimension, with three interior-grid tiles of containing-world context around an
-inner room. Its scene viewport is a fixed square centered in the panel body,
-whose side is the shorter body axis; the settled inner tile is that side
-divided by eleven. This reveals a clipped portion of a maker in an adjacent
-containing-world cell while keeping the rim fixed on wide and phone viewports.
-The outer seven-cell workshop keeps its existing 0.96 body-side fit.
-Partner presence, position and dimension never change camera targets or
-start camera transitions. Makers outside the fixed viewport are clipped.
-The viewport stays fixed during doorway zoom, so the approaching local maker
-remains visible. Up to three real ancestor
-contexts surround the current room, in the same scene. That outside
-uses the maker's latest entrance: shell entries resolve their current parent
-and location, and fixed references use their recorded parent and anchor.
-A self-reference can therefore put the same canonical room around itself;
-two makers in the same room can have different surrounding contexts if they
-used different entrances. Room shells retain live nested miniature interiors.
-Each context draws at most 48 room instances and three descendant levels.
-Below 0.65 pixels per inner tile, preview details collapse to coloured room
-or infinity markers. Drawing never duplicates simulation content. The
-simultaneous enlarged room cards and connection-path overview are removed.
+Each settled room fits max(width,height)+6 tiles in a fixed centered square,
+revealing actual containing-world context. Outer room retains its 0.96
+viewport-side fit. Partner presence, position and room never change camera
+targets; makers may leave the viewport. Surroundings resolve the live entered
+instance, including moved copies and self-containing boxes. Drawing is bounded
+to three ancestor contexts, three descendant levels and 48 instances per
+context; subpixel previews become markers. No match objects are duplicated.
 
-The visual treatment uses coloured room frames, richer wood surfaces and
-inset shadows, brass box-icon parcel targets, player-icon exits, doorway marks
-and latch feedback.
-Switches display both box and player icons, since either occupant can release
-the latch. Filled target and switch colours retain their existing feedback.
-Camera transitions, interpolation, shadows, particles and failed-action
-feedback are local state only. Reduced motion bypasses transitions,
-movement interpolation and decorative motion.
+Materials use square edges, worn tiles, subdued colours, inset shadows and
+fluorescent accents. Maintenance silhouettes retain AMBER/TEAL colours.
+Targets show box icons, player goals show player icons and docks show numbered
+outlines. Panels/buttons share a dark institutional palette. There are no
+enemies, threat events, jumpscares or timers.
 
-`ui.tide` provides WASD/arrows to walk and push, Z/Backspace shared undo,
-R reset, H layered hints and Enter to continue. Directions match the screen.
-Touch uses the same directional buttons. After a serial
-change, held directions must be released before sending a fresh action.
-Hints are optional and wrap/grow to fit their text. Default level descriptions
-state objectives without exposing the decisive solving sequence.
+WASD/arrows walk/push, Z/Backspace undo, R reset, H hints and Enter continues.
+Touch uses the same directional buttons. Held directions require release
+after serial changes. Hints grow/wrap to fit. Ambience, sound and reduced
+motion are local options; Rooms volume settings remain. Presentation and
+audio never enter the match hash.
 
-Original audio in `sound.tide` and `sfx/` is reproducible with
-`sfx/make_sounds.py`. Entrance, movement, pushes, failed actions, undo, reset
-and completion have soft cues. Sound/music/reduced-motion options are local;
-Rooms settings control volume. No presentation or audio enters the match hash.
+`sfx/make_sounds.py` reproduces original assets. The melody is replaced by
+`ambience.wav`: a seamless 12-second mono 24 kHz PCM16 ventilation/fluorescent
+hum, filtered seeded noise and subtle 50/100 Hz harmonics. Peak -28.754 dBFS,
+RMS -36.725 dBFS before 0.27 gain; no clipping and a 14-PCM-unit boundary delta.
+There are no stingers or sudden threat cues. SHA256:
+`274097dcafdf4c1355d435444dc2a3ae8bc59a6cb77684b320d4448e2498c715`.
+The obsolete `workshop.wav` is removed. Seven short cues remain byte-identical.
+`enter.wav` remains the 300 ms seeded-noise friction and air puff, without
+oscillators, coin ringing or note sweeps: 7,200 mono 24 kHz PCM16 frames,
+silent endpoints, no clipping, -12.906 dBFS peak before 0.38 gain. SHA256:
+`657d7c91dc2cd45538453e7956af5ea608df74f5dd90f7d1c835dfee9fe4f40a`.
+Entry/exit/depth changes select kind 2 before push cues, including doorway
+travel that pushes a parcel.
 
-The doorway cue uses `enter.wav`, now a 300 ms seeded-noise cardboard friction
-and rounded air puff. Its previous low sine bodies have been removed: there
-are no oscillators, resonant ringing, note sweeps or musical tails. Entry,
-exit and recursive depth changes select kind 2 before the push cue, including
-travel that pushes a parcel from the doorway. The clip is mono 24 kHz PCM16,
-7,200 frames, with silent endpoints and no clipped samples. Its peak is
--12.906 dBFS before the 0.38 playback gain. The other
-seven WAV files, including music, remain byte-identical after regeneration;
-the obsolete `swap.wav` has been removed.
+## Solvability and verification contract
 
-The existing opt-in `TIDE_PRIVATE_PROTOTYPES` builds this game;
-`inside_out_page` and `private_games` stage the page beside its gameplay
-thumbnail. The catalog is authenticated while the playable page remains
-public at <https://tide-engine.dev/prototypes/inside-out/>. Site serving and
-catalog boundaries remain in `notes/private-prototypes.md` and
-`notes/docs-site.md`.
-
-## Solvability and testing contract
-
-The replacement campaign keeps one short introduction, then develops blocked
-pushing stances, parking order, latch handoffs, nested delivery addresses and
-recursive access. Its witnessed successful move counts are:
+The authored replacement campaign has these production-command witnesses:
 
 | Puzzle | Moves |
 | --- | ---: |
-| First delivery | 8 |
-| Hold that thought | 21 |
-| Reserved space | 28 |
-| Passing place | 68 |
-| A door to itself | 28 |
-| Return post | 36 |
-| Packed together | 38 |
-| The round trip | 21 |
-| Change of address | 42 |
-| Loan counter | 29 |
-| Shared address | 28 |
-| Borrowed space | 30 |
+| A room outside | 10 |
+| No handle inside | 12 |
+| The other opening | 20 |
+| A place to stand | 31 |
+| Passing place | 41 |
+| The same corner | 21 |
+| Carried together | 41 |
+| Before it moves | 40 |
+| Two ways home | 34 |
+| Return address | 51 |
+| Folded landing | 26 |
+| Crossed return | 28 |
 
-Reserved space requires undocking an initially parked child to clear a parcel
-route. Return post temporarily empties a filled target to recover the stance
-needed to dock its child. Change of address exports before nesting changes
-the parcel's physical destination. Loan counter uses a nested child's north
-export to reach a target whose ordinary pushing stances are blocked, then
-temporarily un-fills another target before exporting and redocking the child.
-Shared address reaches an inaccessible north stance through A-to-B-to-A;
-the partner's completed delivery closes its old return route. Borrowed space
-posts a parcel into the newly nested child to recover the child's docking
-stance, returns the parcel through the partner, and uses a third room's
-recursive doorway to deliver another parcel. Outer walls keep the recursive
-access rooms immovable, preventing the physical north-entrance bypass.
+Return address requires a copied box's parent to change into its own
+canonical interior and then extraction. Folded landing forms and extracts
+a primary self-cycle. Crossed return forms and extracts a primary two-room
+cycle. Carried together pins two partner-body backstops with counterfactual
+production commands: removing that partner makes the box push instead of
+admitting the approaching maker.
 
-Campaign evidence pins recursive entries in puzzles 5, 8, 11 and 12 (depths
-2, 3, 3 and 3), shell parent changes in 7, 9, 10 and 12, and temporary target
-unfills in 6, 9, 10 and 12. Twenty-one witnessed pushes require the partner's
-sole switch hold: removing that holder and replaying the same production
-command must leave the physical shells unchanged. The attempted push can
-legitimately fall back to doorway entry, including pushing a parcel at that
-door. Those effects are separately guarded by the core fixtures. These probes establish
-the dependencies in the witnesses; they do not exhaust all possible solutions
-or prove that every layout is impossible with one maker.
+No handle inside exhausts all 167 reachable production-command states for
+either initial maker acting alone with the other body removed, ignoring
+player goals. Neither can both dock the home and deliver its parcel. This
+establishes a mechanical co-op dependency for that layout; it does not prove
+solo impossibility or human difficulty for the entire campaign.
 
-`levels.tide` owns all layouts, objectives and three-tier hints.
-`test/solutions.h` stores witnesses that are absent from the public game.
-`test/campaign.c` replays them through actual generated Move command handlers
-in a world with two joined players. Every individual action must succeed,
-both seats must act, and production completion must become true. Final-action
-undo and Reset/replay check exact state restoration. Witness length proves
-existence, not shortest solutions or human difficulty.
+`levels.tide` owns twelve nested-start layouts and three-tier hints. A short
+intro teaches leaving two containing boxes; later puzzles develop backstops,
+occupied transport, narrow storage, offset exits and movable recursion.
+Witnesses in `test/solutions.h` are absent from the public game. Campaign
+checks invoke actual generated Move handlers with two joined players: every
+action succeeds, both seats act, production completion is true, and undo /
+reset-replay restore exact state. Witnesses prove solvability, not shortest
+paths or measured human difficulty. Final campaign pins/results follow below.
 
-Simulation fixtures exercise free entry/exit for both actors, nested shells,
-self-reference and shared interior state, bounded trails and failed actions,
-latch cooperation, authorization, malformed/stale commands, completion,
-shared history, snapshots, packing and deterministic replay.
+PuzzleCue carries the accepted direction and source Traveler for travel.
+An outward step emits kind 2 even when cycle rebasing leaves room/depth/box
+identity unchanged. A paint-owned all-seat listener handles this exit only
+when snapshots missed it, validates the live box/endpoint against late states,
+starts at the captured border pose and clears pending cues on undo/reset.
+Ordinary crossings consume cues without replay. This is event/local data,
+not new match state. The test-only `test/cues.tide` primitive/source listener
+enables a typed-command cue fixture and is absent from the public game.
 
-`test/browser.mjs` runs the real game in two separate muted Chrome/Edge
-windows through a relay and unordered, unreliable WebRTC channels. It uses
-the repository's existing bounded DevTools-pipe/process cleanup and serialized
-frame helpers, now beside it in `test/`. They moved unmodified from The Last
-Light when that prototype was removed on 2026-10-11; their original unit tests
-left with that game and their history remains in git. Checkpoints require
-fresh verified ticks and packet exchange;
-runtime, browser and graphics errors fail. Rendered label crops verify shared
-actions without wasm inspection or a game-only debug export. The camera
-regression keeps one maker stationary while the partner moves far away,
-approaches, enters and exits. Static parcel, frame and parent-rim crops must
-remain byte-identical; rendered maker-colour pixels must show a clipped nearby
-partner, disappear farther away and return inside after entry. Clipped
-screenshot requests on the same browser page run sequentially, since parallel
-captures race Chrome's temporary capture viewport. The fixture controls match
-time; physical devices, NAT reachability and real-time latency
-remain separate coverage. `TIDE_INSIDE_OUT_RELAY` optionally probes production
-signalling, retaining a local relay by default.
+Core fixtures cover bounds, offset traversal, canonical collision, occupied
+instances, cycles/extraction, atomic blockage, history, snapshots, packing and
+deterministic replay. `test/browser.mjs` runs two muted Chrome/Edge windows
+through real unordered/unreliable WebRTC using existing bounded process/pipe
+and serialized-frame helpers beside it. Checkpoints require fresh verified
+ticks and packets; browser/runtime/graphics errors fail. Rendered labels and
+colour crops observe production play without wasm inspection or debug exports.
+Crops on one page run sequentially to avoid Chrome's temporary viewport race.
+Local relay is default; TIDE_INSIDE_OUT_RELAY probes production signalling.
+Real devices, NAT and wall-clock network latency remain separate coverage.
 
-Native two-process scripts and browser captures are kept under ignored
-`build/inside-out-captures/`. Runs use `TIDE_HIDDEN=1`, bounded frames/scripts
-and muted browsers. They never open the owner's audio devices.
+Bounded scripts, audio and browser captures live in ignored
+`build/inside-out-captures/`; TIDE_HIDDEN=1 and muted browsers prevent owner
+audio devices opening. `inside_out_page` / `private_games` stage the opted-in
+prototype beside its thumbnail. Public play remains
+<https://tide-engine.dev/prototypes/inside-out/>; catalog authentication and
+serving/deployment contracts remain in `notes/private-prototypes.md` and
+`notes/docs-site.md`.
+
+
+## Nested-box revision validation (2026-10-11)
+
+Final native desktop, 900px and phone captures include the primary self-cycle
+exit whose canonical room, depth and entered box remain unchanged. Approach,
+middle and settled poses show continuous passage; doorway jambs use square
+rectangles. The refreshed 960x540 gameplay thumbnail SHA-256 is
+`082d090d130c07b526c6921cea56490a61fc4d23e49dfb58f0e49187d2d9ed78`.
+A device-free 15-second production mixer capture verifies the new ambience:
+source correlation 0.9999975, gain 0.2699908, peak -40.125 dBFS, identical stereo
+channels, no clipping and exact repeated samples across the 12-second loop.
+Hardware listening is not claimed.
+
+The native build is warning-free and all 33 fixtures pass: 30 core cases,
+all twelve command witnesses with undo/reset/exact replay, all twelve with
+exchanged jobs, and the second puzzle's exhaustive mechanical co-op proof.
+The WASI aggregate passes as well. Two-browser WebGL and WebGPU checks pass
+in 117.9 and 57.4 seconds, respectively, with three production solutions,
+phone touch, stationary-partner camera crops, occupied-box context, actual
+primary self-nesting/undo/extraction and an unchanged-room/depth/box cycle
+exit. The final square-jamb presentation and integrated dependency checks
+are recorded below after staging.
+
+Bounded native desktop, 900-pixel and phone captures review nested starts,
+offset miniature doorways, self-recursive entrances and the exact primary
+self-exit. The final same-room passage starts at its real east border,
+crosses continuously and restores aliases without a finite-end pop.
+
+A 15-second device-free production ambience capture is stereo, unclipped,
+and repeats its twelve-second period byte-identically. Source correlation is
+0.9999975, measured gain 0.2699908 and mixed peak -40.125 dBFS. The seven
+retained short WAVs remain unchanged; public pack validation follows staging.
+Real phones, hardware audio listening and network/NAT conditions beyond
+this machine remain unmeasured.
 
 ## Earlier published build (superseded)
 

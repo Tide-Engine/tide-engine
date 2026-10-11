@@ -1,9 +1,9 @@
-# Opt-in co-op puzzle workshop; one match implementation on desktop and web.
+# Opt-in co-op recursive puzzle; one match implementation on desktop and web.
 file(GLOB INSIDE_OUT_SOURCES LIST_DIRECTORIES false CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide")
 list(SORT INSIDE_OUT_SOURCES)
 set(INSIDE_OUT_ROOMS PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
 
-tide_add_game(inside_out_tests SOURCES game.tide levels.tide NAME game ${INSIDE_OUT_ROOMS}
+tide_add_game(inside_out_tests SOURCES game.tide levels.tide test/cues.tide NAME game ${INSIDE_OUT_ROOMS}
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/simulation.c test/campaign.c)
 target_include_directories(inside_out_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME inside_out_tests COMMAND inside_out_tests)
