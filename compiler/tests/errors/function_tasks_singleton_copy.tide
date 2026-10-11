@@ -1,0 +1,17 @@
+// expect: 'Through' starts a task with its 'tally', which the task gets again each time it goes on, so it takes the caller's own: a parameter
+// expect: it does on line 11
+singleton Tally { int counted; }
+scene Main { }
+async void Count(mut Tally tally)
+{
+    await Wait.Ticks(1);
+    tally.counted += 1;
+}
+void StartCount(mut Tally tally) { Count(tally); }
+void Through(mut Tally tally) { StartCount(tally); }
+system Start(mut Tally tally)
+{
+    Through(tally);
+    mut var copy = tally;
+    Through(copy);
+}

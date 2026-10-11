@@ -1,0 +1,3 @@
+// expect: what an array holds is always there, so it can't be a T?
+component Targets { int?[4] ids; }
+scene Main { }

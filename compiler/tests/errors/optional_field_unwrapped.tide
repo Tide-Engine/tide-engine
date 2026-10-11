@@ -1,0 +1,4 @@
+// expect: 'item' is int?, a value or nothing, so it needs unwrapping first
+struct Slot { int? item; }
+int Next(Slot slot) { return slot.item + 1; }
+scene Main { }

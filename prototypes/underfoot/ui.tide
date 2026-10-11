@@ -1,0 +1,467 @@
+using Rooms;
+
+enum ArtStage { Backdrop, Prepare, Board, Controls, Sound }
+
+// The courtyard's palette, which art/make_art.py shares: night, cream,
+// mustard, jade, coral and teal. Nothing on screen is another colour's shade
+// by accident.
+const Color NIGHT = Color(0.05, 0.062, 0.14);
+const Color DEEP = Color(0.03, 0.035, 0.08);
+const Color CREAM = Color(0.97, 0.94, 0.87);
+const Color MUTED = Color(0.58, 0.61, 0.78);
+const Color PANEL = Color(0.15, 0.145, 0.29);
+const Color CORAL = Color(0.94, 0.40, 0.33);
+const Color SKY = Color(0.16, 0.64, 0.66);
+const Color GOLD = Color(0.93, 0.69, 0.25);
+const Color MINT = Color(0.31, 0.72, 0.57);
+const Color VIOLET = Color(0.60, 0.47, 0.90);
+const GUITheme NIGHT_THEME = GUITheme {
+    text = CREAM, panel = PANEL, control = Color(0.22, 0.21, 0.40),
+    hot = Color(0.28, 0.27, 0.50), pressed = Color(0.17, 0.165, 0.32),
+    field = Color(0.08, 0.085, 0.18), fieldHot = Color(0.13, 0.13, 0.26),
+    accent = GOLD, radius = 8
+};
+
+local singleton Hands
+{
+    PlayerID player;
+    int seat = -1;
+    int active;
+    int level = -1;
+    int serial = -1;
+    int held = -1;
+    float repeat;
+    float undoRepeat;
+    int hint;
+    bool hintOpen;
+    bool shelf;
+    bool guide;
+    bool quiet;
+    bool music = true;
+    bool reduceMotion;
+    bool handMode;
+    bool fingers;
+    float hintHeight = 150;
+    float blockTime;
+    int blockPaver;
+    string reason;
+    float reasonTime;
+}
+
+Color PaverColor(int paver) { return paver == 0 ? CORAL : SKY; }
+string PaverName(int paver) { return paver == 0 ? "Ember" : "Tide"; }
+string GroundName(Ground ground)
+{
+    switch (ground)
+    {
+        case Ground.Stone: return "a tile";
+        case Ground.Ice: return "ice";
+        case Ground.PortalP: return "a portal";
+        case Ground.PortalQ: return "a portal";
+        case Ground.PlateA: return "a plate";
+        case Ground.PlateB: return "a plate";
+    }
+    return "nothing";
+}
+
+void Label(string text, float2 at, float size = 16, Color color = CREAM, Anchor anchor = Anchor.MiddleLeft)
+{
+    Draw.Text(text, at, size, color, anchor);
+}
+
+int WrappedLines(string words, float width, float size)
+{
+    mut var rest = words;
+    mut var line = "";
+    mut var rows = 1;
+    while (rest.length > 0)
+    {
+        var space = rest.IndexOf(' ');
+        var word = space < 0 ? rest : rest.Substring(0, space);
+        var next = line == "" ? word : $"{line} {word}";
+        if (line != "" && Draw.MeasureText(next, size).x > width)
+        {
+            line = word;
+            rows++;
+        }
+        else line = next;
+        rest = space < 0 ? "" : rest.Substring(space + 1);
+    }
+    return rows;
+}
+
+void Paragraph(string words, float2 at, float width, float size = 15, Color tone = CREAM)
+{
+    mut var rest = words;
+    mut var line = "";
+    mut var row = 0;
+    while (rest.length > 0)
+    {
+        var space = rest.IndexOf(' ');
+        var word = space < 0 ? rest : rest.Substring(0, space);
+        var next = line == "" ? word : $"{line} {word}";
+        if (line != "" && Draw.MeasureText(next, size).x > width)
+        {
+            Label(line, at + float2(0, row * (size + 6)), size, tone);
+            line = word;
+            row++;
+        }
+        else line = next;
+        rest = space < 0 ? "" : rest.Substring(space + 1);
+    }
+    if (line != "") Label(line, at + float2(0, row * (size + 6)), size, tone);
+}
+
+bool NightButton(string text, Rect rect, bool enabled = true, bool accent = false)
+{
+    mut var clicked = false;
+    GUI.Disabled(!enabled)
+    {
+        var control = GUI.Control(rect);
+        var at = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+        // Flat, with the one hard shadow everything here has; pressed, it sits down on it.
+        var base = accent ? GOLD : Color(0.22, 0.21, 0.40);
+        var fill = !enabled ? Color(0.12, 0.12, 0.24) : control.hovered || control.focused ? Math.Lerp(base, Color.white, 0.14) : base;
+        var sink = enabled && control.pressed ? 3.0 : 0.0;
+        Draw.RoundRect(at + float2(0, 4), float2(rect.width, rect.height), 8, DEEP);
+        Draw.RoundRect(at + float2(0, sink), float2(rect.width, rect.height), 8, fill);
+        Label(text, at + float2(0, sink), rect.height < 36 ? 12.0 : 14.0, !enabled ? Color(0.36, 0.37, 0.54) : accent ? Color(0.13, 0.11, 0.24) : CREAM, Anchor.MiddleCenter);
+        clicked = control.clicked;
+    }
+    return clicked;
+}
+
+[Stage(ArtStage.Prepare)]
+[Before(Rooms.Begin, Rooms.Pages)]
+view PrepareHands(Session session, mut Hands hands)
+{
+    hands.player = session.player;
+    hands.blockTime = Math.Max(0, hands.blockTime - Frame.dt);
+    hands.reasonTime = Math.Max(0, hands.reasonTime - Frame.dt);
+    GUI.SetTheme(NIGHT_THEME);
+}
+
+// Why hands did nothing, in a few words: the rules are few, but a refusal
+// with no reason reads as a broken game.
+string Refusal(Yard yard, int paver, int direction)
+{
+    var board = yard.board;
+    var here = board.paver[paver];
+    var to = Step(here, direction);
+    if (to < 0 || board.ground[to] == Ground.Wall) return "That is wall.";
+    if (yard.layout.gate[to] != 0) return "Nothing is lifted or laid in a gateway.";
+    var taken = PaverAt(board, to) >= 0 || CrateAt(board, to) >= 0;
+    if (board.held[paver] != Ground.Void)
+        return board.ground[to] == Ground.Void ? "" : "Your hands are full. Lay this over water first.";
+    if (board.ground[to] == Ground.Void) return "Nothing there to lift.";
+    if (taken) return "Not while something stands on it.";
+    if (yard.layout.fixed[to] || !Loose(board.ground[to])) return "That one is set in the floor. Only loose tiles lift.";
+    if (!Firm(yard.layout, board, here)) return "No lifting from a loose tile. Stand on the floor.";
+    return "";
+}
+
+local event(PuzzleCue cue) FeelPuzzle(Yard yard, mut Hands hands)
+{
+    if (cue.kind != Cue.Blocked)
+    {
+        if (cue.paver == hands.active) hands.reasonTime = Math.Min(hands.reasonTime, 0.25);
+        return;
+    }
+    hands.blockTime = 0.22;
+    hands.blockPaver = cue.paver;
+    if (cue.action < 4 || cue.action > 7 || cue.paver != hands.active || cue.paver < 0 || cue.paver > 1) return;
+    var reason = Refusal(yard, cue.paver, cue.action - 4);
+    if (reason == "") return;
+    hands.reason = reason;
+    hands.reasonTime = 2.6;
+}
+
+override string Rooms.Tagline() { return "Two tilers, a dark pool, and never quite enough tile."; }
+override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 84, 18, 68, 34); }
+
+override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
+{
+    Draw.SetScreen();
+    var width = Math.Min(Screen.width - 32, 560);
+    var at = float2(Screen.width * 0.5, Screen.height * 0.5);
+    Draw.RoundRect(at + float2(0, 7), float2(width, 318), 22, DEEP);
+    Draw.RoundRect(at, float2(width, 318), 22, PANEL);
+    Label("A PUZZLE FOR ONE OR TWO", at + float2(0, -122), 12, GOLD, Anchor.MiddleCenter);
+    Label("underfoot", at + float2(0, -82), Screen.width < 550 ? 38.0 : 46.0, CREAM, Anchor.MiddleCenter);
+    Paragraph("Lift a loose tile. Lay it over the water. Get both tilers to their lanterns. The floor is the puzzle, and there is never quite enough of it.", at + float2(-width * 0.5 + 30, -36), width - 60, 15, MUTED);
+    var connected = session.state == SessionState.Connected;
+    var third = (width - 76) / 3;
+    var row = at.y + 62;
+    var x = at.x - width * 0.5 + 30;
+    if (NightButton("Play alone", Rect(x, row, third, 44), connected, true)) Rooms.Play(lobby);
+    if (NightButton("Host a friend", Rect(x + third + 8, row, third, 44), connected))
+    {
+        Rooms.Host(lobby);
+        lobby.page = Rooms.Page.Playing;
+    }
+    if (NightButton("Join a friend", Rect(x + (third + 8) * 2, row, third, 44))) Rooms.ShowJoin(lobby);
+    Label(lobby.message != "" ? lobby.message : "18 puzzles  /  alone you work both tilers  /  no clock", at + float2(0, 130), 12, MUTED, Anchor.MiddleCenter);
+}
+
+[Stage(ArtStage.Prepare, 1)]
+view Roster(Yard yard, mut Hands hands, mut Rooms.Lobby lobby)
+{
+    hands.seat = SeatOf(yard, hands.player);
+    lobby.seats = 2;
+    lobby.manned = (yard.present[0] ? 1 : 0) | (yard.present[1] ? 2 : 0);
+    lobby.mine = hands.seat;
+    lobby.offersNewGame = false;
+    lobby.offersBots = false;
+    if (Together(yard) && hands.seat >= 0) hands.active = hands.seat;
+    if (hands.level != yard.level || hands.serial != yard.serial)
+    {
+        hands.level = yard.level;
+        hands.serial = yard.serial;
+        hands.hint = 0;
+        hands.hintOpen = false;
+        hands.held = -1;
+        hands.repeat = 0.3;
+    }
+}
+
+int KeyDirection(Devices devices, bool edge)
+{
+    var key = devices.keyboard;
+    if (edge ? key.w.down || key.upArrow.down : key.w.pressed || key.upArrow.pressed) return 0;
+    if (edge ? key.d.down || key.rightArrow.down : key.d.pressed || key.rightArrow.pressed) return 1;
+    if (edge ? key.s.down || key.downArrow.down : key.s.pressed || key.downArrow.pressed) return 2;
+    if (edge ? key.a.down || key.leftArrow.down : key.a.pressed || key.leftArrow.pressed) return 3;
+    return -1;
+}
+
+float2 Heading(int direction)
+{
+    if (direction == 0) return float2(0, -1);
+    if (direction == 1) return float2(1, 0);
+    if (direction == 2) return float2(0, 1);
+    return float2(-1, 0);
+}
+
+void DirectionMark(float2 at, int direction, float size, Color tone)
+{
+    var axis = Heading(direction);
+    var cross = float2(-axis.y, axis.x);
+    var tip = at + axis * size;
+    Draw.Line(at - axis * size, tip, 2, tone);
+    Draw.Line(tip, tip - axis * size * 0.7 + cross * size * 0.45, 2, tone);
+    Draw.Line(tip, tip - axis * size * 0.7 - cross * size * 0.45, 2, tone);
+}
+
+[Stage(ArtStage.Controls)]
+[Before(Rooms.Pages)]
+view YardControls(Yard yard, Session session, Devices devices, Progress progress, mut Rooms.Lobby lobby, mut Hands hands)
+{
+    Draw.SetScreen();
+    if (lobby.page != Rooms.Page.Playing || !yard.initialized) return;
+    var width = Screen.width;
+    var height = Screen.height;
+    bool narrow = width < 720;
+    bool together = Together(yard);
+    bool mine = hands.seat >= 0;
+    bool playing = lobby.playing && mine && !hands.shelf && !hands.guide;
+    // The keys are the puzzle's while it is played: the arrows walk and Space is
+    // a hand, so neither may wander the buttons' focus or press one.
+    if (playing) GUI.ClaimKeyboard();
+    var key = devices.keyboard;
+    // Escape is claimed with the rest, so it is handed on: it closes a hint,
+    // or opens the room's menu as it does in any game that lists Rooms.
+    if (playing && key.escape.down)
+    {
+        if (hands.hintOpen) hands.hintOpen = false;
+        else
+        {
+            lobby.page = Rooms.Page.Room;
+            lobby.resume = true;
+        }
+    }
+    var left = narrow ? 14.0 : Math.Max(24, (width - 1180) * 0.5);
+    var right = width - left;
+    var bottom = height - (narrow ? 150.0 : 62.0);
+
+    // Who is who, and what each has in hand.
+    for (var paver = 0; paver < 2; paver++)
+    {
+        var tone = PaverColor(paver);
+        var who = together ? (paver == hands.seat ? "you" : "your friend") : (paver == hands.active ? "in your hands" : "waiting");
+        var carrying = yard.board.held[paver] == Ground.Void ? "" : $"  /  carrying {GroundName(yard.board.held[paver])}";
+        var at = float2(left + 8, (narrow ? 96.0 : 84.0) + paver * 18);
+        Draw.Circle(at, 5, tone);
+        if (!together && paver == hands.active) Draw.WireCircle(at, 8, 1.5, tone);
+        Label($"{PaverName(paver)}  /  {who}{carrying}", at + float2(14, 0), 12, paver == hands.active || together ? CREAM : MUTED);
+    }
+
+    if (NightButton("Puzzles", Rect(right - 246, 18, 76, 34))) hands.shelf = !hands.shelf;
+    if (NightButton("How", Rect(right - 164, 18, 50, 34))) hands.guide = !hands.guide;
+    if (!narrow && NightButton(hands.quiet ? "Muted" : "Sound", Rect(right - 322, 18, 70, 34))) hands.quiet = !hands.quiet;
+    if (session.room != "" && !together)
+    {
+        if (NightButton($"Copy invite  /  {session.room}", Rect(narrow ? left : right - 322, narrow ? 122.0 : 60.0, narrow ? width - left * 2 : 322.0, 30), true, true))
+            Clipboard.Copy($"https://tide-engine.dev/prototypes/underfoot/?join={session.room}");
+    }
+
+    var actionWidth = narrow ? 68.0 : 96.0;
+    hands.undoRepeat -= Math.Min(Frame.dt, 0.1);
+    var undoKey = key.z.pressed || key.backspace.pressed;
+    var undoEdge = key.z.down || key.backspace.down;
+    if (!undoKey) hands.undoRepeat = 0;
+    if (NightButton(narrow ? "Undo" : "Undo  Z", Rect(left, bottom, actionWidth, 40), yard.historyCount > 0 && playing)
+        || playing && yard.historyCount > 0 && (undoEdge || undoKey && hands.undoRepeat <= 0))
+    {
+        Send(Undo { serial = yard.serial });
+        hands.undoRepeat = undoEdge ? 0.32 : 0.09;
+    }
+    if (NightButton(narrow ? "Reset" : "Reset  R", Rect(left + actionWidth + 8, bottom, actionWidth, 40), playing && yard.board.moves > 0) || playing && key.r.down)
+        Send(Reset { serial = yard.serial });
+    if (NightButton(narrow ? "Hint" : "Hint  H", Rect(left + (actionWidth + 8) * 2, bottom, actionWidth, 40), !hands.shelf && !hands.guide) || playing && key.h.down)
+        hands.hintOpen = !hands.hintOpen;
+
+    // Any puzzle is a key away, for whoever wants to look ahead.
+    if (playing && key.pageDown.down && yard.level < LEVEL_COUNT - 1) Send(ChooseLevel { serial = yard.serial, level = yard.level + 1 });
+    if (playing && key.pageUp.down && yard.level > 0) Send(ChooseLevel { serial = yard.serial, level = yard.level - 1 });
+
+    // Alone, one player works both pavers and says which.
+    if (!together && mine)
+    {
+        var swapRect = narrow ? Rect(left, bottom + 50, 104, 40) : Rect(left + (actionWidth + 8) * 3, bottom, 130, 40);
+        if (NightButton(narrow ? "Swap tiler" : "Swap tiler  Tab", swapRect, playing) || playing && (key.tab.down || key.q.down))
+            hands.active = 1 - hands.active;
+    }
+    var handRect = narrow ? Rect(left + 112, bottom + 50, 104, 40) : Rect(left + (actionWidth + 8) * 3 + (together ? 0 : 138), bottom, 124, 40);
+    if (NightButton(hands.handMode ? "Hands: ON" : (narrow ? "Use hands" : "Hands  Shift"), handRect, playing, hands.handMode)) hands.handMode = !hands.handMode;
+    var hand = hands.handMode || key.leftShift.pressed || key.rightShift.pressed || key.space.pressed;
+
+    // A held direction walks on after a pause; lifting and laying never repeat.
+    var canAct = playing && !yard.board.solved;
+    hands.repeat -= Math.Min(Frame.dt, 0.1);
+    var direction = KeyDirection(devices, false);
+    var edge = KeyDirection(devices, true);
+    if (!canAct || direction < 0)
+    {
+        hands.held = -1;
+        hands.repeat = 0;
+    }
+    else if (edge >= 0 || !hand && (direction != hands.held || hands.repeat <= 0))
+    {
+        var way = edge >= 0 ? edge : direction;
+        Send(Act { serial = yard.serial, paver = hands.active, action = way + (hand ? 4 : 0) });
+        hands.repeat = hands.held == direction ? 0.13 : 0.26;
+        hands.held = direction;
+    }
+    if (canAct && (key.e.down || key.f.down))
+        Send(Act { serial = yard.serial, paver = hands.active, action = 4 + yard.board.facing[hands.active] });
+
+    // The same four ways for a pointer or a finger.
+    var arrowSize = narrow ? 42.0 : 40.0;
+    var pad = float2(right - arrowSize * 1.5 - 4, height - arrowSize * 1.5 - (narrow ? 14.0 : 10.0));
+    if (devices.touchscreen.primaryTouch.press.pressed) hands.fingers = true;
+    if (narrow || hands.fingers)
+    {
+        for (var d = 0; d < 4; d++)
+        {
+            var at = pad + Heading(d) * arrowSize;
+            if (NightButton("", Rect(at.x - arrowSize * 0.5 + 1, at.y - arrowSize * 0.5 + 1, arrowSize - 2, arrowSize - 2), canAct, hand))
+                Send(Act { serial = yard.serial, paver = hands.active, action = d + (hand ? 4 : 0) });
+            DirectionMark(at, d, 7, !canAct ? MUTED : hand ? Color(0.16, 0.12, 0.05) : CREAM);
+        }
+    }
+    else if (width >= 1180) Label(hand ? "HANDS  /  a direction lifts the loose tile there, or lays the one you carry" : "WASD or arrows walk  /  hold Shift or Space with a direction to lift and lay  /  E uses what you face",
+        float2(right, height - 16), 12, hand ? GOLD : MUTED, Anchor.MiddleRight);
+    else if (width >= 900) Label(hand ? "HANDS  /  a direction lifts or lays" : "Shift or Space + a direction lifts and lays", float2(right, bottom + 20), 12, hand ? GOLD : MUTED, Anchor.MiddleRight);
+
+    if (hands.reasonTime > 0 && !hands.shelf && !hands.guide && !yard.board.solved)
+    {
+        var fade = Math.Min(1, hands.reasonTime / 0.25);
+        var words = Draw.MeasureText(hands.reason, 14).x + 36;
+        var at = float2(width * 0.5, bottom - 26);
+        Draw.RoundRect(at + float2(0, 4), float2(words, 34), 17, Color(DEEP.r, DEEP.g, DEEP.b, fade));
+        Draw.RoundRect(at, float2(words, 34), 17, Color(CORAL.r, CORAL.g, CORAL.b, fade));
+        Label(hands.reason, at, 14, Color(0.13, 0.11, 0.24, fade), Anchor.MiddleCenter);
+    }
+
+    if (hands.hintOpen && !hands.shelf && !hands.guide && !yard.board.solved)
+    {
+        var hintWidth = Math.Min(width - 32, 600);
+        var hintText = LevelHint(yard.level, hands.hint);
+        var hintHeight = 104.0 + WrappedLines(hintText, hintWidth - 40, 14) * 20;
+        hands.hintHeight = hintHeight;
+        var hintAt = float2(width * 0.5, bottom - 14 - hintHeight * 0.5);
+        Draw.RoundRect(hintAt + float2(0, 7), float2(hintWidth, hintHeight), 16, DEEP);
+        Draw.RoundRect(hintAt, float2(hintWidth, hintHeight), 16, PANEL);
+        Label($"A NUDGE  /  {hands.hint + 1} OF 3", hintAt + float2(-hintWidth * 0.5 + 20, -hintHeight * 0.5 + 24), 12, GOLD);
+        Paragraph(hintText, hintAt + float2(-hintWidth * 0.5 + 20, -hintHeight * 0.5 + 52), hintWidth - 40, 14);
+        var hintButtons = hintAt.y + hintHeight * 0.5 - 42;
+        if (NightButton(hands.hint < 2 ? "Tell me more" : "From the start", Rect(hintAt.x + hintWidth * 0.5 - 136, hintButtons, 116, 30))) hands.hint = (hands.hint + 1) % 3;
+        if (NightButton("Close", Rect(hintAt.x - hintWidth * 0.5 + 20, hintButtons, 70, 30))) hands.hintOpen = false;
+    }
+
+    if (yard.board.solved && !hands.shelf && !hands.guide)
+    {
+        var boxWidth = Math.Min(width - 32, 470);
+        var at = float2(width * 0.5, height - (narrow ? 250.0 : 150.0));
+        Draw.RoundRect(at + float2(0, 7), float2(boxWidth, 142), 18, DEEP);
+        Draw.RoundRect(at, float2(boxWidth, 142), 18, PANEL);
+        Draw.WireRoundRect(at, float2(boxWidth, 142), 18, 1.5, GOLD);
+        var par = LevelPar(yard.level);
+        Label(yard.level == LEVEL_COUNT - 1 ? "Every lantern lit." : "Both lanterns lit.", at + float2(0, -42), narrow ? 22.0 : 26.0, GOLD, Anchor.MiddleCenter);
+        Label(yard.board.moves <= par ? $"{yard.board.moves} moves  /  none shorter exists" : $"{yard.board.moves} moves  /  the shortest way takes {par}",
+            at + float2(0, -10), 13, MUTED, Anchor.MiddleCenter);
+        if (yard.level < LEVEL_COUNT - 1)
+        {
+            if (NightButton("Next puzzle  /  Enter", Rect(at.x - 124, at.y + 16, 248, 42), mine, true) || playing && key.enter.down)
+                Send(Next { serial = yard.serial });
+        }
+        else if (NightButton("Back to the puzzles", Rect(at.x - 124, at.y + 16, 248, 42), true, true)) hands.shelf = true;
+    }
+
+    if (hands.shelf)
+    {
+        GUILayout.Modal(Anchor.MiddleCenter, hands.shelf)
+        {
+            GUILayout.Label("THE PUZZLES");
+            GUILayout.Label("Every one is open. A star is one you have lit.");
+            for (var level = 0; level < LEVEL_COUNT; level++)
+            {
+                // Lit in this room, or by this player in any room before it.
+                var here = (yard.completed & (1 << level)) != 0 ? yard.best[level] : 0;
+                var before = (progress.completed & (1 << level)) != 0 ? progress.best[level] : 0;
+                var fewest = here > 0 && (before == 0 || here < before) ? here : before;
+                var done = fewest > 0;
+                var best = done ? $"  /  {fewest} moves" : "";
+                if (GUILayout.Button($"{(done ? "*" : " ")} {level + 1}. {LevelName(level)}{best}"))
+                {
+                    Send(ChooseLevel { serial = yard.serial, level = level });
+                    hands.shelf = false;
+                }
+            }
+            if (GUILayout.Button("Back")) hands.shelf = false;
+        }
+    }
+    if (hands.guide)
+    {
+        GUILayout.Modal(Anchor.MiddleCenter, hands.guide)
+        {
+            GUILayout.Label("HOW IT WORKS");
+            GUILayout.Label("Bring both tilers to a lantern each.");
+            GUILayout.Label("WASD or arrows walk and push crates.");
+            GUILayout.Label("Shift or Space with a direction uses your hands:");
+            GUILayout.Label("lift the loose tile there, or lay the one you carry over water.");
+            GUILayout.Label("E does the same to whatever you face.");
+            GUILayout.Label("One tile in hand at a time. You cannot lift");
+            GUILayout.Label("while standing on a loose tile yourself.");
+            GUILayout.Label("A crate pushed into the water sinks, and is floor for good.");
+            GUILayout.Label("Ice carries whatever steps on it until something stops it.");
+            GUILayout.Label("A portal sends you to its twin, if the twin is laid and free.");
+            GUILayout.Label("A plate under a paver or a crate opens its gates.");
+            GUILayout.Label("Playing alone, Tab swaps which tiler you work.");
+            GUILayout.Label("Z undoes, 256 moves back. R starts over, and Z undoes that too.");
+            GUILayout.Toggle("Music", hands.music);
+            GUILayout.Toggle("Reduced motion", hands.reduceMotion);
+            if (GUILayout.Button("Back")) hands.guide = false;
+        }
+    }
+}

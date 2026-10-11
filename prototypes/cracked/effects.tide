@@ -19,6 +19,7 @@ struct Spark
     float weight;        // How much of gravity pulls it
     float drag;          // How fast it slows, a second
     bool shard;          // A piece of glass: a box that's lit, not a glow
+    int kind;            // 0 a glow. Of a bullet's burst: 1 its fire, 2 its flash, 3 a puff of its smoke, 4 a spark that's a streak
 }
 
 // A ball that's drawn: a glow that's added to what's behind it, a bullet, a
@@ -68,13 +69,59 @@ struct Burst
     int seat;
 }
 
+// A bullet as this machine draws it. The match's bullets are a list, which
+// a view sees as the last tick left it, so this keeps where each was a tick
+// before and draws it between the two, and the places it was drawn at, which
+// are its trail. A bullet the match has no more flies the rest of its last
+// tick, to what stopped it, and its trail fades behind it.
+const int TRAIL_POINTS = 32;
+const float TRAIL_SECONDS = 0.05;    // The TrailRenderer's time,
+const float TRAIL_APART = 0.1;       // its least distance between two points,
+const float TRAIL_EVERY = 0.016;     // and the least time: a bullet's way is straight within a tick, so no more places show
+const float MIST_SECONDS = 0.5;      // The poison trails' time (VFX_Trail_Nature's two, as the bullet's prefab sets them),
+const float MIST_WIDER = 0.4;        // and how much wider than the bullet they are
+const float MARK_RADIUS = 0.18;      // The crosshair's ball in the world: 0.15 across on a canvas scaled for 800 pixels, on a screen 1920 wide
+
+struct Tail
+{
+    int id;
+    int seat;
+    int tick;            // The tick `now` is of
+    float3 was;          // Where it was a tick before,
+    float3 now;          // and at the tick
+    float3 velocity;
+    float size;
+    bool poison;         // Its shooter has Poison Cloud: two green trails behind it
+    bool daze;           // ...or Stagger Shot: lightning around it
+    bool seen;           // The match has it this frame
+    bool gone;           // The match has it no more,
+    bool flying = true;  // and it's still drawn until that tick is over
+    float3 head;         // Where it's drawn this frame
+    float3[TRAIL_POINTS] points;     // Where it was drawn, the newest first,
+    float[TRAIL_POINTS] ages;        // and how long ago
+    int count;
+}
+
+// A corner of a trail's ribbon. `uv.x` is how far along it is, from 0 at the
+// bullet to 1 at its end, and `uv.y` where across it, from -1 to 1.
+struct Streak
+{
+    float3 position;
+    float2 uv;
+    Color color;
+}
+
 local singleton Air
 {
+    List<Tail> tails;
+    List<Streak> streaks;    // The trails' ribbons, one mesh of all of them,
+    List<int> streakFaces;
     List<Spark> sparks;
     List<Orb> glows;         // As they're drawn: added light,
     List<Orb> shards;        // lit pieces,
     List<Orb> shots;         // the bullets,
     List<Orb> puffs;         // the clouds,
+    List<Orb> smokes;        // a burst's fire and smoke,
     List<Orb> bubbles;       // and the shields
     List<Orb> flats;         // The rings, each a flat square its frag makes a ring of
     List<Orb> beams;         // The lightning's pieces
@@ -96,14 +143,31 @@ frag GlowLook(Corner corner, out Color color, Orb orb, Instance instance, Light 
     color = Color(orb.tint.r, orb.tint.g, orb.tint.b, orb.tint.a * Math.Pow(facing * facing, orb.soft));
 }
 
-// A bullet: the Unity game's red ball with an orange light of its own,
+// A bullet: Bullet.mat's ball, whose own light (2.67, 0.29, 0) is so much
+// more than the red the sun finds on it that it's nearly one color all over,
 // brighter than white, so the bloom takes it.
 frag ShotLook(Corner corner, out Color color, Orb orb, Instance instance, Light light)
 {
     float3 normal = instance.Normal(corner.normal);
     float facing = Math.Saturate(Math.Dot(normal, Math.Normalize(light.eye - this.world)));
-    float hot = 0.55 + 0.45 * facing * facing;
+    float hot = 0.82 + 0.18 * facing;
     color = Color(orb.tint.r * hot, orb.tint.g * hot, orb.tint.b * hot, 1);
+}
+
+// A trail: the ribbon's own color, a little soft at its sides.
+frag StreakLook(Streak streak, out Color color)
+{
+    float side = Math.Saturate((1 - Math.Abs(streak.uv.y)) * 4);
+    color = Color(streak.color.r, streak.color.g, streak.color.b, streak.color.a * side);
+}
+
+// A poison trail: thick along its middle and gone at its sides, in streaks
+// that run back along it, as the Vefects trail's masks make of it.
+frag MistLook(Streak streak, out Color color, Light light)
+{
+    float side = 1 - Math.Abs(streak.uv.y);
+    float streaks = 0.65 + 0.35 * Math.Sin(streak.uv.y * 7 + streak.uv.x * 9 - light.beat * 4);
+    color = Color(streak.color.r, streak.color.g, streak.color.b, streak.color.a * side * side * streaks);
 }
 
 // A cloud's puff: soft at its edge, lighter on top.
@@ -195,20 +259,57 @@ local event(Fired fired) Flashed(Arena arena, mut Fx fx, mut Air air)
     air.sparks.Add(Spark { position = at, color = Color(2.6, 1.0, 0.3, 0.7), life = 0.08, size = 0.38 });
 }
 
-// A bullet met something: sparks off a wall, a burst where it ended, and a
-// shield's own color where one turned it.
-local event(BulletHit hit) Struck(mut Fx fx, mut Air air)
+// A color on its way through three others, each at its own share of the way.
+Color Through(Color first, Color second, float at2, Color third, float at3, Color last, float at4, float t)
 {
-    var big = Math.Clamp(hit.size / 0.2, 0.6, 3);
-    if (hit.what == 2)
+    return Mix(Mix(Mix(first, second, t / at2), third, (t - at2) / (at3 - at2)), last, (t - at3) / (at4 - at3));
+}
+
+// A bullet's end, as the bullet's prefab has it: Cartoon FX's "Explosion
+// Smoke 2", which is drawn at the bullet's scale, so every number of it is
+// times the bullet's size. A ball of fire for half a second, a flash that
+// spreads for a quarter, eight puffs of smoke that go from fire to grey, and
+// thirty sparks thrown from a shell around it, which fall.
+void Blast(mut Fx fx, mut Air air, float3 at, float size)
+{
+    if (air.sparks.count > 900) return;
+    air.sparks.Add(Spark { kind = 1, position = at, life = 0.48, size = 3 * size });
+    air.sparks.Add(Spark { kind = 2, position = at, life = 0.25, size = 4 * size });
+    for (var i = 0; i < 8; i++)
     {
-        Sparks(fx, air, hit.at, float3(0), 10, 7, Color(0.3, 2.4, 2.4), 0.06, 0.3);
-        air.sparks.Add(Spark { position = hit.at, color = Color(0.4, 2, 2.2, 0.6), life = 0.14, size = 0.45 * big });
+        var way = fx.random.NextFloat3Direction();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        air.sparks.Add(Spark { kind = 3, position = at, velocity = way * (5 + 5 * pace) * size, life = 0.8 + 0.7 * long, size = (1.5 + 0.5 * big) * size,
+                               drag = 5 });
+    }
+    for (var i = 0; i < 30; i++)
+    {
+        var way = fx.random.NextFloat3Direction();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        air.sparks.Add(Spark { kind = 4, position = at + way * (1.5 * size), velocity = way * (25 + 75 * pace) * size, life = 0.3 + 0.3 * long,
+                               size = (0.05 + 0.05 * big) * size, weight = 1.4, drag = 6 });
+    }
+}
+
+// A bullet met something. Only its end shows, as a burst: a bounce and a
+// shield that turns it have no particles in the Unity game, only their
+// sounds and a camera that shakes (a Cinemachine impulse: the burst's is
+// 0.5 within 4 m, the others' 0.1 within 2 m, and the burst's and a hit's are
+// times the bullet's size).
+local event(BulletHit hit) Struck(mut Fx fx, mut Air air, mut Look look)
+{
+    var near = Math.Distance(hit.at, look.eye);
+    if (hit.what == 1)
+    {
+        Blast(fx, air, hit.at, hit.size);
+        look.shake = Math.Min(1, look.shake + 3 * 0.5 * hit.size * Math.Saturate(1 - (near - 4) / 50));
         return;
     }
-    var burst = hit.what == 1;
-    Sparks(fx, air, hit.at, float3(0, 0.4, 0), burst ? 12 : 5, burst ? 7 : 4, Color(3, 0.8, 0.15), 0.05 * big, 1);
-    air.sparks.Add(Spark { position = hit.at, color = Color(2.6, 0.7, 0.2, 0.6), life = burst ? 0.16 : 0.1, size = (burst ? 0.5 : 0.3) * big });
+    look.shake = Math.Min(1, look.shake + 3 * 0.1 * (hit.what == 2 ? 1 : hit.size) * Math.Saturate(1 - (near - 2) / 10));
 }
 
 // Someone was hurt: they flash white, as the Unity game's team material
@@ -289,12 +390,12 @@ local event(CloudMade made) Billowed(mut Fx fx, mut Air air)
 // The clocks the mages' looks go by, and the puffs a jetpack and a dash
 // leave: per seat, from what the match has of each.
 [Stage(Layers.Prepare, 1)]
-view Seats(Arena arena, mut Fx fx, mut Air air)
+view Seats(Arena arena, Shown shown, mut Fx fx, mut Air air)
 {
     var dt = fx.dt;
     for (var s = 0; s < SEATS; s++)
     {
-        var seat = arena.seats[s];
+        var seat = Seen(arena, shown, s);
         air.flash[s] = Math.Max(0, air.flash[s] - dt * 2);     // White for half a second
         air.threw[s] += dt;
         var up = seat.alive && seat.shieldActive ? 1.0 : 0.0;
@@ -322,28 +423,207 @@ view Seats(Arena arena, mut Fx fx, mut Air air)
     }
 }
 
-// The bullets: each a ball that glows, with a short tail behind it, as long
-// as it flies in a twentieth of a second and narrowing to nothing.
+// Two corners of a ribbon at a place on its way, a width apart and turned to
+// the eye, and the two triangles back to the pair before them.
+void Band(mut List<Streak> corners, mut List<int> faces, float3 eye, float3 at, float3 along, float wide, float far, Color color, bool joined)
+{
+    var side = Math.Cross(along, eye - at);
+    var length = Math.Length(side);
+    var across = length > 0.00001 ? side / length * (wide * 0.5) : float3(0);
+    var first = corners.count;
+    corners.Add(Streak { position = at - across, uv = float2(far, -1), color = color });
+    corners.Add(Streak { position = at + across, uv = float2(far, 1), color = color });
+    if (!joined) return;
+    faces.Add(first - 2);
+    faces.Add(first - 1);
+    faces.Add(first);
+    faces.Add(first - 1);
+    faces.Add(first + 1);
+    faces.Add(first);
+}
+
+// A bullet's trail as a ribbon: from where the bullet is back through where
+// it was drawn, `wide` at the bullet and nothing where the trail is `life`
+// seconds old, which is where it's cut, between two of its places. A `mist`
+// is as wide all along, and fades instead: in over its first 7%, and out
+// from a third of the way, as the poison trails' gradient has it.
+void Trail(mut List<Streak> corners, mut List<int> faces, Tail tail, float3 eye, float life, float wide, Color color, bool mist)
+{
+    mut var last = tail.head;
+    mut var lastAge = 0.0;
+    mut var start = 0;
+    if (!tail.flying)
+    {
+        if (tail.count == 0 || tail.ages[0] >= life) return;
+        last = tail.points[0];
+        lastAge = tail.ages[0];
+        start = 1;
+    }
+    mut var joined = false;
+    for (var i = start; i < tail.count; i++)
+    {
+        mut var at = tail.points[i];
+        mut var age = tail.ages[i];
+        var done = age >= life;
+        if (done)
+        {
+            at = last + (at - last) * ((life - lastAge) / Math.Max(age - lastAge, 0.0001));
+            age = life;
+        }
+        var along = last - at;
+        if (Math.LengthSq(along) > 0.000001)
+        {
+            var from = lastAge / life;
+            var to = age / life;
+            if (mist)
+            {
+                if (!joined) Band(corners, faces, eye, last, along, wide, from, Fade(color, Math.Min(from / 0.07, (1 - from) / 0.67)), false);
+                Band(corners, faces, eye, at, along, wide, to, Fade(color, Math.Min(to / 0.07, (1 - to) / 0.67)), true);
+            }
+            else
+            {
+                if (!joined) Band(corners, faces, eye, last, along, wide * (1 - from), from, color, false);
+                Band(corners, faces, eye, at, along, wide * (1 - to), to, color, true);
+            }
+            joined = true;
+            last = at;
+            lastAge = age;
+        }
+        if (done) return;
+    }
+}
+
+// The bullets, each where this frame has it between its last two ticks.
+[Stage(Layers.Prepare, 3)]
+view Flights(Arena arena, Time time, Fx fx, mut Air air)
+{
+    for (var k = 0; k < air.tails.count; k++) air.tails[k].seen = false;
+    foreach (var bullet in arena.bullets)
+    {
+        mut var k = 0;
+        while (k < air.tails.count && (air.tails[k].id != bullet.id || air.tails[k].gone)) k++;
+        if (k == air.tails.count)
+        {
+            if (air.tails.count >= 400) continue;
+            // A bullet flies a tick in the tick it's fired in: it was at the fire point before
+            mut var poison = false;
+            mut var daze = false;
+            foreach (var mod in arena.bulletMods)
+            {
+                if (mod.seat != bullet.seat) continue;
+                if (mod.kind == BulletModKind.PoisonCloud) poison = true;
+                if (mod.kind == BulletModKind.DazeOnHit) daze = true;
+            }
+            air.tails.Add(Tail { id = bullet.id, seat = bullet.seat, tick = time.tick, was = bullet.position - bullet.velocity * time.dt,
+                                 poison = poison, daze = daze });
+        }
+        else if (air.tails[k].tick != time.tick)
+        {
+            air.tails[k].was = air.tails[k].tick + 1 == time.tick ? air.tails[k].now : bullet.position - bullet.velocity * time.dt;
+            air.tails[k].tick = time.tick;
+        }
+        air.tails[k].now = bullet.position;
+        air.tails[k].velocity = bullet.velocity;
+        air.tails[k].size = bullet.props.size;
+        air.tails[k].seen = true;
+    }
+
+    var share = 1 + fx.late / time.dt;
+    mut var t = 0;
+    while (t < air.tails.count)
+    {
+        mut var tail = air.tails[t];
+        if (!tail.seen && !tail.gone)
+        {
+            // The match has it no more: it flies on to what stopped it, or a tick's way when its time was up
+            tail.gone = true;
+            tail.was = tail.now;
+            var delta = tail.velocity * time.dt;
+            var length = Math.Length(delta);
+            if (length > 0.0001)
+            {
+                var way = delta / length;
+                tail.now = tail.was + way * (Lands(arena, tail.seat, tail.was, way, length, tail.size, out var hit, out _) ? Math.Max(hit.distance - 0.01, 0) : length);
+            }
+            if (tail.tick == time.tick) tail.flying = false;     // This machine took the bullet back: it never was
+            tail.tick = time.tick;
+        }
+        else if (tail.gone && tail.tick != time.tick) tail.flying = false;
+
+        for (var i = 0; i < tail.count; i++) tail.ages[i] += fx.dt;
+        // A place is kept until the one after it is too old to draw to
+        var kept = tail.poison ? MIST_SECONDS : TRAIL_SECONDS;
+        while (tail.count > 1 && tail.ages[tail.count - 2] >= kept) tail.count -= 1;
+        if (tail.count == 1 && tail.ages[0] >= kept && !tail.flying) tail.count = 0;
+        if (tail.flying)
+        {
+            tail.head = tail.was + (tail.now - tail.was) * share;
+            if (tail.count == 0 || (Math.Distance(tail.head, tail.points[0]) >= TRAIL_APART && tail.ages[0] >= TRAIL_EVERY))
+            {
+                if (tail.count < TRAIL_POINTS) tail.count += 1;
+                for (var i = tail.count - 1; i > 0; i--)
+                {
+                    tail.points[i] = tail.points[i - 1];
+                    tail.ages[i] = tail.ages[i - 1];
+                }
+                tail.points[0] = tail.head;
+                tail.ages[0] = 0;
+            }
+        }
+        else if (tail.count == 0)
+        {
+            air.tails.RemoveAt(t);
+            continue;
+        }
+        air.tails[t] = tail;
+        t++;
+    }
+}
+
+// The bullets: the Unity game's ball, as wide as its size (half of what the
+// match casts), red with an orange light of its own that the bloom takes,
+// and its trail, of the same paint, as wide as the ball where it leaves it
+// and narrowing to nothing a twentieth of a second behind. With Poison Cloud
+// two green trails are behind it too, half a second long. And where this
+// machine's player's next bullet would land, PlayerCrosshair's ball: white,
+// and far brighter than white.
 [Stage(Layers.World, 5)]
-view Shots(Arena arena, Models models, Post post, mut Air air)
+view Shots(Models models, Light light, Sight sight, Post post, mut Air air)
 {
     air.shots.Clear();
     air.glows.Clear();
-    foreach (var bullet in arena.bullets)
+    air.streaks.Clear();
+    air.streakFaces.Clear();
+    var paint = Color(2.5, 0.95, 0.02);
+    foreach (var tail in air.tails)
     {
-        var size = bullet.props.size;
-        air.shots.Add(Orb { transform = float4x4.TRS(bullet.position, quaternion.identity, float3(size)), tint = Color(3.4, 0.55, 0.08) });
-        air.glows.Add(Orb { transform = float4x4.TRS(bullet.position, quaternion.identity, float3(size * 3.2)), tint = Color(1.6, 0.3, 0.04, 0.55),
-                            soft = 2.5 });
-        for (var k = 1; k <= 6; k++)
-        {
-            var back = k / 6.0;
-            air.glows.Add(Orb { transform = float4x4.TRS(bullet.position - bullet.velocity * (back * 0.06), quaternion.identity,
-                                                         float3(size * (1 - back * 0.85) * 1.5)),
-                                tint = Color(2.2, 0.45, 0.06, 0.6 * (1 - back)), soft = 1.5 });
-        }
+        Trail(air.streaks, air.streakFaces, tail, light.eye, TRAIL_SECONDS, tail.size, paint, false);
+        if (!tail.flying) continue;
+        air.shots.Add(Orb { transform = float4x4.TRS(tail.head, quaternion.identity, float3(tail.size * 0.5)), tint = paint });
     }
+    if (sight.found) air.shots.Add(Orb { transform = float4x4.TRS(sight.at, quaternion.identity, float3(MARK_RADIUS)), tint = Color(5, 5, 5) });
     post.scene.Instanced(models.ball, models.ballFaces, air.shots, ShotLook);
+    post.scene.Depth(Depth.Read),
+    post.scene.Cull(Cull.None)
+    {
+        post.scene.Mesh(air.streaks, air.streakFaces, float4x4.identity, StreakLook);
+    }
+
+    air.streaks.Clear();
+    air.streakFaces.Clear();
+    foreach (var tail in air.tails)
+    {
+        if (!tail.poison) continue;
+        // Trail 02 under Trail 01: the paler, then the one three times as bright
+        Trail(air.streaks, air.streakFaces, tail, light.eye, MIST_SECONDS, tail.size + MIST_WIDER, Color(0.12, 0.9, 0.39, 0.8), true);
+        Trail(air.streaks, air.streakFaces, tail, light.eye, MIST_SECONDS, (tail.size + MIST_WIDER) * 0.7, Color(0.8, 2, 0.35, 0.8), true);
+    }
+    if (air.streaks.count == 0) return;
+    post.scene.Depth(Depth.Read),
+    post.scene.Cull(Cull.None)
+    {
+        post.scene.Mesh(air.streaks, air.streakFaces, float4x4.identity, MistLook);
+    }
 }
 
 // The clouds a bullet or a block left: puffs within the cloud's reach that
@@ -379,13 +659,13 @@ view Mists(Arena arena, Models models, Light light, Post post, mut Air air)
 // The shields: a bubble around each player who has one up, which pops out
 // and back in.
 [Stage(Layers.Effects, 1)]
-view Shields(Arena arena, Models models, Post post, mut Air air)
+view Shields(Arena arena, Shown shown, Models models, Post post, mut Air air)
 {
     air.bubbles.Clear();
     for (var s = 0; s < SEATS; s++)
     {
         if (air.shield[s] < 0.02 || !arena.seats[s].alive) continue;
-        var seat = arena.seats[s];
+        var seat = Seen(arena, shown, s);
         var size = seat.settings.size;
         var out = EaseOutBack(air.shield[s]);
         air.bubbles.Add(Orb { transform = float4x4.TRS(seat.position + Math.Rotate(seat.rotation, float3(0, SHIELD_CENTER * size, 0)), quaternion.identity,
@@ -401,10 +681,12 @@ view Shields(Arena arena, Models models, Post post, mut Air air)
 // Everything that's light: the sparks move on, the rings spread, the
 // lightning jumps, and all of it is added to the picture in a draw each.
 [Stage(Layers.Effects, 2)]
-view Glows(Arena arena, Models models, Post post, mut Fx fx, mut Air air)
+view Glows(Arena arena, Shown shown, Models models, Post post, mut Fx fx, mut Air air)
 {
     var dt = fx.dt;
     air.shards.Clear();
+    air.smokes.Clear();
+    air.beams.Clear();
     mut var i = 0;
     while (i < air.sparks.count)
     {
@@ -420,7 +702,39 @@ view Glows(Arena arena, Models models, Post post, mut Fx fx, mut Air air)
         spark.position += spark.velocity * dt;
         air.sparks[i] = spark;
         var left = 1 - spark.age / spark.life;
-        if (spark.shard)
+        var t = spark.age / spark.life;
+        if (spark.kind == 1)
+        {
+            // The fire: half its size in its first tenth of a second, from yellow through orange to a dark red, and gone
+            var grown = t < 0.5 ? t : 0.5 + (t - 0.5) * 0.25;
+            var tone = Through(Color(1.9, 1.06, 0.3), Color(1.9, 1.06, 0.3), 0.125, Color(2.1, 0.3, 0.1), 0.5, Color(0.43, 0.01, 0), 0.875, t);
+            air.smokes.Add(Orb { transform = float4x4.TRS(spark.position, quaternion.identity, float3(spark.size * grown)),
+                                 tint = Fade(tone, (1 - t) / 0.69), soft = 0.9 });
+        }
+        else if (spark.kind == 2)
+        {
+            var tone = Through(Color.white, Color.white, 0.2, Color(1, 0.81, 0), 0.4, Color(1, 0.46, 0.25), 0.6, t);
+            air.glows.Add(Orb { transform = float4x4.TRS(spark.position, quaternion.identity, float3(spark.size * t)),
+                                tint = Fade(tone, 0.8 * Math.Min(1, (0.9 - t) / 0.8)), soft = 1.2 });
+        }
+        else if (spark.kind == 3)
+        {
+            // A puff: fire for its first fifth, then brown, then the grey it stays, thinner all the while
+            var tone = Through(Color(2, 1.7, 0.58), Color(2, 1, 0.54), 0.1, Color(0.83, 0.26, 0.18), 0.15, Color(0.3, 0.3, 0.3), 0.2, t);
+            air.smokes.Add(Orb { transform = float4x4.TRS(spark.position, quaternion.identity, float3(spark.size * (0.1 + 0.9 * EaseOut(t)))),
+                                 tint = Fade(tone, 0.6 * left * Math.Min(1, left / 0.4)), soft = 2 });
+        }
+        else if (spark.kind == 4)
+        {
+            // A streak along its way, a twentieth of a second long, that thins to nothing
+            var pace = Math.Length(spark.velocity);
+            var tone = Through(Color.white, Color.white, 0.1, Color(1, 0.81, 0), 0.3, Color(1, 0.38, 0.13), 0.5, t);
+            if (pace > 0.01)
+                air.beams.Add(Orb { transform = float4x4.TRS(spark.position, quaternion.LookRotation(spark.velocity / pace, float3(0.13, 0.97, 0.21)),
+                                                             float3(spark.size * left, spark.size * left, Math.Max(pace * 0.05, spark.size))),
+                                    tint = Fade(Shade(Mix(tone, Color(1, 0.02, 0), (t - 0.5) / 0.2), 3), Math.Min(1, left / 0.7)) });
+        }
+        else if (spark.shard)
             air.shards.Add(Orb { transform = float4x4.TRS(spark.position, quaternion.Euler(float3(spark.age * 9, spark.age * 7 + i, 0)),
                                                           float3(spark.size, spark.size * 0.35, spark.size) * Math.Saturate(left * 4)),
                                  tint = spark.color });
@@ -449,9 +763,26 @@ view Glows(Arena arena, Models models, Post post, mut Fx fx, mut Air air)
         i++;
     }
 
+    // Stagger Shot's bullets: the prefab's Dazed aura, bits of magenta
+    // lightning that last a tenth of a second each, about ten at a time,
+    // anywhere in a ball around the bullet. Here they're other ones each frame.
+    foreach (var tail in air.tails)
+    {
+        if (!tail.daze || !tail.flying) continue;
+        for (var k = 0; k < 8; k++)
+        {
+            var out = fx.random.NextFloat3Direction();
+            var far = fx.random.NextFloat(0.6, 1);
+            var way = fx.random.NextFloat3Direction();
+            var long = fx.random.NextFloat(0.6, 1);
+            air.beams.Add(Orb { transform = float4x4.TRS(tail.head + out * (far * 0.8 * tail.size), quaternion.LookRotation(way, float3(0.13, 0.97, 0.21)),
+                                                         float3(0.06 * tail.size, 0.06 * tail.size, long * 0.8 * tail.size)),
+                                tint = Color(3, 0.2, 2.5, 0.9) });
+        }
+    }
+
     // Lightning: a line of pieces between two players, which jumps about
     // each frame for the quarter second it lasts
-    air.beams.Clear();
     i = 0;
     while (i < air.bolts.count)
     {
@@ -463,8 +794,8 @@ view Glows(Arena arena, Models models, Post post, mut Fx fx, mut Air air)
             continue;
         }
         air.bolts[i] = bolt;
-        var from = Chest(arena.seats[bolt.from]);
-        var to = Chest(arena.seats[bolt.to]);
+        var from = Chest(Seen(arena, shown, bolt.from));
+        var to = Chest(Seen(arena, shown, bolt.to));
         var far = Math.Distance(from, to);
         mut var last = from;
         for (var k = 1; k <= 8; k++)
@@ -484,6 +815,10 @@ view Glows(Arena arena, Models models, Post post, mut Fx fx, mut Air air)
     }
 
     post.scene.Instanced(models.cube, models.cubeFaces, air.shards, ShardLook);
+    post.scene.Depth(Depth.Read)
+    {
+        post.scene.Instanced(models.ball, models.ballFaces, air.smokes, PuffLook);
+    }
     post.scene.Blend(Blend.Add),
     post.scene.Depth(Depth.Read),
     post.scene.Cull(Cull.None)
@@ -502,13 +837,13 @@ view Glows(Arena arena, Models models, Post post, mut Fx fx, mut Air air)
 // who was hurt, and over every other player a bar of their health and a pip
 // for each bullet they have left, as the Unity game's world HUD has them.
 [Stage(Layers.Effects, 110)]
-view Overhead(Arena arena, Look look, Fx fx, mut Air air)
+view Overhead(Arena arena, Shown shown, Look look, Fx fx, mut Air air)
 {
     Draw.Screen()
     {
         for (var s = 0; s < SEATS; s++)
         {
-            var seat = arena.seats[s];
+            var seat = Seen(arena, shown, s);
             if (!seat.alive || seat.dead || s == look.follow) continue;
             var over = Head(seat) + float3(0, 0.55 * seat.settings.size, 0);
             var far = Math.Distance(over, look.eye);

@@ -30,6 +30,7 @@ tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
+tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and for their callers' entities
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
@@ -186,6 +187,8 @@ tide_e2e_test(resident SOURCES e2e/resident.tide e2e/resident_c.c) # A match sin
 tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out` parameters and arguments, as C#'s
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
 target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=7485469572211020663ull)
+tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=7606955030890254320ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots

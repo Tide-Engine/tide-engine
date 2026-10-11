@@ -1,0 +1,16 @@
+// expect: an operator works a value out of its operands, so it can't start a task, and calling 'Later', which is async, would
+// expect: start it from a system, a view or a handler, or from a function they call
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+struct Money
+{
+    int cents;
+    Money operator +(Money a, Money b)
+    {
+        Later();
+        return Money { cents = a.cents + b.cents };
+    }
+}
+scene Main { }

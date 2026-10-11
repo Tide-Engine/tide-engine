@@ -61,6 +61,7 @@ Anything else is a compile error that names the field: an `Entity`, a vector, a 
 Reading is forgiving about what's there and strict about what it is:
 
 - **A key the JSON leaves out keeps its field's default**, and so does a key whose value is `null`. `maxPlayers` above is 8 unless the JSON says otherwise.
+- **A `T?` field tells you whether the key was there.** It has nothing when the key is left out (or its default, if it declares one) and when the value is `null`.
 - **A key no field has is skipped.** A server can add to what it sends without breaking the game.
 - **A key written twice takes the last one.**
 - **A value of the wrong kind makes the whole read give nothing**: a string where a number goes, a number that doesn't fit its field (`300` for a `byte`, `1e40` for a `float`), an enum's name no member has, an object where an array goes.
@@ -92,12 +93,28 @@ var prices = Json.Read<Map<string, int>>(body) ?? default;
 
 ## Writing
 
-`Json.Write` writes every field, in the order the struct declares them, and a map's entries in the order they were added:
+`Json.Write` writes every field that has a value, in the order the struct declares them, and a map's entries in the order they were added:
 
 ```csharp
 var text = Json.Write(LobbyInfo { id = "a1", name = "Friday", tags = ["casual"] });
 // {"id":"a1","name":"Friday","players":0,"tags":["casual"],"max_players":8}
 ```
+
+A [`T?` field](./errors.md#fields-that-may-be-missing) with nothing is left out, so one struct can say only what changes:
+
+```csharp
+struct LobbyChange
+{
+    string? name;
+    [Json("max_players")] int? maxPlayers;
+    bool? open;
+}
+
+var text = Json.Write(LobbyChange { open = false });
+// {"open":false}
+```
+
+Reading works the same way round: a key that's missing or `null` leaves the field with nothing.
 
 What it writes, `Json.Read` reads back as the same value. A float is written with the fewest digits that read back as the same float, bit for bit. JSON has no number for NaN or an infinity, so those are written as `null`, which reads back as the field's default.
 

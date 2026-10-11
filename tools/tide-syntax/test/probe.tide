@@ -224,6 +224,16 @@ component Mesh
 }
 view Bake(mut Mesh mesh) { var local = mesh.local; }
 
+// Fields that are a T?: a value or nothing.
+struct Wish
+{
+    string? wished;
+    List<int>? wishes = null;
+    Combat.Stats? granted;
+    float3? toward = float3(0, 1, 0);
+}
+void Grant(mut Wish wish) { wish.wished = null; var count = wish.wishes ?? []; if (wish.granted is Combat.Stats stats) { } }
+
 // Frags and verts: their words start a declaration, and are names anywhere else.
 frag Shade(BoxVertex vertex, out Color color, Box box)
 {

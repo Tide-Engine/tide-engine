@@ -63,6 +63,7 @@ singleton Arena
     int revision;
     float selectionAge;
     Random cardDice;
+    int hover = -1;              // The card the picker's pointer is on, for everyone who watches
 
     // MapManager
     MapPhase mapPhase;
@@ -79,6 +80,18 @@ singleton Arena
 }
 
 component Participant { int seat; }
+
+// Where a seat's avatar is, for what draws it. The seats are an array, which
+// a view sees as the last tick left it: these fields a view sees blended
+// between ticks, and gliding to where the server says when this machine
+// guessed otherwise. Nothing of the match reads them.
+component Avatar
+{
+    int seat;
+    int life;
+    [Position] float3 position;
+    [Rotation] quaternion rotation = quaternion.identity;
+}
 scene Main { }
 
 command Restart { }
@@ -103,6 +116,26 @@ local singleton Hand
     bool fire;
     bool shield;
     bool reload;
+    int hover = -1;      // The card the pointer is on, while this machine's player picks
+}
+
+// Each seat's avatar as this frame draws it: Avatar's blended place and turn,
+// which a view copies here for every other view (render.tide).
+local singleton Shown
+{
+    float3[SEATS] position;
+    quaternion[SEATS] rotation;
+}
+
+// Where this machine's player's next bullet would first land, as
+// PlayerCrosshair has it from ShooterBase.PredictHit: the crosshair is there,
+// not at the screen's middle (render.tide works it out, hud.tide draws it).
+local singleton Sight
+{
+    bool found;          // There's an avatar to aim for
+    float3 at;
+    float3 normal = float3(0, 1, 0);
+    bool player;         // It would land on a player
 }
 
 input Controls
@@ -115,9 +148,11 @@ input Controls
     [Absolute] float3 aim = float3(0, 0, 1);
     [Absolute] float yaw;
     [Absolute] float pitch = 17.5;
+    [Absolute, Clamp(-1, 4)] int hover = -1;
 
     Sample(Devices devices, Lobby lobby, Hand hand)
     {
+        hover = hand.hover;
         yaw = hand.yaw;
         pitch = hand.pitch;
         aim = hand.aim;
@@ -222,6 +257,7 @@ event(Spawned) Begin(mut Arena arena, with Main)
     // file can change
     arena.mapDice = Random(Random.seed * 2 + 1);
     arena.cardDice = Random(Random.seed * 2 + 2);
+    for (var s = 0; s < SEATS; s++) Spawn(Avatar { seat = s });
     KeepTeams(arena);
 }
 
@@ -301,7 +337,7 @@ system ReadControls(Controls input, Participant participant, mut Arena arena, wi
     var s = participant.seat;
     if (s < 0 || s >= SEATS) return;
     arena.seats[s].pad = Pad { move = input.move, jump = input.jump, jumpDown = input.jump.down, fire = input.fire, shield = input.shield,
-                               reload = input.reload, aim = input.aim, yaw = input.yaw, pitch = input.pitch };
+                               reload = input.reload, aim = input.aim, yaw = input.yaw, pitch = input.pitch, hover = input.hover };
 }
 
 // The seats' avatars for a round, on their teams' lines: LineSpawnPoint's
@@ -355,7 +391,7 @@ void SpawnPlayers(mut Arena arena)
 void SpawnPlayer(mut Arena arena, int s, float3 at, quaternion rotation, float yaw, int seed)
 {
     var was = arena.seats[s];
-    mut var seat = Seat { taken = true, bot = was.bot, player = was.player, team = TeamOf(s), alive = true, position = at, rotation = rotation,
+    mut var seat = Seat { taken = true, bot = was.bot, player = was.player, team = TeamOf(s), alive = true, life = was.life + 1, position = at, rotation = rotation,
                           yaw = yaw, pitch = 23.2, random = Random(seed), stagger = Random(seed + 1) };
     seat.pad = Pad { yaw = yaw, pitch = 23.2, aim = Math.Rotate(rotation, float3(0, 0, 1)) };
     arena.seats[s] = seat;
@@ -624,6 +660,7 @@ void Rounds(mut Arena arena, float dt)
                 break;
             }
             arena.selectionAge += dt;
+            arena.hover = arena.seats[arena.upgrading].bot ? -1 : arena.seats[arena.upgrading].pad.hover;
             // Whoever takes too long, and a bot, has the first card
             if (arena.selectionAge >= SELECTION_TIMEOUT || (arena.seats[arena.upgrading].bot && arena.selectionAge >= BOT_SELECTION_DELAY))
                 TakeCard(arena, arena.cards[0]);
@@ -666,4 +703,17 @@ system Tick(mut Arena arena, Time time)
     for (var s = 0; s < SEATS; s++)
         if (arena.seats[s].alive) Pads(arena, s, held);
     Rounds(arena, dt);
+    if (arena.phase != Phase.Upgrade) arena.hover = -1;
+}
+
+// Each seat's avatar, where the tick left it. A new avatar is where it is at
+// once: it doesn't slide there from where the last one fell.
+[Stage(Steps.Simulation, 1)]
+system Mirror(mut Avatar avatar, Arena arena)
+{
+    avatar.position = arena.seats[avatar.seat].position;
+    avatar.rotation = arena.seats[avatar.seat].rotation;
+    if (avatar.life == arena.seats[avatar.seat].life) return;
+    avatar.life = arena.seats[avatar.seat].life;
+    this.Snap();
 }
