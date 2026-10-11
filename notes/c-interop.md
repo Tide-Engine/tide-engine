@@ -1,5 +1,9 @@
 # C: lists C makes, jobs, systems written in C
 
+## Borrowed immutable asset lists (2026-10-11)
+
+Generated `mut List<T>` extern wrappers now receive destination ownership internally and call the owner-approved `tide_list_prepare` before writable flattening. The C extern's public parameter shape is unchanged. `out` still avoids copying discarded data; ending an out call releases old immutable descriptor leases as appropriate. A C caller using `tide_list_copy` may now receive a borrowed asset value. Before manually writing it, call `tide_list_prepare(&local, sizeof(element), TIDE_IN_SCRATCH)` (or the actual field's match/local ownership). Raw `_at_mut` returns NULL for immutable values. Plain nonasset lists retain their old copying path. Updated owned-model C regressions and `asset_sharing_c.c` exercise these contracts.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language

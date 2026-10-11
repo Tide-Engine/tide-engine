@@ -79,7 +79,7 @@ component Sign
 ```
 
 - The field gets the asset's value where the default is given: as an entity is spawned, as a match or this machine's local state starts, and for an entity's [local fields](./local-state.md) nothing wrote yet.
-- Text, bytes and a glob's list or map are copied into the field, which is the field's own from then on: changing `text` changes no file's.
+- Text, bytes and a glob's list or map become independent field values: changing one changes neither the asset nor another field. Asset-backed lists can share immutable bytes until the first write, when that value detaches into owned storage. A field keeps the value it was assigned across asset reloads.
 - A `Texture`, a [`Clip`](./audio.md#clips) and a `Cubemap` name their asset, so they cost nothing to give, and under `tide run` a saved file shows through them.
 - A `Grid2<Color>` field can't start as an asset's grid, since a grid is never copied: read the asset's by its name, or give it to a `Texture` field, `Texture face = hero;`.
 - One of a glob's, like `run[0]` or `icons["art/icons/star.png"]`, isn't a default yet: a view assigns it.

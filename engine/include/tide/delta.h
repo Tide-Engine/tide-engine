@@ -41,6 +41,7 @@ typedef struct tide_delta_writer {
     tide_writer bytes;
     bool xor;     // Regions are XOR'd with the base's
     bool by_need; // Which regions to send is what the receiver said it needs
+    bool assets;  // The receiver explicitly advertised this exact asset pack.
     tide_reader need;
     bool lacking;  // The run of `need` being read: regions it needs, or has
     uint32_t left; // ...and how many more of them

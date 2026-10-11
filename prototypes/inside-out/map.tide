@@ -20,8 +20,10 @@ MapLens WorkshopLens(float2 screen, int room)
     var center = float2(left + width * 0.5, top + height * 0.5);
     var size = float2(width, height);
     var cells = room < 0 ? OUTER_SIZE : INNER_SIZE;
-    var side = Math.Min(size.x - 24, size.y - 62) * (room < 0 ? 0.96 : 0.62);
-    var tile = Math.Max(5, side / cells);
+    var side = Math.Min(size.x - 24, size.y - 62);
+    // Fixed room framing includes a slice of a maker beside its outer shell.
+    // The partner's position never changes this scale or center.
+    var tile = Math.Max(5, room < 0 ? side * 0.96 / cells : side / (cells + 6));
     var origin = center + float2(0, 9) - float2((cells - 1) * tile * 0.5);
     return MapLens { center = center, size = size, origin = origin, tile = tile };
 }
@@ -283,38 +285,6 @@ MapLens BlendLens(MapLens source, MapLens target, float amount)
 {
     return MapLens { center = target.center, size = target.size,
         origin = Math.Lerp(source.origin, target.origin, amount), tile = Math.Lerp(source.tile, target.tile, amount) };
-}
-
-int OutsideMakers(Workshop workshop, RoomSurround surround, int localSeat)
-{
-    mut var mask = 0;
-    for (var seat = 0; seat < 2; seat++)
-        if (seat != localSeat && workshop.present[seat] && workshop.puzzle.actors[seat].room == surround.room)
-            mask |= 1 << seat;
-    return mask;
-}
-
-MapLens FocusLens(float2 screen, Workshop workshop, Traveler actor, RoomSurround surround, Picture picture, int localSeat)
-{
-    var normal = WorkshopLens(screen, actor.room);
-    if (actor.room < 0 || OutsideMakers(workshop, surround, localSeat) == 0) return normal;
-    // Fit the current interior and real makers outside together. Self-reference
-    // never uses the local maker's repeated depiction as another person.
-    mut var low = float2(-0.45);
-    mut var high = float2(0.45);
-    for (var seat = 0; seat < 2; seat++)
-    {
-        if (seat == localSeat || !workshop.present[seat] || workshop.puzzle.actors[seat].room != surround.room) continue;
-        var relative = picture.actors[seat] - surround.anchor;
-        low = Math.Min(low, relative - float2(0.40));
-        high = Math.Max(high, relative + float2(0.40));
-    }
-    var span = high - low;
-    var parentTile = Math.Min(normal.tile / ROOM_SCALE,
-        Math.Min((normal.size.x - 40) / span.x, (normal.size.y - 78) / span.y));
-    var tile = parentTile * ROOM_SCALE;
-    var origin = normal.center + float2(0, 9) - (low + high) * 0.5 * parentTile - float2(2 * tile);
-    return MapLens { center = normal.center, size = normal.size, origin = origin, tile = tile };
 }
 
 float2 SmoothCell(float2 current, float2 target, float blend)

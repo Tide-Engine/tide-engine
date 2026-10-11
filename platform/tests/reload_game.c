@@ -39,11 +39,12 @@ static void copy(void *to, const void *from) { memcpy(to, from, sizeof(world)); 
 static uint64_t hash(const void *w) { return ((const world *)w)->ticks; }
 static void player(void *w, tide_player_id id) { (void)w; (void)id; }
 
-static uint8_t *pack(const void *w, const void *base, const uint8_t *need, uint32_t need_size, uint32_t *size)
+static uint8_t *pack(const void *w, const void *base, const uint8_t *need, uint32_t need_size, bool assets, uint32_t *size)
 {
     (void)base;
     (void)need;
     (void)need_size;
+    (void)assets;
     uint8_t *bytes = malloc(sizeof(world));
     if (!bytes) abort();
     memcpy(bytes, w, sizeof(world));

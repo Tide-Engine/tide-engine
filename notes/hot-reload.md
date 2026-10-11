@@ -1,5 +1,9 @@
 # Hot reloading
 
+## Retained asset values and heap packing (2026-10-11)
+
+Asset-backed list fields retain assigned bytes independently of the loaded pack. Unload/replacement frees its own cache reference, while worlds/snapshots and detached origin hints retain their copies. Raw packed heaps now start with a self-contained immutable-content dictionary; migration copies that packed heap intact and emits a four-byte empty dictionary for a new empty heap. Optional encoding origins are omitted from raw saves/migration; values and hashes are preserved, though the new world may send full edited pages. Host/game storage and session callback ABIs changed, so rebuild them together; no compatibility with older packed heaps is promised. Snapshot/unload/raw-roundtrip regressions are in `test_asset_lists.c` and generated `asset_sharing`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases

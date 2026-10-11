@@ -121,35 +121,61 @@ and from reading the solutions.
 
 ## Presentation
 
-The look is a tiled courtyard over dark water at night, cut from flat colour
-(the owner's third word on it, 2026-10-11, after two passes that were
-"generic" and "halfway": "make it unique, give it a theme or make it simple").
-It is both: one theme, and four rules that every picture keeps, written at the
-top of `art/make_art.py`:
+The look is a crypt over a pit, in 3D, seen from the south and well above
+through a camera with no perspective, so it reads as the flat board it is, with
+depth. It is the fifth look in a day. The owner found the first hard to read,
+the second (shaded sprites over a painted sky) generic and "halfway", asked of
+the third (a flat tiled courtyard) for "2.5d; same angle just using shadows and
+depth" and "a horror theme", and of the fourth, which faked height with flat
+sprites, said what was meant: "actual 3D but same angle 2D looking thing".
 
-- flat colour only, with no gradients, gloss, blur or outlines;
-- one hard shadow, straight down, from whatever is loose or stands up;
-- what is set in the floor is plain, and what can be carried is decorated: set
-  ground is sand paving, a loose stone is a glazed tile with an eight-pointed
-  star, loose ice has a snowflake and a portal a dark well;
-- a short palette (sand, cream, cobalt, mustard, jade, coral, teal, plum),
-  shared by `ui.tide`'s constants.
+`paint.tide` builds and draws all of it, after the pattern of Two Forks and
+Tag:
 
-Where there is no ground there is water, which is why a crate sinks and why a
-tile laid there is a way across. The pavers are two tilers in straw hats,
-coral and teal, drawn from the front, the back and the side. `art/atlas.png`
-holds 24 sprites of 288 pixels around a 192 pixel cell, and `art/lattice.png`
-the faint star pattern behind everything; `make_art.py` makes both from
-shapes given as distances, with numpy and Pillow, and nothing is drawn by hand
-or borrowed. Plates, gates and what turns in a portal are white in the atlas
-and coloured as they are drawn. `paint.tide` draws the rest with the same
-rules: the courtyard's wall as one flat block, water with two short lines of
-light a cell, and the HUD's buttons and panels flat on a hard shadow. The
-words players read say tile, floor and water; the code still says stone and
-ground.
+- **Meshes.** A unit box, drawn as instances for walls, floor, slabs, coffins,
+  plates, gate bars and lanterns, and one keeper, a cloak and a pointed hood of
+  eight flat sides with a dark face and two lit eyes, turned to face the way
+  it last went. A cell is a meter; north is +z and up is +y. Set floor is a
+  block three meters deep, a loose slab a thin one, so the pit shows the
+  floor's sides going down, and they darken with depth.
+- **Camera.** Orthographic, 64 degrees above the horizon. Because it has no
+  perspective, `Seen` gives exactly where a place in the world is drawn, and
+  the flat things laid over the frame (the marks round the cell hands would
+  act on, hint letters, sparks) line up with it. Walls are low (0.32) and the
+  south side of the rim is at floor height, because a wall south of a cell
+  hides the near edge of it.
+- **Light.** One cold light in the north-west through a shadow map
+  (`Moonlight`, 1,024 pixels now the frame is small), in three flat steps, plus four candles that fall off with
+  distance: a dim one each keeper carries so the floor round it reads, and one
+  at each lantern once it is reached. Glow is added unlit: eyes, a lit candle,
+  a portal's star.
+- **Decals.** What is cut or painted on a top face comes from
+  `art/decals.png`, eight flat marks that `art/make_art.py` makes with numpy
+  and Pillow: the red eye of a slab that lifts, a snowflake, a portal's star, a
+  coffin's cross, two cracks, a ring, a border. They are lit with the face
+  they lie on.
+- **The frame** is drawn the way a console of the nineties would have (the
+  owner, of the first 3D frame: "add SSAO and a PSX style"), after Two Forks:
+  a small target of about 270 lines, each pixel a whole number of the
+  window's; a vert (`Snap`) moves every corner onto one of its pixels, so what
+  moves wobbles a little; paint is lighter or darker a texel at a time, twelve
+  a meter, from a hash (`Speck`); and `Present` cuts each colour to 31 shades
+  in a four-pixel pattern as it blits to the window, sampling by point.
+- **Creases are darkened** in that same blit. A second depth-only pass from
+  the camera (`Crypt.eyes`) keeps how far it sees along each pixel, and
+  `Crease` takes twice a pixel's depth less its two neighbours' on either
+  side, across four directions at two reaches: nothing on a flat face
+  whichever way it slopes, something where surfaces meet, and nothing again
+  past a step of 1.2 meters, so a thing in front leaves no halo behind it.
+  Decals and the HUD are not in that image; the HUD is drawn flat, at the
+  window's own sharpness, over the frame.
 
-The rim of wall round a board is a third of a cell thick, so the cells are as
-large as the screen allows. Words along the top sit on a plain bar.
+Where there is no ground there is the pit, and in some of its cells a pair of
+eyes that blink and follow whichever keeper is being moved. What gets pushed
+is a coffin. A lantern stands in a gold ring until a keeper reaches it and
+takes it up, lit. The HUD keeps the flat, hard-shadowed style and the crypt's
+palette. The music is the same loop moved down. The words players read say
+slab, coffin, keeper and pit; the code still says stone, crate and paver.
 
 A plate's disc brightens when held down and shows round a crate. What is in
 a portal turns while it leads somewhere and is dull and still while its twin
@@ -258,26 +284,20 @@ real phones, two machines across a real network, and anyone actually playing.
 The sounds were made and are played but were never heard: every run here was
 muted.
 
-Two polish passes followed on 2026-10-11. The owner first asked that the
-visuals not get in the way of playing: the first build drew rock and nothing
-in nearly the same dark blue inside a full ring of rock cells, so where a
-stone could go was hard to read. That pass separated the three, thinned the
-rim, and added the refusal lines, flying stones and room for the solved card
-(`PuzzleCue` gained `action`). The owner then said it still looked bad, the
-bright loose tiles out of place, and to give it the best that could be done.
-The second pass made one paving stone for all ground and replaced flat
-shapes with generated, shaded sprites over a painted sky. The owner found that
-generic and distracting too, and the third pass is the look described under
-Presentation, which replaced it whole.
+Five looks followed one another on 2026-10-11 (see Presentation). Along the
+way the game gained things that outlived them: lines that say why hands were
+refused (`PuzzleCue` gained `action`), slabs that fly between hands and ground,
+a board that makes room for a hint or the solved card, and a plain bar under
+the header's words.
 
-After the third pass: native debug and web debug build without warnings; the
+After the last, in 3D: native debug and web debug build without warnings; the
 12 cases pass natively and under WASI; the browser play test passes on WebGL
-and WebGPU. It found two things the new look had broken in what it reads, the
-celebration's sparks and the slab's shadow drifting into the header, and both
-now stay below it; the header's bar is also what makes two machines draw it
-alike. Captures at
-1280 by 800, 1280 by 720, 960 by 540 and the browser's 390 by 844 were looked
-at, and the thumbnail was taken again. Native release was not rebuilt.
+and WebGPU, so the shaders and the shadow map run on both. Captures at 1280 by
+800, 1280 by 720, 960 by 540 and the browser's 390 by 844 were looked at, and
+the thumbnail was taken again. Known and left: an unlit lantern is a dark
+shape that only its ring explains, wall tops take up much of a board with
+many walls, and shadow edges are a pixel rough. Release builds were not
+rebuilt, frame time was not measured, and the music was never heard.
 
 The page is public at `/prototypes/underfoot/` once the Docs workflow next
 deploys the site; that workflow was not started. Catalog and staging are in

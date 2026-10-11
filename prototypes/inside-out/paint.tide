@@ -20,7 +20,6 @@ local singleton Picture
     int focusShell = -2;
     int focusPortal = -2;
     int focusDepth = -1;
-    int focusOutside;
     float cameraBlend = 1;
     MapLens cameraLens;
     MapLens cameraFrom;
@@ -44,10 +43,18 @@ string RoomName(int room)
     return "Workshop";
 }
 
-void Leaf(float2 at, float size, Color tone)
+void BoxMark(float2 at, float size, Color tone)
 {
-    Draw.Ellipse(at, float2(size * 0.23, size * 0.09), -0.45, tone);
-    Draw.Line(at + float2(-size * 0.20, size * 0.09), at + float2(size * 0.19, -size * 0.09), Math.Max(1, size * 0.025), PAPER);
+    var stroke = Math.Max(0.55, size * 0.075);
+    Draw.WireRoundRect(at, float2(size), size * 0.12, stroke, tone);
+    Draw.Line(at - float2(size * 0.30), at + float2(size * 0.30), stroke, tone);
+    Draw.Line(at + float2(-size * 0.30, size * 0.30), at + float2(size * 0.30, -size * 0.30), stroke, tone);
+}
+
+void PlayerMark(float2 at, float size, Color tone)
+{
+    Draw.Circle(at - float2(0, size * 0.25), size * 0.18, tone);
+    Draw.RoundRect(at + float2(0, size * 0.20), float2(size * 0.60, size * 0.46), size * 0.14, tone);
 }
 
 void Crate(float2 at, float size, bool onTarget = false)
@@ -95,7 +102,7 @@ void GoldTarget(float2 at, float size, bool occupied)
     var side = size * 0.79;
     Draw.RoundRect(at, float2(side), size * 0.12, Color(tone.r, tone.g, tone.b, 0.12));
     Draw.WireRoundRect(at, float2(side), size * 0.12, Math.Max(1.2, size * 0.035), tone);
-    Draw.Circle(at, size * 0.09, Color(tone.r, tone.g, tone.b, 0.48));
+    BoxMark(at, size * 0.42, tone);
 }
 
 void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
@@ -116,13 +123,16 @@ void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
     {
         Draw.RoundRect(at, float2(size * 0.82), size * 0.12, Color(0.76, 0.84, 0.66));
         Draw.WireRoundRect(at, float2(size * 0.72), size * 0.10, Math.Max(1, size * 0.025), TEAL);
-        Leaf(at, size * 1.15, TEAL);
+        PlayerMark(at, size * 0.56, Color(0.23, 0.43, 0.37));
     }
     else if (tile == Tile.Switch)
     {
         Draw.RoundRect(at, float2(size * 0.64), size * 0.11, Color(0.57, 0.49, 0.32));
-        Draw.RoundRect(at - float2(0, size * (occupied ? 0.01 : 0.055)), float2(size * 0.52), size * 0.075, occupied ? Color(0.68, 0.80, 0.40) : Color(0.92, 0.68, 0.32));
-        Draw.Circle(at, size * 0.08, occupied ? PAPER : Color(0.53, 0.43, 0.27));
+        var face = at - float2(0, size * (occupied ? 0.01 : 0.055));
+        Draw.RoundRect(face, float2(size * 0.52), size * 0.075, occupied ? Color(0.68, 0.80, 0.40) : Color(0.92, 0.68, 0.32));
+        var mark = occupied ? PAPER : Color(0.42, 0.34, 0.22);
+        BoxMark(face - float2(size * 0.13, 0), size * 0.21, mark);
+        PlayerMark(face + float2(size * 0.13, 0), size * 0.27, mark);
     }
 }
 
@@ -520,12 +530,11 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var localSeat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
     var actor = workshop.puzzle.actors[localSeat];
     var surround = ReturnSurround(workshop, actor, picture);
-    var outside = actor.room < 0 ? 0 : OutsideMakers(workshop, surround, localSeat);
-    var target = FocusLens(screen, workshop, actor, surround, picture, localSeat);
+    var target = WorkshopLens(screen, actor.room);
     var firstView = picture.focusRoom == -2;
     var resized = picture.cameraLens.size.x != target.size.x || picture.cameraLens.size.y != target.size.y || picture.cameraLens.center.y != target.center.y;
     var crossing = actor.room != picture.focusRoom || surround.room != picture.focusParent ||
-        surround.shell != picture.focusShell || surround.portal != picture.focusPortal || actor.depth != picture.focusDepth || outside != picture.focusOutside;
+        surround.shell != picture.focusShell || surround.portal != picture.focusPortal || actor.depth != picture.focusDepth;
     var transitioning = picture.cameraBlend < 1;
     if (firstView || levelChanged || resized || hands.reduceMotion)
     {
@@ -564,7 +573,6 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     picture.focusShell = surround.shell;
     picture.focusPortal = surround.portal;
     picture.focusDepth = actor.depth;
-    picture.focusOutside = outside;
     var eased = picture.cameraBlend * picture.cameraBlend * (3 - 2 * picture.cameraBlend);
     if (picture.cameraBlend < 1) picture.cameraLens = BlendLens(picture.cameraFrom, target, eased);
     else
@@ -583,6 +591,11 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     Draw.Clip(body)
     {
         Draw.RoundRect(lens.center + float2(0, 9), lens.size - float2(24, 62), 7, Color(0.88, 0.84, 0.73));
+    }
+    var viewSide = Math.Min(body.width, body.height);
+    var viewCenter = lens.center + float2(0, 9);
+    Draw.Clip(Rect(viewCenter.x - viewSide * 0.5, viewCenter.y - viewSide * 0.5, viewSide, viewSide))
+    {
         mut MapLens[4] contexts = default;
         mut RoomSurround[3] ancestors = default;
         mut int[4] dimensions = default;

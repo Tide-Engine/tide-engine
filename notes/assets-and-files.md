@@ -1,5 +1,13 @@
 # Assets and local files
 
+## Retained ordinary asset values (2026-10-11)
+
+Production sharing now implements the owner's approved detach-on-write direction, including ordinary asset lists, not only Animation/SkinnedMesh data. A field owns a small heap descriptor naming immutable bytes by SHA-256 of the layout, length and content. The heap retains that content outside simulation pages; copies and snapshots retain it across pack replacement/unload. Reads and repeated assignment of the same known asset avoid payload copies. First write detaches into ordinary owned storage. Already-owned destinations reuse their storage on asset reset, avoiding the prototype's doubled pending allocations. Arbitrary ordinary values retain their existing copying path; no broad content comparisons were added.
+
+Immutable canonical model data is validated once in its retained allocation and can reuse skinned version/sampling proof after unload. Mutable/detached data keeps full validation. Generated nested-list/map/text ownership traversals detach outer storage before retagging or writing; Texture/Clip retain their existing small resource-reference behavior. Private optional origins on detached list chunks enable smaller asset-relative network pages. These hints neither enter hashes nor change values. Saves include each retained payload once and remain self-contained; edited save pages still use the ordinary full representation.
+
+`tests/test_asset_lists.c` covers 100 independent fields sharing one payload, same-asset assignment, local/field mutation, snapshots, raw packing without a pack, sparse/dense transfer, base reuse, missing assets and malformed descriptors. `compiler/tests/e2e/asset_sharing` covers generated mutation and nested/text/map ownership plus real loopback join/retry under loss. The owner's unchanged 100-character project also produces identical simulation, palette and whole transfer bytes on native/WASI; each decodes the other's known-pack and self-contained packets, including self-contained decoding after unload. Structural evidence and reproduction are in `bench/results/asset-production/`. Timing remains deferred; prototype CPU gains are not a production timing claim. See `notes/ecs.md` and `notes/netcode.md` for storage and wire contracts.
+
 ## AnimationCatalog lookup API, 2026-10-11
 
 The owner's approved `AnimationCatalog` name replaces `Animations` in asset
