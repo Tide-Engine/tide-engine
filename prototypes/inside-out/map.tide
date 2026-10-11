@@ -16,6 +16,7 @@ struct MapLens
     float2 size;
     float2 origin;
     float tile;
+    float floor;
 }
 
 MapLens WorkshopLens(LevelLayout layout, float2 screen, int room)
@@ -336,7 +337,8 @@ MapLens InteriorLens(LevelLayout layout, int room, MapLens parent, float2 anchor
     var tile = parent.tile * RoomScale(layout, room);
     var center = MapPoint(anchor, parent);
     return MapLens { center = parent.center, size = parent.size,
-        origin = center - RoomCenter(layout, room) * tile, tile = tile };
+        origin = center - RoomCenter(layout, room) * tile, tile = tile,
+        floor = parent.floor + parent.tile * .018 };
 }
 
 MapLens ContainingLens(LevelLayout layout, int room, MapLens focus, RoomSurround surround)
@@ -344,13 +346,15 @@ MapLens ContainingLens(LevelLayout layout, int room, MapLens focus, RoomSurround
     var tile = focus.tile / RoomScale(layout, room);
     var center = focus.origin + RoomCenter(layout, room) * focus.tile;
     var origin = center - surround.anchor * tile;
-    return MapLens { center = focus.center, size = focus.size, origin = origin, tile = tile };
+    return MapLens { center = focus.center, size = focus.size, origin = origin, tile = tile,
+        floor = focus.floor - tile * .018 };
 }
 
 MapLens BlendLens(MapLens source, MapLens target, float amount)
 {
     return MapLens { center = target.center, size = target.size,
-        origin = Math.Lerp(source.origin, target.origin, amount), tile = Math.Lerp(source.tile, target.tile, amount) };
+        origin = Math.Lerp(source.origin, target.origin, amount), tile = Math.Lerp(source.tile, target.tile, amount),
+        floor = Math.Lerp(source.floor, target.floor, amount) };
 }
 
 float2 SmoothCell(float2 current, float2 target, float blend)

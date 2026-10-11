@@ -60,93 +60,91 @@ string RoomName(int room)
     return "Outer room";
 }
 
-void BoxMark(float2 at, float size, Color tone)
+void BoxMark(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, float scale)
 {
-    var stroke = Math.Max(0.55, size * 0.075);
-    Draw.WireRoundRect(at, float2(size), 0, stroke, tone);
-    Draw.Line(at - float2(size * 0.30), at + float2(size * 0.30), stroke, tone);
-    Draw.Line(at + float2(-size * 0.30, size * 0.30), at + float2(size * 0.30, -size * 0.30), stroke, tone);
+    var stroke = Math.Max(.5, size * .075);
+    FloorOutline(sculpture, at, float2(size), stroke, tone, floor, scale);
+    FloorLine(sculpture, at - float2(size * .30), at + float2(size * .30), stroke, tone, floor, scale);
+    FloorLine(sculpture, at + float2(-size * .30, size * .30), at + float2(size * .30, -size * .30), stroke, tone, floor, scale);
 }
 
-void PlayerMark(float2 at, float size, Color tone)
+void PlayerMark(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, float scale)
 {
-    Draw.Rect(at - float2(0, size * 0.25), float2(size * 0.32), tone);
-    Draw.Rect(at + float2(0, size * 0.20), float2(size * 0.60, size * 0.46), tone);
+    Cuboid(sculpture, at - float2(0, size * .25), float2(size * .32), scale * .008, tone, floor, scale);
+    Cuboid(sculpture, at + float2(0, size * .20), float2(size * .60, size * .46), scale * .008, tone, floor, scale);
 }
 
-void Crate(float2 at, float size, bool onTarget = false)
+void Crate(mut Sculpture sculpture, float2 at, float size, bool onTarget, float floor)
 {
-    var side = size * 0.72;
-    var dark = Color(0.22, 0.25, 0.17);
-    Draw.Rect(at + float2(0, size * 0.055), float2(side), Color(0.08, 0.10, 0.07, 0.35));
-    Draw.Rect(at, float2(side), dark);
-    Draw.Rect(at - float2(0, size * 0.025), float2(side * 0.87), onTarget ? Color(0.59, 0.64, 0.36) : Color(0.68, 0.62, 0.39));
-    BoxMark(at - float2(0, size * 0.025), side * 0.72, Color(0.31, 0.31, 0.18));
-    Draw.Rect(at + float2(0, side * 0.35), float2(side * 0.72, Math.Max(0.7, size * 0.035)), Color(0.75, 0.72, 0.46));
+    var side = size * .72;
+    var height = size * .36;
+    var wood = onTarget ? Color(.59, .64, .36) : Color(.68, .62, .39);
+    Cuboid(sculpture, at, float2(side), height, Color(.30, .31, .20), floor, size);
+    Cuboid(sculpture, at, float2(side * .89), height * .12, wood, floor + height, size);
+    var top = floor + height * 1.12 + size * .003;
+    BoxMark(sculpture, at, side * .71, Color(.27, .27, .15), top, size);
+    FloorLine(sculpture, at + float2(-side * .44, side * .40), at + float2(side * .44, side * .40), size * .033, Color(.76, .72, .45), top, size);
+    FloorLine(sculpture, at + float2(-side * .44, -side * .40), at + float2(side * .44, -side * .40), size * .033, Color(.76, .72, .45), top, size);
 }
 
-void Maker(float2 at, float size, int seat)
+void Maker(mut Sculpture sculpture, float2 at, float size, int seat, float floor)
 {
     var tone = seat == 0 ? AMBER : TEAL;
-    var dark = Color(0.13, 0.17, 0.12);
-    Draw.Rect(at + float2(0, size * 0.31), float2(size * 0.49, size * 0.14), Color(0.07, 0.09, 0.06, 0.35));
-    Draw.Rect(at + float2(-size * 0.105, size * 0.27), float2(size * 0.13, size * 0.22), dark);
-    Draw.Rect(at + float2(size * 0.105, size * 0.27), float2(size * 0.13, size * 0.22), dark);
-    Draw.Rect(at + float2(0, size * 0.075), float2(size * 0.40, size * 0.36), tone);
-    Draw.Rect(at + float2(-size * 0.255, size * 0.07), float2(size * 0.11, size * 0.28), tone);
-    Draw.Rect(at + float2(size * 0.255, size * 0.07), float2(size * 0.11, size * 0.28), tone);
-    Draw.Rect(at - float2(0, size * 0.18), float2(size * 0.28, size * 0.24), Color(0.73, 0.74, 0.57));
-    Draw.Rect(at - float2(0, size * 0.30), float2(size * 0.34, size * 0.10), tone);
-    Draw.Rect(at + float2(0, size * 0.075), float2(size * 0.075, size * 0.30), dark);
-    if (size >= 18)
+    var dark = Color(.13, .17, .12);
+    var cloth = Color(.73, .74, .57);
+    Cuboid(sculpture, at + float2(-size * .105, size * .018), float2(size * .13, size * .21), size * .17, dark, floor, size);
+    Cuboid(sculpture, at + float2(size * .105, size * .018), float2(size * .13, size * .21), size * .17, dark, floor, size);
+    Cuboid(sculpture, at, float2(size * .39, size * .25), size * .27, tone, floor + size * .16, size);
+    Cuboid(sculpture, at + float2(-size * .25, 0), float2(size * .105, size * .20), size * .22, tone, floor + size * .17, size);
+    Cuboid(sculpture, at + float2(size * .25, 0), float2(size * .105, size * .20), size * .22, tone, floor + size * .17, size);
+    Cuboid(sculpture, at, float2(size * .27, size * .25), size * .20, cloth, floor + size * .43, size);
+    Cuboid(sculpture, at - float2(0, size * .015), float2(size * .33, size * .29), size * .065, tone, floor + size * .63, size);
+    Cuboid(sculpture, at + float2(0, size * .132), float2(size * .035, size * .012), size * .25, dark, floor + size * .17, size);
+    if (size >= 12)
     {
-        Draw.Rect(at + float2(-size * 0.055, -size * 0.18), float2(Math.Max(1, size * 0.025)), dark);
-        Draw.Rect(at + float2(size * 0.055, -size * 0.18), float2(Math.Max(1, size * 0.025)), dark);
-        Label($"{seat + 1}", at + float2(size * 0.105, size * 0.07), Math.Max(6, size * 0.15), Color(0.84, 0.86, 0.70), Anchor.MiddleCenter);
+        Cuboid(sculpture, at + float2(-size * .055, size * .131), float2(size * .025, size * .014), size * .028, dark, floor + size * .52, size);
+        Cuboid(sculpture, at + float2(size * .055, size * .131), float2(size * .025, size * .014), size * .028, dark, floor + size * .52, size);
     }
 }
 
-void GoldTarget(float2 at, float size, bool occupied)
+void GoldTarget(mut Sculpture sculpture, float2 at, float size, bool occupied, float floor)
 {
-    var tone = occupied ? Color(0.49, 0.68, 0.39) : Color(0.69, 0.64, 0.32);
-    var side = size * 0.79;
-    Draw.Rect(at, float2(side), Color(tone.r, tone.g, tone.b, 0.13));
-    Draw.WireRoundRect(at, float2(side), 0, Math.Max(1.2, size * 0.035), tone);
-    BoxMark(at, size * 0.42, tone);
+    var tone = occupied ? Color(.49, .68, .39) : Color(.69, .64, .32);
+    var top = floor + size * .009;
+    FloorOutline(sculpture, at, float2(size * .79), Math.Max(.9, size * .027), tone, top, size);
+    BoxMark(sculpture, at, size * .42, tone, top, size);
 }
 
-void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
+void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor)
 {
-    var tone = variation % 2 == 0 ? Color(0.62, 0.64, 0.45) : Color(0.59, 0.61, 0.43);
-    Draw.Rect(at, float2(size + 0.05), tone);
+    var tone = variation % 2 == 0 ? Color(.62, .64, .45) : Color(.59, .61, .43);
+    var thickness = Math.Max(.08, size * .010);
+    Cuboid(sculpture, at, float2(size), thickness, Color(.30, .34, .22), floor - thickness, size);
+    Cuboid(sculpture, at, float2(size * .985), thickness * .24, tone, floor, size);
     if (size > 19)
-    {
         for (var grain = 0; grain < 4; grain++)
         {
-            var offset = float2((grain % 2 == 0 ? -1.0 : 1.0) * size * 0.22, (grain < 2 ? -1.0 : 1.0) * size * 0.22);
-            Draw.Rect(at + offset, float2(Math.Max(1, size * 0.022)), Color(0.38, 0.42, 0.26, 0.24));
+            var offset = float2((grain % 2 == 0 ? -1.0 : 1.0) * size * .22, (grain < 2 ? -1.0 : 1.0) * size * .22);
+            Cuboid(sculpture, at + offset, float2(Math.Max(.5, size * .017)), size * .0015, Color(.46, .50, .33), floor + thickness * .25, size);
         }
-    }
-    Draw.Line(at + float2(-size * 0.5, size * 0.5), at + float2(size * 0.5, size * 0.5), Math.Max(0.5, size * 0.013), Color(0.22, 0.26, 0.16, 0.18));
-    if (tile == Tile.Target) GoldTarget(at, size, occupied);
+    if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
     else if (tile == Tile.Exit)
     {
-        Draw.Rect(at, float2(size * 0.82), Color(0.35, 0.49, 0.34));
-        Draw.WireRoundRect(at, float2(size * 0.72), 0, Math.Max(1, size * 0.025), Color(0.60, 0.74, 0.51));
-        PlayerMark(at, size * 0.56, Color(0.78, 0.83, 0.63));
+        var top = floor + size * .006;
+        Cuboid(sculpture, at, float2(size * .82), size * .003, Color(.35, .49, .34), top, size);
+        FloorOutline(sculpture, at, float2(size * .72), Math.Max(.8, size * .025), Color(.60, .74, .51), top + size * .004, size);
+        PlayerMark(sculpture, at, size * .56, Color(.78, .83, .63), top + size * .004, size);
     }
 }
 
-void WallTile(float2 at, float size, Color tone)
+void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor)
 {
-    Draw.Rect(at, float2(size + 0.05), Math.Lerp(tone, Color(0.12, 0.16, 0.11), 0.26));
-    Draw.Rect(at - float2(0, size * 0.03), float2(size * 0.93, size * 0.86), tone);
-    Draw.Line(at + float2(-size * 0.46, -size * 0.46), at + float2(size * 0.46, -size * 0.46), Math.Max(0.7, size * 0.023), Math.Lerp(tone, Color(0.78, 0.83, 0.58), 0.22));
+    var height = size * .24;
+    Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, Color(.12, .16, .11), .22), floor, size);
+    Cuboid(sculpture, at, float2(size * .95), size * .018, tone, floor + height, size);
+    FloorLine(sculpture, at + float2(-size * .46, -size * .45), at + float2(size * .46, -size * .45), Math.Max(.6, size * .02), Math.Lerp(tone, Color(.78, .83, .58), .22), floor + height + size * .019, size);
     if (size > 13)
-    {
-        Draw.Rect(at + float2(-size * 0.20, size * 0.12), float2(Math.Max(1, size * 0.03)), Color(0.11, 0.16, 0.10, 0.35));
-        Draw.Rect(at + float2(size * 0.16, -size * 0.14), float2(Math.Max(1, size * 0.03)), Color(0.11, 0.16, 0.10, 0.25));
-    }
+        Cuboid(sculpture, at + float2(-size * .20, size * .12), float2(size * .028), size * .001, Color(.22, .30, .20), floor + height + size * .020, size);
 }
 
 [Stage(ArtStage.Backdrop)]
@@ -170,7 +168,7 @@ void Panel(float2 at, float2 size)
     Draw.WireRoundRect(at, size, 0, 1, Color(0.32, 0.38, 0.27));
 }
 
-void DimensionFloor(Workshop workshop, int room, MapLens lens)
+void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens)
 {
     var tone = room < 0 ? Color(0.46, 0.50, 0.35) : RoomColor(room);
     for (var y = 0; y < RoomHeight(workshop.layout, room); y++)
@@ -181,20 +179,20 @@ void DimensionFloor(Workshop workshop, int room, MapLens lens)
             var at = MapPoint(float2(position), lens);
             if (!InPlayfield(at, lens.tile * 1.10, lens)) continue;
             var occupied = CargoAt(workshop.layout, workshop.puzzle, room, position) >= 0;
-            if (tile == Tile.Wall) WallTile(at, lens.tile, tone);
-            else TilePaint(tile, at, lens.tile, occupied, x + y);
+            if (tile == Tile.Wall) WallTile(sculpture, at, lens.tile, tone, lens.floor);
+            else TilePaint(sculpture, tile, at, lens.tile, occupied, x + y, lens.floor);
         }
     for (var shell = 0; shell < workshop.layout.roomCount; shell++)
     {
         var layout = workshop.layout.rooms[shell];
         if (layout.dockRoom != room || layout.dock.x < 0) continue;
         var here = MapPoint(float2(layout.dock), lens);
-        Draw.WireRoundRect(here, float2(lens.tile * 0.91), 0, Math.Max(1, lens.tile * 0.028), RoomColor(shell));
-        if (lens.tile > 18) Label($"{shell + 1}", here + float2(lens.tile * 0.31, -lens.tile * 0.30), lens.tile * 0.17, Color(0.18, 0.23, 0.14), Anchor.MiddleCenter);
+        FloorOutline(sculpture, here, float2(lens.tile * .91), Math.Max(.8, lens.tile * .028), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
+        if (lens.tile > 18) FloorNumber(sculpture, shell + 1, false, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, Color(.18, .23, .14), lens.floor + lens.tile * .014, lens.tile);
     }
 }
 
-void DimensionConnections(Workshop workshop, int room, MapLens lens, Picture picture)
+void DimensionConnections(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture)
 {
     for (var box = 0; box < 8; box++)
     {
@@ -216,18 +214,18 @@ void DimensionConnections(Workshop workshop, int room, MapLens lens, Picture pic
             var second = direction % 2 == 0 ? float2(to.x, middle.y) : float2(middle.x, to.y);
             var stroke = Math.Min(RoomScale(workshop.layout, child), RoomScale(workshop.layout, other)) * lens.tile * 0.82;
             var floor = Color(0.59, 0.61, 0.43);
-            Draw.Line(from, first, stroke, floor);
-            Draw.Line(first, second, stroke, floor);
-            Draw.Line(second, to, stroke, floor);
+            FloorLine(sculpture, from, first, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
+            FloorLine(sculpture, first, second, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
+            FloorLine(sculpture, second, to, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
         }
     }
 }
 
-void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture, Hands hands)
+void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture, Hands hands)
 {
     for (var crate = 0; crate < workshop.layout.crateCount; crate++)
         if (workshop.puzzle.crates[crate].active && workshop.puzzle.crates[crate].room == room)
-            Crate(MapPoint(picture.crates[crate], lens), lens.tile, TileAt(workshop.layout, room, workshop.puzzle.crates[crate].position) == Tile.Target);
+            Crate(sculpture, MapPoint(picture.crates[crate], lens), lens.tile, TileAt(workshop.layout, room, workshop.puzzle.crates[crate].position) == Tile.Target, lens.floor + lens.tile * .004);
     for (var seat = 0; seat < 2; seat++)
         if (workshop.present[seat])
         {
@@ -235,79 +233,45 @@ void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture,
             if (trip.active)
             {
                 if (room == trip.child && trip.aliasAlpha > 0)
-                    Draw.Tint(Color(1, 1, 1, trip.aliasAlpha))
-                    {
-                        Maker(MapPoint(trip.aliasPosition, lens), lens.tile * 0.90, seat);
-                    }
+                {
+                    sculpture.alpha = trip.aliasAlpha;
+                    Maker(sculpture, MapPoint(trip.aliasPosition, lens), lens.tile * .90, seat, lens.floor + lens.tile * .004);
+                    sculpture.alpha = 1;
+                }
                 continue;
             }
             if (workshop.puzzle.actors[seat].room != room) continue;
             mut var at = MapPoint(picture.actors[seat], lens);
             if (seat == hands.seat && hands.blockTime > 0)
             {
-                Draw.WireCircle(at, lens.tile * 0.44, Math.Max(1.5, lens.tile * 0.035), Color(0.82, 0.43, 0.26, hands.blockTime * 4));
+                FloorOutline(sculpture, at, float2(lens.tile * .88), Math.Max(.8, lens.tile * .035), Color(.82, .43, .26, hands.blockTime * 4), lens.floor + lens.tile * .020, lens.tile);
                 if (!hands.reduceMotion) at.x += Math.Sin(hands.blockTime * 70) * lens.tile * 0.025;
             }
             if (seat == hands.seat && hands.portalTime > 0)
-                Draw.WireCircle(at, lens.tile * (hands.reduceMotion ? 0.46 : 0.42 + (0.36 - hands.portalTime) * 0.50), Math.Max(1.5, lens.tile * 0.035), Color(0.33, 0.61, 0.54, hands.portalTime * 1.8));
-            Maker(at, lens.tile * 0.90, seat);
+                FloorOutline(sculpture, at, float2(lens.tile * .92), Math.Max(.8, lens.tile * .025), Color(.33, .61, .54, hands.portalTime * 1.8), lens.floor + lens.tile * .015, lens.tile);
+            Maker(sculpture, at, lens.tile * .90, seat, lens.floor + lens.tile * .004);
         }
 }
 
-// The normal canonical copies are hidden during travel. Draw the single live
-// maker after all room surfaces, at its continuous containing-world pose.
-void DoorwayMaker(LevelLayout layout, MakerPassage trip, Picture picture, MapLens parent, int seat)
+// The same aperture mask is used by colour, depth and the shadow pass.
+// Its ground-plane test admits the approaching body only through the gap.
+void DoorwayMaker(mut Sculpture sculpture, LevelLayout layout, MakerPassage trip, Picture picture, MapLens parent, int seat)
 {
     var at = MapPoint(trip.position, parent);
-    var size = parent.tile * trip.scale * 0.90;
+    var size = parent.tile * trip.scale * .90;
     var mouth = MapPoint(PassageAnchor(trip.gate, picture) + trip.lip, parent);
-    var gap = parent.tile * RoomScale(layout, trip.child) * 0.82;
-    var low = parent.center - parent.size * 0.5;
-    var high = parent.center + parent.size * 0.5;
-    var horizontal = trip.side % 2 == 0;
-    mut var outside = Rect(low.x, low.y, parent.size.x, parent.size.y);
-    mut var inside = outside;
-    if (horizontal)
-    {
-        inside.x = mouth.x - gap * 0.5;
-        inside.width = gap;
-        if (trip.side == 0)
-        {
-            outside.height = Math.Max(0, mouth.y - low.y);
-            inside.y = mouth.y;
-            inside.height = Math.Max(0, high.y - mouth.y);
-        }
-        else
-        {
-            outside.y = mouth.y;
-            outside.height = Math.Max(0, high.y - mouth.y);
-            inside.height = Math.Max(0, mouth.y - low.y);
-        }
-    }
-    else
-    {
-        inside.y = mouth.y - gap * 0.5;
-        inside.height = gap;
-        if (trip.side == 3)
-        {
-            outside.width = Math.Max(0, mouth.x - low.x);
-            inside.x = mouth.x;
-            inside.width = Math.Max(0, high.x - mouth.x);
-        }
-        else
-        {
-            outside.x = mouth.x;
-            outside.width = Math.Max(0, high.x - mouth.x);
-            inside.width = Math.Max(0, mouth.x - low.x);
-        }
-    }
-    // A maker may overlap the edge plane only through the open aperture.
-    // This stays in the containing transform while the camera moves.
-    Draw.Clip(outside) { Maker(at, size, seat); }
-    Draw.Clip(inside) { Maker(at, size, seat); }
+    var scale = RoomScale(layout, trip.child);
+    var gap = parent.tile * scale * .82;
+    var nested = Math.Clamp((1 - trip.scale) / Math.Max(.001, 1 - scale), 0, 1);
+    var floor = parent.floor + parent.tile * .018 * nested;
+    sculpture.ground = floor;
+    sculpture.aperture = float4(mouth.x, mouth.y, gap * .5, 0);
+    sculpture.apertureSide = trip.side;
+    Maker(sculpture, at, size, seat, floor + size * .004);
+    sculpture.apertureSide = -1;
 }
 
-void PassageMaker(Workshop workshop, Picture picture, Hands hands, int seat, MapLens[4] contexts, int[4] dimensions, int contextCount)
+void PassageMaker(mut Sculpture sculpture, Workshop workshop, Picture picture, Hands hands, int seat, MapLens[4] contexts, int[4] dimensions, int contextCount)
 {
     var trip = picture.passages[seat];
     if (!trip.active || !workshop.present[seat]) return;
@@ -359,26 +323,28 @@ void PassageMaker(Workshop workshop, Picture picture, Hands hands, int seat, Map
         }
     }
     if (found)
-        Draw.Tint(Color(1, 1, 1, 1 - trip.aliasAlpha))
-        {
-            DoorwayMaker(workshop.layout, trip, picture, parent, seat);
-        }
+    {
+        sculpture.alpha = 1 - trip.aliasAlpha;
+        DoorwayMaker(sculpture, workshop.layout, trip, picture, parent, seat);
+        sculpture.alpha = 1;
+    }
 }
 
-void WallStrip(float2 from, float2 to, float thickness, Color tone)
+void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness, Color tone, float floor, float tile)
 {
     mut var size = float2(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
     if (size.x < 0.001 && size.y < 0.001) return;
     if (size.x < 0.001) size.x = thickness;
     if (size.y < 0.001) size.y = thickness;
-    Draw.Rect((from + to) * 0.5, size, tone);
+    var height = tile * .23;
+    Cuboid(sculpture, (from + to) * .5, size, height, tone, floor, tile);
     var highlight = size.x > size.y ? float2(size.x, thickness * 0.18) : float2(thickness * 0.18, size.y);
-    Draw.Rect((from + to) * 0.5, highlight, Math.Lerp(tone, Color(0.77, 0.83, 0.60), 0.35));
+    Cuboid(sculpture, (from + to) * .5, highlight, tile * .004, Math.Lerp(tone, Color(.77, .83, .60), .35), floor + height, tile);
 }
 
 // The walls sit inside the exact room footprint. A doorway removes a section
 // of that wall rather than painting a door symbol over a closed frame.
-void RoomWalls(LevelLayout layout, int room, MapLens lens)
+void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens)
 {
     var dims = RoomDimensions(layout, room);
     var low = lens.origin - float2(lens.tile * 0.5);
@@ -403,31 +369,31 @@ void RoomWalls(LevelLayout layout, int room, MapLens lens)
             var tangent = horizontal ? float2(1, 0) : float2(0, 1);
             var start = mouth - tangent * lens.tile * 0.41;
             var end = mouth + tangent * lens.tile * 0.41;
-            WallStrip(first, start, thickness, tone);
-            WallStrip(end, last, thickness, tone);
+            WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile);
+            WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile);
             // Short jambs make the depth of the opening visible. The floor
             // remains continuous all the way through the missing wall.
             var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
-            Draw.Rect(start - normal * thickness * 0.5, jambSize, Color(0.18, 0.24, 0.15));
-            Draw.Rect(end - normal * thickness * 0.5, jambSize, Color(0.18, 0.24, 0.15));
+            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .22, Color(.18, .24, .15), lens.floor, lens.tile);
+            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .22, Color(.18, .24, .15), lens.floor, lens.tile);
         }
-        else WallStrip(first, last, thickness, tone);
+        else WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile);
     }
 }
 
-void RoomTrim(LevelLayout layout, int room, MapLens lens, int box)
+void RoomTrim(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens, int box)
 {
-    RoomWalls(layout, room, lens);
+    RoomWalls(sculpture, layout, room, lens);
     if (room < 0 || lens.tile < 3) return;
     var badge = lens.origin + float2(lens.tile * 0.12, lens.tile * 0.12);
-    Label(box >= MAX_ROOMS ? $"{room + 1}′" : $"{room + 1}", badge, Math.Max(4, lens.tile * 0.26), Color(0.20, 0.27, 0.16), Anchor.MiddleCenter);
+    FloorNumber(sculpture, room + 1, box >= MAX_ROOMS, badge, Math.Max(3, lens.tile * .26), Color(.20, .27, .16), lens.floor + lens.tile * .015, lens.tile);
 }
 
 struct SceneLens { int room; MapLens lens; int depth; int box = -1; }
 
 // Full rooms and miniatures share every geometric primitive. Drawing is finite
 // even when a doorway refers to its own canonical room.
-void RoomScene(Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, int hideBox = -1, bool wallsOnly = false, int instance = -1)
+void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, int hideBox = -1, int instance = -1)
 {
     mut SceneLens[48] pending = default;
     pending[0] = SceneLens { room = room, lens = lens, box = instance };
@@ -438,14 +404,11 @@ void RoomScene(Workshop workshop, int room, MapLens lens, Picture picture, Hands
         var dims = RoomDimensions(workshop.layout, item.room);
         var center = MapPoint(RoomCenter(workshop.layout, item.room), item.lens);
         if (!InPlayfield(center, Math.Max(dims.x, dims.y) * item.lens.tile, lens)) continue;
-        if (wallsOnly) RoomWalls(workshop.layout, item.room, item.lens);
-        else
-        {
-            DimensionFloor(workshop, item.room, item.lens);
-            DimensionConnections(workshop, item.room, item.lens, picture);
-            DimensionPieces(workshop, item.room, item.lens, picture, hands);
-            RoomTrim(workshop.layout, item.room, item.lens, item.box);
-        }
+        sculpture.ground = item.lens.floor;
+        DimensionFloor(sculpture, workshop, item.room, item.lens);
+        DimensionConnections(sculpture, workshop, item.room, item.lens, picture);
+        DimensionPieces(sculpture, workshop, item.room, item.lens, picture, hands);
+        RoomTrim(sculpture, workshop.layout, item.room, item.lens, item.box);
         for (var box = 0; box < 8; box++)
         {
             if (!ValidBox(workshop.layout, box) || BoxPlacement(workshop.layout, workshop.puzzle, box).room != item.room || (index == 0 && box == hideBox)) continue;
@@ -456,7 +419,12 @@ void RoomScene(Workshop workshop, int room, MapLens lens, Picture picture, Hands
                 pending[count] = SceneLens { room = child, lens = interior, depth = item.depth + 1, box = box };
                 count++;
             }
-            else if (!wallsOnly) Draw.Rect(MapPoint(picture.boxes[box], item.lens), RoomDimensions(workshop.layout, child) * interior.tile, RoomColor(child));
+            else
+            {
+                sculpture.ground = interior.floor;
+                Cuboid(sculpture, MapPoint(picture.boxes[box], item.lens), RoomDimensions(workshop.layout, child) * interior.tile, interior.tile * .20, RoomColor(child), interior.floor, interior.tile);
+                sculpture.ground = item.lens.floor;
+            }
         }
     }
 }
@@ -484,8 +452,9 @@ void DimensionFrame(Workshop workshop, int room, MapLens lens, RoomSurround surr
 }
 
 [Stage(ArtStage.Board)]
-view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture picture)
+view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture picture, mut Sculpture sculpture, mut SceneRender render)
 {
+    render.pending = false;
     Draw.SetScreen();
     var dt = Math.Min(Frame.dt, 0.08);
     picture.clock += dt;
@@ -665,6 +634,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var viewCenter = lens.center + float2(0, 9);
     Draw.Clip(Rect(viewCenter.x - viewSide * 0.5, viewCenter.y - viewSide * 0.5, viewSide, viewSide))
     {
+        BeginSculpture(sculpture, lens.tile, Rect(viewCenter.x - viewSide * .5, viewCenter.y - viewSide * .5, viewSide, viewSide));
         mut MapLens[4] contexts = default;
         mut RoomSurround[3] ancestors = default;
         mut int[4] dimensions = default;
@@ -678,19 +648,21 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
             contexts[layer + 1] = ContainingLens(workshop.layout, dimensions[layer], contexts[layer], ancestors[layer]);
             contextCount++;
         }
+        sculpture.shadowFloor = contexts[contextCount - 1].floor;
         for (var layer = contextCount - 1; layer >= 0; layer--)
         {
             var hiddenBox = layer > 0 ? ancestors[layer - 1].box : -1;
             var instance = layer < 3 && dimensions[layer] >= 0 ? ancestors[layer].box : -1;
-            RoomScene(workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox, false, instance);
+            RoomScene(sculpture, workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox, instance);
         }
-        for (var seat = 0; seat < 2; seat++) PassageMaker(workshop, picture, hands, seat, contexts, dimensions, contextCount);
-        // Opaque frame segments occlude a crossing silhouette. Doorway gaps
-        // remain open, including offset doors and reference-box copies.
-        for (var layer = contextCount - 1; layer >= 0; layer--)
-        {
-            var hiddenBox = layer > 0 ? ancestors[layer - 1].box : -1;
-            RoomScene(workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox, true);
-        }
+        for (var seat = 0; seat < 2; seat++) PassageMaker(sculpture, workshop, picture, hands, seat, contexts, dimensions, contextCount);
+        var rotation = quaternion.Euler(float3(SCENE_PITCH, 0, 0));
+        // Depth bounds follow the local view's containing scales, never a
+        // moving or absent partner. The orthographic ground projection is fixed.
+        var distance = Math.Max(Screen.width, Screen.height) * 8 + contexts[contextCount - 1].tile * 2;
+        var camera = float4x4.TRS(-Math.Forward(rotation) * distance, rotation, float3(1));
+        var projection = float4x4.Ortho(Screen.width, Screen.height, .1, distance * 2);
+        RenderScene(sculpture.vertices, sculpture.indices, sculpture.objects, camera, projection,
+            Rect(viewCenter.x - viewSide * .5, viewCenter.y - viewSide * .5, viewSide, viewSide), viewCenter, lens.tile, render);
     }
 }
