@@ -121,43 +121,48 @@ and from reading the solutions.
 
 ## Presentation
 
-The look is a crypt floor over a pit, cut from flat colour and given height.
-It is the fourth the game has had in a day. The owner found the first hard to
-read, the second (shaded sprites over a painted sky) generic and "halfway",
-and of the third (a flat tiled courtyard over water) asked for two things:
-"make it like 2.5d; same angle just using shadows and depth", and "lets give it
-also a horror theme". The rules every picture keeps are written at the top of
-`art/make_art.py`:
+The look is a crypt over a pit, in 3D, seen from the south and well above
+through a camera with no perspective, so it reads as the flat board it is, with
+depth. It is the fifth look in a day. The owner found the first hard to read,
+the second (shaded sprites over a painted sky) generic and "halfway", asked of
+the third (a flat tiled courtyard) for "2.5d; same angle just using shadows and
+depth" and "a horror theme", and of the fourth, which faked height with flat
+sprites, said what was meant: "actual 3D but same angle 2D looking thing".
 
-- flat colour only, with no gradients, gloss, blur or outlines;
-- everything has height. The view is from above and a little from the south:
-  walls show a south face a third of a cell tall, the floor shows its edge
-  where it ends at the pit, loose slabs and coffins show their sides, and the
-  whole crypt is a block whose own face drops away below it. One light in the
-  north-west: sprites cast a hard shadow down and to the right, and a wall
-  lays one across the cell south of it;
-- what is set in the floor is plain grey flagstone, some of it cracked, and
-  what can be carried is marked: a loose slab is bone white with a red eye
-  carved in it, loose ice has a snowflake, a portal a ring that burns green;
-- a cold palette (stone, bone, iron, pit black) and three accents (blood,
-  candle, the portal's green), shared by `ui.tide`'s constants.
+`paint.tide` builds and draws all of it, after the pattern of Two Forks and
+Tag:
+
+- **Meshes.** A unit box, drawn as instances for walls, floor, slabs, coffins,
+  plates, gate bars and lanterns, and one keeper, a cloak and a pointed hood of
+  eight flat sides with a dark face and two lit eyes, turned to face the way
+  it last went. A cell is a meter; north is +z and up is +y. Set floor is a
+  block three meters deep, a loose slab a thin one, so the pit shows the
+  floor's sides going down, and they darken with depth.
+- **Camera.** Orthographic, 64 degrees above the horizon. Because it has no
+  perspective, `Seen` gives exactly where a place in the world is drawn, and
+  the flat things laid over the frame (the marks round the cell hands would
+  act on, hint letters, sparks) line up with it. Walls are low (0.32) and the
+  south side of the rim is at floor height, because a wall south of a cell
+  hides the near edge of it.
+- **Light.** One cold light in the north-west through a 2,048 pixel shadow map
+  (`Moonlight`), in three flat steps, plus four candles that fall off with
+  distance: a dim one each keeper carries so the floor round it reads, and one
+  at each lantern once it is reached. Glow is added unlit: eyes, a lit candle,
+  a portal's star.
+- **Decals.** What is cut or painted on a top face comes from
+  `art/decals.png`, eight flat marks that `art/make_art.py` makes with numpy
+  and Pillow: the red eye of a slab that lifts, a snowflake, a portal's star, a
+  coffin's cross, two cracks, a ring, a border. They are lit with the face
+  they lie on.
+- **The frame** is drawn into a window-sized target with four samples and
+  blitted to the window; the HUD is drawn flat over it.
 
 Where there is no ground there is the pit, and in some of its cells a pair of
-eyes that blink and follow whichever keeper is being moved; a slab laid over
-them shuts them out. What gets pushed is a coffin, which goes down and wedges.
-The two players are hooded keepers, red and teal, with lit eyes in the dark of
-the hood, drawn from the front, the back and the side; one who reaches a
-lantern holds it lit, in a pool of candlelight. `art/atlas.png` holds 24
-sprites of 288 pixels around a 192 pixel cell, which `make_art.py` makes from
-shapes given as distances, with numpy and Pillow; nothing is drawn by hand or
-borrowed. Plates, gates and what burns in a portal are white in the atlas and
-coloured as they are drawn. The music is the same loop moved down: low minor
-chords a semitone apart under a music box missing most of its teeth. The
-words players read say slab, coffin, keeper and pit; the code still says
-stone, crate and paver.
-
-The rim of wall round a board is half a cell thick: room for its top and its
-face. Words along the top sit on a plain bar.
+eyes that blink and follow whichever keeper is being moved. What gets pushed
+is a coffin. A lantern stands in a gold ring until a keeper reaches it and
+takes it up, lit. The HUD keeps the flat, hard-shadowed style and the crypt's
+palette. The music is the same loop moved down. The words players read say
+slab, coffin, keeper and pit; the code still says stone, crate and paver.
 
 A plate's disc brightens when held down and shows round a crate. What is in
 a portal turns while it leads somewhere and is dull and still while its twin
@@ -266,19 +271,20 @@ real phones, two machines across a real network, and anyone actually playing.
 The sounds were made and are played but were never heard: every run here was
 muted.
 
-Four passes on the look followed on 2026-10-11, each replacing the last (see
-Presentation). Along the way the game gained things that outlived them: lines
-that say why hands were refused (`PuzzleCue` gained `action`), stones that fly
-between hands and ground, a board that makes room for a hint or the solved
-card, and a plain bar under the header's words.
+Five looks followed one another on 2026-10-11 (see Presentation). Along the
+way the game gained things that outlived them: lines that say why hands were
+refused (`PuzzleCue` gained `action`), slabs that fly between hands and ground,
+a board that makes room for a hint or the solved card, and a plain bar under
+the header's words.
 
-After the last pass: native debug and web debug build without warnings; the
+After the last, in 3D: native debug and web debug build without warnings; the
 12 cases pass natively and under WASI; the browser play test passes on WebGL
-and WebGPU. Earlier passes had it catch the celebration's sparks and the
-board's shadow drifting into the header it reads, and both stay below it now.
-Captures at 1280 by 800, 960 by 540 and the browser's 1280 by 720 and 390 by
-844 were looked at, and the thumbnail was taken again. Release builds were not
-rebuilt, and the new music was made but never heard.
+and WebGPU, so the shaders and the shadow map run on both. Captures at 1280 by
+800, 1280 by 720, 960 by 540 and the browser's 390 by 844 were looked at, and
+the thumbnail was taken again. Known and left: an unlit lantern is a dark
+shape that only its ring explains, wall tops take up much of a board with
+many walls, and shadow edges are a pixel rough. Release builds were not
+rebuilt, frame time was not measured, and the music was never heard.
 
 The page is public at `/prototypes/underfoot/` once the Docs workflow next
 deploys the site; that workflow was not started. Catalog and staging are in
