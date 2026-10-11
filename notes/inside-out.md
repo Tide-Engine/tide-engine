@@ -214,6 +214,21 @@ retained short WAVs remain unchanged; public pack validation follows staging.
 Real phones, hardware audio listening and network/NAT conditions beyond
 this machine remain unmeasured.
 
+Integration through `origin/dev` `825c6542` is clean. Shared compiler,
+network/host dependencies and current Underfoot were rebuilt. Native and WASI
+retain 33/33 passing fixtures without warnings; final square-jamb two-browser
+checks pass, WebGL in 113.42 s and WebGPU in 49.89 s. All 64 release pages were
+rebuilt/restaged (46 docs examples, 14 gallery games, four prototypes), and
+their staged/production-package bytes agree. All four thumbnails agree too.
+Inside Out HTML is 1,356,103 bytes with SHA-256
+`f305bd41a4733ba85f119337e4bbaf9ee9ddbd96dff31ee71d572d18a82b500e`.
+The decoded 784,288-byte pack contains each of the eight current WAVs once,
+including the exact ambience/doorway assets above. Removed workshop music,
+the original coin cue and the previous tonal doorway cue are absent.
+Site check has zero errors/warnings; 227 grammar, 18 analytics/admin and five
+production HTTP/SEO/access checks pass. The production build and complete
+WebGL example/gallery rendering smoke pass. No CI was dispatched.
+
 ## Earlier published build (superseded)
 
 The original isometric twelve-puzzle campaign passed fourteen native and

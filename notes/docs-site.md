@@ -7,6 +7,14 @@ institutional tiles and fluorescent ambience. Public serving and catalog
 authentication remain unchanged; Underfoot, Inside Out, CRACKED and Two Forks
 are retained. Game-specific contracts and evidence are in `notes/inside-out.md`.
 
+Integrated through `origin/dev` `825c6542`: all 64 playable release pages were
+rebuilt/restaged and agree with the production package, as do all four
+prototype thumbnails. Check has zero errors/warnings; 227 grammar, eighteen
+analytics/admin and five production HTTP/SEO/access tests pass. Production
+build and full WebGL example/gallery smoke pass. Inside Out native/WASI and
+both two-browser GPU backends pass; exact asset hashes are in its notes.
+No CI was dispatched.
+
 Inside Out catalog addition (2026-10-11): the owner's two-player online puzzle
 prototype adds an eighth server-loaded card, `inside-out`, with a warm miniature
 workshop description. `inside_out_page` stages at
