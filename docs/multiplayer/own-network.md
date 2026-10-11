@@ -11,6 +11,8 @@ There are two parts, and a game takes either alone:
 - **A network of its own** carries the match's datagrams. The game's C registers it, and `Session.Open()`, `Session.Join(text)` and `Session.room` go through it from then on.
 - **A service of its own** answers the lobby package's questions: who the player is, which lobbies there are, who's matched with whom. The game overrides the package's [slots](./lobbies.md#another-service).
 
+The [Steam package](./steam.md) is built from exactly these two, and nothing else.
+
 ## A network of your own
 
 A network is a handful of C functions in a `tide_network` (`tide/network.h`), which a game's C registers with `tide_network_set`. The reference for each function, and for the transports it makes, is [A game's own network](../c/network.md). This walkthrough is the simplest one there is: plain UDP sockets, where the text a match is joined by is its host's address.

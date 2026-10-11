@@ -1,0 +1,265 @@
+// Steam for the lobby package's four slots. A game lists `lobby` and, for
+// the builds it ships on Steam, this package:
+//
+//     lobby
+//     #if STEAM
+//     steam
+//     #endif
+//
+// and `tide build --release --define STEAM` then has the Steam user as the
+// player's identity, Steam's lobbies behind every lobby function and the
+// quick match, and a lobby's match on Steam's own network, joined by its
+// host's Steam ID. Nothing else of the game changes: the menu, LobbyClient
+// and the calls are the lobby package's. Without the symbol, the build has
+// Tide's own service and rooms, and none of this.
+//
+// It's built on what any game or package can use: the lobby package's
+// `virtual` functions, C functions (bridge.c, over Steamworks' flat API) and
+// a network of the game's own (tide/network.h). README.md says which of the
+// SDK's files a game brings, and what Steam does otherwise than Tide's own.
+namespace Steam;
+
+using Lobbies;
+
+// bridge.c. A call Steam answers later gives a number, which TideSteamDone
+// says is answered and TideSteamTake gives the answer of.
+extern bool TideSteamStart();
+extern string TideSteamId();
+extern string TideSteamName();
+extern int TideSteamWhy();
+extern void TideSteamFilter(string key, string value);
+extern int TideSteamCreate(string name, int max, bool listed);
+extern int TideSteamJoin(string id);
+extern int TideSteamList(int seats);
+extern int TideSteamQuick(int seats, string name, int max);
+extern int TideSteamNumber(string text);
+extern bool TideSteamDone(int request);
+extern string TideSteamTake(int request);
+extern string TideSteamLobby(string id);
+extern int TideSteamVersion(string id);
+extern void TideSteamLeave(string id);
+extern bool TideSteamSet(string id, int what, string value);
+extern bool TideSteamSetData(string id, bool own, string key, string value, bool remove);
+extern string TideSteamInvited();
+extern void TideSteamInvite();
+
+// Why Steam gave nothing, as the lobby package says it.
+LobbyFailure Why()
+{
+    switch (TideSteamWhy())
+    {
+        case 1: return LobbyFailure.Unreachable;
+        case 2: return LobbyFailure.SignedOut;
+        case 3: return LobbyFailure.NotFound;
+        case 4: return LobbyFailure.Full;
+        case 5: return LobbyFailure.Closed;
+        case 6: return LobbyFailure.Kicked;
+        case 7: return LobbyFailure.NotMember;
+        case 8: return LobbyFailure.NotOwner;
+        case 9: return LobbyFailure.TooMany;
+        case 10: return LobbyFailure.Busy;
+    }
+    return LobbyFailure.Failed;
+}
+
+// An answer that's a lobby, as bridge.c writes one, or "".
+LobbyAnswer Said(string lobby)
+{
+    if (lobby == "") return LobbyAnswer { failure = Why() };
+    var read = Json.Read<LobbyInfo>(lobby) ?? LobbyInfo { };
+    if (read.id == "") return LobbyAnswer { failure = LobbyFailure.Failed };
+    return LobbyAnswer { ok = true, lobby = read };
+}
+
+// The answer to a call Steam answers later, once it has.
+async LobbyAnswer Answer(int request)
+{
+    if (request == 0) return LobbyAnswer { failure = LobbyFailure.SignedOut };
+    while (!TideSteamDone(request)) await Wait.Frames(1);
+    return Said(TideSteamTake(request));
+}
+
+// The lobby as it is now, after a change that Steam took.
+LobbyAnswer Changed(string id, bool ok)
+{
+    if (!ok) return LobbyAnswer { failure = Why() };
+    return Said(TideSteamLobby(id));
+}
+
+struct Listed
+{
+    List<LobbyEntry> lobbies;
+}
+
+// The identity slot: the Steam user, by its Steam ID and the name its
+// friends see. Signing in fails where Steam isn't running, or doesn't know
+// the game.
+override async LobbyIdentity IdentitySignIn(LobbyClient client, bool fresh)
+{
+    if (!TideSteamStart()) return LobbyIdentity { failure = LobbyFailure.SignedOut };
+    return LobbyIdentity { id = TideSteamId(), name = TideSteamName() };
+}
+
+// The lobby slot: Steam's lobbies. They know a player as Steam does, so
+// there's nothing more to sign in to, whatever the identity.
+override async LobbyIdentity LobbySignIn(LobbyClient client, LobbyIdentity who)
+{
+    if (!TideSteamStart()) return LobbyIdentity { failure = LobbyFailure.SignedOut };
+    return who;
+}
+
+override async LobbyAnswer LobbyCreate(LobbyClient client, LobbyOptions options)
+{
+    foreach (var e in options.data) TideSteamFilter(e.key, e.value);
+    return await Answer(TideSteamCreate(options.name, options.max, options.listed));
+}
+
+override async LobbyListing LobbyList(LobbyClient client, LobbyQuery query)
+{
+    foreach (var e in query.filter) TideSteamFilter(e.key, e.value);
+    var request = TideSteamList(query.seats);
+    if (request == 0) return LobbyListing { failure = LobbyFailure.SignedOut };
+    while (!TideSteamDone(request)) await Wait.Frames(1);
+    var said = TideSteamTake(request);
+    if (said == "") return LobbyListing { failure = Why() };
+    var listed = Json.Read<Listed>(said) ?? Listed { };
+    return LobbyListing { ok = true, lobbies = listed.lobbies };
+}
+
+override async LobbyAnswer LobbyJoin(LobbyClient client, string id)
+{
+    return await Answer(TideSteamJoin(id));
+}
+
+// Steam has no one call that finds or makes a lobby: it lists, then joins
+// the fullest or makes one, whose data is the filter.
+override async LobbyAnswer LobbyQuickJoin(LobbyClient client, Map<string, string> filter, int seats, LobbyOptions options)
+{
+    foreach (var e in filter) TideSteamFilter(e.key, e.value);
+    return await Answer(TideSteamQuick(seats, options.name, options.max));
+}
+
+override async LobbyAnswer LobbyLeave(LobbyClient client, string id)
+{
+    TideSteamLeave(id);
+    return LobbyAnswer { ok = true };
+}
+
+override async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChange change)
+{
+    mut var ok = true;
+    if (change.name is string name) ok = TideSteamSet(id, 0, name) && ok;
+    if (change.match is string match) ok = TideSteamSet(id, 1, match) && ok;
+    if (change.open is bool open) ok = TideSteamSet(id, 4, open ? "1" : "0") && ok;
+    if (change.max is int max) ok = TideSteamSet(id, 5, $"{max}") && ok;
+    if (change.listed is bool listed) ok = TideSteamSet(id, 6, listed ? "1" : "0") && ok;
+    foreach (var e in change.data) ok = TideSteamSetData(id, false, e.key, e.value, false) && ok;
+    foreach (var key in change.remove) ok = TideSteamSetData(id, false, key, "", true) && ok;
+    return Changed(id, ok);
+}
+
+// A member's name is Steam's, so `name` changes nothing here.
+override async LobbyAnswer LobbySetMember(LobbyClient client, string id, string name, Map<string, string> data, List<string> remove)
+{
+    mut var ok = true;
+    foreach (var e in data) ok = TideSteamSetData(id, true, e.key, e.value, false) && ok;
+    foreach (var key in remove) ok = TideSteamSetData(id, true, key, "", true) && ok;
+    return Changed(id, ok);
+}
+
+// Steam has no kick: the owner lists the player in the lobby's data, and
+// that player's own program leaves when it reads so (and stays out).
+override async LobbyAnswer LobbyKick(LobbyClient client, string id, string player)
+{
+    return Changed(id, TideSteamSet(id, 3, player));
+}
+
+override async LobbyAnswer LobbyTransfer(LobbyClient client, string id, string player)
+{
+    return Changed(id, TideSteamSet(id, 2, player));
+}
+
+// Until Steam says the lobby changed, a frame at a time.
+override async LobbyAnswer LobbyWatch(LobbyClient client, string id, int version)
+{
+    await Wait.Frames(1);
+    while (TideSteamVersion(id) == version) await Wait.Frames(1);
+    return Said(TideSteamLobby(id));
+}
+
+// The matchmaking slot: a ticket is a quick join that Steam is still
+// answering, searching until it has.
+override async MatchTicket TicketStart(LobbyClient client, MatchRequest request)
+{
+    foreach (var e in request.attributes) TideSteamFilter(e.key, e.value);
+    if (request.mode != "") TideSteamFilter("mode", request.mode);
+    var asked = TideSteamQuick(request.seats, request.name, request.max);
+    if (asked == 0) return MatchTicket { status = TicketStatus.Failed, failure = LobbyFailure.SignedOut };
+    return MatchTicket { id = $"{asked}", status = TicketStatus.Searching };
+}
+
+override async MatchTicket TicketCheck(LobbyClient client, MatchTicket ticket)
+{
+    await Wait.Frames(1);
+    var asked = TideSteamNumber(ticket.id);
+    if (!TideSteamDone(asked)) return ticket;
+    var answer = Said(TideSteamTake(asked));
+    if (!answer.ok) return MatchTicket { id = ticket.id, status = TicketStatus.Failed, failure = answer.failure };
+    return MatchTicket { id = ticket.id, status = TicketStatus.Found, lobby = answer.lobby };
+}
+
+override async void TicketCancel(LobbyClient client, MatchTicket ticket)
+{
+    if (ticket.status == TicketStatus.Found)
+    {
+        TideSteamLeave(ticket.lobby.id);
+        return;
+    }
+    // Steam is still answering: the lobby it ends in is left once it has
+    var asked = TideSteamNumber(ticket.id);
+    while (!TideSteamDone(asked)) await Wait.Frames(1);
+    var answer = Said(TideSteamTake(asked));
+    if (answer.ok) TideSteamLeave(answer.lobby.id);
+}
+
+// The transport slot: a lobby's match is on Steam's network, joined by its
+// host's Steam ID, which is what Session.room says there. MatchAddress and
+// MatchLeave stay the lobby package's.
+override void MatchOpen()
+{
+    _ = TideSteamStart();
+    Session.Open();
+}
+
+override void MatchJoin(string address)
+{
+    _ = TideSteamStart();
+    Session.Join(address);
+}
+
+// A friend asked this player into a lobby, through Steam's overlay or an
+// invite: out of the one it's in, and into that one.
+[After(Follow)]
+view Invited(mut LobbyClient client)
+{
+    var id = TideSteamInvited();
+    if (id == "" || id == client.lobby.id) return;
+    if (client.lobby.id != "") LeaveLobby(client);
+    CancelLobby(client);
+    JoinLobby(client, id);
+}
+
+// Starts Steam before the player asks anything of the lobby, for a game
+// that wants its friends' invites from its first frame: Steam starts by
+// itself at the first sign-in otherwise. False without Steam.
+bool Start()
+{
+    return TideSteamStart();
+}
+
+// Steam's own dialog to ask friends into this player's lobby: a game's
+// button calls it.
+void InviteFriends()
+{
+    TideSteamInvite();
+}
