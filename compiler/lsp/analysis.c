@@ -1809,7 +1809,8 @@ static const method_form session_calls[] = {
     {"KickAll", "Session.KickAll(string message = \"\")",
      "Sends every player on another machine out of the match this machine runs, with `message`, as `Kick` does."},
     {"Join", "Session.Join(string code)",
-     "Joins the match in the room with `code`, like \"K7QF2M\": its host's `Session.room`. It leaves the match it's in first."},
+     "Joins the match in the room with `code`, like \"K7QF2M\": its host's `Session.room`. On a network of the game's "
+     "own (tide/network.h), `code` is the text that network takes. It leaves the match it's in first."},
     {"Connect", "Session.Connect(string address, int port = 7777)",
      "Joins the match at `address`, like \"192.168.1.5\" or \"localhost\", on `port` (7777 unless it says). It leaves the "
      "match it's in first."},
@@ -6365,7 +6366,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (t.kind == TY_SINGLETON && t.decl->builtin && str_eq_c(t.decl->name, "Session")) {
             item(c, "room", CK_FIELD, "string",
                  "The code of the room the match is in, like \"K7QF2M\", or \"\" if it's in none. Others join it with "
-                 "`Session.Join(code)`.",
+                 "`Session.Join(code)`. On a network of the game's own, it's what that network says the match is "
+                 "joined by.",
                  NULL);
         }
         if (t.kind == TY_EVENT && t.decl->builtin && str_eq_c(t.decl->name, "Disconnected")) {

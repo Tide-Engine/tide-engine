@@ -4601,6 +4601,25 @@ static bool room_code(const str text)
     return n == 6;
 }
 
+// Whether a literal reads as a machine's address, which Session.Connect
+// takes: four numbers with dots between them and maybe a port, or localhost.
+static bool address_like(const str text)
+{
+    const bool local = text.len >= 9 && memcmp(text.ptr, "localhost", 9) == 0;
+    int dots = 0, i = local ? 9 : 0;
+    for (; i < text.len && text.ptr[i] != ':'; i++) {
+        const char ch = text.ptr[i];
+        if (local) return false; // A longer name
+        if (ch == '.') dots++;
+        else if (ch < '0' || ch > '9') return false;
+    }
+    if (dots != 3 && !local) return false;
+    for (i++; i < text.len; i++) {
+        if (text.ptr[i] < '0' || text.ptr[i] > '9') return false;
+    }
+    return true;
+}
+
 // Session.Start(Arena), Session.Join(code), Session.Connect(address, port)
 // and Session.Leave(): which match this machine is in; Session.Open(port)
 // and Session.Close(): whether others can join the one it runs;
@@ -4684,7 +4703,8 @@ static type check_session_call(checker *c, expr *e)
                                            "'Session.Start(Arena)' or 'Session.Start()'"
                                : open    ? "Session.Open takes nothing, or the port to take players on: "
                                            "'Session.Open()' or 'Session.Open(7777)'"
-                               : join    ? "Session.Join takes the room's code: 'Session.Join(\"K7QF2M\")'"
+                               : join    ? "Session.Join takes what the match is joined by, a room's code: "
+                                           "'Session.Join(\"K7QF2M\")'"
                                : connect ? "Session.Connect takes the server's address, and maybe a port: "
                                            "'Session.Connect(\"192.168.1.5\")' or 'Session.Connect(\"192.168.1.5\", 7777)'"
                                : close   ? "Session.Close takes nothing: 'Session.Close()'"
@@ -4703,13 +4723,18 @@ static type check_session_call(checker *c, expr *e)
         if (t.kind != TY_ERROR && t.kind != TY_STRING) {
             diag_error(arg->at, "%s", join ? "Session.Join takes the room's code as text, like \"K7QF2M\""
                                            : "Session.Connect takes the server's address as text, like \"192.168.1.5\"");
-        } else if (join && arg->kind == E_STRING && !room_code(arg->text)) {
-            diag_error(arg->at, "\"" STR_FMT "\" isn't a room's code: they're 6 letters and digits, like \"K7QF2M\"",
-                       STR_ARG(arg->text));
-            if (memchr(arg->text.ptr, '.', (size_t)arg->text.len) || memchr(arg->text.ptr, ':', (size_t)arg->text.len)
-                || str_eq_c(arg->text, "localhost")) {
-                diag_note("to join a machine by its address, call Session.Connect(\"" STR_FMT "\")", STR_ARG(arg->text));
-            }
+        } else if (join && arg->kind == E_STRING && arg->text.len == 0) {
+            diag_error(arg->at, "Session.Join takes what the match is joined by, and \"\" is nothing: a room's code, like "
+                                "\"K7QF2M\", or what the game's own network takes");
+        } else if (join && arg->kind == E_STRING && !room_code(arg->text) && address_like(arg->text)) {
+            // Text that isn't a room's code is for a game's own network to read (tide/network.h), which
+            // tidec can't see. What reads as a machine's address is still most likely meant for Connect
+            diag_warning(arg->at, "\"" STR_FMT "\" reads as a machine's address, and Session.Join takes a room's code, like "
+                                  "\"K7QF2M\", or what the game's own network takes",
+                         STR_ARG(arg->text));
+            diag_note("to join a machine by its address, call Session.Connect(\"" STR_FMT "\"); text the game's own "
+                      "network takes goes in a constant or a variable, which says it's meant",
+                      STR_ARG(arg->text));
         }
         if (connect && e->args.count == 2) {
             const type port = check_expr(c, e->args.items[1]);

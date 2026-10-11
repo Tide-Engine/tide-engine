@@ -1,0 +1,6 @@
+// expect: Session.Join takes what the match is joined by, and "" is nothing
+local scene Main { }
+view Start()
+{
+    Session.Join("");
+}
