@@ -231,3 +231,10 @@ new flat workshop capture. Site check/build and all 23 analytics/admin,
 production HTTP/SEO/access checks pass; staged and production HTML matches
 the web-release game. Game-specific contracts and validation are recorded in
 `notes/inside-out.md`. The public URL and catalog access boundaries are retained.
+
+The revision was deployed to the existing `tide-website` Fly app directly
+from `0530c23f` (release 255); its health checks passed. Anonymous Inside Out
+HTML/thumbnail requests return 200 and match the tested release bytes. A
+two-browser check of those downloaded bytes with the production relay passed.
+The packaged catalog retains the incoming CRACKED, Inside Out and Two Forks
+entries, with no stale HTML from removed prototypes. No CI was dispatched.

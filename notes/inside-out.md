@@ -223,3 +223,13 @@ WebGPU 16.74 s), and all 37 relay/lobby Node cases pass. The site check/build
 and 23 HTTP/admin/analytics/SEO/access tests pass with the new catalog. All
 three current prototype pages were staged; ignored HTML left by the removed
 prototypes was cleared before packaging. The Inside Out page hash is unchanged.
+
+The existing Fly site was updated directly from source `0530c23f` on
+2026-10-11, release 255, image `deployment-01M4NZJJYP3NF97YMDSPHKSDDF`.
+Its machine reached healthy state. Anonymous game/thumbnail requests return
+200 with the exact page and thumbnail hashes above; the page retains noindex,
+COOP same-origin and COEP require-corp. Two separate muted browsers exercised
+the downloaded published bytes with `wss://relay.tide-engine.dev` on WebGPU
+in 16.5 seconds, including join, shared controls, undo/reset, completion and
+phone touch. This uses the fixture's controlled frame clock and does not
+claim physical NAT or human latency coverage. No CI workflow was dispatched.
