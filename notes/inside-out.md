@@ -214,3 +214,12 @@ staged page, release page and production site copy have identical SHA-256
 `fcd07e6e5347c708a75713e1e6ba8257b37082cade06c8181f1503e289865d7a`.
 The new thumbnail SHA-256 is
 `0db7607f0c8c8c579514a7c9d735fd46dcd8d989cb81df8557ff518fae959920`.
+
+Integration with `origin/dev` through `f4fd43fe` preserved the newly reduced
+prototype catalog and the relocated browser helpers. Only documentation
+conflicted; the fixture import paths merged cleanly. Native eighteen-case
+validation, WASI and both real browser checks pass again (WebGL 26.32 s,
+WebGPU 16.74 s), and all 37 relay/lobby Node cases pass. The site check/build
+and 23 HTTP/admin/analytics/SEO/access tests pass with the new catalog. All
+three current prototype pages were staged; ignored HTML left by the removed
+prototypes was cleared before packaging. The Inside Out page hash is unchanged.
