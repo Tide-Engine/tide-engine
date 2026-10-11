@@ -50,3 +50,4 @@ bench/results/skinned-cpu5/** text eol=lf
 bench/results/skinned-10k/** text eol=lf
 bench/results/asset-sharing-prototype/** text eol=lf
 bench/results/asset-owned-reuse/** text eol=lf
+bench/results/asset-relative-delta/** text eol=lf
