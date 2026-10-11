@@ -20,6 +20,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.awt.GraphicsEnvironment;
+import java.util.function.BooleanSupplier;
 
 // The page of a game run on the web, in the Tide Game tool window, which
 // shows up with the first one. In an IDE without JCEF, it opens in the
@@ -30,7 +32,8 @@ public final class TideGamePage implements Disposable {
 
     private final Project project;
     private @Nullable JBCefBrowser browser;
-    private @Nullable String pending; // To load once the browser is there
+    private record Page(String url, BooleanSupplier current) {}
+    private @Nullable Page pending; // To load once the browser is there
 
     public TideGamePage(@NotNull Project project) {
         this.project = project;
@@ -41,15 +44,15 @@ public final class TideGamePage implements Disposable {
     }
 
     // Shows the page at `url`, in the last one's place.
-    void show(@NotNull String url) {
+    void show(@NotNull String url, @NotNull BooleanSupplier current) {
         ApplicationManager.getApplication().invokeLater(() -> {
-            if (project.isDisposed()) return;
+            if (project.isDisposed() || !current.getAsBoolean()) return;
             final ToolWindow window = ToolWindowManager.getInstance(project).getToolWindow(WINDOW);
             if (window == null || !JBCefApp.isSupported()) {
                 BrowserUtil.browse(url);
                 return;
             }
-            pending = url;
+            pending = new Page(url, current);
             window.setAvailable(true);
             window.activate(this::load); // The game gets the keys
         });
@@ -57,7 +60,8 @@ public final class TideGamePage implements Disposable {
 
     private void attach(@NotNull ToolWindow window) {
         if (browser != null || !JBCefApp.isSupported()) return;
-        final JBCefBrowser page = JBCefBrowser.createBuilder().build();
+        final JBCefBrowser page = JBCefBrowser.createBuilder()
+            .setOffScreenRendering(GraphicsEnvironment.isHeadless()).build();
         Disposer.register(this, page);
         browser = page;
         final Content content = ContentFactory.getInstance().createContent(page.getComponent(), null, false);
@@ -69,8 +73,9 @@ public final class TideGamePage implements Disposable {
 
     private void load() {
         if (browser == null || pending == null) return;
-        browser.loadURL(pending);
+        final Page page = pending;
         pending = null;
+        if (!project.isDisposed() && page.current().getAsBoolean()) browser.loadURL(page.url());
     }
 
     @Override

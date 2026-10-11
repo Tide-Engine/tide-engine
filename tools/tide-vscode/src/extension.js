@@ -13,6 +13,17 @@ const path = require('path');
 const vscode = require('vscode');
 const { LanguageClient } = require('vscode-languageclient/node');
 
+// Pinned client 10.1.2 cancels watched-file delivery on disposal, but leaves
+// full-document delivery scheduled. After a restart that timer tries to reuse
+// a disposed connection and fails in Delayer. The next client opens the latest
+// document text, so pending delivery belongs only to the client being stopped.
+class TideLanguageClient extends LanguageClient {
+    dispose(timeout) {
+        this._pendingChangeDelayer.cancel();
+        return super.dispose(timeout);
+    }
+}
+
 const suffix = process.platform === 'win32' ? '.exe' : '';
 let client = null;
 let output = null; // The Tide output channel, which every client shares
@@ -210,7 +221,7 @@ async function start() {
         missing(`Tide: ${server.error}`, 'tide.server.path'); // Not awaited: the editor goes on meanwhile
         return;
     }
-    const next = new LanguageClient('tide', 'Tide', { command: server.file }, {
+    const next = new TideLanguageClient('tide', 'Tide', { command: server.file }, {
         documentSelector: [
             { scheme: 'file', language: 'tide' },
             { scheme: 'untitled', language: 'tide' },
@@ -409,6 +420,7 @@ class Run {
         this.ended = false;
         this.disposed = false;
         this.stopping = false;
+        this.stopped = null;
         const args = KINDS[kind].args;
         this.terminal = vscode.window.createTerminal({
             name: `${path.basename(folder)} (tide ${args.slice(0, 2).join(' ')})`,
@@ -429,7 +441,7 @@ class Run {
     }
 
     start(tide, folder, args, onPage) {
-        if (this.disposed) return;
+        if (this.disposed || this.stopping) return;
         this.print(`${folder}> tide ${args.join(' ')}\n`);
         // Outside Windows, tide and the game it starts get a process group of
         // their own, which stop() ends. TIDE_INTERACTIVE: someone can answer
@@ -449,7 +461,10 @@ class Run {
                 const page = /tide: the game is at (http:\/\/\S+)\s/.exec(seen); // Wait for the address's delimiter, even across chunks
                 if (page) {
                     seen = null;
-                    onPage(page[1]);
+                    const failed = error => {
+                        if (!this.disposed) vscode.window.showErrorMessage(`Tide: couldn't open the game's page: ${error.message}`);
+                    };
+                    try { Promise.resolve(onPage(page[1])).catch(failed); } catch (error) { failed(error); }
                 }
             }
             this.print(text);
@@ -493,44 +508,72 @@ class Run {
 
     // Stops tide, and the game it started, which would keep running without it.
     stop() {
+        if (this.stopped) return this.stopped;
+        this.stopping = true;
         const child = this.process;
         const pid = child?.pid;
-        if (!pid || this.stopping) return;
-        this.stopping = true;
+        if (!pid) return this.stopped = Promise.resolve();
+        const ended = child.exitCode !== null || child.signalCode !== null
+            ? Promise.resolve() : new Promise(resolve => child.once('close', resolve));
+        let requested = Promise.resolve(true);
         if (process.platform === 'win32') {
             let attempted = false;
             const fallback = () => {
                 if (attempted || child.exitCode !== null || child.signalCode !== null) return;
                 attempted = true;
-                child.kill();
+                try { child.kill(); } catch {} // The deadline reports an unconfirmed exit
             };
-            spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true })
-                .on('error', fallback)
-                .on('close', code => { if (code !== 0) fallback(); });
+            requested = new Promise(resolve => {
+                spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true })
+                    .on('error', () => { fallback(); resolve(false); })
+                    .on('close', code => { if (code !== 0) fallback(); resolve(code === 0); });
+            });
         } else {
             try {
-                process.kill(-pid, 'SIGTERM');
+                process.kill(-pid, 'SIGKILL'); // Stop ends the whole group, including a child that ignores SIGTERM
             } catch {
-                child.kill();
+                requested = Promise.resolve(false);
+                try { child.kill('SIGKILL'); } catch {} // The deadline reports an unconfirmed exit
             }
         }
+        // A successful taskkill closes the whole tree. Wait for it as well as
+        // tide's pipes before allowing a replacement to bind the same resources.
+        const problem = () => new Error(`Couldn't confirm cleanup of the game process tree (tide PID ${pid}). Stop the remaining game processes and reload the editor window before running again.`);
+        let timer;
+        const deadline = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(problem()), 5000);
+            timer.unref();
+        });
+        this.stopped = Promise.race([Promise.all([requested, ended]), deadline]).then(([treeStopped]) => {
+            if (!treeStopped) throw problem();
+        }).finally(() => clearTimeout(timer));
+        // Terminal close and subscription disposal cannot await promises. Keep
+        // their failure visible and handled; replacement still awaits rejection.
+        this.stopped.catch(error => {
+            this.print(`Tide: ${error.message}\n`);
+            vscode.window.showErrorMessage(`Tide: ${error.message}`);
+        });
+        return this.stopped;
     }
 
     dispose() {
         this.disposed = true;
-        this.stop();
+        const stopped = this.stop();
         this.terminal.dispose();
         this.output.dispose();
         this.closed.dispose();
+        return stopped;
     }
 }
 
 // Shows the page beside the code: in VS Code's integrated browser, in the tab
 // of the last run's page if it's still open; else in the Simple Browser, which
 // other editors built on VS Code have; else in the system's browser.
-async function showPage(address, lastAddress) {
+async function showPage(address, lastAddress, current) {
     const url = (await vscode.env.asExternalUri(vscode.Uri.parse(address))).toString(true);
-    if ((await vscode.commands.getCommands(true)).includes('workbench.action.browser.open')) {
+    const commands = await vscode.commands.getCommands(true);
+    if (!current()) return null;
+    if (commands.includes('workbench.action.browser.open')) {
         await vscode.commands.executeCommand('workbench.action.browser.open',
             { url, openToSide: true, reuseUrlFilter: lastAddress ?? undefined });
         return url;
@@ -539,19 +582,30 @@ async function showPage(address, lastAddress) {
         await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url),
             { viewColumn: vscode.ViewColumn.Beside });
     } catch {
+        if (!current()) return null;
         await vscode.env.openExternal(vscode.Uri.parse(url));
     }
     return url;
 }
 
 const runs = { desktop: null, web: null, android: null }; // Running, or that ran last
+const runQueues = { desktop: Promise.resolve(), web: Promise.resolve(), android: Promise.resolve() };
+let deactivating = false;
 let lastGame = null;
 let lastPage = null; // The web run's address in the editor
 
 // Runs the game, starting it over if it's running: in a window of its own, on
 // the web, in the editor, or on Android. Running a game runs its code, so not
 // in an untrusted workspace.
-async function run(kind) {
+function run(kind) {
+    runQueues[kind] = runQueues[kind].then(() => beginRun(kind)).catch(error => {
+        output?.error(error);
+    });
+    return runQueues[kind];
+}
+
+async function beginRun(kind) {
+    if (deactivating) return;
     if (!vscode.workspace.isTrusted) {
         const choice = await vscode.window.showErrorMessage(
             "Tide: running a game runs its code, so it only runs once you trust this workspace.", 'Manage Workspace Trust');
@@ -559,7 +613,7 @@ async function run(kind) {
         return;
     }
     const game = await pickGame(lastGame);
-    if (!game) return;
+    if (!game || deactivating) return;
     const configured = settingProgram('path', 'tide', vscode.Uri.file(game));
     const tide = configured ? configured.file : installedProgram('tide');
     if (!tide) {
@@ -567,11 +621,17 @@ async function run(kind) {
         return;
     }
     lastGame = game;
-    runs[kind]?.dispose();
-    runs[kind] = new Run(tide, game, kind, kind === 'web' ? async address => {
-        lastPage = await showPage(address, lastPage);
-        vscode.commands.executeCommand('setContext', 'tide.gamePage', true);
+    await runs[kind]?.dispose();
+    if (deactivating) return;
+    const next = new Run(tide, game, kind, kind === 'web' ? async address => {
+        const current = () => runs[kind] === next && !next.disposed && !deactivating;
+        const page = await showPage(address, lastPage, current);
+        if (page && current()) {
+            lastPage = page;
+            vscode.commands.executeCommand('setContext', 'tide.gamePage', true);
+        }
     } : null);
+    runs[kind] = next;
 }
 
 // The developer tools of the game's page, whose console shows what each
@@ -613,8 +673,10 @@ function activate(context) {
     serially(start);
 }
 
-function deactivate() {
-    return serially(stop);
+async function deactivate() {
+    deactivating = true;
+    await Promise.allSettled(Object.values(runs).map(r => r?.dispose()));
+    await serially(stop);
 }
 
 module.exports = { activate, deactivate };

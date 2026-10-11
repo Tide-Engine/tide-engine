@@ -49,11 +49,25 @@ with, and the IntelliJ Platform it compiles against, the first time.
 
 ```sh
 ./gradlew buildPlugin                  # build/distributions/tide-<version>.zip
-./gradlew test                         # adapter regressions, without starting an IDE
+./gradlew test                         # adapter and isolated IntelliJ platform regressions
 ./gradlew runIde --args="<game folder>"  # an IDE with the plugin, for trying it
 ./gradlew verifyPlugin                 # against IntelliJ 2024.2 and the newest CLion
 ./gradlew verifyPlugin -PverifyIde="C:/Program Files/JetBrains/CLion 2026.2.3"
 ```
+
+The ordinary tests check settings, console hyperlinks, run configurations,
+context-menu targets and game-folder selection in a headless test application.
+To exercise the real LSP4IJ client, a three-level child-process tree and JCEF,
+pass this checkout's built server, Node 24.16 or newer on Windows, and opt in
+to the muted embedded-browser test:
+
+```sh
+./gradlew --no-configuration-cache test -PtideTestServer="<built tidels>" -PtideTestNode="<Node executable>" -PtideTestJcef=true
+```
+
+These checks use the Gradle test sandbox and its JBR; they do not install a
+plugin in, restart, or change settings in an existing IDE. The JCEF check uses
+offscreen rendering, executes page JavaScript and reloads the same browser.
 
 The manually requested Build workflow builds and verifies it, and publishes it to Marketplace with
 each stable release (see `.github/workflows/build.yml`).

@@ -9,10 +9,10 @@ import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../src/extension.js', import.meta.url), 'utf8');
 
-function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], env = {}, files = [], realPaths = {}, settings = {}, failStarts = 0 } = {}) {
+function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], env = {}, files = [], realPaths = {}, settings = {}, failStarts = 0, killGroupFails = false } = {}) {
     const paths = platform === 'win32' ? path.win32 : path.posix;
     const contents = new Map(files.map(f => Array.isArray(f) ? f : [f, '']));
-    const children = [], terminals = [], notifications = [], picks = [], clients = [], lifecycle = [];
+    const children = [], terminals = [], notifications = [], picks = [], clients = [], lifecycle = [], signals = [];
     const key = f => platform === 'win32' ? paths.normalize(f).toLowerCase() : paths.normalize(f);
     const lookup = f => [...contents].find(([name]) => key(name) === key(f));
     class Emitter {
@@ -30,6 +30,12 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
         Range: class { constructor(startLine, startCharacter, endLine, endCharacter) { this.start = { line: startLine, character: startCharacter }; this.end = { line: endLine, character: endCharacter }; } },
         Location: class { constructor(uri, range) { this.uri = uri; this.range = range; } },
         Uri: { file: uri, parse: uri },
+        env: { asExternalUri: async value => value },
+        commands: {
+            getCommands: async () => ['workbench.action.browser.open'],
+            executed: [],
+            async executeCommand(...args) { this.executed.push(args); },
+        },
         workspace: {
             isTrusted: trusted,
             workspaceFolders: folders.map(f => ({ name: paths.basename(f), uri: uri(f) })),
@@ -63,17 +69,18 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
         realpathSync(f) { return realPaths[f] ?? f; },
     };
     class LanguageClient {
+        _pendingChangeDelayer = { cancel: () => { this.cancelledDelivery = true; } };
         constructor(id, name, server, options) { this.server = server; this.options = options; this.id = clients.length; clients.push(this); }
         async start() { lifecycle.push(`start ${this.id}`); if (this.id < failStarts) throw new Error('start failed'); }
         async dispose() { lifecycle.push(`stop ${this.id}`); await this.holdDispose; }
     }
-    const sandbox = { module: { exports: {} }, process: { platform, env }, require: name => ({
+    const sandbox = { module: { exports: {} }, setTimeout, clearTimeout, process: { platform, env, kill: (pid, signal) => { signals.push([pid, signal]); if (killGroupFails) throw new Error('group kill failed'); } }, require: name => ({
         child_process: { spawn }, fs: fakeFs, os: { homedir: () => platform === 'win32' ? 'C:\\home' : '/home/user' },
         path: paths, vscode, 'vscode-languageclient/node': { LanguageClient },
     })[name] };
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox);
-    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, restart, deactivate, lensCommand})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle };
+    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle, signals };
 }
 
 test('Restricted Mode skips workspace servers on PATH and keeps searching', () => {
@@ -142,6 +149,16 @@ test('A disposed run never starts late or opens a stale page', () => {
     assert.equal(e.children.length, before);
 });
 
+test('A failed asynchronous page command is handled and explains the failure', async () => {
+    const e = editor();
+    const run = new e.api.Run('tide.exe', 'C:\\game', 'web', async () => { throw new Error('browser unavailable'); });
+    e.terminals[0].options.pty.open();
+    e.children[0].child.stdout.emit('data', 'tide: the game is at http://localhost:1234/\n');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.match(e.notifications[0], /couldn't open.*browser unavailable/);
+    run.dispose();
+});
+
 test('Windows cleanup falls back on both taskkill errors and nonzero exits', () => {
     for (const event of ['error', 'close']) {
         const e = editor(), run = new e.api.Run('tide.exe', 'C:\\game', 'desktop', null);
@@ -175,6 +192,116 @@ test('Repeated stop/terminal disposal sends one tree-kill request', () => {
     assert.equal(e.children.length, 2);
 });
 
+test('Closing a terminal before its open callback never launches a process', () => {
+    const e = editor(), run = new e.api.Run('tide.exe', 'C:\\game', 'desktop', null);
+    e.terminals[0].options.pty.close();
+    e.terminals[0].options.pty.open();
+    assert.equal(e.children.length, 0);
+    run.dispose();
+});
+
+test('Disposal waits for both the original child and Windows tree cleanup', async () => {
+    for (const treeFirst of [false, true]) {
+        const e = editor(), run = new e.api.Run('tide.exe', 'C:\\game', 'desktop', null);
+        e.terminals[0].options.pty.open();
+        let stopped = false;
+        const pending = run.dispose().then(() => { stopped = true; });
+        const tree = () => e.children[1].child.emit('close', 0);
+        const child = () => { e.children[0].child.exitCode = 0; e.children[0].child.emit('close', 0); };
+        (treeFirst ? tree : child)();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(stopped, false);
+        (treeFirst ? child : tree)();
+        await pending;
+        assert.equal(stopped, true);
+    }
+});
+
+test('A failed tree kill cannot report successful cleanup just because the parent exited', async () => {
+    const e = editor(), run = new e.api.Run('tide.exe', 'C:\\game', 'desktop', null);
+    e.terminals[0].options.pty.open();
+    const stopped = run.stop();
+    e.children[1].child.emit('close', 1);
+    e.children[0].child.exitCode = 0;
+    e.children[0].child.emit('close', 0);
+    await assert.rejects(stopped, /Couldn't confirm cleanup.*process tree/);
+    assert.equal(e.children[0].child.kills, 1);
+});
+
+test('Unconfirmed cleanup has a deadline and prevents a replacement run', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const e = editor({ files: ['C:\\tide.exe'], settings: { path: { globalValue: 'C:\\tide.exe' } } });
+    await e.api.run('desktop');
+    e.terminals[0].options.pty.open();
+    const replacement = e.api.run('desktop');
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(4999);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(e.notifications.length, 0);
+    t.mock.timers.tick(1);
+    await replacement;
+    assert.equal(e.terminals.length, 1);
+    assert.match(e.notifications[0], /Couldn't confirm cleanup/);
+    await e.api.deactivate();
+});
+
+test('POSIX stop forcefully ends the detached group, not just its parent', async () => {
+    const e = editor({ platform: 'linux', folders: ['/game'] });
+    const run = new e.api.Run('/bin/tide', '/game', 'desktop', null);
+    e.terminals[0].options.pty.open();
+    const stopped = run.stop();
+    assert.equal(e.children[0].options.detached, true);
+    assert.deepEqual(e.signals, [[-100, 'SIGKILL']]);
+    e.children[0].child.signalCode = 'SIGKILL';
+    e.children[0].child.emit('close', null);
+    await stopped;
+});
+
+test('A failed POSIX group kill cannot claim the descendants were stopped', async () => {
+    const e = editor({ platform: 'linux', folders: ['/game'], killGroupFails: true });
+    const run = new e.api.Run('/bin/tide', '/game', 'desktop', null);
+    e.terminals[0].options.pty.open();
+    const stopped = run.stop();
+    e.children[0].child.signalCode = 'SIGKILL';
+    e.children[0].child.emit('close', null);
+    await assert.rejects(stopped, /Couldn't confirm cleanup/);
+    assert.equal(e.children[0].child.kills, 1);
+});
+
+test('Replacement run commands serialize through completed process-tree cleanup', async () => {
+    const e = editor({ files: ['C:\\tide.exe'], settings: { path: { globalValue: 'C:\\tide.exe' } } });
+    await e.api.run('desktop');
+    e.terminals[0].options.pty.open();
+    const replacement = e.api.run('desktop');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(e.terminals.length, 1);
+    e.children[0].child.exitCode = 0;
+    e.children[0].child.emit('close', 0);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(e.terminals.length, 1);
+    e.children[1].child.emit('close', 0);
+    await replacement;
+    assert.equal(e.terminals.length, 2);
+    await e.api.deactivate();
+    e.terminals[1].options.pty.open();
+    assert.equal(e.children.length, 2);
+});
+
+test('Page opening rechecks the run after asynchronous URI/command discovery', async () => {
+    for (const delayed of ['uri', 'commands']) {
+        const e = editor();
+        let release, current = true;
+        if (delayed === 'uri') e.vscode.env.asExternalUri = value => new Promise(resolve => { release = () => resolve(value); });
+        else e.vscode.commands.getCommands = () => new Promise(resolve => { release = () => resolve(['workbench.action.browser.open']); });
+        const showing = e.api.showPage('http://localhost:1234/', null, () => current);
+        await new Promise(resolve => setImmediate(resolve));
+        current = false;
+        release();
+        assert.equal(await showing, null);
+        assert.deepEqual(e.vscode.commands.executed, []);
+    }
+});
+
 test('The game picker offers each manifest folder once', async () => {
     const e = editor({ files: [['C:\\game\\build\\tools\\games.txt', 'one\tC:/game/one/\none\tC:/game/one/\ntwo\tC:/game/two/\n']] });
     await e.api.pickGame(null);
@@ -203,6 +330,7 @@ test('Rapid server restarts wait for the previous server to finish stopping', as
     assert.deepEqual(e.lifecycle, ['start 0', 'stop 0', 'start 1', 'stop 1', 'start 2']);
     await e.api.deactivate();
     assert.equal(e.lifecycle.at(-1), 'stop 2');
+    assert.ok(e.clients.every(c => c.cancelledDelivery));
 });
 
 test('A failed server start still allows restart and deactivation', async () => {

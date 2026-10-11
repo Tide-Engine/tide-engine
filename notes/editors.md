@@ -1,5 +1,68 @@
 # The language server and the editors
 
+## Editor host follow-up, 2026-10-11
+
+Closed the host/process coverage gaps from the review below with repeatable
+tests against the real editor applications and SDKs, and fixed the failures
+they exposed. Changes remain in the adapters; tidels and language/runtime
+contracts are unchanged.
+
+- A real VS Code terminal reproduced starting a replacement before the previous
+  three-level process tree exited. Runs now serialize per target and wait for
+  both Windows taskkill completion and the original child's close. Terminal
+  close before its delayed open prevents a launch; deactivation awaits run
+  cleanup as well as server disposal. POSIX Stop uses SIGKILL for the detached
+  group so descendants cannot ignore a graceful signal. A five-second deadline
+  reports unconfirmed cleanup, including failed tree kills even if the parent
+  exits, and prevents starting a replacement. Failure to terminate a process
+  remains an OS failure the editor must report, rather than claim success.
+- Both adapters recheck the originating run before delayed page opening/loading.
+  VS Code also guards its URI/command discovery awaits and last-page/context
+  updates, and reports rejected asynchronous browser commands. JetBrains carries
+  a live-process predicate through its queued show and tool-window activation.
+- Pinned vscode-languageclient 10.1.2 leaves its full-document delivery timer
+  scheduled on disposal. Editing then rapidly restarting produced
+  `Delivering pending changes failed: TypeError: this.task is not a function`
+  in the real host. A small subclass cancels `_pendingChangeDelayer` before
+  disposal. This deliberately depends on the pinned client's internal member;
+  reconsider it when upgrading that dependency. The next client opens current
+  document text. Host tests reject any errors in the Tide client log.
+- JetBrains configuration validation and generated names now handle invalid
+  path syntax with a configuration error instead of an unchecked exception.
+  All Gradle sandboxes receive the shared TextMate bundle, including the test
+  sandbox. The ordinary platform tests exercise settings, VFS console links,
+  coordinate conversion, cloned run options, validation, game selection and
+  all three registered context-menu producers for the actual Tide file type.
+- `tools/tide-vscode/test/run-host.mjs` bundles the actual extension and launches
+  a supplied editor with a fresh profile/extensions directory and muted browser.
+  Its host suite exercises diagnostics and unsaved edits, hover, references,
+  rename, a clickable reference lens, rapid server restarts, real terminal
+  replacement/close, split-URL embedded page JavaScript, developer tools and
+  cleanup after actual extension-host shutdown. A three-level Node CLI stand-in
+  supplies observable PIDs; it stays alive during cleanup assertions. Failure
+  containment follows the test runner's lifetime, without signalling stale PIDs.
+- JetBrains `TideHostTest` runs the real LSP4IJ client with this checkout's tidels,
+  tests server stop/restart and hover/lenses, and starts the real run configuration
+  and process handler against the same three-level CLI fixture. Its JCEF case
+  creates the adapter's tool-window content, activates/loads/reuses its browser,
+  executes page JavaScript, and refuses a stopped run's queued address. In a
+  headless application, the adapter selects offscreen rendering; the opted-in
+  JCEF test enables headless JCEF and passes `--mute-audio`. Desktop rendering
+  still uses the ordinary native component. The SDK headless tool window is
+  used; physical pointer clicks and desktop focus/rendering are not asserted.
+
+Validation: 24 dependency-free VS Code adapter tests; real minified-extension
+host suites on VS Code 1.91.0 (minimum supported) and installed 1.141.0; seven
+ordinary JetBrains tests and three opted-in process/LSP4IJ/JCEF tests on the
+2024.2.6 platform. Both packages and the docs site build; Plugin Verifier checks
+the current plugin against IntelliJ 2024.2.6 and installed CLion 2026.2.3.
+The READMEs document the repeatable host
+commands and their isolated profiles/sandboxes. User documentation explains
+replacement/terminal cleanup. Cross-platform editor-host execution remains CI
+or other-machine coverage; these real host checks ran on Windows. Cold model
+metadata still uses the existing synchronous, budgeted reader described below;
+asynchronous indexing is not a new requirement or implemented feature here.
+
 ## Correctness review, 2026-10-11
 
 Reviewed the VS Code adapter's settings/discovery, client lifecycle, lens
@@ -75,12 +138,10 @@ enable/disable on that platform; this is an existing platform limitation,
 not an API compatibility error. The plugin README's stale every-push CI claim
 now correctly describes the manually requested Build workflow.
 
-Remaining coverage: editor UI clicks, VS Code's actual extension-host lifecycle,
-JCEF interaction and real editor-driven game-process cleanup were not manually
-driven; the adapter suites replace these boundaries with controlled doubles.
-Cold model metadata reads remain synchronous under the existing budgets below.
-No runtime/language design changed, CI was not dispatched, and no editor was
-installed or restarted on the owner's behalf.
+This first pass used controlled doubles at editor/process boundaries. The
+follow-up above supplies actual host, JCEF and process coverage. Neither pass
+changed language/runtime design or dispatched CI; tests use isolated editor
+profiles and sandboxes rather than the owner's editor configuration.
 
 Media formats (2026-10-10): asset path completion stores a counted suffix array rather than four fixed format fields. Texture/Grid2<Color>/Cubemap offer PNG, PSD, JPG/JPEG, TGA and BMP; Clip offers WAV, Ogg, MP3 and FLAC, including case-insensitive file names and per-format list/map globs. `lsp_asset_path_completion` checks each addition. Build-time import failures come from the same checker helpers as ordinary builds; runtime Decode hovers remain PNG/GLB-only. Unsupported skinned source formats now share export guidance across build/editor while recognized model feature errors retain their reason. The existing OBJ/catalog diagnostic regression also checks DAE. The earlier PNG/PSD-only and four-slot descriptions below describe the previous coverage.
 

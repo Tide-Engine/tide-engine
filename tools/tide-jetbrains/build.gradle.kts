@@ -8,6 +8,7 @@
 // -PpluginChannel=nightly publishes to Marketplace's nightly channel.
 
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     id("java")
@@ -30,6 +31,7 @@ dependencies {
         intellijIdeaCommunity("2024.2.6")
         bundledPlugin("org.jetbrains.plugins.textmate")
         plugin("com.redhat.devtools.lsp4ij", "0.21.0")
+        testFramework(TestFrameworkType.Platform)
     }
 }
 
@@ -68,17 +70,36 @@ intellijPlatform {
 }
 
 tasks {
+    compileTestJava {
+        options.compilerArgs.add("-Xlint:deprecation")
+    }
     // Packaging (including the manually requested CI build) runs the adapter
-    // regressions too; no IDE is started by these tests.
+    // regressions too, including the isolated IntelliJ test application.
     buildPlugin {
         dependsOn(test)
+    }
+    test {
+        // Optional real processes/JCEF. The ordinary platform tests remain
+        // headless and do not download or launch a game or external browser.
+        providers.gradleProperty("tideTestNode").orNull?.let { systemProperty("tide.test.node", it) }
+        providers.gradleProperty("tideTestServer").orNull?.let { systemProperty("tide.test.server", it) }
+        filter {
+            if (!providers.gradleProperty("tideTestNode").isPresent) excludeTestsMatching("*.TideHostTest.testRealRunConfigurationKillsDescendants")
+            if (!providers.gradleProperty("tideTestServer").isPresent) excludeTestsMatching("*.TideHostTest.testRealLsp4ijClientStartsRestartsAndNavigates")
+            if (providers.gradleProperty("tideTestJcef").orNull != "true") excludeTestsMatching("*.TideHostTest.testRealJcefLoadsAndReusesPage")
+        }
+        if (providers.gradleProperty("tideTestJcef").orNull == "true") {
+            systemProperty("tide.test.jcef", "true")
+            systemProperty("ide.browser.jcef.headless.enabled", "true")
+            systemProperty("ide.browser.jcef.extra.args", "--mute-audio")
+        }
     }
     // The test IDE opens projects without asking.
     runIde {
         jvmArgs("-Didea.trust.all.projects=true", "-Djb.consents.confirmation.enabled=false")
     }
     // The grammar goes next to the plugin's jar, where the IDE reads it (see TideTextMateBundle).
-    prepareSandbox {
+    withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>().configureEach {
         from(layout.projectDirectory.dir("../tide-syntax")) {
             into("tide/textmate")
             exclude("test/**")
