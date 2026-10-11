@@ -1,3 +1,0 @@
-// expect: fields can't be T? yet
-component Target { int? id; }
-scene Main { }

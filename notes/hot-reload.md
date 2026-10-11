@@ -37,3 +37,7 @@ It's for quick iteration, enabled by default under `tide run`, native and web. `
 ## Confirmed clocks and collider history (2026-10-11)
 
 The frame callback ABI now includes confirmed previous/fraction endpoints. Repository hosts and reload fixtures rebuild together. Client migration resets the confirmed presentation clock and invalidates the old presented input timestamp when adopting a new first tick. The generated completion-slot pointer is tick-local and omitted from migration/copy/pack/hash. Collider history is ordinary typed match data; missing/newly initialized history fails Rewind explicitly. Disabling maxRewind clears previously retained physics history on its next step.
+
+## T? fields across a reload (2026-10-11)
+
+A field declared `T?` is described in `tide_game_layout` as the struct it's kept as, a type named as the `T?` is ("int?") with the fields `value` and `ok`, so it carries over by name like any struct field: a value stays a value, and nothing stays nothing rather than becoming the declared default again. A field that was a `T` and is now a `T?`, or the other way, is another kind and starts at its default (not built: carrying the value across). `migrate_carries_optional_fields_as_a_value_or_nothing` (`platform/tests/migrate.c`) checks both, text included.

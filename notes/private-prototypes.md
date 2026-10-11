@@ -70,6 +70,9 @@ its `<id>_page` target and its `private_games` block, plus the id in
   `private_games` collects `inside_out_page` or `inside_out`, staging the
   public page at `/prototypes/inside-out/` beside its gameplay thumbnail.
   Its rules, puzzle verification and validation are in `notes/inside-out.md`.
+  The subsequent per-maker view shows the current dimension with its actual
+  containing world beyond the walls. Its catalog description and gameplay
+  thumbnail reflect that camera; public/authentication boundaries are unchanged.
 
 - Underfoot (`underfoot`): `prototypes/underfoot/`, a puzzle for one or two
   that the owner asked for on 2026-10-11 as a mashup of puzzle games, with

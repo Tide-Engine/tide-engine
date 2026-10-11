@@ -70,3 +70,7 @@ Clip preparation in `engine/src/audio.c` queues stable indices into its decoded 
 ## Approved physics completion hook (2026-10-11)
 
 The owner explicitly approved the internal tick-completion hook before generated code depended on it. Generated ticks now use `tide_rows_finish_tick`, and physics C registers through `tide_rows_after_tick`; both live in the existing agent-maintained rows runtime. The callback is after queued changes, with final readonly entity/Snap metadata, deterministic slots/order and stable singleton contexts. This keeps the agreed Tide API unchanged. The compiler also uses existing scratch/grid access helpers to build private readonly interpolation snapshots; no additional runtime function is introduced there.
+
+## T? fields (2026-10-11)
+
+Generated code calls no new runtime function for fields declared `T?`, and no engine header or structure changed: what a field is kept as, its conversion to and from the `T?` code reads, its text and list ownership, its packing and its JSON are generated, over `tide_text_view`, `tide_text_temp`, `tide_text_release`, the generated list and map helpers and the `tide_json_*` and `tide_bits_*` functions there were (`notes/language.md`, T? fields).

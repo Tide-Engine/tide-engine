@@ -1,0 +1,3 @@
+// expect: what a Map holds is always there, so it can't be a T?
+component Targets { Map<string, int?> ids; }
+scene Main { }

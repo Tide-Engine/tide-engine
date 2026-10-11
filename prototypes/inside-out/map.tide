@@ -1,4 +1,5 @@
-// All dimensions use the same stable paper map on both players' screens.
+// One stable viewport follows the local maker. Parent tiles remain in world
+// space around the expanded pocket, rather than becoming another panel.
 struct MapLens
 {
     float2 center;
@@ -7,38 +8,62 @@ struct MapLens
     float tile;
 }
 
-MapLens WorkshopLens(float2 screen, int roomCount, int room)
+MapLens WorkshopLens(float2 screen, int room, float zoom = 1)
 {
     var narrow = screen.x < 720;
     var width = Math.Min(screen.x - 36, 1180);
     var left = (screen.x - width) * 0.5;
     var top = screen.x < 1050 ? 154.0 : 126.0;
     var height = Math.Max(200, screen.y - top - (narrow ? 200 : 110));
-    var mainWidth = narrow ? width : width * 0.56 - 8;
-    var mainHeight = narrow ? height * (roomCount <= 2 ? 0.59 : 0.50) : height;
-    mut var center = float2(left + mainWidth * 0.5, top + mainHeight * 0.5);
-    mut var size = float2(mainWidth, mainHeight);
-    if (room >= 0)
-    {
-        var columns = narrow ? (roomCount == 1 ? 1 : 2) : (roomCount <= 2 ? 1 : 2);
-        var rows = (Math.Max(1, roomCount) + columns - 1) / columns;
-        var regionWidth = narrow ? width : width - mainWidth - 24;
-        var regionHeight = narrow ? height - mainHeight - 12 : height;
-        var cardWidth = (regionWidth - (columns - 1) * 12) / columns;
-        var cardHeight = (regionHeight - (rows - 1) * 12) / rows;
-        var cardLeft = narrow ? left : left + mainWidth + 24;
-        var cardTop = narrow ? top + mainHeight + 12 : top;
-        size = float2(cardWidth, cardHeight);
-        center = float2(cardLeft + (room % columns) * (cardWidth + 12) + cardWidth * 0.5,
-            cardTop + (room / columns) * (cardHeight + 12) + cardHeight * 0.5);
-    }
+    var center = float2(left + width * 0.5, top + height * 0.5);
+    var size = float2(width, height);
     var cells = room < 0 ? OUTER_SIZE : INNER_SIZE;
-    var tile = Math.Max(5, Math.Min(size.x - (room < 0 ? 42 : 24), size.y - (room < 0 ? 66 : 44)) / cells);
-    var origin = center + float2(0, room < 0 ? 6 : 1) - float2((cells - 1) * tile * 0.5);
+    var side = Math.Min(size.x - 24, size.y - 62) * (room < 0 ? 0.96 : 0.68);
+    var tile = Math.Max(5, side / cells) * zoom;
+    var origin = center + float2(0, 9) - float2((cells - 1) * tile * 0.5);
     return MapLens { center = center, size = size, origin = origin, tile = tile };
 }
 
 float2 MapPoint(float2 cell, MapLens lens) { return lens.origin + cell * lens.tile; }
+
+struct RoomSurround
+{
+    int room = -1;
+    float2 anchor;
+    int shell = -1;
+    int portal = -1;
+    bool reference;
+}
+
+RoomSurround ReturnSurround(Workshop workshop, Traveler actor, Picture picture)
+{
+    mut var surround = RoomSurround { };
+    if (actor.room < 0 || actor.room >= workshop.layout.roomCount) return surround;
+    mut var entry = Entry { shell = actor.room };
+    if (actor.depth > 0 && actor.depth <= MAX_DEPTH) entry = actor.trail[actor.depth - 1];
+    if (entry.shell >= 0 && entry.shell < workshop.layout.roomCount)
+    {
+        surround.room = workshop.puzzle.rooms[entry.shell].room;
+        surround.anchor = picture.rooms[entry.shell];
+        surround.shell = entry.shell;
+    }
+    else
+    {
+        surround.room = entry.room;
+        surround.anchor = float2(entry.position);
+        surround.portal = PortalAt(workshop.layout, entry.room, entry.position);
+        surround.reference = true;
+    }
+    return surround;
+}
+
+MapLens ContainingLens(MapLens focus, RoomSurround surround)
+{
+    var tile = focus.tile * INNER_SIZE * 1.12;
+    var center = focus.origin + float2((INNER_SIZE - 1) * focus.tile * 0.5);
+    var origin = center - surround.anchor * tile;
+    return MapLens { center = center, size = focus.size, origin = origin, tile = tile };
+}
 
 void InfinityMark(float2 at, float size, Color tone)
 {

@@ -1,5 +1,52 @@
 # The language server and the editors
 
+## T? fields, 2026-10-11
+
+A field declared `T?` is kept as a struct of its value and whether there is
+one (`decl.optional_of`: `notes/language.md`, T? fields), which editors never
+show. The checker gives a member that reads one the `T?` as its type, so
+hover (`int? best`), inlay hints for a `var` (`: int?`), references, rename,
+the unwrap quick fix and diagnostics came with it. `analysis.c` has two places
+that go by a field's declared type instead: `member_type`, what's after a dot
+in completion, now gives the `T?` (`read_type`), so nothing is offered after
+a `T?` until it's unwrapped (it offered `value` and `ok`); and go to type
+definition looks through the kept struct to what it holds. Field completion
+shows `int?` as the detail, from the kept struct's name. The shared grammar
+already scoped `?` after a type; `tools/tide-syntax/test` has a struct of
+`T?` fields now (five lines, 225 checks). `lsp_optional_fields`
+(`compiler/lsp/tests/lsp_test.c`) covers hovers where a field is declared,
+read, written and in a struct's value, hints, references and rename,
+completion after a dot and in a value, nothing after a wrapped one, the quick
+fix, and the diagnostics for a `mut` argument, `List<int?>` and a grid.
+## Asset declaration type completion, 2026-10-11
+
+The owner reported that asset types had to be typed in full. The top-level
+completion context had no branch for `asset`. `complete_asset_type` now reads
+the preceding tokens, so incomplete declarations and partially written types
+offer string, Texture, Clip, Grid2, Mesh, SkinnedMesh, AnimationCatalog,
+Animation, Cubemap, List and Map without requiring a surviving declaration AST.
+Generic insertion snippets fill Grid2<Color>, Mesh/SkinnedMesh<Vertex3>,
+List<byte> and Map<string, Texture>, with editable type placeholders where
+appropriate. The same shared server serves both editor integrations.
+
+Inside a collection, suggestions follow the checker's current restrictions:
+no Cubemap/Animation collections, one collection wrapper, string map keys,
+and List<byte> for a file's bytes. Grid elements offer Color; mesh vertex and
+optional skinned contract arguments offer structs and namespaces, with ordinary
+checker diagnostics still deciding which struct meets the required contract.
+Complete types/names, initializers and later declarations retain their contexts.
+No asset import, language or runtime contract changed.
+
+`lsp_asset_type_completion` covers empty and partial types, a newline,
+attributes, namespace blocks, list/map elements, map keys, grid elements,
+byte-file collections, mesh arguments and declaration-boundary regressions.
+The Editors page documents the suggestions. Coverage is through the LSP
+protocol; interactive editor rendering was not separately exercised.
+Validation: warning-free complete native/web debug builds, all 2,188 native
+and 2,157 web CTests (including OpenGL/WebGL/WebGPU), and the production docs
+build pass with Node 24.16. The server is rebuilt at `build/tools/tidels.exe`.
+Other host platforms and CI were not run.
+
 ## JSON and text primitives, 2026-10-11
 
 `Json.Read`, `Json.Write` and `string.FromBytes` take and give types of the

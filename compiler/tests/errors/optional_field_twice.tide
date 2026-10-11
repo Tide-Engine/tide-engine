@@ -1,0 +1,3 @@
+// expect: 'int??' isn't a type: a T? is a value or nothing, and there's one nothing
+component Target { int?? id; }
+scene Main { }

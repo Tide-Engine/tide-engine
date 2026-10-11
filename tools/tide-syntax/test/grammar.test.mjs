@@ -414,6 +414,13 @@ const cases = {
         ['mut verified tally', [['mut', 'storage.modifier'], ['verified', '!storage.modifier']]],
         ['verified = tally;', [['verified', '!storage.modifier']]],
     ],
+    'a field that is a T?': [
+        ['string? wished;', [['string', 'storage.type.primitive'], ['?', 'keyword.operator.optional'], ['?', '!keyword.operator.ternary']]],
+        ['List<int>? wishes = null;', [['List', 'support.class'], ['int', 'storage.type.primitive'], ['?', 'keyword.operator.optional'], ['null', 'constant.language']]],
+        ['Combat.Stats? granted;', [['Stats', 'entity.name.type'], ['?', 'keyword.operator.optional']]],
+        ['float3? toward = float3(0, 1, 0);', [['float3', 'storage.type.primitive'], ['?', 'keyword.operator.optional'], ['1', 'constant.numeric']]],
+        ['void Grant(', [['null', 'constant.language'], ['??', 'keyword.operator'], ['is', 'keyword']]],
+    ],
     'local before a field is a modifier, and a name anywhere else': [
         ['local List<Vertex3> verts;', [['local', 'storage.modifier'], ['Vertex3', '!storage.modifier']]],
         ['local float fade = 1;', [['local', 'storage.modifier'], ['float', 'storage.type'], ['1', 'constant.numeric']]],

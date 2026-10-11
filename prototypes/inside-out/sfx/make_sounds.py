@@ -53,10 +53,41 @@ def wood(name, seconds, frequency, noise_level, seed):
     write(name, samples)
 
 
+def threshold():
+    """A dry wooden body followed by a short, warm doorway rustle.
+
+    Fixed, inharmonic low resonances decay together; there is no rising note
+    sequence. Two low-pass stages soften the seeded air, while a slow stage
+    removes its bass/DC. Both layers start and end at zero without reverb.
+    """
+    seconds = 0.34
+    rng = random.Random(33)
+    cutoff = 1 - math.exp(-math.tau * 920 / RATE)
+    bass_cutoff = 1 - math.exp(-math.tau * 85 / RATE)
+    soft = warm = bass = 0.0
+    samples = []
+    for i in range(round(seconds * RATE)):
+        t = i / RATE
+        soft += cutoff * (rng.uniform(-1, 1) - soft)
+        warm += cutoff * (soft - warm)
+        bass += bass_cutoff * (warm - bass)
+        end = min(1, (seconds - t) / 0.045)
+        body = min(1, t / 0.006) * end * (
+            0.18 * math.sin(math.tau * 137 * t) * math.exp(-t * 28)
+            + 0.075 * math.sin(math.tau * 211 * t) * math.exp(-t * 42)
+            + 0.035 * math.sin(math.tau * 327 * t) * math.exp(-t * 65))
+        # A single smooth breath, with no tonal sweep or glittering tail.
+        air_envelope = math.sin(math.pi * t / seconds) ** 2 * math.exp(-t * 7)
+        samples.append(body + 0.19 * (warm - bass) * air_envelope * end)
+    # Keep the clip's boundary exactly silent even after PCM quantization.
+    samples[0] = samples[-1] = 0.0
+    write("enter", samples)
+
+
 wood("step", 0.11, 290, 0.21, 20)
 wood("push", 0.22, 155, 0.32, 21)
 wood("stop", 0.09, 118, 0.08, 22)
-chime("swap", [(0, 349.23, 0.20), (0.09, 440, 0.18), (0.18, 523.25, 0.15)], 1.3)
+threshold()
 chime("undo", [(0, 659.25, 0.14), (0.07, 523.25, 0.14)], 0.8)
 chime("reset", [(0, 440, 0.13), (0.12, 349.23, 0.13)], 0.9)
 chime("solve", [(0, 349.23, 0.16), (0.12, 440, 0.16), (0.24, 523.25, 0.16),
