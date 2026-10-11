@@ -479,6 +479,10 @@ Nothing is created or uploaded, and C holds no handle. A mesh names its pixels, 
 
 3D meshes go the same way: a `tide_mesh` names its vertices and indices where C keeps them, and the list copies them when it hasn't got its `version` of them, so a mesh that doesn't change costs nothing to draw again, frame after frame. Change `version` whenever they change, or hash them with `tide_mesh_version(&mesh)`.
 
+## A network from C
+
+A game's C can also carry the game's matches: `tide/network.h` registers a network of the game's own, which `Session.Open()` and `Session.Join()` then go through. See [A game's own network](./network.md).
+
 ## Order
 
 C can keep state, so calling it is a side effect, and Tide keeps its order: in `Pick(Roll(), Roll())`, the first `Roll` runs first on every platform, though C itself would let each compiler pick. The same goes for functions, methods and operators that call C, and for calls inside `&&`, `||` and `?:`, whose parts still only run when they would.

@@ -144,8 +144,8 @@ Tag:
   act on, hint letters, sparks) line up with it. Walls are low (0.32) and the
   south side of the rim is at floor height, because a wall south of a cell
   hides the near edge of it.
-- **Light.** One cold light in the north-west through a 2,048 pixel shadow map
-  (`Moonlight`), in three flat steps, plus four candles that fall off with
+- **Light.** One cold light in the north-west through a shadow map
+  (`Moonlight`, 1,024 pixels now the frame is small), in three flat steps, plus four candles that fall off with
   distance: a dim one each keeper carries so the floor round it reads, and one
   at each lantern once it is reached. Glow is added unlit: eyes, a lit candle,
   a portal's star.
@@ -154,8 +154,21 @@ Tag:
   and Pillow: the red eye of a slab that lifts, a snowflake, a portal's star, a
   coffin's cross, two cracks, a ring, a border. They are lit with the face
   they lie on.
-- **The frame** is drawn into a window-sized target with four samples and
-  blitted to the window; the HUD is drawn flat over it.
+- **The frame** is drawn the way a console of the nineties would have (the
+  owner, of the first 3D frame: "add SSAO and a PSX style"), after Two Forks:
+  a small target of about 270 lines, each pixel a whole number of the
+  window's; a vert (`Snap`) moves every corner onto one of its pixels, so what
+  moves wobbles a little; paint is lighter or darker a texel at a time, twelve
+  a meter, from a hash (`Speck`); and `Present` cuts each colour to 31 shades
+  in a four-pixel pattern as it blits to the window, sampling by point.
+- **Creases are darkened** in that same blit. A second depth-only pass from
+  the camera (`Crypt.eyes`) keeps how far it sees along each pixel, and
+  `Crease` takes twice a pixel's depth less its two neighbours' on either
+  side, across four directions at two reaches: nothing on a flat face
+  whichever way it slopes, something where surfaces meet, and nothing again
+  past a step of 1.2 meters, so a thing in front leaves no halo behind it.
+  Decals and the HUD are not in that image; the HUD is drawn flat, at the
+  window's own sharpness, over the frame.
 
 Where there is no ground there is the pit, and in some of its cells a pair of
 eyes that blink and follow whichever keeper is being moved. What gets pushed

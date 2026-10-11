@@ -188,18 +188,18 @@ The package is four slots, each a set of `virtual` functions whose bodies are Ti
 | Slot | Functions | Tide's own |
 |---|---|---|
 | Identity | `IdentitySignIn` | A secret the service made, kept on this machine |
-| Lobby | `LobbyCreate`, `LobbyList`, `LobbyJoin`, `LobbyQuickJoin`, `LobbyLeave`, `LobbyUpdate`, `LobbySetMember`, `LobbyKick`, `LobbyTransfer`, `LobbyWatch` | The relay's lobbies, over HTTP |
+| Lobby | `LobbySignIn`, `LobbyCreate`, `LobbyList`, `LobbyJoin`, `LobbyQuickJoin`, `LobbyLeave`, `LobbyUpdate`, `LobbySetMember`, `LobbyKick`, `LobbyTransfer`, `LobbyWatch` | The relay's lobbies, over HTTP |
 | Matchmaking | `TicketStart`, `TicketCheck`, `TicketCancel` | A quick join |
 | Transport | `MatchOpen`, `MatchAddress`, `MatchJoin`, `MatchLeave` | Tide's rooms |
 
-The slots are replaced apart: a store's lobbies with Tide's rooms as the way into the match, or Tide's lobbies with another way in. One tie: Tide's own lobbies know a player by the secret its identity brings, so a package that replaces the identity alone brings a secret too.
+The slots are replaced apart: a store's lobbies with Tide's rooms as the way into the match, a store's identity with Tide's lobbies, or Tide's lobbies with another way in. Tide's own lobbies know a player by a secret their service made. With Tide's identity that's the one it keeps; with another, `LobbySignIn` asks the service for a player of this run's, so an identity package needs nothing of them. A package that brings lobbies of its own overrides `LobbySignIn` with what its service needs, often `return who;`.
 
 A build picks its packages with [`#if` lines](../tools/packages.md#packages-for-some-builds-only) in `tide.packages`, so a shipping build has the store's service and every other build has Tide's:
 
 ```
 lobby
 #if STEAM
-github.com/someone/tide-lobby-steam 9c1d7be0a4f25d6c8e3b17f04a92d5c6e8f0a1b2
+steam
 #endif
 ```
 
@@ -222,7 +222,9 @@ override async LobbyAnswer Lobbies.LobbyJoin(LobbyClient client, string id)
 
 `StoreLobby` there is the package's own function, which makes a `LobbyInfo` of what the store says. An override has the parameters of what it replaces, so what a service keeps between calls is in its own C, or in what the functions are handed.
 
-No such package comes with `tide` yet.
+The transport slot goes with [a network of the game's own](./own-network.md): `MatchOpen` and `MatchJoin` register it and then call `Session.Open()` and `Session.Join(address)`, and what the lobby says of its match is what that network's `Session.room` is. That page builds a whole service and network of a game's own, and [`steam`](./steam.md), which comes with `tide`, is one for Steam.
+
+Where a match is joined by its host (a Steam ID) and changes hands with [host migration](./matches.md#host-migration), the lobby follows: its owner's machine, once it runs the match, names it again, and the members' machines, which went there with the match, take the new name.
 
 ## Limits for now
 
