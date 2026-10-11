@@ -1090,6 +1090,7 @@ Built 2026-10-06; the picks below await the owner.
 ### Decided
 
 - Enums and `switch` follow C#'s syntax.
+- An enum member may omit its type with a leading dot when context supplies one unambiguous enum type: `zombie.state = .Idle;`. Typed initializers, fields, parameters, returns, container elements and switch cases supply their expected type; `==` and `!=` can use the other operand's enum type. A typed conditional supplies that type to both branches. This is the same value as `ZombieState.Idle`, including on the GPU. Without an expected enum type, or when overloads leave more than one possible enum, write the qualified member; member names do not choose between enum overloads.
 
 ```csharp
 enum Phase
@@ -1117,7 +1118,7 @@ system Advance(mut Match match)
 
 - `enum Name { A, B = 5, C }` declares an enum. A member without a value is one more than the one before it, and the first is 0. A value is an int known while compiling: a literal, an int constant, or operators on them, worked out as they would be at run time. A comma after the last member is fine. `enum` is only a keyword at the start of a declaration.
 - An enum is stored as an int, or as what it says after its name, as in C#: `enum Voxel : byte { ... }` takes one byte (0 to 255) and `: ushort` two (0 to 65535), for grids' cells and other data there's a lot of. A member out of that range is an error that gives the range. Anything else after the colon is an error that lists the three. Only the size changes: a value's number is still `int(...)`, and the value with a number `Voxel(...)`, which keeps the number's low bits (below).
-- Members are always written with their enum: `Phase.Playing`, or `Game.Phase.Playing` from another namespace. In generated C, `Phase.Playing` is `Phase_Playing`, a constant of the type `Phase`: an `int32_t`, or a `uint8_t` or `uint16_t` for `: byte` and `: ushort`.
+- A qualified member is written `Phase.Playing`, or `Game.Phase.Playing` from another namespace; `.Playing` uses the context's enum type as decided above. In generated C, each spelling is `Phase_Playing`, a constant of the type `Phase`: an `int32_t`, or a `uint8_t` or `uint16_t` for `: byte` and `: ushort`.
 - Enums are values, like structs: fields, locals, inputs, and functions' parameters and return values can hold them. A field without a default starts at 0, even if no member has that value, as in C#.
 - `==` and `!=` compare two values of the same enum.
 - An enum and its number convert both ways, and neither way by itself: `int(phase)` (or `long(phase)`) is a value's number, and `Phase(5)` the value with that number, as `float3(i)` mirrors `int3(f)`. The enum's name is all there is to it: no keyword, and no attribute. An enum in a namespace converts by its qualified name too, `Combat.Stance(2)`.
