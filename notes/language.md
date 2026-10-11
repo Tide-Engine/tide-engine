@@ -1,5 +1,9 @@
 # Language features, as tidec builds them
 
+## Asset value copy implementation (2026-10-11)
+
+The owner approved ordinary asset values sharing immutable storage until the first write. Language value semantics stay unchanged: changing a field/local does not change another copy or the catalog. Generated list setters, mutable slots, RemoveAt/Sort, extern mut wrappers, nested ownership/deep-copy loops and confirmed/interpolated container traversal prepare storage with actual ownership before writing. Plain Clear can release a retained asset descriptor without copying its payload. Nested containers and text/maps still apply their existing ownership rules after outer detachment. The approved runtime boundary is `tide_list_prepare`; `notes/ecs.md` records details. Generated asset globals are marked unused because an unreferenced debug asset is legitimate and newer clang warns on set-only globals. `asset_sharing` covers that texture case and generated mutation/ownership paths. `docs/spec.md` and `docs/game/assets.md` record the agreed copy behavior; Texture/Clip remain resource references.
+
 ## JSON as a game's types, and text as bytes, pieces and numbers, 2026-10-11
 
 The owner approved typed JSON generated at compile time ("yeah I like that

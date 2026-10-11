@@ -2,6 +2,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "asset_store.h"
+#include "delta_asset.h"
 
 // See tide/heap.h.
 
@@ -40,6 +42,7 @@ static void make_room(tide_heap *h, const uint32_t pages)
 
 void tide_heap_settle(tide_heap *h)
 {
+    tide_asset_settle(h);
     if (!h->page) return;
     void *old = h->page[-1];
     while (old) {
@@ -118,6 +121,7 @@ uint32_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
 void tide_heap_release(tide_heap *h, const uint32_t block)
 {
     if (!block) return;
+    tide_asset_origin_clear(h, block);
     tide_heap_write(h, block)->next = h->pending;
     h->pending = block;
     __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
@@ -140,6 +144,12 @@ void tide_heap_flush(tide_heap *h)
 void tide_heap_copy(tide_heap *to, const tide_heap *from)
 {
     if (to == from) return;
+    tide_asset_origins_retain(from->origins);
+    tide_asset_origins_release(to->origins);
+    to->origins = from->origins;
+    tide_asset_pool_retain(from->assets);
+    tide_asset_pool_release(to->assets);
+    to->assets = from->assets;
     // Its pages first, then letting go of to's: they can be the same ones.
     for (uint32_t i = 0; i < from->pages; i++) tide_page_retain(from->page[i]);
     for (uint32_t i = 0; i < to->pages; i++) tide_page_release(to->page[i], 1);
@@ -161,6 +171,24 @@ uint64_t tide_heap_hash(uint64_t h, const tide_heap *heap)
         const uint64_t page = tide_page_hash(heap->page[i], in_use(heap, heap->page[i]));
         h = tide_hash_more(h, &page, sizeof page);
     }
+    // Authenticate the descriptor registry too: omitting a lease from received
+    // metadata must not pass merely because the descriptor's page is unchanged.
+    // This commutative sum is independent of outside-state hash-table ordering.
+    if (heap->assets && heap->assets->count) {
+        uint64_t leases = 0;
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < heap->assets->slots; i++) {
+            const tide_asset_entry entry = heap->assets->entries[i];
+            if (!entry.data) continue;
+            const uint64_t id = tide_hash(entry.data->id, sizeof entry.data->id);
+            for (uint32_t j = 0; j < entry.users; j++) {
+                leases += tide_hash_more(id, &entry.blocks[j], sizeof entry.blocks[j]);
+                count++;
+            }
+        }
+        h = tide_hash_more(h, &leases, sizeof leases);
+        h = tide_hash_more(h, &count, sizeof count);
+    }
     return h;
 }
 
@@ -179,6 +207,8 @@ uint64_t tide_heap_block_hash(tide_heap *h, const uint32_t block)
 
 void tide_heap_free(tide_heap *h)
 {
+    tide_asset_origins_release(h->origins);
+    tide_asset_pool_release(h->assets);
     for (uint32_t i = 0; i < h->pages; i++) tide_page_release(h->page[i], 1);
     tide_heap_settle(h);
     if (h->page) free(h->page - 1);
@@ -190,13 +220,15 @@ void tide_heap_free(tide_heap *h)
 
 uint32_t tide_heap_packed_size(const tide_heap *h)
 {
-    uint32_t size = (uint32_t)(sizeof h->used + sizeof h->free + sizeof h->pending);
+    uint64_t size = (uint64_t)tide_asset_packed_size(h) + sizeof h->used + sizeof h->free + sizeof h->pending;
     for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) size += 4u + in_use(h, h->page[i]);
-    return size;
+    if (size > UINT32_MAX) tide_out_of_memory();
+    return (uint32_t)size;
 }
 
 void tide_heap_pack(const tide_heap *h, tide_writer *w)
 {
+    tide_asset_pack_heap(h, w, false, NULL);
     tide_write_u32(w, h->used);
     for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) tide_write_u32(w, h->free[c]);
     tide_write_u32(w, h->pending);
@@ -227,6 +259,7 @@ static bool places_hold(const uint32_t pages, const uint32_t count)
 
 bool tide_heap_unpack(tide_heap *h, tide_reader *r)
 {
+    if (!tide_asset_unpack_heap(h, r, NULL)) { r->failed = true; return false; }
     h->used = tide_read_u32(r);
     for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) h->free[c] = tide_read_u32(r);
     h->pending = tide_read_u32(r);
@@ -244,6 +277,7 @@ bool tide_heap_unpack(tide_heap *h, tide_reader *r)
         if (data) memcpy(tide_page_data(p), data, bytes);
     }
     tide_heap_settle(h);
+    if (!r->failed && !tide_asset_validate_heap(h)) r->failed = true;
     return !r->failed;
 }
 
@@ -260,6 +294,7 @@ static tide_page *base_page(const tide_heap *base, const uint32_t at)
 
 void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_writer *d)
 {
+    tide_asset_pack_heap(h, &d->bytes, d->assets, d->xor ? base : NULL);
     tide_delta_number(d, h->used);
     for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) tide_delta_number(d, h->free[c]);
     tide_delta_number(d, h->pending);
@@ -284,14 +319,15 @@ void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_
     for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) {
         const tide_page *p = h->page[i];
         const tide_page *b = base_page(base, i);
-        tide_delta_region(d, tide_page_data(p), in_use(h, p), b ? tide_page_data(b) : NULL, b ? in_use(base, b) : 0u,
-                          b == p, 0u);
+        tide_delta_asset_region(d, tide_page_data(p), in_use(h, p), b ? tide_page_data(b) : NULL, b ? in_use(base, b) : 0u,
+                          b == p, tide_asset_origin_page(h, i));
     }
     tide_delta_close(d);
 }
 
 bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_reader *d)
 {
+    if (!tide_asset_unpack_heap(h, &d->bytes, d->xor ? base : NULL)) return false;
     h->used = tide_delta_get_number(d);
     for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) h->free[c] = tide_delta_get_number(d);
     h->pending = tide_delta_get_number(d);
@@ -318,18 +354,21 @@ bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_read
         tide_page *b = base_page(base, h->pages);
         const uint32_t size = count << TIDE_HEAP_PAGE_SHIFT;
         const uint32_t left = h->used - (h->pages << TIDE_HEAP_PAGE_SHIFT);
-        tide_page *p = tide_delta_page(d, left < size ? left : size, size, count, b, b ? in_use(base, b) : 0u,
-                                       b && b->size == size);
+        const tide_asset_origin *previous = base ? tide_asset_origin_page(base, h->pages) : NULL;
+        tide_asset_origin origin = previous ? *previous : (tide_asset_origin){0};
+        tide_page *p = tide_delta_asset_page(d, left < size ? left : size, size, count, b, b ? in_use(base, b) : 0u,
+                                       b && b->size == size, &origin);
         if (!p) {
             tide_heap_settle(h);
             return false;
         }
+        if (origin.data) tide_asset_origin_set(h, h->pages, origin);
         if (p != b) p->first = h->pages;
         for (uint32_t k = 0; k < count; k++) h->page[h->pages + k] = p;
         h->pages += count;
     }
     tide_heap_settle(h);
-    return tide_delta_closed(d);
+    return tide_delta_closed(d) && tide_asset_validate_heap(h);
 }
 
 void tide_heap_hash_pages(const tide_heap *h, tide_writer *w)

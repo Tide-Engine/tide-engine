@@ -138,7 +138,7 @@ TIDE_TEST(asset_usage_codegen_opt_in_prunes_pack_globals_watch_paths_and_model_i
         char *c = read_bytes(ASSET_USAGE_WORK "/usage.c", &size);
         TIDE_REQUIRE(c);
         TIDE_CHECK(strstr(c, "tide_asset_kept") != NULL);
-        TIDE_CHECK((strstr(c, "tide_asset_unused;") != NULL) == !strip);
+        TIDE_CHECK((strstr(c, "tide_asset_unused __attribute__((unused));") != NULL) == !strip);
         TIDE_CHECK((strstr(c, "tide_asset_unusedClips") != NULL) == !strip);
         free(c);
         char *h = read_bytes(ASSET_USAGE_WORK "/usage.h", &size);
