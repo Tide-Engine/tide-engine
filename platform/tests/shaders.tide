@@ -516,6 +516,7 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     int number = int(mode);
     if (Mode(number) != Mode.Bright || Mode(number - 1) != Mode.Plain) ok = false;
     if (Shade(number + 257) != Shade.Dark || int(Shade(number + 511)) != 0 || int(Shade(number - 2)) != 255) ok = false;
+    if (Mode.Count() != 2 || Shade.Count() != 3 || Mode((number + 1) % Mode.Count()) != Mode.Plain) ok = false;
 
     // Colors
     Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;

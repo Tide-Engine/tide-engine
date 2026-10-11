@@ -265,6 +265,8 @@ system Advance(mut Match match)
 - Without an expected enum type, keep the qualified spelling: `var phase = Phase.Playing;`. If overloads could take different enums, qualify the argument; the compiler does not pick an enum by searching for its member name.
 - `==` and `!=` compare two values of the same enum.
 - An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
+- Write conversions as `int(phase)`, not `(int)phase`. The compiler explains the replacement when it encounters a parenthesized cast.
+- `Phase.Count()` is the number of declared members, as a compile-time `int`. The `Phase` above has three members despite its numeric gaps. Members sharing the same numeric value each count. The call takes no arguments; a member you declare named `Count` remains `Phase.Count`.
 - An enum takes four bytes, like an int. `enum Voxel : byte { ... }` takes one, for members from 0 to 255, and `: ushort` two, for 0 to 65535: worth it where there are a lot of them, like a grid's cells.
 - `switch` works on ints, longs, [chars](./text-and-lists.md#characters) and enums. A case is an int (or a long, for a long), a char like `'a'`, an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
 
@@ -293,7 +295,7 @@ The arm values must have compatible types. A typed destination supplies the type
 
 ```csharp
 enum Card { Vitality, RapidFire, Scatter, Ricochet }
-const int CARDS = 4;
+const int CARDS = Card.Count();
 
 // One of the cards, picked by a hash: the same on every machine
 Card Offer(int round, int slot)
@@ -306,6 +308,19 @@ Card Offer(int round, int slot)
 - A number none of the members has is kept as it is: with the `Phase` at the top of this section, `Phase(3)` is a `Phase` whose number is 3. It equals no member, a `switch` on it runs its `default`, and text shows `3`. So bound the number first when it comes from somewhere that can be wrong, as the `% CARDS` does, or handle the rest in a `default`.
 - An enum stored as a `byte` or a `ushort` keeps the number's low 8 or 16 bits, as `byte(x)` does: `Voxel(300)` is `Voxel(44)`.
 - With a constant number it's a constant, so it works in a `const`, a field's default and a `case`.
+
+For consecutive values starting at zero, advance and wrap with `%`:
+
+```csharp
+enum Direction { North, East, South, West }
+
+Direction Next(Direction direction)
+{
+    return Direction((int(direction) + 1) % Direction.Count());
+}
+```
+
+This assumes the starting value is a declared member. Member count is not a numeric range: this formula does not cycle through enums with gaps, negative values or duplicate numeric values. `Count()` works in shaders and constant expressions too.
 
 ## Comments and attributes
 

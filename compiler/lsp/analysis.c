@@ -893,7 +893,7 @@ static void walk_value(const expr *e)
             o.decl = e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->call == CALL_SKINNED || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
+        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->call == CALL_GUI
@@ -3180,6 +3180,13 @@ static void describe(const occurrence *o, sb *out)
         }
         break;
     case OCC_METHOD:
+        if (o->call == CALL_ENUM_COUNT) {
+            sb_printf(&code, "%s.Count() -> int", name_for(o->object_type.decl));
+            code_block(out, code.data);
+            sb_printf(out, "\n\nNumber of declared members, including members with the same numeric value. Compile-time constant: %d.",
+                      o->object_type.decl->members.count);
+            break;
+        }
         if (is_routine(o->decl)) {
             format_routine(o->decl, &code);
             code_block(out, code.data);
@@ -6515,6 +6522,10 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                 char value[32];
                 snprintf(value, sizeof value, "%lld", (long long)d->members.items[m].number);
                 item(c, str_to_cstr(d->members.items[m].name), CK_ENUM_MEMBER, value, NULL, NULL);
+            }
+            if (ids[n - 1] == 0 || DOC->toks[ids[n - 1] - 1].kind != T_CASE) {
+                item(c, "Count()", CK_METHOD, "Count() -> int",
+                     "Number of declared members, including members with the same numeric value. A compile-time constant.", "Count()");
             }
             return;
         }
@@ -10028,7 +10039,12 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         size_t count;
         const method_form *forms = methods_of(t, &count);
         const method_form *form = find_form(forms, count, name);
-        if (t.kind == TY_STRING) {
+        if (called && called->call == CALL_ENUM_COUNT) {
+            sb label = {0};
+            sb_printf(&label, "%s.Count() -> int", name_for(t.decl));
+            add_signature(&s, label.data,
+                          "Number of declared members, including members with the same numeric value. A compile-time constant.");
+        } else if (t.kind == TY_STRING) {
             builtin_signatures(str_from("string"), name, visit_signature, &s);
         } else if (t.kind == TY_STRUCT && t.decl == A.prog->random) {
             builtin_signatures(str_from("Random"), name, visit_signature, &s);

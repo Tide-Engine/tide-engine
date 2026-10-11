@@ -3311,7 +3311,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         // Math.Dot(a, b) and friends, and Draw calls, which record into the
         // view's draw list. Entity methods (Add, Remove, Destroy) are
         // statements; see gen_method.
-        if (e->call == CALL_LOAD) {
+        if (e->call == CALL_ENUM_COUNT) {
+            sb_printf(o, "%lld", (long long)e->int_value);
+        } else if (e->call == CALL_LOAD) {
             sb_put(o, e->hoisted); // Already ran, before the statement
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) {
             gen_routine_call(g, o, e);

@@ -32,6 +32,16 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Rendering and platform
 
+- Enum counts (2026-10-11): `CALL_ENUM_COUNT` emits the checked declaration
+  count as an integer literal in GLSL and WGSL, matching generated C and
+  compile-time folding. No uniforms, runtime functions or enum layout changes.
+  `compiler/tests/shaders/enum_count` pins both stages/languages with plain and
+  qualified enum types, byte-backed sparse values and aliases, constants and
+  integer conversion/modulo wrapping. The existing CPU-versus-GPU enum probe in
+  `platform/tests/shaders.tide` checks ordinary/byte member counts and wrapping
+  through the same code in a frag and a vert. Golden checks and the CPU/GPU
+  probe pass in the full native/web debug suites on OpenGL, WebGL and WebGPU.
+
 - **Degree literals on the GPU** (2026-10-10): lowercase `deg` on a decimal
   literal is an ordinary float in radians. GLSL and WGSL emit the parser's
   converted binary32 value, shared with generated C, instead of converting
