@@ -1777,7 +1777,7 @@ static const method_form scene_calls[] = {
     {"RemovePlayer", "Scene.RemovePlayer(scene, PlayerID player)", "Stops a player seeing a private scene."},
 };
 
-// Session's calls, from views and local handlers.
+// Session's calls, from views and local handlers, and the functions they call.
 static const method_form session_calls[] = {
     {"Start", "Session.Start(scene = Main)",
      "Starts a match on this machine, in `scene`, or in `Main` with nothing named: it runs the server, and no one else "
@@ -3113,7 +3113,7 @@ static void describe(const occurrence *o, sb *out)
                                                          "using and what other views claimed, and the input's Sample once "
                                                          "per tick. Both take a `Devices` parameter. In match code the "
                                                          "parameter receives the entity owner's devices, or the server's."
-                      : str_eq_c(o->name, "Clipboard") ? "\n\nThis machine's clipboard: Copy, from views and local handlers. "
+                      : str_eq_c(o->name, "Clipboard") ? "\n\nThis machine's clipboard: Copy, from views, local handlers and the functions they call. "
                                                          "Ctrl+V pastes into text fields by itself."
                       : str_eq_c(o->name, "Debug")     ? "\n\nOutput for whoever runs the game: Log prints a line, Assert stops "
                                                          "the program when its condition fails. Neither changes the match."
@@ -6393,10 +6393,13 @@ static void list_members(completion *c, const type t, const bool edges, const sc
 }
 
 // Whether code here can call Session.Start and the like: views and local
-// handlers, as the checker allows.
+// handlers, and the functions and methods they call, as the checker allows.
 static bool decides_session(const scope *sc)
 {
-    return sc->decl && sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local) && !sc->in_input;
+    if (!sc->decl || sc->in_input) return false;
+    if (sc->decl->kind == DECL_SYSTEM) return sc->decl->is_view || sc->decl->is_local;
+    return (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD) && !sc->decl->is_async && !sc->decl->is_operator
+        && !sc->decl->is_interpolate && !sc->decl->is_audio;
 }
 
 // After `a.b.`: resolves the chain of names before the dot.

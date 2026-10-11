@@ -8488,6 +8488,16 @@ TIDE_TEST(lsp_functions_send_and_spawn)
                        "system Fight(Body body) { if (body.radius > 20) Poke(this); }\n"
                        "view Show(Body body) { if (body.radius > 20) Poke(this); }\n");
     TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Poke' sends 'Hit'"));
+    // The session's calls and the clipboard's, as the view that calls the function could: not in an operator
+    const char *session = complete(ACTS "void Host()\n{\n    Session.$\n}\n");
+    TIDE_CHECK(offers(session, "Open") && offers(session, "Join") && offers(session, "Start"));
+    const char *clipboard = complete(ACTS "void Share()\n{\n    Clipboard.$\n}\n");
+    TIDE_CHECK(offers(clipboard, "Copy"));
+    const char *op_session = complete(ACTS "struct Money\n{\n    int cents;\n    Money operator +(Money a, Money b)\n    {\n"
+                                           "        Session.$\n        return a;\n    }\n}\n");
+    TIDE_CHECK(!offers(op_session, "Open"));
+    open_document(ACTS "void Host() { Session.Open(); }\nsystem Fight(Body body) { if (body.radius > 20) Host(); }\n");
+    TIDE_CHECK(has(last_sent(), "'Host' calls Session.Open, and the match runs the same on every machine"));
 #undef ACTS
 }
 

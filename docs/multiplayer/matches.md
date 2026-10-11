@@ -75,7 +75,17 @@ view Menu(Session session)
 }
 ```
 
-Session calls are statements, in views and local event handlers. Match code can't make them: it runs the same on every machine.
+Session calls are statements, in views and local event handlers, and in the functions they call:
+
+```csharp
+void Host(mut Menu menu)
+{
+    Session.Open();
+    menu.page = Page.Room;
+}
+```
+
+Match code can't make them, as it runs the same on every machine: calling such a function from a system is an error at that call.
 
 ## A menu that comes with tide
 
@@ -116,7 +126,7 @@ A game can tell the room's page about its match, each frame, from a view that wr
 
 ### Pages of your own
 
-Each page is a function too, which a game overrides to draw that page its own way while the others stay the package's: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, lobby)` (`room` is the room's code) and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each, so a page of the game's keeps the menu's way through its pages:
+Each page is a function too, which a game overrides to draw that page its own way while the others stay the package's: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, lobby)` (`room` is the room's code, `session.room`, which a function is handed) and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each, so a page of the game's keeps the menu's way through its pages:
 
 ```csharp
 using Rooms;
@@ -135,15 +145,15 @@ override void Rooms.TitlePage(Session session, mut Lobby lobby)
 | `Play(lobby)` | Into the match, as a new game: the game sees `newGame` |
 | `Resume(lobby)` | Into the match as it is |
 | `Host(lobby)` | Opens the match to others, and shows its room |
-| `Invite(lobby)` | Opens the match to others from the room's page |
+| `Invite()` | Opens the match to others from the room's page |
 | `ShowJoin(lobby)` | To the page a code is typed into |
 | `Join(lobby, code)` | Asks to join the room with that code |
 | `LeaveJoin(session, lobby)` | From the Join page to the title, out of a match that was being joined |
 | `ShowSettings(lobby)`, `LeaveSettings(lobby)` | To the settings, and back to the page they came from |
-| `CopyCode(lobby)` | Copies the room's code |
+| `CopyCode(lobby, room)` | Copies the room's code |
 | `Leave(session, lobby)` | Out of the room, to the title |
 
-An override has the parameters of what it replaces, so a page that needs more (the game's own state, or `Devices`) is a view of the game's: override the package's page with an empty body, and draw yours from a view that returns unless `lobby.page` is that page. The same calls work there; what they ask of the session is done a frame later, by the package's `Pages` view.
+An override has the parameters of what it replaces, so a page that needs more (the game's own state, or `Devices`) is a view of the game's: override the package's page with an empty body, and draw yours from a view that returns unless `lobby.page` is that page. The same calls work there.
 
 ### Outgrowing it
 
