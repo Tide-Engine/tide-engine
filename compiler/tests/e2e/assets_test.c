@@ -117,7 +117,7 @@ TIDE_TEST(assets_draw_and_are_sampled)
     for (int frame = 0; frame < 2; frame++) {
         tide_draw_reset(&draw);
         tide_gui_begin(&gui, &devices, (tide_float2){640, 360}, NULL);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         tide_gui_end(&gui, &draw);
     }
     // hero (8 by 6) for the plain draw and the frag, and run[1] (2 by 2) for the frag

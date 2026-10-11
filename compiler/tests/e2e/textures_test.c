@@ -36,7 +36,7 @@ static void frame(void)
 {
     for (int i = 0; i < 2; i++) {
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     }
     draw_count = 0;
     uint32_t into = 0;

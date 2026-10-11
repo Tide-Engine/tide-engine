@@ -18,7 +18,7 @@ TIDE_TEST(skinned_atlas_uses_spare_instance_lane_and_preserves_full_attribute_la
     tide_world_tick(&world);
     tide_local_init(&local);
     const uint32_t mark = tide_scratch_mark();
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_draw_prepare(&draw, NULL);
     uint32_t packed = 0, full = 0, full_texture = 0;
     for (uint32_t r = 0; r < draw.run_count; r++) {

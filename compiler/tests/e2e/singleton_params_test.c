@@ -35,7 +35,7 @@ TIDE_TEST(singleton_params_local_helpers_views_and_readonly_sample)
     tide_world_tick(&world);
     const uint64_t before = tide_world_hash(&world);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Display.points == 14 && local.Display.copyPoints == 114);
     TIDE_CHECK(local.Display.frames == 1 && local.Display.copyFrames == 2);
     TIDE_CHECK(local.Display.methodCalls == 1 && local.Display.server);
@@ -46,7 +46,7 @@ TIDE_TEST(singleton_params_local_helpers_views_and_readonly_sample)
     TIDE_CHECK(input.frames == 1 && local.Display.frames == 1); // Sample's helper cannot mutate the source.
 
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Display.frames == 2 && local.Duel_local.paint == 33 && local.Duel_local.marks == 9);
     world.Reset.now = true;
     tide_world_tick(&world); // Whole-value replacement changes match fields and retains the local sidecar.

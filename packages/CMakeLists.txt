@@ -202,3 +202,15 @@ if(TARGET tide_platform)
 endif()
 add_test(NAME tide_box3d_parts COMMAND tide_box3d_parts)
 set_tests_properties(tide_box3d_parts PROPERTIES TIMEOUT 300)
+
+tide_add_game(tide_box2d_rewind SOURCES box2d/bridge.c box2d/test/rewind.tide NAME rewind PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/rewind_test.c)
+target_include_directories(tide_box2d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_rewind PRIVATE tide_box2d)
+add_test(NAME tide_box2d_rewind COMMAND tide_box2d_rewind)
+
+tide_add_game(tide_box3d_rewind SOURCES box3d/bridge.c box3d/test/rewind.tide NAME rewind PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/rewind_test.c)
+target_include_directories(tide_box3d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_rewind PRIVATE tide_box3d)
+add_test(NAME tide_box3d_rewind COMMAND tide_box3d_rewind)

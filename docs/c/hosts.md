@@ -81,7 +81,7 @@ The generated header is the API between the game and its host. Namespaced declar
 **Local state**
 
 - `tide_local` is this machine's local state, outside every world. `tide_local_init(local)` clears it and sets its defaults, and `tide_local_free(local)` lets it go. `tide_local_pack(local, out, capacity)` and `tide_local_unpack(local, data, size)` are it as bytes, as hot reloading carries it over. `TIDE_MAIN_IS_LOCAL` is defined when `Main` is local.
-- `tide_frame(w, previous, alpha, verified, local, draw, gui)` runs the local handlers of what the match sent since the last frame (what `tide_local_events` handed over), then every view once, blending the match between `previous` and `w` by `alpha`, then applies the local changes they made, and local tasks whose time has come go on. Pass `NULL` and 1 to draw `w` as it is, and `NULL` for `w` outside a match. `verified` is the last world the server confirmed, which `tide_session_view` gives with the other two. It's what [`verified`](../game/views-and-the-match.md#confirmed-state) parameters read, and an entity's [local fields](../game/local-state.md#local-fields) go, before the views run, once it's in neither `w` nor `verified`, so a destroy the client predicted wrong takes nothing. A host with one world passes `NULL`: `w` is all there is, and it's what `verified` parameters read too.
+- `tide_frame(w, previous, alpha, verified, NULL, 1.0f, local, draw, gui)` runs the local handlers of what the match sent since the last frame (what `tide_local_events` handed over), then every view once, blending the match between `previous` and `w` by `alpha`, then applies the local changes they made, and local tasks whose time has come go on. Pass `NULL` and 1 to draw `w` as it is, and `NULL` for `w` outside a match. `verified` is the last world the server confirmed, which `tide_session_view` gives with the other two. It's what [`verified`](../game/views-and-the-match.md#confirmed-state) parameters read, and an entity's [local fields](../game/local-state.md#local-fields) go, before the views run, once it's in neither `w` nor `verified`, so a destroy the client predicted wrong takes nothing. A host with one world passes `NULL`: `w` is all there is, and it's what `verified` parameters read too.
 - `tide_local_events(local, events)` hands the local state what the match sent since the last frame, for the next `tide_frame` to run the game's local handlers with, and leaves the log empty. Call it before each `tide_frame`. `events` is a session's, `tide_session_events(session)`, where each event comes once however often its tick ran, and again for `verified` handlers once the server confirmed its tick; or the log a host gave `tide_world_tick_events`. `NULL` does nothing.
 - A match component's local fields are a struct of their own, `<Component>_local`, which the local state keeps for the entities something was written for: `tide_has_<Component>_local(local, entity)`, `tide_get_<Component>_local(local, entity)` (their defaults when nothing was, with text, lists and grids empty) and `tide_set_<Component>_local(local, entity, value)`. What C sets for an entity that had none is kept by its handle alone, where a view's is kept for [the entity it ran for](../game/local-state.md#after-a-rollback). `tide_get_<Component>` and the component's own struct are the match's part. A singleton's are `local-><Singleton>_local`.
 - `tide_local_frame_time(local, seconds)` says how long this frame is: it's what [`Frame.dt`](../game/views.md#a-frame-s-length) reads, local tasks' `Wait.Seconds` counts it down, and presentation correction errors decay once. Call it before the session update that may supply fresh corrections, then draw with `tide_frame`. Without it, `Frame.dt` is 0, local tasks wait forever and correction errors do not decay.
@@ -113,7 +113,7 @@ The generated header is the API between the game and its host. Namespaced declar
 
 The standard host wires [provisional correction smoothing](../game/views.md#provisional-correction-smoothing) automatically. For a custom host, a game with tagged fields defines `TIDE_HAS_VIEW_CORRECTIONS` and exports `tide_local_correct(local, correction)`. Set the session's optional `correct_views` callback to forward its `tide_view_correction` into that function, using the session's `user` for your host state. A host driving a client directly uses `tide_client_desc.correct_views` instead.
 
-After drawing the view returned by `tide_session_view`, call `tide_session_mark_presented(session)`; for a client, call `tide_client_mark_presented(client)`. This records the tick and blend fraction actually drawn without copying worlds. A replay that replaces that presentation supplies the callback with old and corrected endpoint pairs at that same tick and fraction. The worlds belong to the callback only: do not retain their pointers. A context with `reset` clears the retained errors and may have no worlds.
+After drawing the view returned by `tide_session_view`, call `tide_session_mark_presented(session)`; for a client, call `tide_client_mark_presented(client)`. This records both presentation intervals without copying worlds, including the confirmed timestamp stamped into the next input when `maxRewind` is enabled. A replay that replaces that presentation supplies the callback with old and corrected endpoint pairs at that same tick and fraction. The worlds belong to the callback only: do not retain their pointers. A context with `reset` clears the retained errors and may have no worlds.
 
 Call `tide_local_frame_time` before updating the session, so existing errors decay before fresh corrections arrive. These private caches are shared across views and excluded from world state and local packing. A host swapping builds must clear them with the old build's callback before replacing its table and refresh the session callback with `tide_session_set_view_corrector`; `tide/host.h` handles this too. Leaving the callback unset adds no correction snapshot copies.
 
@@ -121,13 +121,13 @@ Call `tide_local_frame_time` before updating the session, so existing errors dec
 
 A zeroed `tide_draw_list` and `tide_gui` are ready to use. A draw list grows as a frame needs, keeps its memory for the next one, and `tide_draw_free` lets it go. It also keeps a copy of each texture the last frame drew with (see [Textures](../game/meshes-and-textures.md#textures)), which `tide_platform_draw` uploads when it changed; a host that swaps the game's code for another build calls `tide_draw_forget`, as `tide/host.h` does at a hot reload.
 
-At the start of the frame, call `tide_local_frame_time(&local, seconds)` before updating the session, so existing presentation errors decay before that update delivers new corrections. After the update, get `w`, `previous`, `alpha` and `verified` from `tide_session_view` and draw:
+At the start of the frame, call `tide_local_frame_time(&local, seconds)` before updating the session, so existing presentation errors decay before that update delivers new corrections. After the update, get the predicted and confirmed endpoints and their fractions from `tide_session_view` and draw:
 
 ```c
 tide_draw_reset(&draw);
 tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
 tide_local_events(&local, tide_session_events(session)); // What the match sent, for the game's local handlers
-tide_frame(w, previous, alpha, verified, &local, &draw, &gui);
+tide_frame(w, previous, alpha, verified, NULL, 1.0f, &local, &draw, &gui);
 tide_gui_end(&gui, &draw);
 tide_platform_typing(tide_gui_typing(&gui)); // Phones show their keyboard while the player types, or a view asks
 tide_platform_cursor_lock(tide_gui_cursor_lock(&gui)); // The cursor is locked while a view asks (Cursor.Lock)
@@ -159,7 +159,7 @@ tide_world_tick_events(&world, jobs, &events);
 
 // Each frame, before tide_frame
 tide_local_events(&local, &events);
-tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 
 // At the end
 tide_event_log_free(&events);

@@ -29,7 +29,7 @@ static void start(void)
 static void frame_on(tide_local *l, const tide_world *w, const tide_world *confirmed)
 {
     tide_draw_reset(&draw);
-    tide_frame(w, NULL, 1.0f, confirmed, l, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, confirmed, NULL, 1.0f, l, &draw, &gui);
     tide_text_use(NULL, &l->heap); // For the lists the checks read
 }
 

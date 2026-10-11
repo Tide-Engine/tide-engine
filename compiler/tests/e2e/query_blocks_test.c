@@ -33,7 +33,7 @@ TIDE_TEST(query_blocks_sort_and_loop_beside_a_query)
 
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Shown.count == 4 && local.Shown.lowest == 1 && local.Shown.highest == 9);
 
     tide_local_free(&local);

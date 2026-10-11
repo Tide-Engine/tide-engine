@@ -1359,6 +1359,9 @@ typedef struct program {
     VEC(decl *) assets;        // Every asset declaration, in source order: what the pack holds
     const char *game_folder;   // Where the game's .tide/ is (tide says; NULL for tidec on its own): asset hashes and fetched URLs are kept there
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set
+    float max_rewind;
+    bool uses_rewind_limit;
+    decl *view_time;
     uint32_t max_players;      // maxPlayers, or 0 where it isn't set: TIDE_PLAYERS_DEFAULT
     const expr *title;         // title, the text it's set to, or NULL
     const expr *app_id;        // appId, likewise

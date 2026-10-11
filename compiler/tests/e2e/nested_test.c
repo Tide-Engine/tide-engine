@@ -110,7 +110,7 @@ TIDE_TEST(nested_views_read_both_worlds)
     tide_local_init(&local);
     tide_draw_list draw = {0};
     tide_gui gui = {0};
-    tide_frame(&world, NULL, 1.0f, &copy, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, &copy, NULL, 1.0f, &local, &draw, &gui);
     const Mirror m = local.Mirror;
     // The drawn world's rows, with what Churn added, and the confirmed world's as it was after the first tick: [[0, 2], [1, 3, 9]]
     printf("    seen %d, verified %d\n", (int)m.seenInView, (int)m.verifiedTotal);

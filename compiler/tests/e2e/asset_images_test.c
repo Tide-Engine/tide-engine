@@ -52,7 +52,7 @@ TIDE_TEST(image_texture_assets_keep_premultiplied_raw_and_collection_pixels)
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     tide_world_init(&world, 1.0f / 60.0f);
     tide_local_init(&local);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_texture image;
     const tide_texture_ref tga = tide_pack_texture_of(tide_pack_find("tgaTexture", TIDE_PACK_TEXTURE));
     const tide_texture_ref numbers = tide_pack_texture_of(tide_pack_find("tgaNumbers", TIDE_PACK_TEXTURE));

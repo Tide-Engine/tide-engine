@@ -401,7 +401,7 @@ component Body
 }
 ```
 
-`Interpolate` isn't for code to call. Singletons have no methods, so a singleton blends its own way through a struct in it that has one.
+`Interpolate` isn't for code to call. Custom interpolation is declared on structs or components; a singleton blends its own way through a struct in it that has one.
 
 ## A frame's length
 

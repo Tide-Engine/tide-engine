@@ -18,4 +18,8 @@ BeforeLeave
 Box2D.Leave
 BeforeReport
 Box2D.Report
+Box2D.BeginHistory
+Box2D.CaptureHistory
+Box2D.EndHistory
+Box2D.SealHistory
 AfterTheStep

@@ -16,7 +16,7 @@ TIDE_TEST(draw_apis_use_the_current_cameras_and_frame_size)
     tide_local_init(&local);
     devices.pointer.position = tide_f2(100, 450); // From the bottom left, as devices count
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), NULL);
-    tide_frame(NULL, NULL, 1, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1, NULL, NULL, 1.0f, &local, &draw, &gui);
 
     TIDE_CHECK(local.Probe.sameList);
     TIDE_CHECK(close_to(local.Probe.screen2.x, 400) && close_to(local.Probe.screen2.y, 300));

@@ -124,10 +124,10 @@ TIDE_TEST(world_functions_in_handlers_tasks_and_views)
     local = (tide_local){0};
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Seen.value == 6); // A view reads the match through a function: 7, and -1 for nobody
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Seen.frames == 2);
     TIDE_CHECK(local.Seen.life == 2); // ...and sets this machine's own through a mut World
 }

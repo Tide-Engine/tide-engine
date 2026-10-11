@@ -35,7 +35,7 @@ static void frame(const tide_world *w)
     tide_touches_poll(&devices.touchscreen);
     tide_pointer_poll(&devices, true);
     tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
-    tide_frame(w, NULL, 1.0f, w, &local, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, w, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 
@@ -81,7 +81,7 @@ static void finger(const tide_touch_phase phase, const float x, const float y)
     tide_touch_event(&devices.touchscreen, phase, 1, tide_f2(x, 400.0f - y));
     tide_pointer_poll(&devices, false);
     tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
-    tide_frame(&world, NULL, 1.0f, &world, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, &world, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

@@ -26,7 +26,7 @@ static void views(const int width, const int height)
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2((float)width, (float)height), tide_platform_measure_text);
     tide_local_frame_time(&local, 1.0f / 60.0f);
-    tide_frame(&world, NULL, 1, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1, NULL, NULL, 1.0f, &local, &draw, &gui);
     // Where each car lands on the screen, asked while the scene's camera is
     // still the frame's: the GUI's widgets put every destination's defaults back
     tide_draw_list *scene = tide_draw_render_target(&draw, local.Look.scene);

@@ -23,7 +23,7 @@ static void frame(const bool leave)
 {
     local.Look.leave = leave;
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     draw_count = 0;
     uint32_t target = 0;
     uint32_t stencils[8] = {0}; // Each destination's own, as a renderer keeps them
