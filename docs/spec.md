@@ -3419,7 +3419,7 @@ Implemented, awaiting approval:
 - Keeping the cookie across restarts, and making it unguessable.
 - Servers with no window and no player of their own.
 - Keeping a room open across reloads under `tide run --web`.
-- Lobbies in the language or the engine: they're a package (`lobby`), over a game's own network where one is brought.
+- Lobbies in the language or the engine: they're packages (`lobby`, and `steam` for Steam), over a game's own network where they bring one.
 - A game's own network: whether `Session.Open` should also take a UDP port beside it, a ping that leaves out the frame's wait without the transport's own clock, and keeping a match on it across a reload.
 - Showing other players from confirmed state, blended between confirmed ticks (see Views and drawing, Open).
 

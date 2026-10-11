@@ -192,6 +192,31 @@ if(TIDE_PLATFORM)
     endif()
 endif()
 
+# Steam: the lobby package's four slots over Steamworks' flat API, in Tide and C (steam/bridge.c). The SDK
+# isn't here and nothing builds the package but this test, which links a Steam that isn't in the SDK's
+# library's place (steam/test/fake_steam.c): four users in one program, each with a session of its own,
+# from Steam's lobbies into a match on Steam's messages. Desktop only, as the package is.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(tide_steam_lobby SOURCES steam/test/game.tide steam/bridge.c steam/test/fake_steam.c NAME game
+        PACKAGES Lobbies ${lobby_files} Steam steam/steam.tide
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" steam/test/steam_test.c)
+    target_include_directories(tide_steam_lobby PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_SOURCE_DIR}/steam")
+    # One program is one Steam user to the package: the test's four each have its state
+    target_compile_definitions(tide_steam_lobby PRIVATE TIDE_STEAM_USERS=4)
+    add_test(NAME tide_steam_lobby COMMAND tide_steam_lobby)
+    set_tests_properties(tide_steam_lobby PROPERTIES TIMEOUT 120)
+endif()
+if(TIDE_WEB)
+    # A web build that lists it (a game's tide.packages with the symbol defined for the wrong target) is told
+    # so by the package's own C, in words: its bridge is compiled for the page as tide would
+    add_test(NAME tide_steam_web_refused
+        COMMAND "${CMAKE_C_COMPILER}" --target=wasm32-wasi -fsyntax-only "-I${PROJECT_SOURCE_DIR}/engine/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/steam/bridge.c")
+    set_tests_properties(tide_steam_web_refused PROPERTIES
+        PASS_REGULAR_EXPRESSION "The steam package is for desktop builds, where Steam is")
+endif()
+
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
 # the package's files before their own: a game needn't use all of a package.

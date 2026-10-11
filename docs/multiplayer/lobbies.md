@@ -199,7 +199,7 @@ A build picks its packages with [`#if` lines](../tools/packages.md#packages-for-
 ```
 lobby
 #if STEAM
-github.com/someone/tide-lobby-steam 9c1d7be0a4f25d6c8e3b17f04a92d5c6e8f0a1b2
+steam
 #endif
 ```
 
@@ -222,7 +222,7 @@ override async LobbyAnswer Lobbies.LobbyJoin(LobbyClient client, string id)
 
 `StoreLobby` there is the package's own function, which makes a `LobbyInfo` of what the store says. An override has the parameters of what it replaces, so what a service keeps between calls is in its own C, or in what the functions are handed.
 
-The transport slot goes with [a network of the game's own](./own-network.md): `MatchOpen` and `MatchJoin` register it and then call `Session.Open()` and `Session.Join(address)`, and what the lobby says of its match is what that network's `Session.room` is. That page builds a whole service and network of a game's own.
+The transport slot goes with [a network of the game's own](./own-network.md): `MatchOpen` and `MatchJoin` register it and then call `Session.Open()` and `Session.Join(address)`, and what the lobby says of its match is what that network's `Session.room` is. That page builds a whole service and network of a game's own, and [`steam`](./steam.md), which comes with `tide`, is one for Steam.
 
 Where a match is joined by its host (a Steam ID) and changes hands with [host migration](./matches.md#host-migration), the lobby follows: its owner's machine, once it runs the match, names it again, and the members' machines, which went there with the match, take the new name.
 
