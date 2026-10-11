@@ -1,0 +1,503 @@
+// How the yard looks. Nothing here is in the match: where things are drawn
+// eases towards where the match says they are.
+//
+// Three things have to be told apart at a glance, so they are three steps of
+// light: nothing is the darkest, rock sits between, and ground is bright. Set
+// ground is square and grey, loose ground rounded, pale and raised.
+local singleton Picture
+{
+    bool ready;
+    int level = -1;
+    int serial = -1;
+    bool snap;
+    float2[2] pavers;
+    bool[2] jumped;
+    float2[6] crates;
+    Ground[63] ground;
+    float[63] age;
+    float clock;
+    float celebration;
+    bool solved;
+    int[6] sparkCell;
+    Cue[6] sparkKind;
+    float[6] sparkAge;
+    int sparkNext;
+    // A stone on its way between the ground and a paver's hands.
+    int flyCell = -1;
+    int flyPaver;
+    bool flyLay;
+    float flyAge;
+    // Room kept at the foot of the screen for a hint or the solved card.
+    float reserved;
+}
+
+struct Lens
+{
+    float2 origin;
+    float tile;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+}
+
+const float FRAME = 0.34;
+const float FLIGHT = 0.15;
+const Color ROCK_TOP = Color(0.185, 0.20, 0.335);
+const Color ROCK_FACE = Color(0.10, 0.11, 0.21);
+const Color ROCK_EDGE = Color(0.29, 0.31, 0.49);
+const Color PIT = Color(0.028, 0.024, 0.08);
+
+float2 CellPoint(int cell) { return float2(cell % BOARD_W, cell / BOARD_W); }
+float2 LensPoint(float2 cell, Lens lens) { return lens.origin + cell * lens.tile; }
+
+// The board is its open cells and a rim of rock, drawn as large as fits.
+Lens BoardLens(Board board, float2 screen, float reserved = 0)
+{
+    mut var x0 = BOARD_W;
+    mut var y0 = BOARD_H;
+    mut var x1 = -1;
+    mut var y1 = -1;
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        if (board.ground[cell] == Ground.Wall) continue;
+        x0 = Math.Min(x0, cell % BOARD_W);
+        x1 = Math.Max(x1, cell % BOARD_W);
+        y0 = Math.Min(y0, cell / BOARD_W);
+        y1 = Math.Max(y1, cell / BOARD_W);
+    }
+    if (x1 < 0) { x0 = 1; y0 = 1; x1 = BOARD_W - 2; y1 = BOARD_H - 2; }
+    var narrow = screen.x < 720;
+    var top = narrow ? 150.0 : 112.0;
+    var bottom = screen.y - (narrow ? 164.0 : 80.0) - reserved;
+    var columns = x1 - x0 + 1 + FRAME * 2;
+    var rows = y1 - y0 + 1 + FRAME * 2;
+    var tile = Math.Clamp(Math.Min((screen.x - (narrow ? 12.0 : 60.0)) / columns, (bottom - top) / rows), 8, 136);
+    var corner = float2((screen.x - columns * tile) * 0.5, top + (bottom - top - rows * tile) * 0.5);
+    return Lens { origin = corner + float2(tile * (0.5 + FRAME)) - float2(x0, y0) * tile, tile = tile, x0 = x0, y0 = y0, x1 = x1, y1 = y1 };
+}
+
+float Ease(float t)
+{
+    var x = Math.Clamp(t, 0, 1);
+    return 1 - (1 - x) * (1 - x) * (1 - x);
+}
+
+[Stage(ArtStage.Backdrop)]
+view NightSky(mut Picture picture)
+{
+    Draw.SetScreen();
+    Draw.Clear(NIGHT);
+    var screen = float2(Screen.width, Screen.height);
+    picture.clock += Math.Min(Frame.dt, 0.08);
+    if (picture.clock > 4000) picture.clock -= 4000;
+    Draw.Shape(Shape { center = float2(screen.x * 0.5, screen.y * 1.05), size = float2(screen.x * 1.5, screen.y * 1.1), ellipse = true, soft = 260, color = Color(0.16, 0.13, 0.33, 0.55) });
+    Draw.Shape(Shape { center = float2(screen.x * 0.16, screen.y * 0.10), size = float2(screen.x * 0.8, screen.y * 0.6), ellipse = true, soft = 220, color = Color(0.07, 0.16, 0.30, 0.50) });
+    for (var star = 0; star < 90; star++)
+    {
+        var at = float2((star * 7919 % 1009) / 1009.0 * screen.x, (star * 104729 % 997) / 997.0 * screen.y);
+        // The band of words along the top stays still, for eyes and for tests that read it.
+        if (at.y < 120) continue;
+        var glow = 0.25 + 0.35 * (0.5 + 0.5 * Math.Sin(picture.clock * (0.6 + star % 5 * 0.21) + star));
+        Draw.Circle(at, star % 7 == 0 ? 1.6 : 1.0, Color(0.85, 0.88, 1, glow));
+    }
+}
+
+void StoneTop(float2 at, float size, bool fixed, Color top, Color side, bool overNothing)
+{
+    var lip = size * 0.13;
+    if (fixed)
+    {
+        // Set ground fills its cell, with a seam so cells can be counted.
+        if (overNothing) Draw.Rect(at + float2(0, size * 0.5 + lip * 0.5), float2(size + 0.6, lip), side);
+        var seam = Math.Max(1.5, size * 0.035);
+        Draw.Rect(at, float2(size + 0.6), Math.Lerp(top, side, 0.55));
+        Draw.RoundRect(at, float2(size - seam), size * 0.05, top);
+        Draw.RoundRect(at - float2(0, size * 0.5 - seam * 0.5 - size * 0.035), float2(size - seam * 3, size * 0.03), size * 0.015, Color(1, 1, 1, 0.16));
+        return;
+    }
+    var slab = size * 0.86;
+    Draw.RoundRect(at + float2(0, lip), float2(slab), size * 0.16, Color(0, 0, 0, 0.35));
+    Draw.RoundRect(at + float2(0, lip * 0.55), float2(slab), size * 0.16, side);
+    Draw.RoundRect(at - float2(0, lip * 0.2), float2(slab), size * 0.16, top);
+    Draw.WireRoundRect(at - float2(0, lip * 0.2), float2(slab * 0.72), size * 0.10, Math.Max(1, size * 0.03), Math.Lerp(top, side, 0.55));
+}
+
+void Lantern(float2 at, float size, bool lit, float clock)
+{
+    var pulse = 0.5 + 0.5 * Math.Sin(clock * 2.2);
+    var tone = lit ? Color(1, 0.93, 0.66) : GOLD;
+    var width = Math.Max(1.5, size * 0.04);
+    Draw.Shape(Shape { center = at, size = float2(size * (lit ? 1.35 : 1.0)), ellipse = true, soft = size * 0.38, color = Color(1, 0.80, 0.36, lit ? 0.40 : 0.14 + 0.08 * pulse) });
+    Draw.Arc(at - float2(0, size * 0.21), size * 0.09, 3.14, 6.28, width, tone);
+    Draw.RoundRect(at - float2(0, size * 0.17), float2(size * 0.28, size * 0.07), size * 0.03, tone);
+    Draw.RoundRect(at + float2(0, size * 0.02), float2(size * 0.22, size * 0.30), size * 0.05, Color(1, 0.86, 0.48, lit ? 0.95 : 0.22 + 0.10 * pulse));
+    Draw.WireRoundRect(at + float2(0, size * 0.02), float2(size * 0.22, size * 0.30), size * 0.05, width, tone);
+    Draw.Ellipse(at + float2(0, size * 0.04), float2(size * 0.045, size * 0.075), lit ? Color(1, 1, 0.92) : Color(1, 0.86, 0.48, 0.8));
+    Draw.RoundRect(at + float2(0, size * 0.20), float2(size * 0.30, size * 0.07), size * 0.03, tone);
+}
+
+// A shut gate is bars across the cell. An open one has drawn them down into
+// the floor: their tops and a painted line are what's left, so the way reads
+// as open and the cell still reads as a gate.
+void Gate(float2 at, float size, Color tone, bool shut)
+{
+    var post = size * 0.10;
+    var dark = Math.Lerp(tone, DEEP, 0.45);
+    if (!shut)
+    {
+        Draw.WireRoundRect(at, float2(size * 0.78), size * 0.10, Math.Max(1.5, size * 0.03), Color(tone.r, tone.g, tone.b, 0.50));
+        for (var bar = -1; bar <= 1; bar++)
+        {
+            Draw.RoundRect(at + float2(bar * size * 0.21, size * 0.015), float2(size * 0.13, size * 0.13), size * 0.05, dark);
+            Draw.RoundRect(at + float2(bar * size * 0.21, 0), float2(size * 0.10, size * 0.10), size * 0.04, tone);
+        }
+        Draw.RoundRect(at + float2(-size * 0.43, 0), float2(post, size * 0.30), post * 0.5, dark);
+        Draw.RoundRect(at + float2(size * 0.43, 0), float2(post, size * 0.30), post * 0.5, dark);
+        return;
+    }
+    Draw.RoundRect(at + float2(-size * 0.43, 0), float2(post, size * 0.94), post * 0.5, dark);
+    Draw.RoundRect(at + float2(size * 0.43, 0), float2(post, size * 0.94), post * 0.5, dark);
+    Draw.RoundRect(at + float2(0, size * 0.05), float2(size * 0.84, size * 0.84), size * 0.06, Color(0, 0, 0, 0.34));
+    for (var bar = -1; bar <= 1; bar++)
+    {
+        Draw.RoundRect(at + float2(bar * size * 0.21, size * 0.03), float2(size * 0.12, size * 0.84), size * 0.06, Math.Lerp(tone, DEEP, 0.35));
+        Draw.RoundRect(at + float2(bar * size * 0.21 - size * 0.015, 0), float2(size * 0.08, size * 0.80), size * 0.04, tone);
+    }
+    Draw.RoundRect(at + float2(0, -size * 0.24), float2(size * 0.80, size * 0.09), size * 0.04, Math.Lerp(tone, Color.white, 0.25));
+    Draw.RoundRect(at + float2(0, size * 0.24), float2(size * 0.80, size * 0.09), size * 0.04, Math.Lerp(tone, DEEP, 0.2));
+}
+
+// One cell's ground, at any size: the board's cells and the stone a paver carries.
+void GroundPaint(Ground ground, float2 at, float size, bool fixed, bool overNothing, bool down, bool live, float clock)
+{
+    var setTop = Color(0.69, 0.67, 0.68);
+    var setSide = Color(0.36, 0.34, 0.42);
+    var looseTop = Color(0.97, 0.90, 0.73);
+    var looseSide = Color(0.64, 0.53, 0.40);
+    if (ground == Ground.Stone) StoneTop(at, size, fixed, fixed ? setTop : looseTop, fixed ? setSide : looseSide, overNothing);
+    else if (ground == Ground.Ice)
+    {
+        StoneTop(at, size, fixed, Color(0.66, 0.88, 0.98), Color(0.33, 0.56, 0.76), overNothing);
+        var glint = Color(1, 1, 1, 0.75);
+        Draw.Line(at + float2(-size * 0.24, -size * 0.02), at + float2(-size * 0.04, -size * 0.22), Math.Max(1, size * 0.04), glint);
+        Draw.Line(at + float2(size * 0.02, size * 0.16), at + float2(size * 0.22, -size * 0.04), Math.Max(1, size * 0.03), glint);
+    }
+    else if (ground == Ground.PortalP || ground == Ground.PortalQ)
+    {
+        StoneTop(at, size, fixed, Color(0.24, 0.19, 0.44), Color(0.13, 0.10, 0.26), overNothing);
+        var tone = live ? VIOLET : Color(0.47, 0.45, 0.60);
+        var center = at - float2(0, fixed ? 0 : size * 0.026);
+        if (live) Draw.Shape(Shape { center = center, size = float2(size * 0.78), ellipse = true, soft = size * 0.2, color = Color(0.62, 0.42, 1, 0.40) });
+        Draw.WireCircle(center, size * 0.27, Math.Max(1.5, size * 0.055), tone);
+        var turn = live ? clock * 1.7 : 0.6;
+        Draw.Arc(center, size * 0.17, turn, turn + 2.2, Math.Max(1, size * 0.04), Math.Lerp(tone, Color.white, 0.45));
+        Draw.Arc(center, size * 0.17, turn + 3.14, turn + 5.34, Math.Max(1, size * 0.04), Math.Lerp(tone, Color.white, 0.45));
+        Draw.Circle(center, size * 0.05, Math.Lerp(tone, Color.white, 0.6));
+    }
+    else if (ground == Ground.PlateA || ground == Ground.PlateB)
+    {
+        StoneTop(at, size, fixed, fixed ? setTop : looseTop, fixed ? setSide : looseSide, overNothing);
+        var tone = ground == Ground.PlateA ? GOLD : MINT;
+        var center = at - float2(0, fixed ? 0 : size * 0.026);
+        // Wider than a crate, so a plate shows its rim under whatever holds it down.
+        if (down) Draw.Shape(Shape { center = center, size = float2(size * 0.95), radius = size * 0.2, soft = size * 0.12, color = Color(tone.r, tone.g, tone.b, 0.45) });
+        Draw.RoundRect(center + float2(0, size * 0.03), float2(size * 0.78), size * 0.14, Math.Lerp(tone, DEEP, 0.55));
+        Draw.RoundRect(center - float2(0, down ? 0 : size * 0.035), float2(size * 0.72), size * 0.13, down ? Math.Lerp(tone, Color.white, 0.35) : tone);
+        Draw.WireRoundRect(center - float2(0, down ? 0 : size * 0.035), float2(size * 0.50), size * 0.09, Math.Max(1, size * 0.03), Math.Lerp(tone, DEEP, 0.35));
+        Draw.Circle(center - float2(0, down ? 0 : size * 0.035), size * 0.06, Math.Lerp(tone, DEEP, 0.4));
+    }
+    else if (ground == Ground.Rubble)
+    {
+        // A crate's lid, level with the floor round it and plainly not coming out.
+        Draw.Rect(at, float2(size + 0.6), Color(0.25, 0.17, 0.12));
+        Draw.RoundRect(at, float2(size * 0.92), size * 0.06, Color(0.50, 0.36, 0.23));
+        for (var plank = -1; plank <= 1; plank++)
+            Draw.Line(at + float2(-size * 0.40, plank * size * 0.23), at + float2(size * 0.40, plank * size * 0.23), Math.Max(1, size * 0.025), Color(0.25, 0.17, 0.12, 0.75));
+        for (var nail = 0; nail < 4; nail++)
+            Draw.Circle(at + float2((nail % 2 == 0 ? -1.0 : 1.0) * size * 0.36, (nail < 2 ? -1.0 : 1.0) * size * 0.36), size * 0.025, Color(0.25, 0.17, 0.12));
+    }
+}
+
+// Rock stands above the floor: its top, and a face wherever open ground is south of it.
+void Rock(float2 at, float size, int variation, bool faced)
+{
+    Draw.Rect(at, float2(size + 0.6), ROCK_TOP);
+    var chip = Color(0, 0, 0, 0.10);
+    Draw.RoundRect(at + float2((variation % 5 - 2) * size * 0.11, (variation % 3 - 1) * size * 0.16 - size * 0.08), float2(size * 0.20, size * 0.09), size * 0.04, chip);
+    Draw.RoundRect(at + float2((variation % 4 - 1.5) * size * 0.14, (variation % 2) * size * 0.2 - size * 0.22), float2(size * 0.11, size * 0.06), size * 0.03, chip);
+    if (!faced) return;
+    Draw.Rect(at + float2(0, size * 0.42), float2(size + 0.6, size * 0.16), ROCK_FACE);
+    Draw.Rect(at + float2(0, size * 0.335), float2(size + 0.6, Math.Max(1, size * 0.02)), ROCK_EDGE);
+}
+
+void CratePaint(float2 at, float size)
+{
+    var side = size * 0.66;
+    Draw.Ellipse(at + float2(0, size * 0.30), float2(size * 0.36, size * 0.11), Color(0, 0, 0, 0.32));
+    Draw.RoundRect(at + float2(0, size * 0.05), float2(side), size * 0.08, Color(0.36, 0.24, 0.14));
+    Draw.RoundRect(at - float2(0, size * 0.05), float2(side), size * 0.08, Color(0.85, 0.62, 0.34));
+    Draw.WireRoundRect(at - float2(0, size * 0.05), float2(side * 0.80), size * 0.05, Math.Max(1.5, size * 0.045), Color(0.60, 0.40, 0.21));
+    Draw.Line(at + float2(-side * 0.30, -side * 0.30 - size * 0.05), at + float2(side * 0.30, side * 0.30 - size * 0.05), Math.Max(1.5, size * 0.05), Color(0.60, 0.40, 0.21));
+}
+
+// Where a paver holds what it carries, from where it stands.
+float2 Overhead(float2 at, float size) { return at + float2(0, -size * 0.76); }
+
+void PaverPaint(float2 at, float size, int paver, int facing, Ground held, bool active, bool home, float clock, bool still)
+{
+    var tone = PaverColor(paver);
+    var bob = still ? 0.0 : Math.Sin(clock * 3.1 + paver * 1.7) * size * 0.018;
+    var body = at + float2(0, -size * 0.06 + bob);
+    Draw.Ellipse(at + float2(0, size * 0.27), float2(size * 0.27, size * 0.09), Color(0, 0, 0, 0.36));
+    if (active)
+    {
+        var ring = 0.5 + 0.5 * Math.Sin(clock * 4.2);
+        Draw.WireEllipse(at + float2(0, size * 0.27), float2(size * (0.34 + (still ? 0.0 : ring * 0.03)), size * 0.13), Math.Max(1.5, size * 0.035), Color(1, 1, 1, 0.80));
+    }
+    // A round body, a brim and two eyes that look where the paver last went.
+    Draw.RoundRect(body + float2(0, size * 0.10), float2(size * 0.50, size * 0.40), size * 0.17, Math.Lerp(tone, DEEP, 0.30));
+    Draw.RoundRect(body + float2(0, size * 0.07), float2(size * 0.50, size * 0.40), size * 0.17, tone);
+    Draw.Circle(body - float2(0, size * 0.16), size * 0.20, Color(0.99, 0.90, 0.76));
+    Draw.Ellipse(body - float2(0, size * 0.29), float2(size * 0.27, size * 0.08), Math.Lerp(tone, DEEP, 0.22));
+    Draw.RoundRect(body - float2(0, size * 0.35), float2(size * 0.27, size * 0.13), size * 0.05, tone);
+    var look = Heading(facing) * size * 0.035;
+    if (facing != 0)
+    {
+        Draw.Circle(body + float2(-size * 0.07, -size * 0.15) + look, size * 0.028, Color(0.12, 0.10, 0.16));
+        Draw.Circle(body + float2(size * 0.07, -size * 0.15) + look, size * 0.028, Color(0.12, 0.10, 0.16));
+    }
+    if (home) Draw.Circle(body + float2(size * 0.20, -size * 0.38), size * 0.05, Color(1, 0.95, 0.70));
+    if (held != Ground.Void)
+    {
+        var carried = Overhead(body, size) + float2(0, still ? 0.0 : Math.Sin(clock * 2.3 + paver) * size * 0.02);
+        GroundPaint(held, carried, size * 0.46, false, false, false, false, clock);
+    }
+}
+
+local event(PuzzleCue cue) WatchPuzzle(mut Picture picture)
+{
+    if (cue.kind == Cue.Portal && cue.paver >= 0 && cue.paver < 2) picture.jumped[cue.paver] = true;
+    if (cue.kind == Cue.Undo || cue.kind == Cue.Reset) picture.snap = true;
+    if ((cue.kind == Cue.Lift || cue.kind == Cue.Lay) && cue.cell >= 0 && cue.paver >= 0 && cue.paver < 2)
+    {
+        picture.flyCell = cue.cell;
+        picture.flyPaver = cue.paver;
+        picture.flyLay = cue.kind == Cue.Lay;
+        picture.flyAge = 0.001;
+        return;
+    }
+    if (cue.cell < 0 || cue.kind == Cue.Step || cue.kind == Cue.Blocked || cue.kind == Cue.Gate) return;
+    picture.sparkCell[picture.sparkNext] = cue.cell;
+    picture.sparkKind[picture.sparkNext] = cue.kind;
+    picture.sparkAge[picture.sparkNext] = 0.001;
+    picture.sparkNext = (picture.sparkNext + 1) % 6;
+}
+
+[Stage(ArtStage.Board)]
+view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
+{
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    var narrow = screen.x < 720;
+    var left = narrow ? 14.0 : Math.Max(24, (screen.x - 1180) * 0.5);
+    Label("underfoot", float2(left, 34), narrow ? 26.0 : 30.0, CREAM);
+    if (!yard.initialized) return;
+    var board = yard.board;
+    var layout = yard.layout;
+    Label($"{ChapterName(yard.level)}  /  {yard.level + 1} of {LEVEL_COUNT}", float2(left + (narrow ? 0.0 : 178.0), narrow ? 62.0 : 28.0), 12, GOLD);
+    Label(LevelName(yard.level), float2(left + (narrow ? 0.0 : 178.0), narrow ? 78.0 : 46.0), narrow ? 13.0 : 16.0, CREAM);
+    var counted = float2(left + (narrow ? 0.0 : 178.0) + Draw.MeasureText(LevelName(yard.level), narrow ? 13.0 : 16.0).x + 14, narrow ? 78.0 : 47.0);
+    Label(board.moves == 1 ? "1 move" : $"{board.moves} moves", counted, 12, MUTED);
+    if (lobby.page != Rooms.Page.Playing) return;
+
+    var dt = Math.Min(Frame.dt, 0.08);
+    if (board.solved && !picture.solved) picture.celebration = 0;
+    picture.solved = board.solved;
+    if (picture.solved) picture.celebration += dt;
+    var fresh = !picture.ready || picture.level != yard.level || picture.serial != yard.serial;
+    var snap = fresh || picture.snap || hands.reduceMotion;
+    var blend = snap ? 1.0 : 1 - Math.Exp(-dt * 24);
+    for (var paver = 0; paver < 2; paver++)
+    {
+        var target = CellPoint(board.paver[paver]);
+        picture.pavers[paver] = Math.Lerp(picture.pavers[paver], target, snap || picture.jumped[paver] ? 1.0 : blend);
+        picture.jumped[paver] = false;
+    }
+    for (var crate = 0; crate < MAX_CRATES; crate++)
+        if (board.crate[crate] >= 0) picture.crates[crate] = Math.Lerp(picture.crates[crate], CellPoint(board.crate[crate]), blend);
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        if (fresh) picture.age[cell] = 1;
+        else if (picture.ground[cell] != board.ground[cell]) picture.age[cell] = snap ? 1.0 : 0.0;
+        else picture.age[cell] = Math.Min(1, picture.age[cell] + dt * 6);
+        picture.ground[cell] = board.ground[cell];
+    }
+    for (var spark = 0; spark < 6; spark++)
+        if (picture.sparkAge[spark] > 0) picture.sparkAge[spark] = picture.sparkAge[spark] + dt > 0.5 || snap ? 0.0 : picture.sparkAge[spark] + dt;
+    if (picture.flyAge > 0) picture.flyAge = picture.flyAge + dt > FLIGHT || snap ? 0.0 : picture.flyAge + dt;
+    // A flight is only shown while the board still agrees with it.
+    var flying = picture.flyAge > 0 && picture.flyCell >= 0 && picture.flyCell < CELLS
+        && (picture.flyLay ? board.ground[picture.flyCell] != Ground.Void : board.held[picture.flyPaver] != Ground.Void);
+    picture.ready = true;
+    picture.snap = false;
+    picture.level = yard.level;
+    picture.serial = yard.serial;
+
+    // A hint or the solved card has the foot of the screen, and the board
+    // glides out of its way instead of hiding under it.
+    var room = board.solved ? (narrow ? 164.0 : 152.0) : hands.hintOpen ? hands.hintHeight + 8 : 0.0;
+    picture.reserved = snap ? room : Math.Lerp(picture.reserved, room, 1 - Math.Exp(-dt * 14));
+    var lens = BoardLens(board, screen, picture.reserved);
+    var tile = lens.tile;
+    var columns = lens.x1 - lens.x0 + 1;
+    var rows = lens.y1 - lens.y0 + 1;
+    var middle = LensPoint(float2(lens.x0 + lens.x1, lens.y0 + lens.y1) * 0.5, lens);
+    var extent = float2(columns, rows) * tile;
+    var slab = extent + float2(tile * FRAME * 2);
+    Draw.Shape(Shape { center = middle + float2(0, tile * 0.24), size = slab + float2(tile * 0.3), radius = tile * 0.3, soft = tile * 0.5, color = Color(0, 0, 0, 0.60) });
+    Draw.RoundRect(middle + float2(0, tile * 0.13), slab, tile * 0.20, ROCK_FACE);
+    Draw.RoundRect(middle, slab, tile * 0.20, ROCK_TOP);
+    Draw.WireRoundRect(middle, slab, tile * 0.20, Math.Max(1, tile * 0.015), ROCK_EDGE);
+    Draw.Rect(middle, extent, PIT);
+
+    // What lies under the yard: a long way down, with a few lights in it.
+    Draw.Clip(Rect(middle.x - extent.x * 0.5, middle.y - extent.y * 0.5, extent.x, extent.y))
+    {
+        Draw.Shape(Shape { center = middle + float2(0, extent.y * 0.25), size = extent * 0.9, ellipse = true, soft = tile * 1.6, color = Color(0.13, 0.09, 0.36, 0.55) });
+        for (var star = 0; star < 64; star++)
+        {
+            var drift = hands.reduceMotion ? 0.0 : picture.clock * (2.0 + star % 4);
+            var x = (star * 3571 % 811) / 811.0 * extent.x;
+            var fall = (star * 6947 % 823) / 823.0 * extent.y + drift;
+            var y = fall - Math.Floor(fall / extent.y) * extent.y;
+            var glow = 0.30 + 0.55 * (0.5 + 0.5 * Math.Sin(picture.clock * (0.8 + star % 3 * 0.4) + star * 1.3));
+            Draw.Circle(middle - extent * 0.5 + float2(x, y), star % 5 == 0 ? tile * 0.030 : tile * 0.017, Color(0.78, 0.84, 1, glow));
+        }
+    }
+    // The rim's face, wherever the top row is open below it.
+    for (var x = lens.x0; x <= lens.x1; x++)
+    {
+        if (board.ground[lens.y0 * BOARD_W + x] == Ground.Wall) continue;
+        var under = LensPoint(float2(x, lens.y0), lens) - float2(0, tile * 0.5);
+        Draw.Rect(under - float2(0, tile * 0.08), float2(tile + 0.6, tile * 0.16), ROCK_FACE);
+        Draw.Rect(under - float2(0, tile * 0.165), float2(tile + 0.6, Math.Max(1, tile * 0.02)), ROCK_EDGE);
+    }
+
+    var pressed = Pressed(board);
+    mut var hasP = false;
+    mut var hasQ = false;
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        if (board.ground[cell] == Ground.PortalP) hasP = true;
+        if (board.ground[cell] == Ground.PortalQ) hasQ = true;
+    }
+    for (var y = lens.y0; y <= lens.y1; y++)
+        for (var x = lens.x0; x <= lens.x1; x++)
+        {
+            var cell = y * BOARD_W + x;
+            var ground = board.ground[cell];
+            var at = LensPoint(float2(x, y), lens);
+            var below = Step(cell, 2);
+            var above = Step(cell, 0);
+            var roofed = above < 0 || board.ground[above] == Ground.Wall;
+            if (ground == Ground.Wall) { Rock(at, tile, x * 5 + y * 3, below >= 0 && y < lens.y1 && board.ground[below] != Ground.Wall); continue; }
+            var landing = flying && picture.flyLay && picture.flyCell == cell;
+            if (ground == Ground.Void || landing)
+            {
+                // Nothing, marked as a place a stone could go, darker under rock.
+                if (roofed) Draw.Rect(at - float2(0, tile * 0.38), float2(tile, tile * 0.24), Color(0, 0, 0, 0.32));
+                Draw.WireRoundRect(at, float2(tile * 0.82), tile * 0.15, Math.Max(1, tile * 0.012), Color(0.62, 0.68, 1, 0.11));
+                continue;
+            }
+            var overNothing = below >= 0 && board.ground[below] == Ground.Void;
+            var grow = hands.reduceMotion || ground == Ground.Rubble ? 1.0 : 0.72 + 0.28 * Ease(picture.age[cell]);
+            var occupied = PaverAt(board, cell) >= 0 || CrateAt(board, cell) >= 0;
+            GroundPaint(ground, at, tile * grow, layout.fixed[cell], overNothing, occupied, hasP && hasQ, picture.clock);
+            if (roofed) Draw.Rect(at - float2(0, tile * 0.42), float2(tile, tile * 0.16), Color(0, 0, 0, 0.18));
+            if (layout.goal[cell]) Lantern(at, tile, PaverAt(board, cell) >= 0, picture.clock);
+            if (layout.gate[cell] != 0) Gate(at, tile, layout.gate[cell] == 1 ? GOLD : MINT, Shut(layout, cell, pressed) && !occupied);
+            // A crate that has just gone under is seen going.
+            if (ground == Ground.Rubble && picture.age[cell] < 1 && !hands.reduceMotion)
+                CratePaint(at + float2(0, tile * 0.10 * picture.age[cell]), tile * (1 - 0.35 * picture.age[cell]));
+        }
+
+    // While a hint is up the rim names the cells, as the hints do.
+    if (hands.hintOpen)
+    {
+        for (var x = lens.x0; x <= lens.x1; x++)
+            Label($"{char(64 + x)}", LensPoint(float2(x, lens.y0), lens) - float2(0, tile * (0.5 + FRAME * 0.56)), Math.Max(10, tile * 0.19), GOLD, Anchor.MiddleCenter);
+        for (var y = lens.y0; y <= lens.y1; y++)
+            Label($"{y}", LensPoint(float2(lens.x0, y), lens) - float2(tile * (0.5 + FRAME * 0.5), 0), Math.Max(10, tile * 0.19), GOLD, Anchor.MiddleCenter);
+    }
+
+    // The cell the paver in hand faces, so a lift or a lay is never a guess.
+    if (hands.seat >= 0 && !board.solved)
+    {
+        var me = hands.active;
+        var ahead = Step(board.paver[me], board.facing[me]);
+        if (ahead >= 0 && board.ground[ahead] != Ground.Wall)
+        {
+            var can = board.held[me] == Ground.Void
+                ? Loose(board.ground[ahead]) && !layout.fixed[ahead] && Firm(layout, board, board.paver[me]) && PaverAt(board, ahead) < 0 && CrateAt(board, ahead) < 0
+                : board.ground[ahead] == Ground.Void;
+            if (can) Draw.WireRoundRect(LensPoint(CellPoint(ahead), lens), float2(tile * 0.94), tile * 0.16, Math.Max(2, tile * 0.035),
+                Color(1, 1, 1, 0.42 + 0.22 * Math.Sin(picture.clock * 5)));
+        }
+    }
+
+    for (var spark = 0; spark < 6; spark++)
+    {
+        if (picture.sparkAge[spark] <= 0 || hands.reduceMotion) continue;
+        var t = picture.sparkAge[spark] / 0.5;
+        var at = LensPoint(CellPoint(picture.sparkCell[spark]), lens);
+        var kind = picture.sparkKind[spark];
+        var tone = kind == Cue.Portal ? VIOLET : kind == Cue.Sink ? Color(0.85, 0.62, 0.34) : kind == Cue.Slide ? Color(0.66, 0.88, 0.98) : kind == Cue.Solve ? GOLD : CREAM;
+        Draw.WireCircle(at, tile * (0.25 + 0.45 * Ease(t)), Math.Max(1.5, tile * 0.04 * (1 - t)), Color(tone.r, tone.g, tone.b, 0.8 * (1 - t)));
+    }
+
+    for (var y = lens.y0; y <= lens.y1; y++)
+    {
+        for (var crate = 0; crate < MAX_CRATES; crate++)
+            if (board.crate[crate] >= 0 && board.crate[crate] / BOARD_W == y) CratePaint(LensPoint(picture.crates[crate], lens), tile);
+        for (var paver = 0; paver < 2; paver++)
+        {
+            if (board.paver[paver] < 0 || board.paver[paver] / BOARD_W != y) continue;
+            mut var at = LensPoint(picture.pavers[paver], lens);
+            if (hands.blockTime > 0 && hands.blockPaver == paver && !hands.reduceMotion)
+                at += Heading(board.facing[paver]) * Math.Sin(hands.blockTime / 0.22 * 3.14) * tile * 0.10;
+            var active = hands.seat >= 0 && paver == hands.active && !board.solved;
+            var lifting = flying && !picture.flyLay && picture.flyPaver == paver;
+            PaverPaint(at, tile, paver, board.facing[paver], lifting ? Ground.Void : board.held[paver], active, layout.goal[board.paver[paver]], picture.clock, hands.reduceMotion);
+        }
+    }
+
+    // The stone in the air, between a paver's hands and its cell.
+    if (flying)
+    {
+        var t = Ease(picture.flyAge / FLIGHT);
+        var hand = Overhead(LensPoint(picture.pavers[picture.flyPaver], lens), tile);
+        var place = LensPoint(CellPoint(picture.flyCell), lens);
+        var kind = picture.flyLay ? board.ground[picture.flyCell] : board.held[picture.flyPaver];
+        var from = picture.flyLay ? hand : place;
+        var to = picture.flyLay ? place : hand;
+        var size = picture.flyLay ? Math.Lerp(0.46, 1.0, t) : Math.Lerp(1.0, 0.46, t);
+        var arc = float2(0, -Math.Sin(t * 3.14) * tile * 0.16);
+        GroundPaint(kind, Math.Lerp(from, to, t) + arc, tile * size, false, false, false, hasP && hasQ, picture.clock);
+    }
+
+    if (board.solved && picture.celebration < 2.4 && !hands.reduceMotion)
+    {
+        for (var paver = 0; paver < 2; paver++)
+        {
+            var home = LensPoint(picture.pavers[paver], lens);
+            for (var mote = 0; mote < 14; mote++)
+            {
+                var rise = picture.celebration * (0.5 + mote % 5 * 0.16);
+                var sway = Math.Sin(picture.celebration * 3 + mote * 1.9) * tile * 0.18;
+                var at = home + float2((mote * 37 % 21 - 10) / 10.0 * tile * 0.5 + sway, -rise * tile * 1.4);
+                Draw.Circle(at, tile * 0.03, Color(1, 0.90, 0.55, Math.Max(0, 1 - picture.celebration / 2.4)));
+            }
+        }
+    }
+}

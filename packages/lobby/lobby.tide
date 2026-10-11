@@ -124,20 +124,15 @@ struct LobbyQuery
     int seats = 1;
 }
 
-// What its owner changes of a lobby: the fields whose `sets` is true, the
-// keys of `data`, and the keys `remove` takes away.
+// What its owner changes of a lobby: the fields that have a value, the keys
+// of `data`, and the keys `remove` takes away.
 struct LobbyChange
 {
-    bool setsName;
-    string name;
-    bool setsMax;
-    int max;
-    bool setsListed;
-    bool listed;
-    bool setsOpen;
-    bool open;
-    bool setsMatch;
-    string match;
+    string? name;
+    int? max;
+    bool? listed;
+    bool? open;
+    string? match;
     Map<string, string> data;
     List<string> remove;
 }
@@ -404,12 +399,11 @@ virtual async LobbyAnswer LobbyLeave(LobbyClient client, string id)
 // Changes a lobby: its owner's to ask.
 virtual async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChange change)
 {
-    mut var body = Json.Write(DataSaid { data = change.data, remove = change.remove });
-    if (change.setsName) body = Merged(body, Json.Write(NameSaid { name = change.name }));
-    if (change.setsMax) body = Merged(body, Json.Write(MaxSaid { max = change.max }));
-    if (change.setsListed) body = Merged(body, Json.Write(ListedSaid { listed = change.listed }));
-    if (change.setsOpen) body = Merged(body, Json.Write(OpenSaid { open = change.open }));
-    if (change.setsMatch) body = Merged(body, Json.Write(MatchSaid { match = change.match }));
+    var body = Json.Write(ChangeSaid
+    {
+        data = change.data, remove = change.remove, name = change.name, max = change.max, listed = change.listed,
+        open = change.open, match = change.match,
+    });
     var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/update", client.me.secret, body);
     return ReadLobby(http);
 }
@@ -629,25 +623,25 @@ void UpdateLobby(mut LobbyClient client, LobbyChange change)
 
 void SetLobbyName(mut LobbyClient client, string name)
 {
-    UpdateLobby(client, LobbyChange { setsName = true, name = name });
+    UpdateLobby(client, LobbyChange { name = name });
 }
 
 // How many members it takes: no fewer than it has.
 void SetLobbyMax(mut LobbyClient client, int max)
 {
-    UpdateLobby(client, LobbyChange { setsMax = true, max = max });
+    UpdateLobby(client, LobbyChange { max = max });
 }
 
 // Whether lists show it and a quick match finds it.
 void SetLobbyListed(mut LobbyClient client, bool listed)
 {
-    UpdateLobby(client, LobbyChange { setsListed = true, listed = listed });
+    UpdateLobby(client, LobbyChange { listed = listed });
 }
 
 // Whether others can join it.
 void SetLobbyOpen(mut LobbyClient client, bool open)
 {
-    UpdateLobby(client, LobbyChange { setsOpen = true, open = open });
+    UpdateLobby(client, LobbyChange { open = open });
 }
 
 // A key of the lobby's own data, which lists filter by.
@@ -1054,7 +1048,7 @@ void Tell(mut LobbyClient client, string address)
 {
     client.told = address;
     client.telling = true;
-    UpdateLobby(client, LobbyChange { setsMatch = true, match = address });
+    UpdateLobby(client, LobbyChange { match = address });
 }
 
 // Starts what the frame's calls asked of the service.

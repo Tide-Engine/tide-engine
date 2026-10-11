@@ -1,0 +1,3 @@
+// expect: a field can't be a grid or nothing: a grid is always there, empty until a cell is set
+component Board { Grid2<int>? cells; }
+scene Main { }

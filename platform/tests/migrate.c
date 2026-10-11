@@ -770,6 +770,71 @@ TIDE_TEST(migrate_a_game_keeps_what_has_the_same_name)
     free(copy);
 }
 
+// T? fields carry over by name as what they are, a value or nothing: one with
+// no value isn't given its default again, and one whose name is new is.
+TIDE_TEST(migrate_carries_optional_fields_as_a_value_or_nothing)
+{
+    const tide_layout *l = &tide_game_layout;
+    tide_layout_type *types = malloc(l->type_count * sizeof *types);
+    memcpy(types, l->types, l->type_count * sizeof *types);
+    tide_layout old = *l;
+    old.types = types;
+    tide_layout_field *fields = NULL;
+    for (uint32_t i = 0; i < old.type_count; i++) {
+        if (strcmp(types[i].name, "Unit") != 0) continue;
+        fields = malloc(types[i].field_count * sizeof *fields);
+        memcpy(fields, types[i].fields, types[i].field_count * sizeof *fields);
+        for (uint32_t k = 0; k < types[i].field_count; k++) {
+            if (strcmp(fields[k].name, "reach") == 0) fields[k].name = "range";
+        }
+        types[i].fields = fields;
+    }
+    TIDE_REQUIRE(fields != NULL);
+
+    tide_world *w = calloc(1, sizeof *w);
+    tide_world *copy = calloc(1, sizeof *copy);
+    tide_world_init(w, 1.0f / 60.0f);
+    const tide_entity first = unit_named(w, "first");
+    const tide_entity second = unit_named(w, "unit");
+    TIDE_REQUIRE(!tide_entity_is_null(first) && !tide_entity_is_null(second));
+    Unit one = tide_get_Unit(w, first);
+    TIDE_CHECK(one.rank.ok && one.rank.value == 4 && one.nick.ok && !one.reach.ok);
+    one.rank = (tide_optional_int){.value = 9, .ok = true};
+    one.reach = (tide_optional_float){.value = 2.5f, .ok = true};
+    tide_set_Unit(w, first, one);
+    Unit two = tide_get_Unit(w, second);
+    two.rank = (tide_optional_int){0}; // Nothing, where the declaration's default is 4
+    two.reach = (tide_optional_float){.value = 7.0f, .ok = true};
+    tide_set_Unit(w, second, two);
+
+    // To the same layout: each as it was
+    tide_migration m;
+    TIDE_REQUIRE(carry(l, w, copy, &m));
+    Unit after = tide_get_Unit(copy, unit_named(copy, "first"));
+    TIDE_CHECK(after.rank.ok && after.rank.value == 9 && after.reach.ok && after.reach.value == 2.5f);
+    const tide_str nick = tide_text_read(&copy->heap, after.nick.value);
+    TIDE_CHECK(after.nick.ok && nick.bytes == 4 && memcmp(nick.ptr, "nick", 4) == 0);
+    after = tide_get_Unit(copy, unit_named(copy, "unit"));
+    TIDE_CHECK(!after.rank.ok && after.rank.value == 0 && after.reach.ok && after.reach.value == 7.0f);
+    TIDE_CHECK(same(w, copy));
+    tide_world_free(copy);
+    memset(copy, 0, sizeof *copy);
+
+    // From a build where `reach` had another name: it starts as its default, nothing, and the rest is as it was
+    TIDE_REQUIRE(carry(&old, w, copy, &m));
+    after = tide_get_Unit(copy, unit_named(copy, "first"));
+    TIDE_CHECK(after.rank.ok && after.rank.value == 9 && after.nick.ok);
+    TIDE_CHECK(!after.reach.ok && after.reach.value == 0.0f);
+    after = tide_get_Unit(copy, unit_named(copy, "unit"));
+    TIDE_CHECK(!after.rank.ok && !after.reach.ok);
+    free(fields);
+    free(types);
+    tide_world_free(w);
+    tide_world_free(copy);
+    free(w);
+    free(copy);
+}
+
 // The local state's bytes, carried over from layout `from` to the game's own, into `copy`.
 static bool carry_local(const tide_layout *from, const tide_local *local, tide_local *copy, tide_migration *m)
 {

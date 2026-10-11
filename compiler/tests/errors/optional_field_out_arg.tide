@@ -1,0 +1,5 @@
+// expect: a T? field can't be passed as 'out': the call would change it where it's kept, which isn't as a T?
+struct Slot { int? item; }
+void Make(out int? value) { value = 1; }
+void Use() { mut Slot slot = Slot { }; Make(out slot.item); }
+scene Main { }
