@@ -595,6 +595,52 @@ TIDE_TEST(skinned_atlas_rechecks_proof_and_keeps_immediate_owned_fallback)
     tide_scratch_reset(mark);
 }
 
+TIDE_TEST(skinned_explicit_captures_recheck_model_identity_across_equal_and_changed_reloads)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw = cache_model(128u, 0.0f), changed = cache_model(128u, 8.0f);
+    size_t first_size, next_size;
+    uint8_t *first_pack = cache_pack(raw, false, &first_size);
+    uint8_t *next_pack = cache_pack(changed, false, &next_size);
+    TIDE_REQUIRE(first_pack && next_pack && tide_pack_load(first_pack, first_size));
+    tide_list pose = {0};
+    TIDE_REQUIRE(tide_skinned_rest(packed_model(), &pose, TIDE_IN_SCRATCH));
+    tide_draw_list immediate = {0}, atlas = {0};
+    uint32_t textures[3][2], plain[3][2], repeat[2];
+    int32_t info[3][4], plain_info[3], repeated[4];
+    tide_float4x4 expected[2][2];
+    expected_palette(packed_model(), pose, expected[0]);
+    uint64_t identity, version, reloaded_identity, reloaded_version;
+    TIDE_REQUIRE(tide_pack_skinned_proof(packed_model(), &identity, &version));
+    for (uint32_t i = 0; i < 3u; i++) {
+        if (i == 1u) {
+            TIDE_REQUIRE(tide_pack_load(first_pack, first_size));
+            TIDE_REQUIRE(tide_pack_skinned_proof(packed_model(), &reloaded_identity, &reloaded_version));
+            TIDE_CHECK(reloaded_identity != identity && reloaded_version == version);
+        } else if (i == 2u) {
+            TIDE_REQUIRE(tide_pack_load(next_pack, next_size));
+            expected_palette(packed_model(), pose, expected[1]);
+        }
+        TIDE_REQUIRE(tide_draw_skinned_data(&immediate, packed_model(), pose, plain[i], plain_info));
+        TIDE_REQUIRE(tide_draw_skinned_atlas(&atlas, packed_model(), pose, textures[i], info[i]));
+        TIDE_REQUIRE(tide_draw_skinned_atlas(&atlas, packed_model(), pose, repeat, repeated));
+        TIDE_CHECK(repeat[0] == textures[i][0] && repeated[3] == info[i][3]);
+    }
+    TIDE_CHECK(plain[0][0] == plain[1][0] && plain[2][0] != plain[0][0]);
+    TIDE_CHECK(info[0][3] == info[1][3] && info[2][3] != info[0][3]);
+    tide_pack_unload();
+    tide_draw_prepare(&atlas, NULL);
+    for (uint32_t i = 0; i < 3u; i++) {
+        TIDE_CHECK(atlas_matches(&atlas, textures[i][0], info[i][3], expected[i == 2u], 2u));
+        TIDE_CHECK(memcmp(immediate.textures[plain[i][0] - 1u].pixels, expected[i == 2u], sizeof expected[0]) == 0);
+    }
+    tide_draw_free(&immediate);
+    tide_draw_free(&atlas);
+    free(first_pack);
+    free(next_pack);
+    tide_scratch_reset(mark);
+}
+
 TIDE_TEST(skinned_rest_capture_reuses_owned_rest_after_edits_growth_and_slot_changes)
 {
     const uint32_t mark = tide_scratch_mark();

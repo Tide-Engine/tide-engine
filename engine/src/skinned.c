@@ -685,7 +685,7 @@ bool tide_skinned_blend(const tide_list a, const tide_list b, const float weight
 }
 
 typedef struct cached_skin_model {
-    uint64_t version;
+    uint64_t version, identity;
     uint32_t nodes, palettes;
     size_t bytes;
 } cached_skin_model;
@@ -808,7 +808,7 @@ static void skin_cache_index(struct tide_skinned_draw_cache *c, const bool model
 }
 
 static uint32_t skin_cache_model(struct tide_skinned_draw_cache *c, const tide_skinned_data_view *v,
-                                 const uint64_t version)
+                                 const uint64_t version, const uint64_t identity)
 {
     const size_t nodes = (size_t)v->nodes * TIDE_SKINNED_NODE_SIZE;
     const size_t palettes = (size_t)v->palettes * TIDE_SKINNED_PALETTE_SIZE;
@@ -818,11 +818,13 @@ static uint32_t skin_cache_model(struct tide_skinned_draw_cache *c, const tide_s
         while (c->model_index[at]) {
             const uint32_t i = c->model_index[at] - 1u;
             const cached_skin_model *m = &c->models[i];
-            // The full content version is an index, never proof of equality.
-            // Exact captured dependencies also guard a pack replaced mid-frame.
+            // A current pack identity proves the captured dependencies have
+            // not changed. Other identities still compare exact owned bytes,
+            // including equal-content replacements and version collisions.
             if (m->version == version && m->nodes == v->nodes && m->palettes == v->palettes
-                && tide_same_bytes(c->bytes + m->bytes, v->data + v->node_at, nodes)
-                && tide_same_bytes(c->bytes + m->bytes + nodes, v->data + v->palette_at, palettes)) return i;
+                && (m->identity == identity
+                    || (tide_same_bytes(c->bytes + m->bytes, v->data + v->node_at, nodes)
+                        && tide_same_bytes(c->bytes + m->bytes + nodes, v->data + v->palette_at, palettes)))) return i;
             at = (at + 1u) & (c->model_slots - 1u);
         }
     }
@@ -832,7 +834,7 @@ static uint32_t skin_cache_model(struct tide_skinned_draw_cache *c, const tide_s
     memcpy(c->bytes + bytes, v->data + v->node_at, nodes);
     memcpy(c->bytes + bytes + nodes, v->data + v->palette_at, palettes);
     const uint32_t model = c->model_count++;
-    c->models[model] = (cached_skin_model){version, v->nodes, v->palettes, bytes};
+    c->models[model] = (cached_skin_model){version, identity, v->nodes, v->palettes, bytes};
     if (c->model_count >= c->model_slots / 2u) skin_cache_index(c, true);
     else c->model_index[at] = model + 1u;
     return model;
@@ -1032,8 +1034,8 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
     const uint32_t mark = tide_scratch_mark();
-    uint64_t version;
-    const bool packed = tide_pack_skinned_version(data, &version);
+    uint64_t version, identity;
+    const bool packed = tide_pack_skinned_proof(data, &identity, &version);
     bool valid = packed || tide_skinned_data_validate(m.view.data, m.view.size);
     const uint64_t pixels = (uint64_t)m.view.vertices + ((uint64_t)m.view.influences + 1u) / 2u;
     valid = valid && m.view.palettes != 0u && pixels > 0u && pixels <= TIDE_LIST_DATA_MOST;
@@ -1045,7 +1047,7 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
         valid = captured != NULL;
         if (valid) {
             if (!draw->skinned) draw->skinned = tide_alloc_zeroed(1u, sizeof *draw->skinned);
-            cached_model = skin_cache_model(draw->skinned, &m.view, version);
+            cached_model = skin_cache_model(draw->skinned, &m.view, version, identity);
             pose_hash = tide_hash_end(tide_hash_more(tide_hash_wide(captured, (size_t)m.view.nodes * sizeof *captured),
                                                     &cached_model, sizeof cached_model));
             const cached_skin_pose *pose = skin_cache_pose(draw->skinned, cached_model, pose_hash, captured,
@@ -1171,8 +1173,8 @@ bool tide_draw_skinned_atlas(tide_draw_list *draw, const tide_list data, const t
     if (!textures || !info) return false;
     memset(textures, 0, 2u * sizeof *textures);
     memset(info, 0, 4u * sizeof *info);
-    uint64_t version;
-    if (!tide_pack_skinned_version(data, &version)) return tide_draw_skinned_data(draw, data, transforms, textures, info);
+    uint64_t version, identity;
+    if (!tide_pack_skinned_proof(data, &identity, &version)) return tide_draw_skinned_data(draw, data, transforms, textures, info);
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
     const uint32_t mark = tide_scratch_mark();
@@ -1183,7 +1185,7 @@ bool tide_draw_skinned_atlas(tide_draw_list *draw, const tide_list data, const t
     valid = valid && trs != NULL;
     if (valid) {
         if (!draw->skinned) draw->skinned = tide_alloc_zeroed(1u, sizeof *draw->skinned);
-        const uint32_t model = skin_cache_model(draw->skinned, &m.view, version);
+        const uint32_t model = skin_cache_model(draw->skinned, &m.view, version, identity);
         const size_t bytes = (size_t)m.view.nodes * sizeof *trs;
         const uint64_t hash = tide_hash_end(tide_hash_more(tide_hash_wide(trs, bytes), &model, sizeof model));
         const cached_skin_pose *pose = atlas_capture(draw, model, version, hash, trs, bytes);
