@@ -1,0 +1,349 @@
+local singleton Picture
+{
+    bool ready;
+    int level = -1;
+    int innerRoom = -1;
+    float2 outside;
+    float2 inside;
+    float2[4] rooms;
+    float2[8] crates;
+    int[8] cargoRoom;
+    float clock;
+    float celebration;
+    bool solved;
+}
+
+Color RoomColor(int room)
+{
+    if (room == 0) return Color(0.41, 0.66, 0.59);
+    if (room == 1) return Color(0.88, 0.61, 0.42);
+    if (room == 2) return Color(0.57, 0.61, 0.78);
+    return Color(0.81, 0.66, 0.38);
+}
+string RoomName(int room)
+{
+    if (room == 0) return "Mint";
+    if (room == 1) return "Peach";
+    if (room == 2) return "Lilac";
+    return "Honey";
+}
+
+void Leaf(float2 at, float size, Color tone)
+{
+    Draw.Ellipse(at, float2(size * 0.23, size * 0.09), -0.45, tone);
+    Draw.Line(at + float2(-size * 0.20, size * 0.09), at + float2(size * 0.19, -size * 0.09), Math.Max(1, size * 0.025), PAPER);
+}
+
+void Crate(float2 at, float size, bool onTarget = false)
+{
+    var height = size * 0.35;
+    Draw.Ellipse(at + float2(0, size * 0.07), float2(size * 0.36, size * 0.14), Color(0.28, 0.25, 0.19, 0.18));
+    var top = onTarget ? Color(0.79, 0.84, 0.56) : Color(0.94, 0.78, 0.51);
+    IsoBlock(at, size, 0.68, height, top, onTarget ? Color(0.57, 0.68, 0.39) : Color(0.76, 0.54, 0.31), onTarget ? Color(0.45, 0.57, 0.31) : Color(0.65, 0.44, 0.25));
+    IsoOutline(at - float2(0, height), size, 0.58, Math.Max(1, size * 0.018), Color(0.99, 0.88, 0.66));
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var a = at + float2(side * size * 0.29, -height + size * 0.04);
+        var b = at + float2(side * size * 0.03, size * 0.15 - height + size * 0.04);
+        var c = b + float2(0, height - size * 0.08);
+        var d = a + float2(0, height - size * 0.08);
+        Draw.Line(a, c, Math.Max(1, size * 0.028), Color(0.52, 0.36, 0.22));
+        Draw.Line(b, d, Math.Max(1, size * 0.028), Color(0.52, 0.36, 0.22));
+    }
+    IsoTop(at - float2(0, height + 0.5), size, 0.16, Color(0.98, 0.88, 0.65));
+}
+
+void Maker(float2 at, float size, int seat, bool mine, float clock)
+{
+    var tone = seat == 0 ? AMBER : TEAL;
+    Draw.Ellipse(at, float2(size * 0.31, size * 0.10), Color(0.25, 0.26, 0.18, 0.20));
+    if (mine)
+    {
+        var pulse = 0.94 + Math.Sin(clock * 2) * 0.03;
+        IsoOutline(at, size, pulse, Math.Max(1.5, size * 0.025), Color(tone.r, tone.g, tone.b, 0.6));
+    }
+    Draw.RoundRect(at + float2(-size * 0.12, -size * 0.05), float2(size * 0.19, size * 0.13), size * 0.05, INK);
+    Draw.RoundRect(at + float2(size * 0.12, -size * 0.05), float2(size * 0.19, size * 0.13), size * 0.05, INK);
+    Draw.RoundRect(at + float2(0, -size * 0.28), float2(size * 0.43, size * 0.45), size * 0.12, Math.Lerp(tone, INK, 0.13));
+    Draw.RoundRect(at + float2(-size * 0.025, -size * 0.30), float2(size * 0.35, size * 0.42), size * 0.10, tone);
+    Draw.Circle(at + float2(0, -size * 0.59), size * 0.21, Color(0.98, 0.87, 0.68));
+    Draw.Ellipse(at + float2(0, -size * 0.72), float2(size * 0.26, size * 0.09), Math.Lerp(tone, INK, 0.09));
+    Draw.RoundRect(at + float2(0, -size * 0.77), float2(size * 0.32, size * 0.16), size * 0.04, tone);
+    Draw.Ellipse(at + float2(0, -size * 0.85), float2(size * 0.16, size * 0.055), Math.Lerp(tone, Color.white, 0.17));
+    Draw.Circle(at + float2(-size * 0.07, -size * 0.59), Math.Max(1, size * 0.022), INK);
+    Draw.Circle(at + float2(size * 0.07, -size * 0.59), Math.Max(1, size * 0.022), INK);
+    Draw.Line(at + float2(-size * 0.11, -size * 0.30), at + float2(size * 0.11, -size * 0.30), size * 0.055, PAPER);
+}
+
+void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
+{
+    IsoTop(at, size, 0.94, variation % 2 == 0 ? Color(0.92, 0.89, 0.76) : Color(0.97, 0.94, 0.82));
+    if (tile == Tile.Target)
+    {
+        Draw.Ellipse(at, float2(size * 0.27, size * 0.13), occupied ? Color(0.53, 0.66, 0.36) : Color(0.76, 0.60, 0.30));
+        Draw.Ellipse(at, float2(size * 0.19, size * 0.09), occupied ? Color(0.78, 0.84, 0.52) : Color(0.94, 0.81, 0.46));
+        Draw.Ellipse(at, float2(size * 0.07, size * 0.035), Color(0.70, 0.54, 0.25));
+    }
+    else if (tile == Tile.Exit)
+    {
+        IsoTop(at, size, 0.80, Color(0.74, 0.84, 0.67));
+        Leaf(at, size * 0.92, TEAL);
+    }
+    else if (tile == Tile.Hatch)
+    {
+        IsoOutline(at, size, 0.67, Math.Max(1, size * 0.025), Color(0.62, 0.55, 0.38));
+        Draw.Line(at + float2(-size * 0.18, -size * 0.03), at + float2(size * 0.15, -size * 0.03), size * 0.04, AMBER);
+        Draw.Line(at + float2(size * 0.15, -size * 0.03), at + float2(size * 0.08, -size * 0.08), size * 0.04, AMBER);
+        Draw.Line(at + float2(size * 0.18, size * 0.05), at + float2(-size * 0.15, size * 0.05), size * 0.04, TEAL);
+        Draw.Line(at + float2(-size * 0.15, size * 0.05), at + float2(-size * 0.08, size * 0.10), size * 0.04, TEAL);
+    }
+    else if (tile == Tile.Switch)
+    {
+        IsoBlock(at, size, 0.58, occupied ? size * 0.025 : size * 0.06, occupied ? Color(0.61, 0.78, 0.44) : Color(0.89, 0.65, 0.37), INK, MUTED);
+    }
+}
+
+void WallTile(float2 at, float size, float height, Color tone)
+{
+    IsoBlock(at, size, 0.96, height, Math.Lerp(tone, Color.white, 0.22), tone, Math.Lerp(tone, INK, 0.22));
+    IsoOutline(at - float2(0, height), size, 0.89, Math.Max(0.7, size * 0.009), Math.Lerp(tone, Color.white, 0.37));
+}
+
+[Stage(ArtStage.Backdrop)]
+view WorkshopBackdrop()
+{
+    Draw.SetScreen();
+    Draw.Clear(Color(0.91, 0.88, 0.77));
+    var screen = float2(Screen.width, Screen.height);
+    for (var i = 0; i < 15; i++)
+    {
+        var y = i * screen.y / 14;
+        Draw.Line(float2(0, y), float2(screen.x, y), 1, Color(0.65, 0.56, 0.39, 0.10));
+        Draw.Line(float2(screen.x * 0.14, y + 7), float2(screen.x * 0.81, y + 7), 1, Color(0.65, 0.56, 0.39, 0.04));
+    }
+    Draw.Shape(Shape { center = float2(screen.x * 0.15, screen.y * 0.35), size = float2(screen.x * 0.8, screen.y), ellipse = true, soft = 140, color = Color(1, 0.98, 0.87, 0.29) });
+}
+
+void Panel(float2 at, float2 size)
+{
+    Draw.Shape(Shape { center = at + float2(0, 6), size = size, radius = 18, color = Color(0.34, 0.29, 0.19, 0.12), soft = 9 });
+    Draw.RoundRect(at, size, 18, PAPER);
+}
+
+void RoomMiniature(Workshop workshop, int room, float2 at, float size, Picture picture)
+{
+    var tone = RoomColor(room);
+    var height = size * 0.24;
+    Draw.Ellipse(at + float2(0, 4), float2(size * 0.46, size * 0.20), Color(0.30, 0.29, 0.21, 0.20));
+    IsoBlock(at, size, 0.94, height, Math.Lerp(tone, Color.white, 0.17), tone, Math.Lerp(tone, INK, 0.22));
+    var raised = at - float2(0, height + 1);
+    var tileSize = size * 0.15;
+    for (var y = 0; y < INNER_SIZE; y++)
+        for (var x = 0; x < INNER_SIZE; x++)
+        {
+            var pos = int2(x, y);
+            var tile = TileAt(workshop.layout, room, pos);
+            var here = IsoPoint(float2(x - 2, y - 2), raised, tileSize);
+            IsoTop(here, tileSize, 0.88, tile == Tile.Wall ? Math.Lerp(tone, INK, 0.18) : Color(0.98, 0.95, 0.82));
+            if (tile == Tile.Exit) Draw.Ellipse(here, float2(tileSize * 0.27, tileSize * 0.13), TEAL);
+            if (tile == Tile.Target) Draw.Ellipse(here, float2(tileSize * 0.27, tileSize * 0.13), AMBER);
+            if (tile == Tile.Switch)
+            {
+                bool held = CargoAt(workshop.layout, workshop.puzzle, room, pos) >= 0 || workshop.puzzle.insideRoom == room && CellEqual(workshop.puzzle.inside, pos);
+                IsoTop(here, tileSize, 0.65, held ? Color(0.64, 0.82, 0.41) : Color(0.97, 0.70, 0.33));
+            }
+        }
+    for (var d = 0; d < 4; d++)
+        if ((workshop.layout.rooms[room].doors & (1 << d)) != 0)
+        {
+            var offset = IsoPoint(float2(Direction(d)) * 2.9, raised, tileSize);
+            IsoTop(offset, tileSize, 0.90, Color(0.99, 0.86, 0.54));
+        }
+    for (var c = 0; c < workshop.layout.crateCount; c++)
+        if (workshop.puzzle.crates[c].active && workshop.puzzle.crates[c].room == room)
+            IsoBlock(IsoPoint(picture.crates[c] - float2(2), raised, tileSize), tileSize, 0.76, tileSize * 0.32, Color(0.98, 0.79, 0.45), Color(0.77, 0.52, 0.26), Color(0.61, 0.40, 0.21));
+    if (workshop.puzzle.insideRoom == room)
+    {
+        var here = IsoPoint(picture.inside - float2(2), raised, tileSize);
+        var avatar = workshop.puzzle.smallSeat == 0 ? AMBER : TEAL;
+        Draw.RoundRect(here - float2(0, tileSize * 0.23), float2(tileSize * 0.46, tileSize * 0.61), tileSize * 0.16, avatar);
+        Draw.Circle(here - float2(0, tileSize * 0.61), tileSize * 0.19, Color(0.99, 0.88, 0.66));
+    }
+    if (!RoomUnlocked(workshop.layout, workshop.puzzle, room))
+    {
+        Draw.RoundRect(raised + float2(size * 0.32, -size * 0.08), float2(size * 0.18, size * 0.15), size * 0.03, INK);
+        Draw.WireCircle(raised + float2(size * 0.32, -size * 0.16), size * 0.055, 1, INK);
+    }
+    IsoOutline(raised, size, 0.94, room == workshop.puzzle.insideRoom ? 2.0 : 1.0, room == workshop.puzzle.insideRoom ? PAPER : Math.Lerp(tone, Color.white, 0.35));
+    Label($"{room + 1}", at + float2(-size * 0.23, size * 0.10 - height * 0.5), Math.Max(9, size * 0.17), PAPER, Anchor.MiddleCenter);
+}
+
+[Stage(ArtStage.Board)]
+view Workbench(Workshop workshop, Rooms.Lobby lobby, mut Hands hands, mut Picture picture)
+{
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    bool narrow = screen.x < 760;
+    var dt = Math.Min(Frame.dt, 0.08);
+    picture.clock += dt;
+    if (picture.clock > 1000) picture.clock -= 1000;
+    if (workshop.puzzle.solved && !picture.solved) picture.celebration = 0;
+    picture.solved = workshop.puzzle.solved;
+    picture.celebration += dt;
+    bool snap = !picture.ready || picture.level != workshop.level || hands.reduceMotion;
+    var blend = snap ? 1.0 : Math.Min(1, dt * 19);
+    picture.outside = Math.Lerp(picture.outside, float2(workshop.puzzle.outside), blend);
+    picture.inside = Math.Lerp(picture.inside, float2(workshop.puzzle.inside), snap || picture.innerRoom != workshop.puzzle.insideRoom ? 1.0 : blend);
+    for (var r = 0; r < MAX_ROOMS; r++) picture.rooms[r] = Math.Lerp(picture.rooms[r], float2(workshop.puzzle.rooms[r]), blend);
+    for (var c = 0; c < MAX_CRATES; c++)
+    {
+        var cargo = workshop.puzzle.crates[c];
+        picture.crates[c] = Math.Lerp(picture.crates[c], float2(cargo.position), snap || picture.cargoRoom[c] != cargo.room ? 1.0 : blend);
+        picture.cargoRoom[c] = cargo.room;
+    }
+    picture.ready = true;
+    picture.level = workshop.level;
+    picture.innerRoom = workshop.puzzle.insideRoom;
+    var contentWidth = Math.Min(screen.x - 36, 1100);
+    var left = (screen.x - contentWidth) * 0.5;
+    Label("inside out", float2(left, 37), narrow ? 29.0 : 36.0, INK);
+    if (!narrow) Label("a little room. a bigger idea.", float2(left, 65), 14, MUTED);
+    var progressX = narrow ? left : left + 230;
+    var progressY = narrow ? 133.0 : 37.0;
+    Label($"{workshop.level + 1:D2} / 12   {LevelName(workshop.level)}", float2(progressX, progressY), narrow ? 13.0 : 17.0, INK);
+    if (!narrow) Paragraph(LevelLesson(workshop.level), float2(progressX, 68), contentWidth - 230, 13, MUTED);
+
+    var top = narrow ? 154.0 : 126.0;
+    var space = Math.Max(160, screen.y - top - (narrow ? 176.0 : 140.0));
+    var panelWidth = narrow ? contentWidth : (contentWidth - 24) * 0.5;
+    var panelHeight = narrow ? (space - 16) * 0.5 : space;
+    var outerAt = float2(left + panelWidth * 0.5, top + panelHeight * 0.5);
+    var innerAt = narrow ? outerAt + float2(0, panelHeight + 16) : outerAt + float2(panelWidth + 24, 0);
+    Panel(outerAt, float2(panelWidth, panelHeight));
+    Panel(innerAt, float2(panelWidth, panelHeight));
+    var outerSide = Math.Min(panelWidth - 38, (panelHeight - (narrow ? 48.0 : 78.0)) * 1.55);
+    var innerSide = Math.Min(panelWidth - 44, (panelHeight - (narrow ? 54.0 : 86.0)) * 1.48);
+    var outerSize = outerSide / OUTER_SIZE;
+    var innerSize = innerSide / INNER_SIZE;
+    var outerCenter = outerAt + float2(0, narrow ? 16.0 : 28.0);
+    var innerCenter = innerAt + float2(0, narrow ? 20.0 : 35.0);
+    var outerStart = IsoPoint(float2(-3), outerCenter, outerSize);
+    var innerStart = IsoPoint(float2(-2), innerCenter, innerSize);
+    Label("THE WORKBENCH", outerAt + float2(-panelWidth * 0.5 + 19, -panelHeight * 0.5 + 22), narrow ? 11.0 : 13.0, AMBER);
+    Label($"{workshop.puzzle.moves} moves", outerAt + float2(panelWidth * 0.5 - 19, -panelHeight * 0.5 + 22), 11, MUTED, Anchor.MiddleRight);
+    var selected = hands.inspect >= 0 && hands.inspect < workshop.layout.roomCount ? hands.inspect : workshop.puzzle.insideRoom;
+    Label($"INSIDE {RoomName(selected).ToUpper()}", innerAt + float2(-panelWidth * 0.5 + 19, -panelHeight * 0.5 + 22), narrow ? 11.0 : 13.0, TEAL);
+    if (!narrow) Label(selected != workshop.puzzle.insideRoom ? "room preview / maker elsewhere" : hands.seat == workshop.puzzle.smallSeat ? "your room" : "your partner's room", innerAt + float2(panelWidth * 0.5 - 19, -panelHeight * 0.5 + 22), 11, MUTED, Anchor.MiddleRight);
+
+    Draw.Shape(Shape { center = outerCenter + float2(0, 18), size = float2(outerSide * 0.97, outerSide * 0.49), ellipse = true, soft = 14, color = Color(0.33, 0.28, 0.17, 0.20) });
+    Draw.Shape(Shape { center = innerCenter + float2(0, 17), size = float2(innerSide * 0.97, innerSide * 0.49), ellipse = true, soft = 14, color = Color(0.33, 0.28, 0.17, 0.20) });
+    IsoBlock(outerCenter + float2(0, 13), outerSide + 13, 1, 13, Color(0.74, 0.62, 0.41), Color(0.60, 0.45, 0.28), Color(0.48, 0.36, 0.22));
+    IsoBlock(innerCenter + float2(0, 13), innerSide + 12, 1, 13, RoomColor(selected), Math.Lerp(RoomColor(selected), INK, 0.20), Math.Lerp(RoomColor(selected), INK, 0.40));
+    for (var y = 0; y < OUTER_SIZE; y++)
+        for (var x = 0; x < OUTER_SIZE; x++)
+        {
+            var pos = int2(x, y);
+            TilePaint(TileAt(workshop.layout, -1, pos), IsoPoint(float2(x, y), outerStart, outerSize), outerSize, CargoAt(workshop.layout, workshop.puzzle, -1, pos) >= 0, x + y);
+        }
+    for (var r = 0; r < workshop.layout.roomCount; r++)
+    {
+        var dock = workshop.layout.rooms[r].dock;
+        if (OnGrid(dock, OUTER_SIZE))
+        {
+            var at = IsoPoint(float2(dock), outerStart, outerSize);
+            IsoOutline(at, outerSize, 0.86, Math.Max(2, outerSize * 0.03), RoomColor(r));
+            Label($"{r + 1}", at, outerSize * 0.22, RoomColor(r), Anchor.MiddleCenter);
+        }
+        for (var d = 0; d < 4; d++)
+        {
+            var neighbour = RoomAt(workshop.layout, workshop.puzzle, workshop.puzzle.rooms[r] + Direction(d));
+            if (neighbour <= r || (workshop.layout.rooms[r].doors & (1 << d)) == 0 || (workshop.layout.rooms[neighbour].doors & (1 << ((d + 2) % 4))) == 0) continue;
+            var a = IsoPoint(picture.rooms[r], outerStart, outerSize);
+            var b = IsoPoint(picture.rooms[neighbour], outerStart, outerSize);
+            Draw.Line(a + float2(0, 2), b + float2(0, 2), outerSize * 0.17, Color(0.65, 0.47, 0.22));
+            Draw.Line(a, b, outerSize * 0.12, Color(0.96, 0.81, 0.47));
+        }
+    }
+    // Back-to-front cell order keeps every miniature grounded in the board.
+    for (var depth = 0; depth <= (OUTER_SIZE - 1) * 2; depth++)
+        for (var x = 0; x < OUTER_SIZE; x++)
+    {
+        var y = depth - x;
+        if (y < 0 || y >= OUTER_SIZE) continue;
+        var pos = int2(x, y);
+        var at = IsoPoint(float2(pos), outerStart, outerSize);
+        if (TileAt(workshop.layout, -1, pos) == Tile.Wall)
+            WallTile(at, outerSize, outerSize * (x == 0 || y == 0 ? 0.37 : 0.12), Color(0.63, 0.65, 0.54));
+        var room = RoomAt(workshop.layout, workshop.puzzle, pos);
+        if (room >= 0)
+        {
+            var roomAt = IsoPoint(picture.rooms[room], outerStart, outerSize);
+            RoomMiniature(workshop, room, roomAt, outerSize * 0.92, picture);
+            if (lobby.page == Rooms.Page.Playing && hands.seat != workshop.puzzle.smallSeat)
+            {
+                var inspect = GUI.Control(Rect(roomAt.x - outerSize * 0.44, roomAt.y - outerSize * 0.46, outerSize * 0.88, outerSize * 0.68));
+                if (inspect.clicked) hands.inspect = room == workshop.puzzle.insideRoom ? -1 : room;
+            }
+        }
+        for (var c = 0; c < workshop.layout.crateCount; c++)
+            if (workshop.puzzle.crates[c].active && workshop.puzzle.crates[c].room < 0 && CellEqual(workshop.puzzle.crates[c].position, pos))
+                Crate(IsoPoint(picture.crates[c], outerStart, outerSize), outerSize, TileAt(workshop.layout, -1, pos) == Tile.Target);
+        if (CellEqual(workshop.puzzle.outside, pos))
+            Maker(IsoPoint(picture.outside, outerStart, outerSize), outerSize * 0.70, 1 - workshop.puzzle.smallSeat, hands.seat == 1 - workshop.puzzle.smallSeat, hands.reduceMotion ? 0.0 : picture.clock);
+    }
+
+    for (var y = 0; y < INNER_SIZE; y++)
+        for (var x = 0; x < INNER_SIZE; x++)
+        {
+            var pos = int2(x, y);
+            bool occupied = CargoAt(workshop.layout, workshop.puzzle, selected, pos) >= 0 || workshop.puzzle.insideRoom == selected && CellEqual(workshop.puzzle.inside, pos);
+            TilePaint(TileAt(workshop.layout, selected, pos), IsoPoint(float2(x, y), innerStart, innerSize), innerSize, occupied, x + y);
+        }
+    for (var d = 0; d < 4; d++)
+        if ((workshop.layout.rooms[selected].doors & (1 << d)) != 0)
+        {
+            var tile = IsoPoint(float2(DoorCell(d)), innerStart, innerSize);
+            var neighbour = RoomAt(workshop.layout, workshop.puzzle, workshop.puzzle.rooms[selected] + Direction(d));
+            bool joined = neighbour >= 0 && (workshop.layout.rooms[neighbour].doors & (1 << ((d + 2) % 4))) != 0;
+            var arrowAt = IsoPoint(float2(DoorCell(d)) + float2(Direction(d)) * 0.47, innerStart, innerSize);
+            Draw.Line(tile, arrowAt, innerSize * 0.085, joined ? RoomColor(neighbour) : Color(0.68, 0.55, 0.32));
+            Draw.Ellipse(arrowAt, float2(innerSize * 0.10, innerSize * 0.05), joined ? RoomColor(neighbour) : Color(0.89, 0.73, 0.43));
+        }
+    for (var depth = 0; depth <= (INNER_SIZE - 1) * 2; depth++)
+        for (var x = 0; x < INNER_SIZE; x++)
+        {
+            var y = depth - x;
+            if (y < 0 || y >= INNER_SIZE) continue;
+            var pos = int2(x, y);
+            var at = IsoPoint(float2(pos), innerStart, innerSize);
+            if (TileAt(workshop.layout, selected, pos) == Tile.Wall)
+                WallTile(at, innerSize, innerSize * (x == 0 || y == 0 ? 0.48 : 0.12), Math.Lerp(RoomColor(selected), Color(0.74, 0.77, 0.65), 0.45));
+            for (var c = 0; c < workshop.layout.crateCount; c++)
+                if (workshop.puzzle.crates[c].active && workshop.puzzle.crates[c].room == selected && CellEqual(workshop.puzzle.crates[c].position, pos))
+                    Crate(IsoPoint(picture.crates[c], innerStart, innerSize), innerSize, TileAt(workshop.layout, selected, pos) == Tile.Target);
+            if (workshop.puzzle.insideRoom == selected && CellEqual(workshop.puzzle.inside, pos))
+                Maker(IsoPoint(picture.inside, innerStart, innerSize), innerSize * 0.73, workshop.puzzle.smallSeat, hands.seat == workshop.puzzle.smallSeat, hands.reduceMotion ? 0.0 : picture.clock);
+        }
+
+    if (!narrow)
+    {
+        Compass(outerAt + float2(panelWidth * 0.5 - 55, panelHeight * 0.5 - 88), hands.held);
+        Compass(innerAt + float2(panelWidth * 0.5 - 55, panelHeight * 0.5 - 88), hands.held);
+        Label("Leaf = exit    Brass circle = crate target", outerAt + float2(0, panelHeight * 0.5 - 20), 11, MUTED, Anchor.MiddleCenter);
+        var tabWidth = Math.Min(82, (panelWidth - 34) / workshop.layout.roomCount);
+        for (var r = 0; r < workshop.layout.roomCount; r++)
+        {
+            var x = innerAt.x - workshop.layout.roomCount * tabWidth * 0.5 + r * tabWidth;
+            if (PaperButton(RoomName(r), Rect(x + 2, innerAt.y + panelHeight * 0.5 - 34, tabWidth - 4, 25), lobby.page == Rooms.Page.Playing, selected == r))
+                hands.inspect = r == workshop.puzzle.insideRoom ? -1 : r;
+        }
+    }
+    if (workshop.puzzle.solved && picture.celebration < 2 && !hands.reduceMotion)
+        for (var i = 0; i < 22; i++)
+        {
+            var t = picture.celebration;
+            var x = screen.x * 0.5 + Math.Sin(i * 2.7) * t * 180;
+            var y = screen.y * 0.48 - t * 180 + t * t * 82 + Math.Cos(i * 1.8) * 30;
+            Draw.Rect(float2(x, y), float2(5, 9), i * 0.7 + t, Color(RoomColor(i % 4).r, RoomColor(i % 4).g, RoomColor(i % 4).b, Math.Max(0, 1 - t * 0.5)));
+        }
+}

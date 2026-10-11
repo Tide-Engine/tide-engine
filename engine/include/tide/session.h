@@ -61,9 +61,18 @@ typedef enum tide_prediction {
     TIDE_PREDICTION_DELAY,
 } tide_prediction;
 
+typedef struct tide_view_time {
+    int32_t tick; // Upper endpoint; the presented time is tick - 1 + alpha.
+    float alpha;
+    bool valid;
+} tide_view_time;
+
 // What a session needs from a game. tidec generates it as tide_game_api in
 // <game>.h; games without an input have no input functions.
 typedef struct tide_game {
+    float max_rewind; // Finite seconds of collider history; 0 disables it.
+    tide_view_time (*view_time)(const void *input);
+    void (*set_view_time)(void *input, tide_view_time time);
     uint64_t hash;            // Tells builds apart: servers only take players of the same game
     uint32_t world_size;      // sizeof(tide_world): a world starts as that many zeros
     uint32_t input_size;      // sizeof(tide_input), or 0
@@ -406,7 +415,9 @@ typedef struct tide_client_status {
 // What views draw: the latest tick's world, the one before it, and how far
 // this moment is between them (0 to 1), to blend them. Views draw a tick late
 // that way, but smoothly at any tick rate. `previous` is NULL right after the
-// world arrives. `verified` is the last world the server confirmed: an entity
+// world arrives. `verified` and `verified_previous` bracket a separate confirmed
+// presentation clock, which holds at the latest confirmation without extrapolating.
+// `verified_alpha` blends that interval. An entity
 // in neither it nor `current` is gone for good, where one only `current` lost
 // may be back once the server says how the tick went, so what this machine
 // keeps for the match's entities (their local fields) goes by both.
@@ -415,6 +426,9 @@ typedef struct tide_view_worlds {
     const void *previous;
     float alpha;
     const void *verified; // NULL outside a match
+    const void *verified_previous;
+    float verified_alpha;
+    uint32_t verified_tick; // Upper endpoint of the confirmed presentation interval.
 } tide_view_worlds;
 
 tide_client *tide_client_create(const tide_client_desc *desc, double now);

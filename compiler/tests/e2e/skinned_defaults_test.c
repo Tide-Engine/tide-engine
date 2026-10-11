@@ -51,7 +51,7 @@ static uint64_t check_defaults(const int32_t length)
 static void frame(const int32_t length)
 {
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     uint32_t instances = 0;
     for (uint32_t i = 0; i < draw.count; i++) {
         const tide_draw_command *c = &draw.commands[i];

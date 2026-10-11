@@ -27,6 +27,7 @@ component Pack
 singleton Board
 {
     int n;
+    HeapValue custom;
     string title;
     List<int> row;
     List<string> notes;
@@ -36,6 +37,13 @@ singleton Board
 // What the views read, as text a test compares
 local singleton Probe
 {
+    float mixedSample;
+    float predictedSample;
+    float singletonSample;
+    float confirmedSample;
+    float querySample;
+    float gridSample;
+    string interpolatedLabel;
     string drawn;      // Pack 1 as it's drawn...
     string sure;       // ...and as confirmed, in the same view
     string copied;     // The confirmed one through a copy of the whole value, and a function that takes it
@@ -51,6 +59,8 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
+    Spawn(HeapPack);
+    Spawn(HeapGrid);
     Spawn(Pack { id = 1 });
     Spawn(Pack { id = 2 });
 }
@@ -164,3 +174,48 @@ view Boards(Board board, verified Board sure, mut Probe probe)
     probe.board = ReadBoard(board);
     probe.sureBoard = ReadBoard(sure);
 }
+
+struct HeapValue
+{
+    List<float> values;
+    Map<string, Item> items;
+    string label;
+    float sample;
+    HeapValue Interpolate(HeapValue from, HeapValue to, float t)
+    {
+        return HeapValue { values = to.values, label = $"{from.label}:{to.label}", items = to.items,
+            sample = Math.Lerp(from.values[0], to.values[0], t) + from.items["first"].count - from.values[0] };
+    }
+}
+component HeapPack { HeapValue value; }
+system GrowHeapPack(mut HeapPack pack, mut Board board, Time time)
+{
+    pack.value = HeapValue { values = [float(time.tick + 1)], label = $"{time.tick + 1}" };
+    pack.value.items["first"] = Item { name = "first", count = time.tick + 1 };
+    board.custom = pack.value;
+}
+view HeapMixed(HeapPack predicted, verified HeapPack confirmed, verified Board board, mut Probe probe)
+{
+    probe.mixedSample = confirmed.value.sample;
+    probe.predictedSample = predicted.value.sample;
+    probe.singletonSample = board.custom.sample;
+    probe.interpolatedLabel = confirmed.value.label;
+}
+view HeapConfirmed(verified HeapPack pack, mut Probe probe,
+    query (verified HeapPack pack) all)
+{
+    probe.confirmedSample = pack.value.sample;
+    foreach (var row in all) probe.querySample = row.pack.value.sample;
+}
+
+component HeapGrid
+{
+    Grid2<int> cells = Grid2(64, 64);
+    float sample;
+    HeapGrid Interpolate(HeapGrid before, HeapGrid now, float t)
+    {
+        return HeapGrid { sample = Math.Lerp(float(before.cells[0, 0]), float(now.cells[0, 0]), t) };
+    }
+}
+system GrowHeapGrid(mut HeapGrid grid, Time time) { grid.cells[0, 0] = time.tick + 1; }
+view ConfirmedHeapGrid(verified HeapGrid grid, mut Probe probe) { probe.gridSample = grid.sample; }

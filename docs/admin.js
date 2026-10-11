@@ -11,8 +11,8 @@ const cookieName = 'tide_admin';
 const bot = /bot|crawler|spider|headless|lighthouse|curl|wget|healthcheck/i;
 
 // Keep retired aliases from serving stale builds; games have one public root.
-const retiredPrototype = /(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine|dead[-_]signal|deadbell|rocket[-_]league|aerial)(?:[\/._-]|$)/i;
-const prototypePath = /^\/prototypes\/(?:two-forks|the-last-light|cabin-nine|dead-signal|deadbell|rocket-league|aerial)(\/.*)?$/;
+const retiredPrototype = /(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine|dead[-_]signal|deadbell|rocket[-_]league|aerial|inside[-_]out)(?:[\/._-]|$)/i;
+const prototypePath = /^\/prototypes\/(?:two-forks|the-last-light|cabin-nine|dead-signal|deadbell|rocket-league|aerial|inside-out)(\/.*)?$/;
 
 /** @param {string | null} value */
 function destination(value) {

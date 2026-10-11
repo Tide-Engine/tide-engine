@@ -1,0 +1,7 @@
+// expect: JSON has nothing for Set<int>, which 'Picks.taken' holds
+// expect: JSON has arrays: keep the keys in a List<T>
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+struct Picks { Set<int> taken; }
+system Run(mut Seen seen) { seen.text = Json.Write(Picks { }); }

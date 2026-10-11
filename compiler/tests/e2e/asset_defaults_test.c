@@ -81,7 +81,7 @@ static void finish(void)
 static void frame(void)
 {
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 // Text, bytes, a list and a map: copies of the pack's, in the match's own heap.

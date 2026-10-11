@@ -3672,6 +3672,26 @@ TIDE_TEST(lsp_methods_and_functions)
     "    Spawn(Ground);\n"                                                     \
     "}\n"
 
+TIDE_TEST(lsp_singleton_methods_and_presented_view_time)
+{
+    start();
+#define SINGLETON_METHODS "settings { maxRewind = 0.25; }\n" \
+        "singleton Physics { float distance; bool Raycast(float value) { return value > distance; }\n" \
+        "mut void Reset() { distance = 0; } }\ninput Controls { bool fire; }\nscene Main { }\n"
+    const char *members = complete("singleton Physics { float distance; bool Raycast(float value) { return value > distance; } }\n"
+        "scene Main { }\nview Show(Physics physics) { physics.$ }\n");
+    TIDE_CHECK(offers(members, "Raycast") && offers(members, "distance"));
+    TIDE_CHECK(offers(complete("singleton Physics { float distance; bool Raycast(float value) { return $ } }\nscene Main { }\n"), "distance"));
+    open_document(SINGLETON_METHODS "system Fire(Controls controls, Physics physics) { if (controls.fire && controls.viewTime.valid) physics.Raycast(1); }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    open_document(SINGLETON_METHODS "view Show(Physics physics) { physics.Ray$cast(1); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Method of singleton `Physics`"));
+    open_document(SINGLETON_METHODS "system Change(Physics physics) { physics.Reset(); }\n");
+    TIDE_CHECK(has(last_sent(), "read-only"));
+    TIDE_CHECK(offers(complete(SINGLETON_METHODS "system Fire(Controls controls) { controls.viewTime.$ }\n"), "valid"));
+#undef SINGLETON_METHODS
+}
+
 TIDE_TEST(lsp_extern_functions)
 {
     start();
@@ -8011,6 +8031,34 @@ TIDE_TEST(lsp_out_completion)
     TIDE_CHECK(offers(complete(OUT_PARAMS "struct Pile\n{\n    int size;\n    mut void Halve() { TryHalf(size, out $); }\n}\n"), "size"));
 }
 
+TIDE_TEST(lsp_animation_catalog_try_get)
+{
+    start();
+    static const char prefix[] = "scene Main { }\nvoid Read(AnimationCatalog clips, Skeleton skeleton)\n{\n";
+    char text[1024];
+    snprintf(text, sizeof text, "%s    clips.$\n}\n", prefix);
+    const char *members = complete(text);
+    TIDE_CHECK(offers(members, "TryGetByName") && offers(members, "TryGetAt")
+               && !offers(members, "Find") && !offers(members, "At"));
+    TIDE_CHECK(has(members, "AnimationCatalog.TryGetAt(int index, out Animation result) -> bool"));
+    TIDE_CHECK(has(members, "TryGetByName(${1:name}, out var ${2:result})"));
+    snprintf(text, sizeof text, "%s    clips.TryGetAt(0, $);\n}\n", prefix);
+    TIDE_CHECK(offers(complete(text), "out var result"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "out Animation result) -> bool"));
+    snprintf(text, sizeof text, "%s    clips.TryGetByName(result: out $, name: \"Run\");\n}\n", prefix);
+    TIDE_CHECK(offers(complete(text), "Animation"));
+    snprintf(text, sizeof text, "%s    if (clips.TryGetAt(0, out var clip)) Debug.Log(clip.$);\n}\n", prefix);
+    TIDE_CHECK(offers(complete(text), "duration"));
+    snprintf(text, sizeof text, "%s    skeleton.bones.$\n}\n", prefix);
+    members = complete(text);
+    TIDE_CHECK(has(members, "TryGetAt(int index, out Bone result) -> bool") && !offers(members, "Find"));
+    snprintf(text, sizeof text, "%s    skeleton.TryGetByName(\"Arm\", out $);\n}\n", prefix);
+    TIDE_CHECK(offers(complete(text), "Bone"));
+    snprintf(text, sizeof text, "%s    if (clips.TryGetByNa$me(\"Run\", out var clip)) Debug.Log(clip.name);\n}\n", prefix);
+    open_document(text);
+    TIDE_CHECK(has(request("textDocument/hover"), "TryGetByName(string name, out Animation result) -> bool"));
+}
+
 // A map's TryGet, the engine's own `out` parameter.
 TIDE_TEST(lsp_map_try_get)
 {
@@ -8524,6 +8572,74 @@ TIDE_TEST(lsp_web_requests)
     open_document("local scene Main { }\nview Start() { }\n");
     TIDE_CHECK(!has(last_sent(), "web.tide"));
 #undef TASK
+}
+
+// Json's calls, string's own and the numbers out of text: what the editor offers after each dot, says
+// of each call, and counts as a use of the type a read names
+TIDE_TEST(lsp_json_and_text_primitives)
+{
+    start();
+#define JSON_TYPES                                                                                              \
+    "struct Score { string name; [Json(\"max_players\")] int most; }\nsingleton Seen { string text; int n; }\n" \
+    "scene Main { }\n"
+    const char *json = complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = Json.$\n}\n");
+    TIDE_CHECK(offers(json, "Read") && offers(json, "Write") && has(json, "Json.Read<T>(string json) -> T?"));
+    TIDE_CHECK(offers(complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = $\n}\n"), "Json"));
+    const char *own = complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = string.$\n}\n");
+    TIDE_CHECK(offers(own, "FromBytes") && !offers(own, "Trim"));
+    const char *text = complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var pieces = seen.text.$\n}\n");
+    TIDE_CHECK(offers(text, "ToBytes") && offers(text, "Split") && offers(text, "Trim") && !offers(text, "FromBytes"));
+    TIDE_CHECK(offers(complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var ok = int.$\n}\n"), "TryParse"));
+    TIDE_CHECK(offers(complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var ok = float.$\n}\n"), "TryParse"));
+    TIDE_CHECK(offers(complete("struct Score\n{\n    [$] int most;\n}\nscene Main { }\n"), "Json"));
+
+    // Every call checks, and each says what it is
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n"
+                             "    var score = Json.Read<Score>(seen.text) ?? Score { };\n"
+                             "    var scores = Json.Read<List<Score>>(seen.text.ToBytes()) ?? [];\n"
+                             "    seen.text = Json.Write(score) + (string.FromBytes(seen.text.ToBytes()) ?? \"\");\n"
+                             "    if (int.TryParse(seen.text, out var n) && float.TryParse(seen.text, out var f)) seen.n = n + int(f);\n"
+                             "    seen.n += seen.text.Split(\",\").count + scores.count;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *read = hover_at(5, 23);
+    TIDE_CHECK(has(read, "Json.Read<T>(string json) -> T?") && has(read, "Json.Read<T>(List<byte> json) -> T?"));
+    TIDE_CHECK(has(read, "A key the JSON leaves out keeps its field's default"));
+    TIDE_CHECK(has(hover_at(5, 17), "JSON to and from the game's own structs"));
+    TIDE_CHECK(has(hover_at(5, 28), "struct Score")); // The type a read names is a use of it
+    TIDE_CHECK(has(hover_at(6, 34), "struct Score")); // ...inside a list's too
+    TIDE_CHECK(has(hover_at(5, 9), "Score score")); // What `??` unwrapped
+    TIDE_CHECK(has(hover_at(7, 23), "Json.Write(T value) -> string"));
+    const char *from = hover_at(7, 45);
+    TIDE_CHECK(has(from, "string.FromBytes(List<byte> bytes) -> string?") && has(from, "or nothing when they aren't"));
+    TIDE_CHECK(has(hover_at(7, 66), "string.ToBytes() -> List<byte>"));
+    const char *parse = hover_at(8, 14);
+    TIDE_CHECK(has(parse, "int.TryParse(string text, out int value) -> bool") && has(parse, "Whether the whole text is an int"));
+    TIDE_CHECK(has(hover_at(8, 54), "float.TryParse(string text, out float value) -> bool"));
+    TIDE_CHECK(has(hover_at(8, 40), "int n")); // The local the call makes
+    const char *split = hover_at(9, 24);
+    TIDE_CHECK(has(split, "string.Split(string separator) -> List<string>") && has(split, "string.Split(char separator) -> List<string>"));
+    TIDE_CHECK(has(hover_at(0, 30), "[Json(\\\"key\\\")]") && has(hover_at(0, 30), "This field's key in JSON"));
+    // The struct's uses: its declaration, both reads, the fallback
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 8, "\"context\":{\"includeDeclaration\":true}"),
+                     "\"uri\"") == 4);
+
+    // Signature help, through the type in <>, a type inside it, and an out argument
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var score = Json.Read<Score>($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Json.Read<T>(string json) -> T?"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var scores = Json.Read<List<Score>>($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Json.Read<T>(List<byte> json) -> T?"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    seen.text = Json.Write($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Json.Write(T value) -> string"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = string.FromBytes($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "string.FromBytes(List<byte> bytes) -> string?"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var ok = long.TryParse(seen.text, $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "long.TryParse(string text, out long value) -> bool") && has(help, "\"activeParameter\":1"));
+
+    // What's wrong is said where it's written
+    open_document(JSON_TYPES "struct Held { Entity owner; }\nsystem Run(mut Seen seen)\n{\n    seen.text = Json.Write(Held { });\n}\n");
+    TIDE_CHECK(has(last_sent(), "JSON has nothing for Entity, which 'Held.owner' holds"));
+#undef JSON_TYPES
 }
 
 TIDE_TEST(lsp_functions_send_and_spawn)
@@ -10884,7 +11000,7 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     open_uri(uri_main, text);
     const char *completion = request_at(uri_main, "textDocument/completion", 6, 21, "");
     TIDE_CHECK(offers(completion, "idle") && offers(completion, "run"));
-    TIDE_CHECK(offers(completion, "count") && offers(completion, "Find") && offers(completion, "At"));
+    TIDE_CHECK(offers(completion, "count") && offers(completion, "TryGetByName") && offers(completion, "TryGetAt"));
     TIDE_CHECK(!offers(completion, "Jump") && !offers(completion, "jump") && !offers(completion, "bad name")
                && !offers(completion, "for") && !offers(completion, "data"));
     TIDE_CHECK(has(completion, "original source name `Idle`"));
@@ -10902,13 +11018,13 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     snprintf(text, sizeof text, "%svoid Helper(SkinnedMesh<Corner> model)\n{\n    model.animations.\n}\n", prefix);
     open_uri(uri_main, text);
     completion = request_at(uri_main, "textDocument/completion", 5, 21, "");
-    TIDE_CHECK(offers(completion, "Find") && offers(completion, "At") && !offers(completion, "idle"));
+    TIDE_CHECK(offers(completion, "TryGetByName") && offers(completion, "TryGetAt") && !offers(completion, "idle"));
 
     snprintf(text, sizeof text, "%sstruct Locomotion { Animation idle; [Name(\"Run\")] Animation sprint; Bone hand; }\n"
                                "void Helper(SkinnedMesh<Corner, Locomotion> model)\n{\n    model.animations.\n}\n", prefix);
     open_uri(uri_main, text);
     completion = request_at(uri_main, "textDocument/completion", 6, 21, "");
-    TIDE_CHECK(offers(completion, "idle") && offers(completion, "sprint") && offers(completion, "Find") && !offers(completion, "hand"));
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "sprint") && offers(completion, "TryGetByName") && !offers(completion, "hand"));
     TIDE_CHECK(has(completion, "original source name `Run`"));
 
     snprintf(text, sizeof text, "%sview V()\n{\n    var pose = hero.animations.idle.Sample(0);\n"
@@ -10926,7 +11042,7 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     snprintf(text, sizeof text, "%sview V()\n{\n    hero.skeleton.bones.\n}\n", prefix);
     open_uri(uri_main, text);
     completion = request_at(uri_main, "textDocument/completion", 5, 24, "");
-    TIDE_CHECK(offers(completion, "root") && offers(completion, "hand") && offers(completion, "Find") && !offers(completion, "data"));
+    TIDE_CHECK(offers(completion, "root") && offers(completion, "hand") && offers(completion, "TryGetByName") && !offers(completion, "data"));
 
     // A watched notification invalidates even the unchanged file's size/time.
     char changed[1024];
@@ -10987,7 +11103,7 @@ TIDE_TEST(lsp_skinned_fbx_catalogs_complete_names_paths_and_refresh)
     snprintf(text, sizeof text, "%sview V()\n{\n    hero.skeleton.bones.\n}\n", prefix);
     open_uri(uri_main, text);
     completion = request_at(uri_main, "textDocument/completion", 6, 24, "");
-    TIDE_CHECK(offers(completion, "root") && offers(completion, "hand") && offers(completion, "Find"));
+    TIDE_CHECK(offers(completion, "root") && offers(completion, "hand") && offers(completion, "TryGetByName"));
     completion = request_at(uri_main, "textDocument/completion", 1, 42, "");
     TIDE_CHECK(offers(completion, "hero.FBX") && !offers(completion, "static.obj"));
     completion = request_at(uri_main, "textDocument/completion", 2, 50, "");
@@ -11002,23 +11118,23 @@ TIDE_TEST(lsp_skinned_fbx_catalogs_complete_names_paths_and_refresh)
              "\"params\":{\"changes\":[{\"uri\":\"%s\",\"type\":2}]}}", uri_model);
     handle(notification);
     TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1u && model_metadata_statistics().file_reads == warm.file_reads + 1u);
-    static const char animation_prefix[] = "asset Animations movement = \"art/hero.FBX\";\n"
-                                           "asset List<Animations> clips = \"art/hero.FBX\";\n"
+    static const char animation_prefix[] = "asset AnimationCatalog movement = \"art/hero.FBX\";\n"
+                                           "asset List<AnimationCatalog> clips = \"art/hero.FBX\";\n"
                                            "scene Main { }\n";
     snprintf(text, sizeof text, "%sview V()\n{\n    movement.\n}\n", animation_prefix);
     open_uri(uri_main, text);
     completion = request_at(uri_main, "textDocument/completion", 5, 13, "");
-    TIDE_CHECK(offers(completion, "idle") && offers(completion, "run") && offers(completion, "Find")
-               && offers(completion, "At") && offers(completion, "count") && !offers(completion, "skeleton"));
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "run") && offers(completion, "TryGetByName")
+               && offers(completion, "TryGetAt") && offers(completion, "count") && !offers(completion, "skeleton"));
     TIDE_CHECK(has(completion, "original source name `Idle`"));
     const model_metadata_stats shared = model_metadata_statistics();
     TIDE_CHECK(shared.parses == warm.parses + 1u && shared.file_reads == warm.file_reads + 1u);
-    completion = request_at(uri_main, "textDocument/completion", 0, (int)strlen("asset Animations movement = \"art/"), "");
+    completion = request_at(uri_main, "textDocument/completion", 0, (int)strlen("asset AnimationCatalog movement = \"art/"), "");
     TIDE_CHECK(offers(completion, "hero.FBX") && !offers(completion, "static.obj"));
-    completion = request_at(uri_main, "textDocument/completion", 1, (int)strlen("asset List<Animations> clips = \"art/"), "");
+    completion = request_at(uri_main, "textDocument/completion", 1, (int)strlen("asset List<AnimationCatalog> clips = \"art/"), "");
     TIDE_CHECK(offers(completion, "*.fbx") && offers(completion, "**/*.fbx") && !offers(completion, "*.obj"));
-    hover = request_at(uri_main, "textDocument/hover", 0, 20, "");
-    TIDE_CHECK(has(hover, "asset Animations movement") && has(hover, "glTF or FBX") && has(hover, "without typed render geometry"));
+    hover = request_at(uri_main, "textDocument/hover", 0, (int)strlen("asset AnimationCatalog ") + 2, "");
+    TIDE_CHECK(has(hover, "asset AnimationCatalog movement") && has(hover, "glTF or FBX") && has(hover, "without typed render geometry"));
     char replacement[sizeof fbx_catalog_fixture];
     memcpy(replacement, fbx_catalog_fixture, sizeof fbx_catalog_fixture);
     memcpy(strstr(replacement, "Idle"), "Walk", 4);
@@ -11059,7 +11175,7 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
     snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_skin_status/main.tide", dir);
     start_in_with(root, ASSET_EDITOR_CAPABILITIES);
     open_uri(uri_main, main_file);
-    TIDE_CHECK(has(last_sent(), "Animations has no checked member 'walk'") && !has(last_sent(), "metadata is unavailable"));
+    TIDE_CHECK(has(last_sent(), "AnimationCatalog has no checked member 'walk'") && !has(last_sent(), "metadata is unavailable"));
     write_file("lsp_skin_status/hero.gltf", "{broken JSON}");
     game_path(path, sizeof path, "lsp_skin_status/hero.gltf");
     model_metadata_invalidate(path);
@@ -11074,7 +11190,7 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
 
     // Dynamic access remains usable when the editor has no cached model.
     static const char dynamic[] = "asset SkinnedMesh<Vertex3> hero = \"https://must-never-be-contacted.invalid/model.glb\";\n"
-                                 "scene Main { }\nview V() { if (hero.animations.Find(\"Idle\") is Animation clip) Debug.Log(clip.name); }\n";
+                                 "scene Main { }\nview V() { if (hero.animations.TryGetByName(\"Idle\", out var clip)) Debug.Log(clip.name); }\n";
     open_uri(uri_main, dynamic);
     TIDE_CHECK(diagnosed(0, (int)(strchr(dynamic, '"') - dynamic), 51, 3, "model catalog metadata is unavailable:")
                && !has(last_sent(), "\"severity\":1"));
@@ -11091,7 +11207,7 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
                                      "scene Main { }\nview V()\n{\n    hero.animations.\n}\n";
     open_uri(uri_main, contracted);
     const char *completion = request_at(uri_main, "textDocument/completion", 5, 20, "");
-    TIDE_CHECK(offers(completion, "idle") && offers(completion, "Find"));
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "TryGetByName"));
     TIDE_CHECK(has(completion, "required normalized source identifier `idle`"));
     TIDE_CHECK(model_metadata_statistics().file_reads == 0 && model_metadata_statistics().parses == 0);
     remove_game_file("lsp_skin_status/main.tide");
@@ -11176,9 +11292,9 @@ TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
 {
     start();
     const char *completion = complete("void Helper($\n");
-    TIDE_CHECK(offers(completion, "Animations"));
+    TIDE_CHECK(offers(completion, "AnimationCatalog"));
     completion = complete("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color)\n{\n    Anim$\n}\n");
-    TIDE_CHECK(!offers(completion, "Animations"));
+    TIDE_CHECK(!offers(completion, "AnimationCatalog"));
     completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
     TIDE_CHECK(offers(completion, "Decode") && has(completion, "self-contained GLB"));
     open_document("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.Dec$ode([byte(0)])!;\n"
@@ -11236,7 +11352,7 @@ TIDE_TEST(lsp_animation_file_lists_clean_names_select_clips_and_refresh_all_sour
     make_folder("lsp_animation_list/art");
     static const char walk[] = "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Root|Walk\"},{\"name\":\"Root|0.Targeting Pose\"}]}";
     static const char run[] = "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Root|Run\"},{\"name\":\"Root|0.Targeting Pose\"}]}";
-    static const char prefix[] = "asset Animations movement = [\"art/walk.gltf\", \"art/run.gltf\"];\n"
+    static const char prefix[] = "asset AnimationCatalog movement = [\"art/walk.gltf\", \"art/run.gltf\"];\n"
                                  "[Name(\"Root|Run\")] asset Animation run = \"art/run.gltf\";\n"
                                  "scene Main { }\n";
     write_file("lsp_animation_list/main.tide", prefix);
@@ -11258,7 +11374,7 @@ TIDE_TEST(lsp_animation_file_lists_clean_names_select_clips_and_refresh_all_sour
     TIDE_CHECK(!offers(completion, "root0TargetingPose") && !offers(completion, "data"));
     const model_metadata_stats warm = model_metadata_statistics();
     TIDE_CHECK(warm.parses == 2 && warm.file_reads == 2 && warm.bytes_read == sizeof walk + sizeof run - 2u);
-    completion = request_at(uri, "textDocument/completion", 0, (int)strlen("asset Animations movement = [\"art/walk.gltf\", \"art/"), "");
+    completion = request_at(uri, "textDocument/completion", 0, (int)strlen("asset AnimationCatalog movement = [\"art/walk.gltf\", \"art/"), "");
     TIDE_CHECK(offers(completion, "run.gltf") && offers(completion, "*.gltf"));
     completion = request_at(uri, "textDocument/completion", 1, (int)strlen("[Name(\"Root|Run\")] asset Animation run = \"art/"), "");
     TIDE_CHECK(offers(completion, "run.gltf") && !offers(completion, "*.gltf"));
@@ -11282,7 +11398,7 @@ TIDE_TEST(lsp_animation_file_lists_clean_names_select_clips_and_refresh_all_sour
     write_file("lsp_animation_list/art/run.gltf", replacement);
     pin_file_time("lsp_animation_list/art/run.gltf");
     notify_file(uri_run, 2);
-    snprintf(text, sizeof text, "asset Animations movement = \"art/*.gltf\";\nscene Main { }\nview V()\n{\n    movement.\n}\n");
+    snprintf(text, sizeof text, "asset AnimationCatalog movement = \"art/*.gltf\";\nscene Main { }\nview V()\n{\n    movement.\n}\n");
     open_uri(uri, text);
     completion = request_at(uri, "textDocument/completion", 4, 13, "");
     TIDE_CHECK(offers(completion, "rootJog") && !offers(completion, "rootRun") && offers(completion, "rootWalk"));
@@ -11291,7 +11407,7 @@ TIDE_TEST(lsp_animation_file_lists_clean_names_select_clips_and_refresh_all_sour
     notify_file(uri_run, 2);
     open_uri(uri, text);
     completion = request_at(uri, "textDocument/completion", 4, 13, "");
-    TIDE_CHECK(!offers(completion, "rootWalk") && !offers(completion, "rootJog") && offers(completion, "Find"));
+    TIDE_CHECK(!offers(completion, "rootWalk") && !offers(completion, "rootJog") && offers(completion, "TryGetByName"));
     remove_game_file("lsp_animation_list/art/run.gltf");
     remove_game_file("lsp_animation_list/art/walk.gltf");
     remove_game_file("lsp_animation_list/main.tide");
@@ -11311,7 +11427,7 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
     model_metadata_forget();
     make_folder("lsp_animations");
     make_folder("lsp_animations/art");
-    static const char prefix[] = "asset Animations movement = \"art/movement.gltf\";\nscene Main { }\n";
+    static const char prefix[] = "asset AnimationCatalog movement = \"art/movement.gltf\";\nscene Main { }\n";
     static const char metadata[] = "{\"asset\":{\"version\":\"2.0\"},"
                                    "\"animations\":[{\"name\":\"Idle\"},{\"name\":\"Run\"},{\"name\":\"bad name\"},"
                                    "{\"name\":\"Jump\"},{\"name\":\"jump\"},{\"name\":\"for\"}],"
@@ -11332,7 +11448,7 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
     open_uri(uri_main, text);
     const char *completion = request_at(uri_main, "textDocument/completion", 5, 10, "");
     TIDE_CHECK(offers(completion, "idle") && offers(completion, "run") && offers(completion, "count")
-               && offers(completion, "Find") && offers(completion, "At"));
+               && offers(completion, "TryGetByName") && offers(completion, "TryGetAt"));
     TIDE_CHECK(!offers(completion, "bad name") && !offers(completion, "jump") && !offers(completion, "for")
                && !offers(completion, "data") && !offers(completion, "skeleton") && !offers(completion, "Decode"));
     TIDE_CHECK(has(completion, "original source name `Idle`"));
@@ -11348,20 +11464,20 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *hover = request_at(uri_main, "textDocument/hover", 2, 31, "");
     TIDE_CHECK(has(hover, "Animation idle") && has(hover, "original source name `Idle`"));
-    hover = request_at(uri_main, "textDocument/hover", 0, 20, "");
-    TIDE_CHECK(has(hover, "asset Animations movement") && has(hover, "without typed render geometry"));
+    hover = request_at(uri_main, "textDocument/hover", 0, (int)strlen("asset AnimationCatalog ") + 2, "");
+    TIDE_CHECK(has(hover, "asset AnimationCatalog movement") && has(hover, "without typed render geometry"));
     completion = request_at(uri_main, "textDocument/completion", 0, 40, "");
     TIDE_CHECK(offers(completion, "movement.gltf") && offers(completion, "other.glb") && !offers(completion, "other.obj"));
 
-    snprintf(text, sizeof text, "%svoid Helper(Animations clips)\n{\n    clips.\n}\n", prefix);
+    snprintf(text, sizeof text, "%svoid Helper(AnimationCatalog clips)\n{\n    clips.\n}\n", prefix);
     open_uri(uri_main, text);
     completion = request_at(uri_main, "textDocument/completion", 4, 10, "");
-    TIDE_CHECK(offers(completion, "count") && offers(completion, "Find") && offers(completion, "At")
+    TIDE_CHECK(offers(completion, "count") && offers(completion, "TryGetByName") && offers(completion, "TryGetAt")
                && !offers(completion, "idle"));
     snprintf(text, sizeof text, "%sfrag Shade(Vertex3 vertex, out Color color)\n{\n    movement.\n}\n", prefix);
     open_uri(uri_main, text);
     completion = request_at(uri_main, "textDocument/completion", 4, 13, "");
-    TIDE_CHECK(!offers(completion, "count") && !offers(completion, "Find") && !offers(completion, "idle"));
+    TIDE_CHECK(!offers(completion, "count") && !offers(completion, "TryGetByName") && !offers(completion, "idle"));
 
     char replacement[sizeof metadata];
     memcpy(replacement, metadata, sizeof metadata);
@@ -11389,8 +11505,8 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
     open_uri(uri_main, text);
     TIDE_CHECK(has(last_sent(), "animation catalog metadata is unavailable") && !has(last_sent(), "has no checked member 'walk'"));
     model_metadata_forget();
-    static const char remote[] = "asset Animations movement = \"https://must-never-be-contacted.invalid/run.glb\";\n"
-                                 "scene Main { }\nview V() { if (movement.Find(\"Run\") is Animation run) Debug.Log(run.name); }\n";
+    static const char remote[] = "asset AnimationCatalog movement = \"https://must-never-be-contacted.invalid/run.glb\";\n"
+                                 "scene Main { }\nview V() { if (movement.TryGetByName(\"Run\", out var run)) Debug.Log(run.name); }\n";
     open_uri(uri_main, remote);
     TIDE_CHECK(has(last_sent(), "metadata is unavailable") && !has(last_sent(), "\"severity\":1"));
     TIDE_CHECK(model_metadata_statistics().file_reads == 0 && model_metadata_statistics().parses == 0);

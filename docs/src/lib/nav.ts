@@ -89,6 +89,7 @@ export const sidebar: Group[] = [
             { text: 'Errors', link: '/language/errors' },
             { text: 'Math', link: '/language/math' },
             { text: 'Text and lists', link: '/language/text-and-lists' },
+            { text: 'JSON', link: '/language/json' },
             { text: 'Grids', link: '/language/grids' },
             { text: 'Namespaces and files', link: '/language/namespaces' },
             { text: 'Virtual and override', link: '/language/overrides' },

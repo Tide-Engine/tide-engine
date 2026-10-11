@@ -1,7 +1,8 @@
-// expect: methods work on structs and components
+// expect: 'score' is read-only
 singleton Score
 {
     int value;
     mut void Add(int points) { value += points; }
 }
 scene Main { }
+system Read(Score score) { score.Add(1); }

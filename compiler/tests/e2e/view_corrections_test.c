@@ -51,7 +51,7 @@ static void correct_on(tide_local *l, float alpha)
 static void frame_on(tide_local *l, const tide_world *w, const tide_world *prev, const tide_world *v, float alpha)
 {
     tide_draw_reset(&draw);
-    tide_frame(w, prev, alpha, v, l, &draw, &gui);
+    tide_frame(w, prev, alpha, v, NULL, 1.0f, l, &draw, &gui);
 }
 
 TIDE_TEST(corrections_accumulate_without_lagging_normal_motion_or_other_fields)

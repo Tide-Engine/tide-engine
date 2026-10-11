@@ -60,7 +60,7 @@ TIDE_TEST(shapes_record_what_each_call_says)
     local.Canvas.target = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12}};
     tide_devices devices = {0};
     tide_gui_begin(&gui, &devices, tide_f2(200, 100), NULL);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 
     uint32_t destination = 0;
     for (uint32_t i = 0; i < draw.count; i++) {
