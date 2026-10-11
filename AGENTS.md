@@ -171,6 +171,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `prototypes/dead-signal/` | `notes/dead-signal.md` |
 | `prototypes/rocket-league/` (Afterburn) | `notes/rocket-league.md` |
 | `prototypes/aerial/` | `notes/aerial.md` |
+| `prototypes/inside-out/` | `notes/inside-out.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
