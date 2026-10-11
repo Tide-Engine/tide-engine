@@ -1,0 +1,7 @@
+// expect: Send takes nothing: 'var response = await request.Send();'
+local scene Main { }
+async void Go()
+{
+    var answer = await Web.Request("http://example.com").Send(3);
+}
+view Start() { Go(); }

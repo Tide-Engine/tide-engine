@@ -333,5 +333,125 @@ bool tide_web_fetch_poll(const tide_io *io, const uint32_t ticket, tide_io_list_
 
 void tide_web_fetch_forget(const tide_io *io, const uint32_t ticket)
 {
-    if (io && io->fetch_forget && ticket && ticket != TIDE_FETCH_INVALID_URL) io->fetch_forget(io->user, ticket);
+    if (io && io->fetch_forget && ticket && ticket != TIDE_FETCH_INVALID_URL && ticket != TIDE_REQUEST_INVALID) {
+        io->fetch_forget(io->user, ticket);
+    }
+}
+
+// A header's name: a token of RFC 9110, which is letters, digits and these.
+static bool header_name_char(const char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || (c && strchr("!#$%&'*+-.^_`|~", c));
+}
+
+// Headers that are the connection's own, which a request's sender says
+// itself: a page's fetch refuses them too. Letters in any case.
+static bool header_is_ours(const char *name, const size_t size)
+{
+    static const char *const ours[] = {"host", "content-length", "connection", "transfer-encoding"};
+    for (size_t i = 0; i < sizeof ours / sizeof ours[0]; i++) {
+        if (strlen(ours[i]) != size) continue;
+        size_t k = 0;
+        while (k < size && (name[k] | 0x20) == ours[i][k]) k++;
+        if (k == size) return true;
+    }
+    return false;
+}
+
+// A request's headers as providers take them, from the lines SetHeader wrote
+// ("Name: value\n"): a line each, "Name: value\r\n", in the scratch area.
+// NULL if a line is no header: a name that's no token, or a value with
+// anything but printable ASCII and tabs in it, which is all a page's fetch
+// sends too. The connection's own are left out.
+static const char *request_headers(const tide_str headers)
+{
+    const size_t size = headers.bytes > 0 ? (size_t)headers.bytes : 0;
+    char *out = tide_scratch_memory(size * 2u + 1u); // Each line gains a byte at the most
+    size_t n = 0;
+    for (size_t at = 0; at < size;) {
+        const char *line = headers.ptr + at;
+        const char *end = memchr(line, '\n', size - at);
+        const size_t length = end ? (size_t)(end - line) : size - at;
+        at += length + 1u;
+        if (!length) continue;
+        const char *colon = memchr(line, ':', length);
+        if (!colon || colon == line) return NULL;
+        const size_t name = (size_t)(colon - line);
+        for (size_t i = 0; i < name; i++) {
+            if (!header_name_char(line[i])) return NULL;
+        }
+        const char *value = colon + 1;
+        size_t value_size = length - name - 1u;
+        while (value_size && (*value == ' ' || *value == '\t')) { value++; value_size--; }
+        while (value_size && (value[value_size - 1] == ' ' || value[value_size - 1] == '\t')) value_size--;
+        for (size_t i = 0; i < value_size; i++) {
+            const unsigned char c = (unsigned char)value[i];
+            if (c != '\t' && (c < 0x20 || c > 0x7E)) return NULL;
+        }
+        if (header_is_ours(line, name)) continue;
+        memcpy(out + n, line, name);
+        n += name;
+        out[n++] = ':';
+        out[n++] = ' ';
+        memcpy(out + n, value, value_size);
+        n += value_size;
+        out[n++] = '\r';
+        out[n++] = '\n';
+    }
+    out[n] = 0;
+    return out;
+}
+
+// A request's method as providers take it, in capitals, or false: a word of
+// letters, and none a page's fetch refuses.
+static bool request_method(const tide_str method, char out[17])
+{
+    if (method.bytes < 1 || method.bytes > 16) return false;
+    for (int32_t i = 0; i < method.bytes; i++) {
+        const char c = method.ptr[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return false;
+        out[i] = (char)(c & ~0x20);
+    }
+    out[method.bytes] = 0;
+    return strcmp(out, "CONNECT") != 0 && strcmp(out, "TRACE") != 0 && strcmp(out, "TRACK") != 0;
+}
+
+uint32_t tide_web_request_begin(const tide_io *io, const tide_str url, const tide_str method, const tide_str headers,
+                                const tide_list body)
+{
+    if (!fetch_url_ok(url)) return TIDE_FETCH_INVALID_URL;
+    char word[17];
+    const int32_t count = tide_list_count(body);
+    if (!request_method(method, word) || count < 0 || (uint32_t)count > TIDE_FETCH_LIMIT) return TIDE_REQUEST_INVALID;
+    const char *lines = request_headers(headers);
+    if (!lines) return TIDE_REQUEST_INVALID;
+    if (!io || !io->request_begin) return 0;
+    uint8_t *data = count ? tide_scratch_memory((size_t)count) : NULL;
+    for (int32_t i = 0; i < count; i++) data[i] = *(const uint8_t *)tide_list_at(body, i, 1);
+    const uint32_t ticket = io->request_begin(io->user, word, tide_str_c(url), lines, data, (uint32_t)count);
+    return ticket == TIDE_FETCH_INVALID_URL || ticket == TIDE_REQUEST_INVALID ? 0 : ticket;
+}
+
+bool tide_web_request_poll(const tide_io *io, const uint32_t ticket, tide_web_answer *answer)
+{
+    *answer = (tide_web_answer){0};
+    if (ticket == TIDE_FETCH_INVALID_URL) { answer->error = TIDE_IO_INVALID_PATH; return true; }
+    if (ticket == TIDE_REQUEST_INVALID) { answer->error = TIDE_IO_INVALID_DATA; return true; }
+    if (!io || !io->request_poll || !ticket) { answer->error = TIDE_IO_FAILED; return true; }
+    tide_io_error error = TIDE_IO_NONE;
+    int32_t status = 0;
+    uint8_t *data = NULL;
+    uint32_t size = 0;
+    if (!io->request_poll(io->user, ticket, &error, &status, &data, &size)) return false;
+    if (!error && (size > TIDE_FETCH_LIMIT || (size && !data) || status < 100 || status > 999)) error = TIDE_IO_FAILED;
+    if (!error && size) {
+        tide_block *block = tide_scratch_block(size, "a web answer's bytes", &answer->body.at);
+        block->a = block->b = size;
+        memcpy(block + 1, data, size);
+    }
+    free(data);
+    answer->error = error;
+    answer->ok = error == TIDE_IO_NONE;
+    answer->status = answer->ok ? status : 0;
+    return true;
 }

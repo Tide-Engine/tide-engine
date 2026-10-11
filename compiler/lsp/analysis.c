@@ -1297,15 +1297,29 @@ static void index_program(void)
     A.occs.count = n;
 }
 
-void analysis_run(const analysis_file *files, const int count)
+void analysis_run(const analysis_file *given, const int given_count)
 {
     arena_reset();
     memset(&A, 0, sizeof A);
+    // Web.Request's types are Tide's own code, a file of the game's for as long as the game names them
+    const analysis_file *files = given;
+    int count = given_count;
+    bool web = false;
+    for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
+    if (web) {
+        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 1));
+        if (given_count > 0) memcpy(all, given, sizeof(analysis_file) * (size_t)given_count);
+        analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
+        prelude.text = web_prelude(&prelude.len);
+        all[given_count] = prelude;
+        files = all;
+        count = given_count + 1;
+    }
     diag_reset();
     diag_set_sink(collect, NULL);
     diag_set_suggestion_sink(collect_suggestion, NULL);
 
-    A.file_count = count;
+    A.file_count = given_count; // The game's own: Web.Request's file is behind them, for what its declarations point to
     A.files = arena_alloc(sizeof(afile) * (size_t)(count > 0 ? count : 1));
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
@@ -6504,6 +6518,13 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         if (n == 1 && str_eq_c(base, "Clipboard") && decides_session(&sc)) {
             item(c, "Copy", CK_FUNCTION, CLIPBOARD_COPY_FORM, CLIPBOARD_COPY_DOC, "Copy($1)");
             return;
+        }
+        // Web.: Request, which is Tide's own code and so in no table; Fetch follows from the engine's
+        if (n == 1 && str_eq_c(base, "Web")) {
+            item(c, "Request", CK_FUNCTION, "WebRequest Web.Request(string url)",
+                 "A request to `url`, a GET until `SetMethod` says otherwise: `SetHeader` and `SetBody` add to it, and "
+                 "`await request.Send()` sends it, giving a `WebResponse` (its `status` and `body`) whatever the status. "
+                 "Fails with IOError when no answer came.", "Request($1)");
         }
         // Wait.: what async code waits for
         if (n == 1 && str_eq_c(base, "Wait") && sc.decl && sc.decl->is_async) {

@@ -1,0 +1,8 @@
+// expect: 'Go' reaches the network, which only local code can use
+scene Main { }
+component Enemy { int hp; }
+async void Go()
+{
+    var answer = await Web.Request("http://example.com").Send();
+}
+system Fight(with Enemy) { Go(); }
