@@ -6516,8 +6516,33 @@ TIDE_TEST(lsp_shutdown_and_exit)
     start();
     handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"shutdown\"}");
     TIDE_CHECK(has(last_sent(), "\"id\":9,\"result\":null"));
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
+    TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"code\":-32600"));
+    static const char after[] = "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}";
+    static const char cancel[] = "{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":10}}";
+    const lsp_message later = {cancel, sizeof cancel - 1};
+    clear_sent();
+    lsp_handle_ahead(&server, after, sizeof after - 1, &later, 1);
+    TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"code\":-32600"));
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":"
+           "{\"uri\":\"file:///shutdown.tide\",\"text\":\"scene Main { }\",\"version\":1}}}");
+    TIDE_CHECK(server.doc_count == 0 && sent_count == 0);
     handle("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
     TIDE_CHECK(server.exited && server.exit_code == 0);
+    clear_sent();
+    lsp_free(&server);
+}
+
+TIDE_TEST(lsp_positions_outside_the_document_are_safe)
+{
+    start();
+    open_document("const int Value = 1;\nscene Main { }\n");
+    static const int lines[] = {-1, 3, 2147483647};
+    for (size_t i = 0; i < sizeof lines / sizeof lines[0]; i++) {
+        TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", lines[i], 2147483647, ""), "\"result\":null"));
+    }
     clear_sent();
     lsp_free(&server);
 }

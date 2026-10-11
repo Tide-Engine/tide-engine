@@ -49,10 +49,11 @@ with, and the IntelliJ Platform it compiles against, the first time.
 
 ```sh
 ./gradlew buildPlugin                  # build/distributions/tide-<version>.zip
+./gradlew test                         # adapter regressions, without starting an IDE
 ./gradlew runIde --args="<game folder>"  # an IDE with the plugin, for trying it
 ./gradlew verifyPlugin                 # against IntelliJ 2024.2 and the newest CLion
 ./gradlew verifyPlugin -PverifyIde="C:/Program Files/JetBrains/CLion 2026.2.3"
 ```
 
-CI builds and verifies it on every push, and publishes it to Marketplace with
+The manually requested Build workflow builds and verifies it, and publishes it to Marketplace with
 each stable release (see `.github/workflows/build.yml`).

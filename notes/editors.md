@@ -1,5 +1,87 @@
 # The language server and the editors
 
+## Correctness review, 2026-10-11
+
+Reviewed the VS Code adapter's settings/discovery, client lifecycle, lens
+arguments, game selection, terminal input, child cleanup and web-page handling;
+the JetBrains factory/settings, run producer/configuration, console links and
+page handling; and tidels's JSON, framing, document synchronization,
+cancellation and navigation/analysis regressions. This is a bounded review,
+not a claim that every editor/version or malformed request has been exhausted.
+
+Fixed contracts and evidence:
+
+- Restricted Mode now excludes workspace servers from PATH as well as user
+  settings, comparing both lexical and real paths of executables and workspace
+  roots. This covers symlinks/junctions and Windows' optional `.exe` spelling.
+  Trusted configured/built/installed precedence stays the same. A missing or
+  relative LOCALAPPDATA no longer turns the installation fallback into a
+  current-directory executable. The README and user Editors page explain the
+  PATH rule.
+- Both editors wait for whitespace after the complete announced web address;
+  previously a stdout chunk ending in the hostname, port or path opened that
+  incomplete address. VS Code's Run reader and JetBrains's small
+  `TidePageAddress` reader are tested at every split of the announcement;
+  the Java reader also receives it one character at a time.
+- A disposed VS Code run cannot start from a delayed terminal-open callback or
+  act on later stdout page announcements. Disposal releases its event emitters. Repeated Stop
+  and terminal-close callbacks send one Windows tree-kill request; taskkill's
+  nonzero close now triggers the existing direct-child fallback, as a spawn
+  error does. The fallback keeps the original child, runs once and never
+  signals one whose exit was already reported. A failed tree kill still cannot
+  promise that every descendant exited: the fallback only signals tide itself.
+- The game picker deduplicates resolved manifest folders. New adapter tests
+  also preserve typed restart/Android answers, serialize rapid language-server
+  restarts through completed disposal, recover from a failed start and convert
+  clickable reference/schedule lens arguments to VS Code's native types. The
+  pinned language-client source confirms its command conversion leaves these
+  JSON arguments for our middleware to convert.
+- tidels's JSON reader now enforces decimal/fraction/exponent syntax without a
+  63-byte truncation, rejects nonfinite results, controls and invalid raw UTF-8,
+  and never casts an out-of-range/nonfinite/fractional number to int. String
+  scanning stays within the input bounds. Valid surrogate pairs decode together;
+  unpaired UTF-16 units become U+FFFD without consuming an unrelated escape.
+  Strings and object keys retain embedded NUL bytes when echoed, while C-string
+  consumers refuse them and key lookup compares complete counted names.
+  Parsing/writing follows [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html)'s number and string rules; finite double
+  range remains an implementation limit.
+- Shutdown now ignores subsequent notifications and rejects requests with
+  InvalidRequest, including a request cancelled in the read-ahead queue; exit
+  still ends normally. Positions outside the document avoid signed line-number
+  overflow, and UTF-8 stepping cannot pass the document's allocation end.
+
+The original new VS Code fixture reproduced eight failures in ten cases; the
+first six JSON fixtures reproduced five failing groups. The final regression
+sets are `tools/tide-vscode/test/extension.test.mjs` (15 tests), Java's
+`TidePageAddressTest` (2), and `compiler/lsp/tests/json_test.c` (8), plus extended
+shutdown/position protocol fixtures. CTest registers the dependency-free Node
+adapter suite after `enable_testing`, on native and web hosts; Gradle's `test`
+task runs the Java regressions and `buildPlugin` depends on it, including in
+manually requested CI builds. VS Code's package also has `npm test`.
+
+Validation: full Windows debug native and web suites passed 2,078 and 2,048
+CTest checks, including native GPU and WebGL/WebGPU coverage. The final tidels
+suite passed 211/211 normally and under Windows clang AddressSanitizer; its real
+stdio/pipe fixtures and the adapter suite pass after the final shutdown change.
+Node 24.16 was used for native/web CTest (the machine's default 24.15 predates
+the required libuv fix). VSIX packaging, JetBrains `test buildPlugin`, the docs
+production build and all 215 shared grammar tests pass.
+Plugin Verifier reports compatibility with IntelliJ Community 2024.2.6
+(IC-242.26775.15) and installed CLion 2026.2.3 (CL-262.10968.117). Local IDE
+paths and `--no-configuration-cache --offline` avoid repeatedly fingerprinting
+the entire IDE installation during this check. The 2024.2 TextMate bundle
+extension is non-dynamic, so the verifier notes an IDE restart for plugin
+enable/disable on that platform; this is an existing platform limitation,
+not an API compatibility error. The plugin README's stale every-push CI claim
+now correctly describes the manually requested Build workflow.
+
+Remaining coverage: editor UI clicks, VS Code's actual extension-host lifecycle,
+JCEF interaction and real editor-driven game-process cleanup were not manually
+driven; the adapter suites replace these boundaries with controlled doubles.
+Cold model metadata reads remain synchronous under the existing budgets below.
+No runtime/language design changed, CI was not dispatched, and no editor was
+installed or restarted on the owner's behalf.
+
 Media formats (2026-10-10): asset path completion stores a counted suffix array rather than four fixed format fields. Texture/Grid2<Color>/Cubemap offer PNG, PSD, JPG/JPEG, TGA and BMP; Clip offers WAV, Ogg, MP3 and FLAC, including case-insensitive file names and per-format list/map globs. `lsp_asset_path_completion` checks each addition. Build-time import failures come from the same checker helpers as ordinary builds; runtime Decode hovers remain PNG/GLB-only. Unsupported skinned source formats now share export guidance across build/editor while recognized model feature errors retain their reason. The existing OBJ/catalog diagnostic regression also checks DAE. The earlier PNG/PSD-only and four-slot descriptions below describe the previous coverage.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.

@@ -222,8 +222,9 @@ static int utf16_col(const loc at)
 // A position in the current document.
 static loc from_lsp(const int line, const int character)
 {
-    loc at = {line + 1, 1, A.doc};
+    loc at = {0, 1, A.doc};
     if (line < 0 || line >= DOC->lines.count) return at;
+    at.line = line + 1;
     const char *p = DOC->lines.items[line];
     const char *end = DOC->src.text + DOC->src.len;
     int units = 0;
@@ -231,8 +232,9 @@ static loc from_lsp(const int line, const int character)
         const unsigned char c = (unsigned char)*p;
         const int len = c < 0xC0 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
         units += c >= 0xF0 ? 2 : 1;
-        p += len;
-        at.col += len;
+        const int bytes = (size_t)len <= (size_t)(end - p) ? len : (int)(end - p);
+        p += bytes;
+        at.col += bytes;
     }
     return at;
 }

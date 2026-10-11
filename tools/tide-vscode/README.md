@@ -60,5 +60,6 @@ After a server update, run **Tide: Restart Language Server**.
 In a workspace you haven't trusted, nothing from it runs: the language server
 is the `tidels` that comes with tide (or one your user settings name outside
 the workspace), never the workspace's `build/tools/tidels` or one its settings
-name, and games don't run, since running one runs its code. Trusting the
-workspace restarts the server.
+name. Servers on `PATH` inside the workspace are skipped too, including paths
+through symlinks or junctions. Games don't run, since running one runs its code.
+Trusting the workspace restarts the server.

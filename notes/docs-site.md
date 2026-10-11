@@ -1,5 +1,10 @@
 # The docs site
 
+Editor review (2026-10-11): the Editors page clarifies Restricted Mode's user
+setting and PATH exclusions, including symlinks/junctions. The docs production
+build and all 215 shared grammar checks pass; implementation, regressions and
+remaining editor UI coverage are recorded in `notes/editors.md`.
+
 Skinned draw batching (2026-10-10): Animation and the spec clarify that each draw captures its current pose and consecutive compatible imported-model draws can batch even with different poses. Later pose edits and samples preserve prior captures. The proposed explicit independent-pose instance-list API remains unbuilt; no syntax changed. Renderer and shader implementation details stay in their subsystem notes. The production docs build passed with the existing allowed missing-example placeholders; no deployment was requested.
 
 Web release payloads (2026-10-10): CLI and Assets explain compression inside a self-contained release page, built-in decoding, unchanged decoded asset values and readable/raw debug or watched pages. The implementation and generation/freshness requirements are in `notes/web.md`.
