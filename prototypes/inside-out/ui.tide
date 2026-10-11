@@ -132,7 +132,7 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
     Draw.RoundRect(at, float2(width, 268), 20, PAPER);
     Label("A SMALL ADVENTURE FOR TWO", at + float2(0, -96), 12, TEAL, Anchor.MiddleCenter);
     Label("Make room for each other.", at + float2(0, -56), Screen.width < 550 ? 24.0 : 30.0, INK, Anchor.MiddleCenter);
-    Paragraph("Explore the same workshop together. Step into pocket rooms, move them with your partner inside, and follow rooms back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
+    Paragraph("Step into a pocket room and see the workshop beyond its walls. Move rooms with your partner inside, and follow doorways back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
     var buttonWidth = (width - 68) * 0.5;
     if (PaperButton("Host a workshop", Rect(at.x - width * 0.5 + 28, at.y + 64, buttonWidth, 43), session.state == SessionState.Connected, true))
     {
@@ -356,6 +356,8 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         {
             GUILayout.Label("HOW TO MAKE ROOM");
             GUILayout.Label("You both explore the same workshop.");
+            GUILayout.Label("Your view follows your maker between rooms.");
+            GUILayout.Label("The containing world is visible beyond the walls.");
             GUILayout.Label("WASD / arrows: walk and push parcels.");
             GUILayout.Label("Walk into a room doorway to enter.");
             GUILayout.Label("Walk out through an edge door to leave.");

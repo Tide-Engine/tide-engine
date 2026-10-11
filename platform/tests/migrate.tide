@@ -16,6 +16,10 @@ component Unit
     Stats stats;
     string name = "unit";
     Entity target;
+    // T? fields: a value or nothing, which carry over as either
+    int? rank = 4;
+    string? nick = "nick";
+    float? reach;
     // Local fields: this machine's, which carry over with the local state
     local int drawn;
     local string seen = "never";

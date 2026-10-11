@@ -116,7 +116,48 @@ if (Find(items, 3) is int at) { ... }
 if (Find(items, 3) == null) { ... }
 ```
 
-It unwraps the same way, with `??`, `is` and `!`, but not `try`: there's no error to pass on. Functions can return a `T?` and take one, and locals can hold one: `int? best = null;`. Fields can't yet.
+It unwraps the same way, with `??`, `is` and `!`, but not `try`: there's no error to pass on. Functions can return a `T?` and take one, and locals can hold one: `int? best = null;`.
+
+### Fields that may be missing
+
+A field can be a `T?` too, in a struct, a component, a singleton, a scene, an event, a command or the input:
+
+```csharp
+struct Slot
+{
+    int? item;          // Nothing, until something sets it
+    string? label;
+    int? level = 3;     // A default, as on any field
+}
+
+component Unit
+{
+    Entity? target;
+    Slot slot;
+}
+
+system Aim(mut Unit unit)
+{
+    unit.target = null;                       // Nothing
+    unit.slot.item = 4;                       // A value
+    unit.slot = Slot { label = "sword" };     // Fields left out have nothing, or their default
+    var item = unit.slot.item ?? 0;           // Read as any T?
+    if (unit.slot.label is string label) Debug.Log(label);
+    if (unit.target == null) { ... }
+}
+```
+
+- A field with no default starts with nothing, and so does one a struct's value leaves out.
+- It's set to a value, another `T?` or `null`, and read with `??`, `is`, `!` and `== null`, like a local. A `var` takes it as the `T?` it is.
+- It works wherever its type would without the `?`. An [input](../game/input.md) holds no text, so it holds no `string?` either.
+- It can't be a grid or a rendering resource, which are never missing: a grid is empty, and a `Texture` is `default`.
+- It can't be passed as a `mut` or `out` argument. Pass a local, and assign the field after.
+- A list, a map or an array doesn't hold a `T?`. It holds a struct with one: `List<Slot>`, and `slots[i].item = 3`.
+- In text, a struct shows a field with nothing as `null`: `Slot { item = null, label = "sword", level = 3 }`.
+- In a view, a `T?` field isn't blended between ticks: it's the newer tick's, a value or nothing.
+- Frags and verts can't read one, or take a struct that has one. A component or singleton with one is still fine there for its other fields.
+
+In a match, a `T?` field with nothing costs a bit in a [command](../game/commands.md), and its storage is all zeros, so setting a field and then taking it away leaves no trace of what it held.
 
 ## What doesn't fail
 
