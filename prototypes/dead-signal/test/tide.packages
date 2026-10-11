@@ -1,2 +1,0 @@
-# A nested manifest keeps this test host out of `tide run ..`.
-rooms
