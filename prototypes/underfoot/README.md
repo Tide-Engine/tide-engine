@@ -1,8 +1,8 @@
 # Underfoot
 
-A puzzle for **one or two**. Two pavers stand on a yard of stone over a long
-drop, and there is never quite enough stone. Lift a loose one, lay it over
-nothing, and get both pavers to a lantern each.
+A puzzle for **one or two**. Two tilers work a courtyard over dark water, and
+there is never quite enough tile. Lift a loose one, lay it over the water, and
+get both tilers to a lantern each.
 
 Play at <https://tide-engine.dev/prototypes/underfoot/>. Alone, you work both
 pavers and swap between them. With a friend, choose **Host a friend**, send
@@ -69,8 +69,8 @@ build/debug/bin/underfoot
 The web page is `underfoot_page` in the `web-debug` or `web-release` presets,
 which stages it for the site at `docs/static/prototypes/underfoot/`.
 
-`art/make_art.py` makes every picture (the sprite atlas, the sky and the rock's
-grain) with numpy and Pillow, and `sfx/make_sounds.py` every sound.
+`art/make_art.py` makes every picture (the sprite atlas and the backdrop's
+pattern) with numpy and Pillow, and `sfx/make_sounds.py` every sound.
 
 `tools/solve.c` is the solver and the search that found the puzzles, and reads
 `levels.tide` as it is; `tools/hints.py` writes each puzzle's second and third

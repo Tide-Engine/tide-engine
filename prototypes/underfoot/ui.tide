@@ -2,21 +2,24 @@ using Rooms;
 
 enum ArtStage { Backdrop, Prepare, Board, Controls, Sound }
 
-const Color NIGHT = Color(0.055, 0.06, 0.13);
-const Color DEEP = Color(0.02, 0.022, 0.06);
-const Color CREAM = Color(0.96, 0.93, 0.85);
-const Color MUTED = Color(0.60, 0.63, 0.78);
-const Color PANEL = Color(0.12, 0.13, 0.24);
-const Color CORAL = Color(0.98, 0.52, 0.43);
-const Color SKY = Color(0.42, 0.72, 0.99);
-const Color GOLD = Color(0.99, 0.80, 0.38);
-const Color MINT = Color(0.42, 0.86, 0.69);
-const Color VIOLET = Color(0.70, 0.55, 0.99);
+// The courtyard's palette, which art/make_art.py shares: night, cream,
+// mustard, jade, coral and teal. Nothing on screen is another colour's shade
+// by accident.
+const Color NIGHT = Color(0.05, 0.062, 0.14);
+const Color DEEP = Color(0.03, 0.035, 0.08);
+const Color CREAM = Color(0.97, 0.94, 0.87);
+const Color MUTED = Color(0.58, 0.61, 0.78);
+const Color PANEL = Color(0.15, 0.145, 0.29);
+const Color CORAL = Color(0.94, 0.40, 0.33);
+const Color SKY = Color(0.16, 0.64, 0.66);
+const Color GOLD = Color(0.93, 0.69, 0.25);
+const Color MINT = Color(0.31, 0.72, 0.57);
+const Color VIOLET = Color(0.60, 0.47, 0.90);
 const GUITheme NIGHT_THEME = GUITheme {
-    text = CREAM, panel = PANEL, control = Color(0.19, 0.21, 0.36),
-    hot = Color(0.26, 0.29, 0.48), pressed = Color(0.16, 0.17, 0.30),
-    field = Color(0.08, 0.09, 0.17), fieldHot = Color(0.14, 0.15, 0.27),
-    accent = GOLD, radius = 10
+    text = CREAM, panel = PANEL, control = Color(0.22, 0.21, 0.40),
+    hot = Color(0.28, 0.27, 0.50), pressed = Color(0.17, 0.165, 0.32),
+    field = Color(0.08, 0.085, 0.18), fieldHot = Color(0.13, 0.13, 0.26),
+    accent = GOLD, radius = 8
 };
 
 local singleton Hands
@@ -51,7 +54,7 @@ string GroundName(Ground ground)
 {
     switch (ground)
     {
-        case Ground.Stone: return "a stone";
+        case Ground.Stone: return "a tile";
         case Ground.Ice: return "ice";
         case Ground.PortalP: return "a portal";
         case Ground.PortalQ: return "a portal";
@@ -116,12 +119,13 @@ bool NightButton(string text, Rect rect, bool enabled = true, bool accent = fals
     {
         var control = GUI.Control(rect);
         var at = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-        var base = accent ? GOLD : Color(0.17, 0.19, 0.33);
-        var fill = !enabled ? Color(0.11, 0.12, 0.21) : control.pressed ? Math.Lerp(base, DEEP, 0.25) : control.hovered ? Math.Lerp(base, Color.white, 0.14) : base;
-        Draw.RoundRect(at + float2(0, 3), float2(rect.width, rect.height), 10, Color(0, 0, 0, 0.30));
-        Draw.RoundRect(at, float2(rect.width, rect.height), 10, fill);
-        Draw.WireRoundRect(at, float2(rect.width, rect.height), 10, 1, control.focused ? GOLD : Color(1, 1, 1, enabled ? 0.10 : 0.04));
-        Label(text, at, rect.height < 36 ? 12.0 : 14.0, !enabled ? Color(0.38, 0.40, 0.54) : accent ? Color(0.16, 0.12, 0.05) : CREAM, Anchor.MiddleCenter);
+        // Flat, with the one hard shadow everything here has; pressed, it sits down on it.
+        var base = accent ? GOLD : Color(0.22, 0.21, 0.40);
+        var fill = !enabled ? Color(0.12, 0.12, 0.24) : control.hovered || control.focused ? Math.Lerp(base, Color.white, 0.14) : base;
+        var sink = enabled && control.pressed ? 3.0 : 0.0;
+        Draw.RoundRect(at + float2(0, 4), float2(rect.width, rect.height), 8, DEEP);
+        Draw.RoundRect(at + float2(0, sink), float2(rect.width, rect.height), 8, fill);
+        Label(text, at + float2(0, sink), rect.height < 36 ? 12.0 : 14.0, !enabled ? Color(0.36, 0.37, 0.54) : accent ? Color(0.13, 0.11, 0.24) : CREAM, Anchor.MiddleCenter);
         clicked = control.clicked;
     }
     return clicked;
@@ -144,15 +148,15 @@ string Refusal(Yard yard, int paver, int direction)
     var board = yard.board;
     var here = board.paver[paver];
     var to = Step(here, direction);
-    if (to < 0 || board.ground[to] == Ground.Wall) return "That is rock.";
+    if (to < 0 || board.ground[to] == Ground.Wall) return "That is wall.";
     if (yard.layout.gate[to] != 0) return "Nothing is lifted or laid in a gateway.";
     var taken = PaverAt(board, to) >= 0 || CrateAt(board, to) >= 0;
     if (board.held[paver] != Ground.Void)
-        return board.ground[to] == Ground.Void ? "" : "Your hands are full. Lay this over nothing first.";
+        return board.ground[to] == Ground.Void ? "" : "Your hands are full. Lay this over water first.";
     if (board.ground[to] == Ground.Void) return "Nothing there to lift.";
     if (taken) return "Not while something stands on it.";
-    if (yard.layout.fixed[to] || !Loose(board.ground[to])) return "That one is set for good. Only loose ground lifts.";
-    if (!Firm(yard.layout, board, here)) return "No lifting from loose ground. Stand on set stone.";
+    if (yard.layout.fixed[to] || !Loose(board.ground[to])) return "That one is set in the floor. Only loose tiles lift.";
+    if (!Firm(yard.layout, board, here)) return "No lifting from a loose tile. Stand on the floor.";
     return "";
 }
 
@@ -172,7 +176,7 @@ local event(PuzzleCue cue) FeelPuzzle(Yard yard, mut Hands hands)
     hands.reasonTime = 2.6;
 }
 
-override string Rooms.Tagline() { return "Two pavers, a long way down, and never quite enough stone."; }
+override string Rooms.Tagline() { return "Two tilers, a dark pool, and never quite enough tile."; }
 override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 84, 18, 68, 34); }
 
 override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
@@ -180,12 +184,11 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
     Draw.SetScreen();
     var width = Math.Min(Screen.width - 32, 560);
     var at = float2(Screen.width * 0.5, Screen.height * 0.5);
-    Draw.Shape(Shape { center = at + float2(0, 10), size = float2(width, 318), radius = 22, soft = 22, color = Color(0, 0, 0, 0.45) });
+    Draw.RoundRect(at + float2(0, 7), float2(width, 318), 22, DEEP);
     Draw.RoundRect(at, float2(width, 318), 22, PANEL);
-    Draw.WireRoundRect(at, float2(width, 318), 22, 1, Color(1, 1, 1, 0.10));
     Label("A PUZZLE FOR ONE OR TWO", at + float2(0, -122), 12, GOLD, Anchor.MiddleCenter);
     Label("underfoot", at + float2(0, -82), Screen.width < 550 ? 38.0 : 46.0, CREAM, Anchor.MiddleCenter);
-    Paragraph("Lift a loose stone. Lay it over nothing. Get both pavers to their lanterns. The floor is the puzzle, and there is never quite enough of it.", at + float2(-width * 0.5 + 30, -36), width - 60, 15, MUTED);
+    Paragraph("Lift a loose tile. Lay it over the water. Get both tilers to their lanterns. The floor is the puzzle, and there is never quite enough of it.", at + float2(-width * 0.5 + 30, -36), width - 60, 15, MUTED);
     var connected = session.state == SessionState.Connected;
     var third = (width - 76) / 3;
     var row = at.y + 62;
@@ -197,7 +200,7 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
         lobby.page = Rooms.Page.Playing;
     }
     if (NightButton("Join a friend", Rect(x + (third + 8) * 2, row, third, 44))) Rooms.ShowJoin(lobby);
-    Label(lobby.message != "" ? lobby.message : "18 puzzles  /  alone you work both pavers  /  no clock", at + float2(0, 130), 12, MUTED, Anchor.MiddleCenter);
+    Label(lobby.message != "" ? lobby.message : "18 puzzles  /  alone you work both tilers  /  no clock", at + float2(0, 130), 12, MUTED, Anchor.MiddleCenter);
 }
 
 [Stage(ArtStage.Prepare, 1)]
@@ -325,7 +328,7 @@ view YardControls(Yard yard, Session session, Devices devices, Progress progress
     if (!together && mine)
     {
         var swapRect = narrow ? Rect(left, bottom + 50, 104, 40) : Rect(left + (actionWidth + 8) * 3, bottom, 130, 40);
-        if (NightButton(narrow ? "Swap paver" : "Swap paver  Tab", swapRect, playing) || playing && (key.tab.down || key.q.down))
+        if (NightButton(narrow ? "Swap tiler" : "Swap tiler  Tab", swapRect, playing) || playing && (key.tab.down || key.q.down))
             hands.active = 1 - hands.active;
     }
     var handRect = narrow ? Rect(left + 112, bottom + 50, 104, 40) : Rect(left + (actionWidth + 8) * 3 + (together ? 0 : 138), bottom, 124, 40);
@@ -366,7 +369,7 @@ view YardControls(Yard yard, Session session, Devices devices, Progress progress
             DirectionMark(at, d, 7, !canAct ? MUTED : hand ? Color(0.16, 0.12, 0.05) : CREAM);
         }
     }
-    else if (width >= 1180) Label(hand ? "HANDS  /  a direction lifts the loose stone there, or lays the one you carry" : "WASD or arrows walk  /  hold Shift or Space with a direction to lift and lay  /  E uses what you face",
+    else if (width >= 1180) Label(hand ? "HANDS  /  a direction lifts the loose tile there, or lays the one you carry" : "WASD or arrows walk  /  hold Shift or Space with a direction to lift and lay  /  E uses what you face",
         float2(right, height - 16), 12, hand ? GOLD : MUTED, Anchor.MiddleRight);
     else if (width >= 900) Label(hand ? "HANDS  /  a direction lifts or lays" : "Shift or Space + a direction lifts and lays", float2(right, bottom + 20), 12, hand ? GOLD : MUTED, Anchor.MiddleRight);
 
@@ -375,10 +378,9 @@ view YardControls(Yard yard, Session session, Devices devices, Progress progress
         var fade = Math.Min(1, hands.reasonTime / 0.25);
         var words = Draw.MeasureText(hands.reason, 14).x + 36;
         var at = float2(width * 0.5, bottom - 26);
-        Draw.RoundRect(at + float2(0, 2), float2(words, 34), 17, Color(0, 0, 0, 0.35 * fade));
-        Draw.RoundRect(at, float2(words, 34), 17, Color(0.16, 0.13, 0.20, 0.96 * fade));
-        Draw.WireRoundRect(at, float2(words, 34), 17, 1.5, Color(CORAL.r, CORAL.g, CORAL.b, 0.85 * fade));
-        Label(hands.reason, at, 14, Color(CREAM.r, CREAM.g, CREAM.b, fade), Anchor.MiddleCenter);
+        Draw.RoundRect(at + float2(0, 4), float2(words, 34), 17, Color(DEEP.r, DEEP.g, DEEP.b, fade));
+        Draw.RoundRect(at, float2(words, 34), 17, Color(CORAL.r, CORAL.g, CORAL.b, fade));
+        Label(hands.reason, at, 14, Color(0.13, 0.11, 0.24, fade), Anchor.MiddleCenter);
     }
 
     if (hands.hintOpen && !hands.shelf && !hands.guide && !yard.board.solved)
@@ -388,9 +390,8 @@ view YardControls(Yard yard, Session session, Devices devices, Progress progress
         var hintHeight = 104.0 + WrappedLines(hintText, hintWidth - 40, 14) * 20;
         hands.hintHeight = hintHeight;
         var hintAt = float2(width * 0.5, bottom - 14 - hintHeight * 0.5);
-        Draw.Shape(Shape { center = hintAt + float2(0, 6), size = float2(hintWidth, hintHeight), radius = 16, soft = 16, color = Color(0, 0, 0, 0.5) });
+        Draw.RoundRect(hintAt + float2(0, 7), float2(hintWidth, hintHeight), 16, DEEP);
         Draw.RoundRect(hintAt, float2(hintWidth, hintHeight), 16, PANEL);
-        Draw.WireRoundRect(hintAt, float2(hintWidth, hintHeight), 16, 1, Color(1, 1, 1, 0.12));
         Label($"A NUDGE  /  {hands.hint + 1} OF 3", hintAt + float2(-hintWidth * 0.5 + 20, -hintHeight * 0.5 + 24), 12, GOLD);
         Paragraph(hintText, hintAt + float2(-hintWidth * 0.5 + 20, -hintHeight * 0.5 + 52), hintWidth - 40, 14);
         var hintButtons = hintAt.y + hintHeight * 0.5 - 42;
@@ -402,7 +403,7 @@ view YardControls(Yard yard, Session session, Devices devices, Progress progress
     {
         var boxWidth = Math.Min(width - 32, 470);
         var at = float2(width * 0.5, height - (narrow ? 250.0 : 150.0));
-        Draw.Shape(Shape { center = at + float2(0, 6), size = float2(boxWidth, 142), radius = 18, soft = 18, color = Color(0, 0, 0, 0.5) });
+        Draw.RoundRect(at + float2(0, 7), float2(boxWidth, 142), 18, DEEP);
         Draw.RoundRect(at, float2(boxWidth, 142), 18, PANEL);
         Draw.WireRoundRect(at, float2(boxWidth, 142), 18, 1.5, GOLD);
         var par = LevelPar(yard.level);
@@ -445,18 +446,18 @@ view YardControls(Yard yard, Session session, Devices devices, Progress progress
         GUILayout.Modal(Anchor.MiddleCenter, hands.guide)
         {
             GUILayout.Label("HOW IT WORKS");
-            GUILayout.Label("Bring both pavers to a lantern each.");
+            GUILayout.Label("Bring both tilers to a lantern each.");
             GUILayout.Label("WASD or arrows walk and push crates.");
             GUILayout.Label("Shift or Space with a direction uses your hands:");
-            GUILayout.Label("lift the loose stone there, or lay the one you carry.");
+            GUILayout.Label("lift the loose tile there, or lay the one you carry over water.");
             GUILayout.Label("E does the same to whatever you face.");
-            GUILayout.Label("One stone in hand at a time. You cannot lift");
-            GUILayout.Label("while standing on a loose stone yourself.");
-            GUILayout.Label("A crate pushed over nothing sinks, and is ground for good.");
+            GUILayout.Label("One tile in hand at a time. You cannot lift");
+            GUILayout.Label("while standing on a loose tile yourself.");
+            GUILayout.Label("A crate pushed into the water sinks, and is floor for good.");
             GUILayout.Label("Ice carries whatever steps on it until something stops it.");
             GUILayout.Label("A portal sends you to its twin, if the twin is laid and free.");
             GUILayout.Label("A plate under a paver or a crate opens its gates.");
-            GUILayout.Label("Playing alone, Tab swaps which paver you work.");
+            GUILayout.Label("Playing alone, Tab swaps which tiler you work.");
             GUILayout.Label("Z undoes, 256 moves back. R starts over, and Z undoes that too.");
             GUILayout.Toggle("Music", hands.music);
             GUILayout.Toggle("Reduced motion", hands.reduceMotion);
