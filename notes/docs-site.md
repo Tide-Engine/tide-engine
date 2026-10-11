@@ -14,7 +14,7 @@ Validation: all 18 analytics/admin unit checks and five production
 SEO/access-form/admin HTTP checks pass with Node 24.21. Svelte check reports
 no errors or warnings; the production site build and complete WebGL
 example/gallery rendering smoke pass with all games staged, including the
-current isometric Inside Out page and gameplay thumbnail. The browser
+initial isometric Inside Out page and gameplay thumbnail. The browser
 gameplay tests are recorded in `notes/inside-out.md`; deployment is a separate
 step using the existing Fly site.
 After merging `origin/dev`'s confirmed-frame/compiler and user-documentation
@@ -223,3 +223,33 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **Rooms volume settings, 2026-10-09:** the Matches page documents the title/room Settings buttons, the volume slider and `Page.Settings`, and the local `Lobby.volume` range/default and lifetime. Back/Escape returns to the menu that opened Settings. The package README describes the same behavior. `npm run build` passed.
 
 Confirmed presentation/physics rewind (2026-10-11): Views, confirmed-state guidance, networking, input and both physics package pages describe confirmed interpolation, opt-in read-only rewind queries and timestamp trust boundaries. C hosts forward both intervals before marking presentation. Singleton methods and the changed frame ABI are documented with the spec; the production docs build passes. Implementation and full native/web validation are in the subsystem notes.
+
+Inside Out shared-world revision (2026-10-11): the existing public prototype
+and authenticated catalog now describe two freely travelling makers, nested
+rooms and canonical recursive doorways. Its gameplay thumbnail uses the
+new flat workshop capture. Site check/build and all 23 analytics/admin,
+production HTTP/SEO/access checks pass; staged and production HTML matches
+the web-release game. Game-specific contracts and validation are recorded in
+`notes/inside-out.md`. The public URL and catalog access boundaries are retained.
+
+The revision was deployed to the existing `tide-website` Fly app directly
+from `0530c23f` (release 255); its health checks passed. Anonymous Inside Out
+HTML/thumbnail requests return 200 and match the tested release bytes. A
+two-browser check of those downloaded bytes with the production relay passed.
+The packaged catalog retains the incoming CRACKED, Inside Out and Two Forks
+entries, with no stale HTML from removed prototypes. No CI was dispatched.
+
+Inside Out focused-view revision (2026-10-11): the catalog description and
+gameplay thumbnail now show the per-maker dimension and its containing world.
+The public URL and authentication/discovery rules are unchanged. The final
+web-release page is restaged; Svelte check has zero errors/warnings, the
+production build passes, and all 23 analytics/admin and production HTTP/SEO/
+access checks pass. Camera, audio and gameplay evidence belongs in
+`notes/inside-out.md`.
+
+That focused-view revision deployed directly from `f8f61e9e` to the existing
+Fly site (release 256); health checks passed. Anonymous game and thumbnail
+requests return 200 and match the validated release hashes. The packaged
+catalog still contains only Inside Out, CRACKED and Two Forks.
+Two-browser WebGPU gameplay of the downloaded page with the production relay
+passes, including the focused-camera and recursion checks. No CI was dispatched.

@@ -63,9 +63,16 @@ its `<id>_page` target and its `private_games` block, plus the id in
   `private_games` collects `cracked_page` or `cracked`. Its contract and
   validation are in `notes/cracked.md`.
 - Inside Out (`inside-out`): `prototypes/inside-out/`, the owner's two-player
-  cooperative puzzle, added on 2026-10-11 through `dev` by another session.
-  It uses the same option, and `private_games` collects `inside_out_page` or
-  `inside_out`. Its rules and validation are in `notes/inside-out.md`.
+  online cooperative puzzle, added on 2026-10-11. Its revised shared workshop
+  lets both makers enter dimensions, move and nest rooms, and use
+  self-referential doorways. The owner requested polished 2D and planning
+  puzzles after the initial build. It uses the same option, and
+  `private_games` collects `inside_out_page` or `inside_out`, staging the
+  public page at `/prototypes/inside-out/` beside its gameplay thumbnail.
+  Its rules, puzzle verification and validation are in `notes/inside-out.md`.
+  The subsequent per-maker view shows the current dimension with its actual
+  containing world beyond the walls. Its catalog description and gameplay
+  thumbnail reflect that camera; public/authentication boundaries are unchanged.
 
 Removal (2026-10-11): the owner asked for every prototype but Two Forks to be
 deleted. The Last Light, Cabin Nine, Dead Signal, Deadbell, Afterburn
