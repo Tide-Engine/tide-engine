@@ -238,3 +238,11 @@ HTML/thumbnail requests return 200 and match the tested release bytes. A
 two-browser check of those downloaded bytes with the production relay passed.
 The packaged catalog retains the incoming CRACKED, Inside Out and Two Forks
 entries, with no stale HTML from removed prototypes. No CI was dispatched.
+
+Inside Out focused-view revision (2026-10-11): the catalog description and
+gameplay thumbnail now show the per-maker dimension and its containing world.
+The public URL and authentication/discovery rules are unchanged. The final
+web-release page is restaged; Svelte check has zero errors/warnings, the
+production build passes, and all 23 analytics/admin and production HTTP/SEO/
+access checks pass. Camera, audio and gameplay evidence belongs in
+`notes/inside-out.md`.
