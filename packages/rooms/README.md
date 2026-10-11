@@ -49,9 +49,24 @@ What a game may tell the room's page, each frame, from a view that takes `mut Lo
 
 Three functions are the game's to replace with an `override`: `Rooms.Title()` (the game's `title` setting, `Application.title`), `Rooms.Tagline()` (the line under it) and `Rooms.MenuButton(screen)` (where the Menu button goes; the bottom left corner).
 
+## Pages of your own
+
+Each page is a function a game overrides to draw it its own way, keeping the others: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, lobby)` and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each: `Play`, `Resume`, `Host`, `Invite`, `ShowJoin`, `Join`, `LeaveJoin`, `ShowSettings`, `LeaveSettings`, `CopyCode` and `Leave`.
+
+```csharp
+override void Rooms.TitlePage(Session session, mut Lobby lobby)
+{
+    if (GUI.Button(Rect(40, 200, 200, 48), "Play")) Play(lobby);
+    if (GUI.Button(Rect(40, 256, 200, 48), "Play with friends")) Host(lobby);
+    if (GUI.Button(Rect(40, 312, 200, 48), "Enter a code")) ShowJoin(lobby);
+}
+```
+
+A page that needs more than those parameters is a view of the game's: override the package's page with an empty body, and draw yours from a view that returns unless `lobby.page` is that page. The calls work there too, and what they ask of the session is done a frame later.
+
 ## Outgrowing it
 
-Copy `rooms.tide` out of the installation's `src/packages/rooms` into the game, drop the line from `tide.packages`, and change what you like.
+`tide eject rooms` copies the package into the game, as `packages/rooms`, and points its line in `tide.packages` there. Change what you like: `tide upgrade` no longer updates it.
 
 ## Tests
 

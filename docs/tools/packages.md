@@ -105,6 +105,20 @@ A name is lower-case letters and digits, and it's never a folder: a folder of th
 
 A name no package has is an error that lists the ones there are. They're folders of the installation's `src/packages` folder, each named as its line is, where the editors' go to definition takes you.
 
+## Making a package your own
+
+A package's code isn't the game's to edit: one from git is a commit, and one that comes with `tide` is replaced by the next upgrade. `tide eject` copies a package into the game and builds with the copy:
+
+```sh
+tide eject rooms
+```
+
+```
+./packages/rooms
+```
+
+The package is a folder of the game's from there, in `packages/` under its own folder's name, and its line is that folder, with any comment after it kept. It's the same package still, with its namespace and what it needs, so nothing else in the game changes; `tide update` and `tide upgrade` no longer move it. Before ejecting, see whether the package marks what you want to change as `virtual`: an [override](../language/overrides.md) changes that much and keeps the package's updates.
+
 ## Writing a package
 
 A package is a folder whose `tide.packages` starts with its name, which is its namespace:
