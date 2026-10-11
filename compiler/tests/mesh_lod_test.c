@@ -427,3 +427,32 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
     shape_free(&small);
     shape_free(&s);
 }
+
+// A level only pays by the triangles it takes off, so none is made with
+// fewer than a source says: the chain stops above it, and a mesh of under
+// twice as many has no levels at all.
+TIDE_TEST(mesh_lod_makes_no_level_under_the_fewest_triangles)
+{
+    shape s = ball(32, 64); // 3,968 triangles
+    mesh_lod_source source = source_of(&s);
+    mesh_lod all, some, none;
+    mesh_lod_make(&source, &all);
+    source.triangles_least = MESH_LOD_TRIANGLES_LEAST;
+    mesh_lod_make(&source, &some);
+    // 1,984 and 992, and not the 496 after them
+    TIDE_REQUIRE(all.levels > 2u && some.levels == 2u);
+    TIDE_CHECK(some.count[0] == all.count[0] && some.count[1] == all.count[1] && some.error[1] == all.error[1]);
+    TIDE_CHECK(some.count[1] >= MESH_LOD_TRIANGLES_LEAST * 3u && all.count[2] < MESH_LOD_TRIANGLES_LEAST * 3u);
+    TIDE_CHECK(memcmp(some.index, all.index, some.indices * sizeof(uint32_t)) == 0);
+    shape light = ball(16, 32); // 960
+    mesh_lod_source other = source_of(&light);
+    other.triangles_least = MESH_LOD_TRIANGLES_LEAST;
+    mesh_lod_make(&other, &none);
+    TIDE_CHECK(none.levels == 0 && none.index == NULL && none.radius > 0.99f);
+    other.triangles_least = 480; // Just enough for one
+    mesh_lod_make(&other, &none);
+    TIDE_CHECK(none.levels == 1 && none.count[0] <= 480u * 3u);
+    mesh_lod_free(&all), mesh_lod_free(&some), mesh_lod_free(&none);
+    shape_free(&light);
+    shape_free(&s);
+}
