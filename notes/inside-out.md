@@ -227,3 +227,10 @@ bytes locally and controls match time, as in its standard checks; this probes
 production signalling and peer traffic without claiming physical-device/NAT
 or real-time latency coverage. Captures are in the ignored
 `build/inside-out-captures/production-relay/` directory.
+
+While saving this evidence, `dev` advanced with the independent JSON/text
+language feature. That merge was clean. The affected game targets were rebuilt
+again, all fourteen native and WASI cases passed, and the updated web debug
+WebGPU co-op fixture passed in 13.25 seconds. The published artifact remains
+the identical bytes verified above; these later changes are repository
+integration and test/documentation evidence.
