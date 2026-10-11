@@ -1,0 +1,41 @@
+// warnings: 2
+// expect: 'Doubled' gives a value that nothing takes, and does nothing else
+// expect: 'Raised' gives a value that nothing takes, and does nothing else
+// expect: or write '_ = ...;' to drop it on purpose
+event Rang { int n; }
+
+struct Bell
+{
+    int tone;
+
+    // Gives a bell, and changes nothing where it's called
+    Bell Raised(int by) { return Bell { tone = tone + by }; }
+}
+
+int Doubled(int n) { return n * 2; }
+
+// These do something besides giving a value, so their calls are statements
+int Counted(mut int total) { total += 1; return total; }
+int Announced(int n) { Send(Rang { n = n }); return n; }
+
+singleton Tally
+{
+    int total;
+    Bell bell;
+}
+
+scene Main { }
+
+system Count(mut Tally tally)
+{
+    Doubled(tally.total);
+    tally.bell.Raised(2);
+    // Dropped on purpose, kept, or a call that does something: nothing to say
+    _ = Doubled(tally.total);
+    _ = tally.bell.Raised(2);
+    tally.bell = tally.bell.Raised(2);
+    Counted(tally.total);
+    Announced(tally.total);
+}
+
+event(Rang rang) Heard(mut Tally tally) { tally.total += rang.n; }
