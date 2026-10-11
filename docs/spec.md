@@ -1738,6 +1738,53 @@ Draw.SkinnedMesh(hero, transform, pose);
 - **Further match-content policy.** Admission of arbitrary runtime content and convenience rules for replacing a rig while retaining older rollback history. Imported content already participates in build compatibility; runtime content reaches the match through synchronized state.
 - **Further behavior.** IK, morph-target animation and an automatic animation controller are outside the current implementation. Background metadata indexing and explicit editor URL refresh remain open.
 
+## Levels of detail
+
+**Not built.** The design below was agreed 2026-10-11; nothing of it is implemented, and `[LOD]` on a declaration is an error today.
+
+### Decided
+
+- **A mesh asset opts in with `[LOD]` on its declaration:** `[LOD] asset Mesh<Corner> rock = "art/rock.glb";`. A mesh without it is drawn as it always was, with nothing made for it and nothing picked. The owner chose opt-in over opt-out: "that way no surprises for the user".
+- **Everything after that is automatic.** The build makes simpler versions of the mesh from the file, and keeps them for later builds. A draw of the mesh picks one by how the mesh shows on screen. A game writes no distances, authors no levels and passes no draw argument.
+- **`Draw.Instanced` picks for each instance**, not once for the call.
+- **Skinned meshes have it too:** `[LOD] asset SkinnedMesh<Corner> hero = "art/hero.glb";`.
+
+```csharp
+[LOD] asset Mesh<Corner> rock = "art/rock.glb";
+
+view Rocks(Scenery scenery)
+{
+    Draw.Instanced(rock, scenery.transforms);
+}
+```
+
+### Provisional
+
+Picks for building it, awaiting the owner. None is built.
+
+- **Where `[LOD]` goes:** an `asset Mesh<V>` or `asset SkinnedMesh<V>` (with or without a contract), alone or as a glob's list or map, where it applies to every file. On any other declaration it's an error that says what it's for.
+- **A level is a shorter index list over the mesh's own vertices.** No vertex is added, moved or copied, so the pack grows by index data only, about as much again as the mesh's indices for a full chain. Each level has about half the triangles of the one before; the chain ends where a step can't remove a quarter of what's left without opening a hole or tearing a seam. A mesh that's simple already gets no levels, and draws as if it had no `[LOD]`.
+  - What's weighed when triangles are removed: positions, and the fields a file fills (`normal`, `uv`, `uv2`, `color`), so a texture's seams and hard edges stay. A skinned mesh's bone weights are weighed as well, so joints keep the vertices that bend them. Open edges stay where they are. Fields of other names aren't weighed.
+- **A draw picks by error on screen, not by distance.** Each level records how far its surface is from the full mesh's. A draw takes the simplest level whose error, through the draw's transform and its camera, covers less than a threshold at the nearest point of the mesh's bounds: 1 pixel by default. So a level is taken when the difference is too small to see, with nothing to tune for each mesh, and a mesh drawn large keeps its full detail at any distance.
+  - The threshold is one number for the game, in pixels of what's drawn into, which a game raises on a weak machine. Its name and where it lives are open, below.
+  - Picking keeps no memory of the frame before: the same draw through the same camera picks the same level.
+- **Each destination picks with its own camera:** the window, and each render target a mesh is drawn into.
+- **Instances are grouped by level.** An instanced draw of an `[LOD]` mesh is one GPU draw for each level in use, finest first, with items in list order within a level. Each instance picks from its `float4x4` (the list's, or its struct's `transform`). Meshes drawn in a row by a view that runs for each entity, which join into one draw, are grouped the same way. Only `[LOD]` meshes pay for the picking.
+- **Code reads the full mesh.** `rock.vertices` and `rock.indices` are what they are without `[LOD]`, for match code and every other reader. No code reads a level, counts them or names one, so nothing of the simulation depends on them, and they aren't part of what makes two builds the same game.
+- **`Draw.Mesh(rock.vertices, rock.indices, ...)` stays the same draw as `Draw.Mesh(rock, ...)`**, levels and all. A copy of either list is the code's own, and draws as written.
+- **A game's vert isn't known to the pick.** The bounds are the mesh's as the file has it, through the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been. That's the game's to know, which is what opting in is for.
+- **A skinned mesh's levels are made from its rest geometry**, and a pose deforms a level as it deforms the full mesh, since the vertices and their weights are the same ones. Its bounds for the pick are the rest pose's.
+- **The cache** is in `.tide/`, by the file's bytes, the vertex struct's layout and the version of what makes the levels. Under `tide run`, a saved model has its levels made again with the pack.
+- **Not there:** levels an artist made, read from a file; blending or dithering between two levels; a flat picture in place of a far mesh; levels for a model decoded while the game runs (`SkinnedMesh<V>.Decode`), which has no declaration to mark; and leaving out what the camera can't see, which is a separate matter.
+
+### Open
+
+- The threshold's name and place, and whether a block form turns picking off around some draws, as the other draw settings have.
+- A shadow map picks with the lamp's camera, so a mesh can cast the shadow of another level than the one it shows as. Whether a target can pick with another camera's eyes.
+- Instances drawn with a blend and no depth depend on their order, which grouping by level changes.
+- A skinned mesh whose clips carry it far from its rest pose (a jump baked into the animation) is measured where it rests.
+- A profiler hint for a mesh without `[LOD]` that keeps drawing many more triangles than the pixels it covers.
+
 ## Tasks
 
 ### Decided
