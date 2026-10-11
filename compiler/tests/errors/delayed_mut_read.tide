@@ -1,0 +1,3 @@
+// expect: 'value' is read before it's assigned
+scene Main { }
+int F() { mut int value; value += 1; return value; }

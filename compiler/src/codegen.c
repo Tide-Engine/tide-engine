@@ -3274,6 +3274,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         gen_as(g, o, e->rhs, e->type);
         sb_put(o, ")");
         break;
+    case E_SWITCH: {
+        const int choice = switch_choice(e);
+        if (choice >= 0) gen_as(g, o, e->args.items[choice], e->type);
+        else sb_put(o, "tide_switch_not_hoisted"); // Every runtime switch is emitted before its statement
+        break;
+    }
     case E_UNARY:
         if (e->method) {
             gen_operator_call(g, o, e->method, e->lhs, NULL);
@@ -4433,6 +4439,7 @@ static bool settled(const expr *e)
     case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
     case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
     case E_STEP:
+    case E_SWITCH:
         return true;
     case E_NAME:
         // A local that isn't mut never changes, but one an `out` argument declares, which its call makes. A
@@ -4652,6 +4659,13 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
     if (!e) return;
     operand_list ops = {0};
     switch (e->kind) {
+    case E_SWITCH: {
+        collect_ordered(e->object, out, false);
+        const ordered_item item = {e, false, false};
+        vec_push(out->items, item);
+        out->forced = true;
+        break;
+    }
     case E_MEMBER: {
         // Draw.Mesh(tree, ...): the Mesh is written out again for its indices, so what it runs waits in the
         // temporaries its vertices' turn made
@@ -4816,6 +4830,8 @@ static bool needs_hoisting(expr *e)
 }
 
 static void hoist_unit(gen *g, expr *e, const char *name);
+static void hoist_switch(gen *g, expr *e, const char *name);
+static void declare_outs(gen *g, const expr *e);
 static void hoist_unwrap(gen *g, expr *e);
 static bool wrapped_in_parens(const char *text);
 static void gen_stmt(gen *g, const stmt *s);
@@ -4850,6 +4866,11 @@ static void hoist_ordered(gen *g, const ordering *ordered)
             sb_put(&g->c, ";\n");
             line(g, &g->c, "(void)%s;", name.data);
             task_declare(g, name.data, (type){e->local_world ? TY_LOCAL_ENTITY : TY_ENTITY, NULL});
+        } else if (e->kind == E_SWITCH) {
+            sb_printf(&name, "tide_switch%d", g->call_temps++);
+            hoist_switch(g, e, name.data);
+            task_declare(g, name.data, e->type);
+            e->kept = true; // The selected arm already made its owned value in source order.
         } else if (is_unit(e)) {
             sb_printf(&name, "tide_called%d", g->call_temps++);
             hoist_unit(g, e, name.data);
@@ -4905,6 +4926,40 @@ static void hoist_spawns(gen *g, expr *e)
 {
     const ordering ordered = order_of(e);
     hoist_ordered(g, &ordered);
+}
+
+static void hoist_switch(gen *g, expr *e, const char *name)
+{
+    sb selector = {0};
+    sb_printf(&selector, "tide_choice%d", g->call_temps++);
+    indent(g, &g->c);
+    sb_printf(&g->c, "%s = ", const_decl(e->object->type, selector.data));
+    gen_expr(g, &g->c, e->object);
+    sb_put(&g->c, ";\n");
+    task_declare(g, selector.data, e->object->type);
+    line(g, &g->c, "%s %s;", c_type(e->type), name);
+    line(g, &g->c, "switch (%s) {", selector.data);
+    g->indent++;
+    for (int i = 0; i < e->args.count; i++) {
+        const expr *label = e->inits.items[i].value;
+        if (label && label->int_value == INT64_MIN) line(g, &g->c, "case (-9223372036854775807LL - 1): {");
+        else if (label) line(g, &g->c, "case %lld%s: {", (long long)label->int_value, e->object->type.kind == TY_LONG ? "LL" : "");
+        else line(g, &g->c, "default: {");
+        g->indent++;
+        const int mark = task_mark(g);
+        declare_outs(g, e->args.items[i]);
+        hoist_spawns(g, e->args.items[i]);
+        indent(g, &g->c);
+        sb_printf(&g->c, "%s = ", name);
+        gen_value_of(g, &g->c, e->args.items[i], e->type);
+        sb_put(&g->c, ";\n");
+        task_pop(g, mark);
+        line(g, &g->c, "break;");
+        g->indent--;
+        line(g, &g->c, "}");
+    }
+    g->indent--;
+    line(g, &g->c, "}");
 }
 
 // The arguments of a task's start, which each go into its frame in a statement
@@ -5208,6 +5263,7 @@ static void declare_outs(gen *g, const expr *e)
         return;
     }
     declare_outs(g, e->object);
+    if (e->kind == E_SWITCH) return; // Each arm owns the locals its out arguments declare.
     declare_outs(g, e->cond);
     declare_outs(g, e->lhs);
     declare_outs(g, e->rhs);
@@ -5912,9 +5968,10 @@ static void gen_stmt(gen *g, const stmt *s)
     case S_VAR: {
         const char *name = local_cname(g, s->name);
         indent(g, o);
-        if (s->is_mut || s->loop_var) sb_printf(o, "%s %s = ", c_type(s->type), name); // A for's step changes its own
+        if (s->is_mut || s->loop_var || s->delayed) sb_printf(o, "%s %s = ", c_type(s->type), name); // Delayed initialization writes it
         else sb_printf(o, "%s = ", const_decl(s->type, name));
-        gen_value_of(g, o, s->value, s->type);
+        if (s->delayed) gen_default(g, o, s->type); // Defined padding and safe storage; source reads still require assignment
+        else gen_value_of(g, o, s->value, s->type);
         sb_printf(o, ";\n");
         line(g, o, "(void)%s;", name);
         task_declare(g, name, s->type);

@@ -747,6 +747,26 @@ static expr *parse_binary(parser *p, const int min_prec)
 {
     expr *lhs = parse_unary(p);
     for (;;) {
+        if (at(p, T_SWITCH) && min_prec <= 11) {
+            const token *word = advance(p);
+            expr *e = new_expr(E_SWITCH, word->at);
+            e->object = lhs;
+            expect(p, T_LBRACE, "'{' and the switch expression's arms");
+            while (!at(p, T_RBRACE) && !at(p, T_EOF)) {
+                field_init arm = {.at = peek(p)->at};
+                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "_")) advance(p);
+                else arm.value = parse_expr(p);
+                expect(p, T_ARROW, "'=>' after a switch expression's case");
+                vec_push(e->inits, arm);
+                vec_push(e->args, parse_expr(p));
+                if (!accept(p, T_COMMA)) break;
+            }
+            const token *close = expect(p, T_RBRACE, "'}' after the switch expression's arms");
+            e->end = close->at;
+            e->end.col++;
+            lhs = e;
+            continue;
+        }
         if (at(p, T_IS) && IS_PRECEDENCE >= min_prec) {
             lhs = parse_is(p, lhs);
             continue;
@@ -1062,6 +1082,11 @@ static stmt *parse_var(parser *p)
     const token *name = expect_ident(p, "variable name");
     s->name = name->text;
     s->name_at = name->at;
+    if (at(p, T_SEMI) && s->type_name.len > 0) {
+        advance(p);
+        s->delayed = true;
+        return s;
+    }
     if (!at(p, T_ASSIGN)) {
         diag_error(name->at, "local variable '" STR_FMT "' needs an initial value", STR_ARG(s->name));
         longjmp(p->fail, 1);

@@ -3700,6 +3700,48 @@ TIDE_TEST(lsp_operators)
 // #if and the rest: the formatter leaves directives and what they leave out as
 // they are, which reads as comments, and each branch folds.
 // ++i and i++ where a value goes: no diagnostic, and the formatter leaves them against their variable.
+TIDE_TEST(lsp_delayed_locals_and_switch_expressions)
+{
+    start();
+    static const char messy[] = "scene Main { }\n"
+                                "enum Mode { Run, Jump }\n"
+                                "int Pick(Mode mode)\n"
+                                "{\n"
+                                "int current;\n"
+                                "current=mode switch\n"
+                                "{\n"
+                                "Mode.Run=>1,\n"
+                                "Mode.Jump=>2,\n"
+                                "_=>3,\n"
+                                "};\n"
+                                "return current;\n"
+                                "}\n";
+    static const char expected[] = "scene Main { }\n"
+                                   "enum Mode { Run, Jump }\n"
+                                   "int Pick(Mode mode)\n"
+                                   "{\n"
+                                   "    int current;\n"
+                                   "    current = mode switch\n"
+                                   "    {\n"
+                                   "        Mode.Run => 1,\n"
+                                   "        Mode.Jump => 2,\n"
+                                   "        _ => 3,\n"
+                                   "    };\n"
+                                   "    return current;\n"
+                                   "}\n";
+    open_document(messy);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 4, 6, ""), "int current"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 4, 6,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 6, ""), "Mode.Run"));
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+}
+
 TIDE_TEST(lsp_increments_as_values)
 {
     start();

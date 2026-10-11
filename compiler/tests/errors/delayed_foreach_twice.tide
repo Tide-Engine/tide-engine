@@ -1,0 +1,3 @@
+// expect: 'value' may already be assigned
+scene Main { }
+int F(List<int> items) { int value; foreach (var n in items) { value = n; } return 0; }

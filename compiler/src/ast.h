@@ -768,6 +768,7 @@ typedef enum expr_kind {
     E_UNARY,
     E_LITERAL, // Transform { position = ... }
     E_CONDITIONAL, // cond ? lhs : rhs
+    E_SWITCH,      // object switch { inits[i].value => args[i] }; NULL label is the final '_'
     E_INTERP,  // $"score {score}": `parts` around the values in `args`, each with its format
     E_INDEX,   // object[lhs]: a list's element
     E_LIST,    // [a, b, c]: a list of `args`, whose type comes from where it goes
@@ -883,6 +884,7 @@ typedef struct field_init {
 struct expr {
     expr_kind kind;
     loc at;
+    loc end; // E_SWITCH: just past its closing brace, for editor spans
     type type;
 
     // E_INT, E_FLOAT. int_value is a case label's value too, worked out by the checker.
@@ -1088,6 +1090,7 @@ struct stmt {
     // A local an `out` argument declares, `out var health`: it has no value of
     // its own, and is unassigned until the call that makes it has run
     bool out_decl;
+    bool delayed; // An explicitly typed local declared without an initializer
     bool discard;  // ...or the place `out _` makes for what the call gives, which no code names
     const expr *out_arg; // ...and the argument that declares it
     str type_name; // Empty for `var`. With its namespace if it's qualified.
@@ -1481,6 +1484,7 @@ bool fold_bool(const expr *e, bool *out);
 // are only read where the call that makes them has run (assigned.c). `code`
 // is the function or method whose body it is, or NULL for other code.
 void check_assigned(program *prog, const decl *code, const stmt *body);
+int switch_choice(const expr *e); // A constant switch's selected arm, or -1 for a runtime selector
 
 // Checks every frag and vert, and the functions they call, for what the GPU
 // runs, and plans the shader each mesh draw draws through (program.shaders):

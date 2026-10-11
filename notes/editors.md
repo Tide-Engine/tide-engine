@@ -1,5 +1,20 @@
 # The language server and the editors
 
+## Delayed locals and switch expressions, 2026-10-11
+
+The shared checker supplies delayed-local diagnostics and switch-arm types.
+`analysis.c` walks the selector, labels and results for navigation, hover,
+references and selection ranges, keeping the expression's closing brace as
+its end. Formatting treats switch-expression braces as expression braces,
+keeps `};` together and indents comma-terminated arms without continuation
+indentation. The shared TextMate grammar scopes `=>` as a switch-arm operator
+for both editors and docs. `lsp_delayed_locals_and_switch_expressions` checks
+accepted code, local/enum hover, references, formatting and idempotence.
+The grammar suite includes both arrows in one expression and the new e2e
+program. All 217 grammar checks and the production docs build pass; complete
+native/web LSP validation is recorded in `notes/language.md`. No editor-host
+client code changed.
+
 ## Editor host follow-up, 2026-10-11
 
 Closed the host/process coverage gaps from the review below with repeatable

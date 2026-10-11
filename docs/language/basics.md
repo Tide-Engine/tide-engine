@@ -67,7 +67,21 @@ float limit = 10;                // read-only, explicit type
 mut float scale = 1;             // mutable, explicit type
 ```
 
-A local needs a value when it's declared, and can't reuse the name of another local or parameter in scope.
+A local with an explicit type can be assigned later:
+
+```csharp
+Animation current;
+switch (zombie.state)
+{
+    case ZombieState.Run: current = movementAnims.rootRun; break;
+    case ZombieState.Jump: current = movementAnims.rootJump; break;
+    default: current = movementAnims.rootRun; break;
+}
+```
+
+Every path that reaches a read must assign the local first. Without `mut`, each path initializes it once; choosing its first value in different branches needs no `mut`. Declare `mut Animation current;` if the code changes it again. A read-only local declared inside a loop can be initialized once each iteration; one declared outside can't be repeatedly initialized by the loop.
+
+`var` and `mut var` need an initializer to infer their type. A local can't reuse the name of another local or parameter in scope.
 
 A local that's never read is a warning. It's usually a value worked out and then forgotten:
 
@@ -172,18 +186,19 @@ Its type comes from where it goes: a typed local, an assignment, an argument, a 
 From the ones that bind tightest to the loosest:
 
 1. `-x`, `!x`, `~x`, `try` and `await`
-2. `*`, `/`, `%`
-3. `+`, `-`
-4. `<<`, `>>`
-5. `<`, `<=`, `>`, `>=`, `is`
-6. `==`, `!=`
-7. `&`
-8. `^`
-9. `|`
-10. `&&`
-11. `||`
-12. `??`
-13. `cond ? a : b`
+2. `value switch { ... }`
+3. `*`, `/`, `%`
+4. `+`, `-`
+5. `<<`, `>>`
+6. `<`, `<=`, `>`, `>=`, `is`
+7. `==`, `!=`
+8. `&`
+9. `^`
+10. `|`
+11. `&&`
+12. `||`
+13. `??`
+14. `cond ? a : b`
 
 Operators on one line group from the left: `a - b - c` is `(a - b) - c`. `??` and `?:` group from the right: `a ?? b ?? 0` is `a ?? (b ?? 0)`.
 
@@ -251,6 +266,25 @@ system Advance(mut Match match)
 - An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
 - An enum takes four bytes, like an int. `enum Voxel : byte { ... }` takes one, for members from 0 to 255, and `: ushort` two, for 0 to 65535: worth it where there are a lot of them, like a grid's cells.
 - `switch` works on ints, longs, [chars](./text-and-lists.md#characters) and enums. A case is an int (or a long, for a long), a char like `'a'`, an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
+
+### Switch expressions
+
+A switch expression chooses a value, so it can initialize a local directly:
+
+```csharp
+Animation current = zombie.state switch
+{
+    ZombieState.Run => movementAnims.rootRun,
+    ZombieState.Jump => movementAnims.rootJump,
+    _ => movementAnims.rootRun,
+};
+```
+
+The selector is evaluated once, and only the selected arm's value runs. Labels are constants of the same kinds a statement switch accepts. Each label appears once; the final `_` arm handles every other value and is required, including for enums, which can hold unnamed numbers. A trailing comma is allowed.
+
+The arm values must have compatible types. A typed destination supplies the type of `default`, `null` and list literals; otherwise the other arms supply it. Each arm has its own scope for locals declared with `out`. Patterns and guards aren't supported yet.
+
+`switch` binds tighter than arithmetic: `(a + b) switch { ... }` switches on the sum. It works in functions, tasks and GPU code as well as systems, subject to the types those places support.
 
 ### From a number
 
