@@ -1,0 +1,1116 @@
+// Lobbies: how players gather before a match and find one to join, behind
+// four slots a game can fill from another service. A game lists `lobby` in
+// its tide.packages and gets a menu (Play alone, Create a lobby, Browse
+// lobbies, Quick match, Join by ID), the lobby's page (who's in it, who's
+// ready, Start the match) and a Menu button in the match, all of the GUI's
+// own widgets (pages.tide), over a client for Tide's own lobby service, which
+// the relay runs beside its rooms (service.tide).
+//
+// A lobby is a group of players with a little data: its own, and each
+// member's. A match can be attached to it, and a party is a lobby with none
+// yet. Nothing of it is in the match: a local singleton, views and tasks.
+//
+// The four slots are `virtual` functions, each with Tide's own service as its
+// body, for a package to `override` when a game ships on another service:
+//
+//   identity      who this player is                      IdentitySignIn
+//   lobby         groups of players, and their data       LobbyCreate, LobbyList, LobbyJoin, LobbyQuickJoin,
+//                                                         LobbyLeave, LobbyUpdate, LobbySetMember, LobbyKick,
+//                                                         LobbyTransfer, LobbyWatch
+//   matchmaking   a ticket that ends in a lobby           TicketStart, TicketCheck, TicketCancel
+//   transport     how a lobby's match is reached          MatchOpen, MatchAddress, MatchJoin, MatchLeave
+//
+// Each slot is replaced apart: a package that brings other lobbies keeps
+// Tide's rooms as the way into a match, and one that brings another way in
+// keeps these lobbies. Tide's own lobbies know a player by its identity's
+// `secret`, so they go with Tide's identity, or one that brings a secret
+// they take. A build picks its packages in tide.packages (`#if STEAM`).
+//
+// What a game reads is `LobbyClient`: the lobby this player is in (`lobby`,
+// with its members and data; `owned`, whether it's this player's), the
+// lobbies last listed (`lobbies`), what's on its way (`busy`, `listing`,
+// `ticket`), the last thing that went wrong, as text (`message`) and as a
+// value (`failure`), and of the menu, `playing` and `page`, as the rooms
+// package has them. What it asks is a call each, below: `CreateLobby`,
+// `HostLobby`, `JoinLobby`, `QuickMatch`, `FindMatch`, `LeaveLobby`,
+// `SetReady`, `StartMatch` and the rest, which the menu's own pages call too.
+namespace Lobbies;
+
+// Which page of the menu is up.
+enum LobbyMenu
+{
+    Playing,   // No page is up
+    Title,     // The game's name, and the ways in
+    Browse,    // The lobbies there are, to join one
+    Join,      // A lobby's ID to type
+    Lobby,     // The lobby this player is in: before its match, and the menu from it
+    Searching  // A quick match is being looked for
+}
+
+// What this player asked for that hasn't been answered yet.
+enum LobbyBusy
+{
+    Idle,
+    Creating,
+    Joining,
+    Searching
+}
+
+// Why the service didn't do what it was asked.
+enum LobbyFailure
+{
+    None,
+    Unreachable, // No answer came
+    SignedOut,   // The service doesn't know who asks
+    NotFound,    // No such lobby, or no such member
+    Full,
+    Closed,      // Its owner lets nobody else in
+    Kicked,      // Its owner sent this player out
+    NotMember,   // This player isn't in that lobby (any more)
+    NotOwner,    // Only its owner does that
+    TooMany,     // This player is in as many lobbies as the service allows
+    Busy,        // Too many requests for now
+    Failed       // Anything else
+}
+
+struct LobbyMember
+{
+    string id;
+    string name;
+    Map<string, string> data; // The member's own, by key: `ready`, and what the game adds
+}
+
+// A lobby, as its members see it.
+struct LobbyInfo
+{
+    string id;      // "" for no lobby
+    string game;
+    string name;
+    string owner;   // A member's ID
+    int max = 8;    // Members it takes
+    [Json("public")] bool listed = true; // Lists show it, and a quick match finds it
+    bool open = true;                    // Others can join
+    Map<string, string> data;            // The lobby's own, by key, which lists filter by
+    string match;   // How to reach its match, or "" with none: what the transport says (a room's code)
+    int version;    // Counts its changes
+    string you;     // This player's ID in it
+    List<LobbyMember> members; // In the order they joined
+}
+
+// A lobby in a list.
+struct LobbyEntry
+{
+    string id;
+    string name;
+    int players;
+    int max;
+    Map<string, string> data;
+}
+
+// A lobby to make.
+struct LobbyOptions
+{
+    string name;
+    int max = 8;
+    bool listed = true;
+    Map<string, string> data;
+}
+
+// What to list: lobbies whose data has each of `filter`'s keys as it says,
+// with `seats` free.
+struct LobbyQuery
+{
+    Map<string, string> filter;
+    int seats = 1;
+}
+
+// What its owner changes of a lobby: the fields whose `sets` is true, the
+// keys of `data`, and the keys `remove` takes away.
+struct LobbyChange
+{
+    bool setsName;
+    string name;
+    bool setsMax;
+    int max;
+    bool setsListed;
+    bool listed;
+    bool setsOpen;
+    bool open;
+    bool setsMatch;
+    string match;
+    Map<string, string> data;
+    List<string> remove;
+}
+
+// Who this player is to the service. `secret` is what Tide's own service
+// knows a player by; another identity may leave it empty.
+struct LobbyIdentity
+{
+    string id;   // "" when signing in failed, with why in `failure`
+    string name; // What the service calls the player, or "" for the game to say
+    string secret;
+    LobbyFailure failure;
+}
+
+// A lobby slot's answer. `already` says this player was in the lobby before
+// it asked to join: another program plays as the same player.
+struct LobbyAnswer
+{
+    bool ok;
+    LobbyFailure failure;
+    LobbyInfo lobby;
+    bool already;
+}
+
+struct LobbyListing
+{
+    bool ok;
+    LobbyFailure failure;
+    List<LobbyEntry> lobbies;
+}
+
+// What a quick match looks for: lobbies of this `mode` with these
+// `attributes`, with `seats` free (a party asks for all of it). `name` and
+// `max` are the lobby's that's made when none is found.
+struct MatchRequest
+{
+    string mode;
+    Map<string, string> attributes;
+    int seats = 1;
+    string name;
+    int max = 8;
+}
+
+enum TicketStatus
+{
+    None,
+    Searching, // Ask again (TicketCheck)
+    Found,     // `lobby` is the one to be in, and this player is in it
+    Failed     // With why in `failure`
+}
+
+// A search for a match, from when it's asked for to the lobby it ends in.
+struct MatchTicket
+{
+    string id; // The service's name for it, to check and cancel it by
+    TicketStatus status;
+    LobbyFailure failure;
+    LobbyInfo lobby;
+    bool already; // As a LobbyAnswer's
+}
+
+enum LobbyAskKind
+{
+    Create,
+    List,
+    Join,
+    Search,
+    Leave,
+    Update,
+    Member,
+    Kick,
+    Transfer
+}
+
+// What a call below asked of the service, for `Serve` to start: a function
+// can't start a task itself.
+struct LobbyAsk
+{
+    LobbyAskKind kind;
+    string id;     // The lobby's
+    string player; // Whom to kick, or hand the lobby to
+    bool standard; // The lobby NewLobby says, or the match QuickRequest says, once this player's name is known
+    LobbyOptions options;
+    LobbyChange change;
+    MatchRequest request;
+    Map<string, string> data; // A member's own, to set
+    List<string> remove;      // ...and to take away
+}
+
+local singleton LobbyClient
+{
+    // The menu (pages.tide)
+    bool started;       // The first frame decided where this machine starts
+    LobbyMenu page = LobbyMenu.Title;
+    bool playing;       // The player's hands are on the game: no page is up, and the match is here
+    bool resume;        // The page came up from a match
+    bool newGame;       // For the frame Play alone was pressed in: a game of this machine's own, from its start
+    string typed;       // What's typed into the Join page's field
+    float copied = 10;  // Seconds since the lobby's ID was copied
+    int listFrom;       // The first lobby the Browse page shows
+
+    // The service
+    string service;     // Where it is, for a host or a test to say; "" is ServiceUrl()
+    string name;        // This player's name, which is the game's to set; "" takes the identity's, or "Player"
+    LobbyIdentity me;   // Who this player is, once the service was first asked
+    bool signing;       // ...which is being asked now
+
+    // The lobby this player is in: `lobby.id` is "" with none
+    LobbyInfo lobby;
+    bool owned;         // It's this player's
+    LobbyBusy busy;
+    MatchTicket ticket; // The quick match being looked for
+    LobbyQuery query;   // What RefreshLobbies lists: the game's to set
+    List<LobbyEntry> lobbies; // What the last list said
+    bool listing;       // A list is on its way
+    string message;     // What went wrong last, or what became of the lobby or its match, for a page to show
+    LobbyFailure failure; // ...as a value, `None` when the message is of a match
+
+    // The lobby's match
+    bool hosting;       // This machine's match is the lobby's, or is being opened to it
+    bool leaving;       // ...once it's out of a match it had joined, which isn't its to open
+    bool opening;       // ...and the transport was asked to open it
+    bool joining;       // This machine is on its way into the lobby's match
+    string match;       // The match this machine is in, as the lobby names it; "" in a match of its own
+    string left;        // A match this machine left or lost: it isn't joined again by itself
+    string told;        // What this machine, the owner, last asked the lobby's match to be
+    bool telling;       // ...and whether it has asked
+
+    int epoch;          // Counts the lobbies asked for and left: an answer to an older one is nobody's
+    List<LobbyAsk> asks;
+}
+
+// Where the service is, without a path: Tide's relay, which a game overrides
+// for a relay of its own, like http://127.0.0.1:8080 while it's developed.
+virtual string ServiceUrl()
+{
+    return "https://relay.tide-engine.dev";
+}
+
+// Which game's lobbies these are: players of two games never meet.
+virtual string ServiceGame()
+{
+    return Application.title;
+}
+
+// The file this machine's identity is kept in, under the game's saved files;
+// "" keeps none, and every run is another player.
+virtual string IdentityFile()
+{
+    return "lobby-identity.json";
+}
+
+// The lobby the Create button makes.
+virtual LobbyOptions NewLobby(string player)
+{
+    return LobbyOptions { name = $"{player}'s lobby" };
+}
+
+// What the Quick match button looks for.
+virtual MatchRequest QuickRequest(string player)
+{
+    return MatchRequest { mode = "quick", name = $"{player}'s match" };
+}
+
+// A failure in words, for a page: a game overrides it to say them its own way.
+virtual string Explain(LobbyFailure failure)
+{
+    switch (failure)
+    {
+        case LobbyFailure.None: return "";
+        case LobbyFailure.Unreachable: return "Couldn't reach the lobby service.";
+        case LobbyFailure.SignedOut: return "Couldn't sign in to the lobby service.";
+        case LobbyFailure.NotFound: return "No lobby has that ID.";
+        case LobbyFailure.Full: return "That lobby is full.";
+        case LobbyFailure.Closed: return "That lobby is closed.";
+        case LobbyFailure.Kicked: return "The owner sent you out of that lobby.";
+        case LobbyFailure.NotMember: return "You're not in that lobby any more.";
+        case LobbyFailure.NotOwner: return "Only the lobby's owner does that.";
+        case LobbyFailure.TooMany: return "You're in too many lobbies at once.";
+        case LobbyFailure.Busy: return "Too many requests. Try again in a moment.";
+    }
+    return "The lobby service couldn't do that.";
+}
+
+// The identity slot: who this player is. Tide's own keeps a secret the
+// service made, in IdentityFile(), and is that player from then on. `fresh`
+// asks for a player of this run's own, kept nowhere: the service said another
+// program is playing as the kept one (two of a game on one machine share
+// their files).
+virtual async LobbyIdentity IdentitySignIn(LobbyClient client, bool fresh)
+{
+    var file = fresh ? "" : IdentityFile();
+    if (file != "")
+    {
+        var kept = Json.Read<KeptIdentity>(File.ReadAllText(file) ?? "") ?? KeptIdentity { };
+        if (kept.id != "" && kept.secret != "") return LobbyIdentity { id = kept.id, secret = kept.secret };
+    }
+    var http = await Call("POST", ServiceOf(client) + "/v1/players", "", "");
+    if (!http.reached) return LobbyIdentity { failure = LobbyFailure.Unreachable };
+    var made = Json.Read<KeptIdentity>(http.body) ?? KeptIdentity { };
+    if (http.status != 200 || made.id == "" || made.secret == "") return LobbyIdentity { failure = LobbyFailure.SignedOut };
+    // A file that can't be written is a player for this run alone
+    if (file != "") File.WriteAllText(file, Json.Write(made))!;
+    return LobbyIdentity { id = made.id, secret = made.secret };
+}
+
+// The lobby slot. Each asks the service and gives its answer; none changes
+// LobbyClient, which is the flows' below.
+
+// Makes a lobby, with this player in it as its owner.
+virtual async LobbyAnswer LobbyCreate(LobbyClient client, LobbyOptions options)
+{
+    var body = Json.Write(CreateSaid
+    {
+        game = ServiceGame(), name = options.name, max = options.max, listed = options.listed, data = options.data,
+        member = MemberSaid { name = client.name }
+    });
+    var http = await Call("POST", ServiceOf(client) + "/v1/lobbies", client.me.secret, body);
+    return ReadLobby(http);
+}
+
+// The listed lobbies of this game that have room, by their data.
+virtual async LobbyListing LobbyList(LobbyClient client, LobbyQuery query)
+{
+    mut var url = $"{ServiceOf(client)}/v1/lobbies?game={Escape(ServiceGame())}&seats={Math.Max(query.seats, 1)}";
+    foreach (var e in query.filter) url += $"&{Escape(e.key)}={Escape(e.value)}";
+    var http = await Call("GET", url, client.me.secret, "");
+    if (!http.reached) return LobbyListing { failure = LobbyFailure.Unreachable };
+    if (http.status != 200) return LobbyListing { failure = Refused(http) };
+    var said = Json.Read<ListSaid>(http.body) ?? ListSaid { };
+    return LobbyListing { ok = true, lobbies = said.lobbies };
+}
+
+// Joins the lobby with this ID.
+virtual async LobbyAnswer LobbyJoin(LobbyClient client, string id)
+{
+    var body = Json.Write(JoinSaid { member = MemberSaid { name = client.name } });
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/join", client.me.secret, body);
+    return ReadLobby(http);
+}
+
+// Joins the fullest listed lobby whose data has each of `filter`'s keys and
+// `seats` free, or makes one as `options` says, in one request: two players
+// who ask at once can't each make a lobby the other missed.
+virtual async LobbyAnswer LobbyQuickJoin(LobbyClient client, Map<string, string> filter, int seats, LobbyOptions options)
+{
+    var body = Json.Write(QuickSaid
+    {
+        game = ServiceGame(), seats = Math.Max(seats, 1), filter = filter,
+        create = MakeSaid { name = options.name, max = options.max, listed = options.listed, data = options.data },
+        member = MemberSaid { name = client.name }
+    });
+    var http = await Call("POST", ServiceOf(client) + "/v1/lobbies/quick", client.me.secret, body);
+    return ReadLobby(http);
+}
+
+// Leaves a lobby. Its owner then is whoever has been there longest.
+virtual async LobbyAnswer LobbyLeave(LobbyClient client, string id)
+{
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/leave", client.me.secret, "{}");
+    return ReadDone(http);
+}
+
+// Changes a lobby: its owner's to ask.
+virtual async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChange change)
+{
+    mut var body = Json.Write(DataSaid { data = change.data, remove = change.remove });
+    if (change.setsName) body = Merged(body, Json.Write(NameSaid { name = change.name }));
+    if (change.setsMax) body = Merged(body, Json.Write(MaxSaid { max = change.max }));
+    if (change.setsListed) body = Merged(body, Json.Write(ListedSaid { listed = change.listed }));
+    if (change.setsOpen) body = Merged(body, Json.Write(OpenSaid { open = change.open }));
+    if (change.setsMatch) body = Merged(body, Json.Write(MatchSaid { match = change.match }));
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/update", client.me.secret, body);
+    return ReadLobby(http);
+}
+
+// Says this member's name, sets the keys of `data` in its own data and takes
+// the keys `remove` lists away.
+virtual async LobbyAnswer LobbySetMember(LobbyClient client, string id, string name, Map<string, string> data, List<string> remove)
+{
+    var body = Json.Write(MemberChangeSaid { name = name, data = data, remove = remove });
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/member", client.me.secret, body);
+    return ReadLobby(http);
+}
+
+// Sends a member out, for as long as the lobby lasts: its owner's to ask.
+virtual async LobbyAnswer LobbyKick(LobbyClient client, string id, string player)
+{
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/kick", client.me.secret, Json.Write(PlayerSaid { player = player }));
+    return ReadLobby(http);
+}
+
+// Hands the lobby to another member: its owner's to ask.
+virtual async LobbyAnswer LobbyTransfer(LobbyClient client, string id, string player)
+{
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/owner", client.me.secret, Json.Write(PlayerSaid { player = player }));
+    return ReadLobby(http);
+}
+
+// The lobby once it's no longer at `version`, or as it is after a while:
+// asked again each time it's answered, it's how a member sees changes as they
+// happen, and how the service knows the member is there.
+virtual async LobbyAnswer LobbyWatch(LobbyClient client, string id, int version)
+{
+    var http = await Call("GET", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}?since={version}", client.me.secret, "");
+    return ReadLobby(http);
+}
+
+// The matchmaking slot: a ticket, from a request to the lobby it ends in.
+// Tide's own is a quick join, which finds or makes a lobby in one request, so
+// its ticket is never `Searching`. A queue's would be, until the service has
+// put its players together.
+
+// Starts looking.
+virtual async MatchTicket TicketStart(LobbyClient client, MatchRequest request)
+{
+    mut var filter = request.attributes;
+    if (request.mode != "") filter["mode"] = request.mode;
+    var options = LobbyOptions { name = request.name, max = request.max, data = filter };
+    var answer = await LobbyQuickJoin(client, filter, request.seats, options);
+    if (!answer.ok) return MatchTicket { status = TicketStatus.Failed, failure = answer.failure };
+    return MatchTicket { id = answer.lobby.id, status = TicketStatus.Found, lobby = answer.lobby, already = answer.already };
+}
+
+// How a ticket that was `Searching` stands now: asked until it isn't.
+virtual async MatchTicket TicketCheck(LobbyClient client, MatchTicket ticket)
+{
+    // None of Tide's own is ever searching: one that says so can't be asked about
+    await Wait.Frames(1);
+    return MatchTicket { id = ticket.id, status = TicketStatus.Failed, failure = LobbyFailure.Failed };
+}
+
+// Stops looking. A ticket that found its lobby meanwhile is left by its lobby.
+virtual async void TicketCancel(LobbyClient client, MatchTicket ticket)
+{
+    if (ticket.status == TicketStatus.Found) _ = await LobbyLeave(client, ticket.lobby.id);
+}
+
+// The transport slot: how a lobby's match is reached. Tide's own is its
+// rooms: the owner opens this machine's match, the room's code is what the
+// lobby says of its match, and the members join that room.
+
+// Opens this machine's match to the lobby's members.
+virtual void MatchOpen()
+{
+    Session.Open();
+}
+
+// What the lobby's members reach this machine's match by, or "" while it has
+// none yet. `room` is the session's room, which a function is handed.
+virtual string MatchAddress(Session session, string room)
+{
+    return session.server && session.open ? room : "";
+}
+
+// Joins the match a lobby names.
+virtual void MatchJoin(string address)
+{
+    Session.Join(address);
+}
+
+// Out of the lobby's match, into one of this machine's own.
+virtual void MatchLeave()
+{
+    Session.Start();
+}
+
+// What a game asks, and what the menu's buttons do: each is a call a page of
+// the game's own makes too. The service is asked after the frame's views
+// (Serve), and LobbyClient says what became of it.
+
+// Makes a lobby and joins it as its owner.
+void CreateLobby(mut LobbyClient client, LobbyOptions options)
+{
+    if (client.busy != LobbyBusy.Idle || client.lobby.id != "") return;
+    client.busy = LobbyBusy.Creating;
+    Clear(client);
+    client.epoch += 1;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Create, options = options });
+}
+
+// Makes the lobby NewLobby says, which is what the Create button does.
+void HostLobby(mut LobbyClient client)
+{
+    if (client.busy != LobbyBusy.Idle || client.lobby.id != "") return;
+    client.busy = LobbyBusy.Creating;
+    Clear(client);
+    client.epoch += 1;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Create, standard = true });
+}
+
+// Lists the lobbies `client.query` asks for, into `client.lobbies`.
+void RefreshLobbies(mut LobbyClient client)
+{
+    if (client.listing) return;
+    client.listing = true;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.List });
+}
+
+// Joins the lobby with this ID.
+void JoinLobby(mut LobbyClient client, string id)
+{
+    if (client.busy != LobbyBusy.Idle || client.lobby.id != "" || id == "") return;
+    client.busy = LobbyBusy.Joining;
+    Clear(client);
+    client.epoch += 1;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Join, id = id });
+}
+
+// Looks for a match: `client.ticket` says how it stands, and it ends in a lobby.
+void QuickMatch(mut LobbyClient client, MatchRequest request)
+{
+    if (client.busy != LobbyBusy.Idle || client.lobby.id != "") return;
+    client.busy = LobbyBusy.Searching;
+    client.ticket = MatchTicket { status = TicketStatus.Searching };
+    client.page = LobbyMenu.Searching;
+    Clear(client);
+    client.epoch += 1;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Search, request = request });
+}
+
+// Looks for the match QuickRequest says, which is what the Quick match button does.
+void FindMatch(mut LobbyClient client)
+{
+    if (client.busy != LobbyBusy.Idle || client.lobby.id != "") return;
+    client.busy = LobbyBusy.Searching;
+    client.ticket = MatchTicket { status = TicketStatus.Searching };
+    client.page = LobbyMenu.Searching;
+    Clear(client);
+    client.epoch += 1;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Search, standard = true });
+}
+
+// Stops waiting for a lobby that was asked for (made, joined or looked for):
+// its answer is nobody's, and a lobby it joined is left.
+void CancelLobby(mut LobbyClient client)
+{
+    if (client.busy == LobbyBusy.Idle) return;
+    client.busy = LobbyBusy.Idle;
+    client.ticket = MatchTicket { };
+    client.epoch += 1;
+    if (client.page == LobbyMenu.Searching) client.page = LobbyMenu.Title;
+}
+
+// Leaves the lobby, and its match with it, for the title.
+void LeaveLobby(mut LobbyClient client)
+{
+    if (client.lobby.id != "") client.asks.Add(LobbyAsk { kind = LobbyAskKind.Leave, id = client.lobby.id });
+    Forget(client);
+    Clear(client);
+    client.page = LobbyMenu.Title;
+}
+
+// This player's name, here and in its lobby.
+void SetName(mut LobbyClient client, string name)
+{
+    client.name = name;
+    if (client.lobby.id != "") client.asks.Add(LobbyAsk { kind = LobbyAskKind.Member, id = client.lobby.id });
+}
+
+// A key of this member's own data, which every member sees.
+void SetMemberData(mut LobbyClient client, string key, string value)
+{
+    if (client.lobby.id == "") return;
+    mut var ask = LobbyAsk { kind = LobbyAskKind.Member, id = client.lobby.id };
+    ask.data[key] = value;
+    client.asks.Add(ask);
+}
+
+void RemoveMemberData(mut LobbyClient client, string key)
+{
+    if (client.lobby.id == "") return;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Member, id = client.lobby.id, remove = [key] });
+}
+
+// Whether this player is ready: the `ready` key of its member's data.
+void SetReady(mut LobbyClient client, bool ready)
+{
+    if (ready) SetMemberData(client, "ready", "1");
+    else RemoveMemberData(client, "ready");
+}
+
+// The owner's: changes the lobby as `change` says.
+void UpdateLobby(mut LobbyClient client, LobbyChange change)
+{
+    if (client.lobby.id == "") return;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Update, id = client.lobby.id, change = change });
+}
+
+void SetLobbyName(mut LobbyClient client, string name)
+{
+    UpdateLobby(client, LobbyChange { setsName = true, name = name });
+}
+
+// How many members it takes: no fewer than it has.
+void SetLobbyMax(mut LobbyClient client, int max)
+{
+    UpdateLobby(client, LobbyChange { setsMax = true, max = max });
+}
+
+// Whether lists show it and a quick match finds it.
+void SetLobbyListed(mut LobbyClient client, bool listed)
+{
+    UpdateLobby(client, LobbyChange { setsListed = true, listed = listed });
+}
+
+// Whether others can join it.
+void SetLobbyOpen(mut LobbyClient client, bool open)
+{
+    UpdateLobby(client, LobbyChange { setsOpen = true, open = open });
+}
+
+// A key of the lobby's own data, which lists filter by.
+void SetLobbyData(mut LobbyClient client, string key, string value)
+{
+    mut var change = LobbyChange { };
+    change.data[key] = value;
+    UpdateLobby(client, change);
+}
+
+void RemoveLobbyData(mut LobbyClient client, string key)
+{
+    UpdateLobby(client, LobbyChange { remove = [key] });
+}
+
+// The owner's: sends a member out of the lobby, who can't come back to it.
+void Kick(mut LobbyClient client, string player)
+{
+    if (client.lobby.id == "") return;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Kick, id = client.lobby.id, player = player });
+}
+
+// The owner's: hands the lobby to another member.
+void TransferLobby(mut LobbyClient client, string player)
+{
+    if (client.lobby.id == "") return;
+    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Transfer, id = client.lobby.id, player = player });
+}
+
+// The owner's: opens this machine's match to the lobby (Follow asks the
+// transport). Once the transport says how it's reached, the lobby says so
+// (`lobby.match`), and every member's machine joins it.
+void StartMatch(mut LobbyClient client)
+{
+    if (client.lobby.id == "" || !client.owned || client.hosting) return;
+    client.hosting = true;
+    client.leaving = false;
+    client.opening = false;
+    client.left = "";
+    Clear(client);
+}
+
+// The owner's: ends the lobby's match. Every member is back in the lobby, in
+// a match of its machine's own.
+void EndMatch(mut LobbyClient client)
+{
+    if (client.lobby.id == "" || !client.owned) return;
+    // Left, so it isn't joined again while the lobby still names it
+    client.left = client.lobby.match;
+    client.hosting = false;
+    client.leaving = false;
+    client.opening = false;
+    client.joining = false;
+    client.match = "";
+    client.page = LobbyMenu.Lobby;
+    client.resume = false;
+    MatchLeave();
+}
+
+// Into the lobby's match again, after this machine lost it.
+void RejoinMatch(mut LobbyClient client)
+{
+    client.left = "";
+    client.message = "";
+    client.failure = LobbyFailure.None;
+}
+
+// What a game reads of a member.
+bool IsReady(LobbyMember member)
+{
+    return member.data["ready"] == "1";
+}
+
+// Whether every member is ready.
+bool AllReady(LobbyInfo lobby)
+{
+    foreach (var member in lobby.members)
+    {
+        if (!IsReady(member)) return false;
+    }
+    return lobby.members.count > 0;
+}
+
+// This player's own member of its lobby, or one with no ID.
+LobbyMember Mine(LobbyClient client)
+{
+    foreach (var member in client.lobby.members)
+    {
+        if (member.id == client.lobby.you) return member;
+    }
+    return LobbyMember { };
+}
+
+// Nothing went wrong, as far as a page says.
+void Clear(mut LobbyClient client)
+{
+    client.message = "";
+    client.failure = LobbyFailure.None;
+}
+
+void Fail(mut LobbyClient client, LobbyFailure failure)
+{
+    client.failure = failure;
+    client.message = Explain(failure);
+}
+
+// No lobby any more, nor its match: this machine is in a match of its own.
+void Forget(mut LobbyClient client)
+{
+    var away = client.match != "" || client.hosting || client.joining;
+    client.lobby = LobbyInfo { };
+    client.owned = false;
+    client.busy = LobbyBusy.Idle;
+    client.ticket = MatchTicket { };
+    client.hosting = false;
+    client.leaving = false;
+    client.opening = false;
+    client.joining = false;
+    client.match = "";
+    client.left = "";
+    client.told = "";
+    client.telling = false;
+    client.resume = false;
+    client.epoch += 1;
+    if (away) MatchLeave();
+}
+
+// The lobby as the service last said it, unless what's here is newer.
+void Apply(mut LobbyClient client, LobbyInfo lobby)
+{
+    if (lobby.id != client.lobby.id || lobby.version < client.lobby.version) return;
+    client.lobby = lobby;
+    client.owned = lobby.owner == lobby.you;
+}
+
+// The service says this player is out of its lobby, or can't be reached: to
+// the title, with a line that says why.
+void Drop(mut LobbyClient client, LobbyFailure failure)
+{
+    Forget(client);
+    client.failure = failure;
+    client.message = failure == LobbyFailure.Kicked ? "The owner sent you out of the lobby."
+                   : failure == LobbyFailure.Unreachable ? "Lost the connection to the lobby service."
+                   : "The lobby is gone.";
+    client.page = LobbyMenu.Title;
+    client.playing = false;
+}
+
+// Whether a failure says this player isn't in the lobby it asked about.
+bool Out(LobbyFailure failure)
+{
+    return failure == LobbyFailure.Kicked || failure == LobbyFailure.NotMember || failure == LobbyFailure.NotFound;
+}
+
+// The flows: tasks that ask the slots and keep LobbyClient. `epoch` is the
+// client's when the task was asked for: one that has moved on since asked
+// for another lobby, or left, and the answer is nobody's.
+
+// Who this player is, asked once. `fresh` asks again, for a player of this
+// run's own.
+async LobbyFailure Identify(mut LobbyClient client, bool fresh)
+{
+    while (client.signing) await Wait.Frames(1);
+    if (client.me.id != "" && !fresh) return LobbyFailure.None;
+    client.signing = true;
+    var who = await IdentitySignIn(client, fresh);
+    client.signing = false;
+    if (who.id == "") return who.failure != LobbyFailure.None ? who.failure : LobbyFailure.SignedOut;
+    client.me = who;
+    if (client.name == "") client.name = who.name != "" ? who.name : "Player";
+    return LobbyFailure.None;
+}
+
+// A lobby was asked for, and this is the answer: into it, or back with why.
+async void Settle(mut LobbyClient client, LobbyAnswer answer, int epoch)
+{
+    if (client.epoch != epoch)
+    {
+        // Nobody waits for it any more: out of a lobby that was joined meanwhile
+        if (answer.ok) _ = await LobbyLeave(client, answer.lobby.id);
+        return;
+    }
+    client.busy = LobbyBusy.Idle;
+    client.ticket = MatchTicket { };
+    if (!answer.ok)
+    {
+        Fail(client, answer.failure);
+        if (client.page == LobbyMenu.Searching) client.page = LobbyMenu.Title;
+        return;
+    }
+    client.lobby = answer.lobby;
+    client.owned = answer.lobby.owner == answer.lobby.you;
+    client.page = LobbyMenu.Lobby;
+    client.resume = false;
+    client.typed = "";
+    Clear(client);
+    Watch(client, epoch);
+}
+
+// `standard` asks for the lobby NewLobby says, which is known once the player's name is.
+async void Create(mut LobbyClient client, LobbyOptions options, bool standard, int epoch)
+{
+    var failure = await Identify(client, false);
+    mut var answer = LobbyAnswer { failure = failure };
+    if (failure == LobbyFailure.None)
+    {
+        var made = standard ? NewLobby(client.name) : options;
+        answer = await LobbyCreate(client, made);
+    }
+    await Settle(client, answer, epoch);
+}
+
+async void Join(mut LobbyClient client, string id, int epoch)
+{
+    mut var failure = await Identify(client, false);
+    mut var answer = LobbyAnswer { failure = failure };
+    if (failure == LobbyFailure.None) answer = await LobbyJoin(client, id);
+    if (answer.ok && answer.already)
+    {
+        // Another program on this machine plays as this player: one of this run's own joins
+        failure = await Identify(client, true);
+        answer = LobbyAnswer { failure = failure };
+        if (failure == LobbyFailure.None) answer = await LobbyJoin(client, id);
+    }
+    await Settle(client, answer, epoch);
+}
+
+// `standard` asks for the match QuickRequest says.
+async void Search(mut LobbyClient client, MatchRequest request, bool standard, int epoch)
+{
+    mut var failure = await Identify(client, false);
+    mut var ticket = MatchTicket { status = TicketStatus.Failed, failure = failure };
+    var wanted = standard && failure == LobbyFailure.None ? QuickRequest(client.name) : request;
+    if (failure == LobbyFailure.None) ticket = await TicketStart(client, wanted);
+    if (ticket.status == TicketStatus.Found && ticket.already)
+    {
+        // Another program on this machine plays as this player: one of this run's own looks
+        failure = await Identify(client, true);
+        ticket = MatchTicket { status = TicketStatus.Failed, failure = failure };
+        if (failure == LobbyFailure.None) ticket = await TicketStart(client, wanted);
+    }
+    while (ticket.status == TicketStatus.Searching && client.epoch == epoch)
+    {
+        client.ticket = ticket;
+        ticket = await TicketCheck(client, ticket);
+    }
+    if (client.epoch != epoch)
+    {
+        await TicketCancel(client, ticket);
+        return;
+    }
+    mut var answer = LobbyAnswer { failure = ticket.failure };
+    if (ticket.status == TicketStatus.Found) answer = LobbyAnswer { ok = true, lobby = ticket.lobby };
+    await Settle(client, answer, epoch);
+}
+
+async void List(mut LobbyClient client, LobbyQuery query)
+{
+    var failure = await Identify(client, false);
+    mut var listing = LobbyListing { failure = failure };
+    if (failure == LobbyFailure.None) listing = await LobbyList(client, query);
+    client.listing = false;
+    if (listing.ok)
+    {
+        client.lobbies = listing.lobbies;
+        if (client.listFrom >= listing.lobbies.count) client.listFrom = 0;
+    }
+    else if (client.page == LobbyMenu.Browse) Fail(client, listing.failure);
+}
+
+async void Depart(LobbyClient client, string id)
+{
+    _ = await LobbyLeave(client, id);
+}
+
+// An answer to something a member asked of its lobby.
+void Heard(mut LobbyClient client, LobbyAnswer answer, int epoch)
+{
+    if (client.epoch != epoch) return;
+    if (answer.ok) Apply(client, answer.lobby);
+    else if (Out(answer.failure)) Drop(client, answer.failure);
+    else Fail(client, answer.failure);
+}
+
+async void Update(mut LobbyClient client, string id, LobbyChange change, int epoch)
+{
+    var answer = await LobbyUpdate(client, id, change);
+    Heard(client, answer, epoch);
+}
+
+async void Member(mut LobbyClient client, string id, Map<string, string> data, List<string> remove, int epoch)
+{
+    var answer = await LobbySetMember(client, id, client.name, data, remove);
+    Heard(client, answer, epoch);
+}
+
+async void KickOut(mut LobbyClient client, string id, string player, int epoch)
+{
+    var answer = await LobbyKick(client, id, player);
+    // A member who left meanwhile is no failure
+    if (answer.ok || answer.failure != LobbyFailure.NotFound) Heard(client, answer, epoch);
+}
+
+async void Transfer(mut LobbyClient client, string id, string player, int epoch)
+{
+    var answer = await LobbyTransfer(client, id, player);
+    if (answer.ok || answer.failure != LobbyFailure.NotFound) Heard(client, answer, epoch);
+}
+
+// How many times in a row the lobby can't be asked about before it's given up.
+const int WATCH_TRIES = 5;
+
+// While this player is in a lobby: asks the service how it stands, again each
+// time it's answered, which is also how the service knows the player is there.
+async void Watch(mut LobbyClient client, int epoch)
+{
+    mut var missed = 0;
+    while (client.epoch == epoch && client.lobby.id != "")
+    {
+        var answer = await LobbyWatch(client, client.lobby.id, client.lobby.version);
+        if (client.epoch != epoch) return;
+        if (answer.ok)
+        {
+            missed = 0;
+            Apply(client, answer.lobby);
+        }
+        else if (Out(answer.failure))
+        {
+            Drop(client, answer.failure);
+            return;
+        }
+        else
+        {
+            missed += 1;
+            if (missed >= WATCH_TRIES)
+            {
+                Drop(client, LobbyFailure.Unreachable);
+                return;
+            }
+            await Wait.Seconds(1);
+        }
+    }
+}
+
+// The lobby's match, as the transport reaches it: the owner's machine opens
+// its match and says where it is, and a member's joins the match the lobby
+// names and leaves it when the lobby names none.
+[After(Pages)]
+view Follow(Session session, mut LobbyClient client)
+{
+    if (client.lobby.id == "") return;
+    if (client.hosting)
+    {
+        var address = MatchAddress(session, session.room);
+        if (address == "")
+        {
+            // Not reachable yet. A match this machine joined isn't its to open: into one of its own first
+            if (session.state != SessionState.Connected) return;
+            if (!session.server)
+            {
+                if (!client.leaving) MatchLeave();
+                client.leaving = true;
+                return;
+            }
+            if (!client.opening) MatchOpen();
+            client.opening = true;
+            return;
+        }
+        if (client.owned && client.lobby.match != address && !(client.telling && client.told == address)) Tell(client, address);
+        if (client.lobby.match == address && client.match != address)
+        {
+            // The lobby says where the match is: this machine is in it already
+            client.match = address;
+            client.page = LobbyMenu.Playing;
+            client.playing = false;
+        }
+        return;
+    }
+    var named = client.lobby.match;
+    if (named != "" && named != client.match && named != client.left)
+    {
+        client.match = named;
+        client.joining = true;
+        Clear(client);
+        MatchJoin(named);
+    }
+    else if (named == "" && client.match != "")
+    {
+        // Its owner ended the match: back in the lobby, in a match of this machine's own
+        client.match = "";
+        client.joining = false;
+        client.page = LobbyMenu.Lobby;
+        client.resume = false;
+        MatchLeave();
+    }
+    if (named == "") client.left = "";
+    // A match its owner left or lost is the lobby's no more
+    if (client.owned && named != "" && named == client.left && !(client.telling && client.told == "")) Tell(client, "");
+    if (named == client.told) client.telling = false;
+}
+
+// Asks the lobby to name this match, once.
+void Tell(mut LobbyClient client, string address)
+{
+    client.told = address;
+    client.telling = true;
+    UpdateLobby(client, LobbyChange { setsMatch = true, match = address });
+}
+
+// Starts what the frame's calls asked of the service.
+[After(Follow)]
+view Serve(mut LobbyClient client)
+{
+    if (client.asks.count == 0) return;
+    var asks = client.asks;
+    client.asks.Clear();
+    foreach (var ask in asks)
+    {
+        switch (ask.kind)
+        {
+            case LobbyAskKind.Create: Create(client, ask.options, ask.standard, client.epoch); break;
+            case LobbyAskKind.List: List(client, client.query); break;
+            case LobbyAskKind.Join: Join(client, ask.id, client.epoch); break;
+            case LobbyAskKind.Search: Search(client, ask.request, ask.standard, client.epoch); break;
+            case LobbyAskKind.Leave: Depart(client, ask.id); break;
+            case LobbyAskKind.Update: Update(client, ask.id, ask.change, client.epoch); break;
+            case LobbyAskKind.Member: Member(client, ask.id, ask.data, ask.remove, client.epoch); break;
+            case LobbyAskKind.Kick: KickOut(client, ask.id, ask.player, client.epoch); break;
+            case LobbyAskKind.Transfer: Transfer(client, ask.id, ask.player, client.epoch); break;
+        }
+    }
+}
+
+// In the lobby's match: the wait is over.
+local event(Connected) Arrived(mut LobbyClient client)
+{
+    if (!client.joining) return;
+    client.joining = false;
+    client.page = LobbyMenu.Playing;
+    client.playing = false;
+}
+
+// A match this machine was in ended, or one it asked for couldn't be joined:
+// back to the menu, in a match of its own, with a line that says why. In a
+// lobby that's the lobby's page, and its match isn't joined again by itself.
+local event(Disconnected gone) MatchLost(mut LobbyClient client)
+{
+    if (gone.reason == DisconnectReason.Left) return;
+    client.failure = LobbyFailure.None;
+    client.message = gone.reason == DisconnectReason.Failed ? (client.joining ? "Couldn't find the match." : "Couldn't reach the match.")
+                   : gone.reason == DisconnectReason.Refused ? "That match is full, or closed."
+                   : gone.reason == DisconnectReason.TimedOut ? (client.joining ? "The match didn't answer." : "Lost the connection to the match.")
+                   : gone.reason == DisconnectReason.Kicked ? (gone.message != "" ? gone.message : "The host sent you out of the match.")
+                   : "The match ended.";
+    client.started = true;
+    client.page = client.lobby.id != "" ? LobbyMenu.Lobby : LobbyMenu.Title;
+    client.left = client.match != "" ? client.match : client.lobby.match;
+    client.match = "";
+    client.hosting = false;
+    client.leaving = false;
+    client.opening = false;
+    client.joining = false;
+    client.resume = false;
+    client.playing = false;
+    MatchLeave();
+}

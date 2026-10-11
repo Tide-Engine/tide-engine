@@ -4,13 +4,15 @@
 // its rooms, and games reach them over plain HTTP with JSON, so a game needs
 // nothing but requests (Web.Request in Tide), from a desktop or a page.
 //
-// A player is whoever holds a secret: a game makes one, keeps it, and sends it
-// with every request (Authorization: Bearer <secret>). Its ID, which other
-// players see, is made from the secret and gives nothing of it away. There are
-// no accounts: a name is what the player says it is.
+// A player is whoever holds a secret: a game makes one, or asks for one (POST
+// /v1/players), keeps it, and sends it with every other request
+// (Authorization: Bearer <secret>). Its ID, which other players see, is made
+// from the secret and gives nothing of it away. There are no accounts: a name
+// is what the player says it is.
 //
 // Every request and answer is JSON. An answer that isn't 200 is {error}.
 //
+//   POST /v1/players               Makes a player: {id, secret}. The one request that says no secret
 //   POST /v1/lobbies               {game, name, max, public, data, member}    Makes one, and joins it
 //   GET  /v1/lobbies?game=G&k=v    The public ones of a game with room, whose data has each k=v;
 //                                  seats=N asks for room for N
@@ -22,18 +24,23 @@
 //                                  to be there. One who stops asking is gone after a while.
 //   POST /v1/lobbies/ID/join       {member}
 //   POST /v1/lobbies/ID/leave
-//   POST /v1/lobbies/ID/member     {name, data}                    The asking member's own
-//   POST /v1/lobbies/ID/update     {name, max, public, open, data, match}   The owner's to change
+//   POST /v1/lobbies/ID/member     {name, data, remove}            The asking member's own
+//   POST /v1/lobbies/ID/update     {name, max, public, open, data, remove, match}   The owner's to change
 //   POST /v1/lobbies/ID/kick       {player}                        The owner's; they can't come back
 //   POST /v1/lobbies/ID/owner      {player}                        Hands the lobby to another member
 //
 // A lobby: {id, game, name, owner, max, public, open, data, match, version, you, members}, a member
 // {id, name, data}. `data` is text by key, in a lobby and in a member; in a change, null takes a key
-// away. `match` is how to reach the lobby's match, which is the game's to write and read (a room's
-// code, with Tide's own rooms). `open` false keeps anyone else from joining. When the owner goes,
-// the member who has been there longest owns it; a lobby nobody is in is gone.
+// away, and so does naming it in `remove`, a list of keys, for a game whose JSON has no null. `match`
+// is how to reach the lobby's match, which is the game's to write and read (a room's code, with
+// Tide's own rooms). `open` false keeps anyone else from joining. When the owner goes, the member
+// who has been there longest owns it; a lobby nobody is in is gone.
+//
+// A join's answer, and a quick join's, says `already: true` when the player was in that lobby
+// before it asked: to a game that wasn't, another program is playing as the same player (two of a
+// game on one machine share what it keeps), and it's the game's to ask as a player of its own.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 const ID_LETTERS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // A room code's: no look-alikes
 const ID = /^[2-9A-HJ-NP-Z]{8}$/;
@@ -69,16 +76,23 @@ function text(value, what, most, fallback) {
     return value;
 }
 
-// `data` as it stands after `change`, whose null values take keys away.
-function changed(data, change, what, limit) {
-    if (change === undefined || change === null) return data;
-    if (typeof change !== 'object' || Array.isArray(change)) throw new Refusal(400, `${what} is an object of text by key`);
+// `data` as it stands after `change`, whose null values take keys away, and
+// without the keys `remove` lists.
+function changed(data, change, what, limit, remove) {
+    if ((change === undefined || change === null) && (remove === undefined || remove === null)) return data;
+    if (change !== undefined && change !== null && (typeof change !== 'object' || Array.isArray(change))) {
+        throw new Refusal(400, `${what} is an object of text by key`);
+    }
+    if (remove !== undefined && remove !== null && (!Array.isArray(remove) || remove.some(key => typeof key !== 'string'))) {
+        throw new Refusal(400, `what to remove of ${what} is a list of keys`);
+    }
     const out = new Map(data);
-    for (const [key, value] of Object.entries(change)) {
+    for (const [key, value] of Object.entries(change || {})) {
         if (!key || key.length > limit.key) throw new Refusal(400, `a key of ${what} is 1 to ${limit.key} characters`);
         if (value === null) out.delete(key);
         else out.set(key, text(value, `a value of ${what}`, limit.value, ''));
     }
+    for (const key of remove || []) out.delete(key);
     if (out.size > limit.keys) throw new Refusal(400, `${what} has ${limit.keys} keys at the most`);
     return out;
 }
@@ -236,12 +250,14 @@ export function createLobbies({ limits = {}, clock, random = () => Math.random()
         return true;
     }
 
+    const idOf = secret => createHash('sha256').update('tide-lobby:' + secret).digest('hex').slice(0, 16);
+
     function playerOf(request) {
         const said = /^Bearer (.+)$/.exec(request.headers.authorization || '');
         if (!said || !SECRET.test(said[1])) {
             throw new Refusal(401, 'say who asks: `Authorization: Bearer <secret>`, 16 to 128 letters, digits, - and _');
         }
-        return createHash('sha256').update('tide-lobby:' + said[1]).digest('hex').slice(0, 16);
+        return idOf(said[1]);
     }
 
     // The answer to a member's GET: at once when it hasn't seen this version, and
@@ -268,6 +284,12 @@ export function createLobbies({ limits = {}, clock, random = () => Math.random()
     }
 
     async function answer(request, url, body, gone) {
+        if (url.pathname === '/v1/players') {
+            if (request.method !== 'POST') throw new Refusal(404, 'no such request');
+            // A secret nobody could guess, for a game that has nothing to make one of
+            const secret = randomBytes(24).toString('base64url');
+            return { id: idOf(secret), secret };
+        }
         const parts = url.pathname.split('/').slice(3); // After /v1/lobbies
         const player = playerOf(request);
         keepSweeping();
@@ -289,6 +311,11 @@ export function createLobbies({ limits = {}, clock, random = () => Math.random()
             const filter = [...changed(new Map(), body.filter, 'a filter', limit)];
             let best = null; // The fullest that has room, so lobbies fill before others start
             for (const lobby of lobbies.values()) {
+                // One the player is in already is the one it's looking for, with or without room
+                if (lobby.members.has(player) && matches(lobby, game, -lobby.max, filter)) {
+                    memberOf(lobby, player);
+                    return { ...view(lobby, player), already: true };
+                }
                 if (lobby.members.has(player) || lobby.kicked.has(player) || !matches(lobby, game, seats, filter)) continue;
                 if (!best || lobby.members.size > best.members.size) best = lobby;
             }
@@ -308,16 +335,18 @@ export function createLobbies({ limits = {}, clock, random = () => Math.random()
         }
         if (parts.length !== 2 || request.method !== 'POST') throw new Refusal(404, 'no such request');
         switch (parts[1]) {
-        case 'join':
+        case 'join': {
+            const already = lobby.members.has(player);
             add(lobby, player, body.member);
-            return view(lobby, player);
+            return already ? { ...view(lobby, player), already } : view(lobby, player);
+        }
         case 'leave':
             remove(lobby, player);
             return {};
         case 'member': {
             const member = memberOf(lobby, player);
             const name = text(body.name, 'a name', limit.value, member.name);
-            const data = changed(member.data, body.data, 'a member\'s data', limit);
+            const data = changed(member.data, body.data, 'a member\'s data', limit, body.remove);
             member.name = name;
             member.data = data;
             touch(lobby);
@@ -327,7 +356,7 @@ export function createLobbies({ limits = {}, clock, random = () => Math.random()
             owned(lobby, player);
             const name = text(body.name, 'a name', limit.value, lobby.name);
             const match = text(body.match, 'a match', limit.value, lobby.match);
-            const data = changed(lobby.data, body.data, 'a lobby\'s data', limit);
+            const data = changed(lobby.data, body.data, 'a lobby\'s data', limit, body.remove);
             const max = body.max === undefined ? lobby.max : body.max;
             if (!Number.isInteger(max) || max < lobby.members.size || max < 1 || max > limit.members) {
                 throw new Refusal(400, `max is from the members there are to ${limit.members}`);
@@ -361,7 +390,7 @@ export function createLobbies({ limits = {}, clock, random = () => Math.random()
     // Answers `request` if it's a lobby's (/v1/lobbies...), and says whether it was.
     function handle(request, response, address) {
         const url = new URL(request.url || '/', 'http://relay');
-        if (url.pathname !== '/v1/lobbies' && !url.pathname.startsWith('/v1/lobbies/')) return false;
+        if (url.pathname !== '/v1/lobbies' && !url.pathname.startsWith('/v1/lobbies/') && url.pathname !== '/v1/players') return false;
         // Games in pages ask from other sites: anyone may, as anyone with a game may
         response.setHeader('access-control-allow-origin', '*');
         response.setHeader('cache-control', 'no-store');

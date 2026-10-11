@@ -1,0 +1,963 @@
+using Rooms;
+
+// CRACKED, as one machine shows it: the camera, the map's blocks and their
+// light, the sky and the floor under every map, and the picture's last pass.
+// Views read the match and never change it: what they write is this machine's
+// own (Hand, Look, Light, Scenery, Shadow, Post). The mages are mage.tide's,
+// and what flies, glows and bursts effects.tide's.
+//
+// The world is drawn into an image of floats (Post.scene), where a bullet's
+// glow is brighter than white, and brought to the window through one frag
+// that adds the bloom, the vignette and the Unity game's color grade. The
+// HUD (hud.tide) draws into the window after that, so none of it glows.
+
+// The Unity game's light: a sun turned (50, -30, 0), which shines along
+// (-0.3214, -0.766, 0.5567). This is the way to it.
+const float3 SUN = float3(0.3214, 0.766, -0.5567);
+const float FLOOR_Y = -7;        // The grid under every map
+const int LAMP_PIXELS = 2048;    // Pixels across the sun's image of a map
+const float LAMP_AWAY = 90;      // How far from the map's middle it looks from,
+const float LAMP_FAR = 200;      // and how far it sees
+const float CAMERA_FOV = 60;     // The Cinemachine camera's
+const float MODEL_SCALE = 1.13;  // The Magician's, in the player prefab
+const float SKY_PIXELS = 256;    // Pixels across a face of a sky
+
+// A corner of a mesh: where it is and which way its face looks. The blocks'
+// files fill it, and the meshes made here.
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> blockPlane = "art/blocks/plane.obj";
+asset Mesh<Corner> blockPlaneSquare = "art/blocks/plane-square.obj";
+asset Mesh<Corner> blockCube = "art/blocks/cube.obj";
+asset Mesh<Corner> blockCubeU = "art/blocks/cube-u.obj";
+asset Mesh<Corner> blockCubeL = "art/blocks/cube-l.obj";
+asset Mesh<Corner> blockBeamLong = "art/blocks/beam-long.obj";
+asset Mesh<Corner> blockBeamShort = "art/blocks/beam-short.obj";
+asset Mesh<Corner> blockTrapezoid = "art/blocks/trapezoid-narrow.obj";
+
+// Each map's sky: six faces of the Unity game's skybox, as MapSky numbers them.
+asset Cubemap sky0 = "art/sky/sky0_??.jpg";
+asset Cubemap sky1 = "art/sky/sky1_??.jpg";
+asset Cubemap sky2 = "art/sky/sky2_??.jpg";
+asset Cubemap sky3 = "art/sky/sky3_??.jpg";
+asset Cubemap sky4 = "art/sky/sky4_??.jpg";
+asset Cubemap sky5 = "art/sky/sky5_??.jpg";
+asset Cubemap sky6 = "art/sky/sky6_??.jpg";
+
+// The meshes made here, once: a box and a ball to draw at any size, and a
+// flat square for the floor.
+local singleton Models
+{
+    List<Corner> cube;
+    List<int> cubeFaces;
+    List<Corner> ball;
+    List<int> ballFaces;
+    List<Corner> plate;
+    List<int> plateFaces;
+    bool made;
+}
+
+// The camera: Cinemachine's orbit around this machine's player, or around
+// whoever it watches when that player is down.
+local singleton Look
+{
+    int seat = -1;       // This machine's player's
+    int follow = -1;     // The seat the camera is on, or -1 for the whole map
+    float3 pivot;        // Where it orbits, which follows the feet a little behind them
+    bool placed;         // ...once it has been anywhere
+    float yaw;           // The orbit it's drawn with: the hand's, or the watched player's
+    float pitch = 17.5;
+    float3 eye;
+    quaternion turned = quaternion.identity;
+    float3 forward = float3(0, 0, 1);
+    float3 was;          // Where it was when what it follows changed,
+    quaternion wasTurned = quaternion.identity;
+    float blend = 1;     // and how far it has come from there, 0 to 1
+    float around;        // Radians, for the turn around a map nobody is in
+    float shake;         // How hard it shakes, 0 to 1
+    bool face;           // A round started: the orbit turns to where the match faces the player
+}
+
+// What every frag that's lit reads: where the eye is, the sun's color for
+// this map, the sky's fill, and the sky itself.
+local singleton Light
+{
+    float3 eye;
+    Color sun = Color.white;         // The sun's light, tinted by the map's temperature
+    Color above = Color(0.5, 0.6, 0.8);   // The sky's fill on what faces up,
+    Color below = Color(0.3, 0.3, 0.35);  // and what comes back up from under the map
+    Color haze = Color(0.5, 0.6, 0.7);    // What the floor fades to, far away
+    float beat;                      // Radians, for what pulses: always under a full turn
+}
+
+// The map's sky. It's apart from Light, which functions the frags call take
+// whole: a cube isn't a value a GPU is handed.
+local singleton Heaven
+{
+    Cubemap sky;
+}
+
+// What this machine's effects keep from frame to frame, beside their lists.
+local singleton Fx
+{
+    float dt;            // Seconds this frame's effects move on by: a stall isn't a leap
+    Random random;       // What rolls them: this machine's own
+}
+
+// The sun's image of the map: how far it sees along each of its pixels,
+// which every lit frag asks whether its pixel is in shadow.
+local singleton Shadow
+{
+    RenderTarget map;
+    DepthTexture depth;
+    float4x4 toLamp = float4x4.identity;
+    float step = 0.03;       // Meters a pixel of it
+    bool made;
+}
+
+// One block as it's drawn.
+struct Brick
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+}
+
+// A jump pad that was just used, which squashes.
+struct Squash
+{
+    int piece = -1;      // The pad's piece, until a view has found where that is
+    float3 at;
+    float age;
+}
+
+// The map as this machine draws it: its blocks from maps.tide, a list of
+// each mesh's for one draw each, and where the map's change has got to.
+local singleton Scenery
+{
+    int map = -1;                // The map `visuals` is of
+    List<Visual> visuals;
+    List<float> turn;            // Each visual's place in the shuffle its map comes and goes in, 0 to 1
+    float3 middle;               // The map's middle and how far it reaches, for the sun's image
+    float reach = 30;
+    int phase;                   // The map's phase last frame, a MapPhase's number,
+    float clock = 10;            // and the seconds since it changed: this machine's own clock
+    List<Squash> squashes;
+    List<Brick> planes;
+    List<Brick> squares;
+    List<Brick> cubes;
+    List<Brick> us;
+    List<Brick> ls;
+    List<Brick> longs;
+    List<Brick> shorts;
+    List<Brick> trapezoids;
+    List<Brick> boxes;
+}
+
+// The picture's passes: the world, its bright parts and their blur.
+local singleton Post
+{
+    RenderTarget scene;
+    RenderTarget bright;
+    RenderTarget spread;
+    Texture glow;
+    Texture shade;       // How much of the sky's light corners keep: Depths' blurred
+    float2 pixel;        // A logical pixel of the window, as a uv
+    bool made;
+}
+
+// How far the eye sees along each pixel, without the scene's samples (a
+// frag can't read a depth that has several a pixel): what's solid, drawn
+// once more with no frag. The shade in corners is worked out of it.
+local singleton Depths
+{
+    RenderTarget map;
+    DepthTexture depth;
+    RenderTarget shade;      // The corners' shade, at half the window's size,
+    RenderTarget soft;       // and its blur's other pass
+    float4x4 toWorld = float4x4.identity;    // From the eye's clip space to the world
+    float3 eye;
+    float3 forward = float3(0, 0, 1);
+    float2 size = float2(1, 1);  // The window's, in logical pixels
+    float2 reach;            // A meter, a meter off, as a uv
+    bool made;
+}
+
+struct BlurStep
+{
+    float2 along;
+}
+
+Color Fade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * Math.Saturate(alpha));
+}
+
+Color Mix(Color from, Color to, float t)
+{
+    return from + (to - from) * Math.Saturate(t);
+}
+
+Color Shade(Color color, float light)
+{
+    return Color(color.r * light, color.g * light, color.b * light, color.a);
+}
+
+float EaseOut(float t)
+{
+    var left = 1 - Math.Saturate(t);
+    return 1 - left * left * left;
+}
+
+// DOTween's InBack and OutBack, which the Unity game's maps go and come by.
+float EaseInBack(float t)
+{
+    var s = Math.Saturate(t);
+    return s * s * (2.70158 * s - 1.70158);
+}
+
+float EaseOutBack(float t)
+{
+    var left = Math.Saturate(t) - 1;
+    return 1 + left * left * (2.70158 * left + 1.70158);
+}
+
+// A number from 0 to 1 that's always the same for the same two.
+float Chance(int a, int b)
+{
+    return (Math.Hash(int2(a, b)) & 4095) / 4095.0;
+}
+
+// A light's color from its temperature, as Unity's lights have one: red and
+// dim under 2000 K, white near 6500 K, blue past it.
+Color Kelvin(float kelvin)
+{
+    var t = Math.Clamp(kelvin, 1000, 40000) / 100;
+    if (t <= 66)
+    {
+        var green = Math.Saturate((99.4708 * Math.Log(t) - 161.1196) / 255);
+        var blue = t <= 19 ? 0.0 : Math.Saturate((138.5177 * Math.Log(t - 10) - 305.0448) / 255);
+        return Color(1, green, blue);
+    }
+    return Color(Math.Saturate(329.6987 * Math.Pow(t - 60, -0.1332) / 255), Math.Saturate(288.1222 * Math.Pow(t - 60, -0.0755) / 255), 1);
+}
+
+// Where a pixel is in the sun's image, a uv from its top left corner, and
+// how far from the sun it is there, from 0 to 1. A pixel looks from a little
+// off its surface, along its normal, the more the more the surface slants
+// from the sun: compared where it is, a surface is in its own shadow, in
+// stripes. What's outside the image is lit.
+float3 FromLamp(float3 world, float3 normal, float4x4 toLamp, float step)
+{
+    float facing = Math.Dot(normal, SUN);
+    float slant = Math.Sqrt(Math.Saturate(1 - facing * facing));
+    float4 clip = Math.Mul(toLamp, float4(world + normal * (step * (0.8 + 1.6 * slant)), 1));
+    if (Math.Max(Math.Abs(clip.x), Math.Abs(clip.y)) > 1) return float3(0.5, 0.5, 0);
+    return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
+}
+
+// How much of the sun gets to a place on a surface, from 0, in shadow, to
+// 1: nine looks at the sun's image around the place, a pixel of it apart,
+// which make a shadow's edge a soft one about ten centimeters wide.
+float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp, float step)
+{
+    float3 seen = FromLamp(world, normal, toLamp, step);
+    float soft = 1.0 / LAMP_PIXELS;
+    mut float lit = 0;
+    for (int x = -1; x <= 1; x++)
+        for (int y = -1; y <= 1; y++)
+            lit += depth.Compare(seen.xy + float2(x * soft, y * soft), seen.z);
+    return lit / 9;
+}
+
+// A surface's paint in the map's light, as the Unity game's plain lit
+// materials take it: the sun by how squarely the surface faces it, and the
+// sky's light on everything, a little more on what faces up, which is all a
+// shadow has. So a block's bevel shades smoothly from one face to the next.
+// `sun` is what `Sunlight` says.
+Color Lit(Color paint, float3 normal, float3 world, Light light, float sun, float gloss)
+{
+    float3 toEye = Math.Normalize(light.eye - world);
+    // The sun wraps a little past what faces it squarely, so a bevel between a lit face and
+    // an unlit one is a soft turn and not a dark band
+    float direct = Math.Saturate((Math.Dot(normal, SUN) + 0.3) / 1.3) * sun;
+    // The sky's light is paler than the sky: a blue one would take a red block's color in its shade
+    float3 fill = (float3(light.above.r, light.above.g, light.above.b) * 0.45 + float3(0.55)) * (0.6 + 0.16 * normal.y);
+    float3 base = float3(paint.r, paint.g, paint.b);
+    float shine = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 40) * gloss * direct;
+    float3 lit = base * (fill + float3(light.sun.r, light.sun.g, light.sun.b) * (direct * 1.0)) + float3(shine);
+    return Color(lit.x, lit.y, lit.z, paint.a);
+}
+// A block: its map's paint, lit.
+frag BlockLook(Corner corner, out Color color, Brick brick, Instance instance, Light light, Shadow shadow)
+{
+    float3 normal = instance.Normal(corner.normal);
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp, shadow.step);
+    // A black block (Map7 has them) still shows its faces
+    Color paint = Color(Math.Max(brick.tint.r, 0.07), Math.Max(brick.tint.g, 0.07), Math.Max(brick.tint.b, 0.09), 1);
+    color = Lit(paint, normal, this.world, light, sun, 0.25);
+}
+
+// The floor under every map is nothing but a grid: Grid.mat's lines, black,
+// two centimeters wide and a meter apart, with the sky through everything
+// between them, and gone 20 meters from the eye (its _Fade_Distance). So a
+// map floats in the sky, and the floor that hurts shows where a player is
+// near it. A line is as soft as a pixel is wide there, as the Unity shader's
+// is by its derivatives.
+const float GRID_FADE = 20;
+const float GRID_LINE = 0.01;    // Half a line's width
+
+frag FloorLook(Corner corner, out Color color, Light light)
+{
+    float far = Math.Length(this.world - light.eye);
+    float2 cell = float2(Math.Abs(Math.Frac(this.world.x + 0.5) - 0.5), Math.Abs(Math.Frac(this.world.z + 0.5) - 0.5));
+    float soft = far * 0.003 + 0.0005;
+    float line = Math.SmoothStep(-soft, 0, GRID_LINE - Math.Min(cell.x, cell.y));
+    float fade = 1 - Math.SmoothStep(0, GRID_FADE, far);
+    color = Color(0, 0, 0, line * fade);
+}
+// The sky, on a ball around the eye. Its faces are small (tools/make_skies.py
+// says why), and a pixel of one is five of the screen's: four looks half a
+// pixel of the face apart round what would show as squares into cloud.
+frag SkyLook(Corner corner, out Color color, Heaven heaven)
+{
+    float3 way = Math.Normalize(corner.position);
+    float3 across = Math.Normalize(Math.Cross(way, float3(0.31, 0.9, 0.3)));
+    float3 over = Math.Cross(way, across);
+    float apart = 1.0 / SKY_PIXELS;
+    Color seen = (heaven.sky.Sample(way + (across + over) * apart) + heaven.sky.Sample(way + (across - over) * apart)
+                + heaven.sky.Sample(way - (across + over) * apart) + heaven.sky.Sample(way - (across - over) * apart)) * 0.25;
+    color = Color(seen.r, seen.g, seen.b, 1);
+}
+
+// What of the picture is brighter than white, for the bloom (URP's
+// threshold of 1).
+frag Bright(Vertex vertex, out Color color, Texture source)
+{
+    Color seen = source.Sample(vertex.uv);
+    float most = Math.Max(seen.r, Math.Max(seen.g, seen.b));
+    float over = Math.Max(most - 1, 0) / Math.Max(most, 0.0001);
+    color = Color(Math.Min(seen.r * over, 6), Math.Min(seen.g * over, 6), Math.Min(seen.b * over, 6), 1);
+}
+
+frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step)
+{
+    var near = step.along * 1.3846;
+    var far = step.along * 3.2308;
+    var sum = source.Sample(vertex.uv) * 0.227
+            + (source.Sample(vertex.uv + near) + source.Sample(vertex.uv - near)) * 0.3162
+            + (source.Sample(vertex.uv + far) + source.Sample(vertex.uv - far)) * 0.0703;
+    color = Color(sum.r, sum.g, sum.b, 1);
+}
+
+// Where a pixel of the eye's depth is in the world.
+float3 Seen(DepthTexture depth, float2 uv, float4x4 toWorld)
+{
+    float4 world = Math.Mul(toWorld, float4(uv.x * 2 - 1, 1 - uv.y * 2, depth.Sample(uv) * 2 - 1, 1));
+    return world.xyz / world.w;
+}
+
+// Ambient occlusion from the eye's depth: how folded in the surface around a
+// pixel is, within AO_REACH of it. Six pairs of looks, each pair either side
+// of the pixel on a spiral, turned differently for each pixel so that the
+// blur after it has no pattern to keep. On a flat surface a pair's two
+// places are opposite ways from the pixel's; in a corner they fold towards
+// the eye, and the sharper the fold the more it shades. It needs no normal,
+// which a depth's own steps would stripe. A pair with a place too far off,
+// across an edge, shades nothing. White where nothing is near, and for the sky.
+const float AO_REACH = 0.8;      // Meters
+const int AO_PAIRS = 6;
+
+frag Occlude(Vertex vertex, out Color color, Texture source, Depths depths)
+{
+    if (depths.depth.Sample(vertex.uv) >= 0.99999)
+    {
+        color = Color.white;
+        return;
+    }
+    float3 here = Seen(depths.depth, vertex.uv, depths.toWorld);
+    float3 toEye = Math.Normalize(depths.eye - here);
+    float away = Math.Max(Math.Dot(here - depths.eye, depths.forward), 0.3);
+    float2 reach = depths.reach * (AO_REACH / away);
+    int2 cell = int2(int(vertex.uv.x * depths.size.x), int(vertex.uv.y * depths.size.y));
+    float turn = (Math.Hash(cell) & 1023) / 1023.0 * Math.PI;
+    mut float shade = 0;
+    for (int i = 0; i < AO_PAIRS; i++)
+    {
+        float out = (i + 0.7) / AO_PAIRS;
+        float angle = turn + i * 2.399963;
+        float2 off = float2(Math.Cos(angle), Math.Sin(angle)) * reach * out;
+        float3 a = Seen(depths.depth, vertex.uv + off, depths.toWorld) - here;
+        float3 b = Seen(depths.depth, vertex.uv - off, depths.toWorld) - here;
+        float longest = Math.Max(Math.Length(a), Math.Length(b));
+        float fold = Math.Dot(Math.Normalize(a), Math.Normalize(b)) + 1;
+        // Folded towards the eye is a corner; away from it is an edge, which is lit
+        float inward = Math.Saturate(Math.Dot(a + b, toEye) / (AO_REACH * 0.08));
+        shade += Math.Saturate(fold * 0.9) * inward * Math.Saturate(2 - longest / AO_REACH);
+    }
+    float kept = 1 - Math.Saturate(shade / AO_PAIRS * 1.5);
+    color = Color(kept, kept, kept, 1);
+}
+// The picture as the window gets it: the world and its bloom, then the
+// Unity volume's grade (exposure, contrast, saturation) and its vignette.
+frag Present(Vertex vertex, out Color color, Texture source, Post post)
+{
+    Color seen = source.Sample(vertex.uv);
+    Color glow = post.glow.Sample(vertex.uv);
+    // Corners keep less of the light; what glows is over that
+    float shade = 0.35 + 0.65 * post.shade.Sample(vertex.uv).r;
+    mut float3 lit = float3(seen.r, seen.g, seen.b) * shade + float3(glow.r, glow.g, glow.b) * 0.9;
+    lit = lit * 1.08;
+    lit = (lit - float3(0.5)) * 1.05 + float3(0.5);
+    float grey = Math.Dot(lit, float3(0.2126, 0.7152, 0.0722));
+    lit = float3(grey) + (lit - float3(grey)) * 1.25;
+    float2 off = vertex.uv - float2(0.5);
+    float dark = 1 - Math.SmoothStep(0.25, 1.1, Math.Length(off) * 1.45) * 0.24;
+    lit = lit * dark;
+    // What's brighter than white whitens slowly, so a glow keeps its color longer than a clamp would let it
+    float most = Math.Max(lit.x, Math.Max(lit.y, lit.z));
+    if (most > 1) lit = lit * ((1 + (most - 1) * 0.3) / most);
+    color = Color(Math.Saturate(lit.x), Math.Saturate(lit.y), Math.Saturate(lit.z), 1);
+}
+
+// A box's six faces, four corners each, added to a mesh.
+void AddBox(mut List<Corner> corners, mut List<int> faces, float3 center, float3 size)
+{
+    for (var face = 0; face < 6; face++)
+    {
+        var axis = face / 2;
+        float way = face % 2 == 0 ? 1 : -1;
+        var normal = float3(axis == 0 ? way : 0, axis == 1 ? way : 0, axis == 2 ? way : 0);
+        var across = float3(axis == 1 ? 1 : 0, axis == 2 ? 1 : 0, axis == 0 ? 1 : 0);
+        var up = Math.Cross(normal, across);
+        var first = corners.count;
+        for (var i = 0; i < 4; i++)
+        {
+            float a = i == 0 || i == 3 ? -0.5 : 0.5;
+            float b = i < 2 ? -0.5 : 0.5;
+            corners.Add(Corner { position = center + (normal * 0.5 + across * a + up * b) * size, normal = normal });
+        }
+        faces.Add(first);
+        faces.Add(first + 1);
+        faces.Add(first + 2);
+        faces.Add(first);
+        faces.Add(first + 2);
+        faces.Add(first + 3);
+    }
+}
+
+// A ball of radius 1: rings of corners from its bottom to its top.
+void AddBall(mut List<Corner> corners, mut List<int> faces, int rings, int around)
+{
+    for (var ring = 0; ring <= rings; ring++)
+    {
+        float tilt = ring * Math.PI / rings;
+        for (var step = 0; step <= around; step++)
+        {
+            float turn = step * Math.TAU / around;
+            var out = float3(Math.Sin(tilt) * Math.Cos(turn), -Math.Cos(tilt), Math.Sin(tilt) * Math.Sin(turn));
+            corners.Add(Corner { position = out, normal = out });
+            if (ring == rings || step == around) continue;
+            int at = ring * (around + 1) + step;
+            faces.Add(at);
+            faces.Add(at + around + 1);
+            faces.Add(at + 1);
+            faces.Add(at + 1);
+            faces.Add(at + around + 1);
+            faces.Add(at + around + 2);
+        }
+    }
+}
+
+void MakeModels(mut Models models)
+{
+    models.made = true;
+    AddBox(models.cube, models.cubeFaces, float3(0), float3(1));
+    AddBall(models.ball, models.ballFaces, 12, 18);
+    models.plate = [Corner { position = float3(-0.5, 0, -0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0.5, 0, -0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0.5, 0, 0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(-0.5, 0, 0.5), normal = float3(0, 1, 0) }];
+    // Seen from above, where a triangle's corners go clockwise to be drawn
+    models.plateFaces = [0, 2, 1, 0, 3, 2];
+}
+
+// Where a visual is in the world: as the map has it, or carried by what moves it.
+void PlaceVisual(Arena arena, Visual visual, out float3 position, out quaternion rotation)
+{
+    position = visual.position;
+    rotation = visual.rotation;
+    if (visual.mover >= 0 && visual.mover < arena.movers.count)
+    {
+        var mover = arena.movers[visual.mover];
+        position = mover.position + Math.Rotate(mover.rotation, visual.position);
+        rotation = Math.Mul(mover.rotation, visual.rotation);
+    }
+    else if (visual.block >= 0 && visual.block < arena.blocks.count)
+    {
+        var block = arena.blocks[visual.block];
+        position = block.position + Math.Rotate(block.rotation, visual.position);
+        rotation = Math.Mul(block.rotation, visual.rotation);
+    }
+}
+
+// The map's blocks, when the map is another: what's drawn of it, each
+// block's turn in the shuffle it comes and goes in, and how far it reaches.
+void TakeMap(mut Scenery scenery, Arena arena)
+{
+    scenery.map = arena.map;
+    scenery.visuals.Clear();
+    scenery.turn.Clear();
+    if (arena.map < 0) return;
+    BuildMapVisuals(arena.map, scenery.visuals);
+    mut var low = float3(1000);
+    mut var high = float3(-1000);
+    for (var i = 0; i < scenery.visuals.count; i++)
+    {
+        scenery.turn.Add(Chance(i, arena.map * 7 + 3));
+        PlaceVisual(arena, scenery.visuals[i], out var position, out _);
+        low = Math.Min(low, position);
+        high = Math.Max(high, position);
+    }
+    if (scenery.visuals.count == 0) return;
+    scenery.middle = (low + high) * 0.5;
+    scenery.reach = Math.Length(high - low) * 0.5 + 9;
+}
+
+void AddBrick(mut Scenery scenery, BlockMesh mesh, Brick brick)
+{
+    switch (mesh)
+    {
+        case BlockMesh.Plane: scenery.planes.Add(brick); break;
+        case BlockMesh.PlaneSquare: scenery.squares.Add(brick); break;
+        case BlockMesh.Cube: scenery.cubes.Add(brick); break;
+        case BlockMesh.CubeU: scenery.us.Add(brick); break;
+        case BlockMesh.CubeL: scenery.ls.Add(brick); break;
+        case BlockMesh.BeamLong: scenery.longs.Add(brick); break;
+        case BlockMesh.BeamShort: scenery.shorts.Add(brick); break;
+        case BlockMesh.TrapezoidNarrow: scenery.trapezoids.Add(brick); break;
+        case BlockMesh.Box: scenery.boxes.Add(brick); break;
+    }
+}
+
+// The map's sky and light, as the map has them.
+void TakeLight(mut Light light, mut Heaven heaven, int map)
+{
+    switch (map < 0 ? 0 : MapSky(map))
+    {
+        case 0: heaven.sky = sky0; light.above = Color(0.50, 0.62, 0.80); light.haze = Color(0.62, 0.76, 0.92); break;
+        case 1: heaven.sky = sky1; light.above = Color(0.46, 0.60, 0.86); light.haze = Color(0.60, 0.78, 0.96); break;
+        case 2: heaven.sky = sky2; light.above = Color(0.44, 0.56, 0.78); light.haze = Color(0.55, 0.68, 0.86); break;
+        case 3: heaven.sky = sky3; light.above = Color(0.62, 0.46, 0.50); light.haze = Color(0.86, 0.52, 0.38); break;
+        case 4: heaven.sky = sky4; light.above = Color(0.36, 0.38, 0.58); light.haze = Color(0.10, 0.10, 0.20); break;
+        case 5: heaven.sky = sky5; light.above = Color(0.42, 0.36, 0.60); light.haze = Color(0.14, 0.08, 0.24); break;
+        case 6: heaven.sky = sky6; light.above = Color(0.56, 0.46, 0.50); light.haze = Color(0.60, 0.42, 0.40); break;
+    }
+    light.below = Shade(light.above, 0.55);
+    // The temperature tints the sun, and its intensity makes it stronger: both
+    // by less than Unity's lights would, whose colors a tonemapper brings back
+    var warm = Kelvin(map < 0 ? 5000 : MapKelvin(map));
+    var tint = Mix(Color.white, warm, 0.45);
+    var strong = 0.62 + 0.1 * ((map < 0 ? 2 : MapIntensity(map)) - 1);
+    light.sun = Shade(tint, strong);
+}
+
+// A frame starts: the models are made once, the clocks move on, and the
+// map's blocks are put where this frame has them.
+[Stage(Layers.Prepare)]
+view Gather(Arena arena, mut Models models, mut Scenery scenery, mut Light light, mut Heaven heaven, mut Fx fx)
+{
+    if (!models.made) MakeModels(models);
+    fx.dt = Math.Min(Frame.dt, 0.05);
+    light.beat += fx.dt * 3;
+    if (light.beat > Math.TAU) light.beat -= Math.TAU;
+
+    if (arena.map != scenery.map)
+    {
+        TakeMap(scenery, arena);
+        TakeLight(light, heaven, arena.map);
+    }
+    // The map's own clock: a view sees the match's timer blended across the
+    // tick its phase changes in, where it jumps
+    var phase = int(arena.mapPhase);
+    if (phase != scenery.phase)
+    {
+        scenery.phase = phase;
+        scenery.clock = 0;
+    }
+    scenery.clock += fx.dt;
+
+    mut var q = 0;
+    while (q < scenery.squashes.count)
+    {
+        // A handler can't read the map's pieces: the view finds the pad's place
+        var piece = scenery.squashes[q].piece;
+        if (piece >= 0 && piece < arena.pieces.count) scenery.squashes[q].at = arena.pieces[piece].position;
+        scenery.squashes[q].piece = -1;
+        scenery.squashes[q].age += fx.dt;
+        if (scenery.squashes[q].age > 0.5) scenery.squashes.RemoveAt(q);
+        else q++;
+    }
+
+    scenery.planes.Clear();
+    scenery.squares.Clear();
+    scenery.cubes.Clear();
+    scenery.us.Clear();
+    scenery.ls.Clear();
+    scenery.longs.Clear();
+    scenery.shorts.Clear();
+    scenery.trapezoids.Clear();
+    scenery.boxes.Clear();
+    if (!arena.hasMap) return;
+    // Map.AnimateOut and AnimateIn: each block's own tween takes 40% of the
+    // step and starts somewhere in its first 60%, in a shuffled order
+    var gone = Math.Saturate(scenery.clock / MAP_STEP_SECONDS);
+    for (var i = 0; i < scenery.visuals.count; i++)
+    {
+        var visual = scenery.visuals[i];
+        mut var grown = 1.0;
+        var own = (gone - scenery.turn[i] * 0.6) / 0.4;
+        if (arena.mapPhase == MapPhase.DestroyOld) grown = 1 - EaseInBack(own);
+        else if (arena.mapPhase == MapPhase.CreateNew) grown = EaseOutBack(own);
+        if (grown <= 0.001) continue;
+        PlaceVisual(arena, visual, out mut var position, out var rotation);
+        mut var scale = visual.scale * grown;
+        // A jump pad that just threw someone is flat for a moment, and springs back
+        if (visual.mesh == BlockMesh.Box)
+        {
+            foreach (var squash in scenery.squashes)
+            {
+                if (Math.Distance(squash.at, position) > 1.6) continue;
+                var t = squash.age / 0.5;
+                var press = Math.Sin(t * Math.PI) * (1 - t) * 0.75;
+                position.y -= scale.y * press * 0.5;
+                scale = float3(scale.x * (1 + press * 0.12), scale.y * (1 - press), scale.z * (1 + press * 0.12));
+            }
+        }
+        var tint = visual.paint == Paint.Own ? visual.own : MapPaint(scenery.map, visual.paint);
+        AddBrick(scenery, visual.mesh, Brick { transform = float4x4.TRS(position, rotation, scale), tint = tint });
+    }
+}
+
+local event(PadUsed used) PadSquashed(mut Scenery scenery)
+{
+    scenery.squashes.Add(Squash { piece = used.piece });
+}
+
+// Cinemachine's three rings, as a radius and a height for the orbit's
+// vertical axis: (0.95, 0.1) at its bottom, (4.11, 1.75) at its middle and
+// (0.95, 5.39) at its top, joined by a curve halfway between straight lines
+// and an ellipse, as the rig's curvature of 0.5 is.
+float2 Orbit(float pitch)
+{
+    var t = pitch >= 17.5 ? (pitch - 17.5) / 27.5 : (pitch - 17.5) / 27.5;
+    var bend = Math.Abs(t) * Math.PI * 0.5;
+    var tall = t >= 0 ? 5.39 - 1.75 : 1.75 - 0.1;
+    var round = float2(0.95 + 3.16 * Math.Cos(bend), 1.75 + (t >= 0 ? tall : -tall) * Math.Sin(bend));
+    var straight = float2(4.11 - 3.16 * Math.Abs(t), 1.75 + tall * t);
+    return (round + straight) * 0.5;
+}
+
+// How far a camera can be from its pivot along a way before a block of the
+// map is in between: the map's solid pieces, not its floor.
+float ClearTo(Arena arena, float3 from, float3 way, float length)
+{
+    mut var clear = length;
+    for (var i = 0; i < arena.pieces.count; i++)
+    {
+        var piece = arena.pieces[i];
+        if (!piece.solid || piece.damageFloor || !Reaches(piece, from, way, clear, 0.3)) continue;
+        if (!SweepBox(from, way, clear, 0.3, piece.position, piece.rotation, piece.half, out var hit)) continue;
+        clear = Math.Min(clear, hit.distance);
+    }
+    return clear;
+}
+
+// Whoever the camera is on: this machine's player while they stand, then a
+// teammate who does, then anyone.
+int Followed(Arena arena, int mine)
+{
+    if (mine >= 0 && arena.seats[mine].alive && !arena.seats[mine].dead) return mine;
+    mut var other = -1;
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (!arena.seats[s].alive || arena.seats[s].dead) continue;
+        if (mine >= 0 && TeamOf(s) == TeamOf(mine)) return s;
+        if (other < 0) other = s;
+    }
+    if (other >= 0) return other;
+    // Nobody stands: it stays on its own player's body
+    if (mine >= 0 && arena.seats[mine].alive) return mine;
+    return -1;
+}
+
+// The match faces a player along their spawn line: the camera starts there.
+// A handler can't ask the match's map of players which seat is this
+// machine's, so it leaves the turn to the camera's view.
+local event(RoundStarted started) Faced(mut Look look)
+{
+    look.face = true;
+}
+
+// The camera, and what the input sends of it. The mouse, the right stick
+// and a touch's drag turn the orbit (`hand.yaw`, `hand.pitch`); the camera
+// goes around this machine's player with it, a little to the left of what it
+// looks at, and `hand.aim` is the way from the fire point to where it looks,
+// as ShooterBase.GetFinalInput has it.
+[Stage(Layers.Camera)]
+view Aim(Devices devices, Arena arena, Session session, Lobby lobby, Fx fx, mut Hand hand, mut Look look, mut Light light)
+{
+    var dt = fx.dt;
+    look.seat = arena.players.TryGet(session.player, out var seat) ? seat : -1;
+    if (look.face && look.seat >= 0 && arena.seats[look.seat].alive)
+    {
+        look.face = false;
+        hand.yaw = arena.seats[look.seat].yaw;
+        hand.pitch = 23.2;
+    }
+
+    // The cursor is the cards' while they're dealt, and the menu's once a game is over
+    var free = arena.phase == Phase.Upgrade || arena.phase == Phase.GameOver;
+    if (lobby.playing)
+    {
+        if (!free) Cursor.Lock();
+        if (Cursor.locked)
+        {
+            hand.yaw += devices.mouse.delta.x * 0.14;
+            hand.pitch -= devices.mouse.delta.y * 0.11;
+        }
+        var stick = devices.gamepad.rightStick;
+        hand.yaw += stick.x * 200 * dt;
+        hand.pitch -= stick.y * 110 * dt;
+    }
+    // A touch's drag, in degrees, with y up as the mouse's is: taken, and gone
+    hand.yaw += hand.look.x;
+    hand.pitch -= hand.look.y;
+    hand.look = float2(0);
+    if (hand.yaw > 180) hand.yaw -= 360;
+    if (hand.yaw < -180) hand.yaw += 360;
+    hand.pitch = Math.Clamp(hand.pitch, -10, 45);
+
+    var follow = Followed(arena, look.seat);
+    mut var eye = look.eye;
+    mut var turned = look.turned;
+    var aspect = Screen.width / Math.Max(Screen.height, 1);
+    var half = Math.Tan(Math.Radians(CAMERA_FOV) * 0.5);
+    if (follow >= 0)
+    {
+        var body = arena.seats[follow];
+        var size = body.settings.size;
+        // Its own orbit for this machine's player, and the watched player's for another
+        mut var yaw = hand.yaw;
+        mut var pitch = hand.pitch;
+        if (follow != look.seat)
+        {
+            mut var turn = body.yaw - look.yaw;
+            if (turn > 180) turn -= 360;
+            if (turn < -180) turn += 360;
+            yaw = look.yaw + turn * Math.Saturate(dt * 6);
+            pitch = look.pitch + (body.pitch - look.pitch) * Math.Saturate(dt * 6);
+        }
+        look.yaw = yaw;
+        look.pitch = pitch;
+        var forward = Forward(yaw);
+        var right = float3(forward.z, 0, -forward.x);
+        var feet = body.position + right * (0.31 * size);
+        // Cinemachine's position damping: the orbit trails the feet
+        if (!look.placed || follow != look.follow || Math.Distance(look.pivot, feet) > 12) look.pivot = feet;
+        look.pivot += (feet - look.pivot) * (1 - Math.Exp(-dt * 14));
+        // ...but never far behind them, however fast they're thrown
+        var behind = look.pivot - feet;
+        if (Math.Length(behind) > 0.7) look.pivot = feet + Math.Normalize(behind) * 0.7;
+        look.placed = true;
+        // A screen that's taller than it's wide sees less to the sides: the orbit is wider there
+        var back = Math.Clamp(1.2 / aspect, 1, 1.7);
+        var ring = Orbit(pitch) * size * float2(back, 1 + (back - 1) * 0.35);
+        var target = look.pivot + float3(0, 0.57 * size, 0);
+        var wanted = look.pivot - forward * ring.x + float3(0, ring.y, 0);
+        // The rotation composer: the target is left of the screen's middle and under it
+        var toward = Math.Normalize(target - wanted);
+        var turnYaw = Math.Atan2(toward.x, toward.z) + Math.Atan(0.08 * 2 * half * aspect);
+        var turnPitch = Math.Asin(Math.Clamp(-toward.y, -1, 1)) - Math.Atan(0.3 * 2 * half);
+        turned = quaternion.Euler(float3(turnPitch, turnYaw, 0));
+        // Nothing of the map between the player and the camera: it comes nearer
+        var from = look.pivot + float3(0, 1.5 * size, 0);
+        var way = wanted - from;
+        var length = Math.Length(way);
+        var clear = ClearTo(arena, from, way / Math.Max(length, 0.001), length);
+        eye = from + way * (Math.Max(clear - 0.05, 0.3) / Math.Max(length, 0.001));
+    }
+    else
+    {
+        // Nobody to watch: a slow turn around the map
+        look.around += dt * 0.12;
+        if (look.around > Math.TAU) look.around -= Math.TAU;
+        var middle = float3(0, 1, 0);
+        eye = middle + float3(Math.Sin(look.around) * 30, 15, -Math.Cos(look.around) * 30);
+        turned = quaternion.LookRotation(Math.Normalize(middle - eye), float3(0, 1, 0));
+    }
+    // When what it follows changes, it glides there
+    if (follow != look.follow)
+    {
+        look.follow = follow;
+        look.was = look.eye;
+        look.wasTurned = look.turned;
+        look.blend = look.placed && Math.LengthSq(look.eye) > 0 ? 0 : 1;
+    }
+    look.blend = Math.Min(look.blend + dt * 1.6, 1);
+    if (look.blend < 1)
+    {
+        var t = Math.SmoothStep(0, 1, look.blend);
+        eye = look.was + (eye - look.was) * t;
+        // Its forward glides and it stays level: a slerp between two level looks rolls on the way
+        var ahead = Math.Rotate(look.wasTurned, float3(0, 0, 1)) * (1 - t) + Math.Rotate(turned, float3(0, 0, 1)) * t;
+        if (Math.LengthSq(ahead) > 0.0001) turned = quaternion.LookRotation(Math.Normalize(ahead), float3(0, 1, 0));
+    }
+    look.eye = eye;
+    look.turned = turned;
+    look.forward = Math.Rotate(turned, float3(0, 0, 1));
+
+    // The bullet's way, from where it leaves to where the camera looks
+    if (look.seat >= 0)
+    {
+        var size = arena.seats[look.seat].settings.size;
+        var forward = Forward(hand.yaw);
+        var right = float3(forward.z, 0, -forward.x);
+        var fire = arena.seats[look.seat].position + (right * FIRE_POINT.x + float3(0, FIRE_POINT.y, 0) + forward * FIRE_POINT.z) * size;
+        hand.aim = Math.Normalize(look.eye + look.forward * 100 - fire);
+    }
+
+    // It shakes when this machine's player is hit
+    look.shake = Math.Max(0, look.shake - dt * 2.2);
+    var wobble = light.beat * 23;
+    var shake = float3(Math.Sin(wobble) + Math.Sin(wobble * 0.62 + 1.3) * 0.6,
+                       Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6, 0) * (look.shake * look.shake * 0.06);
+    light.eye = look.eye + Math.Rotate(turned, shake);
+}
+
+// The sun's image: every block, through a camera where the sun is, into a
+// target that keeps only how far the sun sees. The mages add themselves
+// (mage.tide). It's of the whole map and doesn't follow the camera, so no
+// shadow crawls.
+[Stage(Layers.Shadow)]
+view Cast(Scenery scenery, Models models, mut Shadow shadow)
+{
+    if (!shadow.made)
+    {
+        shadow.made = true;
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
+        shadow.depth = shadow.map.depth;
+    }
+    var span = scenery.reach * 2;
+    shadow.step = span / LAMP_PIXELS;
+    var turned = quaternion.LookRotation(-SUN, float3(0, 1, 0));
+    var lamp = float4x4.TRS(scenery.middle + SUN * LAMP_AWAY, turned, float3(1));
+    shadow.map.Clear(Color.white);
+    shadow.map.SetCamera(lamp, float4x4.Ortho(span, span, 0, LAMP_FAR));
+    shadow.toLamp = shadow.map.WorldToClip();
+    shadow.map.Instanced(blockPlane, scenery.planes);
+    shadow.map.Instanced(blockPlaneSquare, scenery.squares);
+    shadow.map.Instanced(blockCube, scenery.cubes);
+    shadow.map.Instanced(blockCubeU, scenery.us);
+    shadow.map.Instanced(blockCubeL, scenery.ls);
+    shadow.map.Instanced(blockBeamLong, scenery.longs);
+    shadow.map.Instanced(blockBeamShort, scenery.shorts);
+    shadow.map.Instanced(blockTrapezoid, scenery.trapezoids);
+    shadow.map.Instanced(models.cube, models.cubeFaces, scenery.boxes);
+}
+
+// The eye's depth: every block once more, through the eye, with no frag.
+// The mages add themselves (mage.tide).
+[Stage(Layers.Shadow, 1)]
+view Lay(Scenery scenery, Models models, Look look, Light light, mut Depths depths, mut Post post)
+{
+    if (!depths.made)
+    {
+        depths.made = true;
+        depths.map = RenderTarget.Window(Format.Depth);
+        depths.depth = depths.map.depth;
+        depths.shade = RenderTarget.Window(0.5);
+        depths.soft = RenderTarget.Window(0.5);
+        post.shade = depths.shade.color;
+    }
+    depths.map.Clear(Color.white);
+    depths.map.SetCamera(light.eye, look.turned, CAMERA_FOV);
+    depths.toWorld = Math.Inverse(depths.map.WorldToClip());
+    depths.eye = light.eye;
+    depths.forward = Math.Rotate(look.turned, float3(0, 0, 1));
+    depths.size = float2(Math.Max(Screen.width, 1), Math.Max(Screen.height, 1));
+    var half = Math.Tan(Math.Radians(CAMERA_FOV) * 0.5);
+    depths.reach = float2(depths.size.y / depths.size.x, 1) * (0.5 / half);
+    depths.map.Instanced(blockPlane, scenery.planes);
+    depths.map.Instanced(blockPlaneSquare, scenery.squares);
+    depths.map.Instanced(blockCube, scenery.cubes);
+    depths.map.Instanced(blockCubeU, scenery.us);
+    depths.map.Instanced(blockCubeL, scenery.ls);
+    depths.map.Instanced(blockBeamLong, scenery.longs);
+    depths.map.Instanced(blockBeamShort, scenery.shorts);
+    depths.map.Instanced(blockTrapezoid, scenery.trapezoids);
+    depths.map.Instanced(models.cube, models.cubeFaces, scenery.boxes);
+}
+// The world's picture starts here: the sky, the floor and the map, each
+// mesh's blocks in one draw.
+[Stage(Layers.World)]
+view World(Scenery scenery, Models models, Look look, Light light, mut Post post)
+{
+    if (!post.made)
+    {
+        post.made = true;
+        post.scene = RenderTarget.Window(Format.Rgba16f, samples: 4);
+        post.bright = RenderTarget.Window(0.25, Format.Rgba16f);
+        post.spread = RenderTarget.Window(0.25, Format.Rgba16f);
+        post.glow = post.bright.color;
+    }
+    post.pixel = float2(1 / Math.Max(Screen.width, 1), 1 / Math.Max(Screen.height, 1));
+    post.scene.Clear(Color.black);
+    post.scene.SetCamera(light.eye, look.turned, CAMERA_FOV);
+    // The window has the same camera, for what the HUD puts over the world
+    Draw.SetCamera(light.eye, look.turned, CAMERA_FOV);
+    // ...and it's where the match is heard from
+    Audio.SetListener(light.eye, look.turned);
+
+    post.scene.Depth(Depth.None),
+    post.scene.Cull(Cull.Front)
+    {
+        post.scene.Mesh(models.ball, models.ballFaces, float4x4.TRS(light.eye, quaternion.identity, float3(50)), SkyLook);
+    }
+    post.scene.Instanced(blockPlane, scenery.planes, BlockLook);
+    post.scene.Instanced(blockPlaneSquare, scenery.squares, BlockLook);
+    post.scene.Instanced(blockCube, scenery.cubes, BlockLook);
+    post.scene.Instanced(blockCubeU, scenery.us, BlockLook);
+    post.scene.Instanced(blockCubeL, scenery.ls, BlockLook);
+    post.scene.Instanced(blockBeamLong, scenery.longs, BlockLook);
+    post.scene.Instanced(blockBeamShort, scenery.shorts, BlockLook);
+    post.scene.Instanced(blockTrapezoid, scenery.trapezoids, BlockLook);
+    post.scene.Instanced(models.cube, models.cubeFaces, scenery.boxes, BlockLook);
+
+    // The grid last, over the sky and the map: it's see-through, and hides nothing
+    post.scene.Depth(Depth.Read)
+    {
+        post.scene.Mesh(models.plate, models.plateFaces,
+                        float4x4.TRS(float3(light.eye.x, FLOOR_Y, light.eye.z), quaternion.identity, float3(2 * GRID_FADE + 2, 1, 2 * GRID_FADE + 2)), FloorLook);
+    }
+}
+
+// The picture goes to the window: its bright parts blurred across and down,
+// at a quarter of the size, then everything through `Present`.
+[Stage(Layers.Effects, 100)]
+view Show(Post post, Depths depths)
+{
+    // The corners' shade, then blurred across and down
+    Draw.Blit(post.scene.color, depths.shade, Occlude);
+    Draw.Blit(depths.shade.color, depths.soft, Blur, BlurStep { along = float2(post.pixel.x * 2, 0) });
+    Draw.Blit(depths.soft.color, depths.shade, Blur, BlurStep { along = float2(0, post.pixel.y * 2) });
+    Draw.Blit(post.scene.color, post.bright, Bright);
+    Draw.Blit(post.bright.color, post.spread, Blur, BlurStep { along = float2(post.pixel.x * 4, 0) });
+    Draw.Blit(post.spread.color, post.bright, Blur, BlurStep { along = float2(0, post.pixel.y * 4) });
+    Draw.Blit(post.bright.color, post.spread, Blur, BlurStep { along = float2(post.pixel.x * 9, 0) });
+    Draw.Blit(post.spread.color, post.bright, Blur, BlurStep { along = float2(0, post.pixel.y * 9) });
+    Draw.Blit(post.scene.color, Draw.window, Present);
+}

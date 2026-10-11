@@ -15,50 +15,6 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   in `notes/cli-and-packages.md`, Web-watch request diagnostics. The hosted stall's
   underlying cause is unproven; no server behavior or browser test changed.
 
-- `last_light_browser_process` has nine cleanup regressions (2026-10-11):
-  three portable real-process/stdio cases and six controlled Windows taskkill
-  cases. The fault fixtures use EventEmitter children and Node's mock timers
-  to advance the actual helper's default two-second windows, separately from
-  explicit process-exit/error notifications. Accepted kill requests leave exit
-  codes null until an exit is reported. Assertions cover complete grace windows,
-  both exits before success, retained stderr on failure, spawn errors,
-  independent browser exit and unreferencing an unkillable helper. A kill-only
-  case rejects treating `ChildProcess.killed` as confirmed exit.
-  Run `38089269838` passed native Windows and web but cancelled one MinGW fault
-  case at its ten-second test guard. The preceding 100 ms-to-two-second fixture
-  correction had left scheduling-dependent wall-clock waits in those cases.
-  Controlled time removes the deliberate waits; ten-second case guards remain,
-  and the CTest guard returns from 60 to its original 30 seconds. The cleanup
-  implementation and real browser-playtest deadlines are unchanged. Evidence,
-  validation and the earlier fixture history are in `notes/private-prototypes.md`.
-
-- `last_light_browser_devtools` exercises the Last Light fixture's DevTools
-  pipe without a browser (2026-10-10). Eight cases cover fragmented UTF-8,
-  coalesced records, target-session routing and reordered replies, protocol
-  errors, transport closure, timeout/late replies, target detachment and
-  disposal. It runs in native and web builds alongside the process-cleanup
-  and frame-control checks. The transport comparison and the limits of the
-  hosted-timeout diagnosis are in `notes/private-prototypes.md`.
-
-- `last_light_frame_control` checks the playtest's serialized frame/clock
-  controller without a browser (2026-10-11). The runner advances both real
-  browser players one 30 Hz frame per shared round, then waits for every
-  submitted WebGPU queue and completes WebGL work before another round.
-  Only delivered frames advance the page's monotonic match/transport clock;
-  browser startup, input commands,
-  captures and GPU completion waits consume wall time alone. Seven regressions
-  cover long capture/GPU waits, the two-player barrier, recursive callbacks,
-  cancellation, rejected fences, several queues/canvases and idle/invalid steps.
-  Real-time session/transport behavior remains covered by the engine's net
-  and browser-room tests. Game keyboard/touch, visibility, rendering,
-  screenshots, fresh packets and verified-tick assertions remain, with six
-  fresh verified ticks per gameplay checkpoint rather than long waits checking
-  nothing further. All wall-clock guards remain. This replaces the former
-  `last_light_frame_pacing`
-  fixture, which gated the entire host loop on GPU completion while session
-  deadlines continued passing in real time. Evidence and validation are in
-  `notes/private-prototypes.md`.
-
 - Browser tests registered by `tide_add_web_test` reserve the host's CPU count
   through CTest `PROCESSORS`, for WebGL and WebGPU (2026-10-10). Chrome's software
   renderer starts its own workers, so counting each page as one job let four

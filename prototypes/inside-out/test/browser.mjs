@@ -13,9 +13,9 @@ import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createRelay } from '../../../relay/relay.mjs';
-import { stopBrowser } from '../../the-last-light/test/browser-process.mjs';
-import { installFrameControl } from '../../the-last-light/test/frame-control.mjs';
-import { connectDevTools } from '../../the-last-light/test/browser-devtools.mjs';
+import { stopBrowser } from './browser-process.mjs';
+import { installFrameControl } from './frame-control.mjs';
+import { connectDevTools } from './browser-devtools.mjs';
 
 const [gamePage, captureDirectory, backend = 'webgl'] = process.argv.slice(2);
 assert.ok(gamePage && captureDirectory, 'Usage: browser.mjs <inside_out.html> <capture directory> [webgl|webgpu]');
