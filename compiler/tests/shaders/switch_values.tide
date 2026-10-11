@@ -1,6 +1,7 @@
 scene Main { }
 local singleton Models { List<Vertex> corners; }
 const int SWITCH_PICK = 1 switch { 1 => 7, _ => 8 };
+enum SwitchMode { Run, Jump }
 int SwitchMark(mut int calls, int digit)
 {
     calls = calls * 10 + digit;
@@ -41,6 +42,8 @@ int SwitchProbe(int selector)
         _ => SwitchFill(out var value) ? value + 1 : 0,
     };
     var trace = selector == 1 ? 1124 : selector == 2 ? 1234 : 1034;
+    SwitchMode pickedMode = SwitchMode(selector) switch { .Jump => .Jump, _ => .Run };
+    if (int(pickedMode) != (selector == 1 ? 1 : 0)) return -100;
     if (calls != trace || skipped || count != 2 || SWITCH_PICK != 7) return -100;
     return later + chosen + conditional + nested + scoped;
 }

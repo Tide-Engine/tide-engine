@@ -802,7 +802,7 @@ static void walk_value(const expr *e)
     }
 
     case E_MEMBER: {
-        walk_expr(e->object);
+        if (!e->enum_shorthand) walk_expr(e->object);
         occurrence o = {.at = e->at, .len = e->member.len, .name = e->member, .type = e->type,
                         .object_type = e->object->type, .write = e == walk_written};
         if (e->bind == BIND_TYPE && e->type_decl) { // Combat.Health, in Spawn(Combat.Health)
@@ -8120,7 +8120,7 @@ static bool case_written(const int open, const str member)
 // An enum switch's cases, by its members: after `case`, `Phase.Warmup`, and
 // where a case can start (`whole`), `case Phase.Warmup:`. In the enum's
 // order, the members no case names yet before the others.
-static void complete_cases(completion *c, const decl *of, const int open, const bool whole)
+static void complete_cases(completion *c, const decl *of, const int open, const bool whole, const bool unqualified)
 {
     bool first = true;
     for (int m = 0; m < of->members.count; m++) {
@@ -8128,7 +8128,8 @@ static void complete_cases(completion *c, const decl *of, const int open, const 
         const bool written = case_written(open, member);
         if (whole && written) continue;
         sb label = {0};
-        sb_printf(&label, whole ? "case %s." STR_FMT ":" : "%s." STR_FMT, name_for(of), STR_ARG(member));
+        if (unqualified) sb_printf(&label, STR_FMT, STR_ARG(member));
+        else sb_printf(&label, whole ? "case %s." STR_FMT ":" : "%s." STR_FMT, name_for(of), STR_ARG(member));
         bool seen = false;
         for (int i = 0; i < c->seen.count && !seen; i++) seen = strcmp(c->seen.items[i], label.data) == 0;
         if (seen) continue;
@@ -8196,6 +8197,153 @@ static void complete_out_argument(completion *c, const out_argument *arg, const 
     }
 }
 
+
+// Expected enum at an incomplete expression: the recovering parser may have
+// discarded its statement, so use the preceding tokens and the surviving scope.
+typedef struct enum_argument_completion {
+    int place;
+    str named;
+    const decl *of;
+    bool found;
+    bool ambiguous;
+} enum_argument_completion;
+
+static void enum_argument_type(enum_argument_completion *v, const type t)
+{
+    const decl *of = t.kind == TY_ENUM ? t.decl : NULL;
+    if (!of || (v->found && v->of != of)) v->ambiguous = true;
+    v->found = true;
+    v->of = of;
+}
+
+static void visit_enum_argument(void *user, const char *label, const char *doc)
+{
+    (void)doc;
+    enum_argument_completion *v = user;
+    const label_spans spans = label_split(label);
+    for (int p = 0; p < spans.count; p++) {
+        const char *text = label + spans.items[p].start;
+        const char *end = label + spans.items[p].end;
+        const char *equals = memchr(text, '=', (size_t)(end - text));
+        if (equals) { end = equals; while (end > text && end[-1] == ' ') end--; }
+        const char *word = end;
+        while (word > text && word[-1] != ' ') word--;
+        if (v->named.len ? !str_eq(v->named, ((str){word, (int)(end - word)})) : p != v->place) continue;
+        type t = {TY_ERROR, NULL};
+        const str written = {text, word > text ? (int)(word - text - 1) : 0};
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_ENUM && str_eq(written, d->name)) { t = (type){TY_ENUM, d}; break; }
+        }
+        enum_argument_type(v, t);
+    }
+}
+
+static const decl *completion_call_enum(const int last, const loc at)
+{
+    const token *toks = DOC->toks;
+    enum_argument_completion v = {0};
+    const int open = open_call(last, &v.place);
+    if (open < 1 || toks[open - 1].kind != T_IDENT) return NULL;
+    if (toks[last].kind == T_COLON && last >= 1 && toks[last - 1].kind == T_IDENT) v.named = toks[last - 1].text;
+    else if (toks[last].kind != T_LPAREN && toks[last].kind != T_COMMA) return NULL;
+    const int callee = open - 1;
+    const bool method = callee >= 1 && toks[callee - 1].kind == T_DOT;
+    const type receiver = method ? receiver_type(callee - 1, at) : (type){TY_ERROR, NULL};
+    int first = callee;
+    while (first >= 2 && toks[first - 1].kind == T_DOT && toks[first - 2].kind == T_IDENT) first -= 2;
+    const str written = {toks[first].text.ptr, (int)(toks[callee].text.ptr + toks[callee].text.len - toks[first].text.ptr)};
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        for (int k = -1; k < d->methods.count; k++) {
+            const decl *m = k < 0 ? d : d->methods.items[k];
+            if (!is_routine(m) || m->is_operator || !str_eq(m->name, toks[callee].text)) continue;
+            if (m->owner) {
+                if (!method || m->owner != receiver.decl) continue;
+            } else if (m->kind != DECL_FUNCTION || (!str_eq_c(written, name_for(m)) && !str_eq(written, m->qualified))) continue;
+            int p = v.named.len ? -1 : v.place;
+            for (int a = 0; v.named.len && a < m->params.count; a++) if (str_eq(m->params.items[a].name, v.named)) p = a;
+            if (p >= 0 && p < m->params.count) enum_argument_type(&v, m->params.items[p].type);
+        }
+    }
+    if (!v.found && method && callee >= 2 && toks[callee - 2].kind == T_IDENT && builtin_owner(toks[callee - 2].text))
+        builtin_signatures(toks[callee - 2].text, toks[callee].text, visit_enum_argument, &v);
+    if (!v.found && method) {
+        size_t count;
+        const method_form *forms = methods_of(receiver, &count);
+        const method_form *form = find_form(forms, count, toks[callee].text);
+        if (form) {
+            sb label = {0};
+            format_method(form, receiver, &label);
+            visit_enum_argument(&v, label.data, form->doc);
+        }
+        if (!v.found && receiver.kind == TY_RENDER_TARGET)
+            builtin_signatures(str_from("Draw"), toks[callee].text, visit_enum_argument, &v);
+    }
+    return v.found && !v.ambiguous ? v.of : NULL;
+}
+
+static const decl *completion_enum(const scope *sc, const int last, const int brace, const loc at)
+{
+    if (last < 0) return NULL;
+    const token *toks = DOC->toks;
+    const tok_kind kind = toks[last].kind;
+    if (kind == T_RETURN && sc->decl && sc->decl->return_type.kind == TY_ENUM) return sc->decl->return_type.decl;
+    if (kind == T_CASE) {
+        const int switched = switch_of_brace(brace);
+        return switched >= 0 ? switch_enum(sc, switched, brace) : NULL;
+    }
+    if (kind != T_ASSIGN && kind != T_EQ && kind != T_NE) return completion_call_enum(last, at);
+    if (last < 1) return NULL;
+    int first = last - 1;
+    while (first >= 2 && toks[first - 1].kind == T_DOT && toks[first - 2].kind == T_IDENT) first -= 2;
+    type t = names_type(sc, first, last - 1);
+    if (t.kind == TY_ENUM) return t.decl;
+    // A typed declaration, including a field default: ZombieState state =
+    if (kind != T_ASSIGN || first < 1 || toks[first].kind != T_IDENT || toks[first - 1].kind != T_IDENT) return NULL;
+    int type_first = first - 1;
+    while (type_first >= 2 && toks[type_first - 1].kind == T_DOT && toks[type_first - 2].kind == T_IDENT) type_first -= 2;
+    const str written = {toks[type_first].text.ptr,
+                        (int)(toks[first - 1].text.ptr + toks[first - 1].text.len - toks[type_first].text.ptr)};
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ENUM && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d;
+    }
+    return NULL;
+}
+
+static void expected_enum_item(completion *c, const char *label, const int kind, const char *detail,
+                               const char *sort, const bool preselect)
+{
+    for (int i = 0; i < c->seen.count; i++) if (strcmp(c->seen.items[i], label) == 0) return;
+    vec_push(c->seen, label);
+    if (c->count++) jb_put(c->out, ",");
+    jb_put(c->out, "{\"label\":");
+    jb_string(c->out, label);
+    jb_printf(c->out, ",\"kind\":%d,\"detail\":", kind);
+    jb_string(c->out, detail);
+    jb_put(c->out, ",\"sortText\":");
+    jb_string(c->out, sort);
+    if (preselect) jb_put(c->out, ",\"preselect\":true");
+    jb_put(c->out, "}");
+}
+
+static void complete_expected_enum(completion *c, const decl *of, const bool dot)
+{
+    if (!dot) {
+        const char *name = name_for(of);
+        expected_enum_item(c, name, CK_ENUM, "enum (expected type)", "000", true);
+    }
+    for (int i = 0; i < of->members.count; i++) {
+        const enum_member *m = &of->members.items[i];
+        sb label = {0};
+        if (!dot) sb_printf(&label, "%s.", name_for(of));
+        sb_printf(&label, STR_FMT, STR_ARG(m->name));
+        char sort[32];
+        snprintf(sort, sizeof sort, "001%04d", i);
+        expected_enum_item(c, label.data, CK_ENUM_MEMBER, name_for(of), sort, dot && i == 0);
+    }
+}
 
 void analysis_completion(const int line, const int character, jbuf *out)
 {
@@ -8298,7 +8446,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
     }
 
     if (pk == T_DOT) {
-        complete_members(&c, last, at, order);
+        const scope sc = scope_at(at);
+        const decl *of = completion_enum(&sc, last - 1, f.open, at);
+        if (of && last >= 1 && DOC->toks[last - 1].kind == T_CASE) complete_cases(&c, of, f.open, false, true);
+        else if (of) complete_expected_enum(&c, of, true);
+        else complete_members(&c, last, at, order);
         goto done;
     }
     // world.Get<: a component, of the worlds the code reads
@@ -8803,9 +8955,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
         if (switched >= 0 && (pk == T_CASE || (at_statement && pk != T_RPAREN && pk != T_ELSE))) {
             const scope sc = scope_at(at);
             const decl *of = switch_enum(&sc, switched, f.open);
-            if (of) complete_cases(&c, of, f.open, pk != T_CASE);
+            if (of) complete_cases(&c, of, f.open, pk != T_CASE, false);
             if (of && pk == T_CASE) break;
         }
+        const scope sc = scope_at(at);
+        const decl *expected = completion_enum(&sc, last, f.open, at);
+        if (expected) complete_expected_enum(&c, expected, false);
         complete_expression(&c, at, at_statement);
         break;
     }
@@ -10082,6 +10237,7 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     // $"a {x:F2} b": the values in text sit against its braces
     if (y == T_INTERP_PART || y == T_INTERP_FORMAT) return false;
     if ((x == T_INTERP || x == T_INTERP_PART) && DOC->toks[a->tok].text.ptr[DOC->toks[a->tok].text.len - 1] == '{') return false;
+    if (y == T_DOT) return !ends_operand(x) && x != T_LPAREN && x != T_LBRACKET;
     if (y == T_RPAREN || y == T_RBRACKET || y == T_COMMA || y == T_SEMI || y == T_DOT) return false;
     if (x == T_LPAREN || x == T_LBRACKET || x == T_DOT) return false;
     // Parse(t)! and int?: against what they follow

@@ -261,7 +261,8 @@ system Advance(mut Match match)
 ```
 
 - A member without a value is one more than the one before it, and the first is 0. A value is an int, which can come from constants: `Playing = FIRST_LEVEL + 1`.
-- Members are always written with their enum: `Phase.Playing`.
+- Write a member with its enum, `Phase.Playing`, or use `.Playing` when the expected enum type is clear: `match.phase = .Playing;`. Typed declarations, field defaults, function arguments and returns, container elements and `case .Warmup:` inside an enum switch supply that type. Comparisons can use it too: `match.phase == .Playing`. A typed conditional can use shorthand in both branches: `Phase next = ready ? .Playing : .Warmup;`.
+- Without an expected enum type, keep the qualified spelling: `var phase = Phase.Playing;`. If overloads could take different enums, qualify the argument; the compiler does not pick an enum by searching for its member name.
 - `==` and `!=` compare two values of the same enum.
 - An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
 - An enum takes four bytes, like an int. `enum Voxel : byte { ... }` takes one, for members from 0 to 255, and `: ushort` two, for 0 to 65535: worth it where there are a lot of them, like a grid's cells.
@@ -282,7 +283,7 @@ Animation current = zombie.state switch
 
 The selector is evaluated once, and only the selected arm's value runs. Labels are constants of the same kinds a statement switch accepts. Each label appears once; the final `_` arm handles every other value and is required, including for enums, which can hold unnamed numbers. A trailing comma is allowed.
 
-The arm values must have compatible types. A typed destination supplies the type of `default`, `null` and list literals; otherwise the other arms supply it. Each arm has its own scope for locals declared with `out`. Patterns and guards aren't supported yet.
+The arm values must have compatible types. A typed destination supplies the type of `default`, `null`, list literals and enum shorthand such as `.Jump`; otherwise the other arms supply it. An enum selector also supplies the type for shorthand labels such as `.Run`. Each arm has its own scope for locals declared with `out`. Patterns and guards aren't supported yet.
 
 `switch` binds tighter than arithmetic: `(a + b) switch { ... }` switches on the sum. It works in functions, tasks and GPU code as well as systems, subject to the types those places support.
 

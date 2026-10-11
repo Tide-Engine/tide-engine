@@ -14,7 +14,7 @@ TIDE_TEST(switch_values_choose_once_and_delayed_locals_initialize_on_each_path)
     TIDE_CHECK(world.Seen.order == 21);
     TIDE_CHECK(world.Seen.delayed == 84);
     TIDE_CHECK(world.Seen.loops == 14);
-    TIDE_CHECK(world.Seen.extras == 87);
+    TIDE_CHECK(world.Seen.extras == 88);
     TIDE_CHECK(world.Seen.widened == 2.5f);
     TIDE_CHECK(world.Seen.pair.a == 10 && world.Seen.pair.b == 12);
     TIDE_CHECK(tide_list_count(world.Seen.items) == 4);

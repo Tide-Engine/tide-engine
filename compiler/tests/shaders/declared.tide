@@ -28,7 +28,7 @@ local singleton Art
 frag Named(Corner vertex, out Color color, Art art)
 {
     color = tiles.Sample(vertex.uv)
-          * tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat) // Its declaration's, said outright: the same texture
+          * tiles.Sample(vertex.uv, .Point, .Repeat) // Its declaration's, said outright: the same texture
           * tiles.Sample(vertex.uv, Filter.Bilinear)           // The Sample's filter, the declaration's wrap
           * glass.Sample(vertex.uv)
           * hero.Sample(vertex.uv)

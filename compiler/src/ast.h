@@ -915,6 +915,7 @@ struct expr {
     int swizzle[4];        // Component indices: 0..3 for x, y, z, w.
     const char *c_constant; // Static member such as quaternion.identity, as C.
     const enum_member *enum_member; // Page.Title: the member (type_decl is its enum)
+    bool enum_shorthand;   // .Title: object is an implicit enum type, supplied by the expected type
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes

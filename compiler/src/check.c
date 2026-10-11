@@ -2143,6 +2143,11 @@ static type check_expr_want_any(checker *c, expr *e, const type want, const bool
         return want;
     }
     const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
+    if (e->enum_shorthand) {
+        e->type_decl = inner.kind == TY_ENUM ? inner.decl : NULL;
+        return check_expr_any(c, e);
+    }
+    if (e->kind == E_CONDITIONAL && inner.kind == TY_ENUM && !checked) e->type_decl = inner.decl;
     if (e->kind == E_LIST) {
         const bool takes_list = inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY || inner.kind == TY_ERROR;
         if (!takes_list) diag_error(e->at, "a list's type comes from where it goes: 'List<int> scores = [1, 2];'");
@@ -2193,7 +2198,8 @@ static type check_expr_want(checker *c, expr *e, const type want)
 static void check_default_args(checker *c, expr *e)
 {
     for (int i = 0; i < e->args.count && i < e->arg_want.count; i++) {
-        if (e->args.items[i]->kind == E_DEFAULT) check_default_value(c, e->args.items[i], e->arg_want.items[i]);
+        if (e->args.items[i]->kind == E_DEFAULT || e->args.items[i]->enum_shorthand)
+            check_expr_want(c, e->args.items[i], e->arg_want.items[i]);
     }
 }
 
@@ -3210,7 +3216,7 @@ static bool check_random_use(checker *c, const loc at, const bool rolls)
 static type check_roll(checker *c, expr *e)
 {
     for (int i = 0; i < e->args.count; i++) {
-        if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+        if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
     }
     if (!check_random_use(c, e->at, true)) return T_ERR;
     const type result = resolve_builtin_call(str_from("Random"), e);
@@ -3927,7 +3933,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
 static bool untyped_arg(const expr *arg)
 {
     if (arg->is_out) return out_untyped(arg); // `out var health`, `out _`
-    return arg->kind == E_DEFAULT || arg->kind == E_NULL || arg->kind == E_LIST || is_new_grid(arg);
+    return arg->enum_shorthand || arg->kind == E_DEFAULT || arg->kind == E_NULL || arg->kind == E_LIST || is_new_grid(arg);
 }
 
 // A context-typed list doesn't choose an overload, but its elements still
@@ -3953,6 +3959,7 @@ static bool arg_fits(const expr *arg, const param *p)
         return out_untyped(arg) || arg->type.kind == TY_ERROR || p->type.kind == TY_ERROR || same_type(p->type, arg->type);
     }
     const type inner = p->type.kind == TY_OPTIONAL ? wrapped_value(p->type) : p->type;
+    if (arg->enum_shorthand) return p->mode != PARAM_MUT && inner.kind == TY_ENUM;
     if (arg->kind == E_DEFAULT) return p->mode != PARAM_MUT;
     if (arg->kind == E_NULL) return p->mode != PARAM_MUT && p->type.kind == TY_OPTIONAL;
     if (arg->kind == E_LIST) return p->mode != PARAM_MUT && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY);
@@ -5408,7 +5415,7 @@ static type check_mesh_draw(checker *c, expr *e)
     const bool values_ok = !values || check_draw_values(c, e, values);
     if (!check_frame_use(c, e->at, "Draw")) {
         for (int i = checked; i < count; i++) {
-            if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
         }
         return T_ERR;
     }
@@ -6101,6 +6108,20 @@ static type check_window_target(checker *c, expr *e)
 static bool mesh_vertex_ok(const decl *vertex, loc at);
 #include "skinned_ops.inc"
 
+// Sample's filter and wrap have fixed enum types even though this call's
+// shader binding is checked separately from the ordinary signature table.
+static void check_sample_args(checker *c, expr *e, const bool cube)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (!arg->enum_shorthand) { check_expr(c, arg); continue; }
+        const str name = arg_name(e, i);
+        const bool filter = name.len ? str_eq_c(name, "filter") : i == 1;
+        const bool wrap = !cube && (name.len ? str_eq_c(name, "wrap") : i == 2);
+        check_expr_want(c, arg, filter ? (type){TY_ENUM, c->prog->filter} : wrap ? (type){TY_ENUM, c->prog->wrap} : T_ERR);
+    }
+}
+
 static type check_method(checker *c, expr *e)
 {
     bool static_skin_handled = false;
@@ -6176,7 +6197,7 @@ static type check_method(checker *c, expr *e)
             if (arg->is_out && builtin_takes_out(owner, e->name)) begin_out_arg(c, arg);
             else if (arg->is_out && refuse_entered_arg(c, e, arg)) continue;
             else if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
-            else if (arg->kind != E_DEFAULT) check_expr(c, arg);
+            else if (arg->kind != E_DEFAULT && !arg->enum_shorthand) check_expr(c, arg);
         }
         const bool gui = str_eq_c(owner, "GUI") || str_eq_c(owner, "GUILayout");
         const bool cursor = str_eq_c(owner, "Cursor");
@@ -6300,8 +6321,11 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
     if (obj.kind == TY_TEXTURE) {
+        if (str_eq_c(e->name, "Sample")) {
+            check_sample_args(c, e, false);
+            return check_grid_sample(c, e, obj);
+        }
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        if (str_eq_c(e->name, "Sample")) return check_grid_sample(c, e, obj);
         diag_error(e->at, "a Texture has Sample(uv[, filter[, wrap]]), not '" STR_FMT "'", STR_ARG(e->name));
         if (str_eq_c(e->name, "Compare")) diag_note("Compare reads a render target's depth, a DepthTexture: 'target.depth'");
         return T_ERR;
@@ -6319,7 +6343,7 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_CUBEMAP) {
         const bool resize = str_eq_c(e->name, "Resize");
         if (str_eq_c(e->name, "Sample")) {
-            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            check_sample_args(c, e, true);
             return check_cube_sample(c, e);
         }
         if (!resize && !str_eq_c(e->name, "Dispose")) {
@@ -6388,7 +6412,7 @@ static type check_method(checker *c, expr *e)
             return T_ERR;
         }
         for (int i = 0; i < e->args.count; i++) {
-            if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
         }
         if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
         if (old_setting(e)) return T_ERR;
@@ -6403,7 +6427,7 @@ static type check_method(checker *c, expr *e)
     // name.Contains("cat"), name.Substring(0, 3): text's methods
     if (obj.kind == TY_STRING) {
         for (int i = 0; i < e->args.count; i++) {
-            if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
         }
         const type result = resolve_builtin_call(str_from("string"), e);
         if (result.kind != TY_ERROR) {
@@ -6416,7 +6440,7 @@ static type check_method(checker *c, expr *e)
     // called on one the code can change, as a struct's mut methods are.
     if (obj.kind == TY_STRUCT && obj.decl == c->prog->random) {
         for (int i = 0; i < e->args.count; i++) {
-            if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
         }
         if (gpu_refuses(c, e->at, "roll with a Random the game keeps",
                         "its state is 64 bits, and the GPU's ints are 32: roll on the type, 'Random.NextInt(6)', where each pixel "
@@ -7204,6 +7228,18 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
 
 static type check_member(checker *c, expr *e)
 {
+    if (e->enum_shorthand) {
+        if (!e->type_decl) {
+            diag_error(e->at, "'." STR_FMT "' needs an expected enum type; write 'EnumName." STR_FMT "' here",
+                       STR_ARG(e->member), STR_ARG(e->member));
+            return T_ERR;
+        }
+        if (builds(c->prog) && !c->prog->quiet_names && named_only(c->prog, e->type_decl)) e->type_decl->named = true;
+        const type member = check_enum_member(e, e->type_decl);
+        if (e->type_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
+        if (e->type_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
+        return member;
+    }
     // Random.seed: the match's seed
     if (names_random(c, e->object)) {
         if (!str_eq_c(e->member, "seed")) {
@@ -7817,7 +7853,7 @@ static type check_switch_value(checker *c, expr *e, type want)
             fallback = true;
             continue;
         }
-        const type t = check_expr(c, label);
+        const type t = label->enum_shorthand ? check_expr_want(c, label, value) : check_expr(c, label);
         int64_t number;
         if (t.kind == TY_ERROR || !switchable) continue;
         if (!fold_int(label, &number)) {
@@ -7847,7 +7883,7 @@ static type check_switch_value(checker *c, expr *e, type want)
     // Work out the common type before giving it to default/null/list arms.
     for (int i = 0; i < e->args.count; i++) {
         expr *arm = e->args.items[i];
-        if (!contextual && (arm->kind == E_DEFAULT || arm->kind == E_NULL || arm->kind == E_LIST)) continue;
+        if (!contextual && (arm->kind == E_DEFAULT || arm->kind == E_NULL || arm->kind == E_LIST || arm->enum_shorthand)) continue;
         push_scope(c);
         const type t = contextual ? check_expr_want(c, arm, want) : check_expr_any(c, arm);
         pop_scope(c);
@@ -7865,7 +7901,7 @@ static type check_switch_value(checker *c, expr *e, type want)
     if (!contextual) {
         for (int i = 0; i < e->args.count; i++) {
             expr *arm = e->args.items[i];
-            if (arm->kind != E_DEFAULT && arm->kind != E_NULL && arm->kind != E_LIST) continue;
+            if (arm->kind != E_DEFAULT && arm->kind != E_NULL && arm->kind != E_LIST && !arm->enum_shorthand) continue;
             push_scope(c);
             const type t = check_expr_want(c, arm, want);
             pop_scope(c);
@@ -7886,12 +7922,17 @@ static type check_conditional(checker *c, expr *e)
     c->branch_depth++;
     type a;
     type b;
-    if (e->lhs->kind == E_DEFAULT && e->rhs->kind != E_DEFAULT) {
+    if (e->type_decl) {
+        const type want = {TY_ENUM, e->type_decl};
+        a = check_expr_want(c, e->lhs, want);
+        b = check_expr_want(c, e->rhs, want);
+    } else if ((e->lhs->kind == E_DEFAULT || e->lhs->enum_shorthand)
+               && e->rhs->kind != E_DEFAULT && !e->rhs->enum_shorthand) {
         b = check_expr(c, e->rhs);
         a = check_expr_want(c, e->lhs, b);
     } else {
         a = check_expr(c, e->lhs);
-        b = e->rhs->kind == E_DEFAULT ? check_expr_want(c, e->rhs, a) : check_expr(c, e->rhs);
+        b = e->rhs->kind == E_DEFAULT || e->rhs->enum_shorthand ? check_expr_want(c, e->rhs, a) : check_expr(c, e->rhs);
     }
     c->branch_depth--;
     const bool a_ok = check_side(e->lhs, a);
@@ -8673,8 +8714,11 @@ static type check_grid_decode(checker *c, expr *e, const type grid)
 static type check_grid_method(checker *c, expr *e, const type grid)
 {
     if (str_eq_c(e->name, "Decode")) return check_grid_decode(c, e, grid);
+    if (str_eq_c(e->name, "Sample")) {
+        check_sample_args(c, e, false);
+        return check_grid_sample(c, e, grid);
+    }
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-    if (str_eq_c(e->name, "Sample")) return check_grid_sample(c, e, grid);
     if (!str_eq_c(e->name, "Clear")) {
         diag_error(e->at, "a grid has no method '" STR_FMT "'", STR_ARG(e->name));
         suggestion sg = suggest_start(e->name);
@@ -9033,13 +9077,15 @@ static type check_expr_any(checker *c, expr *e)
             diag_error(dflt->at, "'default' can't be used with operator %s", op_str(e->op));
             diag_note("it's only compared, with == and !=; write the value itself here");
         }
-        type l = e->lhs == dflt ? T_ERR : check_expr(c, e->lhs);
+        const bool infer_left = compared && e->lhs->enum_shorthand && !e->rhs->enum_shorthand;
+        type l = e->lhs == dflt || infer_left ? T_ERR : check_expr(c, e->lhs);
         const char *outer_side = c->short_circuit_side;
         if (short_circuit) {
             c->short_circuit_depth++;
             c->short_circuit_side = "on the right side of && or ||";
         }
-        type r = e->rhs == dflt ? T_ERR : check_expr(c, e->rhs);
+        type r = e->rhs == dflt ? T_ERR : compared && e->rhs->enum_shorthand ? check_expr_want(c, e->rhs, l) : check_expr(c, e->rhs);
+        if (infer_left) l = check_expr_want(c, e->lhs, r);
         if (short_circuit) {
             c->short_circuit_depth--;
             c->short_circuit_side = outer_side;
@@ -10400,7 +10446,7 @@ static void check_switch(checker *c, stmt *s)
                 has_default = true;
                 continue;
             }
-            const type t = check_expr(c, label);
+            const type t = label->enum_shorthand ? check_expr_want(c, label, value) : check_expr(c, label);
             if (t.kind == TY_ERROR || !switchable) continue;
             int64_t number;
             if (!fold_int(label, &number)) {
@@ -10991,7 +11037,7 @@ static bool is_constant(const checker *c, const expr *e)
     case E_METHOD: // Math.Max(...), and Combat.Stance(2)
         return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)) && all_constant(c, e);
     case E_MEMBER: // Checking tells a member of an enum or a constant from anything else
-        return (e->object->kind == E_NAME && builtin_owner(e->object->name)) || is_constant(c, e->object) || names_only(e);
+        return e->enum_shorthand || (e->object->kind == E_NAME && builtin_owner(e->object->name)) || is_constant(c, e->object) || names_only(e);
     case E_LITERAL:
         for (int i = 0; i < e->inits.count; i++) {
             if (!is_constant(c, e->inits.items[i].value)) return false;

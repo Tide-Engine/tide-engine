@@ -358,6 +358,16 @@ static expr *parse_primary(parser *p)
 {
     const token *t = peek(p);
     switch (t->kind) {
+    case T_DOT: {
+        advance(p);
+        const token *name = expect(p, T_IDENT, "an enum member after '.'");
+        expr *e = new_expr(E_MEMBER, name->at);
+        e->member = name->text;
+        e->enum_shorthand = true;
+        e->object = new_expr(E_NAME, t->at);
+        e->object->name = str_from("");
+        return e;
+    }
     case T_INT: {
         advance(p);
         expr *e = new_expr(E_INT, t->at);

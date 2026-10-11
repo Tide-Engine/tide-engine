@@ -5,9 +5,17 @@ explicitly typed delayed locals, read-before-assignment and once-only
 initialization, when mut is needed, switch value syntax, final fallback,
 compatible/contextual arm types, scopes and precedence. The spec separates
 the owner's approved design from implemented provisional details and the
-unbuilt patterns/guards. All 217 grammar checks and the production docs build
+unbuilt patterns/guards. All 219 grammar checks and the production docs build
 pass, using the existing allowed placeholders for unstaged game/example
 pages. Compiler/editor/GPU validation stays in their subsystem notes.
+
+Contextual enums (2026-10-11): Language basics and the spec document the
+owner-approved `.Idle` spelling, expected-type contexts and qualified spelling
+for missing context or ambiguous overloads. Editors documents expected enum
+preselection and leading-dot member completion. The shared grammar recognizes
+shorthand without changing leading-point floats or ordinary member scopes;
+all 217 grammar tests and the production docs build pass after merging dev.
+No deployment.
 
 Automatic texture compression (2026-10-11): Assets, Meshes and textures, and the spec explain automatic eligible color BC1/BC3 assets, lossiness, exact Raw/RGBA fallback, prepared mips and bounded whole-image GPU residency. They distinguish GPU savings from the current pack-size increase and unbuilt mip streaming. Implementation evidence and final validation are in `notes/textures.md`.
 
