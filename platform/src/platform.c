@@ -1507,6 +1507,7 @@ typedef struct gpu_mesh {
     uint32_t index_count;          // Three a triangle...
     bool wide;                     // ...of 16 bits where they fit, or 32
     uint32_t frame;                // The frame that last drew it
+    uint32_t base;                 // A level of detail's: 1 + the place of the mesh whose `vertices` it draws with, having none
 } gpu_mesh;
 
 static gpu_mesh *gpu_meshes;
@@ -2045,14 +2046,26 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     const tide_draw_mesh_data *m = &list->meshes[mesh - 1u];
     gpu_mesh *g = &gpu_meshes[mesh - 1u];
     g->frame = gpu_frame;
-    if (g->vertices && g->id == m->id && g->other == m->other && g->version == m->version && g->space == m->space
-        && g->epoch == m->epoch) {
+    // A level of detail has its mesh's corners, which that mesh keeps: its own are its triangles
+    const bool level = m->base && m->base <= list->mesh_count && m->base != mesh && !list->meshes[m->base - 1u].base
+                    && list->meshes[m->base - 1u].space != TIDE_MESH_NONE;
+    if (level) mesh_for(list, m->base);
+    if ((g->vertices || g->base) && g->id == m->id && g->other == m->other && g->version == m->version && g->space == m->space
+        && g->epoch == m->epoch && g->base == (level ? m->base : 0u)) {
         return g;
     }
+    if (level && g->vertices) { // The place was a whole mesh's
+        free_buffer(g->vertices);
+        g->vertices = 0;
+        g->vertex_capacity = 0;
+    }
+    g->base = level ? m->base : 0u;
     // Its corners, each once: as they are for a shader of the game's, which reads their bytes
     const void *corners = m->bytes;
     size_t vertex_bytes = (size_t)m->vertex_count * m->vertex_size;
-    if (m->space != TIDE_MESH_BYTES) {
+    if (level) {
+        vertex_bytes = 0;
+    } else if (m->space != TIDE_MESH_BYTES) {
         vertex_bytes = (size_t)m->vertex_count * sizeof(mesh_3d_vertex);
         mesh_3d_vertex *packed = upload_room(vertex_bytes);
         for (uint32_t i = 0; i < m->vertex_count; i++) {
@@ -2063,7 +2076,9 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
         }
         corners = packed;
     }
-    if (g->vertices && vertex_bytes <= g->vertex_capacity) {
+    if (level) {
+        // Nothing of its own
+    } else if (g->vertices && vertex_bytes <= g->vertex_capacity) {
         gpu->buffer_write(g->vertices, 0, corners, vertex_bytes);
     } else {
         if (g->vertices) free_buffer(g->vertices);
@@ -2095,6 +2110,12 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     g->index_count = m->index_count;
     g->wide = wide;
     return g;
+}
+
+// The buffer a mesh's corners are in: its own, or for a level of detail, its mesh's.
+static tide_gpu_id corners_of(const gpu_mesh *g)
+{
+    return g->base && g->base <= gpu_mesh_count ? gpu_meshes[g->base - 1u].vertices : g->vertices;
 }
 
 // A buffer for `count` elements of `size` bytes, in place of `*buffer` when
@@ -2129,9 +2150,9 @@ static void upload_meshes_3d(const tide_draw_list *list)
 static void forget_meshes_3d(void)
 {
     for (uint32_t i = 0; i < gpu_mesh_count; i++) {
-        if (gpu_meshes[i].vertices && gpu_meshes[i].frame != gpu_frame) {
-            free_buffer(gpu_meshes[i].vertices);
-            free_buffer(gpu_meshes[i].indices);
+        if ((gpu_meshes[i].vertices || gpu_meshes[i].indices) && gpu_meshes[i].frame != gpu_frame) {
+            if (gpu_meshes[i].vertices) free_buffer(gpu_meshes[i].vertices);
+            if (gpu_meshes[i].indices) free_buffer(gpu_meshes[i].indices);
             gpu_meshes[i] = (gpu_mesh){0};
         }
     }
@@ -2905,7 +2926,7 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
         gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)),
                     gpu_filter(tide_sampling_filter(run->sampling, i)), gpu_wrap(tide_sampling_wrap(run->sampling, i)));
     }
-    gpu->vertices(0, g->vertices, 0);
+    gpu->vertices(0, corners_of(g), 0);
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, run->count);
@@ -2920,7 +2941,7 @@ static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
     use_pipeline(s);
     gpu->uniforms(&uniforms, sizeof uniforms);
     sample_step_texture(list, s);
-    gpu->vertices(0, g->vertices, 0);
+    gpu->vertices(0, corners_of(g), 0);
     gpu->vertices(1, gpu_state.matrices, (size_t)s->first * sizeof(tide_float4x4));
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, s->count);

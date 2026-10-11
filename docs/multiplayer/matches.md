@@ -75,7 +75,17 @@ view Menu(Session session)
 }
 ```
 
-Session calls are statements, in views and local event handlers. Match code can't make them: it runs the same on every machine.
+Session calls are statements, in views and local event handlers, and in the functions they call:
+
+```csharp
+void Host(mut Menu menu)
+{
+    Session.Open();
+    menu.page = Page.Room;
+}
+```
+
+Match code can't make them, as it runs the same on every machine: calling such a function from a system is an error at that call.
 
 ## A menu that comes with tide
 
@@ -114,7 +124,40 @@ view Hud(Lobby lobby)
 
 A game can tell the room's page about its match, each frame, from a view that writes `Lobby`: `seats`, `manned` (a bit per seat a player has), `mine` and `bots` list who has each seat, and `offersNewGame` and `offersBots` put **New game** and **Bots: on/off** on the page, which set `newGame` and `toggleBots` for the frame they're pressed in, for the game to send its commands from. **Play** on the title sets `newGame` too. The title is the game's `title` setting (`Application.title`), and three functions are the game's to [override](../language/overrides.md): `Rooms.Title()`, `Rooms.Tagline()` (the line under it) and `Rooms.MenuButton(screen)` (where the button goes).
 
-When the game outgrows it, copy `rooms.tide` out of the installation's `src/packages/rooms` into the game, drop the line, and change what you like: it's a page of Tide, written with nothing a game can't use.
+### Pages of your own
+
+Each page is a function too, which a game overrides to draw that page its own way while the others stay the package's: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, lobby)` (`room` is the room's code, `session.room`, which a function is handed) and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each, so a page of the game's keeps the menu's way through its pages:
+
+```csharp
+using Rooms;
+
+override void Rooms.TitlePage(Session session, mut Lobby lobby)
+{
+    if (GUI.Button(Rect(40, 200, 200, 48), "Play")) Play(lobby);
+    if (GUI.Button(Rect(40, 256, 200, 48), "Play with friends")) Host(lobby);
+    if (GUI.Button(Rect(40, 312, 200, 48), "Enter a code")) ShowJoin(lobby);
+    if (GUI.Button(Rect(40, 368, 200, 48), "Settings")) ShowSettings(lobby);
+}
+```
+
+| Call | What it does |
+|---|---|
+| `Play(lobby)` | Into the match, as a new game: the game sees `newGame` |
+| `Resume(lobby)` | Into the match as it is |
+| `Host(lobby)` | Opens the match to others, and shows its room |
+| `Invite()` | Opens the match to others from the room's page |
+| `ShowJoin(lobby)` | To the page a code is typed into |
+| `Join(lobby, code)` | Asks to join the room with that code |
+| `LeaveJoin(session, lobby)` | From the Join page to the title, out of a match that was being joined |
+| `ShowSettings(lobby)`, `LeaveSettings(lobby)` | To the settings, and back to the page they came from |
+| `CopyCode(lobby, room)` | Copies the room's code |
+| `Leave(session, lobby)` | Out of the room, to the title |
+
+An override has the parameters of what it replaces, so a page that needs more (the game's own state, or `Devices`) is a view of the game's: override the package's page with an empty body, and draw yours from a view that returns unless `lobby.page` is that page. The same calls work there.
+
+### Outgrowing it
+
+`tide eject rooms` copies the package into the game, as `packages/rooms`, and points the game's `tide.packages` line at the copy: it's the game's own from there, to change as you like, and `tide upgrade` no longer updates it. It's a page of Tide, written with nothing a game can't use.
 
 ## Rooms
 

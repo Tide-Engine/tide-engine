@@ -1,0 +1,7 @@
+// expect: unknown attribute 'Lod'
+// expect: did you mean 'LOD'?
+[Lod] asset Mesh<Vertex3> ball = "../e2e/assets/lod/ball.glb";
+
+scene Main
+{
+}

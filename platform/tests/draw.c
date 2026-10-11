@@ -3071,6 +3071,160 @@ static void cull_settings(void)
 }
 
 // ---------------------------------------------------------------------------
+// Levels of detail: a mesh whose levels are other triangles of its corners,
+// so a pixel says which was drawn. The full mesh is two squares side by side,
+// its first level the left one alone, and its second the top right half of
+// the right one. A level has no corners of its own on the GPU: it's drawn
+// with the full mesh's.
+
+static const uint32_t lod_whole[12] = {0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 5, 2};
+static const uint32_t lod_simpler[9] = {0, 1, 2, 0, 2, 3, 1, 4, 5};
+static const float lod_corners[6][2] = {{-1.0f, 0.5f}, {0.0f, 0.5f}, {0.0f, -0.5f}, {-1.0f, -0.5f}, {1.0f, 0.5f}, {1.0f, -0.5f}};
+// Off by 0.03 and 0.06 of the mesh's units: through the pixels' camera, a pixel a unit, an instance 40 times
+// as big draws whole, one 24 times its first level, and one 16 times its second
+static const tide_mesh_levels lod_levels = {.radius = 1.2f, .count = 2, .error = {0.03f, 0.06f}, .first = {0, 6}, .indices = {6, 3},
+                                            .index = lod_simpler, .index_count = 9};
+
+static uint32_t lod_mesh(const bool through_shader)
+{
+    bool fill;
+    if (through_shader) {
+        static lit_vertex lit[6];
+        for (int i = 0; i < 6; i++) lit[i] = (lit_vertex){{lod_corners[i][0], lod_corners[i][1], 0.0f}, {0, 0, -1}};
+        const uint32_t mesh = tide_draw_mesh_slot(&list, TIDE_MESH_BYTES, 0x10D0, 1, 1, &fill);
+        if (fill) {
+            tide_draw_mesh_fill_bytes(&list, mesh, lit, sizeof lit[0], 6, lod_whole, 12);
+            tide_draw_mesh_levels(&list, mesh, &lod_levels);
+        }
+        return mesh;
+    }
+    static tide_vertex3 corners[6];
+    for (int i = 0; i < 6; i++) corners[i] = (tide_vertex3){{lod_corners[i][0], lod_corners[i][1], 0.0f}, {0.0f, 0.0f}, cyan};
+    const uint32_t mesh = tide_draw_mesh_slot(&list, TIDE_MESH_MEMORY, 0x10D0, 2, 1, &fill);
+    if (fill) {
+        tide_draw_mesh_fill(&list, mesh, corners, 6, lod_whole, 12);
+        tide_draw_mesh_levels(&list, mesh, &lod_levels);
+    }
+    return mesh;
+}
+
+static tide_float4x4 lod_place(const float x, const float y, const float scale)
+{
+    const tide_float2 world = at(x, y);
+    return tide_trs_f4x4(tide_f3(world.x, world.y, 5), tide_identity_q(), tide_f3(scale, scale, 1.0f));
+}
+
+static void lod_draw(const bool through_shader, const float x, const float y, const float scale)
+{
+    if (through_shader) {
+        const lit_instance instance = {lod_place(x, y, scale), cyan};
+        tide_draw_shaded(&list, &lit_shader, lod_mesh(true), &instance, NULL, NULL, 0);
+    } else {
+        tide_draw_instance(&list, lod_mesh(false), lod_place(x, y, scale), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
+    }
+}
+
+// Where each draw of the scene is, how big, and the level it has to be at.
+enum { LOD_CELLS = 10 };
+static const struct {
+    float x, y, scale;
+    int level;
+    const char *what;
+} lod_cells[LOD_CELLS] = {
+    {40, 10, 16, 0, "named level 0"},
+    {110, 10, 16, 1, "named level 1"},
+    {180, 10, 16, 2, "named level 9, its last"},
+    {50, 50, 40, 0, "instance 0 of 3, big"},
+    {130, 50, 24, 1, "instance 1 of 3, smaller"},
+    {200, 50, 16, 2, "instance 2 of 3, small"},
+    {30, 110, 16, 2, "drawn alone, small"},
+    {100, 110, 40, 0, "drawn alone, big"},
+    {170, 110, 16, 2, "drawn alone, small again"},
+    {220, 110, 24, 1, "drawn alone, smaller"},
+};
+
+// The draws that are drawn alone, one after the other, as a view that runs for each entity draws them.
+static void lod_alone(const bool through_shader, const float top)
+{
+    for (int i = 6; i < LOD_CELLS; i++) lod_draw(through_shader, lod_cells[i].x, top + lod_cells[i].y, lod_cells[i].scale);
+}
+
+static void lod_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_screen_size(&list, screen);
+    pixel_camera_3d();
+    for (int kind = 0; kind < 2; kind++) {
+        const float top = 20.0f + 170.0f * (float)kind;
+        // A level by its number, whatever the size
+        static const int32_t named[3] = {0, 1, 9};
+        for (int i = 0; i < 3; i++) {
+            const uint32_t mark = tide_draw_push_lod(&list, named[i]);
+            lod_draw(kind != 0, lod_cells[i].x, top + lod_cells[i].y, lod_cells[i].scale);
+            tide_draw_pop(&list, mark);
+        }
+        // The instances of one draw, each at the level its size picks
+        if (kind) {
+            lit_instance instances[3];
+            for (int i = 0; i < 3; i++) {
+                instances[i] = (lit_instance){lod_place(lod_cells[3 + i].x, top + lod_cells[3 + i].y, lod_cells[3 + i].scale), cyan};
+            }
+            tide_draw_shaded_instances(&list, &lit_shader, lod_mesh(true), instances, 3, NULL, NULL, 0);
+        } else {
+            tide_float4x4 places[3];
+            for (int i = 0; i < 3; i++) places[i] = lod_place(lod_cells[3 + i].x, top + lod_cells[3 + i].y, lod_cells[3 + i].scale);
+            tide_draw_instances(&list, lod_mesh(false), places, 3, 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
+        }
+        lod_alone(kind != 0, top);
+    }
+}
+
+static void levels_of_detail(void)
+{
+    static const char *const kinds[2] = {"a 3D mesh", "a 3D mesh through a shader"};
+    static const char *const parts[3] = {"its left square", "the top of its right square", "the bottom of its right square"};
+    // Which of those each level draws
+    static const bool draws[3][3] = {{true, true, true}, {true, false, false}, {false, true, false}};
+    static const float part_at[3][2] = {{-0.5f, 0.0f}, {0.75f, 0.25f}, {0.25f, -0.25f}};
+    static char names[2][LOD_CELLS * 3][160];
+    char what[200];
+    // Twice: the second frame draws with the buffers the first made
+    for (int frame = 0; frame < 2; frame++) {
+        lod_scene();
+        for (int kind = 0; kind < 2; kind++) {
+            const float top = 20.0f + 170.0f * (float)kind;
+            check checks[LOD_CELLS * 3];
+            for (int i = 0; i < LOD_CELLS; i++) {
+                for (int part = 0; part < 3; part++) {
+                    const int k = i * 3 + part;
+                    const bool drawn = draws[lod_cells[i].level][part];
+                    snprintf(names[kind][k], sizeof names[0][0], "%s, %s (level %d): %s %s", kinds[kind], lod_cells[i].what,
+                             lod_cells[i].level, parts[part], drawn ? "drawn" : "not drawn");
+                    checks[k] = (check){lod_cells[i].x + part_at[part][0] * lod_cells[i].scale,
+                                        top + lod_cells[i].y - part_at[part][1] * lod_cells[i].scale, drawn ? cyan : background,
+                                        names[kind][k]};
+                }
+            }
+            check_pixels(checks, LOD_CELLS * 3);
+        }
+    }
+    // Four draws alone at three levels, in an order that changes level each time: a draw call a level, and the clear
+    for (int kind = 0; kind < 2; kind++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_draw_screen_size(&list, screen);
+        pixel_camera_3d();
+        lod_alone(kind != 0, 20.0f);
+        tide_platform_read_pixels(&list, &(tide_float2){0, 0}, 1, &(uint32_t){0});
+        const uint32_t calls = tide_platform_draw_calls();
+        snprintf(what, sizeof what, "%s drawn four times at three levels of detail is three draw calls, and the clear (%u)",
+                 kinds[kind], (unsigned)calls);
+        expect(calls == 4u, what);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Grids that are textures, of which a frame changes a cell: the GPU is sent
 // the pixels that changed and no others (tide_platform_gpu_written), and
 // shows what the grid holds. A cell a pixel, 80 by 48 of them, in chunks.
@@ -3757,6 +3911,7 @@ static int frame(void *user, const float seconds)
         settings();
         depth_settings();
         cull_settings();
+        levels_of_detail();
         return run_checks();
     }
 #endif
@@ -3778,6 +3933,7 @@ static int frame(void *user, const float seconds)
     settings();
     depth_settings();
     cull_settings();
+    levels_of_detail();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

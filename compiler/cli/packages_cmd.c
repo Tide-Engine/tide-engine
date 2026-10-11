@@ -125,6 +125,24 @@ static void set_commit(packages_text *t, const int number, const char *commit)
 
 // ---------------------------------------------------------------------------
 
+// Every package line of a file, in the file's order: this build's, and those
+// a false #if leaves out of it, which these commands keep up as well.
+// `count` is how many; free the list.
+static const package_line **every_line(const packages_file *f, int *count)
+{
+    const int n = f->count + f->off_count;
+    const package_line **all = malloc(sizeof *all * (size_t)(n + 1));
+    if (!all) abort();
+    int a = 0;
+    int b = 0;
+    for (int i = 0; i < n; i++) {
+        const bool on = b == f->off_count || (a < f->count && f->lines[a].line < f->off[b].line);
+        all[i] = on ? &f->lines[a++] : &f->off[b++];
+    }
+    *count = n;
+    return all;
+}
+
 // What to call a line's package: its name, when it's here to read, or else
 // its source. malloc'd.
 static char *package_name(const package_line *line, const char *folder)
@@ -247,8 +265,10 @@ int tide_add(const char *folder, const char *what)
         return 1;
     }
     package_line line = {0, source, ref, NULL, packages_is_local(source), builtin};
-    for (int i = 0; i < game.count; i++) {
-        const package_line *other = &game.lines[i];
+    int every = 0;
+    const package_line **all = every_line(&game, &every);
+    for (int i = 0; i < every; i++) {
+        const package_line *other = all[i];
         bool same = other->local == line.local && other->builtin == line.builtin;
         if (same && !line.local) same = strcmp(other->source, source) == 0;
         if (same && line.local) {
@@ -332,8 +352,18 @@ int tide_fetch(const char *folder)
     // What the packages need goes in the file first, which downloads each to read what it needs
     if (!add_needed(folder)) return 1;
     game_packages packages;
-    const bool ok = packages_resolve(folder, &packages, fetch_package, report, NULL);
-    const int count = packages.count;
+    bool ok = packages_resolve(folder, &packages, fetch_package, report, NULL);
+    int count = packages.count;
+    // What an #if leaves out of this build is another build's: here too, so that one needs no network either
+    for (int i = 0; i < packages.file.off_count && ok; i++) {
+        const package_line *line = &packages.file.off[i];
+        char *repo_dir = packages_repo_dir(line);
+        if (repo_dir) {
+            ok = packages_fetched(repo_dir) || fetch_package(NULL, line, repo_dir);
+            count++;
+        }
+        free(repo_dir);
+    }
     packages_free(&packages);
     if (!ok) return 1;
     if (count == 0) printf("tide: tide.packages lists no packages\n");
@@ -361,22 +391,25 @@ int tide_update(const char *folder, const char *const *names, const int count)
         fprintf(stderr, "  = note: `tide add <source>` starts one\n");
         return 1;
     }
-    bool *chosen = calloc((size_t)game.count + 1, sizeof(bool));
+    // Every line, those an #if leaves out of this build too: they're other builds' to keep up
+    int every = 0;
+    const package_line **all = every_line(&game, &every);
+    bool *chosen = calloc((size_t)every + 1, sizeof(bool));
     if (!chosen) abort();
-    for (int i = 0; i < game.count && count == 0; i++) chosen[i] = !game.lines[i].local && !game.lines[i].builtin;
+    for (int i = 0; i < every && count == 0; i++) chosen[i] = !all[i]->local && !all[i]->builtin;
     for (int n = 0; n < count; n++) {
         bool any = false;
-        for (int i = 0; i < game.count; i++) {
-            if (!names_line(names[n], &game.lines[i], game.folder)) continue;
+        for (int i = 0; i < every; i++) {
+            if (!names_line(names[n], all[i], game.folder)) continue;
             chosen[i] = any = true;
         }
         if (any) continue;
         fprintf(stderr, "tide: tide.packages has no package called %s\n", names[n]);
-        if (game.count > 0) {
+        if (every > 0) {
             fprintf(stderr, "  = note: it has ");
-            for (int i = 0; i < game.count; i++) {
-                char *name = package_name(&game.lines[i], game.folder);
-                fprintf(stderr, "%s%s", i == 0 ? "" : i + 1 == game.count ? " and " : ", ", name);
+            for (int i = 0; i < every; i++) {
+                char *name = package_name(all[i], game.folder);
+                fprintf(stderr, "%s%s", i == 0 ? "" : i + 1 == every ? " and " : ", ", name);
                 free(name);
             }
             fprintf(stderr, "\n");
@@ -388,8 +421,8 @@ int tide_update(const char *folder, const char *const *names, const int count)
     bool changed = false;
     bool failed = false;
     bool any_git = false;
-    for (int i = 0; i < game.count; i++) {
-        const package_line *line = &game.lines[i];
+    for (int i = 0; i < every; i++) {
+        const package_line *line = all[i];
         if (!chosen[i]) continue;
         if (line->local) {
             char *name = package_name(line, game.folder);
@@ -431,6 +464,7 @@ int tide_update(const char *folder, const char *const *names, const int count)
     }
     if (count == 0 && !any_git) printf("tide: tide.packages has no packages from git to update\n");
     free(chosen);
+    free(all);
     if (changed && !save(&t)) return 1;
     if (!changed) {
         free(t.path);
@@ -438,4 +472,144 @@ int tide_update(const char *folder, const char *const *names, const int count)
     }
     packages_free_file(&game);
     return add_needed(folder) && !failed ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// tide eject
+
+// Puts `text` on line `number` in place of its source and commit: all of the
+// line before any comment.
+static void set_line(packages_text *t, const int number, const char *text)
+{
+    char *line = t->text;
+    for (int i = 1; i < number && line; i++) {
+        line = strchr(line, '\n');
+        if (line) line++;
+    }
+    if (!line) return;
+    size_t end = strcspn(line, "\n");
+    bool comment = false;
+    for (size_t i = 0; i < end; i++) {
+        if (line[i] == '#' && (i == 0 || is_space(line[i - 1]))) {
+            end = i;
+            comment = true;
+            break;
+        }
+    }
+    while (!comment && end > 0 && is_space(line[end - 1])) end--; // A "\r" stays the line's end
+    size_t from = 0;
+    while (from < end && is_space(line[from])) from++;
+    const size_t at = (size_t)(line - t->text);
+    const size_t size = strlen(t->text) + strlen(text) + 2;
+    char *out = malloc(size);
+    if (!out) abort();
+    snprintf(out, size, "%.*s%s%s%s", (int)(at + from), t->text, text, comment ? " " : "", t->text + at + end);
+    free(t->text);
+    t->text = out;
+}
+
+typedef struct copy_walk {
+    const char *from;
+    const char *to;
+    bool top; // The package's own folder, where what tide made isn't the package's
+    bool ok;
+} copy_walk;
+
+static void copy_entry(void *user, const char *name, const bool is_dir)
+{
+    copy_walk *w = user;
+    if (!w->ok) return;
+    if (w->top && (strcmp(name, ".tide") == 0 || strcmp(name, ".tide-fetched") == 0 || strcmp(name, ".git") == 0
+                   || strcmp(name, "build") == 0)) {
+        return;
+    }
+    char *from = path_join(w->from, name);
+    char *to = path_join(w->to, name);
+    if (is_dir) {
+        copy_walk inner = {from, to, false, sys_mkdirs(to)};
+        if (inner.ok) sys_list(from, copy_entry, &inner);
+        w->ok = inner.ok;
+    } else {
+        size_t size = 0;
+        char *data = sys_read_file(from, &size);
+        w->ok = data && sys_write_file(to, data, size);
+        free(data);
+    }
+    if (!w->ok) fprintf(stderr, "tide: can't copy %s to %s\n", from, to);
+    free(from);
+    free(to);
+}
+
+int tide_eject(const char *folder, const char *name)
+{
+    packages_file game;
+    if (!packages_read(folder, &game, report, NULL)) return 1;
+    const package_line *line = NULL;
+    int every = 0;
+    const package_line **all = every_line(&game, &every);
+    for (int i = 0; i < every && !line; i++) {
+        if (names_line(name, all[i], game.folder)) line = all[i];
+    }
+    free(all);
+    if (!line) {
+        fprintf(stderr, "tide: tide.packages has no package called %s\n", name);
+        fprintf(stderr, "  = note: eject copies one of the game's packages into the game's folder: `tide add %s` adds it "
+                        "first\n", name);
+        return 1;
+    }
+    char *own = package_name(line, game.folder);
+    if (line->local) {
+        printf("tide: %s is a folder on this machine already (%s): it's changed there\n", own, line->source);
+        return 0;
+    }
+    if (!line->builtin && !line->commit) {
+        fprintf(stderr, "tide: tide.packages:%d names no commit of %s to copy\n", line->line, own);
+        fprintf(stderr, "  = note: `tide update %s` writes the newest one\n", own);
+        return 1;
+    }
+    if (!line->builtin) {
+        char *repo_dir = packages_repo_dir(line);
+        const bool here = repo_dir && (packages_fetched(repo_dir) || fetch_package(NULL, line, repo_dir));
+        free(repo_dir);
+        if (!here) return 1;
+    }
+    char *from = packages_folder(line, game.folder);
+    if (!from || !sys_is_dir(from)) {
+        fprintf(stderr, "tide: %s isn't on this machine to copy\n", own);
+        return 1;
+    }
+
+    // packages/<its folder's name>: the last part of what the line says
+    const char *last = strrchr(line->source, '/');
+    const char *part = last ? last + 1 : line->source;
+    const size_t size = strlen(part) + 16;
+    char *source = malloc(size);
+    if (!source) abort();
+    snprintf(source, size, "./packages/%s", part);
+    char *to = path_join(game.folder, source + 2);
+    if (sys_exists(to)) {
+        fprintf(stderr, "tide: %s is there already, so %s wasn't copied\n", to, own);
+        fprintf(stderr, "  = note: a package is ejected into packages/ in the game's folder, under its own folder's name\n");
+        return 1;
+    }
+    copy_walk walk = {from, to, true, sys_mkdirs(to)};
+    if (walk.ok) sys_list(from, copy_entry, &walk);
+    else fprintf(stderr, "tide: can't make the folder %s\n", to);
+    if (!walk.ok) {
+        sys_remove_tree(to);
+        return 1;
+    }
+
+    packages_text t = load(folder);
+    set_line(&t, line->line, source);
+    if (!save(&t)) return 1;
+    printf("tide: %s is the game's own now, in %s: change what you like\n", own, source + 2);
+    if (line->builtin) printf("  = note: `tide upgrade` no longer updates it\n");
+    else printf("  = note: `tide update` no longer moves it\n");
+    free(own);
+    free(from);
+    free(to);
+    free(source);
+    packages_free_file(&game);
+    return add_needed(folder) ? 0 : 1;
 }

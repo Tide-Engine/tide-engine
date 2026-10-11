@@ -44,6 +44,8 @@ view Characters(Character character)
 
 Each draw captures the pose as it is at that call, so later edits or samples do not change characters already drawn. The renderer can batch consecutive compatible draws of an imported model even when their poses differ. Different shaders, textures, shared values or draw settings can separate those batches.
 
+A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMesh<Vertex3> hero = "art/hero.glb";` has simpler versions of the model made as the game builds, and each draw picks one by how big the character is on screen. The pose, the bones and every lookup are the full model's; only the triangles drawn change. The model's size for the pick is its size at rest. See [Levels of detail](./assets.md#levels-of-detail).
+
 An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
 
 Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh, morph targets and external vertex caches. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
@@ -59,14 +61,14 @@ var model = hero; // Retains the known asset's checked catalog.
 var idle = model.animations.idle;
 var hand = model.skeleton.bones.rightHand;
 
-if (model.animations.Find("Victory Dance") is Animation celebration)
+if (model.animations.TryGetByName("Victory Dance", out var celebration))
 {
     var pose = celebration.Sample(0);
     Draw.SkinnedMesh(model, float4x4.identity, pose);
 }
 ```
 
-`Find` uses the exact original name and returns an optional value; a duplicate original name is ambiguous and returns null. Both `animations` and `skeleton.bones` provide `count` and `At(index)` for enumeration. Unnamed entries are available through `At`; `Find("")` returns null, and contract aliases must be nonempty. `skeleton.Find(name)` also finds a bone. An animation has its original `name` and its `duration` in seconds.
+`TryGetByName(name, out result)` uses the exact original name and returns a bool. Missing, empty or duplicate names return `false` and assign `default` to the result. Both `animations` and `skeleton.bones` provide `count` and `TryGetAt(index, out result)` for enumeration; an index outside the catalog also returns `false` and assigns `default`. Unnamed entries remain accessible by index. `skeleton.TryGetByName(name, out result)` also finds a bone. Contract aliases must be nonempty. An animation has its original `name` and its `duration` in seconds.
 
 A plain `SkinnedMesh<Vertex3>` helper parameter has dynamic lookup. Declare an optional contract when a helper needs checked names:
 
@@ -86,14 +88,14 @@ Animation Running(SkinnedMesh<Vertex3, Locomotion> model)
 }
 ```
 
-The contract requires that subset; extra clips and bones remain discoverable through `Find` and `At`. Unaliased fields match normalized source identifiers; `[Name]` matches exact source spelling. Contracts stay available through helper parameters and collection elements. A build checks an imported asset's requirements; runtime decoding checks them before returning a model.
+The contract requires that subset; extra clips and bones remain discoverable through `TryGetByName` and `TryGetAt`. Unaliased fields match normalized source identifiers; `[Name]` matches exact source spelling. Contracts stay available through helper parameters and collection elements. A build checks an imported asset's requirements; runtime decoding checks them before returning a model.
 
 ## Animation files
 
 A separate glTF or FBX file can supply animation clips without importing typed render geometry. For the character above:
 
 ```csharp
-asset Animations movement = "art/movement.glb";
+asset AnimationCatalog movement = "art/movement.glb";
 
 view MovingCharacter(Character character)
 {
@@ -103,24 +105,24 @@ view MovingCharacter(Character character)
 }
 ```
 
-An `Animations` asset holds every clip in the file and the skeleton those clips animate. A single known asset exposes its clips directly, such as `movement.run`. The editor completes these members and shows their original source names on hover, using the same rules as `hero.animations`. `movement.count`, `movement.Find("Run")` and `movement.At(index)` enumerate or find clips too. Copying with `var` retains checked names; a plain `Animations` helper parameter exposes lookup and enumeration.
+An `AnimationCatalog` asset holds every clip in the file and the skeleton those clips animate. A single known asset exposes its clips directly, such as `movement.run`. The editor completes these members and shows their original source names on hover, using the same rules as `hero.animations`. `movement.count`, `movement.TryGetByName("Run", out result)` and `movement.TryGetAt(index, out result)` enumerate or find clips too. Copying with `var` retains checked names; a plain `AnimationCatalog` helper parameter exposes lookup and enumeration.
 
 The file can be `.glb`, `.gltf` or `.fbx`. The importer keeps animation and skeleton data, so an animation file need not contain a mesh. A file containing several clips imports them all.
 
 Combine several files with a list, or use a glob:
 
 ```csharp
-asset Animations movement = [
+asset AnimationCatalog movement = [
     "kenney/survivors/walk.fbx",
     "kenney/survivors/run.fbx"
 ];
-// Alternatively: asset Animations movement = "kenney/survivors/*.fbx";
+// Alternatively: asset AnimationCatalog movement = "kenney/survivors/*.fbx";
 
 var walk = movement.rootWalk; // Original name: Root|Walk
 var run = movement.rootRun;   // Original name: Root|Run
 ```
 
-This makes one combined catalog. List entries can be constant strings or globs; list order is preserved, each glob is sorted by path, and repeated files are imported once. Clips keep their order within each source. If both files contain `Root|0.Targeting Pose`, their members become `movement.walkRoot0TargetingPose` and `movement.runRoot0TargetingPose`. Remaining collisions receive source ordinals. Hover shows the original clip name and its file. `Find` searches original names across the whole catalog and returns null for an ambiguous name. Each clip retains its own source skeleton; collecting clips does not retarget them.
+This makes one combined catalog. List entries can be constant strings or globs; list order is preserved, each glob is sorted by path, and repeated files are imported once. Clips keep their order within each source. If both files contain `Root|0.Targeting Pose`, their members become `movement.walkRoot0TargetingPose` and `movement.runRoot0TargetingPose`. Remaining collisions receive source ordinals. Hover shows the original clip name and its file. `TryGetByName` searches original names across the whole catalog and returns false for an ambiguous name, assigning `default` to its result. Each clip retains its own source skeleton; collecting clips does not retarget them.
 
 Import a single clip directly when the file contains exactly one. Select a particular clip from a multi-clip file with its exact original name:
 
@@ -132,7 +134,7 @@ asset Animation run = "kenney/survivors/run.fbx";
 var pose = run.Sample(seconds, Playback.Loop);
 ```
 
-Missing or ambiguous selections are build errors. An `Animation` asset takes one file, while an `Animations` asset accepts a file, a glob or a nonempty file list.
+Missing or ambiguous selections are build errors. An `Animation` asset takes one file, while an `AnimationCatalog` asset accepts a file, a glob or a nonempty file list.
 
 `pose.Sample` binds the clip to the pose's skeleton. Use a pose from the character when you also need its bone references for edits or sockets. You can also sample the source clip with `movement.run.Sample(seconds)` and pass that pose directly to `Draw.SkinnedMesh`; the draw binds it to the character.
 

@@ -611,7 +611,7 @@ typedef struct decl {
     struct expr *value; // A constant expression of its type (return_type)
     // Assets: the files the path resolved to, once checked (asset_files.h); NULL where it couldn't
     struct asset_value *asset;
-    VEC(struct expr *) asset_paths; // Checked path literals, including an Animations file list.
+    VEC(struct expr *) asset_paths; // Checked path literals, including an AnimationCatalog file list.
     int asset_kind;  // The asset_kind its type says, once checked (asset_files.h)
     int asset_animation_index; // A singular Animation's checked source clip.
     // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
@@ -620,6 +620,8 @@ typedef struct decl {
     // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
     // only code the GPU runs reads, by its name (declared_raw)
     bool sample_raw;
+    // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
+    bool lod;
     bool asset_many; // A List or Map: a glob's matches, or the one file its path names
 
     // Systems, views, methods, functions, and an input's Sample
@@ -977,6 +979,7 @@ struct expr {
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
     bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
+    bool web_request;        // ...and a WebRequest's Send, with web_fetch: its object is the request, its value a WebResponse
     int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct expr *values;        // mesh draw and Blit: the struct it gives its vert and frag after their names, or NULL

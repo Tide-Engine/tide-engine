@@ -78,6 +78,7 @@ int tide_run_android(const char *root, const build_options *opts, const char *co
 // Startup and unrelated commands have no work in this fixture. Abort if
 // dispatch reaches an unrelated command, so an unexpected path cannot pass.
 void packages_set_builtin_folder(const char *folder) { (void)folder; }
+void packages_set_symbols(const char *const *names, const int count) { (void)names; (void)count; }
 void tide_cleanup(const char *root) { (void)root; }
 const char *tide_channel(const char *root) { (void)root; abort(); }
 bool tide_installation_whole(const char *root, const char *version) { (void)root; (void)version; abort(); }
@@ -86,6 +87,7 @@ char *find_web_clang(void) { abort(); }
 char *find_wasm_ld(const char *clang) { (void)clang; abort(); }
 int tide_editors(const char *root, const bool only_updates) { (void)root; (void)only_updates; abort(); }
 int tide_add(const char *folder, const char *what) { (void)folder; (void)what; abort(); }
+int tide_eject(const char *folder, const char *name) { (void)folder; (void)name; abort(); }
 int tide_update(const char *folder, const char *const *names, const int count)
 {
     (void)folder;

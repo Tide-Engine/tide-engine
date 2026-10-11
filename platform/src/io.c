@@ -163,6 +163,20 @@ static bool backend_fetch_poll(void *user, const uint32_t ticket, tide_io_error 
 }
 static void backend_fetch_forget(void *user, const uint32_t ticket) { (void)user; tide_web_io_fetch_forget(ticket); }
 
+// Web.Request's Send: the same fetch of the page's, with what a request has
+static uint32_t backend_request_begin(void *user, const char *method, const char *url, const char *headers,
+                                      const uint8_t *body, const uint32_t size)
+{
+    (void)user;
+    return tide_web_io_request_begin(method, url, headers, body, size);
+}
+static bool backend_request_poll(void *user, const uint32_t ticket, tide_io_error *error, int32_t *status, uint8_t **data,
+                                 uint32_t *size)
+{
+    *status = tide_web_io_request_status(ticket); // Before the fetch's poll, which lets the ticket go
+    return backend_fetch_poll(user, ticket, error, data, size);
+}
+
 static char *web_path(const int kind)
 {
     const int32_t size = tide_web_io_path(kind, NULL, 0);
@@ -1113,6 +1127,18 @@ static bool backend_fetch_poll(void *user, const uint32_t ticket, tide_io_error 
     return tide_fetch_poll(ticket, error, data, size);
 }
 static void backend_fetch_forget(void *user, const uint32_t ticket) { (void)user; tide_fetch_forget(ticket); }
+static uint32_t backend_request_begin(void *user, const char *method, const char *url, const char *headers,
+                                      const uint8_t *body, const uint32_t size)
+{
+    (void)user;
+    return tide_request_begin(method, url, headers, body, size);
+}
+static bool backend_request_poll(void *user, const uint32_t ticket, tide_io_error *error, int32_t *status, uint8_t **data,
+                                 uint32_t *size)
+{
+    (void)user;
+    return tide_request_poll(ticket, error, status, data, size);
+}
 #endif
 
 const tide_io *tide_platform_io_init(const char *app_id)
@@ -1153,6 +1179,8 @@ const tide_io *tide_platform_io_init(const char *app_id)
         .fetch_begin = backend_fetch_begin,
         .fetch_poll = backend_fetch_poll,
         .fetch_forget = backend_fetch_forget,
+        .request_begin = backend_request_begin,
+        .request_poll = backend_request_poll,
     };
     return &state.provider;
 }

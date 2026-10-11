@@ -1,3 +1,3 @@
 // expect: an asset's path is text, not int
-asset Animations run = ["../e2e/animation_imports/single.gltf", 3];
+asset AnimationCatalog run = ["../e2e/animation_imports/single.gltf", 3];
 scene Main { }

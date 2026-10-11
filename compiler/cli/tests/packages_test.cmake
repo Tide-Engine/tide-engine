@@ -420,8 +420,132 @@ file(WRITE "${game}/tide.packages" "dice\nrolls\nlonely\n")
 tide("${game}" ARGS schedule . FAILS
     EXPECT "a package that comes with tide can't use a folder on this machine (../rolls)")
 
+# tide eject copies a package into the game's packages/ folder and makes its
+# line that folder, with what's around it kept: the game builds with the copy,
+# which is its own to change.
+file(WRITE "${game}/tide.packages" "dice # the dice\nrolls\ngithub.com/test/maths ${M1}\n")
+file(WRITE "${builtin}/dice/.tide/work" "tide's own")
+file(WRITE "${builtin}/dice/art/pips.txt" "six")
+tide("${game}" ARGS eject Dice
+    EXPECT "Dice is the game's own now, in packages/dice" "`tide upgrade` no longer updates it")
+expect_file("${game}/tide.packages" "./packages/dice # the dice\nrolls\ngithub.com/test/maths ${M1}\n")
+expect_file("${game}/packages/dice/tide.packages" "package Dice\nrolls\n")
+expect_file("${game}/packages/dice/art/pips.txt" "six")
+if(EXISTS "${game}/packages/dice/.tide")
+    message(FATAL_ERROR "tide eject copied the .tide folder, which is tide's own work")
+endif()
+file(APPEND "${game}/packages/dice/die.tide" "\nsystem Reroll(mut Die die)\n{\n    die.face += 1;\n}\n")
+tide("${game}" ARGS schedule . EXPECT "Dice.Roll" "Dice.Reroll" "Count")
+tide("${game}" ARGS eject dice EXPECT "Dice is a folder on this machine already (./packages/dice)")
+# One from git: its commit goes with its source
+tide("${game}" ARGS eject maths
+    EXPECT "Maths is the game's own now, in packages/maths" "`tide update` no longer moves it")
+expect_file("${game}/tide.packages" "./packages/dice # the dice\nrolls\n./packages/maths\n")
+expect_file("${game}/packages/maths/tide.packages" "package Maths")
+if(EXISTS "${game}/packages/maths/.tide-fetched")
+    message(FATAL_ERROR "tide eject copied .tide-fetched, which says a download is whole")
+endif()
+tide("${game}" ARGS schedule . EXPECT "Dice.Roll" "Dice.Reroll" "Count")
+tide("${game}" ARGS update EXPECT "tide.packages has no packages from git to update")
+# A folder in the way is left alone, and so is the file
+file(WRITE "${game}/packages/rolls/mine.txt" "kept")
+tide("${game}" ARGS eject rolls FAILS EXPECT "packages/rolls is there already, so Rolls wasn't copied")
+expect_file("${game}/tide.packages" "./packages/dice # the dice\nrolls\n./packages/maths\n")
+expect_file("${game}/packages/rolls/mine.txt" "kept")
+tide("${game}" ARGS eject cards FAILS
+    EXPECT "tide.packages has no package called cards" "`tide add cards` adds it first")
+tide("${game}" ARGS eject FAILS EXPECT "eject takes the name of one of the game's packages")
+file(REMOVE_RECURSE "${game}/packages" "${builtin}/dice/.tide" "${builtin}/dice/art")
+
 # They're the installation's: the tide the build made, where it was built, has neither.
 file(WRITE "${game}/tide.packages" "dice\nrolls\n")
 tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
 set(TIDE "${built}")
 tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: no package called dice comes with this tide")
+
+# ---------------------------------------------------------------------------
+# #if lines: which packages a build has, by its symbols
+
+set(game "${WORK}/conditions")
+file(WRITE "${game}/main.tide" "scene Main { }\n")
+foreach(name Steam Ours Extra)
+    string(TOLOWER "${name}" folder)
+    file(WRITE "${game}/../conditions-${folder}/tide.packages" "package ${name}\n")
+    file(WRITE "${game}/../conditions-${folder}/poll.tide"
+        "namespace ${name};\n\nsingleton Polls\n{\n    int count;\n}\n\nsystem Poll(mut Polls polls)\n{\n    polls.count += 1;\n}\n")
+endforeach()
+file(WRITE "${game}/tide.packages" "# if this were a directive, it would say so
+#if STEAM   # Valve's
+../conditions-steam
+#elif DEMO && !DEBUG
+../conditions-extra
+#else
+../conditions-ours
+#endif
+")
+# No symbol but DEBUG: the #else's. A symbol the command line names: its branch. --release has no DEBUG.
+tide("${game}" ARGS schedule . EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --define STEAM EXPECT "Steam.Poll" WITHOUT "Ours.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --define DEMO EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --release --define DEMO EXPECT "Extra.Poll" WITHOUT "Steam.Poll" "Ours.Poll")
+tide("${game}" ARGS schedule . --release --define DEMO --define STEAM EXPECT "Steam.Poll" WITHOUT "Ours.Poll" "Extra.Poll")
+# A package's own symbol follows the build's packages
+file(WRITE "${game}/main.tide" "scene Main { }\n#if PACKAGE_STEAM\nsystem OnSteam(mut Steam.Polls polls)\n{\n    polls.count += 2;\n}\n#endif\n")
+tide("${game}" ARGS schedule . WITHOUT "OnSteam")
+tide("${game}" ARGS schedule . --define STEAM EXPECT "OnSteam")
+# Nested, and the same package in two branches, which are never one build's
+file(WRITE "${game}/tide.packages" "#if !STEAM
+#if DEBUG
+../conditions-ours
+#else
+../conditions-extra
+#endif
+#else
+../conditions-ours
+../conditions-steam
+#endif
+")
+tide("${game}" ARGS schedule . EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --release EXPECT "Extra.Poll" WITHOUT "Steam.Poll" "Ours.Poll")
+tide("${game}" ARGS schedule . --release --define STEAM EXPECT "Steam.Poll" "Ours.Poll" WITHOUT "Extra.Poll")
+# In one build, twice is twice
+file(WRITE "${game}/tide.packages" "../conditions-ours\n#if DEBUG\n../conditions-ours\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:3: error: ../conditions-ours is listed twice")
+tide("${game}" ARGS schedule . --release EXPECT "Ours.Poll")
+# What's wrong with the lines themselves
+file(WRITE "${game}/tide.packages" "#if STEAM\n../conditions-steam\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: this #if never ends" "end it with a line that says `#endif`")
+file(WRITE "${game}/tide.packages" "../conditions-ours\n#else\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:2: error: this #else has no #if before it")
+file(WRITE "${game}/tide.packages" "#if STEAM &&\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: a condition is missing")
+file(WRITE "${game}/tide.packages" "#if STEAM DEMO\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: the condition ends before 'DEMO'")
+file(WRITE "${game}/tide.packages" "#if PACKAGE_OURS\n../conditions-steam\n#endif\n../conditions-ours\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:1: error: 'PACKAGE_OURS' is a symbol this file's packages make, so no line of it depends on one")
+file(WRITE "${game}/tide.packages" "#if TIDE_NEWER\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: 'TIDE_NEWER' isn't a symbol Tide knows")
+file(WRITE "${game}/tide.packages" "#if TIDE_0_1_OR_NEWER\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . EXPECT "Steam.Poll")
+file(WRITE "${game}/tide.packages" "#ifdef STEAM\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: #ifdef is C's: a condition here is an #if's" "write `#if SYMBOL`")
+file(WRITE "${game}/tide.packages" "#if STEAM\n../conditions-steam\n#else\n#elif DEMO\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:4: error: this #elif comes after the #else of the #if on line 1")
+file(WRITE "${game}/tide.packages" "#if DEBUG\ntide 0.1\n#endif\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:2: error: a `tide` line can't be inside an #if")
+
+# The commands keep every line, a build's or not: update moves them, fetch
+# downloads them, eject finds them, and add sees them listed
+file(WRITE "${game}/main.tide" "scene Main { }\n")
+file(WRITE "${game}/tide.packages" "#if STEAM\ngithub.com/test/maths ${M1}\n#endif\n")
+tide("${game}" ARGS update EXPECT "Maths is up to date, at 1111111 (main)")
+tide("${game}" ARGS update maths EXPECT "Maths is up to date, at 1111111 (main)")
+tide("${game}" ARGS add github.com/test/maths EXPECT "Maths is in tide.packages already, on line 2")
+file(REMOVE_RECURSE "${WORK}/cache/github.com/test/maths")
+tide("${game}" ARGS fetch EXPECT "the game's 1 package is on this machine")
+if(NOT EXISTS "${WORK}/cache/github.com/test/maths/${M1}/.tide-fetched")
+    message(FATAL_ERROR "tide fetch left a package an #if leaves out of this build to another build's network")
+endif()
+tide("${game}" ARGS eject maths EXPECT "Maths is the game's own now, in packages/maths")
+expect_file("${game}/tide.packages" "#if STEAM\n./packages/maths\n#endif\n")

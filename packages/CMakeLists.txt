@@ -133,6 +133,12 @@ tide_add_game(tide_rooms_lobby SOURCES rooms/test/game.tide NAME game PACKAGES R
 target_include_directories(tide_rooms_lobby PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_rooms_lobby COMMAND tide_rooms_lobby)
 set_tests_properties(tide_rooms_lobby PROPERTIES TIMEOUT 120)
+# A game that draws pages of its own: an override of one, and a view of its own for another
+tide_add_game(tide_rooms_pages SOURCES rooms/test/pages.tide NAME game PACKAGES Rooms rooms/rooms.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" rooms/test/pages_test.c)
+target_include_directories(tide_rooms_pages PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_rooms_pages COMMAND tide_rooms_pages)
+set_tests_properties(tide_rooms_pages PROPERTIES TIMEOUT 120)
 
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
