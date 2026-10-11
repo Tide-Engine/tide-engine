@@ -225,11 +225,36 @@ bool Gateway(LevelLayout layout, Puzzle puzzle, int room, int2 at, int direction
     entry = DoorCell(layout, destination, opposite);
     return TileAt(layout, destination, entry) != Tile.Wall;
 }
+// Twice a doorway's distance along its wall from the middle of the box, in
+// cells of that room. Scaled by the other room's longest edge, two of these
+// compare exactly in the containing cell both boxes fill.
+int DoorReach(LevelLayout layout, int room, int direction)
+{
+    var cell = DoorCell(layout, room, direction);
+    return direction % 2 == 0 ? cell.x * 2 - (RoomWidth(layout, room) - 1) : cell.y * 2 - (RoomHeight(layout, room) - 1);
+}
+int RoomSpan(LevelLayout layout, int room) { return Math.Max(RoomWidth(layout, room), RoomHeight(layout, room)); }
+
+// Two boxes side by side connect only where their open doorways physically
+// face each other at the same place along the shared edge.
+bool DoorsMeet(LevelLayout layout, int from, int direction, int to)
+{
+    var opposite = (direction + 2) % 4;
+    if (direction < 0 || direction > 3 || !ValidRoom(layout, from) || !ValidRoom(layout, to)) return false;
+    if ((layout.rooms[from].doors & (1 << direction)) == 0 || (layout.rooms[to].doors & (1 << opposite)) == 0) return false;
+    if (DoorCell(layout, from, direction).x < 0 || DoorCell(layout, to, opposite).x < 0) return false;
+    return DoorReach(layout, from, direction) * RoomSpan(layout, to) == DoorReach(layout, to, opposite) * RoomSpan(layout, from);
+}
+
 bool ObjectDestination(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, out int nextRoom, out int2 next)
 {
     if (!PhysicalStep(layout, puzzle, room, from, direction, out nextRoom, out next)) return false;
-    if (BoxAt(layout, puzzle, nextRoom, next) >= 0)
+    var box = BoxAt(layout, puzzle, nextRoom, next);
+    if (box >= 0)
     {
+        // Leaving one box straight into its neighbor needs facing doorways;
+        // from the open floor an object is carried to whichever doorway faces it.
+        if (!OnRoomGrid(layout, room, from + Direction(direction)) && !DoorsMeet(layout, room, direction, BoxDestination(layout, box))) return false;
         if (!Gateway(layout, puzzle, nextRoom, next, direction, out var destination, out var entry, out _)) return false;
         nextRoom = destination;
         next = entry;
@@ -333,14 +358,20 @@ bool IsSolved(LevelLayout layout, Puzzle puzzle)
     }
     return true;
 }
-bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction)
+// What one step does: the move handler applies it, and each screen asks the
+// same question of a copy to show its own dummy what a direction will do.
+enum Step { Blocked, Walk, Push, Enter }
+bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out Step step)
 {
+    step = Step.Blocked;
     if (puzzle.solved || seat < 0 || seat > 1 || direction < 0 || direction > 3) return false;
     mut var trial = puzzle;
     mut var actor = trial.actors[seat];
     if (actor.depth < 0 || actor.depth > MAX_DEPTH) return false;
     if (!TravelerStep(layout, trial, actor, direction, out mut var room, out mut var next, out mut var depth)) return false;
-    if (depth < actor.depth)
+    var leaving = depth < actor.depth;
+    var source = actor.room;
+    if (leaving)
     {
         if (!RebaseTrail(layout, trial, actor, room, depth)) return false;
         trial.actors[seat] = actor;
@@ -348,7 +379,11 @@ bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction)
     }
     var box = BoxAt(layout, trial, room, next);
     mut var pushed = false;
-    if (box >= 0)
+    mut var entered = false;
+    // Facing doorways are one passage for dummies, parcels and boxes alike:
+    // a dummy walks straight through instead of pushing the neighbor.
+    var meets = leaving && box >= 0 && DoorsMeet(layout, source, direction, BoxDestination(layout, box));
+    if (box >= 0 && !meets)
     {
         // A physical room moves whenever its destination is available. If
         // pushing fails, doorway entry starts from the unchanged candidate.
@@ -361,9 +396,13 @@ bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction)
     }
     if (!pushed && box >= 0)
     {
+        // A dummy in a doorway never stood on the open floor outside, so a
+        // neighbor that neither moves nor faces that doorway is a wall.
+        if (leaving && !meets) return false;
         if (depth >= MAX_DEPTH || !Gateway(layout, trial, room, next, direction, out var destination, out var entry, out var back)) return false;
         room = destination;
         next = entry;
+        entered = true;
         trial.actors[seat].trail[depth] = back;
         depth += 1;
         if (BoxAt(layout, trial, room, next) >= 0) return false;
@@ -380,6 +419,7 @@ bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction)
     trial.moves += 1;
     trial.solved = IsSolved(layout, trial);
     puzzle = trial;
+    step = entered ? Step.Enter : pushed ? Step.Push : Step.Walk;
     return true;
 }
 
@@ -450,7 +490,7 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
     if (!Authorized(workshop, sender, move.serial)) return;
     var seat = SeatOf(workshop, sender);
     var before = workshop.puzzle;
-    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction))
+    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction, out _))
     {
         Send(PuzzleCue { kind = 6, seat = seat });
         return;

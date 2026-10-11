@@ -340,7 +340,7 @@ string LevelHint(int level, int tier)
     {
         if (detail == 0) return "How can two boxes pass in a corridor that is only one cell wide at the top?";
         if (detail == 1) return "Deliver before trading places. Use the bay at the top for the long room, and keep a dummy above it to push it back out.";
-        return "Teal leaves east and brings the long room left beside the home. Amber posts the parcel east, then Teal steps behind the long room to stop its push while Amber enters. Deliver inside; park the long room north at the middle bay. Teal moves the home right, Amber releases the parked room, then Teal leaves the home west to put the long room on its left outline.";
+        return "Amber posts the parcel east out of the home. Teal leaves the long room east and waits behind it to stop its push, so Amber can push the parcel in and follow it. Deliver inside, then Amber waits at the top of the bay while Teal brings the long room left; park it north at the middle bay. Teal moves the home right, Amber releases the parked room, then Teal leaves the home west to put the long room on its left outline.";
     }
     if (level == 5)
     {

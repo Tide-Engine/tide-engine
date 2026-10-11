@@ -8,8 +8,8 @@ move boxes into their own interiors. Repeated views of a room share one
 set of parcels, boxes and people.
 
 The 3D rooms keep a fixed, gently tilted view of a factory drawn like an
-early 3D console game: chunky pixels, coarse texels and patterned shades on
-painted steel containers, concrete slabs and warning yellow, with quiet
+early 3D console game: chunky pixels and flat, stepped shades on painted
+steel containers, concrete slabs and warning yellow, with quiet
 ventilation.
 There are no threats or jumpscares.
 
@@ -51,6 +51,11 @@ another box or your partner stops a room, walking into its open doorway
 enters it. Directions match the screen: W is up, D right, S down and A left.
 After undo or reset, release a held direction before pressing it again.
 
+Beside a box, the game shows what your next step will do before you take
+it: a yellow bar against a box you would push, a green arrow into a doorway
+you would enter. The direction buttons show the same for every direction,
+with a bar across the arrow where you cannot go.
+
 The shelf can revisit or skip any of the twelve puzzles. A plus beside a
 title marks one you have completed in this match. Hints start with a small
 nudge; ask for more to reveal an arrangement and then a more specific plan.
@@ -69,6 +74,13 @@ They are optional. Ambience, sound and reduced motion are local settings.
 - A parcel or room pushed through another room's doorway enters its
   interior. Parcels pushed outward through an edge door emerge beside the
   containing room's physical shell.
+- Two boxes side by side are joined only where their open doorways face
+  each other at the same place along the shared edge; the floor between
+  them is drawn where they do. Dummies, parcels and boxes all cross a
+  joined doorway directly, and a dummy walks through it instead of pushing
+  the neighbor. Where the doorways do not line up, a parcel or box pushed
+  out is blocked by the neighbor, and a dummy stepping out pushes the
+  neighbor if it can move and is blocked if it cannot.
 - A repeated box is another movable entrance into an existing room. Boxes
   can enter themselves, and two boxes can contain one another. Moving a
   parcel during one visit changes it for every visit. Every room still has

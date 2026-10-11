@@ -37,6 +37,7 @@ local singleton Hands
     bool reduceMotion;
     float blockTime;
     float portalTime;
+    Step[4] ahead;
 }
 
 void Label(string text, float2 at, float size = 16, Color color = INK, Anchor anchor = Anchor.MiddleLeft)
@@ -182,6 +183,28 @@ int KeyDirection(Devices devices, bool edge)
     return -1;
 }
 
+Color StepTone(Step step)
+{
+    if (step == Step.Push) return HAZARD;
+    if (step == Step.Enter) return Color(0.48, 0.74, 0.48);
+    return step == Step.Blocked ? MUTED : TEAL;
+}
+
+// A direction's arrow says what the step will do: a solid block ahead of it
+// is a box it pushes, an open frame around its tip a doorway it enters, and
+// a bar across its tip a step that cannot happen.
+void StepMark(float2 at, int direction, float size, Step step)
+{
+    var tone = StepTone(step);
+    var axis = float2(Direction(direction));
+    var cross = float2(-axis.y, axis.x);
+    DirectionMark(at, direction, size, tone);
+    var tip = at + axis * size;
+    if (step == Step.Push) Draw.Rect(tip + axis * size * 0.75, float2(size * 0.9), tone);
+    if (step == Step.Enter) Draw.WireRoundRect(tip - axis * size * 0.1, float2(size * 1.7), 0, 1.5, tone);
+    if (step == Step.Blocked) Draw.Line(tip + axis * 2 - cross * size * 0.7, tip + axis * 2 + cross * size * 0.7, 1.5, tone);
+}
+
 void DirectionMark(float2 at, int direction, float size, Color tone)
 {
     var step = Direction(direction);
@@ -224,6 +247,16 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
     bool compactHeader = width < 1050;
     bool together = Together(workshop);
     bool playing = lobby.playing && together && hands.seat >= 0 && !hands.journal && !hands.guide;
+    // Ask the real move rule about a copy of the puzzle, so the answer is
+    // never a guess. Workbench draws the same answers beside the dummy.
+    for (var d = 0; d < 4; d++)
+    {
+        hands.ahead[d] = Step.Blocked;
+        if (!playing || workshop.puzzle.solved) continue;
+        mut var trial = workshop.puzzle;
+        MovePuzzle(workshop.layout, trial, hands.seat, d, out var step);
+        hands.ahead[d] = step;
+    }
     var key = devices.keyboard;
     var bottom = height - (narrow ? 140.0 : 64.0);
     var actionWidth = narrow ? 65.0 : 92.0;
@@ -297,7 +330,8 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         var enabled = playing && !workshop.puzzle.solved;
         if (PaperButton("", Rect(at.x - arrowSize * 0.5, at.y - arrowSize * 0.5, arrowSize - 3, arrowSize - 3), enabled))
             Send(Move { serial = workshop.serial, direction = d });
-        DirectionMark(at + float2(-1.5, -7), d, 6, enabled ? TEAL : MUTED);
+        if (enabled) StepMark(at + float2(-1.5, -7), d, 6, hands.ahead[d]);
+        else DirectionMark(at + float2(-1.5, -7), d, 6, MUTED);
         Label(DirectionKey(d), at + float2(-1.5, 8), 11, enabled ? INK : MUTED, Anchor.MiddleCenter);
     }
     if (!narrow) Label("WASD / arrows to walk and push. When a room cannot move, step into its doorway to enter.", float2(left, height - 14), 12, MUTED);
@@ -360,6 +394,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("The containing world is visible beyond the walls.");
             GUILayout.Label("WASD / arrows: walk and push parcels or rooms.");
             GUILayout.Label("Rooms move first. Block a room to step inside.");
+            GUILayout.Label("Beside a box: a yellow bar pushes it, a green arrow enters.");
             GUILayout.Label("Walk out through an edge door to leave.");
             GUILayout.Label("A wall, another box or your partner can stop a room.");
             GUILayout.Label("Touch: use the same directional arrows.");
@@ -368,6 +403,8 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("Copies of a room share its contents and people.");
             GUILayout.Label("1 is a primary box. 1' is a movable copy.");
             GUILayout.Label("Pushed objects exit beside the primary box.");
+            GUILayout.Label("Boxes side by side join only where doorways line up.");
+            GUILayout.Label("Joined doorways are walked through, not pushed.");
             GUILayout.Label("You return beside the entrance you used.");
             GUILayout.Label("You can enter up to eight layers deep.");
             GUILayout.Label("Box icons need parcels.");

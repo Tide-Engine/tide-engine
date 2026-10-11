@@ -43,6 +43,47 @@ instance they entered. This distinction is stated in the guide and README.
 Resolution crosses at most one boundary and one gateway per action;
 occupied door cells block unbounded gateway chains.
 
+Facing doorways (owner, 2026-10-12: adjacent boxes "have to match position,
+not just have a magical bridge", and the rules must be consistent, after a
+parcel crossed a bridge that a player leaving the same doorway did not: the
+player pushed the neighbor instead). `DoorsMeet` is true when the leaving
+room's doorway on that side and the neighbor's opposite doorway are both
+open and at the same place along the shared edge, compared exactly in the
+containing cell (`DoorReach` scaled by the other room's longest edge). It
+applies only to leaving one box straight into a box in the cell outside:
+- Doorways meet: a dummy, parcel or box crosses directly. A dummy walks
+  through and does not push the neighbor first. This is my pick for
+  "consistent": one passage rule for everything.
+- Doorways do not meet: a pushed parcel or box is blocked. A dummy pushes
+  the neighbor if it can move and steps out into the freed cell; otherwise
+  the move is blocked, because the dummy never stood on the floor outside.
+From the open floor nothing changed: rooms move first, a blocked room is
+entered through whichever doorway faces the dummy, and a parcel or box
+pushed into a box enters that doorway, wherever along the edge it is. The
+drawn floor between boxes (`DimensionConnections`) uses the same test, so
+it is always straight. Guide and README state the rule.
+
+Step preview (owner, 2026-10-12: "a way to communicate to the player when
+they will push vs enter"; built on "add it"). `MovePuzzle` reports a `Step`
+(Blocked, Walk, Push, Enter) through an `out` parameter; the handler ignores
+it. `WorkshopControls` runs the same function on a copy of the puzzle for
+each of the local seat's four directions every frame (`Hands.ahead`), so the
+preview cannot disagree with the rule, including partner backstops and
+facing doorways. Push means a box moved; a pushed parcel is a Walk, and an
+entry that also pushes a parcel is an Enter. The direction buttons draw it
+(`StepMark`: block ahead of the arrow, frame around its tip, bar across
+it), and `Workbench` draws a yellow bumper or a green arrow on the floor
+between this screen's dummy and the box, one frame behind the controls and
+hidden during a passage. Only the local dummy's next step is shown. The
+shapes and colours are my picks.
+
+Leaving a room, the in-room copy of a dummy now stays opaque until it
+stands in the doorway (progress 0.22..0.30) instead of fading from the
+first frame: the doorway pose is clipped to the opening while inside, so
+the old crossfade left the dummy mostly invisible on its way to the door
+(owner: "the tiny guy when I exit seems to mostly vanish"). The coverage
+pattern of `SceneCovered` is now in composite blocks.
+
 Self-placement and two-room cycles are allowed without cloning interiors.
 `Entry.box` resolves the live entered instance, so a moved occupied box
 changes its maker's return location. A mismatching prefix rebuilds from
@@ -109,40 +150,41 @@ composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
 The factory look (2026-10-12; the owner asked for "factory vibe, we are
-testing dummies; PSX style", the particulars below are unconfirmed picks):
+testing dummies; PSX style", then after the first pass: the dummies "look
+almost like parrots", "the art is still meh", "PSX but cleaner"; the
+particulars below are unconfirmed picks):
 Boxes are painted steel containers (green, oxide red, steel blue, violet;
-the outer hall is bare steel). Their wall panels carry two ribs and four
-rivets in darker shades of the same paint. Floors are concrete slabs with
-dark joints and anchor bolts. Doorways stand between warning-yellow posts,
-parcel targets are warning-yellow floor paint, and the hall's own perimeter
-walls carry yellow/black blocks (`HazardEdge`). Players are crash-test
-dummies in the AMBER/TEAL seat paint: rubber feet, hands, belt and neck, a
-blank head and a quartered black/white calibration mark on the crown. The
-code still calls them makers. Parcels are unchanged. Panels and buttons are
-square, charcoal and steel grey, with warning-yellow accents and a strip of
-warning tape along the top of the viewing panel, above the label crops the
-browser fixture reads. There are no enemies, threat events, jumpscares or
-timers.
+the outer hall is bare steel). A wall panel is a darker rim around a
+slightly raised face, both shades of the same paint. Floors are plain
+concrete slabs with dark joints. Doorways stand between warning-yellow
+posts, parcel targets are warning-yellow floor paint, and the hall's own
+perimeter walls carry yellow/black blocks (`HazardEdge`). Players are
+crash-test dummies: overalls in the AMBER/TEAL seat paint, rubber feet,
+hands, belt and neck, and a head that is the yellow/black quartered
+calibration mark. The first pass had a seat-coloured head with a small
+black/white mark, which read as a parrot's eye and beak. The code still
+calls them makers. Parcels are unchanged. Panels and buttons are square,
+charcoal and steel grey, with warning-yellow accents and a strip of warning
+tape along the top of the viewing panel, above the label crops the browser
+fixture reads. There are no enemies, threat events, jumpscares or timers.
 
 The PSX treatment lives in `SceneComposite` and changes no pass before it.
 The board is read in square blocks of `block` logical pixels, the board's
 width / 220 rounded and at least 1 (2 at 1280x800, 4 at 1920x1080, 2 on a
 390-wide phone): every pixel of a block samples the G-buffer, depth and AO
-at the block's middle. Light is one scalar cut to 14 shades with a 4x4
-ordered pattern over blocks. Because the scalar multiplies all three
-channels, a material keeps its exact chroma in every shade, which is what
-the browser fixture's `materialMatches` relies on; per-channel colour
-quantization would break it. Each face has coarse texels, eight per tile of
-its occurrence (`SceneObject.texels`, in the cube's own coordinates so they
-travel with a pushed box): a hash per texel darkens the scalar by up to 16%,
-fading out where a texel is smaller than a block. The grain is written to
-the blue channel of the Rgba16f normal target; the normal's height is
-rebuilt from x and z because no visible face looks down. Two things were
-tried and dropped: grain in the Rgba8 material's alpha (low alpha destroyed
-the stored material and gave saturated red/yellow texels, presumably because
-colour targets are premultiplied), and snapping vertices to the block grid
-for PSX wobble (rib decals darkened unevenly and half a floor tile went
-dark; the cause was not pinned down beyond removing the snap fixing both).
+at the block's middle. Light is one scalar, capped at 1 so a fully lit top
+face sits exactly on a shade, and cut to 14 shades. A 4x4 ordered pattern
+over blocks only mixes two shades within 0.2 of a shade of where they meet,
+so evenly lit faces are flat and only shadow and occlusion edges are
+patterned. AO strength is 0.50 (was 0.70). Because the scalar multiplies
+all three channels, a material keeps its exact chroma in every shade, which
+is what the browser fixture's `materialMatches` relies on; per-channel
+colour quantization would break it. Tried and dropped: a per-texel grain
+(noisy; the owner asked for cleaner), carrying it in the Rgba8 material's
+alpha (low alpha destroyed the stored material, presumably because colour
+targets are premultiplied), and snapping vertices to the block grid for PSX
+wobble (thin decals darkened unevenly and half a floor tile went dark; the
+cause was not pinned down beyond removing the snap fixing both).
 
 WASD/arrows walk/push, Z/Backspace undo, R reset, H hints and Enter continues.
 Touch uses the same directional buttons. Held directions require release
@@ -174,7 +216,7 @@ The authored replacement campaign has these production-command witnesses:
 | No handle inside | 12 |
 | The other opening | 20 |
 | A place to stand | 31 |
-| Passing place | 41 |
+| Passing place | 39 |
 | The same corner | 21 |
 | Carried together | 41 |
 | Before it moves | 40 |
@@ -234,7 +276,41 @@ serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
 
-## Factory / PSX restyle validation (2026-10-12)
+## Facing doorways and cleaner PSX validation (2026-10-12)
+
+Rules: every authored door pair was not audited; instead all twelve
+witnesses were replayed under the new rule. Eleven are unchanged. Passing
+place's old witness pushed its parcel across a bridge between doorways that
+do not meet (a 4-cell box beside a 3-cell-high one) and is replaced by a
+39-move witness found by a breadth-first search through the generated Move
+handler (1,587,462 states; shortest by construction; the search was scratch
+code and is not in the tree). The layout is unchanged and its minimum
+evidence, including one partner backstop, still holds; its third hint
+follows the new opening. The two-box cycle fixture now expects a dummy
+leaving A to walk into the facing B rather than push it. Layouts whose
+solutions never used a mismatched bridge may still play differently where
+a dummy used to push a facing neighbor from a doorway; no witness did.
+
+Native debug and web debug builds are warning-free. All 33 fixtures pass
+natively and under WASI. On the final code (rules, cleaner look, exit
+passage, step preview) `inside_out_play_webgl` passes in 131.69 s and
+`inside_out_play_webgpu` in 102.34 s; the two batches before it, without
+the preview and without the exit change, passed as well, so the title-crop
+failure recorded below did not recur in three further WebGL runs. Its cause
+is still unknown. The fixture has no assertion for the step preview or for
+a blocked mismatched doorway; the rule is covered by the campaign replays
+and the cycle fixture, the preview by inspected captures only.
+
+Bounded native captures at 1280x800 and 1920x1080 were inspected: flat
+faces, the yellow/black dummy heads, puzzle 8 without its former bent
+bridge, a leaving dummy whole through its doorway, and the green enter
+arrow with the matching button icon. A push bumper was not captured. The
+thumbnail is the new 1920x1080 capture of puzzle 12 halved, 67,276 bytes,
+SHA-256 `d52b7bb9900a7c9e5774b13f4a3ffb1b7a14f91570977a42f64ef3f087c68cbd`.
+The docs production build passes. Web release pages were not rebuilt or
+staged and nothing was deployed. No CI was dispatched.
+
+## Factory / PSX restyle validation (2026-10-12; first pass, superseded look)
 
 Presentation only: `render.tide`, `geometry.tide`, `paint.tide`, `ui.tide`,
 player-visible "maker" wording in hints, guide, README and catalog, and the

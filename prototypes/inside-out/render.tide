@@ -8,7 +8,6 @@ struct SceneObject
     float4 aperture;
     int apertureSide = -1;
     float groundHeight;
-    float3 texels;
 }
 
 local singleton SceneRender
@@ -42,7 +41,6 @@ local singleton SceneRender
 // across it, and its light in this many shades with a pattern between them.
 const float SCENE_LINES = 220;
 const float SCENE_SHADES = 14;
-const float SCENE_TEXELS = 8;
 
 struct SceneBlurStep { float2 direction; }
 
@@ -54,7 +52,7 @@ bool SceneInBoard(float2 point, float4 board)
 
 // This is the maker's floor column, rather than the height of an individual
 // fragment. A head and its boots cross the same real doorway aperture.
-bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float floor, float alpha)
+bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float floor, float alpha, float block)
 {
     if (alpha < 0.01) return false;
     var ground = float2(world.x + screen.x * 0.5,
@@ -67,8 +65,9 @@ bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float 
         if (!outside && Math.Abs(tangent) > aperture.z) return false;
     }
     if (alpha >= 0.999) return true;
-    var x = int(Math.Floor(ground.x)) & 3;
-    var y = int(Math.Floor(ground.y)) & 3;
+    // The pattern is in the composite's blocks, which read one pixel each.
+    var x = int(Math.Floor(ground.x / block)) & 3;
+    var y = int(Math.Floor(ground.y / block)) & 3;
     var low = (((x ^ y) & 1) * 2 + (y & 1)) * 4;
     var high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
     var rank = low + high;
@@ -88,33 +87,21 @@ float SceneTurn(float2 block)
     return (low * 4 + high + 0.5) / 16;
 }
 
-// A face's own coarse texels: they travel with a pushed box or a walking
-// dummy, and repeat from one floor slab to the next.
-float SceneGrain(float3 position, float3 normal, float3 texels)
-{
-    var across = Math.Abs(normal.y) > 0.5 ? float2(position.x * texels.x, position.z * texels.z) :
-        Math.Abs(normal.x) > 0.5 ? float2(position.z * texels.z, position.y * texels.y) :
-        float2(position.x * texels.x, position.y * texels.y);
-    return (Math.Hash(int2(int(Math.Floor(across.x)) + 64, int(Math.Floor(across.y)) + 64)) & 255) / 255.0;
-}
-
 frag SceneShadow(SceneVertex vertex, out Color color, SceneObject object, SceneRender render)
 {
-    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
+    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a, render.block)) this.Discard();
     color = Color.white;
 }
 
 frag SceneFill(SceneVertex vertex, out Color material, out Color normal, Instance instance, SceneObject object, SceneRender render)
 {
-    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
+    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a, render.block)) this.Discard();
     var facing = instance.Normal(vertex.normal);
     material = Color(object.tone.r, object.tone.g, object.tone.b);
     // The alpha is the occurrence's metric scale. Copy blending and point
     // reads keep the floating normal data separate from material opacity.
-    // No visible face looks down, so the normal's height is implied and its
-    // channel carries the texel's grain.
     var scale = Math.Clamp(object.aoScale / render.tile, 0.01, 6);
-    normal = Color(facing.x * 0.5 + 0.5, facing.z * 0.5 + 0.5, SceneGrain(vertex.position, vertex.normal, object.texels), scale);
+    normal = Color(facing.x * 0.5 + 0.5, facing.y * 0.5 + 0.5, facing.z * 0.5 + 0.5, scale);
 }
 
 float3 SceneWorld(DepthTexture depth, float4x4 inverseClip, float2 uv)
@@ -126,9 +113,7 @@ float3 SceneWorld(DepthTexture depth, float4x4 inverseClip, float2 uv)
 
 float3 SceneNormal(Color value)
 {
-    var x = value.r * 2 - 1;
-    var z = value.g * 2 - 1;
-    return float3(x, Math.Sqrt(Math.Max(0, 1 - x * x - z * z)), z);
+    return Math.Normalize(float3(value.r, value.g, value.b) * 2 - float3(1));
 }
 
 float3 SceneKernel(int index)
@@ -179,7 +164,7 @@ frag SceneOcclusion(Vertex vertex, out Color color, Texture source, SceneRender 
         considered += range;
         if (depth < expected - bias / render.depthSpan) blocked += range;
     }
-    var ao = considered > 0.001 ? 1 - 0.70 * blocked / considered : 1.0;
+    var ao = considered > 0.001 ? 1 - 0.50 * blocked / considered : 1.0;
     color = Color(ao, ao, ao);
 }
 
@@ -256,12 +241,11 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     var facing = Math.Max(0, Math.Dot(normal, -render.lightDirection));
     var sunlight = SceneSun(render.shadow, render.toLamp, render.fromLamp, point, normal, encoded.a * render.tile, render.tile, render.lightDirection);
     var material = source.Sample(uv, Filter.Point);
-    // Texels smaller than a block would only be noise.
-    var coarse = Math.Saturate(encoded.a * render.tile / (SCENE_TEXELS * render.block) - 0.5);
-    var lit = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight) * (1 - 0.16 * encoded.b * coarse);
+    var lit = Math.Min(1, 0.62 * ao + 0.48 * facing * sunlight);
     // One scalar for all three channels: a material keeps its exact hue in
-    // every shade, and the pattern stands in for the shades between.
-    var shade = Math.Floor(lit * SCENE_SHADES + SceneTurn(block)) / SCENE_SHADES;
+    // every shade. The pattern only mixes two shades near where they meet,
+    // so evenly lit faces stay flat.
+    var shade = Math.Floor(lit * SCENE_SHADES + 0.5 + (SceneTurn(block) - 0.5) * 0.4) / SCENE_SHADES;
     color = Color(material.r * shade, material.g * shade, material.b * shade, 1);
 }
 

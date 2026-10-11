@@ -298,7 +298,10 @@ void PassagePose(LevelLayout layout, mut MakerPassage trip, Picture picture)
     // the same policy for every box rather than popping recursive aliases.
     var aliasBlend = trip.entering ? PassageEase((progress - (trip.bridge ? 0.80 : 0.70)) / (trip.bridge ? 0.20 : 0.30)) : PassageEase(progress / 0.30);
     trip.aliasPosition = Math.Lerp(trip.aliasSource, trip.entering ? trip.target : trip.lip / scale + center, aliasBlend);
-    trip.aliasAlpha = Math.Lerp(trip.aliasFrom, trip.entering ? 1.0 : 0.0, aliasBlend);
+    // Inside, the doorway pose only shows through the opening itself. A
+    // leaving dummy stays whole in its room until it stands in the doorway.
+    trip.aliasAlpha = trip.entering ? Math.Lerp(trip.aliasFrom, 1.0, aliasBlend) :
+        Math.Lerp(trip.aliasFrom, 0.0, PassageEase((progress - 0.22) / 0.08));
     if (!trip.entering && trip.gate.room == trip.child && progress > 0.65)
     {
         // A self exit reaches another occurrence of the same shared room.
