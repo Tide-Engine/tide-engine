@@ -1794,6 +1794,7 @@ Picks made to build it, awaiting the owner.
 
 - **Where `[LOD]` goes:** an `asset Mesh<V>` or `asset SkinnedMesh<V>` (with or without a contract), alone or as a glob's list or map, where it applies to every file. It takes nothing. On any other asset, and on any other declaration, it's an error that says what it's for. `[Lod]` is an unknown attribute, with `LOD` suggested.
 - **A level is a shorter index list over the mesh's own vertices.** No vertex is added, moved or copied, so the pack grows by index data only, about as much again as the mesh's indices for a full chain. Each level has about half the triangles of the one before, and there are 7 at the most. The chain ends where a step can't remove a quarter of what's left without opening a hole or tearing a seam, and where a level would be off by more than half the mesh's own reach, which is a mesh a few pixels across wherever it's picked. A mesh that's simple already gets no levels, and draws as if it had no `[LOD]`.
+  - **No level has fewer than 500 triangles** (the owner, 2026-10-11, after measuring: a fixed floor; the number is a pick). A level pays by the triangles it takes off a draw, against what picking costs each instance and a draw call more for each level in use: a ball of 960 triangles drawn 40,000 times was slower picked than whole, up close. So the chain stops before a level that small, and a mesh of under 1,000 triangles has no levels and nothing picked.
   - Triangles go by collapsing an edge onto one of its ends, the cheapest first. What's weighed: positions, and the fields a file fills (`normal`, `uv`, `uv2`, `color`), so a level's error is how far its surface and what's on it are from the full mesh's. Tangents and fields of other names aren't weighed.
   - An open edge only collapses along itself, so the mesh's outline keeps its shape. A position with two uvs or two colors is a seam, which only collapses along itself too. Vertices at one position that differ by their normals alone (a mesh shaded flat, each triangle with corners of its own) are one position, so such a mesh loses triangles as a smooth one does.
   - Edges more than two triangles share, and surfaces whose triangles don't agree on their front, stay as they are.
@@ -1827,6 +1828,7 @@ Picks made to build it, awaiting the owner.
 - Instances drawn with a blend and no depth depend on their order, which grouping by level changes. A named level puts them back in list order; whether picking should refuse to group them is open.
 - A skinned mesh whose clips carry it far from its rest pose (a jump baked into the animation) is measured where it rests.
 - A profiler hint for a mesh without `[LOD]` that keeps drawing many more triangles than the pixels it covers.
+- The fewest triangles a level has, 500, was set from one desktop GPU. A phone or a browser pays more for a triangle, where a lower number would still gain.
 
 ## Tasks
 
