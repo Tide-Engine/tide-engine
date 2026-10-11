@@ -93,7 +93,7 @@ All local; nothing of it is in the match's hash.
   for the input, locks the cursor while the player plays (not while cards
   are dealt or a game is over) and sets the audio's listener; the map's
   blocks, an instanced draw a mesh, through a 2,048 pixel shadow map; the
-  sky, a cubemap a map; the grid floor; and the frame's bloom and grade.
+  sky, a cubemap a map; the floor under the map as Grid.mat has it (black lines a meter apart with the sky between them, gone 20 m from the eye: the owner, 2026-10-11, of a first version that was a black plane: "it should be only a grid, almost like you are floating in the sky"); and the frame's bloom and grade.
 - `mage.tide`: the Magician, skinned, with the Unity materials by slot (the
   model carries its slot in `uv.x`), the liquid in its head as its health,
   and its clips blended by how it moves.
