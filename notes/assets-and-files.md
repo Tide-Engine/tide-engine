@@ -29,6 +29,13 @@ After the final test-only key-count/tail addition, both complete runtime test
 executables pass again. No compiler, canonical asset layout or API changes.
 Linux/macOS/MinGW/Android/sanitizer coverage and CI were not run here.
 
+Integration with `origin/dev` through `53f92bf1` keeps incoming Session/Clipboard,
+package tooling and the LOD triangle floor. The merge is clean; this runtime
+source is byte-identical to the measured candidate. Both complete native/web
+debug builds pass, followed by 36 native/38 web runtime, skinned/GPU, LOD,
+Session and Rooms checks. The saved timing binaries remain frozen; no timing
+comparison is claimed for the merged compiler/tool changes.
+
 ## Separate animation exports with different defaults (2026-10-11)
 
 Integration with `origin/dev` through `6682a94d` retains incoming automatic texture compression, enum shorthand and omitted-playback editor hints. The notes insertion conflict preserves both entries; runtime binding code had no conflict. Complete native/web builds and the merged docs build pass, followed by 50 native and 56 web dependency checks: the complete runtime suites, animation/catalog/FBX and skinning paths, texture compression, and OpenGL/WebGL/WebGPU draw/shader checks. The earlier performance binaries/results remain frozen; no post-merge timing comparison is claimed.

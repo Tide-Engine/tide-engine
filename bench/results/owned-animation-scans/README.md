@@ -72,6 +72,11 @@ A final test-only addition exercises every key-scan tail length and one-key
 clips; both complete runtime test executables pass again. Linux/macOS, MinGW,
 Android, sanitizers and CI were not run on this Windows machine.
 
+After clean integration through `origin/dev` at `53f92bf1`, both complete debug
+builds and 36 native/38 web focused runtime, animation/GPU, LOD, Session and
+Rooms checks pass. The measured runtime source remains byte-identical. Saved
+timing binaries are frozen; these additional checks do not remeasure timing.
+
 The same performance hunks were applied to the local installed runtime source
 after checking its initial hash and compiling with its installed headers.
 Its older absence of `tide_draw_gather_levels` is retained. A finite checkout-built
