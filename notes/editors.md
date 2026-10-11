@@ -27,10 +27,13 @@ The Editors page documents completion, and language behavior is recorded in
 
 `lsp_enum_assignment_completion_and_shorthand` checks ranking, single
 preselection, partial members, incomplete returns/initializers/comparisons/cases,
-positional/named/built-in arguments, unchanged non-enum completion, valid built-in
+positional/named/built-in arguments (including List.Add and Texture.Sample),
+unused-first case ordering, malformed input, unchanged non-enum completion, valid built-in
 checking, member hover/rename, and formatting idempotence. The shared grammar
 test covers uppercase/lowercase shorthand and numeric/member regressions.
 These are protocol/grammar tests; no interactive editor-host test was added.
+Final merged validation: all 2,085 native and 2,057 web debug tests pass,
+including the complete tidels suites; docs build and 217 grammar checks pass.
 
 ## Sample playback hints, 2026-10-11
 

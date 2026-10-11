@@ -25,6 +25,11 @@ in `notes/editors.md`. The spec and Language basics page document the feature;
 untyped `var state = .Idle` remains an error. This adds no general backward
 type inference, enum-member search or attribute-specific shorthand contexts.
 
+Final validation after merging dev: full Windows native debug (2,085 tests)
+and web debug (2,057 tests, including WebGL/WebGPU) pass with Node 24.16.0.
+The docs production build and all 217 shared grammar checks pass. Other native
+platforms, sanitizers and Android were not run on this Windows machine.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language
