@@ -1,5 +1,51 @@
 # Benchmarks
 
+## Asset sharing ownership gate, 2026-10-11
+
+The owner approved considering known asset sharing with detach-on-write for
+ordinary asset values as well as immutable animation data, and required proof
+before adopting the broader storage change. A scratch generated-code/C-wrapper
+experiment retains current pack handles until writing; no production compiler,
+runtime, installed package or user game source is changed. It measures ownership
+placement, not a complete stable-reference/reload implementation.
+
+Three alternating release pairs of the unchanged 100-character game, with
+one pre-tick snapshot retained, reduce the median of process-mean CPU
+tick+hash+view/preparation sums from 4.139521 to 1.023344 ms (75.3% lower).
+Every pair improves, with ratios 3.87x/4.06x/4.16x. Tick/hash/views are separately
+1.633971/0.879640/1.625910 -> 0.010648/0.000272/1.011959 ms; retaining the
+snapshot separately is 0.022408 -> 0.000112. Packed native world size is
+13,117,656 -> 7,256 bytes. All game/palette digests agree across both variants
+and native/WASI. Raw world hashes intentionally differ across representations.
+This excludes GPU rendering, networking, restore/replay, Rooms UI and session
+startup; no FPS claim is made.
+
+The corrected ordinary-container controls include snapshotting, cleanup before
+hashing, cold detachment and bulk repeated asset reset followed by editing.
+Cached owned-edit total is close (0.087626 -> 0.088710 ms), with writes about
+1.5% higher; cold first-write totals have mixed pairwise changes and essentially
+equal medians. Bulk reset-and-edit is 1.93x slower (0.256220 -> 0.493319 ms),
+with doubled heap high-water size while old blocks await the batch flush.
+This fails the blanket rollout gate despite the read-only gain. Sharing known
+unchanged data is supported; a complete general candidate must address or
+explicitly justify that adverse workload, preserve stable identities/value
+semantics through reload/snapshots, cover every mutation path and remeasure.
+No general container-storage feature is landed by this experiment.
+
+All 66 valid comparison rows, the 30 initial rows and fixture correction,
+strictly compiled native/WASI checks, source/binary/library/input identities,
+reproduction scripts and verifier are retained in
+[asset-sharing-prototype](../bench/results/asset-sharing-prototype/README.md).
+An initial C fixture wrongly read a byte asset as a float list; the native/web
+digest mismatch exposed its overread. Its mutable-edit results are invalid,
+explicitly excluded and retained for audit; both corrected experiments were
+remeasured and the float results independently checked. Final comparison runs
+each followed a complete 90-second quiet window with no detected competing
+build/test/benchmark work. Other desktop activity/clocks remain uncontrolled.
+Full production suites, browsers/GPU, other platforms, sanitizers and CI were
+not rerun for these standalone experimental artifacts; no production code
+changed.
+
 ## Owned key reductions and validated binding, 2026-10-11
 
 The owner's unchanged 100-character `D:/Projects/Test` scenario now uses
