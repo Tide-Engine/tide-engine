@@ -1,5 +1,37 @@
 # `tide`, packages and the package
 
+## Web-watch request diagnostics (2026-10-11)
+
+- Build run `38139106428` at `0e16bfb4` passed every platform suite and the
+  Linux/macOS package checks. The Windows package failed in
+  `cache_test.mjs`'s debug web-watch startup, after its native/web stripping,
+  parallel-compilation and cache-invalidation checks passed. The only failure
+  printed was `The operation was aborted due to timeout`, 26 seconds after
+  the watch case began. The unguarded initial page fetch was the only request
+  whose five-second timeout escaped the readiness loop; the log cannot
+  distinguish waiting for headers from waiting for the body or establish why
+  the hosted request stalled. This was not the earlier browser cleanup failure.
+- Page requests retain their five-second limit, including reading their body,
+  and fail immediately on transport errors or timeouts. Build/pack polling
+  retains its previous unavailable-request behavior and 120-second readiness
+  guard. Every web-watch failure includes debug/release mode, the last request's URL,
+  header/body phase or HTTP status, elapsed time and captured CLI output.
+  Reload edits, object-reuse assertions, model identities, pack counters and
+  last-good-build assertions are unchanged; the CLI/server implementation is
+  unchanged.
+- Validation: this checkout's compiled CLI and staged web library passed the
+  original and revised debug/release watch cases. A temporary fetch fault
+  fixture reproduced the original bare error on the first header timeout.
+  Injected header/body timeouts, connection refusal, HTTP 404 and invalid page
+  content still failed in the revised test, with request/CLI evidence. A
+  permanently unanswered page still failed at its five-second request guard.
+  A candidate page-readiness retry recovered from injected timeouts, but was
+  discarded: it did not establish the hosted stall's cause and would permit a
+  longer initial page wait. Full Windows debug suites passed 2,085 native and
+  2,057 web tests, including OpenGL, WebGL and WebGPU, using Node 24.16.0. The integration
+  stage uses external clang rather than embedded LLVM; hosted Windows
+  confirmation remains outstanding. No Actions run or retry was dispatched.
+
 ## Smaller standalone web releases (2026-10-10)
 
 - Integrated revision `ea509d62`, including concurrent skinned batching, was packaged with fresh native, web and both Android platform libraries. Native/web cache, stripping, parallel-compilation and watch checks passed; all 2,440 installed files matched the stage by SHA-256. Installed JPEG/TGA/BMP and MP3/FLAC builds passed on native/web, their decoded packs matched exactly, and a hidden three-frame capture produced rendered pixels and nonzero audio. Current minimal/Duel releases are 990,208/1,423,872 native bytes and 397,615/610,951 HTML bytes. Matched readable/raw pages using those same decoded payloads are 965,358/1,534,650 bytes: reductions of 58.81%/60.19%. Original isolated feature measurements remain valid; the small subsequent size increases are from the incoming rendering work.
