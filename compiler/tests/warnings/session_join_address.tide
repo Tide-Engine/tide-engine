@@ -1,0 +1,20 @@
+// warnings: 2
+// expect: "192.168.1.5" reads as a machine's address, and Session.Join takes a room's code
+// expect: to join a machine by its address, call Session.Connect("192.168.1.5")
+// expect: "localhost:7777" reads as a machine's address
+// expect: text the game's own network takes goes in a constant
+local scene Main { }
+
+const string LOBBY = "127.0.0.1:7777";
+
+// A room's code, text that only a game's own network could read, and text
+// from a constant say nothing: what a network takes is its own to say.
+view Start()
+{
+    Session.Join("K7QF2M");
+    Session.Join("76561198000000001");
+    Session.Join("K7QF0M");
+    Session.Join(LOBBY);
+    Session.Join("192.168.1.5");
+    Session.Join("localhost:7777");
+}

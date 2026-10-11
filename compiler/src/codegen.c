@@ -7205,7 +7205,8 @@ static void gen_header(gen *g)
     if (prog->uses_audio) sb_put(o, "    tide_audio_frame *tide_audio; // The frame's audio list (tide_local_audio): what Audio.Play records into\n");
     sb_put(o, "    tide_session_request tide_copy; // Clipboard.Copy: the frame's last, after the kicks\n");
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
-    sb_put(o, "    char tide_room[8]; // Session.room: the code of the room the match is in, or \"\"\n");
+    // TIDE_NETWORK_ADDRESS_BYTES (tide/network.h): a room's code, or what a game's own network says
+    sb_put(o, "    char tide_room[64]; // Session.room: what the match is joined by (a room's code), or \"\"\n");
     if (prog->command_types.count) {
         sb_put(o, "    // Commands sent and not yet the session's, in order, TIDE_COMMAND_PENDING a channel\n"
                   "    tide_outgoing_item tide_outgoing[TIDE_COMMAND_OUTBOX];\n"

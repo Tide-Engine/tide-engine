@@ -1,0 +1,16 @@
+// The example under the standard host (tide/run.h), in a run with no window:
+// it hosts at its first frame, as its Host button would, and its own C then
+// checks what the host made of it (hosted.c).
+extern void HostedCheck(bool server, bool open, string room, int frame);
+
+local singleton Hosted
+{
+    int frame;
+}
+
+view Auto(Session session, mut Hosted hosted)
+{
+    if (hosted.frame == 0) HostMatch();
+    hosted.frame += 1;
+    HostedCheck(session.server, session.open, session.room, hosted.frame);
+}

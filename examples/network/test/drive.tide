@@ -1,0 +1,51 @@
+// What the test has a player do, in the place of the menu's buttons, and
+// what it reads of the match: this machine's own runner and the other's.
+enum Order
+{
+    None,
+    Host,
+    Join,  // The match `text` names
+    Leave,
+    End
+}
+
+local singleton Remote
+{
+    Order order;
+    string text;
+}
+
+local singleton Seen
+{
+    int runners;
+    float mine;
+    float theirs;
+}
+
+view Obey(mut Remote remote, mut Seen seen)
+{
+    seen.runners = 0;
+    var order = remote.order;
+    remote.order = Order.None;
+    switch (order)
+    {
+        case Order.Host: HostMatch(); break;
+        case Order.Join: JoinMatch(remote.text); break;
+        case Order.Leave: Session.Leave(); break;
+        case Order.End: Session.End(); break;
+    }
+}
+
+[After(Obey)]
+view Mine(verified Runner runner, mut Seen seen, with ownership)
+{
+    seen.runners += 1;
+    seen.mine = runner.x;
+}
+
+[After(Obey)]
+view Theirs(verified Runner runner, mut Seen seen, without ownership)
+{
+    seen.runners += 1;
+    seen.theirs = runner.x;
+}

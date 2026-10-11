@@ -21,6 +21,9 @@ typedef enum tide_address_kind {
     // code, packed (TIDE_ROOM_CODE_BIT and 5 bits a character), so each room's
     // host is a server of its own.
     TIDE_ADDRESS_ROOM,
+    // A machine on a game's own network (tide/network.h): `host` and `port`
+    // are that network's to give a meaning.
+    TIDE_ADDRESS_NETWORK,
 } tide_address_kind;
 
 #define TIDE_ROOM_CODE_BIT 0x80000000u
@@ -44,7 +47,8 @@ bool tide_address_equal(tide_address a, tide_address b);
 // layer (tide_platform_resolve).
 bool tide_address_parse(const char *text, uint16_t default_port, tide_address *out);
 
-// Writes "192.168.1.5:7777", "loopback 2" or "room K7QF2M, player 0" into `out`.
+// Writes "192.168.1.5:7777", "loopback 2", "room K7QF2M, player 0" or
+// "network 3:0" into `out`.
 void tide_address_format(tide_address a, char *out, size_t size);
 
 // Carries datagrams, unreliably: they can be lost, duplicated or come out of

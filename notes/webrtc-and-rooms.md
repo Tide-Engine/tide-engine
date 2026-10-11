@@ -22,6 +22,10 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Networking
 
+### A game's own network
+
+- Rooms are how a match is opened and joined unless the game's C registered a network of its own (`tide/network.h`, 2026-10-11): `tide/host.h` then serves `Session.Open` and `Session.Join` from it, and nothing here is asked. Nothing in `platform/src/rooms.c`, the relay or `platform/web/tide.js` changed for it. `notes/own-network.md` has it.
+
 ### Lobbies on the relay
 
 - The relay keeps lobbies beside its rooms (built 2026-10-11, the service side of the lobby and matchmaking design; the owner asked for a service of ours that games test with, Steam and EOS being the others, with parties and matchmaking not ruled out by its shape; that it extends the relay, and everything of its API, are Claude's picks). `relay/lobbies.mjs`, which `createRelay` makes one of (`lobbyLimits`) and whose `handle` its HTTP server asks first. Deployed 2026-10-11 (see `notes/lobby-package.md`). What's built, and what code relies on:

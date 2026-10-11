@@ -159,7 +159,8 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define SENT_TIMES 256u         // Times a client sent that it remembers, to measure its ping when one comes back
 #define TIMEOUT 5.0     // Seconds of silence before giving up on the other side
 #define HELLO_TIMEOUT 2.0 // ...or on one that said hello and never wrote again: it may not be where it said
-#define ROOM_TIMEOUT 15.0 // ...or on a room's host before it first answers: WebRTC can take a while to connect
+#define ROOM_TIMEOUT 15.0 // ...or on a room's host before it first answers: WebRTC can take a while to connect,
+                          // as can a game's own network (tide/network.h)
 #define HELLO_EVERY 0.2 // Seconds between HELLOs until the server answers
 #define WAITS 960.0     // The parts of a second a server says an input's wait in: a 16th of a 60th
 #define WAIT_MOST 30000 // The longest wait it says, either way...
@@ -4391,7 +4392,8 @@ static void update_client(tide_client *c, const double now)
     if (c->state == TIDE_SESSION_OFFLINE) return;
     client_receive(c);
     if (c->state == TIDE_SESSION_OFFLINE) return;
-    const double patience = !c->welcomed && c->desc.server.kind == TIDE_ADDRESS_ROOM ? ROOM_TIMEOUT : TIMEOUT;
+    const bool slow_start = c->desc.server.kind == TIDE_ADDRESS_ROOM || c->desc.server.kind == TIDE_ADDRESS_NETWORK;
+    const double patience = !c->welcomed && slow_start ? ROOM_TIMEOUT : TIMEOUT;
     if (now - c->last_heard > patience) {
         go_offline(c, TIDE_DISCONNECT_TIMED_OUT);
         return;

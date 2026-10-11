@@ -243,6 +243,7 @@ static const tide_host_game tide_host_game_api = {
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
     .correct_views = tide_run_local_correct,
 #endif
+    .network = tide_network_get,
 };
 
 _Noreturn static inline void tide_run(const tide_run_desc *desc)

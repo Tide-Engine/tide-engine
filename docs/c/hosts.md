@@ -179,6 +179,10 @@ if (tide_game_api.hear_arrived) tide_game_api.hear_arrived(&world, NULL, &events
 
 `hear_arrived(world, had, events)` records a `Spawned` for each entity `world` has that `had` doesn't, or for every one with `NULL`. It's `NULL` itself in a game with no local handler of the match's `Spawned`.
 
+## A game's own network
+
+A game's C can carry its matches over a network of its own, registered with `tide_network_set` (`tide/network.h`). The standard host serves `Session.Open()` and `Session.Join()` through it. A host with a loop of its own does the same with the few functions under [For hosts](./network.md#for-hosts), or its games' matches stay where that host puts them.
+
 ## Without a window
 
 To see what a game draws without a window on screen, or to run it where nobody watches, a host opens a headless window in `tide_platform_open`'s place. Its frame function stays as it is:
