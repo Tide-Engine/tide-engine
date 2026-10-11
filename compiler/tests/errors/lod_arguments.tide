@@ -1,0 +1,6 @@
+// expect: LOD takes nothing: '[LOD]'
+[LOD(2)] asset Mesh<Vertex3> ball = "../e2e/assets/lod/ball.glb";
+
+scene Main
+{
+}
