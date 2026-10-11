@@ -320,3 +320,10 @@ their release, static and production-package bytes agree, as do all four
 thumbnails. The site check stays clean, 227 grammar checks pass, and the final
 production build plus five HTTP/SEO/access tests pass. The final Inside Out
 hash is in `notes/inside-out.md`. No CI was dispatched.
+
+Source `0fa243a2` deployed directly to the existing Fly site as release 260
+and passed health checks. Public Inside Out page/thumbnail requests return
+200 with the tested final hashes. Two-player WebGPU gameplay of the downloaded
+page through the production relay passes, including the nearby partner glimpse
+with fixed local framing and recursive doorway travel. The collaborative
+preview navigates to the public URL. No CI was dispatched.
