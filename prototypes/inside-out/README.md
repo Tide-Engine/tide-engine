@@ -14,29 +14,29 @@ chat alongside the game to discuss plans.
 
 ## Playing
 
-Each screen follows its own maker and shows one dimension. Step inside a
-room and its interior fills the view, with the containing world visible
-beyond its walls. The outside follows the doorway you used: a moved shell
-changes your surroundings, and a recursive doorway can put the same room
+Each screen follows its own maker in one continuous scene. Step inside a
+room and the camera zooms into its actual doorway, with the containing world
+and a maker in the immediate containing world kept in view beyond its walls.
+The outside follows the doorway you used: a moved shell changes your surroundings,
+and a recursive doorway can put the same room
 around itself. Amber and Teal keep their identity colours wherever they
 travel. A room shell contains a live miniature of its shared interior;
-nested and recursive previews stop drawing after a few layers.
+nested and recursive preview details collapse to markers after a few layers.
 
 | Action | Keyboard |
 | --- | --- |
-| Walk and push a parcel | WASD or arrow keys |
-| Enter a room | Walk into an open doorway |
+| Walk and push a parcel or room | WASD or arrow keys |
+| Enter a room | Walk into its doorway when the room cannot be pushed |
 | Leave a room | Walk outward through an edge doorway |
-| Push a room shell | Hold Shift while moving |
 | Undo the last shared move | Z or Backspace |
 | Reset this puzzle | R |
 | Show / hide hints | H |
 | Continue after solving | Enter |
 
-The **Push rooms** button toggles the same modifier for touch controls.
-Turn it off to enter a room again. Directions match the screen: W is up,
-D right, S down and A left. After undo or reset, release a held direction
-before pressing it again.
+Touch uses the same directional arrows. Rooms move first; when a wall,
+another object or a closed latch stops a room, walking into its open doorway
+enters it. Directions match the screen: W is up, D right, S down and A left.
+After undo or reset, release a held direction before pressing it again.
 
 The shelf can revisit or skip any of the twelve puzzles. A plus beside a
 title marks one you have completed in this match. Hints start with a small
@@ -45,12 +45,14 @@ They are optional. Music, sound and reduced motion are local settings.
 
 ## The rules
 
-- Both makers can enter any open room. People in the same room block each
-  other, even if they arrived through different recursive doorways.
+- Both makers can enter any blocked room through an open doorway. People in
+  the same room block each other, even if they arrived through different
+  recursive doorways.
 - A moving shell carries its entire interior without changing anything's
   position within that room. A shell can contain another shell.
-- Holding Shift pushes one room instead of entering it. Parcels are pushed
-  normally. Nothing can be pulled, and pushes cannot move a chain.
+- Walking into a room first tries to push it. If that push cannot happen,
+  the same move tries its doorway instead. Parcels are pushed normally.
+  Nothing can be pulled, and pushes cannot move a chain.
 - A parcel or room pushed through another room's doorway enters its
   interior. Parcels pushed outward through an edge door emerge beside the
   containing room's physical shell.

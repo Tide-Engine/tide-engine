@@ -82,7 +82,7 @@ singleton Workshop
 
 scene Main { }
 event PuzzleCue { int kind; int seat; }
-command Move { int serial; int direction; bool push; }
+command Move { int serial; int direction; }
 command Undo { int serial; }
 command Reset { int serial; }
 command Next { int serial; }
@@ -318,7 +318,7 @@ bool IsSolved(LevelLayout layout, Puzzle puzzle)
     }
     return true;
 }
-bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, bool push = false)
+bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction)
 {
     if (puzzle.solved || seat < 0 || seat > 1 || direction < 0 || direction > 3) return false;
     mut var trial = puzzle;
@@ -333,11 +333,19 @@ bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, 
     }
     var shell = RoomAt(layout, trial, room, next);
     var portal = PortalAt(layout, room, next);
-    if (shell >= 0 && push)
+    mut var pushed = false;
+    if (shell >= 0)
     {
-        if (!PushShell(layout, trial, shell, direction)) return false;
+        // A physical room moves whenever its destination is available. If
+        // pushing fails, doorway entry starts from the unchanged candidate.
+        mut var pushTrial = trial;
+        if (PushShell(layout, pushTrial, shell, direction))
+        {
+            trial = pushTrial;
+            pushed = true;
+        }
     }
-    else if (shell >= 0 || portal >= 0)
+    if (!pushed && (shell >= 0 || portal >= 0))
     {
         if (depth >= MAX_DEPTH || !Gateway(layout, trial, room, next, direction, out var destination, out var entry, out var back)) return false;
         room = destination;
@@ -426,14 +434,14 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
     if (!Authorized(workshop, sender, move.serial)) return;
     var seat = SeatOf(workshop, sender);
     var before = workshop.puzzle;
-    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction, move.push))
+    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction))
     {
         Send(PuzzleCue { kind = 6, seat = seat });
         return;
     }
     Remember(workshop, before);
     var travel = before.actors[seat].room != workshop.puzzle.actors[seat].room || before.actors[seat].depth != workshop.puzzle.actors[seat].depth;
-    Send(PuzzleCue { kind = Pushed(before, workshop.puzzle) ? 1 : travel ? 2 : 0, seat = seat });
+    Send(PuzzleCue { kind = travel ? 2 : Pushed(before, workshop.puzzle) ? 1 : 0, seat = seat });
     if (workshop.puzzle.solved)
     {
         workshop.completed |= 1 << workshop.level;

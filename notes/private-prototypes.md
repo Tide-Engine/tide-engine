@@ -73,6 +73,9 @@ its `<id>_page` target and its `private_games` block, plus the id in
   The subsequent per-maker view shows the current dimension with its actual
   containing world beyond the walls. Its catalog description and gameplay
   thumbnail reflect that camera; public/authentication boundaries are unchanged.
+  The latest revision zooms continuously through the room's physical miniature,
+  keeps outside makers visible, and enters a facing doorway only after the
+  automatic room push is blocked. Shift and the touch push toggle are removed.
 
 Removal (2026-10-11): the owner asked for every prototype but Two Forks to be
 deleted. The Last Light, Cabin Nine, Dead Signal, Deadbell, Afterburn

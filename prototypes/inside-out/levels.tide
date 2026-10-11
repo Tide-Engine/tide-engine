@@ -1,5 +1,5 @@
 // Twelve hand-built workshop puzzles. Checked-in witnesses use the actual
-// two-player Move commands, including explicit pushes, in test/campaign.c.
+// two-player directional Move commands in test/campaign.c.
 // Both travelers share canonical room interiors and can enter nested shells
 // or fixed recursive doorways. Physical shells have acyclic parentage.
 
@@ -74,6 +74,7 @@ void WorkshopLateLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
         WorkshopWalker(puzzle, 0, int2(1, 3));
         WorkshopWalker(puzzle, 1, int2(2, 4));
         WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
+        WorkshopTile(layout, -1, int2(3, 4), Tile.Wall);
         WorkshopRow(layout, 0, 0);
         WorkshopRow(layout, 0, 4);
         WorkshopTile(layout, 0, int2(2, 1), Tile.Wall);
@@ -162,6 +163,8 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopWalker(puzzle, 0, int2(1, 2));
             WorkshopWalker(puzzle, 1, int2(3, 3));
             WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(3, 2));
+            WorkshopTile(layout, -1, int2(3, 1), Tile.Wall);
+            WorkshopTile(layout, -1, int2(4, 2), Tile.Wall);
             WorkshopCargo(layout, puzzle, 0, int2(2, 2));
             WorkshopTile(layout, 0, int2(2, 1), Tile.Target);
             WorkshopTile(layout, 0, int2(1, 2), Tile.Exit);
@@ -184,6 +187,9 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopWalker(puzzle, 1, int2(4, 3));
             WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
             WorkshopRow(layout, 0, 4);
+            WorkshopTile(layout, -1, int2(3, 2), Tile.Wall);
+            WorkshopTile(layout, -1, int2(2, 3), Tile.Wall);
+            WorkshopTile(layout, 0, int2(0, 3), Tile.Floor);
             WorkshopRoom(layout, puzzle, 1, int2(2, 2), int2(2, 2), 15, 0, 0);
             layout.rooms[1].latched = true;
             WorkshopTile(layout, 1, int2(2, 2), Tile.Switch);
@@ -236,6 +242,8 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopWalker(puzzle, 0, int2(3, 4));
             WorkshopWalker(puzzle, 1, int2(4, 3));
             WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 3));
+            WorkshopTile(layout, -1, int2(3, 2), Tile.Wall);
+            WorkshopTile(layout, -1, int2(2, 3), Tile.Wall);
             WorkshopRow(layout, 0, 0);
             WorkshopRow(layout, 0, 4);
             WorkshopRoom(layout, puzzle, 1, int2(2, 2), int2(3, 2), 15, 0, 0);
@@ -288,6 +296,7 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopWalker(puzzle, 0, int2(3, 4));
             WorkshopWalker(puzzle, 1, int2(3, 2));
             WorkshopRoom(layout, puzzle, 0, int2(4, 3), int2(4, 2));
+            WorkshopTile(layout, -1, int2(4, 1), Tile.Wall);
             WorkshopRoom(layout, puzzle, 1, int2(3, 3), int2(0, 2), 15, -1, 0);
             layout.rooms[0].latched = true;
             layout.rooms[1].latched = true;
@@ -364,15 +373,15 @@ string LevelHint(int level, int tier)
         case 0:
             if (detail == 0) return "What needs to be parked before you both leave?";
             if (detail == 1) return "The room outline is one square east. The parcel circle is north of the parcel.";
-            return "Amber: hold Shift and move east once. Teal: move north three times, then west to a leaf. Amber: west, south, south to the other leaf.";
+            return "Amber: move east once to dock the room. Teal: move north three times, then west to a leaf. Amber: west, south, south to the other leaf. A blocked room push enters its doorway instead.";
         case 1:
             if (detail == 0) return "Which delivery is taking up the room's route? Who can release its latch?";
             if (detail == 1) return "Clear the outside parcel northward. A maker on the room's west switch can hold the latch while the room moves east.";
             return "Clear the outside parcel onto its circle. Inside, reach the west switch without moving the other parcel. Hold it while the partner docks the room two squares east. Then push the inside parcel north and take both leaf exits.";
         case 2:
             if (detail == 0) return "After making space for the parcel, where will you need to stand to put the small room back?";
-            if (detail == 1) return "Hold the small room's switch and move it west. Push the parcel north, then approach the small room from the containing room's west doorway.";
-            return "One maker holds the child room's switch. The other pushes that room west, delivers the parcel north, then leaves and re-enters the containing room from the west. Push the child east onto its outline before the holder leaves south.";
+            if (detail == 1) return "Hold the small room's switch and move it west. Push the parcel north, then use the containing room's lower-left passage to get behind the small room.";
+            return "One maker holds the child room's switch. The other pushes that room west, delivers the parcel north, and circles through the open lower-left edge to its west doorway. Push the child east onto its outline before the holder leaves south.";
         case 3:
             if (detail == 0) return "When the boxes trade places, what delivery route will disappear?";
             if (detail == 1) return "Deliver while the rooms touch. The upper middle square can hold the left room while the right room passes underneath.";
@@ -384,7 +393,7 @@ string LevelHint(int level, int tier)
         case 5:
             if (detail == 0) return "A filled circle looks finished. Does it also occupy a square you will need later?";
             if (detail == 1) return "The exported parcel blocks the west pushing stance for its own room. Store it one square north while the room moves east.";
-            return "Keep a maker on the child switch. Export its parcel west into the containing room. Leave the child southward, push the parcel north off its circle, then dock the child east. Walk above the stored parcel using the upper row and push it south onto its circle again.";
+            return "Enter the child before its switch is held, then keep a maker on that switch. Export its parcel west into the containing room. Leave the child southward, push the parcel north off its circle, then dock the child east. Use the upper row to push the stored parcel south onto its circle again.";
         case 6:
             if (detail == 0) return "Once a room is packed inside another, where does its parcel doorway lead?";
             if (detail == 1) return "Hold Room 2's switch while it enters Room 1's west doorway. Then its holder can leave east and hold the containing room's south switch.";
@@ -396,7 +405,7 @@ string LevelHint(int level, int tier)
         case 8:
             if (detail == 0) return "Will Room 2's west doorway still lead to the workshop after it is packed away?";
             if (detail == 1) return "Make the outside delivery before nesting. Its circle is also the standing tile for pushing Room 2, so the parcel cannot stay there yet.";
-            return "Hold the child switch and export its parcel west onto the outside circle. Push that parcel north temporarily, then pack the child east into Room 1. Restore the parcel from above. The holder leaves the child east and holds the parent switch while the partner docks the parent north.";
+            return "Enter the child before holding its switch, then export its parcel west onto the outside circle. Push that parcel north temporarily and pack the child east into Room 1. Restore the parcel from above. The holder leaves east and holds the parent switch while the partner docks the parent north.";
         case 9:
             if (detail == 0) return "The upper-left circle has no ordinary pushing stance. Whose doorway could supply the missing approach?";
             if (detail == 1) return "Nest Room 2 in Room 1's west door and post its parcel north. The other filled circle blocks the stance needed to bring Room 2 back out.";
