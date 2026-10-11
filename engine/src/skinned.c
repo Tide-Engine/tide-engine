@@ -273,11 +273,21 @@ bool tide_skinned_rest(const tide_list data, tide_list *transforms, const uint32
 
 static bool channel_valid(const tide_skinned_data_view *v, const tide_skinned_channel_data *c)
 {
+    // Both callers obtain c through data_channel, which checks the complete
+    // descriptor and key spans. Scan their contents once rather than repeating
+    // those checks and constructing three temporary vectors for every key.
     float previous = -1.0f;
     for (uint32_t i = 0; i < c->keys; i++) {
-        float time, value[4], in[4], out[4];
-        if (!tide_skinned_data_key(v, c, i, &time, value, in, out) || !(time >= 0.0f) || (i && !(time > previous))) return false;
+        const float time = validated_number(v->data + c->times_at + (size_t)i * 4u);
+        if (!tide_is_finite_f(time) || !(time >= 0.0f) || (i && !(time > previous))) return false;
         previous = time;
+    }
+    const uint32_t width = c->path == TIDE_SKINNED_ROTATION ? 4u : 3u;
+    const uint32_t copies = c->interpolation == TIDE_SKINNED_CUBICSPLINE ? 3u : 1u;
+    const uint64_t words = (uint64_t)c->keys * width * copies;
+    const uint8_t *values = v->data + c->values_at;
+    for (uint64_t i = 0; i < words; i++) {
+        if ((validated_word(values + (size_t)i * 4u) & 0x7f800000u) == 0x7f800000u) return false;
     }
     return c->keys != 0u;
 }
@@ -552,7 +562,7 @@ static int32_t *bind_nodes(const tide_skinned_data_view *target, const tide_skin
         if (map[i] < 0 || !tide_skinned_data_node(target, (uint32_t)map[i], &to)) return NULL;
         const int32_t source_parent = n.parent > 0 && root_wrapper(source, (uint32_t)n.parent) ? 0 : n.parent;
         const int32_t target_parent = to.parent > 0 && root_wrapper(target, (uint32_t)to.parent) ? 0 : to.parent;
-        if (target_parent != (source_parent < 0 ? -1 : map[source_parent]) || !same_transform(local_of(&n), local_of(&to))) return NULL;
+        if (target_parent != (source_parent < 0 ? -1 : map[source_parent])) return NULL;
     }
     return map;
 }
@@ -579,6 +589,17 @@ bool tide_skinned_sample_into(const tide_list target_data, const tide_list anima
     valid = valid && map != NULL;
     if (valid) {
         fill_rest(&target.view, transforms, where);
+        // Separate exports can store a take's starting pose as their defaults.
+        // Required ancestors must follow those source locals too, just as when
+        // binding an already sampled pose. Unrelated target nodes stay at rest.
+        tide_list_cache rest = {0};
+        for (uint32_t i = 0; i < source.view.nodes; i++) {
+            if (!required[i] || map[i] < 0) continue;
+            tide_skinned_node_data node;
+            (void)tide_skinned_data_node(&source.view, i, &node);
+            tide_bone_transform *to = tide_list_cached_at_mut(&rest, *transforms, map[i], sizeof *to);
+            if (to) *to = local_of(&node);
+        }
         tide_skinned_clip_data clip;
         (void)tide_skinned_data_clip(&source.view, (uint32_t)animation, &clip);
         const float clock = tide_clamp_f(seconds, 0.0f, clip.length);

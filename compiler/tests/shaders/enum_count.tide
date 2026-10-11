@@ -1,0 +1,22 @@
+namespace Game;
+enum Direction { North, East, South, West }
+enum Sparse : byte { A = 10, Alias = 10, B = 100 }
+const int DIRECTIONS = Game.Direction.Count();
+scene Main { }
+local singleton Geometry { List<Vertex3> vertices; List<int> indices; }
+
+vert Lift(mut Vertex3 vertex)
+{
+    vertex.position.x += Direction.Count();
+}
+
+frag Shade(Vertex3 vertex, out Color color)
+{
+    var next = Direction((int(Direction.West) + 1) % Game.Direction.Count());
+    color = Color(float(int(next)), float(Sparse.Count()), float(DIRECTIONS), 1);
+}
+
+view Show(Geometry geometry)
+{
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Lift, Shade);
+}

@@ -68,7 +68,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)
         if (i > 4) break;
         color.a = color.a * 0.5;
     }
-    if (Finish(box.kind) == Finish.Gloss || Layer(box.kind + 256) == Layer.Top) color.a = 1;
+    if (Finish(box.kind) == .Gloss || Layer(box.kind + 256) == .Top) color.a = 1;
     if (this.position.x < 10 || this.world.y < 0) this.Discard();
 }
 

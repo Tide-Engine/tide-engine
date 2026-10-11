@@ -67,7 +67,21 @@ float limit = 10;                // read-only, explicit type
 mut float scale = 1;             // mutable, explicit type
 ```
 
-A local needs a value when it's declared, and can't reuse the name of another local or parameter in scope.
+A local with an explicit type can be assigned later:
+
+```csharp
+Animation current;
+switch (zombie.state)
+{
+    case ZombieState.Run: current = movementAnims.rootRun; break;
+    case ZombieState.Jump: current = movementAnims.rootJump; break;
+    default: current = movementAnims.rootRun; break;
+}
+```
+
+Every path that reaches a read must assign the local first. Without `mut`, each path initializes it once; choosing its first value in different branches needs no `mut`. Declare `mut Animation current;` if the code changes it again. A read-only local declared inside a loop can be initialized once each iteration; one declared outside can't be repeatedly initialized by the loop.
+
+`var` and `mut var` need an initializer to infer their type. A local can't reuse the name of another local or parameter in scope.
 
 A local that's never read is a warning. It's usually a value worked out and then forgotten:
 
@@ -172,18 +186,19 @@ Its type comes from where it goes: a typed local, an assignment, an argument, a 
 From the ones that bind tightest to the loosest:
 
 1. `-x`, `!x`, `~x`, `try` and `await`
-2. `*`, `/`, `%`
-3. `+`, `-`
-4. `<<`, `>>`
-5. `<`, `<=`, `>`, `>=`, `is`
-6. `==`, `!=`
-7. `&`
-8. `^`
-9. `|`
-10. `&&`
-11. `||`
-12. `??`
-13. `cond ? a : b`
+2. `value switch { ... }`
+3. `*`, `/`, `%`
+4. `+`, `-`
+5. `<<`, `>>`
+6. `<`, `<=`, `>`, `>=`, `is`
+7. `==`, `!=`
+8. `&`
+9. `^`
+10. `|`
+11. `&&`
+12. `||`
+13. `??`
+14. `cond ? a : b`
 
 Operators on one line group from the left: `a - b - c` is `(a - b) - c`. `??` and `?:` group from the right: `a ?? b ?? 0` is `a ?? (b ?? 0)`.
 
@@ -246,11 +261,33 @@ system Advance(mut Match match)
 ```
 
 - A member without a value is one more than the one before it, and the first is 0. A value is an int, which can come from constants: `Playing = FIRST_LEVEL + 1`.
-- Members are always written with their enum: `Phase.Playing`.
+- Write a member with its enum, `Phase.Playing`, or use `.Playing` when the expected enum type is clear: `match.phase = .Playing;`. Typed declarations, field defaults, function arguments and returns, container elements and `case .Warmup:` inside an enum switch supply that type. Comparisons can use it too: `match.phase == .Playing`. A typed conditional can use shorthand in both branches: `Phase next = ready ? .Playing : .Warmup;`.
+- Without an expected enum type, keep the qualified spelling: `var phase = Phase.Playing;`. If overloads could take different enums, qualify the argument; the compiler does not pick an enum by searching for its member name.
 - `==` and `!=` compare two values of the same enum.
 - An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
+- Write conversions as `int(phase)`, not `(int)phase`. The compiler explains the replacement when it encounters a parenthesized cast.
+- `Phase.Count()` is the number of declared members, as a compile-time `int`. The `Phase` above has three members despite its numeric gaps. Members sharing the same numeric value each count. The call takes no arguments; a member you declare named `Count` remains `Phase.Count`.
 - An enum takes four bytes, like an int. `enum Voxel : byte { ... }` takes one, for members from 0 to 255, and `: ushort` two, for 0 to 65535: worth it where there are a lot of them, like a grid's cells.
 - `switch` works on ints, longs, [chars](./text-and-lists.md#characters) and enums. A case is an int (or a long, for a long), a char like `'a'`, an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
+
+### Switch expressions
+
+A switch expression chooses a value, so it can initialize a local directly:
+
+```csharp
+Animation current = zombie.state switch
+{
+    ZombieState.Run => movementAnims.rootRun,
+    ZombieState.Jump => movementAnims.rootJump,
+    _ => movementAnims.rootRun,
+};
+```
+
+The selector is evaluated once, and only the selected arm's value runs. Labels are constants of the same kinds a statement switch accepts. Each label appears once; the final `_` arm handles every other value and is required, including for enums, which can hold unnamed numbers. A trailing comma is allowed.
+
+The arm values must have compatible types. A typed destination supplies the type of `default`, `null`, list literals and enum shorthand such as `.Jump`; otherwise the other arms supply it. An enum selector also supplies the type for shorthand labels such as `.Run`. Each arm has its own scope for locals declared with `out`. Patterns and guards aren't supported yet.
+
+`switch` binds tighter than arithmetic: `(a + b) switch { ... }` switches on the sum. It works in functions, tasks and GPU code as well as systems, subject to the types those places support.
 
 ### From a number
 
@@ -258,7 +295,7 @@ system Advance(mut Match match)
 
 ```csharp
 enum Card { Vitality, RapidFire, Scatter, Ricochet }
-const int CARDS = 4;
+const int CARDS = Card.Count();
 
 // One of the cards, picked by a hash: the same on every machine
 Card Offer(int round, int slot)
@@ -271,6 +308,19 @@ Card Offer(int round, int slot)
 - A number none of the members has is kept as it is: with the `Phase` at the top of this section, `Phase(3)` is a `Phase` whose number is 3. It equals no member, a `switch` on it runs its `default`, and text shows `3`. So bound the number first when it comes from somewhere that can be wrong, as the `% CARDS` does, or handle the rest in a `default`.
 - An enum stored as a `byte` or a `ushort` keeps the number's low 8 or 16 bits, as `byte(x)` does: `Voxel(300)` is `Voxel(44)`.
 - With a constant number it's a constant, so it works in a `const`, a field's default and a `case`.
+
+For consecutive values starting at zero, advance and wrap with `%`:
+
+```csharp
+enum Direction { North, East, South, West }
+
+Direction Next(Direction direction)
+{
+    return Direction((int(direction) + 1) % Direction.Count());
+}
+```
+
+This assumes the starting value is a declared member. Member count is not a numeric range: this formula does not cycle through enums with gaps, negative values or duplicate numeric values. `Count()` works in shaders and constant expressions too.
 
 ## Comments and attributes
 

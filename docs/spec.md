@@ -386,6 +386,8 @@ struct Money
 
 - Everything is read-only by default. Mutability is opt-in with `mut`.
 - This includes local variables. `var` infers the type, like C++ `auto`, and is read-only.
+- An explicitly typed local can omit its initializer (`Animation current;`). Every path reaching a read must initialize it first. Without `mut`, each path initializes it once, through a whole-value assignment or an `out` argument. `mut Animation current;` permits later changes. `var` and `mut var` still need an initializer to infer the type. A declaration inside a loop creates a fresh local each iteration; initializing a read-only local declared outside on a repeating path is an error.
+- A statement switch proves initialization through all its sections plus a `default` that assigns or ends the path. Covering only named enum members isn't exhaustive, because enums can hold unnamed numbers.
 
 ```csharp
 var speed = player.speed * 2;    // read-only, type inferred
@@ -1090,6 +1092,20 @@ Built 2026-10-06; the picks below await the owner.
 ### Decided
 
 - Enums and `switch` follow C#'s syntax.
+- Switch expressions choose a value: `value switch { Constant => result, _ => fallback }`. The selector runs once and only the selected arm runs. A final `_` arm is required, including for enums. Arm results have compatible types.
+
+```csharp
+Animation current = zombie.state switch
+{
+    ZombieState.Run => movementAnims.rootRun,
+    ZombieState.Jump => movementAnims.rootJump,
+    _ => movementAnims.rootRun,
+};
+```
+
+- `EnumType.Count()` returns the number of declared members as a compile-time `int`. Members with the same numeric value each count; gaps and explicit values do not change the count. This is a static operation, not an enum member, and takes no arguments. A declared member named `Count` remains accessible as `EnumType.Count`.
+- Explicit conversions use `int(value)` and `EnumType(number)`. Parenthesized cast syntax such as `(int)value` is rejected with guidance on the conversion to write.
+- An enum member may omit its type with a leading dot when context supplies one unambiguous enum type: `zombie.state = .Idle;`. Typed initializers, fields, parameters, returns, container elements and switch cases supply their expected type; `==` and `!=` can use the other operand's enum type. A typed conditional supplies that type to both branches. This is the same value as `ZombieState.Idle`, including on the GPU. Without an expected enum type, or when overloads leave more than one possible enum, write the qualified member; member names do not choose between enum overloads.
 
 ```csharp
 enum Phase
@@ -1117,7 +1133,7 @@ system Advance(mut Match match)
 
 - `enum Name { A, B = 5, C }` declares an enum. A member without a value is one more than the one before it, and the first is 0. A value is an int known while compiling: a literal, an int constant, or operators on them, worked out as they would be at run time. A comma after the last member is fine. `enum` is only a keyword at the start of a declaration.
 - An enum is stored as an int, or as what it says after its name, as in C#: `enum Voxel : byte { ... }` takes one byte (0 to 255) and `: ushort` two (0 to 65535), for grids' cells and other data there's a lot of. A member out of that range is an error that gives the range. Anything else after the colon is an error that lists the three. Only the size changes: a value's number is still `int(...)`, and the value with a number `Voxel(...)`, which keeps the number's low bits (below).
-- Members are always written with their enum: `Phase.Playing`, or `Game.Phase.Playing` from another namespace. In generated C, `Phase.Playing` is `Phase_Playing`, a constant of the type `Phase`: an `int32_t`, or a `uint8_t` or `uint16_t` for `: byte` and `: ushort`.
+- A qualified member is written `Phase.Playing`, or `Game.Phase.Playing` from another namespace; `.Playing` uses the context's enum type as decided above. In generated C, each spelling is `Phase_Playing`, a constant of the type `Phase`: an `int32_t`, or a `uint8_t` or `uint16_t` for `: byte` and `: ushort`.
 - Enums are values, like structs: fields, locals, inputs, and functions' parameters and return values can hold them. A field without a default starts at 0, even if no member has that value, as in C#.
 - `==` and `!=` compare two values of the same enum.
 - An enum and its number convert both ways, and neither way by itself: `int(phase)` (or `long(phase)`) is a value's number, and `Phase(5)` the value with that number, as `float3(i)` mirrors `int3(f)`. The enum's name is all there is to it: no keyword, and no attribute. An enum in a namespace converts by its qualified name too, `Combat.Stance(2)`.
@@ -1132,11 +1148,14 @@ system Advance(mut Match match)
 - Each section has its own scope for locals.
 - A function returns on every path when a switch with a `default` returns in every section.
 - `switch`, `case`, `default` and `break` are keywords.
+- Built switch expressions accept constant labels of the same types as statement switches, with no duplicate values and an optional trailing comma. Each arm has its own scope for `out` locals. The expected result type supplies `default`, `null` and list-literal types; otherwise the compiler infers a common type from the arms. `switch` binds after unary operators and before arithmetic; parentheses switch on a compound expression. Constant selectors and arms work in constants and field defaults. CPU, async and GPU lowering preserve source evaluation order and lazy arm selection, within those contexts' existing type restrictions.
 
 ### Open
 
 - Ordering enums (`<`).
+- Enumerating members as values, such as `EnumType.Values()`, remains a proposal; it is not implemented.
 - A warning when a switch on an enum has no `default` and misses a member.
+- Patterns and guards in switch expressions.
 
 ## Loops
 
@@ -1724,7 +1743,7 @@ pose.Sample(movement.run, seconds, Playback.Loop);
 Draw.SkinnedMesh(hero, transform, pose);
 ```
 
-- **Separate-file binding.** Required nodes match by unique exact source names, their parent chains and numerically equal authored rest transforms; opposite quaternion signs describe the same rest rotation. Node order and unrelated unanimated branches may differ. An unnamed identity scene wrapper directly under the canonical root is transparent only while its source pose and relevant clip channels remain at rest; animated wrappers and deeper unnamed ancestors are rejected. In-place sampling requires the selected clip's animated nodes and their ancestors, and starts other target nodes at rest. Drawing a source Pose also binds procedurally changed nodes and every source clip's channel targets and ancestors, since a Pose does not retain its selected clip. Missing or ambiguous required names, changed parents or changed rest transforms reject binding; this does not retarget different rigs. Sampling into `hero.defaultPose` gives a Pose that can use `hero.skeleton.bones` for edits and sockets. Direct drawing of `movement.run.Sample(seconds)` is also supported, but its Pose retains the animation file's skeleton identity.
+- **Separate-file binding** (name/hierarchy rule agreed 2026-10-11). Required nodes match by unique exact source names and their parent chains. Node order, authored default poses and unrelated unanimated branches may differ. Required source local transforms are copied directly, including unanimated required ancestors; no adaptation of proportions or coordinate spaces is performed. An unnamed identity scene wrapper directly under the canonical root is transparent only while its source pose and relevant clip channels remain at rest; animated wrappers and deeper unnamed ancestors are rejected. In-place sampling requires the selected clip's animated nodes and their ancestors, and starts other target nodes at rest. Drawing a source Pose also binds procedurally changed nodes and every source clip's channel targets and ancestors, since a Pose does not retain its selected clip. Missing or ambiguous required names and changed parents reject binding. Exact skeleton compatibility, Bone identity and blending still include authored rest transforms. Sampling into `hero.defaultPose` gives a Pose that can use `hero.skeleton.bones` for edits and sockets. Direct drawing of `movement.run.Sample(seconds)` is also supported, but its Pose retains the animation file's skeleton identity.
 - **Standalone catalogs.** `Animations` assets accept animation-only or model-containing glTF 2.0 (`.gltf`, `.glb`) or binary/ASCII FBX (`.fbx`) files and expose `count`, `At`, `Find` and inferred direct clip members. A plain `asset Animations movement` accepts one path, a glob or a nonempty list of constant string paths/globs, producing one combined catalog (agreed 2026-10-11). Files follow list order, each glob follows path-byte order, repeated resolved files occur once, and clips retain source order. When cleaned names collide across combined sources, cleaned filename stems prefix those aliases (`walkRoot0TargetingPose`); remaining collisions receive flattened source ordinals. `At` uses flattened clip order; `Find` searches exact original names across all sources and returns null for ambiguity. Each clip retains its original source skeleton; no merged rig is constructed. These are build-time imports, with no runtime `Animations.Decode`. `var` retains checked members; explicit `Animations` annotations and list/map asset elements expose the dynamic API. An `asset Animation run = "run.fbx"` requires exactly one source clip; `[Name("Root|Run")]` selects a unique exact original clip from one file. Missing, ambiguous and implicit zero/multiple-clip selections are errors; singular Animation assets do not accept globs or file lists.
 - **Import and runtime loading.** Assets accept glTF 2.0 `.gltf` and `.glb`, and binary or ASCII `.fbx`. Node hierarchy and authored local transforms are preserved, including animated non-joint parents; the skeleton contains all source nodes and a synthetic identity root. Several skins keep their own inverse-bind palettes; glTF's supplied consecutive joint/weight sets are preserved and positive weights are normalized in a fixed order. glTF animation channels support STEP, LINEAR and CUBICSPLINE. FBX imports linear or rigid skin weights and converts declared axes and units to Y-up meters. Animation stacks become clips shifted to zero with their authored duration; nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms can add unnamed helper nodes. Skinned FBX rejects dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Morph targets are rejected. Vertex fields follow the static mesh's naming/default rules. `SkinnedMesh<V>.Decode(List<byte> bytes)` and the contracted form return a model `fails IOError`, accepting self-contained GLB bytes and returning `IOError.InvalidData` for malformed data, external resources or unmet contracts. Fetching remains separate. Model bytes, animation values and mutable poses use ordinary list/struct ownership and can be stored in match or local fields.
 - **Type boundaries.** `var` retains a single known asset's catalog. Explicit plain generic types expose dynamic catalogs; contracted helper parameters and list/map elements expose their common contract. Inferred or contracted model conversions are checked against the destination requirements. Collection asset imports provide their common type rather than per-item inferred dot members; selection does not invent a union of unrelated catalogs.

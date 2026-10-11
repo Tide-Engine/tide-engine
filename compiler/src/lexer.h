@@ -62,6 +62,7 @@ typedef enum tok_kind {
     T_COLON,
 
     T_ASSIGN,
+    T_ARROW, // =>, a switch expression's arm
     T_PLUS_ASSIGN,
     T_MINUS_ASSIGN,
     T_STAR_ASSIGN,
