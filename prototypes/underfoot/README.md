@@ -69,6 +69,9 @@ build/debug/bin/underfoot
 The web page is `underfoot_page` in the `web-debug` or `web-release` presets,
 which stages it for the site at `docs/static/prototypes/underfoot/`.
 
+`art/make_art.py` makes every picture (the sprite atlas, the sky and the rock's
+grain) with numpy and Pillow, and `sfx/make_sounds.py` every sound.
+
 `tools/solve.c` is the solver and the search that found the puzzles, and reads
 `levels.tide` as it is; `tools/hints.py` writes each puzzle's second and third
 hints from what it finds. Both are for whoever changes a board, and neither is
