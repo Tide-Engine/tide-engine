@@ -8030,6 +8030,116 @@ static type out_variable_type(const int use, const loc at)
 // written: `out var half`, which declares the variable there, `out` before one
 // the code has, and `out _`; after the word, `var`, `mut`, `_`, the
 // parameter's type, and the variables in scope the code can change.
+// The `switch` whose cases the '{' at token `open` holds, or -1: `switch (value) {`.
+static int switch_of_brace(const int open)
+{
+    if (open < 3 || DOC->toks[open].kind != T_LBRACE || DOC->toks[open - 1].kind != T_RPAREN) return -1;
+    int depth = 0;
+    for (int k = open - 1; k >= 1; k--) {
+        if (DOC->toks[k].kind == T_RPAREN) depth++;
+        else if (DOC->toks[k].kind == T_LPAREN && --depth == 0) return DOC->toks[k - 1].kind == T_SWITCH ? k - 1 : -1;
+    }
+    return -1;
+}
+
+// The switch whose `switch` is at `at`, in a statement or the ones inside it.
+static const stmt *switch_in(const stmt *s, const loc at)
+{
+    if (!s) return NULL;
+    if (s->kind == S_SWITCH && loc_cmp(s->at, at) == 0) return s;
+    const stmt *found = NULL;
+    for (int i = 0; s->kind == S_BLOCK && !found && i < s->stmts.count; i++) found = switch_in(s->stmts.items[i], at);
+    for (int i = 0; s->kind == S_SWITCH && !found && i < s->cases.count; i++) {
+        const switch_case *section = &s->cases.items[i];
+        for (int k = 0; !found && k < section->body.count; k++) found = switch_in(section->body.items[k], at);
+    }
+    if (!found && s->kind == S_EXPR && s->value) found = switch_in(s->value->block, at);
+    if (!found) found = switch_in(s->then_stmt, at);
+    if (!found) found = switch_in(s->else_stmt, at);
+    return found;
+}
+
+// The enum a switch goes by, where its value is one: `keyword` is its `switch`
+// and `open` its '{'. From the names of its value, as a half-written case
+// leaves no switch for the checker to look at; from the checker for a value
+// that's more than names, where the switch parses; and for a call of one of
+// the game's functions, `switch (Next(state))`, from what those return.
+static const decl *switch_enum(const scope *sc, const int keyword, const int open)
+{
+    const token *toks = DOC->toks;
+    type t = names_type(sc, keyword + 2, open - 2);
+    if (t.kind == TY_ERROR && sc->decl) {
+        const stmt *s = switch_in(sc->in_sanitize ? sc->decl->sanitize : sc->decl->body, toks[keyword].at);
+        if (s && s->cond) t = s->cond->type;
+    }
+    int called = keyword + 2;
+    while (called + 2 < open && toks[called].kind == T_IDENT && toks[called + 1].kind == T_DOT) called += 2;
+    if (t.kind == TY_ERROR && called + 1 < open && toks[called].kind == T_IDENT && toks[called + 1].kind == T_LPAREN) {
+        const str written = {toks[keyword + 2].text.ptr, (int)(toks[called].text.ptr + toks[called].text.len - toks[keyword + 2].text.ptr)};
+        int depth = 0;
+        int close = called + 1;
+        for (; close < open - 1; close++) { // The call is the whole value: its ')' is the last before the switch's own
+            if (toks[close].kind == T_LPAREN) depth++;
+            else if (toks[close].kind == T_RPAREN && --depth == 0) break;
+        }
+        for (int i = 0; close == open - 2 && t.kind == TY_ERROR && i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind != DECL_FUNCTION || !has_name(d) || d->return_type.kind != TY_ENUM) continue;
+            if (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified)) t = d->return_type;
+        }
+    }
+    return t.kind == TY_ENUM ? t.decl : NULL;
+}
+
+static bool is_label_colon(int i);
+
+// Whether a case of the switch whose '{' is at token `open` names `member`
+// already: `case Phase.Warmup:`, read from the labels as they're written.
+static bool case_written(const int open, const str member)
+{
+    int depth = 0;
+    for (int i = open + 1; i < DOC->tok_count; i++) {
+        const tok_kind kind = DOC->toks[i].kind;
+        if (kind == T_LBRACE) depth++;
+        else if (kind == T_RBRACE && depth-- == 0) return false;
+        else if (kind == T_COLON && depth == 0 && DOC->toks[i - 1].kind == T_IDENT && str_eq(DOC->toks[i - 1].text, member)
+                 && is_label_colon(i)) return true;
+    }
+    return false;
+}
+
+// An enum switch's cases, by its members: after `case`, `Phase.Warmup`, and
+// where a case can start (`whole`), `case Phase.Warmup:`. In the enum's
+// order, the members no case names yet before the others.
+static void complete_cases(completion *c, const decl *of, const int open, const bool whole)
+{
+    bool first = true;
+    for (int m = 0; m < of->members.count; m++) {
+        const str member = of->members.items[m].name;
+        const bool written = case_written(open, member);
+        if (whole && written) continue;
+        sb label = {0};
+        sb_printf(&label, whole ? "case %s." STR_FMT ":" : "%s." STR_FMT, name_for(of), STR_ARG(member));
+        bool seen = false;
+        for (int i = 0; i < c->seen.count && !seen; i++) seen = strcmp(c->seen.items[i], label.data) == 0;
+        if (seen) continue;
+        vec_push(c->seen, label.data);
+        if (c->count++) jb_put(c->out, ",");
+        jb_put(c->out, "{\"label\":");
+        jb_string(c->out, label.data);
+        // After the word `case` itself, where a case is offered whole
+        jb_printf(c->out, ",\"kind\":%d,\"sortText\":\"%s%04d\"", CK_ENUM_MEMBER, whole ? "case " : written ? "1" : "0", m);
+        if (!whole && !written && first) jb_put(c->out, ",\"preselect\":true");
+        if (!written) first = false;
+        jb_put(c->out, ",\"detail\":");
+        char value[64];
+        if (written) snprintf(value, sizeof value, "%lld, which a case has", (long long)of->members.items[m].number);
+        else snprintf(value, sizeof value, "%lld", (long long)of->members.items[m].number);
+        jb_string(c->out, value);
+        jb_put(c->out, "}");
+    }
+}
+
 static void complete_out_argument(completion *c, const out_argument *arg, const loc at)
 {
     sb declares = {0};
@@ -8675,7 +8785,18 @@ void analysis_completion(const int line, const int character, jbuf *out)
             complete_out_argument(&c, &made, at);
             if (made.only) break;
         }
-        const bool at_statement = pk == T_LBRACE || pk == T_RBRACE || pk == T_SEMI || pk == T_RPAREN || pk == T_ELSE;
+        // case Phase.Warmup: a statement starts after a label, as after ';'
+        const bool at_statement = pk == T_LBRACE || pk == T_RBRACE || pk == T_SEMI || pk == T_RPAREN || pk == T_ELSE
+                               || (pk == T_COLON && is_label_colon(last));
+        // A switch on an enum: its members after `case`, which nothing else can follow, and its missing cases
+        // where one can start
+        const int switched = switch_of_brace(f.open);
+        if (switched >= 0 && (pk == T_CASE || (at_statement && pk != T_RPAREN && pk != T_ELSE))) {
+            const scope sc = scope_at(at);
+            const decl *of = switch_enum(&sc, switched, f.open);
+            if (of) complete_cases(&c, of, f.open, pk != T_CASE);
+            if (of && pk == T_CASE) break;
+        }
         complete_expression(&c, at, at_statement);
         break;
     }
