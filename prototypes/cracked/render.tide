@@ -15,7 +15,7 @@ using Rooms;
 // (-0.3214, -0.766, 0.5567). This is the way to it.
 const float3 SUN = float3(0.3214, 0.766, -0.5567);
 const float FLOOR_Y = -7;        // The grid under every map
-const int LAMP_PIXELS = 2048;    // Pixels across the sun's image of a map
+const int LAMP_PIXELS = 4096;    // Pixels across the sun's image of a map: about a centimeter and a half of it each
 const float LAMP_AWAY = 90;      // How far from the map's middle it looks from,
 const float LAMP_FAR = 200;      // and how far it sees
 const float CAMERA_FOV = 60;     // The Cinemachine camera's
@@ -263,7 +263,7 @@ float3 FromLamp(float3 world, float3 normal, float4x4 toLamp, float step)
 
 // How much of the sun gets to a place on a surface, from 0, in shadow, to
 // 1: nine looks at the sun's image around the place, a pixel of it apart,
-// which make a shadow's edge a soft one about ten centimeters wide.
+// which make a shadow's edge a soft one about five centimeters wide.
 float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp, float step)
 {
     float3 seen = FromLamp(world, normal, toLamp, step);
