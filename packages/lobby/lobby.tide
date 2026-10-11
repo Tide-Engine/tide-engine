@@ -14,17 +14,18 @@
 // body, for a package to `override` when a game ships on another service:
 //
 //   identity      who this player is                      IdentitySignIn
-//   lobby         groups of players, and their data       LobbyCreate, LobbyList, LobbyJoin, LobbyQuickJoin,
-//                                                         LobbyLeave, LobbyUpdate, LobbySetMember, LobbyKick,
-//                                                         LobbyTransfer, LobbyWatch
+//   lobby         groups of players, and their data       LobbySignIn, LobbyCreate, LobbyList, LobbyJoin,
+//                                                         LobbyQuickJoin, LobbyLeave, LobbyUpdate, LobbySetMember,
+//                                                         LobbyKick, LobbyTransfer, LobbyWatch
 //   matchmaking   a ticket that ends in a lobby           TicketStart, TicketCheck, TicketCancel
 //   transport     how a lobby's match is reached          MatchOpen, MatchAddress, MatchJoin, MatchLeave
 //
 // Each slot is replaced apart: a package that brings other lobbies keeps
 // Tide's rooms as the way into a match, and one that brings another way in
-// keeps these lobbies. Tide's own lobbies know a player by its identity's
-// `secret`, so they go with Tide's identity, or one that brings a secret
-// they take. A build picks its packages in tide.packages (`#if STEAM`).
+// keeps these lobbies. Tide's own lobbies know a player by a secret their
+// service made, which they ask for themselves (LobbySignIn) when the identity
+// brings none, so another identity needs nothing of them. A build picks its
+// packages in tide.packages (`#if STEAM`).
 //
 // What a game reads is `LobbyClient`: the lobby this player is in (`lobby`,
 // with its members and data; `owned`, whether it's this player's), the
@@ -137,8 +138,10 @@ struct LobbyChange
     List<string> remove;
 }
 
-// Who this player is to the service. `secret` is what Tide's own service
-// knows a player by; another identity may leave it empty.
+// Who this player is to the service. `secret` is the lobby slot's own: what
+// its service knows the player by, which Tide's own makes (LobbySignIn).
+// Another identity leaves it empty, and another lobby service keeps there
+// what it likes, or nothing.
 struct LobbyIdentity
 {
     string id;   // "" when signing in failed, with why in `failure`
@@ -314,6 +317,23 @@ virtual async LobbyIdentity IdentitySignIn(LobbyClient client, bool fresh)
 
 // The lobby slot. Each asks the service and gives its answer; none changes
 // LobbyClient, which is the flows' below.
+
+// The lobby service's part of signing in, once the identity slot said who
+// the player is: `who` as the lobby functions are to find it in `client.me`,
+// or with no `id` and a `failure`. Tide's own needs a secret its service
+// made: the identity's, where it's Tide's own too, and else a player of this
+// run's, asked for here, so any identity goes with these lobbies. A package
+// that brings other lobbies overrides it with what its service needs: often
+// `return who;`.
+virtual async LobbyIdentity LobbySignIn(LobbyClient client, LobbyIdentity who)
+{
+    if (who.secret != "") return who;
+    var http = await Call("POST", ServiceOf(client) + "/v1/players", "", "", client.timeout);
+    if (!http.reached) return LobbyIdentity { failure = LobbyFailure.Unreachable };
+    var made = Json.Read<KeptIdentity>(http.body) ?? KeptIdentity { };
+    if (http.status != 200 || made.secret == "") return LobbyIdentity { failure = LobbyFailure.SignedOut };
+    return LobbyIdentity { id = who.id, name = who.name, secret = made.secret };
+}
 
 // Makes a lobby, with this player in it as its owner.
 virtual async LobbyAnswer LobbyCreate(LobbyClient client, LobbyOptions options)
@@ -780,7 +800,8 @@ async LobbyFailure Identify(mut LobbyClient client, bool fresh)
     while (client.signing) await Wait.Frames(1);
     if (client.me.id != "" && !fresh) return LobbyFailure.None;
     client.signing = true;
-    var who = await IdentitySignIn(client, fresh);
+    mut var who = await IdentitySignIn(client, fresh);
+    if (who.id != "") who = await LobbySignIn(client, who);
     client.signing = false;
     if (who.id == "") return who.failure != LobbyFailure.None ? who.failure : LobbyFailure.SignedOut;
     client.me = who;
@@ -966,6 +987,18 @@ async void Watch(mut LobbyClient client, int epoch)
 view Follow(Session session, mut LobbyClient client)
 {
     if (client.lobby.id == "") return;
+    // The lobby's match changed hands to this machine, the lobby's owner (host
+    // migration on a network where a match is joined by its host: with rooms,
+    // the room keeps its code). It's this machine's to name from here on
+    var took = client.owned && !client.hosting && client.match != "" && session.server
+            && session.state == SessionState.Connected && MatchAddress(session, session.room) != "";
+    if (took)
+    {
+        client.hosting = true;
+        client.opening = true;
+        client.joining = false;
+        client.match = MatchAddress(session, session.room);
+    }
     if (client.hosting)
     {
         var address = MatchAddress(session, session.room);
@@ -994,7 +1027,15 @@ view Follow(Session session, mut LobbyClient client)
         return;
     }
     var named = client.lobby.match;
-    if (named != "" && named != client.match && named != client.left)
+    var there = client.match != "" && !session.server && session.state != SessionState.Offline && session.room == named;
+    // A match that lost its host is on its way to another, which the lobby may name first: no second way in meanwhile
+    var moving = client.match != "" && !client.joining && session.state == SessionState.Connecting;
+    if (named != "" && named != client.match && there)
+    {
+        // The match this machine is in is the one the lobby names now: it followed its new host there already
+        client.match = named;
+    }
+    else if (named != "" && named != client.match && named != client.left && !moving)
     {
         client.match = named;
         client.joining = true;

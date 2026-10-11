@@ -141,6 +141,7 @@ add_subdirectory(packages) # The packages that come with tide, and their tests
 add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
+add_subdirectory(examples/network) # A game on a network of its own, and its test
 add_subdirectory(prototypes) # Private games; catalog staging is explicit
 
 # The docs' live examples open a window, so they need the platform layer, and

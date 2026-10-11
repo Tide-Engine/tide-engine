@@ -78,6 +78,8 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Matches', link: '/multiplayer/matches' },
             { text: 'Lobbies and matchmaking', link: '/multiplayer/lobbies' },
+            { text: 'Your own network and service', link: '/multiplayer/own-network' },
+            { text: 'Steam', link: '/multiplayer/steam' },
             { text: 'Networking', link: '/multiplayer/networking' },
             { text: 'Determinism', link: '/multiplayer/determinism' },
         ],
@@ -110,6 +112,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Calling C', link: '/c/functions' },
             { text: 'C hosts', link: '/c/hosts' },
+            { text: "A game's own network", link: '/c/network' },
         ],
     },
     {

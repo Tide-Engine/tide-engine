@@ -33,7 +33,7 @@ A game that starts in a menu has a local `Main`, and its local code decides whic
 | `Session.Close()` | Lets no one else join; the players in the match stay |
 | `Session.Kick(player, message)` | Sends a player out of the match this machine runs, telling them why (the message is optional) |
 | `Session.KickAll(message)` | The same for every player on another machine |
-| `Session.Join(code)` | Joins the match in the room with this code, like `"K7QF2M"` |
+| `Session.Join(code)` | Joins the match in the room with this code, like `"K7QF2M"`, or on [a network of the game's own](./own-network.md), by the text that network takes |
 | `Session.Connect(address)` | Joins another machine's match by its address: `"192.168.1.5"`, `"192.168.1.5:7777"` or a name like `"localhost"` |
 | `Session.Connect(address, port)` | The same, on another port than 7777 |
 | `Session.Leave()` | Leaves the match. With [host migration](#host-migration), a match this machine runs goes on without it |
@@ -202,7 +202,7 @@ The relay, a server of ours, only introduces players to each other. Their packet
 | `ping` | The network's round trip to the server, in milliseconds: what the machines wait for their next frame to read a packet isn't in it |
 | `server` | Whether this machine runs the server |
 | `open` | Whether others can join it (only the server's machine knows) |
-| `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed |
+| `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed. On [a network of the game's own](./own-network.md), what that network says the match is joined by |
 
 A single-player match is a match too, so `state` is `Connected` there as well: this machine runs the server, and its player connects to it without going through the network. That's `server` true and `open` false. `$"{session}"` shows all of it at once.
 
@@ -244,7 +244,7 @@ Then, when the machine running a room's match leaves or stops answering, another
 - A player who doesn't come back to the new host within 20 seconds leaves the match.
 - A host that leaves says so, and the match changes hands at once. One that stops answering is noticed after a few seconds.
 - `Session.End()` ends the match for everyone instead: every player gets `Disconnected` with `Ended`, even one who missed the goodbye, as the relay keeps the room as ended for a while. So does a match whose last scene unloads.
-- Only matches in a room change hands, as the room is where the players meet again. A closed match stays closed: its players come back, but no one new joins.
+- Only matches in a room change hands, as the room is where the players meet again, or on [a network of the game's own](./own-network.md) that says where its players meet. A closed match stays closed: its players come back, but no one new joins.
 
 The new host takes over the world its machine received. Every player currently receives the whole world, including [private scenes](../game/scenes.md#private-scenes); selective state visibility is not built yet. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 

@@ -105,6 +105,12 @@ override async LobbyIdentity IdentitySignIn(LobbyClient client, bool fresh)
     return LobbyIdentity { id = fresh ? "guest" : "me", name = "Tester" };
 }
 
+// The lobbies are the game's own, which know a player by its identity alone
+override async LobbyIdentity LobbySignIn(LobbyClient client, LobbyIdentity who)
+{
+    return who;
+}
+
 override async LobbyAnswer LobbyCreate(LobbyClient client, LobbyOptions options)
 {
     await Wait.Frames(2);
