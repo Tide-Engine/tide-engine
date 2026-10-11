@@ -1,0 +1,4 @@
+// expect: 'value' is read-only
+scene Main { }
+void G(mut int value) { value = 1; }
+int F() { int value; G(value); return value; }

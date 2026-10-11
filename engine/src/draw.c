@@ -1718,7 +1718,9 @@ static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture)
 {
     tide_texture image;
     if (!tide_pack_texture_find(texture->version & TIDE_TEXTURE_NAME, &image)) return 0;
-    return pack_texture(d, image.version, image.width, image.height, image.pixels);
+    const uint32_t slot = pack_texture(d, image.version, image.width, image.height, image.pixels);
+    d->textures[slot - 1u].compressed = tide_pack_texture_blocks_find(texture->version & TIDE_TEXTURE_NAME);
+    return slot;
 }
 
 uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref texture)
@@ -2671,7 +2673,11 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH || t->space == TIDE_PIXELS_TARGET_CUBE) {
         return target_texture_version(d, t->space, t->id, t->target, t->version);
     }
-    if (t->space == TIDE_PIXELS_PACK) return pack_texture(d, t->id, t->width, t->height, t->pixels);
+    if (t->space == TIDE_PIXELS_PACK) {
+        const uint32_t slot = pack_texture(d, t->id, t->width, t->height, t->pixels);
+        d->textures[slot - 1u].compressed = t->compressed;
+        return slot;
+    }
     if (t->space == TIDE_PIXELS_PACK_CUBE) return pack_cube(d, t->id, t->width, (const uint8_t *const *)(uintptr_t)t->pixels);
     // An atlas page keeps its identity across source frames. Its appended
     // image is a snapshot: resetting and appending that source again cannot

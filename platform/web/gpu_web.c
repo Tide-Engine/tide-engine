@@ -15,6 +15,8 @@ TIDE_WEB_IMPORT(gpu_buffer) tide_gpu_id tide_web_gpu_buffer(tide_gpu_buffer_kind
 TIDE_WEB_IMPORT(gpu_buffer_write) void tide_web_gpu_buffer_write(tide_gpu_id buffer, size_t offset, const void *data, size_t size);
 TIDE_WEB_IMPORT(gpu_buffer_free) void tide_web_gpu_buffer_free(tide_gpu_id buffer);
 TIDE_WEB_IMPORT(gpu_texture) tide_gpu_id tide_web_gpu_texture(tide_gpu_format format, int width, int height, const void *pixels);
+TIDE_WEB_IMPORT(gpu_texture_blocks) tide_gpu_id tide_web_gpu_texture_blocks(int width, int height, uint32_t format,
+                                                                        uint32_t levels, const void *pixels);
 TIDE_WEB_IMPORT(gpu_texture_write) void tide_web_gpu_texture_write(tide_gpu_id texture, const void *pixels);
 TIDE_WEB_IMPORT(gpu_texture_write_part)
 void tide_web_gpu_texture_write_part(tide_gpu_id texture, const void *pixels, int x, int y, int width, int height);
@@ -81,6 +83,11 @@ static bool tide_web_gpu_float_targets(void)
     return true;
 }
 
+static tide_gpu_id web_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
+{
+    return tide_web_gpu_texture_blocks(width, height, blocks.format, blocks.levels, blocks.pixels);
+}
+
 const tide_gpu tide_gpu_webgpu = {
     .name = "WebGPU",
     .epoch = tide_web_gpu_epoch,
@@ -92,6 +99,7 @@ const tide_gpu tide_gpu_webgpu = {
     .buffer_write = tide_web_gpu_buffer_write,
     .buffer_free = tide_web_gpu_buffer_free,
     .texture = tide_web_gpu_texture,
+    .texture_blocks = web_texture_blocks,
     .texture_write = tide_web_gpu_texture_write,
     .texture_write_part = tide_web_gpu_texture_write_part,
     .texture_free = tide_web_gpu_texture_free,

@@ -23,9 +23,11 @@
 #include "tide/gui.h"
 #include "tide/mesh.h"
 #include "tide/net.h" // tide_hash
+#include "tide/pack.h"
 #include "tide/platform.h"
 #include "tide/text.h"
 #include "tide/time.h"
+#include "../src/texture_residency.h"
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
@@ -345,6 +347,163 @@ static void many_cached_textures(void)
     tide_draw_clear(&list, background);
     tide_platform_read_pixels(&list, points, 1, got);
     expect(tide_platform_gpu_memory() == memory - images * 4u, "an empty frame releases all those images");
+}
+
+static void resident_pack_textures(void)
+{
+    // Exercise the actual pressure policy without requiring 128 MiB test
+    // images on software browser GPUs. Sizes are deliberately not uniform.
+    tide_texture_idle policy[] = {
+        {.bytes = 7, .age = 4, .place = 0}, {.bytes = 4, .age = 1, .place = 1},
+        {.bytes = 6, .age = 2, .place = 2}, {.bytes = 2, .age = 3, .place = 3},
+        {.bytes = UINT64_MAX, .age = 1, .place = 4}, {.bytes = 1, .age = 61, .place = 5},
+    };
+    tide_texture_idle_trim(policy, 6, 10, 3);
+    uint32_t selected = 0;
+    for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
+    expect(selected == ((1u << 1) | (1u << 2)), "idle texture pressure prefers recent images, bounds bytes and expires old ones");
+    tide_texture_idle_trim(policy, 6, UINT64_MAX, 1);
+    selected = 0;
+    for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
+    expect(selected == (1u << 1), "idle texture slot pressure has a stable tie order and safe byte arithmetic");
+
+    uint8_t pixels[32 * 32 * 4], hash[32] = {37};
+    for (uint32_t i = 0; i < sizeof pixels; i += 4u) {
+        pixels[i] = 255, pixels[i + 1] = 0, pixels[i + 2] = 0, pixels[i + 3] = 255;
+    }
+    tide_pack_builder pack = {0};
+    const uint32_t block = tide_pack_texture(&pack, hash, 32, 32, pixels);
+    tide_pack_name(&pack, "resident", TIDE_PACK_TEXTURE, block, 0, 0);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&pack, &size);
+    const bool loaded = tide_pack_load(bytes, size);
+    free(bytes);
+    expect(loaded, "resident texture fixture pack loads");
+    if (!loaded) return;
+    const tide_texture_ref image = tide_texture_filtered(
+        tide_pack_texture_of(tide_pack_find("resident", TIDE_PACK_TEXTURE)), TIDE_FILTER_TRILINEAR);
+    const tide_vertex vertices[] = {
+        {{0, 0}, {0, 0}, {1, 1, 1, 1}}, {{16, 0}, {1, 0}, {1, 1, 1, 1}},
+        {{16, 16}, {1, 1}, {1, 1, 1, 1}}, {{0, 16}, {0, 1}, {1, 1, 1, 1}},
+    };
+    const int32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_list corners = tide_list_from(vertices, 4, sizeof *vertices);
+    const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
+    const tide_float2 point = {8.5f, 8.5f};
+    uint32_t got;
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, &point, 1, &got);
+    const uint64_t base_memory = tide_platform_gpu_memory();
+    uint64_t resident_memory = 0;
+    for (uint32_t frame = 0; frame < 66; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_set_screen(&list);
+        tide_draw_clear(&list, background);
+        const bool visible = frame == 0 || frame == 2 || frame == 64;
+        if (visible) tide_draw_mesh_texture(&list, corners, triangles, image);
+        const uint64_t before = tide_platform_gpu_written();
+        tide_platform_read_pixels(&list, &point, 1, &got);
+        const uint64_t sent = frame == 0 || frame == 64 ? sizeof pixels : 0;
+        expect(tide_platform_gpu_written() - before == sent, "pack residency uploads only initially and after expiry");
+        expect(near(got, rgba(visible ? red : background), 8), "pack residency preserves visible and hidden pixels");
+        if (frame == 0) resident_memory = tide_platform_gpu_memory();
+        if (frame == 1 || frame == 2 || frame == 62)
+            expect(tide_platform_gpu_memory() == resident_memory, "a hidden pack image keeps its base and mip allocation");
+        if (frame == 63) expect(tide_platform_gpu_memory() == base_memory, "an expired pack image releases its entire allocation");
+    }
+    tide_pack_unload(); // Cached GPU ids contain no pointer into the unloaded pack.
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, &point, 1, &got);
+    expect(tide_platform_gpu_memory() == base_memory, "a changed draw epoch clears idle pack images after unload");
+}
+
+static void compressed_pack_textures(void)
+{
+    const tide_float2 point = {8.5f, 8.5f};
+    uint32_t got;
+    const tide_vertex vertices[] = {
+        {{0, 0}, {0, 0}, {1, 1, 1, 1}}, {{16, 0}, {1, 0}, {1, 1, 1, 1}},
+        {{16, 16}, {1, 1}, {1, 1, 1, 1}}, {{0, 16}, {0, 1}, {1, 1, 1, 1}},
+    };
+    const int32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_list corners = tide_list_from(vertices, 4, sizeof *vertices);
+    const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
+    for (uint32_t alpha = 0; alpha < 2; alpha++) {
+        const uint32_t format = alpha ? TIDE_BLOCKS_BC3 : TIDE_BLOCKS_BC1;
+        uint32_t levels, compressed_bytes;
+        expect(tide_texture_blocks_size(128, 128, format, &levels, &compressed_bytes), "compressed fixture size is valid");
+        uint8_t pixels[128 * 128 * 4], hash[32] = {41};
+        hash[1] = (uint8_t)alpha;
+        for (uint32_t i = 0; i < sizeof pixels; i += 4u) {
+            pixels[i] = alpha ? 128 : 255, pixels[i + 1] = 0, pixels[i + 2] = 0, pixels[i + 3] = alpha ? 128 : 255;
+        }
+        uint8_t *blocks = malloc(compressed_bytes);
+        if (!blocks) abort();
+        // Independent specification-written blocks: constant red with index
+        // zero, including every tail mip. BC3's red is premultiplied already.
+        const uint32_t stride = alpha ? 16u : 8u;
+        for (uint32_t i = 0; i < compressed_bytes; i += stride) {
+            memset(blocks + i, 0, stride);
+            if (alpha) blocks[i] = blocks[i + 1] = 128;
+            blocks[i + (alpha ? 8u : 0u) + 1u] = alpha ? 0x80 : 0xF8;
+        }
+        tide_pack_builder pack = {0};
+        const uint32_t block = tide_pack_texture_blocks(&pack, hash, 128, 128, pixels,
+            (tide_texture_blocks){blocks, format, levels, compressed_bytes});
+        free(blocks);
+        tide_pack_name(&pack, "compressed", TIDE_PACK_TEXTURE, block, 0, 0);
+        size_t size;
+        uint8_t *bytes = tide_pack_end(&pack, &size);
+        const bool loaded = tide_pack_load(bytes, size);
+        free(bytes);
+        expect(loaded, "compressed fixture pack loads");
+        if (!loaded) continue;
+        const tide_pack_entry *entry = tide_pack_find("compressed", TIDE_PACK_TEXTURE);
+        const tide_texture_ref image = tide_pack_texture_of(entry);
+        const tide_texture_blocks captured = tide_pack_texture_blocks_find(image.image.version & TIDE_TEXTURE_NAME);
+        expect(captured.bytes == compressed_bytes && captured.levels == levels && captured.format == format,
+               "the loaded pack exposes a complete validated compressed mip chain");
+        tide_draw_forget(&list);
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_platform_read_pixels(&list, &point, 1, &got);
+        const uint64_t base_memory = tide_platform_gpu_memory();
+        uint64_t first_sent = 0, first_memory = 0;
+        for (uint32_t frame = 0; frame < 5; frame++) {
+            if (frame == 3) tide_draw_forget(&list); // Recreate compressed objects on epoch changes.
+            tide_draw_reset(&list);
+            tide_draw_set_screen(&list);
+            tide_draw_clear(&list, background);
+            if (frame != 1) tide_draw_mesh_texture(&list, corners, triangles,
+                tide_texture_filtered(image, frame >= 2 ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_POINT));
+            const uint64_t before = tide_platform_gpu_written();
+            tide_platform_read_pixels(&list, &point, 1, &got);
+            const uint64_t sent = tide_platform_gpu_written() - before;
+            if (frame == 0) {
+                first_sent = sent;
+                first_memory = tide_platform_gpu_memory();
+                expect(sent == compressed_bytes || sent == sizeof pixels, "BC upload uses blocks or the exact RGBA fallback");
+                expect(first_memory - base_memory == sent, "GPU memory accounts the complete uploaded representation");
+                printf("BC%u fixture: %llu upload bytes, %llu GPU bytes; RGBA base %zu\n", format,
+                       (unsigned long long)sent, (unsigned long long)(first_memory - base_memory), sizeof pixels);
+            } else expect(sent == (frame == 3 ? first_sent : 0), "compressed residency and epoch recreation have exact upload counts");
+            const tide_color color = frame == 1 ? background : alpha
+                ? (tide_color){128.0f / 255.0f + background.r * 127.0f / 255.0f,
+                               background.g * 127.0f / 255.0f, background.b * 127.0f / 255.0f, 1}
+                : red;
+            expect(near(got, rgba(color), 8), "compressed point/mip sampling preserves premultiplied alpha and visible colors");
+        }
+        tide_pack_unload();
+        tide_draw_forget(&list);
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_platform_read_pixels(&list, &point, 1, &got);
+        expect(tide_platform_gpu_memory() == base_memory, "compressed pack allocations clear on epoch changes");
+    }
 }
 
 static void meshes(void)
@@ -3736,6 +3895,8 @@ static int frame(void *user, const float seconds)
     }
     if (lost == 2) {
         many_cached_textures();
+        resident_pack_textures();
+        compressed_pack_textures();
         changed_textures();
         meshes_3d();
         primitives();
@@ -3756,6 +3917,8 @@ static int frame(void *user, const float seconds)
 #endif
     meshes();
     many_cached_textures();
+    resident_pack_textures();
+    compressed_pack_textures();
     changed_textures();
     meshes_3d();
     primitives();

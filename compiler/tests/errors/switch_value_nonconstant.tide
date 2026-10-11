@@ -1,0 +1,3 @@
+// expect: a switch expression's case must be a constant
+scene Main { }
+int F(int n, int label) { return n switch { label => 2, _ => 4 }; }

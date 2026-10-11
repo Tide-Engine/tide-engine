@@ -14,11 +14,11 @@ const forgetSource = source.slice(source.indexOf('    function forgetGPU()'),
     source.indexOf('    // Starts `bytes` in the running program'));
 const usage = { MAP_READ: 1, COPY_DST: 2, COPY_SRC: 4, QUERY_RESOLVE: 8, UNIFORM: 16 };
 
-function device(timing = true) {
+function device(timing = true, compression = false) {
     const maps = [], passes = [], buffers = [], queries = [];
     let ticks = 1000000n, lost;
     const gpu = {
-        features: new Set(timing ? ['timestamp-query'] : []),
+        features: new Set([...(timing ? ['timestamp-query'] : []), ...(compression ? ['texture-compression-bc'] : [])]),
         limits: { maxTextureDimension2D: 8192 },
         lost: new Promise(resolve => { lost = resolve; }),
         duration: 250000n,
@@ -112,24 +112,25 @@ function device(timing = true) {
     return gpu;
 }
 
-async function runtime({ timing = true, rejectFeature = false } = {}) {
-    const first = device(timing), replacement = device(timing);
+async function runtime({ timing = true, rejectFeature = false, compression = false, compressionEnabled = true } = {}) {
+    const first = device(timing, compression), replacement = device(timing, compression);
     const requests = [];
     let adapters = 0;
     const context = {
-        wantedBackend: 'webgpu', config: {}, platform: {}, canvas: { width: 10, height: 10 },
+        wantedBackend: 'webgpu', config: { textureCompression: compressionEnabled }, platform: {}, canvas: { width: 10, height: 10 },
         device: null, gpuFormat: null, GPUBufferUsage: usage, GPUMapMode: { READ: 1 },
         GPUTextureUsage: { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2, COPY_SRC: 4 },
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 },
         navigator: { gpu: {
             async requestAdapter() {
                 const index = adapters++;
-                return { features: new Set(timing ? ['timestamp-query'] : []), isFallbackAdapter: true,
+                return { features: new Set([...(timing ? ['timestamp-query'] : []), ...(compression ? ['texture-compression-bc'] : [])]), isFallbackAdapter: true,
                     async requestDevice(descriptor) {
                         requests.push(descriptor);
                         if (rejectFeature && index === 0) throw new Error('optional feature unavailable');
-                        if (!descriptor) first.features.delete('timestamp-query');
-                        return index <= (rejectFeature ? 1 : 0) ? first : replacement;
+                        const selected = index <= (rejectFeature ? 1 : 0) ? first : replacement;
+                        selected.features = new Set(descriptor?.requiredFeatures || []);
+                        return selected;
                     } };
             },
             getPreferredCanvasFormat() { return 'rgba8unorm'; },
@@ -236,6 +237,24 @@ const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve()
     context.testForget();
     await settle();
     assert.equal(api.gpu_time_read(), -1, 'hot reload cannot receive a readback from the previous program');
+}
+
+{
+    const { first, requests } = await runtime({ compression: true, rejectFeature: true });
+    assert.deepEqual(Array.from(requests[0].requiredFeatures), ['texture-compression-bc', 'timestamp-query']);
+    assert.deepEqual(Array.from(requests[1].requiredFeatures), ['texture-compression-bc'],
+        'timestamp fallback preserves supported texture compression');
+    assert.ok(first.features.has('texture-compression-bc'));
+    assert.ok(!first.features.has('timestamp-query'));
+}
+{
+    const { requests } = await runtime({ timing: false, compression: true });
+    assert.deepEqual(Array.from(requests[0].requiredFeatures), ['texture-compression-bc'],
+        'compression does not depend on timestamp support');
+    const disabled = await runtime({ compression: true, compressionEnabled: false });
+    assert.deepEqual(Array.from(disabled.requests[0].requiredFeatures), ['timestamp-query']);
+    assert.equal(disabled.api.gpu_texture_blocks(128, 128, 1, 8, 0), 0,
+        'disabled compression returns fallback before allocating or reading blocks');
 }
 {
     const { api, first, replacement, context } = await runtime();

@@ -1,5 +1,95 @@
 # The language server and the editors
 
+## Delayed locals and switch expressions, 2026-10-11
+
+The shared checker supplies delayed-local diagnostics and switch-arm types.
+`analysis.c` walks the selector, labels and results for navigation, hover,
+references and selection ranges, keeping the expression's closing brace as
+its end. Formatting treats switch-expression braces as expression braces,
+keeps `};` together and indents comma-terminated arms without continuation
+indentation. The shared TextMate grammar scopes `=>` as a switch-arm operator
+for both editors and docs. `lsp_delayed_locals_and_switch_expressions` checks
+accepted code, local/enum hover, references, formatting and idempotence.
+The grammar suite includes both arrows in one expression and the new e2e
+program. All 219 grammar checks and the production docs build pass; complete
+native/web LSP validation is recorded in `notes/language.md`. No editor-host
+client code changed.
+
+## Enum count and cast guidance, 2026-10-11
+
+Enum-type completion offers `Count()` with its static, compile-time int contract;
+the distinct label preserves a declared member named `Count`. Named-phase and
+switch-case completion still offer members only. Hover gives the declaration count and
+explains that aliases count separately; signature help describes the zero-argument
+call. The retained enum-type receiver supports qualified-name navigation and
+rename. Both editor integrations receive the same shared language-server output.
+Parser diagnostics for `(int)direction` include `int(direction)` as their note.
+
+`lsp_enum_count_and_cast_diagnostic` covers member/method coexistence, hover,
+static-only signature help, qualified navigation/rename, cast diagnostics with parser recovery
+and valid parenthesized subtraction, indexing and postfix increments. This is
+protocol coverage; the full native language-server suite passes after merging
+dev's contextual enum support (215 tests).
+The full-suite regression also pins member-only switch-case completion. Actual
+editor host rendering was not separately exercised.
+
+## Expected enum completion and shorthand, 2026-10-11
+
+Owner-requested assignment completion ranks and preselects the expected enum
+type (`ZombieState` after `zombie.state =`), with qualified members next and the
+ordinary expression list still available. This does not exclude other valid
+enum-valued variables or functions. `completion_enum` uses preceding tokens
+and the surviving scope because incomplete expressions can discard their AST.
+It handles identifier/member assignment targets, typed declarations/defaults,
+returns, comparisons and enum case labels. Leading-dot completion offers only
+the expected enum's members in declaration order; switch cases keep unused
+members first. Ordinary function/method
+arguments and built-in signature arguments are supported when their candidate
+parameter types agree, including named arguments. Candidate completion is
+conservative: it does not re-run overload resolution on the other arguments,
+and more complex assignment targets may lack the token fallback's type.
+
+`walk_expr` skips the implicit type receiver while retaining the member's exact
+source occurrence, so hover/navigation/rename/highlighting use the same enum
+symbol without inventing a source reference to its type. Formatting spaces
+leading dots after assignments, returns and labels while keeping member-access
+dots tight. The shared TextMate grammar gives shorthand an enum-value scope;
+ordinary member access and leading-point numeric literals keep their scopes.
+The Editors page documents completion, and language behavior is recorded in
+`notes/language.md` and the spec.
+
+`lsp_enum_assignment_completion_and_shorthand` checks ranking, single
+preselection, partial members, incomplete returns/initializers/comparisons/cases,
+positional/named/built-in arguments (including List.Add and Texture.Sample),
+unused-first case ordering, malformed input, unchanged non-enum completion, valid built-in
+checking, member hover/rename, and formatting idempotence. The shared grammar
+test covers uppercase/lowercase shorthand and numeric/member regressions.
+These are protocol/grammar tests; no interactive editor-host test was added.
+Final merged validation: all 2,085 native and 2,057 web debug tests pass,
+including the complete tidels suites; docs build and 217 grammar checks pass.
+
+## Sample playback hints, 2026-10-11
+
+`skinned_arguments` now retains the written arguments before appending an
+omitted `Playback.Clamp`, using the existing `expr.settled`/`written` contract.
+Previously positional and source-ordered named Sample calls exposed the
+synthetic integer default to tidels as a literal at the method name, producing
+`playback:` before `Sample`. Both Animation.Sample and Pose.Sample now omit
+that hint while explicit literals keep their parameter labels and locations.
+Reordered named arguments retain their existing source list and evaluation order.
+No runtime API, default value or language semantics changed.
+
+`lsp_skinned_sample_hints_only_written_arguments` reproduced the extra playback
+labels before the fix and passes afterward. It covers variable/literal seconds,
+omitted and explicit default playback, source-ordered and reordered named
+arguments, exact hint positions, repeated responses and subsequent Sample hover.
+The Editors page documents that parameter labels describe written literals only.
+Validation: full Windows debug native and web suites pass 2,079 and 2,050
+CTest checks, including native GPU and WebGL/WebGPU coverage, with Node 24.16.
+The language-server suite passes all 213 checks; the docs production build passes
+with the existing allowed missing-example placeholders. The server is rebuilt
+at `build/tools/tidels.exe`; editor rendering was not separately exercised.
+
 ## Editor host follow-up, 2026-10-11
 
 Closed the host/process coverage gaps from the review below with repeatable

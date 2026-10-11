@@ -1,0 +1,169 @@
+scene Main { }
+
+enum State { Run, Jump, Idle }
+const int PICK = 1 switch { 0 => 100, 1 => 7, _ => 200 };
+struct Pair { int a; int b; }
+singleton Seen
+{
+    int selected;
+    int calls;
+    int order;
+    int delayed;
+    int loops;
+    int asyncValue;
+    int asyncCalls;
+    float widened;
+    List<int> items;
+    string text;
+    Pair pair;
+    int extras = PICK;
+}
+
+int Mark(mut int calls, int digit)
+{
+    calls = calls * 10 + digit;
+    return digit;
+}
+
+void Fill(out int value) { value = 9; }
+bool Filled(out int value) { value = 6; return true; }
+int CountBefore(List<int> items, int extra) { return items.count + extra; }
+int Grow(mut Seen seen) { seen.items.Add(4); return 0; }
+
+int ArmLocals(int choice)
+{
+    return choice switch
+    {
+        0 => Filled(out var value) ? value : 0,
+        _ => Filled(out var value) ? value + 1 : 0,
+    };
+}
+
+int Later(int choice)
+{
+    int value;
+    switch (choice)
+    {
+        case 0: value = 10; break;
+        case 1: value = 20; break;
+        default: return 30;
+    }
+    return value;
+}
+
+int Branch(bool yes)
+{
+    int value;
+    if (yes) value = 3;
+    else value = 4;
+    return value;
+}
+
+int Once()
+{
+    int value;
+    while (true)
+    {
+        value = 5;
+        break;
+    }
+    return value;
+}
+
+async int WaitFor(int value, mut Seen seen)
+{
+    seen.asyncCalls += 1;
+    await Wait.Ticks(1);
+    return value;
+}
+
+async void Work(mut Seen seen)
+{
+    int value;
+    await Wait.Ticks(1);
+    value = seen.selected switch
+    {
+        2 => await WaitFor(40, seen),
+        _ => await WaitFor(99, seen),
+    };
+    await Wait.Ticks(1);
+    seen.asyncValue = value;
+}
+
+event(Spawned) Start(mut Seen seen, with Main)
+{
+    seen.selected = State.Jump switch
+    {
+        State.Run => Mark(seen.calls, 1),
+        State.Jump => Mark(seen.calls, 2),
+        State.Idle => Mark(seen.calls, 3),
+        _ => Mark(seen.calls, 4),
+    };
+    // The selector and the chosen arm run once, in order amongst other operands.
+    seen.order = Mark(seen.calls, 5) + Mark(seen.calls, 6) switch
+    {
+        6 => Mark(seen.calls, 7),
+        _ => Mark(seen.calls, 8),
+    } + Mark(seen.calls, 9);
+    seen.delayed = Later(0) + Later(1) + Later(2) + Branch(true) + Branch(false) + Once();
+    int fromOut;
+    Fill(out fromOut);
+    seen.delayed += fromOut;
+    mut Pair fields;
+    fields.a = 7;
+    fields.b = 8;
+    seen.pair = fields;
+    mut int changing;
+    changing = 1;
+    changing += 2;
+    seen.delayed += changing;
+    for (var i = 0; i < 3; i++)
+    {
+        int each;
+        each = i;
+        seen.loops += each;
+    }
+    var skipped = false && (0 switch { 0 => Mark(seen.calls, 1) > 0, _ => false });
+    seen.loops += skipped ? 100 : 0;
+    var nested = false ? (0 switch { 0 => Mark(seen.calls, 1), _ => 0 })
+                      : (1 switch { 1 => (2 switch { 2 => 11, _ => 0 }), _ => 0 });
+    seen.loops += nested;
+    seen.widened = 1 switch { 0 => 1, _ => 2.5 };
+    seen.items = 0 switch { 0 => [1, 2, 3], _ => default };
+    seen.text = 'x' switch { 'y' => "no", 'x' => "yes", _ => default };
+    var pair = 1 switch { 0 => Pair { a = 1 }, _ => Pair { a = 3, b = 4 } };
+    seen.pair.a += pair.a;
+    seen.pair.b += pair.b;
+    Animation current;
+    switch (seen.selected)
+    {
+        case 2: current = default; break;
+        default: current = default; break;
+    }
+    seen.extras += int(current.duration);
+    seen.extras += ArmLocals(0) + ArmLocals(1);
+    long wide = -9223372036854775807L - 1;
+    seen.extras += wide switch { -9223372036854775807L - 1 => 10, _ => 100 };
+    byte small = 255;
+    seen.extras += small switch { 255 => 20, _ => 100 };
+    int? maybe = seen.selected switch { 2 => 30, _ => null };
+    seen.extras += maybe ?? 100;
+    float allDefaults = seen.selected switch { 2 => default, _ => default };
+    seen.extras += int(allDefaults);
+    seen.extras += State(42) switch { State.Run => 100, State.Jump => 100, State.Idle => 100, _ => 1 };
+    List<int> held;
+    held = seen.selected switch { 2 => seen.items, _ => default };
+    seen.extras += CountBefore(seen.selected switch { 2 => seen.items, _ => default }, Grow(seen));
+    seen.extras += held.count;
+    State typedState = seen.selected switch { 2 => .Jump, _ => .Idle };
+    var inferredState = seen.selected switch { 2 => .Run, _ => State.Idle };
+    seen.extras += typedState == State.Jump && inferredState == State.Run ? 1 : 100;
+    seen.extras += int(typedState switch { .Jump => State.Run, _ => .Idle });
+    seen.items.Sort(a, b)
+    {
+        int difference;
+        difference = a - b;
+        return difference < 0;
+    }
+    Work(seen);
+}

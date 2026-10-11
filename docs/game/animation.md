@@ -138,11 +138,11 @@ Missing or ambiguous selections are build errors. An `Animation` asset takes one
 
 `pose.Sample` binds the clip to the pose's skeleton. Use a pose from the character when you also need its bone references for edits or sockets. You can also sample the source clip with `movement.run.Sample(seconds)` and pass that pose directly to `Draw.SkinnedMesh`; the draw binds it to the character.
 
-Binding matches nodes by unique exact source names, matching hierarchy and authored local transforms; source node order can differ. Sampling into a target pose requires the selected clip's animated nodes and their ancestors. Drawing a source pose requires all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated unanimated nodes can differ, and unanimated target nodes keep their rest transforms.
+Binding matches nodes by unique exact source names and matching parent chains; source node order and default poses can differ. This supports animation-only FBX exports whose defaults are the starting pose of a take. Required source local transforms are copied directly, including the defaults of unanimated ancestors. Sampling into a target pose requires the selected clip's animated nodes and their ancestors. Drawing a source pose requires all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated target nodes keep their own rest transforms.
 
 An extra unnamed identity scene root, as added by FBX importing, is ignored while its pose and relevant animation channels stay at rest. Animated wrappers or deeper unnamed ancestors cannot be bound this way.
 
-This supports separate files exported from the same rig; it does not retarget animation between rigs with different proportions or rest transforms. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw.
+This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Missing or ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
 
 ## Sample, blend and edit
 

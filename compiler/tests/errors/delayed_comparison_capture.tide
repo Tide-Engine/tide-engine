@@ -1,0 +1,11 @@
+// expect: a comparison runs again and again as the list sorts, so it changes nothing outside it
+scene Main { }
+void Sort(mut List<int> items)
+{
+    int value;
+    items.Sort(a, b)
+    {
+        value = a - b;
+        return value < 0;
+    }
+}
