@@ -18,6 +18,11 @@
 
 enum { MESH_LOD_MOST = 7 }; // Levels after the full mesh, at the most
 
+// The fewest triangles a level is made with, for a game's meshes: a level only pays by the triangles it takes
+// off, against what picking one costs each instance and a draw call more, so a mesh of under twice as many has
+// no levels at all, and draws as one with no [LOD] does. Measured on one desktop GPU (notes/assets-and-files.md).
+enum { MESH_LOD_TRIANGLES_LEAST = 500 };
+
 // What's weighed of a mesh. `position` is 3 floats a vertex; the others are
 // NULL where there's nothing to weigh.
 typedef struct mesh_lod_source {
@@ -33,6 +38,7 @@ typedef struct mesh_lod_source {
     // distance, or NULL: a skinned mesh's is how differently the two follow their bones
     float (*apart)(void *user, uint32_t from, uint32_t to);
     void *user;
+    uint32_t triangles_least; // No level has fewer triangles than this: MESH_LOD_TRIANGLES_LEAST for a game's meshes
 } mesh_lod_source;
 
 typedef struct mesh_lod {

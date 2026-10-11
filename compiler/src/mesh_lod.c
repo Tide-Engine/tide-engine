@@ -639,6 +639,7 @@ void mesh_lod_make(const mesh_lod_source *s, mesh_lod *out)
     uint32_t before = m.left;
     while (out->levels < MESH_LOD_MOST && before >= 2u) {
         const uint32_t aim = before / 2u;
+        if (aim < s->triangles_least) break; // Too few to be worth a level
         for (;;) {
             offer_all(&m);
             uint32_t done = 0;

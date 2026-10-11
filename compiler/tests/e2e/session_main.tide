@@ -12,6 +12,32 @@ local singleton Menu
 {
     string title;
     int frames;
+    int hosted;
+}
+
+// A function asks of the session as the view that calls it could, and so do
+// the functions that call it, and a struct's method
+void Open(int port)
+{
+    Session.Open(port);
+}
+
+void Host(mut Menu menu)
+{
+    menu.hosted += 1;
+    Open(7001);
+}
+
+struct Door
+{
+    string code;
+
+    void Enter() { Session.Join(code); }
+}
+
+void Share(string text)
+{
+    Clipboard.Copy(text);
 }
 
 view Show(mut Menu menu)
@@ -20,6 +46,20 @@ view Show(mut Menu menu)
     menu.frames += 1;
     if (menu.frames == 1) Session.Start();
     if (menu.frames == 2) Session.Start(Main { size = 40 });
+    if (menu.frames == 3) Host(menu);
+    if (menu.frames == 4) Door { code = "K7QF2M" }.Enter();
+    if (menu.frames == 5) Share("K7QF2M");
+}
+
+// A local handler's function too
+void Again()
+{
+    Session.Start();
+}
+
+local event(Disconnected gone) Back()
+{
+    Again();
 }
 
 // The match reads it too: it's the build's, the same on every machine

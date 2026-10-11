@@ -116,30 +116,33 @@ static bool level_holds(const tide_draw_mesh_data *whole, const uint32_t level)
 TIDE_TEST(lod_assets_have_levels_beside_the_full_mesh)
 {
     start();
-    // 960 triangles of 559 corners (the file's 561, less the two no triangle names), with or without levels
-    TIDE_CHECK(world.Seen.corners == 559 && world.Seen.indices == 960 * 3 && world.Seen.wholeIndices == 960 * 3);
-    TIDE_CHECK(world.Seen.armIndices == 24 * 16 * 6);
+    // 9,024 triangles of 4,751 corners (the file's 4,753, less the two no triangle names), with or without levels
+    TIDE_CHECK(world.Seen.corners == 4751 && world.Seen.indices == 9024 * 3 && world.Seen.wholeIndices == 9024 * 3);
+    TIDE_CHECK(world.Seen.armIndices == 32 * 32 * 6);
     frame(0);
     tide_draw_prepare(&draw, NULL);
     run runs[16];
     const uint32_t count = runs_of(runs, 16);
     TIDE_REQUIRE(count >= 4);
     const tide_draw_mesh_data *ball = whole_of(&runs[0]);
-    TIDE_REQUIRE(ball->levels >= 4 && ball->index_count == 960 * 3 && ball->vertex_count == 559);
+    // Four levels: 4,512, 2,256, 1,128 and 564 triangles or so, and none of the 282 after them, which is under 500
+    TIDE_REQUIRE(ball->levels == 4 && ball->index_count == 9024 * 3 && ball->vertex_count == 4751);
+    TIDE_CHECK(ball->level_count[3] >= 500 * 3 && ball->level_count[3] < 600 * 3);
     for (uint32_t level = 1; level <= ball->levels; level++) TIDE_CHECK(level_holds(ball, level));
     TIDE_CHECK(fabsf(ball->radius - 1.0f) < 1e-3f && fabsf(ball->center[0]) < 1e-3f && fabsf(ball->center[1]) < 1e-3f);
     TIDE_CHECK(ball->level_error[0] > 0.0f && ball->level_error[ball->levels - 1u] < 0.5f);
-    // The same file with no [LOD], and the two triangles that are marked: no levels, and one run each, whole
+    // The same file with no [LOD], and the two that are marked and too simple (two triangles, and 960, which
+    // is under twice the fewest a level has): no levels, and one run each, whole
     uint32_t plain = 0;
     for (uint32_t i = 0; i < count; i++) {
         const tide_draw_mesh_data *m = mesh_of(&runs[i]);
         if (m->base == 0 && m->levels == 0) {
             plain++;
-            TIDE_CHECK(m->index_count == 960 * 3 || m->index_count == 6);
+            TIDE_CHECK(m->index_count == 9024 * 3 || m->index_count == 6 || m->index_count == 960 * 3);
             TIDE_CHECK(m != ball && runs[i].count == 1);
         }
     }
-    TIDE_CHECK(plain == 2);
+    TIDE_CHECK(plain == 3);
     finish();
 }
 
@@ -155,18 +158,19 @@ TIDE_TEST(lod_draws_pick_by_how_far_they_are)
     const uint32_t count = runs_of(runs, 16);
     TIDE_REQUIRE(count >= 4);
     const tide_draw_mesh_data *ball = whole_of(&runs[0]);
-    const uint32_t near = level_at(ball, 3.0f, window_scale), mid = level_at(ball, 40.0f, window_scale);
+    const uint32_t near = level_at(ball, 2.0f, window_scale), mid = level_at(ball, 6.0f, window_scale);
     const uint32_t far = level_at(ball, 900.0f, window_scale);
     TIDE_REQUIRE(near == 0 && mid > near && far > mid && far == ball->levels);
-    // Three runs of it, a level each, then the two meshes with no levels, which come between: the three far
+    // Three runs of it, a level each, then the three meshes with no levels, which come between: the three far
     // draws after them (by its lists, from a list and by its key) are the far level's again, one run
-    TIDE_REQUIRE(count == 6);
+    TIDE_REQUIRE(count == 7);
     TIDE_CHECK(mesh_of(&runs[0]) == ball && runs[0].count == 1);
     TIDE_CHECK(whole_of(&runs[1]) == ball && mesh_of(&runs[1])->level == mid && runs[1].count == 1);
     TIDE_CHECK(whole_of(&runs[2]) == ball && mesh_of(&runs[2])->level == far && runs[2].count == 1);
     TIDE_CHECK(mesh_of(&runs[2])->index_count == ball->level_count[far - 1u] && mesh_of(&runs[2])->vertices == NULL);
-    TIDE_CHECK(mesh_of(&runs[3])->levels == 0 && mesh_of(&runs[4])->levels == 0);
-    TIDE_CHECK(runs[5].mesh == runs[2].mesh && runs[5].count == 3);
+    TIDE_CHECK(mesh_of(&runs[3])->levels == 0 && mesh_of(&runs[4])->levels == 0 && mesh_of(&runs[5])->levels == 0);
+    TIDE_CHECK(mesh_of(&runs[5])->base == 0 && mesh_of(&runs[5])->index_count == 960 * 3); // The light one, whole
+    TIDE_CHECK(runs[6].mesh == runs[2].mesh && runs[6].count == 3);
     finish();
 }
 
@@ -179,10 +183,10 @@ TIDE_TEST(lod_instances_each_pick_their_own)
     run runs[8];
     TIDE_REQUIRE(runs_of(runs, 8) == 3);
     const tide_draw_mesh_data *ball = whole_of(&runs[0]);
-    const uint32_t mid = level_at(ball, 40.0f, window_scale);
+    const uint32_t mid = level_at(ball, 6.0f, window_scale);
     TIDE_CHECK(mesh_of(&runs[0]) == ball && runs[0].count == 2);
-    TIDE_CHECK(draw.matrices[runs[0].first].c3.z == 3.0f && draw.matrices[runs[0].first + 1u].c3.z == 4.0f);
-    TIDE_CHECK(mesh_of(&runs[1])->level == mid && runs[1].count == 1 && draw.matrices[runs[1].first].c3.z == 40.0f);
+    TIDE_CHECK(draw.matrices[runs[0].first].c3.z == 2.0f && draw.matrices[runs[0].first + 1u].c3.z == 2.5f);
+    TIDE_CHECK(mesh_of(&runs[1])->level == mid && runs[1].count == 1 && draw.matrices[runs[1].first].c3.z == 6.0f);
     TIDE_CHECK(mesh_of(&runs[2])->level == ball->levels && runs[2].count == 2);
     TIDE_CHECK(draw.matrices[runs[2].first].c3.z == 900.0f && draw.matrices[runs[2].first + 1u].c3.z == 950.0f);
     finish();
@@ -200,7 +204,7 @@ TIDE_TEST(lod_draws_through_a_frag_pick_too)
     TIDE_REQUIRE(count == 3 && runs[0].shaded && runs[1].shaded && runs[2].shaded);
     const tide_draw_mesh_data *lit = whole_of(&runs[0]);
     TIDE_REQUIRE(lit->space == TIDE_MESH_BYTES && lit->levels >= 4 && lit->vertex_size == sizeof(Corner));
-    const uint32_t mid = level_at(lit, 40.0f, window_scale);
+    const uint32_t mid = level_at(lit, 6.0f, window_scale);
     // The single draws and the instances are the same draw to the list: near ones 1 + 2, between 1, far 1 + 2
     TIDE_CHECK(mesh_of(&runs[0]) == lit && runs[0].count == 3);
     TIDE_CHECK(mesh_of(&runs[1])->level == mid && whole_of(&runs[1]) == lit && runs[1].count == 1);
@@ -226,7 +230,7 @@ TIDE_TEST(lod_levels_are_named_by_draw_lod)
     TIDE_CHECK(mesh_of(&runs[3]) == ball && runs[3].count == 1);                          // LOD(): picked, near
     // Back out of both blocks, SetLOD(1) is what's set: the instances are one run, as the list has them
     TIDE_CHECK(mesh_of(&runs[4])->level == 1 && runs[4].count == 5);
-    TIDE_CHECK(draw.matrices[runs[4].first].c3.z == 900.0f && draw.matrices[runs[4].first + 4u].c3.z == 4.0f);
+    TIDE_CHECK(draw.matrices[runs[4].first].c3.z == 900.0f && draw.matrices[runs[4].first + 4u].c3.z == 2.5f);
     TIDE_CHECK(mesh_of(&runs[5]) == ball && runs[5].count == 1); // SetLOD(): picked again
     finish();
 }
@@ -242,9 +246,9 @@ TIDE_TEST(lod_targets_pick_by_their_own_camera_or_the_one_they_are_told)
     const uint32_t count = runs_of(runs, 12);
     TIDE_REQUIRE(count >= 5);
     const tide_draw_mesh_data *ball = whole_of(&runs[0]);
-    const uint32_t own_near = level_at(ball, 5.0f, target_scale), own_mid = level_at(ball, 40.0f, target_scale);
-    const uint32_t window_mid = level_at(ball, 40.0f, window_scale);
-    TIDE_REQUIRE(own_near > 0 && own_mid > window_mid && window_mid > 0 && level_at(ball, 5.0f, window_scale) == 0);
+    const uint32_t own_near = level_at(ball, 2.0f, target_scale), own_mid = level_at(ball, 6.0f, target_scale);
+    const uint32_t window_mid = level_at(ball, 6.0f, window_scale);
+    TIDE_REQUIRE(own_near > 0 && own_mid > window_mid && window_mid > 0 && level_at(ball, 2.0f, window_scale) == 0);
     for (uint32_t i = 0; i < count; i++) TIDE_CHECK(runs[i].target != 0 && whole_of(&runs[i]) == ball);
     // In the order they were drawn: its own pick, the window's camera's (the full mesh, near), the window's
     // camera's by its matrices, its own again, level 2 by name, and its own
@@ -272,10 +276,10 @@ TIDE_TEST(lod_skinned_meshes_have_levels)
     const uint32_t count = runs_of(runs, 8);
     TIDE_REQUIRE(count == 2 && runs[0].shaded && runs[1].shaded);
     const tide_draw_mesh_data *arm = whole_of(&runs[0]);
-    TIDE_REQUIRE(arm->levels >= 2 && arm->index_count == 24 * 16 * 6 && arm->vertex_count == 25 * 16);
+    TIDE_REQUIRE(arm->levels == 2 && arm->index_count == 32 * 32 * 6 && arm->vertex_count == 33 * 32);
     for (uint32_t level = 1; level <= arm->levels; level++) TIDE_CHECK(level_holds(arm, level));
     // Near, it's whichever level is within a pixel there; far, the last
-    TIDE_CHECK(mesh_of(&runs[0])->level == level_at(arm, 6.0f, window_scale));
+    TIDE_CHECK(mesh_of(&runs[0])->level == 0 && level_at(arm, 2.2f, window_scale) == 0);
     TIDE_CHECK(whole_of(&runs[1]) == arm && mesh_of(&runs[1])->level == arm->levels);
     TIDE_CHECK(mesh_of(&runs[1])->vertex_count == arm->vertex_count && mesh_of(&runs[1])->bytes == NULL);
     // The tube is straight, so its rings go freely where they all follow one bone: the first level is hardly off

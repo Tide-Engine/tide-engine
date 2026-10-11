@@ -70,12 +70,11 @@ function bounds(positions) {
     return { min, max };
 }
 
-// ball.glb: a ball of radius 1 about the origin, 16 rings of 32, its corners
+// A ball of radius 1 about the origin, `rings` rings of `around`, its corners
 // shared and their normals their own way out, with uvs that have a seam down
-// one side: 960 triangles. glTF's fronts go counterclockwise, seen from
+// one side. glTF's fronts go counterclockwise, seen from
 // outside.
-{
-    const rings = 16, around = 32;
+function ball(name, rings, around) {
     const positions = [], normals = [], uvs = [], indices = [];
     for (let r = 0; r <= rings; r++) {
         for (let a = 0; a <= around; a++) {
@@ -111,15 +110,19 @@ function bounds(positions) {
     };
     const bin = b.bytes();
     json.buffers[0].byteLength = bin.length;
-    fs.writeFileSync(path.join(out, 'ball.glb'), glb(json, bin));
+    fs.writeFileSync(path.join(out, name), glb(json, bin));
 }
 
-// arm.glb: a tube along y from 0 to 4, radius 0.5, 24 rings of 16, skinned to
+// ball.glb: 9,024 triangles, enough for four levels of 500 or more. light.glb: 960, which is too few for one.
+ball('ball.glb', 48, 96);
+ball('light.glb', 16, 32);
+
+// arm.glb: a tube along y from 0 to 4, radius 0.5, 32 rings of 32, skinned to
 // two bones: the lower one's at the origin and the upper one's at y = 2. A
 // ring follows the lower bone below y = 1.5, the upper one above y = 2.5, and
-// each a share between. 768 triangles, with no clip: it's drawn at rest.
+// each a share between. 2,048 triangles, with no clip: it's drawn at rest.
 {
-    const rings = 24, around = 16, length = 4, radius = 0.5;
+    const rings = 32, around = 32, length = 4, radius = 0.5;
     const positions = [], normals = [], joints = [], weights = [], indices = [];
     for (let r = 0; r <= rings; r++) {
         const y = length * r / rings;

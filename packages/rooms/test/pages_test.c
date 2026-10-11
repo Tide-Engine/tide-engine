@@ -88,11 +88,9 @@ TIDE_TEST(rooms_a_game_draws_pages_of_its_own)
     frame();
     frame();
     TIDE_CHECK(local.Look.shown == 2 && gui.modal == 0);
-    // What a view after the package's asks for is asked the frame after
+    // Its Friends button hosts from there too: a view of the game's asks as the package's page does
     press(60.0f, 80.0f);
-    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Room && asked() == TIDE_REQUEST_NONE);
-    frame();
-    TIDE_CHECK(asked() == TIDE_REQUEST_OPEN);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Room && asked() == TIDE_REQUEST_OPEN);
     frame();
     TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
 
