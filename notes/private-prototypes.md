@@ -78,9 +78,9 @@ its `<id>_page` target and its `private_games` block, plus the id in
   showing part of a maker standing beside the box,
   permits the partner to leave the view, and enters a facing doorway only after the
   automatic room push is blocked. Shift and the touch push toggle are removed.
-  Spatial constraints replace switch locks. The current atmosphere uses worn
-  institutional tiles, fluorescent accents and ventilation ambience, without
-  threats or jumpscares; the catalog description and thumbnail follow it.
+  Spatial constraints replace switch locks. The current look (2026-10-12) is a factory where the
+  players are two test dummies, drawn in a PSX style, with ventilation ambience
+  and no threats or jumpscares; the catalog description and thumbnail follow it.
 
 - Underfoot (`underfoot`): `prototypes/underfoot/`, a puzzle for one or two
   that the owner asked for on 2026-10-11 as a mashup of puzzle games, with

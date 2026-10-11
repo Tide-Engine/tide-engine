@@ -295,7 +295,7 @@ string LevelName(int level)
 }
 string LevelLesson(int level)
 {
-    if (level == 0) return "Deliver the parcel beyond both boxes. Find a player goal for each maker.";
+    if (level == 0) return "Deliver the parcel beyond both boxes. Find a player goal for each dummy.";
     if (level == 1) return "Move the home onto its outline and deliver its parcel into the containing room.";
     if (level == 2) return "Dock the home and deliver its parcel inside the other box.";
     if (level == 3) return "Leave the parcel on the left target and the home on the right outline.";
@@ -320,14 +320,14 @@ string LevelHint(int level, int tier)
     }
     if (level == 1)
     {
-        if (detail == 0) return "After the box moves, will the maker outside still have a way back in?";
+        if (detail == 0) return "After the box moves, will the dummy outside still have a way back in?";
         if (detail == 1) return "Someone must stay inside the left box while the other reaches its south side and pushes it north.";
-        return "Keep the parcel's maker inside. Leave by the north door, circle around the left side, and push the occupied box north. Its east doorway now reaches the delivery route.";
+        return "Keep the parcel's dummy inside. Leave by the north door, circle around the left side, and push the occupied box north. Its east doorway now reaches the delivery route.";
     }
     if (level == 2)
     {
         if (detail == 0) return "Who can reach the outside pushing stance? Who must stay with the parcel?";
-        if (detail == 1) return "Empty the tall receiving room of its maker first. Move the occupied home north to align its east opening with the receiver.";
+        if (detail == 1) return "Empty the tall receiving room of its dummy first. Move the occupied home north to align its east opening with the receiver.";
         return "Amber: north twice, west four times, south twice, east, north. Teal: east six times delivers the parcel, then west twice returns. Amber finishes west, south.";
     }
     if (level == 3)
@@ -339,7 +339,7 @@ string LevelHint(int level, int tier)
     if (level == 4)
     {
         if (detail == 0) return "How can two boxes pass in a corridor that is only one cell wide at the top?";
-        if (detail == 1) return "Deliver before trading places. Use the bay at the top for the long room, and keep a maker above it to push it back out.";
+        if (detail == 1) return "Deliver before trading places. Use the bay at the top for the long room, and keep a dummy above it to push it back out.";
         return "Teal leaves east and brings the long room left beside the home. Amber posts the parcel east, then Teal steps behind the long room to stop its push while Amber enters. Deliver inside; park the long room north at the middle bay. Teal moves the home right, Amber releases the parked room, then Teal leaves the home west to put the long room on its left outline.";
     }
     if (level == 5)
