@@ -279,31 +279,24 @@ frag BlockLook(Corner corner, out Color color, Brick brick, Instance instance, L
     color = Lit(paint, normal, this.world, light, sun, 0.25);
 }
 
-// The floor under every map: black, with a grid's lines, which thin out
-// with distance and are gone in the haze. Where a map is over it, the map's
-// shadow is on it.
-frag FloorLook(Corner corner, out Color color, Light light, Shadow shadow)
-{
-    float2 at = float2(this.world.x, this.world.z);
-    float far = Math.Length(this.world - light.eye);
-    // A line is as wide as a pixel is there, so it never breaks up
-    float wide = 0.02 + far * 0.0016;
-    float2 cell = at / 2;
-    float2 near = float2(Math.Abs(Math.Frac(cell.x + 0.5) - 0.5), Math.Abs(Math.Frac(cell.y + 0.5) - 0.5)) * 2;
-    float line = 1 - Math.SmoothStep(wide * 0.5, wide * 1.5, Math.Min(near.x, near.y));
-    float2 big = at / 10;
-    float2 nearBig = float2(Math.Abs(Math.Frac(big.x + 0.5) - 0.5), Math.Abs(Math.Frac(big.y + 0.5) - 0.5)) * 10;
-    float thick = 1 - Math.SmoothStep(wide, wide * 2.5, Math.Min(nearBig.x, nearBig.y));
-    float sun = Sunlight(shadow.depth, this.world, float3(0, 1, 0), shadow.toLamp, shadow.step);
-    float seen = line * Math.Saturate(1 - far / 110) * 0.3 + thick * Math.Saturate(1 - far / 320) * 0.34;
-    float3 ground = float3(0.022, 0.024, 0.03) * (0.55 + 0.45 * sun);
-    float3 lines = float3(light.above.r, light.above.g, light.above.b) * 0.55 + float3(0.25);
-    mut float3 paint = ground + (lines - ground) * Math.Saturate(seen);
-    float hazy = 1 - Math.Exp(-far / 240);
-    paint = paint + (float3(light.haze.r, light.haze.g, light.haze.b) - paint) * hazy;
-    color = Color(paint.x, paint.y, paint.z, 1);
-}
+// The floor under every map is nothing but a grid: Grid.mat's lines, black,
+// two centimeters wide and a meter apart, with the sky through everything
+// between them, and gone 20 meters from the eye (its _Fade_Distance). So a
+// map floats in the sky, and the floor that hurts shows where a player is
+// near it. A line is as soft as a pixel is wide there, as the Unity shader's
+// is by its derivatives.
+const float GRID_FADE = 20;
+const float GRID_LINE = 0.01;    // Half a line's width
 
+frag FloorLook(Corner corner, out Color color, Light light)
+{
+    float far = Math.Length(this.world - light.eye);
+    float2 cell = float2(Math.Abs(Math.Frac(this.world.x + 0.5) - 0.5), Math.Abs(Math.Frac(this.world.z + 0.5) - 0.5));
+    float soft = far * 0.003 + 0.0005;
+    float line = Math.SmoothStep(-soft, 0, GRID_LINE - Math.Min(cell.x, cell.y));
+    float fade = 1 - Math.SmoothStep(0, GRID_FADE, far);
+    color = Color(0, 0, 0, line * fade);
+}
 // The sky, on a ball around the eye. Its faces are small (tools/make_skies.py
 // says why), and a pixel of one is five of the screen's: four looks half a
 // pixel of the face apart round what would show as squares into cloud.
@@ -830,9 +823,6 @@ view World(Scenery scenery, Models models, Look look, Light light, mut Post post
     {
         post.scene.Mesh(models.ball, models.ballFaces, float4x4.TRS(light.eye, quaternion.identity, float3(50)), SkyLook);
     }
-    post.scene.Mesh(models.plate, models.plateFaces,
-                    float4x4.TRS(float3(light.eye.x, FLOOR_Y, light.eye.z), quaternion.identity, float3(4000, 1, 4000)), FloorLook);
-
     post.scene.Instanced(blockPlane, scenery.planes, BlockLook);
     post.scene.Instanced(blockPlaneSquare, scenery.squares, BlockLook);
     post.scene.Instanced(blockCube, scenery.cubes, BlockLook);
@@ -842,6 +832,13 @@ view World(Scenery scenery, Models models, Look look, Light light, mut Post post
     post.scene.Instanced(blockBeamShort, scenery.shorts, BlockLook);
     post.scene.Instanced(blockTrapezoid, scenery.trapezoids, BlockLook);
     post.scene.Instanced(models.cube, models.cubeFaces, scenery.boxes, BlockLook);
+
+    // The grid last, over the sky and the map: it's see-through, and hides nothing
+    post.scene.Depth(Depth.Read)
+    {
+        post.scene.Mesh(models.plate, models.plateFaces,
+                        float4x4.TRS(float3(light.eye.x, FLOOR_Y, light.eye.z), quaternion.identity, float3(2 * GRID_FADE + 2, 1, 2 * GRID_FADE + 2)), FloorLook);
+    }
 }
 
 // The picture goes to the window: its bright parts blurred across and down,
