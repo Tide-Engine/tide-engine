@@ -10,7 +10,7 @@ static tide_gui gui;
 static void frame(void)
 {
     tide_draw_reset(&draw);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui); // No match
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui); // No match
 }
 
 TIDE_TEST(scenes_local_main_opens_a_menu)

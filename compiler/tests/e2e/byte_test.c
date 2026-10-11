@@ -14,7 +14,7 @@ TIDE_TEST(byte_integer_arguments_run_in_local_code)
     tide_draw_list draw = {0};
     tide_gui gui = {0};
     tide_local_init(&local);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.IntegerResults.sent && local.IntegerResults.handled == 2);
     tide_session_request request;
     tide_start start;

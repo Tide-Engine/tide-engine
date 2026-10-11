@@ -20,6 +20,13 @@ singleton Ledger
     int actionFirst;
     int actionAfter;
     int callbacks;
+
+    int BeforeMark(mut Ledger after)
+    {
+        Mark(after);
+        after.beforeFirst = marks.count == 0 ? 0 : marks[0];
+        return marks.count;
+    }
 }
 local singleton Display
 {
@@ -30,6 +37,9 @@ local singleton Display
     int paint;
     int methodCalls;
     bool server;
+
+    int Frames() { return frames; }
+    mut void Advance() { frames += 1; }
 }
 
 int Points(Duel duel) { return duel.points; }
@@ -91,7 +101,7 @@ struct Helper
 input Choice
 {
     int frames;
-    Sample(Display display) { frames = FramesThrough(display); }
+    Sample(Display display) { frames = display.Frames(); }
 }
 
 scene Main { }
@@ -111,7 +121,7 @@ system Advance(mut Duel duel, mut Trace trace, Time time)
 }
 system Record(mut Ledger ledger)
 {
-    ledger.before = BeforeMarking(ledger, ledger);
+    ledger.before = ledger.BeforeMark(ledger);
     MarkWithAction(ledger, ledger) { ledger.actionAfter = ledger.marks.count; }
     SnapshotDuringAction(ledger)
     {

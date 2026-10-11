@@ -49,7 +49,7 @@ TIDE_TEST(fbx_assets_static_skinned_collections_contracts_and_match_sampling)
     tide_draw_list draw = {0};
     tide_gui gui = {0};
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1, NULL, NULL, 1.0f, &local, &draw, &gui);
     // The built-in static mesh records a plain mesh command; skinning uses
     // one shaded run with its captured palette and influence textures.
     TIDE_CHECK(draw.run_count == 1 && draw.mesh_count == 2);

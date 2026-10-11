@@ -626,7 +626,7 @@ typedef struct decl {
     struct expr *value; // A constant expression of its type (return_type)
     // Assets: the files the path resolved to, once checked (asset_files.h); NULL where it couldn't
     struct asset_value *asset;
-    VEC(struct expr *) asset_paths; // Checked path literals, including an Animations file list.
+    VEC(struct expr *) asset_paths; // Checked path literals, including an AnimationCatalog file list.
     int asset_kind;  // The asset_kind its type says, once checked (asset_files.h)
     int asset_animation_index; // A singular Animation's checked source clip.
     // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
@@ -1382,6 +1382,9 @@ typedef struct program {
     VEC(decl *) assets;        // Every asset declaration, in source order: what the pack holds
     const char *game_folder;   // Where the game's .tide/ is (tide says; NULL for tidec on its own): asset hashes and fetched URLs are kept there
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set
+    float max_rewind;
+    bool uses_rewind_limit;
+    decl *view_time;
     uint32_t max_players;      // maxPlayers, or 0 where it isn't set: TIDE_PLAYERS_DEFAULT
     const expr *title;         // title, the text it's set to, or NULL
     const expr *app_id;        // appId, likewise

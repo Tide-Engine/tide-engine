@@ -99,7 +99,7 @@ TIDE_TEST(overloads_the_engines_functions_take_names)
     one_tick();
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_REQUIRE(draw.count == 2);
     const tide_draw_command *circle = &draw.commands[0];
     TIDE_CHECK(circle->kind == TIDE_DRAW_CIRCLE && circle->a.x == 3.0f && circle->a.y == 4.0f && circle->b.x == 2.0f);

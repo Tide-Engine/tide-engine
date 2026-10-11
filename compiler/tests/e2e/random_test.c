@@ -224,7 +224,7 @@ TIDE_TEST(random_local_state_rolls_too)
     const uint64_t match = tide_world_hash(&world);
     for (int frame = 0; frame < 10; frame++) {
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         TIDE_CHECK(local.Fx.last == tide_random_next_float_between(&fx, -1.0f, 1.0f));
         TIDE_CHECK(local.Fx.coin == (tide_random_next_bool(&fixed) ? 1 : 0));
     }

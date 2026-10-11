@@ -380,7 +380,7 @@ static bool setup_workload(void)
     // frame only creates them; the first mesh draws occur on the next frame.
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     return true;
 }
@@ -442,7 +442,7 @@ static int frame(void *user, const float seconds)
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), tide_platform_measure_text);
     const uint64_t before_view = tide_time_now_ns();
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     const uint64_t recorded = tide_time_now_ns();
     tide_gui_end(&gui, &draw);
     if (!frame_at) {

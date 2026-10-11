@@ -44,7 +44,7 @@ static void frame(tide_local *local, tide_draw_list *draw, const tide_measure_fn
     local->Probe.panel = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12, .scale = 2}};
     tide_draw_reset(draw);
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), font);
-    tide_frame(NULL, NULL, 1, NULL, local, draw, &gui);
+    tide_frame(NULL, NULL, 1, NULL, NULL, 1.0f, local, draw, &gui);
 }
 
 TIDE_TEST(measure_text_is_in_the_units_the_draw_calls_are_in)

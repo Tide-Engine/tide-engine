@@ -84,6 +84,25 @@ static void gen_skinned_adapters(gen *g)
                  "        if (candidate.index < 0) continue;\n"
                  "        if (found.index >= 0) return (%s){.index = -1};\n        found = candidate;\n    }\n    return found;\n}\n\n",
               animation, animation, animation, animation, animation, animation, animation, animation);
+    // Lookup writes through ordinary owned assignment, copying the source
+    // before replacing a result which may already own that same source.
+    sb_printf(o, "TIDE_HELPER bool tide_skin_catalog_try_at(tide_skin_catalog data, int32_t index, %s *result, uint32_t where)\n{\n"
+                 "    const %s value = tide_skin_catalog_at(data, index);\n"
+                 "    const bool ok = value.index >= 0;\n"
+                 "    tide_assign_%s(result, ok ? tide_copy_%s(value) : (%s){0}, where);\n"
+                 "    return ok;\n}\n"
+                 "TIDE_HELPER bool tide_skin_catalog_try_find(tide_skin_catalog data, tide_str name, %s *result, uint32_t where)\n{\n"
+                 "    const %s value = tide_skin_catalog_find(data, name);\n"
+                 "    const bool ok = value.index >= 0;\n"
+                 "    tide_assign_%s(result, ok ? tide_copy_%s(value) : (%s){0}, where);\n"
+                 "    return ok;\n}\n"
+                 "TIDE_HELPER bool tide_skin_bone_try_at(tide_list data, int32_t index, %s *result, uint32_t where)\n{\n"
+                 "    (void)where;\n    const %s value = tide_skin_bone_at(data, index);\n"
+                 "    const bool ok = value.index >= 0;\n    *result = ok ? value : (%s){0};\n    return ok;\n}\n"
+                 "TIDE_HELPER bool tide_skin_bone_try_find(tide_list data, tide_str name, %s *result, uint32_t where)\n{\n"
+                 "    return tide_skin_bone_try_at(data, tide_skinned_find_bone(data, name), result, where);\n}\n\n",
+              animation, animation, animation, animation, animation, animation, animation, animation, animation, animation,
+              bone, bone, bone, bone);
     sb_put(o, "TIDE_HELPER float tide_skin_seconds(float seconds, float duration, int32_t playback)\n{\n"
               "    if (playback != 1 || !(duration > 0.0f)) return seconds;\n"
               "    if (!tide_is_finite_f(seconds)) return 0.0f;\n"
@@ -121,25 +140,6 @@ static void gen_skinned_adapters(gen *g)
         const decl *r = p->results.items[i];
         const type value = r->fields.items[0].type;
         if (value.kind != TY_STRUCT || !value.decl->skin_kind) continue;
-        if (r->fields.count == 1 && (value.decl == p->animation || value.decl == p->bone)) {
-            const char *which = value.decl == p->bone ? "bone" : "animation";
-            const char *result = c_type((type){TY_OPTIONAL, (decl *)r});
-            if (value.decl == p->animation) {
-                sb_printf(o, "TIDE_HELPER %s tide_skin_result%d_at(tide_skin_catalog data, int32_t i)\n{\n"
-                             "    const %s value = tide_skin_catalog_at(data, i);\n"
-                             "    return (%s){.value = value, .ok = value.index >= 0};\n}\n"
-                             "TIDE_HELPER %s tide_skin_result%d_find(tide_skin_catalog data, tide_str name)\n{\n"
-                             "    const %s value = tide_skin_catalog_find(data, name);\n"
-                             "    return (%s){.value = value, .ok = value.index >= 0};\n}\n\n",
-                          result, r->index, animation, result, result, r->index, animation, result);
-                continue;
-            }
-            sb_printf(o, "TIDE_HELPER %s tide_skin_result%d_at(tide_list data, int32_t i)\n{\n"
-                         "    return (%s){.value = tide_skin_%s_at(data, i), .ok = i >= 0 && i < tide_skinned_%s_count(data)};\n}\n"
-                         "TIDE_HELPER %s tide_skin_result%d_find(tide_list data, tide_str name)\n{\n"
-                         "    return tide_skin_result%d_at(data, tide_skinned_find_%s(data, name));\n}\n\n",
-                      result, r->index, result, which, which, result, r->index, r->index, which);
-        }
         if (r->fields.count != 2 || value.decl->skin_kind != SKIN_MESH) continue;
         const decl *mesh = value.decl, *vertex = mesh->skin_vertex.decl;
         const char *result = c_type((type){TY_FAILABLE, (decl *)r});

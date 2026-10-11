@@ -578,6 +578,7 @@ typedef struct connection {
     bool has_world; // It has a world to build it from: it's sent the hashes first
     bool can_start; // ...or can start the match itself to have one
     uint32_t snapshot_tick;
+    uint32_t view_limit; // Latest authoritative tick advertised to this connection.
     uint32_t snapshot_number; // Each thing sent has the next number, from 1
     uint8_t snapshot_kind;    // SEND_WORLD or SEND_HASHES
     uint32_t snapshot_size;
@@ -1661,13 +1662,24 @@ static void server_tick(tide_server *s)
         if (!c->used) continue;
         const uint32_t slot = tick % s->w.inputs;
         note_wait(s, c, tick, c->input_tick[slot] == tick);
-        const uint32_t size = c->input_tick[slot] != tick
+        uint32_t size = c->input_tick[slot] != tick
                                 ? 0u
                                 : canonical_input(g, c->inputs + (size_t)slot * max, c->input_size[slot], input, s->packed);
         if (size == 0) {
             tide_players_add(&late, p);
             if (c->local) tide_players_add(&late, server_slot);
             continue;
+        }
+        if (g->view_time && g->set_view_time) {
+            tide_view_time view = g->view_time(input);
+            const double at = (double)view.tick - 1.0 + (double)view.alpha;
+            const double age = ((double)tick - at) / (double)s->desc.tick_rate;
+            if (!view.valid || view.tick < 0 || !(view.alpha >= 0.0f && view.alpha <= 1.0f)
+                || at < (double)c->snapshot_tick || at > (double)c->view_limit || at > (double)tick
+                || !(g->max_rewind > 0.0f) || age > (double)g->max_rewind) {
+                g->set_view_time(input, (tide_view_time){0});
+                size = g->write_input(input, s->packed, max);
+            }
         }
         if (c->local) {
             server_size = size;
@@ -1729,7 +1741,7 @@ static uint32_t held_ms(const tide_server *s, const connection *c)
     return held > 0.0 ? (held < 60.0 ? (uint32_t)(held * 1000.0 + 0.5) : 60000u) : 0u;
 }
 
-static void send_welcome(tide_server *s, const connection *c)
+static void send_welcome(tide_server *s, connection *c)
 {
     uint8_t data[64];
     tide_writer w = {data, sizeof data, 0, false, false};
@@ -1750,6 +1762,7 @@ static void send_welcome(tide_server *s, const connection *c)
     tide_write_u16(&w, (uint16_t)held_ms(s, c));
     tide_write_u64(&w, s->cookies[c - s->connections]);
     send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
+    c->view_limit = s->tick;
 }
 
 static void send_chunks(tide_server *s, connection *c)
@@ -1871,6 +1884,7 @@ static void send_frames(tide_server *s, connection *c)
         start_snapshot(s, c);
         return;
     }
+    c->view_limit = s->tick;
     // Caught up with the world it was sent: from here, a player that falls
     // behind gets the world again, rather than the server keeping every tick
     if (c->catching_up && s->tick - c->frame_ack <= windows_for(s->desc.tick_rate).history / 2u) c->catching_up = false;
@@ -2325,6 +2339,8 @@ struct tide_client {
     uint32_t ring;
     uint32_t verified;
     uint32_t ahead;
+    double verified_view; // Confirmed presentation time, held when no newer confirmed state exists.
+    tide_view_time presented_view;
     windows w;              // From the match's tick rate, once welcomed
     pending_frame *frames;  // history
 
@@ -3154,9 +3170,11 @@ static bool own_late(const tide_client *c, const pending_frame *f)
 // and new ones, fill the rest.
 static bool room_ahead(tide_client *c)
 {
-    // From the one before `verified` to the one after `ahead`
-    if (c->ahead + 2u - c->verified < c->ring) return true;
-    const uint32_t most = c->w.prediction + 2u;
+    // Preserve the confirmed presentation interval as well as the prediction window.
+    const uint32_t shown = (uint32_t)c->verified_view;
+    const uint32_t oldest = shown > c->first_tick ? shown - 1u : c->first_tick;
+    if (c->ahead + 1u - oldest < c->ring) return true;
+    const uint32_t most = c->w.prediction * 2u + 4u;
     if (c->ring >= most) return false;
     const uint32_t ring = c->ring * 2u > most ? most : c->ring * 2u;
     void **worlds = calloc(ring, sizeof *worlds);
@@ -3166,7 +3184,7 @@ static bool room_ahead(tide_client *c)
         free(moved);
         return false;
     }
-    for (uint32_t t = c->verified > c->first_tick ? c->verified - 1u : c->verified; t <= c->ahead; t++) {
+    for (uint32_t t = oldest; t <= c->ahead; t++) {
         worlds[t % ring] = c->worlds[t % c->ring];
         moved[t % c->ring] = true;
     }
@@ -3587,6 +3605,8 @@ static void load_snapshot(tide_client *c)
     c->need_snapshot = false;
     c->commands_need_world = false;
     c->verified = c->ahead = tick;
+    c->verified_view = (double)tick;
+    c->presented_view = (tide_view_time){0};
     // The server ran the ticks up to where it was as it sent the world
     if (c->server_tick > c->heard_tick) c->heard_tick = c->server_tick;
     if (tick > c->heard_tick) c->heard_tick = tick;
@@ -3646,6 +3666,7 @@ static void sample_input(tide_client *c)
     const uint32_t tick = c->sampled;
     if (g->set_input && c->desc.sample) {
         c->desc.sample(c->desc.user, tick, c->input);
+        if (g->set_view_time) g->set_view_time(c->input, c->presented_view);
         const uint32_t slot = tick % c->w.inputs;
         uint8_t *packed = c->inputs + (size_t)slot * g->max_input_bytes;
         const uint32_t size = g->write_input(c->input, packed, g->max_input_bytes);
@@ -3818,6 +3839,10 @@ static void play(tide_client *c)
             waits = true;
             break;
         }
+        if (tick >= c->ahead && !room_ahead(c)) {
+            out_of_room = true;
+            break;
+        }
         const bool predicted = tick < c->ahead && !stale && tick < c->let_go && as_predicted(c, f);
         if (!predicted && c->ran_now >= c->room.most) {
             out_of_room = true;
@@ -3852,6 +3877,9 @@ static void play(tide_client *c)
         }
         tide_hearing_confirm(&c->hearing, tick); // What it sent is certain now
         c->verified++;
+        // Catch-up consumes old backlog faster than real time. Present its newest
+        // confirmed state so retaining a display interval cannot stall catch-up.
+        if (c->catching_up) c->verified_view = (double)c->verified;
         if (c->ahead < c->verified) c->ahead = c->verified;
         skip_inputs(c, c->ahead); // Behind the server: no input was sampled for those ticks
     }
@@ -4338,6 +4366,10 @@ void tide_client_destroy(tide_client *c)
 
 static void update_client(tide_client *c, const double now)
 {
+    if (c->loaded && now > c->now) {
+        c->verified_view += (now - c->now) * (double)c->tick_rate;
+        if (c->verified_view > (double)c->verified) c->verified_view = (double)c->verified;
+    }
     // A clock with time to lose (keep_early) loses a share of what passed
     if (c->clock_slow > 0.0 && now > c->now) {
         const double most = (now - c->now) * CLOCK_SLOW;
@@ -4419,14 +4451,23 @@ tide_view_worlds tide_client_view(const tide_client *c)
     double alpha = at - (double)c->ahead;
     if (alpha < 0.0) alpha = 0.0;
     if (alpha > 1.0) alpha = 1.0;
-    return (tide_view_worlds){world_at(c, c->ahead), c->ahead > c->first_tick ? world_at(c, c->ahead - 1u) : NULL,
-                              (float)alpha, world_at(c, c->verified)};
+    const uint32_t before = (uint32_t)c->verified_view;
+    const double fraction = c->verified_view - (double)before;
+    const uint32_t shown = fraction > 0.0 && before < c->verified ? before + 1u : before;
+    return (tide_view_worlds){.current = world_at(c, c->ahead),
+        .previous = c->ahead > c->first_tick ? world_at(c, c->ahead - 1u) : NULL,
+        .alpha = (float)alpha, .verified = world_at(c, shown),
+        .verified_previous = shown > c->first_tick ? world_at(c, shown - 1u) : NULL,
+        .verified_alpha = fraction > 0.0 ? (float)fraction : 1.0f, .verified_tick = shown};
 }
 
 void tide_client_mark_presented(tide_client *c)
 {
-    if (!c || !c->desc.correct_views || !c->loaded) return;
+    if (!c || !c->loaded) return;
     const tide_view_worlds view = tide_client_view(c);
+    c->presented_view = view.verified_tick <= INT32_MAX
+        ? (tide_view_time){(int32_t)view.verified_tick, view.verified_alpha, true} : (tide_view_time){0};
+    if (!c->desc.correct_views) return;
     c->presented = true;
     c->presented_previous = view.previous != NULL;
     c->presented_tick = c->ahead;
@@ -4784,7 +4825,8 @@ const void *tide_session_world(const tide_session *s)
 tide_view_worlds tide_session_view(const tide_session *s)
 {
     if (s->client && s->client->loaded) return tide_client_view(s->client);
-    if (s->stale) return (tide_view_worlds){tide_client_world(s->stale), NULL, 1.0f, tide_client_verified_world(s->stale)};
+    if (s->stale) return (tide_view_worlds){.current = tide_client_world(s->stale), .alpha = 1.0f,
+        .verified = tide_client_verified_world(s->stale), .verified_alpha = 1.0f, .verified_tick = s->stale->verified};
     return (tide_view_worlds){0};
 }
 
@@ -5149,6 +5191,8 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
         c->ahead = c->verified;
         c->let_go = UINT32_MAX;
         c->first_tick = c->verified; // Views don't blend from the old build's world
+        c->verified_view = (double)c->verified;
+        c->presented_view = (tide_view_time){0};
     }
 }
 
@@ -5161,6 +5205,8 @@ static void take_server_world(tide_client *c, const tide_server *s)
     c->ahead = s->tick;
     c->let_go = UINT32_MAX;
     c->first_tick = s->tick;
+    c->verified_view = (double)s->tick;
+    c->presented_view = (tide_view_time){0};
     c->commands_need_world = false;
     c->need_snapshot = false;
 }

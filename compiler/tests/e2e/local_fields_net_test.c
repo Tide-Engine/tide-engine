@@ -72,7 +72,7 @@ static void frame(tide_local *l, const tide_client *c)
 {
     const tide_view_worlds view = tide_client_view(c);
     tide_draw_reset(&draw);
-    tide_frame(view.current, view.previous, view.alpha, view.verified, l, &draw, &gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, l, &draw, &gui);
     tide_text_use(NULL, &l->heap); // For the lists the checks read
 }
 
@@ -210,7 +210,7 @@ TIDE_TEST(local_fields_net_outlast_wrong_predictions)
 
     // Out of the match, a machine keeps nothing for it
     tide_draw_reset(&draw);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.tide_fields_Target.rows.count == 0 && local.Seen.forgotten == 5);
     for (int i = 0; i < 3; i++) tide_client_destroy(clients[i]);
     tide_server_destroy(server);

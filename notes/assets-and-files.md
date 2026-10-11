@@ -1,5 +1,29 @@
 # Assets and local files
 
+## AnimationCatalog lookup API, 2026-10-11
+
+The owner's approved `AnimationCatalog` name replaces `Animations` in asset
+and value annotations. Checked members, file-list/glob imports, nested asset
+collections, source skeletons and canonical packing remain the same.
+Dynamic lookup uses bool/out `TryGetAt` and `TryGetByName`, including model
+animation/bone catalogs and Skeleton name lookup. Failure assigns `default`;
+missing/empty/ambiguous names and invalid indices are unsuccessful.
+Historical API spellings in the entries below are superseded by this change.
+
+Existing animation, skinned and FBX E2E fixtures use the new methods.
+`animation_lookup` checks success and failure outputs, int-boundary indices,
+duplicate/empty/unnamed clips, existing and delayed locals, discards, named
+arguments and a receiver retained across a later argument clearing its catalog.
+Its C harness checks owned field outputs, stable heap use during repeated
+replacement/failure, pack unload, snapshots, replay and serialization.
+Checker fixtures reject missing out, wrong types, read-only places, list
+element outputs, reads before assignment and the old methods with replacement
+guidance. No runtime signature or portable representation changed.
+Validation: warning-free native and web debug builds; all 2,150 native and
+2,121 web CTests pass, including the owned-output fixture on native and WASI,
+unchanged deterministic pose hashes, and OpenGL/WebGL/WebGPU checks. The docs
+site build passes. Final wording/dispatch cleanup passes focused catalog checks.
+
 ## Owned-animation validation and separate binding (2026-10-11)
 
 The owner's existing `D:/Projects/Test` Animation component usage is retained.

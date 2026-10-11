@@ -96,7 +96,7 @@ TIDE_TEST(devices_views_receive_this_machines_frame)
     tide_button_set(&frame.keyboard.space, true);
     frame.pointer.position = tide_f2(23.0f, 41.0f);
     tide_gui_begin(&gui, &frame, tide_f2(800.0f, 600.0f), NULL);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     TIDE_CHECK(local.Seen.entities == 3);
     TIDE_CHECK(local.Seen.held);

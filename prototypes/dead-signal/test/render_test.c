@@ -260,7 +260,7 @@ static void check_frame(const int state)
     tide_draw_reset(&list);
     tide_local_frame_time(&local, 1.0f / 60.0f);
     tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     for (uint32_t i = 0; i < list.count; i++) {
         // Present is a fullscreen Blit, which uses the same shaded-run
