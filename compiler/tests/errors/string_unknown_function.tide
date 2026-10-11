@@ -1,0 +1,6 @@
+// expect: string has no function 'Join'
+// expect: it has 'string.FromBytes(bytes)', the text a List<byte> of UTF-8 is
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.text = string.Join(seen.text); }

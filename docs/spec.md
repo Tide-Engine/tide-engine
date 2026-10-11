@@ -642,6 +642,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 - 256 components and 1024 archetypes.
 - A world's heap, which keeps its text, lists, maps, sets and grids, holds 1 GiB, in blocks of 128 MiB at most: a text it keeps is one block. The scratch area, where code makes text and lists along the way, holds 1 GiB on each thread. Past any of these the program ends, as it does when it runs out of memory. A list stops growing at 1 GiB of elements.
+- `Json.Read` has bounds of its own, past which it gives nothing and the program goes on: arrays and objects 32 deep, 64 MiB of text, and 128 MiB of what one read makes (see JSON).
 - Everything else grows as it needs, with no limit but memory: entities, entities per archetype, and structural changes and events per tick.
 
 ### Namespaces
@@ -1185,6 +1186,7 @@ system Advance(mut Match match)
 - A string's `length` counts characters (Unicode code points), not bytes.
 - Components, singletons, structs and events can hold text. A world keeps it in its heap, part of the world, so snapshots have it too. The heap grows as it needs, up to 1 GiB (see Limits).
 - Nothing about text fails: past the end of a string, positions are clamped. Text that code makes can be as long as the scratch area it lives in has room for: the area grows as it needs, up to 1 GiB a thread (see Limits).
+- Text turns into bytes, pieces and numbers by `text.ToBytes()`, `string.FromBytes(bytes)`, `text.Split(separator)`, `int.TryParse(text, out value)` and `float.TryParse(text, out value)` (the owner, 2026-10-11, of these names: "these are good to have anyways"). What each takes and gives beyond its name is Provisional, below.
 
 ### Provisional
 
@@ -1211,15 +1213,66 @@ system Advance(mut Match match)
   - **On the GPU** a char is an int, its code point: fields, arrays, lists, a map's keys, literals, `switch`, comparisons and `char(n)` work there. Text itself stays the CPU's.
   - **Bytes that are no character's.** Text from C or a file can hold bytes that aren't UTF-8. A character is a byte that starts one and the bytes that continue it, which is how `length` counts, and one whose bytes are no character's (too few or too many, a longer form than the shortest, half of a UTF-16 pair) reads as U+FFFD, the replacement character, the same on every machine.
   - **What it costs.** `foreach` reads each character once, on any text. `text[i]` is as quick for text of a byte a character, which a text's two counts (its bytes and its characters) say; for any other it counts its way from the start, so a `for` over a long one with `text[i]` is slow, and `foreach` is the loop to write. `Substring` gives a piece where its text is, with nothing copied.
+- **Bytes, pieces and numbers** (built 2026-10-11; the names are the owner's, each rule Claude's pick, C#'s where it has one and stricter where C# reads a machine's settings):
+  - **`text.ToBytes()`** is a `List<byte>` of the text's UTF-8, and **`string.FromBytes(bytes)`** a `string?`: the text a `List<byte>` is, a copy, or nothing when the bytes aren't UTF-8 through and through (a byte that starts no character, too few after one, a longer form than the shortest, half of a UTF-16 pair, past U+10FFFF). A NUL is a character like any other. `string.` has that one function: what a text has is called on the text.
+  - **`text.Split(separator)`** is a `List<string>` of the pieces between each separator and the next, the separator text or a char. Empty pieces are kept, so joining the pieces with the separator gives the text back: `"a,,b".Split(",")` is three pieces and `"".Split(",")` one. Separators are found from the start, each after the one before (`"aaa".Split("aa")` is `""` and `"a"`). A separator that's empty, `'\0'`, or not in the text gives the whole text as one piece. (C#'s, without its options: no count, no trimming, no dropping of empty pieces.)
+  - **`int.TryParse(text, out value)`, `long.TryParse` and `float.TryParse`** give whether the whole text is a number of that type, which goes to `value`, an `out` argument as a function's is (`out var n`, `out n`, `out _`); otherwise false, and `value` is 0. A call can stand as a statement of its own. An int and a long are digits, with `-` before them for a negative one, zeros before them allowed. A float is that with a point among the digits and an exponent after: `-12.5`, `.5`, `5.`, `1e-3`, `2.5E+10`. Nothing else is a number: no spaces before or after (`Trim` first), no `+` before it, no hex, no digit separators, no `f` or `deg` after it, no `NaN` or `Infinity`. A number the type doesn't hold is false too: an int past its range, a float past the biggest float (one too small to tell from zero is zero). There's no `byte.TryParse`, and no `Parse` that fails.
+  - **A float read from text is the one nearest the number written**, a tie going to the even one, as IEEE 754 rounds, whatever the number of digits: worked out with exact integer arithmetic, never the platform's `strtof`, so the same text is the same bits on every machine, and the match can read numbers. What text shows of a float (its shortest digits, or with a format) reads back as that float.
+  - They run in any CPU code, the match's too; code the GPU runs has no text. A `Split`'s list and a `ToBytes`'s are in the scratch area, like any list code makes.
 - `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing, and Backspace takes off the last character. With `out bool entered` after the text, it also says whether Enter ended the typing (see GUI).
 - Systems that change the match's text or lists wait for each other, as their heap is one: `tidec --schedule` says "both change text or lists".
 
 ### Open
 
 - What a char is, as members: `IsDigit`, `IsLetter` and the like, and its case. For now `c >= '0' && c <= '9'`, and `ToUpper` and `ToLower` are text's.
+- `Join`, `Split` by several separators or with a count, `byte.TryParse`, a `Parse` that fails with an error, and reading hex.
+- The GUI's number fields (`GUILayout.FloatField`) still read what's typed with the platform's `strtof`: local code only, so no match depends on it, but they could read with `float.TryParse`'s code.
 - `++`, `--` and `+=` on a char, and `\r`, `\t` and `\0` in text's literals, which a char's have.
 - Text with a caret that moves, and selection, in text fields.
 - Case for letters past ASCII.
+
+## JSON
+
+### Decided
+
+- JSON is read and written as a game's own types, by code the compiler writes for each type: `Json.Read<LobbyInfo>(text)` gives a `LobbyInfo?`, nothing when the JSON is bad, and `Json.Write(info)` gives a `string` (the owner, 2026-10-11, of the static, struct-mapped way over a JSON value walked at run time: "yeah I like that static thing; makes it simple, straight forward"). There's no dynamic JSON value: that was explicitly not wanted now.
+
+```csharp
+struct LobbyInfo
+{
+    string id;
+    string name;
+    int players;
+    List<string> tags;
+    [Json("max_players")] int maxPlayers;
+}
+
+var info = Json.Read<LobbyInfo>(response.body);   // LobbyInfo? : empty when the JSON is bad
+var text = Json.Write(info ?? LobbyInfo { });     // string
+```
+
+### Provisional
+
+Built 2026-10-11. Beyond the two calls and that a struct's fields are an object's keys, each rule is Claude's pick, awaiting the owner:
+
+- **The calls.** `Json.Read<T>(json)` takes a `string` or a `List<byte>` of UTF-8 (a response's body) and gives a `T?`, unwrapped as any is (`??`, `is`, `!`). `Json.Write(value)` takes the value and gives its JSON with no spaces. `T`, and what `Write` takes, is a struct, a `List<T>` or a `Map<string, T>`: a value alone (`Json.Read<int>`) goes in a struct's field. Arguments go in order, without names. `Json` is a name of the language's, like `Math`: a game declares nothing called `Json`.
+- **What JSON holds.** `bool` (`true`, `false`); `byte`, `int` and `long` (a number); `float` (a number); `string` (a string); `char` (a string of one character, `""` for `'\0'`); an enum (its member's name, as a string); a struct of the game's (an object, a key for each field); `List<T>` and `T[N]` (an array); `Map<string, T>` (an object, a key for each entry). Anything else is a compile error at the call, naming the type and the field that holds it ("JSON has nothing for Entity, which 'Lobby.owner' holds"): entities and players, vectors, quaternions, colors and matrices, sets, maps whose keys aren't text, grids, textures and the other resources, the engine's own structs (`Random`, `Sound`), and components, singletons, events and inputs, which aren't values of their own (copy what's needed into a struct).
+- **Keys.** A field's key is its name, or the text of `[Json("key")]` before it: `[Json("max_players")] int maxPlayers;`. The attribute goes on a struct's field, takes one text literal of at most 120 bytes, and no two fields of a struct have one key. Keys match exactly, by their bytes, case and all.
+- **Reading is forgiving about what's there:** a key the JSON leaves out keeps its field's declared default; a `null` leaves what it's for as it is (a field's default, an element's or a value's default in a list or a map); a key no field has is skipped, its value read past (it still has to be JSON); a key written twice takes the last one, a struct's fields starting over from their defaults each time. An array for a `T[N]` fills the elements it has room for: fewer leave the rest, more are skipped. `null` as the whole text gives nothing.
+- **And strict about what it is:** anything that isn't JSON (RFC 8259: no comments, no trailing commas, no single quotes, no `NaN`, nothing after the value but spaces) makes the read give nothing, and so does a value that isn't its field's kind. A whole number is one whose value is whole, however it's written (`3`, `3.0`, `300e-2`), and has to fit its type: `300` for a byte, `2147483648` for an int and `3.5` for either give nothing; nothing saturates or wraps. A float takes any number a float holds, rounded to the nearest one as `float.TryParse` rounds (see Text), and one past the biggest float gives nothing. An enum reads from a member's name, an alias's too, or from a number that fits its storage; a name no member has gives nothing. A `char` reads from a string of exactly one character, or `""`. Text has to be UTF-8 with JSON's escapes, `\uXXXX` among them, a pair of them for a character past U+FFFF; a pair's half alone gives nothing. A byte order mark before the JSON is skipped.
+- **Writing.** Every field, in the order the struct declares them; a map's entries in the order they were added; an array's every element. Text is escaped as JSON says (`\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, and `\u00XX` for the other control characters), everything else as it is, in UTF-8; bytes in text that are no character's UTF-8 (text from C or a file) are written as U+FFFD, so what's written is always JSON. An enum is the first name its number has, or the number itself when no member has it. A float is the fewest digits that read back as the same float, as text shows one (`1.5E+21` past 1e21 and under 1e-7), `-0` for a negative zero, and `null` for NaN and the infinities, which JSON has no number for and which read back as the field's default. What `Write` gives, `Read` reads back as the same value, bit for bit, but for those.
+- **The same on every machine.** Reading and writing use exact integer arithmetic for numbers and nothing of the platform's, so the calls are deterministic and run in any CPU code: systems, handlers, functions, views, tasks. Match code can read JSON a command or a file every machine has brought. Code the GPU runs has no text, so none there.
+- **What a read is bounded by**, since its text can come from anyone: arrays and objects nest 32 deep at the most, in what's skipped too; text of 64 MiB or more isn't read (what a fetch gives at the most); and a read makes 128 MiB of elements, entries and text at the most. Past any of them the read gives nothing. Within them, a read never reads outside its text, and what it makes is in the scratch area, like any value code makes.
+- **In generated C** a game has a reader and a writer only for the types it reads and writes, and for the types in those, each a function of its own (a struct with a list of itself reads as deep as the JSON goes, within the 32). A game that calls neither generates the C it did.
+
+### Open
+
+- A JSON value for shapes a struct doesn't say (the owner: not now), and with it reading one key out of a document.
+- `T?` fields, once fields can be a `T?` (see Errors): `null` and a key left out would be nothing there, where today they're the default.
+- Vectors, colors and quaternions as arrays (`[x, y, z]`), sets as arrays, and maps by an int or an enum.
+- Whether a key no field has, a number that doesn't fit and an unknown enum name should each be an error the game can tell apart, where today the read gives nothing whatever was wrong.
+- Options: indented output, leaving out fields at their defaults, keys in another case (`snake_case` for every field at once).
+- What a read gives when it runs out of the scratch area before its own bounds: the program stops, as any code that makes too much does (see Limits).
 
 ## Generics
 

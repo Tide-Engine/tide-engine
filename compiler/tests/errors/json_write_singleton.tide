@@ -1,0 +1,6 @@
+// expect: Json.Write writes a struct, a List<T> or a Map<string, T>, and this is Seen
+// expect: copy what the JSON has of it into a struct, which is a value of its own
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.text = Json.Write(seen); }

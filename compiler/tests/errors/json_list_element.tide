@@ -1,0 +1,5 @@
+// expect: JSON has nothing for PlayerID
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.count = (Json.Read<List<PlayerID>>(seen.text) ?? []).count; }
