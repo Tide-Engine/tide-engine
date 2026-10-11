@@ -121,12 +121,23 @@ and from reading the solutions.
 
 ## Presentation
 
-`paint.tide` draws a night sky, the yard as dark rock with lit ledges over
-open cells, set stone grey and square, loose stone pale, rounded and raised.
+`paint.tide` draws a night sky and the yard as a slab of rock. Three things
+have to be told apart at a glance, so they are three steps of light: nothing
+is the darkest, with a faint outline in each cell a stone could fill; rock is
+a mid blue with a face wherever open ground is south of it; ground is bright.
+Set stone is grey and square with seams, loose stone pale, rounded and raised.
+The rim of rock round a board is drawn a third of a cell thick, so the cells
+are as large as the screen allows.
 Plates are wider than a crate so their rim shows under one, and glow when held
 down. A portal whose twin is in someone's hand is drawn grey. The cell a paver
 faces is outlined when a hand would do something there. Positions ease towards
-the match's; a jump through a portal snaps. Reduced motion stops the easing
+the match's; a jump through a portal snaps. A lifted or laid stone flies
+between the cell and the paver's hands, and a crate that sinks is seen going.
+When hands are refused, a line at the foot of the screen says why (set stone,
+something standing on it, loose footing, full hands): `Refusal` in `ui.tide`
+works it out from the board, for the player whose paver it was. The board
+glides up to leave room for a hint or the solved card instead of hiding under
+either. Reduced motion stops the easing
 and the decoration. `ui.tide` has the title (Play alone, Host a friend, Join a
 friend, over the Rooms package's pages), the roster of who works which paver
 and what each carries, the hint panel (the board draws smaller above it), the
@@ -222,6 +233,18 @@ tests, a catalog card and site patterns), Linux, macOS, Android and sanitizers,
 real phones, two machines across a real network, and anyone actually playing.
 The sounds were made and are played but were never heard: every run here was
 muted.
+
+Polish pass, later on 2026-10-11, after the owner asked that the visuals not
+get in the way of playing: the first build drew rock and nothing in nearly the
+same dark blue, inside a full ring of rock cells, so where a stone could go
+was hard to read and the cells were small. The look described under
+Presentation is the result, with the refusal lines, the flying stones and the
+room made for the solved card. `PuzzleCue` gained `action` for the refusal
+lines. Native debug and web debug build without warnings; the 12 cases pass
+natively and under WASI, and the browser play test on WebGL and WebGPU.
+Captures at 1280 by 800, 1280 by 720, 960 by 540 and the browser's 390 by 844
+were looked at, and the thumbnail was taken again. Release builds were not
+rebuilt for this pass.
 
 The page is public at `/prototypes/underfoot/` once the Docs workflow next
 deploys the site; that workflow was not started. Catalog and staging are in
