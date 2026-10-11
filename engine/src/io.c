@@ -417,7 +417,7 @@ static bool request_method(const tide_str method, char out[17])
 }
 
 uint32_t tide_web_request_begin(const tide_io *io, const tide_str url, const tide_str method, const tide_str headers,
-                                const tide_list body)
+                                const tide_list body, const float timeout)
 {
     if (!fetch_url_ok(url)) return TIDE_FETCH_INVALID_URL;
     char word[17];
@@ -428,7 +428,9 @@ uint32_t tide_web_request_begin(const tide_io *io, const tide_str url, const tid
     if (!io || !io->request_begin) return 0;
     uint8_t *data = count ? tide_scratch_memory((size_t)count) : NULL;
     for (int32_t i = 0; i < count; i++) data[i] = *(const uint8_t *)tide_list_at(body, i, 1);
-    const uint32_t ticket = io->request_begin(io->user, word, tide_str_c(url), lines, data, (uint32_t)count);
+    // The limit as providers take it: none for 0, less, or no number, and never longer than the longest
+    const float limit = !(timeout > 0.0f) ? 0.0f : timeout > TIDE_REQUEST_TIMEOUT_MOST ? TIDE_REQUEST_TIMEOUT_MOST : timeout;
+    const uint32_t ticket = io->request_begin(io->user, word, tide_str_c(url), lines, data, (uint32_t)count, limit);
     return ticket == TIDE_FETCH_INVALID_URL || ticket == TIDE_REQUEST_INVALID ? 0 : ticket;
 }
 

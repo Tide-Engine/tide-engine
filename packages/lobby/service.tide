@@ -70,38 +70,17 @@ struct PlayerSaid
     string player;
 }
 
-// A lobby's change is written a part at a time, so that what isn't changed
-// isn't said: a key that's left out stays as it is.
-
-struct DataSaid
+// A lobby's change: what isn't changed has no value, so it isn't said, and a
+// key that's left out stays as it is.
+struct ChangeSaid
 {
     Map<string, string> data;
     List<string> remove;
-}
-
-struct NameSaid
-{
-    string name;
-}
-
-struct MaxSaid
-{
-    int max;
-}
-
-struct ListedSaid
-{
-    [Json("public")] bool listed;
-}
-
-struct OpenSaid
-{
-    bool open;
-}
-
-struct MatchSaid
-{
-    string match;
+    string? name;
+    int? max;
+    [Json("public")] bool? listed;
+    bool? open;
+    string? match;
 }
 
 // What an answer says beside the lobby.
@@ -128,10 +107,11 @@ string ServiceOf(LobbyClient client)
 }
 
 // A request to the service, as the player whose `secret` this is, with a
-// JSON `body` or none.
-async ServiceAnswer Call(string method, string url, string secret, string body)
+// JSON `body` or none. One that isn't answered within `limit` seconds wasn't
+// reached, as one that couldn't connect.
+async ServiceAnswer Call(string method, string url, string secret, string body, float limit)
 {
-    mut var request = Web.Request(url).SetMethod(method);
+    mut var request = Web.Request(url).SetMethod(method).SetTimeout(limit);
     if (secret != "") request = request.SetHeader("Authorization", $"Bearer {secret}");
     if (body != "") request = request.SetHeader("Content-Type", "application/json").SetBody(body.ToBytes());
     var sent = await request.Send();
@@ -173,14 +153,6 @@ LobbyAnswer ReadDone(ServiceAnswer http)
     if (!http.reached) return LobbyAnswer { failure = LobbyFailure.Unreachable };
     if (http.status != 200) return LobbyAnswer { failure = Refused(http) };
     return LobbyAnswer { ok = true };
-}
-
-// Two JSON objects as one: `{"a":1}` and `{"b":2}` are `{"a":1,"b":2}`.
-string Merged(string a, string b)
-{
-    if (a.length <= 2) return b;
-    if (b.length <= 2) return a;
-    return $"{a.Substring(0, a.length - 1)},{b.Substring(1)}";
 }
 
 // Text as part of a URL: everything but letters, digits, `-`, `_`, `.` and

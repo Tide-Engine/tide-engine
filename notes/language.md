@@ -4,6 +4,245 @@
 
 The owner approved ordinary asset values sharing immutable storage until the first write. Language value semantics stay unchanged: changing a field/local does not change another copy or the catalog. Generated list setters, mutable slots, RemoveAt/Sort, extern mut wrappers, nested ownership/deep-copy loops and confirmed/interpolated container traversal prepare storage with actual ownership before writing. Plain Clear can release a retained asset descriptor without copying its payload. Nested containers and text/maps still apply their existing ownership rules after outer detachment. The approved runtime boundary is `tide_list_prepare`; `notes/ecs.md` records details. Generated asset globals are marked unused because an unreferenced debug asset is legitimate and newer clang warns on set-only globals. `asset_sharing` covers that texture case and generated mutation/ownership paths. `docs/spec.md` and `docs/game/assets.md` record the agreed copy behavior; Texture/Clip remain resource references.
 
+## Functions and methods start tasks, 2026-10-11
+
+The owner's two standing rules (a function does what the code that calls it
+could, with an error only at a call from code that can't; no "not yet" where a
+feature could work) and no word of theirs on this one: the lead agent said it
+would lift the restriction and the owner didn't object. Every rule is the
+agent's pick, Provisional in `docs/spec.md` (Functions and blocks; Tasks). It
+was the first of the lobby package's engine limits (`notes/lobby-package.md`).
+
+**Surface.** An async function called as a statement in a plain function or a
+method starts a task, as in a system. No new syntax.
+
+**Checker** (`check.c`). `check_task_call` lets an inheriting function through
+(`inherits`) and notes `decl.starts_tasks`, `starts_at` and `starts_what`
+("starts 'Countdown'") on it, the fields a system's own start always set. An
+operator and `Interpolate` are refused where the start is written, with
+messages of their own; a frag or vert keeps the old one. The call is still a
+`task_call`, with the function as `from`.
+
+- **Which world.** A task's world is `decl.task_side`, which follows from what
+  the task does, what it awaits or starts and what the functions it calls do;
+  a function that starts a decided task acts in that world (`acts[0]` or
+  `acts[1]`, with "starts 'X', a task that changes the match" as its `what`).
+  Each depends on the others, so `settle_task_sides` settles them together to a
+  fixed point, from `check_acts`, before its errors: `mark_act_callers`, then
+  an async caller's side from a callee's acts, an async caller's from what it
+  awaits or starts, and a plain starter's acts from its task's side. It only
+  assigns where nothing was decided; what disagrees is said by the loops that
+  always said it (`check_acts`, `resolve_tasks`). It runs only in a program
+  where a function starts a task, so no other program's errors change order.
+- **The errors are `check_acts`'s**, at each call from code with abilities of
+  its own, exactly as a send's: a view or a local handler calling what starts a
+  match task, the match calling what starts a local one, `Sample` and
+  `Sanitize`, a frag or a vert, an operator or `Interpolate`, a parallel loop's
+  step and a comparison. `check_acts` also looks at callees that only start
+  tasks nothing decides (`tasks`), which have no `acts`. `check_audio_bodies`
+  says "start tasks" for an `audio` declaration.
+- **A task nothing decides** (`TASK_EITHER`) starts in the world of whatever
+  calls the function. `decl.runs_in[2]`, an async function's worlds, is filled
+  for functions and methods that start tasks too, from their callers
+  (`runs_world`, in `resolve_tasks`' loop, over `c->calls`), and a task's
+  `runs_in` comes from its starter's.
+- **The schedule.** `check_acts` sets `starts_tasks`, `spawns` and
+  `writes_text` on a system, view or handler that calls such a function, what
+  `check_task_call` sets for a start written in it: one thread, in order.
+  `mark_act_callers` carries `starts_tasks` through callers, and its early run
+  (before systems' bodies) makes a grid foreach whose step calls one go in
+  order (`own_cell_only_expr`). `call_acts` counts the call as one that acts.
+- **A task's singleton through a function** (`param.task_own`,
+  `check_task_params`). A task's component and singleton parameters are
+  `task_ref`: not kept in its frame, got again from the world each time it goes
+  on. A start had to pass the caller's own parameter, which a function's never
+  was. A function's **singleton** parameter is now taken, marked `task_own`,
+  and `check_task_params` carries the mark to the parameters of functions that
+  pass theirs on to it, then requires every call to pass a parameter of its own
+  (a system's, a task's `task_ref`, or a function's `task_own`): a copy is the
+  error, at the call, with the line that starts the task. This is what the
+  lobby's `CreateLobby(mut LobbyClient client, ...)` needed. A function's
+  **component** parameter is still refused, with a note that says why: code
+  that runs for an entity holds copies of its components (`gen_entity_copies`
+  stores and reloads them around a start), a function's may be any entity's,
+  and the task loads the one of the entity it belongs to.
+
+**Codegen** (`codegen.c`). `takes_task(m)` is a plain function or method with
+`starts_tasks`. It's handed, after `tide_scene` and before `tide_dice`:
+`const tide_entity tide_task_this, const bool tide_task_this_local, const
+tide_entity tide_task_scene` (what a task belongs to), and where both worlds
+call it (`task_either`: `runs_in[0] && runs_in[1]`) also `tide_world
+*tide_task_w, const bool tide_task_local`. Its worlds go through the
+parameters there were: `takes_local` is also true of one whose callers run
+locally, `takes_world` of one that has callers at all (a local task reads the
+match, so it's handed `const tide_world *tide_w`), and `changes_world` of one
+only the match calls.
+
+- **What a call passes** (`gen_routine_call`): `task_owner(g, local)`, which is
+  a task's own `tide_this, tide_this_local, tide_scene`, a function's own
+  `tide_task_*`, or for a system, view or handler what `gen_task_start` always
+  wrote (the entity it runs for, and its scene when that's of the task's
+  world). `has_local` and `has_world` say whether the calling code has `tide_l`
+  and `tide_w`: a local handler has no `tide_w` and the match's code no
+  `tide_l`, and a function that starts tasks is handed `NULL` there, the only
+  calls that pass one. `own_routine(g)` is the function whose own code is being
+  generated, through functions that take an Action, which are copied into
+  their caller and use the caller's names.
+- **The start** (`gen_task_start`, with `gen_task_start_in` the block it always
+  wrote): in a function, the task's own world, or for a task nothing decides
+  the worlds the function runs in: one, both behind `if (tide_task_local)`, or
+  none, where nothing that runs calls the function, no world has a table for
+  the task, and only the arguments are worked out (`(void)(...)`), so a
+  package's functions a game never calls still compile without a warning.
+- **Order in the file.** A function that starts a task fills the task's frame,
+  whose type is known once the tasks' code has been generated once
+  (`gen_tasks`). So `gen_routines` leaves `takes_task` functions out and
+  `gen_task_routines` writes them inside `gen_tasks`, after the frames and the
+  declarations of the start functions; everything else calls them through
+  `gen_routine_prototypes`' declarations.
+- `call_keeps_order` counts a call of one that gives a value, as one that sends.
+
+**A program where no function starts a task generates the C it did, byte for
+byte**: old and new tidec over every source list in `build/debug`, with
+`--layout` and without: 265 of 272 the same, five that use what's new and the
+old compiler refuses (`tidec_e2e_fetch`, `tidec_e2e_function_tasks`,
+`lobby_try`, `tide_lobby_menu`, `tide_lobby_relay`), and `last_light`'s two
+failing with both, run outside the game's folder.
+
+**Tests.** `compiler/tests/e2e/function_tasks` (three tests, natively and on
+the web: a function's start, two through another function, a sum's left to
+right, a struct's method's, an Action function's and its block's, each in the
+order written and waiting in the match's table; a task that rolls, the same in
+a second world; a task's own call of a function that starts another; a task a
+fuse through a function, ending with its fuse; a crate a task spawned joining
+its arena and going with it; the local world's from a view through one
+function and two, from a view of the match's entities, each task its entity's
+and gone with it, and from a local handler, which has no match to hand on; one
+task nothing decides started by the same function from the match and from this
+machine; two functions nothing calls). `compiler/tests/errors/function_tasks_*`,
+13 files, a diagnostic each (`async_start_in_function`, which pinned the
+refusal, is gone). Editors: `lsp_functions_send_and_spawn` (nothing was hidden:
+completion always offered async functions in a function; the diagnostics at a
+view's call are checked).
+
+**Validation** (Windows, Node 24, with the request's time limit of the same
+day, `notes/assets-and-files.md`): warning-free native and web debug builds;
+2,230 of 2,230 native and 2,199 of 2,199 web tests, 37 of 37 relay tests, and
+the docs production build. Linux, macOS, MinGW, Android and the sanitizers
+were not run here, and no workflow was dispatched.
+
+**Not built:** a function's component handed on to a task (above); a method's
+own value (`this` of a singleton's method) handed on; `Snap`, `Scene.Load` and
+`Scene.Unload` in a function; cancelling a task (no design).
+
+## T? fields, 2026-10-11
+
+The owner asked for them ("we have optional types or whatever but not fields
+which is very weird; so we need to add those for consistency"): that a field
+can be a `T?` is theirs, and every rule of how is the agent's pick, Provisional
+in `docs/spec.md` (Errors, Provisional: T? fields; JSON).
+
+**How it's kept.** A field declared `T?` has, as its type, a struct the
+checker makes for that `T`: `value`, of type `T`, and `ok`, a bool
+(`optional_field_type` in `check.c`; `decl.optional_of` is the `T?` it's for,
+that `T?`'s `decl.stored` is the struct, and `program.optional_fields` lists
+them). It's a `DECL_STRUCT` that's `builtin`, named as the `T?` is ("int?"),
+in no list of names, ordered among `program.structs` after what its value
+holds (`order_struct`). So everything that lays a struct's fields out, pads,
+hashes, packs, snapshots, sends as deltas, carries over a reload, owns text
+and lists, and repairs an input does a `T?` field's with no code of its own.
+In generated C it's `tide_optional_<T>` (`name_program` in `codegen.c`: the
+type's name with what C names can't hold as underscores, `tide_optional_int`,
+`tide_optional_Combat_Stats`, `tide_optional_List_int`, text
+`tide_optional_string`, and its place in the list after one that's taken),
+in the header with the structs: the value, `bool ok`, padding written out.
+
+**What code sees.** Never the struct. `check_expr_any` ends by turning the
+struct into the `T?` (`read_type`), so a member or a method's own field is a
+`TY_OPTIONAL` with `e->field` the field (`is_optional_field`), and everything
+the language has for a `T?` local works on it unchanged. What takes a value
+for a field (`check_expr_want_any`, `type_assignable` in `types.c`) takes what
+the `T?` does. `check_default` lets `null` be a default. `check_writable`
+refuses one as a `mut` or `out` argument (the C types differ, so nothing can
+point at it as a `T?`), and `element_path_in_place` asks what the field is
+kept as, so `rows[i].label = "x"` of a `string?` is refused as a `string`'s
+is. `optional_field_ok` refuses a grid and a rendering resource. `T??`,
+`List<int?>` (any `<>`) and `int?[4]` are the parser's errors
+(`parse_decl_type`, `parse_type`), which say a struct with a `T?` field goes
+there. `wrapped_what` names a field in the unwrap error.
+
+**Generated C.** `tide_optional_<T>_get(kept)` gives the `tide_result<n>`
+code reads (zeros unless `ok`; text through `tide_text_view`), and
+`tide_optional_<T>_of(result)` what's kept (zeros unless `ok`; text through
+`tide_text_temp`): `gen_optional_helpers`, both `TIDE_HELPER`s in the `.c`.
+A read is `gen_optional_read` from `gen_expr`'s `E_MEMBER` and `E_NAME`,
+beside text's `tide_text_view`, with `tide_copy_<struct>` first where the
+value has a list, as any value taken out of a place is copied. A write is
+`gen_as` with the struct as what's wanted (so a struct's value, a default, a
+spawn and a send all go through `_of`), and in `S_ASSIGN` and
+`gen_element_assign` the field's own branch: `tide_assign_<struct>` where it
+keeps text or lists. `has_defaults` and `gen_value` give zeros for one with
+no value, whatever its value's struct defaults to.
+
+**A field with no value is zeros.** `_of` gives zeros; `tide_assign_<X>`
+(`gen_text_helpers`) ends by releasing the text and lists of each `T?` field
+it left with no value (`optional_paths`) and zeroing it, since assigning an
+empty list keeps a block; an input is put right before `Sanitize`
+(`gen_clear_padding`, and `needs_repair` is true of one); a command's and a
+whole input's bits are read into zeros, and a delta's read ends with it
+(`gen_bits`). `random_paths` skips them, so nothing seeds a `Random?`.
+`type_blends` (`types.c`) says no, so views snap them. `gen_show_helpers`
+has a `tide_text_<struct>` for each one shown: the value, or `null`.
+
+**JSON** (`json_holds` in `check.c`; the struct reader and writer in
+`gen_json_helpers`): no reader or writer of the kept struct's own. A struct's
+reader sets the field to zeros, then, unless the value is `null`, reads the
+value (a struct's from its defaults) and sets `ok`; its writer, for a struct
+with any `T?` field, keeps a `first` flag instead of fixed commas and leaves
+out a field with no value. A struct with none generates what it did.
+
+**A game with none generates the C it did, byte for byte**: old and new tidec
+over every source list in `build/debug` (270, with `--layout` and without).
+The six that differ have `T?` fields, which the old compiler refuses: the new
+e2e and safety programs, the three that build the lobby package, and the
+migration test's. `last_light`'s two fail the same way with both, run outside
+the game's folder.
+
+**Tests.** `compiler/tests/e2e/optional_fields` (86 checks in Tide: every
+kind of `T`, defaults, `null`, `default`, literals, methods, text and list
+ownership and copies, lists, maps and arrays of structs with them, past the
+end, as text, JSON both ways, C through `extern`, a scene's, events, a query's
+rows, the World, a task across waits; in C: a component set and cleared is
+the bytes of one never set and the world's hash where nothing's in the heap,
+a copy, the world as bytes, a delta, `OPTIONAL_FIELDS_HASH`, which native and
+web share, the input from C with bytes beside no value and as bits whole and
+as what changed, commands' sizes on the wire and cut short, local fields,
+local events and a local component, and a view between two ticks), natively
+and on the web. `compiler/tests/safety/optional_fields`.
+`compiler/tests/errors/optional_field_*`, 28 files, a diagnostic each
+(`optional_field.tide`, the error that fields couldn't be one, is gone).
+`migrate_carries_optional_fields_as_a_value_or_nothing`
+(`platform/tests/migrate.c`). Editors: `lsp_optional_fields`, and five lines
+of the grammar's (`notes/editors.md`).
+
+**The lobby package** (`packages/lobby`) wrote a lobby's change a struct at a
+time and joined the texts, as `Json.Write` wrote every field. It writes one
+`ChangeSaid` of `T?` fields now, and `LobbyChange` has `T?` fields where it
+had a `sets` flag beside each (`notes/lobby-package.md`).
+
+**Validation** (Windows, Node 24): warning-free native and web debug builds;
+2,217 native and 2,186 web tests pass, the web's with the same
+`OPTIONAL_FIELDS_HASH`; 225 grammar checks; the docs production build. Linux,
+macOS, MinGW, Android and the sanitizers were not run here, and no workflow
+was dispatched.
+
+**Not built**: a `T?` as what a list, a map, a set, a grid or an array holds;
+a `T?` field as a `mut` or `out` argument; `??=`; `cond ? value : null`
+(no local has it either); blending a value between two ticks that both have
+one; a reload from `T` to `T?`; `null` written in JSON; a shorter delta for
+an input's `T?` (its value's change is sent beside the flag's); a `T?` on the
+GPU.
+
 ## JSON as a game's types, and text as bytes, pieces and numbers, 2026-10-11
 
 The owner approved typed JSON generated at compile time ("yeah I like that
@@ -121,7 +360,7 @@ cross-platform hash; 221 grammar checks; the docs production build. Linux,
 macOS, MinGW, Android and the sanitizers were not run here, and no workflow
 was dispatched.
 
-**Not built**: a dynamic JSON value; `T?` fields (the language has none yet);
+**Not built**: a dynamic JSON value; `T?` fields (built since: see T? fields, above);
 vectors, colors, sets and maps by an int or an enum; telling why a read gave
 nothing; indented output or leaving out defaults; `Join`, `byte.TryParse`, a
 `Parse` that fails; `TryParse` in the GUI's own number fields.
@@ -372,7 +611,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Editors:** completion offers `Spawn` and `Send` in a function or a method, with the events of both worlds, and an entity's `Add`, `Remove`, `Destroy` and `Send` after its dot there (`passed` in `list_members`, and the routine's branch of `complete_expression`, `compiler/lsp/analysis.c`), not in an operator, an `Interpolate` or an `audio` declaration, and never `Snap`. They were hidden in every function, async ones too, which could always send. `lsp_functions_send_and_spawn` checks them, and the diagnostic at a view's call.
   - **A dropped value warns, and `_ = value;` drops one on purpose** (built 2026-10-11, both the owner's, from `request.SetHeader(...)` written as a statement, which gave a request nobody kept). `check_stmt`'s `S_EXPR` notes a function's or method's call whose type isn't void, an error or failable (`checker.dropped`), and `warn_dropped_values`, after `warn_unused_locals`, warns for those `call_acts` says do nothing: it has to wait, as whether a function draws, calls C or acts is known once every body is checked. `_ = value;` is the parser's (`parse_simple`): a `var` named `_dropped_<line>_<column>`, marked `discard` and read, so a value dropped goes through everything a variable's does (a call's order, an `await`, text and lists) and generated C needed nothing. No game in the repository had such a call. Tests: `compiler/tests/warnings/dropped_value.tide`.
   - **Session calls and `Clipboard.Copy` in a function or a method** (built 2026-10-11; the owner, asked whether to lift "functions can't call Session yet": "yes lets improve the session stuff on Tide"). They're this machine's acts: `check_session_call` and the clipboard's check let an inheriting function through and `note_act(c, true, ...)` with "calls Session.Open" or "calls Clipboard.Copy", as a command's send does, so `mark_act_callers` and `check_acts` need no rule for them and the errors are theirs (the match, `Sample`, a frag, a parallel loop's step, a comparison); `check_acts` words the match's as "the match runs the same on every machine" for a `what` that starts with "calls ". An operator and `Interpolate` are refused where written. Generated C needed nothing: `takes_local` is true of `acts[1]`, so the function is handed `tide_l`, which `gen_session_call` and `tide_request_copy` already name. "A statement of its own" still holds in a function. `session.room` and a whole `Session` as text stay refused in functions and methods (`singleton_param_session_room`, `_text`, `_append`): the room is beside the `Session` value, in the local state, and a helper gains no implicit lookup; making the room part of the value is the runtime's side and wasn't done. tidels offers `Session.` and `Clipboard.` there (`decides_session`). Tests: `tidec_e2e_session_main` (a function a function calls, a struct's method, the clipboard, a local handler's function), `compiler/tests/errors/session_in_function`, `clipboard_in_function`, `session_function_in_sample`, `session_in_operator`; `singleton_param_session_operation`, which pinned the refusal, is gone; `lsp_functions_send_and_spawn`.
-  - Not built: `Snap`, `Scene.Load` and `Scene.Unload` and starting tasks in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards.
+  - Not built: `Snap`, `Scene.Load` and `Scene.Unload` in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards. Starting tasks in a function is built since: Functions and methods start tasks, at the top.
   - Provisional, awaiting the owner: everything under Functions and blocks in the spec. The owner's own words cover that it's bare, inherited from the caller, and an error only at a call from a place that can't; that it's all six operations and methods too is my reading of "there are depend on who calls them", said of `Spawn` and `Destroy`.
 - `virtual` and `override` follow C# (agreed 2026-10-05; `docs/spec.md`, Mods: Decided for what's agreed, Provisional for the picks made to build them). `virtual` before a declaration with code says another package can replace it, and `override` before one replaces the virtual declaration of that name and those parameters, while compiling. They're the first step of modding, and for any package. What's built, and what code relies on:
   - **The words** are read where `local` and `async` are (`at_replace_word` in `compiler/src/parser.c`): before a declaration's word or a function's type, and `virtual` before a method in a type's body. Data, constants, `extern` and the settings are refused before the declaration is read (`replace_refusal`), which then goes as it would without the word. After `override` a declaration's name can be qualified (`new_named_decl`, `parser.overriding`): `decl.override_name` is what's written, and `name` and `at` its last part.

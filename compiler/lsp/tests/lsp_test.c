@@ -6995,6 +6995,65 @@ TIDE_TEST(lsp_completion_keeps_complete_member_chains)
     jb_free(&source);
 }
 
+TIDE_TEST(lsp_asset_type_completion)
+{
+    start();
+    static const char *const declarations[] = {
+        "asset $", "asset Tex$", "asset Anim$", "asset Ski$", "asset\n    $",
+        "[LOD] asset Me$", "namespace Art { asset Tex$ }",
+    };
+    static const char *const types[] = {
+        "string", "Texture", "Clip", "Grid2", "Mesh", "SkinnedMesh", "AnimationCatalog", "Animation", "Cubemap", "List", "Map",
+    };
+    for (size_t i = 0; i < sizeof declarations / sizeof declarations[0]; i++) {
+        open_document(declarations[i]);
+        const char *reply = request("textDocument/completion");
+        for (size_t k = 0; k < sizeof types / sizeof types[0]; k++) TIDE_CHECK(offers(reply, types[k]));
+        TIDE_CHECK(!offers(reply, "int") && !offers(reply, "Pose") && !offers(reply, "Set") && !offers(reply, "component"));
+        TIDE_CHECK(has(reply, "\"insertText\":\"Grid2<Color>\""));
+        TIDE_CHECK(has(reply, "\"insertText\":\"Mesh<${1:Vertex3}>\""));
+        TIDE_CHECK(has(reply, "\"insertText\":\"Map<string, ${1:Texture}>\""));
+    }
+    static const char *const collections[] = {"asset List<$", "asset List<Tex$", "asset Map<string, $", "asset Map<string, Anim$"};
+    for (size_t i = 0; i < sizeof collections / sizeof collections[0]; i++) {
+        open_document(collections[i]);
+        const char *reply = request("textDocument/completion");
+        TIDE_CHECK(offers(reply, "Texture") && offers(reply, "Mesh") && offers(reply, "SkinnedMesh") && offers(reply, "AnimationCatalog"));
+        TIDE_CHECK(!offers(reply, "Animation") && !offers(reply, "Cubemap") && !offers(reply, "Map"));
+        TIDE_CHECK(has(reply, "\"insertText\":\"List<byte>\""));
+        TIDE_CHECK(offers(reply, "byte") == (i < 2));
+    }
+    open_document("asset Map<str$");
+    const char *reply = request("textDocument/completion");
+    TIDE_CHECK(offers(reply, "string") && count(reply, "\"label\"") == 1);
+    static const char *const pixels[] = {"asset Grid2<Col$", "asset List<Grid2<$", "asset Map<string, Grid2<$"};
+    for (size_t i = 0; i < sizeof pixels / sizeof pixels[0]; i++) {
+        open_document(pixels[i]);
+        reply = request("textDocument/completion");
+        TIDE_CHECK(offers(reply, "Color") && count(reply, "\"label\"") == 1);
+    }
+    open_document("asset Map<string, List<by$");
+    reply = request("textDocument/completion");
+    TIDE_CHECK(offers(reply, "byte") && count(reply, "\"label\"") == 1);
+    static const char *const meshes[] = {"Mesh<$", "SkinnedMesh<Cor$", "List<Mesh<$", "Map<string, SkinnedMesh<$", "SkinnedMesh<Vertex3, $"};
+    for (size_t i = 0; i < sizeof meshes / sizeof meshes[0]; i++) {
+        char source[512];
+        snprintf(source, sizeof source, "struct Corner { float3 position; }\nstruct Rig { Animation idle; }\nenum Choice { One }\nasset %s", meshes[i]);
+        open_document(source);
+        reply = request("textDocument/completion");
+        TIDE_CHECK(offers(reply, "Corner") && offers(reply, "Rig") && offers(reply, "Vertex3"));
+        TIDE_CHECK(!offers(reply, "Choice") && !offers(reply, "Texture") && !offers(reply, "Map"));
+    }
+    // A complete type/name, initializer and the next declaration keep their own contexts.
+    open_document("asset Texture logo $;");
+    TIDE_CHECK(!offers(request("textDocument/completion"), "Texture"));
+    open_document("asset Texture logo = $;");
+    TIDE_CHECK(!offers(request("textDocument/completion"), "Texture"));
+    open_document("asset Texture logo = missing;\n$");
+    reply = request("textDocument/completion");
+    TIDE_CHECK(offers(reply, "component") && !offers(reply, "Texture"));
+}
+
 TIDE_TEST(lsp_completion_keeps_deep_block_context)
 {
     start();
@@ -8563,6 +8622,17 @@ TIDE_TEST(lsp_web_requests)
     TIDE_CHECK(offers(web, "Request") && offers(web, "Fetch"));
     const char *built = complete(TASK "    var request = Web.Request(\"http://example.com\");\n    request.$\n}\n");
     TIDE_CHECK(offers(built, "SetMethod") && offers(built, "SetHeader") && offers(built, "SetBody") && offers(built, "url"));
+    // Its time limit, as a call and as the field it sets, and the error a request past it fails with
+    TIDE_CHECK(offers(built, "SetTimeout") && offers(built, "timeout"));
+    TIDE_CHECK(has(built, "WebRequest SetTimeout(float seconds)"));
+    // ...which is a member in a program that has a request, and in no other: every game's header declares IOError
+    TIDE_CHECK(offers(complete(TASK "    var request = Web.Request(\"http://example.com\");\n    var late = IOError.$\n}\n"), "TimedOut"));
+    const char *plain = complete(TASK "    var late = IOError.$\n}\n");
+    TIDE_CHECK(offers(plain, "Failed") && !offers(plain, "TimedOut"));
+    open_document(TASK "    var answer = await Web.Request(\"http://example.com\").SetTimeout(5).Send();\n"
+                       "    if (answer is IOError.TimedOut) return;\n}\nview Start() { Go(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(3, 60), "WebRequest SetTimeout(float seconds)"));
     const char *answer = complete(TASK "    var answer = await Web.Request(\"http://example.com\").Send() ?? WebResponse { };\n"
                                        "    answer.$\n}\n");
     TIDE_CHECK(offers(answer, "status") && offers(answer, "body"));
@@ -8642,6 +8712,76 @@ TIDE_TEST(lsp_json_and_text_primitives)
 #undef JSON_TYPES
 }
 
+// Fields declared T?: read as the T? they are, in hovers, hints and completions, and what's wrong said where it's written.
+TIDE_TEST(lsp_optional_fields)
+{
+    start();
+#define OPTIONAL_TYPES                                                                                      \
+    "struct Slot { int? item; string? label; }\nsingleton Bag { Slot slot; int? best; List<int>? picks; }\n" \
+    "scene Main { }\n"
+    open_document(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n"
+                                 "    var kept = bag.best;\n"
+                                 "    var item = bag.slot.item ?? 0;\n"
+                                 "    bag.best = item;\n"
+                                 "    bag.slot.label = null;\n"
+                                 "    if (bag.best is int found) bag.best = found + 1;\n"
+                                 "    bag.slot = Slot { item = kept ?? 1 };\n"
+                                 "    bag.picks = [item];\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(5, 19), "int? best"));    // Where it's read
+    TIDE_CHECK(has(hover_at(7, 9), "int? best"));     // ...and written
+    TIDE_CHECK(has(hover_at(1, 33), "int? best"));    // ...and declared
+    TIDE_CHECK(has(hover_at(8, 14), "string? label"));
+    TIDE_CHECK(has(hover_at(0, 19), "int? item"));
+    TIDE_CHECK(has(hover_at(5, 9), "int? kept"));     // A local holds it as it is
+    TIDE_CHECK(has(hover_at(6, 9), "int item"));      // What `??` unwrapped
+    TIDE_CHECK(has(hover_at(9, 26), "int found"));
+    TIDE_CHECK(has(hover_at(10, 22), "int? item"));   // In a struct's value
+    TIDE_CHECK(has(hover_at(11, 9), "List<int>? picks"));
+    const char *hints = all_hints();
+    TIDE_CHECK(has(hints, "\": int?\"") && has(hints, "\": int\""));
+    // The field's uses: where it's declared, read, tested and written twice
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 1, 33, "\"context\":{\"includeDeclaration\":true}"),
+                     "\"uri\"") == 5);
+    // Renaming it changes them all
+    const char *renamed = rename_at(1, 33, "top");
+    TIDE_CHECK(count(renamed, "\"newText\":\"top\"") == 5);
+
+    // After a dot: the fields, each with its type
+    const char *fields = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    bag.$\n}\n");
+    TIDE_CHECK(offers(fields, "best") && offers(fields, "slot") && offers(fields, "picks") && has(fields, "int?") && has(fields, "List<int>?"));
+    const char *inner = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    bag.slot.$\n}\n");
+    TIDE_CHECK(offers(inner, "item") && offers(inner, "label") && has(inner, "string?"));
+    // In a struct's value
+    const char *literal = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    bag.slot = Slot { item = 1, $ };\n}\n");
+    TIDE_CHECK(offers(literal, "label") && has(literal, "string?"));
+    // A T? has nothing after its dot until it's unwrapped: not its value's, and not how it's kept
+    const char *wrapped = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    var n = bag.slot.label.$\n}\n");
+    TIDE_CHECK(!offers(wrapped, "length") && !offers(wrapped, "value") && !offers(wrapped, "ok"));
+    const char *unwrapped = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    var label = bag.slot.label ?? \"\";\n    var n = label.$\n}\n");
+    TIDE_CHECK(offers(unwrapped, "length"));
+    // A type that takes a '?' where a field's goes
+    TIDE_CHECK(offers(complete("struct Slot { int? item; }\nstruct Bag\n{\n    Sl$? slot;\n}\nscene Main { }\n"), "Slot"));
+
+    // What's wrong is said where it's written, with how to unwrap it
+    const char *used = OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    var next = bag.best + 1;\n}\n";
+    open_document(used);
+    TIDE_CHECK(has(last_sent(), "'best' is int?, a value or nothing, so it needs unwrapping first"));
+    actions_at(5);
+    const char *fixed = apply_fix(used, "Carry on with the default if there's none: add '!'");
+    if (!fixed) printf("    actions: %s\n", last_sent());
+    TIDE_CHECK(fixed && has(fixed, "var next = bag.best! + 1;"));
+    open_document(OPTIONAL_TYPES "void Bump(mut int? value) { value = 1; }\nsystem Run(mut Bag bag)\n{\n    Bump(bag.best);\n}\n");
+    TIDE_CHECK(has(last_sent(), "a T? field can't be passed as 'mut'"));
+    open_document("component Targets { List<int?> ids; int?? twice; int?[4] cells; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "what a List holds is always there, so it can't be a T?"));
+    open_document("component Board { Grid2<int>? cells; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "a field can't be a grid or nothing"));
+    // Formatting keeps the '?' against its type
+    TIDE_CHECK(has(format_reply("struct Slot{int ?item;string? label=null;}\nscene Main { }\n"), "int? item;") );
+#undef OPTIONAL_TYPES
+}
+
 TIDE_TEST(lsp_functions_send_and_spawn)
 {
     start();
@@ -8680,6 +8820,16 @@ TIDE_TEST(lsp_functions_send_and_spawn)
     TIDE_CHECK(!offers(op_session, "Open"));
     open_document(ACTS "void Host() { Session.Open(); }\nsystem Fight(Body body) { if (body.radius > 20) Host(); }\n");
     TIDE_CHECK(has(last_sent(), "'Host' calls Session.Open, and the match runs the same on every machine"));
+    // A task, started as the code that calls the function could: an async function is offered there, nothing is
+    // wrong with the function or the system that calls it, and a view is told at its call
+#define LATER "async void Later(int n)\n{\n    await Wait.Ticks(n);\n}\n"
+    TIDE_CHECK(offers(complete(ACTS LATER "void Soon()\n{\n    $\n}\n"), "Later"));
+    open_document(ACTS LATER "void Soon() { Later(2); }\nsystem Fight(Body body) { if (body.radius > 20) Soon(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(ACTS LATER "void Soon() { Later(2); }\nsystem Fight(Body body) { if (body.radius > 20) Soon(); }\n"
+                             "view Show(Body body) { if (body.radius > 20) Soon(); }\n");
+    TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Soon' starts 'Later', a task that changes the match"));
+#undef LATER
 #undef ACTS
 }
 

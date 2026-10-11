@@ -257,6 +257,12 @@ static type_ref *parse_type(parser *p, const char *what)
             if (i == 1 && str_eq_c(q.text, "SkinnedMesh") && !at(p, T_COMMA)) break;
             if (i) expect(p, T_COMMA, form->comma);
             vec_push(r->args, parse_type(p, form->hints[i]));
+            if (at(p, T_QUESTION) || at(p, T_COALESCE)) { // List<int?>: what a container holds is always there
+                const type_ref *held = r->args.items[r->args.count - 1];
+                diag_error(peek(p)->at, "what a " STR_FMT " holds is always there, so it can't be a T?", STR_ARG(q.text));
+                diag_note("a struct's field can be one, and the struct goes here: 'struct Slot { " STR_FMT "? value; }'", STR_ARG(held->text));
+                advance(p);
+            }
         }
         const loc close = close_angle(p, form->close);
         r->end = (loc){close.line, close.col + 1, close.file};
@@ -280,11 +286,22 @@ static type_ref *parse_type(parser *p, const char *what)
 static type_ref *parse_decl_type(parser *p, const char *what)
 {
     type_ref *r = parse_type(p, what);
-    if (!at(p, T_QUESTION)) return r;
+    if (at(p, T_COALESCE)) { // int??: a T? of a T?
+        diag_error(peek(p)->at, "'" STR_FMT "?" "?' isn't a type: a T? is a value or nothing, and there's one nothing", STR_ARG(r->text));
+        diag_note("write '" STR_FMT "?'", STR_ARG(r->text));
+    } else if (!at(p, T_QUESTION)) {
+        return r;
+    }
     r->question_at = advance(p)->at;
     r->optional = true;
     r->end = (loc){r->question_at.line, r->question_at.col + 1, r->question_at.file};
     set_type_text(r);
+    if (at(p, T_LBRACKET)) { // int?[4]: an array's elements are always there
+        diag_error(peek(p)->at, "what an array holds is always there, so it can't be a T?");
+        diag_note("a struct's field can be one, and the array is of the struct: 'struct Slot { " STR_FMT " value; }'", STR_ARG(r->text));
+        while (!at(p, T_RBRACKET) && !at(p, T_EOF) && !at(p, T_SEMI)) advance(p);
+        if (at(p, T_RBRACKET)) advance(p);
+    }
     return r;
 }
 

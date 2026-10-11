@@ -1,0 +1,475 @@
+// How the yard looks. Nothing here is in the match: where things are drawn
+// eases towards where the match says they are.
+//
+// A tiled courtyard over dark water at night, cut from flat colour. The rules
+// of the look are art/make_art.py's, and this file keeps them too: flat colour
+// only, one hard shadow straight down from whatever is loose or stands up, and
+// decoration only on what can be carried. Set ground is plain sand paving; a
+// loose stone is a glazed tile with an eight-pointed star. Where there is no
+// ground there is water.
+[Filter(Filter.Trilinear)]
+asset Texture artSheet = "art/atlas.png";
+[Wrap(Wrap.Repeat)]
+asset Texture starLattice = "art/lattice.png";
+
+// The atlas's sprites, in its order: six across.
+enum Art
+{
+    StoneSetA, StoneSetB, StoneSetC, StoneLoose, IceSet, IceLoose,
+    PortalSet, PortalLoose, Rubble, Crate, ButtonUp, ButtonDown,
+    GateShut, GateOpen, Lantern, LanternLit, PortalLight, EmberFront,
+    EmberBack, EmberSide, TideFront, TideBack, TideSide, TilePlain
+}
+
+local singleton Picture
+{
+    bool ready;
+    int level = -1;
+    int serial = -1;
+    bool snap;
+    float2[2] pavers;
+    bool[2] jumped;
+    float[2] stride;
+    float2[6] crates;
+    Ground[63] ground;
+    float[63] age;
+    float clock;
+    float celebration;
+    bool solved;
+    int[6] sparkCell;
+    Cue[6] sparkKind;
+    float[6] sparkAge;
+    int sparkNext;
+    // A stone on its way between the ground and a paver's hands.
+    int flyCell = -1;
+    int flyPaver;
+    bool flyLay;
+    float flyAge;
+    // Room kept at the foot of the screen for a hint or the solved card.
+    float reserved;
+}
+
+struct Lens
+{
+    float2 origin;
+    float tile;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+}
+
+const float FRAME = 0.34;
+const float FLIGHT = 0.15;
+const float SHEET_W = 1728;
+const float SHEET_H = 1152;
+const Color WALL_TOP = Color(0.20, 0.19, 0.36);
+const Color WALL_FACE = Color(0.12, 0.115, 0.23);
+const Color WATER = Color(0.075, 0.20, 0.33);
+const Color WATER_DEEP = Color(0.055, 0.15, 0.26);
+const Color WATER_LIGHT = Color(0.16, 0.34, 0.48);
+const Color GROUT = Color(0.56, 0.48, 0.39);
+
+float2 CellPoint(int cell) { return float2(cell % BOARD_W, cell / BOARD_W); }
+float2 LensPoint(float2 cell, Lens lens) { return lens.origin + cell * lens.tile; }
+
+// The board is its open cells and a rim of rock, drawn as large as fits.
+Lens BoardLens(Board board, float2 screen, float reserved = 0)
+{
+    mut var x0 = BOARD_W;
+    mut var y0 = BOARD_H;
+    mut var x1 = -1;
+    mut var y1 = -1;
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        if (board.ground[cell] == Ground.Wall) continue;
+        x0 = Math.Min(x0, cell % BOARD_W);
+        x1 = Math.Max(x1, cell % BOARD_W);
+        y0 = Math.Min(y0, cell / BOARD_W);
+        y1 = Math.Max(y1, cell / BOARD_W);
+    }
+    if (x1 < 0) { x0 = 1; y0 = 1; x1 = BOARD_W - 2; y1 = BOARD_H - 2; }
+    var narrow = screen.x < 720;
+    var top = narrow ? 150.0 : 112.0;
+    var bottom = screen.y - (narrow ? 164.0 : 80.0) - reserved;
+    var columns = x1 - x0 + 1 + FRAME * 2;
+    var rows = y1 - y0 + 1 + FRAME * 2;
+    var tile = Math.Clamp(Math.Min((screen.x - (narrow ? 12.0 : 60.0)) / columns, (bottom - top) / rows), 8, 136);
+    var corner = float2((screen.x - columns * tile) * 0.5, top + (bottom - top - rows * tile) * 0.5);
+    return Lens { origin = corner + float2(tile * (0.5 + FRAME)) - float2(x0, y0) * tile, tile = tile, x0 = x0, y0 = y0, x1 = x1, y1 = y1 };
+}
+
+float Ease(float t)
+{
+    var x = Math.Clamp(t, 0, 1);
+    return 1 - (1 - x) * (1 - x) * (1 - x);
+}
+
+// One sprite of the atlas, `tile` being the size of a cell: a sprite is half
+// as wide again as its cell. `turn` spins it about its middle.
+void Sprite(Art art, float2 center, float tile, Color tint = Color.white, bool mirror = false, float turn = 0)
+{
+    if (tile <= 0) return;
+    var index = int(art);
+    var cell = float2(1.0 / 6, 1.0 / 4);
+    var inset = float2(0.75 / SHEET_W, 0.75 / SHEET_H);
+    var low = float2(index % 6, index / 6) * cell + inset;
+    var high = low + cell - inset * 2;
+    var from = mirror ? float2(high.x, low.y) : low;
+    var to = mirror ? float2(low.x, high.y) : high;
+    var half = tile * 0.75;
+    var across = float2(Math.Cos(turn), Math.Sin(turn)) * half;
+    var down = float2(-across.y, across.x);
+    List<Vertex> corners = [
+        Vertex { position = center - across - down, uv = from, color = tint },
+        Vertex { position = center + across - down, uv = float2(to.x, from.y), color = tint },
+        Vertex { position = center + across + down, uv = to, color = tint },
+        Vertex { position = center - across + down, uv = float2(from.x, to.y), color = tint },
+    ];
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], artSheet);
+}
+
+// The backdrop's pattern over a part of the screen: stars in line, very faint.
+void LatticePatch(float2 from, float2 to, Color tint)
+{
+    var scale = 1.0 / 150;
+    List<Vertex> corners = [
+        Vertex { position = from, uv = from * scale, color = tint },
+        Vertex { position = float2(to.x, from.y), uv = float2(to.x, from.y) * scale, color = tint },
+        Vertex { position = to, uv = to * scale, color = tint },
+        Vertex { position = float2(from.x, to.y), uv = float2(from.x, to.y) * scale, color = tint },
+    ];
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], starLattice);
+}
+
+[Stage(ArtStage.Backdrop)]
+view NightSky(mut Picture picture)
+{
+    Draw.SetScreen();
+    Draw.Clear(NIGHT);
+    var screen = float2(Screen.width, Screen.height);
+    picture.clock += Math.Min(Frame.dt, 0.08);
+    if (picture.clock > 4000) picture.clock -= 4000;
+    LatticePatch(float2(0), screen, Color(0.55, 0.62, 1, 0.045));
+}
+
+// One cell's ground, `size` being its cell: the board's cells, and at a
+// smaller size the stone a paver carries. `seed` picks among stones that
+// differ only in their grain.
+void GroundPaint(Ground ground, float2 at, float size, bool fixed, bool down, bool live, float clock, int seed = 0)
+{
+    // A loose stone's top is a little above its cell's middle; a set one's is on it.
+    var face = at - float2(0, fixed ? 0.0 : size * 0.035);
+    if (ground == Ground.Stone || ground == Ground.PlateA || ground == Ground.PlateB)
+    {
+        if (!fixed) Sprite(ground == Ground.Stone ? Art.StoneLoose : Art.TilePlain, at, size);
+        else Sprite(seed % 3 == 0 ? Art.StoneSetA : seed % 3 == 1 ? Art.StoneSetB : Art.StoneSetC, at, size, Color.white, seed % 2 == 1);
+        if (ground == Ground.Stone) return;
+        var tone = ground == Ground.PlateA ? GOLD : MINT;
+        Sprite(down ? Art.ButtonDown : Art.ButtonUp, face, size, down ? Math.Lerp(tone, Color.white, 0.30) : tone);
+    }
+    else if (ground == Ground.Ice) Sprite(fixed ? Art.IceSet : Art.IceLoose, at, size);
+    else if (ground == Ground.PortalP || ground == Ground.PortalQ)
+    {
+        Sprite(fixed ? Art.PortalSet : Art.PortalLoose, at, size);
+        // Lit and turning while it leads somewhere; a dull ring while its twin is in a hand.
+        if (live) Sprite(Art.PortalLight, face, size, Color(0.97, 0.94, 0.87), false, clock * 1.2);
+        else Sprite(Art.PortalLight, face, size, Color(0.45, 0.40, 0.62));
+    }
+    else if (ground == Ground.Rubble) Sprite(Art.Rubble, at, size);
+}
+
+// A wall stands above the floor. Its top is the courtyard's own; what a cell
+// of it adds is a face, wherever open ground or water is south of it.
+void Rock(float2 at, float size, bool faced)
+{
+    if (faced) Draw.Rect(at + float2(0, size * 0.43), float2(size + 0.6, size * 0.14), WALL_FACE);
+}
+
+// Corner marks round a cell, in a paver's colour: where its hands would act.
+void Brackets(float2 at, float size, Color tone, float width)
+{
+    var half = size * 0.5;
+    var arm = size * 0.22;
+    for (var corner = 0; corner < 4; corner++)
+    {
+        var sx = corner % 2 == 0 ? -1.0 : 1.0;
+        var sy = corner < 2 ? -1.0 : 1.0;
+        var tip = at + float2(sx * half, sy * half);
+        Draw.Line(tip, tip - float2(sx * arm, 0), width, tone);
+        Draw.Line(tip, tip - float2(0, sy * arm), width, tone);
+    }
+}
+
+// Where a paver holds what it carries, from where it stands.
+float2 Overhead(float2 at, float size) { return at + float2(0, -size * 0.77); }
+
+void PaverPaint(float2 at, float size, int paver, int facing, Ground held, bool active, float clock, float stride, bool still)
+{
+    var tone = PaverColor(paver);
+    if (active)
+    {
+        var ring = 0.5 + 0.5 * Math.Sin(clock * 4.2);
+        Draw.WireEllipse(at + float2(0, size * 0.275), float2(size * (0.36 + (still ? 0.0 : ring * 0.025)), size * 0.135), Math.Max(1.5, size * 0.03), Color(tone.r * 0.5 + 0.5, tone.g * 0.5 + 0.5, tone.b * 0.5 + 0.5, 1));
+    }
+    // A breath while standing, a hop while walking.
+    var hop = still ? 0.0 : Math.Abs(Math.Sin(stride * 3.14)) * size * 0.07;
+    var bob = still ? 0.0 : Math.Sin(clock * 2.6 + paver * 1.7) * size * 0.012;
+    var body = at - float2(0, hop + bob);
+    var front = paver == 0 ? Art.EmberFront : Art.TideFront;
+    var back = paver == 0 ? Art.EmberBack : Art.TideBack;
+    var side = paver == 0 ? Art.EmberSide : Art.TideSide;
+    Sprite(facing == 0 ? back : facing == 2 ? front : side, body, size, Color.white, facing == 3);
+    if (held != Ground.Void)
+    {
+        var carried = Overhead(body, size) + float2(0, still ? 0.0 : Math.Sin(clock * 2.3 + paver) * size * 0.015);
+        GroundPaint(held, carried, size * 0.46, false, false, false, clock);
+    }
+}
+
+local event(PuzzleCue cue) WatchPuzzle(mut Picture picture)
+{
+    if (cue.kind == Cue.Portal && cue.paver >= 0 && cue.paver < 2) picture.jumped[cue.paver] = true;
+    if (cue.kind == Cue.Undo || cue.kind == Cue.Reset) picture.snap = true;
+    if ((cue.kind == Cue.Lift || cue.kind == Cue.Lay) && cue.cell >= 0 && cue.paver >= 0 && cue.paver < 2)
+    {
+        picture.flyCell = cue.cell;
+        picture.flyPaver = cue.paver;
+        picture.flyLay = cue.kind == Cue.Lay;
+        picture.flyAge = 0.001;
+        return;
+    }
+    if (cue.cell < 0 || cue.kind == Cue.Step || cue.kind == Cue.Blocked || cue.kind == Cue.Gate) return;
+    picture.sparkCell[picture.sparkNext] = cue.cell;
+    picture.sparkKind[picture.sparkNext] = cue.kind;
+    picture.sparkAge[picture.sparkNext] = 0.001;
+    picture.sparkNext = (picture.sparkNext + 1) % 6;
+}
+
+[Stage(ArtStage.Board)]
+view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture)
+{
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    var narrow = screen.x < 720;
+    var left = narrow ? 14.0 : Math.Max(24, (screen.x - 1180) * 0.5);
+    // A plain bar behind the words: easier to read than words on stars, and the
+    // same pixels on every machine, which the browser test compares.
+    var bar = narrow ? 126.0 : 66.0;
+    Draw.Rect(float2(screen.x * 0.5, bar * 0.5), float2(screen.x, bar), Color(0.065, 0.07, 0.15));
+    Draw.Rect(float2(screen.x * 0.5, bar + 1), float2(screen.x, 3), Color(0.035, 0.04, 0.09));
+    Label("underfoot", float2(left, 34), narrow ? 26.0 : 30.0, CREAM);
+    if (!yard.initialized) return;
+    var board = yard.board;
+    var layout = yard.layout;
+    Label($"{ChapterName(yard.level)}  /  {yard.level + 1} of {LEVEL_COUNT}", float2(left + (narrow ? 0.0 : 178.0), narrow ? 62.0 : 28.0), 12, GOLD);
+    Label(LevelName(yard.level), float2(left + (narrow ? 0.0 : 178.0), narrow ? 78.0 : 46.0), narrow ? 13.0 : 16.0, CREAM);
+    var counted = float2(left + (narrow ? 0.0 : 178.0) + Draw.MeasureText(LevelName(yard.level), narrow ? 13.0 : 16.0).x + 14, narrow ? 78.0 : 47.0);
+    Label(board.moves == 1 ? "1 move" : $"{board.moves} moves", counted, 12, MUTED);
+    if (lobby.page != Rooms.Page.Playing) return;
+
+    var dt = Math.Min(Frame.dt, 0.08);
+    if (board.solved && !picture.solved) picture.celebration = 0;
+    picture.solved = board.solved;
+    if (picture.solved) picture.celebration += dt;
+    var fresh = !picture.ready || picture.level != yard.level || picture.serial != yard.serial;
+    var snap = fresh || picture.snap || hands.reduceMotion;
+    var blend = snap ? 1.0 : 1 - Math.Exp(-dt * 22);
+    for (var paver = 0; paver < 2; paver++)
+    {
+        var target = CellPoint(board.paver[paver]);
+        picture.pavers[paver] = Math.Lerp(picture.pavers[paver], target, snap || picture.jumped[paver] ? 1.0 : blend);
+        picture.jumped[paver] = false;
+        // How far through a step the paver is: what is left of the way, at most one cell.
+        var apart = target - picture.pavers[paver];
+        picture.stride[paver] = Math.Min(1, Math.Abs(apart.x) + Math.Abs(apart.y));
+    }
+    for (var crate = 0; crate < MAX_CRATES; crate++)
+        if (board.crate[crate] >= 0) picture.crates[crate] = Math.Lerp(picture.crates[crate], CellPoint(board.crate[crate]), blend);
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        if (fresh) picture.age[cell] = 1;
+        else if (picture.ground[cell] != board.ground[cell]) picture.age[cell] = snap ? 1.0 : 0.0;
+        else picture.age[cell] = Math.Min(1, picture.age[cell] + dt * 6);
+        picture.ground[cell] = board.ground[cell];
+    }
+    for (var spark = 0; spark < 6; spark++)
+        if (picture.sparkAge[spark] > 0) picture.sparkAge[spark] = picture.sparkAge[spark] + dt > 0.5 || snap ? 0.0 : picture.sparkAge[spark] + dt;
+    if (picture.flyAge > 0) picture.flyAge = picture.flyAge + dt > FLIGHT || snap ? 0.0 : picture.flyAge + dt;
+    // A flight is only shown while the board still agrees with it.
+    var flying = picture.flyAge > 0 && picture.flyCell >= 0 && picture.flyCell < CELLS
+        && (picture.flyLay ? board.ground[picture.flyCell] != Ground.Void : board.held[picture.flyPaver] != Ground.Void);
+    picture.ready = true;
+    picture.snap = false;
+    picture.level = yard.level;
+    picture.serial = yard.serial;
+
+    // A hint or the solved card has the foot of the screen, and the board
+    // glides out of its way instead of hiding under it.
+    var room = board.solved ? (narrow ? 164.0 : 152.0) : hands.hintOpen ? hands.hintHeight + 8 : 0.0;
+    picture.reserved = snap ? room : Math.Lerp(picture.reserved, room, 1 - Math.Exp(-dt * 14));
+    var lens = BoardLens(board, screen, picture.reserved);
+    var tile = lens.tile;
+    var columns = lens.x1 - lens.x0 + 1;
+    var rows = lens.y1 - lens.y0 + 1;
+    var middle = LensPoint(float2(lens.x0 + lens.x1, lens.y0 + lens.y1) * 0.5, lens);
+    var extent = float2(columns, rows) * tile;
+    var slab = extent + float2(tile * FRAME * 2);
+
+    // The courtyard: one flat block of wall, and its one hard shadow.
+    Draw.RoundRect(middle + float2(0, tile * 0.20), slab, tile * 0.16, Color(0.03, 0.035, 0.08));
+    Draw.RoundRect(middle + float2(0, tile * 0.10), slab, tile * 0.16, WALL_FACE);
+    Draw.RoundRect(middle, slab, tile * 0.16, WALL_TOP);
+
+    var pressed = Pressed(board);
+    mut var hasP = false;
+    mut var hasQ = false;
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        if (board.ground[cell] == Ground.PortalP) hasP = true;
+        if (board.ground[cell] == Ground.PortalQ) hasQ = true;
+    }
+
+    // First what everything else lies on or in: rock, the beds of set ground,
+    // and the dark at the edges of each gap.
+    for (var y = lens.y0; y <= lens.y1; y++)
+        for (var x = lens.x0; x <= lens.x1; x++)
+        {
+            var cell = y * BOARD_W + x;
+            var ground = board.ground[cell];
+            var at = LensPoint(float2(x, y), lens);
+            var below = Step(cell, 2);
+            if (ground == Ground.Wall) { Rock(at, tile, below >= 0 && y < lens.y1 && board.ground[below] != Ground.Wall); continue; }
+            var bedded = layout.fixed[cell] || ground == Ground.Rubble;
+            if (bedded && ground != Ground.Void)
+            {
+                Draw.Rect(at, float2(tile + 0.6), GROUT);
+                if (below >= 0 && y < lens.y1 && !(layout.fixed[below] || board.ground[below] == Ground.Rubble || board.ground[below] == Ground.Wall))
+                    Draw.Rect(at + float2(0, tile * 0.5 + tile * 0.07), float2(tile + 0.6, tile * 0.14), Color(0.36, 0.30, 0.25));
+                continue;
+            }
+            // No ground: water, darker in the shade of whatever stands north of it.
+            Draw.Rect(at, float2(tile + 0.6), WATER);
+            Draw.Rect(at - float2(0, tile * 0.41), float2(tile + 0.6, tile * 0.18), WATER_DEEP);
+            if (ground != Ground.Void) continue;
+            // Two short lines of light on it, sliding slowly.
+            for (var ripple = 0; ripple < 2; ripple++)
+            {
+                var seed = cell * 2 + ripple;
+                var slide = hands.reduceMotion ? 0.0 : Math.Sin(picture.clock * (0.5 + seed % 3 * 0.17) + seed * 1.9) * tile * 0.08;
+                var from = at + float2((seed * 37 % 40 - 30) / 100.0 * tile + slide, (ripple == 0 ? -0.08 : 0.22) * tile + (seed * 13 % 10) / 100.0 * tile);
+                Draw.Line(from, from + float2(tile * (0.16 + seed % 3 * 0.05), 0), Math.Max(1.5, tile * 0.028), WATER_LIGHT);
+            }
+        }
+    // The rim's face, wherever the top row is open below it.
+    for (var x = lens.x0; x <= lens.x1; x++)
+    {
+        if (board.ground[lens.y0 * BOARD_W + x] == Ground.Wall) continue;
+        var under = LensPoint(float2(x, lens.y0), lens) - float2(0, tile * 0.5);
+        Draw.Rect(under - float2(0, tile * 0.07), float2(tile + 0.6, tile * 0.14), WALL_FACE);
+    }
+
+    // Then the ground itself, and what is fixed to it.
+    for (var y = lens.y0; y <= lens.y1; y++)
+        for (var x = lens.x0; x <= lens.x1; x++)
+        {
+            var cell = y * BOARD_W + x;
+            var ground = board.ground[cell];
+            if (ground == Ground.Wall || ground == Ground.Void) continue;
+            if (flying && picture.flyLay && picture.flyCell == cell) continue;
+            var at = LensPoint(float2(x, y), lens);
+            var set = layout.fixed[cell] || ground == Ground.Rubble;
+            var grow = hands.reduceMotion || set ? 1.0 : 0.80 + 0.20 * Ease(picture.age[cell]);
+            var occupied = PaverAt(board, cell) >= 0 || CrateAt(board, cell) >= 0;
+            GroundPaint(ground, at, tile * grow, layout.fixed[cell], occupied, hasP && hasQ, picture.clock, x * 7 + y * 13);
+            // A lantern waits unlit; the paver who reaches it takes it up, lit.
+            if (layout.goal[cell] && PaverAt(board, cell) < 0) Sprite(Art.Lantern, at, tile);
+            if (layout.gate[cell] != 0) Sprite(Shut(layout, cell, pressed) && !occupied ? Art.GateShut : Art.GateOpen, at, tile, layout.gate[cell] == 1 ? GOLD : MINT);
+            // A crate that has just gone under is seen going.
+            if (ground == Ground.Rubble && picture.age[cell] < 1 && !hands.reduceMotion)
+                Sprite(Art.Crate, at + float2(0, tile * 0.10 * picture.age[cell]), tile * (1 - 0.30 * picture.age[cell]), Color(1, 1, 1, 1 - picture.age[cell] * 0.6));
+        }
+
+    // While a hint is up the rim names the cells, as the hints do.
+    if (hands.hintOpen)
+    {
+        for (var x = lens.x0; x <= lens.x1; x++)
+            Label($"{char(64 + x)}", LensPoint(float2(x, lens.y0), lens) - float2(0, tile * (0.5 + FRAME * 0.60)), Math.Max(10, tile * 0.17), GOLD, Anchor.MiddleCenter);
+        for (var y = lens.y0; y <= lens.y1; y++)
+            Label($"{y}", LensPoint(float2(lens.x0, y), lens) - float2(tile * (0.5 + FRAME * 0.5), 0), Math.Max(10, tile * 0.17), GOLD, Anchor.MiddleCenter);
+    }
+
+    // The cell the paver in hand faces, so a lift or a lay is never a guess.
+    if (hands.seat >= 0 && !board.solved)
+    {
+        var me = hands.active;
+        var ahead = Step(board.paver[me], board.facing[me]);
+        if (ahead >= 0 && board.ground[ahead] != Ground.Wall)
+        {
+            var can = board.held[me] == Ground.Void
+                ? Loose(board.ground[ahead]) && !layout.fixed[ahead] && Firm(layout, board, board.paver[me]) && PaverAt(board, ahead) < 0 && CrateAt(board, ahead) < 0
+                : board.ground[ahead] == Ground.Void;
+            var mark = Math.Lerp(PaverColor(me), Color.white, 0.35);
+            if (can) Brackets(LensPoint(CellPoint(ahead), lens), tile * (0.88 + 0.03 * Math.Sin(picture.clock * 4)), Color(mark.r, mark.g, mark.b, 0.90), Math.Max(2, tile * 0.03));
+        }
+    }
+
+    for (var spark = 0; spark < 6; spark++)
+    {
+        if (picture.sparkAge[spark] <= 0 || hands.reduceMotion) continue;
+        var t = picture.sparkAge[spark] / 0.5;
+        var at = LensPoint(CellPoint(picture.sparkCell[spark]), lens);
+        var kind = picture.sparkKind[spark];
+        var tone = kind == Cue.Portal ? VIOLET : kind == Cue.Sink ? Color(0.85, 0.62, 0.34) : kind == Cue.Slide ? Color(0.66, 0.88, 0.98) : kind == Cue.Solve ? GOLD : CREAM;
+        Draw.WireCircle(at, tile * (0.25 + 0.45 * Ease(t)), Math.Max(1.5, tile * 0.04 * (1 - t)), Color(tone.r, tone.g, tone.b, 0.8 * (1 - t)));
+    }
+
+    // Crates and pavers, the far rows first so the near ones stand in front.
+    for (var y = lens.y0; y <= lens.y1; y++)
+    {
+        for (var crate = 0; crate < MAX_CRATES; crate++)
+            if (board.crate[crate] >= 0 && board.crate[crate] / BOARD_W == y) Sprite(Art.Crate, LensPoint(picture.crates[crate], lens), tile);
+        for (var paver = 0; paver < 2; paver++)
+        {
+            if (board.paver[paver] < 0 || board.paver[paver] / BOARD_W != y) continue;
+            mut var at = LensPoint(picture.pavers[paver], lens);
+            if (hands.blockTime > 0 && hands.blockPaver == paver && !hands.reduceMotion)
+                at += Heading(board.facing[paver]) * Math.Sin(hands.blockTime / 0.22 * 3.14) * tile * 0.10;
+            var active = hands.seat >= 0 && paver == hands.active && !board.solved;
+            var lifting = flying && !picture.flyLay && picture.flyPaver == paver;
+            PaverPaint(at, tile, paver, board.solved ? 2 : board.facing[paver], lifting ? Ground.Void : board.held[paver], active, picture.clock, picture.stride[paver], hands.reduceMotion);
+            if (layout.goal[board.paver[paver]] && picture.stride[paver] < 0.3)
+                Sprite(Art.LanternLit, at + float2(tile * 0.31, tile * 0.07), tile * 0.62);
+        }
+    }
+
+    // The stone in the air, between a paver's hands and its cell.
+    if (flying)
+    {
+        var t = Ease(picture.flyAge / FLIGHT);
+        var hand = Overhead(LensPoint(picture.pavers[picture.flyPaver], lens), tile);
+        var place = LensPoint(CellPoint(picture.flyCell), lens);
+        var kind = picture.flyLay ? board.ground[picture.flyCell] : board.held[picture.flyPaver];
+        var from = picture.flyLay ? hand : place;
+        var to = picture.flyLay ? place : hand;
+        var size = picture.flyLay ? Math.Lerp(0.46, 1.0, t) : Math.Lerp(1.0, 0.46, t);
+        var arc = float2(0, -Math.Sin(t * 3.14) * tile * 0.16);
+        GroundPaint(kind, Math.Lerp(from, to, t) + arc, tile * size, false, false, hasP && hasQ, picture.clock);
+    }
+
+    if (board.solved && picture.celebration < 2.4 && !hands.reduceMotion)
+    {
+        for (var paver = 0; paver < 2; paver++)
+        {
+            var home = LensPoint(picture.pavers[paver], lens);
+            for (var mote = 0; mote < 14; mote++)
+            {
+                var rise = picture.celebration * (0.5 + mote % 5 * 0.16);
+                var sway = Math.Sin(picture.celebration * 3 + mote * 1.9) * tile * 0.18;
+                var at = home + float2((mote * 37 % 21 - 10) / 10.0 * tile * 0.5 + sway, -rise * tile * 1.4);
+                // They stay out of the band of words along the top.
+                if (at.y > 124) Draw.Circle(at, tile * 0.03, Color(1, 0.90, 0.55, Math.Max(0, 1 - picture.celebration / 2.4)));
+            }
+        }
+    }
+}

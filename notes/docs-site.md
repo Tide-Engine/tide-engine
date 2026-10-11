@@ -155,11 +155,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `docs/releases.js` records only successful GET redirects for recognized package archives, including installers and upgrades. Metadata, HEAD, checksums and failed requests don't count. Each request has its release version, platform and channel; retries can count again, and a redirect doesn't prove completion or installation. Recording runs independently of the download response, so analytics cannot delay or break a download. History starts when this version is deployed; it does not import older GitHub totals.
   - The website samples the relay every minute through Fly private networking at `TIDE_RELAY_STATS_URL` (`http://purrengine-relay.internal:8080/admin/stats`), with a shared Fly secret `TIDE_RELAY_STATS_TOKEN` in both apps. Both apps must belong to the same Fly organization. Requests have a four-second timeout and a 16 KiB response cap. Private sampling doesn't start an idle relay. Missing reports are unavailable/stale, never invented zero counts; the previous report and its time remain visible. Daily averages and peaks are of the samples, so short-lived activity between samples can be missed. Relay connections are signaling sockets, not players in matches (see `webrtc-and-rooms.md`); no player reporting protocol is added.
   - Tests: `npm run test:analytics` covers persistent counts, retention, bounds, failed writes, draining writes, auth, sessions, CSRF, encoded paths and relay failures; `npm run test:admin-http` checks the actual production handler and collector. Both run in the existing manually requested Docs workflow, alongside its release, SEO and access tests. The UI was checked with headless Chrome at desktop and phone widths, including range changes, logout, empty states and relay status. The dashboard refreshes each minute and exposes exact daily totals beneath the charts.
-- **Shareable prototypes, 2026-10-09:** the owner first requested a private admin catalog, then asked for public game URLs so other players need no admin access. `/admin/prototypes` stays beside Analytics and lists CRACKED and Two Forks (2026-10-11; the six games it listed before were deleted, see the entry at the top of this file). Catalog data stays in its server load, absent from public Samples, search and sitemap. Cards open public games in a new tab; a build without that game's HTML says In development. The catalog explains that Play links can be shared with anyone and that hosting/joining uses the normal room flow. The catalog and staging contract is in `notes/private-prototypes.md`.
+- **Shareable prototypes, 2026-10-09:** the owner first requested a private admin catalog, then asked for public game URLs so other players need no admin access. `/admin/prototypes` stays beside Analytics and lists Underfoot, Inside Out, CRACKED and Two Forks (2026-10-11; the six deleted games are recorded in the entry at the top of this file). Catalog data stays in its server load, absent from public Samples, search and sitemap. Cards open public games in a new tab; a build without that game's HTML says In development. The catalog explains that Play links can be shared with anyone and that hosting/joining uses the normal room flow. The catalog and staging contract is in `notes/private-prototypes.md`.
   - Every game's HTML and files stage beneath `docs/static/prototypes/<id>/`, served publicly as `/prototypes/<id>/`, including thumbnails and future external wasm, packs, sounds and textures. Self-contained web pages stage as `index.html`. `private_games` retains its target name and stages the games; the Docs workflow builds it alongside the public examples. Games under `prototypes/` are opt-in through `TIDE_PRIVATE_PROTOTYPES=ON`, which the manually requested Docs workflow enables; ordinary builds keep them off. Generated HTML stays ignored; authored assets can be checked in under the public prototype directory.
-  - `admin.js` lets the public game roots (`two-forks`, `cracked`) through before checking admin configuration or sessions. Bare game, directory and `index.html` URLs have `X-Robots-Tag: noindex`, including encoded spellings; assets use ordinary static caching, HEAD, ranges and conditional requests. Old game URLs are unsupported: the owner explicitly declined compatibility redirects. The `/admin/prototypes` catalog and data routes, analytics and all other admin routes keep their existing password/session guard and private/no-store/noindex headers. Without `TIDE_ADMIN_PASSWORD`, admin fails closed while games remain available. Development uses the same routing.
+  - `admin.js` lets the public game roots (`two-forks`, `cracked`, and since 2026-10-11 `inside-out` and `underfoot`) through before checking admin configuration or sessions. Bare game, directory and `index.html` URLs have `X-Robots-Tag: noindex`, including encoded spellings; assets use ordinary static caching, HEAD, ranges and conditional requests. Old game URLs are unsupported: the owner explicitly declined compatibility redirects. The `/admin/prototypes` catalog and data routes, analytics and all other admin routes keep their existing password/session guard and private/no-store/noindex headers. Without `TIDE_ADMIN_PASSWORD`, admin fails closed while games remain available. Development uses the same routing.
   - A catalog id anywhere outside `/prototypes/` (`/samples/<id>/`, a thumbnail, a raw executable name) still returns 404 even if a stale deployment contains those bytes. The site build rejects files named for a catalog game outside `static/prototypes/` or the legacy admin root, so new builds have one public game address. Both patterns hold the current catalog ids only. The games are public to anyone with the URL; omission from the gallery, search and sitemap and the noindex header are discovery choices, not access control.
-  - Validation of the original sharing change (2026-10-09, Node 24.19, the five games of that day): `npm run check`, the site build and the analytics/admin, production prototype HTTP, SEO and access-form HTTP checks passed, with full native/web suites (2,016/2,016 and 1,993/1,993). They covered anonymous HTML/assets, missing admin configuration, encoded paths, HEAD/ranges/conditional requests and retained admin/catalog protection. Removing the unwanted compatibility redirects also removed their dedicated test. The same tests now go through the two current ids.
+  - Validation of the original sharing change (2026-10-09, Node 24.19, the five games of that day): `npm run check`, the site build and the analytics/admin, production prototype HTTP, SEO and access-form HTTP checks passed, with full native/web suites (2,016/2,016 and 1,993/1,993). They covered anonymous HTML/assets, missing admin configuration, encoded paths, HEAD/ranges/conditional requests and retained admin/catalog protection. Removing the unwanted compatibility redirects also removed their dedicated test. The same tests now go through all four current ids.
 - Every response has `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (`docs/headers.js`, in `npm run dev` too), so pages are cross-origin isolated and the demos in them run on threads. A page in a frame is only isolated when the page around it is, and moving between pages loads no new one, so every page has them: everything a page loads comes from the site itself (fonts included), or has to say it may be embedded (CORP or CORS).
 - `.github/workflows/docs.yml` is part of every run of the Build workflow, whose `Docs` job calls it (`workflow_call`; the owner, 2026-10-08, who kept having to start both: "can the docs be part of this?"), so `gh workflow run build.yml --ref dev` is the release and the site. It still runs alone when asked to, for a change to the docs only: `gh workflow run docs.yml --ref dev`. Either way a run on `dev` builds and deploys it (the `FLY_API_TOKEN` secret, a deploy token for the app, which the Build workflow hands it), and a run on another ref builds without deploying. Pushes and pull requests start nothing.
   - In a Build run the site is beside the release, not part of it: neither waits for the other, so the site deploys whatever the packages and suites do, and a nightly is published whether or not the site built. A failure of either fails the run.
@@ -238,3 +238,45 @@ HTML/thumbnail requests return 200 and match the tested release bytes. A
 two-browser check of those downloaded bytes with the production relay passed.
 The packaged catalog retains the incoming CRACKED, Inside Out and Two Forks
 entries, with no stale HTML from removed prototypes. No CI was dispatched.
+
+Inside Out focused-view revision (2026-10-11): the catalog description and
+gameplay thumbnail now show the per-maker dimension and its containing world.
+The public URL and authentication/discovery rules are unchanged. The final
+web-release page is restaged; Svelte check has zero errors/warnings, the
+production build passes, and all 23 analytics/admin and production HTTP/SEO/
+access checks pass. Camera, audio and gameplay evidence belongs in
+`notes/inside-out.md`.
+
+That focused-view revision deployed directly from `f8f61e9e` to the existing
+Fly site (release 256); health checks passed. Anonymous game and thumbnail
+requests return 200 and match the validated release hashes. The packaged
+catalog still contains only Inside Out, CRACKED and Two Forks.
+Two-browser WebGPU gameplay of the downloaded page with the production relay
+passes, including the focused-camera and recursion checks. No CI was dispatched.
+
+Inside Out spatial-zoom revision (2026-10-11): the authenticated catalog
+description now explains automatic pushing followed by blocked doorway entry.
+Its new gameplay thumbnail shows Peach nested in Mint with the partner outside.
+The public URL and discovery/authentication boundaries remain the same.
+Svelte check reports zero errors/warnings, the production build passes, and
+all eighteen analytics/admin plus five production HTTP/SEO/access tests pass.
+Release, staged and packaged Inside Out HTML are byte-identical. Game-specific
+camera, movement, campaign and audio evidence is in `notes/inside-out.md`.
+
+The maker-passage follow-up retains that public serving contract. After the
+clean integration through `origin/dev` `1e969c61`, all 64 staged pages match
+their release artifacts, including the incoming Underfoot and CRACKED pages.
+The authenticated catalog retains Underfoot, Inside Out, CRACKED and Two
+Forks. All 225 grammar checks and the full WebGL docs/gallery smoke pass;
+Svelte check has zero errors/warnings, eighteen analytics/admin checks pass,
+and the final production build and five HTTP/SEO/access checks pass.
+Inside Out's final packaged HTML hash is recorded in `notes/inside-out.md`.
+
+Final integration through `origin/dev` `7c4e0835` brought unrelated CRACKED
+and Underfoot updates, which were rebuilt/restaged before deployment. All
+64 playable pages and four prototype thumbnails match the final package;
+the production build and five HTTP/SEO/access checks pass again. Source
+`9d25977b` deployed directly to the existing Fly app as release 258 and passed
+health checks. Anonymous Inside Out HTML/thumbnail requests return 200 with
+the tested final hashes, and two-browser gameplay of those downloaded bytes
+through the production relay passes. No CI was dispatched.

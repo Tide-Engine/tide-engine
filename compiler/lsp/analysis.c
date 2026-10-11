@@ -4795,9 +4795,9 @@ void analysis_type_definition(const int line, const int character, jbuf *out)
         default: t = o->type; break;
         }
     }
-    // What a list, grid or T? holds, and a failable call's value
+    // What a list, grid or T? holds (a field's T? too, as it's kept), and a failable call's value
     while ((t.kind == TY_LIST || t.kind == TY_GRID || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE || t.kind == TY_MAP
-            || t.kind == TY_SET) && t.decl) {
+            || t.kind == TY_SET || (t.kind == TY_STRUCT && t.decl && t.decl->optional_of)) && t.decl) {
         t = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type; // A map's value
     }
     const decl *d = t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_STRUCT
@@ -6027,6 +6027,13 @@ static type list_type(const type element)
     return (type){TY_ERROR, NULL};
 }
 
+// A field's type as code reads it: the T? of a field declared one, which is kept as a struct of its value and
+// whether there is one (decl.optional_of), and any other type as it is.
+static type read_type(const type t)
+{
+    return t.kind == TY_STRUCT && t.decl && t.decl->optional_of ? (type){TY_OPTIONAL, t.decl->optional_of} : t;
+}
+
 static type member_type(const type t, const str member)
 {
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
@@ -6054,7 +6061,7 @@ static type member_type(const type t, const str member)
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
-            if (!field_of(t.decl, i)->hidden && str_eq(field_of(t.decl, i)->name, member)) return field_of(t.decl, i)->type;
+            if (!field_of(t.decl, i)->hidden && str_eq(field_of(t.decl, i)->name, member)) return read_type(field_of(t.decl, i)->type);
         }
     }
     const int dim = type_dim(t);
@@ -6983,6 +6990,91 @@ static void complete_value_types(completion *c, const unsigned which)
         item(c, "Grid2", CK_STRUCT, "Grid2<T>", builtin_type_doc(TY_GRID), "Grid2<$1>");
         item(c, "Grid3", CK_STRUCT, "Grid3<T>", builtin_type_doc(TY_GRID), "Grid3<$1>");
     }
+}
+
+static void complete_asset_types(completion *c, const bool collection)
+{
+    item(c, "string", CK_STRUCT, "UTF-8 text asset", builtin_type_doc(TY_STRING), NULL);
+    item(c, "Texture", CK_STRUCT, "Image asset", builtin_type_doc(TY_TEXTURE), NULL);
+    item(c, "Clip", CK_STRUCT, "Sound asset", builtin_type_doc(TY_CLIP), NULL);
+    item(c, "Grid2", CK_STRUCT, "Grid2<Color>: image pixels", builtin_type_doc(TY_GRID), "Grid2<Color>");
+    item(c, "Mesh", CK_STRUCT, "Mesh<V>: static model asset", builtin_type_doc(TY_MESH), "Mesh<${1:Vertex3}>");
+    item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>: animated model asset",
+         "Imports geometry, a skeleton and animation catalogs from glTF or FBX.", "SkinnedMesh<${1:Vertex3}>");
+    item(c, "AnimationCatalog", CK_STRUCT, "Animation catalog asset",
+         "Imports animation clips from glTF or FBX files, file lists or globs.", NULL);
+    item(c, "List", CK_STRUCT, collection ? "List<byte>: any file" : "List<T>: bytes or a collection of assets",
+         "List<byte> imports any file as bytes. A List of another asset type imports the files a path or glob matches.",
+         collection ? "List<byte>" : "List<${1:byte}>");
+    if (!collection) {
+        item(c, "Cubemap", CK_STRUCT, "Six image faces", builtin_type_doc(TY_CUBEMAP), NULL);
+        item(c, "Animation", CK_STRUCT, "One animation clip asset",
+             "Imports a file's only animation clip, or the exact original clip selected by [Name(\"source name\")].", NULL);
+        item(c, "Map", CK_STRUCT, "Map<string, T>: assets keyed by path",
+             "Imports the files a path or glob matches, keyed by their written paths.", "Map<string, ${1:Texture}>");
+    }
+}
+
+// Use tokens: an unfinished asset type need not survive parser recovery.
+static bool complete_asset_type(completion *c, const int last)
+{
+    int asset = last;
+    for (; asset >= 0; asset--) {
+        const token *t = &DOC->toks[asset];
+        if (t->kind == T_SEMI || t->kind == T_LBRACE || t->kind == T_RBRACE || t->kind == T_ASSIGN) return false;
+        if (t->kind == T_IDENT && str_eq_c(t->text, "asset")) break;
+    }
+    if (asset < 0) return false;
+    int first = asset + 1;
+    if (first > last) {
+        complete_asset_types(c, false);
+        return true;
+    }
+    bool collection = false;
+    if (first + 1 <= last && DOC->toks[first + 1].kind == T_LT) {
+        const str name = DOC->toks[first].text;
+        if (str_eq_c(name, "List")) {
+            first += 2;
+            collection = true;
+            if (first > last) {
+                item(c, "byte", CK_STRUCT, "List<byte>: any file", builtin_type_doc(TY_BYTE), NULL);
+            }
+        } else if (str_eq_c(name, "Map")) {
+            if (first + 1 == last) {
+                item(c, "string", CK_STRUCT, "Asset maps are keyed by path", builtin_type_doc(TY_STRING), NULL);
+                return true;
+            }
+            if (first + 3 > last || !str_eq_c(DOC->toks[first + 2].text, "string")
+                || DOC->toks[first + 3].kind != T_COMMA) return false;
+            first += 4;
+            collection = true;
+        }
+    }
+    if (first > last) {
+        complete_asset_types(c, collection);
+        return true;
+    }
+    if (first + 1 <= last && DOC->toks[first + 1].kind == T_LT) {
+        const str name = DOC->toks[first].text;
+        if (str_eq_c(name, "Grid2") && first + 1 == last) {
+            item(c, "Color", CK_STRUCT, "Grid2<Color>: image pixels", builtin_type_doc(TY_COLOR), NULL);
+            return true;
+        }
+        const bool skinned = str_eq_c(name, "SkinnedMesh");
+        if ((str_eq_c(name, "Mesh") || skinned) && (first + 1 == last || (skinned && DOC->toks[last].kind == T_COMMA))) {
+            for (int i = 0; i < A.prog->decls.count; i++) {
+                const decl *d = A.prog->decls.items[i];
+                if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", NULL, NULL);
+            }
+            complete_namespaces(c, false);
+            return true;
+        }
+        if (collection && str_eq_c(name, "List") && first + 1 == last) {
+            item(c, "byte", CK_STRUCT, "List<byte>: any file", builtin_type_doc(TY_BYTE), NULL);
+            return true;
+        }
+    }
+    return false;
 }
 
 // What a function's or method's parameter can be, as the checker takes it:
@@ -8580,6 +8672,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     switch (f.kind) {
     case CTX_TOP:
+        if (complete_asset_type(&c, last)) break;
         if (pk == T_EOF || pk == T_RBRACE || pk == T_SEMI || pk == T_RBRACKET || (pk == T_LBRACE && namespace_brace(prev->at))) {
             complete_declarations(&c);
         } else if (pk == T_IDENT && str_eq_c(prev->text, "override")) { // What there is to replace, each written out

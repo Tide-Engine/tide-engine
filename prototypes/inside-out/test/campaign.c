@@ -45,7 +45,7 @@ static int entry_room(const LevelLayout *const layout, const Entry *const entry)
     return -2;
 }
 
-static bool record_evidence(const Puzzle *const before, const int seat, const int direction, const bool push, CampaignEvidence *const evidence)
+static bool record_evidence(const Puzzle *const before, const int seat, const int direction, CampaignEvidence *const evidence)
 {
     const Puzzle after = world.Workshop.puzzle;
     const LevelLayout *const layout = &world.Workshop.layout;
@@ -73,19 +73,53 @@ static bool record_evidence(const Puzzle *const before, const int seat, const in
         evidence->partner_latch_pushes++;
 
         // A counter alone could count a decorative holding job. Re-run the
-        // same real command with its sole holder removed: this push must fail.
+        // same real command with its sole holder removed. A blocked push can
+        // enter its doorway, but the shell must not be moved by that fallback.
+        const int history_count = world.Workshop.historyCount;
+        if (history_count < 0 || history_count >= 128) {
+            fprintf(stderr, "Campaign latch probes need a spare undo slot.\n");
+            return false;
+        }
         world.Workshop.puzzle = *before;
         world.Workshop.puzzle.actors.at[1 - seat].room = -1;
         world.Workshop.puzzle.actors.at[1 - seat].position = tide_i2(0, 0);
         const Puzzle without_holder = world.Workshop.puzzle;
-        const int history_count = world.Workshop.historyCount;
-        const bool accepted = inside_out_test_act_push(TIDE_COMMAND_ID_Move, seat, direction, push);
-        const bool blocked = memcmp(&without_holder, &world.Workshop.puzzle, sizeof without_holder) == 0
+        const Puzzle spare_history = world.Workshop.history.at[history_count];
+        const bool accepted = inside_out_test_act(TIDE_COMMAND_ID_Move, seat, direction);
+        const Puzzle fallback = world.Workshop.puzzle;
+        const Traveler *const original_actor = &without_holder.actors.at[seat];
+        const Traveler *const fallback_actor = &fallback.actors.at[seat];
+        const bool unchanged = memcmp(&without_holder, &fallback, sizeof fallback) == 0
             && world.Workshop.historyCount == history_count;
+        const bool entered = fallback_actor->room == room && fallback_actor->depth == original_actor->depth + 1
+            && fallback_actor->trail.at[original_actor->depth].shell == room
+            && equal_cell(fallback_actor->position, direction == 0 ? tide_i2(2, 4) : direction == 1 ? tide_i2(0, 2)
+                : direction == 2 ? tide_i2(2, 0) : tide_i2(4, 2))
+            && fallback.moves == without_holder.moves + 1 && world.Workshop.historyCount == history_count + 1;
+        const bool shells_unchanged = memcmp(&without_holder.rooms, &fallback.rooms, sizeof fallback.rooms) == 0;
+        const bool partner_unchanged = memcmp(&without_holder.actors.at[1 - seat], &fallback.actors.at[1 - seat], sizeof(Traveler)) == 0;
+        bool cargo_valid = true;
+        int shifted_cargo = 0;
+        const tide_int2 delta = direction == 0 ? tide_i2(0, -1) : direction == 1 ? tide_i2(1, 0)
+            : direction == 2 ? tide_i2(0, 1) : tide_i2(-1, 0);
+        for (int item = 0; item < layout->crateCount; item++) {
+            const Cargo *const old_item = &without_holder.crates.at[item];
+            const Cargo *const new_item = &fallback.crates.at[item];
+            if (memcmp(old_item, new_item, sizeof(Cargo)) == 0) continue;
+            shifted_cargo++;
+            // A legitimate entry can push its one doorway parcel inward.
+            // This observes that actual command, rather than reimplementing
+            // gateway resolution or substituting another movement engine.
+            cargo_valid = cargo_valid && entered && old_item->active == new_item->active
+                && old_item->room == room && new_item->room == room
+                && equal_cell(old_item->position, fallback_actor->position)
+                && equal_cell(new_item->position, tide_i2(old_item->position.x + delta.x, old_item->position.y + delta.y));
+        }
         world.Workshop.puzzle = after;
         world.Workshop.historyCount = history_count;
-        if (!accepted || !blocked) {
-            fprintf(stderr, "A counted cooperative latch push succeeded without its partner holder.\n");
+        world.Workshop.history.at[history_count] = spare_history;
+        if (!accepted || !shells_unchanged || !partner_unchanged || !cargo_valid || shifted_cargo > 1 || (!unchanged && !entered)) {
+            fprintf(stderr, "A counted latch push did not remain a blocked shell move or valid doorway fallback without its partner.\n");
             return false;
         }
     }
@@ -103,20 +137,18 @@ static bool play_witness(const int level, const char *const witness, int *const 
     int used = 0;
     unsigned seats = 0;
     unsigned dimensions = 0;
-    bool push = false;
     const char *const upper_keys = "NESW";
     const char *const lower_keys = "nesw";
     for (const char *action = witness; *action; action++) {
-        if (*action == '+') { push = true; continue; }
         const char *const upper = strchr(upper_keys, *action);
         const char *const lower = strchr(lower_keys, *action);
         if (!upper && !lower) continue;
         const int seat = upper ? 0 : 1;
         const int direction = upper ? (int)(upper - upper_keys) : (int)(lower - lower_keys);
         const Puzzle before = world.Workshop.puzzle;
-        if (!inside_out_test_act_push(TIDE_COMMAND_ID_Move, seat, direction, push) || world.Workshop.puzzle.moves != before.moves + 1) {
-            fprintf(stderr, "Level %d witness action %d (%s%c) blocked: actor room %d (%d,%d), depth %d.\n",
-                level + 1, used + 1, push ? "+" : "", *action, before.actors.at[seat].room,
+        if (!inside_out_test_act(TIDE_COMMAND_ID_Move, seat, direction) || world.Workshop.puzzle.moves != before.moves + 1) {
+            fprintf(stderr, "Level %d witness action %d (%c) blocked: actor room %d (%d,%d), depth %d.\n",
+                level + 1, used + 1, *action, before.actors.at[seat].room,
                 before.actors.at[seat].position.x, before.actors.at[seat].position.y, before.actors.at[seat].depth);
             for (int other = 0; other < 2; other++) fprintf(stderr, "  actor%d room%d (%d,%d) depth%d\n", other,
                 before.actors.at[other].room, before.actors.at[other].position.x, before.actors.at[other].position.y, before.actors.at[other].depth);
@@ -128,8 +160,7 @@ static bool play_witness(const int level, const char *const witness, int *const 
         }
         seats |= 1u << seat;
         dimensions |= before.actors.at[seat].room < 0 ? 1 : 2;
-        if (evidence && !record_evidence(&before, seat, direction, push, evidence)) return false;
-        push = false;
+        if (evidence && !record_evidence(&before, seat, direction, evidence)) return false;
         used++;
     }
     if (actions) *actions = used;

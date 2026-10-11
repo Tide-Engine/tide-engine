@@ -109,6 +109,24 @@ async int Requests(string origin)
     if (await Web.Request(echo).SetHeader("Bad Name", "x").Send() is IOError.InvalidData) right |= 4096;
     if (await Web.Request("ftp://example.com/file").Send() is IOError.InvalidPath) right |= 8192;
     if (await Web.Request("http://127.0.0.1:1/nothing").SetMethod("POST").Send() is IOError.Failed) right |= 16384;
+    // A time limit: a server that takes the request and never answers is TimedOut once it's past
+    if (await Web.Request(origin + "/silent").SetTimeout(0.3).Send() is IOError.TimedOut) right |= 32768;
+    // ...and so is one that stops in the middle of its answer's body
+    if (await Web.Request(origin + "/stall").SetTimeout(0.3).Send() is IOError.TimedOut) right |= 65536;
+    // An answer that comes within the limit is the answer
+    var slow = await Web.Request(origin + "/slow").SetTimeout(30).Send();
+    if (slow is WebResponse s && s.status == 200 && s.body.count == 11) right |= 131072;
+    // 0 or less is no limit
+    var unlimited = await Web.Request(origin + "/slow").SetTimeout(-1).Send();
+    if (unlimited is WebResponse u && u.status == 200 && u.body.count == 11) right |= 262144;
+    // The limit stays through the calls after it, and a field sets it too
+    mut var limited = Web.Request(origin + "/silent").SetTimeout(30).SetMethod("POST").SetHeader("X-Tide", "x").SetBody([1]);
+    var kept = limited.timeout == 30;
+    limited.timeout = 0.3;
+    if (kept && await limited.Send() is IOError.TimedOut) right |= 524288;
+    // What timed out left nothing behind: the next request is answered
+    var after = await Web.Request(echo).SetTimeout(30).Send();
+    if (after is WebResponse v && Echoed(v, 200, 3, 0, 0)) right |= 1048576;
     return right;
 }
 

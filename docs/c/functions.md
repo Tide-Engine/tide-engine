@@ -216,6 +216,21 @@ bool RayCast(tide_float3 from, tide_float3 direction, Hit *hit)
 
 Tide's types have no padding the compiler adds, so a C struct with the same fields lines up with them. Structs that hold text or lists can't go to C, and neither can lists of text or `T?` values.
 
+A struct with a `T?` field can. In the generated header the field is a struct of its own, named for its type: `tide_optional_int`, `tide_optional_float3`, `tide_optional_Stats`. It holds `value`, then `bool ok`, then its padding. When `ok` is false, C leaves the rest of it zero, as Tide does:
+
+```c
+// struct Slot { int? item; }
+int32_t SlotItem(const Slot slot)
+{
+    return slot.item.ok ? slot.item.value : -1;
+}
+
+void ClearSlot(Slot *slot)
+{
+    slot->item = (tide_optional_int){0};
+}
+```
+
 C functions can't `fail` (see [Errors](../language/errors.md)): they return what C returns. To turn a C function's error code into an error, check it in a Tide function that fails, and call that.
 
 ### Out parameters

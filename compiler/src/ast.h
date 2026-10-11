@@ -328,6 +328,10 @@ typedef struct param {
     bool whole;          // ...or reads it as a value, all its fields at once
     bool *gpu_leaves;    // A function's list, grid, map or set, in code the GPU runs: the parts of an element it reads (field.gpu_leaves)
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
+    // A function's or method's singleton that it starts a task with, itself or through a function it passes it to:
+    // the task gets the world's own again each time it goes on, so every call passes its own parameter, never a copy
+    bool task_own;
+    loc task_own_at;     // ...where it first does
     // A match component or singleton with local fields (its type's local_part):
     bool local_use;      // The code reads or writes its local fields, itself or through a function it passes it to
     loc local_use_at;    // ...where it first does
@@ -577,6 +581,8 @@ typedef struct decl {
     bool is_set;          // Maps: a Set<K>, with no values
     struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
     struct decl *optional; // Maps: the V? that Get gives, once something calls it
+    struct decl *optional_of; // Structs: the T? this one keeps for a field, `int? target;`: its fields are the value and whether there is one
+    struct decl *stored;      // A T?: the struct a field of it is kept as (optional_of), once a field is one
     bool tries;           // Maps: some code calls TryGet, so generated C has its helper
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
 
@@ -680,6 +686,8 @@ typedef struct decl {
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
     bool starts_tasks;   // Code that starts tasks, calling an async function without await: they're the world's, in order
     loc starts_at;       // ...where it first does
+    const char *starts_what; // ...and for a function or method, which starts them as the code that calls it would (itself
+                             // or through the functions and methods it calls), what, for messages: "starts 'Countdown'"
 
     // Async functions and handlers: they run as tasks, which can wait
     bool is_async;       // `async`
@@ -693,6 +701,7 @@ typedef struct decl {
     loc task_side_at;    // ...where it first decides
     bool task_root;      // Something starts it without await: its tasks have a table of their own
     bool runs_in[2];     // Worlds it runs in, the match's ([0]) and the local one ([1]): codegen makes each
+                         // ...and for a function or method that starts tasks, the worlds its callers run in
     VEC(struct decl *) awaits;  // Async functions it awaits, once each: their frames are in its own
     VEC(loc) await_at;          // ...and where it first awaits each
     VEC(struct decl *) callees; // Functions it calls, once each
@@ -1356,6 +1365,7 @@ typedef struct program {
     decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
+    VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.
     decl *devices;       // The built-in Devices record.
     VEC(decl *) records; // Built-in records: Devices, Keyboard, Mouse, Gamepad, Dpad, Button.

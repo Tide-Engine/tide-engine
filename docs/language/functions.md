@@ -29,6 +29,7 @@ component Unit
 ```
 
 - A value is written like a component's: `Stats { health = 50 }`. Fields left out take their defaults.
+- A field that may be missing is a `T?`, like `int? target;`. It starts with nothing (see [Errors](./errors.md#fields-that-may-be-missing)).
 - Components, singletons, inputs and other structs can hold structs, and so can locals. System parameters stay components, singletons, the input and `Devices`.
 - A struct can't contain itself, even through other structs.
 
@@ -89,7 +90,7 @@ system Regenerate(mut Unit unit)
 - A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
-Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
+Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, and start tasks, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
@@ -189,6 +190,45 @@ view Hud(Kitchen kitchen)
 - **Threads change nothing.** A system that splits its entities across threads calls such functions as it sends and spawns itself (see [The schedule](../game/schedule.md#splitting-across-threads)).
 
 Some code never sends or spawns, whoever calls it: a `Sort`'s comparison and a `parallel` loop's step, the input's `Sample` and `Sanitize`, frags and verts, a struct's operators and a component's `Interpolate`. A call there of a function that does is the error.
+
+### Starting a task
+
+A function or a method starts a [task](../game/tasks.md) the same way, by calling an async function as a statement, and the same rule holds: it starts it as the code that calls it could.
+
+```csharp
+singleton Round
+{
+    int left;
+}
+
+async void Countdown(mut Round round, int from)
+{
+    for (var i = from; i > 0; i--)
+    {
+        round.left = i;
+        await Wait.Seconds(1);
+    }
+    round.left = 0;
+}
+
+// Any system or handler of the match can call this
+void Restart(mut Round round)
+{
+    Countdown(round, 3); // Starts a task; Restart doesn't wait for it
+}
+
+system Rounds(mut Round round, Controls controls)
+{
+    if (controls.restart && round.left == 0) Restart(round);
+}
+```
+
+- **Which world** is the task's own: a function that starts a task that changes the match is the match's to call, and one whose task uses local state is a view's, a local handler's or a local task's. A call from the other side is the error, and it names the task and the line that starts it. A task that does neither starts in the world of whatever calls the function, so one function serves both.
+- **Whom the task belongs to** is the entity the calling code runs for, through however many functions: it ends when that entity is destroyed, and what it spawns joins that entity's scene.
+- **A task's singleton is the caller's own.** A task gets its singletons again each time it goes on, so `Restart` hands on the `Round` it was handed, and every call of `Restart` passes a parameter of its own, never a copy. A component isn't handed on this way: start a task that takes one from the system, view or handler that has it.
+- **Its calls keep their order,** and a system that calls such a function starts its tasks in order, on one thread, as one that starts them itself.
+
+The code that never sends never starts a task either.
 
 ## Default values, names and overloads
 

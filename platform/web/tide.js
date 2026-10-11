@@ -2412,7 +2412,7 @@
     // Load them before main: IndexedDB is asynchronous, whereas a game's
     // whole-file reads and directory queries operate on this memory tree.
     const ioError = { notFound: 1, exists: 2, denied: 3, path: 4, notDirectory: 5,
-        notEmpty: 6, space: 7, unavailable: 8, data: 9, failed: 10 };
+        notEmpty: 6, space: 7, unavailable: 8, data: 9, failed: 10, timedOut: 11 };
     const fileTrees = new Map();
     const flushTickets = new Map();
     let filesDB = null, filesError = 0, files = null, nextFlush = 0;
@@ -2423,12 +2423,22 @@
     let nextFetch = 0;
     // Starts a fetch of `url` and gives its ticket. With no `init` it's
     // Web.Fetch's GET, which only a 2xx answer ends well; with one, a request
-    // whose answer is its result whatever its status.
-    function startFetch(url, init) {
+    // whose answer is its result whatever its status. `timeout` is the seconds
+    // a request may take, to its answer's last byte: a timer aborts it then,
+    // and it ends as timed out. 0 is no limit.
+    function startFetch(url, init, timeout) {
         do { nextFetch = (nextFetch + 1) >>> 0; } while (!nextFetch || nextFetch >= 0xFFFFFFFE || fetchTickets.has(nextFetch));
         const ticket = nextFetch, control = new AbortController();
-        const entry = { done: false, error: 0, status: 0, bytes: null, control };
+        const entry = { done: false, error: 0, status: 0, bytes: null, control, late: false, timer: 0 };
         fetchTickets.set(ticket, entry);
+        if (timeout > 0) {
+            entry.timer = setTimeout(() => {
+                entry.timer = 0;
+                if (entry.done) return;
+                entry.late = true;
+                control.abort();
+            }, timeout * 1000);
+        }
         (async () => {
             try {
                 const response = await fetch(url, { ...(init || {}), signal: control.signal });
@@ -2463,6 +2473,12 @@
             } catch (error) {
                 entry.error = ioError.failed; // No connection, CORS, or aborted
             } finally {
+                if (entry.late) { // Its time limit aborted it, wherever it had got to
+                    entry.error = ioError.timedOut;
+                    entry.bytes = null;
+                }
+                if (entry.timer) clearTimeout(entry.timer);
+                entry.timer = 0;
                 entry.done = true;
             }
         })();
@@ -2745,18 +2761,19 @@
             return true;
         },
         io_flush_forget(ticket) { flushTickets.delete(ticket); },
-        io_fetch_begin(ptr) { return startFetch(string(ptr), null); },
+        io_fetch_begin(ptr) { return startFetch(string(ptr), null, 0); },
         // Web.Request's Send: the same fetch, with a method, headers (a line each,
         // "Name: value\r\n") and a body, and an answer of any status is its
-        // result, which io_request_status gives once it's done
-        io_request_begin(method, url, headers, body, size) {
+        // result, which io_request_status gives once it's done. `timeout` is
+        // its time limit in seconds, 0 for none
+        io_request_begin(method, url, headers, body, size, timeout) {
             const init = { method: string(method), headers: [] };
             for (const line of string(headers).split('\r\n')) {
                 const colon = line.indexOf(':');
                 if (colon > 0) init.headers.push([line.slice(0, colon), line.slice(colon + 1).trim()]);
             }
             if (size) init.body = u8().slice(body, body + size);
-            return startFetch(string(url), init);
+            return startFetch(string(url), init, timeout);
         },
         io_request_status(ticket) {
             const entry = fetchTickets.get(ticket);
@@ -2778,6 +2795,8 @@
         io_fetch_forget(ticket) {
             const entry = fetchTickets.get(ticket);
             if (entry && !entry.done) entry.control.abort();
+            if (entry && entry.timer) clearTimeout(entry.timer);
+            if (entry) entry.timer = 0;
             fetchTickets.delete(ticket);
         },
     });

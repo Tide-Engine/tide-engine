@@ -15,12 +15,13 @@ using Rooms;
 // (-0.3214, -0.766, 0.5567). This is the way to it.
 const float3 SUN = float3(0.3214, 0.766, -0.5567);
 const float FLOOR_Y = -7;        // The grid under every map
-const int LAMP_PIXELS = 2048;    // Pixels across the sun's image of a map
+const int LAMP_PIXELS = 4096;    // Pixels across the sun's image of a map: about a centimeter and a half of it each
 const float LAMP_AWAY = 90;      // How far from the map's middle it looks from,
 const float LAMP_FAR = 200;      // and how far it sees
 const float CAMERA_FOV = 60;     // The Cinemachine camera's
 const float MODEL_SCALE = 1.13;  // The Magician's, in the player prefab
 const float SKY_PIXELS = 256;    // Pixels across a face of a sky
+const int SIGHT_TICKS = 180;     // PlayerCrosshair._maxSimulationSteps: how far ahead a bullet is flown for the crosshair
 
 // A corner of a mesh: where it is and which way its face looks. The blocks'
 // files fill it, and the meshes made here.
@@ -105,6 +106,7 @@ local singleton Heaven
 local singleton Fx
 {
     float dt;            // Seconds this frame's effects move on by: a stall isn't a leap
+    float late;          // Seconds this frame is drawn before the last tick's end: from a tick's length under 0, up to 0
     Random random;       // What rolls them: this machine's own
 }
 
@@ -261,7 +263,7 @@ float3 FromLamp(float3 world, float3 normal, float4x4 toLamp, float step)
 
 // How much of the sun gets to a place on a surface, from 0, in shadow, to
 // 1: nine looks at the sun's image around the place, a pixel of it apart,
-// which make a shadow's edge a soft one about ten centimeters wide.
+// which make a shadow's edge a soft one about five centimeters wide.
 float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp, float step)
 {
     float3 seen = FromLamp(world, normal, toLamp, step);
@@ -361,15 +363,19 @@ float3 Seen(DepthTexture depth, float2 uv, float4x4 toWorld)
 }
 
 // Ambient occlusion from the eye's depth: how folded in the surface around a
-// pixel is, within AO_REACH of it. Six pairs of looks, each pair either side
-// of the pixel on a spiral, turned differently for each pixel so that the
-// blur after it has no pattern to keep. On a flat surface a pair's two
+// pixel is, within AO_REACH of it. Eight pairs of looks, each pair either
+// side of the pixel on a spiral, which is turned by one of sixteen angles,
+// in a pattern that repeats every four pixels: `Soften` after it takes the
+// mean of four pixels by four, which has every one of the sixteen in it, so
+// the pattern is gone and nothing of it is left to crawl as the eye moves (a
+// turn that's another for every pixel, as this had, is grain that a blur
+// only makes coarser). On a flat surface a pair's two
 // places are opposite ways from the pixel's; in a corner they fold towards
 // the eye, and the sharper the fold the more it shades. It needs no normal,
 // which a depth's own steps would stripe. A pair with a place too far off,
 // across an edge, shades nothing. White where nothing is near, and for the sky.
 const float AO_REACH = 0.8;      // Meters
-const int AO_PAIRS = 6;
+const int AO_PAIRS = 8;
 
 frag Occlude(Vertex vertex, out Color color, Texture source, Depths depths)
 {
@@ -382,8 +388,11 @@ frag Occlude(Vertex vertex, out Color color, Texture source, Depths depths)
     float3 toEye = Math.Normalize(depths.eye - here);
     float away = Math.Max(Math.Dot(here - depths.eye, depths.forward), 0.3);
     float2 reach = depths.reach * (AO_REACH / away);
-    int2 cell = int2(int(vertex.uv.x * depths.size.x), int(vertex.uv.y * depths.size.y));
-    float turn = (Math.Hash(cell) & 1023) / 1023.0 * Math.PI;
+    // Which of the sixteen: an ordered dither's four by four, so that neighbors are far apart in angle
+    int col = int(this.position.x) & 3;
+    int row = int(this.position.y) & 3;
+    int order = (((col ^ row) & 1) * 2 + (row & 1)) * 4 + (((col >> 1) ^ (row >> 1)) & 1) * 2 + ((row >> 1) & 1);
+    float turn = order / 16.0 * Math.PI;
     mut float shade = 0;
     for (int i = 0; i < AO_PAIRS; i++)
     {
@@ -401,6 +410,36 @@ frag Occlude(Vertex vertex, out Color color, Texture source, Depths depths)
     float kept = 1 - Math.Saturate(shade / AO_PAIRS * 1.5);
     color = Color(kept, kept, kept, 1);
 }
+// The corners' shade, smoothed: the mean of four pixels by four of it around
+// a pixel, less of each the further its surface is from the pixel's own, so
+// a mage's shade isn't spread over the wall behind it, and none at all on
+// the sky. Run twice, the second over the first's.
+frag Soften(Vertex vertex, out Color color, Texture source, Depths depths, BlurStep step)
+{
+    if (depths.depth.Sample(vertex.uv) >= 0.99999)
+    {
+        color = Color.white;
+        return;
+    }
+    float away = Math.Dot(Seen(depths.depth, vertex.uv, depths.toWorld) - depths.eye, depths.forward);
+    float slack = 0.3 + away * 0.08;
+    mut float sum = 0;
+    mut float weight = 0;
+    for (int x = 0; x < 4; x++)
+    {
+        for (int y = 0; y < 4; y++)
+        {
+            float2 at = vertex.uv + float2((x - 1.5) * step.along.x, (y - 1.5) * step.along.y);
+            float there = Math.Dot(Seen(depths.depth, at, depths.toWorld) - depths.eye, depths.forward);
+            float near = Math.Saturate(1 - Math.Abs(there - away) / slack) + 0.001;
+            sum += source.Sample(at).r * near;
+            weight += near;
+        }
+    }
+    float kept = sum / weight;
+    color = Color(kept, kept, kept, 1);
+}
+
 // The picture as the window gets it: the world and its bloom, then the
 // Unity volume's grade (exposure, contrast, saturation) and its vignette.
 frag Present(Vertex vertex, out Color color, Texture source, Post post)
@@ -486,14 +525,17 @@ void MakeModels(mut Models models)
 }
 
 // Where a visual is in the world: as the map has it, or carried by what moves it.
-void PlaceVisual(Arena arena, Visual visual, out float3 position, out quaternion rotation)
+// The movers are a list, which a view sees as the last tick left it: one that
+// slides or lifts is drawn `late` seconds back along its way, so it moves
+// every frame, as the mages on it do. A bridge's halves turn too slowly to show.
+void PlaceVisual(Arena arena, Visual visual, float late, out float3 position, out quaternion rotation)
 {
     position = visual.position;
     rotation = visual.rotation;
     if (visual.mover >= 0 && visual.mover < arena.movers.count)
     {
         var mover = arena.movers[visual.mover];
-        position = mover.position + Math.Rotate(mover.rotation, visual.position);
+        position = mover.position + mover.velocity * late + Math.Rotate(mover.rotation, visual.position);
         rotation = Math.Mul(mover.rotation, visual.rotation);
     }
     else if (visual.block >= 0 && visual.block < arena.blocks.count)
@@ -518,7 +560,7 @@ void TakeMap(mut Scenery scenery, Arena arena)
     for (var i = 0; i < scenery.visuals.count; i++)
     {
         scenery.turn.Add(Chance(i, arena.map * 7 + 3));
-        PlaceVisual(arena, scenery.visuals[i], out var position, out _);
+        PlaceVisual(arena, scenery.visuals[i], 0, out var position, out _);
         low = Math.Min(low, position);
         high = Math.Max(high, position);
     }
@@ -565,13 +607,38 @@ void TakeLight(mut Light light, mut Heaven heaven, int map)
     light.sun = Shade(tint, strong);
 }
 
+// Each seat's avatar where this frame has it, before any view draws one: the
+// seats are an array, which a view sees as the last tick left it, and an
+// Avatar's place is blended between ticks, and glides to where the server
+// says when this machine guessed otherwise.
+[Stage(Layers.Prepare, -1)]
+view Stand(Avatar avatar, mut Shown shown)
+{
+    if (avatar.seat < 0 || avatar.seat >= SEATS) return;
+    shown.position[avatar.seat] = avatar.position;
+    shown.rotation[avatar.seat] = avatar.rotation;
+}
+
+// A seat as a view draws it: the match's, where this frame shows it. What a
+// view draws of a seat, or follows, asks this; what the match would do from
+// where the seat is (the aim, a bullet's way) asks the seat itself.
+Seat Seen(Arena arena, Shown shown, int s)
+{
+    mut var seat = arena.seats[s];
+    seat.position = shown.position[s];
+    seat.rotation = shown.rotation[s];
+    return seat;
+}
+
 // A frame starts: the models are made once, the clocks move on, and the
 // map's blocks are put where this frame has them.
 [Stage(Layers.Prepare)]
-view Gather(Arena arena, mut Models models, mut Scenery scenery, mut Light light, mut Heaven heaven, mut Fx fx)
+view Gather(Arena arena, Time time, mut Models models, mut Scenery scenery, mut Light light, mut Heaven heaven, mut Fx fx)
 {
     if (!models.made) MakeModels(models);
     fx.dt = Math.Min(Frame.dt, 0.05);
+    // The match's seconds are blended between the last two ticks, and its tick's number is the later one's
+    fx.late = Math.Clamp(time.t - time.tick * time.dt, -time.dt, 0);
     light.beat += fx.dt * 3;
     if (light.beat > Math.TAU) light.beat -= Math.TAU;
 
@@ -623,7 +690,7 @@ view Gather(Arena arena, mut Models models, mut Scenery scenery, mut Light light
         if (arena.mapPhase == MapPhase.DestroyOld) grown = 1 - EaseInBack(own);
         else if (arena.mapPhase == MapPhase.CreateNew) grown = EaseOutBack(own);
         if (grown <= 0.001) continue;
-        PlaceVisual(arena, visual, out mut var position, out var rotation);
+        PlaceVisual(arena, visual, fx.late, out mut var position, out var rotation);
         mut var scale = visual.scale * grown;
         // A jump pad that just threw someone is flat for a moment, and springs back
         if (visual.mesh == BlockMesh.Box)
@@ -678,22 +745,26 @@ float ClearTo(Arena arena, float3 from, float3 way, float length)
 
 // Whoever the camera is on: this machine's player while they stand, then a
 // teammate who does, then anyone.
-int Followed(Arena arena, int mine)
+int Followed(Arena arena, int mine, int turn)
 {
     if (mine >= 0 && arena.seats[mine].alive && !arena.seats[mine].dead) return mine;
-    mut var other = -1;
-    for (var s = 0; s < SEATS; s++)
-    {
-        if (!arena.seats[s].alive || arena.seats[s].dead) continue;
-        if (mine >= 0 && TeamOf(s) == TeamOf(mine)) return s;
-        if (other < 0) other = s;
-    }
-    if (other >= 0) return other;
+    // Whoever stands, teammates first: Prev and Next step through them
+    mut int[SEATS] standing = [0, 0, 0, 0, 0, 0, 0, 0];
+    mut var count = 0;
+    for (var pass = 0; pass < 2; pass++)
+        for (var s = 0; s < SEATS; s++)
+        {
+            if (!arena.seats[s].alive || arena.seats[s].dead) continue;
+            var mate = mine >= 0 && TeamOf(s) == TeamOf(mine);
+            if (mate != (pass == 0)) continue;
+            standing[count] = s;
+            count += 1;
+        }
+    if (count > 0) return standing[((turn % count) + count) % count];
     // Nobody stands: it stays on its own player's body
     if (mine >= 0 && arena.seats[mine].alive) return mine;
     return -1;
 }
-
 // The match faces a player along their spawn line: the camera starts there.
 // A handler can't ask the match's map of players which seat is this
 // machine's, so it leaves the turn to the camera's view.
@@ -708,7 +779,7 @@ local event(RoundStarted started) Faced(mut Look look)
 // looks at, and `hand.aim` is the way from the fire point to where it looks,
 // as ShooterBase.GetFinalInput has it.
 [Stage(Layers.Camera)]
-view Aim(Devices devices, Arena arena, Session session, Lobby lobby, Fx fx, mut Hand hand, mut Look look, mut Light light)
+view Aim(Devices devices, Arena arena, Shown shown, Session session, Lobby lobby, Spectator spectator, Fx fx, mut Hand hand, mut Look look, mut Light light)
 {
     var dt = fx.dt;
     look.seat = arena.players.TryGet(session.player, out var seat) ? seat : -1;
@@ -720,7 +791,8 @@ view Aim(Devices devices, Arena arena, Session session, Lobby lobby, Fx fx, mut 
     }
 
     // The cursor is the cards' while they're dealt, and the menu's once a game is over
-    var free = arena.phase == Phase.Upgrade || arena.phase == Phase.GameOver;
+    var free = arena.phase == Phase.Upgrade || arena.phase == Phase.GameOver
+            || (look.seat >= 0 && arena.seats[look.seat].dead);
     if (lobby.playing)
     {
         if (!free) Cursor.Lock();
@@ -741,14 +813,14 @@ view Aim(Devices devices, Arena arena, Session session, Lobby lobby, Fx fx, mut 
     if (hand.yaw < -180) hand.yaw += 360;
     hand.pitch = Math.Clamp(hand.pitch, -10, 45);
 
-    var follow = Followed(arena, look.seat);
+    var follow = Followed(arena, look.seat, spectator.turn);
     mut var eye = look.eye;
     mut var turned = look.turned;
     var aspect = Screen.width / Math.Max(Screen.height, 1);
     var half = Math.Tan(Math.Radians(CAMERA_FOV) * 0.5);
     if (follow >= 0)
     {
-        var body = arena.seats[follow];
+        var body = Seen(arena, shown, follow);
         var size = body.settings.size;
         // Its own orbit for this machine's player, and the watched player's for another
         mut var yaw = hand.yaw;
@@ -836,6 +908,120 @@ view Aim(Devices devices, Arena arena, Session session, Lobby lobby, Fx fx, mut 
     var shake = float3(Math.Sin(wobble) + Math.Sin(wobble * 0.62 + 1.3) * 0.6,
                        Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6, 0) * (look.shake * look.shake * 0.06);
     light.eye = look.eye + Math.Rotate(turned, shake);
+}
+
+// What a bullet that isn't fired yet would meet on a stretch of its way, as
+// BulletBase.DryMove asks PhysX with the shooter's mask (Default and Player):
+// the map's pieces but not the floor under it, and every other player's
+// hitbox, shield or no shield.
+bool Lands(Arena arena, int shooter, float3 from, float3 way, float length, float radius, out Hit hit, out bool player)
+{
+    hit = Hit { };
+    player = false;
+    mut var found = false;
+    for (var i = 0; i < arena.pieces.count; i++)
+    {
+        if (arena.pieces[i].damageFloor || !BulletSees(arena.pieces[i]) || !Reaches(arena.pieces[i], from, way, length, radius)) continue;
+        if (!SweepBox(from, way, length, radius, arena.pieces[i].position, arena.pieces[i].rotation, arena.pieces[i].half, out var met)) continue;
+        if (found && met.distance >= hit.distance) continue;
+        found = true;
+        hit = met;
+        hit.piece = i;
+    }
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (s == shooter || !arena.seats[s].alive) continue;
+        var reach = 2.5 * arena.seats[s].settings.size + radius;
+        var on = from + way * Math.Clamp(Math.Dot(arena.seats[s].position - from, way), 0, length);
+        if (Math.DistanceSq(on, arena.seats[s].position) > reach * reach) continue;
+        if (!SweepCapsule(from, way, length, radius, CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, -1),
+                          CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, 1), HITBOX_RADIUS * arena.seats[s].settings.size, out var body)) continue;
+        if (found && body.distance >= hit.distance) continue;
+        found = true;
+        hit = body;
+        player = true;
+    }
+    return found;
+}
+
+// Where this machine's player's next bullet would land, for the crosshair:
+// PlayerCrosshair, which asks ShooterBase.PredictHit every frame. The bullet
+// is flown from the fire point along the camera's aim, as fast, as heavy and
+// as big as the player's cards make it (what SpawnBullet takes of them at a
+// shot), a tick at a time for 180 ticks, and stops at the first thing in its
+// way; with nothing there, the place is where those six seconds end. One
+// that doesn't fall is one cast, as TracePreview has it. The fire point is
+// the shown avatar's, as the Unity game's is its visuals': from the tick's,
+// the place would step thirty times a second under a camera that glides.
+[Stage(Layers.Camera, 1)]
+view Sights(Arena arena, Shown shown, Time time, Look look, Hand hand, mut Sight sight)
+{
+    sight.found = false;
+    var s = look.seat;
+    if (s < 0 || !arena.seats[s].alive || arena.seats[s].dead) return;
+    var size = arena.seats[s].settings.size;
+    var forward = Forward(hand.yaw);
+    var right = float3(forward.z, 0, -forward.x);
+    var fire = shown.position[s] + (right * FIRE_POINT.x + float3(0, FIRE_POINT.y, 0) + forward * FIRE_POINT.z) * size;
+    var way = Math.Normalize(look.eye + look.forward * 100 - fire);
+
+    mut var speed = arena.seats[s].settings.fireForce;
+    mut var props = BulletProps { };
+    for (var i = 0; i < arena.bulletMods.count; i++)
+    {
+        if (arena.bulletMods[i].seat != s) continue;
+        var mod = arena.bulletMods[i];
+        if (mod.kind == BulletModKind.Bigger) props.size = props.size * mod.a + mod.b;
+        if (mod.kind == BulletModKind.FireForce) speed = speed * mod.a + mod.b;
+        if (mod.kind == BulletModKind.Speed) speed *= mod.a;
+        if (mod.kind == BulletModKind.NoGravity) props.gravity = 0;
+    }
+
+    // Everything a bullet could meet is in this box: a step of the flight that's outside it asks nothing
+    mut var low = float3(100000);
+    mut var high = float3(-100000);
+    for (var i = 0; i < arena.pieces.count; i++)
+    {
+        if (arena.pieces[i].damageFloor || !BulletSees(arena.pieces[i])) continue;
+        low = Math.Min(low, arena.pieces[i].position - float3(arena.pieces[i].radius));
+        high = Math.Max(high, arena.pieces[i].position + float3(arena.pieces[i].radius));
+    }
+    for (var other = 0; other < SEATS; other++)
+    {
+        if (other == s || !arena.seats[other].alive) continue;
+        low = Math.Min(low, arena.seats[other].position - float3(2.5 * arena.seats[other].settings.size));
+        high = Math.Max(high, arena.seats[other].position + float3(2.5 * arena.seats[other].settings.size));
+    }
+    low -= float3(props.size + 0.05);
+    high += float3(props.size + 0.05);
+
+    mut var at = fire + way * 0.01;
+    mut var velocity = way * speed;
+    sight.found = true;
+    sight.normal = float3(0, 1, 0);
+    sight.player = false;
+    var steps = props.gravity > 0 ? SIGHT_TICKS : 1;
+    var dt = props.gravity > 0 ? time.dt : time.dt * SIGHT_TICKS;
+    for (var step = 0; step < steps; step++)
+    {
+        var delta = velocity * dt;
+        var length = Math.Length(delta);
+        if (length <= 0.0000001) break;
+        var next = at + delta;
+        var a = Math.Min(at, next);
+        var b = Math.Max(at, next);
+        if (a.x <= high.x && b.x >= low.x && a.y <= high.y && b.y >= low.y && a.z <= high.z && b.z >= low.z
+            && Lands(arena, s, at, delta / length, length, props.size, out var hit, out var player))
+        {
+            sight.at = hit.point;
+            sight.normal = hit.normal;
+            sight.player = player;
+            return;
+        }
+        at = next;
+        velocity.y -= props.gravity * dt;
+    }
+    sight.at = at;
 }
 
 // The sun's image: every block, through a camera where the sun is, into a
@@ -950,10 +1136,10 @@ view World(Scenery scenery, Models models, Look look, Light light, mut Post post
 [Stage(Layers.Effects, 100)]
 view Show(Post post, Depths depths)
 {
-    // The corners' shade, then blurred across and down
+    // The corners' shade, then smoothed twice: a pixel of it is two of the window's
     Draw.Blit(post.scene.color, depths.shade, Occlude);
-    Draw.Blit(depths.shade.color, depths.soft, Blur, BlurStep { along = float2(post.pixel.x * 2, 0) });
-    Draw.Blit(depths.soft.color, depths.shade, Blur, BlurStep { along = float2(0, post.pixel.y * 2) });
+    Draw.Blit(depths.shade.color, depths.soft, Soften, BlurStep { along = post.pixel * 2 });
+    Draw.Blit(depths.soft.color, depths.shade, Soften, BlurStep { along = post.pixel * 2 });
     Draw.Blit(post.scene.color, post.bright, Bright);
     Draw.Blit(post.bright.color, post.spread, Blur, BlurStep { along = float2(post.pixel.x * 4, 0) });
     Draw.Blit(post.spread.color, post.bright, Blur, BlurStep { along = float2(0, post.pixel.y * 4) });
