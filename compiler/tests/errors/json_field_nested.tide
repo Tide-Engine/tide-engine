@@ -1,0 +1,7 @@
+// expect: JSON has nothing for float3, which 'Spot.at' holds
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+struct Spot { float3 at; }
+struct Level { List<Spot> spots; }
+system Run(mut Seen seen) { seen.count = (Json.Read<Level>(seen.text) ?? Level { }).spots.count; }

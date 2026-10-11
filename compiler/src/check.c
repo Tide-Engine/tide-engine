@@ -6173,6 +6173,287 @@ static void check_sample_args(checker *c, expr *e, const bool cube)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Json.Read<T> and Json.Write: JSON to and from a game's own types, by
+// functions generated C has for each type a game reads or writes (codegen.c,
+// gen_json_helpers; tide/json.h).
+
+// The longest key a field has in JSON, in bytes: what a reader tells apart (tide/json.h).
+#define JSON_KEY_MOST 120
+// How deep the types JSON holds are looked into: a type nested past this is refused.
+#define JSON_TYPE_DEPTH 32
+
+str json_field_key(const field *f)
+{
+    for (int i = 0; i < f->attributes.count; i++) {
+        const attribute *a = &f->attributes.items[i];
+        if (str_eq_c(a->name, "Json") && a->values.count == 1 && a->values.items[0]->kind == E_STRING) return a->values.items[0]->text;
+    }
+    return f->name;
+}
+
+// [Json("max_players")] on a struct's field: its key in JSON, which no other
+// field of the struct has.
+static void check_json_attribute(const decl *d, const field *f, const attribute *a)
+{
+    if (d->kind != DECL_STRUCT) {
+        diag_error(a->at, "[Json] goes on a struct's field: Json reads and writes structs, and '" STR_FMT "' is %s",
+                   STR_ARG(d->name), decl_what(d));
+        return;
+    }
+    if (a->args.count || a->values.count != 1 || a->values.items[0]->kind != E_STRING) {
+        diag_error(a->at, "[Json] takes the field's key in JSON, in quotes: [Json(\"max_players\")]");
+        return;
+    }
+    const str key = a->values.items[0]->text;
+    if (key.len > JSON_KEY_MOST) {
+        diag_error(a->values.items[0]->at, "a field's key in JSON is %d bytes at the most, and this one is %d", JSON_KEY_MOST, key.len);
+        return;
+    }
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *other = &d->fields.items[i];
+        if (other == f || !str_eq(json_field_key(other), key)) continue;
+        if (other > f && !str_eq(json_field_key(other), other->name)) continue; // Two [Json]s: said once, at the second
+        diag_error(a->values.items[0]->at, "'" STR_FMT "' already has a field with the key \"" STR_FMT "\" in JSON: '" STR_FMT "'",
+                   STR_ARG(d->name), STR_ARG(key), STR_ARG(other->name));
+        diag_note("an object has each key once: give one of the two another key");
+        return;
+    }
+}
+
+// Whether JSON has something for a value of type `t`, and for everything in
+// it: a bool, a number, a char or text (a string), an enum (its member's
+// name), a struct (an object), a list or an array (an array) and a map by
+// text (an object). `*why` is the type it has nothing for, and `*in` and
+// `*at` the struct and the field that hold it, if one does. `outer` is the
+// structs being looked into, so one with a list of itself ends.
+static bool json_holds(const type t, type *why, const decl **in, const field **at, const decl **outer, const int depth)
+{
+    switch (t.kind) {
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_STRING: case TY_ENUM:
+        return true;
+    case TY_STRUCT:
+        if (t.decl->builtin || t.decl->skin_kind || depth == JSON_TYPE_DEPTH) break;
+        for (int i = 0; i < depth; i++) {
+            if (outer[i] == t.decl) return true;
+        }
+        outer[depth] = t.decl;
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->hidden) continue;
+            *in = NULL;
+            if (!json_holds(f->type, why, in, at, outer, depth + 1)) {
+                if (!*in) { // The field itself, or what its list holds
+                    *in = t.decl;
+                    *at = f;
+                }
+                return false;
+            }
+        }
+        return true;
+    case TY_LIST: case TY_ARRAY:
+        if (depth == JSON_TYPE_DEPTH) break;
+        outer[depth] = NULL;
+        return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth + 1);
+    case TY_MAP:
+        if (map_key(t).kind != TY_STRING || depth == JSON_TYPE_DEPTH) break;
+        outer[depth] = NULL;
+        return json_holds(map_value(t), why, in, at, outer, depth + 1);
+    default: break;
+    }
+    *why = t;
+    *in = NULL;
+    return false;
+}
+
+// `t` and the types in it are read, or written: codegen writes their readers, or their writers.
+static void mark_json(const type t, const bool reads)
+{
+    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP) return;
+    bool *marked = reads ? &t.decl->json_reads : &t.decl->json_writes;
+    if (*marked) return;
+    *marked = true;
+    if (t.kind == TY_ENUM) return;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (!t.decl->fields.items[i].hidden) mark_json(t.decl->fields.items[i].type, reads);
+    }
+}
+
+// Whether `call` (Json.Read or Json.Write) takes a value of type `t`: a
+// struct, a list or a map by text, of what JSON holds. Says what's in the way.
+static bool json_takes(const type t, const loc at, const char *call)
+{
+    if (t.kind == TY_ERROR) return false;
+    const bool reads = strcmp(call, "Json.Read") == 0;
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && !(t.kind == TY_MAP && map_key(t).kind == TY_STRING)) {
+        diag_error(at, "%s %s a struct, a List<T> or a Map<string, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
+        if (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT || t.kind == TY_INPUT) {
+            diag_note("copy what the JSON has of it %s a struct, which is a value of its own", reads ? "from" : "into");
+        } else {
+            diag_note("a value alone goes in a struct's field: 'struct Answer { %s value; }'", type_name(t));
+        }
+        return false;
+    }
+    const decl *outer[JSON_TYPE_DEPTH + 1];
+    const decl *in = NULL;
+    const field *field_at = NULL;
+    type why = T_ERR;
+    if (json_holds(t, &why, &in, &field_at, outer, 0)) return true;
+    if (in) {
+        diag_error(at, "JSON has nothing for %s, which '" STR_FMT "." STR_FMT "' holds", type_name(why), STR_ARG(in->name),
+                   STR_ARG(field_at->name));
+    } else {
+        diag_error(at, "JSON has nothing for %s", type_name(why));
+    }
+    if (why.kind == TY_MAP) diag_note("an object's keys are text: a map JSON holds is a Map<string, T>");
+    else if (why.kind == TY_SET) diag_note("JSON has arrays: keep the keys in a List<T>");
+    else diag_note("JSON holds bool, the integers, float, char, string, enums, structs of these, List<T>, arrays and Map<string, T>");
+    return false;
+}
+
+// The functions generated C has for Json.Read and Json.Write of `t`.
+static int json_root_of(program *prog, const type t)
+{
+    for (int i = 0; i < prog->json_roots.count; i++) {
+        const type other = prog->json_roots.items[i].type;
+        if (other.kind == t.kind && other.decl == t.decl) return i;
+    }
+    json_root root = {0};
+    root.type = t;
+    vec_push(prog->json_roots, root);
+    return prog->json_roots.count - 1;
+}
+
+// Json.Read<LobbyInfo>(text) and Json.Write(info).
+static type check_json_call(checker *c, expr *e)
+{
+    const bool reads = str_eq_c(e->name, "Read");
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (reads && arg->kind == E_LIST) check_expr_want(c, arg, list_of(c->prog, (type){TY_BYTE, NULL})); // [0x7B, 0x7D]: bytes
+        else check_expr(c, arg);
+    }
+    if (!reads && !str_eq_c(e->name, "Write")) {
+        diag_error(e->at, "Json has no function '" STR_FMT "'", STR_ARG(e->name));
+        diag_note("it has 'Json.Read<T>(json)', which gives a T? from a string or a List<byte>, and 'Json.Write(value)', "
+                  "which gives a string");
+        return T_ERR;
+    }
+    if (gpu_refuses(c, e->at, reads ? "read JSON" : "write JSON", "JSON is text, which is the CPU's: read it in a view or a "
+                    "system, and give the frag the numbers")) {
+        return T_ERR;
+    }
+    type t;
+    if (reads) {
+        if (e->type_arg.len == 0) {
+            diag_error(e->at, "Json.Read takes the type it reads in '<>': 'Json.Read<LobbyInfo>(text)'");
+            return T_ERR;
+        }
+        t = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+        if (e->args.count != 1) {
+            diag_error(e->at, "Json.Read takes one argument, the JSON to read: 'Json.Read<" STR_FMT ">(text)'", STR_ARG(e->type_arg));
+            return T_ERR;
+        }
+        const type source = e->args.items[0]->type;
+        if (source.kind == TY_ERROR) return T_ERR;
+        if (source.kind != TY_STRING && !(source.kind == TY_LIST && list_element(source).kind == TY_BYTE)) {
+            diag_error(e->args.items[0]->at, "Json.Read reads a string or a List<byte> of UTF-8, not %s", type_name(source));
+            return T_ERR;
+        }
+        if (!json_takes(t, e->type_arg_qual_at, "Json.Read")) return T_ERR;
+    } else {
+        if (e->type_arg.len > 0) {
+            diag_error(e->type_arg_qual_at, "Json.Write takes no type in '<>': it writes its value's type, 'Json.Write(value)'");
+            return T_ERR;
+        }
+        if (e->args.count != 1) {
+            diag_error(e->at, "Json.Write takes one argument, the value to write: 'Json.Write(value)'");
+            return T_ERR;
+        }
+        t = e->args.items[0]->type;
+        if (!json_takes(t, e->args.items[0]->at, "Json.Write")) return T_ERR;
+    }
+    const int root = json_root_of(c->prog, t);
+    const bool bytes = reads && e->args.items[0]->type.kind == TY_LIST;
+    type result = (type){TY_STRING, NULL};
+    if (reads) {
+        result = optional_type(c, t, e->at);
+        if (result.kind == TY_ERROR) return T_ERR;
+        c->prog->json_roots.items[root].result = result;
+    }
+    json_root *r = &c->prog->json_roots.items[root];
+    r->reads_text |= reads && !bytes;
+    r->reads_bytes |= bytes;
+    r->writes |= !reads;
+    if (builds(c->prog)) mark_json(t, reads);
+    sb callee = {0};
+    sb_printf(&callee, "tide_json_%s%d", !reads ? "write" : bytes ? "read_bytes" : "read", root);
+    e->call = CALL_JSON;
+    e->c_callee = callee.data;
+    e->arg_want.count = 0;
+    vec_push(e->arg_want, e->args.items[0]->type);
+    c->prog->uses_text = true; // What it makes is in the scratch area
+    return result;
+}
+
+// string.FromBytes(bytes): the text those bytes are, or nothing when they aren't UTF-8.
+static type check_from_bytes(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (arg->kind == E_LIST) check_expr_want(c, arg, list_of(c->prog, (type){TY_BYTE, NULL})); // [0x68, 0x69]: bytes
+        else check_expr(c, arg);
+    }
+    if (!str_eq_c(e->name, "FromBytes")) {
+        diag_error(e->at, "string has no function '" STR_FMT "'", STR_ARG(e->name));
+        diag_note("it has 'string.FromBytes(bytes)', the text a List<byte> of UTF-8 is; what a text has is called on "
+                  "the text, like 'name.Trim()'");
+        return T_ERR;
+    }
+    if (gpu_refuses(c, e->at, "work with text", "text is the CPU's")) return T_ERR;
+    const type bytes = e->args.count == 1 ? e->args.items[0]->type : T_ERR;
+    if (e->args.count == 1 && bytes.kind == TY_ERROR) return T_ERR;
+    if (e->args.count != 1 || bytes.kind != TY_LIST || list_element(bytes).kind != TY_BYTE) {
+        diag_error(e->at, "string.FromBytes takes the text's bytes, a List<byte> of UTF-8: 'string.FromBytes(bytes)'");
+        return T_ERR;
+    }
+    const type result = optional_type(c, (type){TY_STRING, NULL}, e->at);
+    if (result.kind == TY_ERROR) return T_ERR;
+    c->prog->from_bytes = true;
+    c->prog->from_bytes_result = result;
+    e->call = CALL_JSON;
+    e->c_callee = "tide_text_from_bytes";
+    e->arg_want.count = 0;
+    vec_push(e->arg_want, bytes);
+    c->prog->uses_text = true;
+    return result;
+}
+
+// int.TryParse(text, out value), and long's and float's: the variable the
+// call makes is checked as a function's `out` argument is.
+static type check_parse_call(checker *c, expr *e, const type result)
+{
+    if (gpu_refuses(c, e->at, "work with text", "text is the CPU's")) return T_ERR;
+    sb name = {0};
+    sb_printf(&name, STR_FMT "." STR_FMT, STR_ARG(e->object->name), STR_ARG(e->name));
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        const bool makes = (e->arg_out & (1u << i)) != 0;
+        if (!makes && !arg->is_out) continue;
+        decl *called = NEW(decl);
+        called->name = (str){name.data, (int)name.len};
+        param *value = NEW(param);
+        value->name = builtin_param_name(e, i);
+        value->type = e->arg_want.items[i];
+        value->mode = makes ? PARAM_MUT : PARAM_READ;
+        value->is_out = makes;
+        if (arg->is_out) finish_out_arg(c, arg, makes ? value->type : T_ERR);
+        check_out_param(c, called, value, arg);
+    }
+    e->call = CALL_JSON;
+    return result;
+}
+
 static type check_method(checker *c, expr *e)
 {
     if (str_eq_c(e->name, "Count")) {
@@ -6201,7 +6482,8 @@ static type check_method(checker *c, expr *e)
         param *world = find_param(c, e->object->name);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
     }
-    if (e->type_arg.len > 0) {
+    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads
+    if (e->type_arg.len > 0 && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))) {
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
         diag_note("the World's methods do: 'world.Get<Health>(entity)', in code that takes 'World world'");
     }
@@ -6226,11 +6508,15 @@ static type check_method(checker *c, expr *e)
 
     if (names_random(c, e->object)) return check_roll(c, e); // Random.NextInt(6): a roll, with no generator of the game's
 
+    // string.FromBytes(bytes): the type's own, where what a text has is called on the text
+    if (e->object->kind == E_NAME && str_eq_c(e->object->name, "string")) return check_from_bytes(c, e);
+
     // Math.Dot(a, b), quaternion.AxisAngle(axis, angle), Draw.Circle(center,
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
         if (builtin_old_draw_owner(owner)) return old_draw_owner(c, e);
+        if (str_eq_c(owner, "Json")) return check_json_call(c, e);
         const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
         const bool flush = str_eq_c(owner, "Storage");
         const bool fetch = str_eq_c(owner, "Web");
@@ -6318,6 +6604,7 @@ static type check_method(checker *c, expr *e)
             e->draw_dims = 2;
         }
         if (plays) e->call = CALL_AUDIO;
+        if (e->arg_out && !gui) return check_parse_call(c, e, result); // int.TryParse(text, out value)
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
     }
@@ -6500,6 +6787,9 @@ static type check_method(checker *c, expr *e)
     }
     // name.Contains("cat"), name.Substring(0, 3): text's methods
     if (obj.kind == TY_STRING) {
+        if (str_eq_c(e->name, "ToBytes") || str_eq_c(e->name, "Split")) { // The lists they give, as the program has them
+            builtins_use_io(list_of(c->prog, (type){TY_BYTE, NULL}).decl, list_of(c->prog, (type){TY_STRING, NULL}).decl);
+        }
         for (int i = 0; i < e->args.count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
         }
@@ -10863,6 +11153,7 @@ static bool stands_alone(const expr *e)
         || (call == CALL_GRID && !str_eq_c(called->name, "Sample"))
         || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
+        || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0
         || e->kind == E_TRY // Passes an error on, even from a variable
         || called->kind == E_AWAIT;
 }
@@ -12116,6 +12407,10 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             check_field_raw(f, a);
             continue;
         }
+        if (str_eq_c(a->name, "Json")) {
+            check_json_attribute(d, f, a);
+            continue;
+        }
         if (!clamp && !min && !max) {
             diag_error(a->at, "unknown field attribute '" STR_FMT "'", STR_ARG(a->name));
             suggestion s = suggest_start(a->name);
@@ -12129,6 +12424,7 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Filter");
             suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
+            suggest_consider_c(&s, "Json");
             suggest_note(&s);
             continue;
         }
@@ -15336,7 +15632,7 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
-        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web")
+        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
 
