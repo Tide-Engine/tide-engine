@@ -1,0 +1,15 @@
+// expect: a view can't change the match, and 'Chain' starts 'Later', a task that changes the match
+// expect: it does on line 12
+component Enemy { int hp; }
+scene Main { }
+async void Later()
+{
+    await Wait.Ticks(1);
+}
+void Now() { Later(); }
+void Chain()
+{
+    Now();
+}
+event(Spawned) Setup(with Main) { Spawn(Enemy); Chain(); }
+view Show(Enemy enemy) { Chain(); }

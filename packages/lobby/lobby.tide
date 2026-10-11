@@ -194,34 +194,6 @@ struct MatchTicket
     bool already; // As a LobbyAnswer's
 }
 
-enum LobbyAskKind
-{
-    Create,
-    List,
-    Join,
-    Search,
-    Leave,
-    Update,
-    Member,
-    Kick,
-    Transfer
-}
-
-// What a call below asked of the service, for `Serve` to start: a function
-// can't start a task itself.
-struct LobbyAsk
-{
-    LobbyAskKind kind;
-    string id;     // The lobby's
-    string player; // Whom to kick, or hand the lobby to
-    bool standard; // The lobby NewLobby says, or the match QuickRequest says, once this player's name is known
-    LobbyOptions options;
-    LobbyChange change;
-    MatchRequest request;
-    Map<string, string> data; // A member's own, to set
-    List<string> remove;      // ...and to take away
-}
-
 local singleton LobbyClient
 {
     // The menu (pages.tide)
@@ -237,6 +209,8 @@ local singleton LobbyClient
     // The service
     string service;     // Where it is, for a host or a test to say; "" is ServiceUrl()
     string name;        // This player's name, which is the game's to set; "" takes the identity's, or "Player"
+    float timeout = 10; // Seconds the service has to answer a request, before it counts as unreachable; 0 is no limit
+    float watchTimeout = 30; // ...and the request a member watches its lobby with, which Tide's service holds for about 20
     LobbyIdentity me;   // Who this player is, once the service was first asked
     bool signing;       // ...which is being asked now
 
@@ -262,7 +236,6 @@ local singleton LobbyClient
     bool telling;       // ...and whether it has asked
 
     int epoch;          // Counts the lobbies asked for and left: an answer to an older one is nobody's
-    List<LobbyAsk> asks;
 }
 
 // Where the service is, without a path: Tide's relay, which a game overrides
@@ -330,7 +303,7 @@ virtual async LobbyIdentity IdentitySignIn(LobbyClient client, bool fresh)
         var kept = Json.Read<KeptIdentity>(File.ReadAllText(file) ?? "") ?? KeptIdentity { };
         if (kept.id != "" && kept.secret != "") return LobbyIdentity { id = kept.id, secret = kept.secret };
     }
-    var http = await Call("POST", ServiceOf(client) + "/v1/players", "", "");
+    var http = await Call("POST", ServiceOf(client) + "/v1/players", "", "", client.timeout);
     if (!http.reached) return LobbyIdentity { failure = LobbyFailure.Unreachable };
     var made = Json.Read<KeptIdentity>(http.body) ?? KeptIdentity { };
     if (http.status != 200 || made.id == "" || made.secret == "") return LobbyIdentity { failure = LobbyFailure.SignedOut };
@@ -350,7 +323,7 @@ virtual async LobbyAnswer LobbyCreate(LobbyClient client, LobbyOptions options)
         game = ServiceGame(), name = options.name, max = options.max, listed = options.listed, data = options.data,
         member = MemberSaid { name = client.name }
     });
-    var http = await Call("POST", ServiceOf(client) + "/v1/lobbies", client.me.secret, body);
+    var http = await Call("POST", ServiceOf(client) + "/v1/lobbies", client.me.secret, body, client.timeout);
     return ReadLobby(http);
 }
 
@@ -359,7 +332,7 @@ virtual async LobbyListing LobbyList(LobbyClient client, LobbyQuery query)
 {
     mut var url = $"{ServiceOf(client)}/v1/lobbies?game={Escape(ServiceGame())}&seats={Math.Max(query.seats, 1)}";
     foreach (var e in query.filter) url += $"&{Escape(e.key)}={Escape(e.value)}";
-    var http = await Call("GET", url, client.me.secret, "");
+    var http = await Call("GET", url, client.me.secret, "", client.timeout);
     if (!http.reached) return LobbyListing { failure = LobbyFailure.Unreachable };
     if (http.status != 200) return LobbyListing { failure = Refused(http) };
     var said = Json.Read<ListSaid>(http.body) ?? ListSaid { };
@@ -370,7 +343,7 @@ virtual async LobbyListing LobbyList(LobbyClient client, LobbyQuery query)
 virtual async LobbyAnswer LobbyJoin(LobbyClient client, string id)
 {
     var body = Json.Write(JoinSaid { member = MemberSaid { name = client.name } });
-    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/join", client.me.secret, body);
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/join", client.me.secret, body, client.timeout);
     return ReadLobby(http);
 }
 
@@ -385,14 +358,14 @@ virtual async LobbyAnswer LobbyQuickJoin(LobbyClient client, Map<string, string>
         create = MakeSaid { name = options.name, max = options.max, listed = options.listed, data = options.data },
         member = MemberSaid { name = client.name }
     });
-    var http = await Call("POST", ServiceOf(client) + "/v1/lobbies/quick", client.me.secret, body);
+    var http = await Call("POST", ServiceOf(client) + "/v1/lobbies/quick", client.me.secret, body, client.timeout);
     return ReadLobby(http);
 }
 
 // Leaves a lobby. Its owner then is whoever has been there longest.
 virtual async LobbyAnswer LobbyLeave(LobbyClient client, string id)
 {
-    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/leave", client.me.secret, "{}");
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/leave", client.me.secret, "{}", client.timeout);
     return ReadDone(http);
 }
 
@@ -404,7 +377,7 @@ virtual async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChange
         data = change.data, remove = change.remove, name = change.name, max = change.max, listed = change.listed,
         open = change.open, match = change.match,
     });
-    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/update", client.me.secret, body);
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/update", client.me.secret, body, client.timeout);
     return ReadLobby(http);
 }
 
@@ -413,21 +386,21 @@ virtual async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChange
 virtual async LobbyAnswer LobbySetMember(LobbyClient client, string id, string name, Map<string, string> data, List<string> remove)
 {
     var body = Json.Write(MemberChangeSaid { name = name, data = data, remove = remove });
-    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/member", client.me.secret, body);
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/member", client.me.secret, body, client.timeout);
     return ReadLobby(http);
 }
 
 // Sends a member out, for as long as the lobby lasts: its owner's to ask.
 virtual async LobbyAnswer LobbyKick(LobbyClient client, string id, string player)
 {
-    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/kick", client.me.secret, Json.Write(PlayerSaid { player = player }));
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/kick", client.me.secret, Json.Write(PlayerSaid { player = player }), client.timeout);
     return ReadLobby(http);
 }
 
 // Hands the lobby to another member: its owner's to ask.
 virtual async LobbyAnswer LobbyTransfer(LobbyClient client, string id, string player)
 {
-    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/owner", client.me.secret, Json.Write(PlayerSaid { player = player }));
+    var http = await Call("POST", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}/owner", client.me.secret, Json.Write(PlayerSaid { player = player }), client.timeout);
     return ReadLobby(http);
 }
 
@@ -436,7 +409,7 @@ virtual async LobbyAnswer LobbyTransfer(LobbyClient client, string id, string pl
 // happen, and how the service knows the member is there.
 virtual async LobbyAnswer LobbyWatch(LobbyClient client, string id, int version)
 {
-    var http = await Call("GET", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}?since={version}", client.me.secret, "");
+    var http = await Call("GET", $"{ServiceOf(client)}/v1/lobbies/{Escape(id)}?since={version}", client.me.secret, "", client.watchTimeout);
     return ReadLobby(http);
 }
 
@@ -500,8 +473,8 @@ virtual void MatchLeave()
 }
 
 // What a game asks, and what the menu's buttons do: each is a call a page of
-// the game's own makes too. The service is asked after the frame's views
-// (Serve), and LobbyClient says what became of it.
+// the game's own makes too. Each starts its flow, a task (below), which asks
+// the service at once, and LobbyClient says what became of it.
 
 // Makes a lobby and joins it as its owner.
 void CreateLobby(mut LobbyClient client, LobbyOptions options)
@@ -510,7 +483,7 @@ void CreateLobby(mut LobbyClient client, LobbyOptions options)
     client.busy = LobbyBusy.Creating;
     Clear(client);
     client.epoch += 1;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Create, options = options });
+    Create(client, options, false, client.epoch);
 }
 
 // Makes the lobby NewLobby says, which is what the Create button does.
@@ -520,7 +493,7 @@ void HostLobby(mut LobbyClient client)
     client.busy = LobbyBusy.Creating;
     Clear(client);
     client.epoch += 1;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Create, standard = true });
+    Create(client, LobbyOptions { }, true, client.epoch);
 }
 
 // Lists the lobbies `client.query` asks for, into `client.lobbies`.
@@ -528,7 +501,7 @@ void RefreshLobbies(mut LobbyClient client)
 {
     if (client.listing) return;
     client.listing = true;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.List });
+    List(client, client.query);
 }
 
 // Joins the lobby with this ID.
@@ -538,7 +511,7 @@ void JoinLobby(mut LobbyClient client, string id)
     client.busy = LobbyBusy.Joining;
     Clear(client);
     client.epoch += 1;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Join, id = id });
+    Join(client, id, client.epoch);
 }
 
 // Looks for a match: `client.ticket` says how it stands, and it ends in a lobby.
@@ -550,7 +523,7 @@ void QuickMatch(mut LobbyClient client, MatchRequest request)
     client.page = LobbyMenu.Searching;
     Clear(client);
     client.epoch += 1;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Search, request = request });
+    Search(client, request, false, client.epoch);
 }
 
 // Looks for the match QuickRequest says, which is what the Quick match button does.
@@ -562,7 +535,7 @@ void FindMatch(mut LobbyClient client)
     client.page = LobbyMenu.Searching;
     Clear(client);
     client.epoch += 1;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Search, standard = true });
+    Search(client, MatchRequest { }, true, client.epoch);
 }
 
 // Stops waiting for a lobby that was asked for (made, joined or looked for):
@@ -579,7 +552,7 @@ void CancelLobby(mut LobbyClient client)
 // Leaves the lobby, and its match with it, for the title.
 void LeaveLobby(mut LobbyClient client)
 {
-    if (client.lobby.id != "") client.asks.Add(LobbyAsk { kind = LobbyAskKind.Leave, id = client.lobby.id });
+    if (client.lobby.id != "") Depart(client, client.lobby.id);
     Forget(client);
     Clear(client);
     client.page = LobbyMenu.Title;
@@ -589,22 +562,22 @@ void LeaveLobby(mut LobbyClient client)
 void SetName(mut LobbyClient client, string name)
 {
     client.name = name;
-    if (client.lobby.id != "") client.asks.Add(LobbyAsk { kind = LobbyAskKind.Member, id = client.lobby.id });
+    if (client.lobby.id != "") Member(client, client.lobby.id, default, [], client.epoch);
 }
 
 // A key of this member's own data, which every member sees.
 void SetMemberData(mut LobbyClient client, string key, string value)
 {
     if (client.lobby.id == "") return;
-    mut var ask = LobbyAsk { kind = LobbyAskKind.Member, id = client.lobby.id };
-    ask.data[key] = value;
-    client.asks.Add(ask);
+    mut Map<string, string> data = default;
+    data[key] = value;
+    Member(client, client.lobby.id, data, [], client.epoch);
 }
 
 void RemoveMemberData(mut LobbyClient client, string key)
 {
     if (client.lobby.id == "") return;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Member, id = client.lobby.id, remove = [key] });
+    Member(client, client.lobby.id, default, [key], client.epoch);
 }
 
 // Whether this player is ready: the `ready` key of its member's data.
@@ -618,7 +591,7 @@ void SetReady(mut LobbyClient client, bool ready)
 void UpdateLobby(mut LobbyClient client, LobbyChange change)
 {
     if (client.lobby.id == "") return;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Update, id = client.lobby.id, change = change });
+    Update(client, client.lobby.id, change, client.epoch);
 }
 
 void SetLobbyName(mut LobbyClient client, string name)
@@ -661,14 +634,14 @@ void RemoveLobbyData(mut LobbyClient client, string key)
 void Kick(mut LobbyClient client, string player)
 {
     if (client.lobby.id == "") return;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Kick, id = client.lobby.id, player = player });
+    KickOut(client, client.lobby.id, player, client.epoch);
 }
 
 // The owner's: hands the lobby to another member.
 void TransferLobby(mut LobbyClient client, string player)
 {
     if (client.lobby.id == "") return;
-    client.asks.Add(LobbyAsk { kind = LobbyAskKind.Transfer, id = client.lobby.id, player = player });
+    Transfer(client, client.lobby.id, player, client.epoch);
 }
 
 // The owner's: opens this machine's match to the lobby (Follow asks the
@@ -1049,30 +1022,6 @@ void Tell(mut LobbyClient client, string address)
     client.told = address;
     client.telling = true;
     UpdateLobby(client, LobbyChange { match = address });
-}
-
-// Starts what the frame's calls asked of the service.
-[After(Follow)]
-view Serve(mut LobbyClient client)
-{
-    if (client.asks.count == 0) return;
-    var asks = client.asks;
-    client.asks.Clear();
-    foreach (var ask in asks)
-    {
-        switch (ask.kind)
-        {
-            case LobbyAskKind.Create: Create(client, ask.options, ask.standard, client.epoch); break;
-            case LobbyAskKind.List: List(client, client.query); break;
-            case LobbyAskKind.Join: Join(client, ask.id, client.epoch); break;
-            case LobbyAskKind.Search: Search(client, ask.request, ask.standard, client.epoch); break;
-            case LobbyAskKind.Leave: Depart(client, ask.id); break;
-            case LobbyAskKind.Update: Update(client, ask.id, ask.change, client.epoch); break;
-            case LobbyAskKind.Member: Member(client, ask.id, ask.data, ask.remove, client.epoch); break;
-            case LobbyAskKind.Kick: KickOut(client, ask.id, ask.player, client.epoch); break;
-            case LobbyAskKind.Transfer: Transfer(client, ask.id, ask.player, client.epoch); break;
-        }
-    }
 }
 
 // In the lobby's match: the wait is over.

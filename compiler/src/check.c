@@ -4269,9 +4269,11 @@ static decl *check_routine_args(checker *c, expr *e, decl *m)
 }
 
 // A call of async function `fn`: awaited, its frame part of the caller's, or
-// as a statement, starting a task. A task belongs to a world, so plain
-// functions and methods can't start one. Its components and singletons are
-// looked up again each time it goes on, so they're the caller's own.
+// as a statement, starting a task. A task belongs to a world: a plain function
+// or method starts one as the code that calls it would, in that code's world
+// and for its entity, and whether that code may is each call's to say
+// (check_acts). Its components and singletons are looked up again each time it
+// goes on, so they're the caller's own.
 static void check_task_call(checker *c, expr *e, decl *fn)
 {
     const bool awaited = c->awaiting == e;
@@ -4282,14 +4284,32 @@ static void check_task_call(checker *c, expr *e, decl *fn)
         diag_note("a task goes on by itself, and a statement that starts one doesn't wait for it");
         return;
     }
-    if (!awaited && (in_routine(c) || c->in_input || !from)) {
-        diag_error(e->at, "'" STR_FMT "' is async, so calling it starts a task, which belongs to a world, and %s can't",
-                   STR_ARG(fn->name), in_routine(c) ? routines(c) : c->in_input ? input_code(c) : "this code");
-        if (in_routine(c) && c->method->kind == DECL_FUNCTION) {
-            diag_note("make '" STR_FMT "' async too, or start it from the system, view or handler that calls it",
-                      STR_ARG(c->method->name));
+    if (!awaited && in_routine(c) && !inherits(c)) {
+        if (c->method->is_interpolate) {
+            diag_error(e->at, "Interpolate blends a value between ticks, for views, so it can't start a task, and calling '"
+                       STR_FMT "', which is async, would", STR_ARG(fn->name));
+        } else if (c->method->is_operator) {
+            diag_error(e->at, "an operator works a value out of its operands, so it can't start a task, and calling '"
+                       STR_FMT "', which is async, would", STR_ARG(fn->name));
+        } else {
+            diag_error(e->at, "'" STR_FMT "' is async, so calling it starts a task, which belongs to a world, and %s can't",
+                       STR_ARG(fn->name), routines(c));
         }
+        diag_note("start it from a system, a view or a handler, or from a function they call");
         return;
+    }
+    if (!awaited && (c->in_input || !from)) {
+        diag_error(e->at, "'" STR_FMT "' is async, so calling it starts a task, which belongs to a world, and %s can't",
+                   STR_ARG(fn->name), c->in_input ? input_code(c) : "this code");
+        return;
+    }
+    if (!awaited && inherits(c)) {
+        decl *m = c->method;
+        if (!m->starts_tasks) {
+            m->starts_tasks = true;
+            m->starts_at = e->at;
+            m->starts_what = act_what("starts", fn);
+        }
     }
     // A system that starts tasks makes them in order, on one thread
     if (!awaited && !c->method && from->kind == DECL_SYSTEM) {
@@ -4304,8 +4324,21 @@ static void check_task_call(checker *c, expr *e, decl *fn)
         if (!p->task_ref || arg->type.kind == TY_ERROR) continue;
         const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && (!arg->param->function_param || arg->param->task_ref);
         if (own) continue;
+        // A function's or method's own singleton is the world's when every call of it passes its own (check_task_params)
+        const bool handed = arg->kind == E_NAME && arg->bind == BIND_PARAM && inherits(c) && !awaited;
+        if (handed && arg->param->type.kind == TY_SINGLETON) {
+            if (!arg->param->task_own) arg->param->task_own_at = arg->at;
+            arg->param->task_own = true;
+            continue;
+        }
         diag_error(arg->at, "'" STR_FMT "' gets its '" STR_FMT "' again each time it goes on, so it takes the caller's own: "
                    "a parameter", STR_ARG(fn->name), STR_ARG(p->name));
+        if (handed) {
+            diag_note("a %s's component may be any entity's, or a copy, and the task gets the one of the entity it belongs to: "
+                      "start '" STR_FMT "' from the system, view or handler that has it", c->method->kind == DECL_FUNCTION
+                      ? "function" : "method", STR_ARG(fn->name));
+            continue;
+        }
         diag_note("a task gets its components and singletons as they are: a copy would miss what changes while it waits");
     }
     if (awaited && from && from->kind == DECL_FUNCTION) {
@@ -10177,6 +10210,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_FUNCTION:
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
         if (e->method && (e->method->acts[0] || e->method->acts[1])) return false; // What it sends and spawns is recorded in order
+        if (e->method && e->method->starts_tasks) return false; // And the tasks it starts, started in order
         // What it changes, its mut arguments and the value a mut method is called on, is the step's own
         for (int i = 0; e->method && i < e->args.count && i < e->method->params.count; i++) {
             if (e->method->params.items[i].mode == PARAM_MUT && !step_own(e->args.items[i], loop)) return false;
@@ -14859,7 +14893,7 @@ static bool call_acts(const expr *e)
         const decl *m = e->method;
         if (!m) return false;
         if (m->is_extern || m->calls_c || m->draws || m->rolls || m->is_async || m->is_mut_method || m->takes_action) return true;
-        if (m->acts[0] || m->acts[1]) return true; // It sends, spawns or changes entities, as its caller would
+        if (m->acts[0] || m->acts[1] || m->starts_tasks) return true; // It sends, spawns, changes entities or starts tasks, as its caller would
         for (int i = 0; i < m->params.count; i++) {
             if (m->params.items[i].mode == PARAM_MUT) return true; // It changes the caller's variable
         }
@@ -15110,12 +15144,22 @@ static void add_builtins(program *prog)
     prog->prediction = prediction;
 
     static const char *const io_errors[] = {"None", "NotFound", "AlreadyExists", "AccessDenied", "InvalidPath", "NotDirectory",
-                                            "DirectoryNotEmpty", "OutOfSpace", "StorageUnavailable", "InvalidData", "Failed"};
+                                            "DirectoryNotEmpty", "OutOfSpace", "StorageUnavailable", "InvalidData", "Failed",
+                                            "TimedOut"};
+    // TimedOut is a request's own (SetTimeout), and every program's header declares IOError: it's a
+    // member where Web.Request's own code is compiled in (web_prelude_wanted), so a program with no
+    // request declares the IOError it always did, and is the same game. tide/io.h's tide_io_error
+    // has the same values.
+    bool requests = false;
+    for (int i = 0; i < prog->units.count && !requests; i++) {
+        const unit *u = prog->units.items[i];
+        requests = u->src && u->src->path && strcmp(u->src->path, WEB_PRELUDE_PATH) == 0;
+    }
     decl *io_error = NEW(decl);
     io_error->kind = DECL_ENUM;
     io_error->name = str_from("IOError");
     io_error->builtin = true;
-    for (int i = 0; i < (int)(sizeof io_errors / sizeof io_errors[0]); i++) {
+    for (int i = 0; i < (int)(sizeof io_errors / sizeof io_errors[0]) - (requests ? 0 : 1); i++) {
         const enum_member m = {str_from(io_errors[i]), {0, 0, 0}, NULL, i};
         vec_push(io_error->members, m);
     }
@@ -16942,8 +16986,19 @@ static bool awaits(const decl *from, const decl *target, const decl **seen, int 
 // a view's, or an async function's own (TASK_EITHER while nothing decides).
 static int caller_side(const decl *from)
 {
+    if (passes_acts(from)) return TASK_EITHER; // A function or method that starts one: its own callers answer for it (check_acts)
     if (from->kind == DECL_FUNCTION) return from->task_side;
     return is_local_code(from) ? TASK_LOCAL : TASK_MATCH;
+}
+
+// Whether `from` runs in the match's world (`w` 0) or the local one (1): a
+// system, view or handler in its own, and an async function, or a function or
+// method that starts tasks, in the worlds of what starts or calls it.
+static bool runs_world(const decl *from, const int w)
+{
+    if (from->kind == DECL_SYSTEM) return is_local_code(from) == (w == 1);
+    if (from->kind == DECL_FUNCTION || from->kind == DECL_METHOD) return from->runs_in[w];
+    return false;
 }
 
 // After every body: the world each async function runs in. What an async
@@ -16958,7 +17013,8 @@ static void resolve_tasks(checker *c)
         changed = false;
         for (int i = 0; i < c->task_calls.count; i++) {
             const task_call *t = &c->task_calls.items[i];
-            if (t->from->kind != DECL_FUNCTION || t->from->task_side != TASK_EITHER || t->to->task_side == TASK_EITHER) continue;
+            if (t->from->kind != DECL_FUNCTION || !t->from->is_async || t->from->task_side != TASK_EITHER
+                || t->to->task_side == TASK_EITHER) continue;
             t->from->task_side = t->to->task_side;
             t->from->task_side_at = t->call->at;
             changed = true;
@@ -16990,9 +17046,18 @@ static void resolve_tasks(checker *c)
             const task_call *t = &c->task_calls.items[i];
             if (!t->awaited) t->to->task_root = true;
             for (int w = 0; w < 2; w++) {
-                const bool runs = t->from->kind == DECL_FUNCTION ? t->from->runs_in[w] : is_local_code(t->from) == (w == 1);
-                if (!runs || t->to->runs_in[w]) continue;
+                if (!runs_world(t->from, w) || t->to->runs_in[w]) continue;
                 t->to->runs_in[w] = true;
+                changed = true;
+            }
+        }
+        // A function or method that starts tasks runs where its callers do, and its tasks start there
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!passes_acts(site->to) || !site->to->starts_tasks) continue;
+            for (int w = 0; w < 2; w++) {
+                if (!runs_world(site->from, w) || site->to->runs_in[w]) continue;
+                site->to->runs_in[w] = true;
                 changed = true;
             }
         }
@@ -17315,11 +17380,12 @@ static void check_audio_bodies(const checker *c)
         const bool acts = d->acts[0] || d->acts[1];
         const char *what = d->draws ? "draw or use the GUI" : d->plays ? "play sounds" : d->uses_io ? "reach files or the network"
                          : d->frame_time ? "read Frame.dt" : (d->world_local || d->world_match) ? "reach the world"
-                         : acts ? "send events, spawn or change entities"
+                         : acts ? "send events, spawn or change entities" : d->starts_tasks ? "start tasks"
                          : d->calls_c ? "call C" : d->is_async ? "be a task" : d->makes_text ? "make text, lists, maps, sets or read grids" : NULL;
         if (!what) continue;
         const loc at = d->draws ? d->draws_at : d->plays ? d->plays_at : d->uses_io ? d->io_at : d->frame_time ? d->frame_time_at
                      : acts && !d->world_local && !d->world_match ? d->acts_at[d->acts[0] ? 0 : 1]
+                     : d->starts_tasks && !acts && !d->world_local && !d->world_match ? d->starts_at
                      : d->makes_text ? d->makes_text_at : d->at;
         diag_error(at, "'" STR_FMT "' runs on the audio thread, so it can't %s", STR_ARG(d->name), what);
         diag_note("an audio declaration reads and writes its block, its state and its knobs, and calls functions that do no more");
@@ -17592,32 +17658,131 @@ static void mark_act_callers(const checker *c)
                 if (to->acts_spawn[w] && !from->acts_spawn[w]) from->acts_spawn[w] = changed = true;
             }
             if (to->acts_text && !from->acts_text) from->acts_text = changed = true;
+            if (passes_acts(to) && to->starts_tasks && !from->starts_tasks) {
+                from->starts_tasks = changed = true;
+                from->starts_at = site->call->at;
+                from->starts_what = to->starts_what;
+            }
         }
     }
 }
 
-// Nothing is wrong with a function that sends, spawns or changes entities:
-// what's checked is each call of one from code that has abilities of its own,
-// a system, a view, a handler, a task, the input's code or the GPU's, and those
-// in a parallel loop's step or a comparison. A function's own callers answer
-// for it. A system that calls one hands out entity IDs when it spawns, and
-// changes its world's heap when what it records holds text, as if the Spawn or
-// the Send were written in the system.
+// A function or method that starts a task does it in the task's world, as it
+// sends in an event's: so it's the match's ([0]) or this machine's ([1]) to
+// call, by what the task does. And a task's world is what it does, what it
+// awaits or starts, and what the functions it calls do. Each follows from the
+// others, so they're settled together, until nothing changes. A task whose
+// world nothing decides starts in the world of the code that calls the
+// function. What disagrees is said by check_acts and resolve_tasks.
+static void settle_task_sides(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        mark_act_callers(c);
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            decl *from = site->from;
+            if (from->kind != DECL_FUNCTION || !from->is_async || from->task_side != TASK_EITHER) continue;
+            if (!site->to->acts[0] && !site->to->acts[1]) continue;
+            from->task_side = site->to->acts[0] ? TASK_MATCH : TASK_LOCAL;
+            from->task_side_at = site->call->at;
+            changed = true;
+        }
+        for (int i = 0; i < c->task_calls.count; i++) {
+            const task_call *t = &c->task_calls.items[i];
+            const int side = t->to->task_side;
+            if (side == TASK_EITHER) continue;
+            if (t->from->kind == DECL_FUNCTION && t->from->is_async) {
+                if (t->from->task_side != TASK_EITHER) continue;
+                t->from->task_side = side;
+                t->from->task_side_at = t->call->at;
+                changed = true;
+            } else if (passes_acts(t->from) && !t->awaited) {
+                const int w = side == TASK_LOCAL ? 1 : 0;
+                if (t->from->acts[w]) continue;
+                sb what = {0};
+                sb_printf(&what, "starts '" STR_FMT "', a task that %s", STR_ARG(t->to->name),
+                          w ? "uses local state" : "changes the match");
+                t->from->acts[w] = true;
+                t->from->acts_at[w] = t->call->at;
+                t->from->acts_what[w] = what.data;
+                changed = true;
+            }
+        }
+    }
+}
+
+// A function's or method's singleton that it starts a task with is the world's
+// own, which the task gets again each time it goes on: so each call passes a
+// parameter of its own, a system's, a view's, a handler's or a task's, or a
+// function's that every call of it passes the same way. Never a copy.
+static void check_task_params(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!passes_acts(site->to) || !passes_acts(site->from)) continue;
+            for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
+                const expr *arg = site->call->args.items[k];
+                if (!site->to->params.items[k].task_own || arg->kind != E_NAME || arg->bind != BIND_PARAM) continue;
+                param *p = arg->param;
+                if (!p->function_param || p->task_ref || p->task_own || p->type.kind != TY_SINGLETON) continue;
+                p->task_own = changed = true;
+                p->task_own_at = arg->at;
+            }
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        const decl *to = site->to;
+        if (!passes_acts(to)) continue;
+        for (int k = 0; k < site->call->args.count && k < to->params.count; k++) {
+            const param *q = &to->params.items[k];
+            const expr *arg = site->call->args.items[k];
+            if (!q->task_own || arg->type.kind == TY_ERROR) continue;
+            if (arg->kind == E_NAME && arg->bind == BIND_PARAM
+                && (!arg->param->function_param || arg->param->task_ref || arg->param->task_own)) continue;
+            diag_error(arg->at, "'" STR_FMT "' starts a task with its '" STR_FMT "', which the task gets again each time it goes "
+                       "on, so it takes the caller's own: a parameter", STR_ARG(to->name), STR_ARG(q->name));
+            diag_note_at(q->task_own_at, "it does on line %d", q->task_own_at.line);
+            diag_note("a task gets its components and singletons as they are: a copy would miss what changes while it waits");
+        }
+    }
+}
+
+// Nothing is wrong with a function that sends, spawns, changes entities or
+// starts tasks: what's checked is each call of one from code that has
+// abilities of its own, a system, a view, a handler, a task, the input's code
+// or the GPU's, and those in a parallel loop's step or a comparison. A
+// function's own callers answer for it. A system that calls one hands out
+// entity IDs when it spawns, and changes its world's heap when what it records
+// holds text, as if the Spawn or the Send were written in the system, and
+// starts its tasks in order, as if it started them itself.
 static void check_acts(checker *c)
 {
     bool any = false;
+    bool starts = false;
     for (int i = 0; i < c->calls.count && !any; i++) any = c->calls.items[i].to->acts[0] || c->calls.items[i].to->acts[1];
-    if (!any) return;
+    for (int i = 0; i < c->task_calls.count && !starts; i++) {
+        starts = !c->task_calls.items[i].awaited && passes_acts(c->task_calls.items[i].from);
+    }
+    if (!any && !starts) return;
+    if (starts) {
+        settle_task_sides(c);
+        check_task_params(c);
+    }
     mark_act_callers(c);
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
         decl *from = site->from;
         const decl *to = site->to;
-        if (!to->acts[0] && !to->acts[1]) continue;
+        const bool tasks = passes_acts(to) && to->starts_tasks; // Whose world may be the caller's own
+        if (!to->acts[0] && !to->acts[1] && !tasks) continue;
         const int w = to->acts[0] ? 0 : 1; // What the messages name: the match's first
         const loc at = site->call->at;
-        const loc where = to->acts_at[w];
-        const char *what = to->acts_what[w];
+        const loc where = to->acts[w] ? to->acts_at[w] : to->starts_at;
+        const char *what = to->acts[w] ? to->acts_what[w] : to->starts_what;
         if (site->parallel) {
             diag_error(at, "a parallel loop's steps run at once, and '" STR_FMT "' %s", STR_ARG(to->name), what);
             diag_note_at(where, "it does on line %d", where.line);
@@ -17680,6 +17845,12 @@ static void check_acts(checker *c)
         }
         from->spawns |= to->acts_spawn[0] || to->acts_spawn[1];
         from->writes_text |= to->acts_text;
+        if (tasks) { // As a start written in it (check_task_call): its tasks are made in order, on one thread
+            if (!from->starts_tasks) from->starts_at = at;
+            from->starts_tasks = true;
+            from->writes_text = true;
+            from->spawns = true;
+        }
     }
 }
 

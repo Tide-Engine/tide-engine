@@ -51,11 +51,11 @@ view Hud(LobbyClient client)
 | `me` | Who this player is to the service, once it was first asked: `id` and `name` |
 | `match`, `hosting`, `joining` | The lobby's match this machine is in, whether it opened it, and whether it's on its way in |
 
-And what a game sets: `name`, this player's name (the identity's, or `Player`, until then); `query`, what the Browse page lists (`filter`, the lobby data to match, and `seats`); and `service`, where the service is when a program is told as it runs (a test's port).
+And what a game sets: `name`, this player's name (the identity's, or `Player`, until then); `query`, what the Browse page lists (`filter`, the lobby data to match, and `seats`); and `service`, where the service is when a program is told as it runs (a test's port); and `timeout` and `watchTimeout`, how long the service has to answer (below).
 
 ## What a game asks
 
-Each is a call with `mut LobbyClient` first, from a view or a page. The service is asked after the frame's views, and `LobbyClient` says what became of it.
+Each is a call with `mut LobbyClient` first, from a view or a page. The service is asked at once, and `LobbyClient` says what became of it.
 
 | Call | What it does |
 |---|---|
@@ -107,6 +107,8 @@ override string Lobbies.ServiceUrl()
 ```
 
 `ServiceGame()` says which game's lobbies these are (its `title` setting): players of two games never meet.
+
+`client.timeout` (10) is the seconds the service has to answer a request before it counts as unreachable, and `client.watchTimeout` (30) the same for the request a member watches its lobby with, which Tide's service holds for about 20. A game sets either; 0 is no limit.
 
 A player is a secret the service makes the first time it's asked, which this machine keeps in `lobby-identity.json` among the game's saved files (`IdentityFile()`; `""` keeps none). Two programs of a game on one machine share that file. The second one to join a lobby the first is in is told so, and joins as a player of its run's own, so two windows on one machine are two players.
 

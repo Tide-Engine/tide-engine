@@ -1,0 +1,45 @@
+// expect: the GPU runs a frag, and 'Glow' starts 'Later', which only code in a world does
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+
+float Glow(float x)
+{
+    Later();
+    return x * 2;
+}
+
+frag Shade(V vertex, out Color color)
+{
+    color = Color(Glow(vertex.uv.x), 0, 0);
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}
