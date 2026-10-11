@@ -355,6 +355,8 @@ int main(const int argc, char **argv)
     opts.watch = run && !headless;
     // DEBUG is every build's but --release's
     if (!opts.release) defines[opts.define_count++] = "DEBUG";
+    // The game's tide.packages reads them too: its #if lines say which packages this build has
+    packages_set_symbols(defines, opts.define_count);
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
         free(defines);
