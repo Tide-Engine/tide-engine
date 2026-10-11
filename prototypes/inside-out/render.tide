@@ -1,0 +1,277 @@
+// Every pass draws the same finite occurrences assembled by the local view.
+struct SceneVertex { float3 position; float3 normal; }
+struct SceneObject
+{
+    float4x4 transform;
+    Color tone;
+    float aoScale = 1;
+    float4 aperture;
+    int apertureSide = -1;
+    float groundHeight;
+}
+
+local singleton SceneRender
+{
+    bool ready;
+    bool pending;
+    float4x4 cameraTransform;
+    float4x4 projection;
+    float2 focusPixels;
+    RenderTarget scene;
+    RenderTarget lamp;
+    RenderTarget ao;
+    RenderTarget blurred;
+    Texture normals;
+    Texture occlusion;
+    DepthTexture sceneDepth;
+    DepthTexture shadow;
+    float4x4 toClip;
+    float4x4 fromClip;
+    float4x4 toLamp;
+    float3 lightDirection;
+    float2 screenSize;
+    float4 board;
+    float tile;
+    float depthSpan;
+}
+
+struct SceneBlurStep { float2 direction; }
+
+bool SceneInBoard(float2 point, float4 board)
+{
+    return point.x >= board.x && point.y >= board.y &&
+        point.x < board.x + board.z && point.y < board.y + board.w;
+}
+
+// This is the maker's floor column, rather than the height of an individual
+// fragment. A head and its boots cross the same real doorway aperture.
+bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float floor, float alpha)
+{
+    if (alpha < 0.01) return false;
+    var ground = float2(world.x + screen.x * 0.5,
+        screen.y * 0.5 - world.z * SCENE_SIN - floor * SCENE_COS);
+    if (side >= 0)
+    {
+        var outside = side == 0 ? ground.y <= aperture.y : side == 2 ? ground.y >= aperture.y :
+            side == 3 ? ground.x <= aperture.x : ground.x >= aperture.x;
+        var tangent = side % 2 == 0 ? ground.x - aperture.x : ground.y - aperture.y;
+        if (!outside && Math.Abs(tangent) > aperture.z) return false;
+    }
+    if (alpha >= 0.999) return true;
+    var x = int(Math.Floor(ground.x)) & 3;
+    var y = int(Math.Floor(ground.y)) & 3;
+    var low = (((x ^ y) & 1) * 2 + (y & 1)) * 4;
+    var high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
+    var rank = low + high;
+    // Passage and canonical-alias alphas are complementary. Opposite Bayer
+    // phases preserve full coverage when their poses coincide.
+    var coverage = side >= 0 ? 15 - rank : rank;
+    return alpha >= (coverage + 0.5) / 16;
+}
+
+frag SceneShadow(SceneVertex vertex, out Color color, SceneObject object, SceneRender render)
+{
+    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
+    color = Color.white;
+}
+
+frag SceneFill(SceneVertex vertex, out Color material, out Color normal, Instance instance, SceneObject object, SceneRender render)
+{
+    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
+    var facing = instance.Normal(vertex.normal);
+    material = Color(object.tone.r, object.tone.g, object.tone.b);
+    // The alpha is the occurrence's metric scale. Copy blending and point
+    // reads keep the floating normal data separate from material opacity.
+    var scale = Math.Clamp(object.aoScale / render.tile, 0.01, 6);
+    normal = Color(facing.x * 0.5 + 0.5, facing.y * 0.5 + 0.5, facing.z * 0.5 + 0.5, scale);
+}
+
+float3 SceneWorld(DepthTexture depth, float4x4 inverseClip, float2 uv)
+{
+    var sample = depth.Sample(uv);
+    var world = Math.Mul(inverseClip, float4(uv.x * 2 - 1, 1 - uv.y * 2, sample * 2 - 1, 1));
+    return float3(world.x, world.y, world.z) / world.w;
+}
+
+float3 SceneNormal(Color value)
+{
+    return Math.Normalize(float3(value.r, value.g, value.b) * 2 - float3(1));
+}
+
+float3 SceneKernel(int index)
+{
+    if (index == 0) return float3(0.55, 0.05, 0.28);
+    if (index == 1) return float3(-0.28, 0.45, 0.24);
+    if (index == 2) return float3(0.05, -0.50, 0.20);
+    if (index == 3) return float3(0.15, 0.30, 0.50);
+    if (index == 4) return float3(-0.42, -0.18, 0.32);
+    if (index == 5) return float3(0.38, -0.32, 0.38);
+    if (index == 6) return float3(-0.16, 0.12, 0.70);
+    return float3(0.10, -0.15, 0.95);
+}
+
+frag SceneOcclusion(Vertex vertex, out Color color, Texture source, SceneRender render)
+{
+    var uv = vertex.uv;
+    if (!SceneInBoard(uv * render.screenSize, render.board)) { color = Color.white; return; }
+    var encoded = source.Sample(uv, Filter.Point);
+    if (encoded.a < 0.005) { color = Color.white; return; }
+    var normal = SceneNormal(encoded);
+    var point = SceneWorld(render.sceneDepth, render.fromClip, uv);
+    var centerDepth = render.sceneDepth.Sample(uv);
+    var radius = Math.Clamp(encoded.a * render.tile * 0.38, 0.30, render.tile * 0.90);
+    var bias = Math.Max(0.01, radius * 0.035);
+    var reference = Math.Abs(normal.y) > 0.95 ? float3(1, 0, 0) : float3(0, 1, 0);
+    var tangent = Math.Normalize(Math.Cross(reference, normal));
+    var bitangent = Math.Cross(normal, tangent);
+    var pixel = int2(Math.Floor(uv * render.screenSize));
+    var angle = ((pixel.x + pixel.y * 3) & 7) * Math.TAU / 8;
+    var turned = tangent * Math.Cos(angle) + bitangent * Math.Sin(angle);
+    var across = Math.Cross(normal, turned);
+    mut var blocked = 0.0;
+    mut var considered = 0.0;
+    for (var index = 0; index < 8; index++)
+    {
+        var kernel = SceneKernel(index);
+        var samplePoint = point + (turned * kernel.x + across * kernel.y + normal * kernel.z) * radius;
+        var projected = Math.Mul(render.toClip, float4(samplePoint, 1));
+        var sampleUV = float2(projected.x / projected.w * 0.5 + 0.5, 0.5 - projected.y / projected.w * 0.5);
+        if (!SceneInBoard(sampleUV * render.screenSize, render.board)) continue;
+        var sampleNormal = source.Sample(sampleUV, Filter.Point);
+        if (sampleNormal.a < 0.005) continue;
+        var depth = render.sceneDepth.Sample(sampleUV);
+        var expected = projected.z / projected.w * 0.5 + 0.5;
+        var separation = Math.Abs(depth - centerDepth) * render.depthSpan;
+        var range = 1 - Math.SmoothStep(radius * 0.45, radius * 1.8, separation);
+        considered += range;
+        if (depth < expected - bias / render.depthSpan) blocked += range;
+    }
+    var ao = considered > 0.001 ? 1 - 0.70 * blocked / considered : 1.0;
+    color = Color(ao, ao, ao);
+}
+
+frag SceneBlur(Vertex vertex, out Color color, Texture source, SceneBlurStep step, SceneRender render)
+{
+    var uv = vertex.uv;
+    if (!SceneInBoard(uv * render.screenSize, render.board)) { color = Color.white; return; }
+    var center = render.normals.Sample(uv, Filter.Point);
+    if (center.a < 0.005) { color = Color.white; return; }
+    var normal = SceneNormal(center);
+    var depth = render.sceneDepth.Sample(uv);
+    var radius = Math.Clamp(center.a * render.tile * 0.38, 0.30, render.tile * 0.90);
+    mut var sum = source.Sample(uv, Filter.Point).r * 3;
+    mut var weights = 3.0;
+    for (var index = -2; index <= 2; index++)
+    {
+        if (index == 0) continue;
+        var sampleUV = uv + step.direction * index;
+        if (!SceneInBoard(sampleUV * render.screenSize, render.board)) continue;
+        var encoded = render.normals.Sample(sampleUV, Filter.Point);
+        if (encoded.a < 0.005) continue;
+        var similar = Math.Max(0, Math.Dot(normal, SceneNormal(encoded)));
+        var difference = Math.Abs(render.sceneDepth.Sample(sampleUV) - depth) * render.depthSpan;
+        var weight = (index == -1 || index == 1 ? 2.0 : 1.0) * similar * similar * similar * similar *
+            (1 - Math.SmoothStep(radius * 0.08, radius * 0.50, difference));
+        sum += source.Sample(sampleUV, Filter.Point).r * weight;
+        weights += weight;
+    }
+    var ao = sum / weights;
+    color = Color(ao, ao, ao);
+}
+
+float SceneSun(DepthTexture shadow, float4x4 toLamp, float3 world, float3 normal, float scale, float tile, float3 direction)
+{
+    var slope = 1 - Math.Max(0, Math.Dot(normal, -direction));
+    var bias = Math.Max(0.06, Math.Min(scale * 0.016, tile * 0.04)) * (1 + slope);
+    var clip = Math.Mul(toLamp, float4(world + normal * bias, 1));
+    var uv = float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+    var depth = clip.z / clip.w * 0.5 + 0.5;
+    if (uv.x < 0 || uv.y < 0 || uv.x > 1 || uv.y > 1 || depth < 0 || depth > 1) return 1;
+    var pixel = 0.75 / 1024;
+    return (shadow.Compare(uv + float2(-pixel, -pixel), depth) + shadow.Compare(uv + float2(pixel, -pixel), depth) +
+        shadow.Compare(uv + float2(-pixel, pixel), depth) + shadow.Compare(uv + float2(pixel, pixel), depth)) * 0.25;
+}
+
+frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender render)
+{
+    var uv = vertex.uv;
+    if (!SceneInBoard(uv * render.screenSize, render.board)) this.Discard();
+    var encoded = render.normals.Sample(uv, Filter.Point);
+    if (encoded.a < 0.005) this.Discard();
+    var normal = SceneNormal(encoded);
+    var point = SceneWorld(render.sceneDepth, render.fromClip, uv);
+    var ao = render.occlusion.Sample(uv, Filter.Bilinear).r;
+    var facing = Math.Max(0, Math.Dot(normal, -render.lightDirection));
+    var sunlight = SceneSun(render.shadow, render.toLamp, point, normal, encoded.a * render.tile, render.tile, render.lightDirection);
+    var shade = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight);
+    var material = source.Sample(uv, Filter.Point);
+    color = Color(material.r * shade, material.g * shade, material.b * shade, material.a);
+}
+
+void RenderScene(List<SceneVertex> vertices, List<int> indices, List<SceneObject> objects,
+    float4x4 cameraTransform, float4x4 projection, Rect clip, float2 focusPixels, float tile, mut SceneRender render)
+{
+    render.pending = vertices.count >= 3 && indices.count >= 3 && objects.count > 0;
+    render.cameraTransform = cameraTransform;
+    render.projection = projection;
+    render.focusPixels = focusPixels;
+    render.board = float4(clip.x, clip.y, clip.width, clip.height);
+    render.tile = Math.Max(0.01, tile);
+}
+
+[Stage(ArtStage.Board, 1)]
+view SceneLighting(Sculpture sculpture, mut SceneRender render)
+{
+    if (!render.pending) return;
+    if (!render.ready)
+    {
+        render.scene = RenderTarget.Window(Format.Rgba8, Format.Rgba16f);
+        render.lamp = RenderTarget(1024, 1024, 1, Format.Depth);
+        render.ao = RenderTarget.Window(0.5);
+        render.blurred = RenderTarget.Window(0.5);
+        render.normals = render.scene.colors[1];
+        render.sceneDepth = render.scene.depth;
+        render.shadow = render.lamp.depth;
+        render.ready = true;
+    }
+    render.screenSize = float2(Screen.width, Screen.height);
+    render.lightDirection = Math.Normalize(float3(0.45, -1, -0.30));
+    var clip = Rect(render.board.x, render.board.y, render.board.z, render.board.w);
+    var focus = float3(render.focusPixels.x - Screen.width * 0.5, 0,
+        -(render.focusPixels.y - Screen.height * 0.5) / SCENE_SIN);
+    // Fit the working space, not the enormous extents of repeated ancestors.
+    // Off-map receivers remain lit rather than sampling a clamped shadow edge.
+    var span = Math.Max(160, Math.Max(clip.width, clip.height) * 1.8 + render.tile * 2);
+    var lamp = float4x4.TRS(focus - render.lightDirection * (span * 3),
+        quaternion.LookRotation(render.lightDirection, float3(0, 1, 0)), float3(1));
+    render.lamp.Clear(Color.white);
+    render.lamp.SetCamera(lamp, float4x4.Ortho(span, span, 0.1, span * 6));
+    render.toLamp = render.lamp.WorldToClip();
+    render.lamp.SetDepth(Depth.ReadWrite);
+    render.lamp.SetBlend(Blend.Replace);
+    render.lamp.Instanced(sculpture.vertices, sculpture.indices, sculpture.objects, SceneShadow);
+
+    render.scene.SetScreen();
+    render.scene.SetClip();
+    render.scene.Clear(Color.none);
+    render.scene.SetClip(clip);
+    render.scene.SetCamera(render.cameraTransform, render.projection);
+    render.toClip = render.scene.WorldToClip();
+    render.fromClip = Math.Inverse(render.toClip);
+    var depthAxis = Math.Mul(render.fromClip, float4(0, 0, 1, 0));
+    render.depthSpan = Math.Max(0.01, Math.Length(float3(depthAxis.x, depthAxis.y, depthAxis.z)) * 2);
+    render.scene.SetDepth(Depth.ReadWrite);
+    render.scene.SetBlend(Blend.Replace);
+    render.scene.Instanced(sculpture.vertices, sculpture.indices, sculpture.objects, SceneFill);
+
+    render.ao.Clear(Color.white);
+    render.blurred.Clear(Color.white);
+    Draw.Blit(render.normals, render.ao, SceneOcclusion);
+    Draw.Blit(render.ao.color, render.blurred, SceneBlur, SceneBlurStep { direction = float2(2 / Screen.width, 0) });
+    Draw.Blit(render.blurred.color, render.ao, SceneBlur, SceneBlurStep { direction = float2(0, 2 / Screen.height) });
+    render.occlusion = render.ao.color;
+    // Blit deliberately ignores Draw.Clip; the composite shader discards
+    // everything outside the fixed board and leaves the surrounding UI intact.
+    Draw.Blit(render.scene.color, Draw.window, SceneComposite);
+    Draw.SetScreen();
+}

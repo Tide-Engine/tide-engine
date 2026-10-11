@@ -6,8 +6,9 @@ Push rooms with your partner inside, fit them through tight passages, and
 move boxes into their own interiors. Repeated views of a room share one
 set of parcels, boxes and people.
 
-The 2D rooms have an unsettling institutional atmosphere: worn tiles,
-fluorescent light and quiet ventilation. There are no threats or jumpscares.
+The 3D rooms keep a fixed, gently tilted view: low walls, worn tiles,
+soft cast and contact shadows, fluorescent light and quiet ventilation.
+There are no threats or jumpscares.
 
 Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
 catalog links to the same public page; friends need no admin account.
@@ -29,6 +30,8 @@ and a recursive doorway can put the same room
 around itself. Amber and Teal keep their identity colours wherever they
 travel. A room shell contains a live miniature of its shared interior;
 nested and recursive preview details collapse to markers after a few layers.
+Floors, walls, parcels and makers are real 3D geometry. The orthographic view
+keeps the grid and movement directions familiar; there is no camera rotation.
 
 | Action | Keyboard |
 | --- | --- |
@@ -89,7 +92,9 @@ until both seats are present again.
 
 The prototype uses Tide and the existing Rooms package. Its deterministic
 match rules are in `game.tide`; campaign layouts and optional hints are in
-`levels.tide`. Presentation, controls and original audio are local state.
+`levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
+handles lighting, shadow mapping and screen-space ambient occlusion.
+Presentation, controls and original audio are local state.
 There are no new engine or runtime APIs.
 
 Enable `TIDE_PRIVATE_PROTOTYPES` when configuring the repository. Build

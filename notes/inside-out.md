@@ -3,7 +3,7 @@
 The owner requested a public online co-op puzzle prototype for two friends
 in separate browsers on 2026-10-11. The initial workshop, fixed player roles,
 isometric experiment, switch locks and fixed recursive entrances are
-superseded. The current direction is polished 2D, harder planning and
+superseded. The current direction is actual 3D with a fixed 2.5D view, harder planning and
 interdependent moves, physically nested starting rooms, varied sizes and
 offset doors, and movable boxes including self-nesting. The owner chose
 spatial constraints instead of locks, and an unsettling institutional /
@@ -84,8 +84,29 @@ instance, including moved copies and self-containing boxes. Drawing is bounded
 to three ancestor contexts, three descendant levels and 48 instances per
 context; subpixel previews become markers. No match objects are duplicated.
 
-Materials use square edges, worn tiles, subdued colours, inset shadows and
-fluorescent accents. Maintenance silhouettes retain AMBER/TEAL colours.
+`geometry.tide` builds normalled, depth-tested cube instances for floors,
+low cutaway walls, crates, stencils and maintenance makers. The orthographic
+camera has a fixed 65-degree pitch and no yaw; ground coordinates preserve
+the existing screen axes and camera framing. Each occurrence has a shared
+ground plane; component elevations change world Y only, keeping heads, lids
+and trim physically stacked. Interior floors rise by 0.018 containing tiles.
+Finite contexts and descendant limits remain unchanged. Geometry, lighting
+and render resources are machine-local; layouts, rules and audio are unchanged.
+
+`render.tide` uses a common scene/depth for every visible occurrence: Rgba8
+material plus Rgba16f normal/occurrence-scale MRT, a fixed-focus 1024-square
+directional shadow map with four comparison taps, and half-resolution SSAO.
+Eight normal-oriented hemisphere samples reconstruct world positions from
+hardware depth and inverse camera projection. Metric radii/biases follow
+the originating occurrence's tile scale. Two separable bilateral passes
+respect normal and depth discontinuities; AO affects ambient light only.
+No temporal jitter or geometry-dependent camera fitting is used. Alpha and
+doorway ground-column discard rules are shared by all mesh passes. The
+composite explicitly clips the board because Blit does not inherit Draw.Clip.
+Workbench prepares geometry and SceneLighting owns view-only shader draws.
+
+Materials use square edges, worn tiles, subdued colours, cast shadows,
+screen-space contact shading and fluorescent accents. Maintenance makers retain AMBER/TEAL colours.
 Targets show box icons, player goals show player icons and docks show numbered
 outlines. Panels/buttons share a dark institutional palette. There are no
 enemies, threat events, jumpscares or timers.
@@ -180,7 +201,51 @@ serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
 
-## Nested-box revision validation (2026-10-11)
+## 3D revision validation (2026-10-12)
+
+Native and WASI retain all 33 fixtures, including twelve production-command
+solutions, exchanged jobs, exact undo/reset/replay and the exhaustive second
+puzzle co-op check. No match, layout, hint or audio file changed. Native,
+web debug and web release builds are warning-free. Both two-browser fixtures
+pass: WebGL 125.98 s and WebGPU 89.89 s. They retain actual online admission,
+three production completions, phone touch, continuous doorway growth/shrink,
+nearby/offscreen partner framing, carried interiors, physical self-nesting,
+undo and unchanged-room/depth/entrance cycle exits.
+
+Illumination multiplies material RGB uniformly. Camera/interior assertions
+therefore compare exact brightness-normalized material masks, with mandatory
+feature and boundary presence, rather than treating a moving shadow as a
+camera movement. Quantitative zoom growth, maker visibility, narrowing and
+travel direction remain checked. Undo and settled-cycle whole-scene RGB
+comparisons remain exact. Old uniform wall crops are replaced by real edges.
+
+Bounded 1280x800, 1920x1080 and 390x844 native captures were inspected, including
+offset entrances and the unchanged-identity primary self exit. Components
+share each occurrence's ground plane so lids, heads and trim stack vertically.
+CPU cropping includes a conservative caster guard based on its top above
+the minimum containing floor; artificial cut faces cannot shadow the view
+under the fixed light and camera. The refreshed 960x540 gameplay thumbnail
+is 128,622 bytes, SHA-256
+`61bcfef843b34a0e24ffdbd7eb5560a5193d4cd272419f461d3028ee7c0f511c`.
+
+Controlled full/no-AO/no-shadow native captures prove both effects: removing
+AO changes 30,461 initial scene pixels (maximum channel delta 55); removing
+cast shadows changes 37,026 (maximum 92). An empty 5,280-pixel floor patch
+changes zero pixels with AO removed, and both comparisons change zero pixels
+outside the scene. Temporary comparison edits were restored byte-for-byte.
+The final caster-guard build's initial and outside images are RGB-identical
+to these measured baselines. Evidence lives in ignored `3d-lighting-*` and
+`volume-*` captures under `build/inside-out-captures/`.
+
+The production site build, zero-error/warning check, eighteen analytics/admin,
+227 grammar and five HTTP/SEO/access tests pass. All 64 release/staged/package
+playable pages and four thumbnails agree. Inside Out is 1,385,947 bytes,
+SHA-256 `2b71dad7d5b74c912fc55801122d44eba762f5dfbf414cbf10ef05bae4947483`.
+Its pack contains each unchanged current WAV exactly once; removed music,
+coin and tonal-doorway assets remain absent. No CI was dispatched. Physical
+phone/GPU coverage, audio listening and external NAT conditions remain separate.
+
+## Nested-box revision validation (2026-10-11; 2D presentation superseded)
 
 Final native desktop, 900px and phone captures include the primary self-cycle
 exit whose canonical room, depth and entered box remain unchanged. Approach,

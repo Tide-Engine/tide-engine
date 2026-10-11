@@ -131,25 +131,57 @@ const screenshotPixels = (png, visit) => {
         previous = row;
     }
 };
+// SceneComposite multiplies the stored material by one scalar for real
+// sunlight and ambient occlusion. Compare chroma, allowing two byte steps
+// for the material/shade quantization, rather than freezing illumination.
+const materialMatches = (r, g, b, tone) => {
+    const shade = g / tone[1];
+    return shade >= 0.12 && shade <= 1.15 && Math.abs(r - tone[0] * shade) <= 2 && Math.abs(b - tone[2] * shade) <= 2;
+};
+const homeMaterial = [92, 140, 107];
+const amberMaterial = [217, 122, 69];
+const parcelMaterials = [[[69, 69, 38]], [[173, 158, 99]]];
+const filledParcelMaterials = [[[69, 69, 38]], [[150, 163, 92]]];
+const homeMaterials = [[homeMaterial]];
+const featureMask = (png, materials, label) => {
+    const values = [], counts = materials.map(() => 0);
+    screenshotPixels(png, (r, g, b) => {
+        let value = 0;
+        for (let i = 0; i < materials.length; i++) {
+            if (materials[i].some(tone => materialMatches(r, g, b, tone))) {
+                value |= 1 << i;
+                counts[i]++;
+            }
+        }
+        values.push(value);
+    });
+    assert.ok(counts.every(count => count > 4), `${label}: each observed material is present (${counts})`);
+    assert.ok(values.filter(value => value === 0).length > 4, `${label}: the crop straddles a real material boundary`);
+    return Buffer.from(values);
+};
+const assertFeaturesEqual = (actual, expected, materials, message) => {
+    assertImagesEqual(featureMask(actual, materials, message), featureMask(expected, materials, message), message);
+};
 const homeWallArea = png => {
     let total = 0;
     screenshotPixels(png, (r, g, b) => {
         // Box 1's solid material; exclude the green player goals visible
         // farther outside during the early miniature-scale frames.
-        if (r >= 90 && r <= 94 && g >= 138 && g <= 142 && b >= 105 && b <= 109) total++;
+        if (materialMatches(r, g, b, homeMaterial)) total++;
     });
     return total;
 };
 const amberPixels = png => {
-    let area = 0, horizontal = 0, left = Infinity;
-    screenshotPixels(png, (r, g, b, x) => {
+    let area = 0, horizontal = 0, vertical = 0, left = Infinity, right = -Infinity;
+    screenshotPixels(png, (r, g, b, x, y) => {
         // Amber identity pixels are distinct from the institutional walls
         // and parcel targets. Read the maker from a stationary partner view.
-        if (r >= 205 && r <= 225 && g >= 112 && g <= 134 && b >= 58 && b <= 82) {
-            area++; horizontal += x; left = Math.min(left, x);
+        if (materialMatches(r, g, b, amberMaterial)) {
+            area++; horizontal += x; vertical += y; left = Math.min(left, x); right = Math.max(right, x);
         }
     });
-    return { area, x: area ? horizontal / area : null, left: area ? left : null };
+    return { area, x: area ? horizontal / area : null, y: area ? vertical / area : null,
+        left: area ? left : null, right: area ? right : null };
 };
 const amberFootprint = png => {
     const footprint = amberPixels(png);
@@ -393,15 +425,18 @@ try {
     const parcelClip = client => {
         const { tile, x, y } = focusedGeometry(client);
         const side = Math.floor(tile * 0.65);
-        return { x: Math.round(x - side / 2), y: Math.round(y - side / 2), width: side, height: side };
+        // The parcel's top is 0.40 tiles high and projects upward through
+        // the fixed 65-degree camera: its identifying box mark sits here.
+        return { x: Math.round(x - side / 2), y: Math.round(y - side / 2 - tile * 0.17), width: side, height: side };
     };
     const framingClips = client => {
         const { tile, x, y } = focusedGeometry(client);
         const patch = (dx, dy) => ({ x: Math.round(x + dx * tile), y: Math.round(y + dy * tile),
-            width: Math.floor(tile * 0.3), height: Math.floor(tile * 0.3) });
+            width: Math.floor(tile * 0.4), height: Math.floor(tile * 0.4) });
         // The tutorial starts in a three-cell home box. Its central parcel
-        // and two north-wall patches avoid both makers and the east doorway.
-        return [parcelClip(client), patch(-0.7, -1.2), patch(0.7, -1.2)];
+        // and two north-wall edge patches avoid both makers and the east
+        // doorway. Each straddles geometry, so a uniform/blank crop fails.
+        return [parcelClip(client), patch(-0.7, -1.68), patch(0.7, -1.68)];
     };
     const titleClip = { x: 315, y: 24, width: 320, height: 25 };
     const moveLabel = client => client.crop(movesClip(client));
@@ -517,17 +552,19 @@ try {
     const clips = framingClips(small);
     const fixed = [];
     for (const clip of clips) fixed.push(await small.crop(clip));
+    const framingMaterials = [parcelMaterials, homeMaterials, homeMaterials];
+    for (let i = 0; i < fixed.length; i++) featureMask(fixed[i], framingMaterials[i], 'stationary camera baseline');
     const initialAmber = amberFootprint(await small.crop(cameraBody(small)));
     await action('E');
     await advanceMatch(24);
     const nearby = amberFootprint(await small.crop(cameraBody(small)));
     assert.ok(nearby.area > initialAmber.area, 'the maker grows into the visible containing world');
-    for (let i = 0; i < clips.length; i++) assertImagesEqual(await small.crop(clips[i]), fixed[i], 'Teal framing stays fixed while Amber leaves');
+    for (let i = 0; i < clips.length; i++) assertFeaturesEqual(await small.crop(clips[i]), fixed[i], framingMaterials[i], 'Teal geometry stays fixed while Amber leaves');
     await small.screenshot('desktop-nearby-outside-partner');
     await action('E');
     await advanceMatch(24);
     assert.equal(amberPixels(await small.crop(cameraBody(small))).area, 0, 'the farther partner may leave Teal screen');
-    for (let i = 0; i < clips.length; i++) assertImagesEqual(await small.crop(clips[i]), fixed[i], 'the camera does not chase an off-screen partner');
+    for (let i = 0; i < clips.length; i++) assertFeaturesEqual(await small.crop(clips[i]), fixed[i], framingMaterials[i], 'the camera does not chase an off-screen partner');
     await action('W');
     await advanceMatch(24);
     assert.ok(amberFootprint(await small.crop(cameraBody(small))).area > 0, 'the nearby outside maker becomes visible again');
@@ -551,10 +588,12 @@ try {
     assertImagesDiffer(entryLate, entrySettled, 'entry is still travelling before its settled endpoint');
     const travel = [makerEarly, makerMiddle, makerLate, makerSettled].map(amberFootprint);
     assert.ok(travel[0].area > travel[3].area, 'the maker shrinks through the entrance');
+    assert.ok(travel[3].right - travel[3].left < travel[0].right - travel[0].left, 'the maker silhouette narrows into the actual doorway');
+    assert.ok(travel[3].x < travel[0].x, 'the stationary partner observes Amber travelling west toward the doorway');
     assertImagesDiffer(makerMiddle, makerEarly, 'the partner observes an intermediate passage pose');
     assertImagesEqual(await dimensionLabel(host), homeTitle, 'both makers now view the same canonical home');
     assertImagesEqual(await host.crop(parcelClip(host)), await small.crop(parcelClip(small)), 'both visits share the same parcel and floor');
-    for (let i = 0; i < clips.length; i++) assertImagesEqual(await small.crop(clips[i]), fixed[i], 'partner entry never changes Teal camera');
+    for (let i = 0; i < clips.length; i++) assertFeaturesEqual(await small.crop(clips[i]), fixed[i], framingMaterials[i], 'partner entry never changes Teal camera');
     await host.tapKey('KeyD', 'd');
     const exitEarly = await saveCrop(host, 'zoom-exit-early', cameraBody(host));
     await host.frames(5);
@@ -593,14 +632,16 @@ try {
         y: Math.round(carryGeometry.y + dy * carryGeometry.tile),
         width: Math.floor(carryGeometry.tile * side), height: Math.floor(carryGeometry.tile * side),
     });
-    const cargoBefore = await small.crop(carryPatch(-0.2, -0.7));
-    const wallBefore = await small.crop(carryPatch(-2, 0.2));
+    const cargoBefore = await small.crop(carryPatch(-0.35, -1.02, 0.7));
+    const wallBefore = await small.crop(carryPatch(-2.68, 0.1));
+    featureMask(cargoBefore, parcelMaterials, 'occupied-box parcel baseline');
+    featureMask(wallBefore, homeMaterials, 'occupied-box wall edge baseline');
     const outsideBefore = await saveCrop(small, 'occupied-box-outside-before', carryPatch(3.4, -4.3));
     await witness('NWSSEN');
     await advanceMatch(24);
     assertImagesEqual(await dimensionLabel(small), beforeCarryTitle, 'the passenger remains in its canonical interior');
-    assertImagesEqual(await small.crop(carryPatch(-0.2, -0.7)), cargoBefore, 'carrying a room preserves its parcel coordinates');
-    assertImagesEqual(await small.crop(carryPatch(-2, 0.2)), wallBefore, 'carrying a room preserves interior framing');
+    assertFeaturesEqual(await small.crop(carryPatch(-0.35, -1.02, 0.7)), cargoBefore, parcelMaterials, 'carrying a room preserves its parcel coordinates');
+    assertFeaturesEqual(await small.crop(carryPatch(-2.68, 0.1)), wallBefore, homeMaterials, 'carrying a room preserves interior framing');
     assertImagesDiffer(await saveCrop(small, 'occupied-box-outside-after', carryPatch(3.4, -4.3)), outsideBefore,
         'a moved occupied box shows its actual new containing-world context');
     await host.screenshot('desktop-offset-occupied-box-outside');
@@ -628,12 +669,13 @@ try {
     await advanceMatch(24);
     const physicalParent = await saveCrop(small, 'selfnest-before', cameraBody(small));
     const canonicalTarget = await small.crop(targetPatch);
+    featureMask(canonicalTarget, filledParcelMaterials, 'canonical self-nest parcel baseline');
     await action('E');
     await advanceMatch(24);
     const selfParent = await saveCrop(small, 'selfnest-after', cameraBody(small));
     assertImagesDiffer(selfParent, physicalParent, 'pushing the primary box into its own interior changes its real surroundings');
     assertImagesEqual(await dimensionLabel(small), canonicalTitle, 'self-nesting preserves the same canonical room identity');
-    assertImagesEqual(await small.crop(targetPatch), canonicalTarget, 'self-nesting preserves the canonical parcel target');
+    assertFeaturesEqual(await small.crop(targetPatch), canonicalTarget, filledParcelMaterials, 'self-nesting preserves the canonical parcel target');
     await small.screenshot('desktop-primary-self-nesting-inside');
     await host.screenshot('desktop-primary-self-nesting-outside');
     await host.tapKey('KeyZ', 'z');
