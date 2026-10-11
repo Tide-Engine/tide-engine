@@ -32,8 +32,9 @@ The play button above a `.tide` file runs its game:
 
 Each runs `tide run` in a terminal of its own, so saving a file reloads the
 game (on Android, builds it again and starts it over), and typing `r` and
-Enter there starts it over. Running it again starts the game over. The
-first run on Android may ask to download Android's tools from Google: type
+Enter there starts it over. Running it again starts the game over.
+Each replacement waits for the preceding run's processes to stop. Closing its
+terminal stops the run too. The first run on Android may ask to download Android's tools from Google: type
 `y` and Enter there to accept.
 
 On the web, each reload says what it did in the page's console. **Tide: Game
@@ -63,3 +64,21 @@ the workspace), never the workspace's `build/tools/tidels` or one its settings
 name. Servers on `PATH` inside the workspace are skipped too, including paths
 through symlinks or junctions. Games don't run, since running one runs its code.
 Trusting the workspace restarts the server.
+
+## Testing
+
+From this folder, `npm ci` installs the pinned dependencies and `npm test`
+runs the adapter regressions. To test the bundled extension inside a real
+VS Code installation, with this checkout's built server:
+
+```sh
+node test/run-host.mjs "<Code executable>" ../../build/tools/tidels.exe "<Node executable>"
+```
+
+Use Node 24.16 or newer on Windows. The test creates an isolated profile,
+extension bundle and workspace, and mutes its browser. It checks live language
+features, restarts, real terminal/process-tree cleanup, the embedded web page
+and developer-tools command, then verifies cleanup after actual host shutdown.
+It leaves logs in the printed temporary folder and changes no installed
+extensions or personal settings. This opt-in test needs a desktop editor;
+CTest runs the dependency-free adapter suite.

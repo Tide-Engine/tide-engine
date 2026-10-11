@@ -45,6 +45,8 @@ The play button above a `.tide` file runs its game, which is the folder you open
 
 Each runs `tide run` in a terminal of its own, so saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter in that terminal starts it over. Running it again starts the game over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter in that terminal to accept. The `tide.path` setting runs another `tide`.
 
+Starting a replacement waits for the preceding run's processes to stop. Closing its terminal stops the run too. If the editor cannot confirm cleanup, it explains how to stop the remaining processes before running again.
+
 On the web, each reload says what it did in the page's console: **Tide: Game Developer Tools** shows it.
 
 ## JetBrains IDEs

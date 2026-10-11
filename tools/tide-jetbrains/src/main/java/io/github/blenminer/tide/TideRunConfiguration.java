@@ -113,8 +113,12 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
     public @Nullable String suggestedName() {
         final String folder = getOptions().getFolder();
         if (folder == null || folder.isEmpty()) return null;
-        final Path name = Path.of(folder).getFileName();
-        return (name != null ? name.toString() : folder) + getOptions().suffix();
+        try {
+            final Path name = Path.of(folder).getFileName();
+            return (name != null ? name.toString() : folder) + getOptions().suffix();
+        } catch (InvalidPathException e) {
+            return "Tide" + getOptions().suffix(); // The configuration explains the invalid path
+        }
     }
 
     @Override
@@ -123,10 +127,14 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
         if (problem != null && !problem.isEmpty()) throw new RuntimeConfigurationError(problem);
         final String folder = getOptions().getFolder();
         if (folder == null || folder.isEmpty()) throw new RuntimeConfigurationError("Choose the game's folder");
-        if (!Files.isDirectory(Path.of(folder))) throw new RuntimeConfigurationError("There's no folder " + folder);
         final String tide = getOptions().getTide();
-        if (tide != null && !tide.isEmpty() && !Files.isRegularFile(Path.of(tide))) {
-            throw new RuntimeConfigurationError("There's no tide at " + tide);
+        try {
+            if (!Files.isDirectory(Path.of(folder))) throw new RuntimeConfigurationError("There's no folder " + folder);
+            if (tide != null && !tide.isEmpty() && !Files.isRegularFile(Path.of(tide))) {
+                throw new RuntimeConfigurationError("There's no tide at " + tide);
+            }
+        } catch (InvalidPathException e) {
+            throw new RuntimeConfigurationError("Choose a valid game folder and tide executable path: " + e.getReason());
         }
     }
 
@@ -182,7 +190,8 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
                 public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
                     if (outputType != ProcessOutputTypes.STDOUT) return;
                     final String page = address.accept(event.getText());
-                    if (page != null) TideGamePage.of(getProject()).show(page);
+                    if (page != null) TideGamePage.of(getProject()).show(page,
+                        () -> !handler.isProcessTerminating() && !handler.isProcessTerminated());
                 }
             });
         }
