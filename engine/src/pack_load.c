@@ -11,6 +11,7 @@
 #include "tide/page.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
+#include "asset_store.h"
 
 #define OFFSET(at) ((at) & 0x3FFFFFFFu)
 
@@ -78,6 +79,7 @@ typedef struct skinned_span {
 } skinned_span;
 
 static struct {
+    uint8_t digest[32];
     uint8_t *region;
     uint32_t size;
     uint32_t file_size; // Before mutable texture/clip references are laid out after it.
@@ -681,6 +683,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     const uint64_t whole = (uint64_t)h.region_size + textures_room(bytes + h.region_at, h.region_size, entries, h.entries);
     if (whole > TIDE_PACK_BASE) return false;
     tide_pack_unload();
+    tide_sha256_of(bytes, size, pack.digest);
     // The region in memory of its own, a whole number of slots, so that the
     // last slot's pointer reaches memory wherever an offset in it points
     const uint32_t slots = (uint32_t)((whole + TIDE_SCRATCH_BYTES - 1u) >> TIDE_SCRATCH_SHIFT);
@@ -704,6 +707,8 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
 
 void tide_pack_unload(void)
 {
+    tide_asset_pack_clear();
+    memset(pack.digest, 0, sizeof pack.digest);
     free(pack.region);
     free(pack.entries);
     free(pack.textures);
@@ -726,6 +731,11 @@ void tide_pack_unload(void)
     pack.epoch++;
     tide_pack_region_slots = 0;
     tide_pack_use();
+}
+
+void tide_pack_digest(uint8_t digest[32])
+{
+    memcpy(digest, pack.digest, 32);
 }
 
 void tide_pack_use(void)
@@ -805,6 +815,7 @@ void *tide_pack_mesh_open(const tide_pack_entry *e, const uint32_t k, const uint
 
 void tide_pack_mesh_updated(void *vertices, const uint32_t vertex)
 {
+    tide_asset_pack_clear();
     if (!pack.region || !vertices) return;
     const uintptr_t begin = (uintptr_t)pack.region, at = (uintptr_t)vertices;
     if (at < begin || at - begin < sizeof(tide_block) || at - begin > pack.size) return;
@@ -995,11 +1006,15 @@ bool tide_pack_skinned_proof(const tide_list data, uint64_t *identity, uint64_t 
 
 bool tide_pack_skinned_version(const tide_list data, uint64_t *version)
 {
+    const tide_asset_data *asset = tide_asset_list(data);
+    if (asset && asset->skinned && version) { *version = asset->version; return true; }
     return version && tide_pack_skinned_proof(data, NULL, version);
 }
 
 bool tide_pack_skinned_sample_proof(const tide_list data, bool *nonnegative)
 {
+    const tide_asset_data *asset = tide_asset_list(data);
+    if (asset && asset->skinned) { if (nonnegative) *nonnegative = asset->nonnegative; return true; }
     if (!pack.region || !pack.skinned_places) return false;
     const packed_skinned *found = &pack.skinned[skinned_place(pack.skinned, pack.skinned_places, data.at)];
     if (!found->at || !found->end) return false;
@@ -1117,6 +1132,13 @@ const uint8_t *tide_pack_span(const uint32_t offset, const uint64_t bytes)
     if (!pack.region || offset < TIDE_PACK_BASE) return NULL;
     const uint64_t at = offset - TIDE_PACK_BASE;
     return at + bytes <= pack.size ? pack.region + at : NULL;
+}
+
+const uint8_t *tide_pack_file_span(const uint32_t offset, const uint64_t bytes)
+{
+    if (!pack.region || offset < TIDE_PACK_BASE) return NULL;
+    const uint64_t at = offset - TIDE_PACK_BASE;
+    return at + bytes <= pack.file_size ? pack.region + at : NULL;
 }
 
 void tide_pack_sample_textures(const tide_pack_entry *e, const uint32_t sampling)

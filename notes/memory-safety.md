@@ -1,5 +1,9 @@
 # No Tide code can corrupt memory
 
+## Immutable assets and received heap state (2026-10-11)
+
+New immutable descriptors retain owned bytes outside match pages; no raw pointer enters a game list. Generated writes detach with actual ownership before obtaining writable addresses. Refcounted snapshots and retired pools preserve borrows through source release, including helper side effects during evaluation. `_at_mut` rejects immutable descriptor/pack storage. Packing sizes widen before the uint32 limit check. Dictionary decode checks shapes, multiplication/byte limits, unique IDs and content hashes; page patches check asset identity and source slice bounds. Before publication, registered descriptor spans/identities/counts and free/pending chains are validated, including duplicate locations and cycle rejection. A location/identity sum and count enter the world hash so omitted lease records fail authentication. Live grid headers are cell data and are never scanned as allocations. `test_asset_lists.c` covers every truncated reference packet, unknown descriptor IDs, forged and cleanly omitted leases, missing-pack fallback and snapshot lifetime; generated mutations, mixed grid state and lossy-session retry are checked by `asset_sharing`. Native/WASI cross-transfer evidence uses the owner's real project. Sanitizer/other-platform validation remains CI work; CI was not dispatched.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language

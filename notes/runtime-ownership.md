@@ -1,5 +1,9 @@
 # Runtime written by Claude for now
 
+## Retained asset lists boundary (2026-10-11)
+
+The owner explicitly approved `tide_list_prepare(tide_list *list, uint32_t element_size, uint32_t where)` before generated writable element access. It preserves the logical value and detaches borrowed asset storage with actual destination ownership. This task maintains the temporary list/heap/pack/session implementation and its generated wrappers; no user-facing reference type or mutability change was added. Runtime reads use existing list interfaces, and `_at_mut` refuses immutable descriptors/raw pack data until preparation. `engine/src/asset_store.*` owns private retained content/proof/pool/origin lifetimes. `notes/ecs.md` describes the storage contract, `notes/netcode.md` the protocol 14 callback change, and `notes/assets-and-files.md` the asset semantics and tests. Animation interpolation and palette math remain unchanged.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Layout

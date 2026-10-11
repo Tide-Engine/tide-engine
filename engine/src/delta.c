@@ -1,4 +1,5 @@
 #include "tide/delta.h"
+#include "delta_asset.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -226,6 +227,40 @@ void tide_delta_region(tide_delta_writer *d, const void *now, const uint32_t siz
     put_bytes(d, now, size, d->xor ? base : NULL, d->xor && base ? base_size : 0u, stride);
 }
 
+void tide_delta_asset_region(tide_delta_writer *d, const void *now, const uint32_t size,
+    const void *base, const uint32_t base_size, const bool same, const tide_asset_origin *origin)
+{
+    const bool send = d->by_need ? lacks_next(d)
+        : !(d->xor && base && base_size == size && (same || tide_same_bytes(now, base, size)));
+    if (!send) { d->same++; return; }
+    tide_write_varint(&d->bytes, d->same);
+    d->same = 0;
+    uint8_t baseline[1u << TIDE_HEAP_PAGE_SHIFT];
+    if (d->assets && tide_asset_origin_reference(origin) && tide_asset_origin_bytes(origin, baseline, size)) {
+        tide_delta_writer full = {.bytes = {.grows = true}}, patch = {.bytes = {.grows = true}};
+        put_bytes(&full, now, size, d->xor ? base : NULL, d->xor && base ? base_size : 0u, 0u);
+        put_bytes(&patch, now, size, baseline, size, 0u);
+        uint32_t full_size, patch_size;
+        uint8_t *full_bytes = tide_delta_end(&full, &full_size);
+        uint8_t *patch_bytes = tide_delta_end(&patch, &patch_size);
+        const bool relative = (uint64_t)patch_size + 48u < full_size;
+        tide_write_varint(&d->bytes, relative ? 1u : 0u);
+        if (relative) {
+            tide_write_bytes(&d->bytes, origin->data->id, 32);
+            tide_write_u32(&d->bytes, origin->data->pack_at);
+            tide_write_u32(&d->bytes, origin->data->element);
+            tide_write_u32(&d->bytes, origin->first);
+            tide_write_u32(&d->bytes, origin->count);
+        }
+        tide_write_bytes(&d->bytes, relative ? patch_bytes : full_bytes, relative ? patch_size : full_size);
+        free(full_bytes);
+        free(patch_bytes);
+    } else {
+        tide_write_varint(&d->bytes, 0u);
+        put_bytes(d, now, size, d->xor ? base : NULL, d->xor && base ? base_size : 0u, 0u);
+    }
+}
+
 void tide_delta_close(tide_delta_writer *d)
 {
     tide_write_varint(&d->bytes, d->same);
@@ -304,6 +339,45 @@ tide_page *tide_delta_page(tide_delta_reader *d, const uint32_t size, const uint
     tide_page *p = tide_page_new(page_size);
     p->refs = refs;
     if (!get_bytes(&d->bytes, tide_page_data(p), size, d->xor ? from : NULL, d->xor && base ? base_size : 0u)) {
+        tide_page_release(p, refs);
+        return NULL;
+    }
+    return p;
+}
+
+tide_page *tide_delta_asset_page(tide_delta_reader *d, const uint32_t size, const uint32_t page_size,
+    const uint32_t refs, tide_page *base, const uint32_t base_size, const bool share, tide_asset_origin *origin)
+{
+    if (d->bytes.failed || size > page_size) return NULL;
+    const void *from = base ? tide_page_data(base) : NULL;
+    if (next_same(d)) {
+        if (!base || base_size != size || d->bytes.failed) return NULL;
+        if (share) { base->refs += refs; return base; }
+        tide_page *p = tide_page_new(page_size);
+        p->refs = refs;
+        if (size) memcpy(tide_page_data(p), from, size);
+        return p;
+    }
+    const uint32_t mode = tide_read_varint(&d->bytes);
+    uint8_t baseline[1u << TIDE_HEAP_PAGE_SHIFT];
+    if (mode == 1u) {
+        const uint8_t *id = tide_read_bytes(&d->bytes, 32);
+        const uint32_t at = tide_read_u32(&d->bytes);
+        const uint32_t element = tide_read_u32(&d->bytes);
+        const uint32_t first = tide_read_u32(&d->bytes);
+        const uint32_t count = tide_read_u32(&d->bytes);
+        if (d->bytes.failed || at < TIDE_PACK_BASE || at >= 0x40000000u) return NULL;
+        tide_asset_data *data = tide_asset_pack((tide_list){TIDE_IN_SCRATCH << 30 | at}, element);
+        if (!data || memcmp(data->id, id, 32) != 0) return NULL;
+        const tide_asset_origin relative = {data, first, count};
+        if (!tide_asset_origin_reference(&relative) || !tide_asset_origin_bytes(&relative, baseline, size)) return NULL;
+        *origin = relative;
+        from = baseline;
+    } else if (mode || d->bytes.failed) return NULL;
+    tide_page *p = tide_page_new(page_size);
+    p->refs = refs;
+    if (!get_bytes(&d->bytes, tide_page_data(p), size, mode ? from : d->xor ? from : NULL,
+        mode ? size : d->xor && base ? base_size : 0u)) {
         tide_page_release(p, refs);
         return NULL;
     }
