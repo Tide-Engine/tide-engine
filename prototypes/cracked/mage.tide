@@ -15,6 +15,18 @@ const int PART_HOOD = 4;
 const int PART_SHIRT = 5;
 const int PART_LIQUID = 6;
 
+// The liquid in the head: Liquid.cs's numbers on the Magician prefab's LIQUID
+// object, and Liquid.mat's for the LiquidEffect shader graph.
+const float LIQUID_WOBBLE = 0.005;       // MaxWobble: the most a frame's movement adds to the tilt
+const float LIQUID_SPEED = 2;            // WobbleSpeedMove: sloshes a second
+const float LIQUID_RECOVERY = 1;         // Recovery: how fast it settles, a second
+const float LIQUID_THICKNESS = 5;        // Thickness: the slowest the slosh follows its sine
+const float LIQUID_AMPLITUDE = 0.22;     // _Amplitude: the ripple's height, times the tilt
+const float LIQUID_FREQUENCY = 2.43;     // _Frequency: the ripple's turns along a meter
+const float LIQUID_FOAM = 0.014;         // _FoamWidth: the white line under the surface, in meters
+// Where the LIQUID object is from the head's bone, in the model's own units
+const float3 LIQUID_ORIGIN = float3(0, 0.214, 0.007);
+
 // UpperBody.mask's clip in the Unity animator: frames 20 to 41 of the throw.
 const float THROW_FROM = 0.667;
 const float THROW_LONG = 0.7;
@@ -23,7 +35,7 @@ struct Thread
 {
     float3 position;
     float3 normal;
-    float2 uv;           // x: which part. y: in the liquid, how high, 0 to 1
+    float2 uv;           // x: which part. y: in the liquid, how high as it stands, 0 to 1 (not read)
 }
 
 asset SkinnedMesh<Thread> mage = "art/player/mage.glb";
@@ -36,7 +48,11 @@ struct Robe
     Color liquidTop = Color.white;
     Color liquidBottom = Color.white;
     float flash;         // White from being hurt, 1 fading to 0
-    float level = 1;     // How full the head is: the player's health, 0 to 1
+    float3 bowl;         // Where the liquid's own origin is in the world, in the head's middle
+    float surface;       // How high over that its surface is, in meters: the player's health
+    float wobbleX;       // How its surface tilts, as Liquid.cs gives the shader,
+    float wobbleZ;
+    float ripple;        // and the shader's clock, in radians
     float glass;         // 0 draws the body and the liquid, 1 the head's glass over them
     float headless;      // 1 once the head has shattered
 }
@@ -48,6 +64,21 @@ local singleton Troupe
     float[SEATS] idle;       // Seconds of the idle clip
     float[SEATS] hands;      // How far its hands are up for a reload, 0 to 1
     float[SEATS] moving;     // How much of the jog it shows, eased
+
+    // The liquid in each head, as Liquid.cs keeps it: where the avatar was a
+    // frame ago, how much it has been shaken (which settles), the wave that
+    // makes a slosh of that, and the tilt the frag gets
+    int[SEATS] life;         // The avatar these are of
+    float3[SEATS] wasAt;
+    quaternion[SEATS] wasTurned;
+    float[SEATS] shakenX;    // wobbleAmountToAddX,
+    float[SEATS] shakenZ;    // and Z
+    float[SEATS] wave;       // sinewave
+    float[SEATS] wobbleX;
+    float[SEATS] wobbleZ;
+    float[SEATS] level;      // How high its surface is, which follows the health (`comp`)
+    float clock = 0.5;       // Liquid.cs's time, wrapped where its sine comes round
+    float ripple;            // The shader's, in radians
 }
 
 frag MageLook(Thread thread, out Color color, Robe robe, Instance instance, Light light, Shadow shadow)
@@ -73,12 +104,31 @@ frag MageLook(Thread thread, out Color color, Robe robe, Instance instance, Ligh
     if (part == PART_GLASS) this.Discard();
     if (part == PART_LIQUID)
     {
-        // The liquid is in the head up to the player's health, and glows a little
-        if (robe.headless > 0.5 || thread.uv.y > robe.level) this.Discard();
-        float high = Math.Saturate(thread.uv.y / Math.Max(robe.level, 0.05));
-        Color paint = Mix(robe.liquidBottom, robe.liquidTop, high);
-        float surface = Math.SmoothStep(0.88, 1, high) * 0.35;
-        color = Color(paint.r * 1.25 + surface, paint.g * 1.25 + surface, paint.b * 1.25 + surface, 1);
+        // The LiquidEffect shader graph. The liquid is what of its ball is
+        // under a plane that's level in the world, however the head leans,
+        // at the height the player's health says. The wobble tilts the
+        // plane, and ripples it by as much as it's tilted, so it's flat when
+        // it's still. Unlit: the body is one color with a rim to it, and
+        // what shows through the cut, the ball's far side, is the top's
+        // color, which reads as the surface. A white line of foam is under
+        // the surface's edge.
+        if (robe.headless > 0.5) this.Discard();
+        float3 d = this.world - robe.bowl;
+        float3 tilted = float3(d.x * (1 + robe.wobbleZ) - robe.wobbleX * d.y, d.y + robe.wobbleX * d.x - robe.wobbleZ * d.z,
+                               d.z * (1 + robe.wobbleX) + robe.wobbleZ * d.y);
+        float wave = Math.Sin(robe.ripple + LIQUID_FREQUENCY * (tilted.x + tilted.z));
+        float fill = tilted.y + LIQUID_AMPLITUDE * (Math.Abs(robe.wobbleX) + Math.Abs(robe.wobbleZ)) * wave - robe.surface;
+        if (fill > 0) this.Discard();
+        if (Math.Dot(normal, toEye) < 0)
+        {
+            float ring = fill >= -0.1 * LIQUID_FOAM ? 1.0 : 0.0;
+            color = Color(robe.liquidTop.r + ring, robe.liquidTop.g + ring, robe.liquidTop.b + ring, 1);
+            return;
+        }
+        float foam = fill >= -LIQUID_FOAM ? 1.0 : 0.0;
+        float rim = Math.Pow(1 - Math.Saturate(Math.Dot(normal, toEye)), 2);
+        Color body = Mix(robe.liquidBottom, Color.white, foam);
+        color = Color(body.r + 0.2211 * rim, body.g, body.b + rim, 1);
         return;
     }
     // The inside of the liquid's hollow is the only back face that shows
@@ -177,13 +227,95 @@ Color HoodColor(Seat seat)
     return Color(back * 0.85, back * 0.85, back * 0.85);
 }
 
+// PlayerHealth._healthCurve: how full the head is for a share of the health.
+// A Unity curve's five keys, each a time, a value and a slope.
+float Fullness(float health)
+{
+    if (health <= 0.05488) return Hermite(-0.00124, 0.21590, 1.84784, 0.05488, 0.31010, 1.26495, health);
+    if (health <= 0.22690) return Hermite(0.05488, 0.31010, 1.26495, 0.22690, 0.49759, 0.84777, health);
+    if (health <= 0.43988) return Hermite(0.22690, 0.49759, 0.84777, 0.43988, 0.64777, 0.53801, health);
+    return Hermite(0.43988, 0.64777, 0.53801, 1, 1, 0.53223, health);
+}
+
+float Hermite(float t0, float v0, float m0, float t1, float v1, float m1, float at)
+{
+    var wide = t1 - t0;
+    var t = Math.Saturate((at - t0) / wide);
+    return (2 * t * t * t - 3 * t * t + 1) * v0 + (t * t * t - 2 * t * t + t) * wide * m0
+         + (-2 * t * t * t + 3 * t * t) * v1 + (t * t * t - t * t) * wide * m1;
+}
+
+// How high the liquid's surface is over its origin, in meters, as Liquid.cs
+// and PlayerHealth work `_FillAmount` out: a fill of 0.98 (and half of what
+// the mage is bigger by), less what the health compensates of the bounds of
+// the mesh the script was given, which is the asset pack's potion and not
+// the head's (center 0.09177 up, 1.09979 from that to its lowest point).
+// Empty with no health, and all but full with all of it.
+float SurfaceHeight(Seat seat)
+{
+    var scale = MODEL_SCALE * seat.settings.size;
+    var share = Math.Saturate(float(seat.health) / Math.Max(seat.maxHealth, 1));
+    return 0.5 + scale * 0.09177 - (0.98 + (seat.settings.size - 1) * 0.5) + 0.45 * Fullness(share) * scale * 1.09979;
+}
+
+// Liquid.cs's Update for one seat: the liquid is shaken by how fast its
+// mage moves and turns, a little more every frame and never more than
+// MaxWobble a frame, settles by Recovery, and sloshes on a sine the faster
+// the mage goes. The Unity script goes by its own object's place, under the
+// head's bone; this goes by the avatar's, as this frame shows it.
+void Slosh(mut Troupe troupe, int s, float3 at, quaternion turned, float dt)
+{
+    if (dt <= 0) return;
+    troupe.shakenX[s] += (0 - troupe.shakenX[s]) * Math.Saturate(dt * LIQUID_RECOVERY);
+    troupe.shakenZ[s] += (0 - troupe.shakenZ[s]) * Math.Saturate(dt * LIQUID_RECOVERY);
+    var velocity = (troupe.wasAt[s] - at) / dt;
+    // How fast it turns, in radians a second about each axis, from the turn since the last frame
+    mut var between = Math.Mul(turned, Math.Conjugate(troupe.wasTurned[s])).value;
+    mut var turning = float3(0);
+    if (Math.Abs(between.w) <= 1023.5 / 1024.0)
+    {
+        if (between.w < 0) between = -between;
+        var angle = Math.Acos(Math.Clamp(between.w, -1, 1));
+        turning = float3(between.x, between.y, between.z) * (2 * angle / (Math.Sin(angle) * dt));
+    }
+    // The script reads last frame's speeds here, and works this frame's out after: a frame's difference
+    var pulse = Math.TAU * LIQUID_SPEED;
+    troupe.wave[s] += (Math.Sin(pulse * troupe.clock) - troupe.wave[s])
+                    * Math.Saturate(dt * Math.Clamp(Math.Length(velocity) + Math.Length(turning), LIQUID_THICKNESS, 10));
+    troupe.wobbleX[s] = troupe.shakenX[s] * troupe.wave[s];
+    troupe.wobbleZ[s] = troupe.shakenZ[s] * troupe.wave[s];
+    troupe.shakenX[s] += Math.Clamp((velocity.x + velocity.y * 0.2 + turning.z + turning.y) * LIQUID_WOBBLE, -LIQUID_WOBBLE, LIQUID_WOBBLE);
+    troupe.shakenZ[s] += Math.Clamp((velocity.z + velocity.y * 0.2 + turning.x + turning.y) * LIQUID_WOBBLE, -LIQUID_WOBBLE, LIQUID_WOBBLE);
+}
+
 // The seats' clocks move on.
 [Stage(Layers.Prepare, 2)]
-view Paces(Arena arena, Fx fx, mut Troupe troupe)
+view Paces(Arena arena, Shown shown, Fx fx, mut Troupe troupe)
 {
+    troupe.clock += fx.dt;
+    if (troupe.clock > 1 / LIQUID_SPEED) troupe.clock -= 1 / LIQUID_SPEED;
+    troupe.ripple += fx.dt;
+    if (troupe.ripple > Math.TAU) troupe.ripple -= Math.TAU;
     for (var s = 0; s < SEATS; s++)
     {
         var seat = arena.seats[s];
+        // Another avatar's liquid is still: it wasn't thrown here from where the last one fell
+        if (seat.alive && troupe.life[s] == seat.life)
+        {
+            Slosh(troupe, s, shown.position[s], shown.rotation[s], fx.dt);
+            troupe.level[s] += (SurfaceHeight(seat) - troupe.level[s]) * Math.Saturate(fx.dt * 10);
+        }
+        else
+        {
+            troupe.level[s] = SurfaceHeight(seat);
+            troupe.shakenX[s] = 0;
+            troupe.shakenZ[s] = 0;
+            troupe.wobbleX[s] = 0;
+            troupe.wobbleZ[s] = 0;
+        }
+        troupe.life[s] = seat.life;
+        troupe.wasAt[s] = shown.position[s];
+        troupe.wasTurned[s] = shown.rotation[s];
         if (!seat.alive || seat.dead) continue;
         var speed = Math.Length(seat.localVelocity);
         // A jog's cycle covers about 2.6 meters: slower feet under a slow body
@@ -198,12 +330,12 @@ view Paces(Arena arena, Fx fx, mut Troupe troupe)
 
 // The mages in the sun's image and in the eye's depth, after the blocks.
 [Stage(Layers.Shadow, 2)]
-view MageShadows(Arena arena, Air air, Troupe troupe, Shadow shadow, Depths depths)
+view MageShadows(Arena arena, Shown shown, Air air, Troupe troupe, Shadow shadow, Depths depths)
 {
     for (var s = 0; s < SEATS; s++)
     {
-        var seat = arena.seats[s];
-        if (!seat.alive) continue;
+        if (!arena.seats[s].alive) continue;
+        var seat = Seen(arena, shown, s);
         var pose = MagePose(seat, troupe.stride[s], troupe.idle[s], troupe.moving[s], air.threw[s], troupe.hands[s]);
         shadow.map.SkinnedMesh(mage, MagePlace(seat), pose);
         depths.map.SkinnedMesh(mage, MagePlace(seat), pose);
@@ -213,21 +345,24 @@ view MageShadows(Arena arena, Air air, Troupe troupe, Shadow shadow, Depths dept
 // The mages: body and liquid first, then every head's glass over them, which
 // is seen through and hides nothing.
 [Stage(Layers.World, 2)]
-view Mages(Arena arena, Air air, Troupe troupe, Post post)
+view Mages(Arena arena, Shown shown, Air air, Troupe troupe, Post post)
 {
     for (var pass = 0; pass < 2; pass++)
     {
         for (var s = 0; s < SEATS; s++)
         {
-            var seat = arena.seats[s];
-            if (!seat.alive || (pass == 1 && seat.dead)) continue;
-            var poisoned = seat.poisonLevel > 0;
-            var robe = Robe { team = TeamColor(seat.team), hood = HoodColor(seat),
-                              liquidTop = poisoned ? Color(0.678, 1, 0.184) : Color(0.745, 0, 1),
-                              liquidBottom = poisoned ? Color(0, 1, 0) : Color(1, 0, 0.0155),
-                              flash = air.flash[s], level = Math.Saturate(float(seat.health) / Math.Max(seat.maxHealth, 1)),
-                              glass = pass, headless = seat.dead ? 1 : 0 };
+            if (!arena.seats[s].alive || (pass == 1 && arena.seats[s].dead)) continue;
+            var seat = Seen(arena, shown, s);
             var pose = MagePose(seat, troupe.stride[s], troupe.idle[s], troupe.moving[s], air.threw[s], troupe.hands[s]);
+            // PlayerHealth.UpdateView: the liquid goes green by how poisoned its player is
+            var poisoned = Math.Saturate(seat.poisonLevel);
+            var robe = Robe { team = TeamColor(seat.team), hood = HoodColor(seat),
+                              liquidTop = Mix(Color(0.745, 0, 1), Color(0.678, 1, 0.184), poisoned),
+                              liquidBottom = Mix(Color(1, 0, 0.0155), Color(0, 1, 0), poisoned),
+                              flash = air.flash[s],
+                              bowl = Math.Transform(Math.Mul(MagePlace(seat), pose.Model(mage.skeleton.bones.head)), LIQUID_ORIGIN),
+                              surface = troupe.level[s], wobbleX = troupe.wobbleX[s], wobbleZ = troupe.wobbleZ[s], ripple = troupe.ripple,
+                              glass = pass, headless = seat.dead ? 1 : 0 };
             if (pass == 0)
             {
                 post.scene.Cull(Cull.None)

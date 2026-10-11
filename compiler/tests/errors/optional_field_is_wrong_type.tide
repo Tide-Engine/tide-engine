@@ -1,0 +1,4 @@
+// expect: 'item' is int or nothing, so 'is' takes 'int', not float
+struct Slot { int? item; }
+void Use(Slot slot) { if (slot.item is float f) { } }
+scene Main { }

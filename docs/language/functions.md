@@ -29,6 +29,7 @@ component Unit
 ```
 
 - A value is written like a component's: `Stats { health = 50 }`. Fields left out take their defaults.
+- A field that may be missing is a `T?`, like `int? target;`. It starts with nothing (see [Errors](./errors.md#fields-that-may-be-missing)).
 - Components, singletons, inputs and other structs can hold structs, and so can locals. System parameters stay components, singletons, the input and `Devices`.
 - A struct can't contain itself, even through other structs.
 
