@@ -1,0 +1,4 @@
+// expect: 'value' is read-only
+scene Main { }
+struct Pair { int a; }
+int F() { Pair value; value.a = 1; return value.a; }

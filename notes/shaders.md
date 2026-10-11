@@ -1,5 +1,26 @@
 # Code the GPU runs: frags and verts
 
+## Delayed locals and switch values, 2026-10-11
+
+The CPU's definite-assignment rules also check delayed locals in frags, verts
+and their helpers. Switch expressions lower to a captured selector and a
+result variable assigned by one GLSL/WGSL switch arm. Each arm declares its
+own out locals and emits its own effect prelude. Surrounding operands are
+captured in source order; conditional and short-circuit branches retain their
+laziness. Mutable/out arguments remain writable places. Statements declare
+outer out locals before their preludes.
+
+Loop headers containing switch expressions lower to a loop that reevaluates
+the selector each iteration, with a for's step at the next iteration's start
+so continue still reaches it. Existing GPU type, increment and for-header
+out-declaration restrictions remain. No runtime or shader binding changed.
+`compiler/tests/shaders/switch_values` pins GLSL and WGSL. `SwitchProbe` in
+`platform/tests/shaders.tide` checks delayed branch initialization, single
+selection and source-order effects, skipped/nested branches, arm-local out
+variables and for/while/continue behavior against CPU results in both stages.
+Final native OpenGL, web WebGL and WebGPU results are recorded with language
+validation in `notes/language.md`; other platforms require CI.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform

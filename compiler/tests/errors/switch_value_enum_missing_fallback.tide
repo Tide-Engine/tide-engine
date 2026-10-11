@@ -1,0 +1,4 @@
+// expect: a switch expression needs a final '_' arm
+scene Main { }
+enum E { A, B }
+int F(E n) { return n switch { E.A => 1, E.B => 2 }; }

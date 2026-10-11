@@ -1,0 +1,3 @@
+// expect: local variable 'value' needs an initial value
+scene Main { }
+int F() { var value; return value; }

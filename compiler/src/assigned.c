@@ -5,7 +5,8 @@
 // Definite assignment, as C#'s, for the kinds of variable that start without
 // a value: a function's or method's `out` parameters, what a frag and a vert
 // write (a frag's `out Color`, the structs a vert takes as `out` for its
-// frag), and the locals `out` arguments declare (`out var health`).
+// frag), the locals `out` arguments declare (`out var health`), and explicitly
+// typed locals declared without an initializer (`int health;`).
 //
 // An `out` parameter is assigned before the code reads it, and on every path
 // that returns: `fail` owes it nothing, as a call that fails gives its `out`
@@ -18,12 +19,11 @@
 // once each of its fields does, and a field is read once it's assigned. That's
 // its own fields: a field of a struct in it is a part of that field.
 //
-// The state is a byte per slot, a variable's, or one for each field of a
-// struct, set where it's assigned on every path there. Where no path leads
-// (after a return, a break, a `while (true)` with no break), every slot counts
-// as assigned, as in C#, so joining such a place with another changes nothing.
-// Assignments only add, so a loop's start is as what's before the loop left
-// it, and one pass over the code is enough.
+// The state is a byte per slot: bit 0 means assigned on every path, bit 1 on
+// some path. A separate byte marks unreachable paths, which joins ignore.
+// Delayed read-only locals may be initialized once; a reachable loop back
+// edge is visited again to catch assignments that could repeat. Declarations
+// reset their slots, so a local declared inside a loop is new each iteration.
 
 typedef struct flow {
     program *prog;             // For the fixes editors offer
@@ -34,47 +34,59 @@ typedef struct flow {
     int slots;                 // A slot a variable, or one for each field of a struct
     int params;                // The first of the variables are the parameters
     bool *reported;            // By variable: a read before its assignment was said
+    bool *reassigned;          // By variable: a delayed read-only local was initialized twice
     VEC(uint8_t *) breaks;     // By loop and switch being gone through: what's assigned at each of its breaks
     VEC(uint8_t *) continues;  // By loop: at each of its continues
     int comparing;             // In a Sort's comparison block, whose returns are its own
+    bool readonly_locals;      // Only these need a loop's back edge checked for reinitialization
+    bool revisiting;           // Nested loops do not recursively duplicate a repeated traversal
 } flow;
 
 static uint8_t *state_new(const flow *f, const uint8_t value)
 {
-    uint8_t *s = arena_alloc((size_t)(f->slots ? f->slots : 1));
-    memset(s, value, (size_t)f->slots);
+    uint8_t *s = arena_alloc((size_t)f->slots + 1);
+    memset(s, value ? 3 : 0, (size_t)f->slots);
+    s[f->slots] = value; // Unreachable paths are neutral when joining
     return s;
 }
 
 static uint8_t *state_copy(const flow *f, const uint8_t *from)
 {
-    uint8_t *s = arena_alloc((size_t)(f->slots ? f->slots : 1));
-    memcpy(s, from, (size_t)f->slots);
+    uint8_t *s = arena_alloc((size_t)f->slots + 1);
+    memcpy(s, from, (size_t)f->slots + 1);
     return s;
 }
 
 // What's assigned on both of two paths, into `into`.
 static void state_meet(const flow *f, uint8_t *into, const uint8_t *other)
 {
-    for (int i = 0; i < f->slots; i++) into[i] &= other[i];
+    if (other[f->slots]) return;
+    if (into[f->slots]) {
+        memcpy(into, other, (size_t)f->slots + 1);
+        return;
+    }
+    for (int i = 0; i < f->slots; i++) {
+        into[i] = (into[i] & other[i] & 1) | ((into[i] | other[i]) & 2);
+    }
 }
 
 static void state_set(const flow *f, uint8_t *into, const uint8_t *from)
 {
-    memcpy(into, from, (size_t)f->slots);
+    memcpy(into, from, (size_t)f->slots + 1);
 }
 
 // No path leads here: everything counts as assigned.
 static void state_end(const flow *f, uint8_t *s)
 {
-    memset(s, 1, (size_t)f->slots);
+    memset(s, 3, (size_t)f->slots);
+    s[f->slots] = 1;
 }
 
 // A variable that starts without a value: its slots, one for each field where
 // it's a struct.
-static void add_var(flow *f, const void *var, const type t)
+static void add_var(flow *f, const void *var, const type t, const bool whole)
 {
-    const decl *of = t.kind == TY_STRUCT && t.decl && t.decl->fields.count > 0 ? t.decl : NULL;
+    const decl *of = !whole && t.kind == TY_STRUCT && t.decl && t.decl->fields.count > 0 ? t.decl : NULL;
     vec_push(f->vars, var);
     vec_push(f->structs, of);
     vec_push(f->firsts, f->slots);
@@ -93,7 +105,7 @@ static bool var_assigned(const flow *f, const int v, const uint8_t *st, const fi
     const int first = f->firsts.items[v], count = slot_count(f, v);
     int assigned = 0, lacks = -1;
     for (int i = 0; i < count; i++) {
-        if (st[first + i]) assigned++;
+        if (st[first + i] & 1) assigned++;
         else if (lacks < 0) lacks = i;
     }
     const decl *of = f->structs.items[v];
@@ -105,7 +117,7 @@ static bool var_assigned(const flow *f, const int v, const uint8_t *st, const fi
 
 static void assign_var(const flow *f, const int v, uint8_t *st)
 {
-    memset(st + f->firsts.items[v], 1, (size_t)slot_count(f, v));
+    memset(st + f->firsts.items[v], 3, (size_t)slot_count(f, v));
 }
 
 // A frag or a vert, which writes what a function assigns.
@@ -120,7 +132,7 @@ static int var_of(const flow *f, const expr *e)
     if (!e || e->kind != E_NAME) return -1;
     const void *var = NULL;
     if (e->bind == BIND_PARAM && e->param && e->param->is_out) var = e->param;
-    else if (e->bind == BIND_LOCAL && e->local && e->local->out_decl && !e->local->discard) var = e->local;
+    else if (e->bind == BIND_LOCAL && e->local && (e->local->out_decl || e->local->delayed) && !e->local->discard) var = e->local;
     for (int i = 0; var && i < f->vars.count; i++) {
         if (f->vars.items[i] == var) return i;
     }
@@ -150,8 +162,17 @@ static bool names_place(const flow *f, const expr *e)
 static void assign_place(const flow *f, const expr *e, uint8_t *st)
 {
     const int v = var_of(f, e);
+    if (v >= f->params && v >= 0 && !st[f->slots]) {
+        const stmt *local = f->vars.items[v];
+        if (local->delayed && !local->is_mut && (st[f->firsts.items[v]] & 2) && !f->reassigned[v]) {
+            f->reassigned[v] = true;
+            diag_error(e->at, "'" STR_FMT "' may already be assigned: a read-only local is initialized once", STR_ARG(local->name));
+            diag_note("declare it as 'mut " STR_FMT " " STR_FMT "' to change it after initialization",
+                      STR_ARG(local->type_name), STR_ARG(local->name));
+        }
+    }
     if (v >= 0) assign_var(f, v, st);
-    else if (field_slot(f, e) >= 0) st[field_slot(f, e)] = 1;
+    else if (field_slot(f, e) >= 0) st[field_slot(f, e)] = 3;
 }
 
 static void find_stmt(flow *f, const stmt *s);
@@ -161,7 +182,7 @@ static void find_stmt(flow *f, const stmt *s);
 static void find_expr(flow *f, const expr *e)
 {
     if (!e) return;
-    if (e->kind == E_NAME && e->out_local && !e->out_local->discard) add_var(f, e->out_local, e->out_local->type);
+    if (e->kind == E_NAME && e->out_local && !e->out_local->discard) add_var(f, e->out_local, e->out_local->type, false);
     find_expr(f, e->object);
     find_expr(f, e->lhs);
     find_expr(f, e->rhs);
@@ -176,6 +197,13 @@ static void find_expr(flow *f, const expr *e)
 static void find_stmt(flow *f, const stmt *s)
 {
     if (!s) return;
+    if (s->kind == S_VAR && s->delayed) {
+        f->readonly_locals |= !s->is_mut;
+        bool visible = false;
+        const decl *of = s->type.kind == TY_STRUCT ? s->type.decl : NULL;
+        for (int i = 0; of && i < of->fields.count; i++) visible |= !of->fields.items[i].hidden;
+        add_var(f, s, s->type, !s->is_mut || !visible);
+    }
     for (int i = 0; i < s->stmts.count; i++) find_stmt(f, s->stmts.items[i]);
     for (int i = 0; i < s->cases.count; i++) {
         for (int k = 0; k < s->cases.items[i].body.count; k++) find_stmt(f, s->cases.items[i].body.items[k]);
@@ -198,14 +226,15 @@ static void flow_expr(flow *f, const expr *e, uint8_t *st);
 // be assigned on every path here.
 static void flow_read(flow *f, const expr *e, const field *part, uint8_t *st)
 {
+    if (st[f->slots]) return;
     const expr *name = part ? e->object : e;
     const int v = var_of(f, name);
     if (v < 0) return;
     const field *missing = NULL;
     if (part) {
         const int slot = field_slot(f, e);
-        if (st[slot]) return;
-        st[slot] = 1; // Said once along this path
+        if (st[slot] & 1) return;
+        st[slot] |= 1; // Said once along this path, without inventing an assignment
     } else {
         if (var_assigned(f, v, st, &missing)) return;
         assign_var(f, v, st);
@@ -213,6 +242,12 @@ static void flow_read(flow *f, const expr *e, const field *part, uint8_t *st)
     if (f->reported[v]) return;
     f->reported[v] = true;
     if (v >= f->params) {
+        const stmt *local = f->vars.items[v];
+        if (local->delayed) {
+            diag_error(e->at, "'" STR_FMT "' is read before it's assigned", STR_ARG(local->name));
+            diag_note("assign it on every path that reaches this read; a switch needs a 'default' that assigns it or returns");
+            return;
+        }
         diag_error(e->at, "'" STR_FMT "' isn't assigned here: the call that makes it may not have run", STR_ARG(name->name));
         diag_note("it's assigned once the call that takes 'out " STR_FMT "' has run, which '&&', '||', '?:' and '?\?' can "
                   "skip: read '" STR_FMT "' where that call ran, like in the 'if' it's the condition of",
@@ -253,6 +288,11 @@ static void flow_block(flow *f, const stmt *block, const uint8_t *st, const bool
     uint8_t *inside = state_copy(f, st);
     f->comparing += comparing;
     flow_stmt(f, block, inside);
+    if (f->readonly_locals && !f->revisiting) {
+        f->revisiting = true;
+        flow_stmt(f, block, inside); // A callback may run more than once
+        f->revisiting = false;
+    }
     f->comparing -= comparing;
 }
 
@@ -375,10 +415,27 @@ static void flow_expr(flow *f, const expr *e, uint8_t *st)
         state_meet(f, st, when_false);
         break;
     }
+    case E_SWITCH: {
+        flow_expr(f, e->object, st);
+        const int choice = switch_choice(e);
+        if (choice >= 0) {
+            flow_expr(f, e->args.items[choice], st);
+            break;
+        }
+        uint8_t *after = state_new(f, 1);
+        for (int i = 0; i < e->args.count; i++) {
+            uint8_t *arm = state_copy(f, st);
+            flow_expr(f, e->args.items[i], arm);
+            state_meet(f, after, arm);
+        }
+        state_set(f, st, after);
+        break;
+    }
     case E_COALESCE: { // Its right side only runs when the left has no value
         flow_expr(f, e->lhs, st);
         uint8_t *right = state_copy(f, st);
         flow_expr(f, e->rhs, right);
+        state_meet(f, st, right);
         break;
     }
     case E_LITERAL:
@@ -397,6 +454,7 @@ static void flow_expr(flow *f, const expr *e, uint8_t *st)
 // what a frag or a vert writes at a place it ends.
 static void flow_leave(const flow *f, const loc at, const uint8_t *st, const bool at_end)
 {
+    if (st[f->slots]) return;
     for (int i = 0; i < f->params; i++) {
         const field *missing = NULL;
         if (var_assigned(f, i, st, &missing)) continue;
@@ -475,6 +533,19 @@ static void flow_stmt(flow *f, const stmt *s, uint8_t *st)
         uint8_t *at_next = state_new(f, 1);
         flow_loop_body(f, s->then_stmt, when_true, at_break, at_next);
         flow_stmt(f, s->step, at_next);
+        if (f->readonly_locals && !f->revisiting && !at_next[f->slots]) { // Check a reachable back edge
+            f->revisiting = true;
+            uint8_t *again = state_copy(f, at_next);
+            uint8_t *done = state_new(f, 1);
+            if (s->cond) flow_cond(f, s->cond, at_next, again, done);
+            uint8_t *more_breaks = state_new(f, 1);
+            uint8_t *more_next = state_new(f, 1);
+            flow_loop_body(f, s->then_stmt, again, more_breaks, more_next);
+            flow_stmt(f, s->step, more_next);
+            state_meet(f, at_break, more_breaks);
+            state_meet(f, when_false, done);
+            f->revisiting = false;
+        }
         state_set(f, st, when_false);
         state_meet(f, st, at_break);
         break;
@@ -488,6 +559,16 @@ static void flow_stmt(flow *f, const stmt *s, uint8_t *st)
         uint8_t *at_break = state_new(f, 1);
         uint8_t *at_next = state_new(f, 1);
         flow_loop_body(f, s->then_stmt, inside, at_break, at_next);
+        if (f->readonly_locals && !f->revisiting && !at_next[f->slots]) {
+            f->revisiting = true;
+            uint8_t *more_breaks = state_new(f, 1);
+            uint8_t *more_next = state_new(f, 1);
+            flow_loop_body(f, s->then_stmt, state_copy(f, at_next), more_breaks, more_next);
+            state_meet(f, st, at_next); // It may iterate, but it may also be empty
+            state_meet(f, st, at_break);
+            state_meet(f, st, more_breaks);
+            f->revisiting = false;
+        } else state_meet(f, st, at_break);
         break;
     }
     case S_SWITCH: {
@@ -509,6 +590,15 @@ static void flow_stmt(flow *f, const stmt *s, uint8_t *st)
     }
     case S_VAR:
         flow_expr(f, s->value, st);
+        if (s->delayed) {
+            for (int v = f->params; v < f->vars.count; v++) {
+                if (f->vars.items[v] == s) memset(st + f->firsts.items[v], 0, (size_t)slot_count(f, v));
+                const decl *of = f->structs.items[v];
+                if (f->vars.items[v] == s) {
+                    for (int k = 0; of && k < of->fields.count; k++) st[f->firsts.items[v] + k] = of->fields.items[k].hidden ? 3 : 0;
+                }
+            }
+        }
         break;
     case S_EXPR:
         flow_expr(f, s->value, st);
@@ -551,12 +641,13 @@ void check_assigned(program *prog, const decl *code, const stmt *body)
     f.prog = prog;
     f.code = code;
     for (int i = 0; code && i < code->params.count; i++) {
-        if (code->params.items[i].is_out) add_var(&f, &code->params.items[i], code->params.items[i].type);
+        if (code->params.items[i].is_out) add_var(&f, &code->params.items[i], code->params.items[i].type, false);
     }
     f.params = f.vars.count;
     find_stmt(&f, body);
     if (f.vars.count == 0) return;
     f.reported = arena_alloc(sizeof(bool) * (size_t)f.vars.count);
+    f.reassigned = arena_alloc(sizeof(bool) * (size_t)f.vars.count);
     uint8_t *st = state_new(&f, 0);
     for (int v = 0; v < f.vars.count; v++) { // What a struct keeps for its layout is no field to assign
         const decl *of = f.structs.items[v];

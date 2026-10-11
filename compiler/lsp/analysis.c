@@ -980,6 +980,14 @@ static void walk_value(const expr *e)
         walk_expr(e->rhs);
         break;
 
+    case E_SWITCH:
+        walk_expr(e->object);
+        for (int i = 0; i < e->args.count; i++) {
+            walk_expr(e->inits.items[i].value);
+            walk_expr(e->args.items[i]);
+        }
+        break;
+
     case E_INTERP:
     case E_LIST:
         for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]);
@@ -4980,7 +4988,7 @@ static void select_in_expr(const expr *e, const loc at, span_list *spans)
     select_in_expr(e->rhs, at, spans);
     select_in_expr(e->cond, at, spans);
     for (int i = 0; i < written_count(e); i++) select_in_expr(written_arg(e, i), at, spans);
-    for (int i = 0; e->kind == E_LITERAL && i < e->inits.count; i++) select_in_expr(e->inits.items[i].value, at, spans);
+    for (int i = 0; (e->kind == E_LITERAL || e->kind == E_SWITCH) && i < e->inits.count; i++) select_in_expr(e->inits.items[i].value, at, spans);
     if (e->kind == E_CALL || e->kind == E_METHOD) select_in_stmt(e->block, at, spans);
 }
 
@@ -5205,7 +5213,7 @@ static loc expr_start(const expr *e)
 {
     if (e->is_out && e->out_at.line > 0) return e->out_at;
     for (;;) {
-        if ((e->kind == E_MEMBER || e->kind == E_METHOD || e->kind == E_INDEX) && e->object) e = e->object;
+        if ((e->kind == E_MEMBER || e->kind == E_METHOD || e->kind == E_INDEX || e->kind == E_SWITCH) && e->object) e = e->object;
         else if (e->kind == E_BINARY || e->kind == E_COALESCE || e->kind == E_IS || e->kind == E_DEFAULTED) e = e->lhs;
         else if (e->kind == E_CONDITIONAL) e = e->cond;
         else break;
@@ -5268,6 +5276,7 @@ static loc expr_end(const expr *e)
         return (loc){e->at.line, e->at.col + e->name.len, e->at.file};
     case E_MEMBER: return (loc){e->at.line, e->at.col + e->member.len, e->at.file};
     case E_BINARY: case E_COALESCE: case E_CONDITIONAL: return expr_end(e->rhs);
+    case E_SWITCH: return e->end;
     case E_UNARY: case E_TRY: case E_AWAIT: return expr_end(e->lhs);
     case E_STEP: return e->postfix ? (loc){e->at.line, e->at.col + 2, e->at.file} : expr_end(e->lhs);
     case E_IS: { // x is int score: to the name, or to the type
@@ -9988,6 +9997,7 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
 // Declarations have a word before their name (component Body {, input Keys {).
 static bool opens_literal(const int i)
 {
+    if (i > 0 && DOC->toks[i - 1].kind == T_SWITCH) return true;
     int k = i - 1;
     if (k < 0 || DOC->toks[k].kind != T_IDENT || opens_enum(i)) return false; // `enum Voxel : byte {` isn't one
     while (k >= 2 && DOC->toks[k - 1].kind == T_DOT && DOC->toks[k - 2].kind == T_IDENT) k -= 2;
@@ -10327,7 +10337,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                 case T_LBRACE:
                     if (depth == top && namespace_brace(DOC->toks[item->tok].at)) top++;
                     parens_at[++depth] = parens;
-                    enum_at[depth] = opens_enum(item->tok);
+                    enum_at[depth] = opens_enum(item->tok) || (item->tok > 0 && DOC->toks[item->tok - 1].kind == T_SWITCH);
                     break;
                 case T_RBRACE:
                     if (depth > 0 && depth == top && namespace_brace(DOC->toks[item->tok].at)) top--;

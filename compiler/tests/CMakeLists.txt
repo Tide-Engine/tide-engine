@@ -117,6 +117,7 @@ tide_e2e_test(render_samples) # A target's samples, said by name where it's made
 tide_e2e_test(cubemaps) # Cubemaps: an asset's six files and a cube a view draws into a face at a time, read by a direction
 tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(conditional)
+tide_e2e_test(switch_values)
 tide_e2e_test(input_bounds)
 tide_e2e_test(structs)
 tide_e2e_test(methods)

@@ -1,0 +1,55 @@
+scene Main { }
+local singleton Models { List<Vertex> corners; }
+const int SWITCH_PICK = 1 switch { 1 => 7, _ => 8 };
+int SwitchMark(mut int calls, int digit)
+{
+    calls = calls * 10 + digit;
+    return digit;
+}
+bool SwitchFill(out int value) { value = 6; return true; }
+
+int SwitchProbe(int selector)
+{
+    int later;
+    switch (selector)
+    {
+        case 1: later = 10; break;
+        default: later = 20; break;
+    }
+    mut var calls = 0;
+    var chosen = SwitchMark(calls, 1) + SwitchMark(calls, selector) switch
+    {
+        1 => SwitchMark(calls, 2),
+        _ => SwitchMark(calls, 3),
+    } + SwitchMark(calls, 4);
+    var skipped = false && (selector switch { 1 => SwitchMark(calls, 5) > 0, _ => true });
+    var conditional = selector == 1 ? (selector switch { 1 => 7, _ => 8 })
+                                   : (selector switch { 2 => 9, _ => 10 });
+    mut var count = 0;
+    for (var i = 0; i switch { 0 => true, 1 => true, _ => false }; i++)
+    {
+        int each;
+        each = i;
+        if (i == 0) continue;
+        count += each;
+    }
+    while (count switch { 1 => true, _ => false }) count += 1;
+    var nested = selector switch { 1 => (selector switch { 1 => 11, _ => 12 }), _ => 13 };
+    var scoped = (SwitchFill(out var before) ? before : 0) + selector switch
+    {
+        1 => SwitchFill(out var value) ? value : 0,
+        _ => SwitchFill(out var value) ? value + 1 : 0,
+    };
+    var trace = selector == 1 ? 1124 : selector == 2 ? 1234 : 1034;
+    if (calls != trace || skipped || count != 2 || SWITCH_PICK != 7) return -100;
+    return later + chosen + conditional + nested + scoped;
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    var at = int(vertex.uv.x * 3);
+    int picked;
+    picked = at switch { 1 => SwitchProbe(1), 2 => SwitchProbe(2), _ => SwitchProbe(0) };
+    color = Color(picked / 100.0, 0, 0);
+}
+view Show(Models models) { Draw.Mesh(models.corners, [0, 1, 2], Shade); }

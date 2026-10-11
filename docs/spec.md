@@ -386,6 +386,8 @@ struct Money
 
 - Everything is read-only by default. Mutability is opt-in with `mut`.
 - This includes local variables. `var` infers the type, like C++ `auto`, and is read-only.
+- An explicitly typed local can omit its initializer (`Animation current;`). Every path reaching a read must initialize it first. Without `mut`, each path initializes it once, through a whole-value assignment or an `out` argument. `mut Animation current;` permits later changes. `var` and `mut var` still need an initializer to infer the type. A declaration inside a loop creates a fresh local each iteration; initializing a read-only local declared outside on a repeating path is an error.
+- A statement switch proves initialization through all its sections plus a `default` that assigns or ends the path. Covering only named enum members isn't exhaustive, because enums can hold unnamed numbers.
 
 ```csharp
 var speed = player.speed * 2;    // read-only, type inferred
@@ -1090,6 +1092,16 @@ Built 2026-10-06; the picks below await the owner.
 ### Decided
 
 - Enums and `switch` follow C#'s syntax.
+- Switch expressions choose a value: `value switch { Constant => result, _ => fallback }`. The selector runs once and only the selected arm runs. A final `_` arm is required, including for enums. Arm results have compatible types.
+
+```csharp
+Animation current = zombie.state switch
+{
+    ZombieState.Run => movementAnims.rootRun,
+    ZombieState.Jump => movementAnims.rootJump,
+    _ => movementAnims.rootRun,
+};
+```
 
 ```csharp
 enum Phase
@@ -1132,11 +1144,13 @@ system Advance(mut Match match)
 - Each section has its own scope for locals.
 - A function returns on every path when a switch with a `default` returns in every section.
 - `switch`, `case`, `default` and `break` are keywords.
+- Built switch expressions accept constant labels of the same types as statement switches, with no duplicate values and an optional trailing comma. Each arm has its own scope for `out` locals. The expected result type supplies `default`, `null` and list-literal types; otherwise the compiler infers a common type from the arms. `switch` binds after unary operators and before arithmetic; parentheses switch on a compound expression. Constant selectors and arms work in constants and field defaults. CPU, async and GPU lowering preserve source evaluation order and lazy arm selection, within those contexts' existing type restrictions.
 
 ### Open
 
 - Ordering enums (`<`).
 - A warning when a switch on an enum has no `default` and misses a member.
+- Patterns and guards in switch expressions.
 
 ## Loops
 

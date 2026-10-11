@@ -1,5 +1,14 @@
 # The docs site
 
+Delayed initialization and switch expressions (2026-10-11): Basics explains
+explicitly typed delayed locals, read-before-assignment and once-only
+initialization, when mut is needed, switch value syntax, final fallback,
+compatible/contextual arm types, scopes and precedence. The spec separates
+the owner's approved design from implemented provisional details and the
+unbuilt patterns/guards. All 217 grammar checks and the production docs build
+pass, using the existing allowed placeholders for unstaged game/example
+pages. Compiler/editor/GPU validation stays in their subsystem notes.
+
 Editor review (2026-10-11): the Editors page clarifies Restricted Mode's user
 setting and PATH exclusions, including symlinks/junctions. The docs production
 build and all 215 shared grammar checks pass; implementation, regressions and

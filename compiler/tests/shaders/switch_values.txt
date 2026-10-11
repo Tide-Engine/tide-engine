@@ -1,0 +1,577 @@
+// Shade on Vertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+out vec2 tide_s1;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+void main() {
+    tt_Vertex tide_vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Shade on Vertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+float tide_f(float x) {
+    return x;
+}
+int tide_i(int x) {
+    return x;
+}
+int tf_SwitchMark(inout int t_calls, int t_digit) {
+    t_calls = ((t_calls * 10) + t_digit);
+    return t_digit;
+}
+
+bool tf_SwitchFill(inout int t_value) {
+    t_value = 6;
+    return true;
+}
+
+int tf_SwitchProbe(int t_selector) {
+    int t_later = 0;
+    switch (t_selector) {
+        case 1: {
+            t_later = 10;
+            break;
+        }
+        default: {
+            t_later = 20;
+            break;
+        }
+    }
+    int t_calls = 0;
+    int tide_choice3 = 1;
+    int tide_choice4 = tf_SwitchMark(t_calls, tide_choice3);
+    int tide_choice5 = t_selector;
+    int tide_choice6 = tf_SwitchMark(t_calls, tide_choice5);
+    int tide_choice7;
+    switch (tide_choice6) {
+        case 1: {
+            int tide_choice8 = 2;
+            tide_choice7 = tf_SwitchMark(t_calls, tide_choice8);
+            break;
+        }
+        default: {
+            int tide_choice9 = 3;
+            tide_choice7 = tf_SwitchMark(t_calls, tide_choice9);
+            break;
+        }
+    }
+    int tide_choice10 = (tide_choice4 + tide_choice7);
+    int tide_choice11 = 4;
+    int tide_choice12 = tf_SwitchMark(t_calls, tide_choice11);
+    int t_chosen = (tide_choice10 + tide_choice12);
+    bool tide_choice13 = false;
+    bool tide_choice14;
+    if (tide_choice13) {
+        int tide_choice15 = t_selector;
+        bool tide_choice16;
+        switch (tide_choice15) {
+            case 1: {
+                int tide_choice17 = 5;
+                int tide_choice18 = tf_SwitchMark(t_calls, tide_choice17);
+                int tide_choice19 = 0;
+                tide_choice16 = (tide_choice18 > tide_choice19);
+                break;
+            }
+            default: {
+                tide_choice16 = true;
+                break;
+            }
+        }
+        tide_choice14 = tide_choice16;
+    } else {
+        tide_choice14 = tide_choice13;
+    }
+    bool t_skipped = tide_choice14;
+    int tide_choice20 = t_selector;
+    int tide_choice21 = 1;
+    bool tide_choice22 = (tide_choice20 == tide_choice21);
+    int tide_choice23;
+    if (tide_choice22) {
+        int tide_choice24 = t_selector;
+        int tide_choice25;
+        switch (tide_choice24) {
+            case 1: {
+                tide_choice25 = 7;
+                break;
+            }
+            default: {
+                tide_choice25 = 8;
+                break;
+            }
+        }
+        tide_choice23 = tide_choice25;
+    } else {
+        int tide_choice26 = t_selector;
+        int tide_choice27;
+        switch (tide_choice26) {
+            case 2: {
+                tide_choice27 = 9;
+                break;
+            }
+            default: {
+                tide_choice27 = 10;
+                break;
+            }
+        }
+        tide_choice23 = tide_choice27;
+    }
+    int t_conditional = tide_choice23;
+    int t_count = 0;
+    {
+        int t_i = 0;
+        bool tide_choice28 = true;
+        while (true) {
+            if (!tide_choice28) {
+                t_i = (t_i + 1);
+            }
+            tide_choice28 = false;
+            int tide_choice29 = t_i;
+            bool tide_choice30;
+            switch (tide_choice29) {
+                case 0: {
+                    tide_choice30 = true;
+                    break;
+                }
+                case 1: {
+                    tide_choice30 = true;
+                    break;
+                }
+                default: {
+                    tide_choice30 = false;
+                    break;
+                }
+            }
+            if (!(tide_choice30)) { break; }
+            {
+                int t_each = 0;
+                t_each = t_i;
+                if ((t_i == 0)) {
+                    continue;
+                }
+                t_count = (t_count + t_each);
+            }
+        }
+    }
+    {
+        while (true) {
+            int tide_choice31 = t_count;
+            bool tide_choice32;
+            switch (tide_choice31) {
+                case 1: {
+                    tide_choice32 = true;
+                    break;
+                }
+                default: {
+                    tide_choice32 = false;
+                    break;
+                }
+            }
+            if (!(tide_choice32)) { break; }
+            t_count = (t_count + 1);
+        }
+    }
+    int tide_choice33 = t_selector;
+    int tide_choice34;
+    switch (tide_choice33) {
+        case 1: {
+            int tide_choice35 = t_selector;
+            int tide_choice36;
+            switch (tide_choice35) {
+                case 1: {
+                    tide_choice36 = 11;
+                    break;
+                }
+                default: {
+                    tide_choice36 = 12;
+                    break;
+                }
+            }
+            tide_choice34 = tide_choice36;
+            break;
+        }
+        default: {
+            tide_choice34 = 13;
+            break;
+        }
+    }
+    int t_nested = tide_choice34;
+    int t_before = 0;
+    bool tide_choice37 = tf_SwitchFill(t_before);
+    int tide_choice38;
+    if (tide_choice37) {
+        tide_choice38 = t_before;
+    } else {
+        tide_choice38 = 0;
+    }
+    int tide_choice39 = t_selector;
+    int tide_choice40;
+    switch (tide_choice39) {
+        case 1: {
+            int t_value = 0;
+            bool tide_choice41 = tf_SwitchFill(t_value);
+            int tide_choice42;
+            if (tide_choice41) {
+                tide_choice42 = t_value;
+            } else {
+                tide_choice42 = 0;
+            }
+            tide_choice40 = tide_choice42;
+            break;
+        }
+        default: {
+            int t_value = 0;
+            bool tide_choice43 = tf_SwitchFill(t_value);
+            int tide_choice44;
+            if (tide_choice43) {
+                int tide_choice45 = t_value;
+                int tide_choice46 = 1;
+                tide_choice44 = (tide_choice45 + tide_choice46);
+            } else {
+                tide_choice44 = 0;
+            }
+            tide_choice40 = tide_choice44;
+            break;
+        }
+    }
+    int t_scoped = (tide_choice38 + tide_choice40);
+    int t_trace = ((t_selector == 1) ? 1124 : ((t_selector == 2) ? 1234 : 1034));
+    if (((((t_calls != t_trace) || t_skipped) || (t_count != 2)) || (tide_i(7) != tide_i(7)))) {
+        return (-100);
+    }
+    return ((((t_later + t_chosen) + t_conditional) + t_nested) + t_scoped);
+}
+
+void ts_Shade(tt_Vertex t_vertex, inout vec4 t_color) {
+    int t_at = int((t_vertex.m_uv.x * 3.0));
+    int t_picked = 0;
+    int tide_choice0 = t_at;
+    int tide_choice1;
+    switch (tide_choice0) {
+        case 1: {
+            int tide_choice2 = 1;
+            tide_choice1 = tf_SwitchProbe(tide_choice2);
+            break;
+        }
+        case 2: {
+            int tide_choice47 = 2;
+            tide_choice1 = tf_SwitchProbe(tide_choice47);
+            break;
+        }
+        default: {
+            int tide_choice48 = 0;
+            tide_choice1 = tf_SwitchProbe(tide_choice48);
+            break;
+        }
+    }
+    t_picked = tide_choice1;
+    t_color = vec4((float(t_picked) / tide_f(100.0)), 0.0, 0.0, 1.0);
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Shade(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Shade on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tf_SwitchMark(t_calls: ptr<function, i32>, t_digit: i32) -> i32 {
+    (*t_calls) = (((*t_calls) * 10) + t_digit);
+    return t_digit;
+}
+
+fn tf_SwitchFill(t_value: ptr<function, i32>) -> bool {
+    (*t_value) = 6;
+    return true;
+}
+
+fn tf_SwitchProbe(t_selector: i32) -> i32 {
+    var t_later: i32 = i32();
+    switch t_selector {
+        case 1 {
+            t_later = 10;
+            break;
+        }
+        default {
+            t_later = 20;
+            break;
+        }
+    }
+    var t_calls: i32 = 0;
+    var tide_choice3: i32 = 1;
+    var tide_choice4: i32 = tf_SwitchMark(&t_calls, tide_choice3);
+    var tide_choice5: i32 = t_selector;
+    var tide_choice6: i32 = tf_SwitchMark(&t_calls, tide_choice5);
+    var tide_choice7: i32;
+    switch (tide_choice6) {
+        case 1 {
+            var tide_choice8: i32 = 2;
+            tide_choice7 = tf_SwitchMark(&t_calls, tide_choice8);
+        }
+        default {
+            var tide_choice9: i32 = 3;
+            tide_choice7 = tf_SwitchMark(&t_calls, tide_choice9);
+        }
+    }
+    var tide_choice10: i32 = (tide_choice4 + tide_choice7);
+    var tide_choice11: i32 = 4;
+    var tide_choice12: i32 = tf_SwitchMark(&t_calls, tide_choice11);
+    var t_chosen: i32 = (tide_choice10 + tide_choice12);
+    var tide_choice13: bool = false;
+    var tide_choice14: bool;
+    if (tide_choice13) {
+        var tide_choice15: i32 = t_selector;
+        var tide_choice16: bool;
+        switch (tide_choice15) {
+            case 1 {
+                var tide_choice17: i32 = 5;
+                var tide_choice18: i32 = tf_SwitchMark(&t_calls, tide_choice17);
+                var tide_choice19: i32 = 0;
+                tide_choice16 = (tide_choice18 > tide_choice19);
+            }
+            default {
+                tide_choice16 = true;
+            }
+        }
+        tide_choice14 = tide_choice16;
+    } else {
+        tide_choice14 = tide_choice13;
+    }
+    var t_skipped: bool = tide_choice14;
+    var tide_choice20: i32 = t_selector;
+    var tide_choice21: i32 = 1;
+    var tide_choice22: bool = (tide_choice20 == tide_choice21);
+    var tide_choice23: i32;
+    if (tide_choice22) {
+        var tide_choice24: i32 = t_selector;
+        var tide_choice25: i32;
+        switch (tide_choice24) {
+            case 1 {
+                tide_choice25 = 7;
+            }
+            default {
+                tide_choice25 = 8;
+            }
+        }
+        tide_choice23 = tide_choice25;
+    } else {
+        var tide_choice26: i32 = t_selector;
+        var tide_choice27: i32;
+        switch (tide_choice26) {
+            case 2 {
+                tide_choice27 = 9;
+            }
+            default {
+                tide_choice27 = 10;
+            }
+        }
+        tide_choice23 = tide_choice27;
+    }
+    var t_conditional: i32 = tide_choice23;
+    var t_count: i32 = 0;
+    {
+        var t_i: i32 = 0;
+        var tide_choice28: bool = true;
+        loop {
+            if (!tide_choice28) {
+                t_i = (t_i + 1);
+            }
+            tide_choice28 = false;
+            var tide_choice29: i32 = t_i;
+            var tide_choice30: bool;
+            switch (tide_choice29) {
+                case 0 {
+                    tide_choice30 = true;
+                }
+                case 1 {
+                    tide_choice30 = true;
+                }
+                default {
+                    tide_choice30 = false;
+                }
+            }
+            if (!(tide_choice30)) { break; }
+            {
+                var t_each: i32 = i32();
+                t_each = t_i;
+                if ((t_i == 0)) {
+                    continue;
+                }
+                t_count = (t_count + t_each);
+            }
+        }
+    }
+    {
+        loop {
+            var tide_choice31: i32 = t_count;
+            var tide_choice32: bool;
+            switch (tide_choice31) {
+                case 1 {
+                    tide_choice32 = true;
+                }
+                default {
+                    tide_choice32 = false;
+                }
+            }
+            if (!(tide_choice32)) { break; }
+            t_count = (t_count + 1);
+        }
+    }
+    var tide_choice33: i32 = t_selector;
+    var tide_choice34: i32;
+    switch (tide_choice33) {
+        case 1 {
+            var tide_choice35: i32 = t_selector;
+            var tide_choice36: i32;
+            switch (tide_choice35) {
+                case 1 {
+                    tide_choice36 = 11;
+                }
+                default {
+                    tide_choice36 = 12;
+                }
+            }
+            tide_choice34 = tide_choice36;
+        }
+        default {
+            tide_choice34 = 13;
+        }
+    }
+    var t_nested: i32 = tide_choice34;
+    var t_before: i32 = i32();
+    var tide_choice37: bool = tf_SwitchFill(&t_before);
+    var tide_choice38: i32;
+    if (tide_choice37) {
+        tide_choice38 = t_before;
+    } else {
+        tide_choice38 = 0;
+    }
+    var tide_choice39: i32 = t_selector;
+    var tide_choice40: i32;
+    switch (tide_choice39) {
+        case 1 {
+            var t_value: i32 = i32();
+            var tide_choice41: bool = tf_SwitchFill(&t_value);
+            var tide_choice42: i32;
+            if (tide_choice41) {
+                tide_choice42 = t_value;
+            } else {
+                tide_choice42 = 0;
+            }
+            tide_choice40 = tide_choice42;
+        }
+        default {
+            var t_value: i32 = i32();
+            var tide_choice43: bool = tf_SwitchFill(&t_value);
+            var tide_choice44: i32;
+            if (tide_choice43) {
+                var tide_choice45: i32 = t_value;
+                var tide_choice46: i32 = 1;
+                tide_choice44 = (tide_choice45 + tide_choice46);
+            } else {
+                tide_choice44 = 0;
+            }
+            tide_choice40 = tide_choice44;
+        }
+    }
+    var t_scoped: i32 = (tide_choice38 + tide_choice40);
+    var t_trace: i32 = select(select(1034, 1234, (t_selector == 2)), 1124, (t_selector == 1));
+    if (((((t_calls != t_trace) || t_skipped) || (t_count != 2)) || (tide_i(7) != tide_i(7)))) {
+        return (-100);
+    }
+    return ((((t_later + t_chosen) + t_conditional) + t_nested) + t_scoped);
+}
+
+fn ts_Shade(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    var t_at: i32 = i32((t_vertex.m_uv.x * 3.0));
+    var t_picked: i32 = i32();
+    var tide_choice0: i32 = t_at;
+    var tide_choice1: i32;
+    switch (tide_choice0) {
+        case 1 {
+            var tide_choice2: i32 = 1;
+            tide_choice1 = tf_SwitchProbe(tide_choice2);
+        }
+        case 2 {
+            var tide_choice47: i32 = 2;
+            tide_choice1 = tf_SwitchProbe(tide_choice47);
+        }
+        default {
+            var tide_choice48: i32 = 0;
+            tide_choice1 = tf_SwitchProbe(tide_choice48);
+        }
+    }
+    t_picked = tide_choice1;
+    (*t_color) = vec4f((f32(t_picked) / tide_f(100.0)), 0.0, 0.0, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Shade(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

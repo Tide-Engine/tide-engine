@@ -1,5 +1,57 @@
 # Language features, as tidec builds them
 
+## Delayed locals and switch expressions, 2026-10-11
+
+The owner approved both features after showing a local `Animation` selected by
+a statement switch. Explicitly typed locals may omit initialization. `var`
+still needs a value. A delayed read-only local is initialized once on every
+reachable path before reading it; `mut` permits subsequent writes. A statement
+switch needs an assigning or terminating default, including for enums.
+
+`assigned.c` tracks definite and possible assignments separately and excludes
+unreachable paths from joins. Read-only delayed locals are whole values;
+mutable structs retain the existing field-by-field assignment analysis.
+Reachable loop back edges are visited again to reject repeated initialization,
+while declarations reset their state for each iteration. Callback blocks are
+also checked for repeating initialization. Sort's existing capture-write
+restriction still rejects initialization of an outer delayed local; a local
+declared inside its comparison can be initialized each invocation.
+Plain assignments and `out` calls initialize a delayed local; compound writes
+and `mut` calls require an initialized mutable value. Generated C gives storage its safe type
+default, including padding, without making a source-level read legal.
+
+Switch expressions use `selector switch { constant => value, _ => fallback }`.
+The checker validates constant labels, duplicate folded values, a single final
+fallback and compatible result types, supplying contextual types to default,
+null and collection literals. Each arm owns its out-local scope. Parsing binds
+switch after unary operators and before arithmetic. Constant folding supports
+integer and boolean results; fully constant expressions also work in field
+defaults and constants. Pattern matching and guards remain unbuilt.
+
+C lowering captures the selector once and evaluates only the selected arm,
+preserving surrounding operand order. An arm captures an owned collection
+value before later operands can change its source, and marks that temporary
+as already copied. Existing task-frame declarations preserve selectors,
+branch-local temporaries and delayed locals across awaits, snapshots and
+replay. No runtime API or ABI changed. GPU and editor details are in
+`notes/shaders.md` and `notes/editors.md`.
+
+Coverage: `e2e/switch_values` checks branch initialization, fresh loop locals,
+mutable struct fields, out calls, Animation values, constant defaults,
+integer/byte/char/enum selectors (including unnamed enum numbers and the
+minimum long), inferred/contextual values, lazy effects and operand order,
+owned list copies, async waits and snapshot replay. The `delayed_*` and
+`switch_value_*` error fixtures pin invalid reads/writes, repeating paths,
+missing fallback, duplicate/type/nonconstant labels and result mismatches.
+Validation on Windows with Node 24.16: warning-free full native and web debug
+builds; full suites 2,108/2,108 native and 2,079/2,079 web, including OpenGL,
+WebGL and WebGPU CPU/pixel parity and unchanged determinism checks. The final
+comparison coverage addition passes 32 focused native and 31 web checks,
+including the full native language-server suite, the positive fresh-local
+callback and the existing comparison-capture rejection. All 217 grammar
+checks and the production docs build pass. Linux, macOS, MinGW and Android
+coverage remains CI's job; no workflow was dispatched.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language
