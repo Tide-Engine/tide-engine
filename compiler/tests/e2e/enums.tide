@@ -15,6 +15,31 @@ const int ALIASES = Aliases.Count();
 const int FORWARD_COUNT = Later.Count();
 enum Later { A = Direction.Count(), B }
 
+const Weapon SHORT_BOW = .Bow;
+singleton Shorthand { Weapon weapon = .Bow; int checks; }
+Weapon ShortReturn(Weapon weapon = .Sword) { return weapon == .Sword ? .Bow : .Sword; }
+Weapon ShortIdentity(Weapon weapon) { return weapon; }
+int ShortOverload(Weapon weapon, int n) { return int(weapon) + n; }
+int ShortOverload(Phase phase, float n) { return int(phase) + int(n); }
+system CheckShorthand(mut Shorthand result)
+{
+    mut Weapon weapon = .Sword;
+    weapon = .Bow;
+    List<Weapon> weapons = [.Sword, .Bow];
+    var loadout = Loadout { primary = .Sword };
+    Weapon chosen = true ? .Bow : .Sword;
+    result.weapon = .Sword;
+    result.checks = int(weapon) + int(ShortReturn()) + int(ShortIdentity(.Bow))
+                  + ShortOverload(.Bow, 2) + int(weapons[1]) + int(loadout.primary)
+                  + int(chosen) + int(SHORT_BOW);
+    if (.Sword == result.weapon && result.weapon != .Bow) result.checks += 10;
+    switch (result.weapon)
+    {
+        case .Sword: result.checks += 20; break;
+        case .Bow: break;
+    }
+}
+
 struct Loadout
 {
     Weapon primary = Weapon.Bow;

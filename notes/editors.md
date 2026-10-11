@@ -13,9 +13,45 @@ Parser diagnostics for `(int)direction` include `int(direction)` as their note.
 `lsp_enum_count_and_cast_diagnostic` covers member/method coexistence, hover,
 static-only signature help, qualified navigation/rename, cast diagnostics with parser recovery
 and valid parenthesized subtraction, indexing and postfix increments. This is
-protocol coverage; the full native language-server suite passes (214 tests).
+protocol coverage; the full native language-server suite passes after merging
+dev's contextual enum support (215 tests).
 The full-suite regression also pins member-only switch-case completion. Actual
 editor host rendering was not separately exercised.
+
+## Expected enum completion and shorthand, 2026-10-11
+
+Owner-requested assignment completion ranks and preselects the expected enum
+type (`ZombieState` after `zombie.state =`), with qualified members next and the
+ordinary expression list still available. This does not exclude other valid
+enum-valued variables or functions. `completion_enum` uses preceding tokens
+and the surviving scope because incomplete expressions can discard their AST.
+It handles identifier/member assignment targets, typed declarations/defaults,
+returns, comparisons and enum case labels. Leading-dot completion offers only
+the expected enum's members in declaration order; switch cases keep unused
+members first. Ordinary function/method
+arguments and built-in signature arguments are supported when their candidate
+parameter types agree, including named arguments. Candidate completion is
+conservative: it does not re-run overload resolution on the other arguments,
+and more complex assignment targets may lack the token fallback's type.
+
+`walk_expr` skips the implicit type receiver while retaining the member's exact
+source occurrence, so hover/navigation/rename/highlighting use the same enum
+symbol without inventing a source reference to its type. Formatting spaces
+leading dots after assignments, returns and labels while keeping member-access
+dots tight. The shared TextMate grammar gives shorthand an enum-value scope;
+ordinary member access and leading-point numeric literals keep their scopes.
+The Editors page documents completion, and language behavior is recorded in
+`notes/language.md` and the spec.
+
+`lsp_enum_assignment_completion_and_shorthand` checks ranking, single
+preselection, partial members, incomplete returns/initializers/comparisons/cases,
+positional/named/built-in arguments (including List.Add and Texture.Sample),
+unused-first case ordering, malformed input, unchanged non-enum completion, valid built-in
+checking, member hover/rename, and formatting idempotence. The shared grammar
+test covers uppercase/lowercase shorthand and numeric/member regressions.
+These are protocol/grammar tests; no interactive editor-host test was added.
+Final merged validation: all 2,085 native and 2,057 web debug tests pass,
+including the complete tidels suites; docs build and 217 grammar checks pass.
 
 ## Sample playback hints, 2026-10-11
 

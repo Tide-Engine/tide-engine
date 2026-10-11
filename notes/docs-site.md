@@ -10,6 +10,16 @@ owner's count/conversion decisions as decided; `Values()` remains an open,
 unimplemented proposal. `npm run build` passes with the existing allowed
 missing-example 404s. No site deployment was requested.
 
+Contextual enums (2026-10-11): Language basics and the spec document the
+owner-approved `.Idle` spelling, expected-type contexts and qualified spelling
+for missing context or ambiguous overloads. Editors documents expected enum
+preselection and leading-dot member completion. The shared grammar recognizes
+shorthand without changing leading-point floats or ordinary member scopes;
+all 217 grammar tests and the production docs build pass after merging dev.
+No deployment.
+
+Automatic texture compression (2026-10-11): Assets, Meshes and textures, and the spec explain automatic eligible color BC1/BC3 assets, lossiness, exact Raw/RGBA fallback, prepared mips and bounded whole-image GPU residency. They distinguish GPU savings from the current pack-size increase and unbuilt mip streaming. Implementation evidence and final validation are in `notes/textures.md`.
+
 Sample playback hints (2026-10-11): Editors clarifies that inlay parameter
 labels describe written literals; omitted defaults and named arguments have no
 label. The production docs build passes with the existing allowed missing-example

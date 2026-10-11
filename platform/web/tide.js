@@ -111,6 +111,7 @@
     // arguments go first, and win.
     const words = [...(config.arguments || [])];
     const address = new URLSearchParams(location.search);
+    if (address.get('texture-compression') === 'off') config.textureCompression = false;
     if (address.has('debug-views') && !words.includes('--debug-views')) {
         words.push('--debug-views');
     }
@@ -1389,7 +1390,14 @@
         glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
         glGenTextures: (n, ptr) => generate('texture', () => gl.createTexture(), n, ptr),
         glGenVertexArrays: (n, ptr) => generate('vertexArray', () => gl.createVertexArray(), n, ptr),
-        glGetIntegerv: (pname, ptr) => writeParameter(gl.getParameter(pname), ptr),
+        glGetIntegerv(pname, ptr) {
+            if (pname === 0x86A2 || pname === 0x86A3) {
+                if (config.textureCompression !== false) gl.getExtension('WEBGL_compressed_texture_s3tc');
+                const formats = config.textureCompression === false ? [] : gl.getParameter(gl.COMPRESSED_TEXTURE_FORMATS);
+                if (pname === 0x86A2) writeParameter(formats.length, ptr);
+                else i32().set(formats, ptr >> 2);
+            } else writeParameter(gl.getParameter(pname), ptr);
+        },
         // A format's sample counts (GL_SAMPLES), the most first: as many as there's room for, and none written
         // where the format has none
         glGetInternalformativ(target, format, pname, count, ptr) {
@@ -1438,6 +1446,8 @@
             const [array, offset] = pixels(type, ptr);
             gl.texImage2D(target, level, internal, w, h, border, format, type, array, offset);
         },
+        glCompressedTexImage2D: (target, level, format, w, h, border, size, ptr) =>
+            gl.compressedTexImage2D(target, level, format, w, h, border, u8(), ptr, size),
         glTexParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
         glTexSubImage2D(target, level, x, y, w, h, format, type, ptr) {
             const [array, offset] = pixels(type, ptr);
@@ -1504,9 +1514,12 @@
                 : adapter.isFallbackAdapter;
             if (software && wantedBackend !== 'webgpu' && !again) return;
             let found;
+            const requiredFeatures = [];
+            if (config.textureCompression !== false && adapter.features.has('texture-compression-bc'))
+                requiredFeatures.push('texture-compression-bc');
             if (adapter.features.has('timestamp-query')) {
                 try {
-                    found = await adapter.requestDevice({ requiredFeatures: ['timestamp-query'] });
+                    found = await adapter.requestDevice({ requiredFeatures: [...requiredFeatures, 'timestamp-query'] });
                 } catch {
                     // Timing is optional. Ask anew: a request can consume its adapter.
                     adapter = await navigator.gpu.requestAdapter();
@@ -1514,9 +1527,11 @@
                     const fallback = adapter.info && 'isFallbackAdapter' in adapter.info ? adapter.info.isFallbackAdapter
                         : adapter.isFallbackAdapter;
                     if (fallback && wantedBackend !== 'webgpu' && !again) return;
-                    found = await adapter.requestDevice();
+                    const features = config.textureCompression !== false
+                        && adapter.features.has('texture-compression-bc') ? ['texture-compression-bc'] : [];
+                    found = await adapter.requestDevice(features.length ? { requiredFeatures: features } : undefined);
                 }
-            } else found = await adapter.requestDevice();
+            } else found = await adapter.requestDevice(requiredFeatures.length ? { requiredFeatures } : undefined);
             // A mistake in how the program uses it: test pages stop at one, as for GL's
             found.onuncapturederror = event => {
                 if (config.checkGL) fail(new Error('WebGPU: ' + event.error.message));
@@ -1902,6 +1917,26 @@
             const [data, offset] = memoryBytes(ptr, t.row * t.height);
             device.queue.writeTexture({ texture: t.texture }, data, { offset, bytesPerRow: t.row, rowsPerImage: t.height },
                 [t.width, t.height]);
+        },
+        gpu_texture_blocks(width, height, format, levels, ptr) {
+            if (config.textureCompression === false || !device.features.has('texture-compression-bc')) return 0;
+            const block = format === 1 ? 8 : 16;
+            format = format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
+            const texture = device.createTexture({ size: [width, height], format, mipLevelCount: levels, usage });
+            let w = width, h = height, offset = ptr;
+            for (let level = 0; level < levels; level++) {
+                const blocksWide = Math.ceil(w / 4), blocksHigh = Math.ceil(h / 4);
+                const bytes = blocksWide * blocksHigh * block;
+                const [data, dataOffset] = memoryBytes(offset, bytes);
+                device.queue.writeTexture({ texture, mipLevel: level }, data,
+                    { offset: dataOffset, bytesPerRow: blocksWide * block, rowsPerImage: blocksHigh * 4 },
+                    [blocksWide * 4, blocksHigh * 4]);
+                offset += bytes;
+                w = Math.max(1, w >> 1); h = Math.max(1, h >> 1);
+            }
+            return gpuAdd('texture', { texture, view: texture.createView(), width, height, format, usage,
+                mipped: true, groups: new Set() });
         },
         // Some of its pixels, read where they are among all of them: rows the texture's own width apart
         gpu_texture_write_part(id, ptr, x, y, width, height) {

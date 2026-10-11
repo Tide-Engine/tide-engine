@@ -5,6 +5,15 @@
 
 static tide_world world;
 
+TIDE_TEST(enum_shorthand_uses_expected_types)
+{
+    tide_world_init(&world, 1.0f);
+    TIDE_CHECK(world.Shorthand.weapon == Weapon_Bow);
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Shorthand.weapon == Weapon_Sword);
+    TIDE_CHECK(world.Shorthand.checks == 39);
+}
+
 static void ticks(int n)
 {
     for (int i = 0; i < n; i++) tide_world_tick(&world);

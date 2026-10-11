@@ -27,6 +27,11 @@ typedef ptrdiff_t GLsizeiptr;
 typedef ptrdiff_t GLintptr;
 
 enum {
+    GL_NUM_COMPRESSED_TEXTURE_FORMATS = 0x86A2,
+    GL_COMPRESSED_TEXTURE_FORMATS = 0x86A3,
+    GL_COMPRESSED_RGB_S3TC_DXT1 = 0x83F0,
+    GL_COMPRESSED_RGBA_S3TC_DXT5 = 0x83F3,
+    GL_TEXTURE_MAX_LEVEL = 0x813D,
     GL_FALSE = 0,
     GL_TRUE = 1,
     GL_NONE = 0,
@@ -206,6 +211,8 @@ enum {
       (GLenum target, GLint level, GLint internal, GLsizei width, GLsizei height, GLint border, GLenum format,         \
        GLenum type, const void *pixels),                                                                               \
       (target, level, internal, width, height, border, format, type, pixels))                                          \
+    V(CompressedTexImage2D, (GLenum target, GLint level, GLenum format, GLsizei width, GLsizei height, GLint border,   \
+        GLsizei size, const void *pixels), (target, level, format, width, height, border, size, pixels))              \
     V(TexParameteri, (GLenum target, GLenum name, GLint value), (target, name, value))                                 \
     V(TexSubImage2D,                                                                                                   \
       (GLenum target, GLint level, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type,        \

@@ -1,0 +1,4 @@
+// expect: '.Idle' needs an expected enum type; write 'EnumName.Idle' here
+enum State { Idle }
+scene Main { }
+view V() { int state = .Idle; Debug.Log(state); }

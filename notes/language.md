@@ -1,5 +1,35 @@
 # Language features, as tidec builds them
 
+## Contextual enum members, 2026-10-11
+
+Owner-approved `.Idle` shorthand uses the expected enum type. The parser keeps
+an `E_MEMBER` with `enum_shorthand` and an implicit `E_NAME` receiver; no new
+expression kind, runtime ABI or generated representation is needed. The checker
+binds that receiver from typed initialization/assignment, field and parameter
+defaults, returns, ordinary arguments, container elements/keys, comparisons and
+switch labels. Typed conditionals carry the expected enum into both branches;
+otherwise one ordinary branch can supply the other's type. Overload resolution
+defers shorthand like `default`, requires enum parameters and never picks an
+enum by its member names. Missing/non-enum context and ambiguous overloads need
+the qualified spelling. Built-in signatures and fixed Sample filter/wrap
+parameters use the same members; implicit built-in enum names retain generated
+declarations, bold-font and trilinear flags. Checking still runs ordinary
+assignment/capability rules. Source evaluation order and enum numeric values
+are unchanged.
+
+Regression coverage: `enum_shorthand_uses_expected_types` in the native/web
+`enums` E2E, the `text` E2E's built-in enum arguments and return, four
+`enum_shorthand_*` error fixtures, and unchanged GLSL/WGSL goldens for `lit`,
+`maps`, `declared` and `cubemaps`. Editor behavior and validation are recorded
+in `notes/editors.md`. The spec and Language basics page document the feature;
+untyped `var state = .Idle` remains an error. This adds no general backward
+type inference, enum-member search or attribute-specific shorthand contexts.
+
+Final validation after merging dev: full Windows native debug (2,085 tests)
+and web debug (2,057 tests, including WebGL/WebGPU) pass with Node 24.16.0.
+The docs production build and all 217 shared grammar checks pass. Other native
+platforms, sanitizers and Android were not run on this Windows machine.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language
@@ -24,9 +54,10 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   expressions. Cast int/float/enum/qualified error fixtures and the LSP recovery
   regression pin the guidance. Enum `Values()` remains unimplemented.
   Editor and GPU integration are recorded in their notes. Validation: complete
-  native debug (2,088 CTest entries) and web debug (2,059) suites pass, using
-  Node 24.19.0. The native run caught Count completion leaking into enum case
-  labels; after the editor-only fix, the full 214-test language-server suite
+  native debug (2,094 CTest entries) and web debug (2,066) suites pass after
+  merging dev's contextual enums and texture work, using Node 24.19.0.
+  The first native run caught Count completion leaking into enum case
+  labels; after the editor-only fix, the full 215-test language-server suite
   was rebuilt and rerun successfully. Shader probes pass on native OpenGL,
   WebGL and WebGPU, and the production docs build passes. Other native platforms
   and Android were not run locally; CI was not dispatched.
