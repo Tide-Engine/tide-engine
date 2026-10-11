@@ -280,3 +280,12 @@ the production build and five HTTP/SEO/access checks pass again. Source
 health checks. Anonymous Inside Out HTML/thumbnail requests return 200 with
 the tested final hashes, and two-browser gameplay of those downloaded bytes
 through the production relay passes. No CI was dispatched.
+
+Inside Out local-camera revision (2026-10-11): its catalog description and
+gameplay thumbnail now show the whole current room with one tile of outside
+context. Camera targets no longer follow the partner. Public serving,
+catalog authentication and the other three prototypes are unchanged. The
+site check has zero errors/warnings; its production build and all eighteen
+analytics/admin plus five production HTTP/SEO/access tests pass. Release,
+staged and packaged Inside Out page/thumbnail bytes match; their hashes and
+game-specific camera validation are in `notes/inside-out.md`.
