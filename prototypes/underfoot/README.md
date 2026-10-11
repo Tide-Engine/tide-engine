@@ -70,7 +70,8 @@ build/debug/bin/underfoot
 The web page is `underfoot_page` in the `web-debug` or `web-release` presets,
 which stages it for the site at `docs/static/prototypes/underfoot/`.
 
-`art/make_art.py` makes every picture with numpy and Pillow, and `sfx/make_sounds.py` every sound.
+The game is drawn in 3D from meshes it builds itself; `art/make_art.py` makes
+the marks on their top faces with numpy and Pillow, and `sfx/make_sounds.py` every sound.
 
 `tools/solve.c` is the solver and the search that found the puzzles, and reads
 `levels.tide` as it is; `tools/hints.py` writes each puzzle's second and third
