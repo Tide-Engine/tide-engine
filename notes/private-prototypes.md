@@ -74,7 +74,8 @@ its `<id>_page` target and its `private_games` block, plus the id in
   containing world beyond the walls. Its catalog description and gameplay
   thumbnail reflect that camera; public/authentication boundaries are unchanged.
   The latest revision zooms continuously through the room's physical miniature,
-  keeps outside makers visible, and enters a facing doorway only after the
+  frames the local maker's whole current room with one tile of outside context,
+  permits the partner to leave the view, and enters a facing doorway only after the
   automatic room push is blocked. Shift and the touch push toggle are removed.
 
 - Underfoot (`underfoot`): `prototypes/underfoot/`, a puzzle for one or two
