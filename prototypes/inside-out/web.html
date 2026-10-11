@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8e0c4">
+<meta name="description" content="A little room. A bigger idea. A cooperative puzzle workshop for two friends.">
+<title>Inside Out — a puzzle workshop for two</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #e8e0c4; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; outline: none; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" aria-label="Inside Out cooperative puzzle workshop" oncontextmenu="return false"></canvas>
+<script>
+  var Tide = {
+    canvas: document.getElementById('canvas'),
+    print: text => console.log(text),
+    printErr: text => console.error(text),
+  };
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
