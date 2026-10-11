@@ -623,4 +623,6 @@ The context has every current query form, including all shape casts, overlaps, s
 
 `Rewind` returns false for disabled history, invalid, stale or future times, or an unavailable endpoint. The output then contains no queryable geometry. No time is clamped and no current-world fallback is substituted. History begins after the first completed physics step and follows the same snapshot, rollback and serialization path as the match. Geometry is that of the physics step, as with current queries; write movement before `PhysicsStages.Step` when presentation and collider poses should agree.
 
+The history window covers the full age of the frame when the server executes the shot: confirmation delivery, time since the last drawn frame, input lead and delivery of the input all contribute. Low frame rates, stalls, jitter and packet loss can push a shot outside `maxRewind` even when its ping seems small. The engine uses the actual presented tick and fraction, rather than estimating the shot time by subtracting ping.
+
 The server validates the input timestamp, but the game remains responsible for authoritative shot validation. It must never accept a client-supplied collider pose, origin or hit just because the timestamp passed validation.
