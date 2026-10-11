@@ -2973,6 +2973,50 @@ static bool check_io_use(checker *c, const loc at, const char *what, const bool 
     return true;
 }
 
+// One of the declarations of Web.Request's own Tide code (web_prelude), by
+// its name: NULL in a program that doesn't have it, or whose own declaration
+// has the name.
+static decl *web_decl(const program *prog, const char *name, const decl_kind kind)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind == kind && str_eq_c(d->name, name) && d->unit && d->unit->src
+            && strcmp(d->unit->src->path, WEB_PRELUDE_PATH) == 0) return d;
+    }
+    return NULL;
+}
+
+// await request.Send(): the request goes out, by this machine, and the task
+// waits for its answer, as with Web.Fetch. An answer of any status is its
+// value, a WebResponse; it fails with IOError when none came.
+static type check_web_send(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (!check_io_use(c, e->at, "A request's Send", true)) return T_ERR;
+    if (e->args.count) {
+        diag_error(e->at, "Send takes nothing: 'var response = await request.Send();'");
+        diag_note("what a request sends is set before it: 'request.SetMethod(\"POST\").SetBody(bytes)'");
+        return T_ERR;
+    }
+    if (c->awaiting != e) {
+        diag_error(e->at, "Send is awaited: 'var response = await request.Send();'");
+        diag_note("it takes a while, so the task waits for it, and local code reads what came in a frame to come");
+        return T_ERR;
+    }
+    decl *const response = web_decl(c->prog, "WebResponse", DECL_STRUCT);
+    if (!response) return T_ERR;
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    const type paths = list_of(c->prog, (type){TY_STRING, NULL});
+    builtins_use_io(bytes.decl, paths.decl);
+    e->call = CALL_BUILTIN;
+    e->web_fetch = true;
+    e->web_request = true;
+    c->prog->uses_text = true;
+    decl *code = c->method ? c->method : c->system;
+    if (code) code->uses_fetch = true; // Its task's frame keeps the ticket
+    return result_of(c->prog, decl_type(response), (type){TY_ENUM, c->prog->io_error}, false);
+}
+
 // Frame.dt: how long this machine's frame is, which its host says before each
 // one and its local state keeps. Local code reads it, and the functions it
 // calls, which get the local state from their callers; an async function that
@@ -6189,6 +6233,11 @@ static type check_method(checker *c, expr *e)
         const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
         const bool flush = str_eq_c(owner, "Storage");
         const bool fetch = str_eq_c(owner, "Web");
+        // Web.Request(url): a request to build and send, which is Tide's own code (web_prelude)
+        if (fetch && str_eq_c(e->name, "Request")) {
+            decl *const maker = web_decl(c->prog, WEB_REQUEST_MAKER, DECL_FUNCTION);
+            if (maker) return check_function_call(c, e, maker);
+        }
         if (io || flush || fetch) {
             if (!check_io_use(c, e->at, fetch ? "Web.Fetch" : str_to_cstr(owner), fetch)) return T_ERR;
             if (flush && c->awaiting != e) {
@@ -6484,6 +6533,10 @@ static type check_method(checker *c, expr *e)
             check_writable(c, e->object, &called, NULL);
         }
         return result;
+    }
+    // await request.Send(): a WebRequest on its way, and the task waits for its answer
+    if (obj.kind == TY_STRUCT && str_eq_c(e->name, "Send") && obj.decl == web_decl(c->prog, "WebRequest", DECL_STRUCT)) {
+        return check_web_send(c, e);
     }
     // camera.Snap(): a singleton that jumped, like a camera cut.
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);

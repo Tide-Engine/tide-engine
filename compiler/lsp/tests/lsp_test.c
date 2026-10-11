@@ -8506,6 +8506,26 @@ TIDE_TEST(lsp_out_selection_and_calls)
 
 // A function sends, spawns and changes entities as the code that calls it could: the editor offers
 // them in one, and the error is at a call from code that can't.
+// Web.Request's types are Tide's own code, a file of the game's while the game names them
+TIDE_TEST(lsp_web_requests)
+{
+    start();
+#define TASK "local scene Main { }\nasync void Go()\n{\n"
+    const char *web = complete(TASK "    Web.$\n}\n");
+    TIDE_CHECK(offers(web, "Request") && offers(web, "Fetch"));
+    const char *built = complete(TASK "    var request = Web.Request(\"http://example.com\");\n    request.$\n}\n");
+    TIDE_CHECK(offers(built, "SetMethod") && offers(built, "SetHeader") && offers(built, "SetBody") && offers(built, "url"));
+    const char *answer = complete(TASK "    var answer = await Web.Request(\"http://example.com\").Send() ?? WebResponse { };\n"
+                                       "    answer.$\n}\n");
+    TIDE_CHECK(offers(answer, "status") && offers(answer, "body"));
+    open_document(TASK "    Web.Request(\"http://example.com\").Send();\n}\nview Start() { Go(); }\n");
+    TIDE_CHECK(has(last_sent(), "Send is awaited"));
+    // A game with no request in it has no such file, and says nothing
+    open_document("local scene Main { }\nview Start() { }\n");
+    TIDE_CHECK(!has(last_sent(), "web.tide"));
+#undef TASK
+}
+
 TIDE_TEST(lsp_functions_send_and_spawn)
 {
     start();
