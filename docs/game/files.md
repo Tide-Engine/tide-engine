@@ -139,6 +139,8 @@ async void Report(string url, List<byte> score, mut Board board)
 | `SetBody(bytes)` | The body, a `List<byte>` |
 | `await request.Send()` | Sends it, and gives a `WebResponse`: its `status` and its `body` |
 
+A service that speaks JSON takes and gives structs: `SetBody(Json.Write(report).ToBytes())` sends one, and `Json.Read<Answer>(response.body)` reads the reply as one, or gives nothing when the reply isn't what the game expects (see [JSON](../language/json.md)).
+
 A request is a value, like any struct: a call changes nothing where it's written, it gives a new request. So a request kept in a variable is built on by assigning, `request = request.SetHeader("Accept", "text/plain");`, and its fields can be set as they are (`request.method = "PUT";`). Keep one and send it as often as you like.
 
 **An answer is an answer, whatever its status.** A 404 or a 500 comes back as a `WebResponse` with that `status` and the body the server sent, for the game to read. `Send` fails only when no answer came:

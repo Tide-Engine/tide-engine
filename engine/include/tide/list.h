@@ -201,6 +201,18 @@ void tide_list_own(tide_list *l, uint32_t size, uint32_t where);
 // A world's list leaving it. Release its elements' text first.
 void tide_list_release(tide_list *l, uint32_t where);
 
+// Text and bytes (engine/src/text.c). tide_str_to_bytes is a List<byte> of
+// the text's UTF-8, and tide_str_from_bytes the text those bytes are, a copy,
+// or false when they aren't UTF-8 (tide_utf8_valid). tide_str_split is a
+// List<string> of the pieces of `a` between each `separator` and the next,
+// empty ones too, so joining them with the separator gives `a` back: one
+// piece, the whole text, when the separator isn't in it or is empty. All
+// three are in the scratch area.
+tide_list tide_str_to_bytes(tide_str a);
+bool tide_str_from_bytes(tide_list bytes, tide_str *text);
+tide_list tide_str_split(tide_str a, tide_str separator);
+tide_list tide_str_split_char(tide_str a, int32_t separator);
+
 // Sorts the elements, stable: `before(ctx, a, b)` says whether `a` goes before
 // `b` (a strict order), and elements it doesn't order keep their order. The
 // elements are compared where they are, or in a copy when they're in chunks,

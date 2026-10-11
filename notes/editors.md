@@ -1,5 +1,23 @@
 # The language server and the editors
 
+## JSON and text primitives, 2026-10-11
+
+`Json.Read`, `Json.Write` and `string.FromBytes` take and give types of the
+game's, so they're in no table of the engine's: `analysis.c` has their forms
+and docs (`json_calls`, `FROM_BYTES_FORM`), used for completion after `Json.`
+and `string.`, hover, signature help and the parameter labels beside
+arguments (`CALL_JSON`). `TryParse`, `ToBytes` and `Split` are in the
+signature table, so completion after `int.`, `long.`, `float.` and a text's
+dot, hover and signature help come from it; they aren't offered in code the
+GPU runs. `Json` is offered where a value starts, and `[Json("key")]` before
+a field, with its hover. The type a read names is a use of it for hover,
+references and rename, inside a `List<...>` too: the walk hands
+`type_place` what the call's `T?` holds. `type_argument_open` finds the `<`
+of a type that takes types (`Json.Read<List<Score>>(`, whose last `>` is half
+of a `>>`), so signature help works there. The shared grammar has `Json`
+among the built-in names; its probe has a struct with `[Json]` and each call.
+`lsp_json_and_text_primitives` checks all of it and a diagnostic; the
+language-server suite is 219 tests and the grammar's 221.
 ## AnimationCatalog and TryGet completion, 2026-10-11
 
 The owner-approved catalog name and bool/out lookup are reflected in type and

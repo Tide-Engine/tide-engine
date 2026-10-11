@@ -1,0 +1,5 @@
+// expect: string.FromBytes takes the text's bytes, a List<byte> of UTF-8: 'string.FromBytes(bytes)'
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.text = string.FromBytes(seen.text) ?? ""; }

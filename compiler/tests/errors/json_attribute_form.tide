@@ -1,0 +1,5 @@
+// expect: [Json] takes the field's key in JSON, in quotes: [Json("max_players")]
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+struct Lobby { [Json(3)] int maxPlayers; }
