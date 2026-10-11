@@ -12,6 +12,12 @@ local singleton Picture
     float clock;
     float celebration;
     bool solved;
+    int focusRoom = -2;
+    int focusParent = -2;
+    int focusShell = -2;
+    int focusPortal = -2;
+    int focusDepth = -1;
+    float cameraBlend = 1;
 }
 
 Color RoomColor(int room)
@@ -42,7 +48,9 @@ void Crate(float2 at, float size, bool onTarget = false)
     var tone = onTarget ? Color(0.76, 0.79, 0.47) : Color(0.90, 0.70, 0.40);
     Draw.RoundRect(at + float2(0, size * 0.06), float2(side), size * 0.08, Color(0.32, 0.27, 0.18, 0.19));
     Draw.RoundRect(at, float2(side), size * 0.07, Color(0.60, 0.42, 0.25));
-    Draw.RoundRect(at + float2(0, -size * 0.025), float2(side * 0.91), size * 0.055, tone);
+    Draw.Shape(Shape { center = at + float2(0, -size * 0.025), size = float2(side * 0.91), radius = size * 0.055,
+        color = Math.Lerp(tone, Color.white, 0.13), color2 = Math.Lerp(tone, Color(0.59, 0.40, 0.23), 0.14) });
+    Draw.WireRoundRect(at + float2(0, -size * 0.025), float2(side * 0.84), size * 0.045, Math.Max(0.7, size * 0.014), Color(1, 0.91, 0.65, 0.65));
     for (var plank = -1; plank <= 1; plank++)
         Draw.Line(at + float2(-side * 0.40, plank * side * 0.24), at + float2(side * 0.40, plank * side * 0.24), Math.Max(0.7, size * 0.012), Color(0.55, 0.39, 0.22, 0.42));
     Draw.Line(at + float2(-side * 0.34, -side * 0.34), at + float2(side * 0.34, side * 0.34), Math.Max(1, size * 0.075), Color(0.99, 0.83, 0.51));
@@ -63,6 +71,7 @@ void Maker(float2 at, float size, int seat, bool mine, float clock)
     Draw.Circle(at + float2(0, -size * 0.10), size * 0.24, Color(0.98, 0.86, 0.65));
     Draw.Ellipse(at + float2(0, -size * 0.26), float2(size * 0.30, size * 0.075), Math.Lerp(tone, INK, 0.08));
     Draw.RoundRect(at + float2(0, -size * 0.31), float2(size * 0.32, size * 0.15), size * 0.035, tone);
+    Draw.Line(at + float2(-size * 0.11, -size * 0.34), at + float2(size * 0.06, -size * 0.34), Math.Max(0.7, size * 0.023), Math.Lerp(tone, Color.white, 0.27));
     if (size >= 18)
     {
         Draw.Circle(at + float2(-size * 0.07, -size * 0.10), size * 0.021, INK);
@@ -84,7 +93,16 @@ void GoldTarget(float2 at, float size, bool occupied)
 void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
 {
     var tone = variation % 2 == 0 ? Color(0.96, 0.93, 0.83) : Color(0.94, 0.91, 0.80);
-    Draw.Rect(at, float2(size - 0.7), tone);
+    Draw.Shape(Shape { center = at, size = float2(size - 0.7), color = tone, color2 = Math.Lerp(tone, Color(0.85, 0.76, 0.58), 0.055) });
+    if (size > 19)
+    {
+        for (var grain = 0; grain < 3; grain++)
+        {
+            var y = (grain - 1) * size * 0.27;
+            var offset = (variation % 3 - 1) * size * 0.05;
+            Draw.Line(at + float2(-size * 0.35 + offset, y), at + float2(size * 0.24 + offset, y), Math.Max(0.6, size * 0.009), Color(0.67, 0.54, 0.33, 0.065));
+        }
+    }
     if (tile == Tile.Target) GoldTarget(at, size, occupied);
     else if (tile == Tile.Exit)
     {
@@ -102,8 +120,10 @@ void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
 
 void WallTile(float2 at, float size, Color tone)
 {
-    Draw.Rect(at, float2(size + 0.1), Math.Lerp(tone, INK, 0.15));
-    Draw.Rect(at - float2(0, size * 0.035), float2(size - 1.3, size * 0.88), Math.Lerp(tone, PAPER, 0.18));
+    Draw.Rect(at, float2(size + 0.1), Math.Lerp(tone, INK, 0.22));
+    Draw.Shape(Shape { center = at - float2(0, size * 0.035), size = float2(size - 1.3, size * 0.88),
+        color = Math.Lerp(tone, PAPER, 0.28), color2 = Math.Lerp(tone, INK, 0.05) });
+    Draw.Line(at + float2(-size * 0.46, -size * 0.46), at + float2(size * 0.46, -size * 0.46), Math.Max(0.8, size * 0.024), Math.Lerp(tone, PAPER, 0.42));
     if (size > 13)
     {
         Draw.Line(at + float2(-size * 0.36, -size * 0.20), at + float2(size * 0.29, -size * 0.20), Math.Max(0.7, size * 0.014), Color(0.27, 0.30, 0.22, 0.14));
@@ -271,7 +291,7 @@ void DimensionFloor(Workshop workshop, int room, MapLens lens)
     }
 }
 
-void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture, Hands hands)
+void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, int hideShell = -1, int hidePortal = -1)
 {
     for (var shell = 0; shell < workshop.layout.roomCount; shell++)
     {
@@ -291,14 +311,14 @@ void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture,
     for (var gate = 0; gate < workshop.layout.portalCount; gate++)
     {
         var portal = workshop.layout.portals[gate];
-        if (portal.room != room) continue;
+        if (portal.room != room || gate == hidePortal) continue;
         var here = MapPoint(float2(portal.position), lens);
         Draw.WireRoundRect(here, float2(lens.tile * 0.98), lens.tile * 0.14, Math.Max(1.5, lens.tile * 0.06), Color(0.99, 0.84, 0.45));
         RoomPreview(workshop, portal.destination, here, lens.tile * 0.80, picture, true);
         DoorNotches(here, lens.tile * 0.82, portal.doors, INK);
     }
     for (var shell = 0; shell < workshop.layout.roomCount; shell++)
-        if (workshop.puzzle.rooms[shell].room == room)
+        if (workshop.puzzle.rooms[shell].room == room && shell != hideShell)
         {
             var here = MapPoint(picture.rooms[shell], lens);
             RoomPreview(workshop, shell, here, lens.tile * 0.86, picture);
@@ -328,64 +348,31 @@ void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture,
         }
 }
 
-void DimensionCard(Workshop workshop, int room, MapLens lens)
+void DimensionFrame(Workshop workshop, int room, MapLens lens, RoomSurround surround, int depth)
 {
     Panel(lens.center, lens.size);
     var topLeft = lens.center - lens.size * 0.5;
+    var narrow = Screen.width < 720;
     if (room < 0)
-    {
         Label("THE WORKSHOP", topLeft + float2(18, 20), Screen.width < 720 ? 11.0 : 12.0, MUTED);
-        Label($"{workshop.puzzle.moves} moves", topLeft + float2(lens.size.x - 16, 21), 14, MUTED, Anchor.MiddleRight);
-        Label("Every pocket opens into the same shared world", lens.center + float2(0, lens.size.y * 0.5 - 16), Screen.width < 720 ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
-    }
     else
     {
         var tone = RoomColor(room);
-        Draw.Circle(topLeft + float2(16, 15), 8, tone);
-        Label($"{room + 1}", topLeft + float2(16, 15), 10, PAPER, Anchor.MiddleCenter);
-        Label(RoomName(room), topLeft + float2(29, 15), lens.size.x < 200 ? 11.0 : 14.0, INK);
-        if (workshop.layout.rooms[room].latched)
-            Label(RoomUnlocked(workshop.layout, workshop.puzzle, room) ? "OPEN" : "LATCHED", topLeft + float2(lens.size.x - 11, 15), lens.size.x < 200 ? 8.0 : 10.0, RoomUnlocked(workshop.layout, workshop.puzzle, room) ? TEAL : AMBER, Anchor.MiddleRight);
-        var parent = workshop.puzzle.rooms[room].room;
-        Label($"in {RoomName(parent)}", lens.center + float2(0, lens.size.y * 0.5 - 12), lens.size.x < 200 ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
-        var occupiers = (workshop.present[0] && workshop.puzzle.actors[0].room == room ? 1 : 0) | (workshop.present[1] && workshop.puzzle.actors[1].room == room ? 2 : 0);
-        if (occupiers != 0)
-        {
-            for (var seat = 0; seat < 2; seat++)
-                if ((occupiers & (1 << seat)) != 0)
-                    Draw.Circle(topLeft + float2(lens.size.x - 15 - seat * 11, lens.size.y - 12), 3.5, seat == 0 ? AMBER : TEAL);
-        }
+        Label($"INSIDE {RoomName(room)}  /  {room + 1}", topLeft + float2(18, 20), narrow ? 11.0 : 12.0, Math.Lerp(tone, INK, 0.40));
     }
-}
-
-void DimensionLinks(Workshop workshop, float2 screen)
-{
-    // The coloured thread and breadcrumb tie each lens to its movable shell.
-    for (var room = 0; room < workshop.layout.roomCount; room++)
+    Label($"{workshop.puzzle.moves} moves", topLeft + float2(lens.size.x - 16, 21), 14, MUTED, Anchor.MiddleRight);
+    var footer = lens.center + float2(0, lens.size.y * 0.5 - 13);
+    if (room < 0)
+        Label(narrow ? "Walk into a doorway. Shift to push a room." : "Walk into a doorway to enter  /  Hold Shift to move a room", footer, narrow ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
+    else
     {
-        var parent = workshop.puzzle.rooms[room].room;
-        var source = WorkshopLens(screen, workshop.layout.roomCount, parent);
-        var target = WorkshopLens(screen, workshop.layout.roomCount, room);
-        var a = MapPoint(float2(workshop.puzzle.rooms[room].position), source);
-        var narrow = screen.x < 720;
-        var b = narrow ? target.center - float2(0, target.size.y * 0.5 - 2) : target.center - float2(target.size.x * 0.5 - 2, 0);
-        var tone = RoomColor(room);
-        var ink = Color(tone.r, tone.g, tone.b, 0.28);
-        if (narrow)
+        var source = surround.reference ? "reference door" : "room doorway";
+        Label($"Outside: {RoomName(surround.room)}  /  {source}  /  depth {depth}", footer, narrow ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
+        if (workshop.layout.rooms[room].latched && !narrow)
         {
-            var route = source.center.y + source.size.y * 0.5 + 6;
-            Draw.Line(a, float2(a.x, route), 2, ink);
-            Draw.Line(float2(a.x, route), float2(b.x, route), 2, ink);
-            Draw.Line(float2(b.x, route), b, 2, ink);
+            var unlocked = RoomUnlocked(workshop.layout, workshop.puzzle, room);
+            Label(unlocked ? "LATCH OPEN" : "LATCHED", topLeft + float2(lens.size.x - 135, 21), 10, unlocked ? TEAL : AMBER, Anchor.MiddleRight);
         }
-        else
-        {
-            var route = (source.center.x + source.size.x * 0.5 + target.center.x - target.size.x * 0.5) * 0.5;
-            Draw.Line(a, float2(route, a.y), 2, ink);
-            Draw.Line(float2(route, a.y), float2(route, b.y), 2, ink);
-            Draw.Line(float2(route, b.y), b, 2, ink);
-        }
-        Draw.Circle(b, 3, tone);
     }
 }
 
@@ -399,7 +386,9 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     if (workshop.puzzle.solved && !picture.solved) picture.celebration = 0;
     picture.solved = workshop.puzzle.solved;
     if (picture.solved) picture.celebration += dt;
-    var snap = !picture.ready || picture.level != workshop.level || picture.serial != workshop.serial || hands.reduceMotion;
+    var first = !picture.ready;
+    var changed = picture.level != workshop.level || picture.serial != workshop.serial;
+    var snap = first || changed || hands.reduceMotion;
     var blend = snap ? 1.0 : Math.Min(1, dt * 20);
     for (var seat = 0; seat < 2; seat++)
     {
@@ -436,28 +425,62 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
         if (!compact) Paragraph(LevelLesson(workshop.level), progress + float2(0, 30), width - 440, 13, MUTED);
     }
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
-    for (var dimension = -1; dimension < workshop.layout.roomCount; dimension++)
-        DimensionCard(workshop, dimension, WorkshopLens(screen, workshop.layout.roomCount, dimension));
-    DimensionLinks(workshop, screen);
-    for (var dimension = -1; dimension < workshop.layout.roomCount; dimension++)
+    var localSeat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
+    var actor = workshop.puzzle.actors[localSeat];
+    var surround = ReturnSurround(workshop, actor, picture);
+    if (actor.room != picture.focusRoom || surround.room != picture.focusParent ||
+        surround.shell != picture.focusShell || surround.portal != picture.focusPortal || actor.depth != picture.focusDepth || changed)
+        picture.cameraBlend = first || hands.reduceMotion ? 1.0 : 0.0;
+    picture.focusRoom = actor.room;
+    picture.focusParent = surround.room;
+    picture.focusShell = surround.shell;
+    picture.focusPortal = surround.portal;
+    picture.focusDepth = actor.depth;
+    picture.cameraBlend = hands.reduceMotion ? 1.0 : Math.Min(1, picture.cameraBlend + dt * 4);
+    var eased = picture.cameraBlend * picture.cameraBlend * (3 - 2 * picture.cameraBlend);
+    var lens = WorkshopLens(screen, actor.room, 0.94 + 0.06 * eased);
+    DimensionFrame(workshop, actor.room, lens, surround, actor.depth);
+    var topLeft = lens.center - lens.size * 0.5;
+    var body = Rect(topLeft.x + 12, topLeft.y + 40, lens.size.x - 24, lens.size.y - 62);
+    Draw.Clip(body)
     {
-        var lens = WorkshopLens(screen, workshop.layout.roomCount, dimension);
-        DimensionFloor(workshop, dimension, lens);
-        DimensionPieces(workshop, dimension, lens, picture, hands);
-    }
-    if (workshop.puzzle.solved && picture.celebration < 2 && !hands.reduceMotion)
-    {
-        var main = WorkshopLens(screen, workshop.layout.roomCount, -1);
-        var gridWidth = main.tile * OUTER_SIZE;
-        var gridLeft = main.origin.x - main.tile * 0.5;
-        var gridTop = main.origin.y - main.tile * 0.5;
-        Draw.Clip(Rect(gridLeft, gridTop, gridWidth, gridWidth))
+        Draw.RoundRect(lens.center + float2(0, 9), lens.size - float2(24, 62), 7, Color(0.88, 0.84, 0.73));
+        if (actor.room >= 0)
         {
-            for (var spark = 0; spark < 22; spark++)
+            // The expanded room occupies its real cell in the containing world.
+            // The latest entrance chooses the parent; shells track their live position.
+            var parent = ContainingLens(lens, surround);
+            DimensionFloor(workshop, surround.room, parent);
+            DimensionPieces(workshop, surround.room, parent, picture, hands, surround.shell, surround.portal);
+            Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.42, 0.37, 0.24, 0.10));
+            var center = lens.origin + float2((INNER_SIZE - 1) * lens.tile * 0.5);
+            Draw.Shape(Shape { center = center + float2(0, 7), size = float2(INNER_SIZE * lens.tile + 20), radius = 12,
+                color = Color(0.21, 0.25, 0.18, 0.32), soft = 10 });
+            for (var direction = 0; direction < 4; direction++)
             {
-                var fall = picture.celebration * 85;
-                var at = float2(gridLeft + (spark * 47 + 29) % int(gridWidth), Math.Max(gridTop + 6, (compact ? 154.0 : 126.0) + 65) + fall + (spark * 31) % 80);
-                Draw.Rect(at, float2(4, 7), picture.clock + spark, spark % 2 == 0 ? AMBER : TEAL);
+                if ((workshop.layout.rooms[actor.room].doors & (1 << direction)) == 0) continue;
+                var delta = float2(Direction(direction));
+                Draw.Line(center + delta * INNER_SIZE * lens.tile * 0.47, center + delta * parent.tile * 0.50,
+                    lens.tile * 0.30, Color(0.99, 0.89, 0.63));
+            }
+        }
+        DimensionFloor(workshop, actor.room, lens);
+        DimensionPieces(workshop, actor.room, lens, picture, hands);
+        if (eased < 1)
+            Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.96, 0.93, 0.83, (1 - eased) * 0.17));
+        if (workshop.puzzle.solved && picture.celebration < 2 && !hands.reduceMotion)
+        {
+            var gridWidth = lens.tile * RoomSize(actor.room);
+            var gridLeft = lens.origin.x - lens.tile * 0.5;
+            var gridTop = lens.origin.y - lens.tile * 0.5;
+            Draw.Clip(Rect(gridLeft, gridTop, gridWidth, gridWidth))
+            {
+                for (var spark = 0; spark < 22; spark++)
+                {
+                    var fall = picture.celebration * 85;
+                    var at = float2(gridLeft + (spark * 47 + 29) % int(gridWidth), Math.Max(gridTop + 6, topLeft.y + 65) + fall + (spark * 31) % 80);
+                    Draw.Rect(at, float2(4, 7), picture.clock + spark, spark % 2 == 0 ? AMBER : TEAL);
+                }
             }
         }
     }
