@@ -2,6 +2,18 @@
 
 Automatic color texture compression (2026-10-11): eligible ordinary `Texture` assets now add a complete BC1/BC3 mip chain beside their exact RGBA fallback. `[Raw]`, small/non-power-of-two images and cubemap faces keep their existing payload. Build-tool-only stb_dxt 1.12 is pinned to `2c980bb59875b0d32144a71867fbdebb2f77cd20`, with its license installed alongside the tools. Content identity distinguishes the compressed variant; logical asset values/fingerprints and generated calls stay unchanged. Pack size grows in this version. Full contracts and evidence are in `notes/textures.md`; DDS/KTX source imports remain unbuilt.
 
+## Levels of detail: design agreed, nothing built (2026-10-11)
+
+- `docs/spec.md`, Levels of detail, records it. The owner decided four points: opt-in with `[LOD]` on a mesh asset's declaration (opt-out was the first proposal; "that way no surprises for the user"), everything else automatic and baked at build time with a cache, a pick for each instance of `Draw.Instanced`, and skinned meshes included. The remaining rules there are picks awaiting the owner.
+- Added the same day, after the shadow-map mismatch came up: the owner asked for both a way to override the level directly and a way for a target to pick through another camera. `LOD`/`SetLOD` and `LODCamera`/`SetLODCamera`, their arguments and rules are picks.
+- No code exists: no attribute, no simplifier, no pack entry, no picking in the draw list. The checker doesn't know `[LOD]`.
+- Constraints found while writing it, for whoever builds it:
+  - `mesh.vertices`/`mesh.indices` are read by match code, so levels have to stay beside them, never in their place, and outside the game's compatibility identity.
+  - `Draw.Instanced` documents list order within one instanced draw (`docs/game/shaders.md`, Instances from a list). Grouping instances by level breaks that for blended draws; the spec lists it as open.
+  - An instance struct places a 3D mesh through its `float4x4 transform` field, so a per-instance pick has a transform to read in both instanced forms. A game's vert can still move vertices anywhere.
+  - No draw has bounds or frustum culling today; the pick is the first per-instance work that needs a mesh's bounds, which the pack would have to carry.
+  - `SkinnedMesh<V>.Decode` models have no declaration, so no levels.
+
 ## Conservative release asset pruning (2026-10-10)
 
 - `codegen_options.strip_unused_assets` defaults to false. Closed standalone release builds opt in; debug, watched/layout and C-host builds keep all assets. Automatic callers also opt out when the game or a package contributes C/C++ sources or prebuilt libraries, whose generated API or `tide_pack_find` uses cannot be inferred from Tide. `tidec --strip-unused-assets` is an explicit opt-in for callers that can account for external uses.
