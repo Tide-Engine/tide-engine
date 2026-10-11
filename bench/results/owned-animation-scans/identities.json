@@ -1,0 +1,104 @@
+{
+  "date": "2026-10-11",
+  "base": "c497e999e125bd1082ce21c8e9f9b7d749b8569a",
+  "compiler": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "cpu": "AMD Ryzen 9 7900X 12-Core Processor            ",
+  "configuration": "CMake RelWithDebInfo; TIDE_PLATFORM=OFF; C17 -O2 -fno-fast-math -ffp-contract=off",
+  "warmup": 30,
+  "measured_frames": 300,
+  "tick_hz": 60,
+  "palette_workers": 0,
+  "identities": [
+    {
+      "path": "engine/src/skinned.c",
+      "bytes": 68473,
+      "sha256": "b96131d31d615263f22114e69d698e9d54e323f3745aa4726e616c4a10f670c6"
+    },
+    {
+      "path": "build/owned-animation/skinned-before.c",
+      "bytes": 67294,
+      "sha256": "7f6432b6b28234e6835dad04e01fade9e334893d094fc1b828d12344ccb6d1ac"
+    },
+    {
+      "path": "build/owned-animation/measure-before.exe",
+      "bytes": 5931520,
+      "sha256": "a6b8ba478f13b6240fef7723856f8134f6b5e16c782f2c8de3532bf9d29921cd"
+    },
+    {
+      "path": "build/owned-animation/measure-after.exe",
+      "bytes": 5923840,
+      "sha256": "ff7e79aa4729d34648fc5978ff1b19762178b148c2dddcede3ef4220f0548051"
+    },
+    {
+      "path": "build/owned-animation/gen/game.c",
+      "bytes": 213248,
+      "sha256": "7aa8faeaf4a164d8e473c86ce7d9079eef2eb58408e4559593b056c17506d00b"
+    },
+    {
+      "path": "build/owned-animation/gen/game.h",
+      "bytes": 26336,
+      "sha256": "bb11cdba21bde70a2f6843bfc5ea6ea615512c7dd1d5b1ba78a8ae101da0ed49"
+    },
+    {
+      "path": "build/owned-animation/gen/game.pack",
+      "bytes": 5689760,
+      "sha256": "31f9bbab5442e3de29d40aaddd9f4a72107f4573e9d5e276b9845f4c21ad7b4b"
+    },
+    {
+      "path": "build/owned-animation/gen/game_pack.c",
+      "bytes": 21987201,
+      "sha256": "17f347b21f1d8d2047a720df75bde229ce6fd59b4d65d8459f21766d88b2b617"
+    },
+    {
+      "path": "build/owned-animation/gen/measure.c",
+      "bytes": 2377,
+      "sha256": "c6e2a08a827ab287f06aac5f144313acb4ee4b9b3e9f243c5e6a03753613b95b"
+    },
+    {
+      "path": "build/release/engine/tide.lib",
+      "bytes": 3497560,
+      "sha256": "cf697ed24d41648be3de9dcc6c6ea08f9926847ec2c63f24a6879e6ea8997269"
+    },
+    {
+      "path": "build/owned-animation/project/Game.tide",
+      "bytes": 2153,
+      "sha256": "849d99b7a2a998d1b9a72b3bab9a6e7d0a5ea23b3a593500973a8e7ca758f792"
+    },
+    {
+      "path": "build/owned-animation/project/Player.tide",
+      "bytes": 1690,
+      "sha256": "ae0baf4813cc34a5d76ade9db9b1d0cd10db0a343ba5b1690897ab20e71d44fa"
+    }
+  ],
+  "validation": {
+    "native_ctests": 2136,
+    "web_ctests": 2107,
+    "failures": 0,
+    "tail_addition": "Both complete tide_tests suites rerun after the test-only all-tail addition; native 3.00s, WASI 3.11s",
+    "pose_bits": "e5d23f82e5d18f26",
+    "unavailable": "Linux/macOS/MinGW/Android/sanitizers and CI not run"
+  },
+  "installed_patch": {
+    "initial_sha256": "fcf4e1764ec14d7206f887c857a7c25cb33da080d0b0d69080ef93bc54999fbc",
+    "patched_sha256": "ff79bfa0b42453dd9e4be451a00f392296cac58a3873b9986a014b3e911b142c",
+    "contract": "Only performance hunks; retains installed runtime without newer gather_levels call. Warning-free strict compilation of patched source against installed headers; a separate scratch library and harness built entirely with installed sources/headers verifies matching world/palette hashes. Earlier mixed-header harness is discarded.",
+    "check": "characters=100 pack=5689760 world=13117656 tick_ms=0.942928 hash_ms=0.635527 draw_ms=1.476647 draw_commands=1 hash=10175709146634639136\r\nframes=330 states=7 palette_hash=5069683498435541530"
+  },
+  "exports": [
+    {
+      "path": "harness.c",
+      "bytes": 2373,
+      "sha256": "070cf0f15067c2840bd0ece8f588c1ccf0fe8803d2f6ad90d571c8a4eaacab50"
+    },
+    {
+      "path": "measure.ps1",
+      "bytes": 2573,
+      "sha256": "ffb5ab1818ccd9c0dfba2b8a6d8a60d502939cef938b86f44300c1ae647ebb2d"
+    },
+    {
+      "path": "paired-rows.json",
+      "bytes": 1806,
+      "sha256": "d2a2089cf00e79021019cd1400db2f082bb9264a65573e480a5769440af7fe64"
+    }
+  ]
+}

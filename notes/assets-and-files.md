@@ -1,5 +1,34 @@
 # Assets and local files
 
+## Owned-animation validation and separate binding (2026-10-11)
+
+The owner's existing `D:/Projects/Test` Animation component usage is retained.
+The runtime now expresses full owned/unproven key validation as vectorizable
+reductions and reuses complete node-table validation within separate binding.
+All descriptors/spans, first-time nonnegativity, strictly increasing finite
+times, finite values/tangents and both skeletons' nodes still pass before any
+output mutation. Private node reads remain inside those unchanged opened
+models. Exact name/parent matching, wrapper rejection, source-default copying,
+interpolation expressions and ordinary List/struct ownership stay unchanged;
+no persistent proof or cache is inferred from an owned model's handle/hash.
+
+`skinned_owned_key_scans_check_every_lane_and_tail_before_writing` corrupts
+every scalar of long rotation and cubic rotation/translation tracks, including
+tangents, every key time, signed-zero duplicates and finite unordered times.
+Scratch and heap sampling plus separate-rig sampling reject without changing
+poses or heap hashes. `skinned_binding_validates_all_nodes_before_private_reads`
+independently spoils every node's parent/name bounds and all ten TRS scalars on
+both sides of sample/pose binding, then verifies successful restored binding.
+Existing aliases, snapshots, pack invalidation, wrappers and exact CPU/GPU
+checks remain. Performance evidence and the still-large owned match state are
+recorded in `notes/benchmarks.md`.
+
+Warning-free full native debug 2,136/2,136 and web debug 2,107/2,107 CTests
+pass, including the existing exact pose bits and OpenGL/WebGL/WebGPU checks.
+After the final test-only key-count/tail addition, both complete runtime test
+executables pass again. No compiler, canonical asset layout or API changes.
+Linux/macOS/MinGW/Android/sanitizer coverage and CI were not run here.
+
 ## Separate animation exports with different defaults (2026-10-11)
 
 Integration with `origin/dev` through `6682a94d` retains incoming automatic texture compression, enum shorthand and omitted-playback editor hints. The notes insertion conflict preserves both entries; runtime binding code had no conflict. Complete native/web builds and the merged docs build pass, followed by 50 native and 56 web dependency checks: the complete runtime suites, animation/catalog/FBX and skinning paths, texture compression, and OpenGL/WebGL/WebGPU draw/shader checks. The earlier performance binaries/results remain frozen; no post-merge timing comparison is claimed.

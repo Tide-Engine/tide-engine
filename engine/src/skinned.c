@@ -129,6 +129,20 @@ static void validated_numbers(const uint8_t *p, const uint32_t count, float *out
     for (uint32_t i = 0; i < count; i++) out[i] = validated_number(p + (size_t)i * 4u);
 }
 
+// Binding callers validate every node before entering their private readers.
+// Keep these decoded pointers inside that unchanged opened model's lifetime.
+static void validated_node(const tide_skinned_data_view *v, const uint32_t index, tide_skinned_node_data *out)
+{
+    const uint8_t *p = v->data + v->node_at + (size_t)index * TIDE_SKINNED_NODE_SIZE;
+    out->parent = index ? (int32_t)validated_word(p) : -1;
+    out->source_node = validated_word(p + 4u);
+    out->name = (const char *)v->data + validated_word(p + 8u);
+    out->name_length = validated_word(p + 12u);
+    validated_numbers(p + 16u, 3u, out->position);
+    validated_numbers(p + 28u, 4u, out->rotation);
+    validated_numbers(p + 44u, 3u, out->scale);
+}
+
 static void fill_rest(const tide_skinned_data_view *v, tide_list *transforms, const uint32_t where)
 {
     // All callers establish node validity before resizing/writing the output.
@@ -276,20 +290,29 @@ static bool channel_valid(const tide_skinned_data_view *v, const tide_skinned_ch
     // Both callers obtain c through data_channel, which checks the complete
     // descriptor and key spans. Scan their contents once rather than repeating
     // those checks and constructing three temporary vectors for every key.
-    float previous = -1.0f;
-    for (uint32_t i = 0; i < c->keys; i++) {
-        const float time = validated_number(v->data + c->times_at + (size_t)i * 4u);
-        if (!tide_is_finite_f(time) || !(time >= 0.0f) || (i && !(time > previous))) return false;
-        previous = time;
+    if (!c->keys) return false;
+    const uint8_t *times = v->data + c->times_at;
+    const float first = validated_number(times);
+    if (!tide_is_finite_f(first) || !(first >= 0.0f)) return false;
+    // Independent adjacent comparisons and a reduction let native/web
+    // compilers vectorize the complete scan. Keep float comparisons so -0
+    // remains a valid first key, while either ordering of +/-0 is rejected.
+    uint32_t invalid = 0u;
+    for (uint32_t i = 1u; i < c->keys; i++) {
+        const uint32_t bits = validated_word(times + (size_t)i * 4u);
+        const float time = validated_number(times + (size_t)i * 4u);
+        const float previous = validated_number(times + (size_t)(i - 1u) * 4u);
+        invalid |= (uint32_t)((bits & 0x7f800000u) == 0x7f800000u);
+        invalid |= (uint32_t)!(time > previous);
     }
     const uint32_t width = c->path == TIDE_SKINNED_ROTATION ? 4u : 3u;
     const uint32_t copies = c->interpolation == TIDE_SKINNED_CUBICSPLINE ? 3u : 1u;
     const uint64_t words = (uint64_t)c->keys * width * copies;
     const uint8_t *values = v->data + c->values_at;
     for (uint64_t i = 0; i < words; i++) {
-        if ((validated_word(values + (size_t)i * 4u) & 0x7f800000u) == 0x7f800000u) return false;
+        invalid |= (uint32_t)((validated_word(values + (size_t)i * 4u) & 0x7f800000u) == 0x7f800000u);
     }
-    return c->keys != 0u;
+    return invalid == 0u;
 }
 
 // These readers require complete channel/key validation, or current immutable-
@@ -450,13 +473,13 @@ static node_names index_names(const tide_skinned_data_view *v)
     for (uint32_t i = 0; i < room; i++) names.slots[i] = (named_node){.index = -1};
     for (uint32_t i = 1; i < v->nodes; i++) {
         tide_skinned_node_data n;
-        (void)tide_skinned_data_node(v, i, &n);
+        validated_node(v, i, &n);
         if (!n.name_length) continue;
         const uint64_t hash = tide_hash(n.name, n.name_length);
         uint32_t at = (uint32_t)hash & names.mask;
         while (names.slots[at].index >= 0) {
             tide_skinned_node_data previous;
-            (void)tide_skinned_data_node(v, (uint32_t)names.slots[at].index, &previous);
+            validated_node(v, (uint32_t)names.slots[at].index, &previous);
             if (names.slots[at].hash == hash && same_name(&n, &previous)) break;
             at = (at + 1u) & names.mask;
         }
@@ -473,7 +496,7 @@ static int32_t named_index(const tide_skinned_data_view *v, const node_names nam
     uint32_t at = (uint32_t)hash & names.mask;
     while (names.slots[at].index >= 0) {
         tide_skinned_node_data found;
-        (void)tide_skinned_data_node(v, (uint32_t)names.slots[at].index, &found);
+        validated_node(v, (uint32_t)names.slots[at].index, &found);
         if (names.slots[at].hash == hash && same_name(n, &found)) {
             return names.slots[at].ambiguous ? -1 : names.slots[at].index;
         }
@@ -496,9 +519,11 @@ static bool same_transform(const tide_bone_transform a, const tide_bone_transfor
 // A static identity wrapper has no effect on named bones' parent-local TRS.
 static bool root_wrapper(const tide_skinned_data_view *v, const uint32_t index)
 {
+    if (index == 0u) return false;
     tide_skinned_node_data n;
+    validated_node(v, index, &n);
     const tide_bone_transform identity = {tide_f3(0, 0, 0), {tide_f4(0, 0, 0, 1)}, tide_f3(1, 1, 1)};
-    return index != 0u && tide_skinned_data_node(v, index, &n) && n.parent == 0 && n.name_length == 0u
+    return n.parent == 0 && n.name_length == 0u
         && same_transform(local_of(&n), identity);
 }
 
@@ -544,13 +569,13 @@ static int32_t *bind_nodes(const tide_skinned_data_view *target, const tide_skin
     for (uint32_t i = source->nodes; i-- > 1u;) {
         if (!required[i]) continue;
         tide_skinned_node_data n;
-        (void)tide_skinned_data_node(source, i, &n);
+        validated_node(source, i, &n);
         required[n.parent] = 1u;
     }
     for (uint32_t i = 0; i < source->nodes; i++) {
         if (!required[i]) continue;
         tide_skinned_node_data n, to;
-        (void)tide_skinned_data_node(source, i, &n);
+        validated_node(source, i, &n);
         if (root_wrapper(source, i)) {
             map[i] = -2; // Transparent, never copied onto the canonical root.
             continue;
@@ -559,7 +584,8 @@ static int32_t *bind_nodes(const tide_skinned_data_view *target, const tide_skin
             if (named_index(source, source_names, &n) != (int32_t)i) return NULL;
             map[i] = named_index(target, target_names, &n);
         }
-        if (map[i] < 0 || !tide_skinned_data_node(target, (uint32_t)map[i], &to)) return NULL;
+        if (map[i] < 0) return NULL;
+        validated_node(target, (uint32_t)map[i], &to);
         const int32_t source_parent = n.parent > 0 && root_wrapper(source, (uint32_t)n.parent) ? 0 : n.parent;
         const int32_t target_parent = to.parent > 0 && root_wrapper(target, (uint32_t)to.parent) ? 0 : to.parent;
         if (target_parent != (source_parent < 0 ? -1 : map[source_parent])) return NULL;
@@ -596,7 +622,7 @@ bool tide_skinned_sample_into(const tide_list target_data, const tide_list anima
         for (uint32_t i = 0; i < source.view.nodes; i++) {
             if (!required[i] || map[i] < 0) continue;
             tide_skinned_node_data node;
-            (void)tide_skinned_data_node(&source.view, i, &node);
+            validated_node(&source.view, i, &node);
             tide_bone_transform *to = tide_list_cached_at_mut(&rest, *transforms, map[i], sizeof *to);
             if (to) *to = local_of(&node);
         }
@@ -642,7 +668,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
         if (!local) { valid = false; break; }
         if (!exact) {
             tide_skinned_node_data n;
-            (void)tide_skinned_data_node(&source.view, i, &n);
+            validated_node(&source.view, i, &n);
             if (!same_transform(*local, local_of(&n))) {
                 if (root_wrapper(&source.view, i)) { valid = false; break; }
                 required[i] = 1u;
@@ -656,7 +682,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
         tide_bone_transform *made = tide_scratch_memory((size_t)target.view.nodes * sizeof *made);
         for (uint32_t i = 0; i < target.view.nodes; i++) {
             tide_skinned_node_data n;
-            (void)tide_skinned_data_node(&target.view, i, &n);
+            validated_node(&target.view, i, &n);
             made[i] = local_of(&n);
         }
         for (uint32_t i = 0; i < source.view.nodes; i++) {
