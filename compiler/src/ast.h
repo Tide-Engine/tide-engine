@@ -470,6 +470,19 @@ typedef struct enum_member {
     int64_t number;     // Its value, once checked
 } enum_member;
 
+// A type Json.Read<T> or Json.Write is called with. Generated C has a function
+// for each way it's used (tide_json_read<n>, tide_json_read_bytes<n> and
+// tide_json_write<n>, by its place in program.json_roots), which calls the
+// reader or the writer of the type and of each type in it (decl.json_reads,
+// decl.json_writes).
+typedef struct json_root {
+    type type;
+    type result;      // T?, what reading it gives
+    bool reads_text;  // Json.Read<T>(text)
+    bool reads_bytes; // Json.Read<T>(bytes)
+    bool writes;      // Json.Write(value)
+} json_root;
+
 // A channel commands are in: an enum's member, named by [Channel]
 typedef struct command_channel {
     struct decl *enumeration;
@@ -593,6 +606,8 @@ typedef struct decl {
     struct decl *interpolate; // Structs and components: their Interpolate, if they have one
     bool snapped;             // Singletons: something calls .Snap() on it, so it counts its snaps
     bool shown;               // Values with fields, and lists: text shows one somewhere, so it has a text helper
+    bool json_reads;          // Structs, enums, lists, maps and arrays: Json.Read reads one somewhere, so it has a reader
+    bool json_writes;         // ...and Json.Write writes one, so it has a writer
     tok_kind op;              // An operator's: T_PLUS, T_EQ, ...; T_MINUS is negation with one parameter
     str return_type_name;     // "void" if it returns nothing. A constant's type.
     const type_ref *return_type_ref; // ...as written; NULL for what has none (a system)
@@ -827,6 +842,8 @@ typedef enum builtin_call {
     CALL_SKINNED,   // Deterministic model lookup, sampling and pose operations.
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
     CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
+    CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
+                    // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
 } builtin_call;
 
 // What a GUI call needs besides its arguments, and which form of a draw
@@ -1293,6 +1310,9 @@ typedef struct program {
     decl *stencil_op;    // The built-in enum StencilOp, what becomes of the stored number where a draw draws: the same
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
+    VEC(json_root) json_roots; // The types Json.Read and Json.Write are called with: generated C has their functions
+    bool from_bytes;     // string.FromBytes(bytes) is called: its adapter goes in the generated C
+    type from_bytes_result; // ...and what it gives: string?
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
     type decode_result;  // ...and what it gives: void fails IOError
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
@@ -1506,6 +1526,8 @@ void declared_sampling(const expr *texture, int *filter, int *wrap);
 // Whether a texture's declaration says [Raw]: an asset by its name, or a grid's field.
 bool declared_raw(const expr *texture);
 bool field_is_raw(const field *f);
+// A field's key in JSON: what its [Json("key")] says, as written between the quotes, or its name.
+str json_field_key(const field *f);
 
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.

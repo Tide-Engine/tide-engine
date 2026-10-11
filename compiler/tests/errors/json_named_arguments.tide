@@ -1,0 +1,5 @@
+// expect: 'Write' takes its arguments in order, without names
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.text = Json.Write(value: Info { }); }

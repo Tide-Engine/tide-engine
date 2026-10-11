@@ -1,0 +1,5 @@
+// expect: int has no function 'Parse'
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.count = int.Parse(seen.text); }

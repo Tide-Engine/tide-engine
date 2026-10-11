@@ -546,14 +546,23 @@ static expr *parse_primary(parser *p)
 // Whether the '<' the parser is at starts a method's type, as in
 // world.Get<Health>(e), rather than a comparison: a name, maybe qualified,
 // then '>' and the call's '('. As in C#, what follows the '>' decides, and
-// no comparison reads that way (it would compare a bool).
+// no comparison reads that way (it would compare a bool). The type can take
+// types of its own, as in Json.Read<List<Score>>(text): names, dots and
+// commas up to the '>' that closes the first '<', which a '>>' can be part of.
 static bool at_type_argument(const parser *p)
 {
     int i = 1;
     if (peek_at(p, i)->kind != T_IDENT) return false;
-    i++;
-    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
-    return peek_at(p, i)->kind == T_GT && peek_at(p, i + 1)->kind == T_LPAREN;
+    int depth = 1;
+    while (depth > 0) {
+        const tok_kind k = peek_at(p, i)->kind;
+        if (k == T_LT) depth++;
+        else if (k == T_GT) depth--;
+        else if (k == T_SHR) depth -= 2;
+        else if (k != T_IDENT && k != T_DOT && !(k == T_COMMA && depth > 1)) return false; // Map<string, int>'s comma
+        i++;
+    }
+    return depth == 0 && peek_at(p, i)->kind == T_LPAREN;
 }
 
 static stmt *new_stmt(stmt_kind kind, loc at);

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/list.h"
 #include "tide/pack.h"
 
 // See tide/text.h.
@@ -1119,6 +1120,67 @@ tide_str tide_str_replace(const tide_str a, const tide_str from, const tide_str 
         if (at >= 0) at += i;
     } while (at >= 0);
     return append(out, a.ptr + i, a.bytes - i, tide_utf8_chars(a.ptr + i, a.bytes - i));
+}
+
+// ---------------------------------------------------------------------------
+// Text and lists (tide/list.h)
+
+tide_list tide_str_to_bytes(const tide_str a)
+{
+    return tide_list_from(a.ptr, a.bytes, 1u);
+}
+
+bool tide_str_from_bytes(const tide_list bytes, tide_str *text)
+{
+    *text = TIDE_STR_EMPTY;
+    const int32_t count = tide_list_count(bytes);
+    if (count <= 0) return true;
+    char *to = scratch_alloc((uint32_t)count);
+    if (bytes.at >> 30 == TIDE_IN_SCRATCH) { // Side by side
+        memcpy(to, tide_list_at(bytes, 0, 1u), (size_t)count);
+    } else {
+        for (int32_t i = 0; i < count; i++) {
+            const char *b = tide_list_at(bytes, i, 1u);
+            to[i] = b ? *b : '\0';
+        }
+    }
+    if (!tide_utf8_valid(to, count)) return false;
+    *text = (tide_str){to, count, tide_utf8_chars(to, count)};
+    return true;
+}
+
+// As many pieces as a list of text holds in the scratch area's offsets: the
+// last one is the rest of the text, whatever separators are in it.
+#define SPLIT_MOST ((1 << 28) - 1)
+
+tide_list tide_str_split(const tide_str a, const tide_str separator)
+{
+    int32_t pieces = 1;
+    for (int32_t i = 0; separator.bytes > 0 && pieces < SPLIT_MOST;) {
+        const int32_t at = find((tide_str){a.ptr + i, a.bytes - i, 0}, separator);
+        if (at < 0) break;
+        pieces++;
+        i += at + separator.bytes;
+    }
+    uint32_t list;
+    tide_block *b = tide_scratch_block((uint32_t)pieces * (uint32_t)sizeof(tide_text), "a list", &list);
+    tide_text *texts = (tide_text *)(b + 1);
+    b->a = (uint32_t)pieces;
+    b->b = (uint32_t)pieces;
+    int32_t i = 0;
+    for (int32_t k = 0; k < pieces; k++) {
+        const tide_str rest = {a.ptr + i, a.bytes - i, 0};
+        const int32_t bytes = k + 1 < pieces ? find(rest, separator) : rest.bytes;
+        texts[k] = tide_text_temp((tide_str){rest.ptr, bytes, tide_utf8_chars(rest.ptr, bytes)});
+        i += bytes + separator.bytes;
+    }
+    return (tide_list){list};
+}
+
+tide_list tide_str_split_char(const tide_str a, const int32_t separator)
+{
+    char bytes[4];
+    return tide_str_split(a, separator ? char_text(separator, bytes) : TIDE_STR_EMPTY); // ' ' is no character
 }
 
 // ---------------------------------------------------------------------------

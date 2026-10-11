@@ -8526,6 +8526,74 @@ TIDE_TEST(lsp_web_requests)
 #undef TASK
 }
 
+// Json's calls, string's own and the numbers out of text: what the editor offers after each dot, says
+// of each call, and counts as a use of the type a read names
+TIDE_TEST(lsp_json_and_text_primitives)
+{
+    start();
+#define JSON_TYPES                                                                                              \
+    "struct Score { string name; [Json(\"max_players\")] int most; }\nsingleton Seen { string text; int n; }\n" \
+    "scene Main { }\n"
+    const char *json = complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = Json.$\n}\n");
+    TIDE_CHECK(offers(json, "Read") && offers(json, "Write") && has(json, "Json.Read<T>(string json) -> T?"));
+    TIDE_CHECK(offers(complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = $\n}\n"), "Json"));
+    const char *own = complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = string.$\n}\n");
+    TIDE_CHECK(offers(own, "FromBytes") && !offers(own, "Trim"));
+    const char *text = complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var pieces = seen.text.$\n}\n");
+    TIDE_CHECK(offers(text, "ToBytes") && offers(text, "Split") && offers(text, "Trim") && !offers(text, "FromBytes"));
+    TIDE_CHECK(offers(complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var ok = int.$\n}\n"), "TryParse"));
+    TIDE_CHECK(offers(complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var ok = float.$\n}\n"), "TryParse"));
+    TIDE_CHECK(offers(complete("struct Score\n{\n    [$] int most;\n}\nscene Main { }\n"), "Json"));
+
+    // Every call checks, and each says what it is
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n"
+                             "    var score = Json.Read<Score>(seen.text) ?? Score { };\n"
+                             "    var scores = Json.Read<List<Score>>(seen.text.ToBytes()) ?? [];\n"
+                             "    seen.text = Json.Write(score) + (string.FromBytes(seen.text.ToBytes()) ?? \"\");\n"
+                             "    if (int.TryParse(seen.text, out var n) && float.TryParse(seen.text, out var f)) seen.n = n + int(f);\n"
+                             "    seen.n += seen.text.Split(\",\").count + scores.count;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *read = hover_at(5, 23);
+    TIDE_CHECK(has(read, "Json.Read<T>(string json) -> T?") && has(read, "Json.Read<T>(List<byte> json) -> T?"));
+    TIDE_CHECK(has(read, "A key the JSON leaves out keeps its field's default"));
+    TIDE_CHECK(has(hover_at(5, 17), "JSON to and from the game's own structs"));
+    TIDE_CHECK(has(hover_at(5, 28), "struct Score")); // The type a read names is a use of it
+    TIDE_CHECK(has(hover_at(6, 34), "struct Score")); // ...inside a list's too
+    TIDE_CHECK(has(hover_at(5, 9), "Score score")); // What `??` unwrapped
+    TIDE_CHECK(has(hover_at(7, 23), "Json.Write(T value) -> string"));
+    const char *from = hover_at(7, 45);
+    TIDE_CHECK(has(from, "string.FromBytes(List<byte> bytes) -> string?") && has(from, "or nothing when they aren't"));
+    TIDE_CHECK(has(hover_at(7, 66), "string.ToBytes() -> List<byte>"));
+    const char *parse = hover_at(8, 14);
+    TIDE_CHECK(has(parse, "int.TryParse(string text, out int value) -> bool") && has(parse, "Whether the whole text is an int"));
+    TIDE_CHECK(has(hover_at(8, 54), "float.TryParse(string text, out float value) -> bool"));
+    TIDE_CHECK(has(hover_at(8, 40), "int n")); // The local the call makes
+    const char *split = hover_at(9, 24);
+    TIDE_CHECK(has(split, "string.Split(string separator) -> List<string>") && has(split, "string.Split(char separator) -> List<string>"));
+    TIDE_CHECK(has(hover_at(0, 30), "[Json(\\\"key\\\")]") && has(hover_at(0, 30), "This field's key in JSON"));
+    // The struct's uses: its declaration, both reads, the fallback
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 8, "\"context\":{\"includeDeclaration\":true}"),
+                     "\"uri\"") == 4);
+
+    // Signature help, through the type in <>, a type inside it, and an out argument
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var score = Json.Read<Score>($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Json.Read<T>(string json) -> T?"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var scores = Json.Read<List<Score>>($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Json.Read<T>(List<byte> json) -> T?"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    seen.text = Json.Write($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Json.Write(T value) -> string"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var text = string.FromBytes($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "string.FromBytes(List<byte> bytes) -> string?"));
+    open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var ok = long.TryParse(seen.text, $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "long.TryParse(string text, out long value) -> bool") && has(help, "\"activeParameter\":1"));
+
+    // What's wrong is said where it's written
+    open_document(JSON_TYPES "struct Held { Entity owner; }\nsystem Run(mut Seen seen)\n{\n    seen.text = Json.Write(Held { });\n}\n");
+    TIDE_CHECK(has(last_sent(), "JSON has nothing for Entity, which 'Held.owner' holds"));
+#undef JSON_TYPES
+}
+
 TIDE_TEST(lsp_functions_send_and_spawn)
 {
     start();

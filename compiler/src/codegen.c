@@ -3407,6 +3407,19 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 gen_as(g, o, e->args.items[1], (type){TY_COMPONENT, e->type_decl});
             }
             sb_put(o, ")");
+        } else if (e->call == CALL_JSON) { // Json.Read<T>(text), int.TryParse(text, out value): the variable it makes, by address
+            sb_printf(o, "%s(", e->c_callee);
+            for (int i = 0; i < e->args.count; i++) {
+                if (i) sb_put(o, ", ");
+                if (e->arg_out & (1u << i)) {
+                    sb_put(o, "&(");
+                    gen_expr(g, o, e->args.items[i]);
+                    sb_put(o, ")");
+                } else {
+                    gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+                }
+            }
+            sb_put(o, ")");
         } else if (e->call == CALL_TEXT) { // name.Contains("cat"): the text first
             sb_printf(o, "%s(", e->c_callee);
             gen_expr(g, o, e->object);
@@ -4362,6 +4375,7 @@ static bool writes(const expr *e)
     case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_RANDOM: case CALL_ROLL: return true; // Each of a Random's methods steps it
     case CALL_WORLD: return str_eq_c(e->name, "TryGet"); // Its `out` argument
+    case CALL_JSON: return e->arg_out != 0; // int.TryParse(text, out value)
     default: return false;
     }
 }
@@ -6248,7 +6262,7 @@ static void gen_stmt(gen *g, const stmt *s)
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
                    || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_MAP
                    || s->value->call == CALL_GRID || s->value->call == CALL_WORLD || s->value->call == CALL_AUDIO
-                   || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
+                   || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN || s->value->call == CALL_JSON) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
@@ -6690,6 +6704,7 @@ static void gen_header(gen *g)
     if (prog->uses_resident) sb_put(o, "#include \"tide/resident.h\"\n"); // A Resident field: only in a game that has one
     sb_put(o, "\n");
     if (prog->random->named) sb_put(o, "#include \"tide/random.h\"\n\n"); // Random, in the games that have one
+    if (prog->json_roots.count > 0) sb_put(o, "#include \"tide/json.h\"\n\n"); // Json.Read and Json.Write, the same
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
     sb_put(o, "// an input for each, and the server's after them.\n");
     sb_printf(o, "#define TIDE_GAME_PLAYERS %uu\n\n", (unsigned)(prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT));
@@ -7906,6 +7921,297 @@ static void gen_show_helpers(gen *g)
             line = end + 1;
         }
         sb_put(o, "    }\n    return tide_str_add_cstr(a, \"}\");\n}\n\n");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Json.Read<T> and Json.Write (tide/json.h): a reader for each type a game
+// reads (decl.json_reads) and a writer for each it writes (decl.json_writes),
+// each calling those of the types in it, then the functions the calls
+// themselves are (program.json_roots). A game that calls neither has none.
+
+// The function that reads (tide_json_get_...) or writes (tide_json_put_...)
+// a struct, an enum, a list, a map or an array.
+static const char *json_helper(const type t, const bool reads)
+{
+    sb b = {0};
+    sb_printf(&b, "tide_json_%s_", reads ? "get" : "put");
+    if (t.kind == TY_LIST) sb_printf(&b, "list%d", t.decl->index);
+    else if (t.kind == TY_MAP) sb_printf(&b, "map%d", t.decl->index);
+    else if (t.kind == TY_ARRAY) sb_printf(&b, "array%d", t.decl->index);
+    else sb_put(&b, type_cname(t.decl));
+    return b.data;
+}
+
+// What reads a value of type `t` from the reader `j` into `place`, C for
+// where it's kept (text a tide_text), in a function that gives false once
+// anything is wrong. `null` leaves the place as it is.
+static void gen_json_read_part(sb *o, const type t, const char *place, const char *in)
+{
+    switch (t.kind) {
+    case TY_BOOL: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_bool(j, &%s)) return false;\n", in, place); return;
+    case TY_CHAR: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_char(j, &%s)) return false;\n", in, place); return;
+    case TY_FLOAT: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_float(j, &%s)) return false;\n", in, place); return;
+    case TY_STRING: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_text(j, &%s)) return false;\n", in, place); return;
+    case TY_BYTE:
+    case TY_INT:
+    case TY_LONG: {
+        const char *least = t.kind == TY_BYTE ? "0" : t.kind == TY_INT ? "INT32_MIN" : "INT64_MIN";
+        const char *most = t.kind == TY_BYTE ? "255" : t.kind == TY_INT ? "INT32_MAX" : "INT64_MAX";
+        sb_printf(o, "%sif (!tide_json_null(j)) {\n%s    int64_t n;\n%s    if (!tide_json_int(j, %s, %s, &n)) return false;\n", in, in, in,
+                  least, most);
+        sb_printf(o, "%s    %s = (%s)n;\n%s}\n", in, place, c_type(t), in);
+        return;
+    }
+    default: sb_printf(o, "%sif (!tide_json_null(j) && !%s(j, &%s)) return false;\n", in, json_helper(t, true), place); return;
+    }
+}
+
+// `a` followed by `v`, a value of type `t` in C as it's kept, as JSON.
+static void gen_json_write_part(sb *o, const type t, const char *v, const char *in)
+{
+    switch (t.kind) {
+    case TY_BOOL: sb_printf(o, "%sa = tide_str_add_bool(a, %s);\n", in, v); return;
+    case TY_BYTE:
+    case TY_INT: sb_printf(o, "%sa = tide_str_add_int(a, %s, 0);\n", in, v); return;
+    case TY_LONG: sb_printf(o, "%sa = tide_str_add_long(a, %s, 0);\n", in, v); return;
+    case TY_CHAR: sb_printf(o, "%sa = tide_json_add_char(a, %s);\n", in, v); return;
+    case TY_FLOAT: sb_printf(o, "%sa = tide_json_add_float(a, %s);\n", in, v); return;
+    case TY_STRING: sb_printf(o, "%sa = tide_json_add_text(a, tide_text_view(%s));\n", in, v); return;
+    case TY_STRUCT:
+    case TY_ARRAY: sb_printf(o, "%sa = %s(a, &%s);\n", in, json_helper(t, false), v); return; // Where it is: nothing copies it
+    default: sb_printf(o, "%sa = %s(a, %s);\n", in, json_helper(t, false), v); return;
+    }
+}
+
+// Whether a key goes into a C literal between JSON's quotes as it is: nothing in it that either escapes.
+static bool json_key_plain(const str key)
+{
+    for (int i = 0; i < key.len; i++) {
+        const char c = key.ptr[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' || c == ' ')) return false;
+    }
+    return true;
+}
+
+// What a place for a value of type `t` starts as, where it's kept: text and containers empty.
+static void gen_json_default(gen *g, sb *o, const type t)
+{
+    if (t.kind == TY_STRING) sb_put(o, "(tide_text){0}");
+    else gen_default(g, o, t);
+}
+
+static void gen_json_prototype(sb *o, const type t, const char *stored, const bool reads, const bool by_value, const char *end)
+{
+    if (reads) sb_printf(o, "TIDE_HELPER bool %s(tide_json *j, %s *v)%s", json_helper(t, true), stored, end);
+    else sb_printf(o, "TIDE_HELPER tide_str %s(tide_str a, %s%s%sv)%s", json_helper(t, false), by_value ? "" : "const ", stored,
+                   by_value ? " " : " *", end);
+}
+
+static void gen_json_helpers(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (prog->from_bytes) { // string.FromBytes: the engine's answer as the string? it gives
+        const char *result = c_type(prog->from_bytes_result);
+        sb_printf(o, "TIDE_HELPER %s tide_text_from_bytes(const tide_list bytes)\n{\n    %s r = {0};\n", result, result);
+        sb_put(o, "    r.ok = tide_str_from_bytes(bytes, &r.value);\n    return r;\n}\n\n");
+    }
+    if (prog->json_roots.count == 0) return;
+    sb_put(o, "// Json.Read and Json.Write: a reader and a writer for each type they're called with, and each type in it\n\n");
+    for (int pass = 0; pass < 2; pass++) { // Declared first: a struct can hold a list of itself
+        const char *end = pass ? "\n{\n" : ";\n";
+        for (int reads = 0; reads < 2; reads++) {
+            // Enums: a member's name, or the number of a value no member has
+            for (int i = 0; i < prog->decls.count; i++) {
+                const decl *d = prog->decls.items[i];
+                if (d->kind != DECL_ENUM || !(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_ENUM, (decl *)d};
+                gen_json_prototype(o, t, c_type(t), reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    if (d->members.count > 0) {
+                        sb_put(o, "    static const char *const names[] = {");
+                        for (int k = 0; k < d->members.count; k++) sb_printf(o, "%s\"" STR_FMT "\"", k ? ", " : "", STR_ARG(d->members.items[k].name));
+                        sb_put(o, "};\n    static const int64_t numbers[] = {");
+                        for (int k = 0; k < d->members.count; k++) sb_printf(o, "%s%lld", k ? ", " : "", (long long)d->members.items[k].number);
+                        sb_put(o, "};\n");
+                    }
+                    const char *most = d->width == 1 ? "255" : d->width == 2 ? "65535" : "INT32_MAX";
+                    sb_printf(o, "    int64_t n;\n    if (tide_json_number_next(j)) {\n        if (!tide_json_int(j, %s, %s, &n)) return false;\n",
+                              d->width == 1 || d->width == 2 ? "0" : "INT32_MIN", most);
+                    if (d->members.count > 0) {
+                        sb_printf(o, "    } else {\n        int32_t i;\n        if (!tide_json_name(j, names, %d, &i)) return false;\n"
+                                     "        n = numbers[i];\n    }\n", d->members.count);
+                    } else {
+                        sb_put(o, "    } else {\n        return false;\n    }\n");
+                    }
+                    sb_printf(o, "    *v = (%s)n;\n    return true;\n}\n\n", c_type(t));
+                } else {
+                    for (int k = 0; k < d->members.count; k++) {
+                        bool named = false; // By an earlier member: the first of a number's names is the one written
+                        for (int before = 0; before < k; before++) named |= d->members.items[before].number == d->members.items[k].number;
+                        if (named) continue;
+                        sb_printf(o, "    if ((int64_t)v == %lldLL) return tide_str_add_cstr(a, \"\\\"" STR_FMT "\\\"\");\n",
+                                  (long long)d->members.items[k].number, STR_ARG(d->members.items[k].name));
+                    }
+                    sb_put(o, "    return tide_str_add_long(a, (int64_t)v, 0);\n}\n\n");
+                }
+            }
+            // Structs: an object, a key for each field
+            for (int i = 0; i < prog->decls.count; i++) {
+                const decl *d = prog->decls.items[i];
+                if (d->kind != DECL_STRUCT || !(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_STRUCT, (decl *)d};
+                gen_json_prototype(o, t, c_type(t), reads, false, end);
+                if (!pass) continue;
+                int fields = 0;
+                for (int k = 0; k < d->fields.count; k++) fields += !d->fields.items[k].hidden;
+                if (reads) {
+                    if (fields > 0) {
+                        sb_put(o, "    static const char *const keys[] = {");
+                        for (int k = 0, n = 0; k < d->fields.count; k++) {
+                            if (d->fields.items[k].hidden) continue;
+                            sb_put(o, n++ ? ", " : "");
+                            gen_c_literal(o, json_field_key(&d->fields.items[k]), false);
+                        }
+                        sb_put(o, "};\n");
+                    }
+                    sb_put(o, "    *v = ");
+                    gen_default(g, o, t);
+                    sb_put(o, ";\n    if (!tide_json_object(j)) return false;\n");
+                    sb_printf(o, "    for (int32_t k; (k = tide_json_field(j, %s, %d)) != TIDE_JSON_DONE;) {\n        switch (k) {\n",
+                              fields > 0 ? "keys" : "NULL", fields);
+                    for (int k = 0, n = 0; k < d->fields.count; k++) {
+                        const field *f = &d->fields.items[k];
+                        if (f->hidden) continue;
+                        sb_printf(o, "        case %d:\n", n++);
+                        sb place = {0};
+                        sb_printf(&place, "v->%s", field_cname(f));
+                        gen_json_read_part(o, f->type, place.data, "            ");
+                        sb_put(o, "            break;\n");
+                    }
+                    sb_put(o, "        default:\n            if (!tide_json_skip(j)) return false;\n            break;\n        }\n    }\n"
+                              "    return !j->failed;\n}\n\n");
+                } else {
+                    const char *open = "{";
+                    for (int k = 0; k < d->fields.count; k++) {
+                        const field *f = &d->fields.items[k];
+                        if (f->hidden) continue;
+                        const str key = json_field_key(f);
+                        if (json_key_plain(key)) {
+                            sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\\\"" STR_FMT "\\\":\");\n", open, STR_ARG(key));
+                        } else {
+                            sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\");\n    a = tide_json_add_text(a, tide_str_from_cstr(", open);
+                            gen_c_literal(o, key, false);
+                            sb_put(o, "));\n    a = tide_str_add_cstr(a, \":\");\n");
+                        }
+                        sb value = {0};
+                        sb_printf(&value, "v->%s", field_cname(f));
+                        gen_json_write_part(o, f->type, value.data, "    ");
+                        open = ",";
+                    }
+                    if (fields == 0) sb_put(o, "    (void)v;\n    return tide_str_add_cstr(a, \"{}\");\n}\n\n");
+                    else sb_put(o, "    return tide_str_add_cstr(a, \"}\");\n}\n\n");
+                }
+            }
+            // Lists: an array, an element made for each value it has
+            for (int k = 0; k < prog->lists.count; k++) {
+                const decl *d = prog->lists.items[k];
+                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_LIST, (decl *)d};
+                const type e = list_elem(d);
+                const char *ec = elem_ctype(e);
+                gen_json_prototype(o, t, "tide_list", reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    *v = (tide_list){0};\n    if (!tide_json_array(j)) return false;\n");
+                    sb_printf(o, "    while (tide_json_item(j, sizeof(%s))) {\n        %s *e = tide_list_add(v, sizeof(%s), TIDE_IN_SCRATCH);\n"
+                                 "        if (!e) return false;\n", ec, ec, ec);
+                    if (e.kind == TY_STRUCT) { // Its fields' defaults, for a null
+                        sb_put(o, "        *e = ");
+                        gen_default(g, o, e);
+                        sb_put(o, ";\n");
+                    }
+                    gen_json_read_part(o, e, "(*e)", "        ");
+                    sb_put(o, "    }\n    return !j->failed;\n}\n\n");
+                } else {
+                    sb_put(o, "    const int32_t count = tide_list_count(v);\n    a = tide_str_add_cstr(a, \"[\");\n");
+                    sb_printf(o, "    for (int32_t i = 0; i < count; i++) {\n        const %s *e = tide_list_at(v, i, sizeof(%s));\n"
+                                 "        if (!e) break;\n        if (i > 0) a = tide_str_add_cstr(a, \",\");\n", ec, ec);
+                    gen_json_write_part(o, e, "(*e)", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
+                }
+            }
+            // Maps by text: an object, an entry for each key, the last one of a key written twice
+            for (int k = 0; k < prog->maps.count; k++) {
+                const decl *d = prog->maps.items[k];
+                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_MAP, (decl *)d};
+                const type value = d->fields.items[1].type;
+                gen_json_prototype(o, t, "tide_map", reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    *v = (tide_map){0};\n    if (!tide_json_object(j)) return false;\n    tide_text key;\n");
+                    sb_printf(o, "    while (tide_json_key(j, &key, sizeof(tide_map%d_entry))) {\n        %s value = ", k, elem_ctype(value));
+                    gen_json_default(g, o, value);
+                    sb_put(o, ";\n");
+                    gen_json_read_part(o, value, "value", "        ");
+                    sb_printf(o, "        tide_map%d_set(v, tide_text_view(key), %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", k,
+                              value.kind == TY_STRING ? "tide_text_view(value)" : "value");
+                } else {
+                    sb_put(o, "    bool first = true;\n    a = tide_str_add_cstr(a, \"{\");\n");
+                    sb_printf(o, "    for (int32_t i = 0; i < tide_map_entries(v); i++) {\n"
+                                 "        const tide_map%d_entry *e = tide_map_entry(v, i, &tide_map%d_kind);\n"
+                                 "        if (!tide_map_live(e)) continue;\n        if (!first) a = tide_str_add_cstr(a, \",\");\n"
+                                 "        first = false;\n        a = tide_json_add_text(a, tide_text_view(e->key));\n"
+                                 "        a = tide_str_add_cstr(a, \":\");\n", k, k);
+                    gen_json_write_part(o, value, "e->value", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"}\");\n}\n\n");
+                }
+            }
+            // Arrays: an array, whose values go to the elements in order; the ones past its length are skipped
+            for (int k = 0; k < prog->arrays.count; k++) {
+                const decl *d = prog->arrays.items[k];
+                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_ARRAY, (decl *)d};
+                const type e = d->fields.items[0].type;
+                gen_json_prototype(o, t, array_cname(d), reads, false, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    if (!tide_json_array(j)) return false;\n    for (int32_t i = 0; tide_json_item(j, 0); i++) {\n");
+                    sb_printf(o, "        if (i >= %d) {\n            if (!tide_json_skip(j)) return false;\n            continue;\n        }\n",
+                              d->array_length);
+                    gen_json_read_part(o, e, "v->at[i]", "        ");
+                    sb_put(o, "    }\n    return !j->failed;\n}\n\n");
+                } else {
+                    sb_printf(o, "    a = tide_str_add_cstr(a, \"[\");\n    for (int32_t i = 0; i < %d; i++) {\n"
+                                 "        if (i > 0) a = tide_str_add_cstr(a, \",\");\n", d->array_length);
+                    gen_json_write_part(o, e, "v->at[i]", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
+                }
+            }
+        }
+        if (!pass) sb_put(o, "\n");
+    }
+    // The calls: a T? that's nothing unless the whole text was one value of the type, and a value's text
+    for (int i = 0; i < prog->json_roots.count; i++) {
+        const json_root *r = &prog->json_roots.items[i];
+        const char *stored = r->type.kind == TY_LIST ? "tide_list" : r->type.kind == TY_MAP ? "tide_map" : c_type(r->type);
+        for (int bytes = 0; bytes < 2; bytes++) {
+            if (!(bytes ? r->reads_bytes : r->reads_text)) continue;
+            const char *result = c_type(r->result);
+            sb_printf(o, "TIDE_HELPER %s tide_json_read%s%d(const %s source)\n{\n    tide_json j;\n    tide_json_begin%s(&j, source);\n",
+                      result, bytes ? "_bytes" : "", i, bytes ? "tide_list" : "tide_str", bytes ? "_bytes" : "");
+            sb_printf(o, "    %s r = {0};\n    r.ok = !tide_json_null(&j) && %s(&j, &r.value) && tide_json_end(&j);\n", result,
+                      json_helper(r->type, true));
+            sb_printf(o, "    if (!r.ok) r = (%s){0};\n    return r;\n}\n\n", result);
+        }
+        if (r->writes) {
+            const bool by_value = r->type.kind != TY_STRUCT;
+            sb_printf(o, "TIDE_HELPER tide_str tide_json_write%d(const %s value)\n{\n    return %s(TIDE_STR_EMPTY, %svalue);\n}\n\n", i, stored,
+                      json_helper(r->type, false), by_value ? "" : "&");
+        }
     }
 }
 
@@ -14327,6 +14633,9 @@ static void gen_print_value(sb *o, const type t, const char *access)
         sb_printf(o, "        switch (%s) {\n", access);
         for (int i = 0; i < t.decl->members.count; i++) {
             const enum_member *m = &t.decl->members.items[i];
+            bool named = false; // By an earlier member: two names of one number are one case
+            for (int before = 0; before < i; before++) named |= t.decl->members.items[before].number == m->number;
+            if (named) continue;
             sb_printf(o, "        case %s: printf(\"" STR_FMT "." STR_FMT "\"); break;\n", enum_member_cname(t.decl, m),
                       STR_ARG(t.decl->qualified), STR_ARG(m->name));
         }
@@ -17945,6 +18254,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_text_helpers(&g);
     gen_skinned_adapters(&g);
     gen_show_helpers(&g);
+    gen_json_helpers(&g);
     gen_columns(&g);
     gen_component_access(&g);
     gen_local_fields(&g);
