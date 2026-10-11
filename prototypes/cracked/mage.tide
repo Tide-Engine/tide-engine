@@ -1,0 +1,245 @@
+// CRACKED's mages, as one machine shows them: the Unity game's Magician,
+// with its Mixamo clips (art/player/mage.glb, which tools/make_mage.py makes
+// of the Unity project's files). The file has no materials: each corner's
+// `uv.x` says which of the model's seven parts it's of, and the frag paints
+// each as the Unity materials do, with the team's color on the shirt, the
+// shield's state on the hood and the player's health as how full the glass
+// head is. A dead mage has no head: the glass is in pieces (effects.tide).
+
+// The parts, as `uv.x * 8` counts them.
+const int PART_BUCKLE = 0;
+const int PART_BOTTOMS = 1;
+const int PART_SKIN = 2;
+const int PART_GLASS = 3;
+const int PART_HOOD = 4;
+const int PART_SHIRT = 5;
+const int PART_LIQUID = 6;
+
+// UpperBody.mask's clip in the Unity animator: frames 20 to 41 of the throw.
+const float THROW_FROM = 0.667;
+const float THROW_LONG = 0.7;
+
+struct Thread
+{
+    float3 position;
+    float3 normal;
+    float2 uv;           // x: which part. y: in the liquid, how high, 0 to 1
+}
+
+asset SkinnedMesh<Thread> mage = "art/player/mage.glb";
+
+// What one mage's draw says of its player.
+struct Robe
+{
+    Color team = Color.white;
+    Color hood = Color.white;
+    Color liquidTop = Color.white;
+    Color liquidBottom = Color.white;
+    float flash;         // White from being hurt, 1 fading to 0
+    float level = 1;     // How full the head is: the player's health, 0 to 1
+    float glass;         // 0 draws the body and the liquid, 1 the head's glass over them
+    float headless;      // 1 once the head has shattered
+}
+
+// Each seat's clocks, which only this machine keeps.
+local singleton Troupe
+{
+    float[SEATS] stride;     // Where in a jog's cycle it is, 0 to 1
+    float[SEATS] idle;       // Seconds of the idle clip
+    float[SEATS] hands;      // How far its hands are up for a reload, 0 to 1
+    float[SEATS] moving;     // How much of the jog it shows, eased
+}
+
+frag MageLook(Thread thread, out Color color, Robe robe, Instance instance, Light light, Shadow shadow)
+{
+    int part = int(thread.uv.x * 8);
+    float3 normal = instance.Normal(thread.normal);
+    float3 toEye = Math.Normalize(light.eye - this.world);
+    // A mage the camera is in, thrown about or against a wall, isn't in its way
+    // (the Unity game cuts a hole in what hides its player): it thins out, a pixel here and a pixel there, and is gone
+    float near = Math.Distance(light.eye, this.world);
+    if (near < 1.9 && (Math.Hash(int2(int(this.position.x), int(this.position.y))) & 255) / 255.0 >= (near - 0.8) / 1.1) this.Discard();
+    if (robe.glass > 0.5)
+    {
+        // The fishbowl: clear in its middle, the Unity material's cyan at its
+        // edge, with the sun's glint on it
+        if (part != PART_GLASS || robe.headless > 0.5) this.Discard();
+        float edge = Math.Pow(1 - Math.Saturate(Math.Abs(Math.Dot(normal, toEye))), 1.8);
+        float glint = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 60);
+        float3 paint = float3(0.55, 1, 0.98) * (0.75 + 0.5 * edge) + float3(glint * 2);
+        color = Color(paint.x, paint.y, paint.z, Math.Saturate(0.13 + 0.6 * edge + glint));
+        return;
+    }
+    if (part == PART_GLASS) this.Discard();
+    if (part == PART_LIQUID)
+    {
+        // The liquid is in the head up to the player's health, and glows a little
+        if (robe.headless > 0.5 || thread.uv.y > robe.level) this.Discard();
+        float high = Math.Saturate(thread.uv.y / Math.Max(robe.level, 0.05));
+        Color paint = Mix(robe.liquidBottom, robe.liquidTop, high);
+        float surface = Math.SmoothStep(0.88, 1, high) * 0.35;
+        color = Color(paint.r * 1.25 + surface, paint.g * 1.25 + surface, paint.b * 1.25 + surface, 1);
+        return;
+    }
+    // The inside of the liquid's hollow is the only back face that shows
+    mut Color paint = Color(0.2547, 0.0901, 0.0901);
+    if (part == PART_BUCKLE) paint = Color(0.85, 0.62, 0.16);
+    if (part == PART_SKIN) paint = Color(0.96, 0.95, 0.93);
+    if (part == PART_HOOD) paint = robe.hood;
+    if (part == PART_SHIRT) paint = Mix(robe.team, Color(1.6, 1.6, 1.6), robe.flash);
+    else paint = Mix(paint, Color.white, robe.flash * 0.35);
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp, shadow.step);
+    color = Lit(paint, normal, this.world, light, sun, part == PART_BUCKLE ? 1.2 : 0.15);
+}
+
+// One bone of a pose turned towards another pose's.
+void Take(mut Pose pose, Pose from, Bone bone, float weight)
+{
+    pose[bone].rotation = Math.Slerp(pose[bone].rotation, from[bone].rotation, weight);
+}
+
+// A pose's arms and upper back from another pose: the Unity animator's upper
+// body layer.
+void TakeUpper(mut Pose pose, Pose from, float weight)
+{
+    var bones = mage.skeleton.bones;
+    Take(pose, from, bones.spine002, weight);
+    Take(pose, from, bones.spine003, weight);
+    Take(pose, from, bones.shoulderL, weight);
+    Take(pose, from, bones.upper_armL, weight);
+    Take(pose, from, bones.forearmL, weight);
+    Take(pose, from, bones.handL, weight);
+    Take(pose, from, bones.shoulderR, weight);
+    Take(pose, from, bones.upper_armR, weight);
+    Take(pose, from, bones.forearmR, weight);
+    Take(pose, from, bones.handR, weight);
+}
+
+// A mage's pose: the idle, the jogs by which way it goes over the ground,
+// the throw over its arms for a moment after a shot, its hands up while it
+// reloads, and its upper body turned to where its player looks.
+Pose MagePose(Seat seat, float stride, float idle, float moving, float threw, float hands)
+{
+    var clips = mage.animations;
+    mut var pose = clips.idle.Sample(idle, Playback.Loop);
+    if (seat.dead) return pose;
+    if (moving > 0.01)
+    {
+        var speed = Math.Length(seat.localVelocity);
+        var way = speed > 0.05 ? seat.localVelocity / speed : float2(0, 1);
+        mut var jog = way.y >= 0 ? clips.jogForward.Sample(stride * clips.jogForward.duration, Playback.Loop)
+                                 : clips.jogBackward.Sample(stride * clips.jogBackward.duration, Playback.Loop);
+        var side = way.x >= 0 ? clips.strafeRight.Sample(stride * clips.strafeRight.duration, Playback.Loop)
+                              : clips.strafeLeft.Sample(stride * clips.strafeLeft.duration, Playback.Loop);
+        jog.Blend(side, Math.Abs(way.x) / Math.Max(Math.Abs(way.x) + Math.Abs(way.y), 0.001));
+        pose.Blend(jog, Math.Saturate(moving));
+    }
+    if (hands > 0.01) TakeUpper(pose, clips.handsUp.Sample(0), Math.Saturate(hands));
+    if (threw < THROW_LONG)
+    {
+        var weight = Math.Saturate(threw / 0.04) * Math.Saturate((THROW_LONG - threw) / 0.25);
+        TakeUpper(pose, clips.throw.Sample(THROW_FROM + threw), weight);
+    }
+    // ShooterBase.UpdateView: the upper body follows the camera, a quarter turn at the most
+    var ahead = Math.Rotate(seat.rotation, float3(0, 0, 1));
+    mut var turn = seat.yaw - Math.Degrees(Math.Atan2(ahead.x, ahead.z));
+    if (turn > 180) turn -= 360;
+    if (turn < -180) turn += 360;
+    var twist = quaternion.AxisAngle(float3(0, 1, 0), Math.Radians(Math.Clamp(turn, -90, 90)) * 0.5);
+    var bones = mage.skeleton.bones;
+    Twist(pose, bones.spine002, twist);
+    Twist(pose, bones.spine003, twist);
+    return pose;
+}
+
+// A bone turned about the model's own axes, whichever way the bone's are:
+// the turn, taken into the bone's space as it stands in the model.
+void Twist(mut Pose pose, Bone bone, quaternion turn)
+{
+    var stands = pose.Model(bone);
+    var model = quaternion.LookRotation(Math.Normalize(Math.Rotate(stands, float3(0, 0, 1))), Math.Normalize(Math.Rotate(stands, float3(0, 1, 0))));
+    pose[bone].rotation = Math.Mul(pose[bone].rotation, Math.Mul(Math.Conjugate(model), Math.Mul(turn, model)));
+}
+
+float4x4 MagePlace(Seat seat)
+{
+    return float4x4.TRS(seat.position, seat.rotation, float3(MODEL_SCALE * seat.settings.size));
+}
+
+// The hood says what the shield is doing: the Unity material's blue when
+// it's ready, a bright cyan while it's up, and from black to white as it
+// comes back.
+Color HoodColor(Seat seat)
+{
+    if (seat.shieldActive) return Color(0.1, 0.9, 1);
+    if (seat.shieldCooldown <= 0) return Color(0, 0.26, 1);
+    var back = 1 - Math.Saturate(seat.shieldCooldown / Math.Max(seat.settings.shieldCooldown, 0.01));
+    return Color(back * 0.85, back * 0.85, back * 0.85);
+}
+
+// The seats' clocks move on.
+[Stage(Layers.Prepare, 2)]
+view Paces(Arena arena, Fx fx, mut Troupe troupe)
+{
+    for (var s = 0; s < SEATS; s++)
+    {
+        var seat = arena.seats[s];
+        if (!seat.alive || seat.dead) continue;
+        var speed = Math.Length(seat.localVelocity);
+        // A jog's cycle covers about 2.6 meters: slower feet under a slow body
+        troupe.stride[s] = Math.Frac(troupe.stride[s] + fx.dt * Math.Clamp(speed / 2.6, 0.9, 2.4));
+        troupe.idle[s] += fx.dt;
+        if (troupe.idle[s] > mage.animations.idle.duration) troupe.idle[s] -= mage.animations.idle.duration;
+        var moving = Math.Saturate(speed) * (seat.grounded ? 1 : 0.45);
+        troupe.moving[s] += (moving - troupe.moving[s]) * Math.Saturate(fx.dt * 12);
+        troupe.hands[s] += ((seat.reloading ? 1.0 : 0.0) - troupe.hands[s]) * Math.Saturate(fx.dt * 9);
+    }
+}
+
+// The mages in the sun's image, after the blocks.
+[Stage(Layers.Shadow, 1)]
+view MageShadows(Arena arena, Air air, Troupe troupe, Shadow shadow)
+{
+    for (var s = 0; s < SEATS; s++)
+    {
+        var seat = arena.seats[s];
+        if (!seat.alive) continue;
+        shadow.map.SkinnedMesh(mage, MagePlace(seat), MagePose(seat, troupe.stride[s], troupe.idle[s], troupe.moving[s], air.threw[s], troupe.hands[s]));
+    }
+}
+
+// The mages: body and liquid first, then every head's glass over them, which
+// is seen through and hides nothing.
+[Stage(Layers.World, 2)]
+view Mages(Arena arena, Air air, Troupe troupe, Post post)
+{
+    for (var pass = 0; pass < 2; pass++)
+    {
+        for (var s = 0; s < SEATS; s++)
+        {
+            var seat = arena.seats[s];
+            if (!seat.alive || (pass == 1 && seat.dead)) continue;
+            var poisoned = seat.poisonLevel > 0;
+            var robe = Robe { team = TeamColor(seat.team), hood = HoodColor(seat),
+                              liquidTop = poisoned ? Color(0.678, 1, 0.184) : Color(0.745, 0, 1),
+                              liquidBottom = poisoned ? Color(0, 1, 0) : Color(1, 0, 0.0155),
+                              flash = air.flash[s], level = Math.Saturate(float(seat.health) / Math.Max(seat.maxHealth, 1)),
+                              glass = pass, headless = seat.dead ? 1 : 0 };
+            var pose = MagePose(seat, troupe.stride[s], troupe.idle[s], troupe.moving[s], air.threw[s], troupe.hands[s]);
+            if (pass == 0)
+            {
+                post.scene.Cull(Cull.None)
+                {
+                    post.scene.SkinnedMesh(mage, MagePlace(seat), pose, MageLook, robe);
+                }
+            }
+            else
+            {
+                post.scene.Depth(Depth.Read)
+                {
+                    post.scene.SkinnedMesh(mage, MagePlace(seat), pose, MageLook, robe);
+                }
+            }
+        }
+    }
+}

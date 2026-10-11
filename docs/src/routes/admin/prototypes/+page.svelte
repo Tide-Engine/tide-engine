@@ -25,13 +25,8 @@
     <ul class="prototypes" aria-label="Prototype games">
         {#each data.prototypes as prototype}
             <li class="prototype">
-                <div class="picture" class:horror={prototype.horror}>
-                    {#if prototype.image}
-                        <img src={prototype.image} alt="" width="960" height="540" />
-                    {:else}
-                        <div class="candle" aria-hidden="true"><span class="flame"></span><span class="wick"></span><span class="wax"></span></div>
-                        <span class="picture-label">Keep the light.</span>
-                    {/if}
+                <div class="picture">
+                    <img src={prototype.image} alt="" width="960" height="540" />
                     <span class="prototype-label">Prototype</span>
                 </div>
                 <div class="copy">
@@ -70,12 +65,6 @@
     .picture { position: relative; aspect-ratio: 16 / 9; background: #171922; overflow: hidden; }
     .picture img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .prototype-label { position: absolute; top: 16px; left: 16px; padding: 4px 9px; border: 1px solid #ffffff2b; border-radius: 4px; background: #101114d9; color: #e6e6e1; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-    .horror { display: grid; place-items: center; background: radial-gradient(ellipse at 50% 58%, #5b3b2638, transparent 58%), #111013; }
-    .candle { position: relative; width: 26px; height: 84px; margin-top: 16px; filter: drop-shadow(0 0 24px #d99c5940); }
-    .wax { position: absolute; bottom: 0; left: 2px; width: 22px; height: 45px; background: linear-gradient(90deg, #8e775d, #c1aa85 45%, #a18a67); }
-    .wick { position: absolute; top: 34px; left: 12px; width: 2px; height: 7px; background: #34251d; }
-    .flame { position: absolute; top: 6px; left: 7px; width: 13px; height: 29px; border-radius: 60% 50% 45% 45%; background: #e8c697; box-shadow: 0 0 18px 8px #d5933740; transform: rotate(7deg); }
-    .picture-label { position: absolute; bottom: 28px; color: #a68e75; letter-spacing: .25em; font-family: var(--mono); font-size: 10px; text-transform: uppercase; }
     .copy { padding: 24px; }
     .kind { color: var(--brand-1); font-size: 11px; margin: 0 0 10px; }
     h2 { font-size: 24px; line-height: 1.2; letter-spacing: -.02em; margin: 0 0 12px; }

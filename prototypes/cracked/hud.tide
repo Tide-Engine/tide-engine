@@ -1,0 +1,803 @@
+using Rooms;
+
+// CRACKED: what's over the world, in the screen's pixels. This machine's
+// player's health, bullets, shield and jetpack (the Unity game's PlayerHUD),
+// both teams' rounds and points (RoundsHUD), the count before a round and the
+// words when one ends, the end of a game (GameOverView), the controls a
+// phone's fingers get, and what the rooms' menu is told of the match. The
+// cards are cards.tide's, and what's heard sound.tide's. None of it shows
+// while a page of the menu is up.
+
+// TeamManager's colors: the ones its UI has, and the teams' own.
+const Color UI_BLUE = Color(0.58, 1, 0.99);
+const Color UI_RED = Color(1, 0.54, 0.54);
+const Color UI_BLUE_DEEP = Color(0.212, 0.299, 1);
+const Color UI_RED_DEEP = Color(1, 0.297, 0.297);
+const Color UI_INK = Color(0.96, 0.95, 0.92);
+const Color UI_QUIET = Color(0.68, 0.7, 0.78);
+const Color UI_BACK = Color(0.05, 0.055, 0.09);
+const Color UI_PANEL = Color(0.07, 0.08, 0.13, 0.86);
+const Color UI_LINE = Color(1, 1, 1, 0.16);
+const Color UI_GOLD = Color(1, 0.84, 0.42);
+const Color UI_ROSE = Color(1, 0.36, 0.4);
+const Color UI_MINT = Color(0.45, 0.93, 0.6);
+const Color UI_SHIELD = Color(0.55, 0.85, 1);
+const Color UI_POISON = Color(0.5, 0.95, 0.3);
+
+// The menu's look: the game's night blue, with the blue team's light for
+// what's chosen.
+const GUITheme UI_THEME = GUITheme {
+    text = UI_INK,
+    panel = Color(0.06, 0.07, 0.12, 0.95),
+    control = Color(0.16, 0.18, 0.3, 0.95),
+    hot = Color(0.25, 0.29, 0.5),
+    pressed = Color(0.1, 0.12, 0.2),
+    field = Color(0.03, 0.035, 0.06),
+    fieldHot = Color(0.09, 0.1, 0.17),
+    accent = UI_BLUE,
+    radius = 10
+};
+
+// What the views here keep between frames, and say to each other.
+local singleton Overlay
+{
+    int seat = -1;           // This machine's player's, or -1
+    float unit = 1;          // How big the HUD is drawn: 1 on a window 720 pixels high
+    float beat;              // Seconds, under a minute, for what pulses
+    float top;               // Where the next thing under the screen's top goes
+    bool fingers;            // A touchscreen was the last thing used
+
+    // The player's own
+    float health;            // As the bar shows it, which follows the seat's
+    float chip;              // ...and what a hit just took, which follows that
+    float hurt;              // The screen's edges, after a hit
+    float mend;              // ...and after health came back
+    int magazine;
+    float shot;              // Since the magazine last changed
+    bool shieldReady = true;
+    float shieldPop = 1;     // Since the shield was ready again
+
+    // The round's words
+    Phase phase;
+    float go = 10;           // Since a round began
+    int wonTeam = -1;
+    bool wonRound;
+    float won = 100;         // Since a point was scored
+    int map = -1;
+    float mapAge = 100;      // Since a map was made
+    float dead;              // How long this machine's player has been out
+    int champion = -1;
+    float over;              // Since the game ended
+}
+
+// A stick and four buttons, for fingers.
+local singleton Thumbs
+{
+    bool steering;
+    float2 from;             // Where the stick's finger went down, from the top left
+    float2 pull;             // The stick, as the screen has it: y down
+}
+
+Color UiFade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * Math.Saturate(alpha));
+}
+
+Color UiMix(Color a, Color b, float t)
+{
+    return Math.Lerp(a, b, Math.Saturate(t));
+}
+
+Color UiTeam(int team)
+{
+    return team == 0 ? UI_BLUE : UI_RED;
+}
+
+Color UiTeamDeep(int team)
+{
+    return team == 0 ? UI_BLUE_DEEP : UI_RED_DEEP;
+}
+
+string UiTeamName(int team)
+{
+    return team == 0 ? "BLUE" : "RED";
+}
+
+float UiEaseOut(float t)
+{
+    var u = 1 - Math.Saturate(t);
+    return 1 - u * u * u;
+}
+
+// Past its end and back, as the Unity game's cards and numbers land (OutBack).
+float UiEaseBack(float t)
+{
+    var u = Math.Saturate(t) - 1;
+    return 1 + 2.70158 * u * u * u + 1.70158 * u * u;
+}
+
+// Whole pixels, and never too small to read.
+float UiSize(float size, float unit)
+{
+    return Math.Max(10, Math.Round(size * unit));
+}
+
+// Words with a shadow under them, which land a little too big and settle.
+void UiShout(float2 at, string words, float size, Color color, float age, float shown)
+{
+    var landed = Math.Round(size * (1 + 0.3 * Math.Max(0, 1 - age * 6)) * 0.5) * 2;
+    Draw.Tint(UiFade(Color.white, shown))
+    {
+        Draw.Text(words, at + float2(0, Math.Max(2, landed * 0.06)), landed, UiFade(UI_BACK, 0.8), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, at, landed, color, Anchor.MiddleCenter, Font.Bold);
+    }
+}
+
+// A dark pill with a line of words in it.
+void UiPill(float2 at, string words, float size, Color ink, Color edge)
+{
+    var wide = Draw.MeasureText(words, size, Font.Bold).x + size * 1.8;
+    Draw.Shape(Shape { center = at, size = float2(wide, size * 2.1), radius = size * 1.05, color = UI_PANEL, outline = 1.5, outlineColor = edge });
+    Draw.Text(words, at, size, ink, Anchor.MiddleCenter, Font.Bold);
+}
+
+override string Rooms.Title()
+{
+    return "CRACKED";
+}
+
+override string Rooms.Tagline()
+{
+    return "Physics-based wizard brawling!";
+}
+
+// The top left corner: the bottom is the player's own HUD, and a phone's thumbs.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(8, 8, 76, 36);
+}
+
+// Where the title page's buttons start, under the game's name.
+float UiTitleButtons(float2 screen)
+{
+    return Math.Round(Math.Min(screen.y * 0.56, screen.y - 230));
+}
+
+// The title: the game's name over the match that runs behind it, cracked
+// down its middle. It's a view of the HUD's, as the package's pages run
+// before the world is drawn and the world would be over it; the page's
+// buttons are the GUI's, which is drawn last (Rooms.TitlePage, below).
+[Stage(Layers.Hud, 70)]
+view HudTitle(Lobby lobby)
+{
+    if (lobby.page != Page.Title) return;
+    var screen = float2(Screen.width, Screen.height);
+    var k = Math.Clamp(Math.Min(screen.x, screen.y) / 720.0, 0.75, 1.6);
+    var name = float2(screen.x * 0.5, Math.Round(UiTitleButtons(screen) * 0.5));
+    Draw.Screen()
+    {
+        Draw.Shape(Shape { center = screen * 0.5, size = screen, color = UiFade(UI_BACK, 0.55), color2 = UiFade(UI_BACK, 0.9) });
+        Draw.Blend(Blend.Add)
+        {
+            Draw.Shape(Shape { center = name - float2(screen.x * 0.12, 0), size = float2(screen.x * 0.6, 200 * k), ellipse = true, color = UiFade(UI_BLUE_DEEP, 0.3), soft = 150 * k });
+            Draw.Shape(Shape { center = name + float2(screen.x * 0.12, 0), size = float2(screen.x * 0.6, 200 * k), ellipse = true, color = UiFade(UI_RED_DEEP, 0.3), soft = 150 * k });
+        }
+        var words = Rooms.Title();
+        mut var size = Math.Round(132 * k);
+        size = Math.Floor(size * Math.Min(1, (screen.x - 40) / Math.Max(1, Draw.MeasureText(words, size, Font.Bold).x)));
+        var off = Math.Max(2, Math.Round(size * 0.035));
+        // The two teams' colors behind the name, a little apart
+        Draw.Text(words, name + float2(0, off * 2), size, UiFade(UI_BACK, 0.9), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, name - float2(off, 0), size, UI_BLUE_DEEP, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, name + float2(off, 0), size, UI_RED_DEEP, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, name, size, Color.white, Anchor.MiddleCenter, Font.Bold);
+        // The crack: a line that goes down through it, in the page's dark
+        var across = Draw.MeasureText(words, size, Font.Bold).x;
+        mut var from = name + float2(across * 0.08, -size * 0.4);
+        for (var i = 1; i <= 6; i++)
+        {
+            var to = name + float2(across * (0.08 + (i % 2 == 0 ? 0.035 : -0.03) - i * 0.012), -size * 0.4 + size * 0.8 * i / 6.0);
+            Draw.Line(from, to, Math.Max(2, size * 0.028), UI_BACK);
+            if (i == 2 || i == 4) Draw.Line(to, to + float2((i == 2 ? 1 : -1) * size * 0.16, size * 0.07), Math.Max(1.5, size * 0.018), UI_BACK);
+            from = to;
+        }
+        Draw.Text(Rooms.Tagline(), name + float2(0, size * 0.5 + Math.Round(22 * k)), UiSize(18, k), UI_INK, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("Two teams. Rounds on maps that change. The losers pick a card.", name + float2(0, size * 0.5 + Math.Round(48 * k)),
+                  UiFit("Two teams. Rounds on maps that change. The losers pick a card.", UiSize(13, k), screen.x - 24), UI_QUIET, Anchor.MiddleCenter);
+    }
+}
+
+// The title page's buttons, each at its place under the name: no modal, whose
+// dim would be over the name, so the page keeps the pointer itself.
+override void Rooms.TitlePage(Session session, mut Lobby lobby)
+{
+    var screen = float2(Screen.width, Screen.height);
+    var wide = Math.Min(screen.x - 48, 300);
+    var left = Math.Round((screen.x - wide) * 0.5);
+    var top = UiTitleButtons(screen);
+    GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
+    var connected = session.state == SessionState.Connected;
+    mut var play = false;
+    mut var host = false;
+    GUI.Disabled(!connected)
+    {
+        play = GUI.Button(Rect(left, top, wide, 44), "Play");
+        host = GUI.Button(Rect(left, top + 52, wide, 44), "Host a room");
+    }
+    var join = GUI.Button(Rect(left, top + 104, wide, 44), "Join a room");
+    var settings = GUI.Button(Rect(left, top + 156, wide, 44), "Settings");
+    if (lobby.message != "") GUI.Label(Rect(left, top + 204, wide, 24), lobby.message);
+    if (play) Rooms.Play(lobby);
+    if (host) Rooms.Host(lobby);
+    if (join) Rooms.ShowJoin(lobby);
+    if (settings) Rooms.ShowSettings(lobby);
+}
+
+[Before(Rooms.Begin, Rooms.Pages)]
+view HudTheme()
+{
+    GUI.SetTheme(UI_THEME);
+}
+
+// What the menu's room page shows of the match: who has each seat. And its
+// New game button, which is the match's Restart.
+[After(Rooms.Pages)]
+view HudRoster(Arena arena, Session session, mut Lobby lobby)
+{
+    mut var manned = 0;
+    mut var seats = 0;
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (!arena.seats[s].taken) continue;
+        seats = s + 1;
+        if (!arena.seats[s].bot) manned |= 1 << s;
+    }
+    lobby.seats = seats;
+    lobby.manned = manned;
+    lobby.mine = arena.players.TryGet(session.player, out var seat) ? seat : -1;
+    lobby.bots = true;
+    lobby.offersNewGame = true;
+    if (lobby.newGame) Send(Restart { });
+}
+
+// First of the HUD's views: whose seat this machine has, how big things are,
+// and the clocks the others read.
+[Stage(Layers.Hud)]
+view HudState(Arena arena, Session session, Devices devices, mut Overlay hud)
+{
+    var dt = Math.Min(Frame.dt, 0.1);
+    hud.seat = arena.players.TryGet(session.player, out var seat) ? seat : -1;
+    hud.unit = Math.Clamp(Math.Min(Screen.width, Screen.height) / 720.0, 0.75, 1.6);
+    hud.beat += dt;
+    if (hud.beat > 60) hud.beat -= 60;
+    // The Menu button has the top left corner, so a narrow screen's rounds go under it
+    hud.top = Screen.width < 560 ? 50 : 8;
+
+    // Fingers, until a mouse or a key says otherwise
+    foreach (var touch in devices.touchscreen.touches)
+        if (touch.press.pressed) hud.fingers = true;
+    var keys = devices.keyboard;
+    if (devices.mouse.left.down || devices.mouse.right.down || Math.LengthSq(devices.mouse.delta) > 0
+        || keys.w.down || keys.a.down || keys.s.down || keys.d.down || keys.space.down) hud.fingers = false;
+
+    hud.go += dt;
+    hud.won += dt;
+    hud.mapAge += dt;
+    hud.shot += dt;
+    hud.shieldPop += dt;
+    hud.hurt = Math.Max(0, hud.hurt - dt * 1.8);
+    hud.mend = Math.Max(0, hud.mend - dt * 1.5);
+    hud.over = arena.phase == Phase.GameOver ? hud.over + dt : 0;
+    if (arena.phase == Phase.Running && hud.phase == Phase.Warmup) hud.go = 0;
+    hud.phase = arena.phase;
+
+    if (hud.seat < 0 || !arena.seats[hud.seat].alive)
+    {
+        hud.dead = 0;
+        hud.chip = 0;
+        hud.health = 0;
+        return;
+    }
+    var mine = arena.seats[hud.seat];
+    hud.dead = mine.dead ? hud.dead + dt : 0;
+    // The bar follows the health quickly, and what was lost lingers behind it
+    var health = float(mine.health);
+    if (hud.health <= 0 || health > hud.health) hud.health = health;
+    hud.health = Math.Max(health, hud.health - mine.maxHealth * dt * 4);
+    if (hud.chip < hud.health) hud.chip = hud.health;
+    hud.chip = Math.Max(hud.health, hud.chip - mine.maxHealth * dt * 0.45);
+    if (mine.magazine != hud.magazine)
+    {
+        hud.magazine = mine.magazine;
+        hud.shot = 0;
+    }
+    var ready = mine.shieldCooldown <= 0 && !mine.shieldActive;
+    if (ready && !hud.shieldReady) hud.shieldPop = 0;
+    hud.shieldReady = ready;
+}
+
+// A hit on this machine's player, as it's predicted: the screen's edges say so.
+local event(Hurt hurt) HudHurt(mut Overlay hud)
+{
+    if (hurt.seat == hud.seat) hud.hurt = Math.Min(1, 0.45 + hurt.damage * 0.02);
+}
+
+// Who took a point is the server's to say.
+local event(verified RoundWon won) HudRoundWon(mut Overlay hud)
+{
+    hud.wonTeam = won.team;
+    hud.wonRound = won.scored;
+    hud.won = 0;
+}
+
+local event(verified GameWon won) HudGameWon(mut Overlay hud)
+{
+    hud.champion = won.team;
+}
+
+local event(RoundStarted started) HudRoundStarted(mut Overlay hud)
+{
+    hud.map = started.map;
+    hud.mapAge = 0;
+}
+
+// Poison is in the glass: the screen's edges go green with it, red after a
+// hit, and red too while there's little health left.
+[Stage(Layers.Hud, 1)]
+view HudGlass(Arena arena, Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || hud.seat < 0 || !arena.seats[hud.seat].alive) return;
+    var mine = arena.seats[hud.seat];
+    var screen = float2(Screen.width, Screen.height);
+    var edge = Math.Min(screen.x, screen.y);
+    var poison = Math.Saturate(mine.poisonLevel * 0.25) * (0.8 + 0.2 * Math.Sin(hud.beat * 5));
+    if (poison > 0 && !mine.dead)
+    {
+        Draw.Shape(Shape { center = screen * 0.5, size = screen, color = UiFade(UI_POISON, 0.4 * poison), soft = -edge * 0.38 });
+        Draw.Rect(screen * 0.5, screen, UiFade(UI_POISON, 0.07 * poison));
+    }
+    var low = mine.dead ? 0.0 : Math.Saturate(1 - mine.health / (mine.maxHealth * 0.3)) * (0.6 + 0.4 * Math.Sin(hud.beat * 6));
+    var red = Math.Max(hud.hurt, low * 0.55);
+    if (red > 0) Draw.Shape(Shape { center = screen * 0.5, size = screen, color = UiFade(UI_ROSE, 0.5 * red), soft = -edge * 0.3 });
+    if (hud.mend > 0) Draw.Shape(Shape { center = screen * 0.5, size = screen, color = UiFade(UI_MINT, 0.3 * hud.mend), soft = -edge * 0.25 });
+}
+
+// A round a team has, has half of, or hasn't (RoundUIEntry's three sprites).
+void UiRoundPip(float2 at, float radius, Color color, int state)
+{
+    Draw.Circle(at, radius, Color(0, 0, 0, 0.45));
+    if (state == 2)
+    {
+        Draw.Circle(at, radius, color);
+        Draw.Circle(at - float2(radius * 0.28, radius * 0.3), radius * 0.26, UiFade(Color.white, 0.55));
+        return;
+    }
+    // A slice as wide as the circle is half a disc: the left half
+    if (state == 1) Draw.Arc(at, radius, Math.PI * 0.5, Math.PI, radius, color);
+    Draw.WireCircle(at, radius, Math.Max(1.5, radius * 0.2), UiFade(color, state == 1 ? 1 : 0.55));
+}
+
+// Both teams, at the top: the rounds each has of the five that win the game,
+// the points each has of the two that make a round under them, and the
+// rounds as numbers between. They're read `verified`: what the server has
+// confirmed, never a point this machine only predicted.
+[Stage(Layers.Hud, 10)]
+view HudRounds(verified Arena sure, mut Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || sure.phase == Phase.Teams) return;
+    var k = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var radius = Math.Round(9 * k);
+    var step = radius * 2 + Math.Round(6 * k);
+    var middle = Math.Round(86 * k);
+    var side = step * ROUNDS_TO_WIN + Math.Round(10 * k);
+    var tall = Math.Round(48 * k);
+    var at = float2(screen.x * 0.5, hud.top + tall * 0.5);
+    Draw.Shape(Shape { center = at + float2(0, 2), size = float2(middle + side * 2 + 10, tall + 8), radius = tall * 0.5, color = Color(0, 0, 0, 0.3), soft = 8 });
+    Draw.Shape(Shape { center = at, size = float2(middle + side * 2, tall), radius = tall * 0.5, color = UI_PANEL, outline = 1.5, outlineColor = UI_LINE });
+    var myTeam = hud.seat >= 0 ? TeamOf(hud.seat) : -1;
+    for (var team = 0; team < TEAMS; team++)
+    {
+        var way = team == 0 ? -1.0 : 1.0;
+        var color = UiTeam(team);
+        // This machine's player's team has a light behind it (TeamUIEntry's outline)
+        if (team == myTeam)
+            Draw.Shape(Shape { center = at + float2(way * (middle * 0.5 + side * 0.5 - 2), 0), size = float2(side - 6, tall - 10), radius = (tall - 10) * 0.5,
+                               color = UiFade(color, 0.12), outline = 1.5, outlineColor = UiFade(color, 0.7) });
+        for (var i = 0; i < ROUNDS_TO_WIN; i++)
+        {
+            // From the middle outwards
+            var pip = at + float2(way * (middle * 0.5 + radius + Math.Round(4 * k) + i * step), -Math.Round(5 * k));
+            var state = sure.rounds[team] > i ? 2 : sure.rounds[team] == i && sure.score[team] > 0 ? 1 : 0;
+            UiRoundPip(pip, radius, color, state);
+        }
+        // The round's points, under the rounds
+        for (var point = 0; point < SCORE_PER_ROUND; point++)
+        {
+            var dot = at + float2(way * (middle * 0.5 + radius + Math.Round(4 * k) + point * Math.Round(14 * k)), Math.Round(14 * k));
+            var has = sure.score[team] > point;
+            Draw.RoundRect(dot, float2(Math.Round(11 * k), Math.Round(4 * k)), Math.Round(2 * k), has ? color : UiFade(color, 0.22));
+        }
+        Draw.Text(team == myTeam ? "YOU" : UiTeamName(team), at + float2(way * (middle * 0.5 + side - Math.Round(12 * k)), Math.Round(14 * k)), UiSize(9, k),
+                  UiFade(color, team == myTeam ? 1 : 0.7), team == 0 ? Anchor.MiddleLeft : Anchor.MiddleRight, Font.Bold);
+        Draw.Text($"{sure.rounds[team]}", at + float2(way * Math.Round(20 * k), 0), UiSize(26, k), color, Anchor.MiddleCenter, Font.Bold);
+    }
+    Draw.Text(":", at - float2(0, Math.Round(2 * k)), UiSize(20, k), UI_QUIET, Anchor.MiddleCenter, Font.Bold);
+    hud.top += tall + Math.Round(8 * k);
+}
+
+// A bullet of the magazine: a pellet that's there, or the place of one that
+// was fired.
+void UiPellet(float2 at, float2 size, bool full, float pop, Color color)
+{
+    var grown = size * (1 + 0.35 * pop);
+    if (!full)
+    {
+        Draw.WireRoundRect(at, size, size.x * 0.5, Math.Max(1.5, size.x * 0.18), Color(1, 1, 1, 0.28));
+        return;
+    }
+    Draw.RoundRect(at + float2(0, 1.5), grown, grown.x * 0.5, Color(0, 0, 0, 0.5));
+    Draw.Shape(Shape { center = at, size = grown, radius = grown.x * 0.5, color = UiMix(color, Color.white, 0.55 + 0.45 * pop), color2 = color });
+}
+
+// A round gauge with one of the cards' pictures in it: a ring that fills.
+void UiGauge(float2 at, float radius, int picture, float full, bool ready, float pop, Color color)
+{
+    var grown = radius * (1 + 0.25 * Math.Max(0, 1 - pop * 5));
+    Draw.Circle(at + float2(0, 2), grown, Color(0, 0, 0, 0.4));
+    Draw.Circle(at, grown, ready ? UiMix(UI_PANEL, color, 0.32) : UI_PANEL);
+    Draw.WireCircle(at, grown, Math.Max(2, radius * 0.14), ready ? color : Color(1, 1, 1, 0.14));
+    if (!ready) Draw.Arc(at, grown, -Math.PI * 0.5, Math.TAU * Math.Saturate(full), Math.Max(2, radius * 0.14), color);
+    UiIcon(picture, at, grown * 1.25, ready ? Color.white : UiFade(Color.white, 0.4));
+}
+
+// This machine's player's own: their health, their magazine over it, the
+// shield at its left and a jetpack's fuel at its right. It's at the bottom
+// of the screen, and at the top where thumbs have the bottom.
+[Stage(Layers.Hud, 20)]
+view HudPlayer(Arena arena, mut Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || hud.seat < 0) return;
+    var mine = arena.seats[hud.seat];
+    if (!mine.alive || arena.phase == Phase.Upgrade || arena.phase == Phase.GameOver) return;
+    var k = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var gauge = Math.Round(21 * k);
+    var tall = Math.Round(22 * k);
+    var wide = Math.Min(Math.Round(300 * k), screen.x - gauge * 4 - 48);
+    var pellets = Math.Round(26 * k);
+    var middle = float2(screen.x * 0.5, hud.fingers ? hud.top + pellets + tall * 0.5 + 4 : screen.y - Math.Round(18 * k) - tall * 0.5);
+    if (hud.fingers) hud.top += pellets + tall + Math.Round(14 * k);
+    Draw.Tint(UiFade(Color.white, mine.dead ? 0.35 : 1))
+    {
+        // Health: what's left, what a hit just took behind it, and the number
+        var most = Math.Max(1, float(mine.maxHealth));
+        var left = Math.Saturate(hud.health / most);
+        var was = Math.Saturate(hud.chip / most);
+        var fill = left > 0.5 ? UiMix(UI_GOLD, UI_MINT, (left - 0.5) * 2) : UiMix(UI_ROSE, UI_GOLD, left * 2);
+        var corner = float2(middle.x - wide * 0.5, middle.y);
+        Draw.Shape(Shape { center = middle + float2(0, 2), size = float2(wide + 8, tall + 8), radius = tall * 0.5 + 4, color = Color(0, 0, 0, 0.35), soft = 6 });
+        Draw.RoundRect(middle, float2(wide, tall), tall * 0.5, UI_PANEL);
+        var inner = wide - 6;
+        if (was > left) Draw.RoundRect(corner + float2(3 + inner * was * 0.5, 0), float2(Math.Max(tall - 6, inner * was), tall - 6), (tall - 6) * 0.5, UiFade(Color.white, 0.85));
+        if (left > 0)
+            Draw.Shape(Shape { center = corner + float2(3 + Math.Max(tall - 6, inner * left) * 0.5, 0), size = float2(Math.Max(tall - 6, inner * left), tall - 6), radius = (tall - 6) * 0.5,
+                               color = UiMix(fill, Color.white, 0.35), color2 = fill });
+        Draw.WireRoundRect(middle, float2(wide, tall), tall * 0.5, 1.5, UiMix(UI_LINE, UI_ROSE, hud.hurt));
+        var number = $"{Math.Max(0, mine.health)} / {mine.maxHealth}";
+        if (k >= 1) Draw.Text(number, middle + float2(0, 1), UiSize(13, k), Color(0, 0, 0, 0.7), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(number, middle, UiSize(13, k), Color.white, Anchor.MiddleCenter, Font.Bold);
+
+        // The magazine, over the health: a pellet a bullet, as many as fit. A
+        // reload fills them again from the left, and they shake meanwhile.
+        var size = Math.Max(1, mine.settings.magazineSize);
+        var step = Math.Min(Math.Round(14 * k), wide / size);
+        var pellet = float2(Math.Max(3, Math.Round(step * 0.6)), Math.Round(16 * k));
+        var reloaded = mine.reloading ? 1 - Math.Saturate(mine.reloadLeft / Math.Max(0.01, mine.settings.reloadTime)) : 0.0;
+        var row = middle.y - tall * 0.5 - pellets * 0.5 - 1;
+        for (var i = 0; i < size; i++)
+        {
+            var shake = mine.reloading ? Math.Sin(hud.beat * 31 + i * 1.7) * 1.5 * k : 0.0;
+            var at = float2(middle.x - step * (size - 1) * 0.5 + i * step, row + shake);
+            var full = mine.reloading ? i < int(reloaded * size) : i < mine.magazine;
+            // The pellet that was just fired, or loaded, pops (PlayerUIBullet's shake)
+            var pop = !mine.reloading && i == mine.magazine - 1 || mine.reloading && i == int(reloaded * size) - 1 ? Math.Max(0, 1 - hud.shot * 8) : 0.0;
+            UiPellet(at, pellet, full, pop, UI_GOLD);
+        }
+        if (mine.reloading)
+        {
+            var bar = float2(wide * 0.5, Math.Max(2, Math.Round(3 * k)));
+            var under = float2(middle.x, row - pellet.y * 0.5 - bar.y - 3);
+            Draw.RoundRect(under, bar, bar.y * 0.5, Color(0, 0, 0, 0.5));
+            Draw.RoundRect(under - float2(bar.x * (1 - reloaded) * 0.5, 0), float2(Math.Max(bar.y, bar.x * reloaded), bar.y), bar.y * 0.5, UI_GOLD);
+        }
+
+        // The shield: ready, up, or a ring that fills while it comes back
+        var cooled = 1 - Math.Saturate(mine.shieldCooldown / Math.Max(0.01, mine.settings.shieldCooldown));
+        var shield = float2(middle.x - wide * 0.5 - gauge - Math.Round(10 * k), middle.y - Math.Round(8 * k));
+        if (mine.shieldActive)
+        {
+            Draw.Blend(Blend.Add)
+            {
+                Draw.Shape(Shape { center = shield, size = float2(gauge * 2.6), ellipse = true, color = UiFade(UI_SHIELD, 0.5), soft = gauge * 0.7 });
+            }
+            UiGauge(shield, gauge, 0, 1, true, 0, Color.white);
+        }
+        else UiGauge(shield, gauge, 0, cooled, hud.shieldReady, hud.shieldPop, UI_SHIELD);
+
+        // A jetpack's fuel, for who has the card
+        if (mine.settings.hasJetpack)
+        {
+            var fuel = Math.Saturate(mine.jetpackFuel / Math.Max(0.01, mine.settings.jetpackCapacity));
+            UiGauge(float2(middle.x + wide * 0.5 + gauge + Math.Round(10 * k), shield.y), gauge, 25, fuel, fuel >= 0.999, 1, UI_GOLD);
+        }
+    }
+}
+
+// Where the shots go: the middle of the screen (PlayerCrosshair). Its lines
+// open with the spread the player's cards gave their shots, and a ring goes
+// round it while the magazine fills.
+[Stage(Layers.Hud, 22)]
+view HudCrosshair(Arena arena, Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || hud.seat < 0) return;
+    var mine = arena.seats[hud.seat];
+    if (!mine.alive || mine.dead || arena.phase != Phase.Running && arena.phase != Phase.Warmup) return;
+    var k = hud.unit;
+    var at = float2(Math.Round(Screen.width * 0.5), Math.Round(Screen.height * 0.5));
+    var gap = Math.Round((5 + mine.settings.spread * 0.8) * k + Math.Max(0, 1 - hud.shot * 7) * 4 * k);
+    var reach = Math.Round(6 * k);
+    var empty = mine.magazine <= 0 || mine.reloading;
+    var color = empty ? UiFade(UI_GOLD, 0.9) : Color.white;
+    for (var i = 0; i < 4; i++)
+    {
+        var way = i == 0 ? float2(1, 0) : i == 1 ? float2(-1, 0) : i == 2 ? float2(0, 1) : float2(0, -1);
+        Draw.Line(at + way * gap, at + way * (gap + reach), 4, Color(0, 0, 0, 0.55));
+        Draw.Line(at + way * gap, at + way * (gap + reach), 2, color);
+    }
+    Draw.Circle(at, 3, Color(0, 0, 0, 0.55));
+    Draw.Circle(at, 1.5, color);
+    if (!mine.reloading) return;
+    var reloaded = 1 - Math.Saturate(mine.reloadLeft / Math.Max(0.01, mine.settings.reloadTime));
+    var ring = gap + reach + Math.Round(8 * k);
+    Draw.WireCircle(at, ring, 3, Color(0, 0, 0, 0.4));
+    Draw.Arc(at, ring, -Math.PI * 0.5, Math.TAU * reloaded, 3, UI_GOLD);
+}
+
+// The Unity game's maps, by their names in its rotation.
+string UiMapName(int map)
+{
+    switch (map)
+    {
+        case 0: return "MAP 1";
+        case 1: return "MAP 2";
+        case 2: return "MAP 4";
+        case 3: return "MAP 6";
+        case 4: return "MAP 7";
+        case 5: return "MAP 9";
+        case 6: return "MAP 10";
+    }
+    return "";
+}
+
+// The words over the world: the round and its map as it's made, the count
+// before it starts (CountdownText), who took a point or a round, and that
+// this machine's player is out and watching (SpectatorHud).
+[Stage(Layers.Hud, 30)]
+view HudWords(Arena arena, Session session, Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing) return;
+    var k = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var narrow = screen.x < 560;
+    var middle = float2(screen.x * 0.5, Math.Round(screen.y * 0.29));
+    var round = arena.rounds[0] + arena.rounds[1] + 1;
+
+    if (arena.phase == Phase.RoundEnd && hud.won < ROUND_END_SECONDS && hud.wonTeam >= 0)
+    {
+        // A band in the team's color, open while the round's end lasts
+        var open = UiEaseOut(hud.won / 0.25) * (1 - UiEaseOut((hud.won - (ROUND_END_SECONDS - 0.4)) / 0.4));
+        var color = UiTeam(hud.wonTeam);
+        var mine = hud.seat >= 0 && TeamOf(hud.seat) == hud.wonTeam;
+        var tall = Math.Round((narrow ? 78 : 96) * k) * open;
+        Draw.Blend(Blend.Add)
+        {
+            Draw.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = UiFade(color, 0.22 * open), soft = 44 });
+        }
+        Draw.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = UiMix(UiTeamDeep(hud.wonTeam), UI_BACK, 0.35), color2 = UiMix(UiTeamDeep(hud.wonTeam), UI_BACK, 0.7) });
+        Draw.Rect(middle - float2(0, tall * 0.5), float2(screen.x, 2 * open), color);
+        Draw.Rect(middle + float2(0, tall * 0.5), float2(screen.x, 2 * open), color);
+        Draw.Tint(UiFade(Color.white, open * 1.5 - 0.5))
+        {
+            var words = hud.wonRound ? $"{UiTeamName(hud.wonTeam)} WINS THE ROUND" : $"{UiTeamName(hud.wonTeam)} SCORES";
+            var under = hud.wonRound ? (mine ? "The other team picks their cards" : "Your team picks a card each")
+                      : mine ? "One more point takes the round" : "One more point and the round is theirs";
+            var size = UiSize(narrow ? 26 : 38, k);
+            var fit = Math.Min(1, (screen.x - 24) / Math.Max(1, Draw.MeasureText(words, size, Font.Bold).x));
+            Draw.Text(words, middle - float2(0, Math.Round(10 * k)), Math.Floor(size * fit), Color.white, Anchor.MiddleCenter, Font.Bold);
+            Draw.Text(hud.seat >= 0 ? under : "", middle + float2(0, Math.Round(22 * k)), UiSize(14, k), UiFade(color, 0.95), Anchor.MiddleCenter);
+        }
+    }
+    else if (arena.phase == Phase.Warmup)
+    {
+        var count = int(Math.Ceil(arena.phaseTime));
+        var age = 1 - (arena.phaseTime - Math.Floor(arena.phaseTime));
+        if (count > 3)
+        {
+            // The map is on its way: which round this is, and where
+            var shown = Math.Saturate((WARMUP_SECONDS - arena.phaseTime) * 4) * Math.Saturate((arena.phaseTime - 3) * 4);
+            UiShout(middle - float2(0, Math.Round(8 * k)), $"ROUND {round}", (narrow ? 40 : 56) * k, Color.white, WARMUP_SECONDS - arena.phaseTime, shown);
+            var where = arena.mapPhase == MapPhase.DestroyOld || hud.map < 0 ? "Get ready" : UiMapName(hud.map);
+            Draw.Text(where, middle + float2(0, Math.Round(34 * k)), UiSize(16, k), UiFade(UI_QUIET, shown), Anchor.MiddleCenter, Font.Bold);
+        }
+        else if (count >= 1)
+            UiShout(middle, $"{count}", (narrow ? 84 : 110) * k, count == 1 ? UI_GOLD : Color.white, age, Math.Saturate((1 - age) * 2.5 + 0.25));
+    }
+    else if (arena.phase == Phase.Running && hud.go < 0.9)
+        UiShout(middle, "FIGHT!", (narrow ? 64 : 90) * k, UI_GOLD, hud.go, Math.Saturate((0.9 - hud.go) * 4));
+
+    // Out, and watching the others until the round is over
+    if (hud.seat >= 0 && arena.seats[hud.seat].alive && arena.seats[hud.seat].dead && arena.phase == Phase.Running)
+    {
+        var shown = Math.Saturate(hud.dead * 3 - 0.6);
+        var at = float2(screen.x * 0.5, hud.fingers ? Math.Round(screen.y * 0.42) : screen.y - Math.Round(120 * k));
+        Draw.Tint(UiFade(Color.white, shown))
+        {
+            var wide = Math.Min(screen.x - 24, Math.Round(330 * k));
+            Draw.Shape(Shape { center = at, size = float2(wide, Math.Round(62 * k)), radius = Math.Round(16 * k), color = UI_PANEL, outline = 1.5, outlineColor = UiFade(UI_ROSE, 0.8) });
+            Draw.Text("YOU CRACKED", at - float2(0, Math.Round(11 * k)), UiSize(18, k), UI_ROSE, Anchor.MiddleCenter, Font.Bold);
+            mut var team = 0;
+            for (var s = 0; s < SEATS; s++)
+                if (TeamOf(s) == TeamOf(hud.seat) && arena.seats[s].alive && !arena.seats[s].dead) team += 1;
+            Draw.Text(team == 0 ? "Spectating" : team == 1 ? "Spectating: 1 teammate is still up" : $"Spectating: {team} teammates are still up",
+                      at + float2(0, Math.Round(13 * k)), UiSize(13, k), UI_QUIET, Anchor.MiddleCenter);
+        }
+    }
+
+    // The match's host left, and another machine is taking it over
+    if (session.state == SessionState.Connecting)
+        UiPill(float2(screen.x * 0.5, hud.top + Math.Round(18 * k)), "The host left. Finding the match again...", UiSize(12, k), UI_INK, UI_LINE);
+}
+
+// The game is over (GameOverView): who won it, by how many rounds, and when
+// the next one starts.
+[Stage(Layers.Hud, 50)]
+view HudGameOver(Arena arena, Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || arena.phase != Phase.GameOver) return;
+    var k = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var narrow = screen.x < 560;
+    var team = arena.lastWinningTeam >= 0 ? arena.lastWinningTeam : Math.Max(0, hud.champion);
+    var color = UiTeam(team);
+    var shown = Math.Saturate(hud.over * 2);
+    var middle = float2(screen.x * 0.5, Math.Round(screen.y * 0.4));
+    Draw.Rect(screen * 0.5, screen, UiFade(UI_BACK, 0.72 * shown));
+    Draw.Blend(Blend.Add)
+    {
+        Draw.Shape(Shape { center = middle, size = float2(screen.x * 1.2, Math.Round(260 * k)), ellipse = true, color = UiFade(UiTeamDeep(team), 0.35 * shown), soft = Math.Round(160 * k) });
+    }
+    var mine = hud.seat >= 0 ? (TeamOf(hud.seat) == team ? "VICTORY" : "DEFEAT") : "GAME OVER";
+    Draw.Text(mine, middle - float2(0, Math.Round((narrow ? 70 : 96) * k)), UiSize(18, k), UiFade(UI_QUIET, shown), Anchor.MiddleCenter, Font.Bold);
+    var words = $"{UiTeamName(team)} WINS";
+    var size = (narrow ? 60 : 104) * k;
+    var fit = Math.Min(1, (screen.x - 32) / Math.Max(1, Draw.MeasureText(words, Math.Round(size), Font.Bold).x));
+    UiShout(middle, words, size * fit, color, hud.over, shown);
+
+    // The rounds, as they stand at the top, but big
+    var row = middle + float2(0, Math.Round((narrow ? 74 : 104) * k));
+    var radius = Math.Round(11 * k);
+    var step = radius * 2 + Math.Round(7 * k);
+    for (var side = 0; side < TEAMS; side++)
+    {
+        var way = side == 0 ? -1.0 : 1.0;
+        Draw.Text($"{arena.rounds[side]}", row + float2(way * Math.Round(30 * k), 0), UiSize(44, k), UiFade(UiTeam(side), shown), Anchor.MiddleCenter, Font.Bold);
+        if (narrow) continue;
+        for (var i = 0; i < ROUNDS_TO_WIN; i++)
+            UiRoundPip(row + float2(way * (Math.Round(74 * k) + i * step), 0), radius, UiFade(UiTeam(side), shown), arena.rounds[side] > i ? 2 : 0);
+    }
+    Draw.Text("-", row, UiSize(30, k), UiFade(UI_QUIET, shown), Anchor.MiddleCenter, Font.Bold);
+
+    var left = Math.Max(0, int(Math.Ceil(GAME_OVER_SECONDS - arena.phaseTime)));
+    var under = row + float2(0, Math.Round(70 * k));
+    UiPill(under, $"New game in {left}", UiSize(15, k), UI_INK, UiFade(color, 0.7 * shown));
+    Draw.Text("or pick New game from the Menu", under + float2(0, Math.Round(32 * k)), UiSize(12, k), UiFade(UI_QUIET, shown), Anchor.MiddleCenter);
+}
+
+// A round button for a thumb: lit while it's held.
+void UiThumbButton(float2 at, float radius, string words, bool held, Color color)
+{
+    Draw.Circle(at + float2(0, 3), radius, Color(0, 0, 0, 0.35));
+    Draw.Circle(at, radius, held ? UiFade(color, 0.85) : Color(0.09, 0.1, 0.16, 0.6));
+    Draw.WireCircle(at, radius, 2, UiFade(color, held ? 1 : 0.7));
+    Draw.Text(words, at, Math.Max(10, Math.Round(radius * 0.34)), held ? UI_BACK : UiFade(Color.white, 0.92), Anchor.MiddleCenter, Font.Bold);
+}
+
+// A phone's controls, once a finger has touched the screen: a stick under
+// the left thumb, where it's put down, four buttons under the right one, and
+// a drag anywhere else on the right turns the camera, as a mouse does. A
+// finger on FIRE turns it too, so aiming goes on while shooting. They're read
+// here from the devices as they are this frame, and left in `Hand`, which the
+// input's Sample and the camera read. The screen's bottom right corner is the
+// engine's stats', so the buttons are over it.
+[Stage(Layers.Hud, 60)]
+view HudThumbs(Arena arena, Devices devices, Overlay hud, Lobby lobby, mut Hand hand, mut Thumbs thumbs)
+{
+    Draw.SetScreen();
+    hand.stick = float2(0);
+    hand.look = float2(0);
+    hand.jump = false;
+    hand.fire = false;
+    hand.shield = false;
+    hand.reload = false;
+    thumbs.steering = false;
+    if (!hud.fingers || lobby.page != Page.Playing || hud.seat < 0) return;
+    if (arena.phase == Phase.Upgrade || arena.phase == Phase.GameOver) return;
+    var mine = arena.seats[hud.seat];
+    var screen = float2(Screen.width, Screen.height);
+    // A thumb's size is the same on every screen
+    var fire = float2(screen.x - 74, screen.y - 150);
+    var jump = float2(screen.x - 168, screen.y - 104);
+    var shield = float2(screen.x - 160, screen.y - 204);
+    var reload = float2(screen.x - 62, screen.y - 248);
+    var reach = 56.0;
+
+    mut var look = float2(0);
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        var start = Screen.Flip(touch.startPosition);
+        if (Math.Distance(start, fire) < 52)
+        {
+            hand.fire = true;
+            look += touch.delta;
+            continue;
+        }
+        if (Math.Distance(start, jump) < 42) { hand.jump = true; continue; }
+        if (Math.Distance(start, shield) < 40) { hand.shield = true; continue; }
+        if (Math.Distance(start, reload) < 34) { hand.reload = true; continue; }
+        if (start.x < screen.x * 0.5 && start.y > screen.y * 0.3)
+        {
+            // The first finger on the left is the stick, from where it went down
+            if (thumbs.steering) continue;
+            thumbs.steering = true;
+            thumbs.from = start;
+            thumbs.pull = (Screen.Flip(touch.position) - start) / reach;
+            continue;
+        }
+        if (start.y > hud.top) look += touch.delta;
+    }
+    // A quarter of a degree a pixel, with y up, as the mouse's delta has it
+    hand.look = look * 0.25;
+    if (thumbs.steering)
+    {
+        var hard = Math.Length(thumbs.pull);
+        if (hard > 1) thumbs.pull = thumbs.pull / hard;
+        hand.stick = float2(thumbs.pull.x, -thumbs.pull.y);
+    }
+
+    var playing = mine.alive && !mine.dead;
+    Draw.Tint(UiFade(Color.white, playing ? 1 : 0.35))
+    {
+        var base = thumbs.steering ? thumbs.from : float2(96, screen.y - 132);
+        Draw.Circle(base, reach, Color(0.09, 0.1, 0.16, thumbs.steering ? 0.45 : 0.3));
+        Draw.WireCircle(base, reach, 2, UiFade(Color.white, thumbs.steering ? 0.5 : 0.28));
+        Draw.Circle(base + (thumbs.steering ? thumbs.pull * reach : float2(0)), 24, UiFade(Color.white, thumbs.steering ? 0.6 : 0.3));
+
+        var color = UiTeam(TeamOf(hud.seat));
+        UiThumbButton(fire, 44, "FIRE", hand.fire, mine.reloading || mine.magazine <= 0 ? UI_GOLD : color);
+        UiThumbButton(jump, 34, "JUMP", hand.jump, Color.white);
+        UiThumbButton(shield, 32, "SHIELD", hand.shield || mine.shieldActive, hud.shieldReady ? UI_SHIELD : UiFade(UI_SHIELD, 0.4));
+        UiThumbButton(reload, 27, "RELOAD", hand.reload || mine.reloading, UI_GOLD);
+        if (mine.reloading)
+            Draw.Arc(reload, 27, -Math.PI * 0.5, Math.TAU * (1 - Math.Saturate(mine.reloadLeft / Math.Max(0.01, mine.settings.reloadTime))), 3, Color.white);
+        if (!hud.shieldReady && !mine.shieldActive)
+            Draw.Arc(shield, 32, -Math.PI * 0.5, Math.TAU * (1 - Math.Saturate(mine.shieldCooldown / Math.Max(0.01, mine.settings.shieldCooldown))), 3, UI_SHIELD);
+    }
+}

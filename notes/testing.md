@@ -15,50 +15,6 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   in `notes/cli-and-packages.md`, Web-watch request diagnostics. The hosted stall's
   underlying cause is unproven; no server behavior or browser test changed.
 
-- `last_light_browser_process` has nine cleanup regressions (2026-10-11):
-  three portable real-process/stdio cases and six controlled Windows taskkill
-  cases. The fault fixtures use EventEmitter children and Node's mock timers
-  to advance the actual helper's default two-second windows, separately from
-  explicit process-exit/error notifications. Accepted kill requests leave exit
-  codes null until an exit is reported. Assertions cover complete grace windows,
-  both exits before success, retained stderr on failure, spawn errors,
-  independent browser exit and unreferencing an unkillable helper. A kill-only
-  case rejects treating `ChildProcess.killed` as confirmed exit.
-  Run `38089269838` passed native Windows and web but cancelled one MinGW fault
-  case at its ten-second test guard. The preceding 100 ms-to-two-second fixture
-  correction had left scheduling-dependent wall-clock waits in those cases.
-  Controlled time removes the deliberate waits; ten-second case guards remain,
-  and the CTest guard returns from 60 to its original 30 seconds. The cleanup
-  implementation and real browser-playtest deadlines are unchanged. Evidence,
-  validation and the earlier fixture history are in `notes/private-prototypes.md`.
-
-- `last_light_browser_devtools` exercises the Last Light fixture's DevTools
-  pipe without a browser (2026-10-10). Eight cases cover fragmented UTF-8,
-  coalesced records, target-session routing and reordered replies, protocol
-  errors, transport closure, timeout/late replies, target detachment and
-  disposal. It runs in native and web builds alongside the process-cleanup
-  and frame-control checks. The transport comparison and the limits of the
-  hosted-timeout diagnosis are in `notes/private-prototypes.md`.
-
-- `last_light_frame_control` checks the playtest's serialized frame/clock
-  controller without a browser (2026-10-11). The runner advances both real
-  browser players one 30 Hz frame per shared round, then waits for every
-  submitted WebGPU queue and completes WebGL work before another round.
-  Only delivered frames advance the page's monotonic match/transport clock;
-  browser startup, input commands,
-  captures and GPU completion waits consume wall time alone. Seven regressions
-  cover long capture/GPU waits, the two-player barrier, recursive callbacks,
-  cancellation, rejected fences, several queues/canvases and idle/invalid steps.
-  Real-time session/transport behavior remains covered by the engine's net
-  and browser-room tests. Game keyboard/touch, visibility, rendering,
-  screenshots, fresh packets and verified-tick assertions remain, with six
-  fresh verified ticks per gameplay checkpoint rather than long waits checking
-  nothing further. All wall-clock guards remain. This replaces the former
-  `last_light_frame_pacing`
-  fixture, which gated the entire host loop on GPU completion while session
-  deadlines continued passing in real time. Evidence and validation are in
-  `notes/private-prototypes.md`.
-
 - Browser tests registered by `tide_add_web_test` reserve the host's CPU count
   through CTest `PROCESSORS`, for WebGL and WebGPU (2026-10-10). Chrome's software
   renderer starts its own workers, so counting each page as one job let four
@@ -109,3 +65,7 @@ Every browser a test starts is muted (the owner, 2026-10-08, who heard an agent'
 Local full native debug: 2,132 CTest tests passed. Local full web debug: 2,104 passed, including WebGL/WebGPU pages, with Node 24.16.0 configured for both builds. Docs npm build passed. The final Box2D rotation/cleanup changes additionally pass its package and Towers suites on native/web. Release rewind executables pass their correctness tests and report batch timings in notes/box2d.md and notes/box3d.md. Simulation/body/native-image/answer pins agree natively and on web; changed world hashes reflect intentional schema additions. The full suites also include malicious view-time wire tests, singleton methods/LSP, independent confirmed interpolation and custom interpolation across separate endpoint heaps. Android, Linux/macOS/MinGW and sanitizers were not run on this Windows machine; CI was not dispatched.
 
 After merging origin/dev, both full builds and suites pass again: 2,158/2,158 native (174.68 s) and 2,129/2,129 web (339.92 s), plus the production docs build. Incoming LOD and Rooms page hosts were migrated to the confirmed frame arguments. The merged suites include their tests, all rewind/view-time/heap interpolation regressions and WebGL/WebGPU coverage. No CI was dispatched.
+
+Latency/frame-rate follow-up: full native debug passed 2,160/2,160 tests (203.17 s), full web debug passed 2,131/2,131 (333.09 s), and the production docs build passed, using Node 24.16.0. Both suites include the held-input prediction fix. After refining the new fixtures to move the target through its owner's sampled input and checking acceptance counts against actual shot age, both final rewind-network targets passed again on native and web. Each package runs 28 two-client profiles; the age oracle checks every received shot and accepted hits match the actual drawn translating box within 0.0001 units/fraction. Existing shape/rotation tests provide separate coverage. These deterministic loopback profiles simulate latency, jitter, loss, update/render rates and stalls; they do not measure real Internet traffic or display scanout. Other operating systems, Android and sanitizers were not run; no CI was dispatched.
+
+The follow-up merged incoming JSON/compiler and Inside Out work cleanly. Rebuilt both rewind-network games and view_time with the merged compiler/runtime, then passed those three targets on native (6.35 s) and web (8.41 s). The merged production docs build also passed. No session/physics conflict required another full-suite run.
