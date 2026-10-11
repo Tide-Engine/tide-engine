@@ -1,0 +1,88 @@
+// What this machine's player has lit, kept between sittings: a match forgets
+// when it ends, and eighteen of these are more than an evening. It is a file
+// of this machine's own, never the match's: a friend's room keeps its own
+// count, and each player's file learns from whatever room they solve in.
+local singleton Progress
+{
+    bool loaded;
+    int completed;
+    int[18] best;
+    int last;
+    bool resumed;
+    bool kept = true;
+}
+
+string ProgressPath() { return Path.Combine(Application.persistentDataPath, "underfoot.txt"); }
+
+// One line of numbers: the puzzles lit (a bit each), the puzzle last open, then
+// the fewest moves each was lit in. Anything else is no progress at all.
+void LoadProgress(mut Progress progress)
+{
+    progress.loaded = true;
+    var parts = (File.ReadAllText(ProgressPath()) ?? "").Trim().Split(' ');
+    if (parts.count != 2 + LEVEL_COUNT) return;
+    if (!int.TryParse(parts[0], out var completed) || !int.TryParse(parts[1], out var last)) return;
+    if (completed < 0 || completed >= 1 << LEVEL_COUNT || last < 0 || last >= LEVEL_COUNT) return;
+    mut int[18] best = default;
+    for (var level = 0; level < LEVEL_COUNT; level++)
+    {
+        if (!int.TryParse(parts[2 + level], out var moves) || moves < 0) return;
+        best[level] = (completed & (1 << level)) != 0 ? moves : 0;
+    }
+    progress.completed = completed;
+    progress.last = last;
+    progress.best = best;
+}
+
+void WriteProgress(Progress progress) fails IOError
+{
+    mut var text = $"{progress.completed} {progress.last}";
+    for (var level = 0; level < LEVEL_COUNT; level++) text = $"{text} {progress.best[level]}";
+    try Directory.CreateDirectory(Application.persistentDataPath);
+    try File.WriteAllText(ProgressPath(), text);
+}
+
+async void CommitProgress() fails IOError
+{
+    try await Storage.Flush();
+}
+
+// A browser keeps files only once they are flushed, which takes a moment.
+async void FlushProgress(mut Progress progress)
+{
+    progress.kept = !(await CommitProgress() is IOError);
+}
+
+[Stage(ArtStage.Prepare, 2)]
+view KeepProgress(Yard yard, Session session, Rooms.Lobby lobby, Hands hands, mut Progress progress)
+{
+    if (!progress.loaded) LoadProgress(progress);
+    if (!yard.initialized || hands.seat < 0 || !lobby.playing) return;
+
+    // The first time this machine plays a match of its own, pick up where it left off.
+    if (!progress.resumed)
+    {
+        progress.resumed = true;
+        var untouched = yard.level == 0 && yard.board.moves == 0 && yard.historyCount == 0 && yard.completed == 0;
+        if (session.server && !Together(yard) && untouched && progress.last > 0)
+        {
+            Send(ChooseLevel { serial = yard.serial, level = progress.last });
+            return;
+        }
+    }
+
+    mut var changed = progress.last != yard.level;
+    progress.last = yard.level;
+    for (var level = 0; level < LEVEL_COUNT; level++)
+    {
+        if ((yard.completed & (1 << level)) == 0 || yard.best[level] <= 0) continue;
+        if ((progress.completed & (1 << level)) != 0 && progress.best[level] <= yard.best[level]) continue;
+        progress.completed |= 1 << level;
+        progress.best[level] = yard.best[level];
+        changed = true;
+    }
+    if (!changed) return;
+    // A save that fails costs nothing but the save: the next change tries again.
+    progress.kept = !(WriteProgress(progress) is IOError);
+    if (progress.kept) FlushProgress(progress);
+}
