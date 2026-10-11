@@ -1,13 +1,16 @@
 # Inside Out
 
 A cooperative puzzle game for **two friends in separate browsers**.
-Begin inside a small box, itself inside another room, and work your way out.
+You are two test dummies packed in a small box, itself inside another room
+on a factory floor. Work your way out.
 Push rooms with your partner inside, fit them through tight passages, and
 move boxes into their own interiors. Repeated views of a room share one
 set of parcels, boxes and people.
 
-The 3D rooms keep a fixed, gently tilted view: low walls, worn tiles,
-soft cast and contact shadows, fluorescent light and quiet ventilation.
+The 3D rooms keep a fixed, gently tilted view of a factory drawn like an
+early 3D console game: chunky pixels, coarse texels and patterned shades on
+painted steel containers, concrete slabs and warning yellow, with quiet
+ventilation.
 There are no threats or jumpscares.
 
 Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
@@ -18,19 +21,19 @@ chat alongside the game to discuss plans.
 
 ## Playing
 
-Each screen follows its own maker in one continuous scene. Step inside a
+Each screen follows its own dummy in one continuous scene. Step inside a
 room and the camera zooms into its actual doorway. Your whole current room
 stays in view, with a wider fixed rim of containing-world context around it.
-You can see part of a maker standing beside your box.
+You can see part of a dummy standing beside your box.
 The camera keeps that framing when your partner moves or leaves the screen.
-Your maker walks and shrinks through the doorway; leaving grows them back
+Your dummy walks and shrinks through the doorway; leaving grows them back
 into the surrounding world. Your partner can watch that passage from outside.
 The outside follows the doorway you used: a moved shell changes your surroundings,
 and a recursive doorway can put the same room
 around itself. Amber and Teal keep their identity colours wherever they
 travel. A room shell contains a live miniature of its shared interior;
 nested and recursive preview details collapse to markers after a few layers.
-Floors, walls, parcels and makers are real 3D geometry. The orthographic view
+Floors, walls, parcels and dummies are real 3D geometry. The orthographic view
 keeps the grid and movement directions familiar; there is no camera rotation.
 
 | Action | Keyboard |
@@ -55,7 +58,7 @@ They are optional. Ambience, sound and reduced motion are local settings.
 
 ## The rules
 
-- Both makers can enter any blocked room through an open doorway. People in
+- Both dummies can enter any blocked room through an open doorway. People in
   the same room block each other, even if they arrived through different
   recursive doorways.
 - A moving shell carries its entire interior without changing anything's
@@ -72,14 +75,14 @@ They are optional. Ambience, sound and reduced motion are local settings.
   one designated primary box: parcels and boxes pushed out of that room
   emerge beside this primary box, even if you entered through a copy.
   A small number marks the primary box; a prime mark (`1′`) marks its copy.
-- A maker's return path remembers the entrance used. Leaving through an
+- A dummy's return path remembers the entrance used. Leaving through an
   edge door returns beside that entrance; if a shell has moved, the return
   moves with it. Up to eight entrance layers are available.
 - Room sizes, wall shapes and edge doorway positions vary. There are no
   switch locks. Make space and use walls, boxes or your partner as a
   backstop when you need to enter a box instead of pushing it.
 - Fill every box-marked parcel target, park each shell on its matching numbered
-  dock in the correct dimension, and put both makers on distinct player goals.
+  dock in the correct dimension, and put both dummies on distinct player goals.
   Parcels must finish on targets. A filled target can be emptied while
   arranging the solution.
 

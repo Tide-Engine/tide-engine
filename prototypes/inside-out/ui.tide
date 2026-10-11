@@ -2,16 +2,21 @@ using Rooms;
 
 enum ArtStage { Backdrop, Prepare, Board, Controls, Sound }
 
-const Color INK = Color(0.79, 0.81, 0.67);
-const Color PAPER = Color(0.11, 0.14, 0.12);
-const Color MUTED = Color(0.50, 0.55, 0.45);
+const Color INK = Color(0.84, 0.83, 0.76);
+const Color PAPER = Color(0.105, 0.11, 0.12);
+const Color MUTED = Color(0.52, 0.53, 0.51);
 const Color TEAL = Color(0.22, 0.53, 0.48);
 const Color AMBER = Color(0.85, 0.48, 0.27);
+// Factory paints shared by the scene and its controls.
+const Color HAZARD = Color(0.88, 0.70, 0.14);
+const Color RUBBER = Color(0.10, 0.10, 0.11);
+const Color DECAL = Color(0.86, 0.85, 0.78);
+const Color STEEL = Color(0.33, 0.35, 0.38);
 const GUITheme ROOM_THEME = GUITheme {
-    text = INK, panel = PAPER, control = Color(0.21, 0.24, 0.18),
-    hot = Color(0.28, 0.32, 0.23), pressed = Color(0.15, 0.18, 0.13),
-    field = Color(0.09, 0.12, 0.09), fieldHot = Color(0.21, 0.25, 0.18),
-    accent = TEAL, radius = 2
+    text = INK, panel = PAPER, control = Color(0.20, 0.21, 0.23),
+    hot = Color(0.28, 0.29, 0.31), pressed = Color(0.14, 0.15, 0.16),
+    field = Color(0.07, 0.075, 0.08), fieldHot = Color(0.20, 0.21, 0.23),
+    accent = HAZARD, radius = 0
 };
 
 local singleton Hands
@@ -89,11 +94,11 @@ bool PaperButton(string text, Rect rect, bool enabled = true, bool accent = fals
     {
         var control = GUI.Control(rect);
         var at = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-        var base = accent ? Color(0.25, 0.38, 0.29) : Color(0.20, 0.24, 0.19);
-        var fill = !enabled ? Color(0.15, 0.18, 0.14) : control.pressed ? Math.Lerp(base, Color.black, 0.18) : control.hovered ? Math.Lerp(base, INK, 0.12) : base;
-        Draw.RoundRect(at + float2(0, 2), float2(rect.width, rect.height), 2, Color(0.03, 0.04, 0.03));
-        Draw.RoundRect(at, float2(rect.width, rect.height), 2, fill);
-        Draw.WireRoundRect(at, float2(rect.width, rect.height), 2, 1, control.focused ? AMBER : Color(0.34, 0.39, 0.29));
+        var base = accent ? Color(0.46, 0.36, 0.08) : Color(0.20, 0.21, 0.23);
+        var fill = !enabled ? Color(0.14, 0.15, 0.16) : control.pressed ? Math.Lerp(base, Color.black, 0.18) : control.hovered ? Math.Lerp(base, INK, 0.12) : base;
+        Draw.RoundRect(at + float2(0, 2), float2(rect.width, rect.height), 0, Color(0.03, 0.03, 0.035));
+        Draw.RoundRect(at, float2(rect.width, rect.height), 0, fill);
+        Draw.WireRoundRect(at, float2(rect.width, rect.height), 0, 1, control.focused ? HAZARD : Color(0.36, 0.38, 0.40));
         Label(text, at, rect.height < 35 ? 12.0 : 14.0, !enabled ? MUTED : INK, Anchor.MiddleCenter);
         clicked = control.clicked;
     }
@@ -119,7 +124,7 @@ local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
 
 string DimensionName(int room) { return room < 0 ? "Outer room" : RoomName(room); }
 
-override string Rooms.Tagline() { return "Rooms within rooms. Find your way out together."; }
+override string Rooms.Tagline() { return "Two test dummies. Rooms within rooms. Find your way out."; }
 override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 84, 19, 66, 34); }
 
 override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
@@ -127,12 +132,12 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
     Draw.SetScreen();
     var width = Math.Min(Screen.width - 32, 570);
     var at = float2(Screen.width * 0.5, Screen.height * 0.52);
-    Draw.RoundRect(at + float2(0, 5), float2(width, 268), 2, Color(0.02, 0.03, 0.02));
-    Draw.RoundRect(at, float2(width, 268), 2, PAPER);
-    Draw.WireRoundRect(at, float2(width, 268), 2, 1, MUTED);
-    Label("A PLACE WITHIN A PLACE", at + float2(0, -96), 12, INK, Anchor.MiddleCenter);
+    Draw.RoundRect(at + float2(0, 5), float2(width, 268), 0, Color(0.02, 0.02, 0.025));
+    Draw.RoundRect(at, float2(width, 268), 0, PAPER);
+    Draw.WireRoundRect(at, float2(width, 268), 0, 1, MUTED);
+    Label("DUMMY TEST LINE  /  PACKING TRIAL", at + float2(0, -96), 12, HAZARD, Anchor.MiddleCenter);
     Label("Find your way out together.", at + float2(0, -56), Screen.width < 550 ? 24.0 : 30.0, INK, Anchor.MiddleCenter);
-    Paragraph("You begin inside a box within another room. Move boxes, make space for each other, and follow rooms back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
+    Paragraph("You are two test dummies packed in a box within another room. Move boxes, make space for each other, and follow rooms back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
     var buttonWidth = (width - 68) * 0.5;
     if (PaperButton("Host a room", Rect(at.x - width * 0.5 + 28, at.y + 64, buttonWidth, 43), session.state == SessionState.Connected, true))
     {
@@ -350,8 +355,8 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         GUILayout.Modal(Anchor.MiddleCenter, hands.guide)
         {
             GUILayout.Label("FIND A WAY OUT");
-            GUILayout.Label("You begin inside boxes and work outward.");
-            GUILayout.Label("Your view follows your maker between rooms.");
+            GUILayout.Label("Two test dummies begin inside boxes and work outward.");
+            GUILayout.Label("Your view follows your dummy between rooms.");
             GUILayout.Label("The containing world is visible beyond the walls.");
             GUILayout.Label("WASD / arrows: walk and push parcels or rooms.");
             GUILayout.Label("Rooms move first. Block a room to step inside.");
@@ -367,7 +372,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("You can enter up to eight layers deep.");
             GUILayout.Label("Box icons need parcels.");
             GUILayout.Label("Coloured outlines need their room boxes.");
-            GUILayout.Label("Both makers must reach player-marked goals.");
+            GUILayout.Label("Both dummies must reach player-marked goals.");
             GUILayout.Label("Doorways can be anywhere along a room edge.");
             GUILayout.Label("Z: shared undo. R: reset. H: three gentle hints.");
             GUILayout.Label("Talk to each other. There is no time limit.");

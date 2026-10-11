@@ -8,6 +8,7 @@ struct SceneObject
     float4 aperture;
     int apertureSide = -1;
     float groundHeight;
+    float3 texels;
 }
 
 local singleton SceneRender
@@ -34,7 +35,14 @@ local singleton SceneRender
     float4 board;
     float tile;
     float depthSpan;
+    float block = 1;
 }
+
+// The board is drawn in square blocks of window pixels, about this many
+// across it, and its light in this many shades with a pattern between them.
+const float SCENE_LINES = 220;
+const float SCENE_SHADES = 14;
+const float SCENE_TEXELS = 8;
 
 struct SceneBlurStep { float2 direction; }
 
@@ -70,6 +78,26 @@ bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float 
     return alpha >= (coverage + 0.5) / 16;
 }
 
+// Sixteen steps in a four by four pattern of blocks.
+float SceneTurn(float2 block)
+{
+    var x = int(block.x) & 3;
+    var y = int(block.y) & 3;
+    var low = ((x ^ y) & 1) * 2 + (y & 1);
+    var high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
+    return (low * 4 + high + 0.5) / 16;
+}
+
+// A face's own coarse texels: they travel with a pushed box or a walking
+// dummy, and repeat from one floor slab to the next.
+float SceneGrain(float3 position, float3 normal, float3 texels)
+{
+    var across = Math.Abs(normal.y) > 0.5 ? float2(position.x * texels.x, position.z * texels.z) :
+        Math.Abs(normal.x) > 0.5 ? float2(position.z * texels.z, position.y * texels.y) :
+        float2(position.x * texels.x, position.y * texels.y);
+    return (Math.Hash(int2(int(Math.Floor(across.x)) + 64, int(Math.Floor(across.y)) + 64)) & 255) / 255.0;
+}
+
 frag SceneShadow(SceneVertex vertex, out Color color, SceneObject object, SceneRender render)
 {
     if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
@@ -83,8 +111,10 @@ frag SceneFill(SceneVertex vertex, out Color material, out Color normal, Instanc
     material = Color(object.tone.r, object.tone.g, object.tone.b);
     // The alpha is the occurrence's metric scale. Copy blending and point
     // reads keep the floating normal data separate from material opacity.
+    // No visible face looks down, so the normal's height is implied and its
+    // channel carries the texel's grain.
     var scale = Math.Clamp(object.aoScale / render.tile, 0.01, 6);
-    normal = Color(facing.x * 0.5 + 0.5, facing.y * 0.5 + 0.5, facing.z * 0.5 + 0.5, scale);
+    normal = Color(facing.x * 0.5 + 0.5, facing.z * 0.5 + 0.5, SceneGrain(vertex.position, vertex.normal, object.texels), scale);
 }
 
 float3 SceneWorld(DepthTexture depth, float4x4 inverseClip, float2 uv)
@@ -96,7 +126,9 @@ float3 SceneWorld(DepthTexture depth, float4x4 inverseClip, float2 uv)
 
 float3 SceneNormal(Color value)
 {
-    return Math.Normalize(float3(value.r, value.g, value.b) * 2 - float3(1));
+    var x = value.r * 2 - 1;
+    var z = value.g * 2 - 1;
+    return float3(x, Math.Sqrt(Math.Max(0, 1 - x * x - z * z)), z);
 }
 
 float3 SceneKernel(int index)
@@ -212,8 +244,10 @@ float SceneSun(DepthTexture shadow, float4x4 toLamp, float4x4 fromLamp, float3 w
 
 frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender render)
 {
-    var uv = vertex.uv;
-    if (!SceneInBoard(uv * render.screenSize, render.board)) this.Discard();
+    if (!SceneInBoard(vertex.uv * render.screenSize, render.board)) this.Discard();
+    // Every window pixel of a block reads the block's middle.
+    var block = Math.Floor(vertex.uv * render.screenSize / render.block);
+    var uv = (block + float2(0.5)) * render.block / render.screenSize;
     var encoded = render.normals.Sample(uv, Filter.Point);
     if (encoded.a < 0.005) this.Discard();
     var normal = SceneNormal(encoded);
@@ -221,9 +255,14 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     var ao = render.occlusion.Sample(uv, Filter.Bilinear).r;
     var facing = Math.Max(0, Math.Dot(normal, -render.lightDirection));
     var sunlight = SceneSun(render.shadow, render.toLamp, render.fromLamp, point, normal, encoded.a * render.tile, render.tile, render.lightDirection);
-    var shade = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight);
     var material = source.Sample(uv, Filter.Point);
-    color = Color(material.r * shade, material.g * shade, material.b * shade, material.a);
+    // Texels smaller than a block would only be noise.
+    var coarse = Math.Saturate(encoded.a * render.tile / (SCENE_TEXELS * render.block) - 0.5);
+    var lit = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight) * (1 - 0.16 * encoded.b * coarse);
+    // One scalar for all three channels: a material keeps its exact hue in
+    // every shade, and the pattern stands in for the shades between.
+    var shade = Math.Floor(lit * SCENE_SHADES + SceneTurn(block)) / SCENE_SHADES;
+    color = Color(material.r * shade, material.g * shade, material.b * shade, 1);
 }
 
 void RenderScene(List<SceneVertex> vertices, List<int> indices, List<SceneObject> objects,
@@ -235,6 +274,7 @@ void RenderScene(List<SceneVertex> vertices, List<int> indices, List<SceneObject
     render.focusPixels = focusPixels;
     render.board = float4(clip.x, clip.y, clip.width, clip.height);
     render.tile = Math.Max(0.01, tile);
+    render.block = Math.Max(1, Math.Round(clip.width / SCENE_LINES));
 }
 
 [Stage(ArtStage.Board, 1)]

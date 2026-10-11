@@ -174,7 +174,7 @@ const homeWallArea = png => {
 const amberPixels = png => {
     let area = 0, horizontal = 0, vertical = 0, left = Infinity, right = -Infinity;
     screenshotPixels(png, (r, g, b, x, y) => {
-        // Amber identity pixels are distinct from the institutional walls
+        // Amber identity pixels are distinct from the container walls
         // and parcel targets. Read the maker from a stationary partner view.
         if (materialMatches(r, g, b, amberMaterial)) {
             area++; horizontal += x; vertical += y; left = Math.min(left, x); right = Math.max(right, x);

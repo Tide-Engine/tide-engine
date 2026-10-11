@@ -46,10 +46,11 @@ local event(PuzzleCue cue) RememberDoorway(mut Picture picture)
 
 Color RoomColor(int room)
 {
+    // Container paints: machine green, oxide red, steel blue, violet.
     if (room == 0) return Color(0.36, 0.55, 0.42);
-    if (room == 1) return Color(0.61, 0.48, 0.36);
-    if (room == 2) return Color(0.46, 0.48, 0.59);
-    return Color(0.60, 0.57, 0.34);
+    if (room == 1) return Color(0.58, 0.36, 0.28);
+    if (room == 2) return Color(0.36, 0.46, 0.62);
+    return Color(0.50, 0.42, 0.60);
 }
 string RoomName(int room)
 {
@@ -87,29 +88,38 @@ void Crate(mut Sculpture sculpture, float2 at, float size, bool onTarget, float 
     FloorLine(sculpture, at + float2(-side * .44, -side * .40), at + float2(side * .44, -side * .40), size * .033, Color(.76, .72, .45), top, size);
 }
 
+// A crash-test dummy in its seat's paint: jointed limbs, a blank head and a
+// quartered calibration mark on its crown.
 void Maker(mut Sculpture sculpture, float2 at, float size, int seat, float floor)
 {
     var tone = seat == 0 ? AMBER : TEAL;
-    var dark = Color(.13, .17, .12);
-    var cloth = Color(.73, .74, .57);
-    Cuboid(sculpture, at + float2(-size * .105, size * .018), float2(size * .13, size * .21), size * .17, dark, floor, size);
-    Cuboid(sculpture, at + float2(size * .105, size * .018), float2(size * .13, size * .21), size * .17, dark, floor, size);
-    Cuboid(sculpture, at, float2(size * .39, size * .25), size * .27, tone, floor + size * .16, size);
-    Cuboid(sculpture, at + float2(-size * .25, 0), float2(size * .105, size * .20), size * .22, tone, floor + size * .17, size);
-    Cuboid(sculpture, at + float2(size * .25, 0), float2(size * .105, size * .20), size * .22, tone, floor + size * .17, size);
-    Cuboid(sculpture, at, float2(size * .27, size * .25), size * .20, cloth, floor + size * .43, size);
-    Cuboid(sculpture, at - float2(0, size * .015), float2(size * .33, size * .29), size * .065, tone, floor + size * .63, size);
-    Cuboid(sculpture, at + float2(0, size * .132), float2(size * .035, size * .012), size * .25, dark, floor + size * .17, size);
-    if (size >= 12)
+    Cuboid(sculpture, at + float2(-size * .105, size * .028), float2(size * .13, size * .23), size * .04, RUBBER, floor, size);
+    Cuboid(sculpture, at + float2(size * .105, size * .028), float2(size * .13, size * .23), size * .04, RUBBER, floor, size);
+    Cuboid(sculpture, at + float2(-size * .105, size * .012), float2(size * .12, size * .17), size * .12, tone, floor + size * .04, size);
+    Cuboid(sculpture, at + float2(size * .105, size * .012), float2(size * .12, size * .17), size * .12, tone, floor + size * .04, size);
+    Cuboid(sculpture, at, float2(size * .40, size * .26), size * .03, RUBBER, floor + size * .16, size);
+    Cuboid(sculpture, at, float2(size * .39, size * .25), size * .24, tone, floor + size * .19, size);
+    for (var side = -1; side <= 1; side += 2)
     {
-        Cuboid(sculpture, at + float2(-size * .055, size * .131), float2(size * .025, size * .014), size * .028, dark, floor + size * .52, size);
-        Cuboid(sculpture, at + float2(size * .055, size * .131), float2(size * .025, size * .014), size * .028, dark, floor + size * .52, size);
+        var arm = at + float2(side * size * .25, 0);
+        Cuboid(sculpture, arm, float2(size * .095, size * .19), size * .05, RUBBER, floor + size * .13, size);
+        Cuboid(sculpture, arm, float2(size * .105, size * .20), size * .21, tone, floor + size * .18, size);
+    }
+    Cuboid(sculpture, at, float2(size * .14, size * .14), size * .03, RUBBER, floor + size * .43, size);
+    Cuboid(sculpture, at, float2(size * .27, size * .25), size * .19, tone, floor + size * .46, size);
+    for (var quarter = 0; quarter < 4; quarter++)
+    {
+        var east = quarter % 2 == 1;
+        var south = quarter >= 2;
+        var mark = east == south ? RUBBER : DECAL;
+        Cuboid(sculpture, at + float2((east ? 1.0 : -1.0) * size * .045, (south ? 1.0 : -1.0) * size * .045),
+            float2(size * .09), size * .012, mark, floor + size * .65, size);
     }
 }
 
 void GoldTarget(mut Sculpture sculpture, float2 at, float size, bool occupied, float floor)
 {
-    var tone = occupied ? Color(.49, .68, .39) : Color(.69, .64, .32);
+    var tone = occupied ? Color(.40, .68, .38) : HAZARD;
     var top = floor + size * .009;
     FloorOutline(sculpture, at, float2(size * .79), Math.Max(.9, size * .027), tone, top, size);
     BoxMark(sculpture, at, size * .42, tone, top, size);
@@ -117,60 +127,82 @@ void GoldTarget(mut Sculpture sculpture, float2 at, float size, bool occupied, f
 
 void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor)
 {
-    var tone = variation % 2 == 0 ? Color(.62, .64, .45) : Color(.59, .61, .43);
+    // Poured concrete slabs with dark joints and an anchor bolt at each corner.
+    var tone = variation % 2 == 0 ? Color(.57, .57, .55) : Color(.53, .53, .51);
     var thickness = Math.Max(.08, size * .010);
-    Cuboid(sculpture, at, float2(size), thickness, Color(.30, .34, .22), floor - thickness, size);
+    Cuboid(sculpture, at, float2(size), thickness, Color(.17, .18, .19), floor - thickness, size);
     Cuboid(sculpture, at, float2(size * .985), thickness * .24, tone, floor, size);
     if (size > 19)
         for (var grain = 0; grain < 4; grain++)
         {
             var offset = float2((grain % 2 == 0 ? -1.0 : 1.0) * size * .22, (grain < 2 ? -1.0 : 1.0) * size * .22);
-            Cuboid(sculpture, at + offset, float2(Math.Max(.5, size * .017)), size * .0015, Color(.46, .50, .33), floor + thickness * .25, size);
+            Cuboid(sculpture, at + offset, float2(Math.Max(.5, size * .017)), size * .0015, Color(.30, .31, .32), floor + thickness * .25, size);
         }
     if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
     else if (tile == Tile.Exit)
     {
         var top = floor + size * .006;
-        Cuboid(sculpture, at, float2(size * .82), size * .003, Color(.35, .49, .34), top, size);
-        FloorOutline(sculpture, at, float2(size * .72), Math.Max(.8, size * .025), Color(.60, .74, .51), top + size * .004, size);
-        PlayerMark(sculpture, at, size * .56, Color(.78, .83, .63), top + size * .004, size);
+        Cuboid(sculpture, at, float2(size * .82), size * .003, Color(.22, .40, .30), top, size);
+        FloorOutline(sculpture, at, float2(size * .72), Math.Max(.8, size * .025), Color(.48, .74, .48), top + size * .004, size);
+        PlayerMark(sculpture, at, size * .56, Color(.80, .85, .74), top + size * .004, size);
     }
 }
 
+// Yellow and black blocks in turn along a raised edge.
+void HazardEdge(mut Sculpture sculpture, float2 from, float2 to, float width, float floor, float tile)
+{
+    var length = Math.Max(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
+    var count = tile < 8 ? 1 : Math.Clamp(int(Math.Round(length / (tile * .25))), 1, 32);
+    var step = (to - from) / count;
+    var across = Math.Abs(step.x) > Math.Abs(step.y) ? float2(Math.Abs(step.x), width) : float2(width, Math.Abs(step.y));
+    for (var index = 0; index < count; index++)
+        Cuboid(sculpture, from + step * (index + .5), across, tile * .006, index % 2 == 0 ? HAZARD : RUBBER, floor, tile);
+}
+
+// A pressed steel panel in its container's paint: two ribs and four rivets.
 void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor)
 {
     var height = size * .24;
-    Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, Color(.12, .16, .11), .22), floor, size);
+    Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, RUBBER, .40), floor, size);
     Cuboid(sculpture, at, float2(size * .95), size * .018, tone, floor + height, size);
-    FloorLine(sculpture, at + float2(-size * .46, -size * .45), at + float2(size * .46, -size * .45), Math.Max(.6, size * .02), Math.Lerp(tone, Color(.78, .83, .58), .22), floor + height + size * .019, size);
-    if (size > 13)
-        Cuboid(sculpture, at + float2(-size * .20, size * .12), float2(size * .028), size * .001, Color(.22, .30, .20), floor + height + size * .020, size);
+    if (size <= 13) return;
+    var top = floor + height + size * .018;
+    var rib = Color(tone.r * .80, tone.g * .80, tone.b * .80);
+    Cuboid(sculpture, at + float2(0, -size * .16), float2(size * .66, size * .05), size * .002, rib, top, size);
+    Cuboid(sculpture, at + float2(0, size * .16), float2(size * .66, size * .05), size * .002, rib, top, size);
+    for (var corner = 0; corner < 4; corner++)
+        Cuboid(sculpture, at + float2((corner % 2 == 0 ? -1.0 : 1.0) * size * .39, (corner < 2 ? -1.0 : 1.0) * size * .39),
+            float2(size * .045), size * .002, Math.Lerp(tone, RUBBER, .55), top, size);
 }
 
 [Stage(ArtStage.Backdrop)]
 view WorkshopBackdrop()
 {
     Draw.SetScreen();
-    Draw.Clear(Color(0.08, 0.11, 0.085));
+    Draw.Clear(Color(0.065, 0.07, 0.078));
     var screen = float2(Screen.width, Screen.height);
     for (var i = 0; i < 14; i++)
     {
         var y = i * screen.y / 13;
-        Draw.Line(float2(0, y), float2(screen.x, y), 1, Color(0.35, 0.42, 0.28, 0.08));
+        Draw.Line(float2(0, y), float2(screen.x, y), 1, Color(0.45, 0.47, 0.50, 0.07));
     }
-    Draw.Rect(float2(screen.x * 0.5, 0), float2(screen.x * 0.54, 3), Color(0.71, 0.76, 0.49, 0.30));
+    Draw.Rect(float2(screen.x * 0.5, 0), float2(screen.x * 0.54, 3), Color(0.80, 0.84, 0.80, 0.30));
 }
 
 void Panel(float2 at, float2 size)
 {
-    Draw.Rect(at + float2(0, 3), size, Color(0.035, 0.06, 0.035));
+    Draw.Rect(at + float2(0, 3), size, Color(0.03, 0.03, 0.035));
     Draw.Rect(at, size, PAPER);
-    Draw.WireRoundRect(at, size, 0, 1, Color(0.32, 0.38, 0.27));
+    Draw.WireRoundRect(at, size, 0, 1, Color(0.36, 0.38, 0.40));
+    // Warning tape along the top edge of the viewing window.
+    var blocks = int(size.x / 14);
+    for (var index = 0; index < blocks; index += 2)
+        Draw.Rect(at + float2(-size.x * .5 + (index + .5) * size.x / blocks, -size.y * .5 + 2), float2(size.x / blocks, 3), Color(HAZARD.r, HAZARD.g, HAZARD.b, 0.75));
 }
 
 void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens)
 {
-    var tone = room < 0 ? Color(0.46, 0.50, 0.35) : RoomColor(room);
+    var tone = room < 0 ? Color(0.40, 0.42, 0.45) : RoomColor(room);
     for (var y = 0; y < RoomHeight(workshop.layout, room); y++)
         for (var x = 0; x < RoomWidth(workshop.layout, room); x++)
         {
@@ -188,7 +220,7 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
         if (layout.dockRoom != room || layout.dock.x < 0) continue;
         var here = MapPoint(float2(layout.dock), lens);
         FloorOutline(sculpture, here, float2(lens.tile * .91), Math.Max(.8, lens.tile * .028), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
-        if (lens.tile > 18) FloorNumber(sculpture, shell + 1, false, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, Color(.18, .23, .14), lens.floor + lens.tile * .014, lens.tile);
+        if (lens.tile > 18) FloorNumber(sculpture, shell + 1, false, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, RUBBER, lens.floor + lens.tile * .014, lens.tile);
     }
 }
 
@@ -213,7 +245,7 @@ void DimensionConnections(mut Sculpture sculpture, Workshop workshop, int room, 
             var first = direction % 2 == 0 ? float2(from.x, middle.y) : float2(middle.x, from.y);
             var second = direction % 2 == 0 ? float2(to.x, middle.y) : float2(middle.x, to.y);
             var stroke = Math.Min(RoomScale(workshop.layout, child), RoomScale(workshop.layout, other)) * lens.tile * 0.82;
-            var floor = Color(0.59, 0.61, 0.43);
+            var floor = Color(0.57, 0.57, 0.55);
             FloorLine(sculpture, from, first, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
             FloorLine(sculpture, first, second, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
             FloorLine(sculpture, second, to, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
@@ -330,7 +362,7 @@ void PassageMaker(mut Sculpture sculpture, Workshop workshop, Picture picture, H
     }
 }
 
-void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness, Color tone, float floor, float tile)
+void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness, Color tone, float floor, float tile, bool hazard)
 {
     mut var size = float2(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
     if (size.x < 0.001 && size.y < 0.001) return;
@@ -338,8 +370,16 @@ void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness,
     if (size.y < 0.001) size.y = thickness;
     var height = tile * .23;
     Cuboid(sculpture, (from + to) * .5, size, height, tone, floor, tile);
+    if (hazard)
+    {
+        // The hall's own walls carry warning stripes along their length.
+        var middle = (from + to) * .5;
+        var half = size.x > size.y ? float2(size.x * .5, 0) : float2(0, size.y * .5);
+        HazardEdge(sculpture, middle - half, middle + half, thickness * .55, floor + height, tile);
+        return;
+    }
     var highlight = size.x > size.y ? float2(size.x, thickness * 0.18) : float2(thickness * 0.18, size.y);
-    Cuboid(sculpture, (from + to) * .5, highlight, tile * .004, Math.Lerp(tone, Color(.77, .83, .60), .35), floor + height, tile);
+    Cuboid(sculpture, (from + to) * .5, highlight, tile * .004, Math.Lerp(tone, Color(.86, .87, .84), .35), floor + height, tile);
 }
 
 // The walls sit inside the exact room footprint. A doorway removes a section
@@ -350,7 +390,7 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
     var low = lens.origin - float2(lens.tile * 0.5);
     var high = low + dims * lens.tile;
     var thickness = lens.tile * 0.11;
-    var tone = room < 0 ? Color(0.34, 0.39, 0.26) : RoomColor(room);
+    var tone = room < 0 ? STEEL : RoomColor(room);
     for (var side = 0; side < 4; side++)
     {
         var horizontal = side % 2 == 0;
@@ -369,15 +409,15 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
             var tangent = horizontal ? float2(1, 0) : float2(0, 1);
             var start = mouth - tangent * lens.tile * 0.41;
             var end = mouth + tangent * lens.tile * 0.41;
-            WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile);
-            WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile);
-            // Short jambs make the depth of the opening visible. The floor
-            // remains continuous all the way through the missing wall.
+            WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile, room < 0);
+            WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile, room < 0);
+            // Short yellow posts make the depth of the opening visible. The
+            // floor remains continuous all the way through the missing wall.
             var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
-            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .22, Color(.18, .24, .15), lens.floor, lens.tile);
-            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .22, Color(.18, .24, .15), lens.floor, lens.tile);
+            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .25, HAZARD, lens.floor, lens.tile);
+            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .25, HAZARD, lens.floor, lens.tile);
         }
-        else WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile);
+        else WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile, room < 0);
     }
 }
 
@@ -386,7 +426,7 @@ void RoomTrim(mut Sculpture sculpture, LevelLayout layout, int room, MapLens len
     RoomWalls(sculpture, layout, room, lens);
     if (room < 0 || lens.tile < 3) return;
     var badge = lens.origin + float2(lens.tile * 0.12, lens.tile * 0.12);
-    FloorNumber(sculpture, room + 1, box >= MAX_ROOMS, badge, Math.Max(3, lens.tile * .26), Color(.20, .27, .16), lens.floor + lens.tile * .015, lens.tile);
+    FloorNumber(sculpture, room + 1, box >= MAX_ROOMS, badge, Math.Max(3, lens.tile * .26), RUBBER, lens.floor + lens.tile * .015, lens.tile);
 }
 
 struct SceneLens { int room; MapLens lens; int depth; int box = -1; }
@@ -628,7 +668,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var body = Rect(topLeft.x + 12, topLeft.y + 40, lens.size.x - 24, lens.size.y - 62);
     Draw.Clip(body)
     {
-        Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.15, 0.19, 0.13));
+        Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.085, 0.09, 0.10));
     }
     var viewSide = Math.Min(body.width, body.height);
     var viewCenter = lens.center + float2(0, 9);

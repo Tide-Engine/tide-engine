@@ -6,8 +6,9 @@ isometric experiment, switch locks and fixed recursive entrances are
 superseded. The current direction is actual 3D with a fixed 2.5D view, harder planning and
 interdependent moves, physically nested starting rooms, varied sizes and
 offset doors, and movable boxes including self-nesting. The owner chose
-spatial constraints instead of locks, and an unsettling institutional /
-PSX-inspired atmosphere without threats or jumpscares. These are game design
+spatial constraints instead of locks, and on 2026-10-12 a factory where the
+players are test dummies, in a PSX style, replacing the earlier institutional
+atmosphere. There are still no threats or jumpscares. These are game design
 choices within the prototype request, not engine or language requirements.
 
 ## Shared world and recursive boxes
@@ -107,11 +108,41 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
-Materials use square edges, worn tiles, subdued colours, cast shadows,
-screen-space contact shading and fluorescent accents. Maintenance makers retain AMBER/TEAL colours.
-Targets show box icons, player goals show player icons and docks show numbered
-outlines. Panels/buttons share a dark institutional palette. There are no
-enemies, threat events, jumpscares or timers.
+The factory look (2026-10-12; the owner asked for "factory vibe, we are
+testing dummies; PSX style", the particulars below are unconfirmed picks):
+Boxes are painted steel containers (green, oxide red, steel blue, violet;
+the outer hall is bare steel). Their wall panels carry two ribs and four
+rivets in darker shades of the same paint. Floors are concrete slabs with
+dark joints and anchor bolts. Doorways stand between warning-yellow posts,
+parcel targets are warning-yellow floor paint, and the hall's own perimeter
+walls carry yellow/black blocks (`HazardEdge`). Players are crash-test
+dummies in the AMBER/TEAL seat paint: rubber feet, hands, belt and neck, a
+blank head and a quartered black/white calibration mark on the crown. The
+code still calls them makers. Parcels are unchanged. Panels and buttons are
+square, charcoal and steel grey, with warning-yellow accents and a strip of
+warning tape along the top of the viewing panel, above the label crops the
+browser fixture reads. There are no enemies, threat events, jumpscares or
+timers.
+
+The PSX treatment lives in `SceneComposite` and changes no pass before it.
+The board is read in square blocks of `block` logical pixels, the board's
+width / 220 rounded and at least 1 (2 at 1280x800, 4 at 1920x1080, 2 on a
+390-wide phone): every pixel of a block samples the G-buffer, depth and AO
+at the block's middle. Light is one scalar cut to 14 shades with a 4x4
+ordered pattern over blocks. Because the scalar multiplies all three
+channels, a material keeps its exact chroma in every shade, which is what
+the browser fixture's `materialMatches` relies on; per-channel colour
+quantization would break it. Each face has coarse texels, eight per tile of
+its occurrence (`SceneObject.texels`, in the cube's own coordinates so they
+travel with a pushed box): a hash per texel darkens the scalar by up to 16%,
+fading out where a texel is smaller than a block. The grain is written to
+the blue channel of the Rgba16f normal target; the normal's height is
+rebuilt from x and z because no visible face looks down. Two things were
+tried and dropped: grain in the Rgba8 material's alpha (low alpha destroyed
+the stored material and gave saturated red/yellow texels, presumably because
+colour targets are premultiplied), and snapping vertices to the block grid
+for PSX wobble (rib decals darkened unevenly and half a floor tile went
+dark; the cause was not pinned down beyond removing the snap fixing both).
 
 WASD/arrows walk/push, Z/Backspace undo, R reset, H hints and Enter continues.
 Touch uses the same directional buttons. Held directions require release
@@ -202,6 +233,34 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Factory / PSX restyle validation (2026-10-12)
+
+Presentation only: `render.tide`, `geometry.tide`, `paint.tide`, `ui.tide`,
+player-visible "maker" wording in hints, guide, README and catalog, and the
+thumbnail. No match, layout, witness or audio file changed. Box 1's paint,
+AMBER and the parcel colours are unchanged, so the browser fixture's
+material constants are too.
+
+Native debug and web debug builds are warning-free. `inside_out_tests`
+passes natively and under WASI. `inside_out_play_webgpu` passes (104.89 s).
+`inside_out_play_webgl` passed three of four runs (133.71, 135.62, 135.68 s).
+Its first run failed the fixture's last progression check, "recursive puzzle
+progression agrees on both screens": the 2D level-title crops of the two
+pages differed after the final Next. That crop holds no 3D scene pixels and
+the fixture saves no picture of it, so the cause is unknown and the fixture
+is unchanged; whether it predates this revision is unmeasured. The docs
+production build passes with the new catalog text and thumbnail.
+
+Bounded two-player native captures at 1280x800, 1920x1080 and 390x844 were
+inspected: nested start, outer hall, puzzles 8 and 12, hint panel and the
+waiting panel. A `--players` run joins both seats by itself, so the restyled
+title page was only exercised by the browser fixture, not looked at. The
+960x540 thumbnail is the 1920x1080 capture of puzzle 12 halved, 133,592
+bytes, SHA-256
+`ef53445d34150d7e80fa200a782f51c531988557d80c683c4c58d228f1820bc1`.
+Web release pages were not rebuilt or staged and nothing was deployed: the
+public page still shows the previous look. No CI was dispatched.
 
 ## 3D revision validation (2026-10-12)
 
