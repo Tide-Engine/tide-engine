@@ -3,6 +3,7 @@
 #include "asset_files.h"
 #include "asset_usage.h"
 #include "pack_fingerprint.h"
+#include "texture_compress.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
 
@@ -14853,7 +14854,7 @@ static uint8_t channel_byte(const float v, const float alpha)
 
 // One item of an asset into the pack: its block's offset.
 static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
-                          uint32_t *extra)
+                          const bool compress, uint32_t *extra)
 {
     *extra = 0;
     if (kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION) {
@@ -14876,7 +14877,12 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         uint8_t content[32];
         memcpy(content, item->hash, sizeof content);
         if (raw) content[0] ^= 0x52u, content[31] ^= 0x52u;
-        const uint32_t at = tide_pack_texture(b, content, (int32_t)item->image.width, (int32_t)item->image.height, rgba);
+        const tide_texture_blocks compressed = raw || !compress ? (tide_texture_blocks){0}
+            : texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
+        if (compressed.pixels) content[0] ^= 0x42u, content[31] ^= 0x43u;
+        const uint32_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
+                                                    rgba, compressed);
+        free((void *)(uintptr_t)compressed.pixels);
         free(rgba);
         return at;
     }
@@ -15025,7 +15031,7 @@ static void build_pack(gen *g)
         }
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
             uint32_t faces[6], extra;
-            for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, &extra);
+            for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, false, &extra);
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
             continue;
         }
@@ -15043,7 +15049,7 @@ static void build_pack(gen *g)
         }
         if (!v->many) {
             uint32_t extra;
-            const uint32_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, &extra);
+            const uint32_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, true, &extra);
             tide_pack_name(&b, qualified, kind, at,
                            v->kind == ASSET_ANIMATION ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
             continue;
@@ -15053,7 +15059,7 @@ static void build_pack(gen *g)
         if (!offsets || !keys) abort();
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
-            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, &extra);
+            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, true, &extra);
             if (v->is_map) { // Its key: text, as code reads one
                 uint8_t hash[32];
                 tide_sha256_of(v->items[k].key, strlen(v->items[k].key), hash);

@@ -341,6 +341,8 @@ target_compile_definitions(tide_platform_draw PRIVATE TIDE_BENCH_RESULTS="${PROJ
 if(TIDE_WEB)
     tide_web_page(tide_platform_draw SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_draw TARGET tide_platform_draw WEBGPU EXPECT "renderer: WebGPU")
+    tide_add_web_test(tide_platform_draw_rgba_fallback TARGET tide_platform_draw QUERY "texture-compression=off"
+        WEBGPU EXPECT "BC3 fixture: 65536 upload bytes")
 elseif(NOT TIDE_ANDROID)
     # A hidden window, so it needs a desktop session with working OpenGL.
     add_test(NAME tide_platform_draw COMMAND tide_platform_draw)

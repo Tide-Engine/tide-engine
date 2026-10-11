@@ -2339,6 +2339,75 @@ TIDE_TEST(lsp_enums_and_switch)
     TIDE_CHECK(has(symbols, "\"name\":\"Playing\",\"detail\":\"5\",\"kind\":22"));
 }
 
+// A switch on an enum completes by its members: after `case`, where the code
+// around doesn't parse yet, and whole cases where one can start.
+TIDE_TEST(lsp_switch_cases_complete_enum_members)
+{
+    start();
+#define ZOMBIES "enum ZombieState { None, Idle, Run, Jump }\nsingleton Zombie { ZombieState state; int n; }\nscene Main { }\n"                \
+                "ZombieState Next(ZombieState state) { return state; }\n"
+#define ZOMBIE_SWITCH "system Animate(mut Zombie zombie)\n{\n    switch (zombie.state)\n    {\n"
+    // After `case`: the members and nothing else, those without a case first, in the enum's order
+    const char *labels = complete(ZOMBIES ZOMBIE_SWITCH "        case $\n        case ZombieState.Jump: zombie.n = 2; break;\n"
+                                  "        case ZombieState.Idle:\n        default:\n            break;\n    }\n}\n");
+    TIDE_CHECK(has(labels, "{\"label\":\"ZombieState.None\",\"kind\":20,\"sortText\":\"00000\",\"preselect\":true,\"detail\":\"0\"}"));
+    TIDE_CHECK(has(labels, "{\"label\":\"ZombieState.Run\",\"kind\":20,\"sortText\":\"00002\",\"detail\":\"2\"}"));
+    TIDE_CHECK(has(labels, "{\"label\":\"ZombieState.Jump\",\"kind\":20,\"sortText\":\"10003\",\"detail\":\"3, which a case has\"}"));
+    TIDE_CHECK(has(labels, "{\"label\":\"ZombieState.Idle\",\"kind\":20,\"sortText\":\"10001\""));
+    TIDE_CHECK(count(labels, "\"label\"") == 4 && count(labels, "\"preselect\"") == 1);
+    check_repeat_at("file:///test.tide", "textDocument/completion", cursor_line, cursor_character, "");
+    // ...as its first letters are typed, and with the enum written, its members as anywhere
+    TIDE_CHECK(count(complete(ZOMBIES ZOMBIE_SWITCH "        case Ru$\n        case ZombieState.Jump: break;\n    }\n}\n"),
+                     "\"label\"") == 4);
+    const char *members = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.$\n        case ZombieState.Jump: break;\n    }\n}\n");
+    TIDE_CHECK(offers(members, "Run") && offers(members, "Jump") && count(members, "\"label\"") == 4);
+    // A value that's more than names: a function's by what it returns, any other where the switch parses; a local's too
+    const char *chosen = complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n"
+                                  "    switch (zombie.n > 0 ? zombie.state : ZombieState.Idle)\n    {\n"
+                                  "        case ZombieState.Idle:\n            break;\n        $\n    }\n}\n");
+    TIDE_CHECK(offers(chosen, "case ZombieState.Run:") && !offers(chosen, "case ZombieState.Idle:"));
+    TIDE_CHECK(offers(complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n    switch (Next(zombie.state))\n    {\n"
+                               "        case $:\n            break;\n    }\n}\n"), "ZombieState.Run"));
+    TIDE_CHECK(offers(complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n    var state = zombie.state;\n    switch (state)\n    {\n"
+                               "        case $\n    }\n}\n"), "ZombieState.Run"));
+    // A namespace's enum is written as this file writes it
+    TIDE_CHECK(offers(complete("namespace Game.Dead;\nenum Kind { Walker, Runner }\n" "component Body { Kind kind; }\n"
+                               "scene Main { }\nsystem S(mut Body body)\n{\n    switch (body.kind)\n    {\n        case $\n    }\n}\n"),
+                      "Kind.Walker"));
+
+    // Where a case can start: the keywords, and the cases the switch doesn't have, whole
+    const char *starts = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Jump: zombie.n = 2; break;\n        $\n"
+                                  "        case ZombieState.Idle:\n        default:\n            break;\n    }\n}\n");
+    TIDE_CHECK(offers(starts, "case") && offers(starts, "default") && offers(starts, "zombie"));
+    TIDE_CHECK(has(starts, "{\"label\":\"case ZombieState.Run:\",\"kind\":20,\"sortText\":\"case 0002\",\"detail\":\"2\"}"));
+    TIDE_CHECK(offers(starts, "case ZombieState.None:") && !offers(starts, "case ZombieState.Jump:")
+               && !offers(starts, "case ZombieState.Idle:") && !has(starts, "\"preselect\""));
+    // After a label a statement starts, or another label: `case Idle:` then `case` on the next line
+    const char *after = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Idle:\n        $\n    }\n}\n");
+    TIDE_CHECK(offers(after, "case") && offers(after, "break") && offers(after, "if") && offers(after, "case ZombieState.Run:"));
+    TIDE_CHECK(offers(complete(ZOMBIES ZOMBIE_SWITCH "        default:\n            $\n    }\n}\n"), "break"));
+    // ...but not after the ':' of ?: or of a named argument, nor in a block inside a case
+    const char *choice = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Idle:\n            zombie.n = zombie.n > 0 ? 1 : $\n"
+                                  "    }\n}\n");
+    TIDE_CHECK(!offers(choice, "break") && !offers(choice, "case ZombieState.Run:") && offers(choice, "zombie"));
+    const char *inner = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Idle:\n        {\n            $\n        }\n    }\n}\n");
+    TIDE_CHECK(offers(inner, "break") && !offers(inner, "case ZombieState.Run:"));
+
+    // A switch on a number has no members to give: `case` goes on as any value does
+    const char *number = complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n    switch (zombie.n)\n    {\n        case $\n    }\n}\n");
+    TIDE_CHECK(offers(number, "zombie") && !offers(number, "ZombieState.Run"));
+    const char *number_start = complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n    switch (zombie.n)\n    {\n"
+                                        "        case 1:\n            $\n    }\n}\n");
+    TIDE_CHECK(offers(number_start, "break") && !has(number_start, "\"label\":\"case "));
+
+    // The whole switch, as written with them, has nothing to say
+    open_document(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Run: zombie.n = 1; break;\n        case ZombieState.Jump: zombie.n = 2; break;\n"
+                  "        case ZombieState.Idle:\n        case ZombieState.None:\n        default:\n            break;\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef ZOMBIE_SWITCH
+#undef ZOMBIES
+}
+
 // An enum's name converts an int, Phase(5), as int(phase) gives its number:
 // there the name is the enum, as anywhere else it's written.
 TIDE_TEST(lsp_enum_conversion)
@@ -5024,6 +5093,36 @@ TIDE_TEST(lsp_inlay_hints_for_built_ins)
     TIDE_CHECK(has(hints, "\"label\":\"port:\""));
     // float2(1, 2), Math.Clamp(x, a, b) and Color(r, g, b)
     TIDE_CHECK(!has(hints, "\"label\":\"x:\"") && !has(hints, "\"label\":\"a:\"") && !has(hints, "\"label\":\"r:\""));
+}
+
+// Sample's omitted playback is a compiler default, not a written literal.
+TIDE_TEST(lsp_skinned_sample_hints_only_written_arguments)
+{
+    start();
+    open_document("Pose AtTime(Animation current, float seconds) { return current.Sample(seconds); }\n"
+                  "Pose AtZero(Animation current) { return current.Sample(0); }\n"
+                  "Pose AtNamedZero(Animation current) { return current.Sample(seconds: 0); }\n"
+                  "Pose AtReordered(Animation current) { return current.Sample(playback: Playback.Loop, seconds: 0); }\n"
+                  "Pose AtDefault(Animation current) { return current.Sample(0, default); }\n"
+                  "void Update(mut Pose pose, Animation current, float seconds)\n{\n"
+                  "    pose.Sample(current, seconds);\n"
+                  "    pose.Sample(current, 0);\n"
+                  "    pose.Sample(seconds: 0, animation: current);\n"
+                  "    pose.Sample(current, 0, default);\n}\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
+    TIDE_CHECK(count(hints, "\"label\":\"seconds:\"") == 4);
+    TIDE_CHECK(count(hints, "\"label\":\"playback:\"") == 2); // Only the two explicit defaults
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":1,\"character\":55},\"label\":\"seconds:\",\"kind\":2"));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":61},\"label\":\"playback:\",\"kind\":2"));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":10,\"character\":28},\"label\":\"playback:\",\"kind\":2"));
+    char *first = malloc(strlen(hints) + 1);
+    strcpy(first, hints);
+    TIDE_CHECK(strcmp(first, request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                       "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}")) == 0);
+    free(first);
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 65, ""), "Playback.Clamp"));
 }
 
 // A grid's cells[x, y] is cells[int2(x, y)] to the checker: x is still x.
