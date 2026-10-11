@@ -121,26 +121,39 @@ and from reading the solutions.
 
 ## Presentation
 
-`paint.tide` draws the yard as a slab of rock hung in a night sky, and the
-sky shows through wherever there is no ground. Everything a player handles is
-a sprite: paving stones, ice, portals, plates, crates, gates, lanterns and the
-two pavers (front, back and side) are in `art/atlas.png`, 23 sprites of 288
-pixels around a 192 pixel cell. `art/make_art.py` makes them, the sky
-(`sky.jpg`) and the slab's grain (`rock.png`) from nothing but numpy and
-Pillow: shapes given as distances, lit from the top left, bevelled, with a
-little grain. Nothing is drawn by hand or borrowed. Plates, gates and a
-portal's light are grey in the atlas and coloured as they are drawn.
+The look is a tiled courtyard over dark water at night, cut from flat colour
+(the owner's third word on it, 2026-10-11, after two passes that were
+"generic" and "halfway": "make it unique, give it a theme or make it simple").
+It is both: one theme, and four rules that every picture keeps, written at the
+top of `art/make_art.py`:
 
-What tells a player whether ground lifts is what it lies in, not a different
-kind of tile: every piece is the same paving stone, a set one bedded flush in
-rock, a loose one paler and thick, its side showing over the gap. Each gap has
-a faint outline where a stone could go. The rim of rock round a board is a
-third of a cell thick, so the cells are as large as the screen allows. Words
-along the top sit on a plain bar.
+- flat colour only, with no gradients, gloss, blur or outlines;
+- one hard shadow, straight down, from whatever is loose or stands up;
+- what is set in the floor is plain, and what can be carried is decorated: set
+  ground is sand paving, a loose stone is a glazed tile with an eight-pointed
+  star, loose ice has a snowflake and a portal a dark well;
+- a short palette (sand, cream, cobalt, mustard, jade, coral, teal, plum),
+  shared by `ui.tide`'s constants.
 
-A plate glows when held down and shows its rim under a crate. A portal's
-light turns while it leads somewhere and is a dull ring while its twin is in a
-hand. Corner marks in the paver's colour show the cell its hands would act
+Where there is no ground there is water, which is why a crate sinks and why a
+tile laid there is a way across. The pavers are two tilers in straw hats,
+coral and teal, drawn from the front, the back and the side. `art/atlas.png`
+holds 24 sprites of 288 pixels around a 192 pixel cell, and `art/lattice.png`
+the faint star pattern behind everything; `make_art.py` makes both from
+shapes given as distances, with numpy and Pillow, and nothing is drawn by hand
+or borrowed. Plates, gates and what turns in a portal are white in the atlas
+and coloured as they are drawn. `paint.tide` draws the rest with the same
+rules: the courtyard's wall as one flat block, water with two short lines of
+light a cell, and the HUD's buttons and panels flat on a hard shadow. The
+words players read say tile, floor and water; the code still says stone and
+ground.
+
+The rim of wall round a board is a third of a cell thick, so the cells are as
+large as the screen allows. Words along the top sit on a plain bar.
+
+A plate's disc brightens when held down and shows round a crate. What is in
+a portal turns while it leads somewhere and is dull and still while its twin
+is in a hand. Corner marks in the paver's colour show the cell its hands would act
 on. A paver on its lantern holds it, lit. Positions ease towards the match's
 and pavers hop as they walk; a jump through a portal snaps. A lifted or laid
 stone flies between the cell and the paver's hands, and a crate that sinks is
@@ -252,15 +265,17 @@ stone could go was hard to read. That pass separated the three, thinned the
 rim, and added the refusal lines, flying stones and room for the solved card
 (`PuzzleCue` gained `action`). The owner then said it still looked bad, the
 bright loose tiles out of place, and to give it the best that could be done.
-The second pass is the look described under Presentation: one paving stone
-for all ground, and generated sprites and sky in place of flat shapes.
+The second pass made one paving stone for all ground and replaced flat
+shapes with generated, shaded sprites over a painted sky. The owner found that
+generic and distracting too, and the third pass is the look described under
+Presentation, which replaced it whole.
 
-After the second pass: native debug and web debug build without warnings; the
+After the third pass: native debug and web debug build without warnings; the
 12 cases pass natively and under WASI; the browser play test passes on WebGL
 and WebGPU. It found two things the new look had broken in what it reads, the
 celebration's sparks and the slab's shadow drifting into the header, and both
 now stay below it; the header's bar is also what makes two machines draw it
-alike. The release page is 3.8 MB with the art (2.7 MB before). Captures at
+alike. Captures at
 1280 by 800, 1280 by 720, 960 by 540 and the browser's 390 by 844 were looked
 at, and the thumbnail was taken again. Native release was not rebuilt.
 

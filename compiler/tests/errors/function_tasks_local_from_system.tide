@@ -1,0 +1,12 @@
+// expect: 'Ask' starts 'Flow', a task that uses local state, and the match can't use local state
+// expect: it does on line 10
+component Enemy { int hp; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Enemy); }
+async void Flow()
+{
+    await Wait.Frames(1);
+}
+void Ask() { Flow(); }
+view Show(Enemy enemy) { Ask(); }
+system Fight(Enemy enemy) { Ask(); }

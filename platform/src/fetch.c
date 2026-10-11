@@ -8,8 +8,15 @@
 // Each fetch runs on a thread of its own, since the frame can't wait for a
 // network: the frame starts it (tide_fetch_begin) and asks each frame whether
 // it's done (tide_fetch_poll), and the answer comes back on the frame's
-// thread, as data. Nothing is timed: a server that never answers is a fetch
-// that never ends, as a browser's fetch is.
+// thread, as data. Nothing is timed but what a request asks to be: a server
+// that never answers is a fetch that never ends, as a browser's fetch is, and
+// a request with a time limit (SetTimeout) ends when that passes, by
+// tide_time_now_ns, which never steps back. The limit is the one authority:
+// the poll says the request timed out once it's past with the thread not
+// done, and the thread, which looks at the same limit wherever it waits
+// (connecting, the TLS handshake, sending, receiving), stops there and frees
+// what it holds. A thread inside the system's name lookup, which nothing
+// interrupts, stops as that returns.
 //
 // What's refused, with TIDE_IO_FAILED: a body past TIDE_FETCH_LIMIT (read no
 // further, so a hostile server can't fill memory), headers past 64 KiB, more
@@ -31,6 +38,7 @@
 
 #include "rtc/rtc.h"
 #include "tide/page.h"
+#include "tide/time.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -57,6 +65,7 @@ typedef struct fetch {
     uint8_t *send;
     size_t send_size;
     int status;     // The answer's, for a request
+    uint64_t deadline; // When a request's time limit passes, by tide_time_now_ns; 0 for none
     bool done;      // The thread is finished with it
     bool forgotten; // Nobody will poll it: the thread frees it when it's done
     tide_io_error error;
@@ -187,12 +196,20 @@ static char *resolve(const request *q, const char *location)
     return out;
 }
 
+// Whether a time limit there is has passed.
+static bool late(const fetch *f)
+{
+    return f->deadline && tide_time_now_ns() >= f->deadline;
+}
+
+// Whether the thread has nothing left to work for: nobody will poll the
+// request, or its time limit passed.
 static bool forgotten(const request *q)
 {
     lock();
     const bool gone = q->of->forgotten;
     unlock();
-    return gone;
+    return gone || late(q->of);
 }
 
 static void close_request(request *q)
@@ -491,6 +508,7 @@ static tide_io_error get(fetch *f)
     }
     if (url != f->url) free(url);
     free(q.target);
+    if (result != TIDE_IO_NONE && late(f)) result = TIDE_IO_TIMED_OUT; // What it stopped for
     return result;
 }
 
@@ -532,9 +550,15 @@ uint32_t tide_fetch_begin(const char *url)
     return start(f);
 }
 
-uint32_t tide_request_begin(const char *method, const char *url, const char *headers, const uint8_t *body, const uint32_t size)
+uint32_t tide_request_begin(const char *method, const char *url, const char *headers, const uint8_t *body, const uint32_t size,
+                            const float timeout)
 {
     fetch *f = tide_alloc_zeroed(1, sizeof *f);
+    if (timeout > 0.0f) {
+        const float seconds = timeout > TIDE_REQUEST_TIMEOUT_MOST ? TIDE_REQUEST_TIMEOUT_MOST : timeout;
+        f->deadline = tide_time_now_ns() + (uint64_t)((double)seconds * 1e9);
+        if (!f->deadline) f->deadline = 1; // 0 is no limit
+    }
     f->url = copy_text(url);
     f->method = copy_text(method);
     f->headers = copy_text(headers);
@@ -590,6 +614,15 @@ bool tide_request_poll(const uint32_t ticket, tide_io_error *error, int32_t *sta
     if (!f) {
         unlock();
         *error = TIDE_IO_FAILED;
+        *data = NULL;
+        *size = 0;
+        return true;
+    }
+    if (!f->done && late(f)) {
+        // Its time is up, and this is where that's said. The thread stops where it next looks, and frees it
+        f->forgotten = true;
+        unlock();
+        *error = TIDE_IO_TIMED_OUT;
         *data = NULL;
         *size = 0;
         return true;

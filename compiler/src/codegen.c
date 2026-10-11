@@ -1199,13 +1199,31 @@ static const char *operator_word(const decl *m)
     }
 }
 
+// A function or method that starts tasks, itself or through the ones it calls,
+// as the code that calls it would: it's handed what a task belongs to, the
+// entity that code runs for (`tide_task_this`, and whether it's a local one)
+// and that entity's scene (`tide_task_scene`), and the worlds its callers run
+// in (decl.runs_in), where its tasks start.
+static bool takes_task(const decl *m)
+{
+    return m->starts_tasks && !m->is_async && (m->kind == DECL_FUNCTION || m->kind == DECL_METHOD);
+}
+
+// One that both worlds' code calls, whose tasks are ones nothing decides the
+// world of: each call says which it's in (`tide_task_local`), and the match's
+// hands it the world its tasks change (`tide_task_w`).
+static bool task_either(const decl *m)
+{
+    return takes_task(m) && m->runs_in[0] && m->runs_in[1];
+}
+
 // A function that's handed the local state, `tide_l`, by the local code that
 // calls it: one that reaches this machine's files, reads Frame.dt, reaches
 // local entities' components through its World, or sends, spawns and changes
-// entities on this machine as its caller would.
+// entities on this machine as its caller would, or starts tasks there.
 static bool takes_local(const decl *m)
 {
-    return m->uses_io || m->frame_time || m->world_local || m->plays || m->acts[1];
+    return m->uses_io || m->frame_time || m->world_local || m->plays || m->acts[1] || (takes_task(m) && m->runs_in[1]);
 }
 
 // A function or method that reaches the match's entities through its World
@@ -1215,14 +1233,14 @@ static bool takes_local(const decl *m)
 // would: what it records goes where the caller's own would.
 static bool takes_world(const decl *m)
 {
-    return m->world_match || m->acts[0];
+    return m->world_match || m->acts[0] || (takes_task(m) && (m->runs_in[0] || m->runs_in[1])); // A local task reads the match too
 }
 
 // Whether the match's world a function is handed is one it changes: it sets a
 // component through its World, or records in the world's queue.
 static bool changes_world(const decl *m)
 {
-    return m->world_sets || m->acts[0];
+    return m->world_sets || m->acts[0] || (takes_task(m) && m->runs_in[0] && !m->runs_in[1]);
 }
 
 // The match's seed (Random.seed), as the code being generated has it: the
@@ -2810,6 +2828,50 @@ static void gen_extern_call(gen *g, sb *o, const expr *e)
     sb_put(o, text ? "))" : ")");
 }
 
+// The function or method whose own code is being generated, through any
+// functions that take an Action copied into it; NULL in a system's, a view's
+// or a handler's code.
+static const decl *own_routine(const gen *g)
+{
+    const decl *r = g->routine;
+    for (const gen_frame *f = g->frame; f; f = f->caller) r = f->caller_routine;
+    return r;
+}
+
+// Whether the code being generated has the local state, `tide_l`, and the
+// match's world, `tide_w`, which a local handler has none of. A function or
+// method that starts tasks is handed NULL for the one its caller hasn't got.
+static bool has_local(const gen *g)
+{
+    if (g->task) return g->task->local;
+    const decl *r = own_routine(g);
+    if (r) return takes_local(r);
+    return g->code && (g->code->is_view || g->code->is_local);
+}
+
+static bool has_world(const gen *g)
+{
+    if (g->task) return true;
+    const decl *r = own_routine(g);
+    if (r) return takes_world(r);
+    return !(g->code && g->code->is_handler && g->code->is_local);
+}
+
+// What a task started here belongs to, as C arguments: the entity this code
+// runs for, whether it's a local one, and its scene when that's of the task's
+// world (`local`). A task's own, and what a function or method was handed.
+static const char *task_owner(const gen *g, const bool local)
+{
+    if (g->task) return "tide_this, tide_this_local, tide_scene";
+    if (own_routine(g)) return "tide_task_this, tide_task_this_local, tide_task_scene";
+    const decl *code = g->code;
+    sb b = {0};
+    if (code && code->per_entity) sb_printf(&b, "tide_this, %s, ", code->entity_local ? "true" : "false");
+    else sb_put(&b, "(tide_entity){0}, false, ");
+    sb_put(&b, g->has_scene && g->scene_local == local ? "tide_scene" : "(tide_entity){0}");
+    return b.data;
+}
+
 static void gen_routine_call(gen *g, sb *o, const expr *e)
 {
     const decl *m = e->method;
@@ -2842,12 +2904,20 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         args++;
     }
     if (takes_local(m)) {
-        sb_printf(o, "%stide_l", args++ ? ", " : "");
+        sb_printf(o, "%s%s", args++ ? ", " : "", takes_task(m) && !has_local(g) ? "NULL" : "tide_l");
     }
-    if (takes_world(m)) sb_printf(o, "%stide_w", args++ ? ", " : ""); // What its World argument stands for
+    // What its World argument stands for
+    if (takes_world(m)) sb_printf(o, "%s%s", args++ ? ", " : "", takes_task(m) && !has_world(g) ? "NULL" : "tide_w");
     if (takes_scene(g->prog, m)) { // What it spawns joins the scene of the entity this code runs for, when that's of the same world
         const bool same = g->has_scene && g->scene_local == scene_is_local(g->prog, m);
         sb_printf(o, "%s%s", args++ ? ", " : "", same ? "tide_scene" : "(tide_entity){0}");
+    }
+    if (takes_task(m)) { // The tasks it starts belong to what this code's own would, in this code's world
+        const decl *r = g->task ? NULL : own_routine(g);
+        const bool local = g->task ? g->task->local : r ? r->runs_in[1] && !r->runs_in[0] : has_local(g);
+        sb_printf(o, "%s%s", args++ ? ", " : "", task_owner(g, local));
+        if (task_either(m) && r && task_either(r)) sb_put(o, ", tide_task_w, tide_task_local");
+        else if (task_either(m)) sb_put(o, local || !has_world(g) ? ", NULL, true" : ", tide_w, false");
     }
     if (m->rolls) sb_printf(o, "%stide_dice", args++ ? ", " : ""); // The generator this code rolls with
     if (m->reads_seed) sb_printf(o, "%s%s", args++ ? ", " : "", match_seed(g));
@@ -4187,8 +4257,9 @@ static void gen_await(gen *g, expr *e, const char *name)
             gen_expr(g, o, call->object);
             sb_put(o, ";\n");
             line(g, o, "tide_f->tide_fetch_ticket = (int32_t)tide_web_request_begin(tide_l->tide_io, tide_text_view(tide_request%d.url), "
-                       "tide_text_view(tide_request%d.method), tide_text_view(tide_request%d.headers), tide_request%d.body);",
-                 k, k, k, k);
+                       "tide_text_view(tide_request%d.method), tide_text_view(tide_request%d.headers), tide_request%d.body, "
+                       "tide_request%d.timeout);",
+                 k, k, k, k, k);
             g->indent--;
             line(g, o, "}");
             line(g, o, "tide_web_answer tide_fetched%d;", k);
@@ -4364,15 +4435,13 @@ static const expr *task_start(const expr *e)
 static void hoist_spawns(gen *g, expr *e);
 static void hoist_arguments(gen *g, const expr *call);
 
-// Starts a task: its frame, with the arguments, runs until it first waits,
-// then waits in its world's table. It belongs to the entity the code runs
-// for, or with a task, to the task's.
-static void gen_task_start(gen *g, const expr *call)
+// Starts a task in the match's world, or the `local` one, which `worlds` are
+// as C arguments: its frame, with the arguments, runs until it first waits,
+// then waits in its world's table.
+static void gen_task_start_in(gen *g, const expr *call, const bool local, const char *worlds)
 {
     sb *o = &g->c;
     const decl *fn = call->method;
-    const bool local = starts_local(g);
-    hoist_arguments(g, call);
     line(g, o, "{ // " STR_FMT, STR_ARG(fn->qualified));
     g->indent++;
     line(g, o, "%s tide_start = {0};", type_cname(task_of(g, fn)->frame));
@@ -4387,20 +4456,54 @@ static void gen_task_start(gen *g, const expr *call)
         gen_as(g, &value, call->args.items[i], call->arg_want.items[i]);
         gen_spill(g, slot.data, value.data, p->type, where);
     }
-    const char *owner = "tide_this, tide_this_local, tide_scene";
-    if (!g->task) {
-        const decl *code = g->code;
-        sb b = {0};
-        if (code && code->per_entity) sb_printf(&b, "tide_this, %s, ", code->entity_local ? "true" : "false");
-        else sb_put(&b, "(tide_entity){0}, false, ");
-        sb_put(&b, g->has_scene && g->scene_local == local ? "tide_scene" : "(tide_entity){0}");
-        owner = b.data;
-    }
     gen_entity_copies(g, true);
-    line(g, o, "%s(%s, &tide_start, %s);", task_start_name(fn, local), task_worlds(g, local), owner);
+    line(g, o, "%s(%s, &tide_start, %s);", task_start_name(fn, local), worlds, task_owner(g, local));
     gen_entity_copies(g, false);
     g->indent--;
     line(g, o, "}");
+}
+
+// Starts a task. It belongs to the entity the code runs for, or with a task,
+// to the task's. A function or method starts it as the code that calls it
+// would: for what it was handed, in the task's own world, or for a task whose
+// world nothing decides, in the worlds its callers run in, which each call
+// says when they're both.
+static void gen_task_start(gen *g, const expr *call)
+{
+    sb *o = &g->c;
+    const decl *fn = call->method;
+    const decl *r = g->task ? NULL : own_routine(g);
+    hoist_arguments(g, call);
+    if (!r) {
+        const bool local = starts_local(g);
+        gen_task_start_in(g, call, local, task_worlds(g, local));
+        return;
+    }
+    const bool in_match = fn->task_side != TASK_LOCAL && r->runs_in[0];
+    const bool in_local = fn->task_side != TASK_MATCH && r->runs_in[1];
+    if (in_match && in_local) {
+        line(g, o, "if (tide_task_local) {");
+        g->indent++;
+        gen_task_start_in(g, call, true, "tide_w, tide_l");
+        g->indent--;
+        line(g, o, "} else {");
+        g->indent++;
+        gen_task_start_in(g, call, false, "tide_task_w");
+        g->indent--;
+        line(g, o, "}");
+    } else if (in_match) {
+        gen_task_start_in(g, call, false, "tide_w");
+    } else if (in_local) {
+        gen_task_start_in(g, call, true, "tide_w, tide_l");
+    } else { // Nothing that runs calls this code, so no world has a table for the task: only its arguments are worked out
+        for (int i = 0; i < call->args.count; i++) {
+            if (fn->params.items[i].task_ref) continue;
+            indent(g, o);
+            sb_put(o, "(void)(");
+            gen_as(g, o, call->args.items[i], call->arg_want.items[i]);
+            sb_put(o, ");\n");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4530,6 +4633,7 @@ static bool call_keeps_order(const expr *e)
     }
     // One that sends, spawns or changes entities records it in its turn, as the statement's own would be
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->acts[0] || e->method->acts[1])) return true;
+    if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && takes_task(e->method)) return true; // And the tasks it starts
     return writes(e);
 }
 
@@ -12538,6 +12642,11 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     }
     if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", changes_world(m) ? "" : "const ");
     if (takes_scene(g->prog, m)) sb_printf(o, "%stide_entity tide_scene", n++ ? ", " : "");
+    if (takes_task(m)) {
+        sb_printf(o, "%sconst tide_entity tide_task_this, const bool tide_task_this_local, const tide_entity tide_task_scene",
+                  n++ ? ", " : "");
+    }
+    if (task_either(m)) sb_put(o, ", tide_world *tide_task_w, const bool tide_task_local");
     if (m->rolls) sb_printf(o, "%stide_random *tide_dice", n++ ? ", " : "");
     if (m->reads_seed) sb_printf(o, "%sconst int32_t tide_match_seed", n++ ? ", " : "");
     if (m->owner && !m->is_operator && !m->is_interpolate) {
@@ -12589,6 +12698,8 @@ static void gen_routine(gen *g, const decl *m)
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
     if (takes_local(m)) line(g, o, "(void)tide_l;");
     if (takes_world(m)) line(g, o, "(void)tide_w;");
+    if (takes_task(m)) line(g, o, "(void)tide_task_this; (void)tide_task_this_local; (void)tide_task_scene;");
+    if (task_either(m)) line(g, o, "(void)tide_task_w; (void)tide_task_local;");
     if (m->rolls) line(g, o, "(void)tide_dice;");
     if (m->reads_seed) line(g, o, "(void)tide_match_seed;");
     for (int i = 0; i < m->params.count; i++) {
@@ -12915,10 +13026,33 @@ static void gen_task_pass(gen *g, const bool local)
 }
 
 // Every task: frames, tables, and their code for each world they run in.
+// The functions and methods that start tasks, which fill a task's frame: their
+// code comes after the frames and the declarations of what starts a task. The
+// rest of the code has their own declarations already (gen_routine_prototypes).
+static void gen_task_routines(gen *g)
+{
+    sb *o = &g->c;
+    bool any = false;
+    for (int i = 0; i < g->prog->decls.count; i++) {
+        const decl *d = g->prog->decls.items[i];
+        const bool own = d->kind == DECL_FUNCTION && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only && takes_task(d);
+        for (int k = -1; k < d->methods.count; k++) {
+            const decl *m = k < 0 ? d : d->methods.items[k];
+            if (k < 0 ? !own : m->gpu_only || !takes_task(m)) continue;
+            if (!any) sb_put(o, "// Methods and functions that start tasks\n\n");
+            any = true;
+            gen_routine(g, m);
+        }
+    }
+}
+
 static void gen_tasks(gen *g)
 {
     sb *o = &g->c;
-    if (g->tasks.count == 0) return;
+    if (g->tasks.count == 0) {
+        gen_task_routines(g); // Ones nothing that runs calls, so their tasks have no world
+        return;
+    }
     // Their frames' fields, from their code: generated once to find them
     for (int i = 0; i < g->tasks.count; i++) {
         for (int side = 0; side < 2; side++) {
@@ -12993,6 +13127,7 @@ static void gen_tasks(gen *g)
         }
     }
     sb_put(o, "\n");
+    gen_task_routines(g);
     for (int i = 0; i < g->tasks.count; i++) {
         for (int side = 0; side < 2; side++) {
             if (task_runs_in(g->tasks.items[i].fn, side == 1)) gen_task_resume(g, &g->tasks.items[i], side == 1);
@@ -13123,7 +13258,9 @@ static void gen_routines(gen *g)
     }
     if (all.count == 0) return;
     sb_put(o, "// Methods and functions\n\n");
-    for (int i = 0; i < all.count; i++) gen_routine(g, all.items[i]);
+    for (int i = 0; i < all.count; i++) {
+        if (!takes_task(all.items[i])) gen_routine(g, all.items[i]); // Those come once the tasks' frames are known (gen_tasks)
+    }
 }
 
 // The devices as the input sends them: the values match code reads, repaired,

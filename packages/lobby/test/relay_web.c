@@ -37,6 +37,7 @@ int main(int argc, char **argv)
     const tide_io *io = tide_platform_io_init("tests.tide.lobby");
     char origin[64];
     snprintf(origin, sizeof origin, "http://127.0.0.1:%s", port);
+    snprintf(lobby_silent, sizeof lobby_silent, "http://127.0.0.1:%s/silent", port);
     for (int i = 0; i < 4; i++) seat_init(&seats[i], io, origin);
     tide_platform_open(&(tide_window_desc){.title = "lobby", .width = 64, .height = 64, .hidden = true});
     tide_platform_run(frame, NULL);
