@@ -17,10 +17,11 @@ as in Patrick's Parabox. They also requested improved graphics and a doorway
 sound that feels like entering a box instead of collecting a coin.
 They then requested a continuous spatial zoom with visible outside makers,
 automatic room pushing with doorway entry when blocked, and an unmistakably
-unpitched entrance sound. The current prototype implements that follow-up.
+unpitched entrance sound. They clarified that the maker must move smoothly
+through the doorway too, rather than teleport as the camera zooms. The current
+prototype implements that follow-up.
 Its particular layouts and puzzle rules are game design choices within the
-prototype request, not new
-engine or language requirements.
+prototype request, not new engine or language requirements.
 
 ## Shared world and recursive rooms
 
@@ -87,6 +88,21 @@ The workshop is the initial view. Room interiors and their miniatures use
 identical drawing geometry: an inner tile is 0.16 of its containing tile.
 Entry starts at the miniature's actual location and interpolates scale and
 translation over 0.55 seconds; exit starts from the inverse transform.
+Each maker has a separate 0.42-second local doorway passage: its containing
+world position and scale interpolate through the doorway lip, shrinking to
+the 0.16 interior scale on entry and reversing on exit. Both views project
+that pose; active canonical copies are suppressed during the passage. Later
+steps update the destination smoothly, keeping input responsive. Depth-only
+self-entry and adjacent-room handoffs also use passage geometry. Reduced
+motion, level changes and resets to zero moves discard stale passages;
+other interrupted travel can start from the current rendered pose.
+Fixed-reference aliases arrive from their doorway edge during the final
+part of entry, with complementary maker opacity between that edge pose and
+the gateway pose. Exit reverses this handoff, and interrupted travel retains
+the current alias pose and opacity. This avoids a larger canonical maker
+appearing abruptly in a stationary partner's recursive view. A serial change
+returning to zero moves also snaps first-action Undo, since presentation does
+not distinguish it from Reset; other Undo endpoints interpolate normally.
 There is no scene fade. The camera widens and shifts when needed to keep a
 maker in the immediate containing world visible. Up to three real ancestor
 contexts surround the current room, in the same scene. That outside
@@ -340,7 +356,7 @@ remain exact. Native debug, web debug and web release targets build without
 warnings. These witnesses establish solvability, not shortest solutions or
 measured human difficulty.
 
-Both final two-browser fixtures pass, WebGL in 84.87 s and WebGPU in 54.97 s,
+The initial spatial two-browser fixtures pass, WebGL in 84.87 s and WebGPU in 54.97 s,
 with no runtime, browser or graphics errors. New pixel-area assertions require
 the miniature to grow progressively during entry and shrink during exit;
 the settled/initial area differs by more than twofold. Existing strict
@@ -371,10 +387,41 @@ threshold asset's exact bytes; its remaining pickup similarity plausibly
 came from that asset's low sine body. These checks verify asset routing and
 mixer output, not a human listening judgment.
 
-The site check reports zero errors/warnings; the production build, eighteen
+The initial spatial site check reports zero errors/warnings; the production build, eighteen
 analytics/admin tests and five production HTTP/SEO/access tests pass. Release,
 staged and production-site HTML match SHA-256
 `3d3d048342d10a72476529eedbcfa75f4f5ca49291851e54c507fdf994c68547`.
 The packaged asset pack contains the exact new doorway WAV bytes.
 Thumbnail SHA-256 is
 `2e8c973ae731d9f677d89c779b54b1cee90388bfa87bbc3678121e784940b19b`.
+
+The maker-passage follow-up builds without warnings natively and for web
+debug/release. All twenty-one native fixtures remain green; the final WASI
+fixtures and two-browser checks pass again, WebGL in 81.12 s and WebGPU in
+54.75 s. The new stationary outside-view assertion tracks Amber's actual
+body pixels: its footprint shrinks progressively by more than threefold and
+its centroid moves toward the doorway across early/middle/late/settled frames.
+This independently verifies the maker's passage rather than camera zoom.
+Existing camera, canonical-interior, occupied-shell, recursive, shared-command,
+progression, shelf and phone-viewport checks remain green.
+
+Bounded native captures also cover physical entry/exit from both views,
+recursive alias handoff with a stationary partner, fast inner steps,
+immediate reversal/Undo and a rebased exit whose trail depth stays equal.
+Desktop and phone-viewport passage captures were inspected. The current
+settled capstone capture is byte-identical to the existing thumbnail.
+A separate read-only renderer audit found no further critical blockers.
+
+Integration with `origin/dev` through `1e969c61` was clean. Incoming compiler
+changes triggered game and public-page rebuilds; the twenty-one native tests
+passed again. All 64 packaged pages match their release artifacts: 46 docs
+examples, fourteen public gallery games and four prototypes, retaining
+Underfoot, Inside Out, CRACKED and Two Forks in the authenticated catalog.
+All 225 grammar checks and the full WebGL examples smoke pass, including
+the 46 docs examples, two embedded games and fourteen gallery games. The
+site check has zero errors/warnings, eighteen analytics/admin tests pass,
+and the final production build plus five HTTP/SEO/access checks pass.
+Final release, staged and packaged Inside Out HTML has SHA-256
+`c112d75234015c1ff4ea5f6fc27e00e78dc82e27d8e1b30439a94021f0d8ad33`.
+Decoding the packaged asset pack confirms the exact new doorway WAV and
+the absence of the previous doorway WAV bytes. No CI was dispatched.

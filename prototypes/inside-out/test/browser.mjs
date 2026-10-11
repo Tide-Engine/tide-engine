@@ -90,9 +90,9 @@ const browserCommand = async (method, params = {}, timeout = 20_000) => {
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const assertImagesEqual = (actual, expected, message) => assert.equal(Buffer.compare(actual, expected), 0, message);
 const assertImagesDiffer = (actual, expected, message) => assert.notEqual(Buffer.compare(actual, expected), 0, message);
-// Count the rendered Mint wood in a real Chrome screenshot. This checks the
-// spatial zoom itself, without a camera debug export or wasm inspection.
-const mintArea = png => {
+// Read rendered pixels from real Chrome screenshots, without a camera or
+// actor debug export or wasm inspection.
+const screenshotPixels = (png, visit) => {
     let width, height, channels;
     const chunks = [];
     for (let at = 8; at < png.length;) {
@@ -109,7 +109,7 @@ const mintArea = png => {
     }
     const packed = inflateSync(Buffer.concat(chunks));
     const stride = width * channels;
-    let previous = Buffer.alloc(stride), total = 0;
+    let previous = Buffer.alloc(stride);
     const paeth = (a, b, c) => {
         const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
         return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
@@ -126,11 +126,29 @@ const mintArea = png => {
         }
         for (let x = 0; x < stride; x += channels) {
             const r = row[x], g = row[x + 1], b = row[x + 2];
-            if (r > 55 && r < 145 && g > r + 30 && g > b + 12) total++;
+            visit(r, g, b, x / channels, y);
         }
         previous = row;
     }
+};
+const mintArea = png => {
+    let total = 0;
+    screenshotPixels(png, (r, g, b) => {
+        if (r > 55 && r < 145 && g > r + 30 && g > b + 12) total++;
+    });
     return total;
+};
+const amberFootprint = png => {
+    let area = 0, horizontal = 0;
+    screenshotPixels(png, (r, g, b, x) => {
+        // Amber's solid cap/body/outline is distinct from Mint wood and the
+        // tutorial's brass targets. Observe it from the stationary Workshop.
+        if (r >= 205 && r <= 225 && g >= 112 && g <= 134 && b >= 58 && b <= 82) {
+            area++; horizontal += x;
+        }
+    });
+    assert.ok(area > 0, 'Amber remains visible during doorway passage');
+    return { area, x: horizontal / area };
 };
 let pumping;
 // Concurrent predicates share one round. Neither player gets another frame
@@ -507,6 +525,19 @@ try {
     stage = 'both makers can enter the same shared room';
     await host.tapKey('KeyD', 'd');
     await host.tapKey('KeyD', 'd');
+    const passageEarly = await saveCrop(small, 'maker-entry-early', cameraBody(small));
+    await small.frames(4);
+    const passageMiddle = await saveCrop(small, 'maker-entry-middle', cameraBody(small));
+    await small.frames(6);
+    const passageLate = await saveCrop(small, 'maker-entry-late', cameraBody(small));
+    await advanceMatch(24);
+    const passageSettled = await saveCrop(small, 'maker-entry-settled', cameraBody(small));
+    const passage = [passageEarly, passageMiddle, passageLate, passageSettled].map(amberFootprint);
+    assert.ok(passage[0].area > passage[1].area && passage[1].area > passage[2].area && passage[2].area >= passage[3].area,
+        `outside observer sees Amber shrink through the doorway: ${JSON.stringify(passage)}`);
+    assert.ok(passage[0].area > passage[3].area * 3, 'maker entry starts at the outer-player scale');
+    assert.ok(passage[0].x < passage[1].x && passage[1].x < passage[2].x && passage[2].x <= passage[3].x + 1,
+        `outside observer sees Amber travel toward the doorway: ${JSON.stringify(passage)}`);
     await small.tapKey('KeyW', 'w');
     await advanceMatch(24);
     const sharedRoomMoves = await moveLabel(host);
