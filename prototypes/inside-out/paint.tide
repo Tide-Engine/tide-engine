@@ -5,6 +5,9 @@ local singleton Picture
     int serial = -1;
     float2[2] actors;
     int[2] actorRoom;
+    float[2] actorScale;
+    Traveler[2] travelers;
+    MakerPassage[2] passages;
     float2[4] rooms;
     int[4] roomParent;
     float2[8] crates;
@@ -17,7 +20,12 @@ local singleton Picture
     int focusShell = -2;
     int focusPortal = -2;
     int focusDepth = -1;
+    int focusOutside;
     float cameraBlend = 1;
+    MapLens cameraLens;
+    MapLens cameraFrom;
+    RoomSurround cameraSurround;
+    Traveler cameraActor;
 }
 
 Color RoomColor(int room)
@@ -93,7 +101,7 @@ void GoldTarget(float2 at, float size, bool occupied)
 void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
 {
     var tone = variation % 2 == 0 ? Color(0.96, 0.93, 0.83) : Color(0.94, 0.91, 0.80);
-    Draw.Shape(Shape { center = at, size = float2(size - 0.7), color = tone, color2 = Math.Lerp(tone, Color(0.85, 0.76, 0.58), 0.055) });
+    Draw.Shape(Shape { center = at, size = float2(Math.Max(0.1, size - Math.Min(0.7, size * 0.02))), color = tone, color2 = Math.Lerp(tone, Color(0.85, 0.76, 0.58), 0.055) });
     if (size > 19)
     {
         for (var grain = 0; grain < 3; grain++)
@@ -121,7 +129,7 @@ void TilePaint(Tile tile, float2 at, float size, bool occupied, int variation)
 void WallTile(float2 at, float size, Color tone)
 {
     Draw.Rect(at, float2(size + 0.1), Math.Lerp(tone, INK, 0.22));
-    Draw.Shape(Shape { center = at - float2(0, size * 0.035), size = float2(size - 1.3, size * 0.88),
+    Draw.Shape(Shape { center = at - float2(0, size * 0.035), size = float2(Math.Max(0.1, size - Math.Min(1.3, size * 0.03)), size * 0.88),
         color = Math.Lerp(tone, PAPER, 0.28), color2 = Math.Lerp(tone, INK, 0.05) });
     Draw.Line(at + float2(-size * 0.46, -size * 0.46), at + float2(size * 0.46, -size * 0.46), Math.Max(0.8, size * 0.024), Math.Lerp(tone, PAPER, 0.42));
     if (size > 13)
@@ -153,117 +161,22 @@ void Panel(float2 at, float2 size)
     Draw.WireRoundRect(at, size, 15, 1, Color(0.72, 0.65, 0.49, 0.24));
 }
 
-struct PreviewLens { int room; float2 center; float size; int depth; int seen; }
-
-void PreviewBase(Workshop workshop, int room, float2 at, float size, Picture picture)
-{
-    var tone = RoomColor(room);
-    Draw.RoundRect(at + float2(0, size * 0.045), float2(size), size * 0.09, Math.Lerp(tone, INK, 0.27));
-    Draw.RoundRect(at, float2(size), size * 0.09, tone);
-    var step = size * 0.80 / INNER_SIZE;
-    var origin = at - float2(step * 2);
-    for (var y = 0; y < INNER_SIZE; y++)
-        for (var x = 0; x < INNER_SIZE; x++)
-        {
-            var position = int2(x, y);
-            var tile = TileAt(workshop.layout, room, position);
-            var here = origin + float2(position) * step;
-            Draw.Rect(here, float2(Math.Max(0.1, step - 0.25)), tile == Tile.Wall ? Math.Lerp(tone, INK, 0.16) : Color(0.98, 0.95, 0.84));
-            if (tile == Tile.Target) Draw.WireRect(here, float2(step * 0.68), Math.Max(0.6, step * 0.12), Color(0.75, 0.56, 0.21));
-            if (tile == Tile.Exit) Draw.Rect(here, float2(step * 0.70), TEAL);
-            if (tile == Tile.Switch)
-            {
-                var held = CargoAt(workshop.layout, workshop.puzzle, room, position) >= 0 || ActorAt(workshop.puzzle, room, position) >= 0;
-                Draw.Circle(here, step * 0.29, held ? Color(0.57, 0.72, 0.37) : AMBER);
-            }
-        }
-    DoorNotches(at, size, workshop.layout.rooms[room].doors, INK);
-    for (var crate = 0; crate < workshop.layout.crateCount; crate++)
-        if (workshop.puzzle.crates[crate].active && workshop.puzzle.crates[crate].room == room)
-            Draw.RoundRect(origin + picture.crates[crate] * step, float2(step * 0.68), step * 0.12, Color(0.89, 0.67, 0.31));
-    for (var seat = 0; seat < 2; seat++)
-        if (workshop.present[seat] && workshop.puzzle.actors[seat].room == room)
-        {
-            var here = origin + picture.actors[seat] * step;
-            Draw.Circle(here, step * 0.36, PAPER);
-            Draw.Circle(here, step * 0.25, seat == 0 ? AMBER : TEAL);
-        }
-}
-
-// Breadth-first previews are bounded to three visible scales, including cycles.
-void RoomPreview(Workshop workshop, int room, float2 at, float size, Picture picture, bool portal = false)
-{
-    mut PreviewLens[48] pending = default;
-    pending[0] = PreviewLens { room = room, center = at, size = size, seen = 1 << room };
-    mut var count = 1;
-    for (var index = 0; index < count && index < 48; index++)
-    {
-        var item = pending[index];
-        PreviewBase(workshop, item.room, item.center, item.size, picture);
-        var step = item.size * 0.80 / INNER_SIZE;
-        var origin = item.center - float2(step * 2);
-        for (var child = 0; child < workshop.layout.roomCount; child++)
-        {
-            if (workshop.puzzle.rooms[child].room != item.room) continue;
-            var here = origin + picture.rooms[child] * step;
-            if (item.depth < 2 && count < 48)
-            {
-                pending[count] = PreviewLens { room = child, center = here, size = step * 0.89, depth = item.depth + 1, seen = item.seen | (1 << child) };
-                count++;
-            }
-            else
-            {
-                Draw.RoundRect(here, float2(step * 0.85), step * 0.1, RoomColor(child));
-                Draw.WireRect(here, float2(step * 0.58), Math.Max(0.5, step * 0.08), PAPER);
-            }
-        }
-        for (var gate = 0; gate < workshop.layout.portalCount; gate++)
-        {
-            var target = workshop.layout.portals[gate];
-            if (target.room != item.room) continue;
-            var here = origin + float2(target.position) * step;
-            var repeated = (item.seen & (1 << target.destination)) != 0;
-            if (item.depth < 2 && count < 48)
-            {
-                pending[count] = PreviewLens { room = target.destination, center = here, size = step * 0.86, depth = item.depth + 1, seen = item.seen | (1 << target.destination) };
-                count++;
-            }
-            else
-            {
-                Draw.RoundRect(here, float2(step * 0.80), step * 0.1, RoomColor(target.destination));
-                if (repeated) InfinityMark(here, step * 0.74, PAPER);
-            }
-        }
-    }
-    var tone = RoomColor(room);
-    Draw.WireRoundRect(at, float2(size), size * 0.09, Math.Max(1, size * 0.026), portal ? INK : Math.Lerp(tone, INK, 0.28));
-    if (size >= 18)
-    {
-        var badge = at + float2(-size * 0.34, -size * 0.34);
-        Draw.Circle(badge, Math.Max(5, size * 0.135), tone);
-        Draw.WireCircle(badge, Math.Max(5, size * 0.135), Math.Max(1, size * 0.018), PAPER);
-        Label($"{room + 1}", badge, Math.Max(8, size * 0.19), PAPER, Anchor.MiddleCenter);
-        if (portal)
-        {
-            Draw.Circle(at + float2(size * 0.32, size * 0.31), size * 0.16, INK);
-            InfinityMark(at + float2(size * 0.32, size * 0.31), size * 0.25, PAPER);
-        }
-    }
-}
-
 void DimensionFloor(Workshop workshop, int room, MapLens lens)
 {
     var cells = RoomSize(room);
     var tone = room < 0 ? Color(0.74, 0.66, 0.48) : RoomColor(room);
     var center = lens.origin + float2((cells - 1) * lens.tile * 0.5);
-    Draw.RoundRect(center + float2(0, 3), float2(cells * lens.tile + 9), 9, Math.Lerp(tone, INK, 0.22));
-    Draw.RoundRect(center, float2(cells * lens.tile + 9), 9, tone);
+    Draw.Shape(Shape { center = center + float2(0, lens.tile * 0.08), size = float2((cells + 0.36) * lens.tile), radius = lens.tile * 0.18,
+        color = Color(0.22, 0.26, 0.17, 0.23), soft = lens.tile * 0.10 });
+    Draw.RoundRect(center + float2(0, lens.tile * 0.045), float2((cells + 0.28) * lens.tile), lens.tile * 0.18, Math.Lerp(tone, INK, 0.22));
+    Draw.RoundRect(center, float2((cells + 0.22) * lens.tile), lens.tile * 0.18, tone);
     for (var y = 0; y < cells; y++)
         for (var x = 0; x < cells; x++)
         {
             var position = int2(x, y);
             var tile = TileAt(workshop.layout, room, position);
             var at = MapPoint(float2(position), lens);
+            if (!InPlayfield(at, lens.tile * 1.10, lens)) continue;
             var occupied = CargoAt(workshop.layout, workshop.puzzle, room, position) >= 0 || (tile == Tile.Switch && ActorAt(workshop.puzzle, room, position) >= 0);
             if (tile == Tile.Wall) WallTile(at, lens.tile, tone);
             else TilePaint(tile, at, lens.tile, occupied, x + y);
@@ -291,7 +204,7 @@ void DimensionFloor(Workshop workshop, int room, MapLens lens)
     }
 }
 
-void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, int hideShell = -1, int hidePortal = -1)
+void DimensionConnections(Workshop workshop, int room, MapLens lens, Picture picture)
 {
     for (var shell = 0; shell < workshop.layout.roomCount; shell++)
     {
@@ -308,34 +221,27 @@ void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture,
             Draw.Line(from, to, Math.Max(0.8, lens.tile * 0.025), Color(0.66, 0.51, 0.26));
         }
     }
-    for (var gate = 0; gate < workshop.layout.portalCount; gate++)
-    {
-        var portal = workshop.layout.portals[gate];
-        if (portal.room != room || gate == hidePortal) continue;
-        var here = MapPoint(float2(portal.position), lens);
-        Draw.WireRoundRect(here, float2(lens.tile * 0.98), lens.tile * 0.14, Math.Max(1.5, lens.tile * 0.06), Color(0.99, 0.84, 0.45));
-        RoomPreview(workshop, portal.destination, here, lens.tile * 0.80, picture, true);
-        DoorNotches(here, lens.tile * 0.82, portal.doors, INK);
-    }
-    for (var shell = 0; shell < workshop.layout.roomCount; shell++)
-        if (workshop.puzzle.rooms[shell].room == room && shell != hideShell)
-        {
-            var here = MapPoint(picture.rooms[shell], lens);
-            RoomPreview(workshop, shell, here, lens.tile * 0.86, picture);
-            if (workshop.layout.rooms[shell].latched && !RoomUnlocked(workshop.layout, workshop.puzzle, shell))
-            {
-                var badge = here + float2(lens.tile * 0.28, -lens.tile * 0.28);
-                Draw.Circle(badge, lens.tile * 0.15, INK);
-                Draw.Arc(badge - float2(0, lens.tile * 0.04), lens.tile * 0.07, 3.14, 6.28, Math.Max(1, lens.tile * 0.026), PAPER);
-                Draw.RoundRect(badge + float2(0, lens.tile * 0.025), float2(lens.tile * 0.13, lens.tile * 0.11), lens.tile * 0.025, PAPER);
-            }
-        }
+}
+
+void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture, Hands hands)
+{
     for (var crate = 0; crate < workshop.layout.crateCount; crate++)
         if (workshop.puzzle.crates[crate].active && workshop.puzzle.crates[crate].room == room)
             Crate(MapPoint(picture.crates[crate], lens), lens.tile, TileAt(workshop.layout, room, workshop.puzzle.crates[crate].position) == Tile.Target);
     for (var seat = 0; seat < 2; seat++)
-        if (workshop.present[seat] && workshop.puzzle.actors[seat].room == room)
+        if (workshop.present[seat])
         {
+            var trip = picture.passages[seat];
+            if (trip.active)
+            {
+                if (trip.gate.reference && room == trip.child && trip.aliasAlpha > 0)
+                    Draw.Tint(Color(1, 1, 1, trip.aliasAlpha))
+                    {
+                        Maker(MapPoint(trip.aliasPosition, lens), lens.tile * 0.90, seat, false, 0);
+                    }
+                continue;
+            }
+            if (workshop.puzzle.actors[seat].room != room) continue;
             mut var at = MapPoint(picture.actors[seat], lens);
             if (seat == hands.seat && hands.blockTime > 0)
             {
@@ -346,6 +252,150 @@ void DimensionPieces(Workshop workshop, int room, MapLens lens, Picture picture,
                 Draw.WireCircle(at, lens.tile * (hands.reduceMotion ? 0.46 : 0.42 + (0.36 - hands.portalTime) * 0.50), Math.Max(1.5, lens.tile * 0.035), Color(0.33, 0.61, 0.54, hands.portalTime * 1.8));
             Maker(at, lens.tile * 0.90, seat, false, 0);
         }
+}
+
+// The normal canonical copies are hidden during travel. Draw the single live
+// maker after all room surfaces, at its continuous containing-world pose.
+void PassageMaker(Workshop workshop, Picture picture, Hands hands, int seat, MapLens[4] contexts, int[4] dimensions, int contextCount)
+{
+    var trip = picture.passages[seat];
+    if (!trip.active || !workshop.present[seat]) return;
+    mut var parent = contexts[0];
+    mut var found = false;
+    if (seat == hands.seat)
+    {
+        if (trip.entering) parent = ContainingLens(parent, RoomSurround { anchor = PassageAnchor(trip.gate, picture) });
+        found = true;
+    }
+    else
+    {
+        for (var layer = 0; layer < contextCount; layer++)
+            if (!found && dimensions[layer] == trip.gate.room)
+            {
+                parent = contexts[layer];
+                found = true;
+            }
+        if (!found && dimensions[0] == trip.child)
+        {
+            parent = ContainingLens(parent, RoomSurround { anchor = PassageAnchor(trip.gate, picture) });
+            found = true;
+        }
+    }
+    if (!found)
+    {
+        // Locate a visible nested containing room with the same finite bounds
+        // used for miniature artwork. This also covers a partner in a sibling.
+        mut SceneLens[48] pending = default;
+        pending[0] = SceneLens { room = dimensions[0], lens = contexts[0] };
+        mut var count = 1;
+        for (var index = 0; index < count && !found; index++)
+        {
+            var item = pending[index];
+            if (item.room == trip.gate.room)
+            {
+                parent = item.lens;
+                found = true;
+                break;
+            }
+            if (item.depth >= 3) continue;
+            for (var shell = 0; shell < workshop.layout.roomCount && count < 48; shell++)
+                if (workshop.puzzle.rooms[shell].room == item.room)
+                {
+                    pending[count] = SceneLens { room = shell, lens = InteriorLens(item.lens, picture.rooms[shell]), depth = item.depth + 1 };
+                    count++;
+                }
+            for (var portal = 0; portal < workshop.layout.portalCount && count < 48; portal++)
+            {
+                var gate = workshop.layout.portals[portal];
+                if (gate.room != item.room) continue;
+                pending[count] = SceneLens { room = gate.destination, lens = InteriorLens(item.lens, float2(gate.position)), depth = item.depth + 1 };
+                count++;
+            }
+        }
+    }
+    if (found)
+        Draw.Tint(Color(1, 1, 1, trip.gate.reference ? 1 - trip.aliasAlpha : 1.0))
+        {
+            Maker(MapPoint(trip.position, parent), parent.tile * trip.scale * 0.90, seat, false, 0);
+        }
+}
+
+void RoomTrim(Workshop workshop, int room, MapLens lens, bool portal)
+{
+    if (room < 0) return;
+    var center = lens.origin + float2(2 * lens.tile);
+    var tone = RoomColor(room);
+    var side = (INNER_SIZE + 0.22) * lens.tile;
+    Draw.WireRoundRect(center, float2(side), lens.tile * 0.18, Math.Max(0.5, lens.tile * 0.08), portal ? Color(0.90, 0.70, 0.31) : Math.Lerp(tone, INK, 0.23));
+    if (lens.tile * INNER_SIZE >= 18)
+    {
+        var badge = center - float2(lens.tile * 2.20);
+        Draw.Circle(badge, lens.tile * 0.40, tone);
+        Draw.WireCircle(badge, lens.tile * 0.40, Math.Max(0.5, lens.tile * 0.05), PAPER);
+        if (lens.tile >= 3) Label($"{room + 1}", badge, Math.Max(6, lens.tile * 0.52), PAPER, Anchor.MiddleCenter);
+        if (portal)
+        {
+            var mark = center + float2(lens.tile * 2.18);
+            Draw.Circle(mark, lens.tile * 0.46, INK);
+            InfinityMark(mark, lens.tile * 0.68, PAPER);
+        }
+        if (workshop.layout.rooms[room].latched && !RoomUnlocked(workshop.layout, workshop.puzzle, room))
+        {
+            var lock = center + float2(lens.tile * 2.12, -lens.tile * 2.12);
+            Draw.Circle(lock, lens.tile * 0.43, INK);
+            Draw.Arc(lock - float2(0, lens.tile * 0.10), lens.tile * 0.20, 3.14, 6.28, Math.Max(0.5, lens.tile * 0.06), PAPER);
+            Draw.RoundRect(lock + float2(0, lens.tile * 0.075), float2(lens.tile * 0.38, lens.tile * 0.30), lens.tile * 0.05, PAPER);
+        }
+    }
+}
+
+struct SceneLens { int room; MapLens lens; int depth; bool portal; }
+
+// Full rooms and miniatures share every geometric primitive. Drawing is finite
+// even when a doorway refers to its own canonical room.
+void RoomScene(Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, bool portal = false, int hideShell = -1, int hidePortal = -1)
+{
+    mut SceneLens[48] pending = default;
+    pending[0] = SceneLens { room = room, lens = lens, portal = portal };
+    mut var count = 1;
+    for (var index = 0; index < count && index < 48; index++)
+    {
+        var item = pending[index];
+        var center = item.lens.origin + float2((RoomSize(item.room) - 1) * item.lens.tile * 0.5);
+        if (!InPlayfield(center, (RoomSize(item.room) + 0.5) * item.lens.tile, lens)) continue;
+        DimensionFloor(workshop, item.room, item.lens);
+        DimensionConnections(workshop, item.room, item.lens, picture);
+        DimensionPieces(workshop, item.room, item.lens, picture, hands);
+        RoomTrim(workshop, item.room, item.lens, item.portal);
+        for (var child = 0; child < workshop.layout.roomCount; child++)
+        {
+            if (workshop.puzzle.rooms[child].room != item.room || (index == 0 && child == hideShell)) continue;
+            var interior = InteriorLens(item.lens, picture.rooms[child]);
+            if (item.depth < 3 && count < 48 && interior.tile >= 0.65)
+            {
+                pending[count] = SceneLens { room = child, lens = interior, depth = item.depth + 1 };
+                count++;
+            }
+            else Draw.RoundRect(MapPoint(picture.rooms[child], item.lens), float2(item.lens.tile * 0.84), item.lens.tile * 0.03, RoomColor(child));
+        }
+        for (var gate = 0; gate < workshop.layout.portalCount; gate++)
+        {
+            var door = workshop.layout.portals[gate];
+            if (door.room != item.room || (index == 0 && gate == hidePortal)) continue;
+            var interior = InteriorLens(item.lens, float2(door.position));
+            if (item.depth < 3 && count < 48 && interior.tile >= 0.65)
+            {
+                pending[count] = SceneLens { room = door.destination, lens = interior, depth = item.depth + 1, portal = true };
+                count++;
+            }
+            else
+            {
+                var here = MapPoint(float2(door.position), item.lens);
+                Draw.RoundRect(here, float2(item.lens.tile * 0.84), item.lens.tile * 0.03, RoomColor(door.destination));
+                InfinityMark(here, item.lens.tile * 0.52, PAPER);
+            }
+        }
+    }
 }
 
 void DimensionFrame(Workshop workshop, int room, MapLens lens, RoomSurround surround, int depth)
@@ -363,7 +413,7 @@ void DimensionFrame(Workshop workshop, int room, MapLens lens, RoomSurround surr
     Label($"{workshop.puzzle.moves} moves", topLeft + float2(lens.size.x - 16, 21), 14, MUTED, Anchor.MiddleRight);
     var footer = lens.center + float2(0, lens.size.y * 0.5 - 13);
     if (room < 0)
-        Label(narrow ? "Walk into a doorway. Shift to push a room." : "Walk into a doorway to enter  /  Hold Shift to move a room", footer, narrow ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
+        Label(narrow ? "Push a room. When it cannot move, walk inside." : "Rooms move first  /  A blocked room opens its doorway", footer, narrow ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
     else
     {
         var source = surround.reference ? "reference door" : "room doorway";
@@ -387,26 +437,68 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     picture.solved = workshop.puzzle.solved;
     if (picture.solved) picture.celebration += dt;
     var first = !picture.ready;
-    var changed = picture.level != workshop.level || picture.serial != workshop.serial;
+    var levelChanged = picture.level != workshop.level;
+    var changed = levelChanged || picture.serial != workshop.serial;
     var snap = first || changed || hands.reduceMotion;
     var blend = snap ? 1.0 : Math.Min(1, dt * 20);
-    for (var seat = 0; seat < 2; seat++)
-    {
-        var actor = workshop.puzzle.actors[seat];
-        picture.actors[seat] = Math.Lerp(picture.actors[seat], float2(actor.position), snap || actor.room != picture.actorRoom[seat] ? 1.0 : blend);
-        picture.actorRoom[seat] = actor.room;
-    }
     for (var room = 0; room < workshop.layout.roomCount; room++)
     {
         var shell = workshop.puzzle.rooms[room];
-        picture.rooms[room] = Math.Lerp(picture.rooms[room], float2(shell.position), snap || shell.room != picture.roomParent[room] ? 1.0 : blend);
+        picture.rooms[room] = SmoothCell(picture.rooms[room], float2(shell.position), snap || shell.room != picture.roomParent[room] ? 1.0 : blend);
         picture.roomParent[room] = shell.room;
     }
     for (var crate = 0; crate < workshop.layout.crateCount; crate++)
     {
         var cargo = workshop.puzzle.crates[crate];
-        picture.crates[crate] = Math.Lerp(picture.crates[crate], float2(cargo.position), snap || cargo.room != picture.cargoRoom[crate] ? 1.0 : blend);
+        picture.crates[crate] = SmoothCell(picture.crates[crate], float2(cargo.position), snap || cargo.room != picture.cargoRoom[crate] ? 1.0 : blend);
         picture.cargoRoom[crate] = cargo.room;
+    }
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var actor = workshop.puzzle.actors[seat];
+        var before = picture.travelers[seat];
+        var passageSnap = first || levelChanged || hands.reduceMotion || (changed && workshop.puzzle.moves == 0);
+        var makerBlend = passageSnap ? 1.0 : Math.Min(1, dt * 20);
+        var travel = actor.room != before.room || !SameEntrance(before, actor);
+        if (passageSnap)
+        {
+            picture.passages[seat] = MakerPassage { };
+            picture.actors[seat] = float2(actor.position);
+            picture.actorScale[seat] = 1;
+        }
+        else
+        {
+            if (travel) picture.passages[seat] = BeginPassage(workshop, picture, seat, before, actor);
+            mut var trip = picture.passages[seat];
+            if (trip.active)
+            {
+                if (!travel)
+                {
+                    trip.age += dt;
+                    // Input stays responsive during the passage. Follow later
+                    // inner steps continuously instead of arriving at a stale
+                    // doorway cell and snapping to the latest match position.
+                    trip.target = SmoothCell(trip.target, float2(actor.position), makerBlend);
+                }
+                PassagePose(trip, picture);
+                picture.actors[seat] = trip.entering ? (trip.position - PassageAnchor(trip.gate, picture)) / ROOM_SCALE + float2(2) : trip.position;
+                picture.actorScale[seat] = trip.entering ? trip.scale / ROOM_SCALE : trip.scale;
+                if (trip.age >= 0.42)
+                {
+                    picture.actors[seat] = trip.target;
+                    picture.actorScale[seat] = 1;
+                    trip.active = false;
+                }
+                picture.passages[seat] = trip;
+            }
+            else
+            {
+                picture.actors[seat] = SmoothCell(picture.actors[seat], float2(actor.position), travel ? 1.0 : makerBlend);
+                picture.actorScale[seat] = 1;
+            }
+        }
+        picture.actorRoom[seat] = actor.room;
+        picture.travelers[seat] = actor;
     }
     picture.ready = true;
     picture.level = workshop.level;
@@ -428,46 +520,90 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var localSeat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
     var actor = workshop.puzzle.actors[localSeat];
     var surround = ReturnSurround(workshop, actor, picture);
-    if (actor.room != picture.focusRoom || surround.room != picture.focusParent ||
-        surround.shell != picture.focusShell || surround.portal != picture.focusPortal || actor.depth != picture.focusDepth || changed)
-        picture.cameraBlend = first || hands.reduceMotion ? 1.0 : 0.0;
+    var outside = actor.room < 0 ? 0 : OutsideMakers(workshop, surround, localSeat);
+    var target = FocusLens(screen, workshop, actor, surround, picture, localSeat);
+    var firstView = picture.focusRoom == -2;
+    var resized = picture.cameraLens.size.x != target.size.x || picture.cameraLens.size.y != target.size.y || picture.cameraLens.center.y != target.center.y;
+    var crossing = actor.room != picture.focusRoom || surround.room != picture.focusParent ||
+        surround.shell != picture.focusShell || surround.portal != picture.focusPortal || actor.depth != picture.focusDepth || outside != picture.focusOutside;
+    var transitioning = picture.cameraBlend < 1;
+    if (firstView || levelChanged || resized || hands.reduceMotion)
+    {
+        picture.cameraFrom = target;
+        picture.cameraLens = target;
+        picture.cameraBlend = 1;
+    }
+    else if (crossing)
+    {
+        mut var source = picture.cameraLens;
+        if (actor.depth > picture.focusDepth && surround.room == picture.focusRoom)
+            source = InteriorLens(source, surround.anchor);
+        else if ((actor.room != picture.focusRoom || surround.shell != picture.focusShell || surround.portal != picture.focusPortal) &&
+            surround.room == picture.cameraSurround.room && actor.room >= 0 && picture.focusRoom >= 0)
+            source = InteriorLens(ContainingLens(source, picture.cameraSurround), surround.anchor);
+        else if (actor.room != picture.focusRoom && picture.cameraSurround.room == actor.room && actor.depth >= picture.focusDepth)
+            source = ContainingLens(source, picture.cameraSurround);
+        else if (actor.depth < picture.focusDepth)
+        {
+            mut var oldRoom = picture.cameraActor.room;
+            for (var layer = 0; layer < MAX_DEPTH && oldRoom >= 0; layer++)
+            {
+                var previous = layer == 0 ? picture.cameraSurround : AncestorSurround(workshop, picture.cameraActor, oldRoom, layer, picture);
+                source = ContainingLens(source, previous);
+                oldRoom = previous.room;
+                if (oldRoom == actor.room && picture.cameraActor.depth - layer - 1 <= actor.depth) break;
+            }
+        }
+        picture.cameraFrom = source;
+        picture.cameraLens = source;
+        picture.cameraBlend = 0;
+    }
+    else picture.cameraBlend = Math.Min(1, picture.cameraBlend + dt / 0.55);
     picture.focusRoom = actor.room;
     picture.focusParent = surround.room;
     picture.focusShell = surround.shell;
     picture.focusPortal = surround.portal;
     picture.focusDepth = actor.depth;
-    picture.cameraBlend = hands.reduceMotion ? 1.0 : Math.Min(1, picture.cameraBlend + dt * 4);
+    picture.focusOutside = outside;
     var eased = picture.cameraBlend * picture.cameraBlend * (3 - 2 * picture.cameraBlend);
-    var lens = WorkshopLens(screen, actor.room, 0.94 + 0.06 * eased);
+    if (picture.cameraBlend < 1) picture.cameraLens = BlendLens(picture.cameraFrom, target, eased);
+    else
+    {
+        var close = Math.Abs(picture.cameraLens.tile - target.tile) < 0.01 &&
+            Math.Abs(picture.cameraLens.origin.x - target.origin.x) < 0.10 && Math.Abs(picture.cameraLens.origin.y - target.origin.y) < 0.10;
+        picture.cameraLens = BlendLens(picture.cameraLens, target,
+            hands.reduceMotion || firstView || levelChanged || resized || transitioning || close ? 1.0 : Math.Min(1, dt * 9));
+    }
+    picture.cameraActor = actor;
+    picture.cameraSurround = surround;
+    var lens = picture.cameraLens;
     DimensionFrame(workshop, actor.room, lens, surround, actor.depth);
     var topLeft = lens.center - lens.size * 0.5;
     var body = Rect(topLeft.x + 12, topLeft.y + 40, lens.size.x - 24, lens.size.y - 62);
     Draw.Clip(body)
     {
         Draw.RoundRect(lens.center + float2(0, 9), lens.size - float2(24, 62), 7, Color(0.88, 0.84, 0.73));
-        if (actor.room >= 0)
+        mut MapLens[4] contexts = default;
+        mut RoomSurround[3] ancestors = default;
+        mut int[4] dimensions = default;
+        contexts[0] = lens;
+        dimensions[0] = actor.room;
+        mut var contextCount = 1;
+        for (var layer = 0; layer < 3 && dimensions[layer] >= 0; layer++)
         {
-            // The expanded room occupies its real cell in the containing world.
-            // The latest entrance chooses the parent; shells track their live position.
-            var parent = ContainingLens(lens, surround);
-            DimensionFloor(workshop, surround.room, parent);
-            DimensionPieces(workshop, surround.room, parent, picture, hands, surround.shell, surround.portal);
-            Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.42, 0.37, 0.24, 0.10));
-            var center = lens.origin + float2((INNER_SIZE - 1) * lens.tile * 0.5);
-            Draw.Shape(Shape { center = center + float2(0, 7), size = float2(INNER_SIZE * lens.tile + 20), radius = 12,
-                color = Color(0.21, 0.25, 0.18, 0.32), soft = 10 });
-            for (var direction = 0; direction < 4; direction++)
-            {
-                if ((workshop.layout.rooms[actor.room].doors & (1 << direction)) == 0) continue;
-                var delta = float2(Direction(direction));
-                Draw.Line(center + delta * INNER_SIZE * lens.tile * 0.47, center + delta * parent.tile * 0.50,
-                    lens.tile * 0.30, Color(0.99, 0.89, 0.63));
-            }
+            ancestors[layer] = AncestorSurround(workshop, actor, dimensions[layer], layer, picture);
+            dimensions[layer + 1] = ancestors[layer].room;
+            contexts[layer + 1] = ContainingLens(contexts[layer], ancestors[layer]);
+            contextCount++;
         }
-        DimensionFloor(workshop, actor.room, lens);
-        DimensionPieces(workshop, actor.room, lens, picture, hands);
-        if (eased < 1)
-            Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.96, 0.93, 0.83, (1 - eased) * 0.17));
+        for (var layer = contextCount - 1; layer >= 0; layer--)
+        {
+            var reference = layer < contextCount - 1 && ancestors[layer].reference;
+            var hiddenShell = layer > 0 ? ancestors[layer - 1].shell : -1;
+            var hiddenPortal = layer > 0 ? ancestors[layer - 1].portal : -1;
+            RoomScene(workshop, dimensions[layer], contexts[layer], picture, hands, reference, hiddenShell, hiddenPortal);
+        }
+        for (var seat = 0; seat < 2; seat++) PassageMaker(workshop, picture, hands, seat, contexts, dimensions, contextCount);
         if (workshop.puzzle.solved && picture.celebration < 2 && !hands.reduceMotion)
         {
             var gridWidth = lens.tile * RoomSize(actor.room);
