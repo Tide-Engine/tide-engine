@@ -503,3 +503,31 @@ and packaged HTML match SHA-256
 The staged and packaged thumbnail SHA-256 is
 `48f24a67cf3d60c14bfbb7559d280ae4604a456029997532f43124fb0aae1707`.
 The inline pack retains the exact current doorway WAV. No CI was dispatched.
+
+Integration through `origin/dev` `e377d0a9` was clean. Incoming compiler,
+Fetch/platform/web runtime and docs changes triggered dependency rebuilds.
+The rebuilt game and twenty-one fixtures pass without warnings natively and
+under WASI; both final browser checks pass again, WebGL in 106.74 s and
+WebGPU in 63.92 s. All 64 public game/example pages were rebuilt and match
+release, static and production-package bytes; all four prototype thumbnails
+also match. Current Underfoot changes are retained. Docs check is clean,
+all 226 grammar checks pass, and the production build plus five HTTP/SEO/
+access checks pass again. The integrated Inside Out HTML SHA-256 is
+`761bae9375434b22596e6bd05711a6d077f01cb9a034dfa31340d8f0bf507943`;
+the thumbnail hash is unchanged from this revision. The inline pack still
+contains the exact current doorway WAV. Source `ebbd0649` was pushed to `dev`.
+
+That source deployed directly to the existing `tide-website` Fly app as
+release 259, image `deployment-01M4P66FRKJFQ5BR7SKC3E045M`. Machine and
+deployment health checks pass. Anonymous page/thumbnail requests return 200
+with the exact integrated HTML and current thumbnail hashes, retaining
+noindex, COOP same-origin and COEP require-corp. Decoding the public pack
+confirms the current doorway WAV. The collaborative preview was navigated
+to the updated public URL.
+
+The downloaded published page passes the complete two-browser WebGPU
+fixture with `wss://relay.tide-engine.dev` in 65.2 s, including partner
+off-screen movement with exact stationary local framing, smooth maker/camera
+doorway travel, occupied-shell context, recursion, shared commands, progression
+and phone touch. No runtime/browser/graphics errors or CI dispatch occurred.
+Physical phones, cross-machine NAT and human latency remain unmeasured.
