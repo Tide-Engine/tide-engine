@@ -314,7 +314,7 @@ It's what `Draw.Text` would draw at that point of the view, to the pixel. Text i
 
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
-Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is. What a view reads [`verified`](./views-and-the-match.md#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
+Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text come from the upper endpoint. An entity that wasn't there at the previous endpoint is drawn as it is. What a view reads [`verified`](./views-and-the-match.md#confirmed-state) blends on a separate confirmed clock, which holds at the latest confirmation and never extrapolates.
 
 The match below ticks only five times a second. Both discs are the same position: the amber one is an ordinary field, which the view sees blended between ticks, and the teal one a `[Snap]` field, drawn as the last tick left it.
 
