@@ -232,32 +232,46 @@ async function webRunTest(tide, root, release = false) {
     child.stdout.on("data", read);
     child.stderr.on("data", read);
     const pause = () => new Promise((accept) => setTimeout(accept, 50));
+    let lastRequest = "";
     async function waitFor(test, description) {
         const deadline = Date.now() + 120000;
         while (Date.now() < deadline) {
-            check(!exited, `${description}: tide exited ${exitCode} ${startError?.message ?? ""}\n${output}`);
+            check(!exited, `${description}: tide exited ${exitCode} ${startError?.message ?? ""}`);
             if (await test()) return;
             await pause();
         }
-        throw new Error(`${description}: timed out waiting for a completed build\n${output}`);
+        throw new Error(`${description}: timed out waiting for a completed build`);
+    }
+    async function request(path) {
+        const address = `${url}${path}`;
+        const started = Date.now();
+        let phase = "response headers";
+        try {
+            const response = await fetch(address, { signal: AbortSignal.timeout(5000) });
+            phase = `response body (HTTP ${response.status})`;
+            const text = response.ok ? await response.text() : "";
+            lastRequest = `GET ${address}: HTTP ${response.status}, completed in ${Date.now() - started} ms`;
+            return { response, text };
+        } catch (error) {
+            lastRequest = `GET ${address}: ${phase}, ${Date.now() - started} ms: ${error.name}: ${error.message}`;
+            // The CLI cannot serve build/pack probes during a compile.
+            if (path === "build") return null;
+            throw error;
+        }
     }
     async function buildNumber() {
-        try {
-            const response = await fetch(`${url}build`, { signal: AbortSignal.timeout(5000) });
-            return response.ok ? Number((await response.text()).split(" ")[0]) : 0;
-        } catch { return 0; } // The CLI cannot serve requests during a compile.
+        const result = await request("build");
+        return result?.response.ok ? Number(result.text.split(" ")[0]) : 0;
     }
     async function packNumber() {
-        try {
-            const response = await fetch(`${url}build`, { signal: AbortSignal.timeout(5000) });
-            return response.ok ? Number((await response.text()).split(" ")[2]) : 0;
-        } catch { return 0; }
+        const result = await request("build");
+        return result?.response.ok ? Number(result.text.split(" ")[2]) : 0;
     }
     try {
         await waitFor(() => Boolean(url), "web run startup");
-        const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        check(response.ok, "web run serves its page");
-        const page = await response.text();
+        const served = await request("");
+        check(served.response.ok, "web run serves its page");
+        const page = served.text;
         check(page.includes('Tide.arguments = [ "--seed","7"]'), "web run passes the game's arguments");
         check(page.includes("Tide.reload = true;"), "web run enables page polling by default");
         await waitFor(async () => await buildNumber() === 1, "initial web build");
@@ -333,6 +347,9 @@ async function webRunTest(tide, root, release = false) {
         put(join(game, "message.txt"), "without models");
         await waitFor(async () => await packNumber() > noModelsPacked, "ordinary asset repack after removing models");
         check(await buildNumber() === 8, "removing models restores pack-only reload");
+    } catch (error) {
+        throw new Error(`${release ? "release" : "debug"} web hot reload: ${error.message}\n${lastRequest}\n${output}`,
+            { cause: error });
     } finally {
         child.kill();
         await closed;
