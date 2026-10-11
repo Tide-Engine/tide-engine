@@ -234,3 +234,9 @@ again, all fourteen native and WASI cases passed, and the updated web debug
 WebGPU co-op fixture passed in 13.25 seconds. The published artifact remains
 the identical bytes verified above; these later changes are repository
 integration and test/documentation evidence.
+
+The final sync also merged the independent owned-asset benchmark evidence and
+the held-input prediction-reuse fix (`822edee7`). The latter touches the
+session dependency: both game targets were rebuilt, all fourteen native and
+WASI cases passed, and the two-browser web debug WebGPU fixture passed in
+12.73 seconds. No prototype conflicts or rule changes were needed.
