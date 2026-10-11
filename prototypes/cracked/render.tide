@@ -236,39 +236,41 @@ float3 FromLamp(float3 world, float3 normal, float4x4 toLamp, float step)
 {
     float facing = Math.Dot(normal, SUN);
     float slant = Math.Sqrt(Math.Saturate(1 - facing * facing));
-    float4 clip = Math.Mul(toLamp, float4(world + normal * (step * (0.6 + 2.2 * slant)), 1));
+    float4 clip = Math.Mul(toLamp, float4(world + normal * (step * (0.8 + 1.6 * slant)), 1));
     if (Math.Max(Math.Abs(clip.x), Math.Abs(clip.y)) > 1) return float3(0.5, 0.5, 0);
     return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
 }
 
 // How much of the sun gets to a place on a surface, from 0, in shadow, to
-// 1: four looks at the sun's image around the place, which soften the edge.
+// 1: nine looks at the sun's image around the place, a pixel of it apart,
+// which make a shadow's edge a soft one about ten centimeters wide.
 float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp, float step)
 {
     float3 seen = FromLamp(world, normal, toLamp, step);
-    float soft = 0.9 / LAMP_PIXELS;
-    return (depth.Compare(seen.xy + float2(-soft, -soft), seen.z) + depth.Compare(seen.xy + float2(soft, -soft), seen.z)
-          + depth.Compare(seen.xy + float2(-soft, soft), seen.z) + depth.Compare(seen.xy + float2(soft, soft), seen.z)) * 0.25;
+    float soft = 1.0 / LAMP_PIXELS;
+    mut float lit = 0;
+    for (int x = -1; x <= 1; x++)
+        for (int y = -1; y <= 1; y++)
+            lit += depth.Compare(seen.xy + float2(x * soft, y * soft), seen.z);
+    return lit / 9;
 }
 
-// A surface's paint in the map's light, the way the Unity game's flat
-// materials take it: the sun in two soft steps rather than a slope, the
-// sky's fill from above and a little back from below, and a pale edge where
-// the surface turns away from the eye. `sun` is what `Sunlight` says.
+// A surface's paint in the map's light, as the Unity game's plain lit
+// materials take it: the sun by how squarely the surface faces it, and the
+// sky's light on everything, a little more on what faces up, which is all a
+// shadow has. So a block's bevel shades smoothly from one face to the next.
+// `sun` is what `Sunlight` says.
 Color Lit(Color paint, float3 normal, float3 world, Light light, float sun, float gloss)
 {
     float3 toEye = Math.Normalize(light.eye - world);
-    float facing = Math.Dot(normal, SUN);
-    float direct = (Math.SmoothStep(-0.05, 0.25, facing) * 0.6 + Math.SmoothStep(0.45, 0.8, facing) * 0.4) * sun;
-    float up = normal.y * 0.5 + 0.5;
-    float3 fill = float3(light.below.r, light.below.g, light.below.b) * (1 - up) + float3(light.above.r, light.above.g, light.above.b) * up;
+    float direct = Math.Saturate(Math.Dot(normal, SUN)) * sun;
+    // The sky's light is paler than the sky: a blue one would take a red block's color in its shade
+    float3 fill = (float3(light.above.r, light.above.g, light.above.b) * 0.45 + float3(0.55)) * (0.5 + 0.16 * normal.y);
     float3 base = float3(paint.r, paint.g, paint.b);
-    float shine = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 40) * gloss * sun;
-    float rim = Math.Pow(1 - Math.Max(Math.Dot(normal, toEye), 0), 4) * 0.16;
-    float3 lit = base * (fill + float3(light.sun.r, light.sun.g, light.sun.b) * direct) + float3(shine) + fill * rim;
+    float shine = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 40) * gloss * direct;
+    float3 lit = base * (fill + float3(light.sun.r, light.sun.g, light.sun.b) * (direct * 1.15)) + float3(shine);
     return Color(lit.x, lit.y, lit.z, paint.a);
 }
-
 // A block: its map's paint, lit.
 frag BlockLook(Corner corner, out Color color, Brick brick, Instance instance, Light light, Shadow shadow)
 {
