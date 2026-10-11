@@ -99,9 +99,36 @@ All local; nothing of it is in the match's hash.
   and its clips blended by how it moves.
 - `effects.tide`: bullets, shields, clouds, sparks, damage numbers and the
   bars over other players.
-- `hud.tide`, `cards.tide`: the player's HUD, the rounds, the cards (the
-  picker's are `GUI.Control`s: a click, a tap, keys 1 to 5, or `GUI.Navigate`),
-  game over, touch controls and the rooms menu's title page.
+- `hud.tide`, `cards.tide`: the Unity game's UI, from its prefabs and
+  scene, after the owner said of a first version with a look of its own
+  "UI sucks" (2026-10-11). Sizes are the Unity canvases' units (800 across
+  the window for the HUDs, 1920 for the views), and the sprites are the
+  Kenney UI ones the Unity game tints (`art/ui/kit.png`, made with the
+  cards' pictures by `tools/make_ui.py`). Rounds are circles in the top left
+  corner; the player's shield and jetpack bars and their bullets are in the
+  bottom right one, and under the Menu button (top right) on a touchscreen;
+  there's no health on the screen, as in Unity, where it's the head's glass.
+  The crosshair is a dot at the middle and a smaller one at `Sight.at`
+  through the window's 3D camera. The count before a round is the server's
+  seconds, then a 0. Out, a player has Prev and Next, which count in the
+  local `Spectator.turn`: **the camera doesn't read it yet**. Game over is
+  the winners' line with Restart (the `Restart` command) and Main menu
+  (`Rooms.Leave`).
+- The cards: the picker's are `GUI.Control`s (a click, a tap, keys 1 to 5,
+  or `GUI.Navigate`). The card their pointer or focus is on goes into
+  `Hand.hover`, so into the input, and every machine, the picker's too,
+  raises the card `Arena.hover` says (1.1 times, as UpgradeCard.Hover). The
+  card that's taken is found from `Arena.picks` when the deal ends, and
+  corrected by the verified `CardPicked`; it flies to the middle while the
+  others close. Looked at with `--players 2`: both windows raise the same
+  card as the picker's mouse moves.
+- Not matched: the fonts (Super Malibu, Alphakind: the engine's bold with
+  the material's shadow), the blur behind the cards (a dim), the crosshair's
+  inverted color (white with a dark rim: there's no such blend), players'
+  names (their team and place), and the sheets are drawn without mipmaps,
+  with half-size copies for small draws: any `Filter.Trilinear` in the
+  program makes `render.tide`'s blur frag warn that its looped `Sample`
+  can't read it.
 - `sound.tide`: a local handler for each event. Deaths, round results and
   cards taken wait for `verified`.
 
@@ -118,7 +145,7 @@ end of a game; the same inputs twice, a snapshot, a packed world, and two
 clients over a network with 40 ms of latency, 15 of jitter and 5% loss with
 no world sent again.
 
-- **The scripted match's hash is `0xd5f10d031789bc7a`**, the same natively
+- **The scripted match's hash is `0x0267de53757af494`**, the same natively
   and under WASI. Any change to the match changes it: update it from one
   platform and confirm the other.
 - A test forces a map by writing `Arena.futureMap` in the two ticks after
@@ -207,3 +234,49 @@ Each was met as a compiler error or measured, not read in a doc.
 13. **A package's page draws under the game's views**, so the rooms title
     page's art is a HUD view and the override keeps the buttons.
 14. **A sound's volume over 1 clips.**
+
+## After the owner played it (2026-10-11)
+
+The owner's words, and what each became. None of it was replayed by a person
+since: every check is still a scripted run and captures.
+
+- **"movemnt JITTERY AS FUCK ... very very extreme with reconciles."** The
+  seats are an array, and a view sees an array, and a list, as the last tick
+  left it: 30 steps a second, and a correction all at once. Each seat now has
+  an `Avatar` entity with `[Position]` and `[Rotation]` fields, which `Mirror`
+  writes after `Tick` (and `Snap`s when a new avatar spawns, by `Seat.life`).
+  A view copies them into the local `Shown`, and every view that draws or
+  follows a seat reads `Seen(arena, shown, s)`. Bullets are drawn between
+  their last two ticks' places, and sliding movers at
+  `velocity * (time.t - time.tick * time.dt)`. Measured in a scripted walk:
+  the shown place moves 5.5 to 6.6 cm every frame where the seat's moved 11
+  to 13 cm every second frame. A real correction over a network wasn't seen.
+- **"the card selection doesnt network who is hovering."** The input has
+  `hover`, the card the picker's pointer or focus is on, which the match
+  keeps as `Arena.hover` for every machine to raise that card.
+- **"UI sucks."** The first HUD and cards were the agent's own design. They're
+  rebuilt from the Unity prefabs: the card panel and cards (Kenney's sprites,
+  the prefab's sizes, its open, hover and taken animations), the pellets and
+  bars at the bottom right, the round circles at the top left, the countdown,
+  game over. There's no health on the Unity screen, so none here: it's the
+  liquid in the head.
+- **"i also had a crosshair that showed where the bullet would land."**
+  `Sights` in `render.tide` is `ShooterBase.PredictHit`: the next bullet
+  flown for up to 180 ticks against the map (not the floor under it) and the
+  other players, into the local `Sight`. The HUD's small dot is there, with a
+  white ball in the world.
+- **"the bullets looked very different too."** A bullet is drawn at half its
+  cast radius, as the prefab's sphere is, with the prefab's 0.05 s trail of
+  where it really was, and its explosion only where it ends.
+- **"the SSAO looks very grainy."** Eight pairs turned by a 4 by 4 pattern in
+  place of a hash a pixel, and two rounds of a blur that stops at depth edges.
+- **"the liquid in the head doesnt wobble."** `Liquid.cs`'s wobble from how
+  the mage moves and turns, with the prefab's numbers, and the shader's flat
+  surface and foam line at the height `PlayerHealth`'s curve gives.
+- The spectator's Prev and Next step the camera through who stands, and the
+  cursor is free while this machine's player is down.
+
+The scripted match's hash moved with `Avatar` and the two fields. Validation:
+`cracked_tests` 64 of 64 natively and under WASI with the same new hash; the
+web build compiles; nothing was run in a browser, and the full suites weren't
+run again.
