@@ -14,9 +14,9 @@ if(TIDE_NODE)
     add_test(NAME last_light_browser_process
         COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/test/browser-process.test.mjs")
     set_tests_properties(last_light_browser_process PROPERTIES TIMEOUT 30)
-    add_test(NAME last_light_frame_pacing
-        COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/test/frame-pacing.test.mjs")
-    set_tests_properties(last_light_frame_pacing PROPERTIES TIMEOUT 30)
+    add_test(NAME last_light_frame_control
+        COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/test/frame-control.test.mjs")
+    set_tests_properties(last_light_frame_control PROPERTIES TIMEOUT 30)
     add_test(NAME last_light_browser_devtools
         COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/test/browser-devtools.test.mjs")
     set_tests_properties(last_light_browser_devtools PROPERTIES TIMEOUT 30)

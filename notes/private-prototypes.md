@@ -102,6 +102,84 @@ stays as it is. Its contract and tests are in `notes/aerial.md`.
 
 ## Verification and limits
 
+### Controlled browser playtest clock (2026-10-11)
+
+Run `38096963379` at `431882c4` passed every suite except one of 2,047 Windows
+web tests: `last_light_play_webgpu`. Both WebRTC peers connected and exchanged
+packets before the keeper timed out and started host migration. Earlier input
+commands took up to 11 seconds, with simultaneous frame-report gaps up to
+6.8 seconds. Unlike preceding failures, this was after a successful join.
+The hosted log does not locate the precise stall or show the last valid
+server packet consumed by the session.
+
+A controlled release-page probe with CI's Chrome Headless Shell
+155.0.8059.39 and Node 24.21 held only the host's next GPU completion promise
+for six seconds after both players connected. The previous fixture failed
+with the same host-loss report while WebRTC stayed connected: its GPU gate
+stopped the entire game frame, including session processing, but the keeper's
+five-second silence deadline still advanced. This proves the fixture could
+manufacture a networking failure from delayed software rendering; it does
+not prove that this exact promise delay caused the hosted failure.
+
+`test/frame-control.mjs` replaces the former `test/frame-pacing.mjs`.
+The browser runner now explicitly advances both players one 30 Hz frame per
+shared round. It overrides animation delivery and the page's monotonic clock
+only in the injected fixture. The same clock reaches the game's WASI time
+and room-arrival timestamps. Each player renders normally, then the round
+waits for all its WebGPU queues or completes its WebGL work with `finish`.
+Neither player's next frame or match clock can advance while either is
+rendering, while input is being delivered or
+while a screenshot is being captured. Native wall time is retained separately
+for diagnostics and every existing runner/command/CTest guard remains.
+Concurrent readiness predicates share a round rather than advancing players
+independently. There are no runtime, game, transport or session-deadline changes.
+
+The check still uses two real browser players, the actual Rooms keyboard
+controls, a local signaling relay and real unreliable WebRTC channels. Both
+visible players draw; desktop/phone captures, keyboard/touch controls, GPU
+errors, fresh packets and verified-tick progression remain asserted. This is
+a game integration/rendering check with controlled match time, not a measure
+of real-time responsiveness. The existing session tests and lightweight real-time
+browser-room tests retain responsibility for deadlines, background execution
+and migration. The seven `last_light_frame_control` cases use the serialized
+helper with explicit GPU promises and clock control, covering one-minute
+wall waits, the paired-frame barrier, cancellation, rejection and every
+queue/canvas, with completion timing retained for both graphics backends.
+
+The same six-second GPU-delay probe passes the replacement fixture. A
+separate control that disables the host's data-channel sends after joining
+still fails with the keeper's five-second session timeout and migration,
+so controlled wall time has not disabled detection of missing match packets.
+Those fault probes are scratch validation, not additional timed CI fixtures.
+
+The first controlled-clock version retained the old 18/54/27/12/20-tick waits.
+With the whole Node/browser tree limited to 0.48 logical processors, WebGPU
+passed in 87.55 seconds, but WebGL failed twice after about 100 seconds.
+The diagnostic repeat located the failure at the 30-second guard while
+waiting for 54 verified ticks: both players were connected, verified ticks
+were advancing, and packets were fresh within one frame. There was no host
+loss or runtime error. Those long waits checked no additional state; they
+were a software-rendering throughput requirement disguised as readiness.
+The browser check now requires six fresh verified ticks and packet progress
+at each gameplay checkpoint (three after releasing touch). Screenshots and actions are
+retained, and the per-command, readiness and CTest guards are unchanged.
+WebGL completion also bounds its pending work to one round, matching WebGPU.
+
+Final local validation passed all four native debug Last Light checks and all
+six checks in each of web debug and web release, including both real browser
+backends. The seven controller regressions passed, as did the existing native
+and WASI net fixtures (31 cases each) and the real-time browser-room,
+handover and ended checks. Under a Windows Job Object hard CPU cap of 0.48
+logical processors for the complete Node/Chrome tree, the final release
+playtests passed in 101.22 seconds on WebGL and 54.56 seconds on WebGPU.
+The final six-second GPU-stall probe passed, and the final dropped-host-packet
+probe failed with the expected host-loss error. Desktop/phone captures were
+visually inspected. All validation used this checkout's builds, Node 24.21,
+and the CI-pinned muted Chrome Headless Shell. The hosted workflow was not
+dispatched again; Linux/macOS and hosted-runner coverage remain CI validation.
+
+### Earlier browser fixture history
+
 The 2026-10-09 Build run (37994581083) exposed browser-playtest contention:
 Windows timed out in DevTools during startup/capture, and macOS lost the host
 after a long gap in match traffic. Both backends passed on the same Windows
