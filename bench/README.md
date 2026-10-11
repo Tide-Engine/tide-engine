@@ -2,6 +2,8 @@
 
 The [October 11 large-scope rerun](results/scope-performance/README.md) records the current whole-suite baseline and paired map/skinned optimizations, with raw measurements, validation and remaining scale limits.
 
+The opt-in [GPU clip experiment](results/gpu-clip/README.md) uses `bench_skinned --modes gpu`: a resident 60 Hz table of bone palettes, interpolated in the vertex shader with an independent phase per character. Default runs keep the original four modes. `--subframe 0.5` adds a half-tick rendering offset to every selected mode; `--verify-gpu` compares the baked approximation against the exact CPU sampler at 240 phases outside timing when GPU mode is selected. The experiment is specific to the unchanged one-second, 64-bone, four-influence fixture; it adds no public animation API or IK implementation.
+
 Simulation benchmarks compare the same deterministic work in Tide and hand-written C. Build and run them with `cmake --build --preset release --target versus`; individual `build/release/bin/versus_<concept>` programs list their options with `--help`. Save repeated measurements with `--save <label>` in `bench/results/versus.jsonl`.
 
 Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the source revision and local changes before saving simulation or session runs, as for drawing below. New rows also record architecture, compiler version and whether C splitting was forced (`--split`, or `--quick`). Comparisons group matching options, machine, compiler and thread counts; older rows without that metadata form separate groups. Unidentified machines are reported as `unknown`; provide the machine label when comparing machines.

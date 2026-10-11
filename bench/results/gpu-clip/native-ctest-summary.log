@@ -1,0 +1,8 @@
+
+100% tests passed, 0 tests failed out of 2079
+
+Label Time Summary:
+gpu       =  61.18 sec*proc (20 tests)
+safety    =  12.67 sec*proc (26 tests)
+
+Total Test time (real) =  84.13 sec

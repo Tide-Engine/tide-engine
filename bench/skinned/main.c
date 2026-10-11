@@ -11,6 +11,8 @@
 #include "game.h"
 #include "tide/platform.h"
 #include "tide/time.h"
+#include "tide/pack.h"
+#include "tide/skinned_data.h"
 
 #ifndef TIDE_BENCH_RESULTS
 #define TIDE_BENCH_RESULTS "bench/results"
@@ -19,12 +21,12 @@
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
 
-enum { WIDTH = 1024, HEIGHT = 576, MAX_COUNTS = 16, MAX_CHARACTERS = 10000, MODES = 4, DRAIN_FRAMES = 16 };
+enum { WIDTH = 1024, HEIGHT = 576, MAX_COUNTS = 16, MAX_CHARACTERS = 10000, MODES = 5, DRAIN_FRAMES = 16, CLIP_FRAMES = 60 };
 enum { RECORD, SUBMIT, READBACK, TOTAL, CALLS, UPLOAD, GPU, METRICS };
-static const char *mode_names[MODES] = {"static", "omitted_rest", "shared_pose", "independent_poses"};
+static const char *mode_names[MODES] = {"static", "omitted_rest", "shared_pose", "independent_poses", "gpu_clip"};
 static int counts[MAX_COUNTS] = {1, 10, 100, 1000};
 static int selected_modes[MODES] = {0, 1, 2, 3};
-static int selected_mode_count = MODES, mode_at;
+static int selected_mode_count = 4, mode_at;
 static int count_count = 4, measured_frames = 100, warmup_frames = 20, repeats = 3;
 static const char *label, *capture;
 static FILE *output;
@@ -36,6 +38,73 @@ static tide_devices devices;
 static double *samples[METRICS];
 static int mode, count_at, repeat_at, frame_at, draining, gpu_samples;
 static uint64_t retained_memory, retained_gpu_memory;
+static bool verify_gpu;
+static double clip_prepare_ms;
+static float gpu_position_error, gpu_normal_error;
+static float subframe;
+
+static tide_float4x4 blended_skin(const GpuCorner *vertex, const tide_list palettes, const int32_t first,
+                                 const int32_t next, const float alpha)
+{
+    int32_t joints[4];
+    float weights[4], result[16] = {0};
+    memcpy(joints, &vertex->joints, sizeof joints);
+    memcpy(weights, &vertex->weights, sizeof weights);
+    for (uint32_t j = 0; j < 4u; j++) {
+        float a[16], b[16];
+        memcpy(a, tide_list_at(palettes, first + joints[j], sizeof(tide_float4x4)), sizeof a);
+        memcpy(b, tide_list_at(palettes, next + joints[j], sizeof(tide_float4x4)), sizeof b);
+        for (uint32_t k = 0; k < 16u; k++) result[k] += (a[k] + (b[k] - a[k]) * alpha) * weights[j];
+    }
+    tide_float4x4 matrix;
+    memcpy(&matrix, result, sizeof matrix);
+    return matrix;
+}
+
+static tide_float3 posed_normal(const tide_float4x4 skin, const tide_float3 normal)
+{
+    const tide_float3 a = tide_f3(skin.c0.x, skin.c0.y, skin.c0.z);
+    const tide_float3 b = tide_f3(skin.c1.x, skin.c1.y, skin.c1.z);
+    const tide_float3 c = tide_f3(skin.c2.x, skin.c2.y, skin.c2.z);
+    const tide_float3 x = tide_cross_f3(b, c), y = tide_cross_f3(c, a), z = tide_cross_f3(a, b);
+    const float sign = tide_dot_f3(a, x) < 0.0f ? -1.0f : 1.0f;
+    return tide_normalize_f3(tide_mul_f3(tide_mul_f3x3_f3((tide_float3x3){x, y, z}, normal), tide_f3_splat(sign)));
+}
+
+// Untimed reference comparison covers every vertex at tick and quarter-tick
+// phases, including the loop seam. This pins an approximation budget, not
+// equivalence with arbitrary CPU Pose sampling.
+static bool verify_gpu_clip(const tide_list data)
+{
+    gpu_position_error = gpu_normal_error = 0.0f;
+    for (int32_t sample = 0; sample < CLIP_FRAMES * 4; sample++) {
+        const uint32_t mark = tide_scratch_mark();
+        tide_list pose = {0};
+        if (!tide_skinned_sample(data, 0, (float)sample / 240.0f, &pose, TIDE_IN_SCRATCH)) return false;
+        const tide_list exact = tide_skinned_palette(data, pose);
+        if (tide_list_count(exact) != local.GpuClip.bones) return false;
+        const int32_t first = (sample / 4) * local.GpuClip.bones;
+        const int32_t next = ((sample / 4 + 1) % CLIP_FRAMES) * local.GpuClip.bones;
+        const float alpha = (float)(sample % 4) * 0.25f;
+        for (int32_t i = 0; i < tide_list_count(local.GpuClip.vertices); i++) {
+            const GpuCorner *vertex = tide_list_at(local.GpuClip.vertices, i, sizeof *vertex);
+            const tide_float4x4 reference = blended_skin(vertex, exact, 0, 0, 0.0f);
+            const tide_float4x4 approximate = blended_skin(vertex, local.GpuClip.palettes, first, next, alpha);
+            const tide_float4 position = tide_f4(vertex->position.x, vertex->position.y, vertex->position.z, 1.0f);
+            const tide_float4 a = tide_mul_f4x4_f4(reference, position), b = tide_mul_f4x4_f4(approximate, position);
+            const float position_error = tide_length_f3(tide_f3(a.x - b.x, a.y - b.y, a.z - b.z));
+            const float normal_error = tide_length_f3(tide_sub_f3(posed_normal(reference, vertex->normal),
+                                                                posed_normal(approximate, vertex->normal)));
+            if (!isfinite(position_error) || !isfinite(normal_error)) return false;
+            if (position_error > gpu_position_error) gpu_position_error = position_error;
+            if (normal_error > gpu_normal_error) gpu_normal_error = normal_error;
+        }
+        tide_scratch_reset(mark);
+    }
+    printf("GPU clip reference: 240 phases, %d vertices each; max position error %.9g, unit-normal error %.9g\n",
+           tide_list_count(local.GpuClip.vertices), (double)gpu_position_error, (double)gpu_normal_error);
+    return gpu_position_error < 0.01f && gpu_normal_error < 0.01f;
+}
 
 static bool number(const char *text, const int least, const int most, int *out)
 {
@@ -70,7 +139,7 @@ static bool read_counts(const char *text)
 
 static bool read_modes(const char *text)
 {
-    static const char *short_names[MODES] = {"static", "rest", "shared", "independent"};
+    static const char *short_names[MODES] = {"static", "rest", "shared", "independent", "gpu"};
     int parsed[MODES], n = 0;
     const char *at = text;
     while (*at) {
@@ -190,6 +259,7 @@ static void report(void)
                   "\"warmup\":%d,\"frames\":%d,\"gpu_samples\":%d,\"process_memory_bytes\":%llu,\"gpu_memory_bytes\":%llu",
             mode_names[mode], counts[count_at], repeat_at + 1, WIDTH, HEIGHT, warmup_frames, measured_frames, gpu_samples,
             (unsigned long long)retained_memory, (unsigned long long)retained_gpu_memory);
+    fprintf(file, ",\"subframe\":%.6g", (double)subframe);
 #ifdef TIDE_SKINNED_VERTICES
     fprintf(file, ",\"vertices_per_character\":%d", TIDE_SKINNED_VERTICES);
 #endif
@@ -218,6 +288,9 @@ static void report(void)
     json_summary(file, "gpu_ms", values[GPU], gpu_samples != 0);
     json_summary(file, "draw_calls", values[CALLS], true);
     json_summary(file, "texture_upload_bytes", values[UPLOAD], true);
+    if (mode == 4) fprintf(file, ",\"clip_sample_rate\":60,\"clip_frames\":60,\"resident_palette_bytes\":245760,"
+                                 "\"animation_interpolation\":\"baked_palette_linear\",\"clip_prepare_ms\":%.6g",
+                          clip_prepare_ms);
     fputs("}\n", file);
 }
 
@@ -230,19 +303,86 @@ static void collect_gpu(const bool measured)
     }
 }
 
-static void setup_workload(void)
+static bool prepare_gpu_clip(void)
+{
+    const tide_pack_entry *entry = tide_pack_find("character", TIDE_PACK_SKINNED);
+    if (!entry) return false;
+    const tide_skinned_lists model = tide_pack_skinned_of(entry, sizeof(Corner));
+    const int32_t bytes = tide_list_count(model.data);
+    const void *data = tide_list_at(model.data, 0, 1u);
+    tide_skinned_data_view view;
+    tide_skinned_clip_data clip;
+    if (!tide_skinned_data_open(data, (size_t)bytes, &view)
+        || !tide_skinned_data_clip(&view, 0u, &clip) || clip.length != 1.0f || view.palettes != 64u) return false;
+    tide_text_use(&world.heap, &local.heap);
+    local.GpuClip.bones = (int32_t)view.palettes;
+    local.GpuClip.frames = CLIP_FRAMES;
+    tide_list_resize(&local.GpuClip.vertices, (int32_t)view.vertices, sizeof(GpuCorner), TIDE_IN_LOCAL);
+    tide_list_resize(&local.GpuClip.indices, (int32_t)view.indices, sizeof(int32_t), TIDE_IN_LOCAL);
+    tide_list_resize(&local.GpuClip.palettes, CLIP_FRAMES * (int32_t)view.palettes, sizeof(tide_float4x4), TIDE_IN_LOCAL);
+    for (uint32_t i = 0; i < view.vertices; i++) {
+        tide_skinned_vertex_data source;
+        if (!tide_skinned_data_vertex(&view, i, &source) || source.influences != 4u) return false;
+        GpuCorner vertex = {0};
+        memcpy(&vertex.position, source.position, sizeof vertex.position);
+        memcpy(&vertex.normal, source.normal, sizeof vertex.normal);
+        memcpy(&vertex.color, source.color, sizeof vertex.color);
+        int32_t joints[4];
+        float weights[4];
+        for (uint32_t j = 0; j < 4u; j++) {
+            tide_skinned_influence_data influence;
+            if (!tide_skinned_data_influence(&view, source.first_influence + j, &influence)) return false;
+            joints[j] = (int32_t)influence.palette;
+            weights[j] = influence.weight;
+        }
+        memcpy(&vertex.joints, joints, sizeof joints);
+        memcpy(&vertex.weights, weights, sizeof weights);
+        memcpy(tide_list_at_mut(local.GpuClip.vertices, (int32_t)i, sizeof vertex), &vertex, sizeof vertex);
+    }
+    for (uint32_t i = 0; i < view.indices; i++) {
+        uint32_t index;
+        if (!tide_skinned_data_index(&view, i, &index)) return false;
+        *(int32_t *)tide_list_at_mut(local.GpuClip.indices, (int32_t)i, sizeof(int32_t)) = (int32_t)index;
+    }
+    for (int32_t frame = 0; frame < CLIP_FRAMES; frame++) {
+        const uint32_t mark = tide_scratch_mark();
+        tide_list pose = {0};
+        if (!tide_skinned_sample(model.data, 0, (float)frame / 60.0f, &pose, TIDE_IN_SCRATCH)) return false;
+        const tide_list palette = tide_skinned_palette(model.data, pose);
+        if (tide_list_count(palette) != (int32_t)view.palettes) return false;
+        for (int32_t bone = 0; bone < (int32_t)view.palettes; bone++) {
+            memcpy(tide_list_at_mut(local.GpuClip.palettes, frame * (int32_t)view.palettes + bone, sizeof(tide_float4x4)),
+                   tide_list_at(palette, bone, sizeof(tide_float4x4)), sizeof(tide_float4x4));
+        }
+        tide_scratch_reset(mark);
+    }
+    return true;
+}
+
+static bool setup_workload(void)
 {
     tide_local_free(&local);
     tide_local_init(&local);
     local.Workload.count = counts[count_at];
     local.Workload.mode = mode;
     local.Workload.seconds = 0.0f;
+    clip_prepare_ms = 0.0;
+    if (mode == 4) {
+        const uint64_t began = tide_time_now_ns();
+        if (!prepare_gpu_clip()) { fprintf(stderr, "skinned: couldn't prepare the GPU clip experiment\n"); return false; }
+        clip_prepare_ms = (double)(tide_time_now_ns() - began) / 1e6;
+        if (verify_gpu) {
+            const tide_skinned_lists model = tide_pack_skinned_of(tide_pack_find("character", TIDE_PACK_SKINNED), sizeof(Corner));
+            if (!verify_gpu_clip(model.data)) { fprintf(stderr, "skinned: GPU clip approximation exceeded its error budget\n"); return false; }
+        }
+    }
     // Apply the new local entities outside warmup and measurement. This setup
     // frame only creates them; the first mesh draws occur on the next frame.
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
+    return true;
 }
 
 static int finish(void)
@@ -287,7 +427,7 @@ static int frame(void *user, const float seconds)
         }
         mode = selected_modes[mode_at];
         tide_platform_gpu_timing(false);
-        setup_workload();
+        if (!setup_workload()) return 1;
         tide_platform_gpu_timing(true);
     }
     // Discard pending warm-up samples at the measured block's boundary.
@@ -297,7 +437,7 @@ static int frame(void *user, const float seconds)
     }
     local.Workload.count = counts[count_at];
     local.Workload.mode = mode;
-    local.Workload.seconds = (float)frame_at / 60.0f;
+    local.Workload.seconds = ((float)frame_at + subframe) / 60.0f;
     const uint64_t began = tide_time_now_ns();
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), tide_platform_measure_text);
@@ -317,6 +457,10 @@ static int frame(void *user, const float seconds)
     tide_platform_draw(&draw);
     const uint64_t submitted = tide_time_now_ns();
     const uint64_t uploaded = tide_platform_gpu_written() - before_upload;
+    if (mode == 4 && frame_at >= warmup_frames && warmup_frames > 0
+        && (uploaded != 0 || tide_platform_draw_calls() != 2u)) {
+        fprintf(stderr, "skinned: GPU clip lost warmed residency or instancing\n"); return 1;
+    }
     if (!tide_platform_draw_calls()) { fprintf(stderr, "skinned: the renderer submitted no draws\n"); return 1; }
 #ifndef __wasm__
     const uint64_t before_readback = tide_time_now_ns();
@@ -345,10 +489,11 @@ static int frame(void *user, const float seconds)
 
 static void help(void)
 {
-    puts("usage: bench_skinned [--counts 1,10,100,1000] [--modes static,rest,shared,independent]\n"
+    puts("usage: bench_skinned [--counts 1,10,100,1000] [--modes static,rest,shared,independent,gpu]\n"
          "                     [--frames 100] [--warmup 20] [--repeat 3]\n"
-         "                     [--save label] [--capture image.png]\n"
+         "                     [--save label] [--capture image.png] [--verify-gpu] [--subframe 0..1]\n"
          "Each count runs static, omitted-rest, shared-pose and independently sampled-pose views.\n"
+         "The opt-in gpu mode interpolates resident 60 Hz palettes; it is a visual approximation.\n"
          "CPU view recording and submission, GPU execution, and desktop completion/readback are separate.\n"
          "--frames counts measured frames per workload; all runs end automatically.\n"
          "Counts are 1 to 10000, at most 16 entries; --modes selects a subset.\n"
@@ -362,6 +507,7 @@ int main(const int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (!strcmp(arg, "--help") || !strcmp(arg, "-h")) { help(); return 0; }
+        if (!strcmp(arg, "--verify-gpu")) { verify_gpu = true; continue; }
         if (!strcmp(arg, "--bench")) continue; // Existing web test shell disables per-call GL checks for benchmarks.
         const char *equal = strchr(arg, '=');
         const size_t length = equal ? (size_t)(equal - arg) : strlen(arg);
@@ -372,6 +518,12 @@ int main(const int argc, char **argv)
         else if (length == 8 && !strncmp(arg, "--frames", length)) ok = ok && number(value, 1, 1000000, &measured_frames);
         else if (length == 8 && !strncmp(arg, "--warmup", length)) ok = ok && number(value, 0, 1000000, &warmup_frames);
         else if (length == 8 && !strncmp(arg, "--repeat", length)) ok = ok && number(value, 1, 1000, &repeats);
+        else if (length == 10 && !strncmp(arg, "--subframe", length)) {
+            char *end = NULL;
+            errno = 0;
+            if (ok) subframe = strtof(value, &end);
+            ok = ok && !errno && end != value && !*end && isfinite(subframe) && subframe >= 0.0f && subframe <= 1.0f;
+        }
         else if (length == 6 && !strncmp(arg, "--save", length)) { if (ok) label = value; }
         else if (length == 9 && !strncmp(arg, "--capture", length)) { if (ok) capture = value; }
         else ok = false;
@@ -405,7 +557,7 @@ int main(const int argc, char **argv)
     printf("renderer: %s; %d warmup, %d measured frames, %d repeats\n", tide_platform_renderer(), warmup_frames,
            measured_frames, repeats);
     puts("CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.");
-    setup_workload();
+    if (!setup_workload()) return 1;
     tide_platform_gpu_timing(true);
     tide_platform_run(frame, NULL);
 }

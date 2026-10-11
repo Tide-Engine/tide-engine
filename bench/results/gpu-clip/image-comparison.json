@@ -1,0 +1,14 @@
+{
+  "interpretation": "Single final frame, one character, half-tick offset. Baked matrix interpolation is approximate; pixel differences are expected.",
+  "capture_sha256": {
+    "gpu-clip-capture-independent.png": "a158161c19bc1ce7dbfb8b48b4a7e04c277d8f7e29bb35e3edf3146cfe327e2f",
+    "gpu-clip-capture-gpu.png": "b1d1ec39aa40b01ed85c9567ebe30c07ef0f79ab3f9f65052dfdd86ca159fee2"
+  },
+  "width": 1024,
+  "height": 576,
+  "pixels": 589824,
+  "changed_pixels": 123,
+  "pixels_over_2_levels": 2,
+  "max_channel_difference": 127,
+  "mean_absolute_channel_difference": 0.0004504168475115741
+}
