@@ -2,9 +2,11 @@
 description: "Add and update Tide packages from git or local folders, pin commits and share game code and C libraries through tide.packages."
 ---
 
-# Packages
+# Using and writing packages
 
 A package is Tide code, and C, that games share: a folder of `.tide` files, like a game's, without a `Main`. A game lists the packages it uses in a file named `tide.packages`, next to its own files, and `tide` builds them with it. Packages come from git repositories, at a commit, from folders on your machine, or with `tide` itself.
+
+For the list of bundled packages, their API documentation and how to find docs for other packages, start with the [Packages overview](./index.md).
 
 ## Using one
 
@@ -92,7 +94,7 @@ A folder's files build as they are, with no commit, and `tide run` reloads the g
 
 ## Packages that come with tide
 
-Some packages come with `tide`, in its installation: `box2d` and `box3d`, Erin Catto's physics engines in [2D](../physics/box2d.md) and in [3D](../physics/box3d.md), `rooms`, [the menu a game opens on](../multiplayer/matches.md#a-menu-that-comes-with-tide) until it has one of its own, `lobby`, [lobbies and a quick match](../multiplayer/lobbies.md) with their menu, and `steam`, which puts those [on Steam](../multiplayer/steam.md) for the builds that ship there. A line for one is its name alone:
+The [bundled packages](./index.md#bundled-packages) are `box2d`, `box3d`, `rooms`, `lobby` and `steam`. Their API docs are collected in this section. A line for one is its name alone:
 
 ```
 box2d

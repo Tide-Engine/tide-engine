@@ -1,15 +1,16 @@
 # Inside Out
 
 A cooperative puzzle game for **two friends in separate browsers**.
-You are two test dummies packed in a small box, itself inside another room
-in a crash-test lab. Work your way out.
+You are two small test robots packed in a small box, itself inside another
+room, on a model that sits on a table. Work your way out.
 Push rooms with your partner inside, fit them through tight passages, and
 move boxes into their own interiors. Repeated views of a room share one
 set of parcels, boxes and people.
 
-The 3D rooms keep a fixed, gently tilted view of a bright test lab: pale
-flooring, boldly painted boxes, yellow and black striped doorways and soft
-shadows, with quiet ventilation.
+The 3D rooms keep a fixed, gently tilted view of a painted model: pale
+floors, matte painted boxes, soft shadows, marks that glow, and a lens that
+keeps your room sharp while the larger rooms around it fall out of focus,
+with quiet ventilation.
 There are no threats or jumpscares.
 
 Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
@@ -81,6 +82,13 @@ They are optional. Ambience, sound and reduced motion are local settings.
   the neighbor. Where the doorways do not line up, a parcel or box pushed
   out is blocked by the neighbor, and a dummy stepping out pushes the
   neighbor if it can move and is blocked if it cannot.
+- A box standing in a doorway is pushed on in by whoever comes through, as
+  a parcel there is. If it cannot move, the doorway is blocked.
+- A robot is drawn solid only where it really is: in the copy of a box it
+  came in through, and at the depth it is at where a room holds itself.
+  Everywhere else it is a stippled, see-through echo. A partner who came in
+  through another copy still stands in your way; one at another depth of a
+  room that holds itself does not.
 - A repeated box is another movable entrance into an existing room. Boxes
   can enter themselves, and two boxes can contain one another. Moving a
   parcel during one visit changes it for every visit. Every room still has

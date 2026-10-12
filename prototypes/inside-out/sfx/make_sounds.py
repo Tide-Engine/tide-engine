@@ -54,40 +54,35 @@ def wood(name, seconds, frequency, noise_level, seed):
 
 
 def threshold():
-    """Unpitched cardboard friction and air displaced across a doorway.
+    """A soft breath of air through a doorway.
 
-    Every sound layer comes from seeded noise. Broad, fixed low-pass bands
-    soften the brush and air; slow filters remove bass/DC. A little random
-    pressure variation makes the friction tactile without resonant bodies,
-    oscillators, note sweeps, echoes or a ringing tail.
+    Seeded noise through gentle low-pass bands, with nothing above about a
+    kilohertz: the earlier version's brush reached 2.4 kHz with a 22 ms
+    attack and was hard on the ears. It swells and fades on one smooth curve,
+    with no impact, pitch, echo or ringing tail.
     """
-    seconds = 0.30
+    seconds = 0.42
     rng = random.Random(33)
-    brush_cutoff = 1 - math.exp(-math.tau * 2400 / RATE)
-    brush_bass_cutoff = 1 - math.exp(-math.tau * 260 / RATE)
-    air_cutoff = 1 - math.exp(-math.tau * 600 / RATE)
+    brush_cutoff = 1 - math.exp(-math.tau * 850 / RATE)
+    brush_bass_cutoff = 1 - math.exp(-math.tau * 180 / RATE)
+    air_cutoff = 1 - math.exp(-math.tau * 420 / RATE)
     air_bass_cutoff = 1 - math.exp(-math.tau * 65 / RATE)
-    pressure_cutoff = 1 - math.exp(-math.tau * 32 / RATE)
-    brush = brush_soft = brush_bass = 0.0
-    air = air_soft = air_bass = pressure = 0.0
+    brush = brush_soft = brush_softer = brush_bass = 0.0
+    air = air_soft = air_bass = 0.0
     samples = []
     for i in range(round(seconds * RATE)):
         t = i / RATE
         brush += brush_cutoff * (rng.uniform(-1, 1) - brush)
         brush_soft += brush_cutoff * (brush - brush_soft)
-        brush_bass += brush_bass_cutoff * (brush_soft - brush_bass)
+        brush_softer += brush_cutoff * (brush_soft - brush_softer)
+        brush_bass += brush_bass_cutoff * (brush_softer - brush_bass)
         air += air_cutoff * (rng.uniform(-1, 1) - air)
         air_soft += air_cutoff * (air - air_soft)
         air_bass += air_bass_cutoff * (air_soft - air_bass)
-        pressure += pressure_cutoff * (rng.uniform(-1, 1) - pressure)
-        attack = min(1, t / 0.022)
-        release = min(1, (seconds - t) / 0.085)
-        # The broad puff has a rounded middle rather than a sharp impact.
-        phase = t / seconds
-        air_envelope = 4 * phase * (1 - phase)
-        friction = 0.34 * (brush_soft - brush_bass) * (0.82 + pressure)
-        displaced_air = 0.17 * (air_soft - air_bass) * air_envelope
-        samples.append((friction + displaced_air) * attack * release)
+        # One rounded swell: a raised cosine, a little early.
+        phase = (t / seconds) ** 0.8
+        swell = 0.5 - 0.5 * math.cos(math.tau * phase)
+        samples.append((0.20 * (brush_softer - brush_bass) + 0.30 * (air_soft - air_bass)) * swell)
     # Keep the clip's boundary exactly silent even after PCM quantization.
     samples[0] = samples[-1] = 0.0
     write("enter", samples)

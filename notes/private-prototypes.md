@@ -78,8 +78,8 @@ its `<id>_page` target and its `private_games` block, plus the id in
   showing part of a maker standing beside the box,
   permits the partner to leave the view, and enters a facing doorway only after the
   automatic room push is blocked. Shift and the touch push toggle are removed.
-  Spatial constraints replace switch locks. The current look (2026-10-12) is a bright crash-test lab where the
-  players are two test dummies, with ventilation ambience
+  Spatial constraints replace switch locks. The current look (2026-10-12) is a painted tabletop model where the
+  players are two small robots, with ventilation ambience
   and no threats or jumpscares; the catalog description and thumbnail follow it.
 
 - Underfoot (`underfoot`): `prototypes/underfoot/`, a puzzle for one or two

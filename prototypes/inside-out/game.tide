@@ -195,17 +195,22 @@ bool EmptyCell(LevelLayout layout, Puzzle puzzle, int room, int2 at)
     return TileAt(layout, room, at) != Tile.Wall && BoxAt(layout, puzzle, room, at) < 0 && CargoAt(layout, puzzle, room, at) < 0 && ActorAt(puzzle, room, at) < 0;
 }
 
-// Objects exit through their containing room's physical shell. Travelers
-// instead return through the particular doorway in their finite entry trail.
-bool PhysicalStep(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, out int nextRoom, out int2 next)
+// One step from a cell, for a bot, a parcel or a box alike. Inside the room it
+// is the next cell. Outward from a doorway cell it is the cell beyond `shell`,
+// the box the room is being left through. That box is the only thing that
+// differs: a parcel or box leaves by its room's own box, as it has no memory
+// of how it got in, and a bot leaves by the box it came in through.
+bool StepFrom(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, int shell, out int nextRoom, out int2 next)
 {
     nextRoom = room;
     next = from + Direction(direction);
     if (direction < 0 || direction > 3) return false;
     if (OnRoomGrid(layout, room, next)) return TileAt(layout, room, next) != Tile.Wall;
-    if (!ValidRoom(layout, room) || !CellEqual(from, DoorCell(layout, room, direction)) || (layout.rooms[room].doors & (1 << direction)) == 0) return false;
-    nextRoom = puzzle.rooms[room].room;
-    next = puzzle.rooms[room].position + Direction(direction);
+    if (!ValidRoom(layout, room) || !ValidBox(layout, shell) || !CellEqual(from, DoorCell(layout, room, direction)) ||
+        (layout.rooms[room].doors & (1 << direction)) == 0) return false;
+    var placement = BoxPlacement(layout, puzzle, shell);
+    nextRoom = placement.room;
+    next = placement.position + Direction(direction);
     return TileAt(layout, nextRoom, next) != Tile.Wall;
 }
 
@@ -248,7 +253,7 @@ bool DoorsMeet(LevelLayout layout, int from, int direction, int to)
 
 bool ObjectDestination(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, out int nextRoom, out int2 next)
 {
-    if (!PhysicalStep(layout, puzzle, room, from, direction, out nextRoom, out next)) return false;
+    if (!StepFrom(layout, puzzle, room, from, direction, room, out nextRoom, out next)) return false;
     var box = BoxAt(layout, puzzle, nextRoom, next);
     if (box >= 0)
     {
@@ -287,20 +292,15 @@ bool PushBox(LevelLayout layout, mut Puzzle puzzle, int box, int direction)
     }
     return true;
 }
+// A bot's step: StepFrom through the last box of its trail, which it has one
+// fewer of once it is out.
 bool TravelerStep(LevelLayout layout, Puzzle puzzle, Traveler actor, int direction, out int room, out int2 next, out int depth)
 {
-    room = actor.room;
-    next = actor.position + Direction(direction);
     depth = actor.depth;
-    if (OnRoomGrid(layout, room, next)) return TileAt(layout, room, next) != Tile.Wall;
-    if (!ValidRoom(layout, room) || depth <= 0 || depth > MAX_DEPTH || !CellEqual(actor.position, DoorCell(layout, room, direction)) || (layout.rooms[room].doors & (1 << direction)) == 0) return false;
-    var back = actor.trail[depth - 1];
-    if (!ValidBox(layout, back.box)) return false;
-    var placement = BoxPlacement(layout, puzzle, back.box);
-    room = placement.room;
-    next = placement.position + Direction(direction);
-    depth -= 1;
-    return TileAt(layout, room, next) != Tile.Wall;
+    var shell = depth > 0 && depth <= MAX_DEPTH ? actor.trail[depth - 1].box : -1;
+    if (!StepFrom(layout, puzzle, actor.room, actor.position, direction, shell, out room, out next)) return false;
+    if (!OnRoomGrid(layout, actor.room, actor.position + Direction(direction))) depth -= 1;
+    return true;
 }
 
 int EntryDestination(LevelLayout layout, Entry entry)
@@ -405,7 +405,10 @@ bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, 
         entered = true;
         trial.actors[seat].trail[depth] = back;
         depth += 1;
-        if (BoxAt(layout, trial, room, next) >= 0) return false;
+        // A box standing in the doorway is pushed on in by whoever comes
+        // through, as a parcel there is. One that cannot move blocks the way.
+        var standing = BoxAt(layout, trial, room, next);
+        if (standing >= 0 && !PushBox(layout, trial, standing, direction)) return false;
     }
     var occupant = ActorAt(trial, room, next);
     if (occupant >= 0 && occupant != seat) return false;
