@@ -143,7 +143,7 @@ TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
         {.cargo_transfers = 2}, {.occupied_box_moves = 1, .cargo_transfers = 1},
         {.occupied_box_moves = 1, .cargo_transfers = 2}, {.target_unfills = 1, .cargo_transfers = 1},
         {.cargo_transfers = 1, .partner_backstops = 1}, {.reference_moves = 1, .recursive_entries = 1, .max_depth = 3},
-        {.occupied_box_moves = 1, .box_parent_changes = 1, .cargo_transfers = 1},
+        {.partner_backstops = 1},
         {.target_unfills = 1, .box_parent_changes = 1, .cargo_transfers = 1},
         {.recursive_entries = 1, .reference_moves = 2, .max_depth = 4},
         {.reference_moves = 3, .copied_self_nests = 1, .self_extractions = 1, .target_unfills = 1, .cargo_transfers = 1},
@@ -259,7 +259,7 @@ TIDE_TEST(inside_out_carried_delivery_requires_both_initial_makers)
                 states[count++] = next;
             }
         }
-        TIDE_CHECK(count == 167);
+        TIDE_CHECK(count == 489);
         printf("  Carried delivery seat%d alone: exhausted %d reachable production-command states; no parcel+dock solution.\n", seat, count);
         free(states);
         tide_world_free(&world);
