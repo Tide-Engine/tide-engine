@@ -148,6 +148,26 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
+Continuous cells and square boxes (2026-10-12). The owner asked for cells
+next to each other to be "more continuous" rather than "clearly cells on a
+grid", and for a box to always fill its cell as a square: rooms need not be
+the same size inside, "but the format should still be a square".
+- Wall cells that touch are one block: `WallTile` takes a bit for each side
+  with wall beyond it (off the room's grid counts), draws its lid to the
+  cell's edge, and extends the raised face to every joined side, so the
+  darker rim runs only along a block's open sides. An inside corner has no
+  rim. Floor cells meet without a joint, in two shades 0.025 apart so steps
+  can still be counted.
+- A room that is longer one way is packed out to a square with solid wall on
+  its two short sides (`RoomPadding`, from `RoomTrim`): half the difference
+  in tiles on each. A doorway on a packed side runs through the packing as
+  a strip of floor as wide as the doorway. This is drawing only. The room,
+  its doors, `DoorsMeet` and every puzzle are unchanged; the packing is not
+  a place anything can be, and a passage crosses it on the way to the
+  doorway. A box too small to detail is a square block too. The owner's
+  words could also mean making every authored room square, which would
+  change the puzzles; that reading was not taken and is theirs to ask for.
+
 Full-window layout (2026-10-12; the owner: "the game should be most of the
 screen, right now it's like a weird iframe like thing"). The framed panel
 is gone. The scene is drawn over the whole window below the heading
@@ -336,6 +356,31 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Continuous cells, square boxes and the title-crop failure (2026-10-12)
+
+The intermittent "recursive puzzle progression agrees on both screens"
+failure is explained. It recurred twice here (WebGL, then WebGPU with a
+variant that waited up to 60 more ticks, so it was never a race). The
+failure screenshots of the two pages show the same title, "12 / 12 Crossed
+return", and differ in that crop by exactly one pixel, at 469,42, inside
+the text. The fixture compared PNG bytes. That one comparison between two
+pages now allows up to 8 differing pixels (`pixelsApart`); a different
+title differs in hundreds. Why one text pixel differs between two pages on
+one machine is not established; each page fills its glyph cache in its own
+order, which is my guess. Other cross-page label comparisons are still
+exact and have not failed.
+
+Native and web debug builds are warning-free; the 33 fixtures pass natively
+and under WASI. On the final game code `inside_out_play_webgl` passes in
+174.75 s and `inside_out_play_webgpu` in 141.85 s. The WebGL run had
+started with the waiting variant of that last check loaded and the WebGPU
+run with the pixel tolerance; the tolerance has passed once on WebGPU and
+once on WebGL since (179.13 s). Native captures at 1280x800 and 1920x1080 were
+inspected: joined wall blocks, a plain floor, and the 5 by 4 box of puzzle
+12 filling its cell. The thumbnail is 163,638 bytes, SHA-256
+`0d7b85de8684b608ca65fdb3d52cd843a117f16731244c7df5b6399b3540636c`.
+Nothing was staged or deployed. No CI was dispatched.
 
 ## Full-window layout validation (2026-10-12)
 
