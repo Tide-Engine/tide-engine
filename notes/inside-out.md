@@ -192,9 +192,20 @@ starts at a wall, colour bounce turned down, no rim on wall tops.
   1050 wide.
 
 Rules (`game.tide`).
-- `StepFrom` is the one step for bots, parcels and boxes; the box a room is
-  left through is its only parameter that differs (a room's own box for an
-  object, the trail's last for a bot). `TravelerStep` wraps it.
+- `StepFrom` is the one step for bots, parcels and boxes, and the box a
+  room is left through is the same for a bot and for what it pushes: the
+  box that bot came in by (`PusherShell`, the room's own box where the
+  trail does not say). Until this round a pushed thing left by its room's
+  primary box whichever copy the pusher was in. The owner's partner pushed
+  a parcel west out of a copy and saw it come in at the east door of the
+  same room ("what he sees doesn't match what happens. we either fix what
+  he sees or what happens"); I changed what happens. All twelve witnesses
+  replay unchanged under it, puzzle 7 still has no solution without a
+  backstop (726,703 positions) and the second puzzle's count is still 489.
+  Whether it opens or closes other routes in puzzles 9 to 12, which were
+  written around the primary box, is unchecked. "Objects pushed out emerge
+  beside that room's primary box" above no longer holds. `TravelerStep`
+  wraps `StepFrom` for a bot's own step.
 - A box standing in a doorway cell is pushed on in by a bot entering, as a
   parcel there is; it blocks only if it cannot move. The owner hit the old
   block ("is this intended?") and I changed it for consistency with
@@ -537,6 +548,15 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Pushed things leave by the pusher's box, validation (2026-10-12)
+
+`game.tide`, one fixture, the exit crossing in `map.tide`, the guide and
+README. Native and web debug builds are warning-free; the 33 fixtures pass
+natively and under WASI; `inside_out_play_webgl` passes in 583.13 s and
+`inside_out_play_webgpu` in 550.33 s, on top of the 91 files that came in
+from `dev` with the merge before. Nothing was staged or deployed. No CI was
+dispatched.
 
 ## Tabletop model, echoes and new rules validation (2026-10-12)
 
