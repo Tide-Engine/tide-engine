@@ -22,6 +22,7 @@ prefab Playground {
 prefab Crate {
     Transform { localScale = float3(0.75) };
     Health;
+    Model { model = pyramid };
     entity Lid {
         Transform { localPosition = float3(0, 1, 0), localScale = float3(1, 0.2, 1) };
     }

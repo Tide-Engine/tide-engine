@@ -1,0 +1,4 @@
+// expect: an Asset's Value is read-only
+component Art { Asset<Mesh<Vertex3>> model; }
+system Edit(mut Art art) { art.model.Value = default; }
+scene Main { }

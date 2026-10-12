@@ -1730,6 +1730,36 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
 - Pinning a URL to a hash of its contents, so a build is reproducible when the server changes the file.
 - Big media through the match: it goes player to server to everyone, so a host's upload is the file once per player. The docs say the number; a game with big files keeps a URL in the match and each machine fetches. Whether the engine should do more than say so.
 
+## Checked asset references
+
+### Decided
+
+Components may store checked references to named model assets. Prefab text assigns
+the asset name; the compiler validates the referenced asset and its type. The
+editor previews its geometry, while game views decide how to render it (owner,
+2026-10-12).
+
+### Provisional
+
+The first implementation uses `Asset<Mesh<V>>`. A matching singular mesh asset
+name converts to this reference where its expected type is known, including
+component defaults, prefab overrides, arguments and list elements. A borrowed
+`Mesh<V>` variable cannot convert: it has no declaration identity. References
+can be stored in either world using ordinary placement rules.
+
+`reference.Value` reads the currently loaded `Mesh<V>`, subject to the existing
+borrowed-mesh lifetime and read-only rules. `default` is an empty reference and
+reads an empty mesh; unknown received identities do too. The reference stores
+only a stable numeric identity derived from the qualified asset name. Geometry
+replacement preserves it; changing the declaration name changes it. Identity
+collisions are compile errors. No pointer or runtime type registry enters a world.
+
+This initial type supports singular static meshes only. Collection elements,
+skinned models, other resource types, JSON asset-name serialization and persistent
+identity migration across declaration renames are not implemented. The native
+editor previews named references and constant aliases at each entity's composed
+Transform; preview materials and lighting are editor choices, not game rendering.
+
 ## Skinned meshes and animation
 
 ### Decided

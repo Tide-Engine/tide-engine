@@ -1,5 +1,43 @@
 # The language server and the editors
 
+## Static model preview and assignment (2026-10-12)
+
+The native editor now browses static Mesh assets, including each resolved list/map
+item. Its orbit preview owns copied Vertex3 positions/uvs/imported colors/indices
+outside compiler arenas; refreshing analysis or freeing an importer cannot leave
+draw pointers dangling. Bounds frame the model. Lit/Unlit selects fixed editor
+vertex lighting; game defaults, textures, material shaders and views do not run.
+
+Direct Asset<Mesh<V>> component fields expose Browse and a type-matched singular
+asset assignment. Edits write the qualified asset name through the existing exact
+override/undo/save path. Scene preview draws named references and constant aliases
+using the composed Transform, including inherited nested roots and children. A
+per-analysis owned geometry cache shares each model across scene instances. Wire
+markers remain selectable; mesh-surface picking, orbiting the scene, gizmos,
+skinned preview, collection reference assignment and previewing arbitrary authored
+reference expressions are not built. Unsupported reference expressions or
+unavailable geometry contribute to an explicit omitted-model count in the viewport
+footer. The asset browser previews collections but cannot assign their items as
+references.
+
+Half-second polling includes declared model paths/glob directories, resolved
+models and glTF side buffers. Metadata changes trigger shared import-cache
+revalidation and copied preview replacement; preserving both timestamps and sizes
+is not detected by this native polling path. Source edits already refreshed in
+that poll avoid a second analysis. Language-server member completion offers Value
+and follows its Mesh members; the internal identity field stays hidden.
+
+Corrections to the historical first-editor entry below: static mesh import already
+ran through ordinary front-end asset checking; it was not yet drawn in that UI.
+Static model rendering is now implemented. Game rendering and IDE embedding remain
+future work. User documentation describes current behavior.
+
+Coverage adds owned-geometry lifetime/replacement checks and native scripted PNG
+comparisons for orbit and zoom, collection browsing, assignment to an inherited
+nested-root field, save and subsequent --check. Existing native inspector edits,
+undo/redo, structural composition and two viewport sizes remain covered.
+Final validation is recorded in notes/language.md with the compiler feature.
+
 ## First native scene editor (2026-10-12)
 
 tools/tide-editor builds tide-editor, a desktop C17 app using existing Tide

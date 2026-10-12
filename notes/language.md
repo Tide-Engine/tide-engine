@@ -1,5 +1,56 @@
 # Language features, as tidec builds them
 
+## Checked static asset references (2026-10-12)
+
+The owner approved checked asset-reference fields for prefab model selections.
+Asset<Mesh<V>> is a synthetic builtin ordinary struct with one hidden long
+identity field, one instantiation per Mesh type. Ordinary layout/padding,
+placement, ownership, task storage, snapshots, packing and hashing apply without
+an engine API or runtime type registry. The first spelling/access and limits are
+Provisional in docs/spec.md, Checked asset references.
+
+A matching singular named asset converts under an expected reference type.
+Component defaults, authored overrides, arguments (including overload selection),
+context-typed conditionals and list elements use that conversion. Expressions
+retain BIND_ASSET for dependency pruning and editor rename/navigation. A borrowed
+Mesh value, collection element or different vertex type cannot supply identity.
+Value reads the current asset global through a private generated typed resolver;
+the resulting mesh retains existing borrowed lifetime and read-only restrictions.
+Empty/unknown IDs resolve to empty geometry, never an unchecked array/pointer.
+
+IDs are the qualified asset name's FNV-1a hash, masked to a positive 63-bit value,
+with zero reserved. Codegen rejects collisions among compiled singular meshes.
+Changing a model file or declaration order preserves the reference; changing its
+qualified name changes identity. Renamed persisted runtime state is not migrated
+to the new identity. Synthetic types introduced only in routine bodies are ordered
+after checking as well as during ordinary field ordering. No-assets builds still
+emit their empty resolver. JSON rejects the opaque builtin through its existing
+rule rather than silently dropping its hidden identity.
+
+asset_references E2E covers defaults, prefab/nested-root assignment, match/local
+storage, overloaded calls, conditional/list conversion, current-pack reload,
+snapshot and packed-world round trips, unchanged match state during local views,
+and arbitrary unknown identities. asset_reference_empty covers a late local type
+without any assets. Five negative fixtures cover unsupported resource types,
+borrowed conversion, hidden storage, readonly Value and vertex mismatch. The LSP
+test covers Value and its mesh member completion without exposing identity.
+The shared grammar recognizes Asset as a generic type.
+An additional --strip-unused-assets generated-C build/run retains a mesh used
+only by a spawned prefab field, omits an unused declaration, and passes the same
+snapshot/serialization harness with warnings as errors.
+
+Remaining: other resource kinds, collection-element identity, JSON asset-name
+serialization, declaration-rename runtime migration and skinned-model preview.
+Editor implementation and native UI checks are in notes/editors.md.
+
+Validation: warning-free complete Windows native/web debug builds and all 2,260
+native and 2,225 web CTests pass, including OpenGL, WebGL/WebGPU, existing exact
+determinism pins and language-server coverage. All 232 shared grammar checks and
+the production docs build pass with Node 24.16.0. The final omitted-model footer
+change was rebuilt and passed native UI coverage before the full native suite
+reached that test. No engine runtime/API change, CI dispatch, Android, other-host
+or sanitizer validation was performed for this task.
+
 ## Authored component bindings for the native editor (2026-10-12)
 
 Prefab composition retains the resolved component declaration on the original

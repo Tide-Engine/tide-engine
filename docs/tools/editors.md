@@ -50,13 +50,27 @@ cannot remove a component inherited from the base prefab. Inherited descendants
 are read-only here: edit their source prefab. **Next** switches between prefab
 declarations in a file. **Source** shows the current text draft.
 
-The viewport draws unit wire cubes and axes as transform markers, with parenting,
+The viewport draws referenced static models, unit wire cubes and axes, with parenting,
 local position, rotation and scale. Use the wheel to zoom, middle drag to pan,
 and **XY**/**Isometric** to change projection. Literal TRS, constants and basic
 float arithmetic are previewed, including `quaternion.Euler(float3(...))`.
 Unsupported expressions and their subtrees are explicitly omitted from the
-preview. Game views, meshes, materials and scripts are not executed or rendered
-in this first version; there are no drag gizmos yet.
+preview. Game views, materials and scripts are not executed; there are no drag
+gizmos yet. Static model previews use imported colors and editor lighting.
+
+Declare a field such as `Asset<Mesh<Vertex3>> model` in your own component and
+add that component to an entity. Select its field and choose **Browse**, select
+a matching singular mesh asset, then **Use for selected field**. The prefab
+stores the asset name as an ordinary checked override. Nested instances use
+their composed position, rotation and scale in the preview.
+Named references and constant aliases are previewed. Other valid reference
+expressions are counted as omitted in the viewport footer; inspect their text.
+
+**Models** opens the project's static mesh asset browser, including collection
+items. Right drag orbits, the wheel zooms, **Frame model** resets the zoom and
+**Lit**/**Unlit** switches preview shading. Model files and glTF side buffers
+refresh when their filesystem metadata changes. Skinned-model previews and
+assigning collection items as persistent references are later work.
 
 **Save** / **Ctrl+S** updates the text file. **Undo** / **Ctrl+Z** and **Redo** /
 **Ctrl+Y** keep up to 64 edits. Source edits preserve surrounding comments,

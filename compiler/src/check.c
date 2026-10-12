@@ -1896,6 +1896,37 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
 {
     const str name = r->name;
     type t;
+    if (r->args.count > 0 && str_eq_c(name, "Asset")) {
+        if (r->args.count != 1) {
+            diag_error(at, "Asset takes one mesh type, like 'Asset<Mesh<Vertex3>>'");
+            return T_ERR;
+        }
+        const type mesh = resolve_type(c, r->args.items[0], PLACE_ASSET, at);
+        if (mesh.kind == TY_ERROR) return T_ERR;
+        if (mesh.kind != TY_MESH) {
+            diag_error(at, "Asset currently references a static Mesh<V>, not %s", type_name(mesh));
+            return T_ERR;
+        }
+        for (int i = 0; i < c->prog->asset_refs.count; i++) {
+            decl *d = c->prog->asset_refs.items[i];
+            if (d->asset_ref_of == mesh.decl) return (type){TY_STRUCT, d};
+        }
+        decl *d = NEW(decl);
+        d->kind = DECL_STRUCT;
+        d->builtin = true;
+        d->at = at;
+        d->asset_ref_of = mesh.decl;
+        sb name_text = {0};
+        sb_printf(&name_text, "Asset<%s>", type_name(mesh));
+        d->name = (str){name_text.data, (int)name_text.len};
+        field id = {0};
+        id.name = str_from("id");
+        id.type = (type){TY_LONG, NULL};
+        id.hidden = true;
+        vec_push(d->fields, id);
+        vec_push(c->prog->asset_refs, d);
+        return (type){TY_STRUCT, d};
+    }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
@@ -2256,7 +2287,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         e->type_decl = inner.kind == TY_ENUM ? inner.decl : NULL;
         return check_expr_any(c, e);
     }
-    if (e->kind == E_CONDITIONAL && inner.kind == TY_ENUM && !checked) e->type_decl = inner.decl;
+    if (e->kind == E_CONDITIONAL && (inner.kind == TY_ENUM || (inner.decl && inner.decl->asset_ref_of)) && !checked) e->type_decl = inner.decl;
     if (e->kind == E_LIST) {
         const bool takes_list = inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY || inner.kind == TY_ERROR;
         if (!takes_list) diag_error(e->at, "a list's type comes from where it goes: 'List<int> scores = [1, 2];'");
@@ -2273,6 +2304,11 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         return e->type = T_ERR;
     }
     const type t = checked ? e->type : check_expr_any(c, e);
+    if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && e->bind == BIND_ASSET
+        && same_type((type){TY_MESH, inner.decl->asset_ref_of}, t)) {
+        e->asset_reference = true;
+        return e->type = inner;
+    }
     if (inner.kind == TY_TEXTURE && !refuse_raw_grid(e)) return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
@@ -4215,6 +4251,8 @@ static bool arg_fits(const expr *arg, const param *p)
     const type t = arg->type;
     if (t.kind == TY_ERROR || p->type.kind == TY_ERROR) return true;
     if (p->mode == PARAM_MUT) return same_type(p->type, t); // The variable itself
+    if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && arg->bind == BIND_ASSET
+        && same_type((type){TY_MESH, inner.decl->asset_ref_of}, t)) return true;
     if (type_assignable(p->type, t)) return true;
     int64_t value; // As in C#, an int constant fits a byte
     return inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(arg, &value) && value >= 0 && value <= 255;
@@ -4393,6 +4431,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             continue;
         }
         const param *taken_by = &m->params.items[param_of[best][i]];
+        if (taken_by->mode != PARAM_MUT && arg->bind == BIND_ASSET) check_expr_want_checked(c, arg, want, true);
         if ((arg->type.kind == TY_STRUCT || arg->type.kind == TY_ARRAY) && holds_long_array(arg->type)
             && (taken_by->mode != PARAM_MUT || taken_by->is_out)) {
             diag_error(arg->at, "'%s' is never copied: it holds an array of more than %d elements, so the parameter that takes it is 'mut'",
@@ -8042,6 +8081,18 @@ static type check_member(checker *c, expr *e)
     bool skin_handled;
     const type skin_result = check_skinned_member(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
+    if (obj.kind == TY_STRUCT && obj.decl->asset_ref_of) {
+        if (gpu_code(c)) {
+            diag_error(e->at, "resolve an Asset's Value in CPU code before passing mesh data to a shader");
+            return T_ERR;
+        }
+        if (!str_eq_c(e->member, "Value")) {
+            diag_error(e->at, "%s has 'Value', the currently loaded mesh, not '" STR_FMT "'", type_name(obj), STR_ARG(e->member));
+            return T_ERR;
+        }
+        e->asset_ref_value = true;
+        return (type){TY_MESH, obj.decl->asset_ref_of};
+    }
 
     if (obj.kind == TY_RENDER_TARGET) {
         if (gpu_code(c)) {
@@ -8644,7 +8695,7 @@ static type check_conditional(checker *c, expr *e)
     type a;
     type b;
     if (e->type_decl) {
-        const type want = {TY_ENUM, e->type_decl};
+        const type want = {e->type_decl->asset_ref_of ? TY_STRUCT : TY_ENUM, e->type_decl};
         a = check_expr_want(c, e->lhs, want);
         b = check_expr_want(c, e->rhs, want);
     } else if ((e->lhs->kind == E_DEFAULT || e->lhs->enum_shorthand)
@@ -10047,6 +10098,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     for (const expr *part = target; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+        if (part->asset_ref_value) {
+            diag_error(target->at, "an Asset's Value is read-only; assign a named mesh asset to the reference instead");
+            return false;
+        }
         if (part->kind == E_MEMBER && part->object->type.decl == c->prog->view_time) {
             diag_error(target->at, "ViewTime is engine-stamped and read-only");
             return false;
@@ -19088,6 +19143,7 @@ bool check(program *prog)
     }
     // What T? fields are kept as: structs no declaration names, each after what its value holds
     for (int i = 0; i < prog->optional_fields.count; i++) order_struct(prog, prog->optional_fields.items[i]);
+    for (int i = 0; i < prog->asset_refs.count; i++) order_struct(prog, prog->asset_refs.items[i]);
     c.fields_ordered = true;
     // Arrays made while resolving fields, including those in a container's
     // arguments, now see every forward struct's fields and no containment cycle.
@@ -19205,6 +19261,7 @@ bool check(program *prog)
     check_roll_calls(&c);
     drop_unused_seed(prog);
     if (prog->random->named) order_struct(prog, prog->random);
+    for (int i = 0; i < prog->asset_refs.count; i++) order_struct(prog, prog->asset_refs.items[i]);
     check_sends(&c);
     check_acts(&c);
     check_render_resource_calls(&c);
