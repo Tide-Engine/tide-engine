@@ -860,11 +860,13 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
         // the camera has settled, eased from the last room's: it must not
         // follow the zoom, or the focus would leap as a doorway is crossed.
         var sharp = RoomDimensions(workshop.layout, actor.room) * target.tile * (actor.room < 0 ? .48 : .5);
-        picture.focusHalf = picture.focusHalf.x <= 0 || hands.reduceMotion ? sharp : Math.Lerp(picture.focusHalf, sharp, Math.Min(1, dt * 5));
+        // A new puzzle or window is simply in focus: there is no room to ease from.
+        var settle = firstView || levelChanged || resized || hands.reduceMotion;
+        picture.focusHalf = picture.focusHalf.x <= 0 || settle ? sharp : Math.Lerp(picture.focusHalf, sharp, Math.Min(1, dt * 5));
         if (Math.Abs(picture.focusHalf.x - sharp.x) < .05 && Math.Abs(picture.focusHalf.y - sharp.y) < .05) picture.focusHalf = sharp;
         render.focusHalf = picture.focusHalf;
         // The same for the margin left sharp around it, which is in tiles.
-        picture.focusTile = picture.focusTile <= 0 || hands.reduceMotion ? target.tile : Math.Lerp(picture.focusTile, target.tile, Math.Min(1, dt * 5));
+        picture.focusTile = picture.focusTile <= 0 || settle ? target.tile : Math.Lerp(picture.focusTile, target.tile, Math.Min(1, dt * 5));
         if (Math.Abs(picture.focusTile - target.tile) < .05) picture.focusTile = target.tile;
         render.focusTile = picture.focusTile;
     }
