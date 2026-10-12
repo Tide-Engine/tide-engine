@@ -18,8 +18,8 @@ preview reloads its title screen without console errors.
 
 Inside Out nested-box revision (2026-10-11; 2D presentation superseded): the existing catalog now describes
 starting inside nested rooms, varied shapes and offset doors, spatial planning
-and movable self-containing boxes. Its gameplay treatment is a factory with two
-test dummies, drawn in a PSX style (`notes/inside-out.md`). Public serving and catalog
+and movable self-containing boxes. Its gameplay treatment is a bright crash-test lab
+with two test dummies (`notes/inside-out.md`). Public serving and catalog
 authentication remain unchanged; Underfoot, Inside Out, CRACKED and Two Forks
 are retained. Game-specific contracts and evidence are in `notes/inside-out.md`.
 

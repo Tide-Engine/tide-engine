@@ -81,8 +81,7 @@ Leaving a room, the in-room copy of a dummy now stays opaque until it
 stands in the doorway (progress 0.22..0.30) instead of fading from the
 first frame: the doorway pose is clipped to the opening while inside, so
 the old crossfade left the dummy mostly invisible on its way to the door
-(owner: "the tiny guy when I exit seems to mostly vanish"). The coverage
-pattern of `SceneCovered` is now in composite blocks.
+(owner: "the tiny guy when I exit seems to mostly vanish").
 
 Self-placement and two-room cycles are allowed without cloning interiors.
 `Entry.box` resolves the live entered instance, so a moved occupied box
@@ -148,6 +147,24 @@ No temporal jitter or geometry-dependent camera fitting is used. Alpha and
 doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
+
+Current look: a bright crash-test lab (2026-10-12). The owner found the PSX
+block filter made small nested boxes lose all their detail, preferred the
+earlier clean render while their partner had not, asked for "a mix of
+simple yet themed", and took my recommendation. `render.tide` is the 3D
+revision's again, byte for byte: full resolution, soft shadows, SSAO, no
+blocks, no shade steps. The theme is paint and large shapes only, so it
+survives when a box is a few pixels wide: pale flooring whose slab joints
+are the taped grid, a mid grey-blue void, light grey hall panels, boxes in
+bold flat paints (green, blue, violet, coral red; Box 1's green is still
+the browser fixture's `homeMaterial`), a yellow/black striped threshold on
+the floor of every doorway between yellow posts (`HazardEdge` with a finer
+stripe), warning-yellow parcel targets, and the dummies described below.
+Wall panels keep the rim-and-face shape, floors the plain slabs, and the
+UI its charcoal and yellow. The two paragraphs that follow describe the
+superseded factory/PSX passes; what they say of the dummies, door posts,
+hazard edges and UI still holds, what they say of blocks, shades, grain and
+container colours does not.
 
 The factory look (2026-10-12; the owner asked for "factory vibe, we are
 testing dummies; PSX style", then after the first pass: the dummies "look
@@ -275,6 +292,21 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Crash-test lab look validation (2026-10-12)
+
+Presentation only: `render.tide` restored to the 3D revision's, new paints
+and a doorway threshold in `paint.tide`, one constant in `ui.tide`, README,
+catalog text and thumbnail. Native debug and web debug builds are
+warning-free; the 33 fixtures pass natively and under WASI;
+`inside_out_play_webgl` passes in 127.32 s and `inside_out_play_webgpu` in
+100.31 s; the docs production build passes. Bounded native captures at
+1280x800, 1920x1080 and 390x844 were inspected, including nested boxes a
+few tiles across, which keep their walls, thresholds and dummies. The
+thumbnail is the 1920x1080 capture of puzzle 12 halved, 101,371 bytes,
+SHA-256 `0d93a81d4c2b393024ab1be88d424391b11516fafbd41f3f1ed3d778fbc070ef`.
+Web release pages were not rebuilt or staged and nothing was deployed. No
+CI was dispatched.
 
 ## Facing doorways and cleaner PSX validation (2026-10-12)
 
