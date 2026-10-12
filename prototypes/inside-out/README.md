@@ -91,10 +91,10 @@ They are optional. Ambience, sound and reduced motion are local settings.
   room that holds itself does not.
 - A repeated box is another movable entrance into an existing room. Boxes
   can enter themselves, and two boxes can contain one another. Moving a
-  parcel during one visit changes it for every visit. Every room still has
-  one designated primary box: parcels and boxes pushed out of that room
-  emerge beside this primary box, even if you entered through a copy.
-  A small number marks the primary box; a prime mark (`1′`) marks its copy.
+  parcel during one visit changes it for every visit. A parcel or box
+  pushed out of a room comes out beside the box its pusher came in through,
+  which is where the pusher would come out too. A small number marks a
+  room's first box; a prime mark (`1′`) marks its copy.
 - A dummy's return path remembers the entrance used. Leaving through an
   edge door returns beside that entrance; if a shell has moved, the return
   moves with it. Up to eight entrance layers are available.
