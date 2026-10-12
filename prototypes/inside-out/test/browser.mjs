@@ -131,13 +131,16 @@ const screenshotPixels = (png, visit) => {
         previous = row;
     }
 };
-// SceneComposite multiplies the stored material by one scalar for real
-// sunlight and ambient occlusion. Compare chroma, allowing two byte steps
-// for the material/shade quantization, rather than freezing illumination.
-const materialMatches = (r, g, b, tone) => {
-    const shade = g / tone[1];
-    return shade >= 0.12 && shade <= 1.15 && Math.abs(r - tone[0] * shade) <= 2 && Math.abs(b - tone[2] * shade) <= 2;
-};
+// The scene is lit warm and shaded cool, with grain, a soft focus away from
+// the played room and colour spilling from walls, so no pixel is exactly a
+// paint. Each paint is told by the order and rough ratios of its channels,
+// which all of that leaves alone: wide enough for lit and lightly shaded
+// surfaces, and apart from every other paint in the scene.
+const sagePaint = (r, g, b) => g > 60 && g > r * 1.15 && g < r * 1.75 && g > b * 1.08 && g < b * 1.7;
+const amberPaint = (r, g, b) => r > 110 && r > g * 1.55 && g > b * 1.6;
+const woodPaint = (r, g, b) => r > 120 && r > g * 1.12 && r < g * 1.45 && g > b * 1.3 && g < b * 1.95;
+const filledWoodPaint = (r, g, b) => g > 90 && g > r * 1.02 && g < r * 1.3 && r > b * 1.3;
+const markPaint = (r, g, b) => r > 40 && r < 125 && r > g * 1.2 && g > b * 1.4;
 // How many pixels of two same-sized screenshots differ.
 const pixelsApart = (first, second) => {
     const one = [], other = [];
@@ -148,17 +151,15 @@ const pixelsApart = (first, second) => {
     for (let i = 0; i < one.length; i++) if (one[i] !== other[i]) apart++;
     return apart;
 };
-const homeMaterial = [92, 140, 107];
-const amberMaterial = [217, 122, 69];
-const parcelMaterials = [[[69, 69, 38]], [[173, 158, 99]]];
-const filledParcelMaterials = [[[69, 69, 38]], [[150, 163, 92]]];
-const homeMaterials = [[homeMaterial]];
+const parcelMaterials = [[markPaint], [woodPaint]];
+const filledParcelMaterials = [[markPaint], [filledWoodPaint]];
+const homeMaterials = [[sagePaint]];
 const featureMask = (png, materials, label) => {
     const values = [], counts = materials.map(() => 0);
     screenshotPixels(png, (r, g, b) => {
         let value = 0;
         for (let i = 0; i < materials.length; i++) {
-            if (materials[i].some(tone => materialMatches(r, g, b, tone))) {
+            if (materials[i].some(paint => paint(r, g, b))) {
                 value |= 1 << i;
                 counts[i]++;
             }
@@ -177,7 +178,7 @@ const homeWallArea = png => {
     screenshotPixels(png, (r, g, b) => {
         // Box 1's solid material; exclude the green player goals visible
         // farther outside during the early miniature-scale frames.
-        if (materialMatches(r, g, b, homeMaterial)) total++;
+        if (sagePaint(r, g, b)) total++;
     });
     return total;
 };
@@ -186,7 +187,7 @@ const amberPixels = png => {
     screenshotPixels(png, (r, g, b, x, y) => {
         // Amber identity pixels are distinct from the container walls
         // and parcel targets. Read the maker from a stationary partner view.
-        if (materialMatches(r, g, b, amberMaterial)) {
+        if (amberPaint(r, g, b)) {
             area++; horizontal += x; vertical += y; left = Math.min(left, x); right = Math.max(right, x);
         }
     });
@@ -412,7 +413,7 @@ try {
         const narrow = width < 720;
         const contentWidth = Math.min(width - 36, 1180);
         const left = (width - contentWidth) / 2;
-        const top = width < 1050 ? 154 : 126;
+        const top = width < 1050 ? 136 : 88;
         return { x: left, y: top, width: contentWidth, height: Math.max(200, height - top - (narrow ? 200 : 110)) };
     };
     const movesClip = client => {
@@ -430,7 +431,7 @@ try {
     // more of the containing world on a wide screen.
     const sceneSquare = client => {
         const { width, height } = client.state.screen;
-        const top = width < 1050 ? 146 : 104, bottom = width < 720 ? 200 : 80;
+        const top = width < 1050 ? 128 : 66, bottom = width < 720 ? 200 : 80;
         return { side: Math.max(200, Math.min(width - 24, height - top - bottom)), x: width / 2, y: top + (height - top - bottom) / 2 };
     };
     const cameraBody = client => {
@@ -457,7 +458,7 @@ try {
         // doorway. Each straddles geometry, so a uniform/blank crop fails.
         return [parcelClip(client), patch(-0.7, -1.68), patch(0.7, -1.68)];
     };
-    const titleClip = { x: 315, y: 24, width: 320, height: 25 };
+    const titleClip = { x: 265, y: 24, width: 320, height: 25 };
     const moveLabel = client => client.crop(movesClip(client));
     const dimensionLabel = client => client.crop(dimensionClip(client));
     const saveCrop = async (client, label, clip) => {

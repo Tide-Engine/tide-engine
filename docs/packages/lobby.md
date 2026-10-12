@@ -2,9 +2,9 @@
 description: "Add lobbies and a quick match to a Tide game with the lobby package: a menu, ready flags, lobby data, and slots for another service such as Steam."
 ---
 
-# Lobbies and matchmaking
+# Lobby: lobbies and matchmaking
 
-A [room](./matches.md#rooms) is a match players reach by a code. A lobby comes before the match: a group of players who see each other, say they're ready, and go into a match together. The `lobby` package is a lobby service's client and a menu over it, so a game has both before it writes either. List it in the game's `tide.packages`:
+A [room](../multiplayer/matches.md#rooms) is a match players reach by a code. A lobby comes before the match: a group of players who see each other, say they're ready, and go into a match together. The bundled `lobby` package is a lobby service's client and a menu over it, in the namespace `Lobbies`, so a game has both before it writes either. List it in the game's `tide.packages`:
 
 ```
 lobby
@@ -12,7 +12,7 @@ lobby
 
 The game then opens on a title page, with its name over **Play alone**, **Create a lobby**, **Browse lobbies**, **Quick match** and **Join by ID**. A lobby's page shows its ID to share, its members and who's ready, and for its owner **Start the match**, **Kick** beside each member and a switch that closes the lobby to others. In the match, **Menu** in the bottom left corner, or Escape, brings the lobby's page back.
 
-It's drawn over a live match, as [the rooms menu](./matches.md#a-menu-that-comes-with-tide) is: `Main` stays the match's scene, so the game runs behind the title, and **Play alone** closes the menu. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. `rooms` is the smaller of the two: a code and nothing else. Both are packages that come with `tide`, and a game lists the one it wants.
+It's drawn over a live match, as [the rooms menu](./rooms.md) is: `Main` stays the match's scene, so the game runs behind the title, and **Play alone** closes the menu. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. `rooms` is the smaller of the two: a code and nothing else. Both are packages that come with `tide`, and a game lists the one it wants.
 
 ::: info Tide's own service
 The lobbies are Tide's relay's, which also introduces the players of a room. It's for building and testing a game: nothing is installed, there are no accounts, and two windows on one machine are two players. A game that ships on a store's service [replaces the parts it needs](#another-service) and keeps the rest.
@@ -119,7 +119,7 @@ What only the owner does is refused for anyone else, with `failure` set to `Lobb
 
 ## The lobby's match
 
-**Start the match** opens the owner's machine's match to others, as [`Session.Open`](./matches.md#starting-a-match-from-code) does. An owner who's playing in someone else's match, having started with `--join`, leaves it for a match of its own first. Once that match has a room, the lobby says the room's code as its `match`, and every member's machine joins that room, with no code for anyone to type. A member who joins the lobby later joins the match too. Who gets in, and what a late player finds, is the game's: `Session.Close()` in the match keeps latecomers out.
+**Start the match** opens the owner's machine's match to others, as [`Session.Open`](../multiplayer/matches.md#starting-a-match-from-code) does. An owner who's playing in someone else's match, having started with `--join`, leaves it for a match of its own first. Once that match has a room, the lobby says the room's code as its `match`, and every member's machine joins that room, with no code for anyone to type. A member who joins the lobby later joins the match too. Who gets in, and what a late player finds, is the game's: `Session.Close()` in the match keeps latecomers out.
 
 **End the match** puts the owner in a match of its own again, and the lobby says it has none: every member's machine leaves for a match of its own, with the lobby's page up. A match that ends some other way, or can't be joined, puts a member on the lobby's page with a line that says why, and **Rejoin the match** tries again. Leaving the lobby leaves its match.
 
@@ -194,7 +194,7 @@ The package is four slots, each a set of `virtual` functions whose bodies are Ti
 
 The slots are replaced apart: a store's lobbies with Tide's rooms as the way into the match, a store's identity with Tide's lobbies, or Tide's lobbies with another way in. Tide's own lobbies know a player by a secret their service made. With Tide's identity that's the one it keeps; with another, `LobbySignIn` asks the service for a player of this run's, so an identity package needs nothing of them. A package that brings lobbies of its own overrides `LobbySignIn` with what its service needs, often `return who;`.
 
-A build picks its packages with [`#if` lines](../tools/packages.md#packages-for-some-builds-only) in `tide.packages`, so a shipping build has the store's service and every other build has Tide's:
+A build picks its packages with [`#if` lines](../packages/using-and-writing.md#packages-for-some-builds-only) in `tide.packages`, so a shipping build has the store's service and every other build has Tide's:
 
 ```
 lobby
@@ -222,15 +222,15 @@ override async LobbyAnswer Lobbies.LobbyJoin(LobbyClient client, string id)
 
 `StoreLobby` there is the package's own function, which makes a `LobbyInfo` of what the store says. An override has the parameters of what it replaces, so what a service keeps between calls is in its own C, or in what the functions are handed.
 
-The transport slot goes with [a network of the game's own](./own-network.md): `MatchOpen` and `MatchJoin` register it and then call `Session.Open()` and `Session.Join(address)`, and what the lobby says of its match is what that network's `Session.room` is. That page builds a whole service and network of a game's own, and [`steam`](./steam.md), which comes with `tide`, is one for Steam.
+The transport slot goes with [a network of the game's own](../multiplayer/own-network.md): `MatchOpen` and `MatchJoin` register it and then call `Session.Open()` and `Session.Join(address)`, and what the lobby says of its match is what that network's `Session.room` is. That page builds a whole service and network of a game's own, and [`steam`](./steam.md), which comes with `tide`, is one for Steam.
 
-Where a match is joined by its host (a Steam ID) and changes hands with [host migration](./matches.md#host-migration), the lobby follows: its owner's machine, once it runs the match, names it again, and the members' machines, which went there with the match, take the new name.
+Where a match is joined by its host (a Steam ID) and changes hands with [host migration](../multiplayer/matches.md#host-migration), the lobby follows: its owner's machine, once it runs the match, names it again, and the members' machines, which went there with the match, take the new name.
 
 ## Limits for now
 
 - **Tide's own service is for building and testing.** A player is whoever holds its secret, with no account behind it, and a name is what the player says. Lobbies are kept in the relay's memory: a relay that restarts has none.
 - **One lobby at a time.** A party that stays together from one match's lobby to the next isn't built: `seats` in a `MatchRequest` asks for room for a group, and the group's members each join the lobby that's found.
 - **The quick match is find-or-create.** There's no queue, and no rule for who's matched with whom beyond the request's mode and attributes.
-- **A kick is from the lobby.** The kicked player's machine leaves the lobby's match itself. A host that wants a player out of the match as well uses [`Session.Kick`](./matches.md#players-in-the-match).
+- **A kick is from the lobby.** The kicked player's machine leaves the lobby's match itself. A host that wants a player out of the match as well uses [`Session.Kick`](../multiplayer/matches.md#players-in-the-match).
 - **The Browse page shows six lobbies at a time**, of the 50 at most a list has, with **More** for the next six.
 - **In a browser, each open lobby holds one request to the service**, and a browser allows a site six at once to one address. More than six tabs of a game in one browser wait on each other.

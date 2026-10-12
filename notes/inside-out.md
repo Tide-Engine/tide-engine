@@ -148,6 +148,114 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
+### Current state (2026-10-12, last round of the day)
+
+This subsection is what the game is now. The dated paragraphs after it in
+this section are the passes that led here, kept for their reasons; where
+they disagree with this, this is right. The owner iterated on screenshots
+and a local two-player page, said tests were "useless until we land on
+something", and asked for the merge once the look and rules below stood.
+Everything not attributed to the owner is my pick.
+
+Look (`render.tide`, `paint.tide`, `geometry.tide`, `ui.tide`). The owner
+asked me for "your version" after rejecting a dimmer lab and an abandoned
+factory, then steered it: no lamp pool or lanterns ("the level should just
+be lit"), every room the same brightness, blur that fades in rather than
+starts at a wall, colour bounce turned down, no rim on wall tops.
+- A painted model on a wooden table. Pale plaster floor in two shades 0.025
+  apart, boxes sage, slate blue, plum and terracotta, a wooden parcel, brass
+  door posts, the outer room a low walnut top with a raised frame. A wall
+  block is one paint on top and darker sides, 0.31 of a tile high.
+- Light: warm where lit, cool where shaded (`tint`), 12-tap soft shadows
+  turned per pixel from a 4,096 lamp map, occlusion at the window's size,
+  a catch-light on the near edge of tops, a darker line where the surface
+  behind is a real step away, static grain. All of it is the same in every
+  room; nothing is keyed to the played room's tile, which changes at a
+  doorway (a clamp on `SceneFill`'s scale and three such terms made the
+  surroundings jump on entering).
+- Marks that give their own light (`SceneObject.glow`, a whole 1 in the blue
+  of the normal target): goal pads, parcel targets, the step preview, a
+  bot's visor and antenna tip. They bloom (`SceneGlowSource`,
+  `SceneGlowBlur`, half size, two rounds).
+- `SceneFinish` is the lens: sharp over the played room as it sits once the
+  camera has settled (`Picture.focusHalf`, `focusTile`, eased at 5 a second,
+  never tied to the zoom) and for 0.9 of a tile round it, then softer with
+  distance on every side to 10 pixels of a 12-tap disc; a little colour
+  parting and darkening to the corners. Colour bounce in `SceneComposite`
+  tints a floor by what stands within half a tile of it, as hue only.
+- The bots: tracks, a chassis under a shoulder plate, a two-step bone head,
+  visor and antenna in the seat's colour (`Maker`, `BotPart`). They face
+  their step, hop, and settle to the camera within a tenth of a second.
+- Header one slim row on wide windows; the puzzle's advice, the room, the
+  moves, the surroundings and who is where are on plates over the scene
+  (`WorkbenchLabels`, `WorkshopControls`). `SceneTop` is 66, or 128 under
+  1050 wide.
+
+Rules (`game.tide`).
+- `StepFrom` is the one step for bots, parcels and boxes; the box a room is
+  left through is its only parameter that differs (a room's own box for an
+  object, the trail's last for a bot). `TravelerStep` wraps it.
+- A box standing in a doorway cell is pushed on in by a bot entering, as a
+  parcel there is; it blocks only if it cannot move. The owner hit the old
+  block ("is this intended?") and I changed it for consistency with
+  parcels; they have played it since and not objected.
+- Facing doorways (`DoorsMeet`) and the step preview stand as described
+  below.
+
+Layouts (`levels.tide`). Every room is a square grid (`SquareRoom`), and
+`WidenRooms` then opens cells of the doubled wall that squaring left into
+floor, puzzle by puzzle: the owner would not have the dark strip I first
+drew there ("sounds like the level needs a redesign"). Each cell was opened
+by a search that kept it only while that puzzle's witness still solved it
+with the evidence the campaign asks. That shows each puzzle is still
+solvable as intended, not that no shortcut opened. Known: puzzle 4 has a
+15-move solution against its 31-move witness, origin unchecked; puzzles 1
+to 3 have witnesses of the shortest length; puzzles 5 to 12 are unchecked
+for shortcuts, and the box-in-doorway rule can only have added moves.
+
+Puzzle 7 is new, "Hold it steady" (owner: the partner-as-backstop move
+should be used by a puzzle). A small box must be parked on its outline with
+its parcel delivered inside, with open floor behind the outline, so one bot
+must stand there for the other to get in. A breadth-first search through
+the Move handler finds it solvable in 19 moves and, with every move in
+which a partner's body turned a push into an entry forbidden, finds no
+solution in the 726,703 positions reachable. Its evidence is one partner
+backstop. The same search finds puzzles 1 to 4 need no backstop and ran out
+of room on puzzle 5.
+
+What is drawn of things in motion (`map.tide`, `paint.tide`).
+- `FollowPushed` is the one path for a pushed box or parcel: a steady slide
+  within a room, and a `Transit` through a doorway, into the box beside it,
+  out to beside its room's box, straight between two boxes with facing
+  doorways, or back into the same room where a room holds itself. Boxes
+  and parcels share all of it. A bot's `MakerPassage` is separate: it is
+  tied to the camera's zoom and the fade between copies. A bot crossing
+  straight between two boxes glides in one motion and never takes the
+  outer room's size.
+- Echoes. A bot is solid only where it is: in a drawing of the box it came
+  in through, and at its own depth where a room repeats on the way down
+  (`through`, `level`, `repeats`). Elsewhere, the played room included, it
+  is an echo: greyed, unlit, 36% and stippled in two-pixel cells. A bot
+  arriving fades in as what it will be there, and one crossing through
+  another copy than this screen's is not drawn at this screen's doorway.
+  The owner asked for this in place of rethinking copies, and reported each
+  case fixed here in play except the last two, which they have not
+  confirmed.
+- A blocked step shakes its bot on both screens (`Hands.blockTime` by seat).
+- A dock outline is hidden under any box standing on it.
+
+Sound. `enter.wav` is a soft low whoosh (0.42 s, low-passed near 850 Hz,
+one raised-cosine swell), played at 0.26: the owner found the last one
+"a bit hard on the ears". Against it the new one has a quarter of the
+sample-to-sample movement and takes four times as long to reach half its
+peak. Nobody has listened to it but the owner, who has not said.
+
+Not done, and known: the browser fixture's wall and parcel patches were
+re-aimed for the new rooms only as far as its runs below say; the room
+layouts are still authored non-square and squared and widened at load; the
+text still says "dummy"; nothing was measured of what the lens, bloom and
+larger maps cost on real hardware.
+
 Square blocks again, with texture and depth (2026-10-12, later still). The
 owner did not like the rounded corners ("the square one looked better so
 make it like it was before") and found the surfaces "pretty flat": "lets
@@ -372,7 +480,7 @@ The authored replacement campaign has these production-command witnesses:
 | A place to stand | 31 |
 | Passing place | 39 |
 | The same corner | 21 |
-| Carried together | 27 |
+| Hold it steady | 19 |
 | Before it moves | 43 |
 | Two ways home | 35 |
 | Return address | 51 |
@@ -429,6 +537,38 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Tabletop model, echoes and new rules validation (2026-10-12)
+
+Native and web debug builds are warning-free. All 33 fixtures pass natively
+and under WASI: the twelve replays (puzzle 7's new 19-move witness among
+them), the exchanged jobs, and the second puzzle's exhaustive check, whose
+count is 489 positions on the widened room. One fixture changed with the
+rule: a box standing in a doorway is pushed in, where it used to block.
+
+`inside_out_play_webgl` passes in 639.31 s and `inside_out_play_webgpu` in
+544.51 s, once each, on the final code. They took about 170 s and 140 s
+before the lens, bloom, larger maps and full-size occlusion; the owner was
+told the scene is about twice as heavy and said the cost is fine. Their
+budget is 900 s. The fixture now tells paints by the order and rough ratios
+of their channels (`sagePaint`, `amberPaint`, `woodPaint`,
+`filledWoodPaint`, `markPaint`), as light, grain, focus and bounce leave no
+pixel an exact paint, and reads the slim header's positions. Its first run
+on this look failed "shared undo restores the physical parent context":
+the lens was still easing from the previous puzzle's room a third of a
+second after a puzzle change, so the baseline crop was softer than the
+later one. A new puzzle, a first view and a resize now settle the focus at
+once. The fixture has no assertion for echoes, crossings of boxes and
+parcels, or the new puzzle; those were checked in native captures and by
+the owner in play on a local two-player page.
+
+A before/after capture of five scripted two-player runs (48 frames) is
+byte-identical across the code cleanup that introduced `StepFrom` and
+`FollowPushed`. The thumbnail is 678,679 bytes, SHA-256
+`9bc21708a08f144d50e5a83a7b2f99ec6d2b8976313953172bbca0a7ab21a53e`. The
+docs production build passes. Web release pages were not rebuilt or staged
+and nothing was deployed: the public page still shows an older build. No CI
+was dispatched.
 
 ## Square blocks, texture and depth validation (2026-10-12)
 

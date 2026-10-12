@@ -6,7 +6,7 @@ static const char *const inside_out_solutions[12] = {
     "swww ESSSSWNEENNWWSNEESEESW w ES sw",
     "NEEE ee EEEWWWNN wswnswwnees S ennwwws S e SWW e",
     "W SSSSE ssss nnnnesssssw",
-    "SSSWWNESE nneeeenes eee NSWWW s",
+    "eeeeessw SSSEEEEWWWW",
     "WWW eesssswwne EEEEEENNNWWSWSSEEEN ssssw SWSSSE",
     "EEEEEEE nneesss nnnwwsssswww WWWWSSSSE",
     "NWWSE NEESSWN ssnw WNWS eeesww esswwnn enw eessswnn wnw seen",

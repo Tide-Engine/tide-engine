@@ -621,7 +621,9 @@ TIDE_TEST(inside_out_door_masks_entry_occupants_and_non_chain_pushes)
     blocked(0, 1);
     world.Workshop.layout.crateCount = 0;
     reference(0, 0, 0, 2, 1);
-    blocked(0, 1); // One-entry resolution never follows a gateway chain.
+    move(0, 1); // A box standing in the doorway is pushed on in, as a parcel is; no gateway chain is followed.
+    TIDE_CHECK(world.Workshop.puzzle.references.at[0].room == 0 && same_cell(world.Workshop.puzzle.references.at[0].position, tide_i2(1, 2)));
+    TIDE_CHECK(world.Workshop.puzzle.actors.at[0].room == 0 && same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(0, 2)));
     world.Workshop.layout.referenceCount = 0;
     world.Workshop.layout.rooms.at[0].doors = 14;
     actor(0, -1, 3, 2);

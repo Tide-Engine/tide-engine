@@ -23,9 +23,9 @@ local event(PuzzleCue cue) HearPuzzle(Hands hands)
     if (hands.quiet) return;
     if (cue.kind == 0) Audio.Play(woodenStep, cue.seat == hands.seat ? 0.30 : 0.15, cue.seat == 0 ? 0.95 : 1.10);
     else if (cue.kind == 1) Audio.Play(woodenPush, 0.37);
-    else if (cue.kind == 2) Audio.Play(doorwayRustle, 0.38);
+    else if (cue.kind == 2) Audio.Play(doorwayRustle, 0.26);
     else if (cue.kind == 3) Audio.Play(littleUndo, 0.28);
     else if (cue.kind == 4) Audio.Play(littleReset, 0.27);
     else if (cue.kind == 5) Audio.Play(littleSolve, 0.53);
-    else if (cue.kind == 6 && cue.seat == hands.seat) Audio.Play(woodenStop, 0.18);
+    else if (cue.kind == 6) Audio.Play(woodenStop, cue.seat == hands.seat ? 0.18 : 0.09);
 }
