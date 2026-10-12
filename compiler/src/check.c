@@ -268,6 +268,7 @@ typedef enum name_kind {
     NAME_CONST,
     NAME_SHADER,   // Frags and verts, where Draw.Mesh names them
     NAME_ASSET,    // Assets: values, like constants, read where their type's values are
+    NAME_PREFAB,
 } name_kind;
 
 static bool is_kind(const decl *d, const name_kind kind)
@@ -277,7 +278,8 @@ static bool is_kind(const decl *d, const name_kind kind)
     if (kind == NAME_CONST) return d->kind == DECL_CONST;
     if (kind == NAME_SHADER) return d->kind == DECL_SHADER;
     if (kind == NAME_ASSET) return d->kind == DECL_ASSET;
-    return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER && d->kind != DECL_ASSET;
+    if (kind == NAME_PREFAB) return d->kind == DECL_PREFAB;
+    return d->kind != DECL_PREFAB && d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER && d->kind != DECL_ASSET;
 }
 
 static void c_name_of(const decl *d, sb *out);
@@ -480,6 +482,7 @@ static const char *decl_what(const decl *d)
     case DECL_STRUCT: return "a struct";
     case DECL_EVENT: return d->is_command ? "a command" : "an event";
     case DECL_ENUM: return "an enum";
+    case DECL_PREFAB: return "a prefab";
     default: return "not a type";
     }
 }
@@ -4565,6 +4568,8 @@ static type check_self_call(checker *c, expr *e, decl *m)
     return m->result;
 }
 
+#include "prefab_check.inc"
+
 static type check_call(checker *c, expr *e)
 {
     param *const block = find_local(c, e->name) ? NULL : find_param(c, e->name);
@@ -4594,6 +4599,8 @@ static type check_call(checker *c, expr *e)
             diag_error(e->at, "Spawn can't be %s", c->short_circuit_side);
             diag_note("that side only runs sometimes; spawn into a local before the condition");
         }
+        decl *prefab = e->args.count ? prefab_named(c, e->args.items[0]) : NULL;
+        if (prefab) return check_prefab_spawn(c, e, prefab, false);
         e->call = CALL_SPAWN;
         e->local_world = e->placement_local;
         e->spawn_mask = check_component_list(c, e, "Spawn");
@@ -4971,6 +4978,13 @@ static type check_scene_call(checker *c, expr *e)
     }
     bool local = local_code(c);
     e->local_world = local;
+    if (load && e->args.count) {
+        decl *prefab = prefab_named(c, e->args.items[0]);
+        if (prefab) {
+            if (c->loop_header || c->branch_depth || c->short_circuit_depth) diag_error(e->at, "Scene.Load prefab instances in a statement or loop body, not a condition, step or conditional expression");
+            return check_prefab_spawn(c, e, prefab, true);
+        }
+    }
     if (!order_named_args(e, load ? "scene, visibility" : unload ? "scene" : "scene, player", load ? 1 : 0)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
@@ -9723,7 +9737,18 @@ static type check_expr(checker *c, expr *e)
 
 // An expression of any type, failable calls' and T? values too: what `??`,
 // `is`, `!`, `try` and `var` take.
+static type check_expr_any_raw(checker *c, expr *e);
 static type check_expr_any(checker *c, expr *e)
+{
+    if (e->prefab_reference) return e->type;
+    const unit *saved = c->unit;
+    if (e->authored_unit) c->unit = e->authored_unit;
+    const type result = check_expr_any_raw(c, e);
+    c->unit = saved;
+    return result;
+}
+
+static type check_expr_any_raw(checker *c, expr *e)
 {
     const bool whole_ok = c->device_whole_ok == e;
     c->device_whole_ok = NULL;
@@ -11749,6 +11774,12 @@ static bool names_only(const expr *e)
 // names assets (c->assets_constant): the pack's, the same on every machine.
 static bool is_constant(const checker *c, const expr *e)
 {
+    if (e->prefab_reference) return true;
+    if (e->authored_unit && c->unit != e->authored_unit) {
+        checker scoped = *c;
+        scoped.unit = e->authored_unit;
+        return is_constant(&scoped, e);
+    }
     type ignored;
     decl *other;
     switch (e->kind) {
@@ -12710,6 +12741,14 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
     for (int i = 0; i < f->attributes.count; i++) has_snap |= str_eq_c(f->attributes.items[i].name, "Snap");
     for (int i = 0; i < f->attributes.count; i++) {
         attribute *a = &f->attributes.items[i];
+        if (str_eq_c(a->name, "SceneRequired")) {
+            const type t = is_stored_optional(f->type) ? f->type.decl->fields.items[0].type : f->type;
+            if (a->args.count || a->values.count) diag_error(a->at, "[SceneRequired] takes no arguments");
+            if (d->kind != DECL_COMPONENT || f->is_local || (t.kind != TY_ENTITY && t.kind != TY_LOCAL_ENTITY)) {
+                diag_error(a->at, "[SceneRequired] marks an Entity or LocalEntity component field, optionally nullable, for prefab authoring");
+            }
+            continue;
+        }
         if (str_eq_c(a->name, "Name")) {
             if (d->kind != DECL_STRUCT || f->type.kind != TY_STRUCT
                 || (f->type.decl->skin_kind != SKIN_ANIMATION && f->type.decl->skin_kind != SKIN_BONE)) {
@@ -16169,7 +16208,8 @@ static void collect_decls(program *prog)
             c_name_of(d, &mine);
             for (int j = first_c_named(by_c_name, mine.data, mine.len); j >= 0 && j < i; j = by_c_name->next[j]) {
                 const decl *other = prog->decls.items[j];
-                const bool both_types = is_kind(d, NAME_TYPE) && is_kind(other, NAME_TYPE);
+                const bool both_types = (is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB)
+                                     && (is_kind(other, NAME_TYPE) || other->kind == DECL_PREFAB);
                 const bool both_systems = d->kind == DECL_SYSTEM && other->kind == DECL_SYSTEM;
                 const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION || d->kind == DECL_SHADER
                                    || other->kind == DECL_SHADER;
@@ -16298,6 +16338,7 @@ static void collect_decls(program *prog)
         case DECL_ASSET:
         case DECL_SHADER:
         case DECL_SETTINGS: // Not in prog->decls
+        case DECL_PREFAB:
             break;
         case DECL_SYSTEM:
             if (d->is_view) {
@@ -19065,6 +19106,13 @@ bool check(program *prog)
         check_local_part(&c, prog->local_parts.items[i]);
     }
     // Every signature first, so bodies can call any method or function.
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_PREFAB) continue;
+        prefab_instance *p = prefab_expand(&c, d);
+        prefab_check_values(&c, p, false, true);
+        d->prefab_checked = p;
+    }
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         c.unit = d->unit;

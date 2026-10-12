@@ -6471,6 +6471,49 @@ TIDE_TEST(lsp_open_folder_is_a_game)
     lsp_free(&server);
 }
 
+static void notify_file(const char *uri, int type);
+
+TIDE_TEST(lsp_prefab_project_and_refactors)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_prefab");
+    static const char main_file[] = "namespace Game;\ncomponent Health { int value = 7; }\nscene Main { }\n"
+                                    "event(Spawned) Setup(with Main) { Spawn(Enemy); }\n";
+    static const char prefab_file[] = "namespace Game;\nprefab Enemy\n{\n    Health { value = 3 };\n    entity Child : Part { }\n}\n"
+                                      "prefab Part { Transform; }\n";
+    write_file("lsp_prefab/main.tide", main_file);
+    write_file("lsp_prefab/Enemy.tprefab", prefab_file);
+    char root[700], uri_main[700], uri_prefab[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_prefab", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_prefab/main.tide", dir);
+    snprintf(uri_prefab, sizeof uri_prefab, "file:///%s/lsp_prefab/Enemy.tprefab", dir);
+    start_in(root);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(sent_count == 2);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]") && has(sent[1], "\"diagnostics\":[]"));
+    const char *rename = request_at(uri_main, "textDocument/rename", 1, 12, "\"newName\":\"Vitals\"");
+    TIDE_CHECK(has(rename, uri_prefab) && has(rename, uri_main) && has(rename, "Vitals"));
+    rename = request_at(uri_main, "textDocument/rename", 1, 24, "\"newName\":\"amount\"");
+    TIDE_CHECK(has(rename, uri_prefab) && has(rename, "amount"));
+    open_uri(uri_prefab, prefab_file);
+    rename = request_at(uri_prefab, "textDocument/rename", 1, 8, "\"newName\":\"Foe\"");
+    TIDE_CHECK(has(rename, uri_main) && has(rename, "Foe"));
+    rename = request_at(uri_prefab, "textDocument/rename", 6, 8, "\"newName\":\"Branch\"");
+    TIDE_CHECK(has(rename, "\"line\":4") && has(rename, "Branch"));
+    write_file("lsp_prefab/Enemy.tprefab", "namespace Game;\nprefab Enemy { Removed; }\n");
+    close_uri(uri_prefab);
+    notify_file(uri_prefab, 2);
+    bool prefab_diagnosed = false;
+    for (int i = 0; i < sent_count; i++) prefab_diagnosed |= has(sent[i], uri_prefab) && has(sent[i], "a prefab entry must name an ordinary component");
+    TIDE_CHECK(prefab_diagnosed);
+    remove_game_file("lsp_prefab/main.tide");
+    remove_game_file("lsp_prefab/Enemy.tprefab");
+    remove_folder("lsp_prefab");
+    clear_sent();
+    lsp_free(&server);
+}
+
 // A game whose tide.packages lists a package in a folder: its files are
 // analyzed with the game's, in its namespace. A package's file is analyzed
 // with the game that uses it, or else alone, with no Main; and a folder of

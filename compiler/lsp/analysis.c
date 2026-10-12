@@ -1159,6 +1159,17 @@ static void replace_refs(const decl *d)
     }
 }
 
+static void walk_prefab_bases(const prefab_node *node)
+{
+    if (!node) return;
+    if (node->base_decl) {
+        qualifier_ref(node->base_qual_at, node->base_at, node->base);
+        const str name = last_part(node->base);
+        add_occ((occurrence){.at = node->base_at, .len = name.len, .kind = OCC_TYPE, .decl = node->base_decl, .name = name});
+    }
+    for (int i = 0; i < node->children.count; i++) walk_prefab_bases(node->children.items[i]);
+}
+
 // In source order, and at one position in the order they were found: qsort
 // leaves ties in any order.
 static int occ_order(const void *a, const void *b)
@@ -1240,6 +1251,14 @@ static void index_program(void)
         }
         add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
                              .name = d->name});
+        if (d->kind == DECL_PREFAB && d->prefab_checked) {
+            walk_prefab_bases(d->prefab_root);
+            for (int n = 0; n < d->prefab_checked->entities.count; n++) {
+                const expr *spawn = d->prefab_checked->entities.items[n].spawn;
+                for (int c = 0; c < spawn->args.count; c++) walk_expr(spawn->args.items[c]);
+            }
+            continue;
+        }
         if (d->kind == DECL_ENUM && d->backing.len > 0) { // enum Voxel : byte
             add_occ((occurrence){.at = d->backing_at, .len = d->backing.len, .kind = OCC_TYPE, .name = d->backing,
                                  .type = {TY_INT, NULL}, .backing = true});
@@ -1553,6 +1572,7 @@ static const char *builtin_type_doc(const type_kind kind)
 static const char *decl_keyword(const decl *d)
 {
     switch (d->kind) {
+    case DECL_PREFAB: return "prefab";
     case DECL_COMPONENT: return d->is_scene ? "scene" : "component";
     case DECL_SINGLETON: return "singleton";
     case DECL_INPUT: return "input";
@@ -7678,7 +7698,7 @@ static void complete_draw_values(completion *c, const decl *shader)
 
 // Contexts the cursor can be in, found by scanning tokens.
 typedef enum context_kind {
-    CTX_TOP, CTX_DATA, CTX_HEADER, CTX_CODE, CTX_LITERAL, CTX_ATTRIBUTE, CTX_ATTRIBUTE_ARGS,
+    CTX_TOP, CTX_DATA, CTX_PREFAB, CTX_HEADER, CTX_CODE, CTX_LITERAL, CTX_ATTRIBUTE, CTX_ATTRIBUTE_ARGS,
     CTX_FIELD_ATTRIBUTE, CTX_FIELD_ATTRIBUTE_ARGS, // [Clamp(-1, 1)] before an input field
 } context_kind;
 
@@ -8623,6 +8643,13 @@ void analysis_completion(const int line, const int character, jbuf *out)
             context_kind next = CTX_CODE;
             if (top == CTX_TOP && before == T_IDENT && !after_fails(i)) next = CTX_DATA;
             else if ((top == CTX_CODE || top == CTX_LITERAL) && before == T_IDENT) next = CTX_LITERAL;
+            if (top == CTX_PREFAB) next = CTX_LITERAL;
+            for (int j = i - 1; (top == CTX_TOP || top == CTX_PREFAB) && j >= 0 && DOC->toks[j].kind != T_LBRACE && DOC->toks[j].kind != T_RBRACE && DOC->toks[j].kind != T_SEMI; j--) {
+                if (DOC->toks[j].kind == T_IDENT && (str_eq_c(DOC->toks[j].text, "prefab") || (top == CTX_PREFAB && str_eq_c(DOC->toks[j].text, "entity")))) {
+                    next = CTX_PREFAB;
+                    break;
+                }
+            }
             stack[++depth] = (frame){next, i, HEADER_NONE};
         } else if (kind == T_RBRACE && depth > 0) {
             depth--;
@@ -8749,6 +8776,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     case CTX_FIELD_ATTRIBUTE:
         if (pk == T_LBRACKET || pk == T_COMMA) {
+            item(&c, "SceneRequired", CK_FUNCTION, "[SceneRequired]", "Prefab authoring must supply a named entity reference; ordinary code can initialize it later.", "SceneRequired");
             item(&c, "Clamp", CK_FUNCTION, "[Clamp(lo, hi)]", "Keeps the field between lo and hi, before Sanitize runs.",
                  "Clamp($1)");
             item(&c, "Min", CK_FUNCTION, "[Min(x)]", "Keeps the field at least x, before Sanitize runs.", "Min($1)");
@@ -9077,6 +9105,21 @@ void analysis_completion(const int line, const int character, jbuf *out)
             }
         } else {
             complete_expression(&c, at, false);
+        }
+        break;
+
+    case CTX_PREFAB:
+        if (pk == T_COLON) {
+            for (int i = 0; i < A.written.count; i++) {
+                const decl *d = A.written.items[i];
+                if (d->kind == DECL_PREFAB) item(&c, name_for(d), CK_CLASS, "prefab", "Reusable rooted entity tree.", NULL);
+            }
+        } else {
+            for (int i = 0; i < A.prog->decls.count; i++) {
+                const decl *d = A.prog->decls.items[i];
+                if (d->kind == DECL_COMPONENT && !d->is_scene) item(&c, name_for(d), CK_STRUCT, "component", NULL, NULL);
+            }
+            item(&c, "entity", CK_KEYWORD, "named child entity", "Nested entities follow their parent's transform and lifetime.", "entity ${1:Child}\n{\n    $0\n}");
         }
         break;
 

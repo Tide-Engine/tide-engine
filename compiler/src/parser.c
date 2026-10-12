@@ -1905,6 +1905,47 @@ static decl *parse_operator(parser *p, decl *owner)
 }
 
 // component Name { Type field; ... }, and the same for singletons, inputs and structs.
+static prefab_node *parse_prefab_node(parser *p, const str name, const loc where, const int depth)
+{
+    if (depth > 128) fail_at(p, peek(p), "a prefab tree at most 128 levels deep");
+    prefab_node *node = NEW(prefab_node);
+    node->name = name;
+    node->at = where;
+    node->unit = p->unit;
+    if (accept(p, T_COLON)) {
+        const qname base = parse_qname(p, "nested prefab name");
+        node->base = base.text; node->base_at = base.name_at; node->base_qual_at = base.at;
+    }
+    expect(p, T_LBRACE, "'{' after prefab or entity name");
+    while (!at(p, T_RBRACE)) {
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "entity") && peek_at(p, 1)->kind == T_IDENT) {
+            advance(p);
+            const token *child = expect_ident(p, "child entity name");
+            vec_push(node->children, parse_prefab_node(p, child->text, child->at, depth + 1));
+        } else {
+            const qname comp = parse_qname(p, "component name or 'entity Name { ... }'");
+            expr *value = new_expr(E_LITERAL, comp.name_at);
+            value->qual_at = comp.at;
+            value->name = comp.text;
+            value->authored_unit = p->unit;
+            if (at(p, T_LBRACE)) parse_literal_inits(p, value);
+            expect(p, T_SEMI, "';' after a prefab component");
+            vec_push(node->components, value);
+        }
+    }
+    advance(p);
+    return node;
+}
+
+static decl *parse_prefab(parser *p)
+{
+    decl *d = new_named_decl(p, DECL_PREFAB, "prefab name");
+    d->prefab_root = parse_prefab_node(p, (str){0}, d->at, 0);
+    if (d->prefab_root->base.len) diag_error(d->at, "a top-level prefab has its own root; nest reusable prefabs with 'entity Name : Prefab'");
+    d->end = p->toks[p->pos - 1].at;
+    return d;
+}
+
 static decl *parse_data_decl(parser *p, const decl_kind kind)
 {
     const char *what = kind == DECL_COMPONENT   ? "component or scene name"
@@ -2536,6 +2577,8 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
+    const size_t path_len = strlen(src->path);
+    const bool prefab_file = path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0;
     parser p = {.toks = toks, .recover = recover, .prog = prog};
     p.unit = NEW(unit);
     p.unit->src = src;
@@ -2612,6 +2655,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         }
         // settings { ... }: kept apart from the declarations, as it names nothing
         if (t->kind == T_IDENT && str_eq_c(t->text, "settings") && peek_at(&p, 1)->kind == T_LBRACE) {
+            if (prefab_file) diag_error(t->at, ".tprefab files describe entity trees; put game settings and code in .tide files");
             advance(&p);
             if (local) diag_error(local->at, "the settings are the whole game's, so they can't be local");
             if (replace_word) refuse_replace_word(replace_word, "the settings are the game's own, and have no code to replace");
@@ -2650,6 +2694,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             d->is_command = true;
         }
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "enum")) d = parse_enum(&p);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "prefab")) d = parse_prefab(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) {
             d = parse_data_decl(&p, DECL_COMPONENT);
             d->is_scene = true;
@@ -2666,6 +2711,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         }
         else fail_at(&p, t, "'component', 'scene', 'singleton', 'struct', 'enum', 'event', 'input', 'system', 'view', 'frag', 'vert', 'extern', 'const', 'asset' or a function"); // Consumed, so recovery skips it
         d->unit = p.unit;
+        if (prefab_file && d->kind != DECL_PREFAB) diag_error(d->at, ".tprefab files contain prefab declarations; put components and code in .tide files");
         p.overriding = false;
         if (local) {
             if (d->kind == DECL_COMPONENT && !d->is_scene) {

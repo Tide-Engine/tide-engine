@@ -1713,6 +1713,23 @@ static void gen_load(gen *g, sb *o, const expr *e);
 // in the same world; otherwise it's in no scene.
 static void gen_spawn(gen *g, sb *o, const expr *e)
 {
+    if (e->prefab) {
+        const prefab_instance *p = e->prefab;
+        const bool scene = g->has_scene && g->scene_local == e->local_world;
+        sb_printf(o, "tide_prefab%d(%s, %s", p->index, e->local_world ? "tide_l" : "tide_w", scene ? "tide_scene" : "(tide_entity){0}");
+        for (int i = 0; i < p->overrides.count; i++) {
+            const expr *value = p->overrides.items[i];
+            sb_put(o, ", ");
+            gen_value(g, o, value->type_decl, value->inits.items, value->inits.count);
+        }
+        if (p->load) {
+            sb_put(o, ", ");
+            if (p->visibility) gen_expr(g, o, p->visibility);
+            else sb_put(o, "0");
+        }
+        sb_put(o, ")");
+        return;
+    }
     if (e->call == CALL_LOAD) {
         gen_load(g, o, e);
         return;
@@ -3105,6 +3122,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
     }
     if (e->bind == BIND_ASSET) { // Its global, set as the pack is loaded
         sb_put(o, asset_cname(e->constant));
+        return;
+    }
+    if (e->prefab_reference) {
+        sb_printf(o, "tide_nodes[%d]", e->prefab_entity);
         return;
     }
     if (e->skin_operation) {
@@ -7089,6 +7110,7 @@ static void gen_header(gen *g)
     sb_put(o, "typedef struct tide_command {\n    uint32_t size;      // Its bytes in the queue, which sets it\n");
     sb_put(o, "    uint16_t kind;\n    uint16_t id;        // Archetype for spawns, component for add and remove, event for sends.\n");
     sb_put(o, "    uint32_t depth;     // How far down a chain of events: one more than the change whose handlers recorded it\n");
+    if (prog->prefab_sites.count) sb_put(o, "    uint32_t prefab_pending; // Its initialization runs after the whole authored tree is ready\n");
     sb_put(o, "    tide_entity entity; // For sends, the entity it's sent to, or null for the world\n");
     if (prog->command_types.count) sb_put(o, "    tide_player_id sender; // Commands: authenticated by the session, never supplied by the payload\n");
     sb_put(o, "    union {\n        uint8_t tide_none;\n        tide_player_id player; // Who's added to or removed from a scene\n");
@@ -9471,6 +9493,7 @@ static void gen_command_recorders(gen *g)
     sb_put(o, "enum { TIDE_CMD_SPAWN, TIDE_CMD_ADD, TIDE_CMD_REMOVE, TIDE_CMD_DESTROY, TIDE_CMD_EVENT, TIDE_CMD_UNLOAD,\n"
               "       TIDE_CMD_SCENE_PLAYER, TIDE_CMD_SNAP");
     if (prog->hierarchy[0] || prog->hierarchy[1]) sb_put(o, ", TIDE_CMD_PARENT");
+    if (prog->prefab_sites.count) sb_put(o, ", TIDE_CMD_PREFAB_READY");
     sb_put(o, " };\n\n");
 
     // Where a tick records what local handlers hear (tide_world_tick_events):
@@ -9527,6 +9550,7 @@ static void gen_command_recorders(gen *g)
             "    c->id = (uint16_t)id;\n"
             "    c->depth = w->tide_chain;\n"
             "    c->entity = e;\n"
+            "%s"
             "    return c;\n"
             "}\n\n"
             "TIDE_HELPER void %scmd_remove(%s *w, tide_entity e, uint32_t component)\n"
@@ -9543,7 +9567,8 @@ static void gen_command_recorders(gen *g)
             "}\n\n",
             p, world_type(local),
             // A task on another thread records into its own queue (tide/jobs.h)
-            local ? "&w->commands" : "tide_recording(&w->commands)", local ? "frame" : "tick", p, world_type(local), p, p,
+            local ? "&w->commands" : "tide_recording(&w->commands)", local ? "frame" : "tick",
+            prog->prefab_sites.count ? "    c->prefab_pending = 0;\n" : "", p, world_type(local), p, p,
             world_type(local), p, p, world_type(local), p);
         if (!local) {
             sb_put(o, "// entity.Snap(): views draw it as it is, from the end of this tick\n");
@@ -9683,6 +9708,8 @@ static void gen_no_scene(gen *g, const bool local)
 }
 
 // Applying a world's queue at the end of the tick (the match) or frame (local).
+#include "prefab_codegen.inc"
+
 static void gen_apply(gen *g, const bool local)
 {
     const program *prog = g->prog;
@@ -9748,6 +9775,7 @@ static void gen_apply(gen *g, const bool local)
             }
             sb_put(o, "        tide_entity_set_born(&w->entities, c->entity, tide_born(tide_h));\n");
         }
+        if (prog->prefab_sites.count) sb_put(o, "        if (c->prefab_pending) break;\n");
         if (handled_for(prog, prog->spawned, a)) sb_printf(o, "        %sdispatch_%s(w, c->entity, &(%s){0});\n", p, spawned, spawned);
         if (!local && heard_for(prog, prog->spawned, a)) {
             sb_printf(o, "        if (tide_listening) tide_hear_%s(w, c->entity, &(%s){0});\n", spawned, spawned);
@@ -9974,6 +10002,17 @@ static void gen_apply(gen *g, const bool local)
     // nothing is left.
     sb parent_case = {0};
     if (prog->hierarchy[local]) sb_printf(&parent_case, "        case TIDE_CMD_PARENT: %sset_parent_now(w, c->entity, c->data.parent.parent, c->data.parent.keep); break;\n", p);
+    if (prog->prefab_sites.count) {
+        sb_put(&parent_case, "        case TIDE_CMD_PREFAB_READY:\n            if (!tide_entity_alive(&w->entities, c->entity)) break;\n            switch (c->id) {\n");
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (arch_local(g, a) != local || !prog->spawn_target.items[a]) continue;
+            sb_printf(&parent_case, "            case %d:\n", a);
+            if (handled_for(prog, prog->spawned, a)) sb_printf(&parent_case, "                %sdispatch_%s(w, c->entity, &(%s){0});\n", p, spawned, spawned);
+            if (!local && heard_for(prog, prog->spawned, a)) sb_printf(&parent_case, "                if (tide_listening) tide_hear_%s(w, c->entity, &(%s){0});\n", spawned, spawned);
+            sb_put(&parent_case, "                break;\n");
+        }
+        sb_put(&parent_case, "            default: break;\n            }\n            break;\n");
+    }
     sb_printf(o,
         "static void %sapply_from(%s *w, tide_queue_place at)\n"
         "{\n"
@@ -18905,6 +18944,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_local_fields(&g);
     gen_moves(&g);
     gen_command_recorders(&g);
+    gen_prefab_recorders(&g);
     gen_dispatch_prototypes(&g);
     gen_apply(&g, false);
     gen_apply(&g, true);

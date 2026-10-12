@@ -3079,6 +3079,170 @@ Implemented, awaiting approval:
 - The pieces widgets are made of, so a game can build its own like the built-in ones: a control's ID, which the compiler derives from the call as for the built-in widgets, whether it's hovered, pressed or focused, and drawing in the GUI's layer, over its panels (`Draw.Screen()` draws in its pixels, under it).
 - Scrolling, clipping, and keys that repeat while held.
 
+## Prefabs and authored scenes
+
+### Decided
+
+- Authored scenes/prefabs are human-readable text with Tide-like syntax. Files
+  describe entities, component values and references; game behavior remains in
+  ordinary Tide scripts. Refactoring an invalid component/type/reference must
+  produce a compiler/editor diagnostic rather than silently omit an object.
+- One rooted entity tree can serve as a reusable entity prefab or a loaded scene.
+  Nested entities follow their parent's transform and lifetime. Reusable nested
+  prefabs use the same authoring format and editor.
+- Values left out use component defaults. Authored overrides remain explicit in
+  text, so ordinary source control diffs and merges are understandable.
+- A prefab has an explicit name. Entity references are checked against the
+  resolved authored composition, including nested prefab instances.
+- Required authoring fields may be marked in component code. This validation
+  applies to authored composition, while ordinary code can build an entity in
+  stages. It does not make regular component constructors require every field.
+- Component availability comes from the game's compiled code and packages;
+  opening an authored file alone does not give it unrestricted access to code.
+- Settings are ordinary components on the root entity, configurable when
+  spawning/loading. Prefabs do not declare their own typed parameters for the
+  first build (owner decision, 2026-10-12).
+- A prefab instance's complete tree, components, references and parenting exist
+  before any of its `Spawned` handlers run. Handlers then run root-first (owner
+  decision, 2026-10-12).
+
+### Provisional
+
+**First text/compiler implementation (2026-10-12).** The spelling and initial
+limits below remain provisional. Transform and parenting are implemented
+separately in the following section. Native scene-editor UI is later work.
+
+Use `.tprefab`, normally one named declaration per file, such as
+`Enemy.tprefab`. Its body is its root entity. Ordinary component values use the
+existing Tide spelling; a semicolon ends each component entry. An `entity` block
+adds a named child. Names are stable authored identifiers, not runtime entity IDs.
+
+```csharp
+// Enemy.tprefab
+namespace Game;
+
+prefab Enemy
+{
+    Transform;
+    Health { value = 100 };
+    Aim { muzzle = Weapon.Muzzle };
+
+    entity Weapon : Pistol
+    {
+        Transform { localPosition = float3(0, 1, 0) };
+    }
+}
+
+// Pistol.tprefab
+namespace Game;
+
+prefab Pistol
+{
+    Transform;
+
+    entity Muzzle
+    {
+        Transform { localPosition = float3(0, 0, 0.5) };
+    }
+}
+
+// Components remain code in .tide files.
+component Aim
+{
+    [SceneRequired] Entity muzzle;
+}
+```
+
+- `entity Weapon : Pistol` instantiates Pistol as that child and applies the
+  component values in Weapon's block as overrides on its root. Its named
+  descendants participate in paths such as `Weapon.Muzzle`. Additional named
+  children can be added. Removing/replacing inherited children and top-level
+  prefab variants are later work; overlapping inherited names must not be
+  resolved by silently taking whichever file was read last.
+- Authoring expressions are literals, the existing constant/default expressions,
+  assets and named entity references. They do not call game functions, run
+  statements, read live worlds or start tasks. Entity names/paths are resolved
+  against the complete composition, allowing forward references. A path is
+  relative to the root of the prefab whose source wrote it; inherited paths
+  retain that scope in a nested instance. `this` refers to the entity block
+  containing the value. Parenting is
+  determined by nesting; reference fields may form cycles without changing that
+  parent tree. Recursive prefab inclusion and ambiguous/missing names are errors.
+- A nested override changes only fields it names. Other fields come from the
+  nested prefab and then the component defaults. Duplicate components or fields
+  in one authored block are errors. Component/type/default changes in code are
+  reflected during validation; stored text need not repeat unchanged defaults.
+- Entry points are `Spawn(Enemy)` and `local Spawn(Enemy)`, returning
+  Entity and LocalEntity respectively. Root component additions/overrides can
+  use the existing argument-list shape, for example
+  `Spawn(Enemy, Health { value = 50 })`. The compiler knows every effective
+  archetype and checks each instantiated placement's component/reference types.
+  Explicit Entity and LocalEntity fields retain their meanings.
+  A component literal overrides only its named fields; omitted fields retain
+  authored values. A bare component argument resets it to its component defaults.
+  Components absent from the authored root can be added through these arguments.
+- `Scene.Load(Level)` loads the same authored tree as a scene, with its authored
+  root as the scene entity. Loading adds private scene-instance metadata;
+  ordinary Spawn does not. Loading/unloading and scene visibility must preserve
+  existing scene ownership rules. A loaded root stays independent, as today's
+  scenes do. This requires generated construction support, not a global runtime
+  prefab registry.
+  Root overrides follow the prefab name: `Scene.Load(Level, LevelSettings {
+  difficulty = 2 }, visibility: SceneVisibility.Private)`. Visibility is optional,
+  named and last, and only match scenes have it. Loading from local code creates
+  local entities; match code creates match entities.
+- Settings use ordinary root components, such as
+  `LevelSettings { difficulty = 2 }`. Code reads them through its usual typed
+  component access. Prefab-specific parameter declarations are not part of the
+  proposed first slice. Root overrides must be applied before initialization
+  handlers observe the instance.
+- Reserve the complete instance's handles, initialize components/references and
+  establish parenting before sending any of that instance's Spawned events.
+  Then send Spawned in root-first authored order. This makes a root handler's
+  required child references usable immediately. Changes recorded by those
+  handlers remain ordered/deferred, as elsewhere. Code-driven ordinary Spawn
+  keeps its current behavior.
+- `[SceneRequired]` initially covers Entity/LocalEntity reference fields and
+  nullable forms of those. An effective authored value must resolve to an
+  existing entity of the correct placement; a missing/null reference is an
+  authoring error. Nested prefab overrides participate in the check. Ordinary
+  code-driven Spawn/Add, later assignments and deliberate runtime overrides are
+  not constrained by this authoring annotation.
+- `.tprefab` files join the same compiler input set as `.tide` files. Folder
+  builds include them under existing game/package boundaries, and CMake builds
+  use their registered game's source set. IDE analysis shares that build
+  context, so completion and rename use actual visible declarations.
+  A `.tprefab` file contains prefab declarations and namespace/using directives;
+  components, functions and game settings belong in `.tide` files. Prefab
+  declarations are also accepted in `.tide` files. Every declaration is validated,
+  including unused prefabs and required fields. Composition is initially bounded
+  to 1024 entities per instance and 128 levels of nesting.
+- Future standalone opening should identify a known game through tide.packages or a
+  CMake game manifest. Ambiguous shared-package files need a game selection;
+  without an identifiable game, require an explicit project selection instead
+  of searching arbitrary ancestor directories for components. An explicit
+  project option and remembered editor context can make later opens convenient.
+
+### Open
+
+Further authoring/editor work:
+
+- Root identity filters and prefab Main. The first implementation gives a prefab
+  no implicit component/type; use explicit root components for filters and keep
+  today's `.tide` `scene Main` startup convention. A future prefab startup
+  convention needs a separate decision.
+- Rename/completion for authored entity paths. Component/field/prefab symbol
+  renames are implemented; authored child names currently require text edits.
+- Authoring machine-local fields on match entities, including model/material
+  selection, without putting rendering resources in match snapshots or trusting
+  serialized executable code. A basic data tree alone does not solve this.
+- Defaults-versus-overrides during live editing/hot reload of existing instances.
+  The first slice can instantiate new trees; automatic modification of existing
+  gameplay instances needs a separate policy.
+- Native scene-editor UI and IDE embedding, undo/redo and save/merge formatting.
+  The text/compiler contract is the first layer; no native editor, `tide open`
+  command or browser model viewer is built by the first compiler implementation.
+
 ## Transform and entity parenting
 
 ### Decided
