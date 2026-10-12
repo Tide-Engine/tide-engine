@@ -4,7 +4,7 @@ Lobbies and a quick match for a game, before it has either of its own: a client 
 
 It's made of four slots, each a set of `virtual` functions with Tide's own service as their bodies, so a game that ships on another service replaces a slot with a package that overrides it and keeps the rest: who a player is, the lobbies, matchmaking, and how a lobby's match is reached.
 
-The docs say how it's used: https://tide-engine.dev/multiplayer/lobbies
+The docs say how it's used: https://tide-engine.dev/packages/lobby
 
 ## Using it
 

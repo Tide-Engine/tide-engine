@@ -4,7 +4,7 @@
 
 An experiment, as the Box2D package beside it is, and built the same way: what's here works and is tested, and what it costs is below. Its names and its shape are not settled, and Box3D itself is at 0.1.
 
-The docs have a page for it, with an example to play: https://tide-engine.dev/physics/box3d
+The docs have a page for it, with an example to play: https://tide-engine.dev/packages/box3d
 
 ## Using it
 

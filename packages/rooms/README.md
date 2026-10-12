@@ -2,7 +2,7 @@
 
 The menu a game opens on, and the way back to it from a match, so a game is playable with friends before it has a menu of its own: a title page (Play, Host a room, Join a room), a page to type a friend's code into, the room's page (the code to copy, who's in it, Resume, Leave), volume settings and a Menu button in the match. It's a page of Tide, with nothing a game couldn't write itself.
 
-The docs say how it's used: https://tide-engine.dev/multiplayer/matches#a-menu-that-comes-with-tide
+The docs say how it's used: https://tide-engine.dev/packages/rooms
 
 ## Using it
 

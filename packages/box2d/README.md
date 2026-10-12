@@ -4,7 +4,7 @@
 
 An experiment: what's here works and is tested, and what it costs is below. Its names and its shape are not settled.
 
-The docs have a page for it, with an example to play: https://tide-engine.dev/physics/box2d
+The docs have a page for it, with an example to play: https://tide-engine.dev/packages/box2d
 
 ## Using it
 
