@@ -102,6 +102,8 @@ static void prefab_compose(checker *c, prefab_instance *p, const int index,
             diag_error(written->at, "a prefab entry must name an ordinary component: 'Transform;' or 'Health { value = 100 };'");
             continue;
         }
+        // Tooling inspects the authored block as well as its expanded copy.
+        ((expr *)written)->type_decl = component;
         for (int j = 0; j < i; j++) {
             decl *other;
             if (lookup(c->prog, node->unit, node->components.items[j]->name, NAME_TYPE, &other) == component) {

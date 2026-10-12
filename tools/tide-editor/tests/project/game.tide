@@ -1,0 +1,4 @@
+scene Main { }
+component Health { int value = 100; }
+component LevelSettings { float roundSeconds = 60; int enemies = 3; }
+component Target { [SceneRequired] Entity entity; }

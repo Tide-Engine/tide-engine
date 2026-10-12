@@ -21,10 +21,35 @@ tide <command> [folder] [options]
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
+| `tide open <file.tprefab>` | Opens the native [scene editor](editors.md#native-scene-editor) |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
 | `tide help` | Lists every option |
 | `tide cc <options>` | clang, built into tide, for C you build yourself (see [Calling C](../c/functions.md#where-the-c-goes)) |
+
+## open
+
+```sh
+tide open scenes/Level.tprefab
+tide open scenes/Level.tprefab --project .
+tide open scenes/Level.tprefab --check
+```
+
+The desktop app edits rooted [prefabs and scenes](../game/scenes.md#authored-prefabs).
+It uses the nearest enclosing `tide.packages` as the project root, or the
+prefab's folder if there is none. Use `--project <folder>` when scripts live
+elsewhere in your game's folder. The selected root is visible in the window.
+The first version uses folder/package discovery; it does not read CMake game
+manifests. Packages must already be available locally (`tide fetch` downloads them).
+
+`--check` runs the same authoring validation without opening a window and returns
+1 for project errors. It inspects asset metadata, rather than compiling/importing
+the full game. For automated UI runs, `--frames`, `--capture` and `--script` use
+the normal [hidden input/capture loop](#scripts). The default editor size is
+1440 by 900; `--size W H` accepts 1100..8192 by 650..8192. `TIDE_HIDDEN`
+requires one of these bounded modes or `--check`.
+
+See [the editor controls and current limits](editors.md#native-scene-editor).
 
 ## run and build
 
