@@ -168,21 +168,57 @@ void HazardEdge(mut Sculpture sculpture, float2 from, float2 to, float width, fl
         Cuboid(sculpture, from + step * (index + .5), across, tile * .006, index % 2 == 0 ? HAZARD : RUBBER, floor, tile);
 }
 
-// Wall cells that touch are one block in the container's paint: the darker
-// rim runs only along its open sides, and the raised face carries across
-// from cell to cell. `joined` has a bit for each side with wall beyond it.
+const float WALL_HIGH = .258;
+const float WALL_ROUND = .30;
+const float WALL_FILLET = .20;
+
+// Where the square of side `radius` in a cell's corner is. Corners go
+// north-east, south-east, south-west, north-west.
+float2 CornerOffset(int corner, float radius)
+{
+    var reach = .5 - radius * .5;
+    return float2(corner < 2 ? reach : -reach, corner == 1 || corner == 2 ? reach : -reach);
+}
+
+// Wall cells that touch are one block in the box's paint, and an outer
+// corner of the block is rounded: a corner whose two sides both have open
+// floor beyond them. `joined` has a bit for each side with wall beyond it.
 void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, int joined)
 {
-    var height = size * .24;
-    Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, RUBBER, .40), floor, size);
-    Cuboid(sculpture, at, float2(size), size * .018, Color(tone.r * .84, tone.g * .84, tone.b * .84), floor + height, size);
+    var height = size * WALL_HIGH;
+    mut var rounded = 0;
+    for (var corner = 0; corner < 4; corner++)
+        if ((joined & (1 << corner)) == 0 && (joined & (1 << ((corner + 1) % 4))) == 0) rounded |= 1 << corner;
+    if (rounded == 0 || size <= 9)
+    {
+        Cuboid(sculpture, at, float2(size), height, tone, floor, size);
+        return;
+    }
+    var radius = WALL_ROUND;
+    Cuboid(sculpture, at, float2(size, size * (1 - radius * 2)), height, tone, floor, size);
+    Cuboid(sculpture, at - float2(0, size * (.5 - radius * .5)), float2(size * (1 - radius * 2), size * radius), height, tone, floor, size);
+    Cuboid(sculpture, at + float2(0, size * (.5 - radius * .5)), float2(size * (1 - radius * 2), size * radius), height, tone, floor, size);
+    for (var corner = 0; corner < 4; corner++)
+    {
+        var where = at + CornerOffset(corner, radius) * size;
+        if ((rounded & (1 << corner)) != 0) Corner(sculpture, false, where, size * radius, height, tone, floor, size, corner);
+        else Cuboid(sculpture, where, float2(size * radius), height, tone, floor, size);
+    }
+}
+
+// An inner corner, where wall runs along two sides of a floor cell, is
+// filled in with a hollow curve, so a block turns a corner in one sweep.
+void WallFillets(mut Sculpture sculpture, LevelLayout layout, int room, int2 position, float2 at, float size, Color tone, float floor)
+{
     if (size <= 9) return;
-    var north = (joined & 1) != 0 ? -.5 : -.39;
-    var east = (joined & 2) != 0 ? .5 : .39;
-    var south = (joined & 4) != 0 ? .5 : .39;
-    var west = (joined & 8) != 0 ? -.5 : -.39;
-    Cuboid(sculpture, at + float2((west + east) * .5, (north + south) * .5) * size, float2(east - west, south - north) * size,
-        size * .003, tone, floor + height + size * .018, size);
+    for (var corner = 0; corner < 4; corner++)
+    {
+        var first = position + Direction(corner);
+        var second = position + Direction((corner + 1) % 4);
+        if (!OnRoomGrid(layout, room, first) || !OnRoomGrid(layout, room, second)) continue;
+        if (TileAt(layout, room, first) != Tile.Wall || TileAt(layout, room, second) != Tile.Wall) continue;
+        Corner(sculpture, true, at + CornerOffset(corner, WALL_FILLET) * size, size * WALL_FILLET, size * WALL_HIGH, tone, floor, size, (corner + 2) % 4);
+    }
 }
 
 [Stage(ArtStage.Backdrop)]
@@ -225,7 +261,11 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
                     if (TileAt(workshop.layout, room, position + Direction(side)) == Tile.Wall) joined |= 1 << side;
                 WallTile(sculpture, at, lens.tile, tone, lens.floor, joined);
             }
-            else TilePaint(sculpture, tile, at, lens.tile, occupied, x + y, lens.floor);
+            else
+            {
+                TilePaint(sculpture, tile, at, lens.tile, occupied, x + y, lens.floor);
+                WallFillets(sculpture, workshop.layout, room, position, at, lens.tile, tone, lens.floor);
+            }
         }
     for (var shell = 0; shell < workshop.layout.roomCount; shell++)
     {
@@ -425,8 +465,6 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
             var end = mouth + tangent * lens.tile * 0.41;
             WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile, room < 0);
             WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile, room < 0);
-            // A striped threshold marks the doorway on the floor.
-            HazardEdge(sculpture, start, end, thickness, lens.floor + lens.tile * .012, lens.tile, .164);
             // Short yellow posts make the depth of the opening visible. The
             // floor remains continuous all the way through the missing wall.
             var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
@@ -437,73 +475,9 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
     }
 }
 
-// A box is always a square that fills its cell. A room that is longer one
-// way than the other is packed out to that square with solid wall on its two
-// short sides, and a doorway on one of them runs through the packing as a
-// strip of floor. Nothing can stand there: the rules know only the room.
-void PadBlock(mut Sculpture sculpture, float2 low, float2 high, Color tone, float floor, float tile)
-{
-    var size = high - low;
-    if (size.x <= .01 || size.y <= .01) return;
-    var at = (low + high) * .5;
-    var height = tile * .24;
-    Cuboid(sculpture, at, size, height, Math.Lerp(tone, RUBBER, .40), floor, tile);
-    Cuboid(sculpture, at, size, tile * .018, Color(tone.r * .84, tone.g * .84, tone.b * .84), floor + height, tile);
-    if (tile > 9 && size.x > tile * .3 && size.y > tile * .3)
-        Cuboid(sculpture, at, size - float2(tile * .22), tile * .003, tone, floor + height + tile * .018, tile);
-}
-void PadFloor(mut Sculpture sculpture, float2 low, float2 high, float floor, float tile)
-{
-    var thickness = Math.Max(.08, tile * .010);
-    Cuboid(sculpture, (low + high) * .5, high - low, thickness, Color(.55, .57, .60), floor - thickness, tile);
-    Cuboid(sculpture, (low + high) * .5, high - low, thickness * .24, Color(.90, .90, .87), floor, tile);
-}
-void RoomPadding(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens)
-{
-    if (room < 0) return;
-    var dims = RoomDimensions(layout, room);
-    var pad = (float2(Math.Max(dims.x, dims.y)) - dims) * .5 * lens.tile;
-    var low = lens.origin - float2(lens.tile * .5);
-    var high = low + dims * lens.tile;
-    var tone = RoomColor(room);
-    for (var side = 0; side < 4; side++)
-    {
-        var horizontal = side % 2 == 0;
-        var depth = horizontal ? pad.y : pad.x;
-        if (depth <= .01) continue;
-        mut var from = low;
-        mut var to = high;
-        if (side == 0) { to.y = low.y; from.y = low.y - depth; }
-        if (side == 1) { from.x = high.x; to.x = high.x + depth; }
-        if (side == 2) { from.y = high.y; to.y = high.y + depth; }
-        if (side == 3) { to.x = low.x; from.x = low.x - depth; }
-        var cell = DoorCell(layout, room, side);
-        if ((layout.rooms[room].doors & (1 << side)) == 0 || !OnRoomGrid(layout, room, cell))
-        {
-            PadBlock(sculpture, from, to, tone, lens.floor, lens.tile);
-            continue;
-        }
-        var mouth = MapPoint(float2(cell), lens);
-        var gap = lens.tile * .41;
-        if (horizontal)
-        {
-            PadBlock(sculpture, from, float2(mouth.x - gap, to.y), tone, lens.floor, lens.tile);
-            PadBlock(sculpture, float2(mouth.x + gap, from.y), to, tone, lens.floor, lens.tile);
-            PadFloor(sculpture, float2(mouth.x - gap, from.y), float2(mouth.x + gap, to.y), lens.floor, lens.tile);
-        }
-        else
-        {
-            PadBlock(sculpture, from, float2(to.x, mouth.y - gap), tone, lens.floor, lens.tile);
-            PadBlock(sculpture, float2(from.x, mouth.y + gap), to, tone, lens.floor, lens.tile);
-            PadFloor(sculpture, float2(from.x, mouth.y - gap), float2(to.x, mouth.y + gap), lens.floor, lens.tile);
-        }
-    }
-}
-
 void RoomTrim(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens, int box)
 {
     RoomWalls(sculpture, layout, room, lens);
-    RoomPadding(sculpture, layout, room, lens);
     if (room < 0 || lens.tile < 3) return;
     var badge = lens.origin + float2(lens.tile * 0.12, lens.tile * 0.12);
     FloorNumber(sculpture, room + 1, box >= MAX_ROOMS, badge, Math.Max(3, lens.tile * .30), DECAL, lens.floor + lens.tile * .015, lens.tile);

@@ -148,6 +148,47 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
+Square rooms, rounded corners and plain doorways (2026-10-12, later the
+same day; this replaces the packing described in the next paragraph's
+second bullet). The owner kept the lab look after seeing other styles, said
+the packed box was "still off-grid just filled the gaps", expected the
+puzzles to need redesigning, asked for the black/yellow lines on the
+entrances to go, and suggested rounded or merged corners ("box marching").
+- Every room is a square grid in the match itself. `SquareRoom`, run by
+  `LoadLevel` on each authored room, packs a room that is longer one way
+  out to its longer side with rows or columns of wall, the odd one below or
+  to the right (above or to the left for puzzle 9's narrow room, the one
+  place it mattered), moves everything in the room with it, and carries a
+  doorway on a packed side to the new edge along a corridor of floor. The
+  authored calls keep their old sizes; the layout a match holds is square.
+  `RoomPadding` and its helpers are gone.
+- Solutions: eight of twelve replay unchanged. Puzzles 8, 9 and 11 take the
+  old solution with one or two steps repeated where a corridor is crossed
+  (43, 35 and 28 moves), and show the same evidence as before. Puzzle 7's
+  old solution does not adapt. A breadth-first search through the Move
+  handler found a 27-move solution with no partner backstop, and the same
+  search on the puzzle as it was before found one of 24 moves: the two
+  backstops the old 41-move witness showed were never required. Its
+  minimum evidence is now one occupied move, one parent change and one
+  cargo transfer, and its lesson and three hints describe the 27-move
+  route. "Carried together pins two partner-body backstops" below is no
+  longer true of the witness. Puzzles 8, 9 and 11 were past the search's
+  four million states, so their witnesses are not known to be shortest.
+  The second puzzle's exhaustive count is still 167.
+- Wall blocks: `WallTile` draws a cell as one cuboid, or as a cross with
+  corner squares when an outer corner is rounded (both sides beyond it are
+  open floor, radius 0.30 of a tile). `WallFillets` fills an inner corner,
+  where on-grid wall runs along two sides of a floor cell, with a hollow
+  curve of radius 0.20. Both curves are two more instanced meshes built once
+  in `BeginSculpture` (`RoundMesh`, `FilletMesh`, six steps to the quarter),
+  placed by `Corner` with a quarter turn per quadrant, and drawn by the lamp
+  and scene passes after the cubes. A wall block is one paint now, shaded by
+  the light alone: the darker rim, raised face and darker sides are gone.
+  The fillet stands in the corner of a floor cell; nothing in the rules
+  knows of it.
+- The striped threshold on a doorway's floor is gone. The yellow posts
+  either side remain.
+
 Continuous cells and square boxes (2026-10-12). The owner asked for cells
 next to each other to be "more continuous" rather than "clearly cells on a
 grid", and for a box to always fill its cell as a square: rooms need not be
@@ -299,11 +340,11 @@ The authored replacement campaign has these production-command witnesses:
 | A place to stand | 31 |
 | Passing place | 39 |
 | The same corner | 21 |
-| Carried together | 41 |
-| Before it moves | 40 |
-| Two ways home | 34 |
+| Carried together | 27 |
+| Before it moves | 43 |
+| Two ways home | 35 |
 | Return address | 51 |
-| Folded landing | 26 |
+| Folded landing | 28 |
 | Crossed return | 28 |
 
 Return address requires a copied box's parent to change into its own
@@ -356,6 +397,28 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Square rooms and rounded corners validation (2026-10-12)
+
+Match layouts, four witnesses, puzzle 7's lesson and hints, presentation
+and the browser fixture's numbers for the two rooms it measures. Native and
+web debug builds are warning-free. All 33 fixtures pass natively and under
+WASI, including the twelve replays, the exchanged jobs and the second
+puzzle's exhaustive check. `inside_out_play_webgl` passes in 168.92 s and
+`inside_out_play_webgpu` in 123.23 s, on the first run. In the fixture the
+carried home is read as five by five with its contents half a tile higher,
+the recursive home as six by six with its contents half a tile to the left,
+and the self-cycle loop is entered one step later and is one step longer
+(`neesee`), as the home's east doorway has a corridor cell.
+
+Native captures of puzzle 12 at 1920x1080 and of puzzle 8 at 1280x800 were
+inspected: rounded outer corners, filleted inner ones, the five by five
+violet box on its cell, doorways without stripes. The other ten puzzles
+were not looked at in the new shapes, and nobody has played the four
+changed puzzles. The thumbnail is 166,680 bytes, SHA-256
+`810dccc05e3f11edb53538e2aa6e9a68cd5b01a85074b67e1e21b95ac5186926`. The
+docs production build passes. Nothing was staged or deployed. No CI was
+dispatched.
 
 ## Continuous cells, square boxes and the title-crop failure (2026-10-12)
 
