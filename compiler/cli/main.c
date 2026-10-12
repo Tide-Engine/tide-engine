@@ -8,6 +8,7 @@
 #include "editors.h"
 #include "install.h"
 #include "lexer.h"
+#include "open.h"
 #include "packages.h"
 #include "packages_cmd.h"
 #include "publish.h"
@@ -45,6 +46,7 @@ static void usage(void)
            "  fetch [folder]     download the game's packages from git that aren't on this machine yet, building nothing\n"
            "  publish [folder]   send this version of the game's source to the build service, which builds it with mods\n"
            "  editors            add Tide to VS Code, Cursor, VSCodium and Windsurf\n"
+           "  open <file.tprefab> open the native scene editor (--project <folder> selects its game)\n"
            "  upgrade            update tide to the newest version\n"
            "  version            show tide's version and channel, where it's installed, and which compilers it found\n"
            CC_USAGE
@@ -151,6 +153,7 @@ int main(const int argc, char **argv)
         return argc < 2 ? 2 : 0;
     }
     const char *command = argv[1];
+    if (strcmp(command, "open") == 0) return tide_open(argc, argv);
     char *root = install_root();
     // The packages that come with tide are sources of the installation, like the engine's
     char *builtin = path_join(root, "src/packages");

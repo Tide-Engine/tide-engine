@@ -1,5 +1,15 @@
 # Language features, as tidec builds them
 
+## Authored component bindings for the native editor (2026-10-12)
+
+Prefab composition retains the resolved component declaration on the original
+authored entry, alongside its checked expanded copy. The native editor uses this
+source binding to patch existing overrides by the actual component identity,
+including qualified/package names. Placement-specific expansion/checking and
+generated code remain unchanged; no syntax, runtime call or layout was added.
+The editor's package/nested-override cases exercise this binding. App contracts
+and validation are recorded in notes/editors.md.
+
 ## Asset value copy implementation (2026-10-11)
 
 The owner approved ordinary asset values sharing immutable storage until the first write. Language value semantics stay unchanged: changing a field/local does not change another copy or the catalog. Generated list setters, mutable slots, RemoveAt/Sort, extern mut wrappers, nested ownership/deep-copy loops and confirmed/interpolated container traversal prepare storage with actual ownership before writing. Plain Clear can release a retained asset descriptor without copying its payload. Nested containers and text/maps still apply their existing ownership rules after outer detachment. The approved runtime boundary is `tide_list_prepare`; `notes/ecs.md` records details. Generated asset globals are marked unused because an unreferenced debug asset is legitimate and newer clang warns on set-only globals. `asset_sharing` covers that texture case and generated mutation/ownership paths. `docs/spec.md` and `docs/game/assets.md` record the agreed copy behavior; Texture/Clip remain resource references.

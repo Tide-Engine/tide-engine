@@ -3110,7 +3110,7 @@ Implemented, awaiting approval:
 
 **First text/compiler implementation (2026-10-12).** The spelling and initial
 limits below remain provisional. Transform and parenting are implemented
-separately in the following section. Native scene-editor UI is later work.
+separately in the following section. The first native editor is described below.
 
 Use `.tprefab`, normally one named declaration per file, such as
 `Enemy.tprefab`. Its body is its root entity. Ordinary component values use the
@@ -3217,11 +3217,28 @@ component Aim
   declarations are also accepted in `.tide` files. Every declaration is validated,
   including unused prefabs and required fields. Composition is initially bounded
   to 1024 entities per instance and 128 levels of nesting.
-- Future standalone opening should identify a known game through tide.packages or a
-  CMake game manifest. Ambiguous shared-package files need a game selection;
-  without an identifiable game, require an explicit project selection instead
-  of searching arbitrary ancestor directories for components. An explicit
-  project option and remembered editor context can make later opens convenient.
+- First native editor (2026-10-12): `tide open <file.tprefab>` opens an existing
+  authored file in a desktop app. `--project <folder>` explicitly selects its
+  game; otherwise the nearest enclosing tide.packages selects the root, with
+  the file's folder as the no-manifest fallback. The root is displayed. Only
+  that folder's sources and resolved packages provide components; arbitrary
+  ancestor scripts are not gathered. CMake manifest/shared-package consumer
+  selection are future work. Checking uses DEBUG and package symbols, matching
+  ordinary IDE analysis; custom build defines are not selected yet.
+- The first app provides a composed hierarchy, component/default/override
+  inspection, Tide expression editing, child/prefab insertion and subtree
+  deletion. Inherited descendants are read-only; nested roots can override their
+  component values. Source-span edits retain untouched text and comments.
+  Syntax-invalid edits are rejected; project compiler errors block Save.
+  Saving compares the original disk text before replacement. Undo/redo retain
+  64 edits; recovery drafts retain the original source baseline under .tide/editor.
+  This is front-end/asset-metadata authoring validation, not game compilation.
+- The viewport uses transform markers with local TRS/parent composition, XY or
+  isometric projection, zoom and pan. It interprets a limited set of constant
+  TRS expressions; unsupported transforms and their subtrees are visibly omitted.
+  No game views, meshes or scripts run there. `--check` validates without a
+  window; bounded `--frames`/`--capture`/`--script` modes use the native platform
+  loop. UI details and controls remain provisional.
 
 ### Open
 
@@ -3239,9 +3256,11 @@ Further authoring/editor work:
 - Defaults-versus-overrides during live editing/hot reload of existing instances.
   The first slice can instantiate new trees; automatic modification of existing
   gameplay instances needs a separate policy.
-- Native scene-editor UI and IDE embedding, undo/redo and save/merge formatting.
-  The text/compiler contract is the first layer; no native editor, `tide open`
-  command or browser model viewer is built by the first compiler implementation.
+- IDE embedding, model/game-view previews, transform drag gizmos, authored
+  reparent/rename refactoring, new-file creation and conflict merge UI. The first
+  native app edits existing files and keeps conflicting drafts without merging
+  them automatically. CMake/consumer project selection and remembered context
+  remain open tooling work.
 
 ## Transform and entity parenting
 

@@ -21,6 +21,64 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 - Above a declaration a package replaced, which package did, and above an [override](../language/overrides.md), what it replaces. A click goes to the other.
 - Above a declaration, how many places name it ("3 references"), which a click lists: types, functions, methods, constants, assets, frags and verts, where "0 references" is code nothing uses. A system, view or handler has the line only when a `[Before]` or `[After]` names it.
 
+## Native scene editor
+
+Open an authored tree in a desktop window alongside your code editor:
+
+```sh
+tide open scenes/Level.tprefab --project .
+```
+
+The hierarchy shows the complete composition, including descendants inherited
+from nested prefabs. Select an entity in the hierarchy or click its viewport
+marker. The inspector shows its components and effective field values, including
+defaults. Select a field, edit its Tide expression, then press Enter or **Apply**.
+**Ctrl+A** selects the whole value while typing. Values can name entities,
+assets, constants and ordinary struct/list literals, with the normal compiler
+checks. **Reset override** restores the component default or inherited value.
+Untouched fields are not serialized.
+Direct entity references show their composed paths, so a nested prefab's `Lid`
+can be overridden as `Crates.Left.Lid`. When editing a more complex inherited
+expression, write its names in the current prefab's namespace and entity-path
+scope; compiler diagnostics check the resulting value.
+
+**Add component** lists this project's shared component definitions.
+**Child** adds an entity beneath the selection, and **Prefab** nests an existing
+prefab there. **Delete selected subtree** removes an authored child and its
+descendants. **Remove** deletes an authored component entry or override; it
+cannot remove a component inherited from the base prefab. Inherited descendants
+are read-only here: edit their source prefab. **Next** switches between prefab
+declarations in a file. **Source** shows the current text draft.
+
+The viewport draws unit wire cubes and axes as transform markers, with parenting,
+local position, rotation and scale. Use the wheel to zoom, middle drag to pan,
+and **XY**/**Isometric** to change projection. Literal TRS, constants and basic
+float arithmetic are previewed, including `quaternion.Euler(float3(...))`.
+Unsupported expressions and their subtrees are explicitly omitted from the
+preview. Game views, meshes, materials and scripts are not executed or rendered
+in this first version; there are no drag gizmos yet.
+
+**Save** / **Ctrl+S** updates the text file. **Undo** / **Ctrl+Z** and **Redo** /
+**Ctrl+Y** keep up to 64 edits. Source edits preserve surrounding comments,
+line endings and untouched values. Syntax-invalid edits are rejected so the
+inspector remains editable; type/reference errors remain visible and block Save.
+The compiler checks the whole project's scripts and prefabs as code changes,
+including `[SceneRequired]` references. This is front-end and asset-metadata
+validation; normal game builds still validate generated C and complete assets.
+
+Outside changes reload automatically while the document is clean. With unsaved
+edits, the draft stays in memory and Save refuses to overwrite changed source.
+**Reload** asks before discarding edits. Unsaved applied edits are also kept in
+`<project>/.tide/editor/`; opening the file again offers recovery. Recovery retains
+the original source baseline, so a newer outside edit still causes a conflict.
+These recovery files are local cache files, not authored project content.
+
+The first app opens existing `.tprefab` files and uses the folder/package project
+context described under [`tide open`](cli.md#open). It supports Tide expression
+fields rather than a full text editor: long expressions and source syntax errors
+are edited in your usual code editor. Entity rename/reparent authoring, model
+previews, game rendering and embedded IDE windows are future work.
+
 ## VS Code, Cursor, VSCodium and Windsurf
 
 Both editor integrations recognize `.tprefab` files as Tide. They use the same

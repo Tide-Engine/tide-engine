@@ -9,6 +9,7 @@
 #undef main
 
 static char calls[16];
+int tide_open(int argc, char **argv) { (void)argc; (void)argv; return 0; }
 static size_t call_count;
 static const char *passed[40]; // What the last run was given for its game
 static int passed_count;
