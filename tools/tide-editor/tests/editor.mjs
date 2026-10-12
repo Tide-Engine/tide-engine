@@ -41,6 +41,38 @@ if (mode === 'ui') {
     r = run('--capture', join(work, 'small.png'), '--size', '1100', '650');
     assert.equal(r.status, 0, r.stderr + r.stdout);
     const small = readPng(readFileSync(join(work, 'small.png'))); assert.equal(small.width, 1100);
+    writeFileSync(script, [
+        '2 mouse 120 295', '3 button left', // Authored nested instance Crates.Right.
+        '5 mouse 1200 446', '6 button left', // Inherited Model.model value.
+        '8 mouse 1340 634', '9 button left', // Browse checked assets.
+        '11 mouse 335 117', '12 button left',
+        '15 capture model.png',
+        '16 mouse 765 400', '17 button right down', '18 mouse 910 470', '19 button right up',
+        '22 capture model-orbit.png',
+        '23 mouse 650 400', '24 scroll 0 2',
+        '27 capture model-zoom.png',
+        '28 mouse 335 147', '29 button left', // Collection items can also be previewed.
+        '32 capture model-collection.png',
+        '33 mouse 335 117', '34 button left',
+        '36 mouse 930 668', '37 button left', // Assign the singular asset to the selected field.
+        '40 mouse 125 26', '41 button left',
+        '44 capture model-assigned.png', '45 quit',
+    ].join('\n'));
+    r = run('--script', script); assert.equal(r.status, 0, r.stderr + r.stdout);
+    const assigned = readFileSync(prefab, 'utf8');
+    assert.match(assigned, /entity Right : Crate\s*\{[^}]*\}[^}]*\}[^}]*Model \{ model = pyramid \}/);
+    const model = readPng(readFileSync(join(work, 'model.png')));
+    const orbit = readPng(readFileSync(join(work, 'model-orbit.png')));
+    const zoomed = readPng(readFileSync(join(work, 'model-zoom.png')));
+    const differs = (a, b) => {
+        let n = 0;
+        for (let y = 170; y < 590; y += 2) for (let x = 520; x < 1020; x += 2)
+            if (a.at(x, y).some((v, i) => v !== b.at(x, y)[i])) n++;
+        return n;
+    };
+    assert.ok(differs(model, orbit) > 500, 'orbit changes actual rendered geometry');
+    assert.ok(differs(orbit, zoomed) > 500, 'zoom changes actual rendered geometry');
+    r = run('--check'); assert.equal(r.status, 0, r.stderr + r.stdout);
     console.log('ok: native inspector editing, save, undo/redo and two viewport sizes');
 } else {
     // Real CLI dispatch and compiler diagnostics after a source refactor.

@@ -62,8 +62,8 @@ authored prefab and component defaults.
 loads into the local world. References must use the corresponding `Entity` or
 `LocalEntity` type. Prefab names are factories, so filters use explicit root
 components. Keep `scene Main` in `.tide` for startup. The initial limits are 1024
-entities per instance and 128 nesting levels; the native scene editor is not yet
-implemented.
+entities per instance and 128 nesting levels. Use `tide open Level.tprefab` for
+the [native scene editor](../tools/editors.md#native-scene-editor).
 
 ## Main
 

@@ -6068,6 +6068,7 @@ static type read_type(const type t)
 
 static type member_type(const type t, const str member)
 {
+    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && str_eq_c(member, "Value")) return (type){TY_MESH, t.decl->asset_ref_of};
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "animations")) return (type){TY_STRUCT, d->skin_animations};
@@ -6226,6 +6227,11 @@ static void method_snippet(const method_form *form, sb *out)
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
+    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
+        item(c, "Value", CK_PROPERTY, type_name((type){TY_MESH, t.decl->asset_ref_of}),
+             "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);
+        return;
+    }
     if (t.decl && t.decl->query_row) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
@@ -7001,6 +7007,8 @@ static void complete_value_types(completion *c, const unsigned which)
         item(c, "Map", CK_STRUCT, "Map<K, V>", builtin_type_doc(TY_MAP), "Map<$1, $2>");
         item(c, "Set", CK_STRUCT, "Set<K>", builtin_type_doc(TY_SET), "Set<$1>");
         if (!(which & VT_GPU)) {
+            item(c, "Asset", CK_STRUCT, "Asset<Mesh<V>>: checked persistent model reference",
+                 "Store a named static mesh asset in a component. Value reads the currently loaded mesh.", "Asset<Mesh<${1:Vertex3}>>");
             item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
                  "An immutable glTF or FBX model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
             item(c, "AnimationCatalog", CK_STRUCT, "built-in type",
@@ -10514,7 +10522,7 @@ static bool is_argument_colon(const int i)
 static bool generic_type(const str name)
 {
     return str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
-        || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh");
+        || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset");
 }
 
 static bool space_between(const fmt_item *a, const fmt_item *b)

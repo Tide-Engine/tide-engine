@@ -1,0 +1,3 @@
+// expect: Asset currently references a static Mesh<V>, not int
+component Art { Asset<int> value; }
+scene Main { }

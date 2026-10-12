@@ -1,0 +1,4 @@
+// expect: has 'Value', the currently loaded mesh
+component Art { Asset<Mesh<Vertex3>> model; }
+system Read(Art art) { Debug.Log(art.model.id); }
+scene Main { }

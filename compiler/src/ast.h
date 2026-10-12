@@ -569,6 +569,7 @@ typedef struct decl {
     int array_length;      // ...and how many
     int long_arrays;       // A struct: whether it holds an array of more than 4,096 elements (0 not worked out, 1 no, 2 yes: check.c, holds_long_array)
     skinned_kind skin_kind;
+    struct decl *asset_ref_of; // Asset<Mesh<V>>: persistent named identity, resolved to borrowed mesh on .Value
     type skin_vertex;
     struct decl *skin_contract;
     struct decl *skin_animations;
@@ -975,6 +976,8 @@ struct expr {
     stmt *local;        // BIND_LOCAL: the S_VAR declaring it
     decl *type_decl;    // BIND_TYPE, E_LITERAL's type, CALL_SEND's event, and CTOR_ENUM's enum
     decl *constant;     // BIND_CONST, on an E_NAME or E_MEMBER
+    bool asset_reference; // BIND_ASSET converted to its checked persistent reference
+    bool asset_ref_value; // .Value on an Asset<Mesh<V>>
 
     // E_MEMBER, E_METHOD
     expr *object;
@@ -1405,6 +1408,7 @@ typedef struct program {
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
     VEC(decl *) arrays;  // Every T[N] type, one per element type and length
     VEC(decl *) meshes;  // Every Mesh<V> type, one per vertex struct
+    VEC(decl *) asset_refs; // Persistent Asset<Mesh<V>> value types
     VEC(decl *) skinned_types; // Owned model values and their inferred/contracted catalog views.
     decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.

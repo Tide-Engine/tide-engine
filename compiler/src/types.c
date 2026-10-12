@@ -42,6 +42,7 @@ static const struct {
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])
 
 static const generic_form generic_forms[] = {
+    {"Asset", 1, {GENERIC_VALUE}, {"the referenced mesh type, like 'Asset<Mesh<Vertex3>>'"}, NULL, "'>' after the referenced mesh type"},
     {"List", 1, {GENERIC_ELEMENT}, {"the list's element type, like 'List<int>'"}, NULL, "'>' after the list's element type"},
     {"Map", 2, {GENERIC_KEY, GENERIC_ELEMENT},
      {"the map's key type, like 'Map<int, string>'", "the map's value type, like 'Map<int, string>'"},

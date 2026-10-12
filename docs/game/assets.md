@@ -173,6 +173,26 @@ asset Cubemap sky = "art/sky_??.png";
 
 ## Meshes
 
+To keep a static model selection in a component, use a checked asset reference:
+
+```csharp
+asset Mesh<Vertex3> rock = "art/rock.glb";
+component Model { Asset<Mesh<Vertex3>> model = rock; }
+view Render(Model model, World world)
+{
+    Draw.Mesh(model.model.Value, world.LocalToWorld(this));
+}
+```
+
+Assign a matching singular asset name in code or a prefab override. `.Value`
+reads the currently loaded mesh; the stored reference survives geometry reloads
+and world snapshots. `default` reads an empty mesh. The compiler rejects missing
+assets and mismatched vertex types. A borrowed mesh variable or a collection
+element cannot become a persistent reference in this first version.
+The [native editor](../tools/editors.md#native-scene-editor) can browse, assign
+and preview these fields; your views still choose materials and drawing.
+
+
 A model an artist made, or one a tool generated, is a mesh file: glTF (a `.glb`, or a `.gltf` with its buffers), FBX (`.fbx`, binary or ASCII) or a Wavefront `.obj`. `asset Mesh<V>` declares one as vertices of a struct of yours, `V`, which the file fills by its fields' names:
 
 ```csharp

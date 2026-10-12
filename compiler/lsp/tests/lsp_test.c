@@ -2889,6 +2889,22 @@ TIDE_TEST(lsp_arrays_hover_and_count)
     TIDE_CHECK(has(members, "How many elements the array holds: its length, a constant."));
 }
 
+TIDE_TEST(lsp_asset_reference_members)
+{
+    start();
+    open_document("component Art { Asset<Mesh<Vertex3>> model; }\nscene Main {}\n"
+                  "system Read(Art art) { Debug.Assert(art.model.Va$lue.indices.count == 0); }\n"
+                  "event(Spawned) Begin(with Main) { Spawn(Art); }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    const char *members = complete("component Art { Asset<Mesh<Vertex3>> model; }\nscene Main {}\n"
+                                   "system Read(Art art) { var model = art.model.$; }\n");
+    TIDE_CHECK(offers(members, "Value"));
+    TIDE_CHECK(!offers(members, "id"));
+    TIDE_CHECK(offers(complete("component Art { $ }\nscene Main {}\n"), "Asset"));
+    TIDE_CHECK(offers(complete("component Art { Asset<Mesh<Vertex3>> model; }\nscene Main {}\n"
+                             "system Read(Art art) { var model = art.model.Value.$; }\n"), "indices"));
+}
+
 TIDE_TEST(lsp_byte_scalar_hover_and_completion)
 {
     start();
