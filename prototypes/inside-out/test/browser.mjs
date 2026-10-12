@@ -526,7 +526,8 @@ try {
         await small.resize(1280, 800);
         await advanceMatch();
         await host.click(1075, 36);
-        await host.click(640, 251 + level * 33);
+        // Nine puzzles on the shelf.
+        await host.click(640, 301 + level * 33);
         await advanceMatch(10);
     };
 
@@ -675,55 +676,22 @@ try {
     await advanceMatch();
     assertImagesDiffer(await host.crop(titleClip), secondTitle, 'the occupied-box witness completes through production rules');
 
-    stage = 'movable primary self-nesting and cycle exit';
-    await choose(10);
+    stage = 'a room that holds a copy of itself';
+    await choose(7);
     const recursiveTitle = await host.crop(titleClip);
-    const canonicalTitle = await dimensionLabel(small);
-    const recursionGeometry = focusedGeometry(small, 6, 6);
-    const targetPatch = {
-        x: Math.round(recursionGeometry.x - recursionGeometry.tile * 1.75),
-        y: Math.round(recursionGeometry.y + recursionGeometry.tile * 0.25),
-        width: Math.floor(recursionGeometry.tile * 0.5), height: Math.floor(recursionGeometry.tile * 0.5),
-    };
-    await action('W');
+    await witness('WS');
     await advanceMatch(24);
-    const physicalParent = await saveCrop(small, 'selfnest-before', cameraBody(small));
-    const canonicalTarget = await small.crop(targetPatch);
-    featureMask(canonicalTarget, filledParcelMaterials, 'canonical self-nest parcel baseline');
-    await action('E');
+    const copyBefore = await saveCrop(small, 'copy-before', cameraBody(small));
+    await action('s');
     await advanceMatch(24);
-    const selfParent = await saveCrop(small, 'selfnest-after', cameraBody(small));
-    assertImagesDiffer(selfParent, physicalParent, 'pushing the primary box into its own interior changes its real surroundings');
-    assertImagesEqual(await dimensionLabel(small), canonicalTitle, 'self-nesting preserves the same canonical room identity');
-    assertFeaturesEqual(await small.crop(targetPatch), canonicalTarget, filledParcelMaterials, 'self-nesting preserves the canonical parcel target');
-    await small.screenshot('desktop-primary-self-nesting-inside');
-    await host.screenshot('desktop-primary-self-nesting-outside');
+    assertImagesDiffer(await saveCrop(small, 'copy-after', cameraBody(small)), copyBefore, 'a step changes the room and every drawing of it');
     await host.tapKey('KeyZ', 'z');
     await advanceMatch(24);
-    assertImagesEqual(await small.crop(cameraBody(small)), physicalParent, 'partner undo restores the exact pre-cycle scene');
-    await action('E');
-    // The home's east doorway reaches its edge along one more cell now.
-    await action('e');
-    await action('e');
-    await advanceMatch(24);
-    const loopStart = await small.crop(cameraBody(small));
-    await witness('neesee');
-    await advanceMatch(24);
-    // The final east step exits a self-containing primary back into the
-    // same canonical room with identical depth and entrance instance.
-    // Its verified direction/source cue still starts a real doorway zoom.
-    await small.tapKey('KeyD', 'd');
-    const cycleEarly = await saveCrop(small, 'cycle-exit-early', cameraBody(small));
-    await small.frames(5);
-    const cycleMiddle = await saveCrop(small, 'cycle-exit-middle', cameraBody(small));
-    await small.frames(5);
-    const cycleLate = await saveCrop(small, 'cycle-exit-late', cameraBody(small));
-    await advanceMatch(24);
-    const cycleSettled = await saveCrop(small, 'cycle-exit-settled', cameraBody(small));
-    assertImagesDiffer(cycleMiddle, cycleEarly, 'same-room cycle exits include a spatial intermediate frame');
-    assertImagesDiffer(cycleLate, cycleSettled, 'same-room cycle exits settle gradually');
-    assertImagesEqual(cycleSettled, loopStart, 'a finite self-cycle returns to the same canonical contents and framing');
-    await witness('swneessswnenneeeenwnnnn W');
+    // What a bot faces is the match's, so an undo turns it back too.
+    assertImagesEqual(await small.crop(cameraBody(small)), copyBefore, 'partner undo restores the exact scene');
+    await small.screenshot('desktop-self-copy-teal');
+    await host.screenshot('desktop-self-copy-amber');
+    await witness('ssssneNNSEensw');
     await small.tapKey('Enter', 'Enter');
     await advanceMatch();
     // The two pages draw the same title from glyphs they each cached in
@@ -732,7 +700,7 @@ try {
     // 469,42). A different title differs in hundreds of pixels, so a few
     // are allowed here, where two pages are compared; one page against its
     // own earlier crop stays exact.
-    assertImagesDiffer(await host.crop(titleClip), recursiveTitle, 'self-nesting, extraction and delivery complete the authored puzzle');
+    assertImagesDiffer(await host.crop(titleClip), recursiveTitle, 'the witness completes the puzzle through production rules');
     assert.ok(pixelsApart(await host.crop(titleClip), await small.crop(titleClip)) <= 8, 'recursive puzzle progression agrees on both screens');
     await choose(0);
     stage = 'phone layout and real touch movement';

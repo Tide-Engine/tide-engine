@@ -13,7 +13,7 @@ const int MAX_CRATES = 8;
 const int MAX_REFERENCES = 4;
 const int MAX_BOXES = 8;
 const int MAX_DEPTH = 8;
-const int LEVEL_COUNT = 12;
+const int LEVEL_COUNT = 9;
 const int UNDO_LIMIT = 128;
 
 enum Tile { Floor, Wall, Target, Exit }
@@ -55,6 +55,8 @@ struct Traveler
     int2 position;
     Entry[8] trail;
     int depth;
+    // The way it last moved, which is the way it faces.
+    int facing = 2;
 }
 struct RoomShell { int room = -1; int2 position; }
 struct Cargo { int room = -1; int2 position; bool active; }
@@ -190,118 +192,82 @@ Tile TileAt(LevelLayout layout, int room, int2 at)
     var index = CellIndex(at, RoomWidth(layout, room));
     return room == -1 ? layout.tiles[index] : layout.rooms[room].tiles[index];
 }
-bool EmptyCell(LevelLayout layout, Puzzle puzzle, int room, int2 at)
-{
-    return TileAt(layout, room, at) != Tile.Wall && BoxAt(layout, puzzle, room, at) < 0 && CargoAt(layout, puzzle, room, at) < 0 && ActorAt(puzzle, room, at) < 0;
-}
-
 // One step from a cell, for a bot, a parcel or a box alike. Inside the room it
-// is the next cell. Outward from a doorway cell it is the cell beyond `shell`,
-// the box the room is being left through. That box is the only thing that
-// differs, and it is always the box the bot in that room came in through:
-// its own step, and the step of whatever it pushes, so a pushed thing goes
-// where its pusher sees the doorway lead.
-bool StepFrom(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, int shell, out int nextRoom, out int2 next)
+// is the next cell. Outward from a doorway cell it is the cell beyond the
+// room's own box: a room has one box that is its outside, and everything in
+// it leaves beside that box, however it came in. A copy is a way in only.
+bool StepFrom(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, out int nextRoom, out int2 next)
 {
     nextRoom = room;
     next = from + Direction(direction);
     if (direction < 0 || direction > 3) return false;
     if (OnRoomGrid(layout, room, next)) return TileAt(layout, room, next) != Tile.Wall;
-    if (!ValidRoom(layout, room) || !ValidBox(layout, shell) || !CellEqual(from, DoorCell(layout, room, direction)) ||
+    if (!ValidRoom(layout, room) || !CellEqual(from, DoorCell(layout, room, direction)) ||
         (layout.rooms[room].doors & (1 << direction)) == 0) return false;
-    var placement = BoxPlacement(layout, puzzle, shell);
-    nextRoom = placement.room;
-    next = placement.position + Direction(direction);
+    nextRoom = puzzle.rooms[room].room;
+    next = puzzle.rooms[room].position + Direction(direction);
     return TileAt(layout, nextRoom, next) != Tile.Wall;
 }
 
-// Resolve one doorway only. Occupied destination doorways block instead of
-// silently following an unbounded chain of recursive references.
-bool Gateway(LevelLayout layout, Puzzle puzzle, int room, int2 at, int direction, out int destination, out int2 entry, out Entry trail)
+// The doorway of the box at a cell that faces something coming at it.
+bool Gateway(LevelLayout layout, Puzzle puzzle, int room, int2 at, int direction, out int destination, out int2 entry)
 {
     destination = room;
     entry = at;
-    trail = Entry { };
     var box = BoxAt(layout, puzzle, room, at);
     if (!ValidBox(layout, box)) return false;
     var opposite = (direction + 2) % 4;
     destination = BoxDestination(layout, box);
-    trail = Entry { box = box };
     if (!ValidRoom(layout, destination) || (layout.rooms[destination].doors & (1 << opposite)) == 0) return false;
     entry = DoorCell(layout, destination, opposite);
     return TileAt(layout, destination, entry) != Tile.Wall;
 }
-// Twice a doorway's distance along its wall from the middle of the box, in
-// cells of that room. Scaled by the other room's longest edge, two of these
-// compare exactly in the containing cell both boxes fill.
-int DoorReach(LevelLayout layout, int room, int direction)
-{
-    var cell = DoorCell(layout, room, direction);
-    return direction % 2 == 0 ? cell.x * 2 - (RoomWidth(layout, room) - 1) : cell.y * 2 - (RoomHeight(layout, room) - 1);
-}
-int RoomSpan(LevelLayout layout, int room) { return Math.Max(RoomWidth(layout, room), RoomHeight(layout, room)); }
 
-// Two boxes side by side connect only where their open doorways physically
-// face each other at the same place along the shared edge.
-bool DoorsMeet(LevelLayout layout, int from, int direction, int to)
+// Whatever stands in a cell: kind 0 is a bot, 1 a box, 2 a parcel, -1 nothing.
+struct Thing { int kind = -1; int index; }
+struct Spot { int room; int2 cell; }
+Thing ThingAt(LevelLayout layout, Puzzle puzzle, int room, int2 at)
 {
-    var opposite = (direction + 2) % 4;
-    if (direction < 0 || direction > 3 || !ValidRoom(layout, from) || !ValidRoom(layout, to)) return false;
-    if ((layout.rooms[from].doors & (1 << direction)) == 0 || (layout.rooms[to].doors & (1 << opposite)) == 0) return false;
-    if (DoorCell(layout, from, direction).x < 0 || DoorCell(layout, to, opposite).x < 0) return false;
-    return DoorReach(layout, from, direction) * RoomSpan(layout, to) == DoorReach(layout, to, opposite) * RoomSpan(layout, from);
+    var seat = ActorAt(puzzle, room, at);
+    if (seat >= 0) return Thing { kind = 0, index = seat };
+    var box = BoxAt(layout, puzzle, room, at);
+    if (box >= 0) return Thing { kind = 1, index = box };
+    var crate = CargoAt(layout, puzzle, room, at);
+    if (crate >= 0) return Thing { kind = 2, index = crate };
+    return Thing { };
 }
-
-bool ObjectDestination(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, int shell, out int nextRoom, out int2 next)
+Spot SpotOf(LevelLayout layout, Puzzle puzzle, Thing thing)
 {
-    if (!StepFrom(layout, puzzle, room, from, direction, shell, out nextRoom, out next)) return false;
-    var box = BoxAt(layout, puzzle, nextRoom, next);
-    if (box >= 0)
+    if (thing.kind == 0) return Spot { room = puzzle.actors[thing.index].room, cell = puzzle.actors[thing.index].position };
+    if (thing.kind == 1)
     {
-        // Leaving one box straight into its neighbor needs facing doorways;
-        // from the open floor an object is carried to whichever doorway faces it.
-        if (!OnRoomGrid(layout, room, from + Direction(direction)) && !DoorsMeet(layout, room, direction, BoxDestination(layout, box))) return false;
-        if (!Gateway(layout, puzzle, nextRoom, next, direction, out var destination, out var entry, out _)) return false;
-        nextRoom = destination;
-        next = entry;
+        var placement = BoxPlacement(layout, puzzle, thing.index);
+        return Spot { room = placement.room, cell = placement.position };
     }
-    return EmptyCell(layout, puzzle, nextRoom, next);
+    return Spot { room = puzzle.crates[thing.index].room, cell = puzzle.crates[thing.index].position };
 }
-bool PushCargo(LevelLayout layout, mut Puzzle puzzle, int crate, int direction, int shell)
+void PutThing(mut Puzzle puzzle, Thing thing, Spot spot)
 {
-    if (crate < 0 || crate >= layout.crateCount || crate >= MAX_CRATES || !puzzle.crates[crate].active) return false;
-    var item = puzzle.crates[crate];
-    if (!ObjectDestination(layout, puzzle, item.room, item.position, direction, shell, out var room, out var next)) return false;
-    puzzle.crates[crate].room = room;
-    puzzle.crates[crate].position = next;
-    return true;
-}
-bool PushBox(LevelLayout layout, mut Puzzle puzzle, int box, int direction, int shell)
-{
-    if (!ValidBox(layout, box) || !ValidRoom(layout, BoxDestination(layout, box))) return false;
-    var placement = BoxPlacement(layout, puzzle, box);
-    if (!ObjectDestination(layout, puzzle, placement.room, placement.position, direction, shell, out var room, out var next)) return false;
-    if (box < MAX_ROOMS)
+    if (thing.kind == 0)
     {
-        puzzle.rooms[box].room = room;
-        puzzle.rooms[box].position = next;
+        puzzle.actors[thing.index].room = spot.room;
+        puzzle.actors[thing.index].position = spot.cell;
+    }
+    else if (thing.kind == 1 && thing.index < MAX_ROOMS)
+    {
+        puzzle.rooms[thing.index].room = spot.room;
+        puzzle.rooms[thing.index].position = spot.cell;
+    }
+    else if (thing.kind == 1)
+    {
+        puzzle.references[thing.index - MAX_ROOMS].room = spot.room;
+        puzzle.references[thing.index - MAX_ROOMS].position = spot.cell;
     }
     else
     {
-        puzzle.references[box - MAX_ROOMS].room = room;
-        puzzle.references[box - MAX_ROOMS].position = next;
+        puzzle.crates[thing.index].room = spot.room;
+        puzzle.crates[thing.index].position = spot.cell;
     }
-    return true;
-}
-// A bot's step: StepFrom through the last box of its trail, which it has one
-// fewer of once it is out.
-bool TravelerStep(LevelLayout layout, Puzzle puzzle, Traveler actor, int direction, out int room, out int2 next, out int depth)
-{
-    depth = actor.depth;
-    var shell = depth > 0 && depth <= MAX_DEPTH ? actor.trail[depth - 1].box : -1;
-    if (!StepFrom(layout, puzzle, actor.room, actor.position, direction, shell, out room, out next)) return false;
-    if (!OnRoomGrid(layout, actor.room, actor.position + Direction(direction))) depth -= 1;
-    return true;
 }
 
 int EntryDestination(LevelLayout layout, Entry entry)
@@ -362,76 +328,107 @@ bool IsSolved(LevelLayout layout, Puzzle puzzle)
 // What one step does: the move handler applies it, and each screen asks the
 // same question of a copy to show its own dummy what a direction will do.
 enum Step { Blocked, Walk, Push, Enter }
-// The box a bot's push leaves `room` through: the one the bot came into it
-// by, `depth` entries into its trail, or the room's own where the trail does
-// not say.
-int PusherShell(LevelLayout layout, Traveler actor, int room, int depth)
+// One bot's step, and everything it sets moving. The same rule moves a bot,
+// a parcel and a box:
+// - A thing steps to the next cell. If something stands there, that is
+//   pushed the same way first, and whatever is beyond it, however long the
+//   row: nothing in a row holds it back.
+// - Only a wall or a bot stops a row. The thing against the stop cannot
+//   move; the thing behind it, if the stopped thing is a box with a doorway
+//   facing it, goes into that box instead, pushing on whatever stands in the
+//   doorway. If it cannot, it is stopped too, and the same is asked of the
+//   thing behind it, back to the bot that pushed.
+// So a bot gets into a box only when the box cannot be pushed, and the one
+// thing that can be put in a box's way and taken out again is the other bot.
+// Every step is worked out from where things stood, and then all move at once.
+bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out Step step)
 {
-    var shell = depth > 0 && depth <= MAX_DEPTH ? actor.trail[depth - 1].box : -1;
-    return ValidBox(layout, shell) && BoxDestination(layout, shell) == room ? shell : room;
+    step = Step.Blocked;
+    mut Thing[20] row = default;
+    mut Spot[20] goals = default;
+    row[0] = Thing { kind = 0, index = seat };
+    mut var count = 1;
+    mut var entered = false;
+    mut var decided = false; // The last of the row already has its goal: a doorway
+    for (var guard = 0; guard < 96; guard++)
+    {
+        var last = count - 1;
+        mut var free = true;
+        if (!decided)
+        {
+            var from = SpotOf(layout, puzzle, row[last]);
+            free = StepFrom(layout, puzzle, from.room, from.cell, direction, out var room, out var cell);
+            goals[last] = Spot { room = room, cell = cell };
+        }
+        decided = false;
+        if (free)
+        {
+            var ahead = ThingAt(layout, puzzle, goals[last].room, goals[last].cell);
+            if (ahead.kind < 0)
+            {
+                for (var moved = 0; moved < count; moved++) PutThing(puzzle, row[moved], goals[moved]);
+                step = entered ? Step.Enter : count > 1 ? Step.Push : Step.Walk;
+                return true;
+            }
+            mut var stopped = ahead.kind == 0 || count >= 20;
+            for (var earlier = 0; earlier < count; earlier++)
+                if (row[earlier].kind == ahead.kind && row[earlier].index == ahead.index) stopped = true;
+            if (!stopped)
+            {
+                row[count] = ahead;
+                count += 1;
+                continue;
+            }
+            // A bot, or the row come round on itself, stands there like a
+            // wall. What stood before it is asked whether it can be entered.
+            if (count < 20)
+            {
+                row[count] = ahead;
+                count += 1;
+            }
+        }
+        // The last of the row cannot move. Whatever is behind it goes into
+        // it, if it is a box with a doorway this way.
+        mut var found = false;
+        while (count >= 2 && !found)
+        {
+            var into = row[count - 1];
+            count -= 1;
+            if (into.kind != 1) continue;
+            var at = SpotOf(layout, puzzle, into);
+            if (!Gateway(layout, puzzle, at.room, at.cell, direction, out var destination, out var entry)) continue;
+            goals[count - 1] = Spot { room = destination, cell = entry };
+            decided = true;
+            found = true;
+            if (count == 1) entered = true;
+        }
+        if (!found) return false;
+    }
+    return false;
 }
+
 bool MovePuzzle(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out Step step)
 {
     step = Step.Blocked;
     if (puzzle.solved || seat < 0 || seat > 1 || direction < 0 || direction > 3) return false;
     mut var trial = puzzle;
-    mut var actor = trial.actors[seat];
-    if (actor.depth < 0 || actor.depth > MAX_DEPTH) return false;
-    if (!TravelerStep(layout, trial, actor, direction, out mut var room, out mut var next, out mut var depth)) return false;
-    var leaving = depth < actor.depth;
-    var source = actor.room;
-    if (leaving)
+    if (!Shove(layout, trial, seat, direction, out step))
     {
-        if (!RebaseTrail(layout, trial, actor, room, depth)) return false;
-        trial.actors[seat] = actor;
-        depth = actor.depth;
+        step = Step.Blocked;
+        return false;
     }
-    var box = BoxAt(layout, trial, room, next);
-    mut var pushed = false;
-    mut var entered = false;
-    // Facing doorways are one passage for dummies, parcels and boxes alike:
-    // a dummy walks straight through instead of pushing the neighbor.
-    var meets = leaving && box >= 0 && DoorsMeet(layout, source, direction, BoxDestination(layout, box));
-    if (box >= 0 && !meets)
+    trial.actors[seat].facing = direction;
+    // What a bot is inside of is its room's box, and that box's room's, and
+    // so on: worked out again for both, as a box either is in may have moved.
+    for (var who = 0; who < 2; who++)
     {
-        // A physical room moves whenever its destination is available. If
-        // pushing fails, doorway entry starts from the unchanged candidate.
-        mut var pushTrial = trial;
-        if (PushBox(layout, pushTrial, box, direction, PusherShell(layout, pushTrial.actors[seat], room, depth)))
-        {
-            trial = pushTrial;
-            pushed = true;
-        }
+        mut var actor = trial.actors[who];
+        if (!RebaseTrail(layout, trial, actor, actor.room, 0)) return false;
+        trial.actors[who] = actor;
     }
-    if (!pushed && box >= 0)
-    {
-        // A dummy in a doorway never stood on the open floor outside, so a
-        // neighbor that neither moves nor faces that doorway is a wall.
-        if (leaving && !meets) return false;
-        if (depth >= MAX_DEPTH || !Gateway(layout, trial, room, next, direction, out var destination, out var entry, out var back)) return false;
-        room = destination;
-        next = entry;
-        entered = true;
-        trial.actors[seat].trail[depth] = back;
-        depth += 1;
-        // A box standing in the doorway is pushed on in by whoever comes
-        // through, as a parcel there is. One that cannot move blocks the way.
-        var standing = BoxAt(layout, trial, room, next);
-        if (standing >= 0 && !PushBox(layout, trial, standing, direction, PusherShell(layout, trial.actors[seat], room, depth))) return false;
-    }
-    var occupant = ActorAt(trial, room, next);
-    if (occupant >= 0 && occupant != seat) return false;
-    var crate = CargoAt(layout, trial, room, next);
-    if (crate >= 0 && !PushCargo(layout, trial, crate, direction, PusherShell(layout, trial.actors[seat], room, depth))) return false;
-    trial.actors[seat].room = room;
-    trial.actors[seat].position = next;
-    trial.actors[seat].depth = depth;
-    // Clear popped slots so equivalent paths have identical state bytes.
-    for (var entry = depth; entry < MAX_DEPTH; entry++) trial.actors[seat].trail[entry] = Entry { };
     trial.moves += 1;
     trial.solved = IsSolved(layout, trial);
     puzzle = trial;
-    step = entered ? Step.Enter : pushed ? Step.Push : Step.Walk;
     return true;
 }
 

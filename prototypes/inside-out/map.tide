@@ -118,6 +118,21 @@ float2 DoorLip(LevelLayout layout, int room, int side)
         float2(Direction(side)) * 0.5) * RoomScale(layout, room);
 }
 
+// The box a bot went into by one step: one beside where it stood, whose
+// facing doorway is where it now stands. -1 for any other step.
+int EnteredBox(Workshop workshop, Traveler before, Traveler after)
+{
+    var apart = after.position - before.position;
+    if (before.room == after.room && Math.Abs(apart.x) + Math.Abs(apart.y) == 1) return -1;
+    for (var direction = 0; direction < 4; direction++)
+    {
+        var box = BoxAt(workshop.layout, workshop.puzzle, before.room, before.position + Direction(direction));
+        if (box < 0 || BoxDestination(workshop.layout, box) != after.room) continue;
+        if (CellEqual(after.position, DoorCell(workshop.layout, after.room, (direction + 2) % 4))) return box;
+    }
+    return -1;
+}
+
 MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after, bool capturedSource = false)
 {
     var destination = ReturnSurround(workshop, after, picture);
@@ -134,6 +149,15 @@ MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler
         trip.fromChild = before.room;
         trip.fromSide = PassageSide(destination.anchor - previous.anchor);
         trip.side = (trip.fromSide + 2) % 4;
+    }
+    else if (EnteredBox(workshop, before, after) >= 0)
+    {
+        // In through the box it stood beside, which may be a copy: the room
+        // it is in afterwards has one box of its own, somewhere else.
+        var box = EnteredBox(workshop, before, after);
+        trip.entering = true;
+        trip.gate = RoomSurround { room = before.room, anchor = picture.boxes[box], box = box, reference = box >= MAX_ROOMS };
+        trip.side = PassageSide(float2(before.position) - trip.gate.anchor);
     }
     else if (after.depth > before.depth && destination.room == before.room)
     {
