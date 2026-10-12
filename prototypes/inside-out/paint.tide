@@ -146,7 +146,9 @@ void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool o
     var tone = variation % 2 == 0 ? Color(.90, .90, .87) : Color(.875, .875, .845);
     var thickness = Math.Max(.08, size * .010);
     Cuboid(sculpture, at, float2(size), thickness, Color(.55, .57, .60), floor - thickness, size);
+    sculpture.detail = 1;
     Cuboid(sculpture, at, float2(size), thickness * .24, tone, floor, size);
+    sculpture.detail = 0;
     if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
     else if (tile == Tile.Exit)
     {
@@ -168,57 +170,23 @@ void HazardEdge(mut Sculpture sculpture, float2 from, float2 to, float width, fl
         Cuboid(sculpture, from + step * (index + .5), across, tile * .006, index % 2 == 0 ? HAZARD : RUBBER, floor, tile);
 }
 
-const float WALL_HIGH = .258;
-const float WALL_ROUND = .30;
-const float WALL_FILLET = .20;
-
-// Where the square of side `radius` in a cell's corner is. Corners go
-// north-east, south-east, south-west, north-west.
-float2 CornerOffset(int corner, float radius)
-{
-    var reach = .5 - radius * .5;
-    return float2(corner < 2 ? reach : -reach, corner == 1 || corner == 2 ? reach : -reach);
-}
-
-// Wall cells that touch are one block in the box's paint, and an outer
-// corner of the block is rounded: a corner whose two sides both have open
-// floor beyond them. `joined` has a bit for each side with wall beyond it.
+// Wall cells that touch are one block in the container's paint: the darker
+// rim runs only along its open sides, and the raised face carries across
+// from cell to cell. `joined` has a bit for each side with wall beyond it.
 void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, int joined)
 {
-    var height = size * WALL_HIGH;
-    mut var rounded = 0;
-    for (var corner = 0; corner < 4; corner++)
-        if ((joined & (1 << corner)) == 0 && (joined & (1 << ((corner + 1) % 4))) == 0) rounded |= 1 << corner;
-    if (rounded == 0 || size <= 9)
-    {
-        Cuboid(sculpture, at, float2(size), height, tone, floor, size);
-        return;
-    }
-    var radius = WALL_ROUND;
-    Cuboid(sculpture, at, float2(size, size * (1 - radius * 2)), height, tone, floor, size);
-    Cuboid(sculpture, at - float2(0, size * (.5 - radius * .5)), float2(size * (1 - radius * 2), size * radius), height, tone, floor, size);
-    Cuboid(sculpture, at + float2(0, size * (.5 - radius * .5)), float2(size * (1 - radius * 2), size * radius), height, tone, floor, size);
-    for (var corner = 0; corner < 4; corner++)
-    {
-        var where = at + CornerOffset(corner, radius) * size;
-        if ((rounded & (1 << corner)) != 0) Corner(sculpture, false, where, size * radius, height, tone, floor, size, corner);
-        else Cuboid(sculpture, where, float2(size * radius), height, tone, floor, size);
-    }
-}
-
-// An inner corner, where wall runs along two sides of a floor cell, is
-// filled in with a hollow curve, so a block turns a corner in one sweep.
-void WallFillets(mut Sculpture sculpture, LevelLayout layout, int room, int2 position, float2 at, float size, Color tone, float floor)
-{
+    var height = size * .31;
+    Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, RUBBER, .40), floor, size);
+    Cuboid(sculpture, at, float2(size), size * .018, Color(tone.r * .84, tone.g * .84, tone.b * .84), floor + height, size);
     if (size <= 9) return;
-    for (var corner = 0; corner < 4; corner++)
-    {
-        var first = position + Direction(corner);
-        var second = position + Direction((corner + 1) % 4);
-        if (!OnRoomGrid(layout, room, first) || !OnRoomGrid(layout, room, second)) continue;
-        if (TileAt(layout, room, first) != Tile.Wall || TileAt(layout, room, second) != Tile.Wall) continue;
-        Corner(sculpture, true, at + CornerOffset(corner, WALL_FILLET) * size, size * WALL_FILLET, size * WALL_HIGH, tone, floor, size, (corner + 2) % 4);
-    }
+    var north = (joined & 1) != 0 ? -.5 : -.39;
+    var east = (joined & 2) != 0 ? .5 : .39;
+    var south = (joined & 4) != 0 ? .5 : .39;
+    var west = (joined & 8) != 0 ? -.5 : -.39;
+    sculpture.detail = 2;
+    Cuboid(sculpture, at + float2((west + east) * .5, (north + south) * .5) * size, float2(east - west, south - north) * size,
+        size * .003, tone, floor + height + size * .018, size);
+    sculpture.detail = 0;
 }
 
 [Stage(ArtStage.Backdrop)]
@@ -263,14 +231,18 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
             }
             else
             {
+                // The floor's flecks run on from cell to cell.
+                sculpture.detailOrigin = float2(x, y) * 8;
                 TilePaint(sculpture, tile, at, lens.tile, occupied, x + y, lens.floor);
-                WallFillets(sculpture, workshop.layout, room, position, at, lens.tile, tone, lens.floor);
             }
         }
     for (var shell = 0; shell < workshop.layout.roomCount; shell++)
     {
         var layout = workshop.layout.rooms[shell];
         if (layout.dockRoom != room || layout.dock.x < 0) continue;
+        // A box standing on its outline hides it: none of it shows through a doorway.
+        var parked = workshop.puzzle.rooms[shell];
+        if (parked.room == room && CellEqual(parked.position, layout.dock)) continue;
         var here = MapPoint(float2(layout.dock), lens);
         FloorOutline(sculpture, here, float2(lens.tile * .91), Math.Max(.8, lens.tile * .028), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
         if (lens.tile > 18) FloorNumber(sculpture, shell + 1, false, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, RUBBER, lens.floor + lens.tile * .014, lens.tile);
@@ -422,7 +394,7 @@ void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness,
     if (size.x < 0.001 && size.y < 0.001) return;
     if (size.x < 0.001) size.x = thickness;
     if (size.y < 0.001) size.y = thickness;
-    var height = tile * .23;
+    var height = tile * .30;
     Cuboid(sculpture, (from + to) * .5, size, height, tone, floor, tile);
     if (hazard)
     {
@@ -468,8 +440,8 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
             // Short yellow posts make the depth of the opening visible. The
             // floor remains continuous all the way through the missing wall.
             var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
-            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .25, HAZARD, lens.floor, lens.tile);
-            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .25, HAZARD, lens.floor, lens.tile);
+            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
+            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
         }
         else WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile, room < 0);
     }
