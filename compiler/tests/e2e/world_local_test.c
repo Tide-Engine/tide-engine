@@ -36,12 +36,12 @@ TIDE_TEST(world_local_code_changes_local_entities)
     start();
     frame(&world); // Make's lamp and toggle are there from the next frame
     TIDE_CHECK(tide_local_entity_count(&local) == 2);
-    TIDE_CHECK(tide_get_Lamp(&local, local.Seen.lamp).glow == 5);
+    TIDE_CHECK(tide_get_tide_local_component_Lamp(&local, local.Seen.lamp).glow == 5);
     frame(&world);
-    TIDE_CHECK(local.Seen.glow == 6 && tide_get_Lamp(&local, local.Seen.lamp).glow == 6);
+    TIDE_CHECK(local.Seen.glow == 6 && tide_get_tide_local_component_Lamp(&local, local.Seen.lamp).glow == 6);
     frame(&world);
     frame(&world); // At 8, the toggle is sent Dim, whose handler takes 6 off at the end of the frame
-    TIDE_CHECK(local.Seen.glow == 8 && tide_get_Lamp(&local, local.Seen.lamp).glow == 2);
+    TIDE_CHECK(local.Seen.glow == 8 && tide_get_tide_local_component_Lamp(&local, local.Seen.lamp).glow == 2);
     frame(&world);
     TIDE_CHECK(local.Seen.glow == 3);
     tide_world_free(&world);

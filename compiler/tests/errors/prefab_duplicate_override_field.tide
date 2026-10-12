@@ -1,0 +1,5 @@
+// expect: field 'x' is set twice
+scene Main { }
+component Value { int x; }
+prefab Base { Value { x = 1 }; }
+prefab Broken { entity Child : Base { Value { x = 2, x = 3 }; } }

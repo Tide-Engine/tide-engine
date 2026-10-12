@@ -309,6 +309,8 @@ typedef struct param {
     // confirmed, in a view; in a local handler's trigger, once the server confirmed the tick that sent the event
     bool verified;
     loc verified_at; // ...the word
+    bool placement_local; // `local Component value`: access to machine-local storage of a shared component type
+    loc placement_at;
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
     // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
     // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
@@ -408,6 +410,7 @@ typedef struct system_wait {
 } system_wait;
 
 typedef enum decl_kind {
+    DECL_PREFAB, // A named authored entity tree; neither a component nor a runtime value type.
     DECL_COMPONENT,
     DECL_SINGLETON,
     DECL_SYSTEM,
@@ -505,8 +508,12 @@ typedef struct decl {
     bool query_row;   // Compiler-only foreach row: entity and named read-only component values
     struct param *query_source; // Its query parameter, for editor binding lookup
     bool is_local;    // `local`: belongs to this machine, not the match. Views are always local code.
+    struct decl *placement_of; // A private local storage specialization; values have the source component's type
+    struct decl *local_placement; // The source component's local specialization, created only when used
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
+    struct prefab_node *prefab_root;
+    struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
@@ -604,6 +611,8 @@ typedef struct decl {
 
     // Methods and functions
     struct decl *owner;       // A method's struct or component; NULL for a function
+    struct decl *placement_method; // Independently parsed body for a component method's local specialization
+    bool body_checked; // Prevents repeated checks of lazily instantiated placement methods
     bool is_mut_method;       // `mut void Damage(...)`: it may change the fields
     bool is_operator;         // `Money operator +(Money a, Money b)`: in a struct, with no value of its own
     bool is_interpolate;      // `Angle Interpolate(Angle from, Angle to, float t)`: how views blend its type, no value of its own
@@ -828,6 +837,8 @@ typedef enum builtin_call {
     CALL_ADD,
     CALL_REMOVE,
     CALL_DESTROY,
+    CALL_PARENT,    // entity.SetParent(parent[, worldPositionStays]): a checked deferred hierarchy change
+    CALL_TRANSFORM, // world.LocalToWorld(entity): explicit reads of ancestor transforms
     CALL_METHOD,    // stats.IsDead(), or IsDead() inside another of Stats' methods
     CALL_FUNCTION,  // Heal(unit.stats, 5), or Combat.Heal(...)
     CALL_SEND,      // Send(RoundOver { ... }), or target.Send(Hit { ... }): type_decl is the event
@@ -910,9 +921,39 @@ typedef struct field_init {
     field *field;
 } field_init;
 
+typedef struct prefab_node {
+    str name, base;
+    loc at;
+    const unit *unit;
+    loc base_at, base_qual_at;
+    decl *base_decl;
+    VEC(expr *) components;
+    VEC(struct prefab_node *) children;
+} prefab_node;
+
+typedef struct prefab_entity {
+    str path;
+    int parent;
+    expr *spawn;
+} prefab_entity;
+
+typedef struct prefab_instance {
+    decl *declaration;
+    int index;
+    bool load;
+    VEC(prefab_entity) entities;
+    VEC(expr *) overrides;
+    expr *visibility;
+} prefab_instance;
+
 struct expr {
     expr_kind kind;
     loc at;
+    const unit *authored_unit; // A copied prefab value keeps its source namespace.
+    str prefab_scope;          // Its source prefab instance's root path.
+    int prefab_entity;         // Authored entity reference, when prefab_reference is set.
+    bool prefab_reference;
+    prefab_instance *prefab;
     loc end; // E_SWITCH: just past its closing brace, for editor spans
     type type;
 
@@ -975,6 +1016,7 @@ struct expr {
     comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
+    bool placement_local; // `local Spawn(...)`: explicit machine-local placement
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
     struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
     bool postfix;         // ...written after its variable: the value is what the variable held before
@@ -1266,6 +1308,8 @@ typedef struct decl_index {
 } decl_index;
 
 typedef struct program {
+    VEC(expr *) prefab_sites;
+    decl *prefab_scene[2]; // Private loaded-root marker, per placement.
     VEC(unit *) units; // Its files, in the order they're parsed: sorted by path
     VEC(decl *) decls; // In source order, file by file, builtins first.
     VEC(decl *) replaced; // What overrides replaced (decl.replaced_by), which is no longer in `decls` or any list made of it
@@ -1367,6 +1411,9 @@ typedef struct program {
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.
+    decl *transform;     // Shared Transform component; placement determines its world
+    decl *hierarchy[2];  // Private per-world hierarchy state, present only when hierarchy operations are used
+    decl *hierarchy_node;
     decl *devices;       // The built-in Devices record.
     VEC(decl *) records; // Built-in records: Devices, Keyboard, Mouse, Gamepad, Dpad, Button.
     VEC(device_leaf) device_leaves; // Each value the devices send: a button, stick, trigger, axis, int or bool

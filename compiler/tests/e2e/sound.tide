@@ -1,5 +1,5 @@
 // Sound fields: a sound source a local field keeps, which the frame names to
-// the mixer while it plays, in a local singleton, a local component, a match
+// the mixer while it plays, in a local singleton, a component, a match
 // component's local fields and a struct inside one. The host (sound_test.c)
 // reads what each frame recorded.
 
@@ -28,7 +28,7 @@ local singleton Music
     bool listen; // The view plays the microphone through `ear`
 }
 
-local component Spark
+component Spark
 {
     float3 at;
     Sound crackle;
@@ -73,6 +73,6 @@ view Place(mut Music music)
     if (music.spark)
     {
         music.spark = false;
-        Spawn(Spark { at = float3(0, 1, 0), crackle = Sound { clip = buzz, spatial = true, position = float3(0, 1, 0), playing = true } });
+        local Spawn(Spark { at = float3(0, 1, 0), crackle = Sound { clip = buzz, spatial = true, position = float3(0, 1, 0), playing = true } });
     }
 }

@@ -390,3 +390,37 @@ Built 2026-10-08, after the owner asked for the IDE to respond properly without 
 ## Singleton methods and view times (2026-10-11)
 
 Editor semantic analysis recognizes singleton methods for dot/field-scope completion and hover, using the compiler's readonly diagnostics. ViewTime and the reserved enabled-input viewTime field come from the analyzed compiler program; hover describes confirmed interpolation instead of exact/unblended verified views. `lsp_singleton_methods_and_presented_view_time` pins method completion/hover, readonly singleton errors and viewTime.valid completion.
+
+## Shared components and parenting (2026-10-12)
+
+Editor source occurrences normalize private component/method specializations back
+to the public declarations, preserving rename and definition references across
+match/local access. Hovers/headers retain local access qualifiers. Completion
+uses shared component definitions, offers local Spawn in local code, and no
+longer suggests local component declarations. Entity methods include SetParent;
+World includes Parent and LocalToWorld, with local typed handles in signatures.
+When a method is used only locally, its checked local body supplies implicit-this
+hover context. The shared grammar highlights local placement/access and keeps
+existing local-field and contextual-identifier behavior. The new LSP test checks
+local implicit this, parent/transform completion and signatures, and a four-site
+rename across both placements. Final validation is recorded in language.md.
+
+## Authored prefab files (2026-10-12)
+
+VS Code and JetBrains recognize .tprefab as Tide, sharing the TextMate grammar,
+LSP server and existing game-run selection. JetBrains icon/banner/context-menu
+checks accept both extensions. The shared grammar scopes prefab and entity
+declarations; the language server watches and discovers .tprefab under the same
+manifest/folder/package boundaries as .tide.
+
+Neutral checked prefab compositions are indexed even when unused. Component and
+field rename/definition references include authored entries; prefab symbol renames
+include Spawn/Load and nested prefab bases. Authored child-name rename/path
+completion is not yet implemented. Basic component/field completion works in
+authored blocks, with nested-prefab suggestions after a colon. SceneRequired has
+field-attribute completion. No native scene UI or model viewer was introduced.
+
+lsp_prefab_project_and_refactors drives folder discovery, script-to-prefab type
+and field renames, prefab and nested-base renames, and watched invalid-file
+diagnostics. The grammar has a prefab/child declaration probe. Validation is
+recorded with the compiler build in notes/language.md.

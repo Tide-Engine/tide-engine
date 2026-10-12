@@ -4,7 +4,7 @@ description: "Set up Tide in VS Code or JetBrains IDEs with language server supp
 
 # Editors
 
-Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](packages.md). Across all of them, editors get:
+Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](../packages/using-and-writing.md). Across all of them, editors get:
 
 - Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
 - Enum assignments prioritize and preselect the expected enum type: after `zombie.state =`, `ZombieState` comes first, followed by its qualified members. With [enum shorthand](../language/basics.md#enums-and-switch), `zombie.state = .` offers just that enum's members. A leading dot also completes members in typed declarations, returns, comparisons, enum switch cases and arguments whose parameter type is unambiguous.
@@ -23,6 +23,12 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
+Both editor integrations recognize `.tprefab` files as Tide. They use the same
+game/package context as scripts, report invalid authored components and references,
+and include prefab files when renaming components, fields and named prefabs.
+Authored entity names and paths currently need manual text edits. See
+[Authored prefabs](../game/scenes.md#authored-prefabs) for the text format.
+
 The installer adds Tide to the ones it finds, and `tide upgrade` keeps it up to date. Installed one later? Run:
 
 ```sh
@@ -39,7 +45,7 @@ In a folder you haven't trusted (VS Code's Restricted Mode), nothing from it run
 
 ### Running the game
 
-The play button above a `.tide` file runs its game, which is the folder you opened, or the folder of the game it's in when that has a `tide.packages` of its own; a [package](packages.md)'s file runs the open game that lists it:
+The play button above a `.tide` file runs its game, which is the folder you opened, or the folder of the game it's in when that has a `tide.packages` of its own; a [package](../packages/using-and-writing.md)'s file runs the open game that lists it:
 
 - **Tide: Run** plays it in a window of its own, as `tide run` does.
 - **Tide: Run on the Web** plays it in a browser tab beside your code: VS Code's integrated browser, or the Simple Browser in editors without it. A game only gets keys while its tab has focus, and the editor may pause it while its tab is hidden, so keep it in a group of its own.
@@ -68,7 +74,7 @@ JetBrains' dark color schemes draw type names like plain text, so Tide's types s
 
 ### Running the game
 
-Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl+Shift+R on macOS), to run its game, which is the project's folder, or the folder of the game it's in when that has a `tide.packages` of its own; a [package](packages.md)'s file runs the project's game when it lists the package. The run is named after the folder, like `mygame`:
+Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl+Shift+R on macOS), to run its game, which is the project's folder, or the folder of the game it's in when that has a `tide.packages` of its own; a [package](../packages/using-and-writing.md)'s file runs the project's game when it lists the package. The run is named after the folder, like `mygame`:
 
 - **mygame** plays it in a window of its own, as `tide run` does.
 - **mygame (web)** plays it on the web, in the **Tide Game** tool window. Its **Open DevTools** button shows the page's console, where each reload says what it did. The game only gets keys while the tool window has focus.

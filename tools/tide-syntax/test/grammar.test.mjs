@@ -83,6 +83,14 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('authored prefab and child declarations', () => {
+    const lines = tokenize('prefab Enemy\n{\n    entity Weapon : Pistol\n    {\n        Transform;\n    }\n}');
+    check(lines[0], ['prefab', 'storage.type']);
+    check(lines[0], ['Enemy', 'entity.name.type']);
+    check(lines[2], ['entity', 'storage.type']);
+    check(lines[2], ['Weapon', 'entity.name.type']);
+});
+
 test('switch expression arm arrows', () => {
     const lines = tokenize('int result;\nresult = mode switch { 0 => 1, _ => 2 };');
     check(lines[1], ['switch', 'keyword.control']);
@@ -157,7 +165,7 @@ const cases = {
     ],
     'local and async, in either order': [
         ['local event Shown', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type']]],
-        ['local component Toast', [['local', 'storage.modifier'], ['component', 'storage.type'], ['Toast', 'entity.name.type']]],
+        ['component Toast', [['component', 'storage.type'], ['Toast', 'entity.name.type']]],
         ['async local event(Shown) Fade(', [
             ['async', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type'],
             ['Fade', 'entity.name.function'], ['Fade', '!entity.name.function.call'],

@@ -69,6 +69,33 @@ static void free_info(game_info *info)
     free(info->asset_paths);
 }
 
+TIDE_TEST(asset_usage_retains_instantiated_prefab_values)
+{
+    static const char text[] =
+        "asset string kept = \"assets/rules.txt\";\n"
+        "asset string unused = \"assets/rules.txt\";\n"
+        "component Label { string text; }\n"
+        "prefab Child { Label { text = kept }; }\n"
+        "prefab Tree { entity Child : Child { } }\n"
+        "prefab Unused { Label { text = unused }; }\n"
+        "scene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Tree); }\n";
+    program *p = checked(text);
+    TIDE_REQUIRE(p);
+    program_strip_unused_assets(p);
+    TIDE_CHECK(has_asset(p, "kept"));
+    TIDE_CHECK(!has_asset(p, "unused"));
+    TIDE_REQUIRE(folder_make(ASSET_USAGE_WORK));
+    const codegen_options options = {.name = "prefab_usage", .out_dir = ASSET_USAGE_WORK,
+        .pack = ASSET_USAGE_WORK "/prefab_usage.pack", .strip_unused_assets = true};
+    TIDE_REQUIRE(codegen(p, &options));
+    size_t size;
+    tide_pack_header *pack = read_bytes(options.pack, &size);
+    TIDE_REQUIRE(pack && size >= sizeof *pack);
+    TIDE_CHECK(pack->entries == 1);
+    free(pack);
+    done();
+}
+
 TIDE_TEST(asset_usage_retains_checked_defaults_helpers_operators_shaders_and_collections)
 {
     static const char text[] =

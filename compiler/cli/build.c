@@ -98,6 +98,7 @@ static file_list tide_files(const char *folder)
     file_list list = {0};
     char *dir = path_join(folder, "");
     folder_find_own(dir, ".tide", add_file, &list);
+    folder_find_own(dir, ".tprefab", add_file, &list);
     free(dir);
     if (list.count > 0) qsort(list.items, (size_t)list.count, sizeof(char *), path_order);
     return list;
@@ -2044,6 +2045,7 @@ static void stamp_folder(uint64_t *h, const char *folder)
 {
     char *dir = path_join(folder, "");
     folder_find_own(dir, ".tide", stamp_file, h);
+    folder_find_own(dir, ".tprefab", stamp_file, h);
     char *packages = path_join(dir, PACKAGES_FILE);
     stamp_file(h, packages);
     free(packages);

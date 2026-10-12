@@ -108,6 +108,9 @@ static void declaration(asset_usage *w, const decl *d)
 
 static void expression(asset_usage *w, const expr *e)
 {
+    if (e->prefab) {
+        for (int i = 0; i < e->prefab->entities.count; i++) queue(w, USAGE_EXPR, e->prefab->entities.items[i].spawn);
+    }
     if (e->bind == BIND_ASSET) use_asset(w, e->constant);
     else if (e->bind == BIND_CONST) queue(w, USAGE_DECL, e->constant);
     queue(w, USAGE_DECL, e->type.decl);

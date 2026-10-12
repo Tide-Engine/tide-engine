@@ -285,6 +285,9 @@ bool type_assignable(const type to, const type from)
 {
     if (to.kind == TY_ERROR || from.kind == TY_ERROR) return true;
     if (to.kind == from.kind && to.decl == from.decl) return true;
+    if (to.kind == TY_COMPONENT && from.kind == TY_COMPONENT
+        && (to.decl->placement_of ? to.decl->placement_of : to.decl)
+            == (from.decl->placement_of ? from.decl->placement_of : from.decl)) return true;
     if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_ANIMATIONS
         && from.decl->skin_kind == SKIN_ANIMATIONS) {
         // An annotation erases static names; dynamic values cannot gain an

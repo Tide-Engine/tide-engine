@@ -1,6 +1,6 @@
 // The first Tide program: players move and never go below y = 0.
 
-component Transform
+component TestTransform
 {
     float3 position;
     float3 rotation;
@@ -12,7 +12,7 @@ component Player
     float3 speed;
 }
 
-// Props have a Transform but no Player, so the player systems skip them.
+// Props have a TestTransform but no Player, so the player systems skip them.
 component Prop
 {
     int id;
@@ -22,18 +22,18 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Transform { position = float3(0, 10, 0), scale = float3(1, 1, 1) },
+    Spawn(TestTransform { position = float3(0, 10, 0), scale = float3(1, 1, 1) },
           Player { speed = float3(1, -2, 0) });
 
-    Spawn(Transform { position = float3(0, 10, 0) }, Prop { id = 7 });
+    Spawn(TestTransform { position = float3(0, 10, 0) }, Prop { id = 7 });
 }
 
-system MovePlayer(Time time, Player player, mut Transform trs)
+system MovePlayer(Time time, Player player, mut TestTransform trs)
 {
     trs.position += player.speed * time.dt;
 }
 
-system ClampPlayer(mut Transform trs, with Player)
+system ClampPlayer(mut TestTransform trs, with Player)
 {
     if (trs.position.y < 0)
         trs.position.y = 0;

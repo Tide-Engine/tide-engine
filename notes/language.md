@@ -679,3 +679,134 @@ The owner approved singleton methods. Structs, components and singletons now sup
 Verified view parameters, mixed joins and query bindings interpolate against confirmed previous/current endpoints and their own fraction. Membership/discrete fields use the upper endpoint; Snap, birth identity and custom interpolation apply, without prediction correction smoothing. Verified handlers remain exact. Custom interpolators reading heap values get independent endpoint snapshots, including nested text/list/map/set values and readonly grid chunks. Scratch cleanup and both world hashes are pinned by `verified_heap`; ordinary numeric interpolation keeps its existing path. `tide_confirmed` retags only match offsets, preserving scratch/local values returned by custom interpolation.
 
 `settings.maxRewind` is finite nonnegative constant seconds, default zero; positive values reserve the input field `ViewTime viewTime`. The checker blocks explicit/member and Sample/Sanitize field writes. ViewTime contains upper tick, fraction and validity. Input repair invalidates malformed timestamps before ordinary float repair. `Time.maxRewind` is retained only when used. Constant, negative/nonfinite/dynamic, reserved-name and readonly diagnostics are covered.
+
+## Shared component placement and Transform foundation (2026-10-12)
+
+The owner approved one component definition usable in match or local placement,
+a built-in Transform, checked Unity-style parenting, descendant destruction,
+and placement-specialized component methods. The prefab/editor design remains
+future work; this change implements its entity foundation only.
+
+`component` defines values/defaults. `Spawn(...)` places match entities and
+`local Spawn(...)` places local entities. Access bindings use `local`, including
+`mut local Marker marker` and `query (local Marker marker) markers`. Entity and
+LocalEntity handles choose placement for Add/Remove and World Get/Has/TryGet/Set.
+Local component declarations are rejected with the replacement spelling. Local
+singletons/scenes/events and attached local fields keep their existing rules.
+Rendering resources and LocalEntity fields (including optional/container shapes)
+are rejected at match placement/access. Attached local fields currently restrict
+a definition to match placement; local placement of that shape remains open.
+
+Private local storage specializations share the source component's C value type
+and ownership helpers. Components remain one public type; masks/storage retain
+separate world identities. Component methods get independent parsed syntax trees
+for local placement, instantiated on calls, with typed implicit this and ordinary
+caller capability propagation. Calls through methods, overloads, mut methods,
+World helpers and task starts retain their effects. Explicit Entity/LocalEntity
+parameter and return types keep their meanings. Unused methods are checked once
+in match placement; a method called only locally is checked in local placement.
+
+Transform has zero localPosition, identity localRotation and unit localScale.
+SetParent(parent, worldPositionStays = true) records an ordered deferred command;
+null detaches. World.LocalToWorld(entity) reads stored TRS root to leaf and
+World.Parent(entity) reads the typed parent. Reads contribute Transform-wide
+scheduler dependencies and helper callers keep their capabilities. View reads
+use stored state, as existing World.Get does, not interpolated parameter copies.
+Parentless reads avoid scratch allocation; deeper reads use bounded scratch
+ancestor chains. No cached world matrices or timing improvement is claimed.
+
+Links live in private per-world Map<Entity, node> singleton state, using existing
+heap ownership, snapshot/hash/packing/layout machinery. Parent commands settle
+both temporary handles, reject cycles/dead handles at application time, and
+leave links/local values unchanged on failed keep-world conversion. Keeping
+world placement needs the child's Transform and an invertible finite parent;
+TRS cannot preserve general shear from rotated nonuniform scales exactly.
+Destroy walks descendants iteratively before each parent, with Destroyed while
+that entity is still readable. Loaded scenes remain independent roots; parenting
+an ordinary subtree into another scene transfers its membership, while detaching
+retains ownership. No engine runtime API or global type registry was added.
+
+Validation: focused Transform tests cover match/local storage and hash isolation,
+implicit-this specialization, method chains/overloads/mut methods/task starts,
+rotation/scale, cycle/dead/singular rejection, ordered deferred changes,
+descendant destruction, COW snapshots and packed world restoration. Compiler
+fixtures preserve access restrictions and cover cross-world parents, local
+component declaration replacement, local-field placement and nested local handles.
+Final Windows debug validation passes all 2,241 native and 2,209 web CTests,
+including native GPU and WebGL/WebGPU coverage, the exact existing determinism
+pins and all 224 language-server checks. All 228 shared grammar checks and the
+production docs build pass with Node 24.16.0. Two initial full-suite failures
+were stale schedule text after renaming old fixture Transform types; those pins
+were corrected before both final full runs. A final diagnostic-only wording
+cleanup is checked with the LSP suite and replacement/unknown-World fixtures.
+No CI, sanitizers, Android, Linux, macOS or MinGW coverage was requested/run.
+
+Remaining work: prefab text/editor authoring, hierarchy presentation interpolation,
+world-matrix caching/deep-hierarchy performance measurements, richer hierarchy
+inspection, and broader platform CI (not requested for this Windows task).
+
+Integration through origin/dev f349c31a merges cleanly. Incoming CLI development
+optimization/cache changes rebuild warning-free and pass all 10 native CLI CTests;
+the production docs build passes again. Other incoming work is prototype content
+and benchmark evidence, with no compiler/runtime overlap requiring full repeats.
+
+## First authored prefab compiler build (2026-10-12)
+
+The owner chose ordinary root components for settings and complete-tree
+construction before root-first Spawned handlers. The parser accepts named prefab
+trees, ordinary component entries, named child blocks and nested prefab roots.
+The provisional spelling and limits are in the spec's Prefabs and authored scenes
+section; .tprefab files accept composition and namespace/using directives only.
+
+prefab_check.inc expands a tree at each spawn/load site and separately validates
+unused declarations. Copied expressions retain their source namespace and nested
+instance scope. Named paths support forward references; this denotes the current
+entity block. Component/default/placement checks remain ordinary typed checks.
+Recursive inclusion, duplicate components/fields/child paths, missing symbols,
+nonconstant authored expressions and absent SceneRequired references are errors.
+SceneRequired initially applies to direct Entity/LocalEntity component fields,
+including nullable ones, without constraining ordinary code-driven construction.
+
+Spawn(Prefab, Component { fields }) and local Spawn return ordinary typed handles;
+component literals replace only named root fields, bare components reset their
+defaults, and absent root components can be added. Runtime argument expressions
+evaluate once in written order before recording the tree. Scene.Load accepts the
+same root component arguments, with optional named visibility last. A private
+per-placement scene marker distinguishes loaded roots without a wrapper entity
+or implicit public prefab component. Existing scene Main startup stays in .tide.
+
+prefab_codegen.inc emits specialized private recorders using existing entity,
+queue, text ownership and parenting functions; no runtime API was added. All
+handles are reserved, then rows and parents recorded, then root-first ready
+commands. Pending spawn commands suppress initialization until those ready
+commands; normal spawns retain their ordering. Temporary handle settlement still
+uses ordinary spawn/reference/parent machinery. Composition is bounded at compile
+time to 1024 entities and 128 nesting levels; no game-controlled tree allocation
+or recursive runtime factory is introduced.
+
+Coverage: prefabs e2e checks nested inherited defaults, nullable required paths,
+dynamic overrides evaluated once, root settings additions, complete parenting
+before initialization, root-first order, match/local isolation, subtree destroy,
+scene unload, snapshots/raw packing, and identical split-job versus serial ticks.
+Eight negative fixtures cover invalid/removed components, missing/required paths,
+recursive inclusion, duplicate children/override fields, runtime expressions and
+placement mismatch. Project discovery/editor coverage is in their notes.
+
+Remaining: native scene-editor UI, authored child-name rename/completion, inherited
+child removal/replacement, prefab startup/identity conventions, authored local
+visual fields on match entities, and live-instance defaults/override reconciliation.
+No native editor or tide open command is built. Dedicated portable-wire migration,
+prefab queued hot-reload and performance measurements remain untested.
+
+Validation: warning-free complete native/web debug builds and all 2250 native
+and 2218 web CTests passed on Windows with Clang 23.1.2/Node 24.16.0, including
+OpenGL, WebGL and WebGPU. Final neutral-binding correction for authored local
+entity lists and local scene-load coverage passed the 14 affected native checks
+and all 9 web prefab checks. Local reference elements retain their declared type
+in neutral validation; actual spawns still check every reference's placement.
+The correction's valid List<LocalEntity> fixture fails against the earlier binder.
+The final editor completion adjustment passes all 225 LSP tests and stdio/pipe
+checks. Docs production build, 230 grammar checks, 24 VS Code tests/build and
+JetBrains plugin build plus 7 headless adapter/platform tests pass. No CI, other
+operating systems, Android or sanitizers were run; opted-in JCEF/client integration
+was not run. Source/whitespace review passes.

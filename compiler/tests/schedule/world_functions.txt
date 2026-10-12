@@ -2,13 +2,13 @@ world_functions: 6 systems each tick, 2 stages deep; 6 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  Aim  (per entity)
-         writes Transform
+         writes TestTransform
          alongside Heal, Drain, Rust, Rest
 stage 2  Chase  (per entity)
          reads Runner
-         writes Transform
-         reads any entity's Transform, through World
-         after Aim: it writes Transform, which this reads
+         writes TestTransform
+         reads any entity's TestTransform, through World
+         after Aim: it writes TestTransform, which this reads
          alongside Heal, Drain, Rust, Rest
 stage 1  Heal  (per entity)
          reads Healer

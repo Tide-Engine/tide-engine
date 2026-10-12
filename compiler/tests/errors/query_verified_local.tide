@@ -1,7 +1,7 @@
-// expect: 'Spark' is local: it's this machine's own, and no server confirms it
-local component Spark { float x; }
+// expect: no server confirms it
+component Spark { float x; }
 scene Main { }
-view Show(query (verified Spark spark) sparks)
+view Show(query (verified local Spark spark) sparks)
 {
     foreach (var row in sparks) Debug.Log($"{row.spark.x}");
 }

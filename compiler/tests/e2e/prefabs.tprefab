@@ -1,0 +1,67 @@
+prefab Part
+{
+    Transform { localPosition = float3(2, 0, 0) };
+    Data { value = 20, label = "part" };
+    Links { child = Tip };
+    entity Tip
+    {
+        Transform { localPosition = float3(3, 0, 0) };
+        Data { value = 30 };
+    }
+}
+
+prefab Tree
+{
+    Transform { localPosition = float3(10, 0, 0) };
+    Data { value = 10, label = "root" };
+    Links { child = Branch, tip = Branch.Tip };
+    OptionalLink { target = Branch.Tip };
+    entity Branch : Part
+    {
+        Data { value = 25 };
+    }
+}
+
+prefab LocalTree
+{
+    Transform;
+    LocalLinks { child = Child };
+    LocalNested { children = [Child] };
+    entity Child { Data { value = 4 }; }
+}
+
+prefab SharedTree
+{
+    Transform;
+    Data { value = 8 };
+    entity Child { Data { value = 9 }; }
+    entity A : Empty { }
+    entity B : Empty { }
+}
+
+prefab Empty { }
+
+prefab Worker
+{
+    WorkerLink { child = Child };
+    Self { value = this };
+    entity Child { WorkerChild; Self { value = this }; }
+}
+
+namespace Defaults
+{
+    prefab Template
+    {
+        Data { value = VALUE };
+        entity Child { Data { value = VALUE }; }
+    }
+}
+
+namespace Overrides
+{
+    prefab Scoped
+    {
+        ScopedLinks { child = Item, tip = Item.Child };
+        entity Item : Defaults.Template { Data { value = VALUE }; }
+    }
+}

@@ -374,6 +374,13 @@ static void parse_literal_inits(parser *p, expr *lit)
 static expr *parse_primary(parser *p)
 {
     const token *t = peek(p);
+    if (t->kind == T_IDENT && str_eq_c(t->text, "local") && peek_at(p, 1)->kind == T_IDENT
+        && str_eq_c(peek_at(p, 1)->text, "Spawn") && peek_at(p, 2)->kind == T_LPAREN) {
+        advance(p);
+        expr *e = parse_primary(p);
+        e->placement_local = true;
+        return e;
+    }
     switch (t->kind) {
     case T_DOT: {
         advance(p);
@@ -1204,6 +1211,7 @@ static bool at_local_decl(const parser *p)
 {
     const token *t = peek(p);
     if (t->kind != T_IDENT) return false;
+    if (str_eq_c(t->text, "local") && str_eq_c(peek_at(p, 1)->text, "Spawn") && peek_at(p, 2)->kind == T_LPAREN) return false;
     if (generic_name(t->text) && peek_at(p, 1)->kind == T_LT) {
         const int end = skip_type(p, 0);
         return end > 0 && peek_at(p, end)->kind == T_IDENT;
@@ -1599,8 +1607,16 @@ static void parse_routine_params(parser *p, decl *m)
         do {
             param prm = {0};
             prm.at = peek(p)->at;
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")) {
+                prm.placement_at = advance(p)->at;
+                prm.placement_local = true;
+            }
             const token *mut = at(p, T_MUT) ? advance(p) : NULL;
             prm.mode = mut ? PARAM_MUT : PARAM_READ;
+            if (!prm.placement_local && at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")) {
+                prm.placement_at = advance(p)->at;
+                prm.placement_local = true;
+            }
             // `in Stats stats`: `in` before a type and a name (the checker says it's only for extern functions)
             const tok_kind after = peek_at(p, 2)->kind;
             if (prm.mode == PARAM_READ && at(p, T_IDENT) && str_eq_c(peek(p)->text, "in") && peek_at(p, 1)->kind == T_IDENT
@@ -1819,10 +1835,24 @@ static decl *parse_method(parser *p, decl *owner)
     m->return_type_at = ret->name_at;
     m->return_type_qual_at = ret->at;
     m->return_type_ref = ret;
+    const int params_start = p->pos;
     parse_routine_params(p, m);
     m->body_at = m->at;
     m->body = parse_block(p);
     m->end = m->body->end;
+    if ((owner && owner->kind == DECL_COMPONENT) || p->overriding) {
+        // Checking annotates and rewrites expressions; each placement needs its
+        // own syntax tree, while source locations and immutable type refs agree.
+        parser local_parser = *p;
+        local_parser.pos = params_start;
+        decl *local_method = NEW(decl);
+        *local_method = *m;
+        local_method->params.items = NULL;
+        local_method->params.count = local_method->params.cap = 0;
+        parse_routine_params(&local_parser, local_method);
+        local_method->body = parse_block(&local_parser);
+        m->placement_method = local_method;
+    }
     return m;
 }
 
@@ -1875,6 +1905,47 @@ static decl *parse_operator(parser *p, decl *owner)
 }
 
 // component Name { Type field; ... }, and the same for singletons, inputs and structs.
+static prefab_node *parse_prefab_node(parser *p, const str name, const loc where, const int depth)
+{
+    if (depth > 128) fail_at(p, peek(p), "a prefab tree at most 128 levels deep");
+    prefab_node *node = NEW(prefab_node);
+    node->name = name;
+    node->at = where;
+    node->unit = p->unit;
+    if (accept(p, T_COLON)) {
+        const qname base = parse_qname(p, "nested prefab name");
+        node->base = base.text; node->base_at = base.name_at; node->base_qual_at = base.at;
+    }
+    expect(p, T_LBRACE, "'{' after prefab or entity name");
+    while (!at(p, T_RBRACE)) {
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "entity") && peek_at(p, 1)->kind == T_IDENT) {
+            advance(p);
+            const token *child = expect_ident(p, "child entity name");
+            vec_push(node->children, parse_prefab_node(p, child->text, child->at, depth + 1));
+        } else {
+            const qname comp = parse_qname(p, "component name or 'entity Name { ... }'");
+            expr *value = new_expr(E_LITERAL, comp.name_at);
+            value->qual_at = comp.at;
+            value->name = comp.text;
+            value->authored_unit = p->unit;
+            if (at(p, T_LBRACE)) parse_literal_inits(p, value);
+            expect(p, T_SEMI, "';' after a prefab component");
+            vec_push(node->components, value);
+        }
+    }
+    advance(p);
+    return node;
+}
+
+static decl *parse_prefab(parser *p)
+{
+    decl *d = new_named_decl(p, DECL_PREFAB, "prefab name");
+    d->prefab_root = parse_prefab_node(p, (str){0}, d->at, 0);
+    if (d->prefab_root->base.len) diag_error(d->at, "a top-level prefab has its own root; nest reusable prefabs with 'entity Name : Prefab'");
+    d->end = p->toks[p->pos - 1].at;
+    return d;
+}
+
 static decl *parse_data_decl(parser *p, const decl_kind kind)
 {
     const char *what = kind == DECL_COMPONENT   ? "component or scene name"
@@ -1987,6 +2058,11 @@ static void parse_query_params(parser *p, decl *d)
             param prm = {0};
             prm.at = peek(p)->at;
             const char *what = "parameter type";
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")
+                && (peek_at(p, 1)->kind == T_MUT || peek_at(p, 1)->kind == T_IDENT)) {
+                prm.placement_local = true;
+                prm.placement_at = advance(p)->at;
+            }
             if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "query") && peek_at(p, 1)->kind == T_LPAREN) {
                 advance(p);
                 prm.mode = PARAM_QUERY;
@@ -2075,6 +2151,10 @@ static void parse_query_params(parser *p, decl *d)
                 }
             }
             const bool filter = prm.mode == PARAM_WITH || prm.mode == PARAM_WITHOUT;
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local") && peek_at(p, 1)->kind == T_IDENT) {
+                prm.placement_local = true;
+                prm.placement_at = advance(p)->at;
+            }
             // `verified Health health`, `with verified Dead`: a word of its own
             // before a parameter's type, and a name like any other everywhere
             // else, a type's too (`verified score`, `with verified`)
@@ -2082,6 +2162,10 @@ static void parse_query_params(parser *p, decl *d)
                 && (filter || peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT)) {
                 prm.verified = true;
                 prm.verified_at = advance(p)->at;
+            }
+            if (!prm.placement_local && at(p, T_IDENT) && str_eq_c(peek(p)->text, "local") && peek_at(p, 1)->kind == T_IDENT) {
+                prm.placement_local = true;
+                prm.placement_at = advance(p)->at;
             }
             // `with ownership`, `without ownership`: a word of its own right after
             // them, and a name like any other everywhere else, a namespace's too
@@ -2493,6 +2577,8 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
+    const size_t path_len = strlen(src->path);
+    const bool prefab_file = path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0;
     parser p = {.toks = toks, .recover = recover, .prog = prog};
     p.unit = NEW(unit);
     p.unit->src = src;
@@ -2552,7 +2638,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const bool followed_by_name = peek_at(&p, 1)->kind == T_IDENT;
         if (t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
             advance(&p);
-            if (local) diag_error(local->at, "'local' goes before a declaration, like 'local component Spark { ... }'");
+            if (local) diag_error(local->at, "'local' goes before a declaration, like 'local singleton Fx { ... }'");
             if (replace_word) refuse_replace_word(replace_word, "a namespace is where names are, and has no code of its own");
             if (p.pending.count > 0 && str_eq_c(t->text, "namespace")) {
                 diag_error(p.pending.items[0].at, "attributes go right before a declaration, and a namespace takes none");
@@ -2569,6 +2655,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         }
         // settings { ... }: kept apart from the declarations, as it names nothing
         if (t->kind == T_IDENT && str_eq_c(t->text, "settings") && peek_at(&p, 1)->kind == T_LBRACE) {
+            if (prefab_file) diag_error(t->at, ".tprefab files describe entity trees; put game settings and code in .tide files");
             advance(&p);
             if (local) diag_error(local->at, "the settings are the whole game's, so they can't be local");
             if (replace_word) refuse_replace_word(replace_word, "the settings are the game's own, and have no code to replace");
@@ -2607,6 +2694,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             d->is_command = true;
         }
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "enum")) d = parse_enum(&p);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "prefab")) d = parse_prefab(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) {
             d = parse_data_decl(&p, DECL_COMPONENT);
             d->is_scene = true;
@@ -2623,10 +2711,15 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         }
         else fail_at(&p, t, "'component', 'scene', 'singleton', 'struct', 'enum', 'event', 'input', 'system', 'view', 'frag', 'vert', 'extern', 'const', 'asset' or a function"); // Consumed, so recovery skips it
         d->unit = p.unit;
+        if (prefab_file && d->kind != DECL_PREFAB) diag_error(d->at, ".tprefab files contain prefab declarations; put components and code in .tide files");
         p.overriding = false;
         if (local) {
-            d->is_local = true;
-            d->local_at = local->at;
+            if (d->kind == DECL_COMPONENT && !d->is_scene) {
+                diag_error(local->at, "components define values, not a world: use 'component' with 'local Spawn(...)' and 'local' component access");
+            } else {
+                d->is_local = true;
+                d->local_at = local->at;
+            }
         }
         if (virtual || override) mark_replace_words(d, virtual, override);
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {

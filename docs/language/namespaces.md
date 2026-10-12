@@ -6,7 +6,7 @@ description: "Organize Tide games across files and namespaces, control declarati
 
 ## Files
 
-A game is every `.tide` file in its folder and its subfolders, and those of the [packages](../tools/packages.md) it uses. Every declaration is visible from every file, and there are no imports between files. How you split a game into files is up to you: the editors can move a declaration to a file of its own. A subfolder with a `tide.packages` of its own is a game or a package of its own, and isn't part of the game.
+A game is every `.tide` file in its folder and its subfolders, and those of the [packages](../packages/using-and-writing.md) it uses. Every declaration is visible from every file, and there are no imports between files. How you split a game into files is up to you: the editors can move a declaration to a file of its own. A subfolder with a `tide.packages` of its own is a game or a package of its own, and isn't part of the game.
 
 Files compile in order of their paths, and that's the default order of systems and views: by file, then as they're written in each file (see [Systems](../game/systems.md#order)). Packages' files come first.
 
@@ -86,7 +86,7 @@ event(Spawned) Setup(with Main)
 
 ## Code for other versions of tide
 
-Tide still changes between versions. Code that has to build with several, like a [package](../tools/packages.md)'s, picks what each version reads with `#if`:
+Tide still changes between versions. Code that has to build with several, like a [package](../packages/using-and-writing.md)'s, picks what each version reads with `#if`:
 
 ```csharp
 #if TIDE_0_4_OR_NEWER

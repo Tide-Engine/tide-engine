@@ -2,9 +2,9 @@
 description: "Use Tide's Box3D package for deterministic 3D rigid bodies, collisions, compound shapes and world queries in multiplayer matches."
 ---
 
-# 3D physics (Box3D)
+# Box3D: 3D physics
 
-[Box3D](https://github.com/erincatto/box3d) is Erin Catto's 3D physics engine: rigid bodies that fall, collide, stack and come to rest. It comes with `tide` as a [package](../tools/packages.md#packages-that-come-with-tide). A body and its shapes are components of an entity, every tick steps them, and the match stays the same on every machine, through rollbacks, joins and hot reloads, with nothing for the game to do.
+[Box3D](https://github.com/erincatto/box3d) is Erin Catto's 3D physics engine: rigid bodies that fall, collide, stack and come to rest. It comes with `tide` as a [package](../packages/using-and-writing.md#packages-that-come-with-tide). A body and its shapes are components of an entity, every tick steps them, and the match stays the same on every machine, through rollbacks, joins and hot reloads, with nothing for the game to do.
 
 It's the [Box2D package](./box2d.md) again, for 3D: the same components, with a third axis, and the same rules. A few things are here first, which the Box2D package is to get: [parts](#parts), a body's type that [changes](#changing-how-a-body-is), what's [asked of the world](#asking-the-world), [hits](#hits) and the world's tuning.
 
@@ -327,7 +327,7 @@ A world where everything is asleep and nothing was written isn't stepped at all 
 
 ## When things happen in a tick
 
-The package's systems run before the game's, as every [package's](../tools/packages.md#writing-a-package) do, in this order:
+The package's systems run before the game's, as every [package's](../packages/using-and-writing.md#writing-a-package) do, in this order:
 
 1. What was destroyed since the last step goes from the world: bodies, with their parts, and the shapes of parts that went by themselves.
 2. Bodies and shapes that are new are made, and what code wrote into a `Body` goes to Box3D.

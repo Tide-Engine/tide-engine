@@ -29,7 +29,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 
 - Tide is a language of its own, and isn't described as C#-like. C# inspired its syntax, and a rule below that follows C# says so.
 - Types, systems and methods use PascalCase: `Transform`, `MovePlayer`, `Spawn(...)`.
-- Fields, parameters and locals use camelCase: `trs.position`, not `trs.Position`.
+- Fields, parameters and locals use camelCase: `trs.localPosition`, not `trs.Position`.
 - Public properties use camelCase too, even static ones: `Color.red`, `quaternion.identity`. True constants use FULL_CASE: `Math.PI`, `Math.TAU`.
 - Attributes (`[...]`) are only for metadata, such as when a system runs or the bounds of an input field, not for what code does. The engine may enforce what an attribute declares, as it clamps an input field to its `[Clamp]`.
 - Braces go on lines of their own, as in C#, and so does an `else` after a block. A block that fits on one line can stay there (`scene Main { }`, `if (dead) { return; }`), and so do literals (`Body { position = p }`). The language server's formatter lays code out this way, indenting as the editor is set to (four spaces by default).
@@ -414,8 +414,8 @@ A system's component parameters describe the entities it runs for. Each paramete
 ```csharp
 system ClampPlayer(mut Transform trs, with Player)
 {
-    if (trs.position.y < 0)
-        trs.position.y = 0;
+    if (trs.localPosition.y < 0)
+        trs.localPosition.y = 0;
 }
 ```
 
@@ -506,7 +506,7 @@ system Heal(Healer healer, mut World world)
 - Structural changes (`Spawn`, `Add`, `Remove`) are deferred. They're applied together at the next fixed point in the tick, in a deterministic order. The entity handle `Spawn` returns is usable immediately, for example to store in a component. The entity's data becomes readable once the changes are applied.
 
 ```csharp
-var e = Spawn(Transform { scale = float3(1, 1, 1) }, Player);
+var e = Spawn(Transform { localScale = float3(1, 1, 1) }, Player);
 e.Add(Stunned { duration = 2 });
 e.Remove(Stunned);
 ```
@@ -522,7 +522,7 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Transform { scale = float3(1, 1, 1) }, Player { speed = float3(0, 0, 5) });
+    Spawn(Transform { localScale = float3(1, 1, 1) }, Player { speed = float3(0, 0, 5) });
 }
 ```
 
@@ -772,8 +772,8 @@ Follows Unity.Mathematics, with Tide's naming. Everything in this section is dec
 quaternion spin = quaternion.AxisAngle(float3(0, 1, 0), input.turn * time.dt);
 trs.rotation = Math.Mul(trs.rotation, spin);
 float3 forward = Math.Rotate(trs.rotation, float3(0, 0, 1));
-trs.position += Math.Normalize(forward) * 5 * time.dt;
-float2 flat = trs.position.xz;
+trs.localPosition += Math.Normalize(forward) * 5 * time.dt;
+float2 flat = trs.localPosition.xz;
 ```
 
 **Constructors**
@@ -3079,14 +3079,203 @@ Implemented, awaiting approval:
 - The pieces widgets are made of, so a game can build its own like the built-in ones: a control's ID, which the compiler derives from the call as for the built-in widgets, whether it's hovered, pressed or focused, and drawing in the GUI's layer, over its panels (`Draw.Screen()` draws in its pixels, under it).
 - Scrolling, clipping, and keys that repeat while held.
 
+## Prefabs and authored scenes
+
+### Decided
+
+- Authored scenes/prefabs are human-readable text with Tide-like syntax. Files
+  describe entities, component values and references; game behavior remains in
+  ordinary Tide scripts. Refactoring an invalid component/type/reference must
+  produce a compiler/editor diagnostic rather than silently omit an object.
+- One rooted entity tree can serve as a reusable entity prefab or a loaded scene.
+  Nested entities follow their parent's transform and lifetime. Reusable nested
+  prefabs use the same authoring format and editor.
+- Values left out use component defaults. Authored overrides remain explicit in
+  text, so ordinary source control diffs and merges are understandable.
+- A prefab has an explicit name. Entity references are checked against the
+  resolved authored composition, including nested prefab instances.
+- Required authoring fields may be marked in component code. This validation
+  applies to authored composition, while ordinary code can build an entity in
+  stages. It does not make regular component constructors require every field.
+- Component availability comes from the game's compiled code and packages;
+  opening an authored file alone does not give it unrestricted access to code.
+- Settings are ordinary components on the root entity, configurable when
+  spawning/loading. Prefabs do not declare their own typed parameters for the
+  first build (owner decision, 2026-10-12).
+- A prefab instance's complete tree, components, references and parenting exist
+  before any of its `Spawned` handlers run. Handlers then run root-first (owner
+  decision, 2026-10-12).
+
+### Provisional
+
+**First text/compiler implementation (2026-10-12).** The spelling and initial
+limits below remain provisional. Transform and parenting are implemented
+separately in the following section. Native scene-editor UI is later work.
+
+Use `.tprefab`, normally one named declaration per file, such as
+`Enemy.tprefab`. Its body is its root entity. Ordinary component values use the
+existing Tide spelling; a semicolon ends each component entry. An `entity` block
+adds a named child. Names are stable authored identifiers, not runtime entity IDs.
+
+```csharp
+// Enemy.tprefab
+namespace Game;
+
+prefab Enemy
+{
+    Transform;
+    Health { value = 100 };
+    Aim { muzzle = Weapon.Muzzle };
+
+    entity Weapon : Pistol
+    {
+        Transform { localPosition = float3(0, 1, 0) };
+    }
+}
+
+// Pistol.tprefab
+namespace Game;
+
+prefab Pistol
+{
+    Transform;
+
+    entity Muzzle
+    {
+        Transform { localPosition = float3(0, 0, 0.5) };
+    }
+}
+
+// Components remain code in .tide files.
+component Aim
+{
+    [SceneRequired] Entity muzzle;
+}
+```
+
+- `entity Weapon : Pistol` instantiates Pistol as that child and applies the
+  component values in Weapon's block as overrides on its root. Its named
+  descendants participate in paths such as `Weapon.Muzzle`. Additional named
+  children can be added. Removing/replacing inherited children and top-level
+  prefab variants are later work; overlapping inherited names must not be
+  resolved by silently taking whichever file was read last.
+- Authoring expressions are literals, the existing constant/default expressions,
+  assets and named entity references. They do not call game functions, run
+  statements, read live worlds or start tasks. Entity names/paths are resolved
+  against the complete composition, allowing forward references. A path is
+  relative to the root of the prefab whose source wrote it; inherited paths
+  retain that scope in a nested instance. `this` refers to the entity block
+  containing the value. Parenting is
+  determined by nesting; reference fields may form cycles without changing that
+  parent tree. Recursive prefab inclusion and ambiguous/missing names are errors.
+- A nested override changes only fields it names. Other fields come from the
+  nested prefab and then the component defaults. Duplicate components or fields
+  in one authored block are errors. Component/type/default changes in code are
+  reflected during validation; stored text need not repeat unchanged defaults.
+- Entry points are `Spawn(Enemy)` and `local Spawn(Enemy)`, returning
+  Entity and LocalEntity respectively. Root component additions/overrides can
+  use the existing argument-list shape, for example
+  `Spawn(Enemy, Health { value = 50 })`. The compiler knows every effective
+  archetype and checks each instantiated placement's component/reference types.
+  Explicit Entity and LocalEntity fields retain their meanings.
+  A component literal overrides only its named fields; omitted fields retain
+  authored values. A bare component argument resets it to its component defaults.
+  Components absent from the authored root can be added through these arguments.
+- `Scene.Load(Level)` loads the same authored tree as a scene, with its authored
+  root as the scene entity. Loading adds private scene-instance metadata;
+  ordinary Spawn does not. Loading/unloading and scene visibility must preserve
+  existing scene ownership rules. A loaded root stays independent, as today's
+  scenes do. This requires generated construction support, not a global runtime
+  prefab registry.
+  Root overrides follow the prefab name: `Scene.Load(Level, LevelSettings {
+  difficulty = 2 }, visibility: SceneVisibility.Private)`. Visibility is optional,
+  named and last, and only match scenes have it. Loading from local code creates
+  local entities; match code creates match entities.
+- Settings use ordinary root components, such as
+  `LevelSettings { difficulty = 2 }`. Code reads them through its usual typed
+  component access. Prefab-specific parameter declarations are not part of the
+  proposed first slice. Root overrides must be applied before initialization
+  handlers observe the instance.
+- Reserve the complete instance's handles, initialize components/references and
+  establish parenting before sending any of that instance's Spawned events.
+  Then send Spawned in root-first authored order. This makes a root handler's
+  required child references usable immediately. Changes recorded by those
+  handlers remain ordered/deferred, as elsewhere. Code-driven ordinary Spawn
+  keeps its current behavior.
+- `[SceneRequired]` initially covers Entity/LocalEntity reference fields and
+  nullable forms of those. An effective authored value must resolve to an
+  existing entity of the correct placement; a missing/null reference is an
+  authoring error. Nested prefab overrides participate in the check. Ordinary
+  code-driven Spawn/Add, later assignments and deliberate runtime overrides are
+  not constrained by this authoring annotation.
+- `.tprefab` files join the same compiler input set as `.tide` files. Folder
+  builds include them under existing game/package boundaries, and CMake builds
+  use their registered game's source set. IDE analysis shares that build
+  context, so completion and rename use actual visible declarations.
+  A `.tprefab` file contains prefab declarations and namespace/using directives;
+  components, functions and game settings belong in `.tide` files. Prefab
+  declarations are also accepted in `.tide` files. Every declaration is validated,
+  including unused prefabs and required fields. Composition is initially bounded
+  to 1024 entities per instance and 128 levels of nesting.
+- Future standalone opening should identify a known game through tide.packages or a
+  CMake game manifest. Ambiguous shared-package files need a game selection;
+  without an identifiable game, require an explicit project selection instead
+  of searching arbitrary ancestor directories for components. An explicit
+  project option and remembered editor context can make later opens convenient.
+
+### Open
+
+Further authoring/editor work:
+
+- Root identity filters and prefab Main. The first implementation gives a prefab
+  no implicit component/type; use explicit root components for filters and keep
+  today's `.tide` `scene Main` startup convention. A future prefab startup
+  convention needs a separate decision.
+- Rename/completion for authored entity paths. Component/field/prefab symbol
+  renames are implemented; authored child names currently require text edits.
+- Authoring machine-local fields on match entities, including model/material
+  selection, without putting rendering resources in match snapshots or trusting
+  serialized executable code. A basic data tree alone does not solve this.
+- Defaults-versus-overrides during live editing/hot reload of existing instances.
+  The first slice can instantiate new trees; automatic modification of existing
+  gameplay instances needs a separate policy.
+- Native scene-editor UI and IDE embedding, undo/redo and save/merge formatting.
+  The text/compiler contract is the first layer; no native editor, `tide open`
+  command or browser model viewer is built by the first compiler implementation.
+
+## Transform and entity parenting
+
+### Decided
+
+- One built-in `Transform` component works in match or local placement, with `localPosition`, `localRotation` and `localScale`. These values are relative to the parent, and root values place it in the world.
+- Parenting is an entity relationship, independent of component value types. Descendants move with their parent and are destroyed when their parent is destroyed.
+- Reparenting follows Unity's default of preserving world placement, with an option to retain local values. Detaching preserves world placement by default. Cycles are rejected without changing the hierarchy.
+- Static access and typed entity handles preserve the match/local boundary. Match hierarchy state participates in deterministic snapshots, hashes and transfer; local hierarchy state stays outside it.
+
+### Provisional
+
+Implemented first-build interface and details:
+
+- `entity.SetParent(parent, worldPositionStays = true)` records a deferred structural change. `null` or `default` detaches. Local entity handles require local parents. Commands validate cycles and live generations in deterministic application order.
+- `world.LocalToWorld(entity)` returns a `float4x4` composed root to leaf; `world.Parent(entity)` returns the same kind of handle as its argument. Both read stored state, with normal caller capabilities and Transform read dependencies. Dead entities give identity/null, and absent Transform components contribute identity.
+- Transform defaults are zero position, identity rotation and unit scale. World rotation composes normalized quaternions. Keeping world placement adjusts local TRS; shear from nonuniform scale and rotation cannot be preserved exactly. Singular/nonfinite results are rejected, without changing local values or links. Keeping world placement requires a Transform on the child.
+- Destruction walks descendants before the root and invokes existing Destroyed handlers while each entity still exists. Loaded scene entities remain independent roots. An ordinary subtree parented into another scene transfers membership there; detaching retains its scene.
+- The compiler emits private per-world links using existing world-owned containers and checked command queues. No engine runtime registry or new public runtime entry point is required.
+
+### Open
+
+- The prefab text format and editor are future work; this foundation does not implement them.
+- More complete hierarchy presentation and authoring APIs.
+- Presentation interpolation of a composed hierarchy and optimized deep-hierarchy caching.
+
 ## Local state
 
 ### Decided
 
 - The world holds a match: the state every machine simulates the same way. It only exists while a match is on. Single-player is a match too, on a server the machine runs itself and reaches through a loopback transport, the same path as any other connection.
 - Local state belongs to one machine and lives outside every world: menus, settings, connection status, animation timers, particles. It's never sent, rolled back or hashed.
-- `local` in front of a declaration makes it local: `local singleton`, `local component`, `local scene` and `local event`. Everything else belongs to the match. Structs and functions belong to neither, and both sides use them.
-- A local singleton exists once per machine, for the whole program. Local components make local entities.
+- `local` on a singleton, scene or event declaration makes it local. A component defines data and defaults shared by both worlds; local belongs on its placement and access. Match code cannot read local storage, and local code cannot change the match. Structs and ordinary functions work with values from either side.
+- A local singleton exists once per machine, for the whole program. Local entities hold components in local storage.
 - Views run every frame, in a match or not. They read the match, and read and write local state: `mut` local parameters, and `Spawn`, `Add`, `Remove` and `Destroy` of local entities. A view only runs when everything it reads exists, so a view of match components or singletons doesn't run outside a match.
 - Local structural changes and local events are handled at the end of the frame, as the match's are at the end of the tick.
 - The GUI is immediate mode, drawn from views (see GUI).
@@ -3104,7 +3293,7 @@ Implemented, awaiting approval:
   - Errors say where to go instead: "a view can't change the match: put it in the input and handle it in a system."
 
 ```csharp
-local component Spark
+component Spark
 {
     float2 position;
     int framesLeft = 30;
@@ -3113,10 +3302,10 @@ local component Spark
 // Reads the match and leaves a trail of local sparks behind every ball.
 view Trail(Body body, with Ball)
 {
-    Spawn(Spark { position = body.position });
+    local Spawn(Spark { position = body.position });
 }
 
-view DrawSparks(mut Spark spark)
+view DrawSparks(mut local Spark spark)
 {
     Draw.Circle(spark.position, 0.1, Color.yellow);
     spark.framesLeft -= 1;
@@ -3124,7 +3313,7 @@ view DrawSparks(mut Spark spark)
 }
 
 // Error: match code can't read local state.
-system Count(Spark spark) { }
+system Count(local Spark spark) { }
 ```
 
 ```csharp
@@ -3154,8 +3343,12 @@ system Shrink(mut Box box) { box.verts.Clear(); }
 
 ### Provisional
 
-- `local` is only a keyword at the start of a declaration, and before a field's type. It goes before components, singletons, events and event handlers; before any other declaration it's an error that says why (structs and functions belong to neither side, views are always local, systems run the match). Anywhere else it's a name like any other, a field's too.
-- **`LocalEntity`** is an entity of the local world. `Spawn` in local code returns one, and `this` is one in a view of local components, where in a view of match components it's an `Entity`. Local code can hold and read an `Entity` (the unit a player selected, say) but never change one. The match's declarations can't hold a `LocalEntity`, and neither can structs, which both sides share.
+Implemented placement spellings: `Spawn(...)` creates match entities; `local Spawn(...)` creates local entities. A `local` component access qualifier selects local storage in views, local handlers, queries, shader bindings and async parameters, for example `mut local Transform transform` or `query (local Transform transform) transforms`. Ordinary function parameters are values without a placement qualifier. Component methods are specialized for each placement they are called on: implicit `this` is `Entity` or `LocalEntity` accordingly. Explicit entity parameter and return types retain their meaning. An unused method is checked once in match placement. `Get`, `Has`, `TryGet`, `Set`, `Add` and `Remove` select placement from the typed entity handle. Component declarations cannot be `local`. Rendering resources and LocalEntity fields restrict a component to local placement. Components with attached `local` fields currently require match placement; supporting those same definitions on local entities remains open.
+
+
+
+- `local` selects entity placement in `local Spawn`, component storage in access parameters, and machine-local singletons, scenes, events, handlers and attached fields. It goes before singletons, events and event handlers; before any other declaration it's an error that says why (structs and functions belong to neither side, views are always local, systems run the match). Anywhere else it's a name like any other, a field's too.
+- **`LocalEntity`** is an entity of the local world. `local Spawn` returns one, and `this` is one in a view of local components, where in a view of match components it's an `Entity`. Local code can hold and read an `Entity` (the unit a player selected, say) but never change one. The match's declarations can't hold a `LocalEntity`, and neither can structs, which both sides share.
 - A view runs for the entities of one world: its components are all local or all the match's.
 - Local handlers handle local events, and `Spawned` and `Destroyed` of local entities, with local state only; the match's events, with what they take of the match as the event left it (see Events); and `Forgotten`, with the match component or singleton whose local fields are going (below).
 - The host keeps the local state and calls `tide_local_init(local)` once, then `tide_frame(w, previous, alpha, verified, verified_previous, verified_alpha, local, draw, gui)` every frame. `tide_frame` runs the local handlers of what the match sent since the last frame (which the host handed it with `tide_local_events`), lets go of the local fields of entities that are gone, runs the views, then applies their local changes and events. Outside a match, `w` is NULL, and views that read the match don't run.
@@ -3183,7 +3376,7 @@ local singleton Sparks
     List<Spark> list;
 }
 
-view DrawSparks(mut Sparks sparks)
+view DrawSparks(mut local Sparks sparks)
 {
     mut var i = 0;
     while (i < sparks.list.count)
@@ -3206,7 +3399,7 @@ view DrawSparks(mut Sparks sparks)
 Local fields, beyond what's decided:
 
 - **What they hold** is what a local component's fields can: numbers, vectors, enums, structs, text, lists, maps, sets, grids, `Entity` and `LocalEntity`, each with a default like any field's. `[Snap]` on one is an error, as local state is never blended. A local field shares its name with no other field or method of its component.
-- **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local component or singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
+- **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
 - **They're reached through a parameter**, `box.verts`, where local code has the component or singleton itself:
   - a view's, read through `Box box` and written through `mut Box box`;
   - an ordinary function's, which gets them with the component or singleton: `void Bake(mut Box box)` writes them, `int Corners(Box box)` reads them, and the caller passes its own bound parameter, `Bake(box)`. The parameter can go through helper chains with its local fields. Such a function is local code: only views, local handlers and functions like it call it, and calling it from match code is an error that says where it uses a local field;

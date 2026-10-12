@@ -6,7 +6,7 @@ It's Tide and C, built on what any game or package can use, with nothing of the 
 
 **It hasn't been run against Steam.** Its tests run it against a stand-in for Steam's library that the tests bring. A first run with the real SDK will find things.
 
-The docs say how it's used: https://tide-engine.dev/multiplayer/steam
+The docs say how it's used: https://tide-engine.dev/packages/steam
 
 ## Using it
 

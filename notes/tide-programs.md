@@ -50,3 +50,11 @@ Assets read by skinned vertex defaults contribute their named content fingerprin
 
 Generated tide_frame takes `(w, previous, alpha, verified, verified_previous, verified_alpha, local, draw, gui)`. Host API callbacks, standard hosts and every repository caller migrate together. Single-world callers use NULL/1 for confirmed previous/fraction. tide_game adds optional view-time input accessors and max_rewind; enabled inputs gain the engine-owned timestamp. Extern-system ticks carry deterministic transient completion slots and call the approved rows completion hook after queued changes. Collider history is ordinary match state, while slots and readonly query contexts contribute no live-world mutation.
 Merge integration: the incoming LOD and Rooms page test hosts also pass NULL/1 for the confirmed interval; their single-world frame behavior is unchanged.
+
+## Prefab source sets (2026-10-12)
+
+The default tide_add_game source glob includes .tprefab. Explicit SOURCES already
+accepts it as a Tide compiler input, and PACKAGES now classifies both extensions
+as source paths rather than treating a .tprefab path as a package name. Registered
+manifest lists/folders retain the existing game context used by tidels. The prefab
+e2e target compiles separate .tide and .tprefab sources on native and web.

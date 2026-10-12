@@ -29,12 +29,12 @@ local singleton Seen
     bool made;
 }
 
-local component Lamp
+component Lamp
 {
     int glow;
 }
 
-local component Toggle
+component Toggle
 {
     LocalEntity lamp;
 }
@@ -49,8 +49,8 @@ view Make(mut Seen seen)
 {
     if (seen.made) return;
     seen.made = true;
-    seen.lamp = Spawn(Lamp { glow = 5 });
-    Spawn(Toggle { lamp = seen.lamp });
+    seen.lamp = local Spawn(Lamp { glow = 5 });
+    local Spawn(Toggle { lamp = seen.lamp });
 }
 
 // A match entity's component, from the entity the view runs for
@@ -67,7 +67,7 @@ view Picked(mut Seen seen, World world)
 }
 
 // A local entity's component, read and changed through the World
-view Flip(Toggle toggle, mut World world, mut Seen seen)
+view Flip(local Toggle toggle, mut World world, mut Seen seen)
 {
     mut var lamp = world.Get<Lamp>(toggle.lamp);
     lamp.glow += 1;
@@ -77,7 +77,7 @@ view Flip(Toggle toggle, mut World world, mut Seen seen)
 }
 
 // A local handler takes the World too, for local entities
-local event(Dim dim) DimLamp(Toggle toggle, mut World world)
+local event(Dim dim) DimLamp(local Toggle toggle, mut World world)
 {
     mut var lamp = world.Get<Lamp>(toggle.lamp);
     lamp.glow -= dim.by;

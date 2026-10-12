@@ -1,0 +1,3 @@
+// expect: entity 'Child' already exists in this composition
+scene Main { }
+prefab Broken { entity Child { } entity Child { } }
