@@ -148,6 +148,26 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
+The players are small test robots (2026-10-12; the owner wanted "more
+motion and maybe a different look", unsure about them being human, "maybe
+robots or something"; the design is my pick and unconfirmed). `Maker` draws
+a body in the seat's paint on two rubber treads, a front bumper, a pale
+head with a dark visor and a yellow eye, the yellow/black calibration mark
+on the head and an antenna tipped in the seat's paint. `BotPart` places
+each cuboid to the bot's right and ahead for one of four facings, since
+cuboids are never rotated. Motion is presentation state in `Picture`
+(`actorFacing`, `actorStride`, `actorWobble`, `actorIdle`): the bot faces
+the step it takes (through a doorway, the passage's side), hops twice a
+cell and whips its antenna while its drawn position changes. A tenth of a
+second after a step stops, and at once after a doorway passage, it turns
+back to the camera, so a scene settles no later than it did before the
+bots (a longer look-ahead and antenna decay failed the fixture's exact
+undo comparison, which waits 24 ticks). A snapped pose (first frame, level change, reduced motion) is that rest pose.
+There is deliberately no idle animation: the browser fixture compares whole
+settled scenes byte for byte across time (undo, cycle exit), so a settled
+scene has to depend on the puzzle alone. Player-visible text still says
+"dummy"; renaming is open.
+
 Current look: a bright crash-test lab (2026-10-12). The owner found the PSX
 block filter made small nested boxes lose all their detail, preferred the
 earlier clean render while their partner had not, asked for "a mix of
@@ -292,6 +312,19 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Test robots validation (2026-10-12)
+
+Presentation only (`paint.tide`, thumbnail). Native and web debug builds
+are warning-free and the 33 fixtures pass natively and under WASI. The
+first version failed both two-browser fixtures at "partner undo restores
+the exact pre-cycle scene"; with the quicker rest described above
+`inside_out_play_webgl` passes in 124.68 s and `inside_out_play_webgpu` in
+99.87 s. Native captures at rest, mid-roll and settled were inspected at
+1280x800. The thumbnail is 101,034 bytes, SHA-256
+`ca171ab46b4a5ed9baf22132480b01ce1a3962f534e2fc429552dc2a293d5275`; the docs
+production build passes. Nothing was staged or deployed. No CI was
+dispatched.
 
 ## Crash-test lab look validation (2026-10-12)
 
