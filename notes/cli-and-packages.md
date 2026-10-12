@@ -1,5 +1,16 @@
 # `tide`, packages and the package
 
+## Native authoring command (2026-10-12)
+
+tide open forwards arguments to the sibling tide-editor executable and returns
+its exit code; it builds/runs no game and opens no browser. Native builds with
+the platform enabled install the app in bin beside tide/tidels. The CLI names
+the missing desktop installation/build target if the app is absent. Project
+discovery, --check, bounded captures/scripts and limits are in docs/tools/cli.md,
+docs/tools/editors.md and notes/editors.md. The app uses the shared package
+resolver without fetching, and checks with DEBUG/package symbols. Normal build,
+watch and package behavior is unchanged. CLI/UI fixtures exercise real dispatch.
+
 ## Optimized engine in development builds (2026-10-12)
 
 The owner approved optimizing the engine by default after the external
