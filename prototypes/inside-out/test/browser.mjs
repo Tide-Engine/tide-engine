@@ -138,6 +138,16 @@ const materialMatches = (r, g, b, tone) => {
     const shade = g / tone[1];
     return shade >= 0.12 && shade <= 1.15 && Math.abs(r - tone[0] * shade) <= 2 && Math.abs(b - tone[2] * shade) <= 2;
 };
+// How many pixels of two same-sized screenshots differ.
+const pixelsApart = (first, second) => {
+    const one = [], other = [];
+    screenshotPixels(first, (r, g, b) => one.push(r << 16 | g << 8 | b));
+    screenshotPixels(second, (r, g, b) => other.push(r << 16 | g << 8 | b));
+    assert.equal(one.length, other.length, 'compared screenshots are the same size');
+    let apart = 0;
+    for (let i = 0; i < one.length; i++) if (one[i] !== other[i]) apart++;
+    return apart;
+};
 const homeMaterial = [92, 140, 107];
 const amberMaterial = [217, 122, 69];
 const parcelMaterials = [[[69, 69, 38]], [[173, 158, 99]]];
@@ -635,22 +645,22 @@ try {
     stage = 'offset doorway and physical occupied-box transport';
     await choose(1);
     const beforeCarryTitle = await dimensionLabel(small);
-    const carryGeometry = focusedGeometry(small, 5, 4);
+    const carryGeometry = focusedGeometry(small, 5, 5);
     const carryPatch = (dx, dy, side = 0.4) => ({
         x: Math.round(carryGeometry.x + dx * carryGeometry.tile),
         y: Math.round(carryGeometry.y + dy * carryGeometry.tile),
         width: Math.floor(carryGeometry.tile * side), height: Math.floor(carryGeometry.tile * side),
     });
-    const cargoBefore = await small.crop(carryPatch(-0.35, -1.02, 0.7));
-    const wallBefore = await small.crop(carryPatch(-2.68, 0.1));
+    const cargoBefore = await small.crop(carryPatch(-0.35, -1.52, 0.7));
+    const wallBefore = await small.crop(carryPatch(-2.68, -0.4));
     featureMask(cargoBefore, parcelMaterials, 'occupied-box parcel baseline');
     featureMask(wallBefore, homeMaterials, 'occupied-box wall edge baseline');
     const outsideBefore = await saveCrop(small, 'occupied-box-outside-before', carryPatch(3.4, -4.3));
     await witness('NWSSEN');
     await advanceMatch(24);
     assertImagesEqual(await dimensionLabel(small), beforeCarryTitle, 'the passenger remains in its canonical interior');
-    assertFeaturesEqual(await small.crop(carryPatch(-0.35, -1.02, 0.7)), cargoBefore, parcelMaterials, 'carrying a room preserves its parcel coordinates');
-    assertFeaturesEqual(await small.crop(carryPatch(-2.68, 0.1)), wallBefore, homeMaterials, 'carrying a room preserves interior framing');
+    assertFeaturesEqual(await small.crop(carryPatch(-0.35, -1.52, 0.7)), cargoBefore, parcelMaterials, 'carrying a room preserves its parcel coordinates');
+    assertFeaturesEqual(await small.crop(carryPatch(-2.68, -0.4)), wallBefore, homeMaterials, 'carrying a room preserves interior framing');
     assertImagesDiffer(await saveCrop(small, 'occupied-box-outside-after', carryPatch(3.4, -4.3)), outsideBefore,
         'a moved occupied box shows its actual new containing-world context');
     await host.screenshot('desktop-offset-occupied-box-outside');
@@ -668,9 +678,9 @@ try {
     await choose(10);
     const recursiveTitle = await host.crop(titleClip);
     const canonicalTitle = await dimensionLabel(small);
-    const recursionGeometry = focusedGeometry(small, 5, 6);
+    const recursionGeometry = focusedGeometry(small, 6, 6);
     const targetPatch = {
-        x: Math.round(recursionGeometry.x - recursionGeometry.tile * 1.25),
+        x: Math.round(recursionGeometry.x - recursionGeometry.tile * 1.75),
         y: Math.round(recursionGeometry.y + recursionGeometry.tile * 0.25),
         width: Math.floor(recursionGeometry.tile * 0.5), height: Math.floor(recursionGeometry.tile * 0.5),
     };
@@ -691,10 +701,12 @@ try {
     await advanceMatch(24);
     assertImagesEqual(await small.crop(cameraBody(small)), physicalParent, 'partner undo restores the exact pre-cycle scene');
     await action('E');
+    // The home's east doorway reaches its edge along one more cell now.
+    await action('e');
     await action('e');
     await advanceMatch(24);
     const loopStart = await small.crop(cameraBody(small));
-    await witness('neese');
+    await witness('neesee');
     await advanceMatch(24);
     // The final east step exits a self-containing primary back into the
     // same canonical room with identical depth and entrance instance.
@@ -710,11 +722,17 @@ try {
     assertImagesDiffer(cycleMiddle, cycleEarly, 'same-room cycle exits include a spatial intermediate frame');
     assertImagesDiffer(cycleLate, cycleSettled, 'same-room cycle exits settle gradually');
     assertImagesEqual(cycleSettled, loopStart, 'a finite self-cycle returns to the same canonical contents and framing');
-    await witness('swneessswnenneeenwnnnn W');
+    await witness('swneessswnenneeeenwnnnn W');
     await small.tapKey('Enter', 'Enter');
     await advanceMatch();
+    // The two pages draw the same title from glyphs they each cached in
+    // their own order, and one pixel of it has differed between them (a
+    // failure kept both screenshots: the same words, one pixel apart at
+    // 469,42). A different title differs in hundreds of pixels, so a few
+    // are allowed here, where two pages are compared; one page against its
+    // own earlier crop stays exact.
     assertImagesDiffer(await host.crop(titleClip), recursiveTitle, 'self-nesting, extraction and delivery complete the authored puzzle');
-    assertImagesEqual(await host.crop(titleClip), await small.crop(titleClip), 'recursive puzzle progression agrees on both screens');
+    assert.ok(pixelsApart(await host.crop(titleClip), await small.crop(titleClip)) <= 8, 'recursive puzzle progression agrees on both screens');
     await choose(0);
     stage = 'phone layout and real touch movement';
     await host.resize(390, 844);

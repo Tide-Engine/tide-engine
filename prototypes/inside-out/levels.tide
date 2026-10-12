@@ -71,6 +71,57 @@ void WorkshopSeed(mut LevelLayout layout, mut Puzzle puzzle)
     }
 }
 
+// Every box is a square grid, so its miniature fills the cell it stands in.
+// A room authored longer one way is packed out with rows or columns of wall,
+// the odd one below or to the right (above or to the left with `low`), and
+// everything in it moves with it. A
+// doorway on a packed side reaches the new edge along a corridor of floor.
+void SquareRoom(mut LevelLayout layout, mut Puzzle puzzle, int room, bool low)
+{
+    var old = layout.rooms[room];
+    var width = old.width;
+    var height = old.height;
+    if (width == height) return;
+    var span = Math.Max(width, height);
+    var odd = low ? 1 : 0;
+    var shift = int2((span - width + odd) / 2, (span - height + odd) / 2);
+    mut int2[4] doors = default;
+    for (var side = 0; side < 4; side++) doors[side] = DoorCell(layout, room, side);
+    mut var next = old;
+    next.width = span;
+    next.height = span;
+    for (var cell = 0; cell < 49; cell++) next.tiles[cell] = Tile.Wall;
+    for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++) next.tiles[(y + shift.y) * span + x + shift.x] = old.tiles[y * width + x];
+    for (var side = 0; side < 4; side++)
+    {
+        if ((old.doors & (1 << side)) == 0 || doors[side].x < 0) continue;
+        var at = doors[side] + shift;
+        if (side == 0) next.north = at.x;
+        if (side == 1) next.east = at.y;
+        if (side == 2) next.south = at.x;
+        if (side == 3) next.west = at.y;
+        mut var walk = at;
+        while (walk.x >= 0 && walk.y >= 0 && walk.x < span && walk.y < span)
+        {
+            if (next.tiles[walk.y * span + walk.x] == Tile.Wall) next.tiles[walk.y * span + walk.x] = Tile.Floor;
+            walk = walk + Direction(side);
+        }
+    }
+    layout.rooms[room] = next;
+    for (var seat = 0; seat < 2; seat++)
+        if (puzzle.actors[seat].room == room) puzzle.actors[seat].position = puzzle.actors[seat].position + shift;
+    for (var crate = 0; crate < MAX_CRATES; crate++)
+        if (puzzle.crates[crate].active && puzzle.crates[crate].room == room) puzzle.crates[crate].position = puzzle.crates[crate].position + shift;
+    for (var box = 0; box < MAX_ROOMS; box++)
+    {
+        if (puzzle.rooms[box].room == room && box < layout.roomCount) puzzle.rooms[box].position = puzzle.rooms[box].position + shift;
+        if (layout.rooms[box].dockRoom == room && layout.rooms[box].dock.x >= 0) layout.rooms[box].dock = layout.rooms[box].dock + shift;
+    }
+    for (var copy = 0; copy < layout.referenceCount; copy++)
+        if (puzzle.references[copy].room == room) puzzle.references[copy].position = puzzle.references[copy].position + shift;
+}
+
 void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
 {
     WorkshopBlank(layout, puzzle);
@@ -266,6 +317,7 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopTile(layout, 3, int2(4, 4), Tile.Exit);
             break;
     }
+    for (var room = 0; room < layout.roomCount; room++) SquareRoom(layout, puzzle, room, level == 8 && room == 1);
     WorkshopSeed(layout, puzzle);
 }
 string ChapterName(int level)
@@ -301,7 +353,7 @@ string LevelLesson(int level)
     if (level == 3) return "Leave the parcel on the left target and the home on the right outline.";
     if (level == 4) return "Trade the two boxes' places and deliver the parcel into the long room.";
     if (level == 5) return "Deliver the parcel down the left corridor, then leave this room together.";
-    if (level == 6) return "Nest the narrow box, park the occupied larger box, and deliver the parcel inside it.";
+    if (level == 6) return "Nest the narrow box, deliver the parcel inside the larger box, and park it.";
     if (level == 7) return "Deliver the parcel, pack the boxes onto their outlines, then leave both enclosing rooms.";
     if (level == 8) return "Deliver both parcels in the same interior and return to the containing room.";
     if (level == 9) return "Move the home onto its outline, keep one parcel inside, and deliver the other outward.";
@@ -350,9 +402,9 @@ string LevelHint(int level, int tier)
     }
     if (level == 6)
     {
-        if (detail == 0) return "If walking into the parked room pushes it farther, what could stop that push?";
-        if (detail == 1) return "The partner can be a backstop. Teal must deliver into the larger room, then leave its north door and stand behind it so Amber can enter from the south.";
-        return "Amber leaves south, nests the narrow occupied box east into the larger room, then parks that room north. Teal posts the parcel east into the larger room, leaves north and waits. Amber enters south, circles to the parcel's north side and pushes it down. Amber leaves south and waits beside the box so Teal can re-enter from the north; then both take the south route to their goals.";
+        if (detail == 0) return "The narrow box can travel inside the larger one. Who should be in it when it goes?";
+        if (detail == 1) return "Nest the narrow box first, with Teal still inside it. Teal can then deliver the parcel from inside the larger room before that room is parked.";
+        return "Amber leaves south, walks round and pushes the narrow box east into the larger room with Teal inside. Teal leaves the narrow box east, pushing the parcel along, steps round it and pushes it down onto its target, then leaves the larger room east. Amber pushes the larger room north onto its outline, and both walk to their goals.";
     }
     if (level == 7)
     {

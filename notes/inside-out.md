@@ -148,6 +148,99 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
+Square blocks again, with texture and depth (2026-10-12, later still). The
+owner did not like the rounded corners ("the square one looked better so
+make it like it was before") and found the surfaces "pretty flat": "lets
+play with texture, depth". The amounts below are a first, gentle pass and
+my picks.
+- The rounded corners are gone, with their two meshes, `Corner`,
+  `WallFillets` and the extra lamp and scene passes: `geometry.tide` and
+  `render.tide` went back to the commit before them, and `WallTile` is the
+  joined block with a darker rim and a raised face again. What the bullet
+  below says of rounding no longer applies; square rooms and plain doorways
+  stand.
+- Depth: walls are 0.31 of a tile high (were 0.24), perimeter strips 0.30
+  and door posts 0.32. Every side face darkens towards the floor it stands
+  on, from full light at its top to 0.76 at its foot.
+- Texture: a floor is terrazzo, 24 flecks to a tile's edge, about one in
+  twenty darker (0.935) and one in thirty paler; a wall's raised face is
+  brushed, 40 streaks to a tile within 4% of light. `SceneDetail` computes
+  it in the object's own coordinates (`SceneObject.texels`, `detail`,
+  `detailOrigin`; `Sculpture.detail` and `detailOrigin` say what the next
+  cuboids are, and a floor cell's origin is its place in the room, so the
+  flecks run on from cell to cell and travel with a pushed box). It is one
+  scalar in the blue channel of the normal target, halved; the normal's
+  height is rebuilt from x and z, as no visible face looks down. The
+  composite multiplies the light by it, so a paint's chroma is unchanged
+  and the browser fixture's material matching holds. It fades out where an
+  occurrence's tile is under about 22 pixels and where it is over 1.3 times
+  the focused room's, so small nested rooms and the huge tiles of a
+  containing room stay plain: on those it read as noise and as blotches.
+- A dock outline is not drawn while its box stands on it. The owner asked
+  what the line across an exit was: the home's own outline, on the parent's
+  floor, showing through the doorway gap.
+
+Square rooms, rounded corners and plain doorways (2026-10-12, later the
+same day; this replaces the packing described in the next paragraph's
+second bullet). The owner kept the lab look after seeing other styles, said
+the packed box was "still off-grid just filled the gaps", expected the
+puzzles to need redesigning, asked for the black/yellow lines on the
+entrances to go, and suggested rounded or merged corners ("box marching").
+- Every room is a square grid in the match itself. `SquareRoom`, run by
+  `LoadLevel` on each authored room, packs a room that is longer one way
+  out to its longer side with rows or columns of wall, the odd one below or
+  to the right (above or to the left for puzzle 9's narrow room, the one
+  place it mattered), moves everything in the room with it, and carries a
+  doorway on a packed side to the new edge along a corridor of floor. The
+  authored calls keep their old sizes; the layout a match holds is square.
+  `RoomPadding` and its helpers are gone.
+- Solutions: eight of twelve replay unchanged. Puzzles 8, 9 and 11 take the
+  old solution with one or two steps repeated where a corridor is crossed
+  (43, 35 and 28 moves), and show the same evidence as before. Puzzle 7's
+  old solution does not adapt. A breadth-first search through the Move
+  handler found a 27-move solution with no partner backstop, and the same
+  search on the puzzle as it was before found one of 24 moves: the two
+  backstops the old 41-move witness showed were never required. Its
+  minimum evidence is now one occupied move, one parent change and one
+  cargo transfer, and its lesson and three hints describe the 27-move
+  route. "Carried together pins two partner-body backstops" below is no
+  longer true of the witness. Puzzles 8, 9 and 11 were past the search's
+  four million states, so their witnesses are not known to be shortest.
+  The second puzzle's exhaustive count is still 167.
+- Wall blocks: `WallTile` draws a cell as one cuboid, or as a cross with
+  corner squares when an outer corner is rounded (both sides beyond it are
+  open floor, radius 0.30 of a tile). `WallFillets` fills an inner corner,
+  where on-grid wall runs along two sides of a floor cell, with a hollow
+  curve of radius 0.20. Both curves are two more instanced meshes built once
+  in `BeginSculpture` (`RoundMesh`, `FilletMesh`, six steps to the quarter),
+  placed by `Corner` with a quarter turn per quadrant, and drawn by the lamp
+  and scene passes after the cubes. A wall block is one paint now, shaded by
+  the light alone: the darker rim, raised face and darker sides are gone.
+  The fillet stands in the corner of a floor cell; nothing in the rules
+  knows of it.
+- The striped threshold on a doorway's floor is gone. The yellow posts
+  either side remain.
+
+Continuous cells and square boxes (2026-10-12). The owner asked for cells
+next to each other to be "more continuous" rather than "clearly cells on a
+grid", and for a box to always fill its cell as a square: rooms need not be
+the same size inside, "but the format should still be a square".
+- Wall cells that touch are one block: `WallTile` takes a bit for each side
+  with wall beyond it (off the room's grid counts), draws its lid to the
+  cell's edge, and extends the raised face to every joined side, so the
+  darker rim runs only along a block's open sides. An inside corner has no
+  rim. Floor cells meet without a joint, in two shades 0.025 apart so steps
+  can still be counted.
+- A room that is longer one way is packed out to a square with solid wall on
+  its two short sides (`RoomPadding`, from `RoomTrim`): half the difference
+  in tiles on each. A doorway on a packed side runs through the packing as
+  a strip of floor as wide as the doorway. This is drawing only. The room,
+  its doors, `DoorsMeet` and every puzzle are unchanged; the packing is not
+  a place anything can be, and a passage crosses it on the way to the
+  doorway. A box too small to detail is a square block too. The owner's
+  words could also mean making every authored room square, which would
+  change the puzzles; that reading was not taken and is theirs to ask for.
+
 Full-window layout (2026-10-12; the owner: "the game should be most of the
 screen, right now it's like a weird iframe like thing"). The framed panel
 is gone. The scene is drawn over the whole window below the heading
@@ -279,11 +372,11 @@ The authored replacement campaign has these production-command witnesses:
 | A place to stand | 31 |
 | Passing place | 39 |
 | The same corner | 21 |
-| Carried together | 41 |
-| Before it moves | 40 |
-| Two ways home | 34 |
+| Carried together | 27 |
+| Before it moves | 43 |
+| Two ways home | 35 |
 | Return address | 51 |
-| Folded landing | 26 |
+| Folded landing | 28 |
 | Crossed return | 28 |
 
 Return address requires a copied box's parent to change into its own
@@ -336,6 +429,66 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Square blocks, texture and depth validation (2026-10-12)
+
+Presentation only. Native and web debug builds are warning-free; the 33
+fixtures pass natively and under WASI; `inside_out_play_webgl` passes in
+188.98 s and `inside_out_play_webgpu` in 149.41 s. Both are about 20 s
+slower than the run before; whether that is the taller walls and the
+detail channel or the machine was not separated. Native captures of
+puzzles 1 and 12 at 1280x800 and 1920x1080 were inspected, enlarged. The
+speckle on the floors of the smallest nested boxes is older than this
+change and is not the new texture. The thumbnail is 180,028 bytes,
+SHA-256 `22d456b668dc66c9df34bfa6418ba0f26862465c9cf9290646a4fd9ac924ea41`. The docs production build passes. Nothing was staged
+or deployed. No CI was dispatched.
+
+## Square rooms and rounded corners validation (2026-10-12)
+
+Match layouts, four witnesses, puzzle 7's lesson and hints, presentation
+and the browser fixture's numbers for the two rooms it measures. Native and
+web debug builds are warning-free. All 33 fixtures pass natively and under
+WASI, including the twelve replays, the exchanged jobs and the second
+puzzle's exhaustive check. `inside_out_play_webgl` passes in 168.92 s and
+`inside_out_play_webgpu` in 123.23 s, on the first run. In the fixture the
+carried home is read as five by five with its contents half a tile higher,
+the recursive home as six by six with its contents half a tile to the left,
+and the self-cycle loop is entered one step later and is one step longer
+(`neesee`), as the home's east doorway has a corridor cell.
+
+Native captures of puzzle 12 at 1920x1080 and of puzzle 8 at 1280x800 were
+inspected: rounded outer corners, filleted inner ones, the five by five
+violet box on its cell, doorways without stripes. The other ten puzzles
+were not looked at in the new shapes, and nobody has played the four
+changed puzzles. The thumbnail is 166,680 bytes, SHA-256
+`810dccc05e3f11edb53538e2aa6e9a68cd5b01a85074b67e1e21b95ac5186926`. The
+docs production build passes. Nothing was staged or deployed. No CI was
+dispatched.
+
+## Continuous cells, square boxes and the title-crop failure (2026-10-12)
+
+The intermittent "recursive puzzle progression agrees on both screens"
+failure is explained. It recurred twice here (WebGL, then WebGPU with a
+variant that waited up to 60 more ticks, so it was never a race). The
+failure screenshots of the two pages show the same title, "12 / 12 Crossed
+return", and differ in that crop by exactly one pixel, at 469,42, inside
+the text. The fixture compared PNG bytes. That one comparison between two
+pages now allows up to 8 differing pixels (`pixelsApart`); a different
+title differs in hundreds. Why one text pixel differs between two pages on
+one machine is not established; each page fills its glyph cache in its own
+order, which is my guess. Other cross-page label comparisons are still
+exact and have not failed.
+
+Native and web debug builds are warning-free; the 33 fixtures pass natively
+and under WASI. On the final game code `inside_out_play_webgl` passes in
+174.75 s and `inside_out_play_webgpu` in 141.85 s. The WebGL run had
+started with the waiting variant of that last check loaded and the WebGPU
+run with the pixel tolerance; the tolerance has passed once on WebGPU and
+once on WebGL since (179.13 s). Native captures at 1280x800 and 1920x1080 were
+inspected: joined wall blocks, a plain floor, and the 5 by 4 box of puzzle
+12 filling its cell. The thumbnail is 163,638 bytes, SHA-256
+`0d7b85de8684b608ca65fdb3d52cd843a117f16731244c7df5b6399b3540636c`.
+Nothing was staged or deployed. No CI was dispatched.
 
 ## Full-window layout validation (2026-10-12)
 

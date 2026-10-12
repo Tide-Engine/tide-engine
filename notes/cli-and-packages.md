@@ -1,5 +1,46 @@
 # `tide`, packages and the package
 
+## Optimized engine in development builds (2026-10-12)
+
+The owner approved optimizing the engine by default after the external
+2,500-character FBX stress test exposed the cost of an entirely unoptimized
+runtime. `tide build` and `tide run` now compile engine sources with `-O2 -g`
+in development, while generated game/launcher code and game/package C/C++
+retain `-O0 -g`. Assertions and the Tide `DEBUG` symbol remain enabled;
+release flags, determinism flags, stripping and hot reload are unchanged.
+The policy applies through the shared compiler path to native, web and
+Android, including watched libraries. Repository CMake debug presets stay
+fully unoptimized for engine development and correctness testing.
+
+Engine compile jobs and their object stamps use the same engine-specific
+flags. An old engine stamp rebuilds engine objects without changing the
+game's compilation policy. Existing per-game/configuration caches remain;
+ordinary game edits do not rebuild the engine. No ABI, runtime API or
+language semantics changed, and no animation sampling/binding cache was added.
+
+The package cache integration test checks optimization/assertion macros in
+engine and game probes for native/web debug/release, plus invalidation of an
+old unoptimized engine stamp while preserving other objects. Its optimization
+probe fails against the preceding CLI with `engine_must_be_optimized`.
+
+Validation on Windows with Clang 23.1.2 and Node 24.16.0: full native debug
+passed 2,235/2,235 CTests (62.26 s), full web debug passed 2,203/2,203 (162.96 s),
+including OpenGL/WebGL/WebGPU coverage, and the docs production build passed.
+The complete staged CLI cache/stripping/parallel-compilation and debug/release
+web-watch integration passed with an external compiler. Separately relinking
+the unoptimized core-test objects against `-O2 -g` engine libraries with
+assertions enabled passed 435/435 on both native and WASI, including unchanged
+cross-platform math/random and skinned-pose bits. Android, other operating
+systems and sanitizers were not run; no CI or site deployment was requested.
+
+The CPU-only external stress diagnostic recorded 2,500 synchronized characters
+with 61-node animation sources and 1,604 triangles per character. Mean view
+recording over eight measured frames after two warmups was 273.36 ms with the
+unoptimized engine and 23.46 ms with only the engine optimized, keeping callers
+unoptimized, assertions enabled and the same Windows debug C runtime. This
+isolated diagnostic excludes simulation, GPU work and display waiting; its
+private FBX fixture is outside the repository, and no gameplay FPS is inferred.
+
 ## Web-watch request diagnostics (2026-10-11)
 
 - Build run `38139106428` at `0e16bfb4` passed every platform suite and the

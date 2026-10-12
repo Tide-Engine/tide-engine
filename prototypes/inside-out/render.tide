@@ -8,6 +8,11 @@ struct SceneObject
     float4 aperture;
     int apertureSide = -1;
     float groundHeight;
+    // The surface's size in texels, eight to a tile of its own room, what
+    // it is made of, and where its pattern starts.
+    float3 texels;
+    float detail;
+    float2 detailOrigin;
 }
 
 local singleton SceneRender
@@ -70,6 +75,26 @@ bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float 
     return alpha >= (coverage + 0.5) / 16;
 }
 
+// How much of the light a point of a surface keeps, for its texture and
+// depth. One scalar, so the paint's hue is the same in every shade. A side
+// darkens towards the floor it stands on. A floor (detail 1) is terrazzo:
+// sparse dark flecks and a few pale ones. A wall's face (detail 2) is
+// brushed: fine streaks along it.
+float SceneDetail(float3 position, float3 normal, SceneObject object)
+{
+    if (Math.Abs(normal.y) < 0.5) return 0.76 + 0.24 * (position.y + 0.5);
+    if (object.detail < 0.5) return 1;
+    var across = position.x * object.texels.x + object.detailOrigin.x;
+    var along = position.z * object.texels.z + object.detailOrigin.y;
+    if (object.detail < 1.5)
+    {
+        var fleck = (Math.Hash(int2(int(Math.Floor(across * 3)) + 4096, int(Math.Floor(along * 3)) + 4096)) & 1023) / 1023.0;
+        return fleck > 0.955 ? 0.935 : fleck < 0.03 ? 1.025 : 1.0;
+    }
+    var streak = (Math.Hash(int2(int(Math.Floor(along * 5)) + 4096, 7)) & 255) / 255.0;
+    return 0.97 + 0.04 * streak;
+}
+
 frag SceneShadow(SceneVertex vertex, out Color color, SceneObject object, SceneRender render)
 {
     if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
@@ -83,8 +108,10 @@ frag SceneFill(SceneVertex vertex, out Color material, out Color normal, Instanc
     material = Color(object.tone.r, object.tone.g, object.tone.b);
     // The alpha is the occurrence's metric scale. Copy blending and point
     // reads keep the floating normal data separate from material opacity.
+    // No visible face looks down, so the normal's height is implied and its
+    // channel carries the surface's detail, halved to leave room above one.
     var scale = Math.Clamp(object.aoScale / render.tile, 0.01, 6);
-    normal = Color(facing.x * 0.5 + 0.5, facing.y * 0.5 + 0.5, facing.z * 0.5 + 0.5, scale);
+    normal = Color(facing.x * 0.5 + 0.5, facing.z * 0.5 + 0.5, SceneDetail(vertex.position, vertex.normal, object) * 0.5, scale);
 }
 
 float3 SceneWorld(DepthTexture depth, float4x4 inverseClip, float2 uv)
@@ -96,7 +123,9 @@ float3 SceneWorld(DepthTexture depth, float4x4 inverseClip, float2 uv)
 
 float3 SceneNormal(Color value)
 {
-    return Math.Normalize(float3(value.r, value.g, value.b) * 2 - float3(1));
+    var x = value.r * 2 - 1;
+    var z = value.g * 2 - 1;
+    return float3(x, Math.Sqrt(Math.Max(0, 1 - x * x - z * z)), z);
 }
 
 float3 SceneKernel(int index)
@@ -221,7 +250,12 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     var ao = render.occlusion.Sample(uv, Filter.Bilinear).r;
     var facing = Math.Max(0, Math.Dot(normal, -render.lightDirection));
     var sunlight = SceneSun(render.shadow, render.toLamp, render.fromLamp, point, normal, encoded.a * render.tile, render.tile, render.lightDirection);
-    var shade = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight);
+    // Texture finer than a few pixels would only be noise, and on the huge
+    // tiles of a containing room it would be blotches: it belongs to rooms
+    // near the focused one's scale, and fades out of the others.
+    var fine = Math.Saturate(encoded.a * render.tile / 36 - 0.6) * (1 - Math.Saturate((encoded.a - 1.3) / 0.7));
+    var detail = 1 + (encoded.b * 2 - 1) * fine;
+    var shade = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight) * detail;
     var material = source.Sample(uv, Filter.Point);
     color = Color(material.r * shade, material.g * shade, material.b * shade, material.a);
 }
