@@ -2,15 +2,14 @@
 
 A cooperative puzzle game for **two friends in separate browsers**.
 You are two test dummies packed in a small box, itself inside another room
-on a factory floor. Work your way out.
+in a crash-test lab. Work your way out.
 Push rooms with your partner inside, fit them through tight passages, and
 move boxes into their own interiors. Repeated views of a room share one
 set of parcels, boxes and people.
 
-The 3D rooms keep a fixed, gently tilted view of a factory drawn like an
-early 3D console game: chunky pixels and flat, stepped shades on painted
-steel containers, concrete slabs and warning yellow, with quiet
-ventilation.
+The 3D rooms keep a fixed, gently tilted view of a bright test lab: pale
+flooring, boldly painted boxes, yellow and black striped doorways and soft
+shadows, with quiet ventilation.
 There are no threats or jumpscares.
 
 Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype

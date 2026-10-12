@@ -46,11 +46,11 @@ local event(PuzzleCue cue) RememberDoorway(mut Picture picture)
 
 Color RoomColor(int room)
 {
-    // Container paints: machine green, oxide red, steel blue, violet.
+    // Test-rig paints, bold enough to tell apart when a box is tiny.
     if (room == 0) return Color(0.36, 0.55, 0.42);
-    if (room == 1) return Color(0.58, 0.36, 0.28);
-    if (room == 2) return Color(0.36, 0.46, 0.62);
-    return Color(0.50, 0.42, 0.60);
+    if (room == 1) return Color(0.27, 0.48, 0.76);
+    if (room == 2) return Color(0.60, 0.40, 0.72);
+    return Color(0.82, 0.36, 0.34);
 }
 string RoomName(int room)
 {
@@ -121,10 +121,10 @@ void GoldTarget(mut Sculpture sculpture, float2 at, float size, bool occupied, f
 
 void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor)
 {
-    // Poured concrete slabs with dark joints.
-    var tone = variation % 2 == 0 ? Color(.57, .57, .55) : Color(.53, .53, .51);
+    // Pale lab flooring; the joints between slabs are its taped grid.
+    var tone = variation % 2 == 0 ? Color(.90, .90, .87) : Color(.86, .86, .83);
     var thickness = Math.Max(.08, size * .010);
-    Cuboid(sculpture, at, float2(size), thickness, Color(.17, .18, .19), floor - thickness, size);
+    Cuboid(sculpture, at, float2(size), thickness, Color(.55, .57, .60), floor - thickness, size);
     Cuboid(sculpture, at, float2(size * .985), thickness * .24, tone, floor, size);
     if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
     else if (tile == Tile.Exit)
@@ -137,10 +137,10 @@ void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool o
 }
 
 // Yellow and black blocks in turn along a raised edge.
-void HazardEdge(mut Sculpture sculpture, float2 from, float2 to, float width, float floor, float tile)
+void HazardEdge(mut Sculpture sculpture, float2 from, float2 to, float width, float floor, float tile, float stripe = .25)
 {
     var length = Math.Max(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
-    var count = tile < 8 ? 1 : Math.Clamp(int(Math.Round(length / (tile * .25))), 1, 32);
+    var count = tile < 8 ? 1 : Math.Clamp(int(Math.Round(length / (tile * stripe))), 1, 32);
     var step = (to - from) / count;
     var across = Math.Abs(step.x) > Math.Abs(step.y) ? float2(Math.Abs(step.x), width) : float2(width, Math.Abs(step.y));
     for (var index = 0; index < count; index++)
@@ -183,7 +183,7 @@ void Panel(float2 at, float2 size)
 
 void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens)
 {
-    var tone = room < 0 ? Color(0.40, 0.42, 0.45) : RoomColor(room);
+    var tone = room < 0 ? Color(0.66, 0.68, 0.71) : RoomColor(room);
     for (var y = 0; y < RoomHeight(workshop.layout, room); y++)
         for (var x = 0; x < RoomWidth(workshop.layout, room); x++)
         {
@@ -227,7 +227,7 @@ void DimensionConnections(mut Sculpture sculpture, Workshop workshop, int room, 
             var first = direction % 2 == 0 ? float2(from.x, middle.y) : float2(middle.x, from.y);
             var second = direction % 2 == 0 ? float2(to.x, middle.y) : float2(middle.x, to.y);
             var stroke = Math.Min(RoomScale(workshop.layout, child), RoomScale(workshop.layout, other)) * lens.tile * 0.82;
-            var floor = Color(0.57, 0.57, 0.55);
+            var floor = Color(0.90, 0.90, 0.87);
             FloorLine(sculpture, from, first, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
             FloorLine(sculpture, first, second, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
             FloorLine(sculpture, second, to, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
@@ -393,6 +393,8 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
             var end = mouth + tangent * lens.tile * 0.41;
             WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile, room < 0);
             WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile, room < 0);
+            // A striped threshold marks the doorway on the floor.
+            HazardEdge(sculpture, start, end, thickness, lens.floor + lens.tile * .012, lens.tile, .164);
             // Short yellow posts make the depth of the opening visible. The
             // floor remains continuous all the way through the missing wall.
             var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
@@ -408,7 +410,7 @@ void RoomTrim(mut Sculpture sculpture, LevelLayout layout, int room, MapLens len
     RoomWalls(sculpture, layout, room, lens);
     if (room < 0 || lens.tile < 3) return;
     var badge = lens.origin + float2(lens.tile * 0.12, lens.tile * 0.12);
-    FloorNumber(sculpture, room + 1, box >= MAX_ROOMS, badge, Math.Max(3, lens.tile * .26), RUBBER, lens.floor + lens.tile * .015, lens.tile);
+    FloorNumber(sculpture, room + 1, box >= MAX_ROOMS, badge, Math.Max(3, lens.tile * .30), DECAL, lens.floor + lens.tile * .015, lens.tile);
 }
 
 struct SceneLens { int room; MapLens lens; int depth; int box = -1; }
@@ -650,7 +652,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var body = Rect(topLeft.x + 12, topLeft.y + 40, lens.size.x - 24, lens.size.y - 62);
     Draw.Clip(body)
     {
-        Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.085, 0.09, 0.10));
+        Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.27, 0.30, 0.34));
     }
     var viewSide = Math.Min(body.width, body.height);
     var viewCenter = lens.center + float2(0, 9);
@@ -694,7 +696,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
                     FloorLine(sculpture, edge - cross * lens.tile * .26, edge + cross * lens.tile * .26, lens.tile * .09, HAZARD, top, lens.tile);
                 if (hands.ahead[d] == Step.Enter)
                 {
-                    var green = Color(.48, .74, .48);
+                    var green = Color(.16, .56, .30);
                     FloorLine(sculpture, edge, edge - axis * lens.tile * .16 + cross * lens.tile * .18, lens.tile * .07, green, top, lens.tile);
                     FloorLine(sculpture, edge, edge - axis * lens.tile * .16 - cross * lens.tile * .18, lens.tile * .07, green, top, lens.tile);
                 }

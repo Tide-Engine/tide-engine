@@ -34,13 +34,7 @@ local singleton SceneRender
     float4 board;
     float tile;
     float depthSpan;
-    float block = 1;
 }
-
-// The board is drawn in square blocks of window pixels, about this many
-// across it, and its light in this many shades with a pattern between them.
-const float SCENE_LINES = 220;
-const float SCENE_SHADES = 14;
 
 struct SceneBlurStep { float2 direction; }
 
@@ -52,7 +46,7 @@ bool SceneInBoard(float2 point, float4 board)
 
 // This is the maker's floor column, rather than the height of an individual
 // fragment. A head and its boots cross the same real doorway aperture.
-bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float floor, float alpha, float block)
+bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float floor, float alpha)
 {
     if (alpha < 0.01) return false;
     var ground = float2(world.x + screen.x * 0.5,
@@ -65,9 +59,8 @@ bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float 
         if (!outside && Math.Abs(tangent) > aperture.z) return false;
     }
     if (alpha >= 0.999) return true;
-    // The pattern is in the composite's blocks, which read one pixel each.
-    var x = int(Math.Floor(ground.x / block)) & 3;
-    var y = int(Math.Floor(ground.y / block)) & 3;
+    var x = int(Math.Floor(ground.x)) & 3;
+    var y = int(Math.Floor(ground.y)) & 3;
     var low = (((x ^ y) & 1) * 2 + (y & 1)) * 4;
     var high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
     var rank = low + high;
@@ -77,25 +70,15 @@ bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float 
     return alpha >= (coverage + 0.5) / 16;
 }
 
-// Sixteen steps in a four by four pattern of blocks.
-float SceneTurn(float2 block)
-{
-    var x = int(block.x) & 3;
-    var y = int(block.y) & 3;
-    var low = ((x ^ y) & 1) * 2 + (y & 1);
-    var high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
-    return (low * 4 + high + 0.5) / 16;
-}
-
 frag SceneShadow(SceneVertex vertex, out Color color, SceneObject object, SceneRender render)
 {
-    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a, render.block)) this.Discard();
+    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
     color = Color.white;
 }
 
 frag SceneFill(SceneVertex vertex, out Color material, out Color normal, Instance instance, SceneObject object, SceneRender render)
 {
-    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a, render.block)) this.Discard();
+    if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
     var facing = instance.Normal(vertex.normal);
     material = Color(object.tone.r, object.tone.g, object.tone.b);
     // The alpha is the occurrence's metric scale. Copy blending and point
@@ -164,7 +147,7 @@ frag SceneOcclusion(Vertex vertex, out Color color, Texture source, SceneRender 
         considered += range;
         if (depth < expected - bias / render.depthSpan) blocked += range;
     }
-    var ao = considered > 0.001 ? 1 - 0.50 * blocked / considered : 1.0;
+    var ao = considered > 0.001 ? 1 - 0.70 * blocked / considered : 1.0;
     color = Color(ao, ao, ao);
 }
 
@@ -229,10 +212,8 @@ float SceneSun(DepthTexture shadow, float4x4 toLamp, float4x4 fromLamp, float3 w
 
 frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender render)
 {
-    if (!SceneInBoard(vertex.uv * render.screenSize, render.board)) this.Discard();
-    // Every window pixel of a block reads the block's middle.
-    var block = Math.Floor(vertex.uv * render.screenSize / render.block);
-    var uv = (block + float2(0.5)) * render.block / render.screenSize;
+    var uv = vertex.uv;
+    if (!SceneInBoard(uv * render.screenSize, render.board)) this.Discard();
     var encoded = render.normals.Sample(uv, Filter.Point);
     if (encoded.a < 0.005) this.Discard();
     var normal = SceneNormal(encoded);
@@ -240,13 +221,9 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     var ao = render.occlusion.Sample(uv, Filter.Bilinear).r;
     var facing = Math.Max(0, Math.Dot(normal, -render.lightDirection));
     var sunlight = SceneSun(render.shadow, render.toLamp, render.fromLamp, point, normal, encoded.a * render.tile, render.tile, render.lightDirection);
+    var shade = Math.Min(1.05, 0.62 * ao + 0.48 * facing * sunlight);
     var material = source.Sample(uv, Filter.Point);
-    var lit = Math.Min(1, 0.62 * ao + 0.48 * facing * sunlight);
-    // One scalar for all three channels: a material keeps its exact hue in
-    // every shade. The pattern only mixes two shades near where they meet,
-    // so evenly lit faces stay flat.
-    var shade = Math.Floor(lit * SCENE_SHADES + 0.5 + (SceneTurn(block) - 0.5) * 0.4) / SCENE_SHADES;
-    color = Color(material.r * shade, material.g * shade, material.b * shade, 1);
+    color = Color(material.r * shade, material.g * shade, material.b * shade, material.a);
 }
 
 void RenderScene(List<SceneVertex> vertices, List<int> indices, List<SceneObject> objects,
@@ -258,7 +235,6 @@ void RenderScene(List<SceneVertex> vertices, List<int> indices, List<SceneObject
     render.focusPixels = focusPixels;
     render.board = float4(clip.x, clip.y, clip.width, clip.height);
     render.tile = Math.Max(0.01, tile);
-    render.block = Math.Max(1, Math.Round(clip.width / SCENE_LINES));
 }
 
 [Stage(ArtStage.Board, 1)]
