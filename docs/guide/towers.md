@@ -6,7 +6,7 @@ description: "Explore a deterministic 2D multiplayer physics game in Tide with B
 
 This walkthrough explains how a Box2D match steers falling bricks and turns them into loose parts of a tower. Follow its [physics](#the-physics), [input](#the-input), [lobby](#the-lobby) and [presentation](#what-a-machine-shows), with code excerpts and the match and lobby sources.
 
-Four plinths side by side, bricks that come down one at a time, and a race to build the tallest tower, with [Box2D](../physics/box2d.md) under all of it. A game made with Tide to show its 2D physics in a match: a brick that has landed is a body like any other, so towers lean, slide and come down, the same on every machine, whatever their pings. Play it alone against three towers that build themselves, or with friends in a room. The idea is Tricky Towers', the party game of stacking falling bricks.
+Four plinths side by side, bricks that come down one at a time, and a race to build the tallest tower, with [Box2D](../packages/box2d.md) under all of it. A game made with Tide to show its 2D physics in a match: a brick that has landed is a body like any other, so towers lean, slide and come down, the same on every machine, whatever their pings. Play it alone against three towers that build themselves, or with friends in a room. The idea is Tricky Towers', the party game of stacking falling bricks.
 
 <iframe class="demo-frame roomy" src="/towers/?embedded" title="Towers" allow="fullscreen"></iframe>
 
@@ -72,11 +72,11 @@ Towers has five files of Tide, and a `tide.packages` that says `box2d` and `room
 - `bots.tide` is how a tower nobody steers gets built: a plan for each brick, from how high the tower stands in each column.
 - `play.tide` is what one machine shows of it: the hand on the brick, the camera and the pieces.
 - `effects.tide` has the dust, the pieces and the words that float up, and `hud.tide` the race, the next brick and the words over the world.
-- The lobby and the menu are the `rooms` package's, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide): which match this machine is in is its to say.
+- The lobby and the menu are the `rooms` package's, [the menu that comes with tide](../packages/rooms.md): which match this machine is in is its to say.
 
 ### The physics
 
-Everything that's solid is a body of Box2D's, made, moved and read through components, as the [physics page](../physics/box2d.md) says. A brick is one entity and one body from the moment it's dealt to the end of the round. What changes is what kind of body it is, and which shapes it has.
+Everything that's solid is a body of Box2D's, made, moved and read through components, as the [physics page](../packages/box2d.md) says. A brick is one entity and one body from the moment it's dealt to the end of the round. What changes is what kind of body it is, and which shapes it has.
 
 **A falling brick is a kinematic body with no shapes.** It goes where its `velocity` takes it, which is down, and where its `position` and `angle` are written, which is how a player steers it: half a cell across, a quarter turn. With no shape it touches nothing, and nothing touches it. What's in its way, it asks:
 
@@ -95,7 +95,7 @@ float Free(Physics physics, Kind kind, float2 from, int quarter, float2 way, flo
 }
 ```
 
-[`Cast`](../physics/box2d.md#asking-the-world) moves a box along a way through the world, and says how much of the way it went before it touched something. The seven bricks are four cells each, which is one box for the bar and the square and two for the rest, so each box is moved, and the brick is free to go as far as the first of them. `Slim` makes a box a little smaller than it is: a shape that's cast counts as touching what it's flush with, and a brick has to slide down beside a wall it only just clears.
+[`Cast`](../packages/box2d.md#asking-the-world) moves a box along a way through the world, and says how much of the way it went before it touched something. The seven bricks are four cells each, which is one box for the bar and the square and two for the rest, so each box is moved, and the brick is free to go as far as the first of them. `Slim` makes a box a little smaller than it is: a shape that's cast counts as touching what it's flush with, and a brick has to slide down beside a wall it only just clears.
 
 **The system that steers it asks three things each tick.** Is there room for the brick turned the way its player wants, which is the package's `Overlap`? Is it free to step half a cell across? And is it free to fall as far as this tick takes it?
 
@@ -124,7 +124,7 @@ if (free >= 1)
 }
 ```
 
-A turn or a step there's no room for doesn't happen, so a brick is never inside a wall and nothing is undone. The system is [`Before` the package's stage](../physics/box2d.md#before-the-step): the world it asks is the world as the last tick's step left it, which is where `body.position` says the brick is, and the step that moves the brick is this tick's. `controls` is the input of the player who owns the brick.
+A turn or a step there's no room for doesn't happen, so a brick is never inside a wall and nothing is undone. The system is [`Before` the package's stage](../packages/box2d.md#before-the-step): the world it asks is the world as the last tick's step left it, which is where `body.position` says the brick is, and the step that moves the brick is this tick's. `controls` is the input of the player who owns the brick.
 
 **Where it isn't free to fall, it lands: the same body is a dynamic one, with its shapes on it.**
 
@@ -139,9 +139,9 @@ if (second.size.x > 0) Spawn(Box { size = second.size, offset = second.offset, f
 this.Remove(Falling, Owner);
 ```
 
-It's put where it touches, at rest, however fast it fell: it was never in the tower, so nothing pushes it out, and a landing doesn't hit what's under it. Writing `type` is [all it takes](../physics/box2d.md#changing-what-a-body-is) to change what a body is. Its first box is a `Box` on its own entity. An entity has one `Box`, so a brick of two gets the second as a [`Part`](../physics/box2d.md#more-shapes-on-a-body): an entity of its own that names the brick, whose box is on the brick's body. From the next step the brick is Box2D's: it has weight, it rests on what's under it, and it goes over if that's not enough.
+It's put where it touches, at rest, however fast it fell: it was never in the tower, so nothing pushes it out, and a landing doesn't hit what's under it. Writing `type` is [all it takes](../packages/box2d.md#changing-what-a-body-is) to change what a body is. Its first box is a `Box` on its own entity. An entity has one `Box`, so a brick of two gets the second as a [`Part`](../packages/box2d.md#more-shapes-on-a-body): an entity of its own that names the brick, whose box is on the brick's body. From the next step the brick is Box2D's: it has weight, it rests on what's under it, and it goes over if that's not enough.
 
-**Where it will land is the same question, asked by a view.** The outline under your brick is where `Free` says it stops, looking 60 meters down. A [view asks the world](../physics/box2d.md#what-they-see) like the match does, of the world it draws:
+**Where it will land is the same question, asked by a view.** The outline under your brick is where `Free` says it stops, looking 60 meters down. A [view asks the world](../packages/box2d.md#what-they-see) like the match does, of the world it draws:
 
 ```csharp
 var fall = SIGHT * Free(physics, piece.kind, from, falling.quarter, float2(0, -SIGHT), float2(SLACK, 0));
@@ -149,7 +149,7 @@ var fall = SIGHT * Free(physics, piece.kind, from, falling.quarter, float2(0, -S
 
 **The plinths are kinematic bodies,** which go where their `velocity` takes them, whatever stands on them. A quake is a plinth going there and back four times. A plinth rises under a player who joined late, and when a round is over the plinths sink, the winner's last, and everything on them comes down.
 
-**A tower is loose bricks all the way down.** With the world as Box2D comes, forty meters of them is a spring: a contact gives a little, and every landing ran down the whole tower and back. So the game tunes the world, which is [three fields of `Physics`](../physics/box2d.md#the-world):
+**A tower is loose bricks all the way down.** With the world as Box2D comes, forty meters of them is a spring: a contact gives a little, and every landing ran down the whole tower and back. So the game tunes the world, which is [three fields of `Physics`](../packages/box2d.md#the-world):
 
 ```csharp
 physics.substeps = SUBSTEPS;          // 8, where it comes with 4
@@ -179,7 +179,7 @@ pushed.impulse.x += Of(towers.winds, lot) * WIND * (1 - Math.Max(depth, 0) / WIN
 world.Set<Body>(this, pushed);
 ```
 
-**How hard things meet is the package's to say.** [`Hit`](../physics/box2d.md#hits) is sent to both bodies that meet faster than the world's `hitSpeed`, which the game puts at 2.5 meters a second, with where and how fast. Nothing in the match handles it. Each machine makes pieces fly of it, more the harder it was: a brick that goes over the side and meets the ground, a tower coming down.
+**How hard things meet is the package's to say.** [`Hit`](../packages/box2d.md#hits) is sent to both bodies that meet faster than the world's `hitSpeed`, which the game puts at 2.5 meters a second, with where and how fast. Nothing in the match handles it. Each machine makes pieces fly of it, more the harder it was: a brick that goes over the side and meets the ground, a tower coming down.
 
 ```csharp
 local event(Hit hit) Crash(Brick brick, mut Fx fx)
@@ -216,7 +216,7 @@ A view works those out a frame at a time, from the keys, the mouse and fingers, 
 
 ### The lobby
 
-The lobby isn't the game's: it's the `rooms` package, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide), which the game lists in its `tide.packages`. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the menu is drawn over it: **Play** closes it, **Host a room** opens that match to others, and **Join a room** leaves it for someone else's. A machine that was told which match to be in, with `--host` or `--join` on its command line or `?host` or `?join=` in its page's address, has no menu in its way.
+The lobby isn't the game's: it's the `rooms` package, [the menu that comes with tide](../packages/rooms.md), which the game lists in its `tide.packages`. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the menu is drawn over it: **Play** closes it, **Host a room** opens that match to others, and **Join a room** leaves it for someone else's. A machine that was told which match to be in, with `--host` or `--join` on its command line or `?host` or `?join=` in its page's address, has no menu in its way.
 
 What the game adds is in `hud.tide`. While a page is up, the player's hands are off their brick: the input reads the menu's `Lobby.playing` and says so (`hands`), and the match builds their tower for them, as it does a tower nobody has. And a view tells the room's page about the match, who has each seat and whether bots play the rest, and sends the game's commands when the page's **New game** and **Bots** buttons say so:
 
@@ -255,7 +255,7 @@ Late in a round there are about 150 bodies: 120 bricks on the towers, loose but 
 
 A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.9 ms on a desktop and 1.2 ms in a browser, and 1.2 and 1.6 while everything comes down. That's a tenth of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
 
-Box2D's whole state is in the match, about 250 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 150 KB.
+Box2D's whole state is in the match, about 250 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../packages/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 150 KB.
 
 ### The match, whole
 

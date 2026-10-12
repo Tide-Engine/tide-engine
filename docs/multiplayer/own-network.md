@@ -4,14 +4,14 @@ description: "Bring your own match transport and your own lobby service to a Tid
 
 # Your own network and service
 
-A match's packets go through Tide's [rooms](./matches.md#rooms) unless the game says otherwise, and its lobbies are Tide's [lobby service](./lobbies.md) unless it says otherwise. Both are the game's to replace, from its own files or a package it lists, with nothing of the engine changed: a store's network and lobbies, a server fleet's, a LAN's.
+A match's packets go through Tide's [rooms](./matches.md#rooms) unless the game says otherwise, and its lobbies are Tide's [lobby service](../packages/lobby.md) unless it says otherwise. Both are the game's to replace, from its own files or a package it lists, with nothing of the engine changed: a store's network and lobbies, a server fleet's, a LAN's.
 
 There are two parts, and a game takes either alone:
 
 - **A network of its own** carries the match's datagrams. The game's C registers it, and `Session.Open()`, `Session.Join(text)` and `Session.room` go through it from then on.
-- **A service of its own** answers the lobby package's questions: who the player is, which lobbies there are, who's matched with whom. The game overrides the package's [slots](./lobbies.md#another-service).
+- **A service of its own** answers the lobby package's questions: who the player is, which lobbies there are, who's matched with whom. The game overrides the package's [slots](../packages/lobby.md#another-service).
 
-The [Steam package](./steam.md) is built from exactly these two, and nothing else.
+The [Steam package](../packages/steam.md) is built from exactly these two, and nothing else.
 
 ## A network of your own
 
@@ -191,7 +191,7 @@ A run of several players with no window (`--players`) is on the game's network t
 
 ## A service of your own
 
-The [lobby package](./lobbies.md) asks four things of a service, each a set of `virtual` functions: who the player is, lobbies, matchmaking, and how a lobby's match is reached. A game, or a package it lists, [overrides](../language/overrides.md) the ones it has its own answer for. Here every one of them is the game's own, over C that keeps its lobbies however it likes:
+The [lobby package](../packages/lobby.md) asks four things of a service, each a set of `virtual` functions: who the player is, lobbies, matchmaking, and how a lobby's match is reached. A game, or a package it lists, [overrides](../language/overrides.md) the ones it has its own answer for. Here every one of them is the game's own, over C that keeps its lobbies however it likes:
 
 ```csharp
 using Lobbies;

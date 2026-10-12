@@ -2,9 +2,9 @@
 description: "Use Tide's Box2D package for deterministic 2D rigid bodies, collisions, queries and multiplayer physics that survives rollback and joins."
 ---
 
-# 2D physics (Box2D)
+# Box2D: 2D physics
 
-[Box2D](https://box2d.org) is Erin Catto's 2D physics engine: rigid bodies that fall, collide, stack and come to rest. It comes with `tide` as a [package](../tools/packages.md#packages-that-come-with-tide). A body and its shapes are components of an entity, every tick steps them, and the match stays the same on every machine, through rollbacks, joins and hot reloads, with nothing for the game to do.
+[Box2D](https://box2d.org) is Erin Catto's 2D physics engine: rigid bodies that fall, collide, stack and come to rest. It comes with `tide` as a [package](../packages/using-and-writing.md#packages-that-come-with-tide). A body and its shapes are components of an entity, every tick steps them, and the match stays the same on every machine, through rollbacks, joins and hot reloads, with nothing for the game to do.
 
 For 3D, see [3D physics (Box3D)](./box3d.md), which is the same package around Box3D.
 
@@ -285,7 +285,7 @@ A world where everything is asleep and nothing was written isn't stepped at all 
 
 ## When things happen in a tick
 
-The package's systems run before the game's, as every [package's](../tools/packages.md#writing-a-package) do, in this order:
+The package's systems run before the game's, as every [package's](../packages/using-and-writing.md#writing-a-package) do, in this order:
 
 1. Bodies and shapes that are new are made, and what code wrote into a `Body` goes to Box2D.
 2. The world steps, by the tick's length, `Time.dt`.

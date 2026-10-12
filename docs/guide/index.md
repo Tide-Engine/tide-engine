@@ -56,5 +56,6 @@ The screen updates every **frame**, as fast as the display allows:
 - Try the [live examples](./examples.md): small games that run in these pages, beside their code.
 - Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md).
 - See how machines share a match, and how the engine keeps them in step: [matches](../multiplayer/matches.md), [networking](../multiplayer/networking.md) and [determinism](../multiplayer/determinism.md).
+- Find optional physics, menus and Steam integration in [Packages](../packages/index.md), with setup and API docs for each bundled package.
 - Look things up in [the language](../language/basics.md) and the [tide command](../tools/cli.md).
 - Browse the [samples](./samples.md) to play complete games in your browser, alone or with friends.
