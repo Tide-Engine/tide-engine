@@ -28,7 +28,7 @@ if(TIDE_WEB)
                     "${CMAKE_CURRENT_SOURCE_DIR}/test/browser.mjs"
                     "$<TARGET_FILE_DIR:inside_out>/inside_out.html"
                     "${CMAKE_CURRENT_BINARY_DIR}/captures/${backend}" "${backend}")
-            set_tests_properties(inside_out_play_${backend} PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE
+            set_tests_properties(inside_out_play_${backend} PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE
                 LABELS "private-prototype" SKIP_REGULAR_EXPRESSION "SKIPPED:")
         endforeach()
         set_tests_properties(inside_out_play_webgpu PROPERTIES LABELS "private-prototype;webgpu")

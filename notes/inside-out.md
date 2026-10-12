@@ -540,7 +540,35 @@ serving/deployment contracts remain in `notes/private-prototypes.md` and
 
 ## Tabletop model, echoes and new rules validation (2026-10-12)
 
-VALIDATION_TABLETOP
+Native and web debug builds are warning-free. All 33 fixtures pass natively
+and under WASI: the twelve replays (puzzle 7's new 19-move witness among
+them), the exchanged jobs, and the second puzzle's exhaustive check, whose
+count is 489 positions on the widened room. One fixture changed with the
+rule: a box standing in a doorway is pushed in, where it used to block.
+
+`inside_out_play_webgl` passes in 639.31 s and `inside_out_play_webgpu` in
+544.51 s, once each, on the final code. They took about 170 s and 140 s
+before the lens, bloom, larger maps and full-size occlusion; the owner was
+told the scene is about twice as heavy and said the cost is fine. Their
+budget is 900 s. The fixture now tells paints by the order and rough ratios
+of their channels (`sagePaint`, `amberPaint`, `woodPaint`,
+`filledWoodPaint`, `markPaint`), as light, grain, focus and bounce leave no
+pixel an exact paint, and reads the slim header's positions. Its first run
+on this look failed "shared undo restores the physical parent context":
+the lens was still easing from the previous puzzle's room a third of a
+second after a puzzle change, so the baseline crop was softer than the
+later one. A new puzzle, a first view and a resize now settle the focus at
+once. The fixture has no assertion for echoes, crossings of boxes and
+parcels, or the new puzzle; those were checked in native captures and by
+the owner in play on a local two-player page.
+
+A before/after capture of five scripted two-player runs (48 frames) is
+byte-identical across the code cleanup that introduced `StepFrom` and
+`FollowPushed`. The thumbnail is 678,679 bytes, SHA-256
+`9bc21708a08f144d50e5a83a7b2f99ec6d2b8976313953172bbca0a7ab21a53e`. The
+docs production build passes. Web release pages were not rebuilt or staged
+and nothing was deployed: the public page still shows an older build. No CI
+was dispatched.
 
 ## Square blocks, texture and depth validation (2026-10-12)
 
