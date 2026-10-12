@@ -147,7 +147,7 @@ system CountDown(mut Round round, Time time)
 
 ## Order
 
-Systems run in one order, the same on every machine. By default, it follows the files, sorted by path, then the order of the systems in each file. A game's [packages](../tools/packages.md) come first, each after the packages it needs.
+Systems run in one order, the same on every machine. By default, it follows the files, sorted by path, then the order of the systems in each file. A game's [packages](../packages/using-and-writing.md) come first, each after the packages it needs.
 
 `[Before]` and `[After]` change that. They take any number of systems:
 

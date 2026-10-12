@@ -4,7 +4,7 @@ description: "Ship a Tide game's lobbies and matches on Steam with the steam pac
 
 # Steam
 
-The `steam` package puts a game's [lobbies](./lobbies.md) and matches on Steam for the builds that ship there. A game lists it under a condition, beside the lobby package it fills in:
+The bundled `steam` package, in the namespace `Steam`, puts a game's [lobbies](./lobby.md) and matches on Steam for the builds that ship there. A game lists it under a condition, beside the lobby package it fills in:
 
 ```
 lobby
@@ -19,7 +19,7 @@ steam
 The package is tested against a stand-in for Steam's library that Tide's tests bring, with several users in one program. It hasn't been run against the Steam client. Expect a first run with the real SDK to find things, and see [the first run with Steam](#the-first-run-with-steam).
 :::
 
-It's a package like any other, built on what any game can use: the lobby package's [`virtual` functions](./lobbies.md#another-service), [C functions](../c/functions.md) over Steamworks' flat C API, and [a network of the game's own](./own-network.md). Nothing in the engine knows about Steam, so a package for another store is written the same way.
+It's a package like any other, built on what any game can use: the lobby package's [`virtual` functions](./lobby.md#another-service), [C functions](../c/functions.md) over Steamworks' flat C API, and [a network of the game's own](../multiplayer/own-network.md). Nothing in the engine knows about Steam, so a package for another store is written the same way.
 
 ## What a game brings
 
@@ -52,7 +52,7 @@ Steam starts the first time a player asks something of the lobby (the first sign
 
 - **Names are Steam's.** `SetName` changes nothing in a lobby: members see each other's Steam names.
 - **A quick match isn't one question.** Steam lists, then the game joins or creates, so two players who ask at the same moment can each make a lobby. A made lobby's data is what was searched for.
-- **A kick is the owner's list.** Steam has no kick. The owner writes the player's Steam ID into the lobby's data, and that player's own program leaves when it reads so, and leaves again if it comes back. A program that isn't the game's could ignore it: a host that wants a player out of the match uses [`Session.Kick`](./matches.md#players-in-the-match) as well.
+- **A kick is the owner's list.** Steam has no kick. The owner writes the player's Steam ID into the lobby's data, and that player's own program leaves when it reads so, and leaves again if it comes back. A program that isn't the game's could ignore it: a host that wants a player out of the match uses [`Session.Kick`](../multiplayer/matches.md#players-in-the-match) as well.
 - **An unlisted lobby is a private one**, joined by its ID or an invite.
 - **The lobby's own bookkeeping is in its data**, under keys that start with `tide_`, and `name`. A game's own keys can't use those.
 - **Data has limits**: keys of up to 63 bytes and values of up to 256 are shown, 32 keys of a lobby and of a member.

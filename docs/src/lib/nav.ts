@@ -18,8 +18,8 @@ export const docs: Link = { text: 'Docs', link: '/guide' };
 
 // A group is one subject, and its pages are in a folder of that subject:
 // `game/` is what a game is made of, the match (Simulation) and what one
-// machine shows of it (Presentation), `physics/` is the physics packages that
-// come with tide, and `language/` is the language those are written in.
+// machine shows of it (Presentation), `packages/` collects optional packages
+// and how to use them, and `language/` is the language those are written in.
 export const sidebar: Group[] = [
     {
         text: 'Get started',
@@ -67,19 +67,22 @@ export const sidebar: Group[] = [
         ],
     },
     {
-        text: 'Physics',
+        text: 'Packages',
         items: [
-            { text: '2D physics (Box2D)', link: '/physics/box2d' },
-            { text: '3D physics (Box3D)', link: '/physics/box3d' },
+            { text: 'Overview', link: '/packages' },
+            { text: 'Using and writing packages', link: '/packages/using-and-writing' },
+            { text: 'Box2D — 2D physics', link: '/packages/box2d' },
+            { text: 'Box3D — 3D physics', link: '/packages/box3d' },
+            { text: 'Rooms — Play, Host and Join', link: '/packages/rooms' },
+            { text: 'Lobby — lobbies and matchmaking', link: '/packages/lobby' },
+            { text: 'Steam', link: '/packages/steam' },
         ],
     },
     {
         text: 'Multiplayer',
         items: [
             { text: 'Matches', link: '/multiplayer/matches' },
-            { text: 'Lobbies and matchmaking', link: '/multiplayer/lobbies' },
             { text: 'Your own network and service', link: '/multiplayer/own-network' },
-            { text: 'Steam', link: '/multiplayer/steam' },
             { text: 'Networking', link: '/multiplayer/networking' },
             { text: 'Determinism', link: '/multiplayer/determinism' },
         ],
@@ -104,7 +107,6 @@ export const sidebar: Group[] = [
             { text: 'The tide command', link: '/tools/cli' },
             { text: 'Editors', link: '/tools/editors' },
             { text: 'Debug views', link: '/tools/debug-views' },
-            { text: 'Packages', link: '/tools/packages' },
         ],
     },
     {
