@@ -1,5 +1,12 @@
 # Repository layout and reference history
 
+Native authoring tool (2026-10-12): tools/tide-editor owns the desktop prefab
+editor, its document layer and tests. It links tidec_core and tide_platform after
+the platform target is declared, and is omitted from web/Android/platform-off
+builds. The native installation adds bin/tide-editor; tide open launches that
+sibling through compiler/cli/open.c. No library/generated runtime ABI changed.
+Controls, project/save contracts, limits and validation are in notes/editors.md.
+
 Repository navigation moved from `AGENTS.md` on 2026-10-11. Working rules and the current subsystem index remain in that guide. This file describes locations, not permission to work outside an assigned task. Agent ownership applies to any AI agent, as clarified in the guide; the runtime exception is recorded in `notes/runtime-ownership.md`.
 
 ## Layout

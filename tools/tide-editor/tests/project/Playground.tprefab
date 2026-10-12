@@ -1,0 +1,28 @@
+// A rooted level and a reusable prefab share the same text format.
+prefab Playground {
+    Transform;
+    LevelSettings { enemies = 5 };
+
+    entity Player {
+        Transform { localPosition = float3(-2, 0.5, 0) };
+        Health;
+        Target { entity = Crates.Left };
+    }
+
+    entity Crates {
+        Transform { localPosition = float3(2, 0, 1) };
+        entity Left : Crate { }
+        entity Right : Crate {
+            Transform { localPosition = float3(2, 0, 0) };
+            Health { value = 50 };
+        }
+    }
+}
+
+prefab Crate {
+    Transform { localScale = float3(0.75) };
+    Health;
+    entity Lid {
+        Transform { localPosition = float3(0, 1, 0), localScale = float3(1, 0.2, 1) };
+    }
+}

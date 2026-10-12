@@ -129,6 +129,9 @@ endif()
 
 if(TIDE_PLATFORM)
     add_subdirectory(platform)
+    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        add_subdirectory(tools/tide-editor)
+    endif()
     add_subdirectory(demo)
     add_subdirectory(sandbox) # Opens a window, so it needs the platform layer
     add_subdirectory(examples/duel)

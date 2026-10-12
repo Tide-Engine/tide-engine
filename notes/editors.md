@@ -1,5 +1,79 @@
 # The language server and the editors
 
+## First native scene editor (2026-10-12)
+
+tools/tide-editor builds tide-editor, a desktop C17 app using existing Tide
+window/draw/GUI APIs. It installs beside tide and launches through tide open;
+no browser, generated game or match is involved. First scope: composed rooted
+.tprefab hierarchy, component/default/override inspector, Tide-expression edits,
+authored children/nested prefabs, component-entry removal and subtree deletion.
+Inherited descendants are read-only; nested roots can override values.
+Direct entity-reference fields display composed paths (or this), rather than
+copying a base prefab's relative name into the caller's scope; constants display
+qualified names. Other complex inherited expressions retain their source spelling
+and require names written in the caller's context when overriding.
+Source view is read-only. Child rename/reparenting, new-file creation, drag gizmos,
+model/game-view rendering and IDE embedding remain future work.
+
+The viewport interprets literal/constant TRS, basic float arithmetic and Euler
+quaternions with Tide math. Parent matrices compose unit wire markers/axes;
+XY/isometric, zoom and middle-drag pan are supported. Unsupported transforms
+omit their subtree with an explicit count. No user function/extern/view/system
+or asset geometry importer runs. Metadata-only front-end checking uses DEBUG
+and package symbols; normal builds validate complete assets/generated C. No
+engine/platform API or runtime boundary changed.
+
+The document layer uses recovering lex/parse/check with cached source tokens.
+Nearest tide.packages or explicit --project selects folder/package inputs;
+without a manifest, only the prefab's folder is inferred. Root is displayed.
+Already-fetched packages use the shared resolver, including built-ins. CMake
+manifests, package fetching and custom build-symbol selection are not implemented.
+Half-second rescans include source/package changes, additions and deletions.
+Clean outside edits reload; dirty edits retain the draft and flag conflicts.
+Named prefab/entity selection survives refresh; old field edit buffers clear
+after outside changes so stale indices cannot edit a different entity.
+
+Edits patch precise source spans, retaining surrounding comments, UTF-8, line
+endings and untouched values. Syntax-invalid patches roll back; semantic errors
+remain visible and block Save. Project diagnostics include required references
+and code errors. Source syntax/package errors are fixed in the normal code editor.
+Save rechecks the front end, compares disk bytes against the baseline, writes a
+neighboring temporary file and replaces after another comparison. This is a
+single-file replacement, not a merge service; the final compare-to-rename interval
+is not an OS compare-and-swap lock.
+
+Undo/redo retain 64 applied edits. Atomic .tide/editor/<path hash>.draft recovery
+stores both baseline and current text, detecting newer source across sessions.
+Opening offers recovery/discard; Save/discard/undo to baseline removes the cache.
+Applied edits survive window close; text not yet Applied/Entered is not authored.
+These files are local ignored cache content. Expression fields support whole-value
+Ctrl+A replacement; large values are read-only rather than GUI-buffer truncated.
+The app requires at least 1100x650 to show its panels. Bounded runs use existing
+--frames/--capture/--script APIs; quiet runs inherit TIDE_HIDDEN.
+
+Nine Windows document tests (eight on other hosts) cover comments/CRLF/UTF-8,
+case-insensitive path/recovery spelling, exact expression spans, undo,
+syntax rollback, invalid-type save refusal, composition/default overrides,
+inherited read-only nodes, required paths, structural edits/comma removal,
+source refactors/added files, package context and recovery/outside conflicts.
+Real CLI checks exercise --check and hidden/size refusals. The GPU-labelled UI
+script edits a root setting using Ctrl+A/Enter, saves/undoes/redoes/saves, checks
+the exact file diff and recovery cleanup, and reads native PNG pixels at two
+sizes. All test files stay in private build folders.
+
+Validation: warning-free native/web debug builds and all 2253 native and 2218
+web CTests pass on Windows (Clang 23.1.2, Node 24.16), including OpenGL,
+WebGL/WebGPU and the full compiler/LSP regression coverage. Final editor-only
+path-spelling and inherited-reference display corrections pass the three editor
+CTests, including all nine document cases and the actual native UI script.
+The production docs build passes. A private native install includes tide-editor;
+its installed tide open --check and bounded PNG capture both succeed. Other
+operating systems, Android, sanitizers and CI were not run; no workflow was
+dispatched. The screenshot is a real hidden native capture, not a mockup.
+Integration through origin/dev 9ff7e83b is clean. Incoming prototype/workflow
+changes do not touch editor/compiler/runtime dependencies; documentation overlap
+keeps the relocated package links. The merged production docs build passes.
+
 ## Tasks from functions, and a request's time limit, 2026-10-11
 
 Neither needed code in tidels. Completion always offered async functions

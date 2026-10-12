@@ -1,6 +1,6 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang (see AGENTS.md, Packaging and releases).
-add_executable(tide_cli main.c android.c build.c editors.c fetch.c install.c libraries.c line.c packages_cmd.c publish.c release.c
+add_executable(tide_cli main.c android.c build.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
     serve.c sys.c toolchain.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
