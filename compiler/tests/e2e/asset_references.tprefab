@@ -1,0 +1,5 @@
+prefab Art {
+    Transform;
+    Model { model = quad };
+    entity Child { Model; }
+}

@@ -1,0 +1,26 @@
+asset Mesh<Vertex3> box = "assets/meshes/box.obj";
+asset Mesh<Vertex3> quad = "assets/meshes/quad.glb";
+component Model { Asset<Mesh<Vertex3>> model = box; }
+singleton Probe { Entity root; int count; int empty; Asset<Mesh<Vertex3>> held = box; int heldCount; }
+local singleton LocalProbe { LocalEntity root; int count; }
+scene Main { }
+int Count(Asset<Mesh<Vertex3>> model) { return model.Value.indices.count; }
+int Count(int value) { return value; }
+event(Spawned) Begin(with Main, mut Probe probe) { probe.root = Spawn(Art); }
+system Read(mut Probe probe, World world) {
+    var model = world.Get<Model>(probe.root);
+    probe.count = Count(model.model);
+    Asset<Mesh<Vertex3>> none = default;
+    probe.empty = Count(none);
+    probe.heldCount = Count(probe.held);
+    Debug.Assert(Count(box) == box.indices.count);
+    Asset<Mesh<Vertex3>> choice = true ? box : quad;
+    Debug.Assert(Count(choice) == box.indices.count);
+    List<Asset<Mesh<Vertex3>>> refs = [box, quad, default];
+    Debug.Assert(Count(refs[1]) == quad.indices.count);
+}
+view Local(mut LocalProbe probe, World world) {
+    if (probe.root == default) probe.root = local Spawn(Art);
+    var model = world.Get<Model>(probe.root);
+    probe.count = Count(model.model);
+}

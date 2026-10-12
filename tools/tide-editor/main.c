@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include "document.h"
+#include "asset_files.h"
+#include "model.h"
 #include "packages.h"
 #include "sys.h"
 #include "tide/platform.h"
@@ -24,6 +26,17 @@ typedef struct editor {
     action pending;
     int argument;
     char *pending_name;
+    bool models;
+    int model_scroll;
+    char *model_asset, *model_key;
+    editor_model model;
+    uint64_t model_revision;
+    uint64_t asset_stamp;
+    bool model_lighting;
+    float model_yaw, model_pitch, model_zoom;
+    editor_model *scene_models;
+    int scene_model_count;
+    uint64_t scene_model_revision;
 } editor;
 
 static char *own(const char *s)
@@ -140,14 +153,144 @@ static bool local_matrix(const editor_node *n, tide_float4x4 *m)
     return true;
 }
 
+static void asset_stamp_path(void *user, const char *path)
+{
+    uint64_t *stamp = user;
+    for (const unsigned char *p = (const unsigned char *)path; *p; p++) *stamp = (*stamp ^ *p) * UINT64_C(1099511628211);
+    *stamp = (*stamp ^ sys_file_stamp(path)) * UINT64_C(1099511628211);
+}
+
+static uint64_t asset_stamp(const editor_document *doc)
+{
+    const arena_mark mark = arena_checkpoint();
+    uint64_t stamp = UINT64_C(14695981039346656037);
+    for (int a = 0; a < doc->prog->assets.count; a++) {
+        const decl *asset = doc->prog->assets.items[a];
+        if (asset->asset_kind != ASSET_MESH) continue;
+        for (int p = 0; p < asset->asset_paths.count; p++)
+            asset_watched(asset->unit->src->path, asset->asset_paths.items[p]->text, asset_stamp_path, &stamp);
+        if (asset->asset) for (int m = 0; m < asset->asset->count; m++) {
+            const asset_match *item = &asset->asset->items[m];
+            asset_stamp_path(&stamp, item->abs);
+            for (int s = 0; s < item->side_count; s++) asset_stamp_path(&stamp, item->sides[s]);
+        }
+    }
+    arena_rewind(mark); return stamp;
+}
+
+static decl *selected_asset_type(editor *e)
+{
+    if (!e->component || e->selected < 0 || e->selected >= e->doc.nodes.count) return NULL;
+    expr *comp = editor_component(&e->doc.nodes.items[e->selected], str_from(e->component));
+    if (!comp || !comp->type_decl) return NULL;
+    for (int i = 0; i < comp->type_decl->fields.count; i++) {
+        field *f = &comp->type_decl->fields.items[i];
+        if (str_eq_c(f->name, e->field) && f->type.kind == TY_STRUCT) return f->type.decl->asset_ref_of;
+    }
+    return NULL;
+}
+
+static void models(editor *e, tide_rect r, tide_float2 size)
+{
+    const float list_width = fminf(230, r.width * .4f);
+    const tide_rect rows = {r.x + 8, r.y + 48, list_width - 16, r.height - 110};
+    label(e, r.x + 12, r.y + 12, "MODEL ASSETS", dim);
+    if (contains(rows, e->gui.mouse)) e->model_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
+    if (e->model_scroll < 0) e->model_scroll = 0;
+    const int visible = (int)(rows.height / 30);
+    int row = 0;
+    const asset_match *selected = NULL;
+    const decl *selected_decl = NULL;
+    tide_draw_set_clip(&e->draw, rows); tide_draw_set_clip(&e->gui.list, rows);
+    for (int a = 0; a < e->doc.prog->assets.count; a++) {
+        const decl *asset = e->doc.prog->assets.items[a];
+        if (asset->asset_kind != ASSET_MESH || !asset->asset) continue;
+        const char *name = str_to_cstr(asset->qualified);
+        for (int m = 0; m < asset->asset->count; m++, row++) {
+            const asset_match *item = &asset->asset->items[m];
+            const bool active = e->model_asset && strcmp(e->model_asset, name) == 0 && strcmp(e->model_key, item->key) == 0;
+            if (active) { selected = item; selected_decl = asset; }
+            if (row < e->model_scroll || row >= e->model_scroll + visible) continue;
+            sb title = {0};
+            sb_printf(&title, "%s%s%s", active ? "> " : "", name, asset->asset_many ? " / " : "");
+            if (asset->asset_many) sb_put(&title, path_base(item->key));
+            if (button(e, 400000u + (uint32_t)row, (tide_rect){rows.x,rows.y+(float)(row-e->model_scroll)*30,rows.width,26}, title.data)) {
+                replace(&e->model_asset, name); replace(&e->model_key, item->key);
+                e->model_revision = UINT64_MAX; selected = item; selected_decl = asset;
+                e->model_zoom = 1; e->model_pitch = .3f; e->model_yaw = -.6f;
+            }
+        }
+    }
+    if (e->model_scroll > (row > visible ? row - visible : 0)) e->model_scroll = row > visible ? row - visible : 0;
+    tide_draw_unset_clip(&e->draw); tide_draw_unset_clip(&e->gui.list);
+    const decl *wanted = selected_asset_type(e);
+    if (wanted && selected_decl && selected_decl->return_type.kind == TY_MESH && selected_decl->return_type.decl == wanted) {
+        if (button(e, 77, (tide_rect){r.x+r.width-222,r.y+r.height-76,210,28}, "Use for selected field")) {
+            replace(&e->value, str_to_cstr(selected_decl->qualified));
+            queue(e, SET); e->models = false;
+        }
+    } else if (wanted) label(e, r.x+12, r.y+r.height-92, "Choose a matching singular mesh asset for the field.", dim);
+    if (e->model_revision != e->doc.revision) {
+        if (selected) editor_model_set(&e->model, &selected->mesh, e->model_lighting);
+        else editor_model_free(&e->model);
+        e->model_revision = e->doc.revision;
+    }
+    const tide_rect view = {r.x+list_width+4,r.y+48,r.width-list_width-12,r.height-132};
+    if (button(e, 75, (tide_rect){view.x,r.y+10,100,26}, "Frame model")) e->model_zoom = 1;
+    if (button(e, 76, (tide_rect){view.x+110,r.y+10,100,26}, e->model_lighting ? "Lit" : "Unlit")) {
+        e->model_lighting = !e->model_lighting; e->model_revision = UINT64_MAX;
+    }
+    tide_draw_set_clip(&e->draw, view); tide_draw_set_clip(&e->gui.list, view);
+    panel(e, view, rgb(.065f,.08f,.1f));
+    if (!row) label(e, rows.x, rows.y, "No static Mesh assets.", dim);
+    if (e->model.mesh.vertex_count) {
+        if (contains(view, e->gui.mouse)) {
+            e->model_zoom = tide_clamp_f(e->model_zoom * (1 - e->devices.mouse.poll_scroll.y * .1f), .08f, 20);
+            if (e->devices.mouse.right.pressed) {
+                e->model_yaw += e->devices.mouse.poll_delta.x * .008f;
+                e->model_pitch = tide_clamp_f(e->model_pitch - e->devices.mouse.poll_delta.y * .008f, -1.5f, 1.5f);
+            }
+        }
+        const float inverse = 1 / e->model.radius;
+        const tide_float4x4 placed = tide_mul_f4x4(tide_trs_f4x4(tide_f3(0,0,0), tide_euler_q(tide_f3(e->model_pitch,e->model_yaw,0)), tide_f3_splat(inverse)), tide_translate_f4x4(tide_neg_f3(e->model.center)));
+        const float height = 3.2f*e->model_zoom*fmaxf(1, view.height/view.width);
+        tide_float4x4 projection = tide_ortho_f4x4(height*view.width/view.height, height, .1f, 20);
+        // Matrix cameras include their aspect. Map their clip coordinates into
+        // this rectangle of the window without changing its other panels.
+        projection.c0.x *= view.width / size.x;
+        projection.c1.y *= view.height / size.y;
+        projection.c3.x = 2*(view.x+view.width/2)/size.x-1;
+        projection.c3.y = 1-2*(view.y+view.height/2)/size.y;
+        const uint32_t camera = tide_draw_push_camera_matrices(&e->draw, tide_translate_f4x4(tide_f3(0,0,-5)), projection);
+        tide_draw_mesh_3d(&e->draw, &e->model.mesh, placed, NULL, TIDE_FILTER_POINT);
+        tide_draw_pop(&e->draw, camera);
+        char info[120]; snprintf(info, sizeof info, "%u vertices / %u triangles", e->model.mesh.vertex_count, e->model.mesh.index_count / 3);
+        label(e, view.x+10,view.y+10, info, dim);
+    } else label(e, view.x+10,view.y+14, selected ? "Geometry could not be previewed." : "Select a model asset.", dim);
+    tide_draw_unset_clip(&e->draw); tide_draw_unset_clip(&e->gui.list);
+    tide_draw_set_clip(&e->draw, r);
+    label(e, r.x+12,r.y+r.height-66, "Right drag: orbit  |  Wheel: zoom", dim);
+    label(e, r.x+12,r.y+r.height-40, "Preview lighting / imported colors; game materials are not rendered.", dim);
+    label(e, r.x+12,r.y+r.height-18, "Static Mesh assets only; SkinnedMesh previews are not available yet.", dim);
+    tide_draw_unset_clip(&e->draw);
+}
+
 static tide_float2 project(editor *e, tide_rect r, tide_float3 p)
 {
     return tide_f2(r.x + r.width / 2 + e->pan.x + (p.x + (e->xy ? 0 : p.z * 0.6f)) * e->zoom,
                    r.y + r.height / 2 + e->pan.y + (-p.y + (e->xy ? 0 : p.z * 0.35f)) * e->zoom);
 }
 
-static void viewport(editor *e, tide_rect r)
+static void viewport(editor *e, tide_rect r, tide_float2 size)
 {
+    if (e->scene_model_revision != e->doc.revision) {
+        for (int i = 0; i < e->scene_model_count; i++) editor_model_free(&e->scene_models[i]);
+        free(e->scene_models);
+        e->scene_model_count = e->doc.prog->assets.count;
+        e->scene_models = calloc((size_t)e->scene_model_count, sizeof(*e->scene_models));
+        if (e->scene_model_count && !e->scene_models) abort();
+        e->scene_model_revision = e->doc.revision;
+    }
     tide_draw_set_clip(&e->draw, r);
     tide_draw_set_clip(&e->gui.list, r);
     if (button(e, 70, (tide_rect){r.x + 14, r.y + 42, 82, 26}, e->xy ? "XY" : "Isometric")) e->xy = !e->xy;
@@ -172,13 +315,46 @@ static void viewport(editor *e, tide_rect r)
     const int count = e->doc.nodes.count;
     tide_float4x4 *matrices = arena_alloc((size_t)count * sizeof(*matrices));
     bool *valid = arena_alloc((size_t)count * sizeof(*valid));
-    int omitted = 0;
+    int omitted = 0, omitted_models = 0;
     for (int i = 0; i < count; i++) {
         editor_node *n = &e->doc.nodes.items[i];
         const int parent = n->parent;
         valid[i] = local_matrix(n, &matrices[i]) && (parent < 0 || (parent < i && valid[parent]));
         if (!valid[i]) { omitted++; continue; }
         if (parent >= 0) matrices[i] = tide_mul_f4x4(matrices[parent], matrices[i]);
+        if (n->effective) for (int c = 0; c < n->effective->args.count; c++) {
+            const expr *comp = n->effective->args.items[c];
+            if (!comp->type_decl) continue;
+            for (int f = 0; f < comp->type_decl->fields.count; f++) {
+                const field *field = &comp->type_decl->fields.items[f];
+                if (field->hidden || field->is_local || field->type.kind != TY_STRUCT || !field->type.decl->asset_ref_of) continue;
+                const expr *value = editor_value(comp, field);
+                int depth = 0;
+                while (value && value->bind == BIND_CONST && depth++ < 64) value = value->constant->value;
+                if (!value || value->kind == E_DEFAULT) continue;
+                if (value->bind != BIND_ASSET || !value->asset_reference) { omitted_models++; continue; }
+                bool drawn = false;
+                for (int a = 0; a < e->scene_model_count; a++) {
+                    const decl *asset = e->doc.prog->assets.items[a];
+                    if (asset != value->constant || !asset->asset || asset->asset->count != 1) continue;
+                    editor_model *model = &e->scene_models[a];
+                    if (!model->mesh.vertex_count) editor_model_set(model, &asset->asset->items[0].mesh, true);
+                    if (!model->mesh.vertex_count) continue;
+                    tide_float4x4 projection = tide_identity_f4x4();
+                    projection.c0.x = 2*e->zoom/size.x;
+                    projection.c1.y = 2*e->zoom/size.y;
+                    projection.c2.x = e->xy ? 0 : .6f*projection.c0.x;
+                    projection.c2.y = e->xy ? 0 : -.35f*projection.c1.y;
+                    projection.c0.z = -.0001f; projection.c1.z = -.0001f; projection.c2.z = .0001f;
+                    projection.c3 = tide_f4(2*(r.x+r.width/2+e->pan.x)/size.x-1,1-2*(r.y+r.height/2+e->pan.y)/size.y,.5f,1);
+                    const uint32_t camera = tide_draw_push_camera_matrices(&e->draw, tide_identity_f4x4(), projection);
+                    tide_draw_mesh_3d(&e->draw, &model->mesh, matrices[i], NULL, TIDE_FILTER_POINT);
+                    tide_draw_pop(&e->draw, camera);
+                    drawn = true;
+                }
+                if (!drawn) omitted_models++;
+            }
+        }
         const tide_float3 p = tide_transform_f4x4(matrices[i], tide_f3(0, 0, 0));
         const tide_float2 screen = project(e, r, p);
         if (!isfinite(screen.x) || !isfinite(screen.y) || fabsf(screen.x) > 1e6f || fabsf(screen.y) > 1e6f) { valid[i] = false; omitted++; continue; }
@@ -205,11 +381,12 @@ static void viewport(editor *e, tide_rect r)
         }
     }
     panel(e, (tide_rect){r.x,r.y,r.width,34}, rgb(.075f,.095f,.115f));
-    label(e, r.x + 16, r.y + 10, "TRANSFORM PREVIEW", dim);
+    label(e, r.x + 16, r.y + 10, "SCENE PREVIEW", dim);
     panel(e, (tide_rect){r.x,r.y+r.height-42,r.width,42}, rgb(.075f,.095f,.115f));
     char message[180];
-    snprintf(message, sizeof message, omitted ? "%d transform(s) could not be previewed. Inspect their Tide expressions." : "Transform markers  |  Wheel: zoom  |  Middle drag: pan", omitted);
-    label(e, r.x + 16, r.y + r.height - 30, message, omitted ? rgb(.95f,.65f,.3f) : dim);
+    if (omitted || omitted_models) snprintf(message, sizeof message, "%d transform(s), %d model field(s) not previewed. Inspect expressions/diagnostics.", omitted, omitted_models);
+    else snprintf(message, sizeof message, "Static models + markers  |  Wheel: zoom  |  Middle drag: pan");
+    label(e, r.x + 16, r.y + r.height - 30, message, omitted || omitted_models ? rgb(.95f,.65f,.3f) : dim);
     tide_draw_unset_clip(&e->draw); tide_draw_unset_clip(&e->gui.list);
 }
 
@@ -317,6 +494,9 @@ static void inspector(editor *e, tide_rect r)
         label(e, r.x + 14, r.y + r.height - 68, too_long ? "Long expression: edit it in your code editor." : e->value_selected ? "Entire value selected; type to replace." : "Ctrl+A selects the whole value.", dim);
         if (button(e, 91, (tide_rect){r.x + 14, r.y + r.height - 106, 110, 28}, "Apply") || entered) queue(e, SET);
         if (button(e, 92, (tide_rect){r.x + 134, r.y + r.height - 106, 110, 28}, "Reset override")) queue(e, RESET);
+        if (selected_asset_type(e) && button(e, 94, (tide_rect){r.x+254,r.y+r.height-106,90,28}, "Browse")) {
+            e->models = true; e->source = false;
+        }
     }
     if (button(e, 93, (tide_rect){r.x + 14, r.y + r.height - 48, r.width - 28, 30}, "+ Add component")) { e->picker = true; e->nested_picker = false; e->argument = 0; }
 }
@@ -353,7 +533,12 @@ static int frame(void *user, float seconds)
     char *selected_path = e->selected >= 0 && e->selected < e->doc.nodes.count ? own_slice(e->doc.nodes.items[e->selected].path) : NULL;
     const uint64_t revision = e->doc.revision;
     e->poll += seconds;
-    if (e->poll >= .5f) { e->poll = 0; editor_poll(&e->doc); }
+    if (e->poll >= .5f) {
+        e->poll = 0; editor_poll(&e->doc);
+        const uint64_t current = asset_stamp(&e->doc);
+        if (current != e->asset_stamp && e->doc.revision == revision) editor_refresh(&e->doc);
+        e->asset_stamp = asset_stamp(&e->doc);
+    }
     if (e->doc.revision != revision) {
         e->selected = 0;
         for (int i = 0; selected_path && i < e->doc.nodes.count; i++) if (str_eq_c(e->doc.nodes.items[i].path, selected_path)) e->selected = i;
@@ -385,8 +570,9 @@ static int frame(void *user, float seconds)
     if (button(e, 3, (tide_rect){254,12,72,28}, "Redo")) queue(e, REDO);
     if (button(e, 4, (tide_rect){336,12,86,28}, "Reload")) { if (editor_dirty(&e->doc)) e->discard = true; else queue(e, RELOAD); }
     if (button(e, 5, (tide_rect){432,12,86,28}, e->source ? "Viewport" : "Source")) e->source = !e->source;
+    if (button(e, 6, (tide_rect){528,12,86,28}, e->models ? "Scene" : "Models")) { e->models = !e->models; e->source = false; }
     sb title = {0}; sb_printf(&title, "%s%s", path_base(e->doc.path), editor_dirty(&e->doc) ? " *" : "");
-    label(e, 540, 18, title.data, ink);
+    label(e, 634, 18, title.data, ink);
     // Shortcuts read presses before GUI consumption, except while typing/modal.
     const bool ctrl = e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
     if (ctrl && !tide_gui_typing(&e->gui) && !e->picker && !e->discard && !e->recovery) {
@@ -398,7 +584,8 @@ static int frame(void *user, float seconds)
     panel(e, (tide_rect){0,56,250,height}, rgb(.10f,.125f,.15f));
     panel(e, (tide_rect){right,56,390,height}, rgb(.10f,.125f,.15f));
     tree(e, (tide_rect){0,56,250,height});
-    if (!e->source) viewport(e, (tide_rect){254,56,right-258,height});
+    if (e->models && !e->source) models(e, (tide_rect){254,56,right-258,height}, size);
+    else if (!e->source) viewport(e, (tide_rect){254,56,right-258,height}, size);
     else {
         tide_rect r = {266,70,right-278,height-28};
         if (contains(r, e->gui.mouse)) e->source_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
@@ -523,7 +710,7 @@ int main(int argc, char **argv)
     char *bin = sys_exe_dir(), *root = path_dir(bin), *builtin = path_join(root, "src/packages");
     if (!sys_is_dir(builtin)) { free(builtin); builtin = own(TIDE_SOURCE_DIR "/packages"); }
     packages_set_builtin_folder(builtin); free(builtin); free(root); free(bin);
-    editor *e = calloc(1, sizeof(*e)); if (!e) abort(); e->zoom = 48;
+    editor *e = calloc(1, sizeof(*e)); if (!e) abort(); e->zoom = 48; e->model_lighting = true;
     if (!editor_open(&e->doc, path, project_root)) { fprintf(stderr, "tide open: %s\n", e->doc.message); editor_close(&e->doc); free(e); return 2; }
     if (check_only) {
         printf("project: %s\n", e->doc.project);
@@ -532,9 +719,14 @@ int main(int argc, char **argv)
         const int code = e->doc.errors ? 1 : 0; editor_close(&e->doc); free(e); return code;
     }
     e->recovery = e->doc.recovery != NULL;
+    e->asset_stamp = asset_stamp(&e->doc);
     if (hidden.capture || hidden.frames || hidden.script) {
         if (!hidden.frames && !hidden.script) hidden.frames = 2;
         tide_platform_open_headless(&hidden);
     } else tide_platform_open(&(tide_window_desc){.title="Tide Scene Editor", .width=hidden.width, .height=hidden.height});
     tide_platform_run(frame, e);
+    editor_model_free(&e->model);
+    free(e->model_asset); free(e->model_key);
+    for (int i = 0; i < e->scene_model_count; i++) editor_model_free(&e->scene_models[i]);
+    free(e->scene_models);
 }
