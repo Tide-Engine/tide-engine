@@ -10,6 +10,10 @@ local singleton Picture
     float[2] actorStride;
     float[2] actorWobble;
     float[2] actorIdle;
+    float2 focusHalf;
+    Transit[8] boxTransit;
+    Transit[8] crateTransit;
+    float focusTile;
     Traveler[2] travelers;
     MakerPassage[2] passages;
     bool[2] doorwayPending;
@@ -50,11 +54,11 @@ local event(PuzzleCue cue) RememberDoorway(mut Picture picture)
 
 Color RoomColor(int room)
 {
-    // Test-rig paints, bold enough to tell apart when a box is tiny.
-    if (room == 0) return Color(0.36, 0.55, 0.42);
-    if (room == 1) return Color(0.27, 0.48, 0.76);
-    if (room == 2) return Color(0.60, 0.40, 0.72);
-    return Color(0.82, 0.36, 0.34);
+    // Matte model paints: sage, slate blue, plum, terracotta.
+    if (room == 0) return Color(0.44, 0.61, 0.50);
+    if (room == 1) return Color(0.37, 0.50, 0.74);
+    if (room == 2) return Color(0.62, 0.45, 0.72);
+    return Color(0.82, 0.46, 0.38);
 }
 string RoomName(int room)
 {
@@ -83,13 +87,13 @@ void Crate(mut Sculpture sculpture, float2 at, float size, bool onTarget, float 
 {
     var side = size * .72;
     var height = size * .36;
-    var wood = onTarget ? Color(.59, .64, .36) : Color(.68, .62, .39);
-    Cuboid(sculpture, at, float2(side), height, Color(.30, .31, .20), floor, size);
+    var wood = onTarget ? Color(.62, .68, .40) : Color(.76, .60, .38);
+    Cuboid(sculpture, at, float2(side), height, Color(.46, .34, .21), floor, size);
     Cuboid(sculpture, at, float2(side * .89), height * .12, wood, floor + height, size);
     var top = floor + height * 1.12 + size * .003;
-    BoxMark(sculpture, at, side * .71, Color(.27, .27, .15), top, size);
-    FloorLine(sculpture, at + float2(-side * .44, side * .40), at + float2(side * .44, side * .40), size * .033, Color(.76, .72, .45), top, size);
-    FloorLine(sculpture, at + float2(-side * .44, -side * .40), at + float2(side * .44, -side * .40), size * .033, Color(.76, .72, .45), top, size);
+    BoxMark(sculpture, at, side * .71, Color(.36, .26, .15), top, size);
+    FloorLine(sculpture, at + float2(-side * .44, side * .40), at + float2(side * .44, side * .40), size * .033, Color(.86, .72, .48), top, size);
+    FloorLine(sculpture, at + float2(-side * .44, -side * .40), at + float2(side * .44, -side * .40), size * .033, Color(.86, .72, .48), top, size);
 }
 
 // How a seat's bot stands this frame. At rest it is always the same picture:
@@ -113,87 +117,83 @@ void BotPart(mut Sculpture sculpture, float2 at, int facing, float2 offset, floa
     Cuboid(sculpture, at + (right * offset.x + ahead * offset.y) * size,
         facing % 2 == 0 ? float2(across * size, along * size) : float2(along * size, across * size), height * size, tone, floor, size);
 }
-void Maker(mut Sculpture sculpture, float2 at, float size, int seat, float floor, BotPose pose)
+void Maker(mut Sculpture sculpture, float2 at, float size, int seat, float floor, BotPose pose, bool echo = false)
 {
-    var tone = seat == 0 ? AMBER : TEAL;
+    var paint = seat == 0 ? BOT_AMBER : BOT_TEAL;
+    var tone = echo ? Math.Lerp(paint, Color(.80, .82, .88), .70) : paint;
+    var light = echo ? tone : seat == 0 ? Color(1.0, .80, .46) : Color(.56, .98, .92);
     var up = floor + pose.lift * size;
-    BotPart(sculpture, at, pose.facing, float2(-.21, 0), .11, .42, .11, RUBBER, floor + pose.lift * size * .35, size);
-    BotPart(sculpture, at, pose.facing, float2(.21, 0), .11, .42, .11, RUBBER, floor + pose.lift * size * .35, size);
-    BotPart(sculpture, at, pose.facing, float2(0, 0), .36, .36, .23, tone, up + size * .07, size);
-    BotPart(sculpture, at, pose.facing, float2(0, .215), .30, .05, .07, RUBBER, up + size * .09, size);
-    BotPart(sculpture, at, pose.facing, float2(0, -.02), .25, .22, .15, DECAL, up + size * .30, size);
-    BotPart(sculpture, at, pose.facing, float2(0, .10), .21, .03, .07, RUBBER, up + size * .345, size);
-    BotPart(sculpture, at, pose.facing, float2(.045, .112), .06, .03, .04, HAZARD, up + size * .36, size);
-    BotPart(sculpture, at, pose.facing, float2(0, -.02), .16, .16, .008, HAZARD, up + size * .45, size);
-    BotPart(sculpture, at, pose.facing, float2(-.04, -.06), .08, .08, .006, RUBBER, up + size * .458, size);
-    BotPart(sculpture, at, pose.facing, float2(.04, .02), .08, .08, .006, RUBBER, up + size * .458, size);
-    BotPart(sculpture, at, pose.facing, float2(-.10, -.11), .025, .025, .15, RUBBER, up + size * .45, size);
-    BotPart(sculpture, at, pose.facing, float2(-.10 + pose.sway * .05, -.11), .06, .06, .05, tone, up + size * .60, size);
+    var tracks = floor + pose.lift * size * .35;
+    BotPart(sculpture, at, pose.facing, float2(-.225, 0), .12, .46, .12, RUBBER, tracks, size);
+    BotPart(sculpture, at, pose.facing, float2(.225, 0), .12, .46, .12, RUBBER, tracks, size);
+    // The body: a chassis between the tracks under a wider shoulder plate.
+    BotPart(sculpture, at, pose.facing, float2(0, 0), .34, .40, .20, tone, up + size * .08, size);
+    BotPart(sculpture, at, pose.facing, float2(0, -.01), .44, .30, .05, Color(tone.r * .84, tone.g * .84, tone.b * .84), up + size * .28, size);
+    BotPart(sculpture, at, pose.facing, float2(0, .215), .34, .03, .05, RUBBER, up + size * .05, size);
+    // The head: bone white, in two steps, on a short neck.
+    BotPart(sculpture, at, pose.facing, float2(0, -.02), .14, .14, .04, RUBBER, up + size * .33, size);
+    BotPart(sculpture, at, pose.facing, float2(0, -.02), .30, .26, .13, DECAL, up + size * .37, size);
+    BotPart(sculpture, at, pose.facing, float2(0, -.03), .21, .18, .05, Color(DECAL.r * .90, DECAL.g * .90, DECAL.b * .90), up + size * .50, size);
+    BotPart(sculpture, at, pose.facing, float2(-.10, -.11), .025, .025, .14, RUBBER, up + size * .50, size);
+    // What glows: a visor across the face and the tip of the antenna, in
+    // the bot's own colour. Neither lights anything.
+    sculpture.glow = echo ? 0 : 1;
+    BotPart(sculpture, at, pose.facing, float2(0, .116), .22, .03, .055, light, up + size * .405, size);
+    BotPart(sculpture, at, pose.facing, float2(-.10 + pose.sway * .05, -.11), .055, .055, .05, light, up + size * .64, size);
+    sculpture.glow = 0;
 }
+
+// The one width of every line painted on a floor.
+float FloorStroke(float size) { return Math.Max(.9, size * .03); }
 
 void GoldTarget(mut Sculpture sculpture, float2 at, float size, bool occupied, float floor)
 {
-    var tone = occupied ? Color(.40, .68, .38) : HAZARD;
+    // A parcel's place glows amber until it is filled, then green.
+    var tone = occupied ? Color(.52, .90, .56) : GLOW_TARGET;
     var top = floor + size * .009;
-    FloorOutline(sculpture, at, float2(size * .79), Math.Max(.9, size * .027), tone, top, size);
+    sculpture.glow = 1;
+    FloorOutline(sculpture, at, float2(size * .79), FloorStroke(size), tone, top, size);
     BoxMark(sculpture, at, size * .42, tone, top, size);
+    sculpture.glow = 0;
 }
 
 void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor)
 {
-    // One pale lab floor: cells meet without a joint, and only a faint
+    // One pale plaster floor: cells meet without a joint, and only a faint
     // change of shade from one to the next keeps them countable.
-    var tone = variation % 2 == 0 ? Color(.90, .90, .87) : Color(.875, .875, .845);
+    var tone = variation % 2 == 0 ? Color(.86, .83, .77) : Color(.835, .805, .745);
     var thickness = Math.Max(.08, size * .010);
-    Cuboid(sculpture, at, float2(size), thickness, Color(.55, .57, .60), floor - thickness, size);
-    sculpture.detail = 1;
+    Cuboid(sculpture, at, float2(size), thickness, Color(.40, .38, .36), floor - thickness, size);
     Cuboid(sculpture, at, float2(size), thickness * .24, tone, floor, size);
-    sculpture.detail = 0;
     if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
     else if (tile == Tile.Exit)
     {
         var top = floor + size * .006;
-        Cuboid(sculpture, at, float2(size * .82), size * .003, Color(.22, .40, .30), top, size);
-        FloorOutline(sculpture, at, float2(size * .72), Math.Max(.8, size * .025), Color(.48, .74, .48), top + size * .004, size);
-        PlayerMark(sculpture, at, size * .56, Color(.80, .85, .74), top + size * .004, size);
+        // A bot's place: a dark inlay with a ring and a figure that glow.
+        Cuboid(sculpture, at, float2(size * .82), size * .003, Color(.13, .25, .26), top, size);
+        sculpture.glow = 1;
+        FloorOutline(sculpture, at, float2(size * .72), FloorStroke(size), GLOW_GOAL, top + size * .004, size);
+        PlayerMark(sculpture, at, size * .56, Color(.46, .78, .70), top + size * .004, size);
+        sculpture.glow = 0;
     }
 }
 
-// Yellow and black blocks in turn along a raised edge.
-void HazardEdge(mut Sculpture sculpture, float2 from, float2 to, float width, float floor, float tile, float stripe = .25)
+// A wall cell: a block in its box's paint. Cells that touch are one block,
+// as each fills its cell and they share a paint.
+void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, float tall = .31)
 {
-    var length = Math.Max(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
-    var count = tile < 8 ? 1 : Math.Clamp(int(Math.Round(length / (tile * stripe))), 1, 32);
-    var step = (to - from) / count;
-    var across = Math.Abs(step.x) > Math.Abs(step.y) ? float2(Math.Abs(step.x), width) : float2(width, Math.Abs(step.y));
-    for (var index = 0; index < count; index++)
-        Cuboid(sculpture, from + step * (index + .5), across, tile * .006, index % 2 == 0 ? HAZARD : RUBBER, floor, tile);
-}
-
-// Wall cells that touch are one block in the container's paint: the darker
-// rim runs only along its open sides, and the raised face carries across
-// from cell to cell. `joined` has a bit for each side with wall beyond it.
-void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, int joined)
-{
-    var height = size * .31;
-    Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, RUBBER, .40), floor, size);
-    Cuboid(sculpture, at, float2(size), size * .018, Color(tone.r * .84, tone.g * .84, tone.b * .84), floor + height, size);
-    if (size <= 9) return;
-    var north = (joined & 1) != 0 ? -.5 : -.39;
-    var east = (joined & 2) != 0 ? .5 : .39;
-    var south = (joined & 4) != 0 ? .5 : .39;
-    var west = (joined & 8) != 0 ? -.5 : -.39;
-    sculpture.detail = 2;
-    Cuboid(sculpture, at + float2((west + east) * .5, (north + south) * .5) * size, float2(east - west, south - north) * size,
-        size * .003, tone, floor + height + size * .018, size);
-    sculpture.detail = 0;
+    // One paint on top, right to its edges. A darker rim round a raised face
+    // read as a stain on the huge blocks of a containing room.
+    var height = size * tall;
+    Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, RUBBER, .30), floor, size);
+    Cuboid(sculpture, at, float2(size), size * .018, tone, floor + height, size);
 }
 
 [Stage(ArtStage.Backdrop)]
 view WorkshopBackdrop()
 {
     Draw.SetScreen();
-    Draw.Clear(Color(0.065, 0.07, 0.078));
+    Draw.Clear(Color(0.03, 0.032, 0.042));
     var screen = float2(Screen.width, Screen.height);
     for (var i = 0; i < 14; i++)
     {
@@ -212,7 +212,7 @@ void Chip(float2 at, float2 size)
 
 void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens)
 {
-    var tone = room < 0 ? Color(0.66, 0.68, 0.71) : RoomColor(room);
+    var tone = room < 0 ? STEEL : RoomColor(room);
     for (var y = 0; y < RoomHeight(workshop.layout, room); y++)
         for (var x = 0; x < RoomWidth(workshop.layout, room); x++)
         {
@@ -223,16 +223,11 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
             var occupied = CargoAt(workshop.layout, workshop.puzzle, room, position) >= 0;
             if (tile == Tile.Wall)
             {
-                // Beyond the room's edge counts as wall: the block runs up to it.
-                mut var joined = 0;
-                for (var side = 0; side < 4; side++)
-                    if (TileAt(workshop.layout, room, position + Direction(side)) == Tile.Wall) joined |= 1 << side;
-                WallTile(sculpture, at, lens.tile, tone, lens.floor, joined);
+                // The outermost room is the table: a low top, not walls.
+                WallTile(sculpture, at, lens.tile, tone, lens.floor, room < 0 ? .06 : .31);
             }
             else
             {
-                // The floor's flecks run on from cell to cell.
-                sculpture.detailOrigin = float2(x, y) * 8;
                 TilePaint(sculpture, tile, at, lens.tile, occupied, x + y, lens.floor);
             }
         }
@@ -240,11 +235,11 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
     {
         var layout = workshop.layout.rooms[shell];
         if (layout.dockRoom != room || layout.dock.x < 0) continue;
-        // A box standing on its outline hides it: none of it shows through a doorway.
-        var parked = workshop.puzzle.rooms[shell];
-        if (parked.room == room && CellEqual(parked.position, layout.dock)) continue;
+        // Any box standing on an outline hides it: none of it shows through
+        // that box's doorways.
+        if (BoxAt(workshop.layout, workshop.puzzle, room, layout.dock) >= 0) continue;
         var here = MapPoint(float2(layout.dock), lens);
-        FloorOutline(sculpture, here, float2(lens.tile * .91), Math.Max(.8, lens.tile * .028), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
+        FloorOutline(sculpture, here, float2(lens.tile * .91), FloorStroke(lens.tile), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
         if (lens.tile > 18) FloorNumber(sculpture, shell + 1, false, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, RUBBER, lens.floor + lens.tile * .014, lens.tile);
     }
 }
@@ -271,7 +266,7 @@ void DimensionConnections(mut Sculpture sculpture, Workshop workshop, int room, 
             var first = direction % 2 == 0 ? float2(from.x, middle.y) : float2(middle.x, from.y);
             var second = direction % 2 == 0 ? float2(to.x, middle.y) : float2(middle.x, to.y);
             var stroke = Math.Min(RoomScale(workshop.layout, child), RoomScale(workshop.layout, other)) * lens.tile * 0.82;
-            var floor = Color(0.90, 0.90, 0.87);
+            var floor = Color(0.86, 0.83, 0.77);
             FloorLine(sculpture, from, first, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
             FloorLine(sculpture, first, second, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
             FloorLine(sculpture, second, to, stroke, floor, lens.floor + lens.tile * .012, lens.tile);
@@ -279,35 +274,57 @@ void DimensionConnections(mut Sculpture sculpture, Workshop workshop, int room, 
     }
 }
 
-void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture, Hands hands)
+void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, int through = -1, int level = -1)
 {
     for (var crate = 0; crate < workshop.layout.crateCount; crate++)
-        if (workshop.puzzle.crates[crate].active && workshop.puzzle.crates[crate].room == room)
-            Crate(sculpture, MapPoint(picture.crates[crate], lens), lens.tile, TileAt(workshop.layout, room, workshop.puzzle.crates[crate].position) == Tile.Target, lens.floor + lens.tile * .004);
+    {
+        if (!workshop.puzzle.crates[crate].active) continue;
+        // A parcel crossing a doorway is drawn where it is on its way.
+        var crossing = picture.crateTransit[crate];
+        if (ShownRoom(crossing, workshop.puzzle.crates[crate].room) != room) continue;
+        var landed = crossing.via == -2 && TileAt(workshop.layout, room, workshop.puzzle.crates[crate].position) == Tile.Target;
+        Crate(sculpture, MapPoint(ShownAt(crossing, picture.crates[crate]), lens), lens.tile * ShownScale(crossing), landed, lens.floor + lens.tile * .004);
+    }
     for (var seat = 0; seat < 2; seat++)
         if (workshop.present[seat])
         {
+            // A room is the same room in every copy of its box, but a bot
+            // leaves by the copy it came in through. Everywhere else it is
+            // an echo: pale, see-through and unlit. That holds in the played
+            // room too: a partner who came in by another copy is with you,
+            // and in your way, but will leave from over there.
+            var actor = workshop.puzzle.actors[seat];
+            var entered = actor.depth > 0 && actor.depth <= MAX_DEPTH ? actor.trail[actor.depth - 1].box : -1;
+            // Where a room holds a copy of itself, the same box is entered
+            // again and again, and only how deep says which drawing a bot is
+            // really in. `level` is how deep this drawing is, where a room
+            // repeats along the way; elsewhere it is -1 and the box decides.
+            var echo = (through >= 0 && entered >= 0 && entered != through) || (level >= 0 && actor.depth != level);
             var trip = picture.passages[seat];
             if (trip.active)
             {
+                // Arriving through a doorway it fades in, as what it will be
+                // here once it has arrived: itself, or an echo.
                 if (room == trip.child && trip.aliasAlpha > 0)
                 {
-                    sculpture.alpha = trip.aliasAlpha;
-                    Maker(sculpture, MapPoint(trip.aliasPosition, lens), lens.tile * .90, seat, lens.floor + lens.tile * .004, PoseOf(picture, seat));
+                    sculpture.alpha = trip.aliasAlpha * (echo ? .36 : 1.0);
+                    Maker(sculpture, MapPoint(trip.aliasPosition, lens), lens.tile * .90, seat, lens.floor + lens.tile * .004, PoseOf(picture, seat), echo);
                     sculpture.alpha = 1;
                 }
                 continue;
             }
             if (workshop.puzzle.actors[seat].room != room) continue;
             mut var at = MapPoint(picture.actors[seat], lens);
-            if (seat == hands.seat && hands.blockTime > 0)
+            if (hands.blockTime[seat] > 0)
             {
-                FloorOutline(sculpture, at, float2(lens.tile * .88), Math.Max(.8, lens.tile * .035), Color(.82, .43, .26, hands.blockTime * 4), lens.floor + lens.tile * .020, lens.tile);
-                if (!hands.reduceMotion) at.x += Math.Sin(hands.blockTime * 70) * lens.tile * 0.025;
+                FloorOutline(sculpture, at, float2(lens.tile * .88), Math.Max(.8, lens.tile * .035), Color(.82, .43, .26, hands.blockTime[seat] * 4), lens.floor + lens.tile * .020, lens.tile);
+                if (!hands.reduceMotion) at.x += Math.Sin(hands.blockTime[seat] * 70) * lens.tile * 0.025;
             }
             if (seat == hands.seat && hands.portalTime > 0)
                 FloorOutline(sculpture, at, float2(lens.tile * .92), Math.Max(.8, lens.tile * .025), Color(.33, .61, .54, hands.portalTime * 1.8), lens.floor + lens.tile * .015, lens.tile);
-            Maker(sculpture, at, lens.tile * .90, seat, lens.floor + lens.tile * .004, PoseOf(picture, seat));
+            if (echo) sculpture.alpha = .36;
+            Maker(sculpture, at, lens.tile * .90, seat, lens.floor + lens.tile * .004, PoseOf(picture, seat), echo);
+            sculpture.alpha = 1;
         }
 }
 
@@ -329,7 +346,7 @@ void DoorwayMaker(mut Sculpture sculpture, LevelLayout layout, MakerPassage trip
     sculpture.apertureSide = -1;
 }
 
-void PassageMaker(mut Sculpture sculpture, Workshop workshop, Picture picture, Hands hands, int seat, MapLens[4] contexts, int[4] dimensions, int contextCount)
+void PassageMaker(mut Sculpture sculpture, Workshop workshop, Picture picture, Hands hands, int seat, MapLens[4] contexts, int[4] dimensions, int contextCount, int viewerBox)
 {
     var trip = picture.passages[seat];
     if (!trip.active || !workshop.present[seat]) return;
@@ -348,7 +365,12 @@ void PassageMaker(mut Sculpture sculpture, Workshop workshop, Picture picture, H
                 parent = contexts[layer];
                 found = true;
             }
-        if (!found && dimensions[0] == trip.child)
+        // The played room is the one it crosses into or out of, and through
+        // the very box this screen's bot came in by. Through another copy of
+        // that box it is crossing somewhere else: here it only fades, as the
+        // echo it is in this room, and is drawn at its real doorway if that
+        // is in view.
+        if (!found && dimensions[0] == trip.child && trip.gate.box == viewerBox)
         {
             parent = ContainingLens(workshop.layout, trip.child, parent, RoomSurround { anchor = PassageAnchor(trip.gate, picture) });
             found = true;
@@ -388,62 +410,63 @@ void PassageMaker(mut Sculpture sculpture, Workshop workshop, Picture picture, H
     }
 }
 
-void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness, Color tone, float floor, float tile, bool hazard)
+// The edge of a room where its outermost cell is floor: a narrow run of the
+// same block the wall cells are, as tall and in the same two paints.
+void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness, Color tone, float floor, float tile, float tall = .31)
 {
     mut var size = float2(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
     if (size.x < 0.001 && size.y < 0.001) return;
     if (size.x < 0.001) size.x = thickness;
     if (size.y < 0.001) size.y = thickness;
-    var height = tile * .30;
-    Cuboid(sculpture, (from + to) * .5, size, height, tone, floor, tile);
-    if (hazard)
-    {
-        // The hall's own walls carry warning stripes along their length.
-        var middle = (from + to) * .5;
-        var half = size.x > size.y ? float2(size.x * .5, 0) : float2(0, size.y * .5);
-        HazardEdge(sculpture, middle - half, middle + half, thickness * .55, floor + height, tile);
-        return;
-    }
-    var highlight = size.x > size.y ? float2(size.x, thickness * 0.18) : float2(thickness * 0.18, size.y);
-    Cuboid(sculpture, (from + to) * .5, highlight, tile * .004, Math.Lerp(tone, Color(.86, .87, .84), .35), floor + height, tile);
+    var height = tile * tall;
+    Cuboid(sculpture, (from + to) * .5, size, height, Math.Lerp(tone, RUBBER, .30), floor, tile);
+    Cuboid(sculpture, (from + to) * .5, size, tile * .018, tone, floor + height, tile);
 }
 
-// The walls sit inside the exact room footprint. A doorway removes a section
-// of that wall rather than painting a door symbol over a closed frame.
+// The walls sit inside the exact room footprint. Where the outermost cell is
+// wall, that block already runs to the edge and nothing more is drawn. A
+// doorway is a gap in the strip between two posts.
 void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens)
 {
-    var dims = RoomDimensions(layout, room);
-    var low = lens.origin - float2(lens.tile * 0.5);
-    var high = low + dims * lens.tile;
     var thickness = lens.tile * 0.11;
     var tone = room < 0 ? STEEL : RoomColor(room);
     for (var side = 0; side < 4; side++)
     {
         var horizontal = side % 2 == 0;
         var normal = float2(Direction(side));
-        mut var first = side == 0 ? low : side == 1 ? float2(high.x, low.y) : side == 2 ? float2(low.x, high.y) : low;
-        mut var last = horizontal ? first + float2(dims.x * lens.tile, 0) : first + float2(0, dims.y * lens.tile);
-        // Inset the stroke by half its thickness; no trim protrudes into a
-        // neighbor's grid cell or changes a miniature's physical footprint.
-        first -= normal * thickness * 0.5;
-        last -= normal * thickness * 0.5;
-        var cell = DoorCell(layout, room, side);
-        var open = room >= 0 && (layout.rooms[room].doors & (1 << side)) != 0 && OnRoomGrid(layout, room, cell);
-        if (open)
+        var tangent = horizontal ? float2(1, 0) : float2(0, 1);
+        var door = DoorCell(layout, room, side);
+        var open = room >= 0 && (layout.rooms[room].doors & (1 << side)) != 0 && OnRoomGrid(layout, room, door);
+        var length = horizontal ? RoomWidth(layout, room) : RoomHeight(layout, room);
+        for (var along = 0; along < length; along++)
         {
+            var cell = side == 0 ? int2(along, 0) : side == 1 ? int2(RoomWidth(layout, room) - 1, along) :
+                side == 2 ? int2(along, RoomHeight(layout, room) - 1) : int2(0, along);
+            if (room >= 0 && TileAt(layout, room, cell) == Tile.Wall) continue;
+            // Inset by half its thickness: nothing protrudes into a neighbor's
+            // cell or changes a miniature's physical footprint.
             var mouth = MapPoint(float2(cell), lens) + normal * (lens.tile - thickness) * 0.5;
-            var tangent = horizontal ? float2(1, 0) : float2(0, 1);
+            var first = mouth - tangent * lens.tile * 0.5;
+            var last = mouth + tangent * lens.tile * 0.5;
+            if (room < 0)
+            {
+                // The table has a raised frame all the way round.
+                WallStrip(sculpture, first, last, thickness, FRAME, lens.floor, lens.tile, .13);
+                continue;
+            }
+            if (!open || !CellEqual(cell, door))
+            {
+                WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile);
+                continue;
+            }
             var start = mouth - tangent * lens.tile * 0.41;
             var end = mouth + tangent * lens.tile * 0.41;
-            WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile, room < 0);
-            WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile, room < 0);
-            // Short yellow posts make the depth of the opening visible. The
-            // floor remains continuous all the way through the missing wall.
+            WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile);
+            WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile);
             var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
             Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
             Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
         }
-        else WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile, room < 0);
     }
 }
 
@@ -459,7 +482,7 @@ struct SceneLens { int room; MapLens lens; int depth; int box = -1; }
 
 // Full rooms and miniatures share every geometric primitive. Drawing is finite
 // even when a doorway refers to its own canonical room.
-void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, int hideBox = -1, int instance = -1)
+void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture, Hands hands, int hideBox = -1, int instance = -1, int level = -1, int repeats = -3)
 {
     mut SceneLens[48] pending = default;
     pending[0] = SceneLens { room = room, lens = lens, box = instance };
@@ -473,13 +496,29 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
         sculpture.ground = item.lens.floor;
         DimensionFloor(sculpture, workshop, item.room, item.lens);
         DimensionConnections(sculpture, workshop, item.room, item.lens, picture);
-        DimensionPieces(sculpture, workshop, item.room, item.lens, picture, hands);
+        // Every drawing of a room is of one particular box, the played room
+        // included: it is the box this screen's bot came in through.
+        // `level` is this drawing's depth and `repeats` the room that is met
+        // again on the way down from it to the played room, if any. A copy
+        // of that room, or the room itself, is told apart by depth.
+        var deep = level >= 0 && (item.room == repeats || (item.depth > 0 && item.room == room)) ? level + item.depth : -1;
+        DimensionPieces(sculpture, workshop, item.room, item.lens, picture, hands, item.box, deep);
         RoomTrim(sculpture, workshop.layout, item.room, item.lens, item.box);
         for (var box = 0; box < 8; box++)
         {
-            if (!ValidBox(workshop.layout, box) || BoxPlacement(workshop.layout, workshop.puzzle, box).room != item.room || (index == 0 && box == hideBox)) continue;
+            if (!ValidBox(workshop.layout, box) || (index == 0 && box == hideBox)) continue;
+            // A box crossing a doorway is drawn where it is on its way, at
+            // the size it has there, with its inside still in it.
+            var crossing = picture.boxTransit[box];
+            if (ShownRoom(crossing, BoxPlacement(workshop.layout, workshop.puzzle, box).room) != item.room) continue;
+            var stands = ShownAt(crossing, picture.boxes[box]);
             var child = BoxDestination(workshop.layout, box);
-            var interior = InteriorLens(workshop.layout, child, item.lens, picture.boxes[box]);
+            mut var interior = InteriorLens(workshop.layout, child, item.lens, stands);
+            if (crossing.via != -2)
+            {
+                interior.tile = interior.tile * crossing.scale;
+                interior.origin = MapPoint(stands, item.lens) - RoomCenter(workshop.layout, child) * interior.tile;
+            }
             if (item.depth < 3 && count < 48 && interior.tile >= 0.65)
             {
                 pending[count] = SceneLens { room = child, lens = interior, depth = item.depth + 1, box = box };
@@ -488,7 +527,7 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
             else
             {
                 sculpture.ground = interior.floor;
-                Cuboid(sculpture, MapPoint(picture.boxes[box], item.lens), float2(item.lens.tile), interior.tile * .20, RoomColor(child), interior.floor, interior.tile);
+                Cuboid(sculpture, MapPoint(stands, item.lens), float2(item.lens.tile * ShownScale(crossing)), interior.tile * .20, RoomColor(child), interior.floor, interior.tile);
                 sculpture.ground = item.lens.floor;
             }
         }
@@ -516,6 +555,16 @@ view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby, Picture picture)
     }
     Chip(topLeft + float2(lens.size.x - 62, 20), float2(112, 32));
     Label($"{workshop.puzzle.moves} moves", topLeft + float2(lens.size.x - 16, 21), 14, MUTED, Anchor.MiddleRight);
+    if (Screen.width >= 1050)
+    {
+        // The puzzle's line of advice, between the two top plates.
+        var advice = LevelLesson(workshop.level);
+        var most = Math.Min(640, lens.size.x - 440);
+        var rows = WrappedLines(advice, most, 13);
+        var wide = rows > 1 ? most : Draw.MeasureText(advice, 13).x;
+        Chip(float2(Screen.width * 0.5, topLeft.y + 4 + (rows * 19 + 13) * 0.5), float2(wide + 28, rows * 19 + 13));
+        Paragraph(advice, float2(Screen.width * 0.5 - wide * 0.5, topLeft.y + 20), most, 13, MUTED);
+    }
     // Between the buttons and the direction pad where there is room, under
     // the other two plates where not.
     var footer = Screen.width < 1050 ? float2(Screen.width * 0.5, topLeft.y + 50) : float2(Screen.width * 0.5, Screen.height - 40);
@@ -541,19 +590,22 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var levelChanged = picture.level != workshop.level;
     var changed = levelChanged || picture.serial != workshop.serial;
     var snap = first || changed || hands.reduceMotion;
-    var blend = snap ? 1.0 : Math.Min(1, dt * 20);
     mut var localCycleExit = false;
     for (var box = 0; box < 8; box++)
     {
         if (!ValidBox(workshop.layout, box)) continue;
         var placement = BoxPlacement(workshop.layout, workshop.puzzle, box);
-        picture.boxes[box] = SmoothCell(picture.boxes[box], float2(placement.position), snap || placement.room != picture.boxParent[box] ? 1.0 : blend);
+        picture.boxTransit[box] = FollowPushed(workshop.layout, workshop.puzzle, picture.boxTransit[box], picture.boxParent[box], picture.boxes[box],
+            placement.room, placement.position, snap, dt, out var drawn);
+        picture.boxes[box] = drawn;
         picture.boxParent[box] = placement.room;
     }
     for (var crate = 0; crate < workshop.layout.crateCount; crate++)
     {
         var cargo = workshop.puzzle.crates[crate];
-        picture.crates[crate] = SmoothCell(picture.crates[crate], float2(cargo.position), snap || cargo.room != picture.cargoRoom[crate] ? 1.0 : blend);
+        picture.crateTransit[crate] = FollowPushed(workshop.layout, workshop.puzzle, picture.crateTransit[crate], picture.cargoRoom[crate], picture.crates[crate],
+            cargo.room, cargo.position, snap || !cargo.active, dt, out var drawn);
+        picture.crates[crate] = drawn;
         picture.cargoRoom[crate] = cargo.room;
     }
     for (var seat = 0; seat < 2; seat++)
@@ -659,13 +711,13 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var compact = screen.x < 1050;
     var width = Math.Min(screen.x - 36, 1180);
     var left = (screen.x - width) * 0.5;
-    Label("inside out", float2(left, 37), narrow ? 29.0 : 36.0, INK);
-    if (!compact) Label("find a way outward.", float2(left, 66), 14, MUTED);
+    // A wide window's header is one slim row; the puzzle's line of advice
+    // is on a plate over the scene (WorkbenchLabels).
+    Label("inside out", float2(left, compact ? 30 : 37), narrow ? 26.0 : 30.0, INK);
     if (workshop.initialized)
     {
-        var progress = float2(compact ? left : left + 255, compact ? 133 : 37);
+        var progress = float2(compact ? left : left + 215, compact ? 116 : 37);
         Label($"{workshop.level + 1:D2} / {LEVEL_COUNT}   {LevelName(workshop.level)}", progress, compact ? 13.0 : 18.0, INK);
-        if (!compact) Paragraph(LevelLesson(workshop.level), progress + float2(0, 30), width - 440, 13, MUTED);
     }
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
     var localSeat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
@@ -737,10 +789,8 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     // place and size in it, and the controls lie over what surrounds it.
     var sceneTop = SceneTop(screen);
     var region = Rect(0, sceneTop, screen.x, screen.y - sceneTop);
-    Draw.Rect(float2(screen.x * .5, sceneTop + region.height * .5), float2(region.width, region.height), Color(0.27, 0.30, 0.34));
-    var blocks = int(screen.x / 14);
-    for (var index = 0; index < blocks; index += 2)
-        Draw.Rect(float2((index + .5) * screen.x / blocks, sceneTop - 2), float2(screen.x / blocks, 3), Color(HAZARD.r, HAZARD.g, HAZARD.b, 0.75));
+    Draw.Rect(float2(screen.x * .5, sceneTop + region.height * .5), float2(region.width, region.height), Color(0.022, 0.026, 0.04));
+    Draw.Rect(float2(screen.x * .5, sceneTop - 1), float2(screen.x, 1), Color(HAZARD.r, HAZARD.g, HAZARD.b, 0.45));
     var viewCenter = SceneCenter(screen);
     Draw.Clip(region)
     {
@@ -763,9 +813,17 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
         {
             var hiddenBox = layer > 0 ? ancestors[layer - 1].box : -1;
             var instance = layer < 3 && dimensions[layer] >= 0 ? ancestors[layer].box : -1;
-            RoomScene(sculpture, workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox, instance);
+            // Does this room, or the played one, come round again on the way
+            // down? Then its drawings are told apart by depth as well.
+            mut var repeats = -3;
+            for (var below = 0; below < layer; below++)
+                if (dimensions[below] == dimensions[layer]) repeats = dimensions[layer];
+            if (layer == 0)
+                for (var above = 1; above < contextCount; above++)
+                    if (dimensions[above] == dimensions[0]) repeats = dimensions[0];
+            RoomScene(sculpture, workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox, instance, actor.depth - layer, repeats);
         }
-        for (var seat = 0; seat < 2; seat++) PassageMaker(sculpture, workshop, picture, hands, seat, contexts, dimensions, contextCount);
+        for (var seat = 0; seat < 2; seat++) PassageMaker(sculpture, workshop, picture, hands, seat, contexts, dimensions, contextCount, ancestors[0].box);
         if (hands.seat == localSeat && !picture.passages[localSeat].active && picture.cameraBlend >= 1)
         {
             // What the next step does to a box beside this screen's dummy:
@@ -778,14 +836,16 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
                 var axis = float2(Direction(d));
                 var cross = float2(-axis.y, axis.x);
                 var edge = MapPoint(picture.actors[localSeat], lens) + axis * lens.tile * .43;
+                sculpture.glow = 1;
                 if (hands.ahead[d] == Step.Push)
-                    FloorLine(sculpture, edge - cross * lens.tile * .26, edge + cross * lens.tile * .26, lens.tile * .09, HAZARD, top, lens.tile);
+                    FloorLine(sculpture, edge - cross * lens.tile * .26, edge + cross * lens.tile * .26, lens.tile * .08, GLOW_TARGET, top, lens.tile);
                 if (hands.ahead[d] == Step.Enter)
                 {
-                    var green = Color(.16, .56, .30);
+                    var green = GLOW_GOAL;
                     FloorLine(sculpture, edge, edge - axis * lens.tile * .16 + cross * lens.tile * .18, lens.tile * .07, green, top, lens.tile);
                     FloorLine(sculpture, edge, edge - axis * lens.tile * .16 - cross * lens.tile * .18, lens.tile * .07, green, top, lens.tile);
                 }
+                sculpture.glow = 0;
             }
         }
         var rotation = quaternion.Euler(float3(SCENE_PITCH, 0, 0));
@@ -796,5 +856,16 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
         var projection = float4x4.Ortho(Screen.width, Screen.height, .1, distance * 2);
         RenderScene(sculpture.vertices, sculpture.indices, sculpture.objects, camera, projection,
             region, viewCenter, lens.tile, render);
+        // What the lens keeps sharp is the played room as it will sit once
+        // the camera has settled, eased from the last room's: it must not
+        // follow the zoom, or the focus would leap as a doorway is crossed.
+        var sharp = RoomDimensions(workshop.layout, actor.room) * target.tile * (actor.room < 0 ? .48 : .5);
+        picture.focusHalf = picture.focusHalf.x <= 0 || hands.reduceMotion ? sharp : Math.Lerp(picture.focusHalf, sharp, Math.Min(1, dt * 5));
+        if (Math.Abs(picture.focusHalf.x - sharp.x) < .05 && Math.Abs(picture.focusHalf.y - sharp.y) < .05) picture.focusHalf = sharp;
+        render.focusHalf = picture.focusHalf;
+        // The same for the margin left sharp around it, which is in tiles.
+        picture.focusTile = picture.focusTile <= 0 || hands.reduceMotion ? target.tile : Math.Lerp(picture.focusTile, target.tile, Math.Min(1, dt * 5));
+        if (Math.Abs(picture.focusTile - target.tile) < .05) picture.focusTile = target.tile;
+        render.focusTile = picture.focusTile;
     }
 }

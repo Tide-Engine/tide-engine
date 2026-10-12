@@ -122,6 +122,126 @@ void SquareRoom(mut LevelLayout layout, mut Puzzle puzzle, int room, bool low)
         if (puzzle.references[copy].room == room) puzzle.references[copy].position = puzzle.references[copy].position + shift;
 }
 
+// Squaring a room leaves it a second row or column of wall where it was
+// packed out. These cells of that doubled wall are floor instead, so a room
+// fills its square: each was opened only while the puzzle's witness still
+// solved it and still showed what the campaign asks of it.
+void WidenRooms(int level, mut LevelLayout layout)
+{
+    switch (level)
+    {
+        case 0:
+            WorkshopTile(layout, 1, int2(1, 2), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 2), Tile.Floor);
+            break;
+        case 1:
+            WorkshopTile(layout, 0, int2(2, 3), Tile.Floor);
+            WorkshopTile(layout, 0, int2(3, 3), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
+            WorkshopTile(layout, 0, int2(1, 3), Tile.Floor);
+            break;
+        case 2:
+            WorkshopTile(layout, 0, int2(2, 3), Tile.Floor);
+            WorkshopTile(layout, 0, int2(3, 3), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 2), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 3), Tile.Floor);
+            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
+            WorkshopTile(layout, 0, int2(1, 3), Tile.Floor);
+            break;
+        case 3:
+            WorkshopTile(layout, 1, int2(1, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
+            break;
+        case 4:
+            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 3), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 3), Tile.Floor);
+            WorkshopTile(layout, 2, int2(2, 1), Tile.Floor);
+            WorkshopTile(layout, 2, int2(4, 1), Tile.Floor);
+            WorkshopTile(layout, 2, int2(5, 1), Tile.Floor);
+            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(1, 1), Tile.Floor);
+            break;
+        case 5:
+            WorkshopTile(layout, 0, int2(4, 1), Tile.Floor);
+            WorkshopTile(layout, 0, int2(4, 3), Tile.Floor);
+            WorkshopTile(layout, 0, int2(4, 4), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 5), Tile.Floor);
+            break;
+        case 7:
+            WorkshopTile(layout, 0, int2(1, 3), Tile.Floor);
+            WorkshopTile(layout, 0, int2(2, 3), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
+            WorkshopTile(layout, 1, int2(2, 3), Tile.Floor);
+            WorkshopTile(layout, 1, int2(3, 3), Tile.Floor);
+            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
+            break;
+        case 8:
+            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
+            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
+            break;
+        case 9:
+            WorkshopTile(layout, 0, int2(4, 1), Tile.Floor);
+            WorkshopTile(layout, 0, int2(4, 3), Tile.Floor);
+            WorkshopTile(layout, 0, int2(4, 4), Tile.Floor);
+            break;
+        case 10:
+            WorkshopTile(layout, 0, int2(4, 1), Tile.Floor);
+            WorkshopTile(layout, 0, int2(4, 3), Tile.Floor);
+            WorkshopTile(layout, 0, int2(4, 4), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
+            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
+            break;
+        case 11:
+            WorkshopTile(layout, 2, int2(1, 3), Tile.Floor);
+            WorkshopTile(layout, 3, int2(4, 5), Tile.Floor);
+            WorkshopTile(layout, 3, int2(5, 5), Tile.Floor);
+            WorkshopTile(layout, 3, int2(3, 5), Tile.Floor);
+            WorkshopTile(layout, 3, int2(2, 5), Tile.Floor);
+            WorkshopTile(layout, 3, int2(1, 5), Tile.Floor);
+            break;
+    }
+}
+
 void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
 {
     WorkshopBlank(layout, puzzle);
@@ -208,19 +328,28 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
             break;
         case 6:
-            WorkshopContaining(layout, puzzle, 2, 7, 5);
-            WorkshopTile(layout, 2, int2(4, 0), Tile.Floor);
-            WorkshopTile(layout, 2, int2(3, 1), Tile.Wall);
-            WorkshopTile(layout, 2, int2(5, 1), Tile.Wall);
-            WorkshopRoom(layout, puzzle, 0, int2(4, 2), int2(4, 1), 5, 4, 15, 2, 2, 2, 1, 3, 1);
-            WorkshopPatch(layout, 0, 1, 0, 3, 0);
-            WorkshopRoom(layout, puzzle, 1, int2(3, 2), int2(0, 1), 4, 5, 15, 2, 0, 1, 1, 1, 3);
-            WorkshopWalker(puzzle, 0, 0, int2(3, 2));
-            WorkshopWalker(puzzle, 1, 1, int2(1, 3));
-            WorkshopCargo(layout, puzzle, 1, int2(2, 1));
-            WorkshopTile(layout, 0, int2(2, 2), Tile.Target);
-            WorkshopTile(layout, 2, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 2, int2(5, 3), Tile.Exit);
+            // A box only lets a bot in while it cannot move, and this one
+            // has open floor behind its outline: the partner is the wall.
+            // The room is a figure of eight round two blocks, so either bot
+            // can reach either side of the small box, and nothing else can
+            // be put behind it. The home is in a corner and cannot be moved.
+            WorkshopContaining(layout, puzzle, 1, 7, 7);
+            WorkshopClear(layout, 1);
+            WorkshopPatch(layout, 1, 1, 1, 5, 1);
+            WorkshopPatch(layout, 1, 1, 3, 5, 3);
+            WorkshopPatch(layout, 1, 1, 5, 5, 5);
+            WorkshopTile(layout, 1, int2(1, 2), Tile.Floor);
+            WorkshopTile(layout, 1, int2(5, 2), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 4), Tile.Floor);
+            WorkshopTile(layout, 1, int2(5, 4), Tile.Floor);
+            WorkshopRoom(layout, puzzle, 0, int2(1, 1), int2(1, 1), 5, 5, 6, 1, 1);
+            WorkshopRoom(layout, puzzle, 2, int2(2, 3), int2(3, 3), 5, 5, 8, 1, 1);
+            WorkshopWalker(puzzle, 0, 0, int2(2, 3));
+            WorkshopWalker(puzzle, 1, 0, int2(3, 2));
+            WorkshopCargo(layout, puzzle, 2, int2(2, 2));
+            WorkshopTile(layout, 2, int2(3, 2), Tile.Target);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
+            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
             break;
         case 7:
             WorkshopContaining(layout, puzzle, 2, 7, 5, 4);
@@ -318,6 +447,7 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             break;
     }
     for (var room = 0; room < layout.roomCount; room++) SquareRoom(layout, puzzle, room, level == 8 && room == 1);
+    WidenRooms(Math.Clamp(level, 0, LEVEL_COUNT - 1), layout);
     WorkshopSeed(layout, puzzle);
 }
 string ChapterName(int level)
@@ -336,7 +466,7 @@ string LevelName(int level)
         case 3: return "A place to stand";
         case 4: return "Passing place";
         case 5: return "The same corner";
-        case 6: return "Carried together";
+        case 6: return "Hold it steady";
         case 7: return "Before it moves";
         case 8: return "Two ways home";
         case 9: return "Return address";
@@ -353,7 +483,7 @@ string LevelLesson(int level)
     if (level == 3) return "Leave the parcel on the left target and the home on the right outline.";
     if (level == 4) return "Trade the two boxes' places and deliver the parcel into the long room.";
     if (level == 5) return "Deliver the parcel down the left corridor, then leave this room together.";
-    if (level == 6) return "Nest the narrow box, deliver the parcel inside the larger box, and park it.";
+    if (level == 6) return "Park the small box on its outline with its parcel delivered inside. A box only lets you in while it cannot move.";
     if (level == 7) return "Deliver the parcel, pack the boxes onto their outlines, then leave both enclosing rooms.";
     if (level == 8) return "Deliver both parcels in the same interior and return to the containing room.";
     if (level == 9) return "Move the home onto its outline, keep one parcel inside, and deliver the other outward.";
@@ -402,9 +532,9 @@ string LevelHint(int level, int tier)
     }
     if (level == 6)
     {
-        if (detail == 0) return "The narrow box can travel inside the larger one. Who should be in it when it goes?";
-        if (detail == 1) return "Nest the narrow box first, with Teal still inside it. Teal can then deliver the parcel from inside the larger room before that room is parked.";
-        return "Amber leaves south, walks round and pushes the narrow box east into the larger room with Teal inside. Teal leaves the narrow box east, pushing the parcel along, steps round it and pushes it down onto its target, then leaves the larger room east. Amber pushes the larger room north onto its outline, and both walk to their goals.";
+        if (detail == 0) return "Walking into a box pushes it along. What could stand behind this one so that it stays where it is?";
+        if (detail == 1) return "Your partner can be the wall. One of you goes round to the far side of the outline and waits there; then the other can walk in.";
+        return "Teal leaves the home east and goes round to the goal just east of the outline. Amber leaves south, pushes the small box one step east onto its outline, then walks into it again: Teal stops the push, so Amber goes inside. Amber pushes the parcel east onto its target, comes back out west and steps onto the goal.";
     }
     if (level == 7)
     {

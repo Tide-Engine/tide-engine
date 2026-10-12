@@ -24,7 +24,7 @@ MapLens WorkshopLens(LevelLayout layout, float2 screen, int room)
     var narrow = screen.x < 720;
     var width = Math.Min(screen.x - 36, 1180);
     var left = (screen.x - width) * 0.5;
-    var top = screen.x < 1050 ? 154.0 : 126.0;
+    var top = screen.x < 1050 ? 136.0 : 88.0;
     var height = Math.Max(200, screen.y - top - (narrow ? 200 : 110));
     var center = float2(left + width * 0.5, top + height * 0.5);
     var size = float2(width, height);
@@ -221,31 +221,22 @@ void PassagePose(LevelLayout layout, mut MakerPassage trip, Picture picture)
     {
         var oldLip = PassageAnchor(trip.fromGate, picture) + trip.fromLip;
         var fromScale = RoomScale(layout, trip.fromChild);
-        var halfway = (oldLip + lip) * 0.5;
-        if (progress < 0.20)
-        {
-            var blend = PassageEase(progress / 0.20);
-            trip.position = Math.Lerp(trip.source, oldLip, blend);
-            trip.scale = Math.Lerp(trip.sourceScale, fromScale, blend);
-        }
-        else if (progress < 0.50)
-        {
-            var blend = PassageEase((progress - 0.20) / 0.30);
-            trip.position = Math.Lerp(oldLip, halfway, blend);
-            trip.scale = Math.Lerp(fromScale, 1, blend);
-        }
-        else if (progress < 0.80)
-        {
-            var blend = PassageEase((progress - 0.50) / 0.30);
-            trip.position = Math.Lerp(halfway, lip, blend);
-            trip.scale = Math.Lerp(1, scale, blend);
-        }
-        else
-        {
-            trip.position = Math.Lerp(lip, destination, PassageEase((progress - 0.80) / 0.20));
-            trip.scale = scale;
-        }
-        trip.visualInside = progress >= 0.80;
+        // Straight from one box into the one beside it, in one unbroken
+        // glide along its path: up to the first doorway, across to the
+        // second, on to its cell. The bot never stands in the room outside,
+        // so it never grows to that room's size: it goes from the size it has
+        // in one box to the size it has in the other as it crosses.
+        var first = Math.Length(oldLip - trip.source);
+        var across = Math.Length(lip - oldLip);
+        var last = Math.Length(destination - lip);
+        var gone = PassageEase(progress) * (first + across + last);
+        trip.position = gone < first ? Math.Lerp(trip.source, oldLip, gone / Math.Max(.0001, first)) :
+            gone < first + across ? Math.Lerp(oldLip, lip, (gone - first) / Math.Max(.0001, across)) :
+            Math.Lerp(lip, destination, (gone - first - across) / Math.Max(.0001, last));
+        var margin = Math.Max(.0001, Math.Min(first, last) * .6);
+        var turned = Math.SmoothStep(first - margin, first + across + margin, gone);
+        trip.scale = Math.Lerp(Math.Lerp(trip.sourceScale, fromScale, Math.Saturate(gone / Math.Max(.0001, first))), scale, turned);
+        trip.visualInside = gone >= first + across;
     }
     else if (trip.entering && !trip.sourceInside)
     {
@@ -362,6 +353,97 @@ MapLens BlendLens(MapLens source, MapLens target, float amount)
         floor = Math.Lerp(source.floor, target.floor, amount) };
 }
 
+// A pushed box or parcel on its way through a doorway. It is drawn in `via`,
+// the larger of the two rooms, sliding between its cell there and the cell of
+// the box whose doorway it crosses, at the size it has on that side. -2 is
+// no crossing.
+struct Transit
+{
+    int via = -2;
+    float2 at;
+    float2 goal;
+    float from = 1;
+    float to = 1;
+    float scale = 1;
+}
+
+// Pushed from `old` in `oldRoom` to `now` in `newRoom`: into the box beside
+// it there, or out of its room to beside that room's own box. Anything else
+// is no crossing, and the thing is simply where it now is.
+Transit BeginTransit(LevelLayout layout, Puzzle puzzle, int oldRoom, float2 old, int newRoom, int2 now)
+{
+    var cell = int2(int(Math.Round(old.x)), int(Math.Round(old.y)));
+    for (var direction = 0; direction < 4; direction++)
+    {
+        var gate = BoxAt(layout, puzzle, oldRoom, cell + Direction(direction));
+        if (gate < 0 || BoxDestination(layout, gate) != newRoom) continue;
+        return Transit { via = oldRoom, at = old, goal = float2(cell + Direction(direction)) - float2(Direction(direction)) * .30,
+            from = 1, to = RoomScale(layout, newRoom), scale = 1 };
+    }
+    if (ValidRoom(layout, oldRoom) && puzzle.rooms[oldRoom].room == newRoom)
+    {
+        var shell = puzzle.rooms[oldRoom].position;
+        var apart = now - shell;
+        if (Math.Abs(apart.x) + Math.Abs(apart.y) == 1)
+            return Transit { via = newRoom, at = float2(shell) + float2(apart) * .30, goal = float2(now),
+                from = RoomScale(layout, oldRoom), to = 1, scale = RoomScale(layout, oldRoom) };
+    }
+    // Straight from one box into the one beside it, through doorways that
+    // face each other: drawn in the room both stand in, at the small size it
+    // has inside them.
+    if (ValidRoom(layout, oldRoom) && ValidRoom(layout, newRoom) && puzzle.rooms[oldRoom].room == puzzle.rooms[newRoom].room)
+    {
+        var first = puzzle.rooms[oldRoom].position;
+        var second = puzzle.rooms[newRoom].position;
+        var apart = second - first;
+        if (Math.Abs(apart.x) + Math.Abs(apart.y) == 1)
+            return Transit { via = puzzle.rooms[oldRoom].room, at = float2(first) + float2(apart) * .30, goal = float2(second) - float2(apart) * .30,
+                from = RoomScale(layout, oldRoom), to = RoomScale(layout, newRoom), scale = RoomScale(layout, oldRoom) };
+    }
+    return Transit { };
+}
+
+void StepTransit(mut Transit transit, float dt)
+{
+    if (transit.via == -2) return;
+    var left = transit.goal - transit.at;
+    var far = Math.Length(left);
+    var step = dt * 4;
+    if (far <= step)
+    {
+        transit = Transit { };
+        return;
+    }
+    transit.at = transit.at + left * (step / far);
+    transit.scale = Math.Lerp(transit.to, transit.from, Math.Saturate((far - step) / .7));
+}
+
+// Where a crossing has a thing drawn, and how large; without one, where it is.
+int ShownRoom(Transit crossing, int room) { return crossing.via != -2 ? crossing.via : room; }
+float2 ShownAt(Transit crossing, float2 at) { return crossing.via != -2 ? crossing.at : at; }
+float ShownScale(Transit crossing) { return crossing.via != -2 ? crossing.scale : 1.0; }
+
+// What is drawn of a pushed box or parcel, a frame on. It was drawn at `was`
+// in `wasRoom` and is now at `cell` in `room`. Within a room it slides to its
+// cell at a steady pace, a fifth of a second a cell, so a push is seen as a
+// move. Through a doorway it is in the other room at once and what is drawn
+// takes a moment to cross, which is the crossing returned: that covers
+// another room and the same room again, where a room holds itself. Boxes and
+// parcels share every rule of it.
+Transit FollowPushed(LevelLayout layout, Puzzle puzzle, Transit crossing, int wasRoom, float2 was, int room, int2 cell, bool snap, float dt, out float2 drawn)
+{
+    drawn = float2(cell);
+    if (snap) return Transit { };
+    var left = drawn - was;
+    var far = Math.Length(left);
+    if (room != wasRoom || (crossing.via == -2 && far > 1.5)) return BeginTransit(layout, puzzle, wasRoom, was, room, cell);
+    mut var next = crossing;
+    StepTransit(next, dt);
+    var step = dt * 5;
+    if (far > step) drawn = was + left * (step / far);
+    return next;
+}
+
 float2 SmoothCell(float2 current, float2 target, float blend)
 {
     var next = Math.Lerp(current, target, blend);
@@ -369,7 +451,7 @@ float2 SmoothCell(float2 current, float2 target, float blend)
 }
 
 // The heading's rows end here; the scene has the window below them.
-float SceneTop(float2 screen) { return screen.x < 1050 ? 146.0 : 104.0; }
+float SceneTop(float2 screen) { return screen.x < 1050 ? 128.0 : 66.0; }
 // What the controls along the bottom need clear of the focused room.
 float SceneBottom(float2 screen) { return screen.x < 720 ? 200.0 : 80.0; }
 float SceneSide(float2 screen)

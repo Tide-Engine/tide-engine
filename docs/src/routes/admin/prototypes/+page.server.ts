@@ -12,7 +12,7 @@ const prototypes = [
     },
     {
         id: 'inside-out', title: 'Inside Out', kind: 'Cooperative puzzle · Nested rooms', players: '2 players',
-        description: 'Start inside a box within another room and find your way out together. Fit movable rooms through tight spaces, enter boxes that contain themselves, and solve twelve puzzles with varied shapes and doorways. Each test dummy sees their own room and its immediate surroundings: a bright crash-test lab of boldly painted boxes with yellow and black striped doorways.',
+        description: 'Start inside a box within another room and find your way out together. Fit movable rooms through tight spaces, enter boxes that contain themselves, and solve twelve puzzles with varied shapes and doorways. Each little robot sees their own room and its immediate surroundings: a painted tabletop model with soft shadows and glowing marks, in focus where you are and blurred where the rooms around you are larger.',
         image: '/prototypes/inside-out/thumbnail.png',
     },
     {

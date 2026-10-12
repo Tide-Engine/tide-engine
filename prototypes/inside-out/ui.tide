@@ -8,10 +8,19 @@ const Color MUTED = Color(0.52, 0.53, 0.51);
 const Color TEAL = Color(0.22, 0.53, 0.48);
 const Color AMBER = Color(0.85, 0.48, 0.27);
 // Factory paints shared by the scene and its controls.
-const Color HAZARD = Color(0.88, 0.70, 0.14);
-const Color RUBBER = Color(0.10, 0.10, 0.11);
-const Color DECAL = Color(0.86, 0.85, 0.78);
-const Color STEEL = Color(0.58, 0.60, 0.63);
+// A painted model under a lamp: brass, soft black rubber, bone white, slate.
+const Color HAZARD = Color(0.84, 0.64, 0.22);
+const Color RUBBER = Color(0.11, 0.11, 0.13);
+const Color DECAL = Color(0.90, 0.88, 0.82);
+// The table the model stands on, and the frame around it.
+const Color STEEL = Color(0.33, 0.235, 0.165);
+const Color FRAME = Color(0.50, 0.36, 0.24);
+// The bots' paints in the scene; the words about them use AMBER and TEAL.
+const Color BOT_AMBER = Color(0.93, 0.50, 0.21);
+const Color BOT_TEAL = Color(0.16, 0.60, 0.56);
+// Marks that glow.
+const Color GLOW_GOAL = Color(0.40, 0.80, 0.70);
+const Color GLOW_TARGET = Color(0.98, 0.76, 0.30);
 const GUITheme ROOM_THEME = GUITheme {
     text = INK, panel = PAPER, control = Color(0.20, 0.21, 0.23),
     hot = Color(0.28, 0.29, 0.31), pressed = Color(0.14, 0.15, 0.16),
@@ -35,7 +44,9 @@ local singleton Hands
     bool music = true;
     bool guide;
     bool reduceMotion;
-    float blockTime;
+    // How much longer each seat's bot shakes after a step that could not be
+    // taken. Every screen shows it for both, so a partner sees the bump too.
+    float[2] blockTime;
     float portalTime;
     Step[4] ahead;
 }
@@ -111,15 +122,15 @@ bool PaperButton(string text, Rect rect, bool enabled = true, bool accent = fals
 view PrepareHands(Session session, mut Hands hands)
 {
     hands.player = session.player;
-    hands.blockTime = Math.Max(0, hands.blockTime - Frame.dt);
+    for (var seat = 0; seat < 2; seat++) hands.blockTime[seat] = Math.Max(0, hands.blockTime[seat] - Frame.dt);
     hands.portalTime = Math.Max(0, hands.portalTime - Frame.dt);
     GUI.SetTheme(ROOM_THEME);
 }
 
 local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
 {
+    if (cue.kind == 6 && cue.seat >= 0 && cue.seat < 2) hands.blockTime[cue.seat] = 0.20;
     if (cue.seat != hands.seat) return;
-    if (cue.kind == 6) hands.blockTime = 0.20;
     if (cue.kind == 2) hands.portalTime = 0.36;
 }
 
@@ -290,9 +301,17 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         var location = DimensionName(actor.room);
         var status = actor.depth > 1 ? $"{location} / {actor.depth} layers" : location;
         var x = left + seat * (compactHeader ? (width - 28) * 0.5 : 260.0);
-        Label($"{who}  /  {status}", float2(x, compactHeader ? 111.0 : 86.0), narrow ? 10.0 : 12.0, seat == 0 ? AMBER : TEAL);
+        if (compactHeader) Label($"{who}  /  {status}", float2(x, 99.0), narrow ? 10.0 : 12.0, seat == 0 ? AMBER : TEAL);
+        else
+        {
+            // On a wide window the header is one slim row: who is where sits
+            // on two plates along the bottom instead.
+            var plate = float2(left + 110 + seat * 232, height - 14);
+            Chip(plate, float2(224, 20));
+            Label($"{who}  /  {status}", plate - float2(104, 0), 12, seat == 0 ? AMBER : TEAL);
+        }
     }
-    var toolbarY = compactHeader ? 64.0 : 19.0;
+    var toolbarY = compactHeader ? 54.0 : 19.0;
     if (PaperButton("Puzzles", Rect(compactHeader ? left + 82 : width - 244, toolbarY, 78, 34))) hands.journal = !hands.journal;
     if (PaperButton("?", Rect(compactHeader ? left + 171 : width - 155, toolbarY, 28, 34))) hands.guide = !hands.guide;
     if (PaperButton(hands.quiet ? "Muted" : "Sound", Rect(compactHeader ? left : width - 326, toolbarY, 72, 34))) hands.quiet = !hands.quiet;
@@ -338,7 +357,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         else DirectionMark(at + float2(-1.5, -7), d, 6, MUTED);
         Label(DirectionKey(d), at + float2(-1.5, 8), 11, enabled ? INK : MUTED, Anchor.MiddleCenter);
     }
-    if (!narrow)
+    if (!narrow && compactHeader)
     {
         Chip(float2(left + 268, height - 14), float2(552, 20));
         Label("WASD / arrows to walk and push. When a room cannot move, step into its doorway to enter.", float2(left, height - 14), 12, MUTED);
