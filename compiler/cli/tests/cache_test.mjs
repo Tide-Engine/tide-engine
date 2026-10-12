@@ -159,6 +159,15 @@ int Native(int value)
     put(join(game, "from-c.txt"), packedMarker);
     try {
         for (const release of [false, true]) {
+            // Check real compiler behavior for each side of the build: engine
+            // optimization is independent of game optimization and assertions.
+            const assertionMode = Number(release);
+            put(engine, `#ifndef __OPTIMIZE__\n#error engine_must_be_optimized\n#endif\n`
+                + `#if defined(NDEBUG) != ${assertionMode}\n#error engine_assertion_mode_changed\n#endif\n`
+                + functions("EngineProbe", markers.engineCalled, markers.engineUnused));
+            put(join(game, "probe.c"), `#if defined(__OPTIMIZE__) != ${assertionMode} || defined(NDEBUG) != ${assertionMode}\n`
+                + `#error game_build_mode_changed\n#endif\n`
+                + functions("UserProbe", markers.userCalled, markers.userUnused));
             const output = join(root, `strip-${target}-${release ? "release" : "debug"}${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
             const args = ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []), ...(release ? ["--release"] : [])];
             const result = await run(tide, args, game);
@@ -398,6 +407,17 @@ async function targetTests(tide, installation, root, target, embedded) {
     check(before.has("game.o") && before.has("main.o") && before.has("c/native.c.o"), "initial build did not create expected objects");
     await build();
     expectWrites(cache, before, [], "unchanged build reuses every object");
+
+    // An old engine policy must invalidate only engine objects, even if the
+    // compiler timestamp and every source/header timestamp are unchanged.
+    const engineStamp = join(cache, "engine", "stamp");
+    const engineFlags = readFileSync(engineStamp, "utf8");
+    check(engineFlags.includes("-O2 -g"), "development engine stamp lacks optimized debug flags");
+    put(engineStamp, engineFlags.replace("-O2 -g", "-O0 -g"));
+    before = mark(cache);
+    await build();
+    expectWrites(cache, before, [...before.keys()].filter(file => file.startsWith("engine/")),
+        "old unoptimized engine flags rebuild only engine objects");
 
     before = mark(cache);
     put(source, originalTide.replace("+ 1;", "+ 2;"));

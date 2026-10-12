@@ -141,11 +141,14 @@ void GoldTarget(mut Sculpture sculpture, float2 at, float size, bool occupied, f
 
 void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor)
 {
-    // Pale lab flooring; the joints between slabs are its taped grid.
-    var tone = variation % 2 == 0 ? Color(.90, .90, .87) : Color(.86, .86, .83);
+    // One pale lab floor: cells meet without a joint, and only a faint
+    // change of shade from one to the next keeps them countable.
+    var tone = variation % 2 == 0 ? Color(.90, .90, .87) : Color(.875, .875, .845);
     var thickness = Math.Max(.08, size * .010);
     Cuboid(sculpture, at, float2(size), thickness, Color(.55, .57, .60), floor - thickness, size);
-    Cuboid(sculpture, at, float2(size * .985), thickness * .24, tone, floor, size);
+    sculpture.detail = 1;
+    Cuboid(sculpture, at, float2(size), thickness * .24, tone, floor, size);
+    sculpture.detail = 0;
     if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
     else if (tile == Tile.Exit)
     {
@@ -167,13 +170,23 @@ void HazardEdge(mut Sculpture sculpture, float2 from, float2 to, float width, fl
         Cuboid(sculpture, from + step * (index + .5), across, tile * .006, index % 2 == 0 ? HAZARD : RUBBER, floor, tile);
 }
 
-// A steel panel in its container's paint: a darker rim around a raised face.
-void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor)
+// Wall cells that touch are one block in the container's paint: the darker
+// rim runs only along its open sides, and the raised face carries across
+// from cell to cell. `joined` has a bit for each side with wall beyond it.
+void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, int joined)
 {
-    var height = size * .24;
+    var height = size * .31;
     Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, RUBBER, .40), floor, size);
-    Cuboid(sculpture, at, float2(size * .95), size * .018, Color(tone.r * .84, tone.g * .84, tone.b * .84), floor + height, size);
-    if (size > 9) Cuboid(sculpture, at, float2(size * .78), size * .003, tone, floor + height + size * .018, size);
+    Cuboid(sculpture, at, float2(size), size * .018, Color(tone.r * .84, tone.g * .84, tone.b * .84), floor + height, size);
+    if (size <= 9) return;
+    var north = (joined & 1) != 0 ? -.5 : -.39;
+    var east = (joined & 2) != 0 ? .5 : .39;
+    var south = (joined & 4) != 0 ? .5 : .39;
+    var west = (joined & 8) != 0 ? -.5 : -.39;
+    sculpture.detail = 2;
+    Cuboid(sculpture, at + float2((west + east) * .5, (north + south) * .5) * size, float2(east - west, south - north) * size,
+        size * .003, tone, floor + height + size * .018, size);
+    sculpture.detail = 0;
 }
 
 [Stage(ArtStage.Backdrop)]
@@ -208,13 +221,28 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
             var at = MapPoint(float2(position), lens);
             if (!InPlayfield(at, lens.tile * 1.10, lens)) continue;
             var occupied = CargoAt(workshop.layout, workshop.puzzle, room, position) >= 0;
-            if (tile == Tile.Wall) WallTile(sculpture, at, lens.tile, tone, lens.floor);
-            else TilePaint(sculpture, tile, at, lens.tile, occupied, x + y, lens.floor);
+            if (tile == Tile.Wall)
+            {
+                // Beyond the room's edge counts as wall: the block runs up to it.
+                mut var joined = 0;
+                for (var side = 0; side < 4; side++)
+                    if (TileAt(workshop.layout, room, position + Direction(side)) == Tile.Wall) joined |= 1 << side;
+                WallTile(sculpture, at, lens.tile, tone, lens.floor, joined);
+            }
+            else
+            {
+                // The floor's flecks run on from cell to cell.
+                sculpture.detailOrigin = float2(x, y) * 8;
+                TilePaint(sculpture, tile, at, lens.tile, occupied, x + y, lens.floor);
+            }
         }
     for (var shell = 0; shell < workshop.layout.roomCount; shell++)
     {
         var layout = workshop.layout.rooms[shell];
         if (layout.dockRoom != room || layout.dock.x < 0) continue;
+        // A box standing on its outline hides it: none of it shows through a doorway.
+        var parked = workshop.puzzle.rooms[shell];
+        if (parked.room == room && CellEqual(parked.position, layout.dock)) continue;
         var here = MapPoint(float2(layout.dock), lens);
         FloorOutline(sculpture, here, float2(lens.tile * .91), Math.Max(.8, lens.tile * .028), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
         if (lens.tile > 18) FloorNumber(sculpture, shell + 1, false, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, RUBBER, lens.floor + lens.tile * .014, lens.tile);
@@ -366,7 +394,7 @@ void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness,
     if (size.x < 0.001 && size.y < 0.001) return;
     if (size.x < 0.001) size.x = thickness;
     if (size.y < 0.001) size.y = thickness;
-    var height = tile * .23;
+    var height = tile * .30;
     Cuboid(sculpture, (from + to) * .5, size, height, tone, floor, tile);
     if (hazard)
     {
@@ -409,13 +437,11 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
             var end = mouth + tangent * lens.tile * 0.41;
             WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile, room < 0);
             WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile, room < 0);
-            // A striped threshold marks the doorway on the floor.
-            HazardEdge(sculpture, start, end, thickness, lens.floor + lens.tile * .012, lens.tile, .164);
             // Short yellow posts make the depth of the opening visible. The
             // floor remains continuous all the way through the missing wall.
             var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
-            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .25, HAZARD, lens.floor, lens.tile);
-            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .25, HAZARD, lens.floor, lens.tile);
+            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
+            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
         }
         else WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile, room < 0);
     }
@@ -462,7 +488,7 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
             else
             {
                 sculpture.ground = interior.floor;
-                Cuboid(sculpture, MapPoint(picture.boxes[box], item.lens), RoomDimensions(workshop.layout, child) * interior.tile, interior.tile * .20, RoomColor(child), interior.floor, interior.tile);
+                Cuboid(sculpture, MapPoint(picture.boxes[box], item.lens), float2(item.lens.tile), interior.tile * .20, RoomColor(child), interior.floor, interior.tile);
                 sculpture.ground = item.lens.floor;
             }
         }

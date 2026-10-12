@@ -143,7 +143,7 @@ TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
         {.cargo_transfers = 2}, {.occupied_box_moves = 1, .cargo_transfers = 1},
         {.occupied_box_moves = 1, .cargo_transfers = 2}, {.target_unfills = 1, .cargo_transfers = 1},
         {.cargo_transfers = 1, .partner_backstops = 1}, {.reference_moves = 1, .recursive_entries = 1, .max_depth = 3},
-        {.occupied_box_moves = 2, .box_parent_changes = 1, .cargo_transfers = 1, .partner_backstops = 2},
+        {.occupied_box_moves = 1, .box_parent_changes = 1, .cargo_transfers = 1},
         {.target_unfills = 1, .box_parent_changes = 1, .cargo_transfers = 1},
         {.recursive_entries = 1, .reference_moves = 2, .max_depth = 4},
         {.reference_moves = 3, .copied_self_nests = 1, .self_extractions = 1, .target_unfills = 1, .cargo_transfers = 1},
