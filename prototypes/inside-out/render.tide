@@ -269,6 +269,8 @@ view SceneLighting(Sculpture sculpture, mut SceneRender render)
     render.lamp.SetDepth(Depth.ReadWrite);
     render.lamp.SetBlend(Blend.Replace);
     render.lamp.Instanced(sculpture.vertices, sculpture.indices, sculpture.objects, SceneShadow);
+    if (sculpture.rounds.count > 0) render.lamp.Instanced(sculpture.roundVertices, sculpture.roundIndices, sculpture.rounds, SceneShadow);
+    if (sculpture.fillets.count > 0) render.lamp.Instanced(sculpture.filletVertices, sculpture.filletIndices, sculpture.fillets, SceneShadow);
 
     render.scene.SetScreen();
     render.scene.SetClip();
@@ -282,6 +284,8 @@ view SceneLighting(Sculpture sculpture, mut SceneRender render)
     render.scene.SetDepth(Depth.ReadWrite);
     render.scene.SetBlend(Blend.Replace);
     render.scene.Instanced(sculpture.vertices, sculpture.indices, sculpture.objects, SceneFill);
+    if (sculpture.rounds.count > 0) render.scene.Instanced(sculpture.roundVertices, sculpture.roundIndices, sculpture.rounds, SceneFill);
+    if (sculpture.fillets.count > 0) render.scene.Instanced(sculpture.filletVertices, sculpture.filletIndices, sculpture.fillets, SceneFill);
 
     render.ao.Clear(Color.white);
     render.blurred.Clear(Color.white);
