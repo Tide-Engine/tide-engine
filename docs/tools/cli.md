@@ -30,7 +30,7 @@ tide <command> [folder] [options]
 
 | Option | What it does |
 |---|---|
-| `--release` | Optimized, the way players get it |
+| `--release` | Optimizes game and package code, the way players get it |
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined without `--release`. `schedule` and `shaders` take it too |
@@ -42,6 +42,8 @@ tide <command> [folder] [options]
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
+
+The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
