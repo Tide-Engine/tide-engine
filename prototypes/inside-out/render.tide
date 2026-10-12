@@ -199,7 +199,7 @@ float SceneSun(DepthTexture shadow, float4x4 toLamp, float4x4 fromLamp, float3 w
     var uv = float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
     var depth = clip.z / clip.w * 0.5 + 0.5;
     if (uv.x < 0 || uv.y < 0 || uv.x > 1 || uv.y > 1 || depth < 0 || depth > 1) return 1;
-    var pixel = 0.75 / 1024;
+    var pixel = 0.75 / 2048;
     var axis = Math.Mul(fromLamp, float4(0, 0, 2, 0));
     var depthSlope = Math.Dot(normal, float3(axis.x, axis.y, axis.z));
     // Each tap lies on the same receiver plane. Its expected depth changes
@@ -244,7 +244,7 @@ view SceneLighting(Sculpture sculpture, mut SceneRender render)
     if (!render.ready)
     {
         render.scene = RenderTarget.Window(Format.Rgba8, Format.Rgba16f);
-        render.lamp = RenderTarget(1024, 1024, 1, Format.Depth);
+        render.lamp = RenderTarget(2048, 2048, 1, Format.Depth);
         render.ao = RenderTarget.Window(0.5);
         render.blurred = RenderTarget.Window(0.5);
         render.normals = render.scene.colors[1];

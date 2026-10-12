@@ -148,6 +148,30 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
+Full-window layout (2026-10-12; the owner: "the game should be most of the
+screen, right now it's like a weird iframe like thing"). The framed panel
+is gone. The scene is drawn over the whole window below the heading
+(`SceneTop`: 104 px, 146 px under 1050 wide), and `InPlayfield`, the
+sculpture's bounds, the composite's board and the shadow fit all use that
+region, so a wide window shows as much of the containing world as fits. The
+focused room sits in a square clear of the heading and of the controls
+along the bottom (`SceneSide`, `SceneCenter`, `SceneBottom`: 80 px, 200 px
+under 720 wide), with two of its tiles to each edge of the square where it
+had three, so a tile is about 1.6 times its old size at 1280x800. The outer
+room still takes 0.96 of the square. `MapLens.center` and `size` are still
+the old panel's rectangle, but now only place the labels: the room, the
+move count and the surroundings line are on dark plates (`Chip`) drawn by
+`WorkbenchLabels` at stage Board 2, after the scene's composite, since they
+lie over the scene. The two top plates are where the panel's label row was,
+so the browser fixture's label crops are unchanged; the surroundings plate
+sits between the buttons and the direction pad at 1050 wide and over, under
+the top plates below that, where it can cover part of the outer room's top
+row. Buttons and the help line are drawn over the scene by
+`WorkshopControls`, the help line on a plate. The lamp's depth map is 2,048
+square (was 1,024) because the shadow fit now spans the window rather than
+the old square. The fixture reads what is in frame in the room's square
+(`sceneSquare`, mirroring `SceneSide` and `SceneCenter`), not the window.
+
 The players are small test robots (2026-10-12; the owner wanted "more
 motion and maybe a different look", unsure about them being human, "maybe
 robots or something"; the design is my pick and unconfirmed). `Maker` draws
@@ -312,6 +336,21 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Full-window layout validation (2026-10-12)
+
+Presentation and the fixture's layout numbers only. Native and web debug
+builds are warning-free; the 33 fixtures pass natively and under WASI;
+`inside_out_play_webgl` passes in 166.15 s and `inside_out_play_webgpu` in
+129.57 s. Both are about 35 s slower than before the layout (WebGL was
+124.68 s): the scene now covers the window, with full-window occlusion
+passes and a larger lamp map, in headless browsers. Their budget went from
+180 s to 300 s, as 166 s left too little room. What the larger scene costs
+on real hardware is unmeasured. Native captures at 1280x800, 1920x1080 and
+390x844 were inspected. The thumbnail is 201,827 bytes, SHA-256
+`963603aa6d45534b6946143134b65d935b50825fe64480efdc3450a934f853de`; the docs
+production build passes. Nothing was staged or deployed. No CI was
+dispatched.
 
 ## Test robots validation (2026-10-12)
 

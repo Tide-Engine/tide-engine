@@ -413,14 +413,23 @@ try {
         const rect = playfield(client);
         return { x: rect.x + 16, y: rect.y + 7, width: 240, height: 27 };
     };
+    // The scene fills the window below the heading. The focused room sits
+    // in a square clear of the heading and the controls (SceneSide and
+    // SceneCenter in map.tide), two of its tiles from each edge; what is in
+    // or out of frame is read in that square, as the window beyond it shows
+    // more of the containing world on a wide screen.
+    const sceneSquare = client => {
+        const { width, height } = client.state.screen;
+        const top = width < 1050 ? 146 : 104, bottom = width < 720 ? 200 : 80;
+        return { side: Math.max(200, Math.min(width - 24, height - top - bottom)), x: width / 2, y: top + (height - top - bottom) / 2 };
+    };
     const cameraBody = client => {
-        const rect = playfield(client);
-        return { x: rect.x + 12, y: rect.y + 40, width: rect.width - 24, height: rect.height - 62 };
+        const { side, x, y } = sceneSquare(client);
+        return { x: Math.round(x - side / 2), y: Math.round(y - side / 2), width: Math.round(side), height: Math.round(side) };
     };
     const focusedGeometry = (client, width = 3, height = 3) => {
-        const rect = playfield(client), body = cameraBody(client);
-        return { tile: Math.min(body.width, body.height) / (Math.max(width, height) + 6),
-            x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 + 9 };
+        const { side, x, y } = sceneSquare(client);
+        return { tile: side / (Math.max(width, height) + 4), x, y };
     };
     const parcelClip = client => {
         const { tile, x, y } = focusedGeometry(client);

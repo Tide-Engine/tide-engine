@@ -303,7 +303,11 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         Send(Reset { serial = workshop.serial });
     if (PaperButton("Hint / H", Rect(left + (actionWidth + 8) * 2, bottom, actionWidth, 40), !hands.journal && !hands.guide) || playing && key.h.down)
         hands.hintOpen = !hands.hintOpen;
-    if (narrow) Paragraph("Push a room until blocked, then step inside.", float2(left, bottom + 62), Math.Max(110, width - 164), 11, MUTED);
+    if (narrow)
+    {
+        Chip(float2(left + Math.Max(110, width - 164) * .5 - 2, bottom + 70), float2(Math.Max(110, width - 164) + 8, 38));
+        Paragraph("Push a room until blocked, then step inside.", float2(left, bottom + 62), Math.Max(110, width - 164), 11, MUTED);
+    }
 
     // Every move is a bounded command from this browser's actual player.
     // A held direction waits before repeating, so precise taps stay precise.
@@ -334,7 +338,11 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         else DirectionMark(at + float2(-1.5, -7), d, 6, MUTED);
         Label(DirectionKey(d), at + float2(-1.5, 8), 11, enabled ? INK : MUTED, Anchor.MiddleCenter);
     }
-    if (!narrow) Label("WASD / arrows to walk and push. When a room cannot move, step into its doorway to enter.", float2(left, height - 14), 12, MUTED);
+    if (!narrow)
+    {
+        Chip(float2(left + 268, height - 14), float2(552, 20));
+        Label("WASD / arrows to walk and push. When a room cannot move, step into its doorway to enter.", float2(left, height - 14), 12, MUTED);
+    }
 
     if (hands.hintOpen)
     {

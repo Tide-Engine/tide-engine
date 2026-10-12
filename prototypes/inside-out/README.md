@@ -20,7 +20,8 @@ chat alongside the game to discuss plans.
 
 ## Playing
 
-Each screen follows its own dummy in one continuous scene. Step inside a
+The scene fills the window, with the controls laid over it. Each screen
+follows its own dummy in one continuous scene. Step inside a
 room and the camera zooms into its actual doorway. Your whole current room
 stays in view, with a wider fixed rim of containing-world context around it.
 You can see part of a dummy standing beside your box.

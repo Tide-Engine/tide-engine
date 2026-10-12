@@ -190,15 +190,11 @@ view WorkshopBackdrop()
     Draw.Rect(float2(screen.x * 0.5, 0), float2(screen.x * 0.54, 3), Color(0.80, 0.84, 0.80, 0.30));
 }
 
-void Panel(float2 at, float2 size)
+// A dark plate behind words that lie over the scene.
+void Chip(float2 at, float2 size)
 {
-    Draw.Rect(at + float2(0, 3), size, Color(0.03, 0.03, 0.035));
     Draw.Rect(at, size, PAPER);
     Draw.WireRoundRect(at, size, 0, 1, Color(0.36, 0.38, 0.40));
-    // Warning tape along the top edge of the viewing window.
-    var blocks = int(size.x / 14);
-    for (var index = 0; index < blocks; index += 2)
-        Draw.Rect(at + float2(-size.x * .5 + (index + .5) * size.x / blocks, -size.y * .5 + 2), float2(size.x / blocks, 3), Color(HAZARD.r, HAZARD.g, HAZARD.b, 0.75));
 }
 
 void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens)
@@ -473,11 +469,18 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
     }
 }
 
-void DimensionFrame(Workshop workshop, int room, MapLens lens, RoomSurround surround, int depth)
+// Where this screen's bot is, the shared move count and what lies outside,
+// on plates over the scene. They are drawn after the scene's composite.
+[Stage(ArtStage.Board, 2)]
+view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby, Picture picture)
 {
-    Panel(lens.center, lens.size);
+    if (!workshop.initialized || lobby.page != Rooms.Page.Playing || picture.focusRoom == -2) return;
+    Draw.SetScreen();
+    var lens = picture.cameraLens;
+    var room = picture.cameraActor.room;
     var topLeft = lens.center - lens.size * 0.5;
     var narrow = Screen.width < 720;
+    Chip(topLeft + float2(136, 20), float2(256, 32));
     if (room < 0)
         Label("OUTER ROOM", topLeft + float2(18, 20), Screen.width < 720 ? 11.0 : 12.0, MUTED);
     else
@@ -485,14 +488,16 @@ void DimensionFrame(Workshop workshop, int room, MapLens lens, RoomSurround surr
         var tone = RoomColor(room);
         Label($"INSIDE {RoomName(room)}  /  {room + 1}", topLeft + float2(18, 20), narrow ? 11.0 : 12.0, Math.Lerp(tone, INK, 0.40));
     }
+    Chip(topLeft + float2(lens.size.x - 62, 20), float2(112, 32));
     Label($"{workshop.puzzle.moves} moves", topLeft + float2(lens.size.x - 16, 21), 14, MUTED, Anchor.MiddleRight);
-    var footer = lens.center + float2(0, lens.size.y * 0.5 - 13);
+    // Between the buttons and the direction pad where there is room, under
+    // the other two plates where not.
+    var footer = Screen.width < 1050 ? float2(Screen.width * 0.5, topLeft.y + 50) : float2(Screen.width * 0.5, Screen.height - 40);
+    Chip(footer, float2(Math.Min(lens.size.x, narrow ? 300.0 : 400.0), 22));
     if (room < 0)
         Label(narrow ? "Push a room. When it cannot move, walk inside." : "Rooms move first  /  A blocked room opens its doorway", footer, narrow ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
     else
-    {
-        Label($"Outside: {RoomName(surround.room)}  /  box doorway  /  depth {depth}", footer, narrow ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
-    }
+        Label($"Outside: {RoomName(picture.cameraSurround.room)}  /  box doorway  /  depth {picture.cameraActor.depth}", footer, narrow ? 9.0 : 11.0, MUTED, Anchor.MiddleCenter);
 }
 
 [Stage(ArtStage.Board)]
@@ -702,18 +707,18 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     picture.cameraActor = actor;
     picture.cameraSurround = surround;
     var lens = picture.cameraLens;
-    DimensionFrame(workshop, actor.room, lens, surround, actor.depth);
-    var topLeft = lens.center - lens.size * 0.5;
-    var body = Rect(topLeft.x + 12, topLeft.y + 40, lens.size.x - 24, lens.size.y - 62);
-    Draw.Clip(body)
+    // The scene fills the window below the heading; the room keeps its
+    // place and size in it, and the controls lie over what surrounds it.
+    var sceneTop = SceneTop(screen);
+    var region = Rect(0, sceneTop, screen.x, screen.y - sceneTop);
+    Draw.Rect(float2(screen.x * .5, sceneTop + region.height * .5), float2(region.width, region.height), Color(0.27, 0.30, 0.34));
+    var blocks = int(screen.x / 14);
+    for (var index = 0; index < blocks; index += 2)
+        Draw.Rect(float2((index + .5) * screen.x / blocks, sceneTop - 2), float2(screen.x / blocks, 3), Color(HAZARD.r, HAZARD.g, HAZARD.b, 0.75));
+    var viewCenter = SceneCenter(screen);
+    Draw.Clip(region)
     {
-        Draw.Rect(lens.center + float2(0, 9), lens.size - float2(24, 62), Color(0.27, 0.30, 0.34));
-    }
-    var viewSide = Math.Min(body.width, body.height);
-    var viewCenter = lens.center + float2(0, 9);
-    Draw.Clip(Rect(viewCenter.x - viewSide * 0.5, viewCenter.y - viewSide * 0.5, viewSide, viewSide))
-    {
-        BeginSculpture(sculpture, lens.tile, Rect(viewCenter.x - viewSide * .5, viewCenter.y - viewSide * .5, viewSide, viewSide));
+        BeginSculpture(sculpture, lens.tile, region);
         mut MapLens[4] contexts = default;
         mut RoomSurround[3] ancestors = default;
         mut int[4] dimensions = default;
@@ -764,6 +769,6 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
         var camera = float4x4.TRS(-Math.Forward(rotation) * distance, rotation, float3(1));
         var projection = float4x4.Ortho(Screen.width, Screen.height, .1, distance * 2);
         RenderScene(sculpture.vertices, sculpture.indices, sculpture.objects, camera, projection,
-            Rect(viewCenter.x - viewSide * .5, viewCenter.y - viewSide * .5, viewSide, viewSide), viewCenter, lens.tile, render);
+            region, viewCenter, lens.tile, render);
     }
 }
