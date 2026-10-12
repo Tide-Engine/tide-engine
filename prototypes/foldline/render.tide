@@ -1,0 +1,548 @@
+// Original procedural architecture. All GPU resources belong to this machine.
+struct StoneVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+struct Fixture
+{
+    float4x4 transform;
+    Color tint;
+    float tiles;
+    float luminous;
+}
+
+struct Sight
+{
+    float3 eye;
+    float3 clipPoint;
+    float3 clipNormal;
+    bool clipped;
+    float3 cube;
+    float3 partner;
+    float phase;
+    float2 pixels;
+}
+
+struct Aperture
+{
+    Color rim;
+    float2 pixels;
+    float3 clipPoint;
+    float3 clipNormal;
+    bool clipped;
+    float phase;
+}
+
+struct LightShaft
+{
+    float4x4 transform;
+    Color tint;
+}
+
+local singleton Optics
+{
+    RenderTarget scene;
+    RenderTarget amber;
+    RenderTarget cyan;
+    RenderTarget amberDeep;
+    RenderTarget cyanDeep;
+    List<StoneVertex> box;
+    List<int> triangles;
+    List<Vertex3> card;
+    List<int> cardTriangles;
+    List<Fixture> architecture;
+    List<Fixture> leaves;
+    List<Fixture> furnishings;
+    List<Fixture> dynamic;
+    List<Fixture> self;
+    List<Fixture> device;
+    List<LightShaft> shafts;
+    float3 amberEye;
+    float3 cyanEye;
+    float4x4 amberView;
+    float4x4 cyanView;
+    int dressed = -1;
+    bool made;
+    float phase;
+}
+
+frag Limestone(StoneVertex vertex, Instance instance, Fixture fixture, Sight sight, out Color color)
+{
+    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < 0.025)
+        this.Discard();
+
+    float3 n = instance.Normal(vertex.normal);
+    float3 p = this.world;
+    mut float3 tint = float3(fixture.tint.r, fixture.tint.g, fixture.tint.b);
+    mut float light = 0.6 + Math.Max(0, Math.Dot(n, Math.Normalize(float3(-0.42, 0.85, -0.3)))) * 0.48;
+    light += Math.Max(0, Math.Dot(n, float3(0.6, 0.15, 0.75))) * 0.065;
+    light *= 0.93 + Math.Saturate(p.y * 0.17) * 0.07;
+
+    if (fixture.tiles > 0)
+    {
+        mut float2 tile = p.xz;
+        if (Math.Abs(n.x) > 0.5) tile = p.zy;
+        else if (Math.Abs(n.z) > 0.5) tile = p.xy;
+        float2 seams = Math.Abs(Math.Frac(tile * fixture.tiles) - 0.5);
+        float seam = Math.SmoothStep(0.483, 0.495, Math.Max(seams.x, seams.y));
+        light *= 1 - seam * 0.26;
+        float variation = Math.Sin(p.x * 3.1 + p.y * 2.3 + p.z * 1.7) * 0.013;
+        tint += variation;
+    }
+
+    // Ground contact, including the moving resonator and the other operator.
+    if (n.y > 0.7 && p.y < 0.15)
+    {
+        float cubeShadow = Math.Exp(-Math.DistanceSq(p.xz, sight.cube.xz) * 1.8) * 0.28;
+        float feetShadow = Math.Exp(-Math.DistanceSq(p.xz, sight.partner.xz) * 2.8) * 0.27;
+        float edge = Math.SmoothStep(8.9, 9.8, Math.Abs(p.x)) * 0.18;
+        float window = Math.SmoothStep(-8, -6.7, p.x + p.z * .11) * (1 - Math.SmoothStep(4.8, 6.0, p.x + p.z * .11));
+        float roof = Math.Abs(Math.Frac((p.z + p.x * .32) / 3) - .5);
+        float ribShadow = Math.SmoothStep(.435, .477, roof) * window * .28;
+        light *= 1 - cubeShadow - feetShadow - edge - ribShadow;
+        tint = Math.Lerp(tint, tint * float3(1.04, 1.025, .94), window);
+    }
+
+    mut float3 lit = tint * light * float3(1.025, 1.006, .97);
+    float3 cool = float3(0.08, 0.24, 0.25) * Math.Exp(-Math.DistanceSq(p, float3(-5, 1.5, 2.7)) * 0.055);
+    lit += cool * (1 - fixture.luminous);
+    lit = Math.Lerp(lit, tint * 1.1, Math.Saturate(fixture.luminous));
+    float fog = 1 - Math.Exp(-Math.Distance(p, sight.eye) * 0.009);
+    lit = Math.Lerp(lit, float3(0.46, 0.57, 0.59), fog * 0.36);
+    color = Color(lit.x, lit.y, lit.z, fixture.tint.a);
+}
+
+frag Sunshine(Vertex3 vertex, LightShaft shaft, Sight sight, out Color color)
+{
+    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < 0.025)
+        this.Discard();
+    float width = Math.Sin(vertex.uv.x * Math.PI);
+    float length = Math.Sin(vertex.uv.y * Math.PI);
+    color = shaft.tint;
+    color.a = shaft.tint.a * width * width * length;
+}
+
+float RoundedPortal(float2 uv)
+{
+    float2 q = Math.Abs((uv - 0.5) * float2(2.08, 3.08)) - float2(0.73, 1.23);
+    return Math.Length(Math.Max(q, 0)) + Math.Min(Math.Max(q.x, q.y), 0) - 0.29;
+}
+
+frag Through(Vertex3 vertex, Texture image, Aperture aperture, out Color color)
+{
+    if (aperture.clipped && Math.Dot(this.world - aperture.clipPoint, aperture.clipNormal) < 0.025)
+        this.Discard();
+    float distance = RoundedPortal(vertex.uv);
+    if (distance > 0) this.Discard();
+    // Projected screen coordinates match the mapped virtual camera. Ordinary
+    // mesh UV sampling would turn the opening into a distorted television.
+    Color view = image.Sample(this.position / aperture.pixels, Filter.Bilinear, Wrap.Clamp);
+    float edge = Math.SmoothStep(-0.095, -0.032, distance);
+    float inner = Math.SmoothStep(-0.18, -0.06, distance);
+    color = Math.Lerp(view, aperture.rim, edge);
+    color = Math.Lerp(color, aperture.rim, inner * 0.1);
+    color.a = 1;
+}
+
+frag LastFold(Vertex3 vertex, Aperture aperture, out Color color)
+{
+    if (aperture.clipped && Math.Dot(this.world - aperture.clipPoint, aperture.clipNormal) < 0.025)
+        this.Discard();
+    float distance = RoundedPortal(vertex.uv);
+    if (distance > 0) this.Discard();
+    float line = Math.SmoothStep(-0.12, -0.035, distance);
+    float bands = 0.025 * (1 + Math.Sin(vertex.uv.y * 90 + aperture.phase));
+    color = Math.Lerp(Color(0.035 + bands, 0.09 + bands, 0.11 + bands), aperture.rim, line);
+    color.a = 1;
+}
+
+frag Atmosphere(Vertex vertex, Texture image, out Color color)
+{
+    Color source = image.Sample(vertex.uv, Filter.Bilinear);
+    float2 at = vertex.uv * 2 - 1;
+    float vignette = 1 - Math.SmoothStep(0.45, 1.6, Math.Dot(at, at)) * 0.17;
+    color = Color(source.r * vignette, source.g * vignette, source.b * vignette, 1);
+}
+
+void BoxFace(mut Optics optics, float3 normal, float3 a, float3 b, float3 c, float3 d)
+{
+    int start = optics.box.count;
+    optics.box.Add(StoneVertex { position = a, normal = normal, uv = float2(0, 1) });
+    optics.box.Add(StoneVertex { position = b, normal = normal, uv = float2(1, 1) });
+    optics.box.Add(StoneVertex { position = c, normal = normal, uv = float2(1, 0) });
+    optics.box.Add(StoneVertex { position = d, normal = normal, uv = float2(0, 0) });
+    optics.triangles.Add(start);
+    optics.triangles.Add(start + 1);
+    optics.triangles.Add(start + 2);
+    optics.triangles.Add(start);
+    optics.triangles.Add(start + 2);
+    optics.triangles.Add(start + 3);
+}
+
+void MakeOptics(mut Optics optics)
+{
+    optics.scene = RenderTarget.Window(samples: 4);
+    optics.amber = RenderTarget.Window(0.75);
+    optics.cyan = RenderTarget.Window(0.75);
+    optics.amberDeep = RenderTarget.Window(0.5);
+    optics.cyanDeep = RenderTarget.Window(0.5);
+    BoxFace(optics, float3(0, 0, 1), float3(-.5, -.5, .5), float3(.5, -.5, .5), float3(.5, .5, .5), float3(-.5, .5, .5));
+    BoxFace(optics, float3(0, 0, -1), float3(.5, -.5, -.5), float3(-.5, -.5, -.5), float3(-.5, .5, -.5), float3(.5, .5, -.5));
+    BoxFace(optics, float3(-1, 0, 0), float3(-.5, -.5, -.5), float3(-.5, -.5, .5), float3(-.5, .5, .5), float3(-.5, .5, -.5));
+    BoxFace(optics, float3(1, 0, 0), float3(.5, -.5, .5), float3(.5, -.5, -.5), float3(.5, .5, -.5), float3(.5, .5, .5));
+    BoxFace(optics, float3(0, 1, 0), float3(-.5, .5, .5), float3(.5, .5, .5), float3(.5, .5, -.5), float3(-.5, .5, -.5));
+    BoxFace(optics, float3(0, -1, 0), float3(-.5, -.5, -.5), float3(.5, -.5, -.5), float3(.5, -.5, .5), float3(-.5, -.5, .5));
+    optics.card = [Vertex3 { position = float3(-.5, -.5, 0), uv = float2(0, 1) },
+                   Vertex3 { position = float3(.5, -.5, 0), uv = float2(1, 1) },
+                   Vertex3 { position = float3(.5, .5, 0), uv = float2(1, 0) },
+                   Vertex3 { position = float3(-.5, .5, 0), uv = float2(0, 0) }];
+    optics.cardTriangles = [0, 1, 2, 0, 2, 3];
+    optics.made = true;
+}
+
+Fixture Block(float3 position, float3 size, Color tint, float tiles = 0, float luminous = 0)
+{
+    return Fixture { transform = float4x4.TRS(position, quaternion.identity, size), tint = tint, tiles = tiles, luminous = luminous };
+}
+
+void Dress(mut Optics optics, int level)
+{
+    optics.architecture.Clear();
+    optics.leaves.Clear();
+    optics.furnishings.Clear();
+    optics.shafts.Clear();
+    Color chalk = Color(0.88, 0.84, 0.74);
+    Color porcelain = Color(0.96, 0.94, 0.85);
+    Color graphite = Color(0.075, 0.12, 0.15);
+    Color rail = Color(0.15, 0.23, 0.26);
+    Color mint = Color(0.29, 0.89, 0.82);
+
+    if (level < 2) optics.architecture.Add(Block(float3(0, -.2, 0), float3(19.6, .4, 26), chalk, .5));
+    else
+    {
+        optics.architecture.Add(Block(float3(0, -.2, -4), float3(19.6, .4, 18), chalk, .5));
+        optics.architecture.Add(Block(float3(0, -.2, 11), float3(19.6, .4, 4), chalk, .5));
+        optics.architecture.Add(Block(float3(0, -3, 7), float3(19.6, .4, 4), graphite, 1));
+        for (int i = 0; i < 9; i++)
+        {
+            optics.architecture.Add(Block(float3(-8 + i * 2, -1.4, 7), float3(.16, 2.8, 4), rail));
+            optics.architecture.Add(Block(float3(-8 + i * 2, -2.45, 7), float3(.08, .07, 3.8), mint, 0, 1));
+        }
+    }
+    optics.architecture.Add(Block(float3(-10.1, 3.5, 0), float3(.6, 7, 26.6), chalk, .5));
+    optics.architecture.Add(Block(float3(10.1, 3.5, 0), float3(.6, 7, 26.6), chalk, .5));
+    optics.architecture.Add(Block(float3(0, 3.5, -13.3), float3(20.8, 7, .6), chalk, .5));
+    optics.architecture.Add(Block(float3(-6.5, 3.5, 13.3), float3(7, 7, .6), chalk, .5));
+    optics.architecture.Add(Block(float3(6.5, 3.5, 13.3), float3(7, 7, .6), chalk, .5));
+    optics.architecture.Add(Block(float3(0, 5.5, 13.3), float3(6, 3, .6), chalk, .5));
+    optics.architecture.Add(Block(float3(0, -.25, 15), float3(6, .5, 4), graphite, 1));
+    optics.architecture.Add(Block(float3(-6.05, 3.5, 3), float3(7.9, 7, .4), chalk, .5));
+    optics.architecture.Add(Block(float3(6.05, 3.5, 3), float3(7.9, 7, .4), chalk, .5));
+    optics.architecture.Add(Block(float3(0, 5.5, 3), float3(4.2, 3, .4), chalk, .5));
+
+    // A high glasshouse roof and structural ribs give the scene its silhouette.
+    optics.architecture.Add(Block(float3(-7.6, 7.15, 0), float3(4.8, .3, 26), porcelain));
+    optics.architecture.Add(Block(float3(7.6, 7.15, 0), float3(4.8, .3, 26), porcelain));
+    optics.architecture.Add(Block(float3(0, 7.45, 0), float3(10.4, .08, 26), Color(0.87, 0.94, 0.89), 0, 1));
+    for (int i = 0; i < 9; i++)
+    {
+        float z = -12 + i * 3;
+        optics.architecture.Add(Block(float3(0, 7.25, z), float3(20, .32, .16), rail));
+        optics.architecture.Add(Block(float3(-5.15, 7.2, z), float3(.16, .4, 3), rail));
+        optics.architecture.Add(Block(float3(5.15, 7.2, z), float3(.16, .4, 3), rail));
+        optics.architecture.Add(Block(float3(-9.72, 6.15, z), float3(.18, .9, .35), graphite));
+        optics.architecture.Add(Block(float3(9.72, 6.15, z), float3(.18, .9, .35), graphite));
+    }
+
+    // Lower service ducts, porcelain panel bays, and continuous light ribbons.
+    for (int side = -1; side <= 1; side += 2)
+    {
+        optics.architecture.Add(Block(float3(side * 9.67, .35, 0), float3(.22, .7, 26), graphite));
+        optics.architecture.Add(Block(float3(side * 9.52, .78, 0), float3(.08, .035, 26), mint, 0, 1));
+        optics.architecture.Add(Block(float3(side * 9.62, 4.75, 0), float3(.14, .07, 26), Color(1, .89, .65), 0, 1));
+        for (int i = 0; i < 14; i++)
+            optics.architecture.Add(Block(float3(side * 9.49, .33, -12 + i * 1.85), float3(.12, .26, .08), rail));
+    }
+    for (int i = 0; i < PanelCount(level); i++)
+    {
+        float3 p = PanelPosition(level, i);
+        quaternion r = quaternion.LookRotation(PanelNormal(level, i), float3(0, 1, 0));
+        optics.furnishings.Add(Fixture { transform = float4x4.TRS(p + PanelNormal(level, i) * .012, r, float3(2.9, 3.5, .04)), tint = porcelain, tiles = 1 });
+        optics.furnishings.Add(Fixture { transform = float4x4.TRS(p + float3(0, 2.08, 0) + PanelNormal(level, i) * .07, r, float3(2.9, .035, .05)), tint = mint, luminous = 1 });
+        for (int mark = 0; mark <= i; mark++)
+            optics.furnishings.Add(Fixture { transform = float4x4.TRS(p + Math.Rotate(r, float3(-.9 + mark * .22, 1.87, .07)), r, float3(.1, .11, .02)), tint = rail });
+    }
+
+    // Planting grows in inset ledges, away from the walkable puzzle space.
+    for (int planter = 0; planter < 8; planter++)
+    {
+        float x = planter % 2 == 0 ? -9.0 : 9.0;
+        float z = -11 + (planter / 2) * 6.4;
+        optics.furnishings.Add(Block(float3(x, .36, z), float3(.85, .72, 2.0), rail));
+        optics.furnishings.Add(Block(float3(x, .75, z), float3(.7, .06, 1.85), Color(.055, .085, .06)));
+        for (int leaf = 0; leaf < 13; leaf++)
+        {
+            float a = leaf * 2.39996 + planter;
+            float h = .45 + (leaf % 4) * .17;
+            float3 p = float3(x + Math.Cos(a) * .22, .92 + h * .42, z + Math.Sin(a) * .73);
+            quaternion r = quaternion.Euler(.3 + leaf * .21, a, .45 * Math.Sin(a));
+            optics.leaves.Add(Fixture { transform = float4x4.TRS(p, r, float3(.17, h, .045)), tint = Color(.1 + leaf % 3 * .035, .27 + leaf % 4 * .032, .22) });
+        }
+    }
+
+    // Floor guidance, equipment plinths, and a strip of warm amber at the exit.
+    for (int i = 0; i < 15; i++)
+    {
+        float z = -11.5 + i * 1.55;
+        if (level == 2 && z > 5 && z < 9) continue;
+        optics.furnishings.Add(Block(float3(0, .004, z), float3(.08, .008, .85), mint, 0, 1));
+    }
+    optics.furnishings.Add(Block(float3(0, .025, 12.6), float3(5.8, .045, .08), Color(1, .68, .3), 0, 1));
+    optics.furnishings.Add(Block(float3(-2.95, 2, 13), float3(.05, 4, .08), mint, 0, 1));
+    optics.furnishings.Add(Block(float3(2.95, 2, 13), float3(.05, 4, .08), mint, 0, 1));
+    // Architectural light is visual: soft shafts and the roof's cast pattern.
+    for (int ray = 0; ray < 4; ray++)
+        optics.shafts.Add(LightShaft { transform = float4x4.TRS(float3(-2.2 + ray * .6, 3.6, -8 + ray * 6), quaternion.Euler(12deg, 20deg, 25deg), float3(2.4, 7.7, 1)), tint = Color(1, .94, .73, .035) });
+    optics.furnishings.Add(Block(float3(0, 5.3, 2.745), float3(2.65, 1.5, .045), Color(.14, .22, .24)));
+    WallDigit(optics, 0, float3(-.54, 5.3, 2.70));
+    WallDigit(optics, level + 1, float3(.54, 5.3, 2.70));
+    optics.dressed = level;
+}
+
+void WallDigit(mut Optics optics, int digit, float3 position)
+{
+    int mask = digit == 0 ? 63 : digit == 1 ? 6 : digit == 2 ? 91 : 79;
+    for (int segment = 0; segment < 7; segment++)
+    {
+        if ((mask & (1 << segment)) == 0) continue;
+        mut float3 at = float3(0, .46, 0);
+        mut float3 size = float3(.47, .08, .025);
+        if (segment == 1 || segment == 2 || segment == 4 || segment == 5)
+        {
+            at = float3(segment < 3 ? .265 : -.265, segment == 1 || segment == 5 ? .23 : -.23, 0);
+            size = float3(.08, .4, .025);
+        }
+        else if (segment == 3) at.y = -.46;
+        else if (segment == 6) at.y = 0;
+        optics.furnishings.Add(Block(position + at, size, Color(.84, .93, .85), 0, .8));
+    }
+}
+
+void RobotPiece(mut Optics optics, Fixture part, bool self)
+{
+    if (self) optics.self.Add(part);
+    else optics.dynamic.Add(part);
+}
+
+void Robot(mut Optics optics, Operator body, bool self)
+{
+    quaternion turn = quaternion.Euler(0, body.yaw, 0);
+    Color suit = body.id == 0 ? Color(.92, .62, .28) : Color(.17, .75, .74);
+    float3 p = body.position;
+    mut Fixture part = Block(p + float3(0, .83, 0), float3(.47, .63, .32), Color(.88, .88, .78));
+    part.transform = float4x4.TRS(p + float3(0, .83, 0), turn, float3(.47, .63, .32));
+    RobotPiece(optics, part, self);
+    part.transform = float4x4.TRS(p + float3(0, 1.39, 0), turn, float3(.39, .39, .36));
+    part.tint = suit;
+    RobotPiece(optics, part, self);
+    part.transform = float4x4.TRS(p + Math.Rotate(turn, float3(0, 1.43, .19)), turn, float3(.27, .12, .022));
+    part.tint = Color(.025, .095, .12);
+    RobotPiece(optics, part, self);
+    part.transform = float4x4.TRS(p + Math.Rotate(turn, float3(0, 1.43, .205)), turn, float3(.18, .026, .025));
+    part.tint = Color(.67, .99, .93);
+    part.luminous = 1;
+    RobotPiece(optics, part, self);
+    for (int side = -1; side <= 1; side += 2)
+    {
+        part.transform = float4x4.TRS(p + Math.Rotate(turn, float3(side * .145, .3, 0)), turn, float3(.12, .48, .14));
+        part.tint = Color(.12, .2, .22);
+        part.luminous = 0;
+        RobotPiece(optics, part, self);
+        part.transform = float4x4.TRS(p + Math.Rotate(turn, float3(side * .15, .065, .09)), turn, float3(.18, .13, .3));
+        RobotPiece(optics, part, self);
+        part.transform = float4x4.TRS(p + Math.Rotate(turn, float3(side * .33, .83, .03)), turn, float3(.13, .55, .15));
+        part.tint = suit;
+        RobotPiece(optics, part, self);
+    }
+}
+
+void Handheld(mut Optics optics, float3 eye, quaternion rotation)
+{
+    {
+        mut Fixture part = Fixture { tint = Color(.9, .89, .78) };
+        float3 hand = eye + Math.Rotate(rotation, float3(.62, -.38, .83));
+        part.transform = float4x4.TRS(hand, rotation, float3(.15, .17, .35));
+        optics.device.Add(part);
+        part.tint = Color(.045, .11, .14);
+        part.transform = float4x4.TRS(hand + Math.Rotate(rotation, float3(0, .015, .18)), rotation, float3(.21, .21, .08));
+        optics.device.Add(part);
+        part.tint = Color(.3, .93, .84);
+        part.luminous = 1;
+        part.transform = float4x4.TRS(hand + Math.Rotate(rotation, float3(0, .018, .225)), rotation, float3(.095, .095, .018));
+        optics.device.Add(part);
+        part.tint = Color(1, .62, .25);
+        part.transform = float4x4.TRS(hand + Math.Rotate(rotation, float3(-.066, .05, .1)), rotation, float3(.024, .028, .16));
+        optics.device.Add(part);
+        part.luminous = 0;
+        part.tint = Color(.08, .18, .21);
+        for (int side = -1; side <= 1; side += 2)
+        {
+            part.transform = float4x4.TRS(hand + Math.Rotate(rotation, float3(side * .13, -.02, .22)), Math.Mul(rotation, quaternion.Euler(side * -.12, side * .17, 0)), float3(.028, .045, .28));
+            optics.device.Add(part);
+        }
+    }
+}
+
+void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operator partner)
+{
+    optics.dynamic.Clear();
+    optics.self.Clear();
+    optics.device.Clear();
+    Color amberTint = Color(1, .64, .24);
+    Color cyanTint = Color(.2, .96, .88);
+    for (int plate = 0; plate < 2; plate++)
+    {
+        float3 at = PlatePosition(arena.level, plate);
+        bool pressed = plate == 0 ? arena.plateA : arena.plateB;
+        Color tint = plate == 0 ? amberTint : cyanTint;
+        optics.dynamic.Add(Block(at + float3(0, .035, 0), float3(1.5, .07, 1.5), Color(.1, .17, .19)));
+        optics.dynamic.Add(Block(at + float3(0, .075, 0), float3(1.15, .04, 1.15), pressed ? tint : Color(.27, .35, .36), .5, pressed ? 1 : 0));
+        for (int edge = -1; edge <= 1; edge += 2)
+            optics.dynamic.Add(Block(at + float3(edge * .72, .083, 0), float3(.035, .02, 1.4), tint, 0, 1));
+    }
+    if (arena.level == 2 && arena.bridge)
+    {
+        optics.dynamic.Add(Block(float3(0, -.075, 7), float3(3.4, .15, 4.0), Color(.22, .33, .35), 2));
+        optics.dynamic.Add(Block(float3(-1.68, .02, 7), float3(.04, .03, 4), cyanTint, 0, 1));
+        optics.dynamic.Add(Block(float3(1.68, .02, 7), float3(.04, .03, 4), cyanTint, 0, 1));
+    }
+
+    // The split gate physically retreats upwards as its two circuits latch.
+    float gateY = 2.0 + arena.gate * 4.3;
+    optics.dynamic.Add(Block(float3(0, gateY, 3), float3(4.1, 4.0, .24), Color(.12, .21, .24), 1));
+    optics.dynamic.Add(Block(float3(-1.9, gateY, 2.85), float3(.045, 3.9, .04), amberTint, 0, 1));
+    optics.dynamic.Add(Block(float3(1.9, gateY, 2.85), float3(.045, 3.9, .04), cyanTint, 0, 1));
+    optics.dynamic.Add(Block(float3(0, gateY, 2.855), float3(.035, 3.9, .035), Color(.46, .59, .59)));
+
+    // A carried resonator remains part of the world in every portal pass.
+    float3 cube = fold.cube;
+    optics.dynamic.Add(Block(cube, float3(.78), Color(.86, .87, .77)));
+    optics.dynamic.Add(Block(cube + float3(0, .405, 0), float3(.4, .035, .4), amberTint, 0, 1));
+    optics.dynamic.Add(Block(cube + float3(0, 0, -.405), float3(.4, .4, .035), Color(.09, .48, .48), 0, .7));
+    optics.dynamic.Add(Block(cube + float3(.405, 0, 0), float3(.035, .4, .4), Color(.09, .48, .48), 0, .7));
+    Robot(optics, partner, false);
+    Robot(optics, viewer, true);
+
+}
+
+quaternion FoldedRotation(int level, int source, int destination, quaternion rotation)
+{
+    float3 forward = PortalMapDirection(level, source, destination, Math.Forward(rotation));
+    float3 up = PortalMapDirection(level, source, destination, Math.Up(rotation));
+    return quaternion.LookRotation(forward, up);
+}
+
+// Second crossings, their parents, then the room. Targets are disjoint and
+// portal cameras and all visible simulation objects update in this frame.
+view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Control control, mut Optics optics)
+{
+    if (viewer.id != control.active) return;
+    if (!optics.made) MakeOptics(optics);
+    if (optics.dressed != arena.level) Dress(optics, arena.level);
+    optics.phase += Math.Min(Frame.dt, .05);
+    if (optics.phase >= Math.TAU) optics.phase -= Math.TAU;
+    mut var partner = viewer;
+    foreach (var row in operators)
+        if (row.body.id != viewer.id) partner = row.body;
+    float3 eye = viewer.position + float3(0, 1.55, 0);
+    quaternion rotation = quaternion.Euler(-viewer.pitch, viewer.yaw, 0);
+    float3 amberEye = PortalMapPoint(arena.level, fold.a, fold.b, eye);
+    float3 cyanEye = PortalMapPoint(arena.level, fold.b, fold.a, eye);
+    quaternion amberTurn = FoldedRotation(arena.level, fold.a, fold.b, rotation);
+    quaternion cyanTurn = FoldedRotation(arena.level, fold.b, fold.a, rotation);
+    optics.amberEye = amberEye;
+    optics.cyanEye = cyanEye;
+    Furnish(optics, arena, fold, viewer, partner);
+    Handheld(optics, eye, rotation);
+
+    for (int pass = 0; pass < 5; pass++)
+    {
+        mut var target = optics.amberDeep;
+        mut float3 camera = PortalMapPoint(arena.level, fold.a, fold.b, amberEye);
+        mut quaternion turned = FoldedRotation(arena.level, fold.a, fold.b, amberTurn);
+        mut Sight sight = Sight { eye = camera, clipPoint = PanelPosition(arena.level, fold.b), clipNormal = PanelNormal(arena.level, fold.b), clipped = true, cube = fold.cube, partner = partner.position, phase = optics.phase, pixels = float2(Screen.width, Screen.height) * .5 };
+        if (pass == 1)
+        {
+            target = optics.cyanDeep;
+            camera = PortalMapPoint(arena.level, fold.b, fold.a, cyanEye);
+            turned = FoldedRotation(arena.level, fold.b, fold.a, cyanTurn);
+            sight.clipPoint = PanelPosition(arena.level, fold.a);
+            sight.clipNormal = PanelNormal(arena.level, fold.a);
+        }
+        else if (pass == 2)
+        {
+            target = optics.amber;
+            camera = amberEye;
+            turned = amberTurn;
+            sight.pixels = float2(Screen.width, Screen.height) * .75;
+        }
+        else if (pass == 3)
+        {
+            target = optics.cyan;
+            camera = cyanEye;
+            turned = cyanTurn;
+            sight.clipPoint = PanelPosition(arena.level, fold.a);
+            sight.clipNormal = PanelNormal(arena.level, fold.a);
+            sight.pixels = float2(Screen.width, Screen.height) * .75;
+        }
+        else if (pass == 4)
+        {
+            target = optics.scene;
+            camera = eye;
+            turned = rotation;
+            sight.clipped = false;
+            sight.pixels = float2(Screen.width, Screen.height);
+        }
+        sight.eye = camera;
+        target.Clear(Color(.52, .65, .68));
+        target.SetCamera(float4x4.TRS(camera, turned, float3(1)), float4x4.PerspectiveFov(75deg, Screen.width / Screen.height, .035, 120));
+        if (pass == 2) optics.amberView = target.WorldToClip();
+        if (pass == 3) optics.cyanView = target.WorldToClip();
+        target.Instanced(optics.box, optics.triangles, optics.architecture, Limestone, sight);
+        target.Instanced(optics.box, optics.triangles, optics.furnishings, Limestone, sight);
+        target.Instanced(optics.box, optics.triangles, optics.leaves, Limestone, sight);
+        target.Instanced(optics.box, optics.triangles, optics.dynamic, Limestone, sight);
+        if (pass < 4) target.Instanced(optics.box, optics.triangles, optics.self, Limestone, sight);
+
+        for (int opening = 0; opening < 2; opening++)
+        {
+            int panel = opening == 0 ? fold.a : fold.b;
+            float3 normal = PanelNormal(arena.level, panel);
+            float3 p = PanelPosition(arena.level, panel) + normal * .045;
+            quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
+            Aperture aperture = Aperture { rim = opening == 0 ? Color(1, .64, .24) : Color(.2, .96, .88), pixels = sight.pixels, clipPoint = sight.clipPoint, clipNormal = sight.clipNormal, clipped = sight.clipped, phase = sight.phase };
+            float4x4 transform = float4x4.TRS(p, r, float3(2.08, 3.08, 1));
+            if (pass < 2) target.Mesh(optics.card, optics.cardTriangles, transform, LastFold, aperture);
+            else if (pass < 4)
+            {
+                if (opening == 0) target.Mesh(optics.card, optics.cardTriangles, transform, optics.amberDeep.color, Through, aperture);
+                else target.Mesh(optics.card, optics.cardTriangles, transform, optics.cyanDeep.color, Through, aperture);
+            }
+            else
+            {
+                if (opening == 0) target.Mesh(optics.card, optics.cardTriangles, transform, optics.amber.color, Through, aperture);
+                else target.Mesh(optics.card, optics.cardTriangles, transform, optics.cyan.color, Through, aperture);
+            }
+        }
+        target.Depth(Depth.Read), target.Cull(Cull.None)
+        {
+            target.Instanced(optics.card, optics.cardTriangles, optics.shafts, Sunshine, sight);
+        }
+        if (pass == 4)
+            target.Depth(Depth.None) { target.Instanced(optics.box, optics.triangles, optics.device, Limestone, sight); }
+    }
+    Draw.Blit(optics.scene.color, Draw.window, Atmosphere);
+}

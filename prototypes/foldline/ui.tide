@@ -1,0 +1,189 @@
+// FOLDLINE's local interface. Menus never pause the shared match.
+local singleton Interface
+{
+    bool open = true;
+    bool looking;
+    bool introduced;
+    string code;
+    string message;
+}
+
+const Color UI_INK = Color(0.91, 0.95, 0.93);
+const Color UI_MUTED = Color(0.56, 0.68, 0.7);
+const Color UI_DARK = Color(0.025, 0.065, 0.085, 0.94);
+const Color UI_CYAN = Color(0.21, 0.87, 0.89);
+const Color UI_AMBER = Color(1, 0.65, 0.28);
+
+string ChamberTitle(int level)
+{
+    return level switch { 0 => "01 / A SHORTCUT THROUGH SPACE", 1 => "02 / TWO SIDES OF THE SAME IDEA", _ => "03 / THE RESONANCE BRIDGE" };
+}
+
+string ChamberHint(int level)
+{
+    return level switch {
+        0 => "Carry the cube onto the amber plate. Get both operators to the exit.",
+        1 => "Weight both plates together. Your partner can hold one while you work.",
+        _ => "The cube powers the bridge from plate A. Reach plate B together."
+    };
+}
+
+bool InterfaceButton(Rect rect, string label, Color accent, bool primary)
+{
+    var button = GUI.Control(rect);
+    var hot = button.hovered || button.focused;
+    var middle = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+    Draw.RoundRect(middle, float2(rect.width, rect.height), 7,
+        primary ? (hot ? Color(0.45, 0.97, 0.93) : accent) : (hot ? Color(0.12, 0.24, 0.28) : Color(0.065, 0.14, 0.17)));
+    if (!primary) Draw.WireRoundRect(middle, float2(rect.width, rect.height), 7, 1, hot ? accent : Color(0.2, 0.32, 0.35));
+    Draw.Text(label, float2(rect.x + 18, middle.y), 17, primary ? UI_DARK : UI_INK, Anchor.MiddleLeft, Font.Bold);
+    Draw.Line(float2(rect.x + rect.width - 30, middle.y), float2(rect.x + rect.width - 19, middle.y), 2, primary ? UI_DARK : accent);
+    Draw.Line(float2(rect.x + rect.width - 24, middle.y - 5), float2(rect.x + rect.width - 19, middle.y), 2, primary ? UI_DARK : accent);
+    Draw.Line(float2(rect.x + rect.width - 24, middle.y + 5), float2(rect.x + rect.width - 19, middle.y), 2, primary ? UI_DARK : accent);
+    return button.clicked;
+}
+
+[Before(Render)]
+view InterfaceInput(Devices devices, Session session, Arena arena, mut Control control, mut Interface ui)
+{
+    if (arena.joined > 1) control.active = session.player == arena.second ? 1 : 0;
+    else if (!ui.open && devices.keyboard.tab.down) control.active = 1 - control.active;
+    if (devices.keyboard.escape.down || (ui.looking && !Cursor.locked && !arena.complete)) ui.open = true;
+    ui.looking = Cursor.locked;
+    control.started = !ui.open && !arena.complete;
+    if (control.started) Cursor.Lock();
+}
+
+[After(Render)]
+view InterfaceMenu(Session session, mut Interface ui, mut Control control)
+{
+    if (!ui.open && session.state == SessionState.Connected) return;
+    Draw.SetScreen();
+    GUI.Navigate();
+    var compact = Screen.height < 700;
+    var pad = Math.Clamp(Screen.width * 0.045, 22, 58);
+    var width = Math.Min(450, Screen.width - pad * 2);
+    var headingY = compact ? 26.0 : 94.0;
+    Draw.Rect(float2((width + pad * 2) * 0.5, Screen.height * 0.5), float2(width + pad * 2, Screen.height), UI_DARK);
+    Draw.Line(float2(width + pad * 2, 0), float2(width + pad * 2, Screen.height), 1, Color(0.31, 0.59, 0.62, 0.35));
+    Draw.Text("F O L D   R E S E A R C H   /   C O O P E R A T I V E", float2(pad, headingY - 22), 11, UI_CYAN);
+    Draw.Text("FOLDLINE", float2(pad - 3, headingY), Math.Min(compact ? 56 : 74, width / 5.1), UI_INK, Font.Bold);
+    var ruleY = headingY + (compact ? 72 : 100);
+    Draw.Line(float2(pad, ruleY), float2(pad + 70, ruleY), 3, UI_AMBER);
+    Draw.Line(float2(pad + 78, ruleY), float2(pad + 148, ruleY), 3, UI_CYAN);
+    Draw.Text("Two minds. One impossible shortcut.", float2(pad, headingY + (compact ? 87 : 122)), Math.Min(21, width / 18), UI_INK);
+    if (!compact) Draw.Text("A first-person puzzle for two operators.\nConnect spaces. Move the cube. Find a way together.", float2(pad, headingY + 157), 16, UI_MUTED);
+    var top = headingY + (compact ? 126 : 239);
+    if (InterfaceButton(Rect(pad, top, width, 48), ui.introduced ? "CONTINUE EXPERIMENT" : "ENTER THE FACILITY", UI_CYAN, true))
+    {
+        if (session.state == SessionState.Offline) Session.Start();
+        ui.open = false;
+        ui.introduced = true;
+        control.started = true;
+        Cursor.Lock();
+    }
+    if (InterfaceButton(Rect(pad, top + 60, width, 46), session.open ? "COPY CO-OP ROOM CODE" : "HOST A CO-OP EXPERIMENT", UI_AMBER, false))
+    {
+        if (session.open) Clipboard.Copy(session.room);
+        else
+        {
+            if (session.state == SessionState.Offline) Session.Start();
+            Session.Open();
+            ui.message = "Room is open. Share its code with your partner.";
+        }
+    }
+    GUI.SetTheme(GUITheme { text = UI_INK, field = Color(0.05, 0.12, 0.15), fieldHot = Color(0.1, 0.21, 0.24), accent = UI_CYAN, radius = 6 });
+    GUI.TextField(Rect(pad, top + 119, width - 116, 40), "Room", ui.code, out var entered);
+    var join = InterfaceButton(Rect(pad + width - 104, top + 119, 104, 40), "JOIN", UI_CYAN, false);
+    if ((join || entered) && ui.code != "")
+    {
+        Session.Join(ui.code);
+        ui.message = "Connecting to your partner...";
+        ui.introduced = true;
+    }
+    if (session.room != "") Draw.Text($"ROOM  {session.room}", float2(pad, top + 174), 17, UI_AMBER, Font.Bold);
+    else if (session.state == SessionState.Connecting) Draw.Text("CONNECTING...", float2(pad, top + 174), 15, UI_CYAN);
+    else Draw.Text(ui.message, float2(pad, top + 174), 14, UI_MUTED);
+    if (session.state == SessionState.Connected)
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            var slotWidth = (width - 16) / 3;
+            if (InterfaceButton(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), $"0{i + 1}", i == 0 ? UI_AMBER : UI_CYAN, false))
+            {
+                Send(SelectChamber { level = i });
+                ui.open = false;
+                ui.introduced = true;
+                control.started = true;
+                Cursor.Lock();
+            }
+        }
+    }
+    var foot = Math.Max(top + 268, Screen.height - 114);
+    Draw.Text("SOLO EXPLORATION", float2(pad, foot), 11, UI_CYAN, Font.Bold);
+    Draw.Text("Tab switches operators when playing alone.\nYour other body stays where you leave it.", float2(pad, foot + 22), 14, UI_MUTED);
+    Draw.Text("PROTOTYPE 01   /   TIDE", float2(pad, Screen.height - 22), 10, Color(0.4, 0.55, 0.57));
+    if (Screen.width > 900)
+    {
+        Draw.Text("SPATIAL COOPERATION DIVISION", float2(Screen.width - 36, 32), 11, UI_DARK, Anchor.UpperRight, Font.Bold);
+        Draw.Text("EST. 2086", float2(Screen.width - 36, 53), 11, UI_DARK, Anchor.UpperRight);
+    }
+}
+
+local event(Connected connected) EnterConnectedRoom(mut Interface ui)
+{
+    if (ui.introduced)
+    {
+        ui.open = false;
+        ui.message = "";
+    }
+}
+
+local event(Disconnected gone) ConnectionEnded(mut Interface ui)
+{
+    ui.open = true;
+    ui.looking = false;
+    ui.message = $"Connection ended: {gone.reason}.";
+}
+
+[After(Render)]
+view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session session)
+{
+    if (ui.open) return;
+    Draw.SetScreen();
+    var pad = Math.Clamp(Screen.width * 0.025, 18, 34);
+    var labelWidth = Math.Min(450, Screen.width - 170);
+    Draw.RoundRect(float2(pad + labelWidth * 0.5, 47), float2(labelWidth, 56), 8, Color(0.025, 0.065, 0.085, 0.83));
+    Draw.Text(Screen.width < 800 ? $"EXPERIMENT 0{arena.level + 1}" : ChamberTitle(arena.level), float2(pad + 16, 29), 12, UI_CYAN, Font.Bold);
+    Draw.Text(arena.gate > 0.9 ? (Screen.width < 800 ? "BOTH OPERATORS TO EXIT" : "CIRCUIT COMPLETE  /  BOTH OPERATORS TO THE EXIT") : "CONNECT. COOPERATE. CROSS.", float2(pad + 16, 49), 10, UI_INK);
+    Draw.RoundRect(float2(Screen.width - pad - 65, 47), float2(130, 56), 8, Color(0.025, 0.065, 0.085, 0.83));
+    Draw.Circle(float2(Screen.width - pad - 110, 47), 4, control.active == 0 ? UI_AMBER : UI_CYAN);
+    Draw.Text(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - 98, 47), 12, UI_INK, Anchor.MiddleLeft, Font.Bold);
+    var middle = float2(Screen.width * 0.5, Screen.height * 0.5);
+    Draw.Arc(middle, 11, -1.2, 2.4, 2, UI_AMBER);
+    Draw.Arc(middle, 11, 1.94, 2.4, 2, UI_CYAN);
+    Draw.Circle(middle, 1.7, UI_INK);
+    if (fold.carried == control.active) Draw.Text("E  /  RELEASE RESONANCE CUBE", middle + float2(0, 40), 12, UI_INK, Anchor.MiddleCenter);
+    var hintWidth = Math.Min(610, Screen.width - 36);
+    Draw.RoundRect(float2(Screen.width * 0.5, Screen.height - 92), float2(hintWidth, 38), 7, Color(0.025, 0.065, 0.085, 0.82));
+    Draw.Text(ChamberHint(arena.level), float2(Screen.width * 0.5, Screen.height - 92), Math.Min(13, hintWidth / 47), UI_INK, Anchor.MiddleCenter);
+    if (Screen.width > 780)
+    {
+        Draw.Text("WASD  MOVE    /    SPACE  JUMP    /    E  CARRY    /    LMB + RMB  PORTALS", float2(pad, Screen.height - 34), 11, UI_INK);
+        Draw.Text(arena.joined > 1 ? "Q  PING    R  RESET    ESC  MENU" : "TAB  SWITCH    Q  PING    R  RESET    ESC  MENU", float2(Screen.width - pad, Screen.height - 34), 11, UI_INK, Anchor.UpperRight);
+    }
+    if (session.room != "") Draw.Text($"CO-OP  {session.room}", float2(pad + 3, 90), 11, UI_INK);
+    Draw.Circle(float2(pad + 10, 126), 5, arena.plateA ? UI_AMBER : UI_MUTED);
+    Draw.Text("CIRCUIT A", float2(pad + 23, 126), 11, UI_INK, Anchor.MiddleLeft);
+    Draw.Circle(float2(pad + 10, 148), 5, arena.plateB ? UI_CYAN : UI_MUTED);
+    Draw.Text("CIRCUIT B", float2(pad + 23, 148), 11, UI_INK, Anchor.MiddleLeft);
+    if (arena.complete)
+    {
+        GUI.Navigate();
+        Draw.Rect(middle, float2(Screen.width, Screen.height), Color(0.025, 0.065, 0.085, 0.72));
+        Draw.Text("A GOOD CONNECTION.", middle - float2(0, 75), Math.Min(48, Screen.width / 15), UI_INK, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("Both operators made it. Space is better shared.", middle - float2(0, 23), 17, UI_MUTED, Anchor.MiddleCenter);
+        if (InterfaceButton(Rect(middle.x - 165, middle.y + 30, 330, 48), arena.level < 2 ? "NEXT EXPERIMENT" : "BACK TO EXPERIMENT 01", UI_CYAN, true))
+            Send(SelectChamber { level = (arena.level + 1) % 3 });
+    }
+}
