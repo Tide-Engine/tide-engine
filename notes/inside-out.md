@@ -650,8 +650,20 @@ its shelf clicks are for nine entries. Native captures of all nine starts,
 the row push, "Hold it steady" to its end and "The other way in" from the
 room, with the battery posted and from inside the copy were inspected at
 1280x800. The thumbnail is from that puzzle at 1920x1080 halved. The docs
-production build passes. Deployment is recorded below it when done. No CI
-was dispatched.
+production build passes. No CI was dispatched.
+
+Deployed on the owner's word ("once done push and deploy"). Source
+`8257b69a` on `dev`, which also carries what had come into `dev` from other
+work. Every release page was rebuilt (`sand duel towers sumo docs_examples
+sample_games private_games`, web-release) and staged; the site's check,
+build, SEO, access, admin and examples tests pass. `fly deploy` from `docs`
+is release v270 of `tide-website`, image
+`deployment-01M4RWCY8YB6BSD1XHP8CZ4BAZ`, machine healthy. The public page
+answers 200 with the staged page's bytes (1,402,011, SHA-256
+`4603905ed82f9b4d0b8c6cf3a00f34c3e920007eea51683443beb6bc7e479301`), with
+noindex, COOP same-origin and COEP require-corp; its thumbnail and the home
+page answer 200. The two-browser fixture was not run against the public
+page or the production relay, and nobody has played the deployed build.
 
 ## Pushed things leave by the pusher's box, validation (2026-10-12)
 
