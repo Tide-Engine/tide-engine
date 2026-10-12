@@ -53,7 +53,7 @@ static void usage(void)
            "tide.packages lists.\n"
            "\n"
            "run and build:\n"
-           "  --release          optimized, the way players get it\n"
+           "  --release          optimize game code for players; the engine is always optimized\n"
            "  --web              a web page (WebGPU, or WebGL 2 where the browser has none), with clang's WebAssembly target\n"
            "  --android          an Android app (.apk); run installs it on the phone or emulator connected\n"
            "  --define <SYMBOL>  a symbol the game's #if lines read as defined, like `--define FAST`; as many as needed.\n"

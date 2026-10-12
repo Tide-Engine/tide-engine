@@ -377,6 +377,7 @@ static const char *const c_flags[] = {"-std=c17", NULL};
 static const char *const cpp_flags[] = {"-std=c++20",      "-nostdinc++",             "-fno-exceptions",
                                         "-fno-rtti",       "-fno-threadsafe-statics", NULL};
 static const char *const debug_flags[] = {"-O0", "-g", NULL};
+static const char *const engine_debug_flags[] = {"-O2", "-g", NULL};
 static const char *const release_flags[] = {"-O2", "-DNDEBUG", NULL};
 // These compile flags are part of every object's stamp. The link runs on
 // every build, so changing its collection policy cannot reuse an old program.
@@ -488,8 +489,9 @@ typedef struct build {
 
 static uint64_t header_stamp(const char *folder);
 
-// The flags a C file compiles with, or a C++ one (`cpp`).
-static void config_flags(args *a, const build *b, const bool cpp)
+// Game code stays unoptimized for debugging; the engine keeps its speed in
+// every configuration, with debug information and assertions in development.
+static void config_flags(args *a, const build *b, const bool cpp, const bool engine)
 {
     if (build_target.flag) {
         arg(a, build_target.flag);
@@ -501,7 +503,7 @@ static void config_flags(args *a, const build *b, const bool cpp)
     }
     arg_list(a, cpp ? cpp_flags : c_flags);
     arg_list(a, common_flags);
-    arg_list(a, b->opts->release ? release_flags : debug_flags);
+    arg_list(a, b->opts->release ? release_flags : engine ? engine_debug_flags : debug_flags);
     if (b->opts->release) arg_list(a, release_sections);
     // A library's code works wherever it's loaded, and Android's games are libraries.
     // On Linux and Android, a function whose locals take more than a page
@@ -536,10 +538,10 @@ static void arg_compiler(args *a, const char *compiler)
 
 // One line with everything that decides the engine objects, and the game's
 // C and C++ ones, so a change in any of it rebuilds them.
-static char *stamp_of(const build *b)
+static char *stamp_of(const build *b, const bool engine)
 {
     args a = {0};
-    config_flags(&a, b, false);
+    config_flags(&a, b, false, engine);
     arg_list(&a, cpp_flags);
     // clang also reads header paths and the macOS SDK from its environment.
     // Changing those must not reuse objects compiled against other headers.
@@ -716,7 +718,8 @@ static char *copy_text(const char *text)
 
 // Lists one C or C++ file to compile; `gen`, the generated files' folder, may
 // be NULL.
-static compile_job *queue_compile(compiles *list, const build *b, const char *source, const char *object, const char *gen)
+static compile_job *queue_compile(compiles *list, const build *b, const char *source, const char *object, const char *gen,
+                                  const bool engine)
 {
     if (list->count == list->cap) {
         list->cap = list->cap * 2 + 64;
@@ -724,7 +727,7 @@ static compile_job *queue_compile(compiles *list, const build *b, const char *so
         if (!list->items) abort();
     }
     compile_job *job = &list->items[list->count++];
-    *job = (compile_job){.cpp = is_cpp(source)};
+    *job = (compile_job){.cpp = is_cpp(source), .engine = engine};
     job->made[0] = copy_text(source);
     job->made[1] = copy_text(object);
     job->made[2] = format("-I%s", b->include, NULL);
@@ -736,7 +739,7 @@ static compile_job *queue_compile(compiles *list, const build *b, const char *so
     arg(&job->a, job->made[1]);
     arg(&job->a, job->made[2]);
     if (job->made[3]) arg(&job->a, job->made[3]);
-    config_flags(&job->a, b, job->cpp);
+    config_flags(&job->a, b, job->cpp, engine);
     // The compiler's words are kept until its file's turn, so it can't see
     // that they're for a terminal: it's told. No part of an object's stamp.
     if (diag_colored()) {
@@ -872,7 +875,7 @@ static bool run_compiles(build *b, compiles *list)
 static bool compile_c(build *b, const char *source, const char *object, const char *gen)
 {
     compiles list = {0};
-    queue_compile(&list, b, source, object, gen);
+    queue_compile(&list, b, source, object, gen, false);
     return run_compiles(b, &list);
 }
 
@@ -981,7 +984,7 @@ static void queue_engine_file(void *user, const char *source)
     snprintf(name, sizeof name, "%s.o", path_base(source));
     char *object = path_join(e->out_dir, name);
     if (e->rebuild || sys_mtime(object) < sys_mtime(source)) {
-        queue_compile(e->list, e->b, source, object, NULL)->engine = true;
+        queue_compile(e->list, e->b, source, object, NULL, true);
     }
     add_file(&e->objects, object);
     free(object);
@@ -1005,7 +1008,7 @@ static void queue_engine(build *b, compiles *list)
     char *engine_src = path_join(b->root, "src/engine/");
     // Private headers affect engine objects alone; game and user C objects
     // keep their ordinary public-header stamp.
-    char *common_stamp = stamp_of(b);
+    char *common_stamp = stamp_of(b, true);
     char private_headers[17];
     snprintf(private_headers, sizeof private_headers, "%016llx", (unsigned long long)header_stamp(engine_src));
     char *stamp = format("%s %s", common_stamp, private_headers);
@@ -1123,7 +1126,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
         free(header);
         return false;
     }
-    char *flags = stamp_of(b);
+    char *flags = stamp_of(b, false);
     uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
     h = hash_text(hash_text(h, source), text);
     h = hash_text(h, header);
@@ -1138,7 +1141,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
         // A failed compile may leave a partial object: never reuse it, even
         // if the source is then put back exactly as it was before the failure.
         // The stamp goes as the compile starts (run_compiles).
-        compile_job *job = queue_compile(list, b, source, object, gen);
+        compile_job *job = queue_compile(list, b, source, object, gen, false);
         job->stamp_path = stamp_path;
         job->stamp = copy_text(stamp);
         job->first = first;
@@ -1171,7 +1174,7 @@ static void queue_c_files(const build *b, compiles *list, const char *folder_pat
         free(base);
     }
     sys_mkdirs(dir);
-    char *flags = stamp_of(b);
+    char *flags = stamp_of(b, false);
     uint64_t common = hash_text(0xCBF29CE484222325ull, flags);
     free(flags);
     file_list headers = own_files_of(folder_path, header_extensions);
@@ -1192,7 +1195,7 @@ static void queue_c_files(const build *b, compiles *list, const char *folder_pat
         snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)hash_file(common, sources.items[i]));
         char *old = sys_read_file(stamp_path, NULL);
         if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
-            compile_job *job = queue_compile(list, b, sources.items[i], object, NULL);
+            compile_job *job = queue_compile(list, b, sources.items[i], object, NULL, false);
             job->stamp_path = stamp_path;
             job->stamp = copy_text(stamp);
         } else {
