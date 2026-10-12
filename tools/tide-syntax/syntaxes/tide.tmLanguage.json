@@ -550,6 +550,15 @@
           }
         },
         {
+          "comment": "Local entity placement and component access",
+          "match": "(?:(?<=[(,])|^)\\s*(?:(mut|with|without|verified)\\s+)?(local)(?=\\s+(?:mut\\s+)?[A-Za-z_])|\\b(local)(?=\\s+Spawn\\s*\\()",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "storage.modifier.local.tide" },
+            "3": { "name": "storage.modifier.local.tide" }
+          }
+        },
+        {
           "comment": "Parameter and local modifiers",
           "name": "storage.modifier.tide",
           "match": "\\b(mut|with|without)\\b"

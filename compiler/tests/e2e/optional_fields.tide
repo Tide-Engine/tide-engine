@@ -163,7 +163,7 @@ component Body
     float? speed;
 }
 
-local component Spark
+component Spark
 {
     int? life;
     string? tag;
@@ -583,7 +583,7 @@ view Watch(Game game, mut Seen seen)
         Send(Rename { level = 5, plain = 100 });
         Send(Heard { what = "a sound" });
         Send(Heard { });
-        Spawn(Spark { life = 3 });
+        local Spawn(Spark { life = 3 });
     }
 }
 
@@ -612,7 +612,7 @@ local event(Hit hit) HitHeard(mut Seen seen)
     if (hit.damage is int damage) seen.damage = damage;
 }
 
-view Sparks(mut Spark spark)
+view Sparks(mut local Spark spark)
 {
     spark.life = (spark.life ?? 0) - 1;
     if ((spark.life ?? 0) < 0) spark.tag = null;

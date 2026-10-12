@@ -374,6 +374,13 @@ static void parse_literal_inits(parser *p, expr *lit)
 static expr *parse_primary(parser *p)
 {
     const token *t = peek(p);
+    if (t->kind == T_IDENT && str_eq_c(t->text, "local") && peek_at(p, 1)->kind == T_IDENT
+        && str_eq_c(peek_at(p, 1)->text, "Spawn") && peek_at(p, 2)->kind == T_LPAREN) {
+        advance(p);
+        expr *e = parse_primary(p);
+        e->placement_local = true;
+        return e;
+    }
     switch (t->kind) {
     case T_DOT: {
         advance(p);
@@ -1204,6 +1211,7 @@ static bool at_local_decl(const parser *p)
 {
     const token *t = peek(p);
     if (t->kind != T_IDENT) return false;
+    if (str_eq_c(t->text, "local") && str_eq_c(peek_at(p, 1)->text, "Spawn") && peek_at(p, 2)->kind == T_LPAREN) return false;
     if (generic_name(t->text) && peek_at(p, 1)->kind == T_LT) {
         const int end = skip_type(p, 0);
         return end > 0 && peek_at(p, end)->kind == T_IDENT;
@@ -1599,8 +1607,16 @@ static void parse_routine_params(parser *p, decl *m)
         do {
             param prm = {0};
             prm.at = peek(p)->at;
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")) {
+                prm.placement_at = advance(p)->at;
+                prm.placement_local = true;
+            }
             const token *mut = at(p, T_MUT) ? advance(p) : NULL;
             prm.mode = mut ? PARAM_MUT : PARAM_READ;
+            if (!prm.placement_local && at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")) {
+                prm.placement_at = advance(p)->at;
+                prm.placement_local = true;
+            }
             // `in Stats stats`: `in` before a type and a name (the checker says it's only for extern functions)
             const tok_kind after = peek_at(p, 2)->kind;
             if (prm.mode == PARAM_READ && at(p, T_IDENT) && str_eq_c(peek(p)->text, "in") && peek_at(p, 1)->kind == T_IDENT
@@ -1819,10 +1835,24 @@ static decl *parse_method(parser *p, decl *owner)
     m->return_type_at = ret->name_at;
     m->return_type_qual_at = ret->at;
     m->return_type_ref = ret;
+    const int params_start = p->pos;
     parse_routine_params(p, m);
     m->body_at = m->at;
     m->body = parse_block(p);
     m->end = m->body->end;
+    if ((owner && owner->kind == DECL_COMPONENT) || p->overriding) {
+        // Checking annotates and rewrites expressions; each placement needs its
+        // own syntax tree, while source locations and immutable type refs agree.
+        parser local_parser = *p;
+        local_parser.pos = params_start;
+        decl *local_method = NEW(decl);
+        *local_method = *m;
+        local_method->params.items = NULL;
+        local_method->params.count = local_method->params.cap = 0;
+        parse_routine_params(&local_parser, local_method);
+        local_method->body = parse_block(&local_parser);
+        m->placement_method = local_method;
+    }
     return m;
 }
 
@@ -1987,6 +2017,11 @@ static void parse_query_params(parser *p, decl *d)
             param prm = {0};
             prm.at = peek(p)->at;
             const char *what = "parameter type";
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")
+                && (peek_at(p, 1)->kind == T_MUT || peek_at(p, 1)->kind == T_IDENT)) {
+                prm.placement_local = true;
+                prm.placement_at = advance(p)->at;
+            }
             if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "query") && peek_at(p, 1)->kind == T_LPAREN) {
                 advance(p);
                 prm.mode = PARAM_QUERY;
@@ -2075,6 +2110,10 @@ static void parse_query_params(parser *p, decl *d)
                 }
             }
             const bool filter = prm.mode == PARAM_WITH || prm.mode == PARAM_WITHOUT;
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local") && peek_at(p, 1)->kind == T_IDENT) {
+                prm.placement_local = true;
+                prm.placement_at = advance(p)->at;
+            }
             // `verified Health health`, `with verified Dead`: a word of its own
             // before a parameter's type, and a name like any other everywhere
             // else, a type's too (`verified score`, `with verified`)
@@ -2082,6 +2121,10 @@ static void parse_query_params(parser *p, decl *d)
                 && (filter || peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT)) {
                 prm.verified = true;
                 prm.verified_at = advance(p)->at;
+            }
+            if (!prm.placement_local && at(p, T_IDENT) && str_eq_c(peek(p)->text, "local") && peek_at(p, 1)->kind == T_IDENT) {
+                prm.placement_local = true;
+                prm.placement_at = advance(p)->at;
             }
             // `with ownership`, `without ownership`: a word of its own right after
             // them, and a name like any other everywhere else, a namespace's too
@@ -2552,7 +2595,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const bool followed_by_name = peek_at(&p, 1)->kind == T_IDENT;
         if (t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
             advance(&p);
-            if (local) diag_error(local->at, "'local' goes before a declaration, like 'local component Spark { ... }'");
+            if (local) diag_error(local->at, "'local' goes before a declaration, like 'local singleton Fx { ... }'");
             if (replace_word) refuse_replace_word(replace_word, "a namespace is where names are, and has no code of its own");
             if (p.pending.count > 0 && str_eq_c(t->text, "namespace")) {
                 diag_error(p.pending.items[0].at, "attributes go right before a declaration, and a namespace takes none");
@@ -2625,8 +2668,12 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         d->unit = p.unit;
         p.overriding = false;
         if (local) {
-            d->is_local = true;
-            d->local_at = local->at;
+            if (d->kind == DECL_COMPONENT && !d->is_scene) {
+                diag_error(local->at, "components define values, not a world: use 'component' with 'local Spawn(...)' and 'local' component access");
+            } else {
+                d->is_local = true;
+                d->local_at = local->at;
+            }
         }
         if (virtual || override) mark_replace_words(d, virtual, override);
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {

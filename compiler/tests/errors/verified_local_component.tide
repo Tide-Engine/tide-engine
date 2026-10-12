@@ -1,9 +1,9 @@
-// expect: 'Spark' is local: it's this machine's own, and no server confirms it
-local component Spark { int left; }
+// expect: no server confirms it
+component Spark { int left; }
 local singleton Fx { int count; }
 scene Main { }
 
-view Sparkle(verified Spark spark, mut Fx fx)
+view Sparkle(verified local Spark spark, mut Fx fx)
 {
     fx.count += spark.left;
 }

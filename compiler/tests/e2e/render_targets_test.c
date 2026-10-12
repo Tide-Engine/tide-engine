@@ -81,8 +81,8 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     local.Buffers.borrowed = (tide_render_target){.id = 99, .size = {.width = 1, .height = 1}};
     local.Buffers.beginTask = 1;
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    TIDE_REQUIRE(local.arch0_Graphic.count == 1 && local.tide_tasks_function_Keep.count == 1);
-    const tide_entity graphic = *(const tide_entity *)tide_table_get(&local.arch0_Graphic, &tide_columns_arch0_Graphic, 0, 0);
+    TIDE_REQUIRE(local.arch0_tide_local_component_Graphic.count == 1 && local.tide_tasks_function_Keep.count == 1);
+    const tide_entity graphic = *(const tide_entity *)tide_table_get(&local.arch0_tide_local_component_Graphic, &tide_columns_arch0_tide_local_component_Graphic, 0, 0);
     tide_entity object = {0};
     for (uint32_t i = 0; i < world.entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&world.entities, i);
@@ -96,18 +96,18 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     tide_command *queued = tide_queue_push(&local.commands, TIDE_COMMAND_SIZE(spawn0));
     queued->kind = 0;
     queued->id = 0;
-    queued->data.spawn0.values.Graphic.resources = local.Buffers.nested;
+    queued->data.spawn0.values.tide_local_component_Graphic.resources = local.Buffers.nested;
     tide_local_rebind_resources(&local, true);
     TIDE_CHECK(local.Buffers.scene.id == target.id && local.Buffers.nested.target.id == target.id);
     TIDE_CHECK(local.Buffers.nested.image.image.pixels == NULL && local.Buffers.nested.retained == 77);
     TIDE_CHECK(local.Buffers.windowAlias.id == TIDE_RENDER_WINDOW && local.Buffers.borrowed.id == 0);
-    TIDE_CHECK(tide_get_Graphic(&local, graphic).resources.target.id == target.id);
-    TIDE_CHECK(tide_get_Graphic(&local, graphic).resources.image.image.pixels == NULL);
+    TIDE_CHECK(tide_get_tide_local_component_Graphic(&local, graphic).resources.target.id == target.id);
+    TIDE_CHECK(tide_get_tide_local_component_Graphic(&local, graphic).resources.image.image.pixels == NULL);
     TIDE_CHECK(tide_get_Object_local(&local, object).resources.target.id == target.id);
     TIDE_CHECK(tide_get_Object_local(&local, object).resources.image.image.pixels == NULL);
-    TIDE_CHECK(queued->data.spawn0.values.Graphic.resources.target.id == target.id);
-    TIDE_CHECK(queued->data.spawn0.values.Graphic.resources.image.image.pixels == NULL);
-    TIDE_CHECK(queued->data.spawn0.values.Graphic.resources.retained == 77);
+    TIDE_CHECK(queued->data.spawn0.values.tide_local_component_Graphic.resources.target.id == target.id);
+    TIDE_CHECK(queued->data.spawn0.values.tide_local_component_Graphic.resources.image.image.pixels == NULL);
+    TIDE_CHECK(queued->data.spawn0.values.tide_local_component_Graphic.resources.retained == 77);
     tide_queue_clear(&local.commands);
 
     // The retained async frame also loses CPU pointers while keeping its target.
@@ -144,7 +144,7 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     TIDE_CHECK(tide_render_target_live(following.id) && following.size.window == 0.5f);
     TIDE_CHECK(restored.Buffers.nested.target.id == recreated.id && restored.Buffers.resumed.target.id == recreated.id);
     TIDE_CHECK(restored.Buffers.resumed.image.target.id == recreated.id);
-    TIDE_CHECK(tide_get_Graphic(&restored, graphic).resources.target.id == recreated.id);
+    TIDE_CHECK(tide_get_tide_local_component_Graphic(&restored, graphic).resources.target.id == recreated.id);
     TIDE_CHECK(tide_get_Object_local(&restored, object).resources.target.id == recreated.id);
     TIDE_CHECK(restored.Buffers.nested.retained == 77 && restored.Buffers.beginTask == 2);
     TIDE_CHECK(restored.Buffers.windowAlias.id == TIDE_RENDER_WINDOW);

@@ -423,7 +423,7 @@ TIDE_TEST(lsp_complete_draw_only_in_views)
     TIDE_CHECK(offers(system, "Spawn"));
     const char *view = complete(GAME_TYPES "view V(Body body)\n{\n    $\n}\n");
     TIDE_CHECK(offers(view, "Draw") && !offers(view, "Draw2D") && !offers(view, "Draw3D"));
-    TIDE_CHECK(!offers(view, "Body")); // Views spawn local entities, never the match's
+    TIDE_CHECK(offers(view, "Body")); // Views spawn local entities, never the match's
 }
 
 TIDE_TEST(lsp_complete_io_in_local_code)
@@ -2169,30 +2169,54 @@ TIDE_TEST(lsp_local_state)
 {
     start();
     static const char game[] = GAME_TYPES
-        "local component Spark { int framesLeft = 2; }\n"
+        "component Spark { int framesLeft = 2; }\n"
         "local singleton Menu { bool open; }\n"
-        "view Trail(with Body, mut Menu menu) { Spawn(Spark); menu.open = true; }\n"
-        "view Fade(mut Spark spark) { spark.framesLeft -= 1; if (spark.framesLeft < 0) this.Destroy(); }\n";
+        "view Trail(with Body, mut Menu menu) { local Spawn(Spark); menu.open = true; }\n"
+        "view Fade(mut local Spark spark) { spark.framesLeft -= 1; if (spark.framesLeft < 0) this.Destroy(); }\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    open_document(GAME_TYPES "local component Sp$ark { int framesLeft = 2; }\nview Fade(mut Spark spark) { spark.framesLeft -= 1; }\n");
+    open_document(GAME_TYPES "component Sp$ark { int framesLeft = 2; }\nview Fade(mut local Spark spark) { spark.framesLeft -= 1; }\n");
     const char *hover = request("textDocument/hover");
-    TIDE_CHECK(has(hover, "local component Spark"));
-    TIDE_CHECK(has(hover, "Local: this machine's own"));
+    TIDE_CHECK(has(hover, "component Spark"));
+    TIDE_CHECK(has(hover, "component Spark"));
 
     // In a view, Spawn makes local entities: the local components are offered, not the match's.
-    const char *spawn = complete(GAME_TYPES "local component Spark { int framesLeft = 2; }\nview Trail(Body body)\n{\n    $\n}\n");
-    TIDE_CHECK(offers(spawn, "Spawn"));
+    const char *spawn = complete(GAME_TYPES "component Spark { int framesLeft = 2; }\nview Trail(Body body)\n{\n    $\n}\n");
+    TIDE_CHECK(offers(spawn, "local Spawn"));
     TIDE_CHECK(offers(spawn, "Spark"));
-    TIDE_CHECK(!offers(spawn, "Body"));
-    const char *entity = complete(GAME_TYPES "local component Spark { int framesLeft = 2; }\n"
-                                  "view Fade(Spark spark)\n{\n    this.$\n}\n");
+    TIDE_CHECK(offers(spawn, "Body"));
+    const char *entity = complete(GAME_TYPES "component Spark { int framesLeft = 2; }\n"
+                                  "view Fade(local Spark spark)\n{\n    this.$\n}\n");
     TIDE_CHECK(offers(entity, "Destroy"));
-    TIDE_CHECK(offers(complete(GAME_TYPES "\n$"), "local component"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "\n$"), "component"));
 
     open_document(game);
-    TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"Spark\",\"detail\":\"local component\""));
+    TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"Spark\",\"detail\":\"component\""));
+}
+
+TIDE_TEST(lsp_shared_component_placement_and_parenting)
+{
+    start();
+    open_document("component Marker { LocalEntity Self() { return th$is; } }\n"
+                  "scene Main { }\nview Setup() { local Spawn(Marker); }\nview Show(local Marker marker) { _ = marker.Self(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "LocalEntity this"));
+    const char *methods = complete("scene Main { }\nview Show(local Transform transform)\n{\n"
+                                  "    Debug.Log($$\"{transform.localPosition}\"); this.$\n}\n");
+    TIDE_CHECK(offers(methods, "SetParent"));
+    open_document("scene Main { }\nview Show(local Transform transform)\n{\n"
+                  "    Debug.Log($$\"{transform.localPosition}\"); this.SetParent($);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "LocalEntity parent"));
+    const char *world = complete("scene Main { }\nview Show(local Transform transform, World world)\n{\n"
+                                "    Debug.Log($$\"{transform.localPosition}\"); world.$\n}\n");
+    TIDE_CHECK(offers(world, "Parent") && offers(world, "LocalToWorld"));
+    open_document("component Marker { int value; }\nscene Main { }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Marker); }\n"
+                  "view SetupLocal() { local Spawn(Marker); }\n"
+                  "view Show(local Mar$ker marker) { Debug.Log($$\"{marker.value}\"); }\n");
+    const char *rename = request_with("textDocument/rename", "\"newName\":\"Shared\"");
+    TIDE_CHECK(count(rename, "\"newText\":\"Shared\"") == 4);
 }
 
 TIDE_TEST(lsp_commands)
@@ -2340,7 +2364,7 @@ TIDE_TEST(lsp_local_fields)
     TIDE_CHECK(has(actions_at(13), "Remove 'mut' from 'box'"));
     TIDE_CHECK(has(apply_first_action(unused), "view Show(Box box) { if"));
     // `local` on a field of a declaration that's local already: remove the word
-    static const char twice[] = "local component Spark\n{\n    float2 position;\n    local int frames;\n}\nscene Main { }\n";
+    static const char twice[] = "local singleton Spark\n{\n    float2 position;\n    local int frames;\n}\nscene Main { }\n";
     open_document(twice);
     TIDE_CHECK(has(last_sent(), "'Spark' is local already, and so is every field of it"));
     TIDE_CHECK(has(actions_at(3), "Remove 'local'"));
@@ -3431,10 +3455,10 @@ TIDE_TEST(lsp_snap)
     "    int value;\n"                                                         \
     "    bool IsMine(Entity e) { return e == th$is; }\n"                       \
     "}\n"                                                                      \
-    "local component Spark { int left; }\n"                                    \
+    "component Spark { int left; }\n"                                    \
     "scene Main { }\n"                                                         \
     "system Die(Health health) { if (health.IsMine(th$is)) this.Destroy(); }\n" \
-    "view Fade(mut Spark spark) { spark.left -= 1; if (spark.left <= 0) th$is.Destroy(); }\n"
+    "view Fade(mut local Spark spark) { spark.left -= 1; if (spark.left <= 0) th$is.Destroy(); }\n"
 
 // this: the entity the code runs for, and whose component a method is called on.
 TIDE_TEST(lsp_this)
@@ -3446,7 +3470,7 @@ TIDE_TEST(lsp_this)
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 3, 41, ""), "The entity whose `Health` this is."));
     const char *system = request_at("file:///test.tide", "textDocument/hover", 7, 48, "");
     TIDE_CHECK(has(system, "Entity this") && has(system, "The entity `Die` runs for."));
-    const char *view = request_at("file:///test.tide", "textDocument/hover", 8, 68, "");
+    const char *view = request_at("file:///test.tide", "textDocument/hover", 8, 74, "");
     TIDE_CHECK(has(view, "LocalEntity this"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 7, 48, ""), "'this' is a keyword"));
 
@@ -7182,13 +7206,13 @@ TIDE_TEST(lsp_world)
     TIDE_CHECK(offers(complete(WORLD_GAME "system Heal(Healer healer, mut $)\n{\n}\n"), "World"));
     TIDE_CHECK(offers(complete(WORLD_GAME "system Heal(Healer healer, World $)\n{\n}\n"), "world"));
     // A local handler's World reads the local world's, a view's both
-    static const char local[] = "component Health { int value; }\nlocal component Spark { int life; }\nlocal event Tap { }\n"
+    static const char local[] = "component Health { int value; }\ncomponent Spark { int life; }\nlocal event Tap { }\n"
                                 "scene Main { }\n";
     char text[1024];
-    snprintf(text, sizeof text, "%slocal event(Tap) OnTap(World world, with Spark)\n{\n    var s = world.Get<$\n}\n", local);
+    snprintf(text, sizeof text, "%slocal event(Tap) OnTap(World world, with local Spark)\n{\n    var s = world.Get<$\n}\n", local);
     const char *locals = complete(text);
-    TIDE_CHECK(offers(locals, "Spark") && !offers(locals, "Health"));
-    snprintf(text, sizeof text, "%sview Show(World world, with Spark)\n{\n    var s = world.Get<$\n}\n", local);
+    TIDE_CHECK(offers(locals, "Spark") && offers(locals, "Health"));
+    snprintf(text, sizeof text, "%sview Show(World world, with local Spark)\n{\n    var s = world.Get<$\n}\n", local);
     const char *both = complete(text);
     TIDE_CHECK(offers(both, "Spark") && offers(both, "Health"));
 
@@ -7400,9 +7424,9 @@ TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
     TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "Score") && !offers(bindings, "World"));
     TIDE_CHECK(!offers(complete(QUERY_TYPES "system Hits(query ($) fighters) { }\n"), "verified")); // Only a view's
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show(query (Body body, with $) fighters) { }\n"), "verified"));
-    const char *confirmed = complete(QUERY_TYPES "local component Spark { int value; }\n"
+    const char *confirmed = complete(QUERY_TYPES "component Spark { int value; }\n"
                                                  "view Show(query (verified $) fighters) { }\n");
-    TIDE_CHECK(offers(confirmed, "Body") && !offers(confirmed, "Spark") && !offers(confirmed, "Score"));
+    TIDE_CHECK(offers(confirmed, "Body") && offers(confirmed, "Spark") && !offers(confirmed, "Score"));
     const char *rows = complete(QUERY_TYPES "view Show(query (Body body, verified Fighter sure) fighters)\n{\n"
                                           "    foreach (var fighter in fighters) { var value = fighter.$; }\n}\n");
     TIDE_CHECK(offers(rows, "entity") && offers(rows, "body") && offers(rows, "sure"));
@@ -7439,13 +7463,13 @@ TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 18, 23, ""), "Through its queries, it reads any entity's `Body`"));
 
     // A view's query of the drawn world, and one of this machine's entities
-    open_document(QUERY_TYPES "local component Spark { int value; }\nlocal singleton Seen { float x; }\n"
-                  "view Show(mut Seen seen, query (Body body) bodies, query (Spark spark) sparks)\n{\n"
+    open_document(QUERY_TYPES "component Spark { int value; }\nlocal singleton Seen { float x; }\n"
+                  "view Show(mut Seen seen, query (Body body) bodies, query (local Spark spark) sparks)\n{\n"
                   "    foreach (var row in bodies) seen.x += row.body.position.x;\n"
                   "    foreach (var row in sparks) seen.x += row.spark.value;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 45, ""), "blended between the last two ticks"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 72, ""), "this machine's own entities, as they are"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 78, ""), "this machine's own entities, as they are"));
     // What's refused says so in the editor
     open_document(QUERY_TYPES "view Show(query (mut Body body) bodies)\n{\n"
                   "    foreach (var row in bodies) Debug.Log($\"{row.body.position.x}\");\n}\n");
@@ -10930,9 +10954,9 @@ TIDE_TEST(lsp_cubemaps)
     snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Cubemap sky)\n{\n    color = Color.white;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "not a parameter of its own"));
-    snprintf(program, sizeof program, "scene Main { }\ncomponent Prop { Cubemap around; }\n");
+    snprintf(program, sizeof program, "scene Main { }\ncomponent Prop { Cubemap around; }\nevent(Spawned) Setup(with Main) { Spawn(Prop); }\n");
     open_document(program);
-    TIDE_CHECK(has(last_sent(), "Cubemap, RenderTarget, Clip and Sound belong to this machine"));
+    TIDE_CHECK(has(last_sent(), "use local placement and access for this component"));
 }
 
 // A game with no asset: nothing is registered and no .tide/ is made. An

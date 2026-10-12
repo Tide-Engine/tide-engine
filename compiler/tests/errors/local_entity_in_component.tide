@@ -1,3 +1,4 @@
-// expect: 'Link' belongs to the match, so it can't hold a LocalEntity
+// expect: 'Link' contains machine-local field
 component Link { LocalEntity to; }
 scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Link); }

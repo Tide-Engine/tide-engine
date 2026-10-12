@@ -21,7 +21,7 @@ SkinnedMesh<Vertex3> Model(mut Calls calls)
     return character;
 }
 
-float4x4 Transform(mut Calls calls)
+float4x4 MeshTransform(mut Calls calls)
 {
     calls.transforms++;
     calls.order = calls.order * 10 + 2;
@@ -56,10 +56,10 @@ view Show(mut Calls calls)
         && character.defaultPose[hand].position.x == 0
         && character.animations.count == 0;
 
-    Draw.SkinnedMesh(Model(calls), Transform(calls));
+    Draw.SkinnedMesh(Model(calls), MeshTransform(calls));
     calls.omittedOrder = calls.order;
     calls.order = 0;
-    Draw.SkinnedMesh(Model(calls), Transform(calls), Rest(calls));
+    Draw.SkinnedMesh(Model(calls), MeshTransform(calls), Rest(calls));
     calls.explicitOrder = calls.order;
 
     Draw.SkinnedMesh(character, float4x4.identity, image);

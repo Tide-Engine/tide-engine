@@ -1,5 +1,5 @@
-// expect: 'Puff' is local, and this entity is the match's
+// expect: a parent must belong to the same world as its child
 component Enemy { int hp; }
-local component Puff { int age; }
+component Puff { int age; }
 scene Main { }
-void Dust(Entity target) { target.Add(Puff); }
+void Dust(Entity target, LocalEntity parent) { target.SetParent(parent); }

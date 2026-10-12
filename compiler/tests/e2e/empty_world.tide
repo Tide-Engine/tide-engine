@@ -1,6 +1,6 @@
 // The smallest program: Main spawns nothing, so no system ever runs.
 
-component Transform
+component TestTransform
 {
     float3 position;
 }
@@ -10,7 +10,7 @@ component Player
     float3 velocity;
 }
 
-system PlayerMovement(mut Transform trs, Player player, Time time)
+system PlayerMovement(mut TestTransform trs, Player player, Time time)
 {
     trs.position += player.velocity * time.dt;
 }

@@ -679,3 +679,68 @@ The owner approved singleton methods. Structs, components and singletons now sup
 Verified view parameters, mixed joins and query bindings interpolate against confirmed previous/current endpoints and their own fraction. Membership/discrete fields use the upper endpoint; Snap, birth identity and custom interpolation apply, without prediction correction smoothing. Verified handlers remain exact. Custom interpolators reading heap values get independent endpoint snapshots, including nested text/list/map/set values and readonly grid chunks. Scratch cleanup and both world hashes are pinned by `verified_heap`; ordinary numeric interpolation keeps its existing path. `tide_confirmed` retags only match offsets, preserving scratch/local values returned by custom interpolation.
 
 `settings.maxRewind` is finite nonnegative constant seconds, default zero; positive values reserve the input field `ViewTime viewTime`. The checker blocks explicit/member and Sample/Sanitize field writes. ViewTime contains upper tick, fraction and validity. Input repair invalidates malformed timestamps before ordinary float repair. `Time.maxRewind` is retained only when used. Constant, negative/nonfinite/dynamic, reserved-name and readonly diagnostics are covered.
+
+## Shared component placement and Transform foundation (2026-10-12)
+
+The owner approved one component definition usable in match or local placement,
+a built-in Transform, checked Unity-style parenting, descendant destruction,
+and placement-specialized component methods. The prefab/editor design remains
+future work; this change implements its entity foundation only.
+
+`component` defines values/defaults. `Spawn(...)` places match entities and
+`local Spawn(...)` places local entities. Access bindings use `local`, including
+`mut local Marker marker` and `query (local Marker marker) markers`. Entity and
+LocalEntity handles choose placement for Add/Remove and World Get/Has/TryGet/Set.
+Local component declarations are rejected with the replacement spelling. Local
+singletons/scenes/events and attached local fields keep their existing rules.
+Rendering resources and LocalEntity fields (including optional/container shapes)
+are rejected at match placement/access. Attached local fields currently restrict
+a definition to match placement; local placement of that shape remains open.
+
+Private local storage specializations share the source component's C value type
+and ownership helpers. Components remain one public type; masks/storage retain
+separate world identities. Component methods get independent parsed syntax trees
+for local placement, instantiated on calls, with typed implicit this and ordinary
+caller capability propagation. Calls through methods, overloads, mut methods,
+World helpers and task starts retain their effects. Explicit Entity/LocalEntity
+parameter and return types keep their meanings. Unused methods are checked once
+in match placement; a method called only locally is checked in local placement.
+
+Transform has zero localPosition, identity localRotation and unit localScale.
+SetParent(parent, worldPositionStays = true) records an ordered deferred command;
+null detaches. World.LocalToWorld(entity) reads stored TRS root to leaf and
+World.Parent(entity) reads the typed parent. Reads contribute Transform-wide
+scheduler dependencies and helper callers keep their capabilities. View reads
+use stored state, as existing World.Get does, not interpolated parameter copies.
+Parentless reads avoid scratch allocation; deeper reads use bounded scratch
+ancestor chains. No cached world matrices or timing improvement is claimed.
+
+Links live in private per-world Map<Entity, node> singleton state, using existing
+heap ownership, snapshot/hash/packing/layout machinery. Parent commands settle
+both temporary handles, reject cycles/dead handles at application time, and
+leave links/local values unchanged on failed keep-world conversion. Keeping
+world placement needs the child's Transform and an invertible finite parent;
+TRS cannot preserve general shear from rotated nonuniform scales exactly.
+Destroy walks descendants iteratively before each parent, with Destroyed while
+that entity is still readable. Loaded scenes remain independent roots; parenting
+an ordinary subtree into another scene transfers its membership, while detaching
+retains ownership. No engine runtime API or global type registry was added.
+
+Validation: focused Transform tests cover match/local storage and hash isolation,
+implicit-this specialization, method chains/overloads/mut methods/task starts,
+rotation/scale, cycle/dead/singular rejection, ordered deferred changes,
+descendant destruction, COW snapshots and packed world restoration. Compiler
+fixtures preserve access restrictions and cover cross-world parents, local
+component declaration replacement, local-field placement and nested local handles.
+Final Windows debug validation passes all 2,241 native and 2,209 web CTests,
+including native GPU and WebGL/WebGPU coverage, the exact existing determinism
+pins and all 224 language-server checks. All 228 shared grammar checks and the
+production docs build pass with Node 24.16.0. Two initial full-suite failures
+were stale schedule text after renaming old fixture Transform types; those pins
+were corrected before both final full runs. A final diagnostic-only wording
+cleanup is checked with the LSP suite and replacement/unknown-World fixtures.
+No CI, sanitizers, Android, Linux, macOS or MinGW coverage was requested/run.
+
+Remaining work: prefab text/editor authoring, hierarchy presentation interpolation,
+world-matrix caching/deep-hierarchy performance measurements, richer hierarchy
+inspection, and broader platform CI (not requested for this Windows task).

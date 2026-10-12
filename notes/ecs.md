@@ -84,3 +84,16 @@ Physics history stores plain collider records and frame lists in the match heap.
 ## T? fields in the world (2026-10-11)
 
 A field declared `T?` is a struct in its holder's bytes, `tide_optional_<T>`: the value as the field would be without the `?`, then `bool ok`, then padding written out (`notes/language.md`, T? fields). It adds no storage of another kind: a component's lanes, a singleton's bytes, a list's elements, an event's and a spawn's bytes in the queue, and a task's frame hold it as they hold any struct, and its text and lists are in the heap of whatever holds it. One with no value is all zeros: generated code writes zeros when a field is given `null` or a `T?` with none, releases the text and lists of a field an assignment left with none (the end of each `tide_assign_<struct>`), and gives one no defaults. So a page's hash doesn't depend on what a field held before it was taken away; the heap, which gave a block out and took it back, is as it is after any text or list. No runtime function is new. `compiler/tests/e2e/optional_fields` checks the bytes, the hash, a copy, the world as bytes and a delta.
+
+## Transform hierarchy foundation (2026-10-12)
+
+The compiler emits private match/local hierarchy maps and deferred parent commands
+using existing checked entity, map, heap and command machinery. Match links are
+simulation state, included in snapshots, hashes, packing and generated reload
+layouts; local links stay in tide_local. No runtime function was added. Links are
+entity relationships independent of public component value shapes. Destruction
+walks descendants iteratively, children before parent; no recursive C stack is
+needed. Generation/cycle checks run when commands apply, after temporary handle
+settlement. Transform composition and keep-world reparenting use Tide's existing
+deterministic matrix/quaternion math. Contracts, tests and remaining gaps are
+recorded in language.md's shared placement/Transform entry.

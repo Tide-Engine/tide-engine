@@ -29,7 +29,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 
 - Tide is a language of its own, and isn't described as C#-like. C# inspired its syntax, and a rule below that follows C# says so.
 - Types, systems and methods use PascalCase: `Transform`, `MovePlayer`, `Spawn(...)`.
-- Fields, parameters and locals use camelCase: `trs.position`, not `trs.Position`.
+- Fields, parameters and locals use camelCase: `trs.localPosition`, not `trs.Position`.
 - Public properties use camelCase too, even static ones: `Color.red`, `quaternion.identity`. True constants use FULL_CASE: `Math.PI`, `Math.TAU`.
 - Attributes (`[...]`) are only for metadata, such as when a system runs or the bounds of an input field, not for what code does. The engine may enforce what an attribute declares, as it clamps an input field to its `[Clamp]`.
 - Braces go on lines of their own, as in C#, and so does an `else` after a block. A block that fits on one line can stay there (`scene Main { }`, `if (dead) { return; }`), and so do literals (`Body { position = p }`). The language server's formatter lays code out this way, indenting as the editor is set to (four spaces by default).
@@ -414,8 +414,8 @@ A system's component parameters describe the entities it runs for. Each paramete
 ```csharp
 system ClampPlayer(mut Transform trs, with Player)
 {
-    if (trs.position.y < 0)
-        trs.position.y = 0;
+    if (trs.localPosition.y < 0)
+        trs.localPosition.y = 0;
 }
 ```
 
@@ -506,7 +506,7 @@ system Heal(Healer healer, mut World world)
 - Structural changes (`Spawn`, `Add`, `Remove`) are deferred. They're applied together at the next fixed point in the tick, in a deterministic order. The entity handle `Spawn` returns is usable immediately, for example to store in a component. The entity's data becomes readable once the changes are applied.
 
 ```csharp
-var e = Spawn(Transform { scale = float3(1, 1, 1) }, Player);
+var e = Spawn(Transform { localScale = float3(1, 1, 1) }, Player);
 e.Add(Stunned { duration = 2 });
 e.Remove(Stunned);
 ```
@@ -522,7 +522,7 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Transform { scale = float3(1, 1, 1) }, Player { speed = float3(0, 0, 5) });
+    Spawn(Transform { localScale = float3(1, 1, 1) }, Player { speed = float3(0, 0, 5) });
 }
 ```
 
@@ -772,8 +772,8 @@ Follows Unity.Mathematics, with Tide's naming. Everything in this section is dec
 quaternion spin = quaternion.AxisAngle(float3(0, 1, 0), input.turn * time.dt);
 trs.rotation = Math.Mul(trs.rotation, spin);
 float3 forward = Math.Rotate(trs.rotation, float3(0, 0, 1));
-trs.position += Math.Normalize(forward) * 5 * time.dt;
-float2 flat = trs.position.xz;
+trs.localPosition += Math.Normalize(forward) * 5 * time.dt;
+float2 flat = trs.localPosition.xz;
 ```
 
 **Constructors**
@@ -3079,14 +3079,39 @@ Implemented, awaiting approval:
 - The pieces widgets are made of, so a game can build its own like the built-in ones: a control's ID, which the compiler derives from the call as for the built-in widgets, whether it's hovered, pressed or focused, and drawing in the GUI's layer, over its panels (`Draw.Screen()` draws in its pixels, under it).
 - Scrolling, clipping, and keys that repeat while held.
 
+## Transform and entity parenting
+
+### Decided
+
+- One built-in `Transform` component works in match or local placement, with `localPosition`, `localRotation` and `localScale`. These values are relative to the parent, and root values place it in the world.
+- Parenting is an entity relationship, independent of component value types. Descendants move with their parent and are destroyed when their parent is destroyed.
+- Reparenting follows Unity's default of preserving world placement, with an option to retain local values. Detaching preserves world placement by default. Cycles are rejected without changing the hierarchy.
+- Static access and typed entity handles preserve the match/local boundary. Match hierarchy state participates in deterministic snapshots, hashes and transfer; local hierarchy state stays outside it.
+
+### Provisional
+
+Implemented first-build interface and details:
+
+- `entity.SetParent(parent, worldPositionStays = true)` records a deferred structural change. `null` or `default` detaches. Local entity handles require local parents. Commands validate cycles and live generations in deterministic application order.
+- `world.LocalToWorld(entity)` returns a `float4x4` composed root to leaf; `world.Parent(entity)` returns the same kind of handle as its argument. Both read stored state, with normal caller capabilities and Transform read dependencies. Dead entities give identity/null, and absent Transform components contribute identity.
+- Transform defaults are zero position, identity rotation and unit scale. World rotation composes normalized quaternions. Keeping world placement adjusts local TRS; shear from nonuniform scale and rotation cannot be preserved exactly. Singular/nonfinite results are rejected, without changing local values or links. Keeping world placement requires a Transform on the child.
+- Destruction walks descendants before the root and invokes existing Destroyed handlers while each entity still exists. Loaded scene entities remain independent roots. An ordinary subtree parented into another scene transfers membership there; detaching retains its scene.
+- The compiler emits private per-world links using existing world-owned containers and checked command queues. No engine runtime registry or new public runtime entry point is required.
+
+### Open
+
+- The prefab text format and editor are future work; this foundation does not implement them.
+- More complete hierarchy presentation and authoring APIs.
+- Presentation interpolation of a composed hierarchy and optimized deep-hierarchy caching.
+
 ## Local state
 
 ### Decided
 
 - The world holds a match: the state every machine simulates the same way. It only exists while a match is on. Single-player is a match too, on a server the machine runs itself and reaches through a loopback transport, the same path as any other connection.
 - Local state belongs to one machine and lives outside every world: menus, settings, connection status, animation timers, particles. It's never sent, rolled back or hashed.
-- `local` in front of a declaration makes it local: `local singleton`, `local component`, `local scene` and `local event`. Everything else belongs to the match. Structs and functions belong to neither, and both sides use them.
-- A local singleton exists once per machine, for the whole program. Local components make local entities.
+- `local` on a singleton, scene or event declaration makes it local. A component defines data and defaults shared by both worlds; local belongs on its placement and access. Match code cannot read local storage, and local code cannot change the match. Structs and ordinary functions work with values from either side.
+- A local singleton exists once per machine, for the whole program. Local entities hold components in local storage.
 - Views run every frame, in a match or not. They read the match, and read and write local state: `mut` local parameters, and `Spawn`, `Add`, `Remove` and `Destroy` of local entities. A view only runs when everything it reads exists, so a view of match components or singletons doesn't run outside a match.
 - Local structural changes and local events are handled at the end of the frame, as the match's are at the end of the tick.
 - The GUI is immediate mode, drawn from views (see GUI).
@@ -3104,7 +3129,7 @@ Implemented, awaiting approval:
   - Errors say where to go instead: "a view can't change the match: put it in the input and handle it in a system."
 
 ```csharp
-local component Spark
+component Spark
 {
     float2 position;
     int framesLeft = 30;
@@ -3113,10 +3138,10 @@ local component Spark
 // Reads the match and leaves a trail of local sparks behind every ball.
 view Trail(Body body, with Ball)
 {
-    Spawn(Spark { position = body.position });
+    local Spawn(Spark { position = body.position });
 }
 
-view DrawSparks(mut Spark spark)
+view DrawSparks(mut local Spark spark)
 {
     Draw.Circle(spark.position, 0.1, Color.yellow);
     spark.framesLeft -= 1;
@@ -3124,7 +3149,7 @@ view DrawSparks(mut Spark spark)
 }
 
 // Error: match code can't read local state.
-system Count(Spark spark) { }
+system Count(local Spark spark) { }
 ```
 
 ```csharp
@@ -3154,8 +3179,12 @@ system Shrink(mut Box box) { box.verts.Clear(); }
 
 ### Provisional
 
-- `local` is only a keyword at the start of a declaration, and before a field's type. It goes before components, singletons, events and event handlers; before any other declaration it's an error that says why (structs and functions belong to neither side, views are always local, systems run the match). Anywhere else it's a name like any other, a field's too.
-- **`LocalEntity`** is an entity of the local world. `Spawn` in local code returns one, and `this` is one in a view of local components, where in a view of match components it's an `Entity`. Local code can hold and read an `Entity` (the unit a player selected, say) but never change one. The match's declarations can't hold a `LocalEntity`, and neither can structs, which both sides share.
+Implemented placement spellings: `Spawn(...)` creates match entities; `local Spawn(...)` creates local entities. A `local` component access qualifier selects local storage in views, local handlers, queries, shader bindings and async parameters, for example `mut local Transform transform` or `query (local Transform transform) transforms`. Ordinary function parameters are values without a placement qualifier. Component methods are specialized for each placement they are called on: implicit `this` is `Entity` or `LocalEntity` accordingly. Explicit entity parameter and return types retain their meaning. An unused method is checked once in match placement. `Get`, `Has`, `TryGet`, `Set`, `Add` and `Remove` select placement from the typed entity handle. Component declarations cannot be `local`. Rendering resources and LocalEntity fields restrict a component to local placement. Components with attached `local` fields currently require match placement; supporting those same definitions on local entities remains open.
+
+
+
+- `local` selects entity placement in `local Spawn`, component storage in access parameters, and machine-local singletons, scenes, events, handlers and attached fields. It goes before singletons, events and event handlers; before any other declaration it's an error that says why (structs and functions belong to neither side, views are always local, systems run the match). Anywhere else it's a name like any other, a field's too.
+- **`LocalEntity`** is an entity of the local world. `local Spawn` returns one, and `this` is one in a view of local components, where in a view of match components it's an `Entity`. Local code can hold and read an `Entity` (the unit a player selected, say) but never change one. The match's declarations can't hold a `LocalEntity`, and neither can structs, which both sides share.
 - A view runs for the entities of one world: its components are all local or all the match's.
 - Local handlers handle local events, and `Spawned` and `Destroyed` of local entities, with local state only; the match's events, with what they take of the match as the event left it (see Events); and `Forgotten`, with the match component or singleton whose local fields are going (below).
 - The host keeps the local state and calls `tide_local_init(local)` once, then `tide_frame(w, previous, alpha, verified, verified_previous, verified_alpha, local, draw, gui)` every frame. `tide_frame` runs the local handlers of what the match sent since the last frame (which the host handed it with `tide_local_events`), lets go of the local fields of entities that are gone, runs the views, then applies their local changes and events. Outside a match, `w` is NULL, and views that read the match don't run.
@@ -3183,7 +3212,7 @@ local singleton Sparks
     List<Spark> list;
 }
 
-view DrawSparks(mut Sparks sparks)
+view DrawSparks(mut local Sparks sparks)
 {
     mut var i = 0;
     while (i < sparks.list.count)
@@ -3206,7 +3235,7 @@ view DrawSparks(mut Sparks sparks)
 Local fields, beyond what's decided:
 
 - **What they hold** is what a local component's fields can: numbers, vectors, enums, structs, text, lists, maps, sets, grids, `Entity` and `LocalEntity`, each with a default like any field's. `[Snap]` on one is an error, as local state is never blended. A local field shares its name with no other field or method of its component.
-- **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local component or singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
+- **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
 - **They're reached through a parameter**, `box.verts`, where local code has the component or singleton itself:
   - a view's, read through `Box box` and written through `mut Box box`;
   - an ordinary function's, which gets them with the component or singleton: `void Bake(mut Box box)` writes them, `int Corners(Box box)` reads them, and the caller passes its own bound parameter, `Bake(box)`. The parameter can go through helper chains with its local fields. Such a function is local code: only views, local handlers and functions like it call it, and calling it from match code is an error that says where it uses a local field;

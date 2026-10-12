@@ -28,13 +28,13 @@ local singleton Frames
     LocalEntity newest;
 }
 
-local component Spark
+component Spark
 {
     float2 position;
     int framesLeft = 2;
     bool lit;
 
-    // A local component's this is a LocalEntity.
+    // The method is specialized for this local placement.
     bool Is(LocalEntity e) { return e == this; }
 }
 
@@ -54,11 +54,11 @@ view Count(mut Frames frames)
 view Trail(Ball body, mut Frames frames)
 {
     frames.selected = this;
-    frames.newest = Spawn(Spark { position = body.position });
+    frames.newest = local Spawn(Spark { position = body.position });
 }
 
 // Each spark fades, and destroys itself when it's done.
-view Fade(mut Spark spark)
+view Fade(mut local Spark spark)
 {
     spark.framesLeft -= 1;
     if (spark.framesLeft <= 0) this.Destroy();
@@ -69,7 +69,7 @@ local event(Blink blink) CountBlinks(mut Frames frames)
     frames.blinks += blink.times;
 }
 
-local event(Spawned) Light(mut Spark spark, mut Frames frames)
+local event(Spawned) Light(mut local Spark spark, mut Frames frames)
 {
     spark.lit = spark.Is(this);
     frames.lit += 1;

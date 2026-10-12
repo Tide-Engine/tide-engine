@@ -6,7 +6,7 @@ description: "Keep Tide menus, settings, particles and connection status in loca
 
 The **match** is what every machine simulates the same way. **Local state** belongs to one machine, and lives outside the match: menus, settings, connection status, animation timers, particles. It's never sent, rolled back or checked against other machines.
 
-`local` in front of a declaration makes it local:
+`local` in front of a singleton, scene or event declaration makes it local. Components define a value shape used in either world:
 
 ```csharp
 local singleton Settings
@@ -15,16 +15,16 @@ local singleton Settings
     bool showFps;
 }
 
-local component Spark
+component Spark
 {
     float2 position;
     float age;
 }
 ```
 
-`local singleton`, `local component`, `local scene` and `local event` are the local kinds. Everything else belongs to the match. Structs and functions belong to neither, and both sides use them.
+`local singleton`, `local scene` and `local event` belong to this machine. A component's placement and access choose its world: `Spawn(Spark)` creates a match entity; `local Spawn(Spark)` creates a local entity. Both use the same `Spark` definition. Structs and ordinary functions also work with values from either side.
 
-A local singleton exists once per machine, for the whole program. Local components make local entities.
+A local singleton exists once per machine, for the whole program. Local entities hold components in local storage.
 
 ## Views change local state
 
@@ -34,10 +34,10 @@ Views run every frame, in a match or not. They read the match, and read and writ
 // Reads the match and leaves a trail of local sparks behind every ball.
 view Trail(Body body, with Ball)
 {
-    Spawn(Spark { position = body.position });
+    local Spawn(Spark { position = body.position });
 }
 
-view DrawSparks(mut Spark spark)
+view DrawSparks(mut local Spark spark)
 {
     Draw.Circle(spark.position, 0.1, Color.yellow);
     spark.age += Frame.dt;
@@ -211,7 +211,7 @@ Input and commands carry local actions into the match. Starting, joining and lea
 
 ```csharp
 // Error: match code can't read local state.
-system Count(Spark spark) { }
+system Count(local Spark spark) { }
 ```
 
 ## Local scenes and events
