@@ -6,6 +6,10 @@ local singleton Picture
     float2[2] actors;
     int[2] actorRoom;
     float[2] actorScale;
+    int[2] actorFacing;
+    float[2] actorStride;
+    float[2] actorWobble;
+    float[2] actorIdle;
     Traveler[2] travelers;
     MakerPassage[2] passages;
     bool[2] doorwayPending;
@@ -88,27 +92,43 @@ void Crate(mut Sculpture sculpture, float2 at, float size, bool onTarget, float 
     FloorLine(sculpture, at + float2(-side * .44, -side * .40), at + float2(side * .44, -side * .40), size * .033, Color(.76, .72, .45), top, size);
 }
 
-// A crash-test dummy: overalls in its seat's paint, rubber joints, and a
-// head that is the yellow and black quartered calibration mark itself.
-void Maker(mut Sculpture sculpture, float2 at, float size, int seat, float floor)
+// How a seat's bot stands this frame. At rest it is always the same picture:
+// facing the camera, on the floor, antenna still.
+struct BotPose { int facing = 2; float lift; float sway; }
+BotPose PoseOf(Picture picture, int seat)
+{
+    return BotPose { facing = picture.actorFacing[seat],
+        lift = Math.Abs(Math.Sin(picture.actorStride[seat] * Math.TAU)) * .09,
+        sway = Math.Sin(picture.clock * 22) * picture.actorWobble[seat] };
+}
+
+// A little test rig on treads in its seat's paint: a visor that looks where
+// it is going, a bumper to push with, the yellow and black calibration mark
+// on its head, and an antenna that whips about while it moves. It hops as
+// it rolls. `across` and `along` are sizes to its right and ahead of it.
+void BotPart(mut Sculpture sculpture, float2 at, int facing, float2 offset, float across, float along, float height, Color tone, float floor, float size)
+{
+    var ahead = float2(Direction(facing));
+    var right = float2(-ahead.y, ahead.x);
+    Cuboid(sculpture, at + (right * offset.x + ahead * offset.y) * size,
+        facing % 2 == 0 ? float2(across * size, along * size) : float2(along * size, across * size), height * size, tone, floor, size);
+}
+void Maker(mut Sculpture sculpture, float2 at, float size, int seat, float floor, BotPose pose)
 {
     var tone = seat == 0 ? AMBER : TEAL;
-    for (var side = -1; side <= 1; side += 2)
-    {
-        var leg = at + float2(side * size * .11, size * .012);
-        Cuboid(sculpture, leg + float2(0, size * .02), float2(size * .14, size * .24), size * .04, RUBBER, floor, size);
-        Cuboid(sculpture, leg, float2(size * .13, size * .17), size * .12, tone, floor + size * .04, size);
-        var arm = at + float2(side * size * .275, 0);
-        Cuboid(sculpture, arm, float2(size * .10, size * .19), size * .05, RUBBER, floor + size * .13, size);
-        Cuboid(sculpture, arm, float2(size * .11, size * .20), size * .21, tone, floor + size * .18, size);
-    }
-    Cuboid(sculpture, at, float2(size * .44, size * .26), size * .03, RUBBER, floor + size * .16, size);
-    Cuboid(sculpture, at, float2(size * .43, size * .25), size * .24, tone, floor + size * .19, size);
-    Cuboid(sculpture, at, float2(size * .16, size * .16), size * .03, RUBBER, floor + size * .43, size);
-    Cuboid(sculpture, at, float2(size * .30, size * .28), size * .20, HAZARD, floor + size * .46, size);
-    for (var quarter = 0; quarter < 2; quarter++)
-        Cuboid(sculpture, at + float2((quarter == 0 ? -1.0 : 1.0) * size * .075, (quarter == 0 ? -1.0 : 1.0) * size * .07),
-            float2(size * .15, size * .14), size * .012, RUBBER, floor + size * .66, size);
+    var up = floor + pose.lift * size;
+    BotPart(sculpture, at, pose.facing, float2(-.21, 0), .11, .42, .11, RUBBER, floor + pose.lift * size * .35, size);
+    BotPart(sculpture, at, pose.facing, float2(.21, 0), .11, .42, .11, RUBBER, floor + pose.lift * size * .35, size);
+    BotPart(sculpture, at, pose.facing, float2(0, 0), .36, .36, .23, tone, up + size * .07, size);
+    BotPart(sculpture, at, pose.facing, float2(0, .215), .30, .05, .07, RUBBER, up + size * .09, size);
+    BotPart(sculpture, at, pose.facing, float2(0, -.02), .25, .22, .15, DECAL, up + size * .30, size);
+    BotPart(sculpture, at, pose.facing, float2(0, .10), .21, .03, .07, RUBBER, up + size * .345, size);
+    BotPart(sculpture, at, pose.facing, float2(.045, .112), .06, .03, .04, HAZARD, up + size * .36, size);
+    BotPart(sculpture, at, pose.facing, float2(0, -.02), .16, .16, .008, HAZARD, up + size * .45, size);
+    BotPart(sculpture, at, pose.facing, float2(-.04, -.06), .08, .08, .006, RUBBER, up + size * .458, size);
+    BotPart(sculpture, at, pose.facing, float2(.04, .02), .08, .08, .006, RUBBER, up + size * .458, size);
+    BotPart(sculpture, at, pose.facing, float2(-.10, -.11), .025, .025, .15, RUBBER, up + size * .45, size);
+    BotPart(sculpture, at, pose.facing, float2(-.10 + pose.sway * .05, -.11), .06, .06, .05, tone, up + size * .60, size);
 }
 
 void GoldTarget(mut Sculpture sculpture, float2 at, float size, bool occupied, float floor)
@@ -249,7 +269,7 @@ void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLe
                 if (room == trip.child && trip.aliasAlpha > 0)
                 {
                     sculpture.alpha = trip.aliasAlpha;
-                    Maker(sculpture, MapPoint(trip.aliasPosition, lens), lens.tile * .90, seat, lens.floor + lens.tile * .004);
+                    Maker(sculpture, MapPoint(trip.aliasPosition, lens), lens.tile * .90, seat, lens.floor + lens.tile * .004, PoseOf(picture, seat));
                     sculpture.alpha = 1;
                 }
                 continue;
@@ -263,7 +283,7 @@ void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLe
             }
             if (seat == hands.seat && hands.portalTime > 0)
                 FloorOutline(sculpture, at, float2(lens.tile * .92), Math.Max(.8, lens.tile * .025), Color(.33, .61, .54, hands.portalTime * 1.8), lens.floor + lens.tile * .015, lens.tile);
-            Maker(sculpture, at, lens.tile * .90, seat, lens.floor + lens.tile * .004);
+            Maker(sculpture, at, lens.tile * .90, seat, lens.floor + lens.tile * .004, PoseOf(picture, seat));
         }
 }
 
@@ -281,7 +301,7 @@ void DoorwayMaker(mut Sculpture sculpture, LevelLayout layout, MakerPassage trip
     sculpture.ground = floor;
     sculpture.aperture = float4(mouth.x, mouth.y, gap * .5, 0);
     sculpture.apertureSide = trip.side;
-    Maker(sculpture, at, size, seat, floor + size * .004);
+    Maker(sculpture, at, size, seat, floor + size * .004, PoseOf(picture, seat));
     sculpture.apertureSide = -1;
 }
 
@@ -510,6 +530,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
         var actor = workshop.puzzle.actors[seat];
         var before = picture.travelers[seat];
         var passageSnap = first || levelChanged || hands.reduceMotion || (changed && workshop.puzzle.moves == 0);
+        var was = picture.actors[seat];
         var makerBlend = passageSnap ? 1.0 : Math.Min(1, dt * 20);
         var travel = actor.room != before.room || !SameEntrance(before, actor);
         var cueSource = picture.doorwaySource[seat];
@@ -560,6 +581,40 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
             {
                 picture.actors[seat] = SmoothCell(picture.actors[seat], float2(actor.position), travel ? 1.0 : makerBlend);
                 picture.actorScale[seat] = 1;
+            }
+        }
+        // The bot turns to where it goes and hops along; left alone for a
+        // moment it turns back to the camera, so a settled scene depends on
+        // the puzzle alone.
+        var rolling = picture.passages[seat];
+        var step = actor.position - before.position;
+        var rolled = Math.Length(picture.actors[seat] - was);
+        if (passageSnap)
+        {
+            picture.actorFacing[seat] = 2;
+            picture.actorStride[seat] = 0;
+            picture.actorWobble[seat] = 0;
+            picture.actorIdle[seat] = 0;
+        }
+        else
+        {
+            if (rolling.active) picture.actorFacing[seat] = rolling.entering ? (rolling.side + 2) % 4 : rolling.side;
+            else if (actor.room == before.room && (step.x != 0 || step.y != 0))
+                picture.actorFacing[seat] = Math.Abs(step.x) > Math.Abs(step.y) ? (step.x > 0 ? 1 : 3) : (step.y > 0 ? 2 : 0);
+            if (rolling.active || rolled > .0005)
+            {
+                // A step lets it look ahead for a moment after it stops; a
+                // doorway passage is long enough already.
+                picture.actorIdle[seat] = rolling.active ? 1.0 : 0.0;
+                picture.actorStride[seat] += Math.Min(rolled, .5);
+                picture.actorWobble[seat] = 1;
+            }
+            else
+            {
+                picture.actorIdle[seat] += dt;
+                picture.actorWobble[seat] = 0;
+                picture.actorStride[seat] = 0;
+                if (picture.actorIdle[seat] > .1) picture.actorFacing[seat] = 2;
             }
         }
         picture.actorRoom[seat] = actor.room;
