@@ -90,7 +90,8 @@ They are optional. Ambience, sound and reduced motion are local settings.
 - A dummy's return path remembers the entrance used. Leaving through an
   edge door returns beside that entrance; if a shell has moved, the return
   moves with it. Up to eight entrance layers are available.
-- Room sizes, wall shapes and edge doorway positions vary. There are no
+- Every room is a square grid, so a box always fills the cell it stands
+  in. Room sizes, wall shapes and edge doorway positions vary. There are no
   switch locks. Make space and use walls, boxes or your partner as a
   backstop when you need to enter a box instead of pushing it.
 - Fill every box-marked parcel target, park each shell on its matching numbered
