@@ -138,6 +138,16 @@ const materialMatches = (r, g, b, tone) => {
     const shade = g / tone[1];
     return shade >= 0.12 && shade <= 1.15 && Math.abs(r - tone[0] * shade) <= 2 && Math.abs(b - tone[2] * shade) <= 2;
 };
+// How many pixels of two same-sized screenshots differ.
+const pixelsApart = (first, second) => {
+    const one = [], other = [];
+    screenshotPixels(first, (r, g, b) => one.push(r << 16 | g << 8 | b));
+    screenshotPixels(second, (r, g, b) => other.push(r << 16 | g << 8 | b));
+    assert.equal(one.length, other.length, 'compared screenshots are the same size');
+    let apart = 0;
+    for (let i = 0; i < one.length; i++) if (one[i] !== other[i]) apart++;
+    return apart;
+};
 const homeMaterial = [92, 140, 107];
 const amberMaterial = [217, 122, 69];
 const parcelMaterials = [[[69, 69, 38]], [[173, 158, 99]]];
@@ -713,8 +723,14 @@ try {
     await witness('swneessswnenneeenwnnnn W');
     await small.tapKey('Enter', 'Enter');
     await advanceMatch();
+    // The two pages draw the same title from glyphs they each cached in
+    // their own order, and one pixel of it has differed between them (a
+    // failure kept both screenshots: the same words, one pixel apart at
+    // 469,42). A different title differs in hundreds of pixels, so a few
+    // are allowed here, where two pages are compared; one page against its
+    // own earlier crop stays exact.
     assertImagesDiffer(await host.crop(titleClip), recursiveTitle, 'self-nesting, extraction and delivery complete the authored puzzle');
-    assertImagesEqual(await host.crop(titleClip), await small.crop(titleClip), 'recursive puzzle progression agrees on both screens');
+    assert.ok(pixelsApart(await host.crop(titleClip), await small.crop(titleClip)) <= 8, 'recursive puzzle progression agrees on both screens');
     await choose(0);
     stage = 'phone layout and real touch movement';
     await host.resize(390, 844);
