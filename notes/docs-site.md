@@ -2,7 +2,7 @@
 
 Inside Out 3D revision (2026-10-12): the existing catalog now describes
 miniature 3D rooms with low walls and soft shadows. The fixed orthographic
-view, existing twelve layouts, online two-seat rules, recursive passages
+view, its layouts (nine since 2026-10-12), online two-seat rules, recursive passages
 and audio are preserved. Game-only geometry, shadow mapping and SSAO use
 existing rendering APIs. Public routes and catalog authentication are unchanged.
 Current validation and deployment evidence are recorded in `notes/inside-out.md`.
