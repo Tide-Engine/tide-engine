@@ -1,5 +1,45 @@
 # Benchmarks
 
+## O2 versus O3 on the external stress test, 2026-10-12
+
+The owner requested an optimization-level benchmark after approving optimized
+engine code in development builds. At `83ccb219`, identical unoptimized caller
+objects exercise the unchanged 2,500-character private FBX fixture against
+`-O2 -g` and `-O3 -g` engine libraries, retaining assertions, no fast-math and
+no FMA contraction. Five alternating process pairs per platform run 30 warmup
+and 300 measured 60 Hz manual-world frames, covering idle/run/jump. All twenty
+rows and 6,000 measured frames are kept in
+[optimization-levels](../bench/results/optimization-levels/README.md), with
+input/source/library/binary identities, scripts, summaries and core-test logs.
+
+On Windows/Ryzen 9 7900X/Clang 23.1.2, median-of-process-mean view recording
+is 20.615984 -> 21.646871 ms: O3 is 5.00% slower, and every native pair is
+slower (median paired ratio 1.0468). Node 24.16.0 WASI is 28.705785 ->
+28.675940 ms (-0.10%), within observed variation. Actual combined tick/hash/
+view/preparation intervals are native 20.989503 -> 22.023309 and WASI
+29.257243 -> 29.227485 ms. This workload gives no reason to change O2;
+production defaults remain unchanged. GPU, display wait, interpolation
+snapshots, rollback, networking and Rooms UI are excluded; no FPS is inferred.
+
+The named gate/90-second quiet guard waited through eight detections of other
+build/test work before runtime timing. No competing work was detected during
+measured processes. Other desktop activity and clocks remain uncontrolled.
+A subsequent five-pair cold-engine compilation batch holds the gate and
+checks before/after each build; twelve compiler jobs, warm tools/filesystem,
+configuration/caller compilation/final links excluded. Medians are native
+1.487 -> 1.508 s and WASI 1.278 -> 1.344 s; these small noisy
+differences do not establish a general compilation penalty. Earlier setup
+build rows precede the quiet guard, are retained and explicitly excluded.
+
+All runs match world hash `818c38d6c6daad37` and accumulated active integer
+palette/influence texture hash `aef3539b6e00d762`, with state mask 7, 2,500
+characters, one draw command and two active integer textures. Separate O3
+core-test builds with optimized callers pass 435/435 on native and WASI,
+including unchanged exact math/random/pose pins. The harness builds warning-free
+on native/WASI and the analyzer verifies every runtime/compile pair and digest.
+No all-platform O3 rollout, full-suite rerun, CI dispatch or deployment was
+performed for this measurement-only work.
+
 ## Production retained assets and transfer checks, 2026-10-11
 
 The owner asked to finish integration and put it on dev after the standalone experiments below. Production now retains stable immutable content across field copies/snapshots/reload and detaches on write, including ordinary asset values. Already-owned reset storage is reused; same known-ID reassignment does no work. Production networking negotiates exact pack identity, sends known references or sparse asset-relative chunks only when smaller, and retries self-contained state when decoding fails. Raw saves include each retained payload once. This supersedes the earlier experiments' *production integration gaps*; their timing claims and deferred adverse-workload timing gate remain separate.
