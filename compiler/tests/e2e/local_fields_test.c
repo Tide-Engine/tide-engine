@@ -146,7 +146,7 @@ TIDE_TEST(local_fields_defaults_can_be_text_and_lists)
     TIDE_CHECK(tide_list_count(one.marks) == 3 && tide_list_count(two.marks) == 3);
     // A local field holds a LocalEntity: the spark each spawned
     TIDE_CHECK(tide_local_entity_count(&local) == 2);
-    TIDE_CHECK(tide_get_Spark(&local, one.spark).of == 1 && tide_get_Spark(&local, two.spark).of == 2);
+    TIDE_CHECK(tide_get_tide_local_component_Spark(&local, one.spark).of == 1 && tide_get_tide_local_component_Spark(&local, two.spark).of == 2);
 }
 
 TIDE_TEST(local_fields_of_a_singleton)

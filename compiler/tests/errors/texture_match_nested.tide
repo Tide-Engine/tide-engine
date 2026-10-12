@@ -1,5 +1,6 @@
-// expect: 'State' can't hold rendering resources in match state
+// expect: 'State' contains machine-local field
 scene Main { }
 struct Surface { Texture image; }
 struct Nested { Surface surface; }
 component State { Nested data; }
+event(Spawned) Setup(with Main) { Spawn(State); }

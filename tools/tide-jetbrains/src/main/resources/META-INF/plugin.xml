@@ -26,6 +26,7 @@
         </server>
         <!-- By file name, so the TextMate grammar keeps coloring the text. -->
         <fileNamePatternMapping patterns="*.tide" serverId="tidels" languageId="tide"/>
+        <fileNamePatternMapping patterns="*.tprefab" serverId="tidels" languageId="tide"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">

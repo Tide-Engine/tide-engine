@@ -1,0 +1,109 @@
+component Marker
+{
+    int value = 7;
+    void Detach() { DetachInner(); }
+    void DetachInner() { this.SetParent(null); }
+    void DetachLater() { Later(this); }
+    float4x4 Matrix(World world) { return world.LocalToWorld(this); }
+    mut void Increment() { value += 1; }
+    int Count(int plus) { return value + plus; }
+    int Count(float plus) { return value + int(plus); }
+}
+
+async void Later(LocalEntity entity)
+{
+    await Wait.Frames(1);
+    entity.SetParent(null);
+}
+
+singleton Control
+{
+    Entity a;
+    Entity b;
+    Entity c;
+    int action;
+    Entity parent;
+    Entity parentB;
+    float4x4 matrix;
+}
+
+local singleton LocalControl
+{
+    LocalEntity a;
+    LocalEntity b;
+    bool ready;
+    bool detach;
+    bool later;
+    LocalEntity parent;
+    float4x4 matrix;
+    int value;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Control control)
+{
+    control.a = Spawn(Transform { localPosition = float3(10, 0, 0) }, Marker);
+    control.b = Spawn(Transform { localPosition = float3(2, 0, 0) });
+    control.c = Spawn(Transform { localPosition = float3(3, 0, 0) });
+    control.b.SetParent(control.a, false);
+    control.c.SetParent(control.b, false);
+}
+
+float4x4 ReadMatrix(Entity entity, World world)
+{
+    return world.LocalToWorld(entity);
+}
+
+void ParentThroughHelper(Entity child, Entity parent)
+{
+    child.SetParent(parent);
+}
+
+system Probe(mut Control control, World world)
+{
+    control.parent = world.Parent(control.c);
+    control.parentB = world.Parent(control.b);
+    control.matrix = ReadMatrix(control.c, world);
+    switch (control.action)
+    {
+        case 1: control.a.SetParent(control.c, false); break;
+        case 2: ParentThroughHelper(control.b, default); break;
+        case 3: control.b.SetParent(control.a, worldPositionStays: false); break;
+        case 4: control.a.Destroy(); break;
+        case 5: control.b.SetParent(control.b, false); break;
+        case 6: control.b.SetParent(control.a); break;
+        case 7:
+            control.c.SetParent(control.a, false);
+            control.a.SetParent(control.c, false);
+            break;
+        case 8:
+            control.a.Destroy();
+            control.b.SetParent(control.a, false);
+            break;
+    }
+    control.action = 0;
+}
+
+view LocalSetup(mut LocalControl control, World world)
+{
+    if (!control.ready)
+    {
+        control.a = local Spawn(Transform { localPosition = float3(20, 0, 0) });
+        control.b = local Spawn(Transform { localPosition = float3(4, 0, 0) }, Marker);
+        control.b.SetParent(control.a, false);
+        control.ready = true;
+    }
+    control.matrix = world.LocalToWorld(control.b);
+    control.value = world.Get<Marker>(control.b).value;
+}
+
+view LocalAccess(local mut Marker marker, mut LocalControl control, World world)
+{
+    marker.Increment();
+    control.matrix = marker.Matrix(world);
+    control.value = marker.Count(0) + marker.Count(0.0);
+    control.parent = world.Parent(this);
+    if (control.detach) { marker.Detach(); control.detach = false; }
+    if (control.later) { marker.DetachLater(); control.later = false; }
+}

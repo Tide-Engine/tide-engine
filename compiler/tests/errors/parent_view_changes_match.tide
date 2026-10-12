@@ -1,0 +1,3 @@
+// expect: a view can't change the match
+scene Main { }
+view Attach(Transform transform) { this.SetParent(null); Debug.Log($"{transform.localPosition}"); }

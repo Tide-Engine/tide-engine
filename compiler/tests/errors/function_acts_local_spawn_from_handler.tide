@@ -1,5 +1,5 @@
 // expect: 'Puffs' spawns local entities, and the match can't use local state
-local component Puff { int age; }
+component Puff { int age; }
 scene Main { }
-void Puffs() { Spawn(Puff); }
+void Puffs() { local Spawn(Puff); }
 event(Spawned) Setup(with Main) { Puffs(); }

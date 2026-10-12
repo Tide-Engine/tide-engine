@@ -17,7 +17,7 @@ component Body
     local string label;
 }
 
-local component Spark
+component Spark
 {
     float2 at;
     int life = 2;
@@ -88,7 +88,7 @@ view Show(mut Body body, verified Body confirmed, mut Mine mine, mut World world
     Draw.Text(body.label, body.position, 12, Color.white);
     Draw.Circle(confirmed.position, confirmed.health, Color.red);
     // A spark each frame, which goes a frame later, and everything code can do with one that's gone
-    var spark = Spawn(Spark { at = body.position, twin = mine.gone });
+    var spark = local Spawn(Spark { at = body.position, twin = mine.gone });
     mine.sparks.Add(spark);
     mine.gone = spark;
     spark.Destroy();

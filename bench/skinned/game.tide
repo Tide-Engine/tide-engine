@@ -46,7 +46,7 @@ local singleton Workload
     Pose sharedPose;
 }
 
-local component Character { int index; }
+component Character { int index; }
 
 frag Lit(Corner corner, out Color color)
 {
@@ -62,7 +62,7 @@ float4x4 ClipMatrix(List<float4x4> palettes, int bones, int joint, int first, in
                    Math.Lerp(a.c2, b.c2, alpha), Math.Lerp(a.c3, b.c3, alpha));
 }
 
-vert GpuSkin(mut GpuCorner corner, GpuClip clip, Character item, Workload work)
+vert GpuSkin(mut GpuCorner corner, GpuClip clip, local Character item, Workload work)
 {
     float phase = Math.Frac(work.seconds + float(item.index) / float(work.count)) * float(clip.frames);
     int first = int(Math.Floor(phase));
@@ -106,13 +106,13 @@ view Prepare(mut Workload work)
     // Spawns settle after that frame, so every measured frame has exactly count.
     if (!work.ready)
     {
-        for (int i = 0; i < work.count; i++) Spawn(Character { index = i });
+        for (int i = 0; i < work.count; i++) local Spawn(Character { index = i });
         work.ready = true;
     }
 }
 
 [Stage(Stages.Objects)]
-view Show(Character item, Workload work, GpuClip clip)
+view Show(local Character item, Workload work, GpuClip clip)
 {
     int i = item.index;
     float x = (float(i % work.columns) + 0.5) * (160.0 / 9.0 / float(work.columns)) - 80.0 / 9.0;

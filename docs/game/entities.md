@@ -70,7 +70,7 @@ What makes one match unlike another is its seed, [`Random.seed`](../language/mat
 `Spawn` makes an entity from a list of component values:
 
 ```csharp
-var e = Spawn(Transform { scale = float3(1, 1, 1) }, Player);
+var e = Spawn(Transform { localScale = float3(1, 1, 1) }, Player);
 ```
 
 A component value is written like `Health { max = 200 }`, without `new`. Fields left out take their defaults, and a bare type name, like `Player`, takes every default.
@@ -100,7 +100,7 @@ A [function](../language/functions.md#sending-and-spawning) can `Spawn`, `Add`, 
 ```csharp
 Entity Drop(float3 at)
 {
-    return Spawn(Transform { position = at }, Crate);
+    return Spawn(Transform { localPosition = at }, Crate);
 }
 
 void Stun(Entity target)
@@ -116,6 +116,27 @@ Each ball below is an entity with a `Ball` and a `Health`. Tap one to `Add` a `P
 <<< @/examples/entities.tide
 
 :::
+
+## Transform and parenting
+
+`Transform` is built in, with `float3 localPosition` (zero), `quaternion localRotation` (identity), and `float3 localScale` (one). Each is relative to the entity's parent; a root's values are its world placement. Add it like any other component.
+
+```csharp
+event(Spawned) Assemble(with Main)
+{
+    var parent = Spawn(Transform { localPosition = float3(10, 0, 0) });
+    var child = Spawn(Transform { localPosition = float3(2, 0, 0) });
+    child.SetParent(parent, worldPositionStays: false);
+}
+```
+
+After those changes apply, the child's world position is `(12, 0, 0)`. `SetParent(parent)` preserves its world placement by adjusting its local values; `false` keeps its local values. `SetParent(null)` detaches it. These changes apply at the end of the tick or local frame, in recorded order.
+
+Read `world.LocalToWorld(entity)` for its composed `float4x4`, and `world.Parent(entity)` for its parent's handle. They read the latest stored state, as other `World` methods do. An entity without a Transform contributes identity; a missing entity gives identity or a null parent.
+
+Destroying a parent destroys its descendants, children before their parent. A cycle, a dead handle or a parent from the other world is rejected. Runtime rejections print their reason and leave the hierarchy unchanged. Preserving world placement requires a Transform on the child and an invertible parent transform. Nonuniform scales combined with rotation can create shear; three local TRS values cannot preserve that matrix exactly.
+
+The same `Transform` works on local entities: use `local Spawn(Transform)` and `local Transform transform` in a view's parameters. `Entity` and `LocalEntity` still prevent crossing the match/local boundary. Loaded scene entities remain independent roots. Reparenting ordinary entities into a different scene transfers their descendants into that scene; detaching retains scene ownership.
 
 ## Entity handles
 
@@ -144,7 +165,7 @@ system Expire(mut Lifetime life)
 
 In local code that runs for a local entity, like a view of local components, `this` is a `LocalEntity`. Code that runs once per tick, frame or event runs for no entity, so it has no `this`, and neither do functions. In a [frag](./shaders.md#where-the-pixel-is), `this` is the pixel it runs for.
 
-A component's methods have `this` too: the entity whose component they're called on.
+A component's methods have `this` too: the entity whose component they're called on. Methods are specialized for the placement used by the caller, so `this` is an `Entity` for a match component and a `LocalEntity` for a local component. Explicit parameter and return types keep their meaning.
 
 ```csharp
 component Health

@@ -69,7 +69,7 @@ local singleton Stats
     Entity last;
 }
 
-local component Spark
+component Spark
 {
     int of;
 }
@@ -77,5 +77,5 @@ local component Spark
 view Mark(Label label, Stats stats)
 {
     if (!stats.pulsing) return;
-    Spawn(Spark { of = label.number });
+    local Spawn(Spark { of = label.number });
 }

@@ -549,3 +549,10 @@ if(NOT EXISTS "${WORK}/cache/github.com/test/maths/${M1}/.tide-fetched")
 endif()
 tide("${game}" ARGS eject maths EXPECT "Maths is the game's own now, in packages/maths")
 expect_file("${game}/tide.packages" "#if STEAM\n./packages/maths\n#endif\n")
+
+# Authored trees are part of the same game/package source discovery, even unused.
+file(WRITE "${game}/Enemy.tprefab" "prefab Enemy { MissingComponent; }\n")
+tide("${game}" ARGS schedule . FAILS EXPECT "a prefab entry must name an ordinary component")
+file(WRITE "${game}/Enemy.tprefab" "prefab Enemy { Transform; entity Child { Transform; } }\n")
+tide("${game}" ARGS schedule .)
+file(REMOVE "${game}/Enemy.tprefab")

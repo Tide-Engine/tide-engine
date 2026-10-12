@@ -67,6 +67,10 @@ function describe(text: string): string {
 // that has that heading now (the docs' +page.svelte). `gone` is for a heading
 // that became its page's title: the anchor it had, and that page.
 const split: Record<string, { to: string[]; gone: Record<string, string> }> = {
+    '/multiplayer/matches': {
+        to: ['/packages/rooms'],
+        gone: {},
+    },
     '/game/views': {
         to: ['/game/views-and-the-match', '/game/draw-settings', '/game/meshes-and-textures', '/game/3d', '/game/cameras', '/game/render-targets'],
         gone: { 'targets-and-post-processing': '/game/render-targets', _3d: '/game/3d' },

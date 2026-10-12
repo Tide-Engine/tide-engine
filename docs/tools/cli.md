@@ -4,7 +4,7 @@ description: "Use the tide command to run and build native, web and Android game
 
 # The tide command
 
-`tide` builds and runs games. A game is every `.tide` file in a folder and its subfolders, with the `.c` and `.cpp` files and libraries there when it calls C (see [Calling C](../c/functions.md)), and the packages its `tide.packages` lists (see [Packages](packages.md)). Commands take the game's folder, or use the current one.
+`tide` builds and runs games. A game includes the `.tide` scripts and `.tprefab` authored trees in its folder and subfolders, with the `.c` and `.cpp` files and libraries there when it calls C (see [Calling C](../c/functions.md)), and the packages its `tide.packages` lists (see [Packages](../packages/using-and-writing.md)). Commands take the game's folder, or use the current one. Saving a prefab also triggers the normal watched build; existing live instances are not automatically rewritten with new authored values.
 
 ```
 tide <command> [folder] [options]
@@ -340,7 +340,7 @@ tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
 
 ## add and update
 
-`tide add` and `tide update` change the `tide.packages` of the game in the current folder (see [Packages](packages.md)).
+`tide add` and `tide update` change the `tide.packages` of the game in the current folder (see [Packages](../packages/using-and-writing.md)).
 
 | Command | What it does |
 |---|---|

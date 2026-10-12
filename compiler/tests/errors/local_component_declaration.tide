@@ -1,0 +1,3 @@
+// expect: components define values, not a world
+local component Spark { int count; }
+scene Main { }

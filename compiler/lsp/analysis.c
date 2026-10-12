@@ -344,6 +344,7 @@ static const field *field_of(const decl *d, const int i)
 
 static void add_occ(occurrence o)
 {
+    if (o.decl && o.decl->placement_of) o.decl = o.decl->placement_of;
     o.order = A.occs.count;
     if (o.at.line > 0 && o.len > 0) vec_push(A.occs, o);
 }
@@ -352,6 +353,7 @@ static void add_occ(occurrence o)
 // one, the program has the override there, and the source the one replaced.
 static const decl *method_written(const decl *m)
 {
+    if (!m->body_checked && m->placement_method && m->placement_method->body_checked) return m->placement_method;
     return m->replaces ? m->replaces : m;
 }
 
@@ -371,7 +373,7 @@ static const decl *replaced_or_self(const decl *d)
 
 static void list_written(void)
 {
-    for (int i = 0; i < A.prog->decls.count; i++) vec_push(A.written, A.prog->decls.items[i]);
+    for (int i = 0; i < A.prog->decls.count; i++) if (!A.prog->decls.items[i]->placement_of) vec_push(A.written, A.prog->decls.items[i]);
     for (int i = 0; i < A.prog->replaced.count; i++) {
         const decl *v = A.prog->replaced.items[i];
         vec_push(A.written, v->owner ? v->replaced_by : v); // A method that was replaced is in its type's body
@@ -907,10 +909,12 @@ static void walk_value(const expr *e)
             o.c_name = e->c_callee;
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
+                   || e->call == CALL_PARENT || e->call == CALL_TRANSFORM
                    || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
                    || e->call == CALL_DISCARD || e->call == CALL_NORMAL) {
             // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard(), instance.Normal(n)
             o.kind = OCC_METHOD;
+            if (e->call == CALL_TRANSFORM) o.component = e->type_decl;
             add_occ(o);
         } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
@@ -1155,6 +1159,17 @@ static void replace_refs(const decl *d)
     }
 }
 
+static void walk_prefab_bases(const prefab_node *node)
+{
+    if (!node) return;
+    if (node->base_decl) {
+        qualifier_ref(node->base_qual_at, node->base_at, node->base);
+        const str name = last_part(node->base);
+        add_occ((occurrence){.at = node->base_at, .len = name.len, .kind = OCC_TYPE, .decl = node->base_decl, .name = name});
+    }
+    for (int i = 0; i < node->children.count; i++) walk_prefab_bases(node->children.items[i]);
+}
+
 // In source order, and at one position in the order they were found: qsort
 // leaves ties in any order.
 static int occ_order(const void *a, const void *b)
@@ -1236,6 +1251,14 @@ static void index_program(void)
         }
         add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
                              .name = d->name});
+        if (d->kind == DECL_PREFAB && d->prefab_checked) {
+            walk_prefab_bases(d->prefab_root);
+            for (int n = 0; n < d->prefab_checked->entities.count; n++) {
+                const expr *spawn = d->prefab_checked->entities.items[n].spawn;
+                for (int c = 0; c < spawn->args.count; c++) walk_expr(spawn->args.items[c]);
+            }
+            continue;
+        }
         if (d->kind == DECL_ENUM && d->backing.len > 0) { // enum Voxel : byte
             add_occ((occurrence){.at = d->backing_at, .len = d->backing.len, .kind = OCC_TYPE, .name = d->backing,
                                  .type = {TY_INT, NULL}, .backing = true});
@@ -1549,6 +1572,7 @@ static const char *builtin_type_doc(const type_kind kind)
 static const char *decl_keyword(const decl *d)
 {
     switch (d->kind) {
+    case DECL_PREFAB: return "prefab";
     case DECL_COMPONENT: return d->is_scene ? "scene" : "component";
     case DECL_SINGLETON: return "singleton";
     case DECL_INPUT: return "input";
@@ -1605,6 +1629,7 @@ static void format_param(const param *p, sb *out)
     case PARAM_READ: case PARAM_EVENT: case PARAM_QUERY: case PARAM_SENDER: break;
     }
     if (p->verified_at.line > 0) sb_put(out, "verified "); // As written, where the checker refused it too
+    if (p->placement_local) sb_put(out, "local ");
     sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text)); // One a call can leave out
@@ -2117,9 +2142,11 @@ static const char *builtin_field_doc(const decl *d, const str name)
 
 // An entity's methods, in match code for an Entity and in local code for a LocalEntity.
 static const method_form entity_calls[] = {
+    {"SetParent", "SetParent(Entity parent, bool worldPositionStays = true)",
+     "Changes the parent at the end of the tick or frame. Null detaches. Preserves world placement by default; cycles and invalid handles are rejected."},
     {"Add", "Add(components...)", "Adds components, or replaces their values. Applied at the end of the tick."},
     {"Remove", "Remove(components...)", "Removes components. Applied at the end of the tick."},
-    {"Destroy", "Destroy()", "Destroys the entity at the end of the tick."},
+    {"Destroy", "Destroy()", "Destroys the entity and its descendants at the end of the tick or frame."},
     {"Send", "Send(event)",
      "Sends an event to the entity: handlers that take its components run for it, at the end of the tick."},
     {"Snap", "Snap()",
@@ -2128,6 +2155,8 @@ static const method_form entity_calls[] = {
 
 // The World's methods, in code that takes `World world`: T is the component in <>.
 static const method_form world_calls[] = {
+    {"LocalToWorld", "LocalToWorld(Entity entity) -> float4x4", "Reads the entity's composed world transform, including its ancestors."},
+    {"Parent", "Parent(Entity entity) -> Entity", "Reads the entity's parent, or the null handle for a root."},
     {"Get", "Get<T>(Entity entity) -> T",
      "A copy of the entity's component as it is right now, or the component's zero value when the entity has none. It "
      "counts as reading every entity's, so systems that write the component run before or after."},
@@ -2235,7 +2264,7 @@ static void format_world_method(const method_form *form, const decl *component, 
         const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
         if (*p == 'T' && alone && component) {
             sb_printf(out, STR_FMT, STR_ARG(component->name));
-        } else if (component && component->is_local && strncmp(p, "Entity ", 7) == 0) {
+        } else if (component && component->is_local && strncmp(p, "Entity", 6) == 0 && !isalnum((unsigned char)p[6])) {
             sb_put(out, "LocalEntity");
             p += 5;
         } else {
@@ -2270,7 +2299,9 @@ static void format_method(const method_form *form, const type t, sb *out)
             continue;
         }
         const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
-        if ((*p == 'T' || *p == 'K') && alone) sb_put(out, element);
+        if (t.kind == TY_LOCAL_ENTITY && strncmp(p, "Entity", 6) == 0 && !isalnum((unsigned char)p[6])) {
+            sb_put(out, "LocalEntity"); p += 5;
+        } else if ((*p == 'T' || *p == 'K') && alone) sb_put(out, element);
         else if (*p == 'V' && alone) sb_put(out, value);
         else sb_putn(out, p, 1);
     }
@@ -6742,7 +6773,7 @@ static void complete_components_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_COMPONENT && d->is_local == local) item(c, name_for(d), CK_STRUCT, decl_what(d), NULL, NULL);
+        if (d->kind == DECL_COMPONENT && (!d->is_scene || d->is_local == local)) item(c, name_for(d), CK_STRUCT, decl_what(d), NULL, NULL);
     }
 }
 
@@ -7264,10 +7295,10 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     const bool routine = sc.decl && (sc.decl->kind == DECL_METHOD || sc.decl->kind == DECL_FUNCTION);
     if (sc.decl && !sc.in_input && !routine) {
         const bool local = view || sc.decl->is_local;
-        item(c, "Spawn", CK_FUNCTION, local ? "Spawn(local components...) -> LocalEntity" : "Spawn(components...) -> Entity",
+        item(c, local ? "local Spawn" : "Spawn", CK_FUNCTION, local ? "local Spawn(components...) -> LocalEntity" : "Spawn(components...) -> Entity",
              local ? "Creates a local entity with these components, at the end of the frame."
                    : "Creates an entity with these components.",
-             "Spawn($1)");
+             local ? "local Spawn($1)" : "Spawn($1)");
         item(c, "Send", CK_FUNCTION, "Send(event)",
              local ? "Sends a local event, or submits a command to the match." : "Sends an event to the whole world, handled at the end of the tick.",
              "Send($1)");
@@ -7355,8 +7386,6 @@ static void complete_declarations(completion *c)
          "scene ${1:Name}\n{\n    $0\n}");
     item(c, "local scene", CK_SNIPPET, "local scene Name { fields }", "A scene on this machine only, like a menu.",
          "local scene ${1:Name}\n{\n    $0\n}");
-    item(c, "local component", CK_SNIPPET, "local component Name { fields }",
-         "This machine's own: views change it, and the match never sees it.", "local component ${1:Name}\n{\n    $0\n}");
     item(c, "local singleton", CK_SNIPPET, "local singleton Name { fields }",
          "This machine's own, like settings or a menu's state.", "local singleton ${1:Name}\n{\n    $0\n}");
     item(c, "local event", CK_SNIPPET, "local event Name { fields }", "Sent from views, handled at the end of the frame.",
@@ -7669,7 +7698,7 @@ static void complete_draw_values(completion *c, const decl *shader)
 
 // Contexts the cursor can be in, found by scanning tokens.
 typedef enum context_kind {
-    CTX_TOP, CTX_DATA, CTX_HEADER, CTX_CODE, CTX_LITERAL, CTX_ATTRIBUTE, CTX_ATTRIBUTE_ARGS,
+    CTX_TOP, CTX_DATA, CTX_PREFAB, CTX_HEADER, CTX_CODE, CTX_LITERAL, CTX_ATTRIBUTE, CTX_ATTRIBUTE_ARGS,
     CTX_FIELD_ATTRIBUTE, CTX_FIELD_ATTRIBUTE_ARGS, // [Clamp(-1, 1)] before an input field
 } context_kind;
 
@@ -8614,6 +8643,13 @@ void analysis_completion(const int line, const int character, jbuf *out)
             context_kind next = CTX_CODE;
             if (top == CTX_TOP && before == T_IDENT && !after_fails(i)) next = CTX_DATA;
             else if ((top == CTX_CODE || top == CTX_LITERAL) && before == T_IDENT) next = CTX_LITERAL;
+            if (top == CTX_PREFAB) next = CTX_LITERAL;
+            for (int j = i - 1; (top == CTX_TOP || top == CTX_PREFAB) && j >= 0 && DOC->toks[j].kind != T_LBRACE && DOC->toks[j].kind != T_RBRACE && DOC->toks[j].kind != T_SEMI; j--) {
+                if (DOC->toks[j].kind == T_IDENT && (str_eq_c(DOC->toks[j].text, "prefab") || (top == CTX_PREFAB && str_eq_c(DOC->toks[j].text, "entity")))) {
+                    next = CTX_PREFAB;
+                    break;
+                }
+            }
             stack[++depth] = (frame){next, i, HEADER_NONE};
         } else if (kind == T_RBRACE && depth > 0) {
             depth--;
@@ -8740,6 +8776,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     case CTX_FIELD_ATTRIBUTE:
         if (pk == T_LBRACKET || pk == T_COMMA) {
+            item(&c, "SceneRequired", CK_FUNCTION, "[SceneRequired]", "Prefab authoring must supply a named entity reference; ordinary code can initialize it later.", "SceneRequired");
             item(&c, "Clamp", CK_FUNCTION, "[Clamp(lo, hi)]", "Keeps the field between lo and hi, before Sanitize runs.",
                  "Clamp($1)");
             item(&c, "Min", CK_FUNCTION, "[Min(x)]", "Keeps the field at least x, before Sanitize runs.", "Min($1)");
@@ -9068,6 +9105,21 @@ void analysis_completion(const int line, const int character, jbuf *out)
             }
         } else {
             complete_expression(&c, at, false);
+        }
+        break;
+
+    case CTX_PREFAB:
+        if (pk == T_COLON) {
+            for (int i = 0; i < A.written.count; i++) {
+                const decl *d = A.written.items[i];
+                if (d->kind == DECL_PREFAB) item(&c, name_for(d), CK_CLASS, "prefab", "Reusable rooted entity tree.", NULL);
+            }
+        } else {
+            for (int i = 0; i < A.prog->decls.count; i++) {
+                const decl *d = A.prog->decls.items[i];
+                if (d->kind == DECL_COMPONENT && !d->is_scene) item(&c, name_for(d), CK_STRUCT, "component", NULL, NULL);
+            }
+            item(&c, "entity", CK_KEYWORD, "named child entity", "Nested entities follow their parent's transform and lifetime.", "entity ${1:Child}\n{\n    $0\n}");
         }
         break;
 
