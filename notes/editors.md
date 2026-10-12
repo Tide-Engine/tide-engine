@@ -70,6 +70,9 @@ The production docs build passes. A private native install includes tide-editor;
 its installed tide open --check and bounded PNG capture both succeed. Other
 operating systems, Android, sanitizers and CI were not run; no workflow was
 dispatched. The screenshot is a real hidden native capture, not a mockup.
+Integration through origin/dev 9ff7e83b is clean. Incoming prototype/workflow
+changes do not touch editor/compiler/runtime dependencies; documentation overlap
+keeps the relocated package links. The merged production docs build passes.
 
 ## Tasks from functions, and a request's time limit, 2026-10-11
 
