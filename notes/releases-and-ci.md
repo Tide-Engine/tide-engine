@@ -36,6 +36,26 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A run on `release` uses that branch's own copy of the workflow, which is this one once `dev` is merged there for a stable release.
   - Every run also builds the docs site, and a run on `dev` deploys it: the `Docs` job, which calls `docs.yml` (`notes/docs-site.md`).
 - Windows web CI uses Chrome for Testing's Headless Shell 155.0.8059.39, cached by its exact version and checked before configuring `TIDE_BROWSER`. Its offscreen compositor keeps ANGLE's WARP device for WebGPU without a native window or DXGI window swap chain. Unified Chrome failed creating that swap chain on the runner (`DXGI_ERROR_NOT_CURRENTLY_AVAILABLE`), lost its GPU context and disabled compositing, which made canvas pixel snapshots transparent. The workflow records the Windows session ID. Failed served tests include Chrome's Windows subprocess log. The WebGPU flags and pixel assertions stay the same.
+- The Linux package job frees emulator disk headroom (2026-10-12) by removing
+  only the hosted image's unused .NET and Haskell SDKs (`/usr/share/dotnet`
+  and `/usr/local/.ghcup`) before Android setup. It logs free space on the
+  AVD's filesystem before and after. Android's SDK/NDK, Java, LLVM, caches,
+  emulator partition size, tests and publication gates are unchanged.
+  Run `38249496505` compiled Android successfully but its emulator exited
+  before boot: 7,052.48 MB available versus 7,372.80 MB required for the
+  6 GiB userdata partition. Run `38218458868` passed all 2,173 Android tests
+  earlier that day with the same workflow and Ubuntu image
+  `20261004.327.1`; restored caches were nearly the same size. The logs do
+  not establish what consumed the additional space on the failing runner.
+  Validation: actionlint 1.7.12 passes with only its existing unsupported
+  `queue` key excluded. Parsed workflow comparison confirms the scoped cleanup
+  is the only behavior added. The exact Bash block passes syntax and stubbed
+  execution checks for its fixed deletion targets, before/after reports and
+  failure propagation; no local SDK was deleted. Full Windows debug suites
+  passed 2,250 native tests (349.26 s) and 2,218 web tests (379.77 s), including
+  WebGL/WebGPU, with Node 24.16.0. `git diff --check` passes. Hosted disk
+  reclamation and emulator boot still need a newly requested Build run;
+  retrying the old run uses its old workflow. No CI run was dispatched.
 - Web CTest parallelism follows Node's `os.availableParallelism()` (2026-10-10),
   overriding the matrix's four-job default for that step. GitHub's standard
   private-repository Windows/Linux runners have two CPUs and macOS has three.

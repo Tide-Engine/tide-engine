@@ -377,6 +377,14 @@ jobs:
       # Android's tests run on its emulator, which Linux's runners accelerate
       # (KVM). Its SDK is on the runners; the emulator and its image come
       # through the SDK's manager, under Google's license.
+      - name: Free disk space for Android
+        if: runner.os == 'Linux' && matrix.preset == 'package'
+        run: |
+          # The 6 GiB userdata partition needs 7.2 GiB free before booting.
+          # Tide uses neither of these SDKs preinstalled on the hosted image.
+          df -h "$HOME"
+          sudo rm -rf -- /usr/share/dotnet /usr/local/.ghcup
+          df -h "$HOME"
       # Java for the SDK's tools, and for the checks of what's made for Google
       # Play.
       - uses: actions/setup-java@v4
