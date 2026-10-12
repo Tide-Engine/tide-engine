@@ -29,11 +29,13 @@ MapLens WorkshopLens(LevelLayout layout, float2 screen, int room)
     var center = float2(left + width * 0.5, top + height * 0.5);
     var size = float2(width, height);
     var cells = Math.Max(RoomWidth(layout, room), RoomHeight(layout, room));
-    var side = Math.Min(size.x - 24, size.y - 62);
-    // Fixed room framing includes a slice of a maker beside its outer shell.
-    // The partner's position never changes this scale or center.
-    var tile = Math.Max(5, room < 0 ? side * 0.96 / cells : side / (cells + 6));
-    var origin = center + float2(0, 9) - RoomCenter(layout, room) * tile;
+    var side = SceneSide(screen);
+    // The room sits in a square clear of the heading and the controls, two
+    // of its tiles from each edge; the window beyond shows the containing
+    // world. The partner's position never changes this scale or center.
+    // `center` and `size` place the labels, not the scene.
+    var tile = Math.Max(5, room < 0 ? side * 0.96 / cells : side / (cells + 4));
+    var origin = SceneCenter(screen) - RoomCenter(layout, room) * tile;
     return MapLens { center = center, size = size, origin = origin, tile = tile };
 }
 
@@ -366,10 +368,23 @@ float2 SmoothCell(float2 current, float2 target, float blend)
     return Math.Abs(next.x - target.x) < 0.001 && Math.Abs(next.y - target.y) < 0.001 ? target : next;
 }
 
+// The heading's rows end here; the scene has the window below them.
+float SceneTop(float2 screen) { return screen.x < 1050 ? 146.0 : 104.0; }
+// What the controls along the bottom need clear of the focused room.
+float SceneBottom(float2 screen) { return screen.x < 720 ? 200.0 : 80.0; }
+float SceneSide(float2 screen)
+{
+    return Math.Max(200, Math.Min(screen.x - 24, screen.y - SceneTop(screen) - SceneBottom(screen)));
+}
+float2 SceneCenter(float2 screen)
+{
+    return float2(screen.x * 0.5, SceneTop(screen) + (screen.y - SceneTop(screen) - SceneBottom(screen)) * 0.5);
+}
+
 bool InPlayfield(float2 at, float side, MapLens viewport)
 {
-    var left = viewport.center - viewport.size * 0.5 + float2(12, 40);
-    var right = viewport.center + viewport.size * 0.5 - float2(12, 22);
+    var left = float2(0, SceneTop(float2(Screen.width, Screen.height)));
+    var right = float2(Screen.width, Screen.height);
     return at.x + side * 0.5 >= left.x && at.x - side * 0.5 <= right.x &&
         at.y + side * 0.5 >= left.y && at.y - side * 0.5 <= right.y;
 }
