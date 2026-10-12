@@ -661,6 +661,16 @@ static const char *asset_cname(const decl *d)
     return b.data;
 }
 
+// Stable across asset-file edits and declaration ordering; zero is no asset.
+// Collisions are rejected before generation rather than aliasing references.
+static uint64_t asset_reference_id(const decl *d)
+{
+    uint64_t id = UINT64_C(14695981039346656037);
+    for (int i = 0; i < d->qualified.len; i++) id = (id ^ (uint8_t)d->qualified.ptr[i]) * UINT64_C(1099511628211);
+    id &= INT64_MAX;
+    return id ? id : 1;
+}
+
 // A name for generated code, unique in the program: tide_<what><n>.
 static const char *made_up(gen *g, const char *what)
 {
@@ -733,6 +743,11 @@ static void name_program(gen *g)
         part->gen_name = b.data;
     }
     for (int i = 0; i < prog->results.count; i++) prog->results.items[i]->gen_name = result_cname(prog->results.items[i]);
+    for (int i = 0; i < prog->asset_refs.count; i++) {
+        sb b = {0};
+        sb_printf(&b, "tide_asset_ref%d", i);
+        prog->asset_refs.items[i]->gen_name = b.data;
+    }
     // What a T? field is kept as: tide_optional_<T>, with what C names can't hold as underscores (tide_optional_int,
     // tide_optional_Combat_Health, tide_optional_List_int), and its place among them after one that's taken
     for (int i = 0; i < prog->optional_fields.count; i++) {
@@ -3121,6 +3136,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         return;
     }
     if (e->bind == BIND_ASSET) { // Its global, set as the pack is loaded
+        if (e->asset_reference) {
+            sb_printf(o, "((%s){.id = INT64_C(%llu)})", c_type(e->type), (unsigned long long)asset_reference_id(e->constant));
+            return;
+        }
         sb_put(o, asset_cname(e->constant));
         return;
     }
@@ -3363,6 +3382,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (is_optional_field(e) && e != g->raw_place) {
             gen_optional_read(g, o, e);
+            break;
+        }
+        if (e->asset_ref_value) {
+            sb_printf(o, "tide_resolve_%s(", c_type(e->object->type));
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
             break;
         }
         if (e->object->type.kind == TY_MESH) { // tree.vertices, tree.indices: the pack's lists, by their handles
@@ -15697,12 +15722,23 @@ static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    if (!prog->assets.count) return;
+    if (!prog->assets.count && !prog->asset_refs.count) return;
     sb_put(o, "// The game's assets: the values their names read as, from the pack (tide/pack.h)\n");
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         sb_printf(o, "static %s %s __attribute__((unused)); // " STR_FMT "\n", asset_ctype(d->return_type), asset_cname(d), STR_ARG(d->qualified));
     }
+    for (int i = 0; i < prog->asset_refs.count; i++) {
+        const decl *ref = prog->asset_refs.items[i];
+        sb_printf(o, "\nTIDE_HELPER tide_mesh_lists tide_resolve_%s(const %s ref)\n{\n    switch (ref.id) {\n", type_cname(ref), type_cname(ref));
+        for (int a = 0; a < prog->assets.count; a++) {
+            const decl *asset = prog->assets.items[a];
+            if (asset->return_type.kind != TY_MESH || asset->return_type.decl != ref->asset_ref_of) continue;
+            sb_printf(o, "    case INT64_C(%llu): return %s;\n", (unsigned long long)asset_reference_id(asset), asset_cname(asset));
+        }
+        sb_put(o, "    default: return (tide_mesh_lists){0};\n    }\n}\n");
+    }
+    if (!prog->assets.count) return;
     if (g->asset_dependencies.count || g->skinned_fingerprints.count) {
         sb_put(o, "\n");
         sb_putn(o, (const char *)tide_pack_fingerprint_source, tide_pack_fingerprint_source_size);
@@ -18908,6 +18944,17 @@ bool codegen(program *prog, const codegen_options *opts)
         vec_push(prog->singletons, state);
     }
     name_program(&g);
+    if (prog->asset_refs.count) for (int i = 0; i < prog->assets.count; i++) {
+        const decl *a = prog->assets.items[i];
+        if (a->return_type.kind != TY_MESH) continue;
+        for (int j = 0; j < i; j++) {
+            const decl *b = prog->assets.items[j];
+            if (b->return_type.kind == TY_MESH && asset_reference_id(a) == asset_reference_id(b)) {
+                diag_error(a->at, "asset reference identity clashes with '" STR_FMT "'; rename one asset", STR_ARG(b->qualified));
+                return false;
+            }
+        }
+    }
     collect_tasks(&g);
     collect_heard_rows(&g);
     collect_asset_dependencies(&g);

@@ -1,5 +1,17 @@
 # Assets and local files
 
+## Persistent static model references (2026-10-12)
+
+Approved Asset<Mesh<V>> fields store a checked singular asset declaration's
+identity, separate from borrowed Mesh handles. Value resolves its current global;
+geometry reloads require no reference rewrite. Generated typed switches use no
+engine API or global runtime registry. Compiler/storage contracts and tests are
+in notes/language.md, Checked static asset references. The native editor uses the
+existing static importer/cache for browsing and nested scene previews; copied
+geometry survives front-end arena replacement (notes/editors.md). Imported colors
+and fixed preview lighting are visual only; custom vertex defaults/materials and
+SkinnedMesh previews are not evaluated by the editor.
+
 ## Retained ordinary asset values (2026-10-11)
 
 Production sharing now implements the owner's approved detach-on-write direction, including ordinary asset lists, not only Animation/SkinnedMesh data. A field owns a small heap descriptor naming immutable bytes by SHA-256 of the layout, length and content. The heap retains that content outside simulation pages; copies and snapshots retain it across pack replacement/unload. Reads and repeated assignment of the same known asset avoid payload copies. First write detaches into ordinary owned storage. Already-owned destinations reuse their storage on asset reset, avoiding the prototype's doubled pending allocations. Arbitrary ordinary values retain their existing copying path; no broad content comparisons were added.

@@ -687,7 +687,7 @@
         },
         {
           "comment": "List<int>, Map<int, Cell>, Set<int>, Grid2<Cell>, Mesh<Corner>, SkinnedMesh<Corner, Rig>: the built-in types that hold another",
-          "match": "(?<!\\.)\\b(List|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
+          "match": "(?<!\\.)\\b(List|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh|Asset)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
           "captures": {
             "1": { "name": "support.class.tide" },
             "2": { "name": "punctuation.definition.typeparameters.begin.tide" },
