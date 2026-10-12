@@ -94,6 +94,41 @@ static const type T_CHAR_ = {TY_CHAR, NULL};
 static const type T_LONG_ = {TY_LONG, NULL};
 static const type T_FLOAT_ = {TY_FLOAT, NULL};
 static const type T_ENTITY_ = {TY_ENTITY, NULL};
+static void check_signature(checker *c, decl *m);
+static void check_method_body(checker *c, decl *m);
+
+static decl *local_method(checker *c, decl *owner, decl *source)
+{
+    if (!source->placement_method) return source; // Interpolate and invalid recovery trees
+    decl *m = source->placement_method;
+    if (m->placement_of) return m;
+    m->kind = DECL_METHOD;
+    m->owner = owner;
+    m->placement_of = source;
+    m->placement_method = NULL;
+    m->is_virtual = m->is_override = false;
+    m->shares_name = source->shares_name;
+    m->c_suffix = source->c_suffix;
+    sb name = {0};
+    sb_printf(&name, "%s_" STR_FMT, owner->c_name, STR_ARG(source->name));
+    m->qualified = (str){name.data, (int)name.len};
+    m->c_name = name.data;
+    vec_push(c->prog->decls, m);
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = source->unit};
+    check_signature(&nested, m);
+    return m;
+}
+
+static void check_placement_body(checker *c, decl *m)
+{
+    if (!m->owner || m->owner->kind != DECL_COMPONENT || m->is_interpolate || m->body_checked) return;
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered};
+    check_method_body(&nested, m);
+#define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
+    MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
+    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
+#undef MERGE_CHECKS
+}
 
 // The type a declaration names: a component, singleton, input, record or struct.
 static type decl_type(decl *d)
@@ -312,6 +347,12 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
+            if (d == prog->transform && d->index < 0) {
+                program *p = (program *)prog;
+                d->index = p->components.count;
+                vec_push(p->components, d);
+                d->named = true;
+            }
             // Generated C only has these in games that name them
             if ((d == prog->random || named_only(prog, d)) && builds(prog) && !prog->quiet_names) d->named = true;
             if (d == prog->sound && builds(prog) && !prog->quiet_names) ((program *)prog)->uses_audio = true; // The frame names its Sounds
@@ -635,7 +676,8 @@ static bool same_param_lists(const param *a, const int a_count, const param *b, 
         if (i == a_count || j == b_count) return i == a_count && j == b_count;
         const param *p = &a[i++];
         const param *q = &b[j++];
-        if (signature_form(p->mode) != signature_form(q->mode) || p->ownership != q->ownership || p->verified != q->verified) return false;
+        if (signature_form(p->mode) != signature_form(q->mode) || p->ownership != q->ownership || p->verified != q->verified
+            || p->placement_local != q->placement_local) return false;
         if (p->mode == PARAM_QUERY) {
             if (!same_param_lists(p->query.items, p->query.count, q->query.items, q->query.count)) return false;
         } else if (!p->ownership && !same_type(p->type, q->type)) {
@@ -1152,6 +1194,17 @@ static bool holds_render_resource_in(const type t, const resource_outer *outer)
 static bool holds_render_resource(const type t)
 {
     return holds_render_resource_in(t, NULL);
+}
+
+static bool holds_local_handle(const type t, const int depth)
+{
+    if (t.kind == TY_LOCAL_ENTITY) return true;
+    if (!t.decl || depth > 64 || (t.kind != TY_STRUCT && t.kind != TY_OPTIONAL && t.kind != TY_ARRAY
+        && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET && t.kind != TY_GRID)) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (holds_local_handle(t.decl->fields.items[i].type, depth + 1)) return true;
+    }
+    return false;
 }
 
 // Text or a list: what a world keeps in its heap.
@@ -2411,11 +2464,66 @@ static void record_change(const checker *c, const expr *e, const comp_mask comps
     vec_push(*sites, s);
 }
 
+// Components define values independently of where an instance is stored. A
+// private specialization carries local storage identity through the existing
+// scheduling, archetype and capability analysis; it is never a source symbol.
+static decl *component_placement(program *prog, decl *d, const bool local, const loc at)
+{
+    if (d->placement_of) d = d->placement_of;
+    if (d->is_scene) {
+        if (d->is_local != local) diag_error(at, "'" STR_FMT "' belongs to %s", STR_ARG(d->name), d->is_local ? "local state" : "the match");
+        return d;
+    }
+    if (local && d->local_part) {
+        diag_error(at, "'" STR_FMT "' has local fields attached to match instances: local placement requires ordinary component fields",
+                   STR_ARG(d->name));
+        return d;
+    }
+    if (!local) {
+        for (int i = 0; i < d->fields.count; i++) {
+            const field *f = &d->fields.items[i];
+            if (holds_render_resource(f->type) || holds_local_handle(f->type, 0)) {
+                diag_error(at, "'" STR_FMT "' contains machine-local field '" STR_FMT "' and can't be placed in the match",
+                           STR_ARG(d->name), STR_ARG(f->name));
+                diag_note("use local placement and access for this component");
+                break;
+            }
+        }
+        return d;
+    }
+    if (!d->local_placement) {
+        decl *placed = NEW(decl);
+        *placed = *d;
+        placed->is_local = true;
+        placed->placement_of = d;
+        placed->local_placement = NULL;
+        placed->local_part = NULL;
+        placed->index = prog->components.count;
+        placed->gen_name = NULL;
+        sb name = {0};
+        sb_printf(&name, "tide_local_component_" STR_FMT, STR_ARG(d->qualified));
+        for (size_t i = 0; i < name.len; i++) if (name.data[i] == '.') name.data[i] = '_';
+        placed->c_name = name.data;
+        if (placed->index >= MAX_COMPONENTS) {
+            diag_error(at, "too many component placements; the limit is %d for now", MAX_COMPONENTS);
+            return d;
+        }
+        vec_push(prog->components, placed);
+        d->local_placement = placed;
+    }
+    return d->local_placement;
+}
+
 static comp_mask check_component_list(checker *c, const expr *call, const char *fn)
 {
     comp_mask mask = mask_none();
     for (int i = 0; i < call->args.count; i++) {
         decl *d = check_component_arg(c, call->args.items[i], fn);
+        if (d) {
+            d = component_placement(c->prog, d, call->local_world, call->args.items[i]->at);
+            call->args.items[i]->type_decl = d;
+            call->args.items[i]->type = decl_type(d);
+        }
         if (!d || !check_component_side(c, call->args.items[i], d)) continue;
         if (mask_has(mask, d->index)) {
             diag_error(call->args.items[i]->at, "'" STR_FMT "' appears twice; an entity has at most one of each component",
@@ -2424,6 +2532,44 @@ static comp_mask check_component_list(checker *c, const expr *call, const char *
         mask = mask_or(mask, bit(d));
     }
     return mask;
+}
+
+// Hierarchy links are ordinary world-owned values, so snapshots, hashes and
+// packing use the same machinery as game components. No runtime type registry
+// or pointers into simulation storage are introduced.
+static void ensure_hierarchy(program *prog, const bool local)
+{
+    if (prog->hierarchy[local]) return;
+    if (!prog->hierarchy_node) {
+        decl *node = NEW(decl);
+        node->kind = DECL_STRUCT;
+        node->builtin = true;
+        node->name = node->qualified = str_from("tide_hierarchy_node");
+        node->index = 2;
+        static const char *const names[] = {"parent", "first", "next", "previous"};
+        for (int i = 0; i < 4; i++) {
+            field f = {0};
+            f.name = str_from(names[i]);
+            f.type = T_ENTITY_;
+            vec_push(node->fields, f);
+        }
+        prog->hierarchy_node = node;
+        vec_push(prog->structs, node);
+    }
+    decl *state = NEW(decl);
+    state->kind = DECL_SINGLETON;
+    state->builtin = true;
+    state->is_local = local;
+    state->name = state->qualified = str_from(local ? "tide_local_hierarchy" : "tide_hierarchy");
+    state->index = prog->singletons.count;
+    field f = {0};
+    f.name = str_from("nodes");
+    f.hidden = true;
+    f.type = map_of(prog, T_ENTITY_, (type){TY_STRUCT, prog->hierarchy_node}, false);
+    vec_push(state->fields, f);
+    prog->hierarchy[local] = state;
+    prog->uses_heap = true;
+    vec_push(prog->singletons, state);
 }
 
 // Whether `t` is the built-in Format, what a render target is made to hold.
@@ -3894,6 +4040,7 @@ static void check_arg_types(checker *c, expr *e, decl *m);
 // The arguments of a call of method or function `m`, against its parameters.
 static void check_method_args(checker *c, expr *e, decl *m)
 {
+    check_placement_body(c, m);
     e->call = m->kind == DECL_FUNCTION ? CALL_FUNCTION : CALL_METHOD;
     e->method = m;
     e->names_taken = true;
@@ -4400,6 +4547,14 @@ static type check_self_call(checker *c, expr *e, decl *m)
     const bool shared = m->shares_name; // Which of them it is comes first
     if (shared) m = check_overloaded_args(c, e, m);
     if (!m) return T_ERR;
+    if (c->method->owner && c->method->owner->placement_of) {
+        m = local_method(c, c->method->owner, m);
+        check_placement_body(c, m);
+        if (shared) {
+            e->method = m;
+            for (int i = 0; i < c->calls.count; i++) if (c->calls.items[i].call == e) c->calls.items[i].to = m;
+        }
+    }
     if (m->is_mut_method && !c->method->is_mut_method) {
         diag_error(e->at, "'" STR_FMT "' changes the fields, so only a mut method can call it", STR_ARG(m->name));
         diag_note("declare '" STR_FMT "' as 'mut' too", STR_ARG(c->method->name));
@@ -4440,9 +4595,8 @@ static type check_call(checker *c, expr *e)
             diag_note("that side only runs sometimes; spawn into a local before the condition");
         }
         e->call = CALL_SPAWN;
-        e->local_world = local_code(c);
+        e->local_world = e->placement_local;
         e->spawn_mask = check_component_list(c, e, "Spawn");
-        if (in_async_function(c)) e->local_world = c->method->task_side == TASK_LOCAL;
         if (inherits(c)) {
             // Its world is its components': a local one makes it this machine's, and with none it's the match's
             for (int i = 0; i < e->args.count && !e->local_world; i++) {
@@ -5918,6 +6072,30 @@ static type check_world_call(checker *c, expr *e, param *world)
     e->object->param = world;
     e->object->type = world->type;
     world->read = true;
+    if (str_eq_c(e->name, "LocalToWorld") || str_eq_c(e->name, "Parent")) {
+        if (e->type_arg.len || e->args.count != 1 || !order_named_args(e, "entity", 0)) {
+            diag_error(e->at, STR_FMT " takes one entity handle", STR_ARG(e->name));
+            return T_ERR;
+        }
+        const type handle = check_expr(c, e->args.items[0]);
+        if (handle.kind != TY_ENTITY && handle.kind != TY_LOCAL_ENTITY) {
+            if (handle.kind != TY_ERROR) diag_error(e->args.items[0]->at, STR_FMT " takes an Entity or LocalEntity", STR_ARG(e->name));
+            return T_ERR;
+        }
+        const bool local = handle.kind == TY_LOCAL_ENTITY;
+        decl *transform = find_type(c, str_from("Transform"), e->at);
+        transform = component_placement(c->prog, transform, local, e->at);
+        if (!c->method && ((local && !is_local_code(c->system)) || (!local && c->system->is_handler && c->system->is_local))) {
+            diag_error(e->at, "this World can't read %s entities", local ? "local" : "match");
+            return T_ERR;
+        }
+        ensure_hierarchy(c->prog, local);
+        note_world_use(c, transform, false, e->at);
+        e->type_decl = transform;
+        e->local_world = local;
+        e->call = CALL_TRANSFORM;
+        return str_eq_c(e->name, "Parent") ? handle : (type){TY_FLOAT4X4, NULL};
+    }
     const decl *code = c->system;
     const bool helper = c->method != NULL; // A function's or method's own World
     const char *code_what = !helper ? system_what(code) : code->kind == DECL_FUNCTION ? "function" : "method";
@@ -5926,12 +6104,14 @@ static type check_world_call(checker *c, expr *e, param *world)
     if (set) world->written = true;
     if (!set && !try_get && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
         check_world_args(c, e);
-        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet and Set", STR_ARG(e->name));
+        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, Parent and LocalToWorld", STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Get");
         suggest_consider_c(&s, "Has");
         suggest_consider_c(&s, "TryGet");
         suggest_consider_c(&s, "Set");
+        suggest_consider_c(&s, "Parent");
+        suggest_consider_c(&s, "LocalToWorld");
         suggest_note(&s);
         return T_ERR;
     }
@@ -5962,6 +6142,9 @@ static type check_world_call(checker *c, expr *e, param *world)
         }
         return T_ERR;
     }
+    const type handle = e->args.count > 0 ? check_expr(c, e->args.items[0]) : T_ERR;
+    d = component_placement(c->prog, d, handle.kind == TY_LOCAL_ENTITY, e->type_arg_at);
+    e->type_decl = d;
     // Which world it's in: the match can't use local state, and a local
     // handler has no World of the match to read.
     const bool local_in_match = !helper && d->is_local && !is_local_code(code);
@@ -5982,7 +6165,6 @@ static type check_world_call(checker *c, expr *e, param *world)
     const type_kind want = d->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
     bool ok = true;
     if (e->args.count > 0) {
-        const type handle = check_expr(c, e->args.items[0]);
         if (handle.kind != TY_ERROR && handle.kind != want) {
             diag_error(e->args.items[0]->at, STR_FMT "<" STR_FMT "> takes an entity's handle, %s, not %s", STR_ARG(e->name),
                        STR_ARG(d->name), want == TY_ENTITY ? "an Entity" : "a LocalEntity", type_name(handle));
@@ -6946,7 +7128,7 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);
     // stats.IsDead(), unit.Heal(5), physics.Raycast(...): explicit value receivers.
     if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) {
-        decl *m = find_method(obj.decl, e->name);
+        decl *m = find_method(obj.decl->placement_of ? obj.decl->placement_of : obj.decl, e->name);
         if (!m) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
             diag_error(e->at, "%s has no method '" STR_FMT "'", type_name(obj), STR_ARG(e->name));
@@ -6967,6 +7149,14 @@ static type check_method(checker *c, expr *e)
         const bool shared = m->shares_name; // Which of them it is comes first
         if (shared) m = check_overloaded_args(c, e, m);
         if (!m) return T_ERR;
+        if (obj.kind == TY_COMPONENT && obj.decl->placement_of) {
+            m = local_method(c, obj.decl, m);
+            check_placement_body(c, m);
+            if (shared) {
+                e->method = m;
+                for (int i = 0; i < c->calls.count; i++) if (c->calls.items[i].call == e) c->calls.items[i].to = m;
+            }
+        }
         if (m->is_mut_method && through_element(e->object)) {
             diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
             diag_note("take it out, change it, and put it back: 'var e = items[i]; e." STR_FMT "(...); items[i] = e;'",
@@ -6990,6 +7180,33 @@ static type check_method(checker *c, expr *e)
     // A function's or a method's change is of the entity's world, which its callers answer for
     const bool passed = inherits(c);
     e->local_world = in_async_function(c) || passed ? obj.kind == TY_LOCAL_ENTITY : local_code(c);
+
+    if (str_eq_c(e->name, "SetParent")) {
+        if (e->type_arg.len || e->args.count < 1 || e->args.count > 2 || !order_named_args(e, "parent, worldPositionStays", 1)) {
+            diag_error(e->at, "SetParent takes a parent entity and optional bool worldPositionStays");
+            return T_ERR;
+        }
+        if (e->args.items[0]->kind == E_NULL) e->args.items[0]->kind = E_DEFAULT;
+        const type parent = check_expr_want(c, e->args.items[0], obj);
+        if (parent.kind != TY_ERROR && parent.kind != obj.kind) {
+            diag_error(e->args.items[0]->at, "a parent must belong to the same world as its child");
+            return T_ERR;
+        }
+        if (e->args.count == 2) check_expr_want(c, e->args.items[1], T_BOOL_);
+        else {
+            expr *keep = NEW(expr);
+            keep->kind = E_BOOL;
+            keep->type = T_BOOL_;
+            keep->bool_value = true;
+            vec_push(e->args, keep);
+        }
+        ensure_hierarchy(c->prog, e->local_world);
+        decl *transform = find_type(c, str_from("Transform"), e->at);
+        component_placement(c->prog, transform, e->local_world, e->at);
+        e->call = CALL_PARENT;
+        if (passed) note_act(c, e->local_world, e->at, e->local_world ? "parents local entities" : "parents entities", false, false);
+        return T_VOID_;
+    }
 
     if (str_eq_c(e->name, "Add")) {
         e->call = CALL_ADD;
@@ -7019,6 +7236,11 @@ static type check_method(checker *c, expr *e)
                 continue;
             }
             decl *d = check_component_arg(c, arg, "Remove");
+            if (d) {
+                d = component_placement(c->prog, d, e->local_world, arg->at);
+                arg->type_decl = d;
+                arg->type = decl_type(d);
+            }
             if (!d || !check_component_side(c, arg, d)) continue;
             if (mask_has(mask, d->index)) diag_error(arg->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
             mask = mask_or(mask, bit(d));
@@ -7106,6 +7328,8 @@ static const char *op_symbol(const tok_kind op)
 // Result type of `lhs op rhs`, or TY_ERROR after reporting.
 static bool same_type(const type a, const type b)
 {
+    if (a.kind == TY_COMPONENT && b.kind == TY_COMPONENT)
+        return (a.decl->placement_of ? a.decl->placement_of : a.decl) == (b.decl->placement_of ? b.decl->placement_of : b.decl);
     return a.kind == b.kind && a.decl == b.decl;
 }
 
@@ -7211,6 +7435,7 @@ static void mark_shown(const type t)
 {
     if (!text_shows_inside(t) || t.decl->shown) return;
     t.decl->shown = true;
+    if (t.decl->placement_of) t.decl->placement_of->shown = true;
     for (int i = 0; i < t.decl->fields.count; i++) mark_shown(t.decl->fields.items[i].type);
 }
 
@@ -8689,7 +8914,7 @@ static void check_compare_expr(checker *c, const expr *e)
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_SEND: what = "send events"; break;
-    case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: what = "change entities"; break;
+    case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "change entities"; break;
     case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load or unload scenes"; break;
     case CALL_SESSION: what = "change the session"; break;
     case CALL_CLIPBOARD: what = "use the clipboard"; break;
@@ -10366,7 +10591,7 @@ static void check_step_expr(checker *c, const expr *e)
     const char *what = e->io_operation ? "access the filesystem" : NULL;
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
-    case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: what = "add, remove or destroy"; break;
+    case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "add, remove or destroy"; break;
     case CALL_SEND: what = "send events"; break;
     case CALL_DRAW: what = "draw"; break;
     case CALL_AUDIO: what = "play sounds"; break;
@@ -11262,7 +11487,7 @@ static bool stands_alone(const expr *e)
 {
     const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
     const builtin_call call = called->call;
-    return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY
+    return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_PARENT
                                          // A Draw call that gives a value only measures or converts
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
@@ -12819,7 +13044,7 @@ static void check_fields(checker *c, const decl *d)
         }
         if (holds_render_resource(f->type)) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
-            if (d->kind != DECL_STRUCT && !d->is_local) {
+            if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
                 diag_note("Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component "
                           "or singleton");
@@ -12858,7 +13083,7 @@ static void check_fields(checker *c, const decl *d)
         }
         if (f->default_value) check_default(c, f);
         check_field_attributes(c, d, f);
-        if (f->type.kind == TY_LOCAL_ENTITY && (!d->is_local || d->kind == DECL_STRUCT)) {
+        if (f->type.kind == TY_LOCAL_ENTITY && d->kind != DECL_COMPONENT && (!d->is_local || d->kind == DECL_STRUCT)) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind == DECL_STRUCT) {
                 diag_error(at, "structs belong to neither side, so they can't hold a LocalEntity");
@@ -13093,6 +13318,9 @@ static void check_signature(checker *c, decl *m)
         c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
         c->grid_param = false;
+        if (m->is_async && p->type.kind == TY_COMPONENT) {
+            p->type.decl = component_placement(c->prog, p->type.decl, p->placement_local, p->type_at);
+        } else if (p->placement_local) diag_error(p->placement_at, "local component access belongs on a system, view, handler, query or async parameter; ordinary functions take values");
         if (world) check_world_param(m, p, k);
         if (p->type.kind == TY_GRID) { // Which grid it is, the GPU's code is written for: the CPU has no call that passes one
             if (p->mode == PARAM_MUT) {
@@ -13813,6 +14041,8 @@ static void check_shader_decl(const checker *c, decl *d)
             }
         }
         decl *t = find_type(c, p->type_name, p->type_at);
+        if (t && t->kind == DECL_COMPONENT) t = component_placement(c->prog, t, p->placement_local, p->type_at);
+        else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         type value = T_ERR;
         const bool plain = !t && builtin_type_named(p->type_name, &value);
 
@@ -14057,6 +14287,8 @@ static void check_audio_signature(checker *c, decl *m)
 
 static void check_method_body(checker *c, decl *m)
 {
+    if (m->body_checked) return;
+    m->body_checked = true;
     c->method = m;
     c->system = m; // For its parameters
     c->unit = m->unit;
@@ -14458,6 +14690,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             }
         }
         decl *d = find_type(c, p->type_name, p->type_at);
+        if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         if (!d || d->kind != DECL_COMPONENT) {
             diag_error(p->type_at, "a query takes only components, and '" STR_FMT "' isn't a component", STR_ARG(p->type_name));
             p->type = T_ERR;
@@ -14560,6 +14793,8 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
         decl *d = p->mode == PARAM_QUERY ? NULL : find_type(c, p->type_name, p->type_at);
+        if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
+        else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         const bool is_entity = str_eq_c(p->type_name, "Entity");
         const bool is_local_entity = str_eq_c(p->type_name, "LocalEntity");
 
@@ -14904,7 +15139,7 @@ static bool call_acts(const expr *e)
     if (e->kind != E_CALL && e->kind != E_METHOD) return false;
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
-    case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
+    case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
@@ -15135,6 +15370,37 @@ static void add_builtins(program *prog)
     const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
     vec_push(owner->fields, player);
     prog->owner = owner;
+
+    decl *transform_component = NEW(decl);
+    transform_component->kind = DECL_COMPONENT;
+    transform_component->name = str_from("Transform");
+    transform_component->builtin = true;
+    transform_component->index = -1;
+    static const char *const transform_fields[][2] = {
+        {"localPosition", "float3"}, {"localRotation", "quaternion"}, {"localScale", "float3"}};
+    for (int i = 0; i < 3; i++) {
+        field f = {0};
+        f.name = str_from(transform_fields[i][0]);
+        f.type_name = str_from(transform_fields[i][1]);
+        if (i == 1) {
+            f.default_value = NEW(expr);
+            f.default_value->kind = E_MEMBER;
+            f.default_value->member = str_from("identity");
+            f.default_value->object = NEW(expr);
+            f.default_value->object->kind = E_NAME;
+            f.default_value->object->name = str_from("quaternion");
+        } else if (i == 2) {
+            f.default_value = NEW(expr);
+            f.default_value->kind = E_CALL;
+            f.default_value->name = str_from("float3");
+            expr *one = NEW(expr);
+            one->kind = E_FLOAT;
+            one->text = str_from("1");
+            vec_push(f.default_value->args, one);
+        }
+        vec_push(transform_component->fields, f);
+    }
+    prog->transform = transform_component;
 
     // The events the engine sends: to each entity as it's spawned or destroyed,
     // and to the world as players join and leave.
@@ -15560,6 +15826,7 @@ static void add_builtins(program *prog)
     vec_push(decls, view_time);
     vec_push(decls, random);
     vec_push(decls, owner);
+    vec_push(decls, transform_component);
     vec_push(decls, visibility);
     vec_push(decls, prediction);
     vec_push(decls, io_error);
@@ -15789,7 +16056,8 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
-        || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
+        || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug")
+        || str_eq_c(name, "Transform");
 }
 
 // What a declaration is called in generated C: Combat_Health for Combat.Health.
@@ -15987,6 +16255,7 @@ static void collect_decls(program *prog)
                     prog->main = d;
                 }
             }
+            if (d == prog->transform) { d->index = -1; break; }
             d->index = prog->components.count;
             if (d->index == MAX_COMPONENTS) {
                 diag_error(d->at, "too many components; the limit is %d for now", MAX_COMPONENTS);
@@ -18820,7 +19089,10 @@ bool check(program *prog)
             check_method_body(&c, d);
             if (diag_error_count() == errors) warn_unused_params(&c, d);
         }
-        for (int k = 0; k < d->methods.count; k++) check_method_body(&c, d->methods.items[k]);
+        for (int k = 0; k < d->methods.count; k++) {
+            decl *m = d->methods.items[k];
+            if (d->kind != DECL_COMPONENT || m->is_interpolate) check_method_body(&c, m);
+        }
     }
     for (int i = 0; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
     if (prog->input) {
@@ -18870,6 +19142,16 @@ bool check(program *prog)
         if (diag_error_count() == errors) warn_unused_params(&c, d); // Errors hide uses
     }
     for (int i = replaced_before; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
+    // Called placements have been checked independently. An unused method is
+    // still checked once, in match placement, so unused bodies don't hide errors.
+    for (int i = 0; i < prog->components.count; i++) {
+        decl *d = prog->components.items[i];
+        if (d->placement_of) continue;
+        for (int k = 0; k < d->methods.count; k++) {
+            decl *m = d->methods.items[k];
+            if (!m->body_checked && (!m->placement_method || !m->placement_method->body_checked)) check_placement_body(&c, m);
+        }
+    }
     check_shared_names(&c, DECL_SYSTEM);
     diag_phase("checking code");
     check_roll_calls(&c);

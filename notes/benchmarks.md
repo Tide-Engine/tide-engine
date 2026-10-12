@@ -251,3 +251,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `versus_lookup` compares map/set hits, misses, score updates and ordered key replacement. Its Tide host reads entries directly from the world heap for the semantic digest: a signed 64-bit insertion-order header, then the primitive key and value, both map and set entries 16 bytes with the key at 8. It uses `tide_map_live` so negative removed-entry orders are skipped; storage IDs and padding are never included in the digest. This mirror must follow tidec's entry layout. Layout assertions pin its offsets and strides, and `versus_lookup`, `_empty`, `_single` and `_steady` compare live keys, values and insertion order against the independent C tables on one and several threads.
   - The C is what someone who knows the machine writes: arrays rather than structs where that's faster, branches turned into selects for SIMD, arrays staggered so they don't share their addresses' low bits (4K aliasing), and threads on the same pool Tide ticks on (`versus_for`), only once there's enough work for them to pay (`versus_pieces`; `--split` and `--quick` always split). A way with a trick Tide can't do yet is a way of its own (`C, lookup`, `C, SIMD`). The C builds with the flags generated code does, so the results stay bit-identical.
   - It times each tick after the warm-up ones, on one thread and then on every core, and reports medians, and how many times as long Tide takes. `--save <label>` adds a run to `bench/results/versus.jsonl`.
+
+## Shared component syntax migration (2026-10-12)
+
+The skinned benchmark's Character is now a shared component definition placed
+with local Spawn and accessed with local bindings, including its shader binding.
+Workload, fixture, draw behavior and saved measurements are unchanged. This
+syntax migration makes no new timing claim; full native/web validation is
+recorded with the compiler's Transform/placement work in notes/language.md.

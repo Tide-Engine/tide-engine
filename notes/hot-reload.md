@@ -46,3 +46,13 @@ The frame callback ABI now includes confirmed previous/fraction endpoints. Repos
 ## T? fields across a reload (2026-10-11)
 
 A field declared `T?` is described in `tide_game_layout` as the struct it's kept as, a type named as the `T?` is ("int?") with the fields `value` and `ok`, so it carries over by name like any struct field: a value stays a value, and nothing stays nothing rather than becoming the declared default again. A field that was a `T` and is now a `T?`, or the other way, is another kind and starts at its default (not built: carrying the value across). `migrate_carries_optional_fields_as_a_value_or_nothing` (`platform/tests/migrate.c`) checks both, text included.
+
+## Transform hierarchy layouts (2026-10-12)
+
+Generated private hierarchy singleton maps and their node/entry types use existing
+layout metadata, so retained links migrate with ordinary world-owned containers.
+Private local component storage names are stable from the qualified source type;
+public values use the source C representation. The former local-component
+syntax/storage naming is intentionally replaced, without compatibility aliases.
+Snapshot and raw-pack restoration are tested with live parent links; a dedicated
+hierarchy hot-reload and portable-wire roundtrip remains future coverage.

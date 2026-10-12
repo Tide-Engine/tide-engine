@@ -1,0 +1,3 @@
+// expect: a parent must belong to the same world as its child
+scene Main { }
+void Attach(Entity child, LocalEntity parent) { child.SetParent(parent); }

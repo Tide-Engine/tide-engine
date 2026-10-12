@@ -5,7 +5,7 @@ scene Main { }
 // every kind, and both ways to read one, in a frag and in a vert.
 struct Light { RenderTarget map; DepthTexture shadow; }
 component Caster { float3 position; local DepthTexture seen; }
-local component Probe { DepthTexture shadow; }
+component Probe { DepthTexture shadow; }
 local singleton Lamp
 {
     RenderTarget map;       // Depth alone
@@ -69,7 +69,7 @@ view Make(mut Lamp lamp)
         lamp.light = light;
         lamp.mesh = [Vertex3 { position = float3(-1, 0, 0) }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }];
         lamp.faces = [0, 1, 2];
-        Spawn(Probe { shadow = lamp.half.depth });
+        local Spawn(Probe { shadow = lamp.half.depth });
     }
     lamp.frames += 1;
     lamp.toLamp = float4x4.Ortho(8, 8, 0.1, 20);

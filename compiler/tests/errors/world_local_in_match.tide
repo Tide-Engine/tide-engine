@@ -1,8 +1,6 @@
-// expect: 'Spark' is local, and the match can't use local state
-local component Spark { int life; }
+// expect: the match can't use local state
+component Spark { int life; }
 component Health { int value; }
 scene Main { }
-system Read(World world, with Health)
-{
-    if (world.Has<Spark>(this)) return;
-}
+bool ReadLocal(World world, LocalEntity target) { return world.Has<Spark>(target); }
+system Read(World world, with Health) { if (ReadLocal(world, default)) return; }

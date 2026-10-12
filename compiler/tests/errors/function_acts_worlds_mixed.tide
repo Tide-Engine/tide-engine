@@ -1,6 +1,4 @@
-// expect: 'Enemy' is the match's, and this entity is local
-// expect: an entity belongs to one world
+// expect: no entity has both
 component Enemy { int hp; }
-local component Puff { int age; }
 scene Main { }
-void Both() { Spawn(Puff, Enemy); }
+view Both(Enemy enemy, local Enemy localEnemy) { Debug.Log($"{enemy.hp} {localEnemy.hp}"); }

@@ -1,7 +1,7 @@
 // expect: 'Spark' is local already, and so is every field of it
 scene Main { }
 
-local component Spark
+local singleton Spark
 {
     float2 position;
     local int frames;

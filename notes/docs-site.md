@@ -364,3 +364,13 @@ and passed health checks. Public Inside Out page/thumbnail requests return
 page through the production relay passes, including the nearby partner glimpse
 with fixed local framing and recursive doorway travel. The collaborative
 preview navigates to the public URL. No CI was dispatched.
+
+## Shared components and Transform (2026-10-12)
+
+Entities and Local state now document shared component definitions, explicit
+local placement/access, built-in local TRS, deferred parenting and descendant
+lifetime. The spec separates approved architecture from first-build API/details
+and remaining prefab/editor and presentation work. Existing Transform examples
+use its built-in localPosition/localScale fields. The local-state live example
+and shared grammar probe use the new placement syntax. Final docs/grammar build
+results are recorded in notes/language.md. Nothing is deployed by this task.

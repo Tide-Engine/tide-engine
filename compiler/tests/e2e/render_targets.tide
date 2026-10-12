@@ -2,7 +2,7 @@ enum RenderPhases { Prepare, Objects, Effects, Present }
 scene Main { }
 struct Resources { RenderTarget target; Texture image; int retained; }
 component Object { float2 position; local Resources resources; }
-local component Graphic { Resources resources; }
+component Graphic { Resources resources; }
 local singleton Buffers
 {
     RenderTarget scene;
@@ -32,7 +32,7 @@ view ResourceState(mut Buffers buffers)
     if (buffers.beginTask == 1)
     {
         buffers.beginTask = 2;
-        Spawn(Graphic { resources = buffers.nested });
+        local Spawn(Graphic { resources = buffers.nested });
         Keep(buffers.nested, buffers);
     }
 }

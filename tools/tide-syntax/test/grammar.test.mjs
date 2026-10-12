@@ -157,7 +157,7 @@ const cases = {
     ],
     'local and async, in either order': [
         ['local event Shown', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type']]],
-        ['local component Toast', [['local', 'storage.modifier'], ['component', 'storage.type'], ['Toast', 'entity.name.type']]],
+        ['component Toast', [['component', 'storage.type'], ['Toast', 'entity.name.type']]],
         ['async local event(Shown) Fade(', [
             ['async', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type'],
             ['Fade', 'entity.name.function'], ['Fade', '!entity.name.function.call'],

@@ -113,7 +113,7 @@ local singleton Fx
     int coin;
 }
 
-local component Spark
+component Spark
 {
     Random random;
     int first;
@@ -124,10 +124,10 @@ view Sparkle(mut Fx fx)
     fx.last = fx.random.NextFloat(-1, 1);
     fx.coin = fx.fixed.NextBool() ? 1 : 0;
     fx.frames += 1;
-    if (fx.frames <= 6) Spawn(Spark { });
+    if (fx.frames <= 6) local Spawn(Spark { });
 }
 
-view Glitter(mut Spark spark)
+view Glitter(mut local Spark spark)
 {
     if (spark.first == 0) spark.first = 1 + spark.random.NextInt(1000000);
 }

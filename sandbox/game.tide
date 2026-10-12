@@ -1,6 +1,6 @@
 ﻿namespace Test;
 
-component Transform
+component TestTransform
 {
     float3 position;
 }
@@ -39,18 +39,18 @@ view Map()
     Draw.Line(float2(-WIDTH, 0), float2(WIDTH, 0), Color.green);
 }
 
-view Test(Transform trs, Player player)
+view Test(TestTransform trs, Player player)
 {
     Draw.Circle(trs.position.xy, player.radius, Color.red);
 }
 
-system PlayerMovement(mut Transform trs, Player player, Time time)
+system PlayerMovement(mut TestTransform trs, Player player, Time time)
 {
     trs.position += player.velocity * time.dt;
 }
 
 [After(PlayerMovement)]
-system PlayerClamp(mut Transform trs, mut Player player)
+system PlayerClamp(mut TestTransform trs, mut Player player)
 {
     if (trs.position.y <= player.radius)
     {
@@ -69,7 +69,7 @@ scene Main { }
 event(Spawned) Setup(with Main)
 {
     Spawn(
-        Transform { position = float3(0, 100, 2) },
+        TestTransform { position = float3(0, 100, 2) },
         Player { velocity = float3(0, -10, 0) }
     );
 }

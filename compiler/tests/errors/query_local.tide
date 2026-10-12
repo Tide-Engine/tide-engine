@@ -1,4 +1,4 @@
 // expect: 'Body' is local, and the match can't use local state
-local component Body { float x; }
+component Body { float x; }
 scene Main { }
-system Hits(query (Body body) bodies) { }
+system Hits(query (local Body body) bodies) { }

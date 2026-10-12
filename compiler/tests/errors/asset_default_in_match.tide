@@ -1,4 +1,4 @@
-// expect: 'Sign' can't hold rendering resources in match state
+// expect: 'Sign' contains machine-local field
 asset Texture hero = "../e2e/assets/hero.png";
 
 component Sign
@@ -9,3 +9,4 @@ component Sign
 scene Main
 {
 }
+event(Spawned) Setup(with Main) { Spawn(Sign); }

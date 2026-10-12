@@ -1,12 +1,12 @@
 // expect: 'Count' hears this machine's entities, as it takes 'Spark', which is local, and the match's, as it takes something of the match
-local component Spark { int left; }
+component Spark { int left; }
 singleton Rules { int round; }
 local singleton Log { int count; }
 scene Main { }
 
-view Sparkle() { Spawn(Spark); }
+view Sparkle() { local Spawn(Spark); }
 
-local event(Spawned) Count(Spark spark, Rules rules, mut Log log)
+local event(Spawned) Count(local Spark spark, Rules rules, mut Log log)
 {
     log.count += spark.left + rules.round;
 }

@@ -214,7 +214,7 @@ command(Cheer cheer, PlayerID sender) Cheered(mut Tally tally)
 
 local event Blink { int n; }
 
-local component Puff { int age; }
+component Puff { int age; }
 
 local singleton Seen
 {
@@ -223,7 +223,7 @@ local singleton Seen
 }
 
 void Flash(int n) { Send(Blink { n = n }); }
-LocalEntity Puffed() { return Spawn(Puff); }
+LocalEntity Puffed() { return local Spawn(Puff); }
 void Pop(LocalEntity puff) { puff.Destroy(); }
 void Ask(int n) { Send(Cheer { n = n }); }
 
