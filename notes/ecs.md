@@ -97,3 +97,21 @@ needed. Generation/cycle checks run when commands apply, after temporary handle
 settlement. Transform composition and keep-world reparenting use Tide's existing
 deterministic matrix/quaternion math. Contracts, tests and remaining gaps are
 recorded in language.md's shared placement/Transform entry.
+
+## Authored prefab construction (2026-10-12)
+
+Compiler-generated prefab recorders reserve ordinary checked entity handles,
+record every row and parent link, then record root-first initialization commands.
+A private pending flag suppresses each row's ordinary Spawned dispatch until the
+complete tree is installed. Normal spawns use zero pending and retain their order.
+References and parent commands use the existing temporary-handle settlement path.
+Text/list ownership remains the ordinary spawn ownership machinery. No engine
+function or public generated-C ABI was added.
+
+Scene.Load adds a private scene component to the authored root, per world, with
+the existing visibility/membership fields. Spawn leaves it out. The existing
+scene-column, unload, hierarchy destruction, hash, snapshot and raw-pack machinery
+therefore handles both kinds without a wrapper root or runtime prefab registry.
+The prefab e2e checks complete initialization, root settings, subtree lifetime,
+local isolation, snapshot/raw-pack preservation and serial/split-job equality.
+Portable-wire migration and queued prefab hot reload have no dedicated fixture.

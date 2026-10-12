@@ -1,0 +1,3 @@
+// expect: a prefab entry must name an ordinary component
+scene Main { }
+prefab Broken { RemovedComponent; }

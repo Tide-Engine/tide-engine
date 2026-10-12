@@ -1,0 +1,4 @@
+// expect: unknown name 'Missing'
+scene Main { }
+component Target { Entity child; }
+prefab Broken { Target { child = Missing }; }

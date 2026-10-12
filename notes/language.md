@@ -749,3 +749,64 @@ Integration through origin/dev f349c31a merges cleanly. Incoming CLI development
 optimization/cache changes rebuild warning-free and pass all 10 native CLI CTests;
 the production docs build passes again. Other incoming work is prototype content
 and benchmark evidence, with no compiler/runtime overlap requiring full repeats.
+
+## First authored prefab compiler build (2026-10-12)
+
+The owner chose ordinary root components for settings and complete-tree
+construction before root-first Spawned handlers. The parser accepts named prefab
+trees, ordinary component entries, named child blocks and nested prefab roots.
+The provisional spelling and limits are in the spec's Prefabs and authored scenes
+section; .tprefab files accept composition and namespace/using directives only.
+
+prefab_check.inc expands a tree at each spawn/load site and separately validates
+unused declarations. Copied expressions retain their source namespace and nested
+instance scope. Named paths support forward references; this denotes the current
+entity block. Component/default/placement checks remain ordinary typed checks.
+Recursive inclusion, duplicate components/fields/child paths, missing symbols,
+nonconstant authored expressions and absent SceneRequired references are errors.
+SceneRequired initially applies to direct Entity/LocalEntity component fields,
+including nullable ones, without constraining ordinary code-driven construction.
+
+Spawn(Prefab, Component { fields }) and local Spawn return ordinary typed handles;
+component literals replace only named root fields, bare components reset their
+defaults, and absent root components can be added. Runtime argument expressions
+evaluate once in written order before recording the tree. Scene.Load accepts the
+same root component arguments, with optional named visibility last. A private
+per-placement scene marker distinguishes loaded roots without a wrapper entity
+or implicit public prefab component. Existing scene Main startup stays in .tide.
+
+prefab_codegen.inc emits specialized private recorders using existing entity,
+queue, text ownership and parenting functions; no runtime API was added. All
+handles are reserved, then rows and parents recorded, then root-first ready
+commands. Pending spawn commands suppress initialization until those ready
+commands; normal spawns retain their ordering. Temporary handle settlement still
+uses ordinary spawn/reference/parent machinery. Composition is bounded at compile
+time to 1024 entities and 128 nesting levels; no game-controlled tree allocation
+or recursive runtime factory is introduced.
+
+Coverage: prefabs e2e checks nested inherited defaults, nullable required paths,
+dynamic overrides evaluated once, root settings additions, complete parenting
+before initialization, root-first order, match/local isolation, subtree destroy,
+scene unload, snapshots/raw packing, and identical split-job versus serial ticks.
+Eight negative fixtures cover invalid/removed components, missing/required paths,
+recursive inclusion, duplicate children/override fields, runtime expressions and
+placement mismatch. Project discovery/editor coverage is in their notes.
+
+Remaining: native scene-editor UI, authored child-name rename/completion, inherited
+child removal/replacement, prefab startup/identity conventions, authored local
+visual fields on match entities, and live-instance defaults/override reconciliation.
+No native editor or tide open command is built. Dedicated portable-wire migration,
+prefab queued hot-reload and performance measurements remain untested.
+
+Validation: warning-free complete native/web debug builds and all 2250 native
+and 2218 web CTests passed on Windows with Clang 23.1.2/Node 24.16.0, including
+OpenGL, WebGL and WebGPU. Final neutral-binding correction for authored local
+entity lists and local scene-load coverage passed the 14 affected native checks
+and all 9 web prefab checks. Local reference elements retain their declared type
+in neutral validation; actual spawns still check every reference's placement.
+The correction's valid List<LocalEntity> fixture fails against the earlier binder.
+The final editor completion adjustment passes all 225 LSP tests and stdio/pipe
+checks. Docs production build, 230 grammar checks, 24 VS Code tests/build and
+JetBrains plugin build plus 7 headless adapter/platform tests pass. No CI, other
+operating systems, Android or sanitizers were run; opted-in JCEF/client integration
+was not run. Source/whitespace review passes.

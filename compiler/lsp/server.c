@@ -292,7 +292,8 @@ static bool under(const char *path, const char *folder)
 static bool in_folder(const char *path, const char *folder)
 {
     const size_t len = strlen(path);
-    return len >= 5 && same_path(path + len - 5, ".tide") && under(path, folder);
+    return ((len >= 5 && same_path(path + len - 5, ".tide"))
+            || (len >= 8 && same_path(path + len - 8, ".tprefab"))) && under(path, folder);
 }
 
 static int compare_paths(const void *a, const void *b)
@@ -361,6 +362,8 @@ static void add_folder(const lsp_server *s, path_list *list, const char *folder,
     found_files f = {list, package};
     if (own) folder_find_own(folder, ".tide", add_found, &f);
     else folder_find(folder, ".tide", add_found, &f);
+    if (own) folder_find_own(folder, ".tprefab", add_found, &f);
+    else folder_find(folder, ".tprefab", add_found, &f);
     for (int k = 0; k < s->doc_count; k++) {
         char *open = uri_to_path(s->docs[k].uri);
         if (own ? in_own_folder(open, folder) : in_folder(open, folder)) add_path_in(list, open, package);
@@ -908,6 +911,7 @@ static void register_watchers(lsp_server *s)
     jb_put(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"" WATCH_REQUEST "\",\"method\":\"client/registerCapability\","
                "\"params\":{\"registrations\":[{\"id\":\"tide-files\",\"method\":\"workspace/didChangeWatchedFiles\","
                "\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.tide\"},"
+               "{\"globPattern\":\"**/*.tprefab\"},"
                "{\"globPattern\":\"**/build/tools/games.txt\"},{\"globPattern\":\"**/tide.packages\"},"
                "{\"globPattern\":\"**/*.gltf\"},{\"globPattern\":\"**/*.glb\"},{\"globPattern\":\"**/*.[fF][bB][xX]\"},"
                "{\"globPattern\":\"**/.tide/assets/urls/*\"}");

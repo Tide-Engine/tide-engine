@@ -23,6 +23,12 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
+Both editor integrations recognize `.tprefab` files as Tide. They use the same
+game/package context as scripts, report invalid authored components and references,
+and include prefab files when renaming components, fields and named prefabs.
+Authored entity names and paths currently need manual text edits. See
+[Authored prefabs](../game/scenes.md#authored-prefabs) for the text format.
+
 The installer adds Tide to the ones it finds, and `tide upgrade` keeps it up to date. Installed one later? Run:
 
 ```sh

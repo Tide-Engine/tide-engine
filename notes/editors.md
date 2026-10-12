@@ -404,3 +404,23 @@ hover context. The shared grammar highlights local placement/access and keeps
 existing local-field and contextual-identifier behavior. The new LSP test checks
 local implicit this, parent/transform completion and signatures, and a four-site
 rename across both placements. Final validation is recorded in language.md.
+
+## Authored prefab files (2026-10-12)
+
+VS Code and JetBrains recognize .tprefab as Tide, sharing the TextMate grammar,
+LSP server and existing game-run selection. JetBrains icon/banner/context-menu
+checks accept both extensions. The shared grammar scopes prefab and entity
+declarations; the language server watches and discovers .tprefab under the same
+manifest/folder/package boundaries as .tide.
+
+Neutral checked prefab compositions are indexed even when unused. Component and
+field rename/definition references include authored entries; prefab symbol renames
+include Spawn/Load and nested prefab bases. Authored child-name rename/path
+completion is not yet implemented. Basic component/field completion works in
+authored blocks, with nested-prefab suggestions after a colon. SceneRequired has
+field-attribute completion. No native scene UI or model viewer was introduced.
+
+lsp_prefab_project_and_refactors drives folder discovery, script-to-prefab type
+and field renames, prefab and nested-base renames, and watched invalid-file
+diagnostics. The grammar has a prefab/child declaration probe. Validation is
+recorded with the compiler build in notes/language.md.

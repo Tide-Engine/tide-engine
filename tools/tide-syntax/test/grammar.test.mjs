@@ -83,6 +83,14 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('authored prefab and child declarations', () => {
+    const lines = tokenize('prefab Enemy\n{\n    entity Weapon : Pistol\n    {\n        Transform;\n    }\n}');
+    check(lines[0], ['prefab', 'storage.type']);
+    check(lines[0], ['Enemy', 'entity.name.type']);
+    check(lines[2], ['entity', 'storage.type']);
+    check(lines[2], ['Weapon', 'entity.name.type']);
+});
+
 test('switch expression arm arrows', () => {
     const lines = tokenize('int result;\nresult = mode switch { 0 => 1, _ => 2 };');
     check(lines[1], ['switch', 'keyword.control']);

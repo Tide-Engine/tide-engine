@@ -1,0 +1,103 @@
+component Data { int value = 7; string label = "default"; }
+component Links { [SceneRequired] Entity child; Entity tip; }
+component LocalLinks { [SceneRequired] LocalEntity child; }
+component LocalNested { List<LocalEntity> children; }
+component OptionalLink { [SceneRequired] Entity? target; }
+component Spawner { Entity root; int work; }
+component WorkerLink { [SceneRequired] Entity child; }
+component WorkerChild { }
+component LevelSettings { int difficulty = 1; }
+component Self { Entity value; }
+component ScopedLinks { Entity child; Entity tip; }
+namespace Defaults { const int VALUE = 41; }
+namespace Overrides { const int VALUE = 42; }
+singleton Probe
+{
+    Entity root;
+    Entity loaded;
+    long order;
+    bool ready;
+    bool destroy;
+    bool unload;
+    int batchCount;
+    bool invalidWorker;
+    bool heavy; // Never set; the static cost estimate makes the scheduler split this test's rows.
+    int overrideCalls;
+    bool spawnScoped;
+    Entity scoped;
+}
+local singleton LocalProbe { LocalEntity root; LocalEntity loaded; bool started; bool ready; bool unload; }
+scene Main { }
+
+int OverrideValue(mut Probe probe, int value)
+{
+    probe.overrideCalls += 1;
+    return value;
+}
+
+event(Spawned) Setup(with Main, mut Probe probe)
+{
+    probe.root = Spawn(Tree, Data { value = OverrideValue(probe, 11) }, LevelSettings { difficulty = 2 });
+    probe.loaded = Scene.Load(Tree, Data { value = OverrideValue(probe, 12) }, LevelSettings { difficulty = 3 }, visibility: SceneVisibility.Private);
+    Spawn(Links); // SceneRequired does not prevent ordinary code-driven construction.
+    Spawn(Empty, LevelSettings { });
+}
+
+event(Spawned) RootReady(Links links, Data data, mut Probe probe, World world)
+{
+    // Part's root has Links too; its optional tip is empty.
+    if (links.tip != default)
+    {
+        probe.ready = world.Has<Data>(links.child) && world.Get<Data>(links.child).value == 25
+            && world.Get<Data>(links.child).label == "part" && world.Get<Data>(links.tip).value == 30
+            && world.Parent(links.child) == this && world.Parent(links.tip) == links.child
+            && world.LocalToWorld(links.tip).c3.x == 15 && data.label == "root";
+    }
+}
+
+event(Spawned) Order(Data data, mut Probe probe) { probe.order = probe.order * 100 + data.value; }
+
+system Actions(mut Probe probe)
+{
+    if (probe.spawnScoped) { probe.scoped = Spawn(Overrides.Scoped); probe.spawnScoped = false; }
+    if (probe.destroy) { probe.root.Destroy(); probe.destroy = false; }
+    if (probe.unload) { Scene.Unload(probe.loaded); probe.unload = false; }
+}
+
+Entity MakeWorker() { return Spawn(Worker); }
+
+system SetupBatch(mut Probe probe)
+{
+    for (var i = 0; i < probe.batchCount; i++) Spawn(Spawner);
+    probe.batchCount = 0;
+}
+
+system Batch(mut Spawner spawner, Probe probe)
+{
+    if (probe.heavy) for (var i = 0; i < 1000000; i++) spawner.work += i;
+    if (spawner.root == default) spawner.root = MakeWorker();
+}
+
+system CheckWorkers(WorkerLink link, World world, mut Probe probe)
+{
+    if (!world.Has<WorkerChild>(link.child) || world.Parent(link.child) != this
+        || world.Get<Self>(link.child).value != link.child || world.Get<Self>(this).value != this) probe.invalidWorker = true;
+}
+
+view LocalSetup(mut LocalProbe probe)
+{
+    if (!probe.started)
+    {
+        probe.root = local Spawn(LocalTree);
+        local Spawn(SharedTree);
+        probe.loaded = Scene.Load(SharedTree, Data { value = 21 });
+        probe.started = true;
+    }
+    if (probe.unload) { Scene.Unload(probe.loaded); probe.unload = false; }
+}
+
+local event(Spawned) LocalReady(local LocalLinks links, local LocalNested nested, mut LocalProbe probe, World world)
+{
+    probe.ready = world.Get<Data>(links.child).value == 4 && world.Parent(links.child) == this
+        && nested.children[0] == links.child;
+}

@@ -20,7 +20,7 @@ public final class TidelsBanner implements EditorNotificationProvider, DumbAware
     @Override
     public @Nullable Function<? super FileEditor, ? extends JComponent> collectNotificationData(@NotNull Project project,
                                                                                               @NotNull VirtualFile file) {
-        if (!"tide".equals(file.getExtension())) return null;
+        if (!"tide".equals(file.getExtension()) && !"tprefab".equals(file.getExtension())) return null;
         final String problem = TidelsFactory.find(project).problem();
         if (problem == null) return null;
         return editor -> {

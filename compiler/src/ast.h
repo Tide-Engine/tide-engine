@@ -410,6 +410,7 @@ typedef struct system_wait {
 } system_wait;
 
 typedef enum decl_kind {
+    DECL_PREFAB, // A named authored entity tree; neither a component nor a runtime value type.
     DECL_COMPONENT,
     DECL_SINGLETON,
     DECL_SYSTEM,
@@ -511,6 +512,8 @@ typedef struct decl {
     struct decl *local_placement; // The source component's local specialization, created only when used
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
+    struct prefab_node *prefab_root;
+    struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
@@ -918,9 +921,39 @@ typedef struct field_init {
     field *field;
 } field_init;
 
+typedef struct prefab_node {
+    str name, base;
+    loc at;
+    const unit *unit;
+    loc base_at, base_qual_at;
+    decl *base_decl;
+    VEC(expr *) components;
+    VEC(struct prefab_node *) children;
+} prefab_node;
+
+typedef struct prefab_entity {
+    str path;
+    int parent;
+    expr *spawn;
+} prefab_entity;
+
+typedef struct prefab_instance {
+    decl *declaration;
+    int index;
+    bool load;
+    VEC(prefab_entity) entities;
+    VEC(expr *) overrides;
+    expr *visibility;
+} prefab_instance;
+
 struct expr {
     expr_kind kind;
     loc at;
+    const unit *authored_unit; // A copied prefab value keeps its source namespace.
+    str prefab_scope;          // Its source prefab instance's root path.
+    int prefab_entity;         // Authored entity reference, when prefab_reference is set.
+    bool prefab_reference;
+    prefab_instance *prefab;
     loc end; // E_SWITCH: just past its closing brace, for editor spans
     type type;
 
@@ -1275,6 +1308,8 @@ typedef struct decl_index {
 } decl_index;
 
 typedef struct program {
+    VEC(expr *) prefab_sites;
+    decl *prefab_scene[2]; // Private loaded-root marker, per placement.
     VEC(unit *) units; // Its files, in the order they're parsed: sorted by path
     VEC(decl *) decls; // In source order, file by file, builtins first.
     VEC(decl *) replaced; // What overrides replaced (decl.replaced_by), which is no longer in `decls` or any list made of it
