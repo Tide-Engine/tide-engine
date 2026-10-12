@@ -53,6 +53,15 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- FOLDLINE (`foldline`): `prototypes/foldline/`, a new first-person 3D
+  cooperative portal puzzle requested on 2026-10-12. Its chambers sit in a
+  sunlit research atrium. Linked portals show the actual
+  destination scene from the traveller's transformed camera. It uses the
+  same opt-in option; `private_games` collects `foldline_page` or `foldline`,
+  staging `/prototypes/foldline/` beside its gameplay thumbnail. Its C test
+  host is `foldline_test`, separate from CLI game discovery under `test/`.
+  Rules, rendering contracts and validation belong in `notes/foldline.md`.
+
 - Two Forks (`two-forks`): `examples/samples/two-forks/`. `sample_games`
   builds it with the samples and `sample_two_forks_page` stages it under the
   prototype root alone; `private_games` depends on that target. Its contract
