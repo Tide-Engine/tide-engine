@@ -744,3 +744,8 @@ No CI, sanitizers, Android, Linux, macOS or MinGW coverage was requested/run.
 Remaining work: prefab text/editor authoring, hierarchy presentation interpolation,
 world-matrix caching/deep-hierarchy performance measurements, richer hierarchy
 inspection, and broader platform CI (not requested for this Windows task).
+
+Integration through origin/dev f349c31a merges cleanly. Incoming CLI development
+optimization/cache changes rebuild warning-free and pass all 10 native CLI CTests;
+the production docs build passes again. Other incoming work is prototype content
+and benchmark evidence, with no compiler/runtime overlap requiring full repeats.
