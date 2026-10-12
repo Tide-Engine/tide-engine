@@ -9,15 +9,11 @@ local singleton Sculpture
     List<SceneVertex> vertices;
     List<int> indices;
     List<SceneObject> objects;
-    // Quarter-round corner pieces: a wall's rounded outer corner, and the
-    // fillet that fills an inner corner. Each is one more instanced mesh.
-    List<SceneVertex> roundVertices;
-    List<int> roundIndices;
-    List<SceneObject> rounds;
-    List<SceneVertex> filletVertices;
-    List<int> filletIndices;
-    List<SceneObject> fillets;
     float alpha = 1;
+    // What the next surfaces are made of (SceneDetail), and where their
+    // pattern starts, so it runs on across neighbouring cells.
+    float detail;
+    float2 detailOrigin;
     float4 aperture;
     int apertureSide = -1;
     float tile;
@@ -41,78 +37,8 @@ void CubeFace(mut Sculpture sculpture, float3 normal, float3 a, float3 b, float3
     sculpture.indices.Add(first + 3);
 }
 
-const int ARC_STEPS = 6;
-
-// A quarter of a disc as tall as the unit cube: its square corner at the
-// low x, low z corner of the cube and its arc bulging to the high one. The
-// two flat sides against the wall it rounds are never seen, nor its base.
-void RoundMesh(mut Sculpture sculpture)
-{
-    for (var step = 0; step < ARC_STEPS; step++)
-    {
-        var from = step * Math.PI * .5 / ARC_STEPS;
-        var to = (step + 1) * Math.PI * .5 / ARC_STEPS;
-        var near = float3(Math.Sin(from), 0, Math.Cos(from));
-        var far = float3(Math.Sin(to), 0, Math.Cos(to));
-        var first = sculpture.roundVertices.count;
-        sculpture.roundVertices.Add(SceneVertex { position = float3(-.5, .5, -.5), normal = float3(0, 1, 0) });
-        sculpture.roundVertices.Add(SceneVertex { position = float3(-.5, .5, -.5) + near, normal = float3(0, 1, 0) });
-        sculpture.roundVertices.Add(SceneVertex { position = float3(-.5, .5, -.5) + far, normal = float3(0, 1, 0) });
-        sculpture.roundVertices.Add(SceneVertex { position = float3(-.5, -.5, -.5) + far, normal = far });
-        sculpture.roundVertices.Add(SceneVertex { position = float3(-.5, .5, -.5) + far, normal = far });
-        sculpture.roundVertices.Add(SceneVertex { position = float3(-.5, .5, -.5) + near, normal = near });
-        sculpture.roundVertices.Add(SceneVertex { position = float3(-.5, -.5, -.5) + near, normal = near });
-        sculpture.roundIndices.Add(first);
-        sculpture.roundIndices.Add(first + 1);
-        sculpture.roundIndices.Add(first + 2);
-        sculpture.roundIndices.Add(first + 3);
-        sculpture.roundIndices.Add(first + 4);
-        sculpture.roundIndices.Add(first + 5);
-        sculpture.roundIndices.Add(first + 3);
-        sculpture.roundIndices.Add(first + 5);
-        sculpture.roundIndices.Add(first + 6);
-    }
-}
-
-// What a quarter disc leaves of the unit square: the wall corner is at the
-// low x, low z corner, and the hollow arc faces the high one.
-void FilletMesh(mut Sculpture sculpture)
-{
-    for (var step = 0; step < ARC_STEPS; step++)
-    {
-        var from = step * Math.PI * .5 / ARC_STEPS;
-        var to = (step + 1) * Math.PI * .5 / ARC_STEPS;
-        var near = float3(Math.Sin(from), 0, Math.Cos(from));
-        var far = float3(Math.Sin(to), 0, Math.Cos(to));
-        var first = sculpture.filletVertices.count;
-        sculpture.filletVertices.Add(SceneVertex { position = float3(-.5, .5, -.5), normal = float3(0, 1, 0) });
-        sculpture.filletVertices.Add(SceneVertex { position = float3(.5, .5, .5) - far, normal = float3(0, 1, 0) });
-        sculpture.filletVertices.Add(SceneVertex { position = float3(.5, .5, .5) - near, normal = float3(0, 1, 0) });
-        sculpture.filletVertices.Add(SceneVertex { position = float3(.5, -.5, .5) - near, normal = near });
-        sculpture.filletVertices.Add(SceneVertex { position = float3(.5, .5, .5) - near, normal = near });
-        sculpture.filletVertices.Add(SceneVertex { position = float3(.5, .5, .5) - far, normal = far });
-        sculpture.filletVertices.Add(SceneVertex { position = float3(.5, -.5, .5) - far, normal = far });
-        sculpture.filletIndices.Add(first);
-        sculpture.filletIndices.Add(first + 1);
-        sculpture.filletIndices.Add(first + 2);
-        sculpture.filletIndices.Add(first + 3);
-        sculpture.filletIndices.Add(first + 4);
-        sculpture.filletIndices.Add(first + 5);
-        sculpture.filletIndices.Add(first + 3);
-        sculpture.filletIndices.Add(first + 5);
-        sculpture.filletIndices.Add(first + 6);
-    }
-}
-
 void BeginSculpture(mut Sculpture sculpture, float tile, Rect bounds)
 {
-    if (sculpture.roundVertices.count == 0)
-    {
-        RoundMesh(sculpture);
-        FilletMesh(sculpture);
-    }
-    sculpture.rounds.Clear();
-    sculpture.fillets.Clear();
     if (sculpture.vertices.count == 0)
     {
         CubeFace(sculpture, float3(0, 0, -1), float3(-.5, -.5, -.5), float3(-.5, .5, -.5), float3(.5, .5, -.5), float3(.5, -.5, -.5));
@@ -124,6 +50,8 @@ void BeginSculpture(mut Sculpture sculpture, float tile, Rect bounds)
     }
     sculpture.objects.Clear();
     sculpture.alpha = 1;
+    sculpture.detail = 0;
+    sculpture.detailOrigin = float2(0);
     sculpture.apertureSide = -1;
     sculpture.tile = tile;
     sculpture.ground = 0;
@@ -155,23 +83,9 @@ void Cuboid(mut Sculpture sculpture, float2 at, float2 footprint, float height, 
     sculpture.objects.Add(SceneObject {
         transform = float4x4.TRS(position, quaternion.identity, size), tone = paint,
         aoScale = Math.Max(1, scale), aperture = sculpture.aperture,
-        apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground });
-}
-
-// A corner piece on a square of side `radius` at `at`. `quadrant` turns it a
-// quarter at a time: a round bulges to the north-east at 0, a fillet has its
-// wall corner to the south-west at 0, then south-east, south-west, north-west.
-void Corner(mut Sculpture sculpture, bool fillet, float2 at, float radius, float height, Color tone, float floor, float scale, int quadrant)
-{
-    if (height <= 0 || radius <= 0 || tone.a * sculpture.alpha <= .01) return;
-    var position = SculptureFoot(at, sculpture.ground) + float3(0, floor - sculpture.ground + height * .5, 0);
-    var size = quadrant % 2 == 1 ? float3(radius / SCENE_SIN, height, radius) : float3(radius, height, radius / SCENE_SIN);
-    var piece = SceneObject {
-        transform = float4x4.TRS(position, quaternion.AxisAngle(float3(0, 1, 0), quadrant * Math.PI * .5), size),
-        tone = Color(tone.r, tone.g, tone.b, tone.a * sculpture.alpha), aoScale = Math.Max(1, scale),
-        aperture = sculpture.aperture, apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground };
-    if (fillet) sculpture.fillets.Add(piece);
-    else sculpture.rounds.Add(piece);
+        apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground,
+        texels = float3(clipped.x, height, clipped.y) * (8 / Math.Max(1, scale)), detail = sculpture.detail,
+        detailOrigin = sculpture.detailOrigin });
 }
 
 void FloorLine(mut Sculpture sculpture, float2 from, float2 to, float width, Color tone, float floor, float scale)

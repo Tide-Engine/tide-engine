@@ -148,6 +148,38 @@ doorway ground-column discard rules are shared by all mesh passes. The
 composite explicitly clips the board because Blit does not inherit Draw.Clip.
 Workbench prepares geometry and SceneLighting owns view-only shader draws.
 
+Square blocks again, with texture and depth (2026-10-12, later still). The
+owner did not like the rounded corners ("the square one looked better so
+make it like it was before") and found the surfaces "pretty flat": "lets
+play with texture, depth". The amounts below are a first, gentle pass and
+my picks.
+- The rounded corners are gone, with their two meshes, `Corner`,
+  `WallFillets` and the extra lamp and scene passes: `geometry.tide` and
+  `render.tide` went back to the commit before them, and `WallTile` is the
+  joined block with a darker rim and a raised face again. What the bullet
+  below says of rounding no longer applies; square rooms and plain doorways
+  stand.
+- Depth: walls are 0.31 of a tile high (were 0.24), perimeter strips 0.30
+  and door posts 0.32. Every side face darkens towards the floor it stands
+  on, from full light at its top to 0.76 at its foot.
+- Texture: a floor is terrazzo, 24 flecks to a tile's edge, about one in
+  twenty darker (0.935) and one in thirty paler; a wall's raised face is
+  brushed, 40 streaks to a tile within 4% of light. `SceneDetail` computes
+  it in the object's own coordinates (`SceneObject.texels`, `detail`,
+  `detailOrigin`; `Sculpture.detail` and `detailOrigin` say what the next
+  cuboids are, and a floor cell's origin is its place in the room, so the
+  flecks run on from cell to cell and travel with a pushed box). It is one
+  scalar in the blue channel of the normal target, halved; the normal's
+  height is rebuilt from x and z, as no visible face looks down. The
+  composite multiplies the light by it, so a paint's chroma is unchanged
+  and the browser fixture's material matching holds. It fades out where an
+  occurrence's tile is under about 22 pixels and where it is over 1.3 times
+  the focused room's, so small nested rooms and the huge tiles of a
+  containing room stay plain: on those it read as noise and as blotches.
+- A dock outline is not drawn while its box stands on it. The owner asked
+  what the line across an exit was: the home's own outline, on the parent's
+  floor, showing through the doorway gap.
+
 Square rooms, rounded corners and plain doorways (2026-10-12, later the
 same day; this replaces the packing described in the next paragraph's
 second bullet). The owner kept the lab look after seeing other styles, said
@@ -397,6 +429,19 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Square blocks, texture and depth validation (2026-10-12)
+
+Presentation only. Native and web debug builds are warning-free; the 33
+fixtures pass natively and under WASI; `inside_out_play_webgl` passes in
+188.98 s and `inside_out_play_webgpu` in 149.41 s. Both are about 20 s
+slower than the run before; whether that is the taller walls and the
+detail channel or the machine was not separated. Native captures of
+puzzles 1 and 12 at 1280x800 and 1920x1080 were inspected, enlarged. The
+speckle on the floors of the smallest nested boxes is older than this
+change and is not the new texture. The thumbnail is 180,028 bytes,
+SHA-256 `22d456b668dc66c9df34bfa6418ba0f26862465c9cf9290646a4fd9ac924ea41`. The docs production build passes. Nothing was staged
+or deployed. No CI was dispatched.
 
 ## Square rooms and rounded corners validation (2026-10-12)
 
