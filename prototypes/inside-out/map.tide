@@ -368,7 +368,7 @@ struct Transit
 }
 
 // Pushed from `old` in `oldRoom` to `now` in `newRoom`: into the box beside
-// it there, or out of its room to beside that room's own box. Anything else
+// it there, or out of its room to beside a box of that room. Anything else
 // is no crossing, and the thing is simply where it now is.
 Transit BeginTransit(LevelLayout layout, Puzzle puzzle, int oldRoom, float2 old, int newRoom, int2 now)
 {
@@ -380,13 +380,14 @@ Transit BeginTransit(LevelLayout layout, Puzzle puzzle, int oldRoom, float2 old,
         return Transit { via = oldRoom, at = old, goal = float2(cell + Direction(direction)) - float2(Direction(direction)) * .30,
             from = 1, to = RoomScale(layout, newRoom), scale = 1 };
     }
-    if (ValidRoom(layout, oldRoom) && puzzle.rooms[oldRoom].room == newRoom)
+    // Out of its room: it stands beside a box of that room, whichever copy
+    // its pusher came in through.
+    for (var direction = 0; direction < 4 && ValidRoom(layout, oldRoom); direction++)
     {
-        var shell = puzzle.rooms[oldRoom].position;
-        var apart = now - shell;
-        if (Math.Abs(apart.x) + Math.Abs(apart.y) == 1)
-            return Transit { via = newRoom, at = float2(shell) + float2(apart) * .30, goal = float2(now),
-                from = RoomScale(layout, oldRoom), to = 1, scale = RoomScale(layout, oldRoom) };
+        var shell = BoxAt(layout, puzzle, newRoom, now - Direction(direction));
+        if (shell < 0 || BoxDestination(layout, shell) != oldRoom) continue;
+        return Transit { via = newRoom, at = float2(now) - float2(Direction(direction)) * .70, goal = float2(now),
+            from = RoomScale(layout, oldRoom), to = 1, scale = RoomScale(layout, oldRoom) };
     }
     // Straight from one box into the one beside it, through doorways that
     // face each other: drawn in the room both stand in, at the small size it

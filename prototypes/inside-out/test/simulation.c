@@ -552,8 +552,11 @@ TIDE_TEST(inside_out_occupied_movable_reference_uses_its_live_parent_on_exit)
     tide_world_free(&world);
 }
 
-TIDE_TEST(inside_out_cargo_uses_primary_export_while_maker_uses_entered_copy)
+TIDE_TEST(inside_out_pushed_cargo_leaves_by_the_copy_its_pusher_entered)
 {
+    // A parcel pushed out of a room comes out beside the box its pusher came
+    // in through, which is where the pusher sees that doorway lead, and where
+    // the pusher itself would come out.
     fixture(1);
     reference(0, -1, 5, 4, 0);
     actor(0, 0, 3, 2);
@@ -562,12 +565,10 @@ TIDE_TEST(inside_out_cargo_uses_primary_export_while_maker_uses_entered_copy)
     const Puzzle initial = world.Workshop.puzzle;
     move(0, 1);
     TIDE_CHECK(world.Workshop.puzzle.crates.at[0].room == -1);
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.crates.at[0].position, tide_i2(4, 3)));
+    TIDE_CHECK(same_cell(world.Workshop.puzzle.crates.at[0].position, tide_i2(6, 4)));
     TIDE_CHECK(world.Workshop.puzzle.actors.at[0].trail.at[0].box == 4);
-    move(0, 1);
-    TIDE_CHECK(world.Workshop.puzzle.actors.at[0].room == -1);
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(6, 4)));
-    for (int step = 0; step < 2; step++) TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Undo, 1, 0));
+    blocked(0, 1); // The parcel stands where the bot would come out, against the edge.
+    TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Undo, 1, 0));
     TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
     tide_world_free(&world);
 }

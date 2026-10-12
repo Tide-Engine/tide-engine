@@ -429,7 +429,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("Boxes can move into their own interiors.");
             GUILayout.Label("Copies of a room share its contents and people.");
             GUILayout.Label("1 is a primary box. 1' is a movable copy.");
-            GUILayout.Label("Pushed objects exit beside the primary box.");
+            GUILayout.Label("What you push out leaves by the box you came in through.");
             GUILayout.Label("Boxes side by side join only where doorways line up.");
             GUILayout.Label("Joined doorways are walked through, not pushed.");
             GUILayout.Label("You return beside the entrance you used.");
