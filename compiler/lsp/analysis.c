@@ -3584,12 +3584,14 @@ static void describe_order(const decl *d, sb *out)
 // Code lenses: above each system, its stage, each system it waits for and why,
 // and what runs alongside it; above each local handler of a match event, when
 // it hears it; above a declaration an override replaced, and the override,
-// which is which; and above a declaration, how many places name it. Each is a
+// which is which; above a declaration, how many places name it; and above a
+// helper, the entry points that can reach it. Each is a
 // lens of its own, so the ones that name declarations go to them when clicked
 
 static const char *package_text(const decl *d);
 static const char *code_name(const decl *d);
 static bool same_symbol(const occurrence *a, const occurrence *b);
+static void write_entry_point_lenses(jbuf *out, int *written);
 
 static void write_location(jbuf *out, const loc at, const int len)
 {
@@ -3825,6 +3827,7 @@ void analysis_code_lenses(jbuf *out)
         else write_lens_to(out, &written, h, title.data, (decl *const[]){h->event}, 1);
     }
     write_reference_lenses(out, &written);
+    write_entry_point_lenses(out, &written);
     jb_put(out, "]");
     arena_rewind(temporary);
 }
@@ -5068,6 +5071,143 @@ void analysis_outgoing_calls(const int line, const int character, jbuf *out)
     }
     jb_put(out, "]");
     arena_rewind(temporary);
+}
+
+// Entry points are engine-invoked bodies, not ordinary functions with no
+// callers. Event/command handlers are boundaries: Send is not a call edge.
+static bool entry_point(const caller *c)
+{
+    return c->decl->kind == DECL_SYSTEM || c->decl->kind == DECL_INPUT
+        || c->decl->is_interpolate || c->decl->is_audio;
+}
+
+static const decl *entry_decl(const decl *d)
+{
+    if (d->placement_of) d = d->placement_of;
+    return d->replaced_by ? d->replaced_by : d;
+}
+
+typedef struct entry_node {
+    caller code;
+    VEC(int) from;
+    int seen;
+} entry_node;
+
+typedef struct entry_key {
+    const decl *decl;
+    int node;
+} entry_key;
+
+static int entry_node_order(const void *left, const void *right)
+{
+    const entry_node *a = left, *b = right;
+    return loc_cmp(a->code.name_at, b->code.name_at);
+}
+
+static int entry_key_order(const void *left, const void *right)
+{
+    const entry_key *a = left, *b = right;
+    const uintptr_t x = (uintptr_t)a->decl, y = (uintptr_t)b->decl;
+    return x < y ? -1 : x > y;
+}
+
+static int entry_index_order(const void *left, const void *right)
+{
+    const int *a = left, *b = right;
+    return (*a > *b) - (*a < *b);
+}
+
+static int entry_node_for(const entry_key *keys, const int count, const decl *d)
+{
+    if (!d) return -1;
+    const entry_key key = {entry_decl(d), 0};
+    const entry_key *found = count ? bsearch(&key, keys, (size_t)count, sizeof(*keys), entry_key_order) : NULL;
+    return found ? found->node : -1;
+}
+
+static void write_entry_point_lenses(jbuf *out, int *written)
+{
+    VEC(entry_node) nodes = {0};
+    // Source declarations already include methods, operators and shaders.
+    // Ignore replaced bodies; references to their name resolve to the override.
+    for (int i = 0; i < A.occs.count; i++) {
+        const occurrence *o = &A.occs.items[i];
+        const decl *d = o->decl;
+        if (!o->declaration || !d || d->builtin || d->replaced_by) continue;
+        if ((o->kind == OCC_FUNCTION || o->kind == OCC_METHOD) && is_routine(d)) {
+            const decl *body = d->kind == DECL_METHOD ? method_written(d) : d;
+            vec_push(nodes, ((entry_node){.code = {d, body->body, d->name, d->at}}));
+        } else if (o->kind == OCC_SYSTEM && (d->kind == DECL_SYSTEM || is_shader(d))) {
+            vec_push(nodes, ((entry_node){.code = {d, d->body, d->name, d->at}}));
+        } else if (o->kind == OCC_TYPE && d->kind == DECL_INPUT) {
+            if (d->body) vec_push(nodes, ((entry_node){.code = {d, d->body, str_from("Sample"), d->body_at}}));
+            if (d->sanitize) vec_push(nodes, ((entry_node){.code = {d, d->sanitize, str_from("Sanitize"), d->sanitize_at}}));
+            if (d->predict) vec_push(nodes, ((entry_node){.code = {d, d->predict, str_from("Predict"), d->predict_at}}));
+        }
+    }
+    if (nodes.count == 0) return;
+    qsort(nodes.items, (size_t)nodes.count, sizeof(*nodes.items), entry_node_order);
+    VEC(entry_key) keys = {0};
+    for (int i = 0; i < nodes.count; i++) {
+        const decl *d = nodes.items[i].code.decl;
+        if (d->kind != DECL_INPUT) vec_push(keys, ((entry_key){entry_decl(d), i}));
+    }
+    if (keys.count > 1) qsort(keys.items, (size_t)keys.count, sizeof(*keys.items), entry_key_order);
+    // Occurrences and bodies are both in source order. Associate calls in one
+    // pass rather than scanning every declaration for every occurrence.
+    int enclosing = -1;
+    for (int i = 0; i < A.occs.count; i++) {
+        const occurrence *o = &A.occs.items[i];
+        while (enclosing + 1 < nodes.count && loc_cmp(nodes.items[enclosing + 1].code.name_at, o->at) <= 0) enclosing++;
+        if (enclosing < 0 || !is_call(o) || !block_contains(nodes.items[enclosing].code.body, o->at)) continue;
+        const int to = entry_node_for(keys.items, keys.count, o->decl);
+        if (to >= 0) vec_push(nodes.items[to].from, enclosing);
+    }
+    // A traversal visits each caller once, even for diamonds and recursion.
+    // Reuse its stack and generation marks for every visible declaration.
+    VEC(int) pending = {0};
+    VEC(int) roots = {0};
+    int generation = 0;
+    for (int i = 0; i < A.occs.count; i++) {
+        const occurrence *o = &A.occs.items[i];
+        if (!o->declaration || o->at.file != A.doc || !o->decl || !is_routine(o->decl) || o->decl->builtin) continue;
+        const int target = entry_node_for(keys.items, keys.count, o->decl);
+        if (target < 0 || entry_point(&nodes.items[target].code)) continue;
+        generation++;
+        roots.count = pending.count = 0;
+        vec_push(pending, target);
+        nodes.items[target].seen = generation;
+        while (pending.count) {
+            const int current = pending.items[--pending.count];
+            entry_node *n = &nodes.items[current];
+            if (entry_point(&n->code)) {
+                vec_push(roots, current);
+                continue;
+            }
+            for (int k = 0; k < n->from.count; k++) {
+                const int from = n->from.items[k];
+                if (nodes.items[from].seen == generation) continue;
+                nodes.items[from].seen = generation;
+                vec_push(pending, from);
+            }
+        }
+        char title[40];
+        snprintf(title, sizeof title, "%d entry point%s", roots.count, roots.count == 1 ? "" : "s");
+        open_lens(out, written, o->at, o->len, title);
+        if (!roots.count) {
+            jb_put(out, ",\"command\":\"\"}}");
+            continue;
+        }
+        open_lens_command(out, "editor.action.goToLocations", o->at);
+        // Source order, independent of traversal order, for a stable picker.
+        if (roots.count > 1) qsort(roots.items, (size_t)roots.count, sizeof(*roots.items), entry_index_order);
+        for (int k = 0; k < roots.count; k++) {
+            const entry_node *n = &nodes.items[roots.items[k]];
+            if (k) jb_put(out, ",");
+            write_location(out, n->code.name_at, n->code.name.len);
+        }
+        jb_printf(out, "],\"%s\"]}}", roots.count == 1 ? "goto" : "peek");
+    }
 }
 
 // ---------------------------------------------------------------------------
