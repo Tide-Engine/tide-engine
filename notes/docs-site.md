@@ -9,6 +9,57 @@ or CI dispatch is requested. The local docs check is clean, production build
 passes and the eighteen analytics/admin unit checks and production prototype
 HTTP check pass with Node 24.21.0.
 
+Copper & Coil catalog addition (2026-10-13): `copper-coil` is registered in
+the server-only prototype catalog, public root, outside-root asset gates and
+admin/HTTP prototype lists. `copper_coil_page` stages its self-contained page
+at `/prototypes/copper-coil/`; checked-in artwork and the publisher PDF live
+beside it. Public discovery and catalog authentication retain their existing
+contracts. Game rules and validation are in `notes/copper-coil.md`. The docs
+production build, zero-error/warning Svelte check, eighteen analytics/admin
+checks and production HTTP test pass. No deployment or CI dispatch.
+
+
+HOT SWAP addition (2026-10-13): the server-only catalog and public-root/
+outside-root asset gates include `hot-swap`, a solo/two-player warehouse
+possession heist. `hot_swap_page` stages its self-contained, STATS-enabled
+page beneath `/prototypes/hot-swap/`; the thumbnail is captured gameplay.
+Admin and production HTTP fixtures cover the new id and its stale aliases.
+The existing catalog/auth/discovery contract is unchanged. Game validation
+and remaining playtest gaps are in `notes/hot-swap.md`. No deployment or CI.
+
+DEADWEIGHT catalog addition (2026-10-13): the approved cooperative salvage
+prototype adds `deadweight` to the server-only catalog, public-root and
+outside-root asset gates, and both prototype test id lists. Its self-contained
+page stages at `/prototypes/deadweight/` with an actual-gameplay thumbnail.
+Discovery and catalog authentication retain their existing contracts. Game
+rules and validation belong in `notes/deadweight.md`; no site deployment or
+CI dispatch was requested.
+Local production build and Svelte check pass with zero errors/warnings. All
+nineteen analytics/admin and production prototype HTTP checks pass on Node
+24.16.0, including the new public id, outside-root aliases and discovery gates.
+After merging the concurrent SWINDLE catalog addition and NIGHT ROUTE removal,
+the live id lists retain both SWINDLE and DEADWEIGHT. Production build,
+zero-warning Svelte check and all nineteen HTTP/admin checks pass again.
+
+SWINDLE catalog addition (2026-10-13): the owner's competitive heist demo adds
+`swindle` to the server-only catalog, public root and outside-root asset gates.
+`swindle_page` stages its self-contained page and gameplay thumbnail under
+`/prototypes/swindle/`, collected by `private_games`. Admin and production HTTP
+tests include the id and retain omission from Samples/search/sitemap. Rules,
+native/web play evidence and packaging are recorded in `notes/swindle.md`.
+Site check has zero errors/warnings; eighteen analytics/admin tests, production
+build and prototype HTTP test pass with Node 24.21.0. No deployment or CI.
+
+NIGHT ROUTE removal (2026-10-13): the owner scrapped the delivery prototype
+after playtesting. Its source, tests, build targets, game note, catalog card,
+public id, asset-gate entries and thumbnail are removed, including the local
+staged page. Production HTTP checks require its former page and thumbnail
+to return 404. The five remaining prototypes keep their existing serving
+contract. No site deployment or CI dispatch is requested.
+Validation: the production build and all nineteen analytics/admin/production
+HTTP checks pass with Node 24.16.0; the former NIGHT ROUTE page and thumbnail
+return 404, and no catalog card or staged copy remains.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog

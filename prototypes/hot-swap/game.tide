@@ -1,0 +1,641 @@
+using Rooms;
+
+settings { title = "HOT SWAP"; appId = "dev.tideengine.hotswap"; tickRate = 30; maxPlayers = 2; hostMigration = true; }
+
+const int MACHINES = 15;
+const int PALLETS = 5;
+const int WALLS = 16;
+const int NAV_W = 58;
+const int NAV_H = 36;
+enum Body { Cleaner, Forklift, Camera, Controller }
+enum Beat { Jump, Use, Spray, Flash, Caught, Unlock, Win }
+
+struct Machine
+{
+    Body kind;
+    float2 position;
+    float2 facing = float2(1, 0);
+    int circuit;
+    int cargo = -1; // 0..4 pallet, 5 storm case
+    float offline;
+    float cooldown;
+    float raised;
+    float flash;
+}
+struct Watchman
+{
+    float2 position;
+    float2 facing = float2(1, 0);
+    float2 destination;
+    float2 step;
+    int waypoint;
+    float think;
+    float stun;
+    float chase;
+    float notice;
+    int target = -1;
+}
+struct Slick { float2 position; float life; }
+struct Intent { float2 move; bool use; bool useEdge; bool special; bool specialEdge; }
+component Pilot { int seat; }
+singleton Heist
+{
+    Machine[15] machines;
+    Watchman[2] guards;
+    float2[5] pallets;
+    Slick[12] slicks;
+    int nextSlick;
+    int[2] possessed;
+    float[2] safe;
+    float[2] scan;
+    Intent[2] wishes;
+    Map<PlayerID, Entity> pilots;
+    PlayerID[2] players;
+    bool[2] present;
+    bool[3] doors;
+    bool initialized;
+    bool started;
+    bool manifest;
+    bool bypass;
+    bool released;
+    bool lockdown;
+    bool belt;
+    bool won;
+    float2 loot;
+    int carrier = -1;
+    float alarm;
+    float elapsed;
+    int serial;
+    int swaps;
+    int catches;
+    int lifts;
+    int route; // 1 duct, 2 loading door, 3 conveyor
+}
+scene Main { }
+event Pulse { Beat kind; float2 at; float2 from; int seat; }
+command Jump { int serial; int target; }
+command BeginHeist { int serial; }
+command Restart { int serial; }
+
+// The narrow breaks in the fences are ducts. Only cleaners fit.
+Rect Wall(int index)
+{
+    switch (index)
+    {
+        case 0: return Rect(16, 1, 0.7, 4);
+        case 1: return Rect(16, 8, 0.7, 8);
+        case 2: return Rect(16, 21, 0.7, 7);
+        case 3: return Rect(16, 32, 0.7, 3);
+        case 4: return Rect(42, 1, 0.7, 4);
+        case 5: return Rect(42, 8, 0.7, 8);
+        case 6: return Rect(42, 21, 0.7, 7);
+        case 7: return Rect(42, 32, 0.7, 3);
+        case 8: return Rect(22, 3, 3, 8);
+        case 9: return Rect(22, 15, 3, 8);
+        case 10: return Rect(22, 28, 3, 6);
+        case 11: return Rect(31, 7, 3, 7);
+        case 12: return Rect(31, 20, 3, 10);
+        case 13: return Rect(47, 10, 6, 2);
+        case 14: return Rect(47, 24, 6, 2);
+    }
+    return Rect(4, 9, 7, 3);
+}
+Rect Gateway(int index)
+{
+    if (index == 0) return Rect(16, 16, 0.7, 5);
+    if (index == 1) return Rect(42, 16, 0.7, 5);
+    return Rect(16, 28, 0.7, 4);
+}
+bool Inside(float2 position, Rect rect, float radius = 0)
+{
+    return position.x > rect.x - radius && position.x < rect.x + rect.width + radius
+        && position.y > rect.y - radius && position.y < rect.y + rect.height + radius;
+}
+float BodyRadius(Body kind) { return kind == Body.Forklift ? 0.82 : 0.38; }
+bool Carried(Heist heist, int pallet)
+{
+    for (var i = 0; i < MACHINES; i++) if (heist.machines[i].cargo == pallet) return true;
+    return false;
+}
+int Occupant(Heist heist, int index)
+{
+    for (var s = 0; s < 2; s++) if (heist.present[s] && heist.possessed[s] == index) return s;
+    return -1;
+}
+bool Clear(Heist heist, float2 position, Body kind, int ignorePallet = -1)
+{
+    var r = BodyRadius(kind);
+    if (position.x < 1 + r || position.x > 57 - r || position.y < 1 + r || position.y > 35 - r) return false;
+    for (var i = 0; i < WALLS; i++) if (Inside(position, Wall(i), r)) return false;
+    for (var g = 0; g < 3; g++) if (!heist.doors[g] && Inside(position, Gateway(g), r)) return false;
+    if (kind != Body.Cleaner)
+    {
+        if (Inside(position, Rect(16, 5, 0.7, 3), r) || Inside(position, Rect(42, 5, 0.7, 3), r)) return false;
+    }
+    if (kind != Body.Cleaner && Inside(position, Rect(42, 28, 0.7, 4), r)) return false;
+    for (var p = 0; p < PALLETS; p++)
+        if (p != ignorePallet && !Carried(heist, p) && Math.Length(position - heist.pallets[p]) < r + 0.85) return false;
+    return true;
+}
+bool Sight(Heist heist, float2 from, float2 to)
+{
+    var distance = Math.Length(to - from);
+    var steps = int(distance * 3) + 1;
+    for (var i = 1; i < steps; i++)
+    {
+        var point = Math.Lerp(from, to, float(i) / float(steps));
+        for (var w = 0; w < WALLS; w++) if (Inside(point, Wall(w))) return false;
+        for (var g = 0; g < 3; g++) if (!heist.doors[g] && Inside(point, Gateway(g))) return false;
+        for (var p = 0; p < PALLETS; p++)
+            if (!Carried(heist, p) && Math.Length(point - heist.pallets[p]) < 0.8) return false;
+    }
+    return true;
+}
+bool Reachable(Heist heist, int seat, int target)
+{
+    if (seat < 0 || seat >= 2 || target < 0 || target >= MACHINES || !heist.present[seat] || heist.won) return false;
+    var source = heist.possessed[seat];
+    if (source < 0 || source >= MACHINES || source == target || heist.machines[target].offline > 0 || Occupant(heist, target) >= 0) return false;
+    var a = heist.machines[source];
+    var b = heist.machines[target];
+    if (int(a.kind) >= int(Body.Camera) && int(b.kind) >= int(Body.Camera) && a.circuit == b.circuit) return true;
+    return Math.Length(a.position - b.position) <= 7.5 && Sight(heist, a.position, b.position);
+}
+bool VaultPower(Heist heist)
+{
+    if (heist.bypass) return true;
+    for (var p = 0; p < PALLETS; p++)
+        if (!Carried(heist, p) && Math.Length(heist.pallets[p] - float2(38, 11)) < 1.65) return true;
+    return false;
+}
+int Seat(Heist heist, PlayerID player)
+{
+    for (var s = 0; s < 2; s++) if (heist.present[s] && heist.players[s] == player) return s;
+    return -1;
+}
+void SetMachine(mut Heist heist, int i, Body kind, float2 at, int circuit)
+{
+    heist.machines[i] = Machine { kind = kind, position = at, circuit = circuit };
+}
+void LayWarehouse(mut Heist heist)
+{
+    heist.serial++;
+    heist.initialized = true;
+    heist.started = false;
+    heist.manifest = false;
+    heist.bypass = false;
+    heist.released = false;
+    heist.lockdown = false;
+    heist.belt = false;
+    heist.won = false;
+    heist.alarm = 0;
+    heist.elapsed = 0;
+    heist.swaps = 0;
+    heist.catches = 0;
+    heist.lifts = 0;
+    heist.route = 0;
+    heist.carrier = -1;
+    heist.loot = float2(52, 18);
+    heist.doors = default;
+    heist.scan = default;
+    heist.slicks = default;
+    heist.wishes = default;
+    heist.nextSlick = 0;
+    SetMachine(heist, 0, Body.Cleaner, float2(6, 29), 0);
+    SetMachine(heist, 1, Body.Cleaner, float2(8, 29), 0);
+    SetMachine(heist, 2, Body.Forklift, float2(11, 27), 0);
+    SetMachine(heist, 3, Body.Controller, float2(13, 23), 0);
+    SetMachine(heist, 4, Body.Camera, float2(13, 17), 0);
+    SetMachine(heist, 5, Body.Camera, float2(19, 13), 0);
+    SetMachine(heist, 6, Body.Forklift, float2(28, 17), 1);
+    SetMachine(heist, 7, Body.Cleaner, float2(19, 7), 1);
+    SetMachine(heist, 8, Body.Camera, float2(28, 4), 1);
+    SetMachine(heist, 9, Body.Controller, float2(39, 16), 1);
+    SetMachine(heist, 10, Body.Camera, float2(39, 6), 1);
+    SetMachine(heist, 11, Body.Cleaner, float2(46, 6), 2);
+    SetMachine(heist, 12, Body.Camera, float2(46, 13), 2);
+    SetMachine(heist, 13, Body.Controller, float2(46, 29), 2);
+    SetMachine(heist, 14, Body.Forklift, float2(49, 21), 2);
+    heist.pallets[0] = float2(28, 11);
+    heist.pallets[1] = float2(18.5, 18);
+    heist.pallets[2] = float2(37, 26);
+    heist.pallets[3] = float2(10, 18);
+    heist.pallets[4] = float2(45, 31);
+    heist.possessed[0] = 0;
+    heist.possessed[1] = 1;
+    heist.safe[0] = 4;
+    heist.safe[1] = 4;
+    heist.guards[0] = Watchman { position = float2(28, 25), destination = float2(28, 15), step = float2(28, 25) };
+    heist.guards[1] = Watchman { position = float2(54, 29), destination = float2(54, 15), step = float2(54, 29) };
+}
+system Initialize(mut Heist heist) { if (!heist.initialized) LayWarehouse(heist); }
+event(PlayerJoined joined) Enter(mut Heist heist)
+{
+    if (!heist.initialized) LayWarehouse(heist);
+    if (heist.pilots.Has(joined.player)) return;
+    for (var s = 0; s < 2; s++)
+    {
+        if (heist.present[s]) continue;
+        mut var body = s;
+        if (Occupant(heist, body) >= 0)
+        {
+            for (var i = 0; i < MACHINES; i++)
+                if (Occupant(heist, i) < 0 && heist.machines[i].offline <= 0) { body = i; break; }
+        }
+        heist.present[s] = true;
+        heist.players[s] = joined.player;
+        heist.possessed[s] = body;
+        heist.safe[s] = 4;
+        heist.pilots[joined.player] = Spawn(Pilot { seat = s }, Owner { player = joined.player });
+        return;
+    }
+}
+event(PlayerLeft left) Leave(mut Heist heist)
+{
+    var s = Seat(heist, left.player);
+    if (s < 0) return;
+    heist.present[s] = false;
+    heist.wishes[s] = default;
+    heist.pilots[left.player].Destroy();
+    heist.pilots.Remove(left.player);
+}
+command(BeginHeist begin, PlayerID sender) StartHeist(mut Heist heist)
+{
+    if (begin.serial == heist.serial && Seat(heist, sender) >= 0) heist.started = true;
+}
+command(Restart restart, PlayerID sender) StartAgain(mut Heist heist)
+{
+    if (restart.serial != heist.serial || Seat(heist, sender) < 0) return;
+    LayWarehouse(heist);
+    heist.started = true;
+}
+command(Jump jump, PlayerID sender) Possess(mut Heist heist)
+{
+    var s = Seat(heist, sender);
+    if (!heist.started || jump.serial != heist.serial || !Reachable(heist, s, jump.target)) return;
+    var from = heist.machines[heist.possessed[s]].position;
+    heist.possessed[s] = jump.target;
+    heist.scan[s] = 0;
+    heist.safe[s] = Math.Max(heist.safe[s], 0.7);
+    heist.swaps++;
+    Send(Pulse { kind = Beat.Jump, from = from, at = heist.machines[jump.target].position, seat = s });
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    bool use;
+    bool special;
+    Sample(Devices devices, Lobby lobby, Desk desk)
+    {
+        if (!lobby.playing || desk.guide || desk.map) return;
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y += 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y -= 1;
+        move += float2(devices.gamepad.leftStick.x, -devices.gamepad.leftStick.y);
+        use = keys.e.pressed || devices.gamepad.buttonSouth.pressed || desk.use;
+        special = keys.space.pressed || devices.gamepad.buttonWest.pressed || desk.special;
+        move += desk.stick;
+    }
+}
+[After(Initialize)]
+system ClearIntent(mut Heist heist) { heist.wishes = default; }
+[After(ClearIntent)]
+system ReadIntent(Pilot pilot, Controls input, mut Heist heist, with Owner)
+{
+    heist.wishes[pilot.seat] = Intent { move = Math.Normalize(input.move) * Math.Min(1, Math.Length(input.move)),
+        use = input.use, useEdge = input.use.down, special = input.special, specialEdge = input.special.down };
+}
+void Noise(mut Heist heist, float2 at, float range)
+{
+    for (var g = 0; g < 2; g++)
+        if (Math.Length(heist.guards[g].position - at) < range)
+        {
+            heist.guards[g].destination = at;
+            heist.guards[g].chase = 5;
+            heist.guards[g].think = 0;
+        }
+}
+void Release(mut Heist heist, int s)
+{
+    if (heist.released || !heist.manifest || !VaultPower(heist)) return;
+    heist.released = true;
+    Send(Pulse { kind = Beat.Unlock, at = heist.loot, seat = s });
+}
+void Operate(mut Heist heist, int s, Intent intent, float dt)
+{
+    var index = heist.possessed[s];
+    mut var machine = heist.machines[index];
+    var at = machine.position;
+    if (machine.kind == Body.Camera)
+    {
+        if (Math.Length(intent.move) > 0.1) machine.facing = intent.move;
+        if (intent.use && !heist.manifest && Math.Length(at - float2(30, 4)) < 8
+            && Math.Dot(machine.facing, Math.Normalize(float2(30, 4) - at)) > 0.8 && Sight(heist, at, float2(30, 4)))
+        {
+            heist.scan[s] += dt;
+            if (heist.scan[s] >= 3) { heist.manifest = true; Send(Pulse { kind = Beat.Unlock, at = at, seat = s }); }
+        }
+        else heist.scan[s] = 0;
+        if (intent.specialEdge && machine.cooldown <= 0)
+        {
+            machine.cooldown = 4;
+            machine.flash = 0.35;
+            var lure = at + machine.facing * 5;
+            for (var g = 0; g < 2; g++)
+                if (Math.Length(heist.guards[g].position - at) < 11 && Sight(heist, at, heist.guards[g].position))
+                {
+                    heist.guards[g].stun = 4;
+                    heist.guards[g].notice = 0;
+                    heist.guards[g].destination = lure;
+                    heist.guards[g].chase = 7;
+                    heist.guards[g].think = 0;
+                }
+            Send(Pulse { kind = Beat.Flash, at = at, seat = s });
+        }
+    }
+    else if (machine.kind == Body.Controller)
+    {
+        if (intent.useEdge)
+        {
+            var door = machine.circuit == 0 ? 0 : machine.circuit == 1 ? 1 : 2;
+            heist.doors[door] = !heist.doors[door];
+            Send(Pulse { kind = Beat.Use, at = at, seat = s });
+        }
+        if (intent.specialEdge) { heist.belt = !heist.belt; Send(Pulse { kind = Beat.Use, at = at, seat = s }); }
+    }
+    else
+    {
+        if (intent.useEdge)
+        {
+            if (!heist.manifest && Math.Length(at - float2(30, 4)) < 2.3)
+            { heist.manifest = true; Send(Pulse { kind = Beat.Unlock, at = at, seat = s }); }
+            else if (machine.kind == Body.Cleaner && Math.Length(at - float2(49, 6)) < 2.3)
+            { heist.bypass = true; Send(Pulse { kind = Beat.Unlock, at = at, seat = s }); }
+            else if (machine.cargo >= 0)
+            {
+                var drop = at + machine.facing * 1.7;
+                if (Clear(heist, drop, Body.Cleaner, machine.cargo))
+                {
+                    if (machine.cargo == PALLETS) { heist.carrier = -1; heist.loot = drop; }
+                    else heist.pallets[machine.cargo] = drop;
+                    machine.cargo = -1;
+                    Send(Pulse { kind = Beat.Use, at = at, seat = s });
+                }
+            }
+            else if (heist.released && heist.carrier < 0 && Math.Length(at - heist.loot) < 2.6)
+            {
+                machine.cargo = PALLETS;
+                heist.carrier = index;
+                if (!heist.lockdown)
+                {
+                    heist.lockdown = true;
+                    heist.doors[0] = false;
+                    heist.doors[1] = false;
+                    heist.alarm = Math.Max(heist.alarm, 45);
+                }
+                Send(Pulse { kind = Beat.Use, at = at, seat = s });
+            }
+            else if (machine.kind == Body.Forklift)
+            {
+                mut var nearest = 2.8;
+                mut var pick = -1;
+                for (var p = 0; p < PALLETS; p++)
+                {
+                    var distance = Math.Length(at - heist.pallets[p]);
+                    if (distance < nearest && !Carried(heist, p)) { pick = p; nearest = distance; }
+                }
+                if (pick >= 0) { machine.cargo = pick; Send(Pulse { kind = Beat.Use, at = at, seat = s }); }
+            }
+        }
+        if (intent.special && machine.cooldown <= 0 && machine.kind == Body.Cleaner)
+        {
+            heist.slicks[heist.nextSlick] = Slick { position = at - machine.facing * 0.8, life = 18 };
+            heist.nextSlick = (heist.nextSlick + 1) % 12;
+            machine.cooldown = 2.5;
+            Send(Pulse { kind = Beat.Spray, at = at, seat = s });
+        }
+        if (intent.specialEdge && machine.kind == Body.Forklift && machine.cooldown <= 0)
+        {
+            machine.cooldown = 2;
+            Noise(heist, at, 14);
+            for (var i = 0; i < MACHINES; i++)
+                if (heist.machines[i].kind == Body.Cleaner && Math.Length(heist.machines[i].position - at) < 3)
+                {
+                    heist.machines[i].raised = 15;
+                    heist.lifts++;
+                }
+            Send(Pulse { kind = Beat.Use, at = at, seat = s });
+        }
+    }
+    heist.machines[index] = machine;
+    Release(heist, s);
+}
+float2 Travel(Heist heist, float2 from, float2 delta, Body kind, int cargo = -1, bool raised = false)
+{
+    mut var at = from;
+    var x = at + float2(delta.x, 0);
+    if (Clear(heist, x, kind, cargo)) at = x;
+    var y = at + float2(0, delta.y);
+    if (Clear(heist, y, kind, cargo)) at = y;
+    for (var i = 0; i < MACHINES; i++)
+    {
+        var other = heist.machines[i];
+        if (int(other.kind) >= int(Body.Camera) || Math.Length(other.position - from) < 0.01) continue;
+        var radius = BodyRadius(other.kind) + BodyRadius(kind);
+        if (Math.Length(at - other.position) < radius && Math.Length(at - other.position) < Math.Length(from - other.position)) at = from;
+    }
+    // A forklift-raised cleaner can cross the upper fence onto its service walkway.
+    if (raised && kind == Body.Cleaner && from.y >= 13 && from.y <= 15 && from.x > 40 && from.x < 45)
+        at = float2(Math.Clamp(from.x + delta.x, 40, 45), from.y);
+    return at;
+}
+float2 Patrol(int guard, int waypoint)
+{
+    if (guard == 0)
+    {
+        switch (waypoint % 6)
+        {
+            case 0: return float2(28, 15);
+            case 1: return float2(38, 15);
+            case 2: return float2(38, 4);
+            case 3: return float2(28, 4);
+            case 4: return float2(28, 25);
+        }
+        return float2(38, 32);
+    }
+    switch (waypoint % 4)
+    {
+        case 0: return float2(54, 15);
+        case 1: return float2(45, 15);
+        case 2: return float2(45, 29);
+    }
+    return float2(54, 29);
+}
+// Bounded grid search keeps guards from getting stuck behind rearranged pallets.
+float2 NextStep(Heist heist, float2 from, float2 goal)
+{
+    var sx = Math.Clamp(int(from.x), 1, NAV_W - 2);
+    var sy = Math.Clamp(int(from.y), 1, NAV_H - 2);
+    var gx = Math.Clamp(int(goal.x), 1, NAV_W - 2);
+    var gy = Math.Clamp(int(goal.y), 1, NAV_H - 2);
+    var start = sy * NAV_W + sx;
+    var end = gy * NAV_W + gx;
+    mut int[2088] parents = default;
+    mut int[2088] queue = default;
+    for (var i = 0; i < 2088; i++) parents[i] = -1;
+    parents[start] = start;
+    queue[0] = start;
+    mut var head = 0;
+    mut var count = 1;
+    mut var best = start;
+    mut var least = Math.Length(float2(sx, sy) - float2(gx, gy));
+    while (head < count)
+    {
+        var cell = queue[head++];
+        if (cell == end) { best = cell; break; }
+        for (var d = 0; d < 4; d++)
+        {
+            var x = cell % NAV_W + (d == 0 ? 1 : d == 1 ? -1 : 0);
+            var y = cell / NAV_W + (d == 2 ? 1 : d == 3 ? -1 : 0);
+            if (x < 1 || y < 1 || x >= NAV_W - 1 || y >= NAV_H - 1) continue;
+            var n = y * NAV_W + x;
+            if (parents[n] >= 0 || !Clear(heist, float2(x + 0.5, y + 0.5), Body.Forklift)) continue;
+            parents[n] = cell;
+            queue[count++] = n;
+            var distance = Math.Length(float2(x, y) - float2(gx, gy));
+            if (distance < least) { least = distance; best = n; }
+        }
+    }
+    if (best == start) return goal;
+    for (var i = 0; i < 2088 && parents[best] != start; i++) best = parents[best];
+    return float2(best % NAV_W + 0.5, best / NAV_W + 0.5);
+}
+void Eject(mut Heist heist, int s)
+{
+    var index = heist.possessed[s];
+    var at = heist.machines[index].position;
+    if (heist.machines[index].cargo == PALLETS) heist.carrier = -1;
+    heist.machines[index].cargo = -1;
+    heist.machines[index].offline = 8;
+    mut var best = -1;
+    mut var nearest = 999.0;
+    for (var i = 0; i < MACHINES; i++)
+    {
+        if (i == index || heist.machines[i].offline > 0 || Occupant(heist, i) >= 0) continue;
+        var distance = Math.Length(heist.machines[i].position - at);
+        if (distance < nearest) { nearest = distance; best = i; }
+    }
+    if (best >= 0) heist.possessed[s] = best;
+    heist.safe[s] = 5;
+    heist.scan[s] = 0;
+    heist.catches++;
+    heist.alarm = Math.Min(100, heist.alarm + 16);
+    Send(Pulse { kind = Beat.Caught, at = at, seat = s });
+}
+[After(ReadIntent)]
+system TickHeist(mut Heist heist, Time time)
+{
+    if (!heist.started || heist.won) return;
+    var dt = time.dt;
+    heist.elapsed += dt;
+    heist.alarm = Math.Max(heist.lockdown ? 35.0 : 0.0, heist.alarm - dt * 1.6);
+    for (var i = 0; i < MACHINES; i++)
+    {
+        heist.machines[i].offline = Math.Max(0, heist.machines[i].offline - dt);
+        heist.machines[i].cooldown = Math.Max(0, heist.machines[i].cooldown - dt);
+        var wasRaised = heist.machines[i].raised > 0;
+        heist.machines[i].raised = Math.Max(0, heist.machines[i].raised - dt);
+        if (wasRaised && heist.machines[i].raised <= 0 && Inside(heist.machines[i].position, Rect(42, 13, 0.7, 2), 0.4))
+            heist.machines[i].position = float2(heist.machines[i].position.x < 42.35 ? 41.4 : 43.3, heist.machines[i].position.y);
+        heist.machines[i].flash = Math.Max(0, heist.machines[i].flash - dt);
+    }
+    for (var i = 0; i < 12; i++) heist.slicks[i].life = Math.Max(0, heist.slicks[i].life - dt);
+    for (var s = 0; s < 2; s++)
+    {
+        if (!heist.present[s]) continue;
+        heist.safe[s] = Math.Max(0, heist.safe[s] - dt);
+        var index = heist.possessed[s];
+        var intent = heist.wishes[s];
+        var machine = heist.machines[index];
+        if (int(machine.kind) < int(Body.Camera) && machine.offline <= 0)
+        {
+            var moving = Math.Length(intent.move) > 0.1;
+            if (moving) heist.machines[index].facing = intent.move;
+            var speed = machine.kind == Body.Forklift ? 3.5 : machine.cargo == PALLETS ? 1.8 : 3.1;
+            heist.machines[index].position = Travel(heist, machine.position, intent.move * (speed * dt), machine.kind, machine.cargo, machine.raised > 0);
+            if (machine.kind == Body.Forklift && moving && machine.cargo >= 0) Noise(heist, machine.position, 4);
+        }
+        Operate(heist, s, intent, dt);
+    }
+    for (var i = 0; i < MACHINES; i++)
+    {
+        var m = heist.machines[i];
+        if (m.cargo < 0) continue;
+        var cargoAt = m.kind == Body.Cleaner ? m.position - m.facing * 1.15 : m.position + m.facing * 1.2;
+        if (m.cargo == PALLETS) heist.loot = cargoAt;
+        else heist.pallets[m.cargo] = cargoAt;
+    }
+    // The belt bypasses both main shutters, but needs a controller to reverse it.
+    if (heist.released && heist.carrier < 0 && heist.belt && heist.loot.y >= 28 && heist.loot.y <= 32 && heist.loot.x >= 5)
+    {
+        heist.loot.x -= dt * 2.8;
+        heist.route = 3;
+        if (!heist.lockdown) { heist.lockdown = true; heist.doors[0] = false; heist.doors[1] = false; heist.alarm = 45; }
+    }
+    if (heist.lockdown && heist.route == 0 && heist.loot.x < 16)
+        heist.route = heist.loot.y < 10 ? 1 : 2;
+    if (heist.released && Inside(heist.loot, Rect(2, 25, 7, 9)))
+    {
+        heist.won = true;
+        if (heist.route == 0) heist.route = 2;
+        Send(Pulse { kind = Beat.Win, at = heist.loot });
+        return;
+    }
+    for (var g = 0; g < 2; g++)
+    {
+        mut var guard = heist.guards[g];
+        guard.stun = Math.Max(0, guard.stun - dt);
+        guard.chase = Math.Max(0, guard.chase - dt);
+        guard.think -= dt;
+        mut var seen = -1;
+        mut var nearest = 8.0;
+        for (var s = 0; s < 2; s++)
+        {
+            if (!heist.present[s] || heist.safe[s] > 0) continue;
+            var m = heist.machines[heist.possessed[s]];
+            if (int(m.kind) >= int(Body.Camera)) continue;
+            var offset = m.position - guard.position;
+            var distance = Math.Length(offset);
+            if (distance < nearest && (distance < 2 || Math.Dot(Math.Normalize(offset), guard.facing) > 0.5) && Sight(heist, guard.position, m.position))
+            { seen = s; nearest = distance; }
+        }
+        if (guard.stun > 0) { guard.notice = Math.Max(0, guard.notice - dt); heist.guards[g] = guard; continue; }
+        if (seen >= 0)
+        {
+            guard.notice = Math.Min(1.6, guard.notice + dt);
+            guard.target = seen;
+            guard.destination = heist.machines[heist.possessed[seen]].position;
+            if (guard.notice > 0.75) { guard.chase = 4; heist.alarm = Math.Min(100, heist.alarm + dt * 7); }
+        }
+        else guard.notice = Math.Max(0, guard.notice - dt * 0.6);
+        if (guard.chase <= 0)
+        {
+            if (Math.Length(guard.position - guard.destination) < 1.3) guard.waypoint++;
+            guard.destination = Patrol(g, guard.waypoint);
+        }
+        if (guard.think <= 0 || Math.Length(guard.position - guard.step) < 0.15)
+        { guard.step = NextStep(heist, guard.position, guard.destination); guard.think = 0.5; }
+        var way = Math.Normalize(guard.step - guard.position);
+        mut var speed = guard.chase > 0 ? 3.4 : 1.8;
+        for (var i = 0; i < 12; i++)
+            if (heist.slicks[i].life > 0 && Math.Length(heist.slicks[i].position - guard.position) < 1.2)
+            { speed = 0.5; guard.stun = 1.3; heist.slicks[i].life = 0; }
+        if (Math.Length(way) > 0.1) guard.facing = way;
+        guard.position = Travel(heist, guard.position, way * (speed * dt), Body.Forklift);
+        if (seen >= 0 && nearest < 2 && guard.notice > 0.75) { Eject(heist, seen); guard.stun = 2; guard.notice = 0; }
+        heist.guards[g] = guard;
+    }
+}

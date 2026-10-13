@@ -143,3 +143,14 @@ instructions. The infinite fractal/scale-changing world, persistent saves,
 longer authored content and distinct multi-step garden mechanics in the initial
 pitch remain future directions. This demo is four finite charts, three shared
 restorations and a complete relaxed ending.
+
+Integration with `origin/dev` on 2026-10-13 retains all ten catalog ids,
+including the concurrent Copper & Coil, HOT SWAP, DEADWEIGHT and SWINDLE
+additions and NIGHT ROUTE's removal. Conflicts were in registration/build
+and notes files; no shared engine/compiler dependency changed. Merged native
+and web configurations/builds pass, with the game's 2/2 native and 3/3 web
+tests passing again. Svelte check is clean, the production build passes and
+all nineteen analytics/admin/production HTTP checks pass. The release,
+staged and production-packaged Elsewhere HTML bytes agree. The portable
+review ZIP is built locally; its HTTP server passes normal serving/header
+and root-escape checks. No deployment or CI dispatch.

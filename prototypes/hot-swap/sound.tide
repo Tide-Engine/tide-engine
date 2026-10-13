@@ -1,0 +1,33 @@
+asset Clip swapSound = "sfx/jump.wav";
+asset Clip switchSound = "sfx/switch.wav";
+asset Clip spraySound = "sfx/spray.wav";
+asset Clip flashSound = "sfx/flash.wav";
+asset Clip caughtSound = "sfx/caught.wav";
+asset Clip unlockSound = "sfx/unlock.wav";
+asset Clip winSound = "sfx/win.wav";
+asset Clip factorySound = "sfx/warehouse.wav";
+local singleton Hearing { Sound factory; }
+
+[Stage(Art.Sound)]
+view WarehouseAudio(Heist heist, Desk desk, mut Hearing hearing)
+{
+    hearing.factory.clip = factorySound;
+    hearing.factory.loop = true;
+    hearing.factory.playing = heist.started && !desk.mute;
+    hearing.factory.volume = heist.lockdown && !heist.won ? 0.35 : 0.22;
+}
+local event(Pulse pulse) Hear(Desk desk)
+{
+    if (desk.mute) return;
+    var pitch = pulse.seat == 0 ? 1.0 : 1.12;
+    switch (pulse.kind)
+    {
+        case Beat.Jump: Audio.Play(swapSound, 0.38, pitch); break;
+        case Beat.Use: Audio.Play(switchSound, 0.36, pitch); break;
+        case Beat.Spray: Audio.Play(spraySound, 0.33); break;
+        case Beat.Flash: Audio.Play(flashSound, 0.37); break;
+        case Beat.Caught: Audio.Play(caughtSound, 0.42); break;
+        case Beat.Unlock: Audio.Play(unlockSound, 0.42); break;
+        case Beat.Win: Audio.Play(winSound, 0.48); break;
+    }
+}

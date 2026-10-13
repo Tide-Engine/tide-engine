@@ -70,6 +70,47 @@ its `<id>_page` target and its `private_games` block, plus the id in
   `test/tide.packages`. Game contracts, limits and validation are in
   `notes/elsewhere.md`. Source/catalog registration does not deploy the demo.
 
+- Copper & Coil (`copper-coil`): `prototypes/copper-coil/`, a cooperative
+  logic-circuit puzzle requested with a publisher demo on 2026-10-13. Two
+  maintenance robots configure AND/OR/XOR/NOT consoles, test all input rows,
+  commission a bridge and reunite at its exit. Six circuits share one workshop,
+  with online, shared-keyboard and solo play. `copper_coil_page` stages the
+  public page; `private_games` collects it and the game uses STATS. Gameplay,
+  publisher material, tests and limitations are in `notes/copper-coil.md`.
+
+
+- HOT SWAP (`hot-swap`): `prototypes/hot-swap/`, requested on 2026-10-13,
+  a solo/two-player warehouse possession heist. Electrical creatures borrow
+  cleaners, forklifts, cameras and door controllers to free a storm case and
+  escape by ducts, loading shutters or shipping belt. `hot_swap_page` stages
+  its public page; `private_games` collects it or native `hot_swap`, with STATS.
+  Its isolated C test host is `hot_swap_tests`. Rules and validation are in
+  `notes/hot-swap.md`.
+
+- DEADWEIGHT (`deadweight`): `prototypes/deadweight/`, the owner's two-worker
+  cooperative salvage prototype, approved and built on 2026-10-13. Three jobs
+  in one industrial pumping station use Box3D cargo, winches, a bridge and a
+  counterweight. It supports online rooms, shared keyboard and switching alone.
+  `deadweight_page` stages `/prototypes/deadweight/`; `private_games` collects
+  it or the native `deadweight`. Its main target uses STATS. Rules, contracts,
+  tests and coverage are in `notes/deadweight.md`.
+
+- SWINDLE (`swindle`): `prototypes/swindle/`, the competitive publisher-demo
+  prototype requested on 2026-10-13. Ninety-second rooftop heists with a growing
+  prism, dash steals, fake carriers, moving cash-outs, duel/FFA/2v2, bots,
+  friend rooms and same-keyboard play. `swindle` has STATS; `swindle_page`
+  stages `/prototypes/swindle/` with its gameplay thumbnail, collected by
+  `private_games`. Rules, tests and validation are in `notes/swindle.md`.
+
+Removal (2026-10-13): the owner scrapped NIGHT ROUTE after finding its delivery
+and parcel-rule loop unfun. Its source, tests, thumbnail, game note, build
+targets and catalog/public-id registrations are removed. The single-player
+implementation and validation record remain in git history at `43f402a5`.
+No engine code was changed by the prototype or its removal. No CI/deployment.
+Validation: native/web debug configuration succeeds with no NIGHT ROUTE tests;
+the production docs build and all nineteen analytics/admin/production HTTP
+checks pass, including 404s for the removed page and thumbnail.
+
 Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
 game note, build targets and catalog/public-id registrations are removed. Its
 implementation and engine-gap record remain in git history at `7c047a87`.

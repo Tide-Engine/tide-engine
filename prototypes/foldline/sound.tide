@@ -129,12 +129,12 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     mut float drumFar = 1000.0;
     for (int which = 0; which < DrumCount(arena.level); which++)
     {
-        float3 at = float3(DrumAt(arena.level, arena.ticks, which), -0.3, DrumLane(arena.level, which));
+        float3 at = float3(DrumAt(arena.level, arena.drumTicks, which), -0.3, DrumLane(arena.level, which));
         if (Math.Distance(at, eye) >= drumFar) continue;
         drumFar = Math.Distance(at, eye);
         drumNear = at;
     }
-    LoopingAt(ears.drum, drumRun, drumNear, 1.0, hazard == 3);
+    LoopingAt(ears.drum, drumRun, drumNear, 1.0, hazard == 3 && !((arena.level == 4 || arena.level == 5) && (arena.plateC || arena.plateD)));
     LoopingAt(ears.end0, foldHum, fold.ends[0].at, 0.3, Linked(fold, 0));
     LoopingAt(ears.end1, foldHum, fold.ends[1].at, 0.3, Linked(fold, 0));
     LoopingAt(ears.end2, foldHum, fold.ends[2].at, 0.3, Linked(fold, 1));
