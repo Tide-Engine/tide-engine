@@ -174,6 +174,16 @@ save('drone', loop(drone + low(noise(n), 70) * 1.5, 0.25), 0.6)
 n = 2.25
 save('fold', loop(sum(np.sin(2 * np.pi * f * t(n)) * a for f, a in ((110, 1), (111, 0.7), (165, 0.5), (166.5, 0.4), (330, 0.1)))), 0.5)
 
+# What's between the rooms, moving: something heavy dragged over carpet, and a dry clicking
+n = 1.75
+drag = low(noise(n), 420) * (0.55 + 0.45 * np.sin(2 * np.pi * 4 * t(n))) * 2
+clicks = np.zeros(int(RATE * n))
+for k in range(21):
+    at = int(k * RATE * n / 21 + rng.uniform(0, 0.02) * RATE)
+    m = min(int(RATE * 0.012), len(clicks) - at)
+    clicks[at:at + m] += high(noise(0.012), 2200)[:m] * decay(0.012, 300)[:m]
+save('scrape', loop(drag + clicks * 0.8 + np.sin(2 * np.pi * 37 * t(n)) * 0.6), 0.7)
+
 # Seen: four notes that shouldn't be together, struck
 n = 1.6
 sting = sum(np.sin(2 * np.pi * f * t(n)) for f in (220, 233.1, 311.1, 466.2, 493.9))

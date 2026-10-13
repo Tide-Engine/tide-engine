@@ -279,6 +279,53 @@ current.
     `Sounds` plays `splash.wav` for each (`Optics.splashed`). This is the
     renderer's and not the match's: a machine that didn't draw the frame
     it happened in sees and hears nothing of it.
+- **One way down (2026-10-13).** The owner: "make puzzles harder, i dont
+  really feel challenged... make level transitions be walking vs a button...
+  some backrooms like in-between level where here we can't use our guns and
+  maybe we have monsters we need to evade. i know this is vague but im just
+  trying to find the fun in this game which right now its lacking." Claude
+  proposed, and the owner took ("go with your recommendation"): no level
+  button; stretches between rooms where the device is dead; one thing in
+  them that moves only while nobody sees it (over a chase to run from);
+  caught there, both start that stretch over; and harder rooms made for two
+  folds, the five cut to two that teach and three real ones. Built in that
+  order, for the owner to play each step. **Steps 1 and 2 are built; the
+  rooms are the old five still.**
+  - *Lifts.* The lobby past the gate is a lift. With both in it the gate
+    shuts whatever holds it, and after `RIDE` (1.3 s, `Arena.ride`) the next
+    place is built (`Arena.depth`, `LevelAt`: room, between, room, room,
+    between, room, room, between, and round again) and they're in the lift
+    they came by: a box in the south-east, through a gap in the south wall
+    at x 3.5 to 9.5, which is the lift they left by turned half about. An
+    operator keeps its place and facing through that turn (`Arena.rode`,
+    in `MoveOperators`), so nothing is seen to move but the lamps failing
+    and the eye shaking. Its door (`Door`) opens 0.7 s after arriving.
+    Everyone starts in it, in every room. `Arena.complete` is never set and
+    the screen with its button is gone; the menu's six squares (the last is
+    the stretch between) stay for getting about.
+  - *Between* (`BETWEEN`, level 5): the hall cut into 8 by 10 cells by
+    concrete walls (`MazeEast`, `MazeNorth`: one maze, with loops, made by a
+    script once), a fifth of the lamps' light, no shot (nothing happens on
+    a click), and the gate open.
+  - *What's in it* (`Stalker`, `Stalk`): it's seen while it's within 60
+    degrees of where an operator looks and no wall is between (a ray). Not
+    seen, after four seconds' grace, it goes at 3.3 m/s to the nearest
+    operator who isn't in a lift, by the cells (a breadth-first count from
+    their cell each tick). Within 0.95 m it has them: `Arena.caught`, the
+    picture reddens and goes out, and after `CAUGHT` the stretch is built
+    again with both in the lift. It's drawn as the watcher is, in one
+    frozen pose, through `Watcher.at`; `Haunt` does nothing there. It's
+    heard only while it moves (`scrape.wav`).
+  - `test.c`: both in the lift ride to the stretch and stand as they stood,
+    turned; no shot there; it stays put while both are in the lift, comes
+    for someone with their back to it without leaving the maze, catches
+    them and starts the stretch over; it stands while looked at down an
+    open way and moves when looked away from. Replay hash
+    `8822463228466978914` natively and under WASI.
+  - Not done or checked: the rooms; a second maze (every stretch is the
+    same one); whether 3.3 m/s against a run of about 5 is frightening or
+    only slow; it going through an operator's other body; the thing seen in
+    a capture (the tests see it, Claude's captures didn't find it).
 - P now goes round three pictures for the owner to compare: 300 rows, 480
   (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would

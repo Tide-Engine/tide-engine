@@ -1185,14 +1185,14 @@ void Dress(mut Optics optics, int level)
             normal = float3(0, 0, 1);
             at = float3(door == 6 ? -6.2 : door == 7 ? 1.4 : 7.1, 1.05, -12.97);
         }
-        if (level != 0 && level != 3) continue;
+        if ((level != 0 && level != 3) || door == 8) continue;
         if (door < 6 && Math.Abs(at.z) < 4.5) continue;
         quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
         optics.furnishings.Add(Faced(at + normal * .03, r, float3(.95, 2.1, .06), DOORS, 2));
         optics.furnishings.Add(Turned(at + float3(0, .03, 0) + normal * .012, r, float3(1.11, 2.2, .06), wood));
     }
-    optics.furnishings.Add(Faced(float3(3.4, .06, -12.1), quaternion.Euler(0, .3, 0), float3(2.2, .12, 1.1), PLANKS, 0));
-    optics.furnishings.Add(Faced(float3(3.6, .18, -12.2), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
+    optics.furnishings.Add(Faced(float3(-3.4, .06, -12.1), quaternion.Euler(0, .3, 0), float3(2.2, .12, 1.1), PLANKS, 0));
+    optics.furnishings.Add(Faced(float3(-3.6, .18, -12.2), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
 
     // The frames a fold's end takes its size from: painted round where the opening goes, lit a little.
     for (int index = 0; index < MountCount(level); index++)
@@ -1214,10 +1214,13 @@ void Dress(mut Optics optics, int level)
         optics.furnishings.Add(Block(off + float3(0, high + .22, 0), along ? float3(.03, sign.y, sign.z) : float3(sign.x, sign.y, .03), paint, 0, 1.1));
     }
 
-    // The chamber's number, by the gate.
-    optics.furnishings.Add(Block(float3(5.4, 3.1, 12.96), float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
-    WallDigit(optics, 0, float3(4.86, 3.1, 12.915));
-    WallDigit(optics, level + 1, float3(5.94, 3.1, 12.915));
+    // The chamber's number, by the gate. The stretch between has none.
+    if (level != BETWEEN)
+    {
+        optics.furnishings.Add(Block(float3(5.4, 3.1, 12.96), float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
+        WallDigit(optics, 0, float3(4.86, 3.1, 12.915));
+        WallDigit(optics, level + 1, float3(5.94, 3.1, 12.915));
+    }
 }
 
 // A box of the room, as the match has it: a wall, a ceiling, a planter with what grows in it, or a crate.
@@ -1469,6 +1472,11 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
             optics.dynamic.Add(Block(at + float3(0, .074, edge * .72), float3(1.3, .012, .05), tint, 0, pressed ? 1.3 : .55));
         }
     }
+    // The door of the lift they came by.
+    float doorY = 2.0 + Math.Saturate((arena.arrive - 0.7) * 1.6) * 4.3;
+    optics.dynamic.Add(Faced(float3(ARRIVAL.x, doorY, -13.5), quaternion.identity, float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
+    for (int rib = 0; rib < 4; rib++)
+        optics.dynamic.Add(Block(float3(ARRIVAL.x, doorY - 1.5 + rib, -13.37), float3(5.4, .07, .04), steel, 0, 0, .7));
     // The split gate physically retreats upwards as its two circuits latch.
     float gateY = 2.0 + arena.gate * 4.3;
     optics.dynamic.Add(Faced(float3(0, gateY, 13.5), quaternion.identity, float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
@@ -1522,7 +1530,7 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
     }
 
     // The pit's hands: far down in the dark until someone falls, then up and round them.
-    if (arena.level == 0 || arena.level >= 3)
+    if (Pitted(arena.level))
     {
         float middle = arena.level == 0 ? -1.0 : 1.0;
         for (int i = 0; i < 22; i++)
@@ -1696,8 +1704,10 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     foreach (var row in operators)
         if (row.body.id != viewer.id) partner = row.body;
     mut float3 eye = viewer.position + float3(0, 1.55 * viewer.scale, 0);
-    // In the hands' grip the eye is shaken
+    // In the hands' grip the eye is shaken, and in a lift going down
     if (viewer.taken > 0) eye += float3(Math.Sin(optics.clock * 61), Math.Sin(optics.clock * 83), Math.Cos(optics.clock * 71)) * (.03 * Math.Saturate(viewer.taken * 4));
+    float riding = Math.Max(Math.Saturate(arena.ride * 3), arena.arrive < 0.6 && arena.rode == arena.chamber ? 1.0 : 0.0);
+    eye += float3(Math.Sin(optics.clock * 47), Math.Sin(optics.clock * 39), 0) * (.012 * riding);
     mut quaternion rotation = quaternion.Euler(-viewer.pitch, viewer.yaw, 0);
     if (warming)
     {
@@ -1738,14 +1748,19 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     }
     // The watcher, where the match has it.
     bool watched = watcher.state != Watching.Away;
-    float lamps = watcher.blink > 0 ? 0.0 : 1.0;
+    // The lamps: out as a watcher comes, failing as the lift goes down, and few between the rooms
+    mut float lamps = watcher.blink > 0 ? 0.0 : 1.0;
+    if (riding > 0) lamps *= Math.Sin(optics.clock * 31) + Math.Sin(optics.clock * 53) > 0.6 ? 0.7 : 0.04;
+    if (arena.level == BETWEEN) lamps *= 0.22;
     float4x4 watcherPlace = float4x4.TRS(watcher.at, quaternion.Euler(0, watcher.yaw, 0), float3(FIGURE_SCALE * 1.12));
-    Pose watcherPose = FigurePose(Operator { position = watcher.at, grounded = true }, optics.clock + 3.1);
-    float caught = watcher.state == Watching.Lunging && watcher.victim == viewer.id && !ui.open ? 1 - Math.Saturate(watcher.timer / 0.75) * 0.6 : 0.0;
+    // What's between the rooms doesn't so much as breathe
+    Pose watcherPose = FigurePose(Operator { position = watcher.at, grounded = true }, arena.level == BETWEEN ? 0.4 : optics.clock + 3.1);
+    mut float caught = watcher.state == Watching.Lunging && watcher.victim == viewer.id && !ui.open ? 1 - Math.Saturate(watcher.timer / 0.75) * 0.6 : 0.0;
+    if (arena.caught > 0 && !ui.open) caught = 1;
     float gripped = ui.open || viewer.taken <= 0 ? 0.0 : Math.Saturate(viewer.taken / 0.3) * 0.75;
     lens.sunk = !ui.open && viewer.taken > 0 && eye.y < PIT_SURFACE - .04 ? 1.0 : 0.0;
     lens.scare = Math.Max(Math.Max(caught, gripped), lens.scare - dt * 2.5);
-    lens.under = ui.open ? 0.0 : Math.Saturate((viewer.taken - 1.1) / (TAKEN_FOR - 1.15));
+    lens.under = ui.open ? 0.0 : Math.Max(Math.Saturate((viewer.taken - 1.1) / (TAKEN_FOR - 1.15)), Math.Saturate((arena.caught - 0.35) / (CAUGHT - 0.45)));
 
     float2 window = float2(Screen.width, Screen.height);
     // An end's camera only draws the part of the window its opening covers,
