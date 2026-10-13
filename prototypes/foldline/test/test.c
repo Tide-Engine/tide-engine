@@ -191,6 +191,57 @@ static void folds_are_shot_and_crossed(void)
     tide_world_free(&world);
 }
 
+// A fold's ends of two sizes: what goes in one comes out the other's size.
+static void sizes(void)
+{
+    tide_world world = {0};
+    start(&world);
+    ticks(&world, 5);
+    place(&world, 0, (tide_float3){-5, 0, -2}, 0, 0);
+    ticks(&world, 2);
+    press(&world, (PilotInput){.amber = true});
+    place(&world, 0, (tide_float3){-5, 0, -2}, -TIDE_PI_F / 2, 0);
+    ticks(&world, 2);
+    press(&world, (PilotInput){.cyan = true, .size = 1});
+    CHECK(world.Fold.amber.open && world.Fold.amber.size == 1 && world.Fold.cyan.open && world.Fold.cyan.size == 0.5f);
+    CHECK(near(world.Fold.cyan.at.y, 0.65f, 0.001f)); // Half as high, standing on the floor
+    // In the whole end, out of the half one at half the size, on the floor
+    place(&world, 0, (tide_float3){-5, 0, 0.5f}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
+    CHECK(world.Fold.traversals == 1);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 40);
+    Operator small = pilot(&world, 0);
+    CHECK(small.scale == 0.5f && near(small.position.y, 0, 0.05f) && small.position.x > -9.8f && small.grounded);
+    CHECK(near(tide_get_Box3D_Capsule(&world, world.Arena.op0).height, 0.9f, 0.001f));
+    // Too big for the half end at its own size, it goes back in as it is and comes out whole
+    place(&world, 0, (tide_float3){-8.6f, 0, -2}, -TIDE_PI_F / 2, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    for (int step = 0; step < 120 && world.Fold.traversals == 1; step++) tide_world_tick(&world);
+    CHECK(world.Fold.traversals == 2);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 40);
+    const Operator whole = pilot(&world, 0);
+    CHECK(whole.scale == 1 && near(whole.position.y, 0, 0.05f) && whole.position.z < 2.4f);
+    // A whole body doesn't fit the half end
+    place(&world, 0, (tide_float3){-8.6f, 0, -2}, -TIDE_PI_F / 2, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 90);
+    CHECK(world.Fold.traversals == 2 && pilot(&world, 0).position.x > -9.8f);
+    // A new chamber makes everyone whole again
+    place(&world, 0, (tide_float3){-5, 0, 0.5f}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    for (int step = 0; step < 90 && world.Fold.traversals == 2; step++) tide_world_tick(&world);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 5);
+    CHECK(pilot(&world, 0).scale == 0.5f);
+    choose(&world, 0, 1);
+    ticks(&world, 10);
+    CHECK(pilot(&world, 0).scale == 1 && near(pilot(&world, 0).position.z, -9, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
+    tide_world_free(&world);
+}
+
 static void carrying_and_throwing(void)
 {
     tide_world world = {0};
@@ -272,6 +323,7 @@ int main(void)
 {
     ownership_and_movement();
     folds_are_shot_and_crossed();
+    sizes();
     carrying_and_throwing();
     chambers_and_commands();
     replay_and_pack_are_identical();
