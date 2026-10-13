@@ -26,6 +26,7 @@ if(TIDE_EDITOR_EXTENSIONS)
             tide-vscode/icon.png
             tide-vscode/icons/tide.svg
             tide-vscode/src/extension.js
+            tide-vscode/src/prefab-client.js
             tide-syntax/language-configuration.json
             tide-syntax/syntaxes/tide.tmLanguage.json
         COMMENT "Building the VS Code extension"

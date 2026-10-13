@@ -59,6 +59,8 @@ TIDE_TEST(editor_edits_preserve_source_and_undo)
     TIDE_CHECK(editor_set_field(&d, 0, str_from("Transform"), str_from("localPosition"), "float3(2, 3, 4)"));
     TIDE_CHECK(d.errors == 0); TIDE_CHECK(strstr(d.text, "Transform { localPosition = float3(2, 3, 4) };") != NULL);
     TIDE_CHECK(editor_save(&d)); TIDE_CHECK(!editor_dirty(&d)); TIDE_CHECK(!sys_exists(d.draft_path));
+    const uint64_t saved_revision = d.revision;
+    editor_poll(&d); TIDE_CHECK(d.revision == saved_revision);
     char *disk = sys_read_file(file, NULL); TIDE_CHECK(strcmp(disk, d.text) == 0); free(disk);
     editor_close(&d); free(file);
 }

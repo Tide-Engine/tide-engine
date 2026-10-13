@@ -20,17 +20,19 @@ import java.nio.file.Path;
 // Real IntelliJ settings, VFS, console hyperlinks and configuration storage.
 public final class TidePlatformTest extends BasePlatformTestCase {
     public void testNativePrefabActionIsRegisteredAndOnlyOfferedForPrefabs() throws Exception {
-        final var action = ActionManager.getInstance().getAction("Tide.OpenPrefab");
-        assertNotNull(action);
-        final Path folder = Files.createTempDirectory("tide-platform-");
-        for (final String name : new String[]{"Level.tprefab", "game.tide"}) {
-            final Path file = folder.resolve(name); Files.writeString(file, "");
-            final var virtual = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(file);
-            final var data = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject())
-                .add(CommonDataKeys.VIRTUAL_FILE, virtual).build();
-            final var event = AnActionEvent.createFromAnAction(action, null, ActionPlaces.UNKNOWN, data);
-            action.update(event);
-            assertEquals(name.endsWith(".tprefab"), event.getPresentation().isEnabledAndVisible());
+        for (final String id : new String[]{"Tide.OpenPrefab","Tide.EditPrefab"}) {
+            final var action = ActionManager.getInstance().getAction(id);
+            assertNotNull(action);
+            final Path folder = Files.createTempDirectory("tide-platform-");
+            for (final String name : new String[]{"Level.tprefab", "game.tide"}) {
+                final Path file = folder.resolve(name); Files.writeString(file, "");
+                final var virtual = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(file);
+                final var data = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject())
+                    .add(CommonDataKeys.VIRTUAL_FILE, virtual).build();
+                final var event = AnActionEvent.createFromAnAction(action, null, ActionPlaces.UNKNOWN, data);
+                action.update(event);
+                assertEquals(name.endsWith(".tprefab"), event.getPresentation().isEnabledAndVisible());
+            }
         }
     }
     public void testConsoleHyperlinkUsesFileAndOneBasedCoordinates() throws Exception {

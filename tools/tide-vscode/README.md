@@ -13,6 +13,13 @@ title, opens the native scene app beside the IDE. It requires workspace trust,
 uses `tide.path` or the installed command, and saves a dirty active prefab first.
 Save script changes to refresh the scene app; its window stays open independently.
 
+**Tide: Edit Prefab in IDE** opens that editor in a VS Code tab instead. It hosts
+the same hidden native backend with a scaled 1440×900 PNG canvas, including
+mesh picking and Move/Rotate/Scale gizmos. Save/undo/redo shortcuts reach the
+native document; closing the tab/IDE closes the backend and keeps applied drafts
+recoverable. The configured `tide` must have `tide-editor` beside it. Both versions
+detect saved script changes; embedded hidden tabs stop requesting frames.
+
 tide's installer adds this extension to the editors it finds, and `tide
 editors` adds it again, for example after installing a new editor. The
 language server is `tidels`, which comes with tide. The extension runs it from
@@ -77,13 +84,15 @@ runs the adapter regressions. To test the bundled extension inside a real
 VS Code installation, with this checkout's built server:
 
 ```sh
-node test/run-host.mjs "<Code executable>" ../../build/tools/tidels.exe "<Node executable>"
+node test/run-host.mjs "<Code executable>" ../../build/tools/tidels.exe "<Node executable>" ../../build/debug/bin/tide.exe
 ```
 
 Use Node 24.16 or newer on Windows. The test creates an isolated profile,
 extension bundle and workspace, and mutes its browser. It checks live language
 features, restarts, real terminal/process-tree cleanup, the embedded web page
 and developer-tools command, then verifies cleanup after actual host shutdown.
+The optional fourth argument also checks actual native prefab frame display in
+the webview, panel reuse and backend shutdown.
 It leaves logs in the printed temporary folder and changes no installed
 extensions or personal settings. This opt-in test needs a desktop editor;
 CTest runs the dependency-free adapter suite.

@@ -3300,8 +3300,18 @@ component Aim
   last successful state with diagnostics/stale status. Bounded previews wait
   and fail instead of recording stale results. Closing waits for a current
   compile; private cached builds/logs remain under .tide/editor-preview.
+- Mesh selection tests named static asset-reference triangles under composed
+  authored transforms, choosing nearest depth in the editor camera. It does not
+  derive proxies from arbitrary view draws, custom shader deformation or cameras.
+  Move/rotate/scale gizmos patch one local TRS field on release, with one undo
+  entry, cancellation and optional snapping. Inherited children are read-only.
+  Compiled views refresh after release; overlays/fixed meshes follow the drag.
 - IDE launch actions open this native app for .tprefab files in a trusted
-  game context; embedding remains future work. Optional Windows installer
+  game context. VS Code also embeds its frames in an editor tab; JetBrains uses
+  a Swing tool window. Both own a hidden native process, with private pipe input
+  and authenticated loopback PNG output; the first canvas is fixed at 1440×900 and scaled
+  into the IDE. No second authoring implementation or browser server is hosted.
+  Optional Windows installer
   registration adds Tide to Open With without replacing the user's default.
 
 ### Open
@@ -3320,7 +3330,7 @@ Further authoring/editor work:
 - Defaults-versus-overrides during live editing/hot reload of existing instances.
   The first slice can instantiate new trees; automatic modification of existing
   gameplay instances needs a separate policy.
-- IDE embedding, mesh picking, transform drag gizmos, authored
+- GPU/frame transport improvements, dynamic picking proxies, authored
   reparent/rename refactoring, new-file creation and conflict merge UI. The first
   native app edits existing files and keeps conflicting drafts without merging
   them automatically. CMake/consumer project selection and remembered context

@@ -1,5 +1,87 @@
 # The language server and the editors
 
+## Mesh picking, transform tools and IDE canvases (2026-10-13)
+
+The native viewport picks named static Asset<Mesh<...>> fields and constant
+aliases using their owned source triangles and composed authored Transform.
+Projected sphere bounds reject off-pointer models; triangle work happens only
+on a press. Nearest editor-camera depth wins, including mirrored/nested trees.
+Picking and fixed scene meshes are double-sided. The fixed matrix projection
+now compensates the renderer's z turn as compiled views do, aligning surfaces
+with markers/picking in isometric as well as XY. It does not derive proxies from arbitrary view draws,
+deformed/skinned vertices, transparency, custom cameras or local visual state.
+Hierarchy/markers remain available for those cases; inherited children are
+selectable but read-only. These entries supersede the picking/gizmo/embedding
+gaps recorded in the historical sections below.
+
+Q/W/E/R choose Select/Move/Rotate/Scale outside text fields. Move axes edit
+parent coordinates, with a world-XY center handle; rotation/scale use local
+axes, with uniform scale at the center. Shift snaps to .5 units, 15 degrees,
+or .1 scale-factor increments. Edge-on/singular handles are omitted. An
+editable Transform with supported constant TRS is required. Drag state owns
+values and a document revision, never AST pointers. Release patches one field
+through the existing source-preserving transaction, with one undo record;
+Escape, tool/selection/source changes cancel. Fixed meshes and descendant
+markers follow the draft drag; compiled views rebuild after release. No-op
+clicks retain the original expression. Save now publishes its replacement's
+file stamp immediately, avoiding a later poll cancelling an unrelated drag.
+
+The private --embed <port> <token> backend uses the same app/frame/document
+code and existing headless input/readback/PNG APIs. The IDE binds 127.0.0.1 on
+an ephemeral port and accepts a 32-hex-token TIDEHELLO 1 handshake; it then
+closes the listener. TIDEFRAME 1 has the PNG byte count, dirty flag, revision,
+error count and warning count, followed by PNG bytes. Frame input stays on
+stdin (bounded INPUT events, FRAME 1, QUIT); EOF ends the backend. Only device
+events are accepted, never captures or script control. TCP descriptors are not
+inherited by compiler children. Project stdout/stderr remain ordinary logs,
+avoiding separate Windows CRT ownership/rebinding of standard handles. No HTTP
+or browser server is hosted. No engine/runtime functions, generated game
+callbacks or preview-module ABI changed.
+
+VS Code's Tide: Edit Prefab in IDE opens an editor tab; its nonced, restricted
+webview only sends input and displays native PNGs. Save/undo/redo shortcuts
+forward to the native document, dirty titles track its header, and one panel
+is reused per path. The sibling editor follows tide.path and trusted game
+discovery; a dirty active source saves before launch. Native Open Prefab Editor
+still launches an independent app. Frame validation caps a PNG at 32 MiB and
+admits one request at a time. Pending startup is included in deactivation.
+
+JetBrains' Edit Tide Prefab in IDE adds file tabs to the Tide Prefab tool window.
+The Swing panel forwards input and paints decoded PNGs without JCEF. Both
+adapters scale a fixed 1440x900 native canvas, request at most one frame at a
+time and pause hidden surfaces. Button/key transitions are separated across
+frames so short clicks and drag origins survive batching. Focus loss releases
+held input. Closing sends EOF; after a two-second grace, a stuck backend and
+its descendants are terminated. Applied unsaved edits keep existing recovery.
+The image transport adds latency; resizable/GPU transport, broader text input,
+dynamic picking proxies and live compiled-view transform updates remain gaps.
+
+Coverage: geometry tests pin actual triangle bounds/depth, nested nonuniform
+and mirrored transforms, invalid indices/NaNs, parent-axis drag and edge-on
+rotation. Real native embedding tests exercise PNGs, overlap selection, move,
+rotate/scale, cancel/no-op, one-step undo/redo/save, source polling across a
+post-save drag, EOF and malformed input. Client tests pin event batching and
+shortcuts; VS Code doubles cover binary chunking, trust, save refusal, panel
+reuse and injected lines. Installed preview.mjs also executes actual game
+fragment shaders and project printf from a MinGW DLL in an embedded MSVC app,
+with clean PNG frames and preserved output. Real VS Code 1.141.0 checks display,
+reuse/command dispatch and shutdown in an isolated profile. The IntelliJ
+2024.2.6 sandbox paints a native frame in Swing and verifies EOF exit, alongside
+registered actions and existing adapter regressions.
+
+Validation: the complete native suite covered 2,286 tests; its sole initial
+failure exposed the post-Save stamp refresh, now fixed and pinned. All five
+editor CTests pass after the correction (14 document/model/interaction cases,
+client, real native UI/embedding and CLI). All 2,249 web CTests pass, including
+WebGL/WebGPU. Final scoped validation passes all six editor/adapter CTests,
+all 30 Node adapter/client checks, installed compiled-preview integration,
+MSVC debug and MinGW release native transport/UI tests. The VSIX and JetBrains
+plugin build; actual VS Code 1.141.0 and IntelliJ 2024.2.6 frame/shutdown tests
+pass with the final transport. Production docs and all ten admin/HTTP checks
+pass. Isometric alignment is pinned with a single flat model so identical
+overlapping models cannot hide a mirrored camera. No CI was dispatched;
+other host operating systems, Rider itself and Android were not run here.
+
 ## Compiled authored-view preview (2026-10-13)
 
 The native editor has an explicit Views toggle (off by default), plus --preview

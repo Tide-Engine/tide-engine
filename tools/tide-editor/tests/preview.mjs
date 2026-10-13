@@ -1,10 +1,11 @@
 // Installed CLI integration: the installation needs its native toolchain and
 // platform library, just as tide run does. All files remain in a private workdir.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { readPng } from '../../../platform/tests/png_read.mjs';
+import { createServer } from 'node:net';
 
 const [cliArg, fixtureArg, workArg] = process.argv.slice(2);
 const cli = resolve(cliArg), work = resolve(workArg);
@@ -67,6 +68,51 @@ assert.ok(count(image('redone.png'), p => green(p) && p[1] > 220) > 100, 'redo r
 assert.ok(count(image('nested-root.png'), green) > 50, 'switching the selected prefab rebuilds its root');
 assert.equal(count(image('disabled.png'), green), 0, 'disabling releases the module and restores fixed preview');
 assert.ok(count(image('reenabled.png'), green) > 50, 'preview can be enabled again');
+// Real DLL/CRT boundary in an embedded process: ordinary project printf must
+// stay on ordinary stdio, never corrupt the binary PNG channel.
+rmSync(join(project,'.tide','editor'),{recursive:true,force:true});
+writeFileSync(join(project,'preview_log.c'),'#include <stdio.h>\nvoid PreviewStdout(void) { printf("preview stdout\\n"); fflush(stdout); }\n');
+writeFileSync(game,readFileSync(game,'utf8')+'\nextern void PreviewStdout();\n[EditorOnly] view PipeLog() { PreviewStdout(); }\n');
+const token='0123456789abcdef0123456789abcdef';
+const server=createServer(socket=>{
+    let hello=false;
+    socket.on('data',data=>{
+        bytes=Buffer.concat([bytes,data]);
+        if(!hello){const end=bytes.indexOf(10);if(end<0)return;assert.equal(bytes.subarray(0,end).toString(),`TIDEHELLO 1 ${token}`);bytes=bytes.subarray(end+1);hello=true;server.close();}
+        receive();
+    });
+});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+const child=spawn(join(dirname(cli),process.platform==='win32'?'tide-editor.exe':'tide-editor'),[prefab,'--project',project,'--embed',String(server.address().port),token,'--preview'],
+    {windowsHide:true,env:{...process.env,TIDE_HIDDEN:'1'}});
+let bytes=Buffer.alloc(0), waiting, said='';
+const ended=new Promise(resolve=>child.once('close',resolve));
+child.stderr.on('data',data=>{said+=data;});
+child.stdout.on('data',data=>{said+=data;});
+function receive(){
+    const end=bytes.indexOf(10);if(end<0)return;
+    const header=/^TIDEFRAME 1 (\d+) [01] \d+ \d+ \d+$/.exec(bytes.subarray(0,end).toString());
+    if(!header){waiting?.reject(new Error('invalid binary header: '+bytes.subarray(0,end)));return;}
+    const length=+header[1];if(bytes.length<end+1+length)return;
+    const png=bytes.subarray(end+1,end+1+length);bytes=bytes.subarray(end+1+length);
+    const pending=waiting;waiting=null;pending?.resolve(readPng(png));
+}
+child.on('error',error=>waiting?.reject(error));
+child.on('close',code=>waiting?.reject(new Error(`embedded preview stopped (${code}): ${said}`)));
+const deadline=setTimeout(()=>{child.stdin.end();waiting?.reject(new Error('embedded shader preview timed out'));},120000);
+try {
+    let rendered=false;
+    for(let i=0;i<200&&!rendered;i++) {
+        const next=new Promise((resolve,reject)=>{waiting={resolve,reject};});child.stdin.write('FRAME 1\n');
+        const frame=await next;rendered=count(frame,green)>100;
+        if(!rendered)await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assert.ok(rendered,'embedded native renderer must execute the game fragment shader');
+} finally {
+    clearTimeout(deadline);child.stdin.end();assert.equal(await ended,0,said);
+}
+// close is after both pipes drained; stderr delivery can lag the PNG stream.
+assert.match(said,/preview stdout/,'project stdout is preserved outside binary frames');
 writeFileSync(game, readFileSync(game,'utf8') + '\nextern void MissingPreviewFunction();\n[EditorOnly] view Broken() { MissingPreviewFunction(); }\n');
 r = run('--preview', '--capture', join(work, 'broken.png')); assert.equal(r.status, 1);
 assert.match(r.stderr, /MissingPreviewFunction/);
