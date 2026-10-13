@@ -38,10 +38,11 @@ typedef struct gl_target {
     uint32_t drawn; // How many of them the framebuffer's draw buffers name (see draw_into)
     // A multisampled one's (above 1): the framebuffer is of renderbuffers of that many samples a pixel, its color
     // images' and its depth's, and each color image, a texture as any target's, is in a framebuffer of its own,
-    // which a pass's end resolves the samples into. It has no depth texture.
+    // which a pass's end resolves the samples into. Its depth texture is made, in a framebuffer of its own, the
+    // first time its depth is resolved (gl_resolve_depth).
     uint32_t samples;
     GLuint sampled[TIDE_GPU_MAX_COLORS], sampled_depth;
-    GLuint resolved[TIDE_GPU_MAX_COLORS];
+    GLuint resolved[TIDE_GPU_MAX_COLORS], resolved_depth;
     bool bytes;     // Its first color image is 4 bytes a pixel: what's read back
     bool face;      // Its color image is a cube's face (gl_cube_face), which isn't its own to free or to hand out
     tide_gpu_target_format format; // What it was made to hold, which the pipelines that draw into it are made for
@@ -720,6 +721,10 @@ static void gl_target_free(const tide_gpu_id target)
         glDeleteFramebuffers((GLsizei)t->color_count, t->resolved);
         glDeleteRenderbuffers((GLsizei)t->color_count, t->sampled);
         glDeleteRenderbuffers(1, &t->sampled_depth);
+        if (t->depth) {
+            glDeleteFramebuffers(1, &t->resolved_depth);
+            glDeleteTextures(1, &t->depth);
+        }
     } else {
         glDeleteTextures(1, &t->depth);
     }
@@ -735,6 +740,36 @@ static tide_gpu_id gl_target_texture(const tide_gpu_id target, const uint32_t co
 static tide_gpu_id gl_target_depth(const tide_gpu_id target)
 {
     return targets[target - 1u].depth;
+}
+
+// A multisampled target's depth as a texture: a sample of each pixel's, blitted from its samples.
+static void gl_resolve_depth(const tide_gpu_id target)
+{
+    gl_target *t = &targets[target - 1u];
+    if (t->samples <= 1u) return;
+    if (!t->depth) {
+        glGenTextures(1, &t->depth);
+        bind_texture(t->depth);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, t->width, t->height, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &t->resolved_depth);
+        glBindFramebuffer(GL_FRAMEBUFFER, t->resolved_depth);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, t->depth, 0);
+        glDrawBuffers(1, (const GLenum[]){GL_NONE});
+        glReadBuffer(GL_NONE);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            fprintf(stderr, "tide: no framebuffer to resolve a multisampled depth into\n");
+            abort();
+        }
+    }
+    glDisable(GL_SCISSOR_TEST); // All of it: a blit goes by the scissor
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, t->framebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, t->resolved_depth);
+    glBlitFramebuffer(0, 0, t->width, t->height, 0, 0, t->width, t->height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
@@ -996,6 +1031,7 @@ const tide_gpu tide_gpu_gl = {
     .float_targets = gl_float_targets,
     .target_texture = gl_target_texture,
     .target_depth = gl_target_depth,
+    .resolve_depth = gl_resolve_depth,
     .target_free = gl_target_free,
     .target_read = gl_target_read,
     .begin = gl_begin,

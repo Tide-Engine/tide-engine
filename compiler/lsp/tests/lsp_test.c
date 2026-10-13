@@ -6085,7 +6085,7 @@ TIDE_TEST(lsp_render_target_samples)
     TIDE_CHECK(has(last_sent(), "samples are 1, 2, 4 or 8, and this says 3"));
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Depth, samples: 4);\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(last_sent(), "a multisampled target's depth can't be read"));
+    TIDE_CHECK(has(last_sent(), "samples smooth a target's colors, and it has none"));
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Window(factor: 0.5);\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "without names, but for its samples"));
