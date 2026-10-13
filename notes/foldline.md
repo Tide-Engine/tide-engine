@@ -622,6 +622,44 @@ current.
     in. Replay hash `7217484059584344468` natively and under WASI.
   - Still owed: the pool and the drums off the hall's coordinates; folds
     on floors; the hall's six rooms remade to this difficulty.
+- **The rest of what was owed, and what's left (2026-10-13).** The owner:
+  "keep going until you don't have more things to do".
+  - *The pool and the drums go where a room puts them:* `PitWorks` builds
+    a pit's floor and slopes as wide as `PitFrom` to `PitTo`; what's in a
+    pool keeps to that width, and so does who counts as in it; a drum's
+    reach is the trench's length less its own (`DrumReach`), which in the
+    hall is what it was. A pit's floor is still at 0: not on an upper
+    storey. No room has drums off the hall yet, so that half is the old
+    numbers passing the old tests and nothing more.
+  - *Undertow* (level 12, "room 10", fourth down in place of the hall's
+    pool room, which is off the way down and still in the menu): a dry
+    room with the cube and three crates; a channel 6 m wide and 18 long
+    with the thing in it; and a door at its far end that's a `Mover` on a
+    plate lying on the channel's floor half-way along, marked by four
+    green floats. Nothing past the water takes a fold. What's dropped on
+    the plate is the last thing in, so it comes there; a crate thrown in
+    at the near end after it draws it off again, and the wader gets out.
+    The one left behind has to fetch something back out of the water to
+    throw for themselves, and the cube has to come over for the gate.
+  - `test.c` (`undertow`): it keeping to the channel's width for ten
+    seconds; the door shut; a wader with nothing thrown, had; the cube on
+    the plate opening the door and bringing it; a crate thrown at the near
+    end after that being what it goes for; and someone wading the far half
+    meanwhile, up the slope and through the door. Replay hash unchanged
+    (`7217484059584344468`).
+  - A pad's throw and the dark passage's thing are heard (`cubeThrow`
+    lower, `scrape` lower), unheard by Claude as all of it is.
+  - **Not done, and why.** *Folds on floors and ceilings:* every fold
+    here turns about the vertical only (`FoldDirection`, `Across`,
+    `OnWall`, `InFold`, `OpeningOnScreen`, the box behind an opening, the
+    hole `Carve` cuts), in the match and in the renderer, about forty
+    places; the owner called the fold "the main mechanic it needs to be
+    perfect", and Claude can't see or play what it would break, so it's
+    left to be done with the owner looking. *The hall's rooms 2, 4, 5 and
+    6:* they stand as the easier first half (stacking and two weights
+    shorten them), ahead of rooms 7 to 10; they aren't rebuilt off the
+    hall. *A room with drums off the hall, a pit on an upper storey,
+    lifts turned, anything hinged:* not built.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the gate closing on a body
   under it, two operators through one fold at once and the cube in a hole
