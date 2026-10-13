@@ -340,7 +340,26 @@ try {
     assertImagesDiffer(await host.crop({x:990,y:120,width:240,height:32}), firstTitle, 'completion permits advancing to a different chamber');
     assertImagesDiffer(await host.crop({x:260,y:280,width:440,height:170}), completed, 'Next chamber dismisses the completion card');
 
-    console.log('Solo walkthrough passed; testing two WebRTC players');
+    console.log('Solo walkthrough passed; testing shared keyboard');
+    stage = 'shared-keyboard arrows after a probe click';
+    await navigate(host, '&review=couch');
+    await host.click(460,565);
+    await host.frames(8);
+    await steps(host,'ddww');
+    await host.tapKey('KeyE','e',3); await advance();
+    await host.tapKey('KeyE','e',3); await advance();
+    await host.click(1100,390); await advance();
+    const couchBefore = await table(host);
+    await steps(host,'ssa');
+    await host.tapKey('ArrowLeft','ArrowLeft',3); await advance(42);
+    assertImagesDiffer(await table(host), couchBefore, 'Coil arrow keys still work after clicking the test board; both pads power the bridge');
+    await host.screenshot('shared-keyboard-bridge');
+    const beforeMenu = await table(host);
+    await host.tapKey('Escape','Escape',3); await host.frames(4);
+    assertImagesDiffer(await table(host), beforeMenu, 'Escape opens the room menu while gameplay claims its keyboard');
+    await host.tapKey('Escape','Escape',3); await host.frames(4);
+    assertImagesEqual(await table(host), beforeMenu, 'Escape resumes the match');
+    console.log('Shared-keyboard check passed; testing two WebRTC players');
     stage = 'two players over real WebRTC';
     await navigate(host,'&host');
     await host.until(value => typeof value.room === 'string' && value.room.length === 6, 'published room');
@@ -377,7 +396,7 @@ try {
     await host.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
     await advance();
     assert.deepEqual(errors,[],'No runtime, browser or GPU errors');
-    console.log(`Copper & Coil (${backend}): solo circuit editing and undo, bridge and exit, two real WebRTC players, shared signals and progression, touch rendering passed.`);
+    console.log(`Copper & Coil (${backend}): solo circuit editing and undo, bridge and exit, shared-keyboard arrow controls after clicking a probe, two real WebRTC players, shared signals and progression, touch rendering passed.`);
 } catch (error) {
     process.exitCode = 1;
     console.error(`Copper & Coil failed during ${stage}: ${error.stack ?? error}`);

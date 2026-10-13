@@ -105,3 +105,15 @@ registrations were reapplied with explicit UTF-8. Both scoped debug game
 builds/tests and the merged docs production build, eighteen analytics/admin
 checks and production HTTP test pass. The PDF has a scoped binary attribute
 so git cannot normalize its bytes or treat its streams as text diffs.
+
+Final shared-keyboard check: clicking the oscilloscope had let GUI focus
+navigation consume Coil's arrows. Gameplay now claims the keyboard and its
+pointer-only HUD controls claim their rectangles without taking keyboard focus;
+the room menus and modals retain ordinary GUI controls. A native scripted
+shared-keyboard run completes chamber one, and the browser fixture repeats
+the specific probe-click/Coil-arrow/commissioning sequence as a regression.
+The game forwards Escape to the room page while it owns the keyboard; the
+fixture checks Escape opens that menu and resumes. Repeat navigation uses a
+distinct review query so a previous frame cannot satisfy a new page's readiness
+predicate. The optimized shipping page also passes the shared-keyboard and
+online walkthrough on WebGPU.
