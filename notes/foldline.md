@@ -130,6 +130,12 @@ had a gap at the sill; "this is the main mechanic it needs to be perfect"):
   (`Sight.fold`) and again at the other end, stopped at that face. The old
   rule cut anything within a box behind either wall, the other room's side of
   the divider included, and only copied pieces within 1.4 m.
+- The part at the other end is lit as the part left behind is: `Lit` takes
+  its place and normal back through the fold (`Sight.echoed`, `Sight.back`),
+  and a fold's own glow is at 0.3 on what's passing through it. Lit where
+  each half stood, a body had a seam of light at the wall's face that the
+  owner read as the cut still being there. The light changes at once when
+  the body's middle crosses.
 - What's seen through a fold is drawn on the inside of a box behind the hole,
   a back and four sides, so a look down at the sill lands on it.
 - The near plane is 0.07 m and the far 90 m (0.035 and 120): lamp frames,
