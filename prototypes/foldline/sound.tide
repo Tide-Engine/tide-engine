@@ -19,6 +19,7 @@ asset Clip lampHum = "art/sfx/hum.wav";
 asset Clip lampBuzz = "art/sfx/buzz.wav";
 asset Clip building = "art/sfx/drone.wav";
 asset Clip seen = "art/sfx/sting.wav";
+asset Clip stalking = "art/sfx/scrape.wav";
 asset Clip menuAccept = "art/sfx/accept.wav";
 
 // What was so a frame ago, to hear what changed, and the sounds that go on.
@@ -28,6 +29,8 @@ local singleton Ears
     Sound drone;
     Sound gate;
     Sound under;
+    Sound scrape;
+    float caught;
     Sound pit;
     Sound end0;
     Sound end1;
@@ -73,13 +76,13 @@ void LoopingAt(mut Sound sound, Clip clip, float3 position, float volume, bool p
 }
 
 [After(Render)]
-view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, Optics optics, mut Ears ears)
+view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Stalker stalker, Control control, Interface ui, Optics optics, mut Ears ears)
 {
     if (viewer.id != control.active) return;
     float3 eye = viewer.position + float3(0, 1.55 * viewer.scale, 0);
     Audio.SetListener(eye, quaternion.Euler(-viewer.pitch, viewer.yaw, 0));
     Audio.SetFalloff(2.5, 42);
-    bool pitted = arena.level == 0 || arena.level >= 3;
+    bool pitted = Pitted(arena.level);
     float pitMiddle = arena.level == 0 ? -1.0 : 1.0;
     bool sunk = viewer.taken > 0 && eye.y < PIT_SURFACE;
 
@@ -87,7 +90,14 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     float quiet = ui.open ? 0.5 : sunk ? 0.25 : 1.0;
     Looping(ears.hum, lampHum, 0.16 * quiet * (watcher.blink > 0 ? 0.0 : 1.0), true);
     Looping(ears.drone, building, 0.3 * quiet, true);
-    LoopingAt(ears.gate, gateRun, float3(0, 2, 13.5), 0.9, Math.Abs(arena.gate - ears.gateAt) > 0.0005);
+    // The gate while it moves, and the lift all round while it goes down
+    bool lift = arena.ride > 0 || (arena.arrive < 0.7 && arena.rode == arena.chamber);
+    LoopingAt(ears.gate, gateRun, lift ? eye : float3(0, 2, 13.5), 0.9, lift || Math.Abs(arena.gate - ears.gateAt) > 0.0005);
+    ears.gate.pitch = lift ? 0.6 : 1.0;
+    // What's between the rooms is heard only while it moves, which is while nobody sees it
+    LoopingAt(ears.scrape, stalking, stalker.at + float3(0, 1, 0), stalker.moved, arena.level == BETWEEN && stalker.moved > 0.02);
+    if (arena.caught > 0 && ears.caught <= 0) Audio.Play(seen, 1.0);
+    ears.caught = arena.caught;
     LoopingAt(ears.pit, pitTurning, float3(Math.Clamp(eye.x, -9, 9), PIT_SURFACE, pitMiddle), 0.8, pitted);
     LoopingAt(ears.end0, foldHum, fold.ends[0].at, 0.3, Linked(fold, 0));
     LoopingAt(ears.end1, foldHum, fold.ends[1].at, 0.3, Linked(fold, 0));

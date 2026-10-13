@@ -75,7 +75,7 @@ static void press(tide_world *world, PilotInput controls)
 static void choose(tide_world *world, int sender, int level)
 {
     // The game's only command: generated wire ID, null entity target, zigzag int.
-    CHECK(level >= -1 && level <= 5);
+    CHECK(level >= -1 && level <= 6);
     uint8_t payload[11] = {0};
     payload[0] = (uint8_t)TIDE_COMMAND_ID_SelectChamber;
     payload[1] = (uint8_t)(TIDE_COMMAND_ID_SelectChamber >> 8);
@@ -103,13 +103,15 @@ static void ownership_and_movement(void)
     start(&world);
     CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op0).player, player(0)));
     CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op1).player, player(0)));
+    // In the lift they came by, whose door is shut for a moment and then opens
     ticks(&world, 30);
-    // Standing on the floor, which is Box3D's
-    CHECK(near(pilot(&world, 0).position.y, 0, 0.03f) && pilot(&world, 0).grounded);
+    CHECK(near(pilot(&world, 0).position.y, 0, 0.03f) && pilot(&world, 0).grounded); // On the floor, which is Box3D's
     input(&world, 0, (PilotInput){.move = {0, 1}});
-    ticks(&world, 60);
-    CHECK(pilot(&world, 0).position.z > -8);
-    CHECK(near(pilot(&world, 1).position.z, -10.5f, 0.05f)); // Alone, the other body stays where it's left
+    ticks(&world, 20);
+    CHECK(pilot(&world, 0).position.z < -13.6f && pilot(&world, 0).position.z > -17);
+    ticks(&world, 90);
+    CHECK(pilot(&world, 0).position.z > -12 && pilot(&world, 0).position.z < -4);
+    CHECK(near(pilot(&world, 1).position.z, -15.6f, 0.05f)); // Alone, the other body stays where it's left
     input(&world, 0, (PilotInput){.jump = true});
     ticks(&world, 8);
     CHECK(pilot(&world, 0).position.y > 0.3f);
@@ -268,7 +270,7 @@ static void sizes(void)
     CHECK(pilot(&world, 0).scale == 0.5f);
     choose(&world, 0, 0);
     ticks(&world, 10);
-    CHECK(pilot(&world, 0).scale == 1 && near(pilot(&world, 0).position.z, -10.5f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
+    CHECK(pilot(&world, 0).scale == 1 && near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     tide_world_free(&world);
 }
 
@@ -318,19 +320,80 @@ static void chambers_and_commands(void)
     place(&world, 1, (tide_float3){-5, 0, 5}, 0, 0);
     ticks(&world, 60);
     CHECK(!world.Arena.solved && world.Arena.gate > 0.99f);
-    // Both operators in the lobby past the gate end the chamber
-    place(&world, 1, (tide_float3){1.5f, 0, 15}, 0, 0);
-    ticks(&world, 4);
-    CHECK(world.Arena.complete);
+    // With both in the lift its door shuts on them whatever holds it, and the lift goes down: they're in the
+    // stretch between the rooms, in the lift they came by, standing as they stood and turned about with it
+    place(&world, 1, (tide_float3){1.5f, 0, 15}, 0.5f, 0);
     const int32_t built = world.Arena.chamber;
-    choose(&world, 0, 4);
-    CHECK(world.Arena.level == 4 && world.Arena.chamber == built + 1 && !world.Arena.solved && !world.Arena.complete);
     ticks(&world, 20);
-    CHECK(near(pilot(&world, 0).position.z, -10.5f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
+    CHECK(world.Arena.gate < 0.5f && world.Arena.chamber == built && world.Arena.level == 0);
+    ticks(&world, 120);
+    CHECK(world.Arena.level == 5 && world.Arena.depth == 1 && world.Arena.chamber == built + 1 && world.Arena.rode == built + 1);
+    CHECK(near(pilot(&world, 0).position.x, 6.5f, 0.1f) && near(pilot(&world, 0).position.z, -16, 0.1f) && near(pilot(&world, 0).position.y, 0, 0.05f));
+    CHECK(near(pilot(&world, 1).position.x, 5, 0.1f) && near(pilot(&world, 1).position.z, -15, 0.1f));
+    CHECK(near(tide_sin_f(pilot(&world, 1).yaw), -tide_sin_f(0.5f), 0.01f) && tide_cos_f(pilot(&world, 1).yaw) < 0);
+    // Its door opens, and no shot does anything down here
+    ticks(&world, 100);
+    place(&world, 0, (tide_float3){6.5f, 0, -15}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 40);
+    CHECK(pilot(&world, 0).position.z > -13);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(!world.Fold.ends.at[0].open && world.Fold.fizzleTime <= 0);
+    choose(&world, 0, 4);
+    CHECK(world.Arena.level == 4 && world.Arena.depth == 6 && world.Arena.chamber == built + 2 && !world.Arena.solved);
+    ticks(&world, 20);
+    CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     CHECK(near(world.Fold.cube.z, -11, 0.4f) && near(world.Fold.cube.x, -7, 0.4f) && !world.Fold.ends.at[0].open);
     // A chamber that isn't one changes nothing
-    choose(&world, 0, 5);
+    choose(&world, 0, 6);
     CHECK(world.Arena.level == 4);
+    tide_world_free(&world);
+}
+
+// Between the rooms: something that comes only while nobody sees it.
+static void between(void)
+{
+    tide_world world = {0};
+    start(&world);
+    choose(&world, 0, 5);
+    ticks(&world, 8);
+    CHECK(world.Arena.level == 5 && world.Arena.solved);
+    // Both in the lift, where it comes for nobody: it stays where it starts
+    const tide_float3 began = world.Stalker.at;
+    ticks(&world, 400);
+    CHECK(world.Stalker.at.x == began.x && world.Stalker.at.z == began.z && world.Arena.caught == 0);
+    // Someone out in the maze with their back to it: it comes, by the ways there are, and never through a wall
+    place(&world, 0, (tide_float3){-8.5f, 0, -11.7f}, TIDE_PI_F, -1.2f);
+    float nearest = 1000;
+    bool came = false;
+    for (int step = 0; step < 900 && world.Arena.caught == 0; step++) {
+        tide_world_tick(&world);
+        const tide_float3 at = world.Stalker.at;
+        CHECK(at.x > -9.8f && at.x < 9.8f && at.z > -13 && at.z < 13);
+        const float away = hypotf(at.x + 8.5f, at.z + 11.7f);
+        if (away < nearest) nearest = away;
+        came = came || away < 6;
+    }
+    // ...and gets them: the stretch starts over, with both back in the lift
+    CHECK(came && world.Arena.caught > 0 && nearest < 1);
+    const int32_t built = world.Arena.chamber;
+    ticks(&world, 90);
+    CHECK(world.Arena.chamber == built + 1 && world.Arena.level == 5 && world.Arena.caught == 0);
+    CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 1).position.z, -15.6f, 0.05f));
+    // Looked at down a clear way, it doesn't move; looked away from, it does
+    ticks(&world, 260);
+    const tide_float3 stands = world.Stalker.at;
+    const tide_float3 watch = {stands.x + 1.8f, 0, stands.z};
+    place(&world, 0, watch, WEST, 0);
+    ticks(&world, 200);
+    CHECK(world.Stalker.seen && world.Stalker.at.x == stands.x && world.Stalker.at.z == stands.z && world.Arena.caught == 0);
+    place(&world, 0, watch, EAST, 0);
+    bool moved = false;
+    for (int step = 0; step < 120 && !moved; step++) {
+        tide_world_tick(&world);
+        moved = world.Stalker.at.x != stands.x || world.Stalker.at.z != stands.z;
+    }
+    CHECK(moved);
     tide_world_free(&world);
 }
 
@@ -382,7 +445,7 @@ static void chambers_hold(void)
     // ...but not past the jump of one who came out of a larger end
     input(&world, 0, (PilotInput){0});
     for (int step = 0; step < 200 && (pilot(&world, 0).taken > 0 || !pilot(&world, 0).grounded); step++) tide_world_tick(&world);
-    place(&world, 0, (tide_float3){4, 0, -8}, SOUTH, 0);
+    place(&world, 0, (tide_float3){1.5f, 0, -8}, SOUTH, 0);
     input(&world, 0, (PilotInput){0});
     ticks(&world, 3);
     press(&world, (PilotInput){.amber = true});
@@ -391,7 +454,7 @@ static void chambers_hold(void)
     press(&world, (PilotInput){.cyan = true});
     CHECK(world.Fold.ends.at[0].open && world.Fold.ends.at[0].size == 1 && world.Fold.ends.at[1].open && world.Fold.ends.at[1].size == 1.5f);
     CHECK(near(world.Fold.ends.at[1].at.x, -2.5f, 0.001f));
-    place(&world, 0, (tide_float3){4, 0, -11}, SOUTH, 0);
+    place(&world, 0, (tide_float3){1.5f, 0, -11}, SOUTH, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
     CHECK(world.Fold.traversals == 1);
@@ -413,7 +476,6 @@ static void chambers_hold(void)
     start(&world);
     choose(&world, 0, 1);
     ticks(&world, 8);
-    CHECK(pilot(&world, 0).position.x < -1.5f && pilot(&world, 1).position.x > 0);
     place(&world, 0, (tide_float3){-5, 0, -3}, EAST, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     ticks(&world, 120);
@@ -458,10 +520,10 @@ static void chambers_hold(void)
     ticks(&world, 3);
     press(&world, (PilotInput){.amber = true});
     CHECK(world.Fold.ends.at[0].open && world.Fold.ends.at[0].size == 0.5f && near(world.Fold.ends.at[0].at.z, -3.5f, 0.001f));
-    place(&world, 0, (tide_float3){5.5f, 0, -8}, SOUTH, 0);
+    place(&world, 0, (tide_float3){0.5f, 0, -8}, SOUTH, 0);
     ticks(&world, 3);
     press(&world, (PilotInput){.cyan = true});
-    CHECK(world.Fold.ends.at[1].open && world.Fold.ends.at[1].size == 1.5f && near(world.Fold.ends.at[1].at.x, 5.5f, 0.001f));
+    CHECK(world.Fold.ends.at[1].open && world.Fold.ends.at[1].size == 1.5f && near(world.Fold.ends.at[1].at.x, 0.5f, 0.001f));
     tide_world_free(&world);
     // A half operator goes through the vent, round the baffle and into the room
     start(&world);
@@ -526,6 +588,7 @@ int main(void)
     sizes();
     carrying_and_throwing();
     chambers_and_commands();
+    between();
     chambers_hold();
     replay_and_pack_are_identical();
     puts("FOLDLINE simulation checks passed");
