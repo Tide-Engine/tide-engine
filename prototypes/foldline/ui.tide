@@ -262,7 +262,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     if (legend)
     {
         var solo = arena.joined < 2;
-        var row = solo ? 650.0 : 570.0;
+        var row = solo ? 706.0 : 626.0;
         mut var at = float2(middle.x - row * 0.5, Screen.height - 24);
         at.x = HudKey(at, "WASD", 34, "MOVE", 30);
         at.x = HudKey(at, "SPACE", 38, "JUMP", 28);
@@ -272,6 +272,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
         at.x = HudKey(at, "F", 10, "THROW", 40);
         at.x = HudKey(at, "Q", 10, "PING", 26);
         if (solo) at.x = HudKey(at, "TAB", 24, "SWITCH", 42);
+        at.x = HudKey(at, "H", 10, "HINT", 26);
         at.x = HudKey(at, "R", 10, "RESET", 34);
         at.x = HudKey(at, "ESC", 24, "MENU", 30);
     }
