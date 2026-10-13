@@ -1,5 +1,15 @@
 # `tide_add_game` and the generated header
 
+Docs playground (2026-10-14): opt-in TIDE_DOC_PLAYGROUND builds its shared Tide
+example with LAYOUT and a portable HOST (ordinary tide_run for native captures,
+tide_host_run_web for the browser). On web it also builds tidec_browser from the
+existing compiler sources, engine and importers, and explicitly stages the
+compiler/static runtime bundle through docs_playground. TIDE_DOC_EXAMPLES
+defaults this option on; docs_examples collects the web staging target. Normal
+native/web builds retain their host tidec and existing program generation.
+There is no generated-C/runtime API change. Contracts, downloads and validation
+are in notes/docs-site.md.
+
 Game prototypes (2026-10-09, updated 2026-10-11): `TIDE_PRIVATE_PROTOTYPES`, OFF by default, adds the opt-in games under `prototypes/` (`prototypes/CMakeLists.txt`); today that is `prototypes/cracked/`. A prototype's game and tests use `tide_add_game` normally on native and web. `private_games` stages each catalog game's web page at `docs/static/prototypes/<id>/index.html` through its `<id>_page` target (or collects the native game), served publicly as `/prototypes/<id>/` while the catalog remains authenticated. The docs workflow explicitly enables the option. Nothing installs these games into the package. Catalog and staging: `notes/private-prototypes.md`; a game's own contract is in its note.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.

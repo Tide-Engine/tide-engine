@@ -2997,7 +2997,7 @@
 
     // Starts `bytes` in the running program's place: fresh, or going on from
     // where it is.
-    async function replace(bytes, fresh) {
+    async function replace(bytes, fresh, nextPack) {
         const program = await instantiate(bytes);
         resumeWith = null;
         if (!fresh && exports && exports.tide_reload_save && !stopped) {
@@ -3011,9 +3011,36 @@
         if (gl) forgetGL();
         if (device) forgetGPU();
         closeRoom(); // The new build plays on alone, like any web game for now
+        if (nextPack !== undefined) packBytes = nextPack;
         stopped = failed = false;
         begin(program);
         resumeWith = null;
+    }
+
+    // The docs playground supplies locally compiled builds rather than a
+    // watching server. The same replacement/state migration runs here. Each
+    // call owns its bytes, and failed instantiation leaves the current build.
+    if (config.reload === 'manual') {
+        let queue = Promise.resolve(), latest = null, latestPack = null;
+        const enqueue = action => {
+            const result = queue.then(action);
+            queue = result.catch(() => {});
+            return result;
+        };
+        config.replace = (bytes, pack = new Uint8Array(), fresh = false) => {
+            const next = new Uint8Array(bytes).slice();
+            const assets = new Uint8Array(pack).slice();
+            return enqueue(async () => {
+                await replace(next, fresh || !latest, assets);
+                latest = next;
+                latestPack = assets;
+            });
+        };
+        config.restart = () => enqueue(async () => {
+            if (latest) await replace(latest, true, latestPack);
+        });
+        config.ready?.();
+        return;
     }
 
     // Asks tide for the newest build, and whether to start over, 4 times a

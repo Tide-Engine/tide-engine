@@ -1,5 +1,17 @@
 # Hot reloading
 
+Docs playground (2026-10-14): locally compiled Wasm is supplied through the
+page's manual replacement mode, using exactly the existing web save/migrate
+host and layout representation. Program and pack install together after
+successful instantiation. The manual queue owns its bytes; restarting uses
+only the most recent successful install and carries no previous state.
+`platform/tests/reload_web.mjs` now covers ownership, initial/following/reset
+installs, serialized restart, bad-module preservation and recovery without a
+watch server. The actual docs browser fixture preserves a known counter while
+adding a field, confirms the new default, and keeps rendering after a syntax
+error. Room closure and the existing state migration rules do not change.
+Full-suite and browser/compiler validation are in notes/docs-site.md.
+
 ## Retained asset values and heap packing (2026-10-11)
 
 Asset-backed list fields retain assigned bytes independently of the loaded pack. Unload/replacement frees its own cache reference, while worlds/snapshots and detached origin hints retain their copies. Raw packed heaps now start with a self-contained immutable-content dictionary; migration copies that packed heap intact and emits a four-byte empty dictionary for a new empty heap. Optional encoding origins are omitted from raw saves/migration; values and hashes are preserved, though the new world may send full edited pages. Host/game storage and session callback ABIs changed, so rebuild them together; no compatibility with older packed heaps is promised. Snapshot/unload/raw-roundtrip regressions are in `test_asset_lists.c` and generated `asset_sharing`.

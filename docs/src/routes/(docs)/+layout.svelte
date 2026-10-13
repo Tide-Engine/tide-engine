@@ -63,11 +63,11 @@
 </aside>
 
 <div class="main">
-    <div class="content" class:samples={page.url.pathname === '/guide/samples'}>
+    <div class="content" class:samples={page.url.pathname === '/guide/samples'} class:playground={page.url.pathname === '/guide/playground'}>
         <main id="content">
             {@render children()}
         </main>
-        {#if headings.length}
+        {#if headings.length && page.url.pathname !== '/guide/playground'}
             <aside class="outline" aria-label="On this page">
                 <p>On this page</p>
                 <Outline {headings} spy />
@@ -149,7 +149,7 @@
         max-width: 760px;
     }
 
-    .content.samples main {
+    .content.samples main, .content.playground main {
         max-width: none;
     }
 
