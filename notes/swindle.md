@@ -136,6 +136,15 @@ Export/staged/production HTML SHA-256:
 Demo ZIP SHA-256:
 `b50e7d316c6af68e78d45c515fa92b8b4209047f5877ff590c16987d18e930eb`.
 
+Integration: merged `origin/dev` `3c72f1c9` in `a88ccafc`. Incoming FOLDLINE
+gameplay changes are unrelated; three documentation/test conflicts preserve
+both SWINDLE registration and NIGHT ROUTE's removal record/assertions. The
+merged production docs build and all nineteen analytics/admin/HTTP checks
+pass. Final native/web debug game targets rebuild without warnings and both
+simulation suites pass again. Export/staged/production HTML hashes remain
+identical. No dependency or SWINDLE simulation/rendering overlap required
+repeating the full two-browser runs. No CI/deployment was dispatched.
+
 ## Remaining coverage
 
 No persistent progression or matchmaking queue. Wider balance testing is still
