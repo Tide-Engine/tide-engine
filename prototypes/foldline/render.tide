@@ -62,6 +62,8 @@ struct Sight
     float lamps;      // How much of the ceiling's light there is: none for the moment a watcher comes or goes
     bool cut;         // The piece is the room's: a fold opens a hole in it
     float fold;       // The piece is part of the way through a fold: 1 stops it at the amber wall's face, 2 at the cyan's
+    bool echoed;      // ...and this is the part of it at the fold's other end, lit as the part it left behind is:
+    float4x4 back;    // through this, the fold undone, so that no seam of light crosses the thing
 }
 
 struct Aperture
@@ -426,9 +428,13 @@ float3 Texel(Texture sheet, float cell, float2 uv)
 // A surface's paint in every light there is: the dark, the ceiling's lamps
 // with their shadows, what they throw about their bay and up the walls, the
 // folds', the plates', the cube's and the exit's, and both operators' torches.
-float3 Lit(float3 paint, float3 p, float3 n, float shade, float gloss, bool leaf, Sight sight, DepthTexture sun, float4x4 toSun,
+float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, bool leaf, Sight sight, DepthTexture sun, float4x4 toSun,
            DepthTexture amber, float4x4 toAmber, DepthTexture cyan, float4x4 toCyan)
 {
+    float3 p = sight.echoed ? Math.Mul(sight.back, float4(place, 1)).xyz : place;
+    float3 n = sight.echoed ? Math.Mul(sight.back, float4(normal, 0)).xyz : normal;
+    // A fold's own glow is faint on what's passing through it, which is lit from one side and then the other
+    float mouth = sight.fold > 0.5 ? 0.3 : 1.0;
     float3 sunWay = SunWay();
     // What's in the viewer's hand is lit where the viewer stands, so a wall it reaches into doesn't darken it.
     float3 at = sight.held ? sight.eye : p;
@@ -454,9 +460,9 @@ float3 Lit(float3 paint, float3 p, float3 n, float shade, float gloss, bool leaf
 
     // Each fold's light is stopped by what stands in its way.
     if (sight.linked > 0 && Math.DistanceSq(p, sight.amberAt) < 42)
-        light += Glow(p, n, sight.amberAt, float3(1.0, 0.50, 0.13) * 2.0, 6.5) * (sight.held ? 1.0 : FoldLight(amber, toAmber, p, n));
+        light += Glow(p, n, sight.amberAt, float3(1.0, 0.50, 0.13) * 2.0 * mouth, 6.5) * (sight.held ? 1.0 : FoldLight(amber, toAmber, p, n));
     if (sight.linked > 0 && Math.DistanceSq(p, sight.cyanAt) < 42)
-        light += Glow(p, n, sight.cyanAt, float3(0.10, 0.82, 0.90) * 2.0, 6.5) * (sight.held ? 1.0 : FoldLight(cyan, toCyan, p, n));
+        light += Glow(p, n, sight.cyanAt, float3(0.10, 0.82, 0.90) * 2.0 * mouth, 6.5) * (sight.held ? 1.0 : FoldLight(cyan, toCyan, p, n));
     // The smaller lamps are stopped by what moves: the cube and both operators. A little off the surface,
     // so that a thing isn't in its own way.
     float3 lifted = p + n * 0.2;
@@ -1587,6 +1593,8 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         mut Sight there = sight;
         here.fold = cubeFold;
         there.fold = cubeFold > 0 ? 3 - cubeFold : 0;
+        there.echoed = true;
+        there.back = cubeFold == 2 ? throughAmber : throughCyan;
         target.Instanced(optics.box, optics.triangles, optics.cubeParts, kit, Snap, Surface, here);
         if (cubeFold > 0) target.Instanced(optics.box, optics.triangles, optics.cubeEcho, kit, Snap, Surface, there);
         target.Cull(Cull.None)
@@ -1597,6 +1605,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         // own, at a fold's other end, isn't drawn around the camera that looks out of that end.
         here.fold = partnerFold;
         there.fold = partnerFold > 0 ? 3 - partnerFold : 0;
+        there.back = partnerFold == 2 ? throughAmber : throughCyan;
         if (partner.id == 0)
         {
             target.SkinnedMesh(figure, partnerPlace, partnerPose, skinA, Snap, Figure, here);
@@ -1609,6 +1618,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         }
         here.fold = selfFold;
         there.fold = selfFold > 0 ? 3 - selfFold : 0;
+        there.back = selfFold == 2 ? throughAmber : throughCyan;
         bool own = pass < 4 || ui.open;
         bool ownAgain = selfFold > 0 && pass != selfFold + 1;
         if (viewer.id == 0)
