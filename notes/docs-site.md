@@ -1,5 +1,16 @@
 # The docs site
 
+NIGHT ROUTE catalog addition (2026-10-13): the owner approved an overhead
+delivery prototype with four cargo rules. Its server-only catalog card,
+public root and outside-root asset gates use `night-route`; `night_route_page`
+stages its self-contained page beside the native gameplay thumbnail. Admin
+and production HTTP tests cover the sixth catalog id, including encoded
+paths, stale outside-root copies and exclusion from discovery. Game rules and
+validation are in `notes/night-route.md`. No site deployment is requested.
+The production build, Svelte check (zero errors/warnings), eighteen
+analytics/admin unit checks and production prototype HTTP check pass with
+Node 24.16.0, the staged page and gameplay thumbnail.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog
