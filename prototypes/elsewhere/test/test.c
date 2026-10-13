@@ -24,7 +24,7 @@ static void start(tide_world *w, int players)
 static void at(tide_world *w, int seat, int realm, float x, float z)
 {
     Gardener p = person(w, seat);
-    p.realm = realm; p.position = (tide_float3){x, 0, z}; p.yaw = 0; p.crossing = 0; p.sitting = false;
+    p.realm = realm; p.position = (tide_float3){x, 0, z}; p.yaw = 0; p.sitting = false;
     CHECK(tide_set_Gardener(w, w->Garden.people.at[seat], p));
 }
 
@@ -118,6 +118,48 @@ static void coop_and_leave(void)
     tide_world_free(&w);
 }
 
+static void doorway_edges(void)
+{
+    tide_world w = {0}; start(&w, 2);
+    // The entire visible lower opening is traversable, including both edges.
+    for (int realm = 1; realm <= 3; realm++) for (int side = -1; side <= 1; side += 2) {
+        const float x = (realm - 2) * 7.0f, z = realm == 2 ? 10.0f : 6.0f;
+        at(&w, 0, 0, x + side * 1.4f, z - 0.02f);
+        input(&w, 0, (Wander){.move = {0, 1}}); ticks(&w, 1);
+        CHECK(person(&w, 0).realm == realm);
+        CHECK(fabsf(person(&w, 0).position.x - side * 1.4f) < 0.00001f);
+        // Reversing immediately must return home, without a cooldown hole.
+        input(&w, 0, (Wander){.move = {0, -1}}); ticks(&w, 1);
+        CHECK(person(&w, 0).realm == 0);
+    }
+    // Starting exactly on a plane and stepping through still crosses.
+    at(&w, 0, 0, -7, 6);
+    input(&w, 0, (Wander){.move = {0, 1}}); ticks(&w, 1);
+    CHECK(person(&w, 0).realm == 1);
+    at(&w, 0, 1, 0, -10);
+    input(&w, 0, (Wander){.move = {0, -1}}); ticks(&w, 1);
+    CHECK(person(&w, 0).realm == 0);
+    // Test the intersection with the plane, rather than the tick's endpoint.
+    at(&w, 0, 0, -7 + 1.4f, 5.99f);
+    input(&w, 0, (Wander){.move = {1, 1}}); ticks(&w, 1);
+    CHECK(person(&w, 0).realm == 1);
+    at(&w, 0, 0, -7 + 1.44f, 5.99f);
+    input(&w, 0, (Wander){.move = {-1, 1}}); ticks(&w, 1);
+    CHECK(person(&w, 0).realm == 0); // Intersection is outside, endpoint inside.
+    at(&w, 0, 0, -7, 6);
+    input(&w, 0, (Wander){0}); ticks(&w, 2);
+    CHECK(person(&w, 0).realm == 0); // Resting on the plane does not oscillate.
+    // Both owners can cross and immediately reverse independently.
+    at(&w, 0, 0, -7, 5.98f); at(&w, 1, 0, -7, 5.98f);
+    for (int seat = 0; seat < 2; seat++) input(&w, seat, (Wander){.move = {0, 1}});
+    ticks(&w, 1);
+    CHECK(person(&w, 0).realm == 1 && person(&w, 1).realm == 1);
+    for (int seat = 0; seat < 2; seat++) input(&w, seat, (Wander){.move = {0, -1}});
+    ticks(&w, 1);
+    CHECK(person(&w, 0).realm == 0 && person(&w, 1).realm == 0);
+    tide_world_free(&w);
+}
+
 static void loops_bounds_and_replay(void)
 {
     tide_world w = {0}, before = {0}, restored = {0}; start(&w, 2);
@@ -170,7 +212,7 @@ static void restart_and_membership(void)
 
 int main(void)
 {
-    solo_journey(); coop_and_leave(); loops_bounds_and_replay(); restart_and_membership();
+    doorway_edges(); solo_journey(); coop_and_leave(); loops_bounds_and_replay(); restart_and_membership();
     puts("Elsewhere gameplay checks passed");
     return 0;
 }
