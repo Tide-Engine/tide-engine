@@ -6,6 +6,11 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'deadweight', title: 'DEADWEIGHT', kind: 'Cooperative salvage · Physics', players: '1–2 players',
+        description: 'Two workers extract enormous machinery from an abandoned pumping station. Rig winches, balance lifting lines, walk on your cargo and use a loose ballast as a counterweight. Three physical salvage jobs, online or on a shared keyboard.',
+        image: '/prototypes/deadweight/thumbnail.png',
+    },
+    {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
         description: 'Fold space together in a sunlit research atrium. Place linked portals, look through them into the other side, and carry a resonance cube across the divide. Play both operators alone or solve the chambers with a partner.',
         image: '/prototypes/foldline/thumbnail.png',

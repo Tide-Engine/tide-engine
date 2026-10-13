@@ -1,0 +1,44 @@
+using Box3D;
+using Rooms;
+asset Clip winchMotor = "sfx/winch.wav";
+asset Clip metalImpact = "sfx/impact.wav";
+asset Clip loadSecured = "sfx/secured.wav";
+
+local singleton Soundscape
+{
+    Sound motorA;
+    Sound motorB;
+    float[2] lengths;
+    int revision = -1;
+    bool complete;
+    float cooldown;
+}
+
+local event(Hit hit) Impact(Cargo cargo, mut Soundscape sounds)
+{
+    if (hit.speed < 1.8 || cargo.kind > 3 || sounds.cooldown > 0) return;
+    Audio.Play(metalImpact, Math.Clamp(hit.speed * 0.04, 0.08, 0.35));
+    sounds.cooldown = 0.12;
+}
+
+[Stage(Layers.Hud, 1)]
+view Machinery(Site site, World world, Lobby lobby, mut Soundscape sounds)
+{
+    sounds.cooldown = Math.Max(0, sounds.cooldown - Frame.dt);
+    var changed = sounds.revision != site.revision;
+    if (changed) { sounds.revision = site.revision; sounds.complete = false; }
+    for (var id = 0; id < 2; id++)
+    {
+        var worker = world.Get<Worker>(site.crew[id]);
+        var cable = worker.winch < 0 ? Cable { } : site.cables[worker.winch];
+        var motor = Sound { clip = winchMotor, loop = true, volume = 0.23,
+            pitch = 0.85 + Math.Min(cable.tension, 3) * 0.06,
+            playing = lobby.playing && !changed && !worker.hook && !site.complete
+                && Math.Abs(sounds.lengths[id] - cable.length) > 0.002 };
+        if (id == 0) sounds.motorA = motor;
+        else sounds.motorB = motor;
+        sounds.lengths[id] = cable.length;
+    }
+    if (site.complete && !sounds.complete && lobby.playing) Audio.Play(loadSecured, 0.4);
+    sounds.complete = site.complete;
+}
