@@ -443,6 +443,50 @@ current.
     camera at half and its second crossing and looks into the other fold
     at a quarter. Not measured: what that saves.
 
+- **Physics for more than one box, rooms that aren't the hall's shape, and
+  a stretch to each place (2026-10-13).** The owner, of the six rooms:
+  "the room layouts all seem the same rectangle box with just different
+  stuff in it. we don't have to constrain ourselves to just that.. also we
+  have a full physics system for just one box", then "use physics".
+  - *Loose things.* A room has up to eight: the cube and crates (`Cube.kind`
+    1: planks, half the cube's weight), each a `Cube` with its number
+    (`index`), where it is (`at`, `turn`, which the renderer reads by a
+    query) and who holds it. All are picked up (E takes the nearest within
+    reach, straight or through a fold), carried through folds, thrown,
+    stood on and stacked, weigh a plate, are thrown about by a drum, and
+    draw the pool's thing when they go in. `Fold.holding[2]` is each
+    operator's (a number and one), `Fold.spots[8]` where they all are;
+    `Fold.cube` and `Arena.cube` are still the first's. One of them at a
+    time is drawn again at a fold's other end while part of the way
+    through (`cubeParts`); the rest are `cubeRest`.
+  - *So a gallery is climbed from on top of the cube* (0.74 m and a jump
+    clear 1.6), and two plates are held by two things with nobody standing
+    on either. Both are tested. Rooms 2 to 6 are easier by it than they
+    were written; that's left as what physics does, for the owner's play
+    to judge.
+  - *Shapes.* A room fills what it leaves of the hall from floor to roof
+    (an L for room 2 and room 5, far corners for 3, a corner each for 4
+    and 6) and hangs a beam under the roof in three. It's still one hall,
+    19.6 m by 26, with the lifts where they were: the hazards, the lamps'
+    grid and the maze are written to its coordinates. A room of another
+    size or with its lifts elsewhere is not built.
+  - *A stretch to each place.* `BETWEEN` (6) is the maze, in paper and
+    carpet. `POOLWAY` (7), the pool's: 18 m of water 1.2 m deep with three
+    bars of shallows across it (`ShallowAt`, marked by float lines), where
+    the thing has nobody; crates on the bank to throw in. `GAUNTLET` (8),
+    the concrete's: a trench 14 m across with four drums, a lane each, at
+    four speeds (`DrumCount`, `DrumLane`, `DrumTurn`), and a strip between
+    lanes none reaches. A pit's width is `PitHalf(level)` now. No fold in
+    any of them; their gate is open.
+  - `test.c`: a crate carried to a gallery's plate and the gate opening on
+    two things; a gallery climbed off the cube; in the long pool nobody had
+    in the shallows with the thing beside them, and had a step off; in the
+    works nobody touched between lanes over fifteen seconds, and shredded
+    in one. Replay hash `10234515152563608430` natively and under WASI.
+    `render_test.c` places the cube by its component.
+  - Unplayed, all of it. Not done: joints (nothing hinged or hung), things
+    of other sizes or weights, and a crate half-way through a fold while
+    another is (the second isn't drawn at the far end).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the gate closing on a body
   under it, two operators through one fold at once and the cube in a hole

@@ -83,7 +83,7 @@ static void press(tide_world *world, PilotInput controls)
 static void choose(tide_world *world, int sender, int level)
 {
     // The game's only command: generated wire ID, null entity target, zigzag int.
-    CHECK(level >= -1 && level <= 7);
+    CHECK(level >= -1 && level <= 9);
     uint8_t payload[11] = {0};
     payload[0] = (uint8_t)TIDE_COMMAND_ID_SelectChamber;
     payload[1] = (uint8_t)(TIDE_COMMAND_ID_SelectChamber >> 8);
@@ -352,14 +352,14 @@ static void chambers_and_commands(void)
     CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     CHECK(near(world.Fold.cube.z, -8, 0.4f) && near(world.Fold.cube.x, -3, 0.4f) && !world.Fold.ends.at[0].open);
     // The places in order: two rooms and a stretch between, three times, each three its own place
-    static const int levels[9] = {0, 1, 6, 2, 3, 6, 4, 5, 6};
-    for (int room = 0; room < 7; room++) {
+    static const int levels[9] = {0, 1, 6, 2, 3, 7, 4, 5, 8};
+    for (int room = 0; room < 9; room++) {
         choose(&world, 0, room);
         CHECK(world.Arena.level == room && levels[world.Arena.depth] == room && world.Arena.theme == world.Arena.depth / 3);
     }
     // A room that isn't one changes nothing
-    choose(&world, 0, 7);
-    CHECK(world.Arena.level == 6);
+    choose(&world, 0, 9);
+    CHECK(world.Arena.level == 8);
     tide_world_free(&world);
 }
 
@@ -426,6 +426,52 @@ static void between(void)
 }
 
 // What each chamber rests on: who's the size to get where.
+// The other two stretches: the long pool, and the works.
+static void stretches(void)
+{
+    tide_world world = {0};
+    start(&world);
+    choose(&world, 0, 7);
+    ticks(&world, 30);
+    CHECK(world.Arena.level == 7 && world.Arena.theme == 1 && world.Arena.solved && world.Fold.count == 5);
+    // In the shallows, with it right beside them, nobody is had
+    place(&world, 0, (tide_float3){-7, -0.45f, 0.5f}, 0, 0);
+    bool beside = false;
+    for (int step = 0; step < 900; step++) {
+        tide_world_tick(&world);
+        CHECK(pilot(&world, 0).taken == 0 && pilot(&world, 0).position.y > -0.6f);
+        beside = beside || hypotf(world.Lurker.at.x + 7, world.Lurker.at.z - 0.5f) < 1.6f;
+    }
+    CHECK(beside);
+    // A step off them, they are
+    place(&world, 0, (tide_float3){-7, -1.2f, 2.6f}, 0, 0);
+    bool had = false;
+    for (int step = 0; step < 300 && !had; step++) {
+        tide_world_tick(&world);
+        had = pilot(&world, 0).taken > 0;
+    }
+    CHECK(had);
+    tide_world_free(&world);
+    // The works: four drums, a lane each, and the strips between are out of every one's reach
+    start(&world);
+    choose(&world, 0, 8);
+    ticks(&world, 30);
+    CHECK(world.Arena.level == 8 && world.Arena.theme == 2 && world.Arena.solved);
+    place(&world, 0, (tide_float3){0, -1, 1}, 0, 0);
+    for (int step = 0; step < 900; step++) {
+        tide_world_tick(&world);
+        CHECK(pilot(&world, 0).taken == 0);
+    }
+    place(&world, 0, (tide_float3){0, -1, 2.5f}, 0, 0);
+    had = false;
+    for (int step = 0; step < 600 && !had; step++) {
+        tide_world_tick(&world);
+        had = pilot(&world, 0).shredded;
+    }
+    CHECK(had);
+    tide_world_free(&world);
+}
+
 static void chambers_hold(void)
 {
     tide_world world = {0};
@@ -725,6 +771,7 @@ int main(void)
     carrying_and_throwing();
     chambers_and_commands();
     between();
+    stretches();
     chambers_hold();
     replay_and_pack_are_identical();
     puts("FOLDLINE simulation checks passed");

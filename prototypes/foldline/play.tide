@@ -223,8 +223,17 @@ const float EYE_HIGH = 1.55;
 const float CUBE_SIDE = 0.74;
 const float CEILING_HIGH = 4.4;
 const int PILLARS = 2;
-const int BETWEEN = 6;       // The stretch between rooms: a maze where no fold goes, and something in it
-const int CHAMBERS = 7;
+// The stretches between rooms, where no fold goes, one to a place: a maze with something in it; a long pool
+// to cross by its shallows; and a trench four drums wide
+const int BETWEEN = 6;
+const int POOLWAY = 7;
+const int GAUNTLET = 8;
+const int CHAMBERS = 9;
+
+bool Between(int level)
+{
+    return level >= BETWEEN;
+}
 const float RIDE = 1.3;
 const float CAUGHT = 1.2;
 const float BLACKOUT_EVERY = 6.5;
@@ -240,7 +249,7 @@ const float CELL_LONG = 2.6;
 
 bool Pitted(int level)
 {
-    return level == 0 || level == 2 || level == 4 || level == 5;
+    return level == 0 || level == 2 || level == 4 || level == 5 || level == POOLWAY || level == GAUNTLET;
 }
 
 // What's at each depth: a room, then the stretch between it and the next.
@@ -250,11 +259,13 @@ int LevelAt(int depth)
     {
         case 0: return 0;
         case 1: return 1;
+        case 2: return BETWEEN;
         case 3: return 2;
         case 4: return 3;
+        case 5: return POOLWAY;
         case 6: return 4;
         case 7: return 5;
-        default: return BETWEEN;
+        default: return GAUNTLET;
     }
 }
 
@@ -268,18 +279,38 @@ int Hazard(int level, int theme)
 
 float PitMiddle(int level)
 {
-    return level == 0 ? -1.0 : 1.0;
+    return level == 0 ? -1.0 : level == POOLWAY ? 0.5 : 1.0;
+}
+
+// How far a pit reaches either side of its middle: a room's is 5 m across, a stretch's most of the hall.
+float PitHalf(int level)
+{
+    return level == POOLWAY ? 9.0 : level == GAUNTLET ? 7.0 : 2.5;
 }
 
 // A pool or a trench has a floor, this far down, and a slope to it from each side this long.
-float PitDeep(int hazard)
+float PitDeep(int level, int hazard)
 {
-    return hazard == 2 ? 1.5 : 1.0;
+    return level == POOLWAY ? 1.2 : hazard == 2 ? 1.5 : 1.0;
 }
 
-float PitRun(int hazard)
+float PitRun(int level, int hazard)
 {
-    return hazard == 2 ? 1.9 : 1.4;
+    return level == POOLWAY ? 1.6 : hazard == 2 ? 1.9 : 1.4;
+}
+
+// The long pool's shallows: three bars across it where the water is to the shin, and what's in it has nobody.
+float ShallowAt(int index)
+{
+    return index == 0 ? -4.0 : index == 1 ? 0.5 : 5.0;
+}
+
+bool InShallows(int level, float z)
+{
+    if (level != POOLWAY) return false;
+    for (var index = 0; index < 3; index++)
+        if (Math.Abs(z - ShallowAt(index)) < 0.8) return true;
+    return false;
 }
 
 const float POOL_SURFACE = -0.3;
@@ -288,15 +319,34 @@ const float DRUM_SPEED = 6.0;
 const float SHRED_FOR = 1.1;
 
 // Where each drum is along the trench at a tick: one end to the other and back, the second a pass behind.
-float DrumAt(int ticks, int which)
+// How many drums a trench has, and which lane each keeps to: a room's two share one; the gauntlet's four have
+// one each, with a strip between lanes that none of them reaches.
+int DrumCount(int level)
 {
-    var along = Math.Frac((ticks / 60.0 * DRUM_SPEED + which * DRUM_REACH) / (DRUM_REACH * 2)) * DRUM_REACH * 2;
+    return level == GAUNTLET ? 4 : 2;
+}
+
+float DrumLane(int level, int which)
+{
+    return level == GAUNTLET ? PitMiddle(level) - 4.5 + which * 3.0 : PitMiddle(level);
+}
+
+float DrumTurn(int level, int ticks, int which)
+{
+    var speed = level == GAUNTLET ? 5.0 + which * 1.1 : DRUM_SPEED;
+    var start = level == GAUNTLET ? which * 0.31 : which * 0.5;
+    return Math.Frac(ticks / 60.0 * speed / (DRUM_REACH * 2) + start);
+}
+
+float DrumAt(int level, int ticks, int which)
+{
+    var along = DrumTurn(level, ticks, which) * DRUM_REACH * 2;
     return -DRUM_REACH * 0.5 + (along < DRUM_REACH ? along : DRUM_REACH * 2 - along);
 }
 
-float DrumWay(int ticks, int which)
+float DrumWay(int level, int ticks, int which)
 {
-    return Math.Frac((ticks / 60.0 * DRUM_SPEED + which * DRUM_REACH) / (DRUM_REACH * 2)) < 0.5 ? 1.0 : -1.0;
+    return DrumTurn(level, ticks, which) < 0.5 ? 1.0 : -1.0;
 }
 
 // The place changes every third lift down.
@@ -429,6 +479,7 @@ int CubeCount(int level)
         case 3: return 2;
         case 4: return 3;
         case 5: return 2;
+        case 7: return 5;
         default: return 1;
     }
 }
@@ -443,6 +494,7 @@ float3 CubeStart(int level, int index)
         case 3: return index == 0 ? float3(0, 0.5, -6) : float3(3, 0.5, -9.5);
         case 4: return index == 0 ? float3(-3, 0.5, -8) : index == 1 ? float3(1, 0.4, -9) : float3(1, 1.2, -9);
         case 5: return index == 0 ? float3(-7.5, 2.0, -9) : float3(3, 0.5, -6);
+        case 7: return index == 0 ? float3(4.2, 0.5, -16.7) : float3(-1.5 + (index - 1) * 0.9, 0.4, -11);
         default: return float3(4.2, 0.5, -16.7);
     }
 }
@@ -598,7 +650,7 @@ void BuildChamber(mut Arena arena, int level)
     var ceilingTile = 14.0;
 
     // Which of the hall's walls take a fold. Its side walls are each two: this side of z 3.5 and past it.
-    var south = level != BETWEEN;
+    var south = !Between(level);
     var westNear = level == 0 || level == 1 || level == 3 || level == 5;
     var westFar = level == 0 || level == 1 || level == 3 || level == 4;
     var eastNear = level == 0 || level == 1 || level == 2 || level == 3;
@@ -632,23 +684,26 @@ void BuildChamber(mut Arena arena, int level)
     // The floor: whole, or with a pit across it, which is what the place makes of it
     var hazard = Hazard(level, arena.theme);
     var middle = PitMiddle(level);
+    var half = PitHalf(level);
     if (hazard > 0)
     {
-        Raise(arena, float3(0, -0.5, (middle - 16.5) * 0.5), float3(21.6, 1, middle + 11.5), carpet);
-        Raise(arena, float3(0, -0.5, (middle + 16.5) * 0.5), float3(21.6, 1, 11.5 - middle), carpet);
+        Raise(arena, float3(0, -0.5, (middle - half - 14) * 0.5), float3(21.6, 1, middle - half + 14), carpet);
+        Raise(arena, float3(0, -0.5, (middle + half + 14) * 0.5), float3(21.6, 1, 14 - middle - half), carpet);
     }
     else Raise(arena, float3(0, -0.5, 0), float3(21.6, 1, 28), carpet);
     if (hazard >= 2)
     {
         // A pool or a trench: a floor, and a slope down to it from each side
-        var deep = PitDeep(hazard);
-        var run = PitRun(hazard);
+        var deep = PitDeep(level, hazard);
+        var run = PitRun(level, hazard);
         var slope = Math.Atan2(deep, run);
-        Raise(arena, float3(0, -deep - 0.5, middle), float3(21.6, 1, 5), concrete);
+        Raise(arena, float3(0, -deep - 0.5, middle), float3(21.6, 1, half * 2), concrete);
+        for (var index = 0; index < 3 && level == POOLWAY; index++)
+            Raise(arena, float3(0, -0.85, ShallowAt(index)), float3(21.6, 0.8, 1.6), concrete);
         for (var side = -1; side <= 1; side += 2)
         {
-            var top = float3(0, 0, middle + side * 2.5);
-            var foot = float3(0, -deep, middle + side * (2.5 - run));
+            var top = float3(0, 0, middle + side * half);
+            var foot = float3(0, -deep, middle + side * (half - run));
             var normal = float3(0, Math.Cos(slope), -side * Math.Sin(slope));
             Spawn(Ramp { chamber = arena.chamber },
                   Body { type = BodyType.Static, position = (top + foot) * 0.5 - normal * 0.2, rotation = quaternion.Euler(-side * slope, 0, 0) },
@@ -715,7 +770,7 @@ void BuildChamber(mut Arena arena, int level)
     if (level == 1) Raise(arena, float3(-3.4, 0.36, -7), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
     if (level == 4 || level == 5) Raise(arena, float3(-3.4, 0.36, -11.5), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
     if (level == 0) Raise(arena, float3(-8.6, 0.45, 12.3), float3(0.9, 0.9, 0.9), planks, false, 3);
-    for (var pillar = 0; pillar < PILLARS && level != BETWEEN; pillar++)
+    for (var pillar = 0; pillar < PILLARS && !Between(level); pillar++)
     {
         var box = Pillar(level, pillar);
         Raise(arena, float3(box.x, CEILING_HIGH * 0.5, box.y), float3(0.9, CEILING_HIGH, 0.9), wallpaper);
@@ -973,6 +1028,7 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
 {
     if (Hazard(arena.level, arena.theme) != 2) return;
     var middle = PitMiddle(arena.level);
+    var reach = PitHalf(arena.level);
     if (lurker.chamber != arena.chamber)
     {
         lurker.chamber = arena.chamber;
@@ -985,7 +1041,7 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
     for (var index = 0; index < fold.count; index++)
     {
         var spot = fold.spots[index];
-        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1 || spot.y > POOL_SURFACE || Math.Abs(spot.z - middle) > 2.5) continue;
+        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1 || spot.y > POOL_SURFACE || Math.Abs(spot.z - middle) > reach) continue;
         nowIn |= 1 << index;
         if ((lurker.wasIn & (1 << index)) != 0) continue;
         lurker.lure = spot;
@@ -994,13 +1050,13 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
     lurker.wasIn = nowIn;
     lurker.lureLeft = Math.Max(0, lurker.lureLeft - time.dt);
     // Up and down the pool with nothing to go for; for the nearest of whoever is in it; for a splash before them
-    mut var target = float3(Math.Sin(arena.ticks / 60.0 * 0.35) * 8, POOL_SURFACE, middle);
+    mut var target = float3(Math.Sin(arena.ticks / 60.0 * 0.35) * 8, POOL_SURFACE, middle + Math.Sin(arena.ticks / 60.0 * 0.23) * (reach - 1.5));
     mut var speed = 2.2;
     mut var nearest = 1000.0;
     foreach (var entry in operators)
     {
         var feet = entry.pilot.position;
-        if (Math.Abs(feet.z - middle) > 2.5 || feet.y > POOL_SURFACE - 0.5 || entry.pilot.taken > 0) continue;
+        if (Math.Abs(feet.z - middle) > reach || feet.y > POOL_SURFACE - 0.5 || entry.pilot.taken > 0) continue;
         var away = Math.Distance(feet.xz, lurker.at.xz);
         if (away >= nearest) continue;
         nearest = away;
@@ -1012,7 +1068,7 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
         target = lurker.lure;
         speed = 5.5;
     }
-    target = float3(Math.Clamp(target.x, -9, 9), POOL_SURFACE, Math.Clamp(target.z, middle - 1.9, middle + 1.9));
+    target = float3(Math.Clamp(target.x, -9, 9), POOL_SURFACE, Math.Clamp(target.z, middle - reach + 0.6, middle + reach - 0.6));
     var gap = Math.Distance(target.xz, lurker.at.xz);
     lurker.rush = speed > 3 ? 1.0 : 0.0;
     if (gap < 0.05) return;
@@ -1057,13 +1113,13 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     // What a pit does to whoever is in it
     var hazard = Hazard(arena.level, arena.theme);
     var low = body.position.y - BODY_HIGH * 0.5 * pilot.scale;
-    var within = Math.Abs(body.position.z - PitMiddle(arena.level)) < 2.5;
+    var within = Math.Abs(body.position.z - PitMiddle(arena.level)) < PitHalf(arena.level);
     if (pilot.taken <= 0 && hazard == 2 && within && low < POOL_SURFACE - 0.5 && Math.DistanceSq(lurker.at.xz, body.position.xz) < 1.6) pilot.taken = 0.0001;
     if (pilot.taken <= 0 && hazard == 3 && within && low < -0.6)
     {
-        for (var which = 0; which < 2; which++)
+        for (var which = 0; which < DrumCount(arena.level); which++)
         {
-            if (Math.Abs(body.position.x - DrumAt(arena.ticks, which)) > 0.95) continue;
+            if (Math.Abs(body.position.z - DrumLane(arena.level, which)) > 1.2 || Math.Abs(body.position.x - DrumAt(arena.level, arena.ticks, which)) > 0.95) continue;
             pilot.taken = 0.0001;
             pilot.shredded = true;
         }
@@ -1102,7 +1158,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     // With the cube in hand a click throws it; with empty hands it shoots a fold's end
     var holding = fold.holding[pilot.id] > 0;
     var thrown = holding && (input.amber.down || input.cyan.down || input.hurl.down);
-    if (!holding && (input.amber.down || input.cyan.down) && arena.level != BETWEEN)
+    if (!holding && (input.amber.down || input.cyan.down) && !Between(arena.level))
     {
         // An end that's shot is there at once, and so are the shards of one that wasn't: nothing slides over
         // from where the last was
@@ -1314,10 +1370,13 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
     for (var pair = 0; pair < 2; pair++)
         if (AtMouth(fold, pair, center, 0.6 * cube.scale)) fold.busy[pair] = 3;
     // A drum throws the cube out of its way
-    if (Hazard(arena.level, arena.theme) == 3 && center.y < -0.2 && Math.Abs(center.z - PitMiddle(arena.level)) < 1.4)
+    if (Hazard(arena.level, arena.theme) == 3 && center.y < -0.2)
     {
-        for (var which = 0; which < 2; which++)
-            if (Math.Abs(center.x - DrumAt(arena.ticks, which)) < 1.0) body.velocity = float3(DrumWay(arena.ticks, which) * 7, 6.5, 0);
+        for (var which = 0; which < DrumCount(arena.level); which++)
+        {
+            if (Math.Abs(center.z - DrumLane(arena.level, which)) < 1.4 && Math.Abs(center.x - DrumAt(arena.level, arena.ticks, which)) < 1.0)
+                body.velocity = float3(DrumWay(arena.level, arena.ticks, which) * 7, 6.5, 0);
+        }
     }
     cube.at = center;
     cube.turn = body.rotation;
@@ -1484,7 +1543,7 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     arena.plateB = cubeB || operatorB;
     // A circuit is closed only while its plates are weighted: the gate shuts again when one is let up, so
     // something has to stay behind on each. The cube, or a partner.
-    arena.solved = arena.level == BETWEEN || (arena.plateA && (PlateCount(arena.level) < 2 || arena.plateB));
+    arena.solved = Between(arena.level) || (arena.plateA && (PlateCount(arena.level) < 2 || arena.plateB));
     // ...or the one who went through first stands on the lobby's plate, for the one who stayed
     arena.hold = holding;
     // With both in the lift its door shuts whatever holds it, and the lift goes down: to the next place, where
@@ -1633,7 +1692,7 @@ system Haunt(mut Watcher watcher, Arena arena, query (Operator pilot) operators,
     }
     watcher.blink = Math.Max(0, watcher.blink - time.dt);
     // Between the rooms it's another thing's place
-    if (arena.complete || arena.level == BETWEEN) return;
+    if (arena.complete || Between(arena.level)) return;
     var pillar = Pillar(arena.level, watcher.spot);
     var middle = float3(pillar.x, 0, pillar.y);
     mut var nearest = 1000.0;
