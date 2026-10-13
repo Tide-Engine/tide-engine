@@ -1,5 +1,14 @@
 # The docs site
 
+Copper & Coil catalog addition (2026-10-13): `copper-coil` is registered in
+the server-only prototype catalog, public root, outside-root asset gates and
+admin/HTTP prototype lists. `copper_coil_page` stages its self-contained page
+at `/prototypes/copper-coil/`; checked-in artwork and the publisher PDF live
+beside it. Public discovery and catalog authentication retain their existing
+contracts. Game rules and validation are in `notes/copper-coil.md`. The docs
+production build, zero-error/warning Svelte check, eighteen analytics/admin
+checks and production HTTP test pass. No deployment or CI dispatch.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog
