@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'copper-coil'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));

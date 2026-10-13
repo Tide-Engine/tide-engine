@@ -1,5 +1,9 @@
 # Repository layout and reference history
 
+Copper & Coil (2026-10-13): `prototypes/copper-coil/` is the cooperative
+logic-circuit publisher prototype, opt-in with the existing private prototypes.
+Its build, gameplay and publisher material are in `notes/copper-coil.md`.
+
 Native authoring tool (2026-10-12): tools/tide-editor owns the desktop prefab
 editor, its document layer and tests. It links tidec_core and tide_platform after
 the platform target is declared, and is omitted from web/Android/platform-off

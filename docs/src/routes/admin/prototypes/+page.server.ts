@@ -6,6 +6,11 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'copper-coil', title: 'Copper & Coil', kind: 'Cooperative puzzle · Logic circuits', players: '1–2 players',
+        description: 'Two maintenance robots restore a forgotten power station. Rewire AND, OR, XOR and NOT consoles, test every signal combination, and commission the bridge together. Six chambers with online, shared-keyboard and solo play.',
+        image: '/prototypes/copper-coil/thumbnail.png',
+    },
+    {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
         description: 'Fold space together in a sunlit research atrium. Place linked portals, look through them into the other side, and carry a resonance cube across the divide. Play both operators alone or solve the chambers with a partner.',
         image: '/prototypes/foldline/thumbnail.png',

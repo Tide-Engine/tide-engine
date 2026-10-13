@@ -1,0 +1,300 @@
+using Rooms;
+
+const Color INK = Color(.055, .10, .12);
+const Color PANEL = Color(.09, .16, .18);
+const Color CREAM = Color(.96, .92, .81);
+const Color DIM = Color(.52, .65, .65);
+const Color COPPER = Color(1, .57, .28);
+const Color COIL = Color(.35, .85, .77);
+const Color GOLD = Color(1, .80, .39);
+const GUITheme THEME = GUITheme {
+    text = CREAM, panel = PANEL, control = Color(.16, .25, .27),
+    hot = Color(.23, .35, .36), pressed = INK, field = INK,
+    fieldHot = Color(.12, .22, .24), accent = COPPER, radius = 8
+};
+local singleton Desk
+{
+    int active;
+    int serial = -1;
+    int[2] held = [-1, -1];
+    float[2] repeat;
+    float clock;
+    bool hint;
+    bool chambers;
+    bool help;
+    bool couch;
+    bool reducedMotion;
+    float toastTime;
+    string toast;
+    float2[2] drawn;
+}
+void Text(string words, float2 at, float size = 16, Color color = CREAM, Anchor anchor = Anchor.MiddleLeft)
+{
+    Draw.Text(words, at, size, color, anchor);
+}
+void Paragraph(string words, float2 at, float width, float size = 15, Color tone = CREAM)
+{
+    mut var rest = words;
+    mut var line = "";
+    mut var row = 0;
+    while (rest.length > 0)
+    {
+        var space = rest.IndexOf(' ');
+        var word = space < 0 ? rest : rest.Substring(0, space);
+        var next = line == "" ? word : $"{line} {word}";
+        if (line != "" && Draw.MeasureText(next, size).x > width)
+        {
+            Text(line, at + float2(0, row * (size + 6)), size, tone);
+            line = word;
+            row++;
+        }
+        else line = next;
+        rest = space < 0 ? "" : rest.Substring(space + 1);
+    }
+    if (line != "") Text(line, at + float2(0, row * (size + 6)), size, tone);
+}
+bool Button(string label, Rect rect, bool accent = false, bool enabled = true)
+{
+    mut var clicked = false;
+    GUI.Disabled(!enabled)
+    {
+        var control = GUI.Control(rect);
+        var center = float2(rect.x + rect.width * .5, rect.y + rect.height * .5);
+        var base = accent ? COPPER : Color(.14, .24, .26);
+        var fill = !enabled ? INK : control.hovered || control.focused ? Math.Lerp(base, CREAM, .15) : base;
+        Draw.RoundRect(center, float2(rect.width, rect.height), 7, fill);
+        if (control.focused) Draw.WireRoundRect(center, float2(rect.width, rect.height), 7, 2, CREAM);
+        Text(label, center, rect.height < 34 ? 12.0 : 14.0, !enabled ? DIM : accent ? INK : CREAM, Anchor.MiddleCenter);
+        clicked = control.clicked;
+    }
+    return clicked;
+}
+override string Rooms.Tagline() { return "Two robots. One bright idea."; }
+override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 86, 22, 64, 32); }
+override void Rooms.TitlePage(Session session, mut Lobby lobby) { }
+
+[Before(Rooms.Begin, Rooms.Pages)]
+view Prepare(mut Desk desk)
+{
+    GUI.SetTheme(THEME);
+    desk.clock += Frame.dt;
+    if (desk.clock >= 120) desk.clock -= 120;
+    desk.toastTime = Math.Max(0, desk.toastTime - Frame.dt);
+}
+local event(Feedback feedback) Notify(Station station, mut Desk desk)
+{
+    if (feedback.kind == Cue.Blocked)
+    {
+        var near = Nearby(station.level, station.circuit, feedback.robot);
+        desk.toast = station.circuit.powered && near >= 0 && near < 5 ? "Circuit locked. The bridge is ready!" : "Move beside a console to use it. The dark gap needs power.";
+        desk.toastTime = 2;
+    }
+    if (feedback.kind == Cue.Power) { desk.toast = "Power restored. Meet at the two illuminated exit tiles!"; desk.toastTime = 4; }
+}
+int Direction(Devices devices, bool arrows)
+{
+    var k = devices.keyboard;
+    if (arrows)
+    {
+        if (k.upArrow.pressed) return 0;
+        if (k.rightArrow.pressed) return 1;
+        if (k.downArrow.pressed) return 2;
+        if (k.leftArrow.pressed) return 3;
+    }
+    else
+    {
+        if (k.w.pressed) return 0;
+        if (k.d.pressed) return 1;
+        if (k.s.pressed) return 2;
+        if (k.a.pressed) return 3;
+    }
+    return -1;
+}
+view Interface(Station station, Session session, Devices devices, mut Desk desk, mut Lobby lobby)
+{
+    var w = Screen.width;
+    var h = Screen.height;
+    var narrow = w < 850;
+    var seat = Seat(station, session.player);
+    var together = Together(station);
+    if (together && seat >= 0) desk.active = seat;
+    lobby.seats = 2;
+    lobby.mine = seat;
+    lobby.manned = (station.present[0] ? 1 : 0) | (station.present[1] ? 2 : 0);
+    var playing = lobby.playing && seat >= 0 && !desk.chambers && !desk.help;
+    var k = devices.keyboard;
+    if (playing && !together && k.q.down) desk.active = 1 - desk.active;
+    if (lobby.newGame) Send(Visit { serial = station.serial, level = 0 });
+    if (playing && k.r.down) Send(Restart { serial = station.serial });
+    if (playing && k.z.down) Send(Rewind { serial = station.serial });
+    for (var robot = 0; robot < 2; robot++)
+    {
+        desk.repeat[robot] -= Frame.dt;
+        var drives = playing && !station.circuit.solved && (together ? robot == seat : desk.couch || robot == desk.active);
+        var direction = !drives ? -1 : desk.couch && !together ? Direction(devices, robot == 1) : Direction(devices, false);
+        var other = !drives || desk.couch && !together ? -1 : Direction(devices, true);
+        var way = direction >= 0 ? direction : other;
+        if (way < 0) { desk.held[robot] = -1; desk.repeat[robot] = 0; }
+        else if (desk.held[robot] != way || desk.repeat[robot] <= 0)
+        {
+            Send(Operate { serial = station.serial, robot = robot, action = way });
+            desk.repeat[robot] = desk.held[robot] == way ? .14 : .25;
+            desk.held[robot] = way;
+        }
+        var interact = desk.couch && !together ? robot == 0 ? k.e.down : k.enter.down : k.e.down || k.space.down;
+        if (drives && interact) Send(Operate { serial = station.serial, robot = robot, action = 4 });
+    }
+    if (lobby.page == Page.Title)
+    {
+        // A custom title retains the package's session actions and join flow.
+        Draw.Rect(float2(w * .5, h * .5), float2(w, h), Color(.035, .075, .09, .84));
+        var left = w > 850 ? w * .12 : 24.0;
+        Text("A COOPERATIVE CIRCUIT ADVENTURE", float2(left, h * .22), narrow ? 12.0 : 15.0, COIL);
+        Text("COPPER", float2(left, h * .33), narrow ? 48.0 : 76.0, COPPER);
+        Text("& COIL", float2(left, h * .43), narrow ? 48.0 : 76.0);
+        Text("Two robots. One bright idea.", float2(left + 3, h * .53), narrow ? 19.0 : 25.0);
+        if (!narrow)
+        {
+            var hero = float2(w * .79, h * .47);
+            var size = Math.Min(w * .070, 96);
+            Block(float2(-1, 0), hero, size, 1.0, 22, Color(.24, .37, .37));
+            Block(float2(1, 0), hero, size, 1.0, 22, Color(.24, .37, .37));
+            Cable(float2(-1, 0), float2(0, 0), true, hero, size, desk.clock, COPPER);
+            Cable(float2(0, 0), float2(1, 0), true, hero, size, desk.clock, COIL);
+            Robot(float2(-1, 0), 0, true, hero, size, desk.clock);
+            Robot(float2(1, 0), 1, true, hero, size, desk.clock);
+            Text("RESTORE. REWIRE. REUNITE.", hero + float2(0, size * 1.50), 12, COIL, Anchor.MiddleCenter);
+        }
+        Paragraph("Wake a forgotten power station. Build clever little circuits, share the work, and find your way back to the light.", float2(left + 3, h * .60), Math.Min(w - 48, 440), 16, DIM);
+        var y = h * .76;
+        if (Button("Play the demo", Rect(left, y, 190, 44), true)) { desk.couch = false; Rooms.Play(lobby); }
+        if (Button("Same-keyboard co-op", Rect(left + (narrow ? 0.0 : 202.0), y + (narrow ? 52.0 : 0.0), 210, 44))) { desk.couch = true; Rooms.Play(lobby); }
+        if (Button("Host online", Rect(left, y + (narrow ? 104.0 : 54.0), 132, 36))) Rooms.Host(lobby);
+        if (Button("Join a friend", Rect(left + 144, y + (narrow ? 104.0 : 54.0), 142, 36))) Rooms.ShowJoin(lobby);
+        Text("6 CHAMBERS  /  1-2 PLAYERS  /  PLAYABLE PROTOTYPE", float2(w - 28, h - 25), 11, DIM, Anchor.MiddleRight);
+        return;
+    }
+    Text("COPPER & COIL", float2(28, 35), narrow ? 18.0 : 22.0, CREAM);
+    Text($"POWER STATION  /  CHAMBER 0{station.level + 1}", float2(29, 65), 11, COIL);
+    if (w > 950) Text("TWO ROBOTS. ONE BRIGHT IDEA.", float2(w * .5, 36), 12, DIM, Anchor.MiddleCenter);
+    Draw.Line(float2(28, 88), float2(w - 28, 88), 1, Color(.20, .31, .33));
+    var panelW = narrow ? w - 32 : 280.0;
+    var panelX = narrow ? 16.0 : w - panelW - 24;
+    var panelY = narrow ? h * .53 : 110.0;
+    var panelH = narrow ? h * .47 - 58 : h - 182;
+    Draw.RoundRect(float2(panelX + panelW * .5, panelY + panelH * .5), float2(panelW, panelH), 12, PANEL);
+    Text($"0{station.level + 1}  /  {ChamberName(station.level)}", float2(panelX + 18, panelY + 26), 17, GOLD);
+    Paragraph(narrow ? "Match every test row. Use E beside a console to change its gate." : Brief(station.level), float2(panelX + 18, panelY + 57), panelW - 36, narrow ? 13.0 : 14.0, CREAM);
+    var tableY = panelY + (narrow ? 108.0 : 160.0);
+    Text(station.level == 5 ? "A   B   C      NEED     YOURS" : "A   B          NEED     YOURS", float2(panelX + 20, tableY), 11, DIM);
+    var truth = Truth(station.level, station.circuit);
+    var target = Target(station.level);
+    var rows = Rows(station.level);
+    var rowH = narrow ? station.level == 5 ? 18.0 : 24.0 : station.level == 5 ? 25.0 : 32.0;
+    for (var row = 0; row < rows; row++)
+    {
+        var y = tableY + 24 + row * rowH;
+        var need = (target & (1 << row)) != 0;
+        var out = (truth & (1 << row)) != 0;
+        var current = row == station.circuit.probe;
+        if (current) Draw.RoundRect(float2(panelX + panelW * .5, y), float2(panelW - 24, rowH - 2), 4, Color(.15, .26, .28));
+        var digits = station.level == 5 ? $"{row & 1}   {(row >> 1) & 1}   {(row >> 2) & 1}" : $"{row & 1}   {(row >> 1) & 1}";
+        Text(digits, float2(panelX + 22, y), 13);
+        Text(need ? "ON" : "OFF", float2(panelX + 132, y), 12, need ? GOLD : DIM);
+        Text(out ? "ON" : "OFF", float2(panelX + 205, y), 12, need == out ? COIL : COPPER);
+        // Test rows are a shared oscilloscope, never an edit of a robot's gates.
+        var control = GUI.Control(Rect(panelX + 12, y - rowH * .5, panelW - 24, rowH));
+        if (control.clicked && playing) Send(Probe { serial = station.serial, row = row });
+    }
+    var stateY = tableY + 28 + rows * rowH;
+    Text(station.circuit.powered ? "BRIDGE ONLINE" : truth == target ? "CIRCUIT MATCHES" : "CIRCUIT NEEDS WORK", float2(panelX + 18, stateY), 12, truth == target || station.circuit.powered ? COIL : COPPER);
+    Paragraph(station.circuit.powered ? "Meet on the two bright exit tiles." : truth == target ? Output(station.level, station.circuit, station.circuit.probe) ? "Both robots: stand on your round pads." : "Select an ON test row, then stand on both round pads." : "Walk beside a console. E cycles its gate.", float2(panelX + 18, stateY + 26), panelW - 36, 12, DIM);
+    if (!narrow)
+    {
+        var y = panelY + panelH - 57;
+        if (Button(desk.hint ? "Hide hint" : "Need a nudge?", Rect(panelX + 16, y, 144, 34))) desk.hint = !desk.hint;
+        if (Button("Guide", Rect(panelX + 170, y, 94, 34))) desk.help = true;
+    }
+    if (desk.hint)
+    {
+        var hintW = Math.Min(w - 40, 560);
+        Draw.RoundRect(float2(w * .5, h - 135), float2(hintW, 110), 12, INK);
+        Draw.WireRoundRect(float2(w * .5, h - 135), float2(hintW, 110), 12, 1, GOLD);
+        Paragraph(Hint(station.level), float2(w * .5 - hintW * .5 + 18, h - 164), hintW - 36, 14);
+    }
+    var footY = h - 40;
+    if (Button("Chambers", Rect(24, footY - 16, 92, 32))) desk.chambers = true;
+    if (Button("Undo / Z", Rect(124, footY - 16, 86, 32), false, station.historyCount > 0 && playing)) Send(Rewind { serial = station.serial });
+    if (Button("Reset / R", Rect(218, footY - 16, 88, 32), false, playing)) Send(Restart { serial = station.serial });
+    if (!narrow) Text(together ? $"ONLINE  /  YOU ARE {(seat == 0 ? "COPPER" : "COIL")}  /  WASD + E" : desk.couch ? "COPPER: WASD + E    /    COIL: ARROWS + ENTER" : "WASD / ARROWS + E    /    Q SWAPS ROBOT", float2(326, footY), 11, DIM);
+    if (!together && !desk.couch && !narrow && Button(desk.active == 0 ? "Copper / Q" : "Coil / Q", Rect(28, 110, 128, 34))) desk.active = 1 - desk.active;
+    var nearby = Nearby(station.level, station.circuit, desk.active);
+    if (playing && !narrow && !station.circuit.solved && desk.toastTime <= 0)
+    {
+        var worldW = w - 330;
+        Text(station.circuit.powered ? "The way is open. Walk onto the illuminated exit tiles." : nearby >= 0 && nearby < 5 ? $"E  /  CHANGE {SocketName(nearby)}: {GateName(station.circuit.gates[nearby])}" : nearby >= 5 ? "E  /  TOGGLE INPUT" : "Walk beside a console to change its gate.", float2(worldW * .5, h - 89), 14, GOLD, Anchor.MiddleCenter);
+    }
+    // Touch navigation also offers a pointer-only way to demo the game.
+    if (narrow)
+    {
+        var cy = h * .47;
+        for (var d = 0; d < 4; d++)
+        {
+            var dx = d == 1 ? 44.0 : d == 3 ? -44.0 : 0.0;
+            var dy = d == 2 ? 30.0 : d == 0 ? -30.0 : 0.0;
+            if (Button(d == 0 ? "W" : d == 1 ? "D" : d == 2 ? "S" : "A", Rect(w * .25 + dx - 20, cy + dy - 15, 40, 28), false, playing)) Send(Operate { serial = station.serial, robot = desk.active, action = d });
+        }
+        if (Button("Use", Rect(w * .65, cy - 28, 66, 34), true, playing)) Send(Operate { serial = station.serial, robot = desk.active, action = 4 });
+        if (Button("Swap", Rect(w * .65, cy + 10, 66, 28), false, playing && !together)) desk.active = 1 - desk.active;
+    }
+    if (desk.toastTime > 0 && !desk.help && !desk.chambers && !station.circuit.solved)
+    {
+        var width = Math.Min(w - 36, Draw.MeasureText(desk.toast, 13).x + 32);
+        Draw.RoundRect(float2(w * .5, h - 98), float2(width, 36), 7, INK);
+        Text(desk.toast, float2(w * .5, h - 98), 13, COPPER, Anchor.MiddleCenter);
+    }
+    if (station.circuit.solved && !desk.help && !desk.chambers)
+    {
+        var cw = Math.Min(w - 32, 490);
+        var at = float2((narrow ? w : w - 320) * .5, h * .5);
+        Draw.RoundRect(at + float2(0, 6), float2(cw, 212), 16, INK);
+        Draw.RoundRect(at, float2(cw, 212), 16, PANEL);
+        Draw.WireRoundRect(at, float2(cw, 212), 16, 2, COIL);
+        Text(station.level == 5 ? "A little brighter, together." : "Another light comes home.", at + float2(0, -62), 24, GOLD, Anchor.MiddleCenter);
+        Text(station.level == 5 ? "Thanks for bringing the station back to life." : $"Chamber 0{station.level + 1} restored  /  {station.circuit.moves} actions", at + float2(0, -19), 14, DIM, Anchor.MiddleCenter);
+        if (station.level < 5)
+        {
+            if (Button("Next chamber", Rect(at.x - 110, at.y + 18, 220, 42), true) || playing && !desk.couch && k.enter.down) Send(Visit { serial = station.serial, level = station.level + 1 });
+        }
+        else if (Button("Explore the chambers", Rect(at.x - 110, at.y + 18, 220, 42), true)) desk.chambers = true;
+        Text("Built for two. Figured out together.", at + float2(0, 84), 12, DIM, Anchor.MiddleCenter);
+    }
+    if (desk.chambers)
+    {
+        GUILayout.Modal(Anchor.MiddleCenter, desk.chambers)
+        {
+            GUILayout.Label("THE POWER STATION");
+            for (var i = 0; i < CHAMBERS; i++)
+                if (GUILayout.Button($"{((station.completed & (1 << i)) != 0 ? "* " : "")}0{i + 1}  /  {ChamberName(i)}")) { Send(Visit { serial = station.serial, level = i }); desk.chambers = false; }
+            if (GUILayout.Button("Back")) desk.chambers = false;
+        }
+    }
+    if (desk.help)
+    {
+        GUILayout.Modal(Anchor.MiddleCenter, desk.help)
+        {
+            GUILayout.Label("TWO ROBOTS. ONE BRIGHT IDEA.");
+            GUILayout.Label("WASD / arrows walk. E or Space uses a nearby console.");
+            GUILayout.Label("Alone: Q swaps robot. Co-op: each works their own bank.");
+            GUILayout.Label("Same keyboard: Copper uses WASD + E; Coil arrows + Enter.");
+            GUILayout.Label("WIRE passes power. NOT reverses on and off.");
+            GUILayout.Label("AND needs both. OR needs either. XOR needs exactly one.");
+            GUILayout.Label("The test board must match every row. Click rows to probe.");
+            GUILayout.Label("Select a passing ON row. Stand on both round pads.");
+            GUILayout.Label("Finally meet on the two bright exit tiles. Z undoes; R resets.");
+            GUILayout.Toggle("Reduced motion", desk.reducedMotion);
+            if (GUILayout.Button("Show a hint")) { desk.hint = true; desk.help = false; }
+            if (GUILayout.Button("Back")) desk.help = false;
+        }
+    }
+}
