@@ -733,6 +733,26 @@ have not been exhaustively ruled out. The early rooms deliberately teach;
 the final rooms carry the deeper sequencing challenge. No engine/package code,
 full repository suites, CI or other-platform validation was needed or run.
 
+### Review of that pass (2026-10-13, Claude)
+
+The owner asked for a review of the pass above and for anything more. It
+builds without warnings and its tests pass, 2/2 natively and 3/3 on the web,
+with its replay hash. Its fix to `Shoot` is a real one: a shot went through a
+shut door, which undid Line of Sight. Two things were added:
+
+- High Ground's grilles go to the roof (2.8 m, where they were 1.3). At 1.3
+  their top was 2.9 m up, and a jump off the other operator's head reaches
+  2.87: three centimeters short, and with the cube under the other operator,
+  well over. `chambers_hold` checks someone 2.5 m up is still stopped.
+- H is in the key legend, where the objective line alone named it.
+
+Looked at and left: a shot now stops at the shaft's decks too, which only
+ever makes a shot harder; Smaller's one patch means the small operator has
+to move the end that's in the frame and not their whole one, which is the
+room's point; the old Lure room is reached at the depth Smaller has now.
+Still true of every room past the second: its way through is proven a
+step at a time by placing bodies, not played from lift to lift by inputs.
+
 ## Match and controls
 
 `prototypes/foldline/play.tide` contains a deterministic 60 Hz, two-player match.
