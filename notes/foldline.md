@@ -1086,3 +1086,87 @@ so visual inspection used standard-host captures and the automated browser GPU
 fixtures. A live Internet room with two human players was not exercised;
 co-op validation used the standard host's deterministic two-process transport.
 Linux/macOS/MinGW, Android and sanitizers were not run. No CI was dispatched.
+
+## Two active operators, room seams and lift continuity (2026-10-13)
+
+The owner reported gaps beside doors and in floors, passive partners in the
+puzzles, dry geometry visible through a fold under the blood, ambiguous
+receptive-looking pillars, and lift transitions that looked like teleports.
+They explicitly retained Tab solo play: puzzles require both bodies, not two
+connected people. This section supersedes earlier release/control, Smaller,
+lift construction and submerged-view descriptions. No engine/package changes.
+
+- Every puzzle room, including the archived Lure, starts with its cube held
+  by visible clamps and a kinematic body. It cannot be taken or displaced.
+  Two distinct living operators on C and D simultaneously release it and
+  power the exit circuit (`Arena.released`). Objects cannot substitute for
+  either operator at this release. The clamps stay open; A/B and the lift
+  handoff still require their ordinary weights, and those exit plates do not
+  latch. The horror passages retain their existing survival rules.
+- C/D are at the room's workstations, not extra exit plates: Shortcut's near
+  and far banks, High Ground's separate fenced galleries, Smaller's two vent
+  rooms, the drum rooms' controller/gallery or gallery/small cage, the shaft's
+  lower lift control and far upper ledge, Sight's two door controls, Blackout's
+  lighting control and far room, and Undertow's underwater control/far bank.
+- Shortcut's only receptive wall past the blood is behind a moving cover.
+  C uncovers it for the crossing partner; D holds it open from the far bank.
+  High Ground has an opaque divider between its two galleries. Smaller has
+  mirrored vent rooms, baffles, small frames and hidden receptive patches:
+  both operators must shrink and navigate their own service room. Its A/B
+  plates are in separate rooms; retrieving and shrinking the released cube
+  and the final exit handoff remain part of the solution.
+- C or D brakes the drums in rooms 05/06. `Arena.drumTicks` pauses their common
+  simulation/render/sound clock, so resuming never jumps a drum to where it
+  would have been. The gauntlet still tests moving drums without brakes.
+- A non-receptive wallpaper-painted wall is now bare concrete. Narrow
+  structural pillars also have dark straps. Receptive walls keep their finish.
+- Lift wall openings had eight metres of clearance around six-metre shutters.
+  Shared `LiftShell` now fills the side jambs and thresholds. All rooms use
+  the same shell; adjacent floor slabs overlap slightly along their horizontal
+  edges. Fixed and moving shutters share the same planes and dimensions, with
+  consistent frames, forward lights, neutral shell materials and floor pads.
+- The lift fades out over its final quarter-second, changes room in darkness,
+  then fades in before the forward shutter opens. The renderer maps the first
+  arriving frame to the new lift coordinates before the following tick moves
+  the bodies; facing and local rider offsets stay intact. Arrival no longer
+  clamps a valid rider's forward offset to a narrower range.
+- The transition fixture reproduced a second bug: old colliders survived
+  into the first arriving physics step. Undertow/Blackout walls overlapped
+  the new hall lift and pushed operator B sideways by about 0.12 m.
+  `RetireRoom`, after `EvaluateChamber`, now queues old pieces, objects,
+  machinery, ramps and doors for removal in the room-changing tick. Their
+  Box3D removal is consequently ready before the first arriving step. The
+  original position-continuity tolerances then pass for all thirteen stops.
+- A linked destination whose centre is below the blood surface, within the
+  pit, shows opaque drifting red through `ThroughAir`, `ThroughFar` and the
+  final recursion fallback. Such shots remain allowed. This applies when the
+  other operator's fold sees it as well. Pool views keep their existing rules.
+
+Validation: native debug game/test targets build without warnings and 2/2
+scoped tests pass. Complete input-driven solves now cover rooms 01, 02 and
+03 from their arrival lifts through the next lift; Smaller exercises both
+shrinking routes, both baffles, joint release, the carried cube shrinking,
+weights and the exit handoff. Focused later-room fixtures explicitly begin
+with release completed so they continue to isolate their original mechanics.
+A separate test covers the two-distinct-body release in all ten puzzle room
+IDs: one operator visiting both controls never releases the cube. Tests also
+cover pickup/displacement refusal while clamped, allowed submerged shots,
+and braking/resuming without advancing the drum clock.
+
+The real GPU fixture retains its original portal/parallax checks and adds
+opaque-red checks directly and through the other pair, plus thirteen full
+lift transitions. It draws before, during the first arriving tick and after
+the fade; verifies black during the room change, both rider offsets, and the
+reveal before the forward door opens. Standard-host captures visually check
+the paired Small rooms, cube clamps, bare pillars and Undertow's filled doorway
+and threshold. Later rooms do not yet have full input-driven solves; live
+human co-op and sound balance remain unverified. No CI was dispatched.
+
+Final validation after merging the concurrent gallery hardening: the grilles
+reach the roof, the boosted-on-player-and-cube bypass regression remains, and
+the H hint legend is retained. Native debug passes 2/2 scoped tests; web debug
+passes 3/3 (WASI, WebGL 2 and WebGPU with graphics validation enabled), using
+Node 24.16.0. Native and WASI replay hashes both equal
+`14010256285904244944`. All thirteen transition checks and both submerged-red
+checks pass on each GPU backend. Only this game's targets/suites were run;
+other platforms and CI were not run.
