@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#09111d">
+<meta name="description" content="SWINDLE. A very civil rooftop robbery. A quick competitive heist for friends.">
+<title>SWINDLE — steal the jewel, sell the lie</title>
+<style>
+html,body{margin:0;width:100%;height:100%;background:#09111d;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center}
+canvas{display:block;outline:none;touch-action:none}
+#loading{position:fixed;inset:0;display:grid;place-content:center;color:#f5e8c9;font:600 24px system-ui;letter-spacing:.15em;pointer-events:none;background:#09111d}
+#loading small{font:12px system-ui;letter-spacing:.1em;color:#7de8c2;text-align:center;margin-top:16px}
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" aria-label="SWINDLE competitive rooftop heist" oncontextmenu="return false"></canvas>
+<div id="loading">SWINDLE<small>GETTING THE GANG TOGETHER…</small></div>
+<script>
+var Tide={canvas:document.getElementById('canvas'),print:text=>console.log(text),printErr:text=>console.error(text)};
+</script>
+{{{ SCRIPT }}}
+<script>
+// start() resolves after the engine's first rendered frame.
+if(Tide.start) Tide.start().then(()=>document.getElementById('loading')?.remove()).catch(error=>{document.getElementById('loading').textContent='Could not open the club. Please reload.';console.error(error)});
+</script>
+</body>
+</html>

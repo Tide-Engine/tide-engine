@@ -25,19 +25,19 @@ const Color UI_VIOLET = Color(0.62, 0.4, 1);
 string ChamberHint(int level)
 {
     return level switch {
-        0 => "Two plates open the gate, only while weighted. The plate in the lift holds it for whoever stayed.",
-        1 => "Too high to climb. A fold goes wherever on a wall you can see.",
-        2 => "Something is in the water. It goes for whatever went in last.",
-        3 => "The vent is too low for you. Who leaves by the small frame is small, and stays small.",
-        4 => "They don't stop. Go when they're past.",
-        5 => "The cube is up there. The plate is in there. The drums are between.",
+        0 => "C uncovers the far wall. Your partner crosses and holds D. Together you release the cube.",
+        1 => "A control on each gallery. Keep two routes: you will need to get back off both galleries.",
+        2 => "Throw a block to distract it for seven seconds. Blocks float; it does not eat them.",
+        3 => "A vent room each. Both of you must shrink, get round the baffles, and work C and D together.",
+        4 => "C brakes the drums while your partner finds D on the gallery. Then bring the released cube over.",
+        5 => "C is up on the gallery. D is beyond the small entrance. Either control brakes the drums.",
         6 => "The device is dead down here. It only moves when neither of you is looking.",
         7 => "The device is dead down here. The floats mark the shallows. It has nobody in the shallows.",
         8 => "The device is dead down here. Four of them. Stand between.",
         9 => "The green plate raises the deck. The slot is for something smaller than the cube is.",
         10 => "A door is open while its plate is weighted. Mind which side of it you are when it isn't.",
         11 => "The passage's lamps are the green plate's. It stands still in the light. It follows the nearest of you.",
-        _ => "The door's plate is under the floats. It goes for whatever went in last, for a little while."
+        _ => "Green C marks the shallow step. Throw to distract it for 7 seconds. Blocks float; E retrieves."
     };
 }
 
@@ -255,9 +255,9 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     var hintWidth = Math.Min(680, Screen.width - 36);
     var hintY = Screen.height - (legend ? 62 : 34);
     Slab(Rect(middle.x - hintWidth * 0.5, hintY - 15, hintWidth, 30));
-    var objective = Between(arena.level) ? ChamberHint(arena.level) : arena.level == 0 ? ChamberHint(0)
+    var objective = !Between(arena.level) && !arena.released ? "Release the cube: one operator on C, the other on D.   H / HINT" : Between(arena.level) ? ChamberHint(arena.level) : arena.level == 0 ? "Weight A and B together. Hold the lift for your partner."
                   : "Weight A and B together. Reach the lift.   H / HINT";
-    Ink(arena.gate > 0.9 && !Between(arena.level) ? "Hold the lift's plate for your partner. Then both of you, in." : ui.hint ? ChamberHint(arena.level) : objective, float2(middle.x, hintY),
+    Ink(arena.gate > 0.9 && !Between(arena.level) ? "Hold the lift's plate for your partner. Then both of you, in." : (ui.hint || arena.level == 0 && !arena.released) ? ChamberHint(arena.level) : objective, float2(middle.x, hintY),
         Math.Min(13, hintWidth / 50), UI_INK, Anchor.MiddleCenter);
     if (legend)
     {

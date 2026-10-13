@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'copper-coil'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'swindle'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -171,7 +171,8 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     }
     // An id outside the catalog is an ordinary unknown path.
     assert.equal((await fetch(`${origin}/prototypes/not-a-game/`, { redirect: 'manual' })).status, 404);
-    for (const route of ['/prototypes/skyworks/', '/prototypes/skyworks/index.html', '/prototypes/skyworks/thumbnail.png']) {
+    for (const route of ['/prototypes/skyworks/', '/prototypes/skyworks/index.html', '/prototypes/skyworks/thumbnail.png',
+        '/prototypes/night-route/', '/prototypes/night-route/index.html', '/prototypes/night-route/thumbnail.png']) {
         assert.equal((await fetch(`${origin}${route}`, { redirect: 'manual' })).status, 404, route);
     }
     for (const id of prototypeIds) {
@@ -204,9 +205,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out|underfoot|foldline/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out|underfoot|foldline|swindle|night-route/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out|Underfoot|underfoot|FOLDLINE|foldline/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out|Underfoot|underfoot|FOLDLINE|foldline|SWINDLE|swindle|NIGHT ROUTE|night-route/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);

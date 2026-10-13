@@ -6,9 +6,9 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
-        id: 'copper-coil', title: 'Copper & Coil', kind: 'Cooperative puzzle · Logic circuits', players: '1–2 players',
-        description: 'Two maintenance robots restore a forgotten power station. Rewire AND, OR, XOR and NOT consoles, test every signal combination, and commission the bridge together. Six chambers with online, shared-keyboard and solo play.',
-        image: '/prototypes/copper-coil/thumbnail.png',
+        id: 'swindle', title: 'SWINDLE', kind: 'Competitive heist · Bluff and steal', players: '1–4 players',
+        description: 'A very civil rooftop robbery. Steal a prism whose value grows while you carry it, dash into a friend to snatch it, and send a fake carrier running while you vanish. Cash out at the moving getaway. Ninety-second duels, free-for-all and two-versus-two, with bots, friend rooms and same-keyboard play.',
+        image: '/prototypes/swindle/thumbnail.png',
     },
     {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
