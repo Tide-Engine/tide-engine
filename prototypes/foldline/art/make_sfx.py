@@ -120,6 +120,19 @@ for k in range(9):
 rise = sweep(n, 180, 620, 2) * (t(n) / n) ** 2 * 0.25
 save('grab', growl * 0.8 + slaps + rise, 0.85)
 
+# Into the red: a slap, what's thrown up coming down, and what it leaves
+n = 0.9
+slap = low(noise(n), 1400) * np.minimum(t(n) * 90, 1) * decay(n, 9)
+fall = band(noise(n), 900, 3500) * np.maximum(np.sin(np.pi * (t(n) - 0.18) / 0.5), 0) ** 2 * 0.35
+glug = np.zeros(int(RATE * n))
+for k in range(7):
+    at = int(rng.uniform(0.1, 0.7) * RATE)
+    dd = rng.uniform(0.05, 0.1)
+    m = int(RATE * dd)
+    f0 = rng.uniform(90, 260)
+    glug[at:at + m] += sweep(dd, f0, f0 * 1.8)[:m] * np.sin(np.pi * np.arange(m) / m) * rng.uniform(0.3, 0.8)
+save('splash', slap + fall + low(glug, 700) * 0.7 + np.sin(2 * np.pi * 70 * t(n)) * decay(n, 16) * 0.8, 0.75)
+
 # Under the red: bubbles
 n = 2.5
 bubbles = np.zeros(int(RATE * n))

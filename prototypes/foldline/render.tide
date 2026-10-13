@@ -112,6 +112,15 @@ local singleton Optics
     RenderTarget deep1;
     RenderTarget deep2;
     RenderTarget deep3;
+    // What an end's camera sees through each end of the other fold: 2 an end, the camera's end first
+    RenderTarget cross0;
+    RenderTarget cross1;
+    RenderTarget cross2;
+    RenderTarget cross3;
+    RenderTarget cross4;
+    RenderTarget cross5;
+    RenderTarget cross6;
+    RenderTarget cross7;
     List<StoneVertex> box;
     List<int> triangles;
     List<StoneVertex> ball;
@@ -144,6 +153,12 @@ local singleton Optics
     float stride;
     float fired;
     float3[4] lastAt;
+    // Splashes: where, how long each has left, and how big; the newest's number, for the ear
+    float3[6] splashAt;
+    float[6] splashLeft;
+    float[6] splashBig;
+    float[3] wasHigh;
+    int splashed;
     int walls = -1;
 }
 
@@ -195,6 +210,8 @@ local singleton Lens
     float scare;      // A watcher has this machine's operator: 1 as it lands, fading
     float under;      // The hands in a pit have it: 0 to 1 as the picture goes out
     float sunk;       // The eye is under a pit's red: 1, or 0
+    RenderTarget reach; // How far off each pixel of the room is, in meters, for the red's fog
+    Texture far;
     float lines = 300; // The picture's rows: LINES, or the window's own with the big pixels off
     bool made;
 }
@@ -778,11 +795,15 @@ frag ThroughFar(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, 
     if (distance > 0) this.Discard();
     float2 uv = this.position / aperture.pixels;
     mut float3 view = Unfold3(image.Sample(uv, Filter.Bilinear, Wrap.Clamp));
-    mut float depth = lens.far0.Sample(uv);
-    if (aperture.end == 1) depth = lens.far1.Sample(uv);
-    else if (aperture.end == 2) depth = lens.far2.Sample(uv);
-    else if (aperture.end == 3) depth = lens.far3.Sample(uv);
-    view += Beyond(day.depth, day.toSun, aperture, depth, this.world, uv, this.position);
+    // A look into the other fold has no air of its own
+    if (aperture.end >= 0)
+    {
+        mut float depth = lens.far0.Sample(uv);
+        if (aperture.end == 1) depth = lens.far1.Sample(uv);
+        else if (aperture.end == 2) depth = lens.far2.Sample(uv);
+        else if (aperture.end == 3) depth = lens.far3.Sample(uv);
+        view += Beyond(day.depth, day.toSun, aperture, depth, this.world, uv, this.position);
+    }
     color = Shown(Rimmed(view, aperture.rim, at, aperture.phase, distance, aperture.size), aperture.packed);
 }
 
@@ -825,6 +846,13 @@ frag Shafts(Vertex vertex, Texture source, Ray ray, Daylight day, Lens lens, out
     float far = Math.Length(to);
     float3 lit = Scatter(day.depth, day.toSun, ray.eye, to / Math.Max(far, 0.0001), Math.Min(far, 36), this.position, lens.phase) * ray.lamps;
     color = Color(lit.x, lit.y, lit.z, 1);
+}
+
+// How far off the room is at each pixel, in meters.
+frag HowFar(Vertex vertex, Texture source, Ray ray, Lens lens, out Color color)
+{
+    float far = Math.Length(Unprojected(ray.fromClip, vertex.uv, lens.sceneDepth.Sample(vertex.uv)) - ray.eye);
+    color = Color(far, far, far, 1);
 }
 
 // What's bright enough to spill, at half the window's size.
@@ -882,8 +910,11 @@ frag Develop(Vertex vertex, Texture source, Lens lens, out Color color)
         float2 adrift = float2(Math.Cos(lens.phase), Math.Sin(lens.phase));
         float cloud = Math.Simplex(uv * float2(5, 3) + adrift * 0.8) * 0.5 + Math.Simplex(uv * float2(11, 7) - adrift * 1.3) * 0.5;
         float lightness = Math.Dot(light, float3(0.3, 0.5, 0.2));
-        float3 murk = float3(0.2, 0.008, 0.006) * (0.35 + Math.Saturate(cloud * 0.5 + 0.5) * 0.9) + float3(0.9, 0.05, 0.03) * lightness * 0.6;
-        light = Math.Lerp(light, murk, 0.88 * lens.sunk);
+        float3 murk = float3(0.16, 0.006, 0.005) * (0.35 + Math.Saturate(cloud * 0.5 + 0.5) * 0.9);
+        // Thick: an arm's length off is dim, and nothing shows past a few meters
+        float away = lens.far.Sample(uv, Filter.Bilinear, Wrap.Clamp).r;
+        float thick = 1 - Math.Exp(-away * 1.1);
+        light = Math.Lerp(float3(0.9, 0.06, 0.04) * lightness, murk, Math.Saturate(0.25 + thick * 0.75) * lens.sunk);
     }
 
     mut float3 film = Math.Saturate(light * (light * 2.51 + float3(0.03)) / (light * (light * 2.43 + float3(0.59)) + float3(0.14)));
@@ -1017,6 +1048,14 @@ void MakeOptics(mut Optics optics, mut Daylight day, mut Lens lens)
     optics.deep1 = RenderTarget.Window(0.5);
     optics.deep2 = RenderTarget.Window(0.5);
     optics.deep3 = RenderTarget.Window(0.5);
+    optics.cross0 = RenderTarget.Window(0.5);
+    optics.cross1 = RenderTarget.Window(0.5);
+    optics.cross2 = RenderTarget.Window(0.5);
+    optics.cross3 = RenderTarget.Window(0.5);
+    optics.cross4 = RenderTarget.Window(0.5);
+    optics.cross5 = RenderTarget.Window(0.5);
+    optics.cross6 = RenderTarget.Window(0.5);
+    optics.cross7 = RenderTarget.Window(0.5);
     day.map = RenderTarget(SUN_PIXELS, SUN_PIXELS, 1, Format.Depth);
     day.depth = day.map.depth;
     day.fold0 = RenderTarget(FOLD_PIXELS, FOLD_PIXELS, 1, Format.Depth);
@@ -1038,6 +1077,7 @@ void MakeOptics(mut Optics optics, mut Daylight day, mut Lens lens)
     lens.far2 = optics.deep2.depth;
     lens.far3 = optics.deep3.depth;
     lens.air = RenderTarget.Window(0.5, Format.Rgba16f);
+    lens.reach = RenderTarget.Window(0.5, Format.Rgba16f);
     lens.half = RenderTarget.Window(0.5, Format.Rgba16f);
     lens.quarter = RenderTarget.Window(0.25, Format.Rgba16f);
     lens.quarterTurn = RenderTarget.Window(0.25, Format.Rgba16f);
@@ -1333,6 +1373,52 @@ void Arm(mut Optics optics, float3 root, float3 hand, float3 inward, float big, 
     optics.dynamic.Add(Turned(hand + along * (.06 * big) + Math.Rotate(turn, float3(.11 * big, 0, 0)) + Math.Rotate(thumb, float3(0, 0, .05 * big)), thumb, float3(.04 * big, .04 * big, .12 * big), flesh, .05));
 }
 
+// Something went down through the red: it's thrown up in drops, and a ring runs out from it.
+void Enter(mut Optics optics, int slot, float3 at, float big, float middle)
+{
+    float was = optics.wasHigh[slot];
+    optics.wasHigh[slot] = at.y;
+    if (was <= PIT_SURFACE || at.y > PIT_SURFACE || was - at.y > 3 || Math.Abs(at.z - middle) > 2.6) return;
+    int next = optics.splashed % 6;
+    optics.splashAt[next] = float3(at.x, PIT_SURFACE, at.z);
+    optics.splashLeft[next] = 1.1;
+    optics.splashBig[next] = big;
+    optics.splashed += 1;
+}
+
+void Splashes(mut Optics optics)
+{
+    Color red = Color(.62, .03, .03);
+    for (int i = 0; i < 6; i++)
+    {
+        if (optics.splashLeft[i] <= 0) continue;
+        optics.splashLeft[i] -= Math.Min(Frame.dt, .05);
+        float age = 1.1 - optics.splashLeft[i];
+        float big = optics.splashBig[i];
+        float3 at = optics.splashAt[i];
+        for (int drop = 0; drop < 16; drop++)
+        {
+            int roll = Math.Hash(drop + i * 31 + 7);
+            float a = drop * 0.3927 + (roll & 63) / 63.0;
+            float away = (0.5 + ((roll >> 6) & 63) / 63.0 * 1.6) * big;
+            float up = 2.6 + ((roll >> 12) & 63) / 63.0 * 3.2;
+            float3 place = at + float3(Math.Cos(a) * away * age, up * age - 6.5 * age * age, Math.Sin(a) * away * age);
+            if (place.y < PIT_SURFACE) continue;
+            float size = (.05 + ((roll >> 18) & 7) * .012) * big;
+            optics.dynamic.Add(Turned(place, quaternion.Euler(a + age * 6, a * 2, age * 9), float3(size, size * 1.8, size), red, .45, .9));
+        }
+        // The ring: a low wall of it, running out and sinking
+        float around = (.35 + age * 2.4) * big;
+        float tall = Math.Max(0, .16 * (1 - age / 0.8)) * big;
+        for (int piece = 0; piece < 14 && tall > 0; piece++)
+        {
+            float a = piece * (Math.TAU / 14);
+            optics.dynamic.Add(Turned(at + float3(Math.Cos(a) * around, tall * .5, Math.Sin(a) * around), quaternion.Euler(0, -a, 0),
+                                      float3(.06 * big, tall, around * .46), red, .4, .9));
+        }
+    }
+}
+
 // The hands that have someone who fell: up from under them, round them, and closed.
 void Taken(mut Optics optics, Operator body)
 {
@@ -1458,6 +1544,10 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
         optics.dynamic.Add(red);
         Taken(optics, viewer);
         if (partner.id != viewer.id) Taken(optics, partner);
+        Enter(optics, 0, fold.cube, fold.cubeScale * 1.2, middle);
+        Enter(optics, 1, viewer.position + float3(0, .5 * viewer.scale, 0), viewer.scale * 1.5, middle);
+        if (partner.id != viewer.id) Enter(optics, 2, partner.position + float3(0, .5 * partner.scale, 0), partner.scale * 1.5, middle);
+        Splashes(optics);
     }
 
     // Dust adrift where the roof lets the sun in.
@@ -1670,6 +1760,19 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         seen[end] = OpeningOnScreen(here, eye, rotation, window);
         again[end] = seen[end].z > 0 && Math.Dot(here.at - there.at, there.face) > -1.2 && Math.Dot(eyes[end] - here.at, here.face) > 0;
     }
+    // What each end's camera sees of the other fold's two ends, to follow those too
+    mut float4[8] crossSeen = [float4(0), float4(0), float4(0), float4(0), float4(0), float4(0), float4(0), float4(0)];
+    for (int end = 0; end < 4; end++)
+    {
+        if (seen[end].z <= 0) continue;
+        for (int k = 0; k < 2; k++)
+        {
+            int other = ((end / 2) ^ 1) * 2 + k;
+            Portal out = fold.ends[end ^ 1];
+            if (!Linked(fold, other / 2) || Math.Dot(fold.ends[other].at - out.at, out.face) < -1.2) continue;
+            crossSeen[end * 2 + k] = OpeningOnScreen(fold.ends[other], eyes[end], turns[end], window);
+        }
+    }
     // What every draw of the room is given: where things are, the lights, and all four ends
     mut Sight base = Sight { eye = eye, cube = fold.cube, partner = partner.position, self = viewer.position, phase = optics.phase,
                              plateA = PlatePosition(arena.level, 0) + float3(0, .35, 0), plateB = PlatePosition(arena.level, 1) + float3(0, .35, 0),
@@ -1720,19 +1823,35 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
             map.Instanced(optics.blade, optics.bladeTriangles, optics.leaves, Sway, held);
         }
     }
-    // Passes 0 to 3 are each end's second crossing, 4 to 7 each end's own camera, and 8 the room.
-    for (int pass = 0; pass < 9; pass++)
+    // First each end's camera's looks into the other fold (pass -1). Then passes 0 to 3 are each end's second
+    // crossing, 4 to 7 each end's own camera, and 8 the room.
+    for (int step = 0; step < 17; step++)
     {
-        int through = pass & 3;
-        if ((pass < 4 && !again[through]) || (pass >= 4 && pass < 8 && seen[through].z <= 0)) continue;
+        int pass = step < 8 ? -1 : step - 8;
+        mut int through = pass & 3;
+        if (pass < 0)
+        {
+            if (crossSeen[step].z <= 0) continue;
+            through = ((step / 4) ^ 1) * 2 + (step & 1);
+        }
+        if ((pass >= 0 && pass < 4 && !again[through]) || (pass >= 4 && pass < 8 && seen[through].z <= 0)) continue;
         Portal near = fold.ends[through];
         Portal far = fold.ends[through ^ 1];
+        float4 rect = pass < 0 ? crossSeen[step] : seen[through];
         mut var target = optics.scene;
         mut float3 camera = eye;
         mut quaternion turned = rotation;
         mut float2 pixels = window;
         mut Sight sight = base;
-        if (pass < 4)
+        if (pass < 0)
+        {
+            target = step == 0 ? optics.cross0 : step == 1 ? optics.cross1 : step == 2 ? optics.cross2 : step == 3 ? optics.cross3
+                   : step == 4 ? optics.cross4 : step == 5 ? optics.cross5 : step == 6 ? optics.cross6 : optics.cross7;
+            camera = FoldPoint(near, far, eyes[step / 2]);
+            turned = FoldedRotation(near, far, turns[step / 2]);
+            pixels = window * .5;
+        }
+        else if (pass < 4)
         {
             target = through == 0 ? optics.deep0 : through == 1 ? optics.deep1 : through == 2 ? optics.deep2 : optics.deep3;
             camera = FoldPoint(near, far, eyes[through]);
@@ -1754,12 +1873,12 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
             sight.packed = true;
             float part = pass < 4 ? .5 : 1.0;
             target.SetScreen();
-            target.SetClip(Rect(seen[through].x * part, seen[through].y * part, seen[through].z * part, seen[through].w * part));
+            target.SetClip(Rect(rect.x * part, rect.y * part, rect.z * part, rect.w * part));
         }
         sight.eye = camera;
         target.Clear(Color(.02, .03, .04));
         target.SetCamera(float4x4.TRS(camera, turned, float3(1)), float4x4.PerspectiveFov(75deg, Screen.width / Screen.height, pass == 8 ? .07 * viewer.scale : .07, 90));
-        if (pass < 4) optics.farViews[through] = target.WorldToClip();
+        if (pass >= 0 && pass < 4) optics.farViews[through] = target.WorldToClip();
         else if (pass < 8) optics.views[through] = target.WorldToClip();
         // The room has a hole where each fold is. What's part of the way through a fold stops at that wall's
         // face, and is drawn again where the fold puts it, stopped at that face: whole from either side.
@@ -1830,6 +1949,9 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
                                                wall = portal.at, face = normal, right = FoldRight(portal.face) };
             // A camera sees through its own fold's ends again; another fold's ends it sees as light on a sheet
             bool deeper = pass == 8 || (pass >= 4 && opening / 2 == through / 2);
+            int look = through * 2 + (opening & 1);
+            bool into = pass >= 4 && pass < 8 && opening / 2 != through / 2 && crossSeen[look].z > 0;
+            if (into) aperture.end = -1;
             if (pass == 8)
             {
                 aperture.farEye = eyes[opening];
@@ -1859,7 +1981,18 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
                                                  float3(FOLD_DEEP, high, 1));
                     else if (face > 2)
                         transform = float4x4.TRS(within + float3(0, face == 3 ? -high * .5 : high * .5, 0), Math.Mul(r, quaternion.Euler(90deg, 0, 0)), float3(wide, FOLD_DEEP, 1));
-                    if (!deeper) target.Mesh(optics.card, optics.cardTriangles, transform, LastFold, aperture);
+                    if (into)
+                    {
+                        if (look == 0) target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross0.color, ThroughFar, aperture);
+                        else if (look == 1) target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross1.color, ThroughFar, aperture);
+                        else if (look == 2) target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross2.color, ThroughFar, aperture);
+                        else if (look == 3) target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross3.color, ThroughFar, aperture);
+                        else if (look == 4) target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross4.color, ThroughFar, aperture);
+                        else if (look == 5) target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross5.color, ThroughFar, aperture);
+                        else if (look == 6) target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross6.color, ThroughFar, aperture);
+                        else target.Mesh(optics.card, optics.cardTriangles, transform, optics.cross7.color, ThroughFar, aperture);
+                    }
+                    else if (!deeper) target.Mesh(optics.card, optics.cardTriangles, transform, LastFold, aperture);
                     else if (pass < 8)
                     {
                         if (opening == 0) target.Mesh(optics.card, optics.cardTriangles, transform, optics.deep0.color, ThroughFar, aperture);
@@ -1900,6 +2033,8 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     lens.pixel = float2(1 / Screen.width, 1 / Screen.height);
     lens.phase = optics.phase;
     Draw.Blit(optics.scene.color, lens.air, Shafts, Ray { fromClip = Math.Inverse(optics.scene.WorldToClip()), eye = eye, lamps = lamps });
+    Draw.Blit(optics.scene.color, lens.reach, HowFar, Ray { fromClip = Math.Inverse(optics.scene.WorldToClip()), eye = eye, lamps = lamps });
+    lens.far = lens.reach.color;
     if (!ui.open)
     {
         held.held = true;
