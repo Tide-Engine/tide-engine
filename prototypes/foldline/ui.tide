@@ -125,8 +125,8 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     Draw.Text("PROTOTYPE 01   /   TIDE", float2(pad, Screen.height - 22), 10, Color(0.4, 0.55, 0.57));
     if (Screen.width > 900)
     {
-        Draw.Text("SPATIAL COOPERATION DIVISION", float2(Screen.width - 36, 32), 11, UI_DARK, Anchor.UpperRight, Font.Bold);
-        Draw.Text("EST. 2086", float2(Screen.width - 36, 53), 11, UI_DARK, Anchor.UpperRight);
+        Draw.Text("SPATIAL COOPERATION DIVISION", float2(Screen.width - 36, 32), 11, UI_MUTED, Anchor.UpperRight, Font.Bold);
+        Draw.Text("EST. 2086", float2(Screen.width - 36, 53), 11, UI_MUTED, Anchor.UpperRight);
     }
 }
 
