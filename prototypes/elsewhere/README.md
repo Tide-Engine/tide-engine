@@ -13,7 +13,7 @@ visible through its window. When the garden blooms, sit together and stay.
 
 - Four spaces: a brass conservatory, the Sunwell's monumental solar rings,
   Stillwater's pond and aurora, and an orchard of rosewood pergolas and chimes.
-- Real destination cameras and seamless crossings, with a cycle of garden
+- Full-resolution destination cameras and seamless crossings, with a cycle of garden
   connections that cannot occupy ordinary space. Trees and floating terrariums
   repeat at smaller scales.
 - Three seeds with a complete restoration and flowering ending. Each source

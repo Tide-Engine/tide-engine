@@ -11,8 +11,8 @@ change was needed. No deployment or CI dispatch is requested.
 `play.tide` declares a 60 Hz match for two, with host migration enabled.
 `Garden` owns two seats/entities/player IDs, each garden's 24-second source
 energy, accumulated growth, seed custody, planted bits, completion count and
-the finale. A `Gardener` owns its chart (`realm`), feet, yaw/pitch, doorway
-cooldown, carried seed and sitting state. Movement uses clamped input and
+the finale. A `Gardener` owns its chart (`realm`), feet, yaw/pitch,
+carried seed and sitting state. Movement uses clamped input and
 tagged positions/rotation; the whole entity snaps at a crossing. Look deltas
 are not predicted. The walkable inset keeps visitors on their island and
 clear of the main trunk/source pedestal; other decorative scenery has no
@@ -24,6 +24,13 @@ to the matching hub window. A second, forward-only connection leads to the
 next garden and makes a three-chart cycle. Its destination's back window
 leads home, not back to the preceding garden. Three independent hub windows
 and that directed cycle are the implemented impossible topology.
+
+Crossings use the movement segment's intersection with the plane and the
+same 1.42-unit half-width as the rendered opening. Starting or ending exactly
+on the plane counts when moving through it; resting there does not. There is
+no crossing cooldown: an immediate reverse crosses the return window normally.
+At most one chart change happens per tick. Directed crossings and movement
+direction prevent an idle visitor at the exit from bouncing between charts.
 
 Sources are activated or sustained while using nearby. A seed grows by
 holding use for 3.5 seconds near its tree while energy remains. Growth is
@@ -59,8 +66,8 @@ not infinite portal recursion**. Destination visitors, source effects and
 seed growth are the actual match state seen through each camera.
 
 Each pass uses a 1536-square shadow map with four comparison taps, procedural
-materials and foliage motion. The main picture is HDR with four samples;
-destination pictures follow the window at 0.65, bloom at 0.25. Wind, water,
+materials and foliage motion. The main and destination pictures follow the
+window at full display resolution, HDR with four samples; bloom at 0.25. Wind, water,
 fireflies, bloom and sky motion are local visuals. CPU simulation reads none
 of them. Materials retain forgivable GPU precision differences. Static
 geometry lists are drawn directly from their holder, not copied as a whole
@@ -94,7 +101,8 @@ musical quality, balance and loop audibility need the owner's listening review.
 - `elsewhere_test` plays a complete solo journey with actual movement/use
   input through all hub windows, grows/carries/plants all seeds, waits for
   flowering and sits/stands. Only initial yaw is normalized by the harness.
-  Final hash is `1432443607299100957` on native and WASI.
+  Final hash is `13569490290871266231` on native and WASI after removal of
+  the crossing cooldown field (previously `1432443607299100957`).
 - Its two-player scenario pins inert tending before a source wakes, parallel
   source/tending, exclusive custody, carrier departure recovery and seat reuse.
   Its third scenario covers the directed garden cycle, bounds, non-finite
@@ -154,3 +162,42 @@ all nineteen analytics/admin/production HTTP checks pass. The release,
 staged and production-packaged Elsewhere HTML bytes agree. The portable
 review ZIP is built locally; its HTTP server passes normal serving/header
 and root-escape checks. No deployment or CI dispatch.
+
+## Portal correction, 2026-10-13
+
+The owner reported blurred window views, a triangular mixed-world image near
+a window and walking past it without teleporting. The game had four faults:
+its 1.35-unit traversal half-width excluded a strip of the 1.42-unit visible
+opening; crossing tested the tick's endpoint rather than its intersection;
+starting exactly on the plane could never cross; and the 0.6-second cooldown
+allowed walking back through the return opening without changing charts.
+The swept crossing above fixes these without an engine change.
+
+The ordinary 0.3-unit camera near plane also clipped away the window surface
+before traversal. Each frame now reduces its near distance as needed to keep
+the near rectangle, including its corners, on the camera side of every mouth.
+The calculation uses perpendicular plane distance, vertical FOV and aspect
+ratio with a factor of two clearance. All destination and primary cameras use
+that same projection; the existing infinite far side is preserved. Back-side
+window compositing is rejected at the plane, rather than allowed through a
+0.05-unit tolerance. Full-resolution destination targets also use four samples
+to match the primary picture. This increases GPU storage and rendering work;
+the older performance/VRAM samples above describe the earlier reduced targets.
+
+Regression fixtures first failed against the old implementation: the visible
+edge did not teleport, and the 0.1-unit close camera differed from its mapped
+destination by 117,702 of 230,400 pixels. The corrected movement fixture covers
+both visible edges of every hub opening, immediate reverse, exact-plane starts,
+diagonal intersections inside/outside the opening, idle thresholds and two
+owners crossing/reversing together. The render fixture compares the portal to
+its mapped destination at distances 0.1, 0.02 and 0.0001, including yaw/pitch.
+Fewer than 2% of pixels may differ substantially, allowing sampling and geometry
+precision at the seam; native results were 1,689, 2,573 and 549 pixels.
+
+Final native debug 2/2 and web debug 3/3 game tests pass, including OpenGL,
+WebGL and WebGPU. Native/WASI journey hashes agree on the new value above.
+Native release and web release page build cleanly. The standard-host full
+journey completes with 3/3 and its ending capture was inspected again. The
+staged local page and portable review bundle are refreshed. CI and deployment
+remain unrequested; other operating systems and physical mobile GPU coverage
+remain unavailable here.

@@ -173,7 +173,7 @@ frag Window(Corner corner, out Color color, Texture destination, Optics optics)
     // This is a projective window, not a decal. The camera used the same
     // mapping as the player, so every pixel is the destination at that ray.
     var base = corner.position;
-    if (base.y > 2.1 && base.x * base.x / 2.0164 + (base.y - 2.1) * (base.y - 2.1) / 2.8224 > 1) this.Discard();
+    if (base.y > 2.1 && base.x * base.x / (DoorHalfWidth() * DoorHalfWidth()) + (base.y - 2.1) * (base.y - 2.1) / 2.8224 > 1) this.Discard();
     color = destination.Sample(this.position / optics.screen, Filter.Bilinear);
     color.a = 1;
 }
@@ -181,7 +181,7 @@ frag Window(Corner corner, out Color color, Texture destination, Optics optics)
 frag Frosted(Corner corner, out Color color, Optics optics)
 {
     var p = corner.position;
-    if (p.y > 2.1 && p.x * p.x / 2.0164 + (p.y - 2.1) * (p.y - 2.1) / 2.8224 > 1) this.Discard();
+    if (p.y > 2.1 && p.x * p.x / (DoorHalfWidth() * DoorHalfWidth()) + (p.y - 2.1) * (p.y - 2.1) / 2.8224 > 1) this.Discard();
     var rgb = Mist(optics.realm) * 0.6 + float3(0.13, 0.21, 0.15) * Math.Sin(p.y * 3) * 0.08;
     color = Color(rgb.x, rgb.y, rgb.z);
 }
@@ -228,11 +228,12 @@ void Prepare(mut Optics optics)
         Pebble(optics.flower, float3(Math.Cos(a) * 0.19, 0, Math.Sin(a) * 0.19), float3(0.17, 0.065, 0.17), float3(0.99, 0.70, 0.43), 5);
     }
     Pebble(optics.flower, float3(0, 0.07, 0), float3(0.1, 0.1, 0.1), float3(1, 0.92, 0.57), 5);
-    Quad(optics.aperture, float3(-1.42, 0, 0), float3(1.42, 0, 0), float3(1.42, 3.8, 0), float3(-1.42, 3.8, 0), float3(0, 0, -1), float3(1), 0);
+    var width = DoorHalfWidth();
+    Quad(optics.aperture, float3(-width, 0, 0), float3(width, 0, 0), float3(width, 3.8, 0), float3(-width, 3.8, 0), float3(0, 0, -1), float3(1), 0);
     optics.picture = RenderTarget.Window(Format.Rgba16f, samples: 4);
-    optics.window0 = RenderTarget.Window(0.65, Format.Rgba16f);
-    optics.window1 = RenderTarget.Window(0.65, Format.Rgba16f);
-    optics.window2 = RenderTarget.Window(0.65, Format.Rgba16f);
+    optics.window0 = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    optics.window1 = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    optics.window2 = RenderTarget.Window(Format.Rgba16f, samples: 4);
     optics.shadowMap = RenderTarget(1536, 1536, 1, Format.Depth);
     optics.shadow = optics.shadowMap.depth;
     optics.bloomA = RenderTarget.Window(0.25, Format.Rgba16f);
@@ -352,6 +353,15 @@ view Render(Garden garden, mut Optics optics, Menu menu)
         turn = quaternion.Euler(person.pitch, person.yaw, 0);
     }
     var count = realm == 0 ? 3 : 2;
+    // Keep the entire near-plane rectangle on this side of every window,
+    // including its corners at an oblique angle or a wide screen aspect.
+    // Otherwise the aperture itself clips away before the visitor crosses.
+    var tangent = Math.Tan(Math.Radians(33));
+    var aspect = optics.screen.x / optics.screen.y;
+    var cornerDistance = Math.Sqrt(1 + tangent * tangent * (1 + aspect * aspect));
+    mut float near = 0.3;
+    for (var i = 0; i < count; i++)
+        near = Math.Min(near, Math.Max(0.00000001, Math.Abs(eye.z - Door(realm, i).at.z) / (2 * cornerDistance)));
     for (var pass = 0; pass <= count; pass++)
     {
         var primary = pass == count;
@@ -377,6 +387,9 @@ view Render(Garden garden, mut Optics optics, Menu menu)
         target.SetScreen();
         target.Mesh(optics.quad, optics.quadFaces, Atmosphere, Air { turn = turn, aspect = optics.screen.x / optics.screen.y, realm = chart, time = optics.clock });
         target.SetCamera(camera, turn, 66);
+        mut var projection = target.CameraProjection();
+        projection.c3.z = -2 * near;
+        target.SetCamera(target.CameraTransform(), projection);
         target.SetCull(Cull.None);
         target.Mesh(optics.gardens[chart].vertices, optics.gardens[chart].indices, float4x4.identity, Breeze, Porcelain);
         target.Instanced(optics.person.vertices, optics.person.indices, optics.actors, Painted, Porcelain);
@@ -398,7 +411,7 @@ view Render(Garden garden, mut Optics optics, Menu menu)
     for (var i = 0; i < count; i++)
     {
         var door = Door(realm, i);
-        if ((eye.z - door.at.z) * door.facing < -0.05) continue;
+        if ((eye.z - door.at.z) * door.facing <= 0) continue;
         optics.picture.Mesh(optics.aperture.vertices, optics.aperture.indices, float4x4.Translate(door.at - float3(0, 1.9, 0)), WindowTarget(optics, i).color, Window);
     }
     optics.bloom = optics.bloomA.color;

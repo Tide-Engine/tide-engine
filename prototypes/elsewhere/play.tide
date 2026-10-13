@@ -29,7 +29,6 @@ component Gardener
     [Position] float3 position = float3(-2, 0, -8);
     [Rotation] float yaw;
     float pitch;
-    float crossing;
     int seed;
     bool sitting;
     float walked;
@@ -74,6 +73,8 @@ struct Doorway
     int realm;
     float facing = -1;
 }
+
+float DoorHalfWidth() { return 1.42; }
 
 // Each garden is its own coordinate chart. The same translation maps a
 // traveller and the destination camera; no position depends on presentation.
@@ -161,7 +162,6 @@ bool Walkable(float3 p, int realm)
 
 system Walk(Wander input, mut Gardener person, Time time)
 {
-    person.crossing = Math.Max(0, person.crossing - time.dt);
     person.yaw += input.look.x;
     if (person.yaw > Math.PI) person.yaw -= Math.TAU;
     if (person.yaw < -Math.PI) person.yaw += Math.TAU;
@@ -177,15 +177,19 @@ system Walk(Wander input, mut Gardener person, Time time)
     if (Walkable(float3(next.x, 0, before.z), person.realm)) person.position.x = next.x;
     if (Walkable(float3(person.position.x, 0, next.z), person.realm)) person.position.z = next.z;
     person.walked += Math.Distance(person.position, before);
-    if (person.crossing > 0) return;
     for (var i = 0; i < (person.realm == 0 ? 3 : 2); i++)
     {
         var door = Door(person.realm, i);
-        if (Math.Abs(person.position.x - door.at.x) > 1.35) continue;
-        if ((before.z - door.at.z) * door.facing <= 0 || (person.position.z - door.at.z) * door.facing > 0) continue;
+        var from = (before.z - door.at.z) * door.facing;
+        var to = (person.position.z - door.at.z) * door.facing;
+        // Directed swept crossing, including a step starting or ending on the
+        // plane. Testing movement excludes an idle visitor on the threshold.
+        if (from < 0 || to > 0 || to >= from) continue;
+        var fraction = from / (from - to);
+        var x = Math.Lerp(before.x, person.position.x, fraction);
+        if (Math.Abs(x - door.at.x) > DoorHalfWidth()) continue;
         person.position += door.to - door.at;
         person.realm = door.realm;
-        person.crossing = 0.6;
         this.Snap();
         return;
     }

@@ -34,6 +34,21 @@ static int difference(void)
     }
     return count;
 }
+static void close_window(Gardener p, float distance, float yaw, float pitch)
+{
+    // Close enough that the opening fills the view: every ray should show
+    // the same garden as the translated camera, even inside the usual near clip.
+    p.realm = 0; p.position = (tide_float3){-7, 0, 6 - distance};
+    p.yaw = yaw; p.pitch = pitch;
+    CHECK(tide_set_Gardener(&world, world.Garden.people.at[0], p));
+    picture(before);
+    p.realm = 1; p.position.x += 7; p.position.z -= 16;
+    CHECK(tide_set_Gardener(&world, world.Garden.people.at[0], p));
+    picture(after);
+    const int changed = difference();
+    printf("Close window %.5f, yaw %.2f, pitch %.2f: %d changed pixels\n", distance, yaw, pitch, changed);
+    CHECK(changed < W * H / 50);
+}
 static int frame(void *user, float dt)
 {
     (void)user; (void)dt;
@@ -44,6 +59,11 @@ static int frame(void *user, float dt)
     local.Menu.open = false; local.Menu.begun = true; local.Optics.photo = true;
     Gardener p = tide_get_Gardener(&world, world.Garden.people.at[0]);
     p.position = (tide_float3){-7, 0, 1}; p.yaw = 0; p.pitch = 0;
+    CHECK(tide_set_Gardener(&world, world.Garden.people.at[0], p));
+    picture(before);
+    close_window(p, 0.1f, 0, 0);
+    close_window(p, 0.02f, 0.65f, 0.25f);
+    close_window(p, 0.0001f, -0.65f, -0.25f);
     CHECK(tide_set_Gardener(&world, world.Garden.people.at[0], p));
     picture(before);
     // A real destination plant must change the source window's picture.
