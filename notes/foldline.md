@@ -69,6 +69,13 @@ be replaced. Where Match and controls below differs, this section is current.
   the sill of what's seen through the fold, and hid the foot of a cube
   crossing it (the owner's screenshot). `InFold` now discards the room's
   boxes anywhere in the opening up to 0.9 m past the face.
+- **After the owner's first play of it:** the cube is picked up through a
+  fold when it's within reach that way (`Reach`); with the cube in hand a
+  click throws it and shoots nothing (F still throws, E drops); and plates
+  count only while weighted ("whats the point of the box if we can just
+  stand on them"): `Arena.solved` is the circuit as it is now, the gate shuts
+  at 2.4 a second when a plate is let up, and both operators in the lobby
+  complete the chamber however they got there. Nothing latches any more.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the watcher's pillars and the
   props are where they were.
