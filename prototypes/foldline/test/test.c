@@ -83,7 +83,7 @@ static void press(tide_world *world, PilotInput controls)
 static void choose(tide_world *world, int sender, int level)
 {
     // The game's only command: generated wire ID, null entity target, zigzag int.
-    CHECK(level >= -1 && level <= 11);
+    CHECK(level >= -1 && level <= 12);
     uint8_t payload[11] = {0};
     payload[0] = (uint8_t)TIDE_COMMAND_ID_SelectChamber;
     payload[1] = (uint8_t)(TIDE_COMMAND_ID_SelectChamber >> 8);
@@ -352,14 +352,14 @@ static void chambers_and_commands(void)
     CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     CHECK(near(world.Fold.cube.z, -8, 0.4f) && near(world.Fold.cube.x, -3, 0.4f) && !world.Fold.ends.at[0].open);
     // The places in order: two rooms and a stretch between, three times, each three its own place
-    static const int levels[12] = {0, 1, 6, 2, 3, 7, 4, 5, 8, 10, 9, 6};
-    for (int room = 0; room < 11; room++) {
+    static const int levels[13] = {0, 1, 6, 2, 3, 7, 4, 5, 8, 10, 9, 11, 6};
+    for (int room = 0; room < 12; room++) {
         choose(&world, 0, room);
         CHECK(world.Arena.level == room && levels[world.Arena.depth] == room && world.Arena.theme == world.Arena.depth / 3 % 3);
     }
     // A room that isn't one changes nothing
-    choose(&world, 0, 11);
-    CHECK(world.Arena.level == 10);
+    choose(&world, 0, 12);
+    CHECK(world.Arena.level == 11);
     tide_world_free(&world);
 }
 
@@ -557,9 +557,71 @@ static void shaft(void)
     place(&world, 1, (tide_float3){1, 5, 26.2f}, 0, 0);
     const int32_t built = world.Arena.chamber;
     ticks(&world, 160);
-    CHECK(world.Arena.chamber == built + 1 && world.Arena.depth == 11 && world.Arena.level == 6);
-    CHECK(near(pilot(&world, 0).position.x, 5.5f, 0.1f) && near(pilot(&world, 0).position.z, -15.4f, 0.1f) && near(pilot(&world, 0).position.y, 0, 0.06f));
-    CHECK(near(pilot(&world, 1).position.x, 7.5f, 0.1f) && near(pilot(&world, 1).position.z, -16, 0.1f));
+    CHECK(world.Arena.chamber == built + 1 && world.Arena.depth == 11 && world.Arena.level == 11);
+    CHECK(near(pilot(&world, 0).position.x, -1, 0.1f) && near(pilot(&world, 0).position.z, -23.8f, 0.1f) && near(pilot(&world, 0).position.y, 0, 0.06f));
+    CHECK(near(pilot(&world, 1).position.x, 1, 0.1f) && near(pilot(&world, 1).position.z, -24.4f, 0.1f));
+    tide_world_free(&world);
+}
+
+// The dark passage: lamps on a plate, what moves when they're off, the pit, and the pad over it.
+static void dark(void)
+{
+    tide_world world = {0};
+    start(&world);
+    choose(&world, 0, 11);
+    ticks(&world, 30);
+    CHECK(world.Arena.level == 11 && world.Arena.depth == 11 && !world.Arena.plateC);
+    // It starts where the pad would put someone, and in the dark comes as near whoever is nearest as its side
+    // of the pit lets it: drawn off to the east by someone at the pit's south-east corner
+    CHECK(near(world.Shade.at.x, -2.5f, 0.01f) && near(world.Shade.at.z, 2.3f, 0.01f));
+    place(&world, 0, (tide_float3){3.4f, 0, -8.3f}, 0, 0);
+    ticks(&world, 400);
+    CHECK(!world.Arena.plateC && world.Shade.at.x > 3 && near(world.Shade.at.z, -0.5f, 0.05f) && world.Arena.caught == 0);
+    // On the plate there the lamps are on, and it stands where it is whoever comes
+    place(&world, 0, (tide_float3){2.8f, 0, -7.1f}, 0, 0);
+    ticks(&world, 20);
+    CHECK(world.Arena.plateC && world.Shade.lit);
+    const tide_float3 stood = world.Shade.at;
+    // The pad throws the other over the pit, to the far side, a pad's throw from it
+    place(&world, 1, (tide_float3){-2.5f, 0, -6.7f}, 0, 0);
+    bool over = false;
+    float highest = 0;
+    for (int step = 0; step < 150 && !over; step++) {
+        tide_world_tick(&world);
+        const Operator now = pilot(&world, 1);
+        CHECK(now.taken == 0 && world.Arena.caught == 0);
+        if (now.position.y > highest) highest = now.position.y;
+        over = step > 20 && now.grounded && now.position.z > -1;
+    }
+    CHECK(over && highest > 1.6f && near(pilot(&world, 1).position.x, -2.5f, 0.4f) && pilot(&world, 1).position.z > 1);
+    CHECK(world.Shade.at.x == stood.x && world.Shade.at.z == stood.z);
+    // The far room can't be shot into from this side of the pit; its wall by the passage's end takes a fold
+    // from inside it
+    place(&world, 0, (tide_float3){2.8f, 0, -7.1f}, 0.5f, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(!world.Fold.ends.at[0].open);
+    place(&world, 1, (tide_float3){10, 0, 8.5f}, WEST, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.active = 1, .amber = true});
+    CHECK(world.Fold.ends.at[2].open && near(world.Fold.ends.at[2].at.x, 5, 0.001f) && world.Arena.caught == 0);
+    // With the plate let up it's dark, and whoever is on its side of the pit is caught: the room starts over
+    place(&world, 1, (tide_float3){-2, 0, 4}, 0, 0);
+    place(&world, 0, (tide_float3){0, 0, -17}, 0, 0);
+    const int32_t built = world.Arena.chamber;
+    bool caught = false;
+    for (int step = 0; step < 300 && !caught; step++) {
+        tide_world_tick(&world);
+        caught = world.Arena.caught > 0;
+    }
+    CHECK(caught && !world.Arena.plateC);
+    ticks(&world, 100);
+    CHECK(world.Arena.chamber == built + 1 && world.Arena.level == 11 && world.Arena.caught == 0);
+    // The pit takes whoever falls in it, as the hall's does
+    ticks(&world, 60);
+    place(&world, 0, (tide_float3){0, 0, -3.5f}, 0, 0);
+    ticks(&world, 60);
+    CHECK(pilot(&world, 0).taken > 0);
     tide_world_free(&world);
 }
 
@@ -945,6 +1007,7 @@ int main(void)
     stretches();
     shaft();
     sight();
+    dark();
     chambers_hold();
     replay_and_pack_are_identical();
     puts("FOLDLINE simulation checks passed");
