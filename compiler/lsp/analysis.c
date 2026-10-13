@@ -1294,6 +1294,11 @@ static void index_program(void)
                                  .name = str_from("Sanitize")});
             walk_stmt(d->sanitize);
         }
+        if (d->predict) {
+            add_occ((occurrence){.at = d->predict_at, .len = 7, .kind = OCC_METHOD, .decl = d,
+                                 .name = str_from("Predict")});
+            walk_stmt(d->predict);
+        }
         for (int k = 0; k < d->methods.count; k++) {
             replace_refs(method_written(d->methods.items[k]));
             walk_routine(method_written(d->methods.items[k]));
@@ -3296,6 +3301,11 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, "\n\nBuilds the player's input from this machine's `Devices`, once per tick on their machine. "
                         "Fields start at their defaults. It runs outside the simulation, so it only sees the devices and "
                         "the local singletons it takes.");
+        } else if (o->call == CALL_NONE && str_eq_c(o->name, "Predict")) {
+            code_block(out, "Predict()");
+            sb_put(out, "\n\nAdjusts the previous input when a client guesses a future tick. "
+                        "[DontPredict] fields start at their declared defaults. Reads only the input's fields; "
+                        "real samples stay unchanged, and guesses create no button edges.");
         } else if (o->call == CALL_NONE && str_eq_c(o->name, "Sanitize")) {
             code_block(out, "Sanitize()");
             sb_put(out, "\n\nRuns on every input before the simulation reads it, including input from other "
@@ -3367,6 +3377,7 @@ static void describe(const occurrence *o, sb *out)
                                          "input, after repairing NaN and before Sanitize."},
             {"Min", "[Min(x)]", "Keeps this input field at least x, before Sanitize runs."},
             {"Max", "[Max(x)]", "Keeps this input field at most x, before Sanitize runs."},
+            {"DontPredict", "[DontPredict]", "Resets this input field to its declared default on guessed ticks, before Predict runs."},
             {"Absolute", "[Absolute]", "This input field's default isn't rest, as it says where something is, "
                                        "like an aim or a pointer's place. A machine guesses another player's input by their "
                                        "last one for a while, then as if they'd let go, each field back to its default; an "
@@ -4754,12 +4765,12 @@ void analysis_symbols(jbuf *out)
             jb_put(out, "}");
         }
         // The input's Sample and Sanitize
-        for (int k = 0; d->kind == DECL_INPUT && k < 2; k++) {
-            const stmt *body = k == 0 ? d->body : d->sanitize;
+        for (int k = 0; d->kind == DECL_INPUT && k < 3; k++) {
+            const stmt *body = k == 0 ? d->body : k == 1 ? d->sanitize : d->predict;
             if (!body) continue;
-            const loc at = k == 0 ? d->body_at : d->sanitize_at;
+            const loc at = k == 0 ? d->body_at : k == 1 ? d->sanitize_at : d->predict_at;
             sb detail = {0};
-            sb_put(&detail, k == 0 ? "Sample(" : "Sanitize(");
+            sb_put(&detail, k == 0 ? "Sample(" : k == 1 ? "Sanitize(" : "Predict(");
             for (int i = 0; k == 0 && i < d->params.count; i++) {
                 if (i) sb_put(&detail, ", ");
                 format_param(&d->params.items[i], &detail);
@@ -4767,14 +4778,14 @@ void analysis_symbols(jbuf *out)
             sb_put(&detail, ")");
             if (!first_child) jb_put(out, ",");
             first_child = false;
-            jb_printf(out, "{\"name\":\"%s\",\"detail\":", k == 0 ? "Sample" : "Sanitize");
+            jb_printf(out, "{\"name\":\"%s\",\"detail\":", k == 0 ? "Sample" : k == 1 ? "Sanitize" : "Predict");
             jb_string(out, detail.data);
             jb_printf(out, ",\"kind\":%d,\"range\":{\"start\":", SYMBOL_METHOD);
             write_position(out, at);
             jb_put(out, ",\"end\":");
             write_position(out, (loc){body->end.line, body->end.col + 1, body->end.file});
             jb_put(out, "},\"selectionRange\":");
-            write_range(out, at, k == 0 ? 6 : 8);
+            write_range(out, at, k == 0 ? 6 : k == 1 ? 8 : 7);
             jb_put(out, "}");
         }
         jb_put(out, "]}");
@@ -4880,6 +4891,10 @@ void analysis_implementation(const int line, const int character, jbuf *out)
         if (written++) jb_put(out, ",");
         write_location(out, d->sanitize_at, 8);
     }
+    if (d->kind == DECL_INPUT && d->predict) {
+        if (written++) jb_put(out, ",");
+        write_location(out, d->predict_at, 7);
+    }
     jb_put(out, "]");
 }
 
@@ -4912,6 +4927,9 @@ static caller caller_at(const loc at)
         if (d->kind == DECL_INPUT && block_contains(d->body, at)) return (caller){d, d->body, str_from("Sample"), d->body_at};
         if (d->kind == DECL_INPUT && block_contains(d->sanitize, at)) {
             return (caller){d, d->sanitize, str_from("Sanitize"), d->sanitize_at};
+        }
+        if (d->kind == DECL_INPUT && block_contains(d->predict, at)) {
+            return (caller){d, d->predict, str_from("Predict"), d->predict_at};
         }
         if ((d->kind == DECL_SYSTEM || is_routine(d) || is_shader(d)) && block_contains(d->body, at)) {
             return (caller){d, d->body, d->name, d->at};
@@ -4953,7 +4971,7 @@ static caller hierarchy_target(const int line, const int character)
         return (caller){o->decl, o->decl->body, o->decl->name, o->decl->at};
     }
     if (o && o->kind == OCC_METHOD && o->decl && o->decl->kind == DECL_INPUT) { // Sample, Sanitize
-        return (caller){o->decl, str_eq_c(o->name, "Sample") ? o->decl->body : o->decl->sanitize, o->name, o->at};
+        return (caller){o->decl, str_eq_c(o->name, "Sample") ? o->decl->body : str_eq_c(o->name, "Sanitize") ? o->decl->sanitize : o->decl->predict, o->name, o->at};
     }
     if (o && o->kind == OCC_SYSTEM && o->decl) return (caller){o->decl, o->decl->body, o->decl->name, o->decl->at};
     if (o && (o->kind == OCC_FUNCTION || o->kind == OCC_METHOD) && is_routine(o->decl)) { // An extern function: no body
@@ -5143,11 +5161,11 @@ static void selection_spans(const loc at, span_list *spans)
             select_in_stmt(m->body, at, spans);
         }
         if (d->kind == DECL_INPUT) { // Sample and Sanitize, from their names
-            for (int k = 0; k < 2; k++) {
-                const stmt *body = k == 0 ? d->body : d->sanitize;
+            for (int k = 0; k < 3; k++) {
+                const stmt *body = k == 0 ? d->body : k == 1 ? d->sanitize : d->predict;
                 if (!body) continue;
                 const loc end = {body->end.line, body->end.col + 1, d->at.file};
-                add_span(spans, at, k == 0 ? d->body_at : d->sanitize_at, end);
+                add_span(spans, at, k == 0 ? d->body_at : k == 1 ? d->sanitize_at : d->predict_at, end);
                 select_in_stmt(body, at, spans);
             }
         } else {
@@ -5652,7 +5670,7 @@ static void classify(const occurrence *o, int *type, int *mods)
         } else if (is_routine(o->decl)) {
             *type = ST_METHOD;
         } else if (o->decl && o->decl->kind == DECL_INPUT
-                   && (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize"))) { // The input's own members
+                   && (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize") || str_eq_c(o->name, "Predict"))) { // The input's own members
             *type = ST_KEYWORD;
             *mods = 0;
         } else {
@@ -5838,7 +5856,8 @@ typedef struct scope {
     const decl *decl;           // The system, view, method, function or input whose body holds the cursor, or NULL
     const decl *fields_of;      // Whose fields plain names refer to: the input in Sample, a type in its methods
     bool in_input;
-    bool in_sanitize; // Sets in_input too, for the fields
+    bool in_sanitize; // Sanitize or Predict: input-only scope
+    bool in_predict;
     VEC(const stmt *) locals;   // Locals declared before the cursor, still in scope
 } scope;
 
@@ -5986,12 +6005,14 @@ static scope scope_at(const loc at)
             collect_locals(m->body, at, &sc);
         }
         const bool sanitize = block_contains(d->sanitize, at);
-        if (d->builtin || (!block_contains(d->body, at) && !sanitize)) continue;
+        const bool predict = block_contains(d->predict, at);
+        if (d->builtin || (!block_contains(d->body, at) && !sanitize && !predict)) continue;
         sc.decl = d;
         sc.in_input = d->kind == DECL_INPUT;
         sc.fields_of = sc.in_input ? d : d->kind == DECL_METHOD ? d->owner : NULL; // An override of a method: its type's
-        sc.in_sanitize = sanitize;
-        collect_locals(sanitize ? d->sanitize : d->body, at, &sc);
+        sc.in_sanitize = sanitize || predict;
+        sc.in_predict = predict;
+        collect_locals(predict ? d->predict : sanitize ? d->sanitize : d->body, at, &sc);
     }
     return sc;
 }
@@ -7777,7 +7798,7 @@ static header_kind member_header(const int i)
     if (i < 2) return HEADER_NONE;
     const token *name = &DOC->toks[i - 1];
     const token *before = &DOC->toks[i - 2];
-    if (name->kind == T_IDENT && (str_eq_c(name->text, "Sample") || str_eq_c(name->text, "Sanitize"))) return HEADER_SAMPLE;
+    if (name->kind == T_IDENT && (str_eq_c(name->text, "Sample") || str_eq_c(name->text, "Sanitize") || str_eq_c(name->text, "Predict"))) return HEADER_SAMPLE;
     if (name->kind == T_IDENT && (before->kind == T_IDENT || before->kind == T_QUESTION || before->kind == T_GT)) {
         return HEADER_ROUTINE;
     }
@@ -8313,7 +8334,7 @@ static const decl *switch_enum(const scope *sc, const int keyword, const int ope
     const token *toks = DOC->toks;
     type t = names_type(sc, keyword + 2, open - 2);
     if (t.kind == TY_ERROR && sc->decl) {
-        const stmt *s = switch_in(sc->in_sanitize ? sc->decl->sanitize : sc->decl->body, toks[keyword].at);
+        const stmt *s = switch_in(sc->in_predict ? sc->decl->predict : sc->in_sanitize ? sc->decl->sanitize : sc->decl->body, toks[keyword].at);
         if (s && s->cond) t = s->cond->type;
     }
     int called = keyword + 2;
@@ -8789,6 +8810,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "Clamp($1)");
             item(&c, "Min", CK_FUNCTION, "[Min(x)]", "Keeps the field at least x, before Sanitize runs.", "Min($1)");
             item(&c, "Max", CK_FUNCTION, "[Max(x)]", "Keeps the field at most x, before Sanitize runs.", "Max($1)");
+            item(&c, "DontPredict", CK_FUNCTION, "[DontPredict]",
+                 "Resets an input field to its declared default on guessed ticks, before Predict runs.", "DontPredict");
             item(&c, "Absolute", CK_FUNCTION, "[Absolute]",
                  "This input field's default isn't rest, so a guess of another player's input keeps it.",
                  "Absolute");
@@ -8929,7 +8952,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             }
             break;
         }
-        if (sample && str_eq_c(DOC->toks[f.open - 1].text, "Sanitize")) break; // It takes nothing
+        if (sample && !str_eq_c(DOC->toks[f.open - 1].text, "Sample")) break; // It takes nothing
         // `verified` is a word before a parameter's type, and what was typed after it is that type
         const bool after_verified = pk == T_IDENT && str_eq_c(prev->text, "verified") && last > f.open;
         const tok_kind before_verified = after_verified ? DOC->toks[last - 1].kind : T_EOF;
@@ -9426,6 +9449,7 @@ static const decl *decl_of_local(const stmt *local)
             if (body && loc_cmp(body->at, local->at) < 0 && loc_cmp(local->at, body->end) < 0) return m;
         }
         if (d->body && loc_cmp(d->body->at, local->at) < 0 && loc_cmp(local->at, d->body->end) < 0) return d;
+        if (d->predict && loc_cmp(d->predict->at, local->at) < 0 && loc_cmp(local->at, d->predict->end) < 0) return d;
         if (d->sanitize && loc_cmp(d->sanitize->at, local->at) < 0 && loc_cmp(local->at, d->sanitize->end) < 0) {
             return d;
         }
@@ -9479,7 +9503,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
-                                           "string", "Sample", "Sanitize"};
+                                           "string", "Sample", "Sanitize", "Predict"};
     static char message[160];
 
     if (name.len == 0 || !(isalpha((unsigned char)name.ptr[0]) || name.ptr[0] == '_')) return "Names start with a letter.";

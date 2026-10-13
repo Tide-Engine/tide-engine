@@ -505,8 +505,8 @@
           "match": "\\bis\\b"
         },
         {
-          "comment": "An input's Sample() and Sanitize()",
-          "match": "^\\s*(Sample|Sanitize)(?=\\s*\\()",
+          "comment": "An input's Sample(), Sanitize() and Predict()",
+          "match": "^\\s*(Sample|Sanitize|Predict)(?=\\s*\\()",
           "captures": {
             "1": { "name": "keyword.other.tide" }
           }

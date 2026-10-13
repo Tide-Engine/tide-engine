@@ -1,5 +1,36 @@
 # Netcode: sessions, prediction, commands
 
+## Per-tick game input prediction (2026-10-13)
+
+Owner-approved Predict()/[DontPredict] compile to optional
+`tide_game.predict_inputs(world, keep) -> bool`. Before every predicted client
+tick it adjusts remote player/server inputs, excluding the client's own player
+and its local server slot. It applies marked defaults, Predict, then ordinary
+repair/bounds/Sanitize. Changed guesses set current and previous input together,
+so clearing or computing a guess invents no button edges, including nested bools.
+The existing let-go callback still enforces the 0.15-second cutoff afterward;
+with a custom predictor it reapplies past the cutoff so the method cannot restart
+ordinary held movement. Absolute fields retain the custom guess.
+
+input_guessed records the earliest custom-input change separately from let_go.
+Confirmation cannot reuse its predicted hash: authoritative replay is required
+even for a frame whose held input has no delta. Partial replay preserves an
+earlier unconfirmed marker; completed or replaced timelines clear it. Snapshot
+load, catch-up, migration and adopting the local server world reset both markers.
+No marker is match state. Server ticks and confirmed replay never call Predict.
+No bytes, world layouts, hash algorithms or wire protocol change. The tide_game
+struct grows an optional callback, and its generated header ABI marker requires
+hosts and games to rebuild together.
+
+predict E2E uses two real loopback clients at 250 ms one-way latency and with
+120 ms latency/60 ms jitter/20% loss. It checks remote action counts and edges
+against confirmed state, immediate own actions, the existing nine-tick movement
+limit, server/client final state equality, zero resyncs and no idle replay churn.
+The unchanged guess/net/migration tests remain part of full validation.
+
+Validation: full native/web suites, grammar and production docs build pass;
+counts and remaining platform coverage are in notes/language.md.
+
 ## Asset-aware state transfer, protocol 14 (2026-10-11)
 
 Self-contained restoration currently omits pack-offset affinity along with optional page origins. Such retained payloads may use full dictionary transmission even when identical catalog bytes are installed; explicit shared-base reuse still works. This is an encoding-size gap, not a value/hash or fallback failure.

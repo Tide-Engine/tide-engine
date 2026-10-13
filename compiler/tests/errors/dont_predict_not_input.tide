@@ -1,0 +1,3 @@
+// expect: [DontPredict] goes on an input's own fields
+struct I { [DontPredict] bool jump; }
+scene Main { }

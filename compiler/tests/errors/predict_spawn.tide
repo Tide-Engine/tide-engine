@@ -1,0 +1,4 @@
+// expect: Predict runs outside the simulation, so it can't spawn entities
+component Coin { }
+input I { bool jump; Predict() { Spawn(Coin); } }
+scene Main { }

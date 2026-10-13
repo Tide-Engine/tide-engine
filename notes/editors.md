@@ -1,5 +1,23 @@
 # The language server and the editors
 
+## Input Predict and DontPredict (2026-10-13)
+
+Predict's separate body participates in field/local scope, source occurrences,
+hover, outline, go-to-implementation, call hierarchy, selection ranges, local
+rename scope, semantic highlighting and formatting's input-method header rules.
+Its completion excludes Sample parameters, devices, Cursor and Random operations.
+DontPredict has field-attribute completion/hover. Both editor integrations and
+docs highlighting share the updated TextMate grammar.
+
+lsp_input_prediction checks body/attribute completion, excluded capabilities,
+parameterless headers, accepted diagnostics, hover, outline, implementation
+navigation and hierarchy. The shared grammar probe covers the attribute and
+Predict keyword, and all three new E2E sources. This is shared server/protocol
+and grammar coverage; no adapter changes or interactive IDE-host run is needed.
+
+Validation: full native/web suites, grammar and production docs build pass;
+counts and remaining platform coverage are in notes/language.md.
+
 ## Static model preview and assignment (2026-10-12)
 
 The native editor now browses static Mesh assets, including each resolved list/map

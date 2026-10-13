@@ -661,6 +661,8 @@ typedef struct decl {
     loc body_at;
     stmt *sanitize; // An input's Sanitize() { ... }
     loc sanitize_at;
+    stmt *predict; // An input's Predict() { ... }, on guessed ticks only
+    loc predict_at;
     bool is_view;        // A view: a DECL_SYSTEM that runs once per frame, reads the world and draws.
     bool is_handler;     // An event handler: a DECL_SYSTEM that runs when its event is sent, `event(Hit hit) Name(...)`.
     struct decl *event;  // A handler's event

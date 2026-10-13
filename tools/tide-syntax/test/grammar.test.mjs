@@ -232,6 +232,8 @@ const cases = {
             ['Clamp', 'entity.name.function.attribute'], ['float2', 'storage.type.primitive'], ['float2', 'storage.type.primitive', 2],
             ['-', 'keyword.operator.arithmetic'], ['float2', 'storage.type.primitive', 3], ['aim', '!entity'],
         ]],
+        ['[DontPredict] bool jump;', [['DontPredict', 'entity.name.function.attribute'], ['bool', 'storage.type.primitive']]],
+        ['Predict() { jump = false; }', [['Predict', 'keyword.other']]],
         ['[Min(1)] [Max(3)] int gear', [['Min', 'entity.name.function.attribute'], ['Max', 'entity.name.function.attribute'], ['int', 'storage.type.primitive']]],
     ],
     'built-in types and groups': [
