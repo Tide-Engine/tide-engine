@@ -1170,3 +1170,42 @@ Node 24.16.0. Native and WASI replay hashes both equal
 `14010256285904244944`. All thirteen transition checks and both submerged-red
 checks pass on each GPU backend. Only this game's targets/suites were run;
 other platforms and CI were not run.
+
+## Readable water controls and recoverable distractions (2026-10-13)
+
+The owner could not find submerged controls, read the lurker pursuing a splash
+at the plate as eating the button, and found missed throws hard to recover
+through the opaque water. The lurker has never destroyed objects or controls;
+it prioritizes the last loose-object splash for seven seconds, then returns
+to hunting swimmers. This pass changes only the game.
+
+- Loose cubes and crates have damped buoyancy in water pools. They settle with
+  most of the block above the surface, lose horizontal speed and spin, and
+  remain ordinary dynamic, colliding, carryable objects. Carried blocks keep
+  their existing hand behavior. Blood pits and drum trenches are unchanged.
+- Splash detection uses the block's lower face and scale, not its centre,
+  so floating distractions remain in the water without repeatedly renewing
+  the seven-second lure. It also excludes objects outside the pool's width.
+- Undertow C is now on a shallow 1.8 m square control step (top -0.4 m)
+  instead of the 1.5 m deep floor. It gives a small refuge during the relay
+  and still needs a weight to hold the far door open. Both bodies must still
+  reach C/D together before the cube is released; floating cargo can then
+  rest on C while operators move on. Its plate is at -0.36 m.
+- Submerged plates have a larger green surface outline and a raised, two-sided
+  C/D beacon with matching pressed-state light. This identifies the control
+  from the bank and ties the marker to the HUD. Water opacity stays as before.
+  H hints explain the shallow step, timed splash distraction and E retrieval;
+  the README describes floating blocks and that nothing is eaten.
+
+Validation: scoped native debug 2/2 and web debug 3/3 pass (WASI, WebGL 2 and
+WebGPU, Node 24.16.0, graphics validation enabled). Existing portal and all
+thirteen lift-transition checks retain their tolerances. The Undertow fixture
+checks the raised control holding its door, a real thrown crate distracting
+the creature during a crossing, and that crate remaining intact and afloat.
+A recovery regression checks a missed cube settling at the surface, the lure
+expiring despite buoyancy, the cube surviving, and E retrieving it from the
+dry bank. Both-body release remains covered at the raised C station. Native
+and WASI replay hashes remain `14010256285904244944`. A silent standard-host
+capture confirms that the green C beacon is readable from the entrance.
+This is mechanical/visual validation; human pacing and audio remain untested.
+No full repository suite, other platforms or CI were run.

@@ -27,7 +27,7 @@ string ChamberHint(int level)
     return level switch {
         0 => "C uncovers the far wall. Your partner crosses and holds D. Together you release the cube.",
         1 => "A control on each gallery. Keep two routes: you will need to get back off both galleries.",
-        2 => "Something is in the water. It goes for whatever went in last.",
+        2 => "Throw a block to distract it for seven seconds. Blocks float; it does not eat them.",
         3 => "A vent room each. Both of you must shrink, get round the baffles, and work C and D together.",
         4 => "C brakes the drums while your partner finds D on the gallery. Then bring the released cube over.",
         5 => "C is up on the gallery. D is beyond the small entrance. Either control brakes the drums.",
@@ -37,7 +37,7 @@ string ChamberHint(int level)
         9 => "The green plate raises the deck. The slot is for something smaller than the cube is.",
         10 => "A door is open while its plate is weighted. Mind which side of it you are when it isn't.",
         11 => "The passage's lamps are the green plate's. It stands still in the light. It follows the nearest of you.",
-        _ => "The door's plate is under the floats. It goes for whatever went in last, for a little while."
+        _ => "Green C marks the shallow step. Throw to distract it for 7 seconds. Blocks float; E retrieves."
     };
 }
 
