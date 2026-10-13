@@ -20,6 +20,7 @@ singleton Arena
     bool complete;
     bool plateA;
     bool plateB;
+    bool hold;           // The lobby's plate is stood on: the gate stays up for whoever is still to come
     int ticks;
     int joined;
     PlayerID first;
@@ -137,14 +138,12 @@ local singleton Control
     int active;
     bool started;
     int crisp;           // P: the picture's rows, 0 LINES, 1 SOFT_LINES, 2 the window's own
-    int size;            // Which size the next fold's end is shot at: 0 whole, 1 half, 2 half as big again
     float sensitivity = 0.003;
 }
 
 input PilotInput
 {
     [Absolute, Clamp(0, 1)] int active;
-    [Absolute, Clamp(0, 2)] int size;
     [Clamp(-1, 1)] float2 move;
     [Clamp(-0.4, 0.4)] float2 look;
     bool jump;
@@ -158,7 +157,6 @@ input PilotInput
     Sample(Devices devices, Control control)
     {
         active = control.active;
-        size = control.size;
         if (!control.started) return;
         var keys = devices.keyboard;
         move.x = (keys.d.pressed ? 1 : 0) - (keys.a.pressed ? 1 : 0);
@@ -195,18 +193,42 @@ const float TAKEN_FOR = 1.9;    // How long they drag it down before it's gone
 const float SMALLEST = 0.5;  // The sizes a fold's end is shot at, and so the sizes anything comes out of one
 const float LARGEST = 1.5;
 
-float FoldSize(int choice)
+// A frame painted on a wall: a fold's end shot into it is its size, and
+// anywhere else an end is whole. The size is the wall's, not the shot's.
+struct Mount
 {
-    return choice == 1 ? SMALLEST : choice == 2 ? LARGEST : 1.0;
+    float3 at;
+    float3 face;
+    float size;
+}
+
+int MountCount(int level)
+{
+    return level == 4 ? 2 : level >= 2 ? 1 : 0;
+}
+
+Mount ChamberMount(int level, int index)
+{
+    var small = Mount { at = float3(9.8, FOLD_HALF_HIGH * SMALLEST, 1.5), face = float3(-1, 0, 0), size = SMALLEST };
+    if (level == 2) return small;
+    if (level == 3) return Mount { at = float3(-2.5, FOLD_HALF_HIGH * LARGEST, -13), face = float3(0, 0, 1), size = LARGEST };
+    if (index == 0) return Mount { at = float3(-9.8, FOLD_HALF_HIGH * SMALLEST, -3.5), face = float3(1, 0, 0), size = SMALLEST };
+    return Mount { at = float3(5.5, FOLD_HALF_HIGH * LARGEST, -13), face = float3(0, 0, 1), size = LARGEST };
 }
 
 // Each chamber is the same hall, 19.6 m by 26, with the way out through a
 // gate in its north wall, and its own floor, walls and rooms inside:
-// 0 a pit to fold across; 1 a cage seen into through a window; 2 a room whose
+// 0 a pit to fold across; 1 the two apart, behind a grille; 2 a room whose
 // only way in is a vent; 3 a pit only someone made larger jumps; 4 both.
+// Every gate takes two plates weighted at once, and the cube is one weight:
+// someone stands on the other, and is let through by whoever went first and
+// stands on the lobby's plate.
+const float3 HOLD_PLATE = float3(0, 0.04, 16);
+
 float3 OperatorStart(int level, int id)
 {
     if (level == 4) return float3(id == 0 ? 1.0 : 4.0, 0, -10.5);
+    if (level == 1) return float3(id == 0 ? -5.0 : 4.0, 0, -10.5);
     return float3(id == 0 ? -1.4 : 1.4, 0, -10.5);
 }
 
@@ -214,8 +236,8 @@ float3 CubeStart(int level)
 {
     switch (level)
     {
-        case 1: return float3(0, 0.5, -6);
-        case 2: return float3(-3, 0.5, -6);
+        case 1: return float3(-5, 0.5, -6);
+        case 2: return float3(0, 0.5, -6);
         case 4: return float3(-7, 0.5, -11);
         default: return float3(-3, 0.5, -8);
     }
@@ -223,7 +245,7 @@ float3 CubeStart(int level)
 
 int PlateCount(int level)
 {
-    return 1;
+    return 2;
 }
 
 float3 PlatePosition(int level, int index)
@@ -231,9 +253,10 @@ float3 PlatePosition(int level, int index)
     if (index >= PlateCount(level)) return float3(0, -50, 0);
     switch (level)
     {
-        case 1: return float3(-8.3, 0.04, 3.5);
-        case 2: return float3(7.5, 0.04, 10);
-        default: return float3(5, 0.04, 8);
+        case 0: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 8);
+        case 1: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 9.5);
+        case 2: return index == 0 ? float3(-4, 0.04, 9) : float3(7.5, 0.04, 10);
+        default: return index == 0 ? float3(5, 0.04, 8) : float3(-6, 0.04, 12);
     }
 }
 
@@ -243,8 +266,8 @@ float4 Pillar(int level, int index)
     switch (level)
     {
         case 0: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(6.8, 6, 0.45, 0.45);
-        case 1: return index == 0 ? float4(6.5, -6, 0.45, 0.45) : float4(5, 8, 0.45, 0.45);
-        case 2: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-5, 7, 0.45, 0.45);
+        case 1: return index == 0 ? float4(6.5, -6, 0.45, 0.45) : float4(7.5, 4, 0.45, 0.45);
+        case 2: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-6.5, 2, 0.45, 0.45);
         default: return index == 0 ? float4(7, -9, 0.45, 0.45) : float4(7, 10.5, 0.45, 0.45);
     }
 }
@@ -403,13 +426,9 @@ void BuildChamber(mut Arena arena, int level)
 
     if (level == 1)
     {
-        // A cage against the west wall, with a window too high to climb through
-        Raise(arena, float3(-8.1, 2.2, 1.8), float3(3.4, 4.4, 0.4), panels);
-        Raise(arena, float3(-8.1, 2.2, 5.2), float3(3.4, 4.4, 0.4), panels);
-        Raise(arena, float3(-6.6, 1.1, 3.5), float3(0.4, 2.2, 3.0), panels);
-        Raise(arena, float3(-6.6, 3.9, 3.5), float3(0.4, 1.0, 3.0), panels);
-        Raise(arena, float3(-6.6, 2.8, 2.3), float3(0.4, 1.2, 0.6), panels);
-        Raise(arena, float3(-6.6, 2.8, 4.7), float3(0.4, 1.2, 0.6), panels);
+        // A grille shuts the south-west of the hall off: seen through, and nothing else goes through, a shot neither
+        Raise(arena, float3(-1, 2.2, -3.6), float3(0.3, 4.4, 18.8), rust, false, 4);
+        Raise(arena, float3(-5.5, 2.2, 5.95), float3(8.7, 4.4, 0.3), rust, false, 4);
     }
     if (level == 2)
     {
@@ -452,6 +471,7 @@ void ResetChamber(mut Arena arena, mut Fold fold, int level)
     arena.complete = false;
     arena.plateA = false;
     arena.plateB = false;
+    arena.hold = false;
     arena.ticks = 0;
     fold.amber = Portal { };
     fold.cyan = Portal { };
@@ -539,7 +559,7 @@ void Fizzle(mut Fold fold, bool amber, float3 at, float3 face)
 // A shot: a fold's end goes where it lands, nudged to fit on that face, or
 // fizzles there. It fits on an upright face of a wall that takes folds, clear
 // of the floor, the ceiling, what stands against the wall and the other end.
-bool Shoot(mut Fold fold, bool amber, float size, float3 origin, float3 way, Physics physics, mut World world)
+bool Shoot(mut Fold fold, bool amber, int level, float3 origin, float3 way, Physics physics, mut World world)
 {
     if (!physics.Raycast(origin, origin + way * 60, out var first)) return false;
     // Through whoever and whatever stands in the way that's no part of the room
@@ -556,9 +576,21 @@ bool Shoot(mut Fold fold, bool amber, float size, float3 origin, float3 way, Phy
         Fizzle(fold, amber, hit.point, hit.normal);
         return false;
     }
+    var right = FoldRight(face);
+    // A shot in a frame, or by it, goes into it at the frame's size
+    mut var size = 1.0;
+    mut var aim = hit.point;
+    for (var index = 0; index < MountCount(level); index++)
+    {
+        var mount = ChamberMount(level, index);
+        var off = hit.point - mount.at;
+        if (Math.Dot(mount.face, face) < 0.9 || Math.Abs(Math.Dot(off, face)) > 0.3) continue;
+        if (Math.Abs(Math.Dot(off, right)) > FOLD_HALF_WIDE * mount.size + 0.35 || Math.Abs(off.y) > FOLD_HALF_HIGH * mount.size + 0.35) continue;
+        size = mount.size;
+        aim = mount.at;
+    }
     var halfWide = FOLD_HALF_WIDE * size;
     var halfHigh = FOLD_HALF_HIGH * size;
-    var right = FoldRight(face);
     var along = Math.Abs(face.x) > 0.5;
     var thick = along ? wall.size.x : wall.size.z;
     var wide = along ? wall.size.z : wall.size.x;
@@ -570,8 +602,8 @@ bool Shoot(mut Fold fold, bool amber, float size, float3 origin, float3 way, Phy
         return false;
     }
     var plane = wall.center + face * (thick * 0.5);
-    mut var u = Math.Dot(hit.point - wall.center, right);
-    mut var v = hit.point.y;
+    mut var u = Math.Dot(aim - wall.center, right);
+    mut var v = aim.y;
     mut var lowU = -wide * 0.5 + halfWide;
     mut var highU = wide * 0.5 - halfWide;
     mut var lowV = wall.center.y - wall.size.y * 0.5 + halfHigh;
@@ -673,8 +705,8 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     var holding = fold.carried == pilot.id;
     var thrown = holding && (input.amber.down || input.cyan.down || input.hurl.down);
     // An end that's shot is there at once: nothing shows it sliding over from where it was
-    if (!holding && input.amber.down && Shoot(fold, true, FoldSize(input.size), eye, facing, physics, world)) fold.Snap();
-    if (!holding && input.cyan.down && Shoot(fold, false, FoldSize(input.size), eye, facing, physics, world)) fold.Snap();
+    if (!holding && input.amber.down && Shoot(fold, true, arena.level, eye, facing, physics, world)) fold.Snap();
+    if (!holding && input.cyan.down && Shoot(fold, false, arena.level, eye, facing, physics, world)) fold.Snap();
     if (input.ping.down)
     {
         fold.ping = physics.Raycast(eye, eye + facing * 40, out var seen) ? seen.point : eye + facing * 4;
@@ -966,8 +998,10 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     mut var operatorA = false;
     mut var operatorB = false;
     mut var exiting = 0;
+    mut var holding = false;
     foreach (var entry in operators)
     {
+        if (Weighs(entry.pilot.position, HOLD_PLATE)) holding = true;
         if (Weighs(entry.pilot.position, PlatePosition(arena.level, 0))) operatorA = true;
         if (Weighs(entry.pilot.position, PlatePosition(arena.level, 1))) operatorB = true;
         if (entry.pilot.position.z > 14.2 && Math.Abs(entry.pilot.position.x) < 3 && entry.pilot.position.y > -0.1) exiting += 1;
@@ -977,7 +1011,9 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     // A circuit is closed only while its plates are weighted: the gate shuts again when one is let up, so
     // something has to stay behind on each. The cube, or a partner.
     arena.solved = arena.plateA && (PlateCount(arena.level) < 2 || arena.plateB);
-    arena.gate = Math.Clamp(arena.gate + (arena.solved ? time.dt * 1.6 : -time.dt * 2.4), 0, 1);
+    // ...or the one who went through first stands on the lobby's plate, for the one who stayed
+    arena.hold = holding;
+    arena.gate = Math.Clamp(arena.gate + (arena.solved || arena.hold ? time.dt * 1.6 : -time.dt * 2.4), 0, 1);
     if (exiting == 2) arena.complete = true;
 }
 

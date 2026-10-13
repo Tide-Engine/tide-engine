@@ -17,11 +17,11 @@ const Color UI_AMBER = Color(1, 0.65, 0.28);
 string ChamberHint(int level)
 {
     return level switch {
-        0 => "The gate opens while the plate is weighted. The plate is across the pit: fold the walls together.",
-        1 => "The plate is in the cage. A fold goes anywhere you can see a wall that takes one.",
-        2 => "A vent, too low for you as you are. A fold's ends needn't be the same size.",
-        3 => "Too far to jump as you are. Concrete takes no fold; what's behind it might.",
-        _ => "The cube is shut in one room and the plate is past the pit."
+        0 => "Two plates open the gate, only while weighted. The plate past it holds it for whoever stayed.",
+        1 => "Apart. Neither of you can fold the other's side of the grille: one end each.",
+        2 => "The vent is too low for you. A fold in the small frame is small, and so is who leaves by it.",
+        3 => "Too far to jump as you are. Who leaves by the large frame is large.",
+        _ => "The cube is shut in a room, and the plates are past the pit."
     };
 }
 
@@ -49,14 +49,6 @@ view InterfaceInput(Devices devices, Session session, Arena arena, mut Control c
     ui.looking = Cursor.locked;
     control.started = !ui.open && !arena.complete;
     if (devices.keyboard.p.down) control.crisp = (control.crisp + 1) % 3;
-    // The size of the next fold's end: 1, 2 and 3 from small to large, or the wheel a step either way
-    mut var rank = control.size == 1 ? 0 : control.size == 0 ? 1 : 2;
-    if (devices.keyboard.digit1.down) rank = 0;
-    if (devices.keyboard.digit2.down) rank = 1;
-    if (devices.keyboard.digit3.down) rank = 2;
-    if (control.started && devices.mouse.scroll.y > 0) rank = Math.Min(2, rank + 1);
-    if (control.started && devices.mouse.scroll.y < 0) rank = Math.Max(0, rank - 1);
-    control.size = rank == 0 ? 1 : rank == 1 ? 0 : 2;
     if (control.started) Cursor.Lock();
 }
 
@@ -188,7 +180,7 @@ float HudKey(float2 at, string key, float wide, string label, float reach)
 
 string ChamberName(int level)
 {
-    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "THROUGH THE WINDOW", 2 => "SMALLER", 3 => "LARGER", _ => "BOTH" };
+    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "APART", 2 => "SMALLER", 3 => "LARGER", _ => "BOTH" };
 }
 
 [After(Render)]
@@ -207,7 +199,9 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     Draw.RoundRect(float2(pad + 12, 52), float2(3, 16), 1.5, UI_CYAN);
     Draw.Text($"EXPERIMENT 0{arena.level + 1}", float2(pad + 24, 27), 10, UI_CYAN, Font.Bold);
     Draw.Text(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 24, 41), 14, UI_INK, Font.Bold);
-    HudLamp(float2(pad + 30, 78), "PLATE", UI_AMBER, arena.plateA);
+    HudLamp(float2(pad + 30, 78), "A", UI_AMBER, arena.plateA);
+    HudLamp(float2(pad + 66, 78), "B", UI_CYAN, arena.plateB);
+    HudLamp(float2(pad + 102, 78), "HOLD", UI_INK, arena.hold);
     if (!narrow) Draw.Text(arena.gate > 0.9 ? "GATE OPEN" : "GATE SEALED", float2(pad + plate - 14, 78), 10, arena.gate > 0.9 ? UI_INK : UI_MUTED, Anchor.MiddleRight, Font.Bold);
 
     // Whose eyes these are, and the room others join.
@@ -222,14 +216,6 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     Draw.Arc(middle, 11, -1.2, 2.4, 2, UI_AMBER);
     Draw.Arc(middle, 11, 1.94, 2.4, 2, UI_CYAN);
     Draw.Circle(middle, 1.7, UI_INK);
-    // The size the next end is shot at: three ovals under the reticle, the chosen one lit
-    for (var pick = 0; pick < 3; pick++)
-    {
-        var tall = pick == 0 ? 7.0 : pick == 1 ? 11.0 : 15.0;
-        var at = middle + float2((pick - 1) * 16, 34 - tall * 0.5);
-        if (pick == (control.size == 1 ? 0 : control.size == 0 ? 1 : 2)) Draw.Ellipse(at, float2(tall * 0.55, tall), UI_INK);
-        else Draw.WireEllipse(at, float2(tall * 0.55, tall), 1, Color(0.8, 0.9, 0.9, 0.5));
-    }
     if (fold.carried == control.active) Draw.Text("E  DROP    /    CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter, Font.Bold);
 
     // What to do, and the keys that do it.
@@ -242,14 +228,13 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     if (legend)
     {
         var solo = arena.joined < 2;
-        var row = solo ? 912.0 : 816.0;
+        var row = solo ? 832.0 : 736.0;
         HudPane(Rect(middle.x - row * 0.5 - 12, Screen.height - 47, row + 24, 30));
         mut var at = float2(middle.x - row * 0.5, Screen.height - 32);
         at.x = HudKey(at, "WASD", 44, "MOVE", 30);
         at.x = HudKey(at, "SPACE", 46, "JUMP", 28);
         at.x = HudKey(at, "LMB", 34, "AMBER", 36);
         at.x = HudKey(at, "RMB", 34, "CYAN", 30);
-        at.x = HudKey(at, "1-3", 30, "SIZE", 28);
         at.x = HudKey(at, "E", 20, "CARRY", 36);
         at.x = HudKey(at, "F", 20, "THROW", 40);
         at.x = HudKey(at, "Q", 20, "PING", 26);

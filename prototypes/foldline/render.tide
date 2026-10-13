@@ -1056,6 +1056,26 @@ void Dress(mut Optics optics, int level)
     optics.furnishings.Add(Faced(float3(3.4, .06, -12.1), quaternion.Euler(0, .3, 0), float3(2.2, .12, 1.1), PLANKS, 0));
     optics.furnishings.Add(Faced(float3(3.6, .18, -12.2), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
 
+    // The frames a fold's end takes its size from: painted round where the opening goes, lit a little.
+    for (int index = 0; index < MountCount(level); index++)
+    {
+        Mount mount = ChamberMount(level, index);
+        Color paint = mount.size < 1 ? Color(.95, .9, .5) : Color(.95, .5, .35);
+        float wide = FOLD_HALF_WIDE * mount.size + .07;
+        float high = FOLD_HALF_HIGH * mount.size + .07;
+        bool along = Math.Abs(mount.face.x) > .5;
+        float3 off = mount.at + mount.face * .015;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            float3 post = off + (along ? float3(0, 0, side * wide) : float3(side * wide, 0, 0));
+            optics.furnishings.Add(Block(post, along ? float3(.03, high * 2 + .07, .07) : float3(.07, high * 2 + .07, .03), paint, 0, .6));
+        }
+        optics.furnishings.Add(Block(off + float3(0, high, 0), along ? float3(.03, .07, wide * 2) : float3(wide * 2, .07, .03), paint, 0, .6));
+        // A plate over it: a small square for the small one, a wide bar for the large
+        float3 sign = mount.size < 1 ? float3(.16, .16, .16) : float3(.9, .14, .9);
+        optics.furnishings.Add(Block(off + float3(0, high + .22, 0), along ? float3(.03, sign.y, sign.z) : float3(sign.x, sign.y, .03), paint, 0, 1.1));
+    }
+
     // The chamber's number, by the gate.
     optics.furnishings.Add(Block(float3(5.4, 3.1, 12.96), float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
     WallDigit(optics, 0, float3(4.86, 3.1, 12.915));
@@ -1067,6 +1087,21 @@ void DressWall(mut Optics optics, Wall wall, int number)
 {
     if (wall.kind == 2) optics.glass.Add(Clad(wall.center, wall.size, wall.paint, wall.tiles));
     else if (wall.kind == 3) optics.furnishings.Add(Faced(wall.center, quaternion.identity, wall.size, wall.paint, 0));
+    else if (wall.kind == 4)
+    {
+        // A grille: the match's box is solid, and what's seen of it is bars
+        Color iron = Color(.13, .11, .10);
+        bool along = wall.size.z > wall.size.x;
+        float run = along ? wall.size.z : wall.size.x;
+        int bars = int(run / .34);
+        for (int bar = 0; bar <= bars; bar++)
+        {
+            float offset = -run * .5 + bar * (run / bars);
+            optics.furnishings.Add(Block(wall.center + (along ? float3(0, 0, offset) : float3(offset, 0, 0)), float3(.07, wall.size.y, .07), iron, 0, 0, .5));
+        }
+        for (int rail = 0; rail < 3; rail++)
+            optics.furnishings.Add(Block(float3(wall.center.x, .06 + rail * (wall.size.y - .12) * .5, wall.center.z), along ? float3(.11, .1, run) : float3(run, .1, .11), iron, 0, 0, .5));
+    }
     else if (wall.kind == 1)
     {
         float x = wall.center.x;
@@ -1235,11 +1270,12 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
     Color amberTint = Color(1, .64, .24);
     Color cyanTint = Color(.2, .96, .88);
     Color steel = Color(.10, .14, .16);
-    for (int plate = 0; plate < PlateCount(arena.level); plate++)
+    for (int plate = 0; plate <= PlateCount(arena.level); plate++)
     {
-        float3 at = PlatePosition(arena.level, plate);
-        bool pressed = plate == 0 ? arena.plateA : arena.plateB;
-        Color tint = plate == 0 ? amberTint : cyanTint;
+        // The chamber's own, and after them the lobby's
+        float3 at = plate < PlateCount(arena.level) ? PlatePosition(arena.level, plate) : HOLD_PLATE;
+        bool pressed = plate == PlateCount(arena.level) ? arena.hold : plate == 0 ? arena.plateA : arena.plateB;
+        Color tint = plate == PlateCount(arena.level) ? Color(.75, 1, .8) : plate == 0 ? amberTint : cyanTint;
         float sunk = pressed ? .025 : 0;
         optics.dynamic.Add(Block(at + float3(0, .03, 0), float3(1.62, .08, 1.62), steel, 0, 0, .6, .03));
         optics.dynamic.Add(Block(at + float3(0, .085 - sunk, 0), float3(1.2, .06, 1.2), pressed ? tint : Color(.34, .40, .41), 0, pressed ? .8 : 0, .5, .02));

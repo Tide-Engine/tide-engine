@@ -85,16 +85,16 @@ static void choose(tide_world *world, int sender, int level)
     tide_world_tick(world);
 }
 
-// The second chamber, whose floor is whole: an end on the south wall before an
+// The third chamber, whose floor is whole: an end on the south wall before an
 // operator at (0, -8) who looks south, and one on the west wall when they look west.
-static const float SOUTH = TIDE_PI_F, WEST = -TIDE_PI_F / 2;
+static const float SOUTH = TIDE_PI_F, WEST = -TIDE_PI_F / 2, EAST = TIDE_PI_F / 2;
 
 static void open_floor(tide_world *world)
 {
     start(world);
-    choose(world, 0, 1);
+    choose(world, 0, 2);
     ticks(world, 8);
-    CHECK(world->Arena.level == 1);
+    CHECK(world->Arena.level == 2);
 }
 
 static void ownership_and_movement(void)
@@ -139,8 +139,8 @@ static void folds_are_shot_and_crossed(void)
     tide_world_tick(&world);
     press(&world, (PilotInput){.amber = true});
     CHECK(!world.Fold.amber.open && world.Fold.fizzleTime > 0 && world.Fold.fizzleAmber);
-    // Nor do the cage's thin walls
-    place(&world, 0, (tide_float3){-3, 0, 3.5f}, WEST, 0);
+    // Nor do the thin walls of the room in the corner
+    place(&world, 0, (tide_float3){7.5f, 0, 2}, 0, 0);
     tide_world_tick(&world);
     press(&world, (PilotInput){.amber = true});
     CHECK(!world.Fold.amber.open && world.Fold.fizzleTime > 0);
@@ -220,11 +220,21 @@ static void sizes(void)
     place(&world, 0, (tide_float3){0, 0, -8}, SOUTH, 0);
     ticks(&world, 2);
     press(&world, (PilotInput){.amber = true});
-    place(&world, 0, (tide_float3){0, 0, -8}, WEST, 0);
+    // A shot by the small frame on the east wall goes into it, at its size
+    place(&world, 0, (tide_float3){5, 0, 1.2f}, EAST, 0);
     ticks(&world, 2);
-    press(&world, (PilotInput){.cyan = true, .size = 1});
+    press(&world, (PilotInput){.cyan = true});
     CHECK(world.Fold.amber.open && world.Fold.amber.size == 1 && world.Fold.cyan.open && world.Fold.cyan.size == 0.5f);
-    CHECK(near(world.Fold.cyan.at.y, 0.65f, 0.001f)); // Half as high, standing on the floor
+    CHECK(near(world.Fold.cyan.at.y, 0.65f, 0.001f) && near(world.Fold.cyan.at.z, 1.5f, 0.001f) && near(world.Fold.cyan.at.x, 9.8f, 0.001f));
+    // ...and one well clear of it is whole
+    place(&world, 0, (tide_float3){5, 0, -3}, EAST, 0);
+    ticks(&world, 2);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(world.Fold.cyan.size == 1 && near(world.Fold.cyan.at.z, -3, 0.01f));
+    place(&world, 0, (tide_float3){5, 0, 1.2f}, EAST, 0);
+    ticks(&world, 2);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(world.Fold.cyan.size == 0.5f);
     // In the whole end, out of the half one at half the size, on the floor
     place(&world, 0, (tide_float3){0, 0, -11}, SOUTH, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
@@ -233,10 +243,10 @@ static void sizes(void)
     input(&world, 0, (PilotInput){0});
     ticks(&world, 40);
     const Operator small = pilot(&world, 0);
-    CHECK(small.scale == 0.5f && near(small.position.y, 0, 0.05f) && small.position.x > -9.8f && small.grounded);
+    CHECK(small.scale == 0.5f && near(small.position.y, 0, 0.05f) && small.position.x < 9.8f && small.position.x > 5 && small.grounded);
     CHECK(near(tide_get_Box3D_Capsule(&world, world.Arena.op0).height, 0.9f, 0.001f));
     // Small, it goes back in the half end and comes out whole
-    place(&world, 0, (tide_float3){-8.6f, 0, -8}, WEST, 0);
+    place(&world, 0, (tide_float3){8.6f, 0, 1.5f}, EAST, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     for (int step = 0; step < 120 && world.Fold.traversals == 1; step++) tide_world_tick(&world);
     CHECK(world.Fold.traversals == 2);
@@ -245,10 +255,10 @@ static void sizes(void)
     const Operator whole = pilot(&world, 0);
     CHECK(whole.scale == 1 && near(whole.position.y, 0, 0.05f) && whole.position.z > -13);
     // A whole body doesn't fit the half end
-    place(&world, 0, (tide_float3){-8.6f, 0, -8}, WEST, 0);
+    place(&world, 0, (tide_float3){8.6f, 0, 1.5f}, EAST, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     ticks(&world, 90);
-    CHECK(world.Fold.traversals == 2 && pilot(&world, 0).position.x > -9.8f);
+    CHECK(world.Fold.traversals == 2 && pilot(&world, 0).position.x < 9.8f);
     // A new chamber makes everyone whole again
     place(&world, 0, (tide_float3){0, 0, -11}, SOUTH, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
@@ -256,7 +266,7 @@ static void sizes(void)
     input(&world, 0, (PilotInput){0});
     ticks(&world, 5);
     CHECK(pilot(&world, 0).scale == 0.5f);
-    choose(&world, 0, 2);
+    choose(&world, 0, 0);
     ticks(&world, 10);
     CHECK(pilot(&world, 0).scale == 1 && near(pilot(&world, 0).position.z, -10.5f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     tide_world_free(&world);
@@ -287,17 +297,29 @@ static void chambers_and_commands(void)
     tide_world world = {0};
     start(&world);
     ticks(&world, 10);
-    // The cube on the plate opens the first chamber's gate
+    // The cube on one plate isn't enough for the first chamber's gate
     put_cube(&world, (tide_float3){5, 0.5f, 8}, (tide_float3){0});
     ticks(&world, 90);
-    CHECK(world.Arena.plateA && world.Arena.solved && world.Arena.gate > 0.99f);
-    // ...and only while it stays there
-    put_cube(&world, (tide_float3){0, 0.5f, 6}, (tide_float3){0});
+    CHECK(world.Arena.plateA && !world.Arena.plateB && !world.Arena.solved && world.Arena.gate < 0.01f);
+    // ...with someone on the other it opens
+    place(&world, 1, (tide_float3){-5, 0, 8}, 0, 0);
+    ticks(&world, 90);
+    CHECK(world.Arena.plateB && world.Arena.solved && world.Arena.gate > 0.99f);
+    // ...and only while they stay there
+    place(&world, 1, (tide_float3){-5, 0, 5}, 0, 0);
     ticks(&world, 60);
-    CHECK(!world.Arena.plateA && !world.Arena.solved && world.Arena.gate < 0.01f);
+    CHECK(!world.Arena.plateB && !world.Arena.solved && world.Arena.gate < 0.01f);
+    // Whoever went through stands on the lobby's plate, and the gate stays up for the one who held it open
+    place(&world, 1, (tide_float3){-5, 0, 8}, 0, 0);
+    ticks(&world, 60);
+    place(&world, 0, (tide_float3){0, 0, 16}, 0, 0);
+    ticks(&world, 10);
+    CHECK(world.Arena.hold && !world.Arena.complete);
+    place(&world, 1, (tide_float3){-5, 0, 5}, 0, 0);
+    ticks(&world, 60);
+    CHECK(!world.Arena.solved && world.Arena.gate > 0.99f);
     // Both operators in the lobby past the gate end the chamber
-    place(&world, 0, (tide_float3){-1, 0, 15.5f}, 0, 0);
-    place(&world, 1, (tide_float3){1, 0, 15.5f}, 0, 0);
+    place(&world, 1, (tide_float3){1.5f, 0, 15}, 0, 0);
     ticks(&world, 4);
     CHECK(world.Arena.complete);
     const int32_t built = world.Arena.chamber;
@@ -360,15 +382,16 @@ static void chambers_hold(void)
     // ...but not past the jump of one who came out of a larger end
     input(&world, 0, (PilotInput){0});
     for (int step = 0; step < 200 && (pilot(&world, 0).taken > 0 || !pilot(&world, 0).grounded); step++) tide_world_tick(&world);
-    place(&world, 0, (tide_float3){-4, 0, -8}, SOUTH, 0);
+    place(&world, 0, (tide_float3){4, 0, -8}, SOUTH, 0);
     input(&world, 0, (PilotInput){0});
     ticks(&world, 3);
     press(&world, (PilotInput){.amber = true});
-    place(&world, 0, (tide_float3){4, 0, -8}, SOUTH, 0);
+    place(&world, 0, (tide_float3){-2.2f, 0, -8}, SOUTH, 0);
     ticks(&world, 3);
-    press(&world, (PilotInput){.cyan = true, .size = 2});
-    CHECK(world.Fold.amber.open && world.Fold.cyan.open && world.Fold.cyan.size == 1.5f);
-    place(&world, 0, (tide_float3){-4, 0, -11}, SOUTH, 0);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(world.Fold.amber.open && world.Fold.amber.size == 1 && world.Fold.cyan.open && world.Fold.cyan.size == 1.5f);
+    CHECK(near(world.Fold.cyan.at.x, -2.5f, 0.001f));
+    place(&world, 0, (tide_float3){4, 0, -11}, SOUTH, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
     CHECK(world.Fold.traversals == 1);
@@ -386,14 +409,49 @@ static void chambers_hold(void)
     press(&world, (PilotInput){.amber = true});
     CHECK(near(world.Fold.amber.at.z, 10.5f, 0.001f) && world.Fold.amber.face.z > 0.99f);
     tide_world_free(&world);
-    // The cage's plate is reached by a fold shot through its window onto the wall inside
+    // Apart: the grille takes no shot from either side, and nobody walks through it
     start(&world);
     choose(&world, 0, 1);
     ticks(&world, 8);
-    place(&world, 0, (tide_float3){-2.6f, 0, 3.5f}, WEST, 0.3f);
+    CHECK(pilot(&world, 0).position.x < -1.5f && pilot(&world, 1).position.x > 0);
+    place(&world, 0, (tide_float3){-5, 0, -8}, EAST, 0);
     ticks(&world, 3);
     press(&world, (PilotInput){.amber = true});
-    CHECK(world.Fold.amber.open && near(world.Fold.amber.at.x, -9.8f, 0.001f) && world.Fold.amber.at.z > 2 && world.Fold.amber.at.z < 5);
+    CHECK(!world.Fold.amber.open && world.Fold.fizzleTime > 0 && near(world.Fold.fizzleAt.x, -1.15f, 0.01f));
+    place(&world, 1, (tide_float3){4, 0, -3}, WEST, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.active = 1, .cyan = true});
+    CHECK(!world.Fold.cyan.open && near(world.Fold.fizzleAt.x, -0.85f, 0.01f));
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 120);
+    CHECK(pilot(&world, 0).position.x < -1.3f);
+    // One end each, and the one shut in walks out
+    place(&world, 0, (tide_float3){-5, 0, -8}, WEST, 0);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 3);
+    press(&world, (PilotInput){.amber = true});
+    place(&world, 1, (tide_float3){4, 0, -3}, EAST, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.active = 1, .cyan = true});
+    CHECK(world.Fold.amber.open && near(world.Fold.amber.at.x, -9.8f, 0.001f) && world.Fold.cyan.open && near(world.Fold.cyan.at.x, 9.8f, 0.001f));
+    place(&world, 0, (tide_float3){-8, 0, -8}, WEST, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
+    ticks(&world, 20);
+    CHECK(world.Fold.traversals == 1 && pilot(&world, 0).position.x > 5 && pilot(&world, 0).position.x < 9.8f);
+    tide_world_free(&world);
+    // The last chamber has a frame of each size, each clear of what stands by it
+    start(&world);
+    choose(&world, 0, 4);
+    ticks(&world, 8);
+    place(&world, 0, (tide_float3){-6, 0, -3.5f}, WEST, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(world.Fold.amber.open && world.Fold.amber.size == 0.5f && near(world.Fold.amber.at.z, -3.5f, 0.001f));
+    place(&world, 0, (tide_float3){5.5f, 0, -8}, SOUTH, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(world.Fold.cyan.open && world.Fold.cyan.size == 1.5f && near(world.Fold.cyan.at.x, 5.5f, 0.001f));
     tide_world_free(&world);
     // A half operator goes through the vent, round the baffle and into the room
     start(&world);
@@ -402,9 +460,9 @@ static void chambers_hold(void)
     place(&world, 0, (tide_float3){0, 0, -8}, SOUTH, 0);
     ticks(&world, 3);
     press(&world, (PilotInput){.amber = true});
-    place(&world, 0, (tide_float3){0, 0, -8}, WEST, 0);
+    place(&world, 0, (tide_float3){5, 0, 1.5f}, EAST, 0);
     ticks(&world, 3);
-    press(&world, (PilotInput){.cyan = true, .size = 1});
+    press(&world, (PilotInput){.cyan = true});
     place(&world, 0, (tide_float3){0, 0, -11}, SOUTH, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
