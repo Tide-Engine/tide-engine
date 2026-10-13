@@ -963,6 +963,14 @@ static void chambers_hold(void)
     input(&world, 0, (PilotInput){.move = {0, 1}});
     ticks(&world, 60);
     CHECK(pilot(&world, 0).position.x > -3.8f);
+    // Nor does anyone from higher up: the grille goes to the roof, so someone as high as a jump off the
+    // other's head on the cube would take them is still stopped
+    place(&world, 0, (tide_float3){-3.3f, 2.5f, 2}, WEST, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    for (int step = 0; step < 40; step++) {
+        tide_world_tick(&world);
+        CHECK(pilot(&world, 0).position.x > -3.8f);
+    }
     tide_world_free(&world);
     // The fifth room's plate is on a gallery walled off from this side of the trench: the wall over it takes a
     // fold only from past the drums

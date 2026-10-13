@@ -1174,11 +1174,13 @@ void BuildChamber(mut Arena arena, int level)
         Raise(arena, float3(-6.9, GALLERY * 0.5, 5.5), float3(5.8, GALLERY, 15), panels);
         Raise(arena, float3(6.9, GALLERY * 0.5, 8.5), float3(5.8, GALLERY, 9), panels);
         Raise(arena, float3(0, 2.2, 7), float3(0.6, 4.4, 8), panels);
-        // Maintenance grilles: shots pass, bodies don't. A box used as a step no longer skips the fold.
-        Raise(arena, float3(-3.85, 2.25, 5.5), float3(0.3, 1.3, 15), rust, false, 4);
-        Raise(arena, float3(-6.9, 2.25, -2.1), float3(5.8, 1.3, 0.3), rust, false, 4);
-        Raise(arena, float3(3.85, 2.25, 8.5), float3(0.3, 1.3, 9), rust, false, 4);
-        Raise(arena, float3(6.9, 2.25, 3.9), float3(5.8, 1.3, 0.3), rust, false, 4);
+        // Maintenance grilles, to the roof: shots pass, bodies don't. Nothing stood on, the cube or the other
+        // operator or both, gets anyone over one, so the fold isn't skipped.
+        Raise(arena, float3(-3.85, 3.0, 5.5), float3(0.3, 2.8, 15), rust, false, 4);
+        Raise(arena, float3(-6.9, 3.0, -2.1), float3(5.8, 2.8, 0.3), rust, false, 4);
+        Raise(arena, float3(3.85, 3.0, 8.5), float3(0.3, 2.8, 9), rust, false, 4);
+        Raise(arena, float3(6.9, 3.0, 3.9), float3(5.8, 2.8, 0.3), rust, false, 4);
+
     }
     if (level == 2)
     {
