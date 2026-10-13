@@ -106,6 +106,8 @@ local singleton Optics
     float3 cyanEye;
     float4x4 amberView;
     float4x4 cyanView;
+    float4x4 amberFarView;
+    float4x4 cyanFarView;
     int dressed = -1;
     bool made;
     float phase;
@@ -145,6 +147,8 @@ local singleton Lens
     DepthTexture sceneDepth;
     DepthTexture amberDepth;
     DepthTexture cyanDepth;
+    DepthTexture amberFarDepth;
+    DepthTexture cyanFarDepth;
     Texture shafts;
     Texture near;
     Texture mid;
@@ -292,6 +296,30 @@ float3 Glow(float3 at, float3 normal, float3 from, float3 tint, float reach)
     return tint * (fall * fall * facing / (1 + far * 0.45));
 }
 
+// How much of a lamp's light gets past a ball on its way to a place: none
+// through its middle, all of it past its edge. A ball the lamp is under or
+// inside stops nothing: a plate's light comes from around what weighs it.
+float Past(float3 from, float3 to, float3 middle, float radius)
+{
+    if (Math.DistanceSq(middle.xz, from.xz) < 0.6 && Math.Abs(middle.y - from.y) < 1.3) return 1;
+    float3 along = to - from;
+    float nearest = Math.Saturate(Math.Dot(middle - from, along) / Math.Max(Math.Dot(along, along), 0.0001));
+    return Math.SmoothStep(radius * 0.7, radius * 1.3, Math.Distance(from + along * nearest, middle));
+}
+
+// ...past an operator, who is three of them: legs, shell and head.
+float PastOperator(float3 from, float3 to, float3 feet)
+{
+    return Past(from, to, feet + float3(0, 0.33, 0), 0.2) * Past(from, to, feet + float3(0, 0.86, 0), 0.3) * Past(from, to, feet + float3(0, 1.42, 0), 0.22);
+}
+
+// ...and past everything that moves: both operators, and the cube for a lamp that isn't the cube's own.
+float Unblocked(float3 from, float3 to, Sight sight, bool cube)
+{
+    float past = PastOperator(from, to, sight.partner) * PastOperator(from, to, sight.self);
+    return cube ? past * Past(from, to, sight.cube, 0.46) : past;
+}
+
 // Every solid thing: stone, ceramic, machinery, leaves and the roof's glass.
 frag Surface(StoneVertex vertex, Instance instance, Fixture fixture, Sight sight, Daylight day, out Color color)
 {
@@ -388,21 +416,43 @@ frag Surface(StoneVertex vertex, Instance instance, Fixture fixture, Sight sight
         lamps += Glow(p, n, sight.amberAt, float3(1.0, 0.50, 0.13) * 2.0, 6.5) * (sight.held ? 1.0 : FoldLight(day.amberDepth, day.toAmber, p, n));
     if (sight.linked > 0 && Math.DistanceSq(p, sight.cyanAt) < 42)
         lamps += Glow(p, n, sight.cyanAt, float3(0.10, 0.82, 0.90) * 2.0, 6.5) * (sight.held ? 1.0 : FoldLight(day.cyanDepth, day.toCyan, p, n));
-    lamps += Glow(p, n, sight.plateA, float3(1.0, 0.50, 0.13) * 2.4 * sight.plates.x, 4);
-    lamps += Glow(p, n, sight.plateB, float3(0.10, 0.82, 0.90) * 2.4 * sight.plates.y, 4);
-    lamps += Glow(p, n, sight.cube + float3(0, 0.25, 0), float3(0.2, 0.78, 0.72) * 0.7, 2.4);
+    // The smaller lamps are stopped by what moves: the cube and both operators. A little off the surface,
+    // so that a thing isn't in its own way.
+    float3 lifted = p + n * 0.2;
+    float3 cubeLamp = sight.cube + float3(0, 0.25, 0);
+    if (sight.plates.x > 0 && Math.DistanceSq(p, sight.plateA) < 16)
+        lamps += Glow(p, n, sight.plateA, float3(1.0, 0.50, 0.13) * 2.4, 4) * (sight.held ? 1.0 : Unblocked(sight.plateA, lifted, sight, true));
+    if (sight.plates.y > 0 && Math.DistanceSq(p, sight.plateB) < 16)
+        lamps += Glow(p, n, sight.plateB, float3(0.10, 0.82, 0.90) * 2.4, 4) * (sight.held ? 1.0 : Unblocked(sight.plateB, lifted, sight, true));
+    if (Math.DistanceSq(p, cubeLamp) < 5.8)
+        lamps += Glow(p, n, cubeLamp, float3(0.2, 0.78, 0.72) * 0.7, 2.4) * (sight.held ? 1.0 : Unblocked(cubeLamp, lifted, sight, false));
     if (Math.Abs(p.z) < 13.2)
     {
-        // The two ribbons of light along each side wall.
+        // The two ribbons of light along each side wall. The low one is behind the planters, which keep
+        // it off the floor before them, and behind whoever stands by the wall.
         float side = p.x < 0 ? -1.0 : 1.0;
         float2 mint = float2(side * 9.45 - p.x, 0.8 - p.y);
         float mintFar = Math.Dot(mint, mint);
-        lamps += float3(0.10, 0.82, 0.70) * (0.6 / (1 + mintFar * 2.4)) * Math.Saturate(Math.Dot(n.xy, mint) / Math.Sqrt(mintFar + 0.0001) * 0.6 + 0.4);
+        mut float low = 1;
+        if (mintFar < 14 && !sight.held)
+        {
+            low = Unblocked(float3(side * 9.45, 0.8, p.z), lifted, sight, true);
+            float beside = Math.Abs(Math.Frac((p.z + 11) / 6.4 + 0.5) - 0.5) * 6.4;
+            float inward = 9.45 - Math.Abs(lifted.x);
+            if (p.z < 9.4 && inward > 0.9)
+            {
+                // Where the ray from the ribbon is as it passes the planter's front edge, against the planter's top
+                float over = 0.8 + (lifted.y - 0.8) * (0.875 / inward);
+                low *= 1 - Math.SmoothStep(0.82, 0.66, over) * (1 - Math.SmoothStep(0.85, 1.15, beside));
+            }
+        }
+        lamps += float3(0.10, 0.82, 0.70) * (0.6 / (1 + mintFar * 2.4)) * Math.Saturate(Math.Dot(n.xy, mint) / Math.Sqrt(mintFar + 0.0001) * 0.6 + 0.4) * low;
         float2 warm = float2(side * 9.5 - p.x, 4.75 - p.y);
         float warmFar = Math.Dot(warm, warm);
         lamps += float3(1.0, 0.78, 0.46) * (0.85 / (1 + warmFar * 1.1)) * Math.Saturate(Math.Dot(n.xy, warm) / Math.Sqrt(warmFar + 0.0001) * 0.6 + 0.4);
     }
-    if (p.z > 3.2) lamps += Glow(p, n, float3(0, 2.2, 15.4), float3(1.0, 0.84, 0.62) * 4.5, 11);
+    if (p.z > 3.2)
+        lamps += Glow(p, n, float3(0, 2.2, 15.4), float3(1.0, 0.84, 0.62) * 4.5, 11) * (sight.held ? 1.0 : Unblocked(float3(0, 2.2, 15.4), lifted, sight, true));
 
     float gloss = fixture.gloss;
     float3 between = Math.Normalize(sunWay + view);
@@ -465,21 +515,18 @@ float3 Rimmed(float3 seen, Color tint, float2 uv, float phase, float distance)
     return Math.Lerp(view, rim * 3.4 + float3(0.25), core * 0.6);
 }
 
-// A fold seen by a fold's own camera.
-frag Through(Vertex3 vertex, Texture image, Aperture aperture, out Color color)
+// The sunlit air beyond a fold: from where this pixel's ray leaves the far
+// opening to what the fold's camera sees there, `depth` away.
+float3 Beyond(DepthTexture sun, float4x4 toSun, Aperture aperture, float depth, float3 world, float2 uv, float2 pixel)
 {
-    if (aperture.clipped && Math.Dot(this.world - aperture.clipPoint, aperture.clipNormal) < 0.025)
-        this.Discard();
-    float distance = RoundedPortal(vertex.uv, 1);
-    if (distance > 0) this.Discard();
-    // Projected screen coordinates match the mapped virtual camera. Ordinary
-    // mesh UV sampling would turn the opening into a distorted television.
-    float3 view = Unfold3(image.Sample(this.position / aperture.pixels, Filter.Bilinear, Wrap.Clamp));
-    color = Shown(Rimmed(view, aperture.rim, vertex.uv, aperture.phase, distance), aperture.packed);
+    float3 to = Unprojected(aperture.fromClip, uv, depth) - aperture.farEye;
+    float far = Math.Length(to);
+    float near = Math.Distance(world, aperture.eye);
+    float3 way = to / Math.Max(far, 0.0001);
+    return Scatter(sun, toSun, aperture.farEye + way * near, way, Math.Clamp(far - near, 0, 36), pixel);
 }
 
-// A fold as the viewer sees it, with the sunlit air beyond it: from where
-// this pixel's ray leaves the far opening to what it reaches there.
+// A fold as the viewer sees it, with the sunlit air beyond it.
 frag ThroughAir(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, Lens lens, out Color color)
 {
     float distance = RoundedPortal(vertex.uv, 1);
@@ -487,11 +534,23 @@ frag ThroughAir(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, 
     float2 uv = this.position / aperture.pixels;
     mut float3 view = Unfold3(image.Sample(uv, Filter.Bilinear, Wrap.Clamp));
     float depth = aperture.cyan ? lens.cyanDepth.Sample(uv) : lens.amberDepth.Sample(uv);
-    float3 to = Unprojected(aperture.fromClip, uv, depth) - aperture.farEye;
-    float far = Math.Length(to);
-    float near = Math.Distance(this.world, aperture.eye);
-    float3 way = to / Math.Max(far, 0.0001);
-    view += Scatter(day.depth, day.toSun, aperture.farEye + way * near, way, Math.Clamp(far - near, 0, 36), this.position);
+    view += Beyond(day.depth, day.toSun, aperture, depth, this.world, uv, this.position);
+    color = Shown(Rimmed(view, aperture.rim, vertex.uv, aperture.phase, distance), aperture.packed);
+}
+
+// A fold seen by a fold's own camera, with the air beyond that one too. It
+// reads the second crossings' depths, as ThroughAir reads the first's: a
+// camera's image can't be read while it's drawn into.
+frag ThroughFar(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, Lens lens, out Color color)
+{
+    if (aperture.clipped && Math.Dot(this.world - aperture.clipPoint, aperture.clipNormal) < 0.025)
+        this.Discard();
+    float distance = RoundedPortal(vertex.uv, 1);
+    if (distance > 0) this.Discard();
+    float2 uv = this.position / aperture.pixels;
+    mut float3 view = Unfold3(image.Sample(uv, Filter.Bilinear, Wrap.Clamp));
+    float depth = aperture.cyan ? lens.cyanFarDepth.Sample(uv) : lens.amberFarDepth.Sample(uv);
+    view += Beyond(day.depth, day.toSun, aperture, depth, this.world, uv, this.position);
     color = Shown(Rimmed(view, aperture.rim, vertex.uv, aperture.phase, distance), aperture.packed);
 }
 
@@ -708,6 +767,8 @@ void MakeOptics(mut Optics optics, mut Daylight day, mut Lens lens)
     lens.sceneDepth = optics.scene.depth;
     lens.amberDepth = optics.amber.depth;
     lens.cyanDepth = optics.cyan.depth;
+    lens.amberFarDepth = optics.amberDeep.depth;
+    lens.cyanFarDepth = optics.cyanDeep.depth;
     lens.air = RenderTarget.Window(0.5, Format.Rgba16f);
     lens.half = RenderTarget.Window(0.5, Format.Rgba16f);
     lens.quarter = RenderTarget.Window(0.25, Format.Rgba16f);
@@ -880,6 +941,7 @@ void Dress(mut Optics optics, int level)
     {
         float x = planter % 2 == 0 ? -9.0 : 9.0;
         float z = -11 + (planter / 2) * 6.4;
+        if (level == 2 && z > 4 && z < 10) continue;
         optics.furnishings.Add(Block(float3(x, .36, z), float3(.85, .72, 2.0), rail, 0, 0, .5, .035));
         optics.furnishings.Add(Block(float3(x, .7, z), float3(.72, .06, 1.87), Color(.07, .06, .045), 0, 0, 0));
         for (int leaf = 0; leaf < 30; leaf++)
@@ -1305,6 +1367,8 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         }
         target.Clear(Color(.02, .03, .04));
         target.SetCamera(float4x4.TRS(camera, turned, float3(1)), float4x4.PerspectiveFov(75deg, Screen.width / Screen.height, .035, 120));
+        if (pass == 0) optics.amberFarView = target.WorldToClip();
+        if (pass == 1) optics.cyanFarView = target.WorldToClip();
         if (pass == 2) optics.amberView = target.WorldToClip();
         if (pass == 3) optics.cyanView = target.WorldToClip();
         target.Instanced(optics.box, optics.triangles, optics.architecture, Surface, sight);
@@ -1338,12 +1402,17 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
                 aperture.farEye = opening == 0 ? amberEye : cyanEye;
                 aperture.fromClip = Math.Inverse(opening == 0 ? optics.amberView : optics.cyanView);
             }
+            else if (pass >= 2)
+            {
+                aperture.farEye = opening == 0 ? PortalMapPoint(arena.level, fold.a, fold.b, amberEye) : PortalMapPoint(arena.level, fold.b, fold.a, cyanEye);
+                aperture.fromClip = Math.Inverse(opening == 0 ? optics.amberFarView : optics.cyanFarView);
+            }
             float4x4 transform = float4x4.TRS(p, r, float3(2.08, 3.08, 1));
             if (pass < 2) target.Mesh(optics.card, optics.cardTriangles, transform, LastFold, aperture);
             else if (pass < 4)
             {
-                if (opening == 0) target.Mesh(optics.card, optics.cardTriangles, transform, optics.amberDeep.color, Through, aperture);
-                else target.Mesh(optics.card, optics.cardTriangles, transform, optics.cyanDeep.color, Through, aperture);
+                if (opening == 0) target.Mesh(optics.card, optics.cardTriangles, transform, optics.amberDeep.color, ThroughFar, aperture);
+                else target.Mesh(optics.card, optics.cardTriangles, transform, optics.cyanDeep.color, ThroughFar, aperture);
             }
             else
             {
