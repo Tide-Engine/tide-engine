@@ -1,8 +1,36 @@
 # The docs site
 
+## Input prediction controls (2026-10-13)
+
+Input documents owner-approved Predict()/[DontPredict] with action-reset and
+computed-fade examples. The spec separates their agreed availability from
+first-build ordering, capabilities, attribute placement/conflicts and client-only
+semantics. Functions, Tasks and Editors include the new input body. Docs explain
+normal bool .down history, guessed-edge suppression, immediate real actions and
+the unchanged authoritative missing-input rule and 0.15-second guess cutoff.
+No site deployment is part of this task.
+
+Validation: full native/web suites, grammar and production docs build pass;
+counts and remaining platform coverage are in notes/language.md.
+
+FOLDLINE catalog addition (2026-10-12): the new first-person 3D cooperative
+portal prototype adds `foldline` to the server-only catalog, public root and
+outside-root asset gates. Its page stages at `/prototypes/foldline/` through
+`foldline_page`, collected by `private_games`. The authenticated catalog
+describes its luminous atrium, linked portal views and resonance-cube puzzles.
+Admin and production HTTP checks include its public HTML/assets, encoded
+paths, stale outside-root copies and omission from public discovery. Game
+contracts and completed validation are recorded in `notes/foldline.md`.
+The analytics/admin unit suite passes 18/18 with Node 24.21.0; Svelte check
+reports zero errors or warnings after restoring the declared dependencies.
+The production docs build passes with the existing allowed 404s for unstaged
+example and game HTML. Rebuilding with the final FOLDLINE page and gameplay
+thumbnail passes; the production HTTP prototype check passes for all five
+catalog ids. Staged and packaged FOLDLINE HTML and thumbnail bytes agree.
+
 Inside Out 3D revision (2026-10-12): the existing catalog now describes
 miniature 3D rooms with low walls and soft shadows. The fixed orthographic
-view, existing twelve layouts, online two-seat rules, recursive passages
+view, its layouts (nine since 2026-10-12), online two-seat rules, recursive passages
 and audio are preserved. Game-only geometry, shadow mapping and SSAO use
 existing rendering APIs. Public routes and catalog authentication are unchanged.
 Current validation and deployment evidence are recorded in `notes/inside-out.md`.

@@ -600,6 +600,9 @@ static void build_signatures(void)
     describe(add("Draw", "Clear", T_NONE, "tide_draw_clear", 1, T_COLOR, T_NONE, T_NONE),
              "color", "Fills the whole screen, or what the clip leaves of it, and clears depth and stencil. No blend, tint "
              "or transform changes a clear.");
+    describe(add("Draw", "ClearDepth", T_NONE, "tide_draw_clear_depth", 0, T_NONE, T_NONE, T_NONE),
+             "", "Sets depth back alone, over the whole screen or what the clip leaves of it: colors and stencil stay, "
+             "and the 3D meshes drawn after are in front of everything drawn before.");
     // The settings: what the draws after them, or in their block, are drawn with (tide/draw.h's Settings)
     add_setting("Draw", "Blend", "tide_draw_push_blend", "tide_draw_set_blend", NULL, "mode",
                 "How what's drawn goes over what's there: `Blend.Alpha` (by its alpha, each frame's first), `Blend.Add` "

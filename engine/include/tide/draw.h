@@ -35,7 +35,7 @@
 // back.
 
 typedef enum tide_draw_kind {
-    TIDE_DRAW_CLEAR,       // color
+    TIDE_DRAW_CLEAR,       // color; a.x: 1 for depth alone, which leaves colors and stencil
     TIDE_DRAW_CAMERA,      // a = center, b.x = size
     TIDE_DRAW_CIRCLE,      // a = center, b.x = radius, color
     TIDE_DRAW_WIRE_CIRCLE, // a = center, b.x = radius, color
@@ -704,9 +704,9 @@ tide_render_target tide_render_target_window_of(const tide_target_format *format
 // triangles drawn into it: 1, 2, 4 or 8 (TIDE_TARGET_SAMPLES at the most).
 // Each pixel keeps that many colors and depths while it's drawn into, and its
 // color images are what those come to, one color a pixel, each time a pass on
-// it ends: they're sampled like any target's. Its depth isn't a shader's to
-// read (a draw that reads tide_render_target_depth of one is passed by), so a
-// target of depth alone has one sample, having said so. Another number is the
+// it ends: they're sampled like any target's. Its depth is read like any
+// target's too, one of each pixel's samples, as a renderer makes it when a
+// draw reads it. A target of depth alone has one sample, having said so. Another number is the
 // one of those under it, having said so; a device with fewer has what it has
 // (the renderer says so once), and 1 is the functions above. NULL and 0 for
 // the formats is one image of TIDE_TARGET_RGBA8.
@@ -1378,6 +1378,10 @@ uint32_t tide_draw_cube_source(tide_draw_list *d, tide_cubemap_ref cube);
 // Fills the whole screen, or what the clip leaves of it, with `color` as it
 // is: no blend, tint or transform changes a clear.
 void tide_draw_clear(tide_draw_list *d, tide_color color);
+// Sets depth back alone, over the whole screen or what the clip leaves of it:
+// colors and stencil stay as they are, and what's drawn after is in front of
+// everything drawn before. It's a TIDE_DRAW_CLEAR command whose `a.x` is 1.
+void tide_draw_clear_depth(tide_draw_list *d);
 
 // ---------------------------------------------------------------------------
 // Settings: what the commands recorded after them are drawn with. Each frame

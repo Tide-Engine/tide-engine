@@ -6,13 +6,18 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
+        description: 'Fold space together in a sunlit research atrium. Place linked portals, look through them into the other side, and carry a resonance cube across the divide. Play both operators alone or solve the chambers with a partner.',
+        image: '/prototypes/foldline/thumbnail.png',
+    },
+    {
         id: 'underfoot', title: 'Underfoot', kind: 'Puzzle · Carry the floor', players: '1–2 players',
         description: 'Two pavers over a long drop, and never quite enough stone. Lift a loose stone, lay it over nothing, and get both to their lanterns. Eighteen puzzles with crates, ice, plates and portals you carry; alone you work both pavers.',
         image: '/prototypes/underfoot/thumbnail.png',
     },
     {
         id: 'inside-out', title: 'Inside Out', kind: 'Cooperative puzzle · Nested rooms', players: '2 players',
-        description: 'Start inside a box within another room and find your way out together. Fit movable rooms through tight spaces, enter boxes that contain themselves, and solve twelve puzzles with varied shapes and doorways. Each little robot sees their own room and its immediate surroundings: a painted tabletop model with soft shadows and glowing marks, in focus where you are and blurred where the rooms around you are larger.',
+        description: 'Two small robots start inside a box within another room and find their way out together. One rule moves everything: whatever you walk into is pushed, a whole row at a time, and only a wall or your partner stops it, which is how you get inside a box. Nine puzzles with batteries, sockets and rooms that hold copies of themselves, on a painted tabletop model.',
         image: '/prototypes/inside-out/thumbnail.png',
     },
     {

@@ -92,9 +92,47 @@ input Controls
 - **Letting go presses nothing.** No field's `.up` is true for it, so a shot that fires when a button is let go doesn't fire on a guess.
 - **The devices match code reads** (see [Devices in the match](#devices-in-the-match)) are let go the same way: keys up, sticks centered.
 - **Only guesses change.** What the server runs, and what it confirms, is the input each player sent. A player whose input arrives late still keeps their last one for that tick, on every machine.
-- **What it costs.** A player who keeps going is shown a little behind where they'll turn out to be, and each tick the server confirms, the machine runs the ticks past its guess again. Both only happen on a machine further ahead than 0.15 seconds, and only while someone is doing something.
+- **What it costs.** A player who keeps going is shown a little behind where they'll turn out to be, and each tick the server confirms, the machine runs the ticks past its guess again. For the default guess, both happen only on a machine further ahead than 0.15 seconds, and only while someone is doing something. Custom guesses can require replay sooner.
 
 `[Absolute]` takes no arguments, and goes on the input's own fields, not on the fields of a struct it holds.
+
+## Choosing a guess
+
+Use `[DontPredict]` for actions that should occur only when a real input sample says so. On every guessed tick, the field starts at its declared default:
+
+```csharp
+input Controls
+{
+    float2 move;
+    [DontPredict] bool jump;
+    [DontPredict] bool dash;
+    [Absolute] float2 aim;
+}
+```
+
+Movement continues from the previous input; jump and dash become false immediately. Real input from this machine still acts immediately, and received input keeps its actions. The attribute takes no arguments and goes on the input's own fields. A marked struct or array resets as a whole. It cannot combine with `[Absolute]` on the same field.
+
+For a computed guess, add `Predict()`:
+
+```csharp
+input Controls
+{
+    float2 move;
+    bool dash;
+
+    Predict()
+    {
+        dash = false;
+        move *= 0.9;
+    }
+}
+```
+
+It runs once per guessed tick, starting from the previous input, after `[DontPredict]` resets. Fields it leaves untouched continue; computations such as the movement fade accumulate across guessed ticks. It can also explicitly replace a marked field's default. Repair, bounds and `Sanitize()` apply afterward. The existing 0.15-second limit still resets non-absolute fields after `Predict()` runs.
+
+`Predict()` takes no parameters and reads only the input's fields. It can call pure helpers, as `Sanitize()` does. It cannot read devices, match or local state, frame time or randomness, or send events, spawn entities or start tasks. The engine's `viewTime` remains read-only.
+
+These changes apply to client guesses of other players and a remote server. Actual samples, authoritative server ticks and confirmed replay keep their existing behavior. Changing a guess creates no `.down` or `.up` edges, so clearing an action does not invent a release. Normal `.down` already avoids repeated presses when a held bool is repeated; use these hooks when the held value itself or another action field should not continue into guessed ticks.
 
 ## Devices
 

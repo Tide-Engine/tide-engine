@@ -21,6 +21,12 @@ No installation or file association was changed on the owner's machine, and no
 CI workflow was dispatched. Remaining-platform validation follows the normal
 manually requested release workflow.
 
+Build run 38367850012 (2026-10-13, `dev` at b08fc1bc) failed three ways, fixed the same day:
+
+- **Every Package job:** `tools/tide-editor` installs `tide-editor` in the `tide` component, and the Package step built neither tree's `tide_editor`, so `cmake --install` found no file (the native tree's on Linux and macOS, the MinGW tree's on Windows). The step now builds `tide_editor` in both. Not tried locally: the package preset needs the LLVM libraries.
+- **Docs:** `docs/tests/admin-http.test.mjs` refuses a catalog game's name anywhere in the public search index, which includes `docs/spec.md`. Two spec entries named the prototype they were built for. A docs change is checked with that test after `npm run build`, not the build alone.
+- **`tide_platform_gpu_time_webgpu` on Windows web-release:** its second round gave a supported timer 60 frames to hand back a sample, which software WebGPU ran through in 0.3 seconds. Each round now ends at the first sample, and fails only after 3,600 frames without one (`platform/tests/gpu_time.c`).
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases

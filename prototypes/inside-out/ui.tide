@@ -136,7 +136,7 @@ local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
 
 string DimensionName(int room) { return room < 0 ? "Outer room" : RoomName(room); }
 
-override string Rooms.Tagline() { return "Two test dummies. Rooms within rooms. Find your way out."; }
+override string Rooms.Tagline() { return "Two test robots. Rooms within rooms. Find your way out."; }
 override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 84, 19, 66, 34); }
 
 override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
@@ -149,7 +149,7 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
     Draw.WireRoundRect(at, float2(width, 268), 0, 1, MUTED);
     Label("DUMMY TEST LINE  /  PACKING TRIAL", at + float2(0, -96), 12, HAZARD, Anchor.MiddleCenter);
     Label("Find your way out together.", at + float2(0, -56), Screen.width < 550 ? 24.0 : 30.0, INK, Anchor.MiddleCenter);
-    Paragraph("You are two test dummies packed in a box within another room. Move boxes, make space for each other, and follow rooms back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
+    Paragraph("You are two test robots packed in a box within another room. Move boxes, make space for each other, and follow rooms back into themselves.", at + float2(-width * 0.5 + 28, -15), width - 56, 15, MUTED);
     var buttonWidth = (width - 68) * 0.5;
     if (PaperButton("Host a room", Rect(at.x - width * 0.5 + 28, at.y + 64, buttonWidth, 43), session.state == SessionState.Connected, true))
     {
@@ -157,7 +157,7 @@ override void Rooms.TitlePage(Session session, mut Rooms.Lobby lobby)
         lobby.page = Rooms.Page.Playing;
     }
     if (PaperButton("Join a friend", Rect(at.x + 6, at.y + 64, buttonWidth, 43))) Rooms.ShowJoin(lobby);
-    Label(lobby.message != "" ? lobby.message : "12 puzzles  /  2 players  /  explore at your pace", at + float2(0, 120), 12, MUTED, Anchor.MiddleCenter);
+    Label(lobby.message != "" ? lobby.message : "9 puzzles  /  2 players  /  explore at your pace", at + float2(0, 120), 12, MUTED, Anchor.MiddleCenter);
 }
 
 [Stage(ArtStage.Prepare, 1)]
@@ -416,29 +416,20 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
         GUILayout.Modal(Anchor.MiddleCenter, hands.guide)
         {
             GUILayout.Label("FIND A WAY OUT");
-            GUILayout.Label("Two test dummies begin inside boxes and work outward.");
-            GUILayout.Label("Your view follows your dummy between rooms.");
-            GUILayout.Label("The containing world is visible beyond the walls.");
-            GUILayout.Label("WASD / arrows: walk and push parcels or rooms.");
-            GUILayout.Label("Rooms move first. Block a room to step inside.");
+            GUILayout.Label("Two test robots begin inside boxes and work outward.");
+            GUILayout.Label("WASD / arrows: walk and push. Touch: the same arrows.");
+            GUILayout.Label("Whatever you walk into is pushed, and so is the row behind it.");
+            GUILayout.Label("Only a wall or your partner stops a row.");
+            GUILayout.Label("A box that cannot move lets you in by the door facing you.");
+            GUILayout.Label("So does a battery or a box pushed at it.");
             GUILayout.Label("Beside a box: a yellow bar pushes it, a green arrow enters.");
-            GUILayout.Label("Walk out through an edge door to leave.");
-            GUILayout.Label("A wall, another box or your partner can stop a room.");
-            GUILayout.Label("Touch: use the same directional arrows.");
-            GUILayout.Label("Rooms can carry people and other rooms.");
-            GUILayout.Label("Boxes can move into their own interiors.");
-            GUILayout.Label("Copies of a room share its contents and people.");
-            GUILayout.Label("1 is a primary box. 1' is a movable copy.");
-            GUILayout.Label("What you push out leaves by the box you came in through.");
-            GUILayout.Label("Boxes side by side join only where doorways line up.");
-            GUILayout.Label("Joined doorways are walked through, not pushed.");
-            GUILayout.Label("You return beside the entrance you used.");
-            GUILayout.Label("You can enter up to eight layers deep.");
-            GUILayout.Label("Box icons need parcels.");
-            GUILayout.Label("Coloured outlines need their room boxes.");
-            GUILayout.Label("Both dummies must reach player-marked goals.");
-            GUILayout.Label("Doorways can be anywhere along a room edge.");
-            GUILayout.Label("Z: shared undo. R: reset. H: three gentle hints.");
+            GUILayout.Label("Walk out through an edge door to leave a room.");
+            GUILayout.Label("You come out beside the room's own box.");
+            GUILayout.Label("A pale box is a copy: a way in, never the way out.");
+            GUILayout.Label("A room is one place: what is in it is in every box of it.");
+            GUILayout.Label("Sockets need batteries. Outlines need their boxes.");
+            GUILayout.Label("Both robots must reach a goal.");
+            GUILayout.Label("Z: shared undo. R: reset. H: three hints.");
             GUILayout.Label("Talk to each other. There is no time limit.");
             GUILayout.Toggle("Ambience", hands.music);
             GUILayout.Toggle("Reduced motion", hands.reduceMotion);

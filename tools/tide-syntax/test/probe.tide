@@ -419,3 +419,9 @@ namespace ProbeBlocks.Inner
 // Shared components select local storage at placement and access.
 view LocalPlacement(local mut Toast toast, World world) { local Spawn(Toast); }
 view LocalQuery(query (local Toast toast) toasts) { }
+
+input PredictedControls
+{
+    [DontPredict] bool jump;
+    Predict() { jump = false; }
+}

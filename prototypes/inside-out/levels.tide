@@ -164,24 +164,7 @@ void WidenRooms(int level, mut LevelLayout layout)
             WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
             WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
             break;
-        case 4:
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 3), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 3), Tile.Floor);
-            WorkshopTile(layout, 2, int2(2, 1), Tile.Floor);
-            WorkshopTile(layout, 2, int2(4, 1), Tile.Floor);
-            WorkshopTile(layout, 2, int2(5, 1), Tile.Floor);
-            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(1, 1), Tile.Floor);
-            break;
-        case 5:
+        case 7:
             WorkshopTile(layout, 0, int2(4, 1), Tile.Floor);
             WorkshopTile(layout, 0, int2(4, 3), Tile.Floor);
             WorkshopTile(layout, 0, int2(4, 4), Tile.Floor);
@@ -190,54 +173,6 @@ void WidenRooms(int level, mut LevelLayout layout)
             WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
             WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
             WorkshopTile(layout, 1, int2(1, 5), Tile.Floor);
-            break;
-        case 7:
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Floor);
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 3), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 3), Tile.Floor);
-            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
-            break;
-        case 8:
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
-            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
-            break;
-        case 9:
-            WorkshopTile(layout, 0, int2(4, 1), Tile.Floor);
-            WorkshopTile(layout, 0, int2(4, 3), Tile.Floor);
-            WorkshopTile(layout, 0, int2(4, 4), Tile.Floor);
-            break;
-        case 10:
-            WorkshopTile(layout, 0, int2(4, 1), Tile.Floor);
-            WorkshopTile(layout, 0, int2(4, 3), Tile.Floor);
-            WorkshopTile(layout, 0, int2(4, 4), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Floor);
-            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
-            break;
-        case 11:
-            WorkshopTile(layout, 2, int2(1, 3), Tile.Floor);
-            WorkshopTile(layout, 3, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 3, int2(5, 5), Tile.Floor);
-            WorkshopTile(layout, 3, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 3, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 3, int2(1, 5), Tile.Floor);
             break;
     }
 }
@@ -298,36 +233,19 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopTile(layout, 1, int2(5, 3), Tile.Exit);
             break;
         case 4:
-            WorkshopContaining(layout, puzzle, 2, 7, 5);
-            WorkshopClear(layout, 2);
-            WorkshopPatch(layout, 2, 1, 2, 5, 3);
-            WorkshopTile(layout, 2, int2(3, 1), Tile.Floor);
-            WorkshopTile(layout, 2, int2(3, 0), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(4, 2), 4, 4, 15, 2, 2, 1, 1, 2, 2);
-            WorkshopRoom(layout, puzzle, 1, int2(4, 2), int2(2, 2), 5, 3, 10, 2, 2);
-            WorkshopWalker(puzzle, 0, 0, int2(1, 2));
-            WorkshopWalker(puzzle, 1, 1, int2(3, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(2, 1));
-            WorkshopTile(layout, 1, int2(3, 1), Tile.Target);
-            WorkshopTile(layout, 2, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 2, int2(5, 3), Tile.Exit);
+            // A row moves as one, however long: a battery, a box and nothing
+            // to stop them.
+            WorkshopContaining(layout, puzzle, 1, 7, 7);
+            WorkshopRoom(layout, puzzle, 0, int2(1, 3), int2(1, 3), 5, 5, 2, 1, 1);
+            WorkshopRoom(layout, puzzle, 2, int2(4, 3), int2(5, 3), 3, 3, 8, 1, 1);
+            WorkshopWalker(puzzle, 0, 0, int2(3, 2));
+            WorkshopWalker(puzzle, 1, 0, int2(2, 2));
+            WorkshopCargo(layout, puzzle, 1, int2(3, 3));
+            WorkshopTile(layout, 1, int2(4, 3), Tile.Target);
+            WorkshopTile(layout, 1, int2(2, 1), Tile.Exit);
+            WorkshopTile(layout, 1, int2(2, 5), Tile.Exit);
             break;
         case 5:
-            WorkshopContaining(layout, puzzle, 1, 7, 5);
-            WorkshopClear(layout, 1);
-            WorkshopPatch(layout, 1, 2, 3, 4, 3);
-            WorkshopTile(layout, 1, int2(3, 2), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 2), int2(3, 2), 5, 6, 15, 1, 1, 1, 2, 3, 3);
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Wall);
-            WorkshopReference(layout, puzzle, 0, int2(3, 2), 0);
-            WorkshopWalker(puzzle, 0, 0, int2(4, 2));
-            WorkshopWalker(puzzle, 1, 0, int2(2, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
-            WorkshopTile(layout, 0, int2(1, 4), Tile.Target);
-            WorkshopTile(layout, 1, int2(2, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
-            break;
-        case 6:
             // A box only lets a bot in while it cannot move, and this one
             // has open floor behind its outline: the partner is the wall.
             // The room is a figure of eight round two blocks, so either bot
@@ -351,110 +269,62 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
             WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
             WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
             break;
+        case 6:
+            // A battery goes into a box that cannot move, and so does the bot
+            // behind it. The room is the figure of eight of the puzzle before,
+            // so the partner can stand behind the box.
+            WorkshopContaining(layout, puzzle, 1, 7, 7);
+            WorkshopClear(layout, 1);
+            WorkshopPatch(layout, 1, 1, 1, 5, 1);
+            WorkshopPatch(layout, 1, 1, 3, 5, 3);
+            WorkshopPatch(layout, 1, 1, 5, 5, 5);
+            WorkshopTile(layout, 1, int2(1, 2), Tile.Floor);
+            WorkshopTile(layout, 1, int2(5, 2), Tile.Floor);
+            WorkshopTile(layout, 1, int2(1, 4), Tile.Floor);
+            WorkshopTile(layout, 1, int2(5, 4), Tile.Floor);
+            WorkshopRoom(layout, puzzle, 0, int2(1, 1), int2(1, 1), 5, 5, 6, 1, 1);
+            WorkshopRoom(layout, puzzle, 2, int2(3, 3), int2(3, 3), 3, 3, 8, 1, 1);
+            WorkshopWalker(puzzle, 0, 0, int2(2, 3));
+            WorkshopWalker(puzzle, 1, 0, int2(3, 2));
+            WorkshopCargo(layout, puzzle, 1, int2(2, 3));
+            WorkshopTile(layout, 2, int2(1, 1), Tile.Target);
+            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
+            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
+            break;
         case 7:
-            WorkshopContaining(layout, puzzle, 2, 7, 5, 4);
-            WorkshopPatch(layout, 2, 1, 0, 5, 0);
-            WorkshopTile(layout, 2, int2(3, 1), Tile.Wall);
-            WorkshopRoom(layout, puzzle, 0, int2(4, 2), int2(4, 1), 5, 4, 15, 2, 2, 2, 1, 3, 1);
-            WorkshopRoom(layout, puzzle, 1, int2(3, 2), int2(0, 1), 5, 3, 10, 2, 0);
-            WorkshopWalker(puzzle, 0, 1, int2(3, 1));
-            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
-            WorkshopCargo(layout, puzzle, 1, int2(2, 1));
-            WorkshopTile(layout, 2, int2(2, 2), Tile.Target);
-            WorkshopPatch(layout, -1, 2, 4, 4, 4);
-            WorkshopTile(layout, -1, int2(2, 4), Tile.Exit);
-            WorkshopTile(layout, -1, int2(4, 4), Tile.Exit);
+            WorkshopContaining(layout, puzzle, 1, 7, 5);
+            WorkshopClear(layout, 1);
+            WorkshopPatch(layout, 1, 2, 3, 4, 3);
+            WorkshopTile(layout, 1, int2(3, 2), Tile.Floor);
+            WorkshopRoom(layout, puzzle, 0, int2(3, 2), int2(3, 2), 5, 6, 15, 1, 1, 1, 2, 3, 3);
+            WorkshopTile(layout, 0, int2(2, 3), Tile.Wall);
+            WorkshopReference(layout, puzzle, 0, int2(3, 2), 0);
+            WorkshopWalker(puzzle, 0, 0, int2(4, 2));
+            WorkshopWalker(puzzle, 1, 0, int2(2, 1));
+            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
+            WorkshopTile(layout, 0, int2(1, 4), Tile.Target);
+            WorkshopTile(layout, 1, int2(2, 3), Tile.Exit);
+            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
             break;
         case 8:
-            WorkshopContaining(layout, puzzle, 2, 7, 5);
-            WorkshopClear(layout, 2);
-            WorkshopPatch(layout, 2, 2, 3, 5, 3);
-            WorkshopTile(layout, 2, int2(3, 2), Tile.Floor);
-            WorkshopTile(layout, 2, int2(5, 2), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 2), int2(3, 2), 5, 5, 15, 2, 2, 1, 2, 3, 2);
-            WorkshopPatch(layout, 0, 1, 4, 3, 4);
-            WorkshopRoom(layout, puzzle, 1, int2(5, 2), int2(5, 2), 4, 5, 15, 2, 2, 1, 2, 1, 2);
-            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
-            WorkshopReference(layout, puzzle, 0, int2(3, 3), 1);
-            WorkshopReference(layout, puzzle, 1, int2(1, 2), 0);
-            WorkshopWalker(puzzle, 0, 0, int2(2, 3));
-            WorkshopWalker(puzzle, 1, 1, int2(1, 3));
-            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(1, 2));
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Target);
-            WorkshopTile(layout, 0, int2(3, 2), Tile.Target);
-            WorkshopTile(layout, 2, int2(2, 3), Tile.Exit);
-            WorkshopTile(layout, 2, int2(4, 3), Tile.Exit);
-            break;
-        case 9:
-            WorkshopContaining(layout, puzzle, 1, 6, 6);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 2), 5, 6, 15, 1, 1, 2, 2, 2, 2);
-            WorkshopTile(layout, 1, int2(1, 4), Tile.Wall);
-            WorkshopTile(layout, 1, int2(2, 4), Tile.Wall);
-            WorkshopTile(layout, 0, int2(2, 1), Tile.Wall);
-            WorkshopPatch(layout, 0, 0, 3, 0, 5);
-            WorkshopTile(layout, 0, int2(1, 5), Tile.Floor);
-            WorkshopReference(layout, puzzle, 1, int2(2, 3), 0);
-            WorkshopWalker(puzzle, 0, 0, int2(2, 0));
-            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(1, 2));
-            WorkshopCargo(layout, puzzle, 0, int2(2, 3));
-            WorkshopTile(layout, 0, int2(1, 2), Tile.Target);
-            WorkshopTile(layout, 1, int2(1, 2), Tile.Target);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(4, 2), Tile.Exit);
-            break;
-        case 10:
-            WorkshopContaining(layout, puzzle, 2, 7, 6);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(1, 4), 5, 6, 15, 2, 1, 2, 2, 2, 2);
-            WorkshopRoom(layout, puzzle, 1, int2(5, 4), int2(5, 4), 3, 5, 15, 2, 2, 1, 1, 1, 2);
-            WorkshopClear(layout, 2);
-            WorkshopPatch(layout, 2, 2, 3, 5, 3);
-            WorkshopTile(layout, 2, int2(5, 4), Tile.Floor);
-            WorkshopPatch(layout, 1, 2, 2, 2, 4);
-            WorkshopTile(layout, 0, int2(0, 1), Tile.Floor);
-            WorkshopTile(layout, 0, int2(0, 3), Tile.Floor);
-            WorkshopTile(layout, 0, int2(1, 5), Tile.Floor);
-            WorkshopReference(layout, puzzle, 2, int2(4, 3), 0);
-            WorkshopReference(layout, puzzle, 0, int2(0, 1), 1);
-            WorkshopWalker(puzzle, 0, 0, int2(0, 2));
-            WorkshopWalker(puzzle, 1, 0, int2(4, 2));
-            WorkshopCargo(layout, puzzle, 0, int2(1, 3));
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Target);
-            WorkshopTile(layout, 2, int2(2, 3), Tile.Exit);
-            WorkshopTile(layout, 2, int2(5, 3), Tile.Exit);
-            break;
-        case 11:
-            WorkshopContaining(layout, puzzle, 3, 7, 6);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 0), 5, 5, 15, 3, 2);
-            WorkshopRoom(layout, puzzle, 1, int2(4, 2), int2(4, 2), 5, 5, 15, 0, 0);
-            WorkshopRoom(layout, puzzle, 2, int2(5, 4), int2(5, 4), 5, 4, 15, 3, 3, 2, 1, 2, 2);
-            WorkshopClear(layout, 3);
-            WorkshopPatch(layout, 3, 2, 3, 5, 3);
-            WorkshopPatch(layout, 3, 4, 4, 5, 4);
-            WorkshopReference(layout, puzzle, 3, int2(4, 3), 1);
-            WorkshopReference(layout, puzzle, 1, int2(0, 3), 2);
-            WorkshopTile(layout, 1, int2(0, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(0, 3), Tile.Floor);
-            WorkshopPatch(layout, 2, 1, 0, 3, 0);
-            WorkshopTile(layout, 2, int2(3, 3), Tile.Floor);
-            WorkshopWalker(puzzle, 0, 0, int2(0, 2));
-            WorkshopWalker(puzzle, 1, 0, int2(2, 0));
-            WorkshopCargo(layout, puzzle, 0, int2(3, 2));
-            WorkshopTile(layout, 3, int2(5, 3), Tile.Target);
-            WorkshopTile(layout, 3, int2(2, 3), Tile.Exit);
-            WorkshopTile(layout, 3, int2(4, 4), Tile.Exit);
+            // A copy is a way in, and never the way out: the room's own box
+            // stands outside, on the table, and that is where its doors lead.
+            WorkshopContaining(layout, puzzle, 1, 7, 7);
+            WorkshopRoom(layout, puzzle, 0, int2(1, 3), int2(1, 3), 5, 5, 2, 1, 1);
+            WorkshopRoom(layout, puzzle, 2, int2(4, 3), int2(-1), 5, 5, 12, -1, -1);
+            WorkshopReference(layout, puzzle, 1, int2(5, 3), 2);
+            WorkshopWalker(puzzle, 0, 0, int2(3, 2));
+            WorkshopWalker(puzzle, 1, 0, int2(2, 2));
+            WorkshopCargo(layout, puzzle, 1, int2(4, 3));
+            WorkshopPatch(layout, -1, 4, 3, 5, 5);
+            WorkshopTile(layout, -1, int2(4, 5), Tile.Target);
+            WorkshopTile(layout, -1, int2(5, 4), Tile.Exit);
+            WorkshopTile(layout, -1, int2(5, 5), Tile.Exit);
             break;
     }
-    for (var room = 0; room < layout.roomCount; room++) SquareRoom(layout, puzzle, room, level == 8 && room == 1);
+    for (var room = 0; room < layout.roomCount; room++) SquareRoom(layout, puzzle, room, false);
     WidenRooms(Math.Clamp(level, 0, LEVEL_COUNT - 1), layout);
     WorkshopSeed(layout, puzzle);
-}
-string ChapterName(int level)
-{
-    if (level < 4) return "Beyond the first walls";
-    if (level < 8) return "Borrowed space";
-    return "The same place again";
 }
 string LevelName(int level)
 {
@@ -464,107 +334,78 @@ string LevelName(int level)
         case 1: return "No handle inside";
         case 2: return "The other opening";
         case 3: return "A place to stand";
-        case 4: return "Passing place";
-        case 5: return "The same corner";
-        case 6: return "Hold it steady";
-        case 7: return "Before it moves";
-        case 8: return "Two ways home";
-        case 9: return "Return address";
-        case 10: return "Folded landing";
-        case 11: return "Crossed return";
+        case 4: return "All in a row";
+        case 5: return "Hold it steady";
+        case 6: return "Posted";
+        case 7: return "The same corner";
+        case 8: return "The other way in";
     }
     return "Inside Out";
 }
 string LevelLesson(int level)
 {
-    if (level == 0) return "Deliver the parcel beyond both boxes. Find a player goal for each dummy.";
-    if (level == 1) return "Move the home onto its outline and deliver its parcel into the containing room.";
-    if (level == 2) return "Dock the home and deliver its parcel inside the other box.";
-    if (level == 3) return "Leave the parcel on the left target and the home on the right outline.";
-    if (level == 4) return "Trade the two boxes' places and deliver the parcel into the long room.";
-    if (level == 5) return "Deliver the parcel down the left corridor, then leave this room together.";
-    if (level == 6) return "Park the small box on its outline with its parcel delivered inside. A box only lets you in while it cannot move.";
-    if (level == 7) return "Deliver the parcel, pack the boxes onto their outlines, then leave both enclosing rooms.";
-    if (level == 8) return "Deliver both parcels in the same interior and return to the containing room.";
-    if (level == 9) return "Move the home onto its outline, keep one parcel inside, and deliver the other outward.";
-    if (level == 10) return "Park the home inside the narrow room, restore its parcel, and leave both rooms.";
-    if (level == 11) return "Park the home inside the third room and deliver the parcel into the larger containing space.";
-    return "Deliver every parcel, match the box outlines, and reach the larger space's player goals.";
+    if (level == 0) return "Seat the battery beyond both boxes. Find a goal for each robot.";
+    if (level == 1) return "Move the home onto its outline and seat its battery in the containing room.";
+    if (level == 2) return "Park the home and seat its battery inside the other box.";
+    if (level == 3) return "Leave the battery in the left socket and the home on the right outline.";
+    if (level == 4) return "Seat the battery and park the small box. A row of things moves as one.";
+    if (level == 5) return "Park the small box on its outline with its battery seated inside. A box only lets you in while it cannot move.";
+    if (level == 6) return "Seat the battery inside the small box without moving the box off its outline.";
+    if (level == 7) return "Seat the battery down the left corridor, then leave this room together.";
+    return "Seat the battery on the table outside. A pale box is a copy: a way in, never the way out.";
 }
 string LevelHint(int level, int tier)
 {
     var detail = Math.Clamp(tier, 0, 2);
     if (level == 0)
     {
-        if (detail == 0) return "Where does your doorway lead? What is standing in the parcel's path?";
-        if (detail == 1) return "Let Amber leave through the east door and clear the outside landing. Teal can push the parcel east through both boxes.";
-        return "Amber: east three times, then north. Teal: east five times, then south. Both finish in the larger outside space.";
+        if (detail == 0) return "Where does your doorway lead? What is standing in the battery's path?";
+        if (detail == 1) return "One of you leaves by the east door and clears the landing outside. The other pushes the battery out after.";
+        return "Amber leaves east twice and steps aside. Teal pushes the battery east out of both boxes onto the socket; then each takes a goal.";
     }
     if (level == 1)
     {
-        if (detail == 0) return "After the box moves, will the dummy outside still have a way back in?";
-        if (detail == 1) return "Someone must stay inside the left box while the other reaches its south side and pushes it north.";
-        return "Keep the parcel's dummy inside. Leave by the north door, circle around the left side, and push the occupied box north. Its east doorway now reaches the delivery route.";
+        if (detail == 0) return "After the box moves, will the robot outside still have a way back in?";
+        if (detail == 1) return "Someone stays inside the home while the other goes round to its south side and pushes it north.";
+        return "Amber leaves by the north door, circles round the left side and pushes the occupied home north onto its outline. Teal then pushes the battery east out to the socket.";
     }
     if (level == 2)
     {
-        if (detail == 0) return "Who can reach the outside pushing stance? Who must stay with the parcel?";
-        if (detail == 1) return "Empty the tall receiving room of its dummy first. Move the occupied home north to align its east opening with the receiver.";
-        return "Amber: north twice, west four times, south twice, east, north. Teal: east six times delivers the parcel, then west twice returns. Amber finishes west, south.";
+        if (detail == 0) return "Who can reach the place to push from outside? Who must stay with the battery?";
+        if (detail == 1) return "Empty the tall room of its robot first. Move the occupied home north to line its east opening up with the tall room.";
+        return "Amber leaves the tall room, goes round and pushes the home north. Teal pushes the battery east out of the home and into the tall room, onto its socket.";
     }
     if (level == 3)
     {
-        if (detail == 0) return "Does a finished parcel leave somewhere to stand beside the home?";
-        if (detail == 1) return "The parcel's target is also the stance for pushing the home east. Store the parcel one cell north, move the occupied home, then restore the parcel from above.";
-        return "Teal exports the parcel west. Amber leaves south, pushes that parcel north, and pushes the home east twice. Circle over the top to restore the parcel; approach the home from its right and push it west onto the outline. Teal can finally leave west.";
+        if (detail == 0) return "Does a seated battery leave somewhere to stand beside the home?";
+        if (detail == 1) return "The battery's socket is also where you stand to push the home east. Put the battery aside first.";
+        return "Take the battery out and leave it off its socket. Push the home east onto its outline from the socket's cell, then bring the battery back to the socket.";
     }
     if (level == 4)
     {
-        if (detail == 0) return "How can two boxes pass in a corridor that is only one cell wide at the top?";
-        if (detail == 1) return "Deliver before trading places. Use the bay at the top for the long room, and keep a dummy above it to push it back out.";
-        return "Amber posts the parcel east out of the home. Teal leaves the long room east and waits behind it to stop its push, so Amber can push the parcel in and follow it. Deliver inside, then Amber waits at the top of the bay while Teal brings the long room left; park it north at the middle bay. Teal moves the home right, Amber releases the parked room, then Teal leaves the home west to put the long room on its left outline.";
+        if (detail == 0) return "What happens to a box when the thing beside it is pushed into it, and nothing stands behind?";
+        if (detail == 1) return "Nothing in a row holds it back. One push from the west moves the battery and the box together.";
+        return "Amber leaves the home east and keeps going: the battery slides onto its socket and the box onto its outline in one push. Then each takes a goal.";
     }
     if (level == 5)
     {
-        if (detail == 0) return "Where is the standing tile above the parcel? Can a doorway lead back into this room?";
-        if (detail == 1) return "Move the small copy one cell left. Its south backstop makes entry from above reach the home room's shifted north door.";
-        return "Amber pushes the copy west, then leaves by the south door. Teal enters the copy from its north side and pushes the parcel down three cells. Return north through the same copy, take the right corridor, and leave south.";
+        if (detail == 0) return "Walking into a box pushes it along. What could stand behind this one so that it stays where it is?";
+        if (detail == 1) return "Your partner can be the wall. One of you goes round to the far side of the outline and waits there; then the other can walk in.";
+        return "Teal leaves the home east and goes round to the goal just east of the outline. Amber leaves south, pushes the small box one step east onto its outline, then walks into it again: Teal stops the push, so Amber goes inside. Amber pushes the battery east onto its socket, comes back out west and steps onto the goal.";
     }
     if (level == 6)
     {
-        if (detail == 0) return "Walking into a box pushes it along. What could stand behind this one so that it stays where it is?";
-        if (detail == 1) return "Your partner can be the wall. One of you goes round to the far side of the outline and waits there; then the other can walk in.";
-        return "Teal leaves the home east and goes round to the goal just east of the outline. Amber leaves south, pushes the small box one step east onto its outline, then walks into it again: Teal stops the push, so Amber goes inside. Amber pushes the parcel east onto its target, comes back out west and steps onto the goal.";
+        if (detail == 0) return "A battery pushed at a box that cannot move goes in through its door. What can stop this box?";
+        if (detail == 1) return "Your partner stands behind the box. Push the battery at it once and it goes in; push again and you follow, pushing it on.";
+        return "Teal goes round to the goal east of the box. Amber leaves south and pushes the battery east: it goes into the box. Amber pushes again, goes in after it and seats it, then comes back out west onto the goal.";
     }
     if (level == 7)
     {
-        if (detail == 0) return "Where would this parcel emerge after its box changes parent?";
-        if (detail == 1) return "Export the parcel west before nesting its home. Empty its target briefly to recover the stance for pushing the occupied box east.";
-        return "Amber posts the parcel west and stays inside. Teal leaves south, stores the parcel one cell north, and nests Amber's box east. Amber leaves the nested box through its right door, circles over the top to restore the parcel, then parks the containing box north. Both leave through the largest room's south door.";
+        if (detail == 0) return "Where can you stand above the battery? Can a doorway lead back into this very room?";
+        if (detail == 1) return "The small box is this room again. Going into it from one side brings you in at this room's door on that side.";
+        return "Use the small box as a way round: step into it to come in at the room's edge door, reach the cell above the battery, and push it down the corridor to its socket. Then both leave by the south door.";
     }
-    if (level == 8)
-    {
-        if (detail == 0) return "Which parcel must move first to clear a standing tile for the other?";
-        if (detail == 1) return "Use the other room's movable copy to reach the home's west door. After moving that copy right, its north approach reaches the home's shifted north doorway.";
-        return "Amber walks east six times through the two copies, delivering the lower parcel right. Teal moves north twice and east twice, then enters south and delivers the remaining parcel down. Teal returns north through the copy and leaves the narrow room south. Amber returns west through the copy; leaving that room south brings Amber back to the original home's south door, then outward.";
-    }
-    if (level == 9)
-    {
-        if (detail == 0) return "What happens to a copy's outward address when its containing box moves?";
-        if (detail == 1) return "Put the copy inside its own home, then move the occupied home north. Empty the upper parcel's target temporarily to reach the stance for extracting the copy.";
-        return "Amber leaves north, circles left and pushes the copy east into the home. Shift the occupied home north onto its outline. Teal moves the upper parcel down, reaches the copy's right side and exports it west. Amber stores that copy north to free the outside route. Teal posts the other parcel west and restores the first from the lower alcove; then both leave the home.";
-    }
-    if (level == 10)
-    {
-        if (detail == 0) return "Can a box pass into its own interior before reaching the room on its outline?";
-        if (detail == 1) return "Push the home through its outside copy. Inside the resulting self-containment, the west-side copy of the narrow room can receive the home from below.";
-        return "Amber leaves west and pushes the home east into its own copy. Teal leaves the cycle, moves the parcel down to recover the west standing tile, then pushes the home north through the narrow-room copy. Restore the parcel from its lower alcove. Leave the home north, cross the narrow room's offset east corridor, and leave north into the larger space.";
-    }
-    if (level == 11)
-    {
-        if (detail == 0) return "Which doorway can change a closed pair of boxes into an outward route?";
-        if (detail == 1) return "Push the home into the box already inside it. The copy on that box's lower west edge can extract the home into the third room's north doorway.";
-        return "Amber leaves west and pushes the home east into its child, making a two-box cycle. Teal uses the north doorway to reach the child, then pushes the home south through the third-room copy. Post the parcel west into the third room and move the home right onto its outline, clearing the north doorway. Teal delivers the parcel south into the larger space and returns through that doorway to leave at the offset east goal. Amber finishes at the left goal.";
-    }
-    return "Explore the openings together. Shared undo returns to a clear arrangement.";
+    if (detail == 0) return "The pale box and the box on the table outside are the same room. Which of them do its doors lead out beside?";
+    if (detail == 1) return "The pale copy is against the wall, so pushing the battery at it sends the battery in, and you after it.";
+    return "Push the battery east into the pale box and follow it in. Inside, push it across and out by the south door: it comes out on the table beside the room's own box. Follow it out, pushing it onto the socket, and take a goal each.";
 }

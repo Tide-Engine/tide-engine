@@ -1,0 +1,3 @@
+// expect: Predict works from the input alone, so it can't read Cursor.locked
+input I { bool jump; Predict() { jump = Cursor.locked; } }
+scene Main { }

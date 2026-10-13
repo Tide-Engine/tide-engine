@@ -79,6 +79,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | Function | What it draws |
 |---|---|
 | `Draw.Clear(color)` | Fills the screen |
+| `Draw.ClearDepth()` | Sets depth back and leaves the picture: 3D meshes drawn after are in front of everything before (see [3D](./3d.md)) |
 | `Draw.SetCamera(center, size)` | Sets the camera for the calls after it: `center` is the world position at the middle of the screen, and `size` is half the visible height, like Unity's orthographic size. One of the [draw settings](./draw-settings.md), like the rows that name them below |
 | `Draw.Circle(center, radius, color)` | A filled circle |
 | `Draw.WireCircle(center, radius, color)` | A circle's outline |

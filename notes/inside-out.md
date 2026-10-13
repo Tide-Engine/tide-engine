@@ -11,6 +11,95 @@ players are test dummies, in a PSX style, replacing the earlier institutional
 atmosphere. There are still no threats or jumpscares. These are game design
 choices within the prototype request, not engine or language requirements.
 
+## The rules now (2026-10-12, push-or-enter rewrite)
+
+This section is the game's rules as they stand. Everything below it about
+movement, trails, copies, facing doorways, echoes and the twelve puzzles is
+history: read it for why, not for what the code does.
+
+The owner, after playing with a partner, sent six points, was shown my
+reading of each with two questions, and answered "once done push and
+deploy", so the two readings are mine: (a) "stop making doors between
+worlds" means no direct passage between boxes side by side, and boxes keep
+their doorways; (b) "true recursion" means a room is one place with one box
+that is its outside, with no memory of how anything came in.
+- Facing: a bot faces the way it last moved (`Traveler.facing`, in the
+  match, so undo turns it back and a blocked step turns nothing).
+- "Things should always push, no matter what", and "the only movable wall
+  is the other player": `Shove` (`game.tide`) is the one rule for a bot, a
+  battery and a box. A thing steps to the next cell (`StepFrom`); what
+  stands there is pushed first, and what is beyond it, for a row of up to
+  20. Only a wall or a bot stops a row. Then the thing against the stop
+  stays, and the thing behind it goes into it if it is a box with a doorway
+  facing that way (`Gateway`), pushing on whatever stands in that doorway;
+  failing that it is stopped too and the same is asked of the thing behind
+  it, back to the pusher. All goals are worked out from where things stood,
+  then all move at once. `Step` says Walk, Push or Enter for the preview.
+- No ghosts, true recursion: a room is left beside its own box, by a bot or
+  anything pushed, however it was entered. A reference box (a copy) is a way
+  in only. A bot's trail is no longer history: `MovePuzzle` rebuilds it for
+  both bots after every move as the room's box, that box's room's, and so
+  on (`RebaseTrail` with depth 0), which is what the view's ancestry and
+  the status lines read. A bot is drawn solid in every drawing of its room;
+  the echo code is gone. A copy is drawn washed out (`BoxPaint`). A room
+  whose own box is inside it is left into itself, as before; no infinity
+  room was built.
+- No doors between worlds: `DoorsMeet`, the drawn passage and the special
+  cases for leaving one box into the next are gone. A bot leaving a box
+  into a cell with a box in it pushes that box, and goes into it if the
+  push is stopped.
+- Theme: parcels are batteries (dark cell, copper top with a plus, green
+  when seated) and targets are sockets; the words in the game say so, and
+  "robot" for "dummy". The owner also floated batteries that unlock things.
+  That is a new mechanic and is not built.
+
+Campaign: nine puzzles (`LEVEL_COUNT`). Under the new rules the old
+witnesses of puzzles 1 to 4 and of "Hold it steady" replay unchanged; "The
+same corner" was re-solved by search (16 moves); the other six old puzzles
+are dropped: one searched to four million positions without a result, the
+rest were not searched to an end, and they were built on rules that no
+longer exist. Three are new and small: "All in a row" (a battery and a box
+pushed as one), "Posted" (a battery pushed at a box the partner holds goes
+in, and the bot after it), "The other way in" (a pale copy against a wall
+is entered, and the room's own box is on the table outside, which is where
+its south door leads).
+
+| Puzzle | Witness |
+| --- | ---: |
+| 1 A room outside | 10 |
+| 2 No handle inside | 12 |
+| 3 The other opening | 20 |
+| 4 A place to stand | 31 |
+| 5 All in a row | 11 |
+| 6 Hold it steady | 19 |
+| 7 Posted | 15 |
+| 8 The same corner | 16 |
+| 9 The other way in | 26 |
+
+Witnesses 5 to 8 are the shortest (breadth-first through the Move handler);
+9 is my own route, its search having passed four million positions; 1 to 4
+are the old ones and not known shortest, and puzzle 4 had a 15-move
+solution under the old rules. Whether row pushing made puzzles 1 to 4
+easier is unchecked. Nobody has played any of the nine under these rules.
+
+Tests (`test/campaign.c`, rewritten; `test/simulation.c`, twelve fixtures
+of the old rules removed and four of the new added). Every puzzle's witness
+solves it through the generated handler, with both seats acting, one undo,
+a reset and an exact replay; with the seats exchanged; and every room is a
+square. `inside_out_a_box_is_entered_only_with_the_partner_behind_it`
+searches every position either bot reaches alone with the other taken off
+the board, in puzzles 6 and 7: 8,043 and 30,455 positions, and in none is
+the small box on its outline with its battery seated. The evidence
+counters and the second puzzle's exhaustive check are gone with the rules
+they measured. Fixtures: a row of two boxes and a battery, then the first
+box into the second when the row meets the edge, then the bot into the
+box; a battery behind a box holds nothing and the partner does; in by a
+copy and out, battery and bot, beside the room's own box; facing and undo.
+
+What is drawn: `EnteredBox` (`map.tide`) finds the box a bot went into by
+one step, so going in through a copy closes in on the copy, though the
+surroundings then switch to the room's own box's. Not looked at in motion.
+
 ## Shared world and recursive boxes
 
 `game.tide` contains one deterministic two-seat match. Both makers start
@@ -548,6 +637,33 @@ prototype beside its thumbnail. Public play remains
 serving/deployment contracts remain in `notes/private-prototypes.md` and
 `notes/docs-site.md`.
 
+
+## Push-or-enter rewrite validation (2026-10-12)
+
+Native and web debug builds are warning-free. The 25 fixtures pass natively
+and under WASI. `inside_out_play_webgl` passes in 477.78 s and
+`inside_out_play_webgpu` in 433.03 s, on the first run. The fixture's stage
+on a room that holds itself now plays "The same corner" to its end, with an
+exact scene comparison across a partner's undo (a bot's facing included),
+in place of the self-nesting and cycle-exit crops of a puzzle that is gone;
+its shelf clicks are for nine entries. Native captures of all nine starts,
+the row push, "Hold it steady" to its end and "The other way in" from the
+room, with the battery posted and from inside the copy were inspected at
+1280x800. The thumbnail is from that puzzle at 1920x1080 halved. The docs
+production build passes. No CI was dispatched.
+
+Deployed on the owner's word ("once done push and deploy"). Source
+`8257b69a` on `dev`, which also carries what had come into `dev` from other
+work. Every release page was rebuilt (`sand duel towers sumo docs_examples
+sample_games private_games`, web-release) and staged; the site's check,
+build, SEO, access, admin and examples tests pass. `fly deploy` from `docs`
+is release v270 of `tide-website`, image
+`deployment-01M4RWCY8YB6BSD1XHP8CZ4BAZ`, machine healthy. The public page
+answers 200 with the staged page's bytes (1,402,011, SHA-256
+`4603905ed82f9b4d0b8c6cf3a00f34c3e920007eea51683443beb6bc7e479301`), with
+noindex, COOP same-origin and COEP require-corp; its thumbnail and the home
+page answer 200. The two-browser fixture was not run against the public
+page or the production relay, and nobody has played the deployed build.
 
 ## Pushed things leave by the pusher's box, validation (2026-10-12)
 

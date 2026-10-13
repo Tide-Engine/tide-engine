@@ -1,0 +1,3 @@
+// expect: [DontPredict] can't combine with [Absolute]
+input I { [Absolute, DontPredict] bool jump; }
+scene Main { }

@@ -353,9 +353,11 @@ typedef struct tide_gpu {
     // pass to pass, and a triangle's edge covers some of them. Its color
     // textures have one color a pixel, what its samples come to, as each
     // pass on it ends (`end` resolves them): those are what's sampled and
-    // read back. Its depth is no texture (target_depth is 0): no backend
-    // here resolves one. It takes that many times the memory, and its color
-    // textures beside.
+    // read back. Its depth is no texture until resolve_depth is first asked
+    // for it (target_depth is 0 until then): from there it's one depth a
+    // pixel, a sample of each pixel's, as it was when resolve_depth was last
+    // called, with 4 bytes a pixel more held. It takes that many times the
+    // memory, and its color textures beside.
     tide_gpu_id (*target)(tide_gpu_target_format format, int width, int height);
     int (*target_limit)(void); // The most pixels a side one has, on this device
     // How many samples a target that holds `format`, whose samples are what's
@@ -371,6 +373,10 @@ typedef struct tide_gpu {
     bool (*float_targets)(void);
     tide_gpu_id (*target_texture)(tide_gpu_id target, uint32_t color); // 0 for an image it hasn't got
     tide_gpu_id (*target_depth)(tide_gpu_id target);
+    // Outside a pass: a multisampled target's depth texture is made, the
+    // first time, and is what its samples hold now. Nothing, for a target
+    // that isn't multisampled, whose depth is always its texture.
+    void (*resolve_depth)(tide_gpu_id target);
     void (*target_free)(tide_gpu_id target);
     // Its first color image, read back: 4 bytes a pixel, rows from the top.
     // Zeros for a target whose first isn't 4 bytes a pixel, or that has none:

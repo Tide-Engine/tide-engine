@@ -689,6 +689,7 @@ typedef struct draw_step {
     tide_float2 at;   // STEP_CLIP: its top left corner in window pixels
     tide_float2 to;   // ...and its bottom right one
     rgba color;       // STEP_CLEAR
+    bool depth_alone; // ...which sets depth back and leaves colors and stencil
 } draw_step;
 
 static shape *shapes;
@@ -1239,6 +1240,7 @@ typedef struct engine_pipelines {
     tide_gpu_target_format into;
     tide_gpu_id made[PIPELINE_KINDS][BLENDS][DEPTHS][CULLS]; // Only the 3D meshes' have more than the first depth and cull
     tide_gpu_id clear; // The clears'
+    tide_gpu_id depth_clear; // ...and the ones of depth alone
 } engine_pipelines;
 
 static engine_pipelines *engine_made;
@@ -1347,6 +1349,7 @@ typedef struct mesh_3d_vertex {
 typedef struct gpu_held {
     uint64_t bytes;
     uint8_t mipped; // A bit for each image whose smaller images were made: a third more, once
+    bool resolved;  // A multisampled target's depth was resolved into a texture: 4 bytes a pixel more, once
 } gpu_held;
 
 static gpu_held *held_buffers, *held_textures, *held_targets; // By the backend's id
@@ -1578,6 +1581,9 @@ typedef struct gpu_target {
     // were last made: they're made again for a draw that reads between them once more have (prepare_mipmaps)
     uint32_t drawn;
     uint32_t mipped[TIDE_GPU_MAX_COLORS];
+    // A multisampled one's depth, as a texture: 1 + how many passes had drawn when it was last made of its
+    // samples, and 0 for never (prepare_source_target)
+    uint32_t resolved;
 } gpu_target;
 
 static gpu_target *gpu_targets;
@@ -1977,6 +1983,26 @@ static tide_gpu_id clear_pipeline(const tide_gpu_target_format into)
     });
 }
 
+// A clear of depth alone: the clears' triangle with a clear color over what's
+// there, which leaves every color image as it is, and no stencil stored.
+static tide_gpu_id depth_clear_pipeline(const tide_gpu_target_format into)
+{
+    tide_gpu_id *made = &pipelines_into(into)->depth_clear;
+    if (*made) return *made;
+    const bool several = tide_gpu_target_colors(into) > 1;
+    return *made = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "clears of depth",
+        .glsl_vertex = clear_glsl_vertex,
+        .glsl_fragment = several ? clear_all_glsl_fragment : clear_glsl_fragment,
+        .wgsl = several ? clear_all_wgsl : clear_wgsl,
+        .uniform_size = 4 * sizeof(float),
+        .blend = TIDE_GPU_BLEND_ALPHA,
+        .depth = TIDE_GPU_DEPTH_RESET,
+        .into = into,
+        .outputs = several ? TIDE_GPU_MAX_COLORS : 1u,
+    });
+}
+
 // The window's clears' pipeline, the quad and the white pixel, the first time a list is drawn.
 static void renderer_start(void)
 {
@@ -2029,7 +2055,7 @@ static void find_pipelines(const tide_draw_list *list)
         case STEP_MESH_3D:
             s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, into, state);
             break;
-        case STEP_CLEAR: s->pipeline = clear_pipeline(into); break;
+        case STEP_CLEAR: s->pipeline = s->depth_alone ? depth_clear_pipeline(into) : clear_pipeline(into); break;
         default: break;
         }
     }
@@ -2716,11 +2742,7 @@ static const char *unavailable_texture(const tide_draw_list *list, const uint32_
     }
     if (!of_target(t)) return NULL;
     if (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target)) return "source render target is invalid or disposed";
-    if (t->space == TIDE_PIXELS_TARGET_DEPTH) {
-        // By what it asked for, whatever this device gave it: the same draws are passed by everywhere
-        return tide_render_target_samples(t->id) > 1u
-            ? "source render target is multisampled: its depth has several samples a pixel, which no shader reads" : NULL;
-    }
+    if (t->space == TIDE_PIXELS_TARGET_DEPTH) return NULL;
     const uint32_t colors = tide_render_target_colors(t->id);
     if (colors == 0) return "source render target holds depth alone: it has no color to sample";
     if (tide_render_target_image(t->id) >= colors) {
@@ -2765,15 +2787,29 @@ static bool prepare_source_target(const tide_draw_list *list, const uint32_t tex
     }
     if (!of_target(t)) return false;
     const uint64_t id = tide_render_target_whole(t->id); // The target, whichever of its images is sampled
-    const gpu_target *g = find_target(id);
-    if (g && (!tide_render_target_managed(id) || t->version < g->version)) return false;
-    float width, height;
-    int wide, high;
-    bool limited;
-    if (!target_extent(t->target, &root, &width, &height, &wide, &high, &limited)) return false;
-    if (g && g->target && t->version == g->version && g->width == wide && g->height == high) return false;
-    if (!check) target_for(id, t->target, t->version);
-    return true;
+    gpu_target *g = find_target(id);
+    // A multisampled target's depth is read as a texture of one depth a pixel, made of its samples outside a
+    // pass, and again once more passes have drawn into it
+    const bool depth = t->space == TIDE_PIXELS_TARGET_DEPTH && tide_render_target_samples(id) > 1u;
+    bool made = !g || (tide_render_target_managed(id) && t->version >= g->version);
+    float width = 0, height = 0;
+    int wide = 0, high = 0;
+    bool limited = false;
+    if (made && !target_extent(t->target, &root, &width, &height, &wide, &high, &limited)) made = false;
+    if (made && g && g->target && t->version == g->version && g->width == wide && g->height == high) made = false;
+    if (made && !check) g = target_for(id, t->target, t->version);
+    const bool stale = depth && (made || (g && g->target && g->resolved != g->drawn + 1u));
+    if (stale && !check && g && g->target) {
+        gpu->resolve_depth(g->target);
+        g->resolved = g->drawn + 1u;
+        gpu_held *h = held(&held_targets, &held_target_count, g->target);
+        if (!h->resolved && gpu->target_depth(g->target)) { // Where the device gave it one sample, its depth is its own
+            h->resolved = true;
+            h->bytes += (uint64_t)g->width * (uint64_t)g->height * 4u;
+            gpu_memory += (uint64_t)g->width * (uint64_t)g->height * 4u;
+        }
+    }
+    return made || stale;
 }
 
 static bool prepare_source_targets(const tide_draw_list *list, const draw_step *s, const bool check)
@@ -3129,7 +3165,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             add_step(STEP_TARGET);
             break;
         case TIDE_DRAW_CLEAR:
-            add_step(STEP_CLEAR)->color = color;
+            if (c->a.x != 0.0f) add_step(STEP_CLEAR)->depth_alone = true;
+            else add_step(STEP_CLEAR)->color = color;
             break;
         case TIDE_DRAW_CAMERA:
             cam->center = c->a;

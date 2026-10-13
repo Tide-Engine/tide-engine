@@ -434,10 +434,10 @@ jobs:
           # MinGW stages its tools before the native tools replace them.
           if [ "$RUNNER_OS" = Windows ]; then
             cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
-            cmake --build --preset mingw-release --target tide_cli tidels tide_platform
+            cmake --build --preset mingw-release --target tide_cli tidels tide_platform tide_editor
           fi
           cmake --preset package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
-          targets=(tide_cli tidels tide_vscode)
+          targets=(tide_cli tidels tide_vscode tide_editor)
           if [ "$RUNNER_OS" != Windows ]; then targets+=(tide_platform); fi
           cmake --build --preset package --target "${targets[@]}"
           cmake --preset web-package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
