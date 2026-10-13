@@ -53,11 +53,13 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
-- SKYWORKS (`skyworks`): `prototypes/skyworks/`, an original single-player voxel
-  automation game requested on 2026-10-13. Manual gathering/crafting leads to
-  copper/water lines, signal circuits, bridges to resource islands and a beacon.
-  `skyworks_page` stages the public page; `private_games` collects its page or
-  native target. Rules, limits, engine workarounds and tests: `notes/skyworks.md`.
+Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
+game note, build targets and catalog/public-id registrations are removed. Its
+implementation and engine-gap record remain in git history at `7c047a87`.
+No engine code was changed by the prototype or its removal.
+Validation: native/web debug configuration succeeds with no SKYWORKS tests;
+the docs production build, eighteen analytics/admin checks and production HTTP
+check pass, including 404s for its removed page and thumbnail. No CI/deployment.
 
 - FOLDLINE (`foldline`): `prototypes/foldline/`, a new first-person 3D
   cooperative portal puzzle requested on 2026-10-12. Its chambers sit in a

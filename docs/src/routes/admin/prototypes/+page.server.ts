@@ -6,11 +6,6 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
-        id: 'skyworks', title: 'SKYWORKS', kind: 'Voxel automation · Floating islands', players: '1 player',
-        description: 'Start with a small island above the clouds. Chop trees, mine copper and craft wind-powered machines. Route ore through tubes and kilns, build water and signal circuits, then bridge to resource islands and light a sky beacon.',
-        image: '/prototypes/skyworks/thumbnail.png',
-    },
-    {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
         description: 'Fold space together in a sunlit research atrium. Place linked portals, look through them into the other side, and carry a resonance cube across the divide. Play both operators alone or solve the chambers with a partner.',
         image: '/prototypes/foldline/thumbnail.png',
