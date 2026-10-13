@@ -33,6 +33,7 @@ tide <command> [folder] [options]
 tide open scenes/Level.tprefab
 tide open scenes/Level.tprefab --project .
 tide open scenes/Level.tprefab --check
+tide open scenes/Level.tprefab --preview
 ```
 
 The desktop app edits rooted [prefabs and scenes](../game/scenes.md#authored-prefabs).
@@ -50,6 +51,13 @@ the normal [hidden input/capture loop](#scripts). The default editor size is
 requires one of these bounded modes or `--check`.
 
 See [the editor controls and current limits](editors.md#native-scene-editor).
+
+`--preview` starts with compiled views enabled on authored match entities;
+`--local-preview` uses local placement. Only `[RunInEditor]` and `[EditorOnly]`
+views execute, with no gameplay initialization or systems. The full native build
+toolchain is required. Bounded captures/scripts wait for the current preview
+build and return 1 if it fails, rather than capturing stale state. `--check`
+still performs only front-end validation, even with a preview flag.
 
 ## run and build
 

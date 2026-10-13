@@ -22,6 +22,17 @@ static const char *tree = "// untouched h\xc3\xa9llo\r\n"
     "prefab Level {\r\n    Transform;\r\n    Health { value = 5 /* keep value comment */, label = \"hello\" };\r\n"
     "    entity Child { Transform; Health; }\r\n}\r\n";
 
+TIDE_TEST(editor_opted_views_match_authored_prefabs_without_game_spawns)
+{
+    const char *text = "scene Main {}\ncomponent Health { int value = 5; }\n"
+        "[RunInEditor] view Shared(Health health) { Draw.Circle(float2(health.value,0),1,Color.white); }\n"
+        "[EditorOnly] view Local(local Health health) { Draw.Circle(float2(health.value,0),1,Color.white); }\n";
+    char *file = fixture("opted-views", text, "prefab Level { Health; entity Child { Health; } }\n");
+    editor_document d; TIDE_REQUIRE(editor_open(&d, file, NULL));
+    TIDE_CHECK(d.errors == 0 && d.warnings == 0);
+    editor_close(&d); free(file);
+}
+
 static int node(editor_document *d, const char *path)
 {
     for (int i = 0; i < d->nodes.count; i++) if (str_eq_c(d->nodes.items[i].path, path)) return i;
@@ -48,6 +59,8 @@ TIDE_TEST(editor_edits_preserve_source_and_undo)
     TIDE_CHECK(editor_set_field(&d, 0, str_from("Transform"), str_from("localPosition"), "float3(2, 3, 4)"));
     TIDE_CHECK(d.errors == 0); TIDE_CHECK(strstr(d.text, "Transform { localPosition = float3(2, 3, 4) };") != NULL);
     TIDE_CHECK(editor_save(&d)); TIDE_CHECK(!editor_dirty(&d)); TIDE_CHECK(!sys_exists(d.draft_path));
+    const uint64_t saved_revision = d.revision;
+    editor_poll(&d); TIDE_CHECK(d.revision == saved_revision);
     char *disk = sys_read_file(file, NULL); TIDE_CHECK(strcmp(disk, d.text) == 0); free(disk);
     editor_close(&d); free(file);
 }

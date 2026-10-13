@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
-const [code, server, node = process.execPath] = process.argv.slice(2).map(p => path.resolve(p));
+const [code, server, node = process.execPath, tide] = process.argv.slice(2).map(p => path.resolve(p));
 assert.ok(code && server, 'Pass the Code executable and this checkout\'s built tidels');
 const source = fileURLToPath(new URL('..', import.meta.url));
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tide-vscode-host-'));
@@ -24,7 +24,8 @@ fs.writeFileSync(path.join(workspace, 'main.tide'), 'component Body { float radi
 // The real terminal launches Node as a stand-in CLI. Its child and grandchild
 // stay alive until the adapter kills the tree; the page proves embedded JS ran.
 fs.copyFileSync(path.join(source, 'test/host-process.cjs'), path.join(workspace, 'run'));
-const env = { ...process.env, TIDE_HIDDEN: '1', TIDE_HOST_WORKSPACE: workspace, TIDE_HOST_RUNNER_PID: String(process.pid) };
+const env = { ...process.env, TIDE_HIDDEN: '1', TIDE_HOST_WORKSPACE: workspace, TIDE_HOST_RUNNER_PID: String(process.pid),
+    TIDE_HOST_TIDE: tide ?? '', TIDE_HOST_LOGS: path.join(scratch,'profile/logs') };
 delete env.ELECTRON_RUN_AS_NODE;
 const child = spawn(code, [workspace, '--new-window', '--mute-audio', '--disable-workspace-trust', '--disable-extensions', '--skip-welcome', '--skip-release-notes',
     `--user-data-dir=${path.join(scratch, 'profile')}`, `--extensions-dir=${path.join(scratch, 'installed')}`,
@@ -46,6 +47,10 @@ try {
             try { process.kill(pid, 0); running = true; } catch {}
             assert.equal(running, false, `Deactivation left test process ${pid} alive`);
         }
+    }
+    if (tide) for (const pid of JSON.parse(fs.readFileSync(path.join(workspace,'prefab-pids.json')))) {
+        let running=false;try { process.kill(pid,0);running=true; } catch {}
+        assert.equal(running,false,'Deactivation must close the actual native prefab backend');
     }
     console.log(`Real VS Code host passed. Isolated artifacts: ${scratch}`);
 } finally {

@@ -88,7 +88,7 @@ For now:
 - Methods, extern functions and functions that take an `Action` can't be async.
 - `await` can't go in a block written after a call (an `Action`), and `Wait` only goes after `await`.
 - Tasks can't draw, or read this frame's `Devices`: that's what views do, every frame.
-- The input's `Sample` and `Sanitize`, frags and verts, operators and `Interpolate` start no tasks. A plain function or method does, as the code that calls it could: see [Starting a task](../language/functions.md#starting-a-task).
+- The input's `Sample`, `Sanitize` and `Predict`, frags and verts, operators and `Interpolate` start no tasks. A plain function or method does, as the code that calls it could: see [Starting a task](../language/functions.md#starting-a-task).
 - Awaiting an event and cancelling a task through a handle aren't supported yet. An event can start an async handler, which then waits for time or other async calls.
 
 ## Where tasks run

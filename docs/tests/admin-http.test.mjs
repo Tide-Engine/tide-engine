@@ -171,6 +171,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     }
     // An id outside the catalog is an ordinary unknown path.
     assert.equal((await fetch(`${origin}/prototypes/not-a-game/`, { redirect: 'manual' })).status, 404);
+    for (const route of ['/prototypes/skyworks/', '/prototypes/skyworks/index.html', '/prototypes/skyworks/thumbnail.png']) {
+        assert.equal((await fetch(`${origin}${route}`, { redirect: 'manual' })).status, 404, route);
+    }
     for (const id of prototypeIds) {
         const encodedId = id.replace(/./, (character) => `%${character.charCodeAt(0).toString(16)}`);
         const encodedPublic = await fetch(`${origin}/prototypes/${encodedId}/index.html`, { redirect: 'manual' });

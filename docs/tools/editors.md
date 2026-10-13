@@ -9,7 +9,7 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 - Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
 - Enum assignments prioritize and preselect the expected enum type: after `zombie.state =`, `ZombieState` comes first, followed by its qualified members. With [enum shorthand](../language/basics.md#enums-and-switch), `zombie.state = .` offers just that enum's members. A leading dot also completes members in typed declarations, returns, comparisons, enum switch cases and arguments whose parameter type is unambiguous.
 - Hovers, go to definition or to a value's type, find usages, the uses of a name highlighted, and rename.
-- Go to implementation, from an event to its handlers, from the input to its `Sample` and `Sanitize` and from a `virtual` declaration to its [override](../language/overrides.md), and the call hierarchy: what calls a function, and what it calls.
+- Go to implementation, from an event to its handlers, from the input to its `Sample`, `Sanitize` and `Predict` and from a `virtual` declaration to its [override](../language/overrides.md), and the call hierarchy: what calls a function, and what it calls.
 - Formatting, of a file or a selection, parameter hints and inlay hints. Parameter hints list every function that shares the name being called, with every parameter and its default, and follow an argument written by name; where an argument starts, completion offers the names the other parameters go by. Inlay parameter hints label written literal arguments; omitted defaults and arguments already written by name have no label.
 - The outline, symbols across the workspace's games, folding, growing a selection, and semantic highlighting. A shared package contributes the declarations active in each game that uses it, with identical symbols listed once.
 - After `asset`, completion offers the supported asset types as you start typing, with forms such as `Mesh<Vertex3>`, `Grid2<Color>` and `Map<string, Texture>`. Inside a list or map, it offers the supported element types; mesh vertex and contract arguments offer structs. Assets also complete by name, with their type's methods and parameter hints, including `Texture.Sample` in a frag or vert. They highlight as ordinary read-only variables; fields use the editor's property styling. The editor's theme chooses their colors.
@@ -30,8 +30,9 @@ tide open scenes/Level.tprefab --project .
 ```
 
 The hierarchy shows the complete composition, including descendants inherited
-from nested prefabs. Select an entity in the hierarchy or click its viewport
-marker. The inspector shows its components and effective field values, including
+from nested prefabs. Select an entity in the hierarchy, click its viewport
+marker, or click a static mesh surface. Overlapping meshes select the nearest
+authored triangle. The inspector shows its components and effective field values, including
 defaults. Select a field, edit its Tide expression, then press Enter or **Apply**.
 **Ctrl+A** selects the whole value while typing. Values can name entities,
 assets, constants and ordinary struct/list literals, with the normal compiler
@@ -55,8 +56,60 @@ local position, rotation and scale. Use the wheel to zoom, middle drag to pan,
 and **XY**/**Isometric** to change projection. Literal TRS, constants and basic
 float arithmetic are previewed, including `quaternion.Euler(float3(...))`.
 Unsupported expressions and their subtrees are explicitly omitted from the
-preview. Game views, materials and scripts are not executed; there are no drag
-gizmos yet. Static model previews use imported colors and editor lighting.
+preview. With **Views: off**, static models draw both sides with imported colors and editor lighting
+without executing game code.
+
+**Select / Move / Rotate / Scale** (Q / W / E / R, outside text fields) change
+the viewport tool. Move axes edit `localPosition` in the parent's coordinates;
+the center handle moves in the editor's world XY plane. Rotation rings and scale
+handles use the entity's local axes; the scale center changes all axes together.
+Hold Shift to snap movement to 0.5 units, rotation to 15 degrees, or scale factors
+to 0.1 steps. Edge-on axes/rings are hidden; use Isometric to reach another axis.
+The selected entity needs an editable `Transform` with constant previewable TRS.
+Inherited children remain read-only, while authored nested roots can be edited.
+A drag writes only its changed field on release and makes one undo entry.
+Escape cancels it. Descendant markers and fixed-preview meshes follow the drag;
+compiled views refresh with the new authored transform after release.
+
+**Views: on** compiles the project and renders its opted-in views, including their
+frags, verts and textures. `[RunInEditor]` includes a view in both the game and
+the editor; `[EditorOnly]` includes it only in the editor. Unmarked views run only
+in the game. These attributes take no arguments and apply only to views:
+
+```csharp
+[RunInEditor]
+view Models(Model model, World world)
+{
+    Draw.Mesh(model.model.Value, world.LocalToWorld(this));
+}
+```
+
+The editor constructs the selected prefab's whole tree from its authored values
+and defaults. It does not start `Main`, run `Spawned` or other event handlers,
+tick systems, or start a session. A view can prepare its own local visual state
+using the usual view permissions; that state belongs to the preview. Systems
+cannot opt in. Put values needed for rendering in defaults or authored overrides,
+or prepare local rendering resources from the view.
+
+The editor supplies the initial camera and viewport size. Views can set their own
+camera; picking and gizmos continue to use the editor camera, so keep a shared
+preview view from replacing it when selecting entities. **Match**/**Local** picks
+the prefab's placement, with the normal type checks: an `Entity` reference cannot
+become a `LocalEntity` reference automatically. Game input is neutral in this
+first preview, and match time stays at its initial tick. Audio, networking and
+file/request services are not provided.
+Opting in executes project code, including helpers and trusted C it calls.
+Picking uses named static mesh fields and authored transforms, including nested
+composition. It does not infer selection geometry from arbitrary view draws,
+custom vertex deformation, animation, transparency or an overridden camera.
+Use the hierarchy/markers for those objects.
+
+Applied edits, undo/redo, prefab selection and detected source/asset changes
+compile a fresh authored world, including edits not yet saved. Builds happen in
+the background. A failed build shows diagnostics and keeps the last successful
+preview visibly marked stale; it does not change the authored file. Turning views
+off releases it. Closing waits for an active compile to finish. Private build
+outputs and logs remain under `<project>/.tide/editor-preview/`.
 
 Declare a field such as `Asset<Mesh<Vertex3>> model` in your own component and
 add that component to an entity. Select its field and choose **Browse**, select
@@ -90,8 +143,8 @@ These recovery files are local cache files, not authored project content.
 The first app opens existing `.tprefab` files and uses the folder/package project
 context described under [`tide open`](cli.md#open). It supports Tide expression
 fields rather than a full text editor: long expressions and source syntax errors
-are edited in your usual code editor. Entity rename/reparent authoring, model
-previews, game rendering and embedded IDE windows are future work.
+are edited in your usual code editor. Entity rename/reparent authoring and
+new-file creation remain future work.
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
@@ -100,6 +153,26 @@ game/package context as scripts, report invalid authored components and referenc
 and include prefab files when renaming components, fields and named prefabs.
 Authored entity names and paths currently need manual text edits. See
 [Authored prefabs](../game/scenes.md#authored-prefabs) for the text format.
+
+**Tide: Open Prefab Editor** in the Explorer context menu or above an open
+`.tprefab` launches the native app beside the IDE. It uses `tide.path` when set
+and requires a trusted workspace. A dirty active prefab is saved before launch;
+save script changes in the IDE for the native app to detect them. The app stays
+open independently of the IDE window.
+
+**Tide: Edit Prefab in IDE** opens the same editor in a VS Code editor tab.
+It uses a hidden native `tide-editor` beside the configured `tide`, with the same
+views, hierarchy, inspector, picking, gizmos and recovery. Ctrl+S / Ctrl+Z /
+Ctrl+Y (Cmd+S / Cmd+Z / Cmd+Shift+Z on macOS) reach the native document while
+that tab is active. Closing the tab or IDE closes its backend; applied unsaved
+edits remain recoverable. Save scripts in the IDE to refresh either editor.
+
+The first embedded canvas scales a fixed 1440×900 native image to the panel.
+Frames travel as PNGs on demand over an authenticated loopback connection;
+input uses a private pipe, and project logs stay on ordinary stdout/stderr.
+No browser server opens.
+Hidden tabs stop requesting frames. The standalone app offers a resizable window
+and smoother interaction when the image transport becomes noticeable.
 
 The installer adds Tide to the ones it finds, and `tide upgrade` keeps it up to date. Installed one later? Run:
 
@@ -132,6 +205,16 @@ On the web, each reload says what it did in the page's console: **Tide: Game Dev
 ## JetBrains IDEs
 
 CLion, Rider, IntelliJ and the others, 2024.2 or later: install the Tide plugin from **Settings > Plugins > Marketplace**. It brings the LSP4IJ plugin it needs.
+
+An existing `.tprefab` offers **Open Tide Prefab Editor** in its project/editor
+context menu. It saves that prefab and launches the installed `tide` in the
+file's game context. The project must be trusted. The scene app is a separate
+native window; save scripts in the IDE to refresh its preview.
+
+**Edit Tide Prefab in IDE** opens the same native editor in the **Tide Prefab**
+tool window, with one tab per file. It uses a Swing image panel and works without
+JCEF. The fixed canvas, pipe transport, native save/undo and recovery work as
+described above. Closing its content tab or project closes the native backend.
 
 The plugin runs the `tidels` chosen under **Settings > Languages & Frameworks > Tide**, if any; else the project's own `build/tools/tidels`, like Tide's repo once it's built, once you trust the project; else the one on your `PATH`, or where `tide` is installed. When there's none, `.tide` files say so above the code, with links to install `tide`, choose a `tidels`, or try again. The **Language Servers** tool window restarts the server, after an update, and shows what it and the IDE say to each other.
 

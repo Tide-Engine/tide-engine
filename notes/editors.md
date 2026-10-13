@@ -1,5 +1,169 @@
 # The language server and the editors
 
+## Mesh picking, transform tools and IDE canvases (2026-10-13)
+
+The native viewport picks named static Asset<Mesh<...>> fields and constant
+aliases using their owned source triangles and composed authored Transform.
+Projected sphere bounds reject off-pointer models; triangle work happens only
+on a press. Nearest editor-camera depth wins, including mirrored/nested trees.
+Picking and fixed scene meshes are double-sided. The fixed matrix projection
+now compensates the renderer's z turn as compiled views do, aligning surfaces
+with markers/picking in isometric as well as XY. It does not derive proxies from arbitrary view draws,
+deformed/skinned vertices, transparency, custom cameras or local visual state.
+Hierarchy/markers remain available for those cases; inherited children are
+selectable but read-only. These entries supersede the picking/gizmo/embedding
+gaps recorded in the historical sections below.
+
+Q/W/E/R choose Select/Move/Rotate/Scale outside text fields. Move axes edit
+parent coordinates, with a world-XY center handle; rotation/scale use local
+axes, with uniform scale at the center. Shift snaps to .5 units, 15 degrees,
+or .1 scale-factor increments. Edge-on/singular handles are omitted. An
+editable Transform with supported constant TRS is required. Drag state owns
+values and a document revision, never AST pointers. Release patches one field
+through the existing source-preserving transaction, with one undo record;
+Escape, tool/selection/source changes cancel. Fixed meshes and descendant
+markers follow the draft drag; compiled views rebuild after release. No-op
+clicks retain the original expression. Save now publishes its replacement's
+file stamp immediately, avoiding a later poll cancelling an unrelated drag.
+
+The private --embed <port> <token> backend uses the same app/frame/document
+code and existing headless input/readback/PNG APIs. The IDE binds 127.0.0.1 on
+an ephemeral port and accepts a 32-hex-token TIDEHELLO 1 handshake; it then
+closes the listener. TIDEFRAME 1 has the PNG byte count, dirty flag, revision,
+error count and warning count, followed by PNG bytes. Frame input stays on
+stdin (bounded INPUT events, FRAME 1, QUIT); EOF ends the backend. Only device
+events are accepted, never captures or script control. TCP descriptors are not
+inherited by compiler children. Project stdout/stderr remain ordinary logs,
+avoiding separate Windows CRT ownership/rebinding of standard handles. No HTTP
+or browser server is hosted. No engine/runtime functions, generated game
+callbacks or preview-module ABI changed.
+
+VS Code's Tide: Edit Prefab in IDE opens an editor tab; its nonced, restricted
+webview only sends input and displays native PNGs. Save/undo/redo shortcuts
+forward to the native document, dirty titles track its header, and one panel
+is reused per path. The sibling editor follows tide.path and trusted game
+discovery; a dirty active source saves before launch. Native Open Prefab Editor
+still launches an independent app. Frame validation caps a PNG at 32 MiB and
+admits one request at a time. Pending startup is included in deactivation.
+
+JetBrains' Edit Tide Prefab in IDE adds file tabs to the Tide Prefab tool window.
+The Swing panel forwards input and paints decoded PNGs without JCEF. Both
+adapters scale a fixed 1440x900 native canvas, request at most one frame at a
+time and pause hidden surfaces. Button/key transitions are separated across
+frames so short clicks and drag origins survive batching. Focus loss releases
+held input. Closing sends EOF; after a two-second grace, a stuck backend and
+its descendants are terminated. Applied unsaved edits keep existing recovery.
+The image transport adds latency; resizable/GPU transport, broader text input,
+dynamic picking proxies and live compiled-view transform updates remain gaps.
+
+Coverage: geometry tests pin actual triangle bounds/depth, nested nonuniform
+and mirrored transforms, invalid indices/NaNs, parent-axis drag and edge-on
+rotation. Real native embedding tests exercise PNGs, overlap selection, move,
+rotate/scale, cancel/no-op, one-step undo/redo/save, source polling across a
+post-save drag, EOF and malformed input. Client tests pin event batching and
+shortcuts; VS Code doubles cover binary chunking, trust, save refusal, panel
+reuse and injected lines. Installed preview.mjs also executes actual game
+fragment shaders and project printf from a MinGW DLL in an embedded MSVC app,
+with clean PNG frames and preserved output. Real VS Code 1.141.0 checks display,
+reuse/command dispatch and shutdown in an isolated profile. The IntelliJ
+2024.2.6 sandbox paints a native frame in Swing and verifies EOF exit, alongside
+registered actions and existing adapter regressions.
+
+Validation: the complete native suite covered 2,286 tests; its sole initial
+failure exposed the post-Save stamp refresh, now fixed and pinned. All five
+editor CTests pass after the correction (14 document/model/interaction cases,
+client, real native UI/embedding and CLI). All 2,249 web CTests pass, including
+WebGL/WebGPU. Final scoped validation passes all six editor/adapter CTests,
+all 30 Node adapter/client checks, installed compiled-preview integration,
+MSVC debug and MinGW release native transport/UI tests. The VSIX and JetBrains
+plugin build; actual VS Code 1.141.0 and IntelliJ 2024.2.6 frame/shutdown tests
+pass with the final transport. Production docs and all ten admin/HTTP checks
+pass. Isometric alignment is pinned with a single flat model so identical
+overlapping models cannot hide a mirrored camera. No CI was dispatched;
+other host operating systems, Rider itself and Android were not run here.
+Integration through origin/dev 7e490870 is clean. Incoming changes touch only
+prototype-removal notes and its docs HTTP check; no editor/compiler/runtime
+dependency changed. The merged production docs build and ten admin/HTTP checks
+pass, including the new removed-route assertions.
+
+## Compiled authored-view preview (2026-10-13)
+
+The native editor has an explicit Views toggle (off by default), plus --preview
+and --local-preview. It compiles selected [RunInEditor]/[EditorOnly] views through
+the ordinary project/package/native C pipeline, using the applied unsaved prefab
+as a source overlay at its original path. The selected prefab's complete tree is
+constructed in match or local placement before any view runs. Main, Spawned,
+ordinary/verified/local/Forgotten event handlers and systems do not initialize it.
+Singleton/component defaults still evaluate normally, including trusted helpers.
+Views retain normal capabilities and own local visual state/tasks; match time is
+frozen, input neutral, and no session/audio/IO services are hosted. This is not a
+sandbox for extern C. Authoring analysis counts composed prefab component sets
+when checking opted-in views for unreachable filters, in both native UI and tidels.
+Normal game compilation still checks its own reachable archetypes.
+
+preview.c schedules one background CLI helper at a time and accepts only the
+current document revision. Applied edits, undo/redo, switching prefab roots,
+source changes and detected asset changes trigger fresh worlds. Failed C/link
+builds preserve the old module with a stale banner and visible diagnostics.
+Bounded captures/scripts wait for the current build and fail on build errors.
+Disabling views waits asynchronously for a worker already running, then releases
+its module; close waits for the worker, avoiding abandoned compiler children.
+Build outputs/logs persist beneath .tide/editor-preview/<pid>-<revision>-<side>.
+
+The private version-1 preview ABI is installed as tide/editor_preview.h, from
+tools/tide-editor/preview_api.h. Module allocations, world/local state, GUI and
+draw lists never cross CRT ownership boundaries (MSVC editor vs MinGW game).
+The module renders Draw/Draw.window and GUI into its viewport-sized target, then
+composites it into the host window. The editor copies its prepared commands and
+forgets target/mesh/shader caches before unloading; metadata pointers remain valid
+through synchronous submission. Initial 2D/3D cameras follow editor pan/zoom and
+XY/isometric projection, with renderer z conversion compensated to align markers.
+Views can override the camera; markers still follow the editor camera. Mesh
+picking, gizmos, host services, systems in preview and IDE embedding remain gaps.
+No engine/runtime functions or public game callback signatures were changed.
+The private ABI version must change if shared draw/shader layouts or command
+contracts become incompatible. The preview's frozen Time uses the game's tickRate.
+
+VS Code exposes Tide: Open Prefab Editor in Explorer/title and respects configured
+tide.path, workspace trust and game/package folder discovery. A dirty active
+prefab saves first; the app's process is independent of extension deactivation.
+JetBrains exposes Open Tide Prefab Editor in project/editor menus, using installed
+Tide and existing trusted-project detection. It saves the selected prefab and
+reports process failures. Neither integration embeds the viewport. Windows builds
+give tide-editor the GUI subsystem with the ordinary main CRT entry: Explorer
+does not create an extra console, and inherited CLI pipes retain --check output.
+
+Coverage: compiler E2E game-mode selection and private preview ABI tests on
+native/WASI pin shared vs editor-only views, root/child defaults, no startup/events
+or systems, both placements, resize and cleanup/recreation. Error fixtures reject
+wrong targets, arguments and conflicting inclusion. LSP tests cover completion,
+hover, diagnostics and authored matches without ordinary Spawn; the native
+document test covers the same warning correction. Installed preview.mjs checks
+actual custom fragment-shader pixels and editor-only shapes, nested models,
+invalid cross-placement references, local placement at another viewport size,
+unsaved overrides/undo/redo, root selection, disable/re-enable and link errors.
+The VS Code adapter tests cover launch arguments/paths, trust, save refusal and
+spawn errors; the isolated IntelliJ test checks registered action visibility.
+Final validation is recorded with this feature in notes/language.md.
+
+## Input Predict and DontPredict (2026-10-13)
+
+Predict's separate body participates in field/local scope, source occurrences,
+hover, outline, go-to-implementation, call hierarchy, selection ranges, local
+rename scope, semantic highlighting and formatting's input-method header rules.
+Its completion excludes Sample parameters, devices, Cursor and Random operations.
+DontPredict has field-attribute completion/hover. Both editor integrations and
+docs highlighting share the updated TextMate grammar.
+
+lsp_input_prediction checks body/attribute completion, excluded capabilities,
+parameterless headers, accepted diagnostics, hover, outline, implementation
+navigation and hierarchy. The shared grammar probe covers the attribute and
+Predict keyword, and all three new E2E sources. This is shared server/protocol
+and grammar coverage; no adapter changes or interactive IDE-host run is needed.
+
+Validation: full native/web suites, grammar and production docs build pass;
+counts and remaining platform coverage are in notes/language.md.
+
 ## Static model preview and assignment (2026-10-12)
 
 The native editor now browses static Mesh assets, including each resolved list/map

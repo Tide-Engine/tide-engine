@@ -14,6 +14,24 @@ $root = Join-Path $env:LOCALAPPDATA 'Tide'
 $bin = Join-Path $root 'bin'
 $tide = Join-Path $bin 'tide.exe'
 
+# Optional Open With registration. Windows keeps the user's default choice;
+# selecting Tide in Open With can make it the default for .tprefab files.
+function Register-PrefabEditor {
+    if ($env:TIDE_ASSOCIATE_PREFABS -ne '1') { return }
+    $classes = 'HKCU:\Software\Classes'
+    $editor = Join-Path $bin 'tide-editor.exe'
+    if (-not (Test-Path -LiteralPath $editor)) { return }
+    $progId = Join-Path $classes 'Tide.Prefab'
+    New-Item -Path $progId -Force | Out-Null
+    Set-Item -LiteralPath $progId -Value 'Tide Prefab'
+    $command = Join-Path $progId 'shell\open\command'
+    New-Item -Path $command -Force | Out-Null
+    Set-Item -LiteralPath $command -Value ('"' + $editor + '" "%1"')
+    $openWith = Join-Path $classes '.tprefab\OpenWithProgids'
+    New-Item -Path $openWith -Force | Out-Null
+    New-ItemProperty -LiteralPath $openWith -Name 'Tide.Prefab' -Value '' -PropertyType String -Force | Out-Null
+}
+
 $installed = Test-Path $tide
 if ($installed) {
     Write-Host "tide is already installed in $root; upgrading it."
@@ -110,6 +128,7 @@ try {
             if ($env:TIDE_CHANNEL) { & $tide upgrade "--$channel" } else { & $tide upgrade }
             if ($LASTEXITCODE -ne 0) { throw 'tide could not finish the upgrade.' }
             & $tide editors
+            Register-PrefabEditor
         } finally { $env:TIDE_RELEASES_URL = $previousUrl }
         return
     }
@@ -131,4 +150,5 @@ if (-not (($path -split ';') -contains $bin)) {
 Write-Host "Installed tide in $root."
 # Tide in VS Code and the editors like it.
 & (Join-Path $bin 'tide.exe') editors
+Register-PrefabEditor
 Write-Host 'Open a new terminal, go to a folder with .tide files and run: tide run'

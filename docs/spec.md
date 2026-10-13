@@ -124,7 +124,7 @@ system Hurt(mut Unit unit)
 - A method sees its fields, its parameters and `Math`. It can't draw: views do. It sends events, spawns and changes entities as a function does, for the code that calls it (see Functions).
 - A component's method has `this`: the entity whose component it's called on. A method that uses it, itself or through another of its methods, can only be called on a component the code runs for, a parameter of a system, view or handler: a copy belongs to no entity. A struct's methods and `Interpolate` have no `this`.
 - Methods can share a name when their parameters differ, as functions can (see Default values, named arguments and overloads). A method can't share one with a field.
-- Singleton methods operate on their explicit receiver, with no implicit world access or local sidecar fields. Like struct methods, they have no entity `this`. Inputs have only `Sample` and `Sanitize`.
+- Singleton methods operate on their explicit receiver, with no implicit world access or local sidecar fields. Like struct methods, they have no entity `this`. Inputs have only `Sample`, `Sanitize` and `Predict`.
 - Parameters work as in functions: they can have default values, and calls can name them.
 
 ```csharp
@@ -149,7 +149,7 @@ system Burn(mut Unit unit)
 
 ### Functions
 
-- A function is code that other code calls: systems, views, the input's `Sample` and `Sanitize`, methods and other functions. The engine never runs one by itself.
+- A function is code that other code calls: systems, views, the input's `Sample`, `Sanitize` and `Predict`, methods and other functions. The engine never runs one by itself.
 - A parameter is a copy, read-only. A `mut` parameter is the caller's variable itself, which the function changes: the caller passes something it can write, and its signature still shows the write, so `Heal(unit.stats, 5)` needs `mut Unit unit`. The argument's type matches exactly.
 - Parameters are built-in types, structs, components and singletons. Return values are built-in types, structs and components; singleton return values aren't supported.
 - Singleton parameters and method receivers are explicit values, with the same read-only copy and `mut` caller-variable rules as components. They bind no singleton from the world and grant no world access: a function reaches other entities through a `World` parameter, which its caller passes its own (see The World). Existing restrictions on copying or passing grids and rendering resources still apply.
@@ -626,19 +626,19 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - **Functions that send, spawn and change entities**, beyond what's decided (Functions): built 2026-10-08, each point a pick awaiting the owner.
   - **Which world** a function's `Send`, `Spawn`, `Add`, `Remove` or `Destroy` is in is told by what's written, as an async function's is: the event's own, an `Entity` or a `LocalEntity`, the components'. A command is this machine's to send. What's written has to agree with itself, which is the one error in the function: a `Spawn`'s, an `Add`'s and a `Remove`'s components are all of the entity's world, and an event goes to an entity of its own. A `Spawn` with no components is the match's.
   - **Who can call it:** what's the match's (a match event, the match's entities), match systems, event handlers, command handlers and the match's tasks; what's this machine's (a local event, a command, local entities), views, local handlers and this machine's tasks. An async function that calls one is of that world (see Tasks). A function that does both can be written, and nothing can call it.
-  - **What never does, whoever calls it:** a `Sort`'s comparison and a parallel loop's step, the input's `Sample` and `Sanitize`, frags and verts, and an `audio` declaration: a call there of a function that does is the error. A struct's operators and a component's `Interpolate` are refused where the `Send` is written, or the call of what sends: an operator is handed its operands and nothing else, in a default's value too, and the engine calls `Interpolate` as views blend.
+  - **What never does, whoever calls it:** a `Sort`'s comparison and a parallel loop's step, the input's `Sample`, `Sanitize` and `Predict`, frags and verts, and an `audio` declaration: a call there of a function that does is the error. A struct's operators and a component's `Interpolate` are refused where the `Send` is written, or the call of what sends: an operator is handed its operands and nothing else, in a default's value too, and the engine calls `Interpolate` as views blend.
   - **Methods do as functions do**, though they still can't draw. A component's method reaches its entity as `this`; a function has none and takes an `Entity`.
   - **A function's spawn joins the scene of the entity its caller runs for**, through however many functions, when that entity is of the spawn's world, as the caller's own would.
   - **It's the caller's in the schedule too:** a system that calls a function that spawns hands out entity IDs (it waits for the spawning systems before it, or settles its handles when it splits), and one whose function records text changes its world's heap, as if the `Spawn` or the `Send` were written in the system. Sending makes nothing wait, there as anywhere. A foreach over a grid whose step calls one goes in order.
   - **Its calls keep their order:** what a function records goes where it's called among what the caller records itself, and a call that gives a value runs in its turn, like one that writes (see Evaluation order).
   - `Add` and `Remove` in a function are on an entity read from a parameter, so they may reach any entity (see Archetypes): a helper makes more combinations than `this.Add` in the system does.
-  - **Session calls and `Clipboard.Copy` are a view's and a local handler's, so a function's that they call** (the owner, 2026-10-11, of functions that couldn't call them yet: "yes lets improve the session stuff"). `Session.Start`, `Open`, `Close`, `Join`, `Connect`, `Leave`, `Kick`, `KickAll` and `End`, and `Clipboard.Copy`, are written in a function or a method as in a view, and are this machine's: a call from the match is an error at that call, which names the function and the line it asks on, as is one from `Sample` or `Sanitize`, a parallel loop's step or a comparison. An operator and `Interpolate` still can't, where they're written. Provisional: `session.room` and a whole `Session` as text stay the view's to read and pass, as the room is no part of the `Session` value a function is handed.
+  - **Session calls and `Clipboard.Copy` are a view's and a local handler's, so a function's that they call** (the owner, 2026-10-11, of functions that couldn't call them yet: "yes lets improve the session stuff"). `Session.Start`, `Open`, `Close`, `Join`, `Connect`, `Leave`, `Kick`, `KickAll` and `End`, and `Clipboard.Copy`, are written in a function or a method as in a view, and are this machine's: a call from the match is an error at that call, which names the function and the line it asks on, as is one from `Sample`, `Sanitize` or `Predict`, a parallel loop's step or a comparison. An operator and `Interpolate` still can't, where they're written. Provisional: `session.room` and a whole `Session` as text stay the view's to read and pass, as the room is no part of the `Session` value a function is handed.
   - **Starting a task is a function's too, as the code that calls it could** (built 2026-10-11, on the owner's two rules: a function does what its caller could, with an error only at a call from code that can't, and no "not yet" where a feature could work; each point a pick awaiting the owner). An async function called as a statement in a function or a method starts a task, as in a system.
     - **Which world** is the task's own (see Tasks): a function that starts a task that changes the match is the match's to call, and one that starts a task that uses local state is a view's, a local handler's or a local task's. A call from the other side is an error at that call, which names the function, the task and the line that starts it. A task whose world nothing decides starts in the world of the code that calls the function, so one function serves both.
     - **Whom it belongs to:** the entity the calling code runs for, through however many functions, as a task that code started itself would: it ends with that entity, and what it spawns joins that entity's scene. Code that runs for no entity starts tasks that belong to its world.
     - **A task's singleton is the caller's own.** A task gets its components and singletons again each time it goes on, so a call that starts one passes a parameter of its own, never a copy. A function passes its own singleton parameter on, and then every call of that function passes its own too, through however many: an error at a call that passes a copy. A function's component parameter isn't passed on to a task: it may be any entity's, and the task gets the one of the entity it belongs to, so that start is written in the system, view or handler.
     - **It's the caller's in the schedule:** a system that calls a function that starts tasks runs on one thread and waits as one that starts them itself does (see Tasks). Its calls keep their order, as a function's sends do.
-    - **What never does, whoever calls it,** is what never sends: a comparison, a parallel loop's step, `Sample` and `Sanitize`, a frag or a vert, and an `audio` declaration, each an error at the call; an operator and `Interpolate`, where the start is written.
+    - **What never does, whoever calls it,** is what never sends: a comparison, a parallel loop's step, `Sample`, `Sanitize` and `Predict`, a frag or a vert, and an `audio` declaration, each an error at the call; an operator and `Interpolate`, where the start is written.
   - Not part of it: `Snap`, `Scene.Load` and `Scene.Unload` stay the system's, view's or handler's own to write.
   - In generated C the function is handed the world it records in, as one that takes a `World` is, and the scene its spawns join. One that does none of this generates the C it did.
 - Operators and their precedence follow C#. Comments are `//` and `/* */`.
@@ -1539,7 +1539,7 @@ system Score(mut Board board)
 ### Provisional
 
 - `fail`, `try`, `is` and `null` are keywords everywhere; `fails` is one only right after a function's parameters.
-- Methods can fail too. Operators, `Interpolate`, extern functions and functions that take an Action can't. Systems, views, handlers and the input's `Sample` and `Sanitize` can't fail, and can't `try`.
+- Methods can fail too. Operators, `Interpolate`, extern functions and functions that take an Action can't. Systems, views, handlers and the input's `Sample`, `Sanitize` and `Predict` can't fail, and can't `try`.
 - An error's type is one a function can return. It can't be the type the function returns, which `is` couldn't tell apart, nor a `T?`, and a function that fails can't return a `T?` too.
 - `try` binds like a unary operator, as C#'s `await` does: `try Parse(a) + 1` adds 1 to the value. It works on a variable that holds a result too, and as a statement: `try Open();`. It keeps its place in the evaluation order: what's before it in its statement runs first, and when it passes an error on, nothing after it runs. In a block written after a call, `try` and `fail` leave the function the block is written in, as `return` does. Leaving a function this way closes the GUI containers it opened.
 - `??` binds and groups as in C#: looser than `||`, tighter than `?:`, to the right. Its right side only runs when the left fails or is nothing, so, like the right side of `&&` and `||`, it can't spawn, load scenes or draw widgets. The right side takes the value's type (`?? []`, `?? default`), an int widens to a float (`ParseScore(t) ?? 0.5` is a float), and it can be another failable call or `T?`, which is then what the whole gives: `a ?? b ?? 0`.
@@ -1995,7 +1995,7 @@ system Start(Round round)
 Implemented, awaiting approval:
 
 - `async` goes before a function or an event handler, before or after `local` if it has one (`local async event(...)`); before anything else it's an error that says where it goes. Methods can't be async yet, nor extern functions or functions that take an Action. `await` is a keyword, and binds like `try`: `await Doubled(3) + 1` adds 1 to the value. A `!` after an awaited call is the awaited value's: `await Fetch(name)!`.
-- An async call is awaited, from async code (async functions and handlers), or a statement of its own, which starts a task; using its value without `await` is an error that says which to write. A started task's value is dropped; one that can fail is warned about as a call that can fail is, and `Load(name)!;` starts it without the warning. Systems, views, handlers and async code start tasks, and so does a plain function or method, as the code that calls it could (see Functions and blocks): the input's `Sample` and `Sanitize`, code the GPU runs, operators and `Interpolate` start none.
+- An async call is awaited, from async code (async functions and handlers), or a statement of its own, which starts a task; using its value without `await` is an error that says which to write. A started task's value is dropped; one that can fail is warned about as a call that can fail is, and `Load(name)!;` starts it without the warning. Systems, views, handlers and async code start tasks, and so does a plain function or method, as the code that calls it could (see Functions and blocks): the input's `Sample`, `Sanitize` and `Predict`, code the GPU runs, operators and `Interpolate` start none.
 - `await` waits for an async call, or for `Wait.Ticks(n)` (the match's ticks; match code only), `Wait.Frames(n)` (this machine's frames; local code only) or `Wait.Seconds(s)`: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `Wait` only goes after `await`. `await` isn't allowed in a block written after a call.
 - Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. An awaited call's frame is part of the caller's, so a task is one frame however deep it awaits, and an async function can't await itself (it can start itself again, as a task of its own).
 - A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables, and it has no `out` parameters: its call returns before it has made anything, so it returns a struct instead.
@@ -2035,6 +2035,7 @@ Implemented, awaiting approval:
   - `[Absolute]` takes no arguments and goes on the input's own fields, never a struct's, a component's or a singleton's. The name is the owner's, over `[Hold]`: it says what the field is, where `[Hold] bool fire` would read as a button that's held.
   - The 0.15 seconds are the engine's, with no setting for now. Hosts written in C have `tide_client_desc.guess_seconds`.
 - An input parameter in a system gives the input of the player who owns the entity, and so does a `Devices` parameter. Entities without an `Owner`, or whose owner isn't a known player, get the **server's input**, and so do systems that run once per tick. This is how the server controls what no player owns. An input parameter doesn't filter entities: add `with Owner` to only run on owned ones.
+- An input can have a `Predict()` method to adjust guessed future input. `[DontPredict]` on a field resets it immediately on guessed ticks. Neither changes real sampled input.
 - An input can have a `Sanitize()` method. Every input passes through it before the simulation reads it, including input from other players, so systems can rely on what it guarantees without checking again. It assigns the input's fields by name, like `Sample`, and reads nothing else.
 - Input fields can declare bounds: `[Clamp(lo, hi)]`, `[Min(x)]` and `[Max(x)]`, and so can the fields of structs an input holds. The engine applies them to every input before `Sanitize`, so `Sanitize` only handles what they can't express. Bounds are constants; a number bounds every component of a vector. They go on input and struct fields only, for now: on a component's or singleton's field, they're an error.
 - **Input is an attack point,** so the engine is forgiving with it. Before `Sanitize` runs, NaN and infinite floats become the field's default. Nothing a client sends can put NaN in the simulation, and `Sanitize` only deals with values that are merely out of range.
@@ -2111,6 +2112,12 @@ input PlayerInput
 - Buttons are sent as held (`.pressed`), like bool input fields: `.down` and `.up` in match code are against last tick's input, so a guessed input that repeats the last one doesn't press them again. A button let go and pressed again between two ticks is one press.
 - Repairs: sticks -1 to 1 on each axis, with NaN 0; triggers 0 to 1; the `delta` and `scroll` of the mouse, and the `delta` of touches and the pointer, finite, or 0.
 - On the server's machine, its own player's input is the server's too, so entities without an owner read it. A server with no player of its own keeps the defaults.
+- Custom input prediction, first implementation:
+  - Before each predicted client tick, other players' and remote server inputs start from their previous tick's values. `[DontPredict]` fields reset to their declared defaults, then `Predict()` runs, followed by ordinary repair, bounds and `Sanitize`. Untouched fields keep their previous values; computations can accumulate across guessed ticks.
+  - `Predict()` takes no parameters, returns no value, and assigns fields by name. It reads only the input, with the same capabilities as `Sanitize`: pure helpers are allowed, but match/local state, devices, frame time, random rolls/seed, sending, spawning and tasks are unavailable. The enabled engine-owned `viewTime` remains read-only.
+  - `[DontPredict]` takes no arguments and belongs on the input's own fields, of any supported input type. It resets a whole struct/array field, including its defaults. Duplicate attributes and combination with `[Absolute]` are errors. `Predict()` can explicitly replace an attribute's default.
+  - Changing a guess creates no `.down` or `.up` edges, including nested bool fields. Real samples retain their normal edges. These hooks never run on authoritative server ticks or confirmed replay, and never change this machine's own sampled input.
+  - The existing 0.15-second guess limit still applies after custom prediction: non-`[Absolute]` fields return to their sanitized defaults beyond it, while absolute fields retain the custom guess. A custom guess that changes input requires authoritative replay when confirmed, even if that frame carries no input delta.
 - What a guess is once it lets go (see Decided), in its details:
   - The 0.15 seconds are to the nearest tick. Past them, each guessed input is the input's defaults through the steps any input takes (repair, bounds, `Sanitize`), and the tick before is taken to have had the same, so no `.down` or `.up` is true for it, of a `bool` field or of a device's button.
   - The devices match code reads are let go with the rest: nothing of them is `[Absolute]`.
@@ -2130,6 +2137,13 @@ input PlayerInput
 
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
+- `[RunInEditor]` on a view includes it in game frames and authored prefab
+  preview. `[EditorOnly]` includes it only in preview; unmarked views are game
+  only. Choose one, without arguments. Neither applies to systems or handlers.
+  The same view access rules apply in preview. The editor constructs the whole
+  selected prefab from authored values/defaults before running views, without
+  Main, gameplay event handlers or simulation systems. Local visual state is
+  isolated from authored data and starts fresh on a successful rebuild.
 - Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
 - Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
@@ -2894,7 +2908,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - `Interpolate` isn't for code to call. Custom `Interpolate` belongs to structs and components. A singleton uses it through a struct field, while its ordinary methods follow the same read-only/`mut` receiver rules as other types. A `[Snap]` field of such a type is still drawn as it is.
 - Hosts pass the two ticks and how far between them this moment is to `tide_frame`, with the last world the server confirmed; sessions work those out (`tide_session_view`).
 - The cursor's lock:
-  - **`Cursor.locked` is read in the input's `Sample` too** (proposed, not yet agreed), so a game looks only while the lock holds without a frame's delay: `if (Cursor.locked) look = devices.mouse.delta * 0.003;`. `Sample` reads it of the devices it samples, so it can't call `Cursor.Lock()`, and `Sanitize` can't read it, as it can't read `Devices`. A function `Sample` calls can't either: it's passed what it needs.
+  - **`Cursor.locked` is read in the input's `Sample` too** (proposed, not yet agreed), so a game looks only while the lock holds without a frame's delay: `if (Cursor.locked) look = devices.mouse.delta * 0.003;`. `Sample` reads it of the devices it samples, so it can't call `Cursor.Lock()`, and neither `Sanitize` nor `Predict` can read it, as it can't read `Devices`. A function `Sample` calls can't either: it's passed what it needs.
   - Where neither goes, the error says where it does: the match is told that a view calls `Cursor.Lock()` and that `Sample` reads `Cursor.locked`; a task, a method and a local handler, that views ask every frame. `Cursor.Unlock()` is told that the cursor comes back once no view asks.
   - A function that uses `Cursor` needs the frame, like one that draws: views and the functions they call can call it.
   - While a modal is up (`GUILayout.Modal`), the lock isn't asked for, whatever views ask: its widgets need the pointer. It's asked for again once the modal closes.
@@ -3270,9 +3284,35 @@ component Aim
 - The viewport uses transform markers with local TRS/parent composition, XY or
   isometric projection, zoom and pan. It interprets a limited set of constant
   TRS expressions; unsupported transforms and their subtrees are visibly omitted.
-  No game views, meshes or scripts run there. `--check` validates without a
-  window; bounded `--frames`/`--capture`/`--script` modes use the native platform
-  loop. UI details and controls remain provisional.
+  The fixed preview draws named static mesh references with editor lighting.
+  `--check` validates without a window; bounded `--frames`/`--capture`/`--script`
+  modes use the native platform loop. UI details and controls remain provisional.
+- Compiled view preview (2026-10-13): off by default, enabled by Views or
+  `--preview`/`--local-preview`. Native modules use normal project/package/C
+  compilation and the current unsaved prefab as a source overlay at its original
+  path. Selected match/local placement retains normal component/reference checks.
+  The editor supplies initial 2D/3D cameras and viewport dimensions; views may
+  override them, but hierarchy markers use the editor camera. Device input is
+  neutral; audio/session/IO services are not hosted. Opted-in views can initialize
+  and change their isolated local state, including helper/task calls permitted
+  by normal view capabilities. Trusted extern C is not sandboxed. Successful
+  rebuilds replace the preview with fresh authored state; failures retain the
+  last successful state with diagnostics/stale status. Bounded previews wait
+  and fail instead of recording stale results. Closing waits for a current
+  compile; private cached builds/logs remain under .tide/editor-preview.
+- Mesh selection tests named static asset-reference triangles under composed
+  authored transforms, choosing nearest depth in the editor camera. It does not
+  derive proxies from arbitrary view draws, custom shader deformation or cameras.
+  Move/rotate/scale gizmos patch one local TRS field on release, with one undo
+  entry, cancellation and optional snapping. Inherited children are read-only.
+  Compiled views refresh after release; overlays/fixed meshes follow the drag.
+- IDE launch actions open this native app for .tprefab files in a trusted
+  game context. VS Code also embeds its frames in an editor tab; JetBrains uses
+  a Swing tool window. Both own a hidden native process, with private pipe input
+  and authenticated loopback PNG output; the first canvas is fixed at 1440×900 and scaled
+  into the IDE. No second authoring implementation or browser server is hosted.
+  Optional Windows installer
+  registration adds Tide to Open With without replacing the user's default.
 
 ### Open
 
@@ -3290,7 +3330,7 @@ Further authoring/editor work:
 - Defaults-versus-overrides during live editing/hot reload of existing instances.
   The first slice can instantiate new trees; automatic modification of existing
   gameplay instances needs a separate policy.
-- IDE embedding, model/game-view previews, transform drag gizmos, authored
+- GPU/frame transport improvements, dynamic picking proxies, authored
   reparent/rename refactoring, new-file creation and conflict merge UI. The first
   native app edits existing files and keeps conflicting drafts without merging
   them automatically. CMake/consumer project selection and remembered context
@@ -3409,7 +3449,7 @@ Implemented placement spellings: `Spawn(...)` creates match entities; `local Spa
 - **`Frame.dt`** (the name is a pick, to confirm: `Time` is the match's, so Unity's `Time.deltaTime` can't be it) is the seconds since this machine's previous frame started, a `float`, read-only: what moves things that aren't the match's (particles, menus, a camera's shake) at the same speed whatever the display's rate.
   - It's this machine's, and has nothing to do with the match: it's there in a local scene and while connecting, where no view that takes `Time` runs, and in a match it's the same value, whatever the tick rate and however many ticks the frame ran.
   - Local code reads it: views, local handlers, local tasks (async functions that read it are local, as ones that use local state are), and the functions they call, in a sort's comparison and a parallel loop's steps too. A local task's `Wait.Seconds` counts the same seconds down, and one that waits a frame at a time, `await Wait.Frames(1)`, moves on by it each frame.
-  - The match can't read it, as it's another on every machine: a system or a match handler that does is an error that says to take `Time time` and read `time.dt`, a tick's length, and a function that reads it is local code, which the match can't call. The input's `Sample` and `Sanitize` can't either, as they run once per tick: a view keeps what `Sample` needs in local state. Nor can methods, which are handed nothing, or a frag or vert.
+  - The match can't read it, as it's another on every machine: a system or a match handler that does is an error that says to take `Time time` and read `time.dt`, a tick's length, and a function that reads it is local code, which the match can't call. The input's `Sample`, `Sanitize` and `Predict` can't either, as they run once per tick: a view keeps what `Sample` needs in local state. Nor can methods, which are handed nothing, or a frag or vert.
   - It's the length the host measured, as it is: a frame after the window was dragged or the page was hidden is that long, and a game clamps it where a big step would show (`Math.Min(Frame.dt, 0.05)`). It's never negative or NaN, and it's 0 until the host has given a frame's length: in a handler that runs as the local state is made, like `Spawned` of a local `Main`.
   - There's no clock of seconds beside it. A float of seconds loses precision as it grows (after four and a half hours its steps are 2 milliseconds, about an eighth of a frame at 60 a second), which shows in whatever is animated by it. A game adds `Frame.dt` up into a field of its own, and wraps it where what it drives repeats. Asking `Frame` for one, as a member or a function by a clock's name in any case (`Frame.time`, `Frame.t`, `Frame.elapsed`, `Frame.seconds`, `Frame.Now()`), is an error that says so and what to write: that field, or `time.t` of `Time time` for the match's seconds, which is all it says in a system or a match handler.
   - `Frame` is built into the language, as `Screen` and `Cursor` are: a game can't declare the name, in a namespace or outside one.
@@ -3955,7 +3995,7 @@ override system Move(mut Position position, Velocity velocity, Time time)
 
 - **Where the words go.** Where `local` and `async` do, in any order with them, before a declaration with code: a system, a view, a handler (an event's, a command's, a local one), a function, a method, a frag or a vert. They're words of their own only there, and names like any other everywhere else, a function's type too (`virtual Make()` is a function that returns a `virtual`).
   - On data (a component, singleton, struct, event, command, enum, scene or the input), a constant, the settings or an `extern` function, each is an error that says what the words are for, and why this isn't it. Editors offer to remove the word.
-  - Operators, `Interpolate` and the input's `Sample` and `Sanitize` aren't replaced either: an error on each.
+  - Operators, `Interpolate` and the input's `Sample`, `Sanitize` and `Predict` aren't replaced either: an error on each.
   - `virtual override` together is an error: a declaration is replaced once, so nothing could replace an override.
 - **The name an override writes.** It's the name of what it replaces, looked up as any reference is from the override's file: with its namespace (`override system Combat.Move(...)`), or alone in that namespace, in one inside it, or after `using Combat;`. Two `using` namespaces that both have it are ambiguous, as for any name.
   - A method's override is written outside its type, since it's in another package, with the type before the method's name: `override bool Stats.IsDead()`, or `override bool Combat.Stats.IsDead()`. The type's fields and methods are in scope, as in the type's body. Where a type and a namespace have the same name, it's the type.

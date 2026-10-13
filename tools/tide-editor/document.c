@@ -214,6 +214,7 @@ void editor_refresh(editor_document *d)
     d->prog = program_new();
     d->prog->game_folder = d->project;
     d->prog->asset_metadata_only = true;
+    d->prog->editor_authoring = true;
     diag_set_sink(collect, d);
     lex_symbols_reset(); lex_define("DEBUG");
     game_packages packages = {0};
@@ -395,6 +396,9 @@ bool editor_save(editor_document *d)
     if (ok) {
         free(d->saved); d->saved = copy(d->text); d->conflict = false;
         sys_remove(d->draft_path);
+        // Publish the replacement's filesystem stamp now. Otherwise the next
+        // half-second poll reanalyses our own Save and cancels a fresh gizmo drag.
+        editor_poll(d);
         snprintf(d->message, sizeof d->message, "Saved %s", path_base(d->path));
     } else snprintf(d->message, sizeof d->message, "Save failed or source changed; original file kept.");
     return ok;

@@ -115,7 +115,25 @@
         "title": "Game Developer Tools",
         "category": "Tide",
         "icon": "$(tools)"
+      },
+      {
+        "icon": "$(preview)",
+        "command": "tide.openPrefab",
+        "title": "Open Prefab Editor",
+        "category": "Tide"
+      },
+      {
+        "icon": "$(preview)",
+        "command": "tide.editPrefab",
+        "title": "Edit Prefab in IDE",
+        "category": "Tide"
       }
+    ],
+    "keybindings": [
+      { "command": "tide.prefabSave", "key": "ctrl+s", "mac": "cmd+s", "when": "activeWebviewPanelId == 'tide.prefabEditor'" },
+      { "command": "tide.prefabUndo", "key": "ctrl+z", "mac": "cmd+z", "when": "activeWebviewPanelId == 'tide.prefabEditor'" },
+      { "command": "tide.prefabRedo", "key": "ctrl+y", "mac": "cmd+shift+z", "when": "activeWebviewPanelId == 'tide.prefabEditor'" },
+      { "command": "tide.prefabRedo", "key": "ctrl+shift+z", "when": "activeWebviewPanelId == 'tide.prefabEditor'" }
     ],
     "menus": {
       "editor/title/run": [
@@ -134,15 +152,37 @@
       ],
       "editor/title": [
         {
+          "group": "navigation",
+          "command": "tide.editPrefab",
+          "when": "resourceExtname == .tprefab && isWorkspaceTrusted"
+        },
+        {
           "command": "tide.openDevTools",
           "when": "activeWebviewPanelId == 'simpleBrowser.view' && tide.gamePage",
           "group": "navigation"
+        },
+        {
+          "group": "navigation",
+          "command": "tide.openPrefab",
+          "when": "resourceExtname == .tprefab && isWorkspaceTrusted"
         }
       ],
       "commandPalette": [
         {
           "command": "tide.openDevTools",
           "when": "tide.gamePage"
+        }
+      ],
+      "explorer/context": [
+        {
+          "group": "navigation",
+          "command": "tide.editPrefab",
+          "when": "resourceExtname == .tprefab && isWorkspaceTrusted"
+        },
+        {
+          "group": "navigation",
+          "command": "tide.openPrefab",
+          "when": "resourceExtname == .tprefab && isWorkspaceTrusted"
         }
       ]
     },

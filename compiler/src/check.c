@@ -25,6 +25,7 @@ typedef struct checker {
     decl *method;             // The method or function being checked: a method's type's fields are in scope.
     bool in_input;      // Checking the input's constructor, which runs outside the simulation.
     bool in_sanitize;         // Checking the input's Sanitize; in_input is set too, for the fields.
+    bool in_predict;          // Predict has Sanitize's input-only capabilities.
     int short_circuit_depth;  // Inside the right side of &&, || or ??, which may not run.
     const char *short_circuit_side; // ...as messages say it: "on the right side of && or ||"
     int switch_depth;         // Inside a switch's sections, where `break` ends one.
@@ -84,6 +85,7 @@ typedef struct call_site {
     bool parallel;
     bool comparing;
     bool sanitizing; // In the input's Sanitize
+    bool predicting;
 } call_site;
 
 static const type T_ERR = {TY_ERROR, NULL};
@@ -1033,7 +1035,7 @@ static void note_operator_call(checker *c, decl *op, const expr *e)
 {
     decl *from = reading_code(c);
     if (!op) return;
-    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize};
+    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
     if (!from) {
         vec_push(c->bare, site);
         return;
@@ -3007,7 +3009,7 @@ static decl *converted_enum(const checker *c, const expr *e)
 // The input code being checked, for messages.
 static const char *input_code(const checker *c)
 {
-    return c->in_sanitize ? "Sanitize" : "Sample";
+    return c->in_predict ? "Predict" : c->in_sanitize ? "Sanitize" : "Sample";
 }
 
 static bool in_view(const checker *c)
@@ -3391,7 +3393,8 @@ static bool check_frame_time_use(checker *c, const loc at)
     if (gpu_refuses(c, at, "read Frame.dt", "the view puts what it needs in a component or a singleton, which it takes")) return false;
     if (c->in_input) {
         diag_error(at, "%s runs once per tick, not once per frame, so it can't read Frame.dt", input_code(c));
-        diag_note(c->in_sanitize ? "a frame's length is this machine's, and Sanitize runs on every machine"
+        diag_note(c->in_predict ? "a frame's length is this machine's; Predict computes a guess from the input alone"
+                               : c->in_sanitize ? "a frame's length is this machine's, and Sanitize runs on every machine"
                                  : "a view keeps what the input needs in local state, which Sample reads");
         return false;
     }
@@ -3461,8 +3464,9 @@ static bool check_random_use(checker *c, const loc at, const bool rolls)
     }
     // Sanitize gives every machine the same input for the same bytes, and nothing else
     if (c->in_sanitize) {
-        diag_error(at, "Sanitize can't %s", what);
-        diag_note("it repairs an input the same way on every machine, from the input alone; Sample rolls, on the machine that sends it");
+        diag_error(at, "%s can't %s", input_code(c), what);
+        diag_note(c->in_predict ? "it computes a guess from the input alone; Sample rolls, on the machine that sends it"
+                               : "it repairs an input the same way on every machine, from the input alone; Sample rolls, on the machine that sends it");
         return false;
     }
     decl *code = reading_code(c);
@@ -3541,7 +3545,8 @@ static bool check_cursor_use(checker *c, const loc at, const bool lock)
     if (c->in_input && !c->method) {
         if (!lock && !c->in_sanitize) return true;
         if (c->in_sanitize) {
-            diag_error(at, "Sanitize runs on every machine for every player's input, so it can't %s", what);
+            diag_error(at, c->in_predict ? "Predict works from the input alone, so it can't %s"
+                                       : "Sanitize runs on every machine for every player's input, so it can't %s", what);
             diag_note(lock ? "a view calls it, every frame the game wants the mouse"
                            : "Sample reads it, on the machine the input comes from");
         } else {
@@ -4085,7 +4090,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
     e->names_taken = true;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
         vec_push(c->calls, site);
     }
     int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
@@ -4416,7 +4421,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     e->method = m;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
         vec_push(c->calls, site);
     }
     for (int i = 0; i < written; i++) {
@@ -8400,7 +8405,8 @@ static bool check_devices_use(checker *c, const loc at)
 {
     if (gpu_refuses(c, at, "read the devices", "the view puts what it needs in a component or a singleton, which it takes")) return false;
     if (c->in_sanitize) {
-        diag_error(at, "Sanitize runs on every machine for every player's input, so it can't read this machine's Devices");
+        diag_error(at, c->in_predict ? "Predict works from the input alone, so it can't read this machine's Devices"
+                                   : "Sanitize runs on every machine for every player's input, so it can't read this machine's Devices");
         diag_note("Sample reads them, on the machine the input comes from");
         return false;
     }
@@ -9517,7 +9523,7 @@ static type check_grid_method(checker *c, expr *e, const type grid)
 static const char *code_what(const checker *c)
 {
     if (c->method) return NULL;
-    if (c->in_input) return c->in_sanitize ? "Sanitize" : "Sample";
+    if (c->in_input) return input_code(c);
     if (!c->system) return "a default value";
     return c->system->is_view ? "a view" : c->system->is_handler ? "an event handler" : "a system";
 }
@@ -11926,10 +11932,11 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
     decl *const method = c->method;
     const bool in_input = c->in_input;
     const bool in_sanitize = c->in_sanitize;
+    const bool in_predict = c->in_predict;
     const bool constants_only = c->constants_only;
     const int locals = c->locals.count;
     c->system = c->method = NULL;
-    c->in_input = c->in_sanitize = false;
+    c->in_input = c->in_sanitize = c->in_predict = false;
     c->constants_only = true;
     c->locals.count = 0;
     const type t = typed ? check_expr_want(c, value, want) : check_expr(c, value);
@@ -11937,6 +11944,7 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
     c->method = method;
     c->in_input = in_input;
     c->in_sanitize = in_sanitize;
+    c->in_predict = in_predict;
     c->constants_only = constants_only;
     c->locals.count = locals;
     return t;
@@ -12709,6 +12717,30 @@ static void check_absolute_attribute(const decl *d, const field *f, const attrib
     }
 }
 
+static void check_dont_predict_attribute(const decl *d, const field *f, const attribute *a)
+{
+    if (a->values.count || a->args.count) {
+        diag_error(a->at, "[DontPredict] takes nothing: '[DontPredict] bool jump;'");
+    } else if (d->kind != DECL_INPUT) {
+        diag_error(a->at, "[DontPredict] goes on an input's own fields");
+        diag_note("it resets that field to its declared default when a client guesses a future input");
+    } else {
+        for (int i = 0; i < f->attributes.count; i++) {
+            const attribute *other = &f->attributes.items[i];
+            if (other == a) continue;
+            if (str_eq_c(other->name, "Absolute")) {
+                diag_error(a->at, "[DontPredict] can't combine with [Absolute]");
+                diag_note("[DontPredict] resets a guessed field; [Absolute] keeps it");
+                break;
+            }
+            if (other < a && str_eq_c(other->name, "DontPredict")) {
+                diag_error(a->at, "field '" STR_FMT "' already has [DontPredict]", STR_ARG(f->name));
+                break;
+            }
+        }
+    }
+}
+
 // [Clamp(lo, hi)], [Min(x)] and [Max(x)] on input and struct fields. The
 // engine applies them to every input before Sanitize, the fields of structs in
 // it included, so they're a quick way to bound what players send. Elsewhere,
@@ -12844,6 +12876,10 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
         }
         if (str_eq_c(a->name, "Absolute")) {
             check_absolute_attribute(d, f, a);
+            continue;
+        }
+        if (str_eq_c(a->name, "DontPredict")) {
+            check_dont_predict_attribute(d, f, a);
             continue;
         }
         if (str_eq_c(a->name, "Filter") || str_eq_c(a->name, "Wrap")) {
@@ -13707,7 +13743,7 @@ static void check_method_decls(checker *c, decl *d)
         }
         if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON) {
             diag_error(m->at, "methods work on structs, components and singletons");
-            if (d->kind == DECL_INPUT) diag_note("an input has Sample and Sanitize");
+            if (d->kind == DECL_INPUT) diag_note("an input has Sample, Sanitize and Predict");
             else diag_note("put the data and its methods in a struct, and the struct in the singleton");
         }
         check_reserved(m->name, m->at);
@@ -16610,6 +16646,28 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
             if (prog->archetype_local.items[a] != sys->entity_local) continue;
             if (filters_admit(prog, sys, prog->archetypes.items[a], &prog->possible.items[a])) matched = true;
         }
+        // An authoring preview constructs its selected prefab directly. These
+        // combinations need no Spawn in ordinary game code; either placement
+        // can be selected in the editor, subject to the view's usual filters.
+        if (!matched && prog->editor_authoring && sys->is_view && (sys->run_in_editor || sys->editor_only)) {
+            for (int d = 0; d < prog->decls.count && !matched; d++) {
+                const prefab_instance *p = prog->decls.items[d]->prefab_checked;
+                if (!p) continue;
+                for (int e = 0; e < p->entities.count && !matched; e++) {
+                    comp_mask mask = mask_none();
+                    const expr *spawn = p->entities.items[e].spawn;
+                    for (int k = 0; k < spawn->args.count; k++) mask = mask_or(mask, bit(spawn->args.items[k]->type_decl));
+                    comp_mask need = mask_none(), without = mask_none();
+                    for (int k = 0; k < prog->components.count; k++) {
+                        const decl *comp = prog->components.items[k];
+                        const decl *base = comp->placement_of ? comp->placement_of : comp;
+                        if (mask_has(sys->need_mask, k)) need = mask_or(need, bit(base));
+                        if (mask_has(sys->without_mask, k)) without = mask_or(without, bit(base));
+                    }
+                    matched = mask_subset(need, mask) && !mask_intersects(mask, without);
+                }
+            }
+        }
         if (!matched) {
             diag_warning(sys->at, "%s '" STR_FMT "' never runs: no entity matches its parameters", system_what(sys),
                          STR_ARG(sys->name));
@@ -17036,6 +17094,14 @@ static void check_attributes(checker *c)
         bool stage_seen = false;
         for (int a = 0; a < d->attributes.count; a++) {
             attribute *attr = &d->attributes.items[a];
+            if (str_eq_c(attr->name, "RunInEditor") || str_eq_c(attr->name, "EditorOnly")) {
+                if (!d->is_view) diag_error(attr->at, "" STR_FMT " applies to views only; editor preview does not run systems or handlers", STR_ARG(attr->name));
+                else if (attr->args.count || attr->values.count) diag_error(attr->at, "" STR_FMT " takes no arguments", STR_ARG(attr->name));
+                else if (d->run_in_editor || d->editor_only) diag_error(attr->at, "a view declares its editor inclusion once: choose RunInEditor or EditorOnly");
+                else if (str_eq_c(attr->name, "EditorOnly")) d->editor_only = true;
+                else d->run_in_editor = true;
+                continue;
+            }
             if (str_eq_c(attr->name, "Stage")) {
                 if (stage_seen) {
                     diag_error(attr->at, "'" STR_FMT "' already has a Stage", STR_ARG(d->name));
@@ -17109,6 +17175,8 @@ static void check_attributes(checker *c)
                 diag_error(attr->at, "unknown attribute '" STR_FMT "'", STR_ARG(attr->name));
                 suggestion s = suggest_start(attr->name);
                 suggest_consider_c(&s, "Before");
+                suggest_consider_c(&s, "RunInEditor");
+                suggest_consider_c(&s, "EditorOnly");
                 suggest_consider_c(&s, "After");
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
@@ -17890,7 +17958,8 @@ static void check_roll_calls(const checker *c)
         const char *why = NULL;
         // A frag or a vert rolls with its pixel's or its vertex's own generator, and reads the seed its draw sends (shader.c)
         if (from->kind == DECL_SHADER) continue;
-        if (site->sanitizing) why = "Sanitize repairs an input the same way on every machine, from the input alone";
+        if (site->predicting) why = "Predict computes a guess from the input alone";
+        else if (site->sanitizing) why = "Sanitize repairs an input the same way on every machine, from the input alone";
         else if (from->is_interpolate) why = "Interpolate blends two values the same way each time it's asked";
         else if (!to->rolls && from->is_audio) why = "the audio thread has no match";
         else if (from->kind != DECL_FUNCTION && from->kind != DECL_METHOD && from->kind != DECL_SYSTEM && from->kind != DECL_INPUT) {
@@ -18201,7 +18270,7 @@ static void check_acts(checker *c)
             continue;
         }
         if (from->kind == DECL_INPUT) {
-            diag_error(at, "%s runs outside the simulation, and '" STR_FMT "' %s", site->sanitizing ? "Sanitize" : "Sample",
+            diag_error(at, "%s runs outside the simulation, and '" STR_FMT "' %s", site->predicting ? "Predict" : site->sanitizing ? "Sanitize" : "Sample",
                        STR_ARG(to->name), what);
             diag_note_at(where, "it does on line %d", where.line);
             continue;
@@ -19203,6 +19272,16 @@ bool check(program *prog)
         c.unit = prog->input->unit;
         check_sample(&c, prog->input);
         check_sanitize(&c, prog->input);
+        if (prog->input->predict) {
+            c.system = prog->input;
+            c.in_input = c.in_sanitize = c.in_predict = true;
+            const int outs = c.outs;
+            const int errors = diag_error_count();
+            check_stmt(&c, prog->input->predict);
+            check_body_assigned(&c, NULL, prog->input->predict, outs, errors);
+            c.in_input = c.in_sanitize = c.in_predict = false;
+            c.system = NULL;
+        }
     }
 
     // Every helper body is known before systems and views are checked. Their

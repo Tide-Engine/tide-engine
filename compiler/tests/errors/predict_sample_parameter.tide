@@ -1,0 +1,4 @@
+// expect: unknown name 'menu'
+local singleton Menu { bool open; }
+input I { bool jump; Sample(Menu menu) { jump = menu.open; } Predict() { jump = menu.open; } }
+scene Main { }

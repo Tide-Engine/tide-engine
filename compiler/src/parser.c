@@ -1539,6 +1539,24 @@ static void parse_sanitize(parser *p, decl *d, const token *name)
     d->sanitize = parse_block(p);
 }
 
+// Predict() adjusts the previous input when a client guesses a future tick.
+static void parse_predict(parser *p, decl *d, const token *name)
+{
+    if (d->kind != DECL_INPUT) {
+        diag_error(name->at, "only inputs have Predict");
+        longjmp(p->fail, 1);
+    }
+    if (d->predict) {
+        diag_error(name->at, "an input has one Predict");
+        longjmp(p->fail, 1);
+    }
+    if (name->text.ptr[0] == 'p') diag_error(name->at, "methods use PascalCase: 'Predict()'");
+    d->predict_at = name->at;
+    expect(p, T_LPAREN, "'('");
+    expect(p, T_RPAREN, "')': Predict takes no parameters, it works on the input's fields");
+    d->predict = parse_block(p);
+}
+
 // [Clamp(-1, 1)] before a field. Unlike a declaration's attributes, the
 // arguments are values.
 static void parse_field_attributes(parser *p)
@@ -1981,6 +1999,11 @@ static decl *parse_data_decl(parser *p, const decl_kind kind)
         if (at(p, T_IDENT) && peek_at(p, 1)->kind == T_LPAREN
             && (str_eq_c(peek(p)->text, "Sanitize") || str_eq_c(peek(p)->text, "sanitize"))) {
             parse_sanitize(p, d, advance(p));
+            continue;
+        }
+        if (at(p, T_IDENT) && peek_at(p, 1)->kind == T_LPAREN
+            && (str_eq_c(peek(p)->text, "Predict") || str_eq_c(peek(p)->text, "predict"))) {
+            parse_predict(p, d, advance(p));
             continue;
         }
         if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "extern") && peek_at(p, 1)->kind == T_IDENT) {
