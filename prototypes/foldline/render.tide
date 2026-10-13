@@ -503,7 +503,6 @@ frag Develop(Vertex vertex, Texture source, Lens lens, out Color color)
             + Rgb(lens.shafts.Sample(uv + float2(step.x, -step.y), Filter.Bilinear, Wrap.Clamp)) + Rgb(lens.shafts.Sample(uv + float2(-step.x, -step.y), Filter.Bilinear, Wrap.Clamp))) * 0.25;
     light += Rgb(lens.near.Sample(uv, Filter.Bilinear, Wrap.Clamp)) * 0.55 + Rgb(lens.mid.Sample(uv, Filter.Bilinear, Wrap.Clamp)) * 0.4
            + Rgb(lens.wide.Sample(uv, Filter.Bilinear, Wrap.Clamp)) * 0.3;
-    
     light *= 0.9;
 
     mut float3 film = Math.Saturate(light * (light * 2.51 + float3(0.03)) / (light * (light * 2.43 + float3(0.59)) + float3(0.14)));
