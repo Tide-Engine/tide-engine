@@ -1,0 +1,66 @@
+struct Details { bool fire; int level = 7; }
+
+float Fade(float value) { return Math.Max(0, value - 1); }
+float Compute(float value) { return value * 2; }
+
+input Controls
+{
+    float move;
+    [DontPredict] bool jump;
+    bool dash;
+    [DontPredict] int choice = 3;
+    [DontPredict] Details details;
+    [DontPredict] int? selection;
+    [DontPredict] float[2] axes = [1, 2];
+    [DontPredict] bool deliberate;
+    [Absolute] float aim;
+    [Clamp(0, 10)] float fade;
+    float computed;
+
+    Sample(Devices devices)
+    {
+        move = devices.gamepad.leftStick.x;
+        jump = devices.keyboard.space.pressed;
+    }
+
+    Predict()
+    {
+        dash = false;
+        fade = Fade(fade);
+        var label = $"{choice}";
+        computed = Compute(move) * label.length;
+        if (move != 0) deliberate = true;
+    }
+
+    Sanitize()
+    {
+        if (move == 0) computed = 0;
+    }
+}
+
+component Body
+{
+    float position;
+    int jumps;
+    int dashes;
+    int downs;
+    int ups;
+    int fires;
+    int fireUps;
+    float facing;
+}
+
+scene Main { }
+event(PlayerJoined joined) Join() { Spawn(Body, Owner { player = joined.player }); }
+
+system Drive(Controls input, mut Body body, with Owner)
+{
+    body.position += input.move;
+    body.facing = input.aim;
+    if (input.jump) body.jumps += 1;
+    if (input.dash) body.dashes += 1;
+    if (input.jump.down || input.dash.down) body.downs += 1;
+    if (input.jump.up || input.dash.up) body.ups += 1;
+    if (input.details.fire) body.fires += 1;
+    if (input.details.fire.up) body.fireUps += 1;
+}

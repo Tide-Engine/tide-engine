@@ -348,6 +348,32 @@ TIDE_TEST(lsp_sanitize)
 static const char *format_reply(const char *text);
 static const char *request_at(const char *uri, const char *method, int line, int character, const char *extra);
 
+TIDE_TEST(lsp_input_prediction)
+{
+    start();
+    const char *fields = complete("local singleton Menu { bool open; }\ninput Keys\n{\n"
+                                  "    [DontPredict] bool jump;\n    float move;\n"
+                                  "    Sample(Menu menu) { jump = menu.open; }\n"
+                                  "    Predict()\n    {\n        mut var amount = move;\n        amount = $\n    }\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(fields, "jump") && offers(fields, "move") && offers(fields, "amount"));
+    TIDE_CHECK(!offers(fields, "menu") && !offers(fields, "Devices") && !offers(fields, "Cursor"));
+    TIDE_CHECK(offers(complete("input Keys\n{\n    [$] bool jump;\n}\nscene Main { }\n"), "DontPredict"));
+    TIDE_CHECK(!offers(complete("input Keys\n{\n    bool jump;\n    Predict($) { }\n}\nscene Main { }\n"), "Devices"));
+    TIDE_CHECK(!offers(complete("input Keys\n{\n    int luck;\n    Predict() { luck = Random.$; }\n}\nscene Main { }\n"), "NextInt"));
+    open_document("float Fade(float value) { return value * 0.5; }\n"
+                  "input Keys\n{\n    [DontPredict] bool jump;\n    float move;\n"
+                  "    Pre$dict() { jump = false; move = Fade(move); }\n}\nscene Main { }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Adjusts the previous input when a client guesses a future tick"));
+    TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"Predict\",\"detail\":\"Predict()\",\"kind\":6"));
+    const char *implementation = request_at("file:///test.tide", "textDocument/implementation", 1, 7, "");
+    TIDE_CHECK(has(implementation, "\"line\":5,\"character\":4"));
+    const char *hierarchy = request("textDocument/prepareCallHierarchy");
+    TIDE_CHECK(has(hierarchy, "\"name\":\"Predict\""));
+    open_document("input Keys\n{\n    [Dont$Predict] bool jump;\n}\nscene Main { }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "declared default on guessed ticks"));
+}
+
 // Response builders are temporary; repeated requests keep the same JSON,
 // and later requests must still be able to read the existing analysis.
 static void check_repeat_at(const char *uri, const char *method, const int line, const int character, const char *extra)

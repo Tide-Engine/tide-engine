@@ -1,5 +1,17 @@
 # Runtime written by Claude for now
 
+## Input prediction callback (2026-10-13)
+
+The owner approved input Predict() and [DontPredict]. Their generated adapter
+adds optional `tide_game.predict_inputs(world, keep) -> bool` to the existing
+agent-maintained session boundary. It changes only remote inputs of a predicted
+world, preserves real sampled slots and suppresses invented button edges. The
+session tracks changed guesses for authoritative replay; the existing let-go
+callback still enforces the guess limit. No new exported runtime function or
+match-world state is added. Hosts and generated games rebuild together through
+the changed Session ABI header marker. Contracts/tests are in notes/netcode.md
+and notes/language.md.
+
 ## Retained asset lists boundary (2026-10-11)
 
 The owner explicitly approved `tide_list_prepare(tide_list *list, uint32_t element_size, uint32_t where)` before generated writable element access. It preserves the logical value and detaches borrowed asset storage with actual destination ownership. This task maintains the temporary list/heap/pack/session implementation and its generated wrappers; no user-facing reference type or mutability change was added. Runtime reads use existing list interfaces, and `_at_mut` refuses immutable descriptors/raw pack data until preparation. `engine/src/asset_store.*` owns private retained content/proof/pool/origin lifetimes. `notes/ecs.md` describes the storage contract, `notes/netcode.md` the protocol 14 callback change, and `notes/assets-and-files.md` the asset semantics and tests. Animation interpolation and palette math remain unchanged.

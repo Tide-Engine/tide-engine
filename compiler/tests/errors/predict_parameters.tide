@@ -1,0 +1,3 @@
+// expect: Predict takes no parameters
+input I { bool jump; Predict(Devices devices) { } }
+scene Main { }
