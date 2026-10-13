@@ -184,6 +184,15 @@ for k in range(21):
     clicks[at:at + m] += high(noise(0.012), 2200)[:m] * decay(0.012, 300)[:m]
 save('scrape', loop(drag + clicks * 0.8 + np.sin(2 * np.pi * 37 * t(n)) * 0.6), 0.7)
 
+# A heart: two thumps a beat, round and round
+n = 0.85
+beat = np.zeros(int(RATE * n))
+for at, loud in ((0.02, 1.0), (0.27, 0.7)):
+    i = int(at * RATE)
+    m = int(RATE * 0.16)
+    beat[i:i + m] += np.sin(2 * np.pi * 52 * t(0.16)) * decay(0.16, 26) * loud + low(noise(0.16), 180) * decay(0.16, 40) * loud
+save('heart', loop(low(beat, 240), 0.05), 0.8)
+
 # Seen: four notes that shouldn't be together, struck
 n = 1.6
 sting = sum(np.sin(2 * np.pi * f * t(n)) for f in (220, 233.1, 311.1, 466.2, 493.9))

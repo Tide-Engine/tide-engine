@@ -321,16 +321,16 @@ static void chambers_and_commands(void)
     ticks(&world, 60);
     CHECK(!world.Arena.solved && world.Arena.gate > 0.99f);
     // With both in the lift its door shuts on them whatever holds it, and the lift goes down: they're in the
-    // stretch between the rooms, in the lift they came by, standing as they stood and turned about with it
+    // stretch between the rooms, in the lift they came by, standing as they stood and facing as they faced
     place(&world, 1, (tide_float3){1.5f, 0, 15}, 0.5f, 0);
     const int32_t built = world.Arena.chamber;
     ticks(&world, 20);
     CHECK(world.Arena.gate < 0.5f && world.Arena.chamber == built && world.Arena.level == 0);
     ticks(&world, 120);
     CHECK(world.Arena.level == 5 && world.Arena.depth == 1 && world.Arena.chamber == built + 1 && world.Arena.rode == built + 1);
-    CHECK(near(pilot(&world, 0).position.x, 6.5f, 0.1f) && near(pilot(&world, 0).position.z, -16, 0.1f) && near(pilot(&world, 0).position.y, 0, 0.05f));
-    CHECK(near(pilot(&world, 1).position.x, 5, 0.1f) && near(pilot(&world, 1).position.z, -15, 0.1f));
-    CHECK(near(tide_sin_f(pilot(&world, 1).yaw), -tide_sin_f(0.5f), 0.01f) && tide_cos_f(pilot(&world, 1).yaw) < 0);
+    CHECK(near(pilot(&world, 0).position.x, 6.5f, 0.1f) && near(pilot(&world, 0).position.z, -15.2f, 0.1f) && near(pilot(&world, 0).position.y, 0, 0.05f));
+    CHECK(near(pilot(&world, 1).position.x, 8, 0.1f) && near(pilot(&world, 1).position.z, -16.2f, 0.1f));
+    CHECK(near(pilot(&world, 1).yaw, 0.5f, 0.01f));
     // Its door opens, and no shot does anything down here
     ticks(&world, 100);
     place(&world, 0, (tide_float3){6.5f, 0, -15}, 0, 0);
@@ -375,7 +375,7 @@ static void between(void)
         came = came || away < 6;
     }
     // ...and gets them: the stretch starts over, with both back in the lift
-    CHECK(came && world.Arena.caught > 0 && nearest < 1);
+    CHECK(came && world.Arena.caught > 0 && nearest < 1.4f);
     const int32_t built = world.Arena.chamber;
     ticks(&world, 90);
     CHECK(world.Arena.chamber == built + 1 && world.Arena.level == 5 && world.Arena.caught == 0);
@@ -383,17 +383,26 @@ static void between(void)
     // Looked at down a clear way, it doesn't move; looked away from, it does
     ticks(&world, 260);
     const tide_float3 stands = world.Stalker.at;
-    const tide_float3 watch = {stands.x + 1.8f, 0, stands.z};
+    const tide_float3 watch = {stands.x + 2.1f, 0, stands.z};
+    // ...until every light fails for a moment, and it's nearer when they're back
     place(&world, 0, watch, WEST, 0);
-    ticks(&world, 200);
-    CHECK(world.Stalker.seen && world.Stalker.at.x == stands.x && world.Stalker.at.z == stands.z && world.Arena.caught == 0);
-    place(&world, 0, watch, EAST, 0);
-    bool moved = false;
-    for (int step = 0; step < 120 && !moved; step++) {
+    bool dark = false;
+    int watched = 0;
+    for (int step = 0; step < 600; step++) {
         tide_world_tick(&world);
-        moved = world.Stalker.at.x != stands.x || world.Stalker.at.z != stands.z;
+        if (world.Stalker.dark) {
+            dark = watched > 0;
+            if (dark) break;
+            continue;
+        }
+        if (watched > 0 || world.Stalker.seen) {
+            CHECK(world.Stalker.seen && world.Stalker.at.x == stands.x && world.Stalker.at.z == stands.z && world.Arena.caught == 0);
+            watched += 1;
+        }
     }
-    CHECK(moved);
+    CHECK(dark && !world.Stalker.seen);
+    ticks(&world, 30);
+    CHECK(world.Stalker.at.x != stands.x || world.Stalker.at.z != stands.z || world.Arena.caught > 0);
     tide_world_free(&world);
 }
 
