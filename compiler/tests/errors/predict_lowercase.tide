@@ -1,0 +1,3 @@
+// expect: methods use PascalCase: 'Predict()'
+input I { bool jump; predict() { jump = false; } }
+scene Main { }

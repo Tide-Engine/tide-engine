@@ -2695,7 +2695,15 @@ static void check_samples(void)
     if (!gpu->target_texture(smooth, 0) || gpu->target_texture(smooth, 1) || gpu->target_depth(smooth)
         || !gpu->target_depth(plain)) {
         failures++;
-        fprintf(stderr, "a multisampled target has no color texture, or has a depth to read\n");
+        fprintf(stderr, "a multisampled target has no color texture, or has a depth to read before it's resolved\n");
+    }
+    // Its depth is a texture from the first time it's resolved, and a plain target's is as it was
+    gpu->resolve_depth(smooth);
+    const tide_gpu_id plain_depth = gpu->target_depth(plain);
+    gpu->resolve_depth(plain);
+    if (!gpu->target_depth(smooth) || gpu->target_depth(plain) != plain_depth) {
+        failures++;
+        fprintf(stderr, "a multisampled target's depth, resolved, is no texture, or a plain target's changed\n");
     }
 
     // With one sample a pixel is in the triangle or out of it
@@ -2806,7 +2814,8 @@ static void check_samples(void)
 // window's size and brought to the window. With samples, the pixels its edges
 // cross are between its color and what's behind it; with none, each is one
 // or the other. The engine's own draws, a shader's and a clear go into one
-// like into any target, and its depth is no shader's to read.
+// like into any target, and its depth is read as any target's: one depth a
+// pixel, as its samples have it when the draw that reads it comes.
 static void check_render_samples(const int32_t samples)
 {
     enum { WIDE = WIDTH * 4, HIGH = HEIGHT * 2 }; // 16 by 12
@@ -2877,14 +2886,58 @@ static void check_render_samples(const int32_t samples)
     expect_pixel(WIDE / 2, HIGH / 2, 0x00ff00ffu, "a target's samples are kept from frame to frame");
     expect_pixel(0, 0, 0x0000ffffu, "a target's samples are kept from frame to frame");
 
-    // Its depth is no shader's to read, with samples: that draw is passed by, and the window is as it was cleared
+    // Its depth is a shader's to read, with samples too: 1 where nothing was drawn, and the mesh's in the middle,
+    // which is 1.9 of the 9.9 the camera sees
     tide_draw_reset(&render_list);
     tide_draw_clear(&render_list, (tide_color){1, 0, 1, 1});
     blit_depth(tide_render_target_depth(scene));
     read_window(WIDE, HIGH, 1.0f);
-    // A depth of 1 where nothing was drawn, and of the mesh in the middle: neither is magenta
-    if (samples > 1) expect_all(0xff00ffffu, "a multisampled target's depth isn't read: its draw is passed by");
-    else expect_pixel(0, 0, gray(1.0f), "a target's depth, read, with one sample");
+    expect_pixel(0, 0, gray(1.0f), "a target's depth, read, where nothing was drawn");
+    expect_pixel(WIDE - 1, HIGH - 1, gray(1.0f), "a target's depth, read, where nothing was drawn");
+    expect_pixel(WIDE / 2, HIGH / 2, gray(1.9f / 9.9f), "a target's depth, read, where a mesh is");
+
+    // ...and as it is after more is drawn into it: a nearer mesh, in a later frame
+    const tide_vertex3 nearer[4] = {{{-0.5f, 0.5f, 1}, {0, 0}, TIDE_COLOR_RED}, {{0.5f, 0.5f, 1}, {1, 0}, TIDE_COLOR_RED},
+                                    {{0.5f, -0.5f, 1}, {1, 1}, TIDE_COLOR_RED}, {{-0.5f, -0.5f, 1}, {0, 1}, TIDE_COLOR_RED}};
+    const tide_mesh front = {nearer, 4, indices, 6, 2};
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_set_camera_matrices(&render_list, identity, across);
+    tide_draw_set_cull(&render_list, TIDE_CULL_NONE);
+    tide_draw_mesh_3d(&render_list, &front, turned, NULL, TIDE_FILTER_POINT);
+    tide_draw_to(&render_list, 0, 0, 0);
+    tide_draw_clear(&render_list, (tide_color){1, 0, 1, 1});
+    blit_depth(tide_render_target_depth(scene));
+    read_window(WIDE, HIGH, 1.0f);
+    expect_pixel(0, 0, gray(1.0f), "a target's depth, read again, where nothing was drawn");
+    expect_pixel(WIDE / 2, HIGH / 2, gray(0.9f / 9.9f), "a target's depth, read again, where a nearer mesh is now");
+
+    // A clear of depth alone leaves its colors: a mesh behind the others, drawn after one, is in front of them,
+    // and the corner's shape and what's past the meshes are as they were
+    const tide_vertex3 behind[4] = {{{-0.5f, 0.5f, 5}, {0, 0}, TIDE_COLOR_WHITE}, {{0.5f, 0.5f, 5}, {1, 0}, TIDE_COLOR_WHITE},
+                                    {{0.5f, -0.5f, 5}, {1, 1}, TIDE_COLOR_WHITE}, {{-0.5f, -0.5f, 5}, {0, 1}, TIDE_COLOR_WHITE}};
+    const tide_mesh back = {behind, 4, indices, 6, 3};
+    for (int cleared = 0; cleared < 2; cleared++) {
+        tide_draw_reset(&render_list);
+        tide_draw_render_target(&render_list, scene);
+        if (cleared) tide_draw_clear_depth(&render_list);
+        tide_draw_set_camera_matrices(&render_list, identity, across);
+        tide_draw_set_cull(&render_list, TIDE_CULL_NONE);
+        tide_draw_mesh_3d(&render_list, &back, turned, NULL, TIDE_FILTER_POINT);
+        tide_draw_to(&render_list, 0, 0, 0);
+        blit_target(scene, 0);
+        read_window(WIDE, HIGH, 1.0f);
+        expect_pixel(WIDE / 2, HIGH / 2, cleared ? 0xffffffffu : 0xff0000ffu,
+                     cleared ? "a mesh drawn after a clear of depth is in front" : "a mesh behind another, with depth as it was");
+        expect_pixel(0, 0, 0x0000ffffu, "a clear of depth leaves colors");
+        expect_pixel(WIDE - 1, HIGH - 1, 0xff0000ffu, "a clear of depth leaves colors");
+    }
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, (tide_color){1, 0, 1, 1});
+    blit_depth(tide_render_target_depth(scene));
+    read_window(WIDE, HIGH, 1.0f);
+    expect_pixel(0, 0, gray(1.0f), "a target's depth after a clear of depth, where nothing was drawn since");
+    expect_pixel(WIDE / 2, HIGH / 2, gray(4.9f / 9.9f), "a target's depth after a clear of depth, where a mesh was drawn since");
 
     tide_render_target_dispose(scene);
     tide_render_target_dispose(flat);

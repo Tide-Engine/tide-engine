@@ -1,0 +1,3 @@
+// expect: an input has one Predict
+input I { bool jump; Predict() { } Predict() { } }
+scene Main { }

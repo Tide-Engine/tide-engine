@@ -55,6 +55,46 @@ pass with mocked registry writes, and the production docs build passes.
 Other host OSes, Android, sanitizers and plugin verification against newer IDEs
 were not run; no CI workflow or real installer/association action was invoked.
 
+## Custom input prediction (2026-10-13)
+
+The owner approved `Predict()` and `[DontPredict]`. Inputs now have an optional
+parameterless prediction body with Sanitize's input-only capabilities, including
+pure helper calls and existing scratch cleanup. The parser/checker/codegen and
+asset-usage traversal carry that body separately from Sample and Sanitize.
+Marked direct input fields reset to their declared defaults before Predict;
+whole structs, optional fields and fixed arrays retain their ordinary value,
+padding and repair rules. Duplicate marks, arguments, placement outside input
+and combination with Absolute are errors. The engine-owned viewTime remains
+read-only. First-build ordering and restrictions are Provisional in the spec.
+
+Generated prediction adapters use previous guessed values, then marked defaults,
+Predict, repair/bounds and Sanitize. The existing guess cutoff applies afterward.
+A game's Predict can explicitly replace a marked default. No game-visible world,
+local state or time parameter is added. The callback/rollback boundary is in
+notes/netcode.md; the tide_game ABI marker changes, without changing world state
+layout or the wire protocol. Existing games emit no prediction callback.
+
+predict E2E checks defaults/arrays/optionals, pure computation and text scratch
+cleanup, repair/bounds/Sanitize, untouched own samples, remote server input,
+button-edge suppression, snapshots and high-latency/loss/jitter sessions with
+zero resyncs and quiet-period replay stability. predict_fields and predict_method
+exercise each feature independently. Fifteen diagnostics pin signature, purity,
+helper capabilities, viewTime and attribute restrictions. Editor integration
+and validation are recorded in notes/editors.md.
+
+Remaining: nested-field attributes, age/time-aware prediction parameters and
+per-field guess limits are not part of this implementation. Server ticks missing
+input retain the existing authoritative held-input rule.
+
+Validation: warning-free complete Windows native and web debug builds pass;
+all 2,278 native and 2,243 web CTests pass, including native OpenGL, WebGL/WebGPU,
+networking/migration/safety and unchanged determinism pins. All 235 shared grammar
+checks and the production docs build pass with Clang 23.1.2/Node 24.16.0.
+The predictor's text-scratch branch and idle replay checks are included in both
+full suites. Initial focused checks corrected a test-harness null argument,
+a viewTime diagnostic pin and Predict's expected keyword grammar scope before
+these final full runs. No CI, Android, Linux, macOS, MinGW or sanitizers were run.
+
 ## Checked static asset references (2026-10-12)
 
 The owner approved checked asset-reference fields for prefab model selections.

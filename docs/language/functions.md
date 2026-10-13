@@ -61,7 +61,7 @@ system Burn(mut Unit unit)
 
 Calling a `mut` method changes what it's called on, so it needs write access, like an assignment: `unit.stats.Hurt(1)` needs `mut Unit unit`. A read-only method can't call a `mut` one.
 
-Singleton methods use their explicit receiver and have no entity `this`, implicit world access or local sidecar fields. Inputs have only `Sample` and `Sanitize`.
+Singleton methods use their explicit receiver and have no entity `this`, implicit world access or local sidecar fields. Inputs have only `Sample`, `Sanitize` and `Predict`.
 
 A method marked `virtual` can be replaced by another package, and so can a function: see [Virtual and override](overrides.md).
 
@@ -189,7 +189,7 @@ view Hud(Kitchen kitchen)
 - **What was sent stays sent.** A function that tries a move and takes it back should send once the move is certain.
 - **Threads change nothing.** A system that splits its entities across threads calls such functions as it sends and spawns itself (see [The schedule](../game/schedule.md#splitting-across-threads)).
 
-Some code never sends or spawns, whoever calls it: a `Sort`'s comparison and a `parallel` loop's step, the input's `Sample` and `Sanitize`, frags and verts, a struct's operators and a component's `Interpolate`. A call there of a function that does is the error.
+Some code never sends or spawns, whoever calls it: a `Sort`'s comparison and a `parallel` loop's step, the input's `Sample`, `Sanitize` and `Predict`, frags and verts, a struct's operators and a component's `Interpolate`. A call there of a function that does is the error.
 
 ### Starting a task
 

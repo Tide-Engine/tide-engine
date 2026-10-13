@@ -1,0 +1,455 @@
+// FOLDLINE — a shared pair of folds, two operators, one resonant cube.
+settings
+{
+    title = "FOLDLINE";
+    tickRate = 60;
+    maxPlayers = 2;
+    hostMigration = true;
+}
+
+singleton Arena
+{
+    int level;
+    float gate;
+    bool solved;
+    bool complete;
+    bool plateA;
+    bool plateB;
+    bool bridge;
+    int ticks;
+    int joined;
+    PlayerID first;
+    PlayerID second;
+    Entity op0;
+    Entity op1;
+}
+
+singleton Fold
+{
+    int a = 4;
+    int b = 2;
+    [Position] float3 cube = float3(-3, 0.5, -8);
+    float3 cubeVelocity;
+    int carried = -1;
+    float cubeCooldown;
+    float3 ping;
+    float pingTime;
+    int pingOperator;
+    int traversals;
+}
+
+component Operator
+{
+    int id;
+    [Position] float3 position;
+    [Rotation] float yaw;
+    float pitch;
+    float3 velocity;
+    float portalCooldown;
+}
+
+local singleton Control
+{
+    int active;
+    bool started;
+    float sensitivity = 0.003;
+}
+
+input PilotInput
+{
+    [Absolute, Clamp(0, 1)] int active;
+    [Clamp(-1, 1)] float2 move;
+    [Clamp(-0.4, 0.4)] float2 look;
+    bool jump;
+    bool amber;
+    bool cyan;
+    bool carry;
+    bool ping;
+    bool reset;
+
+    Sample(Devices devices, Control control)
+    {
+        active = control.active;
+        if (!control.started) return;
+        var keys = devices.keyboard;
+        move.x = (keys.d.pressed ? 1 : 0) - (keys.a.pressed ? 1 : 0);
+        move.y = (keys.w.pressed ? 1 : 0) - (keys.s.pressed ? 1 : 0);
+        move += devices.gamepad.leftStick;
+        if (Cursor.locked) look = devices.mouse.delta * control.sensitivity;
+        look += devices.gamepad.rightStick * 0.045;
+        jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed;
+        amber = devices.mouse.left.pressed || devices.gamepad.rightTrigger > 0.3;
+        cyan = devices.mouse.right.pressed || devices.gamepad.leftTrigger > 0.3;
+        carry = keys.e.pressed || devices.gamepad.buttonWest.pressed;
+        ping = keys.q.pressed || devices.gamepad.buttonNorth.pressed;
+        reset = keys.r.pressed;
+    }
+}
+
+scene Main { }
+event Restart { }
+command SelectChamber { int level; }
+
+float3 OperatorStart(int id)
+{
+    return float3(id == 0 ? -1.4 : 1.4, 0, -9);
+}
+
+float3 CubeStart(int level)
+{
+    return level == 2 ? float3(-3, 0.5, -8) : float3(-3, 0.5, -6.5);
+}
+
+float3 PlatePosition(int level, int index)
+{
+    if (level == 0) return float3(index == 0 ? 5 : -5, 0.04, -2);
+    if (level == 1) return index == 0 ? float3(5, 0.04, -4) : float3(-5, 0.04, 10);
+    return index == 0 ? float3(-5, 0.04, -2) : float3(5, 0.04, 10.5);
+}
+
+int PanelCount(int level)
+{
+    return level >= 0 ? 6 : 0;
+}
+
+float3 PanelPosition(int level, int index)
+{
+    if (level < 0) return float3(0);
+    switch (index)
+    {
+        case 0: return float3(-9.8, 1.5, -6);
+        case 1: return float3(9.8, 1.5, -6);
+        case 2: return float3(-9.8, 1.5, 10);
+        case 3: return float3(9.8, 1.5, 10);
+        case 4: return float3(-5, 1.5, 2.8);
+        default: return float3(5, 1.5, 3.2);
+    }
+}
+
+float3 PanelNormal(int level, int index)
+{
+    if (level < 0) return float3(0, 0, 1);
+    switch (index)
+    {
+        case 0: case 2: return float3(1, 0, 0);
+        case 1: case 3: return float3(-1, 0, 0);
+        case 4: return float3(0, 0, -1);
+        default: return float3(0, 0, 1);
+    }
+}
+
+float3 PanelRight(int level, int index)
+{
+    return Math.Cross(float3(0, 1, 0), PanelNormal(level, index));
+}
+
+float3 PortalMapDirection(int level, int source, int destination, float3 direction)
+{
+    var x = Math.Dot(direction, PanelRight(level, source));
+    var z = Math.Dot(direction, PanelNormal(level, source));
+    return -PanelRight(level, destination) * x + float3(0, direction.y, 0)
+         - PanelNormal(level, destination) * z;
+}
+
+float3 PortalMapPoint(int level, int source, int destination, float3 point)
+{
+    return PanelPosition(level, destination)
+         + PortalMapDirection(level, source, destination, point - PanelPosition(level, source));
+}
+
+float3 LookDirection(float yaw, float pitch)
+{
+    var flat = Math.Cos(pitch);
+    return float3(Math.Sin(yaw) * flat, Math.Sin(pitch), Math.Cos(yaw) * flat);
+}
+
+bool PortalAperture(int level, int panel, float3 center, float radius)
+{
+    var offset = center - PanelPosition(level, panel);
+    // An opening 1.36 wide and 2.6 high that stands on the floor: its middle is 0.2 under its panel's.
+    return Math.Abs(Math.Dot(offset, PanelRight(level, panel))) < 0.68 - radius
+        && Math.Abs(offset.y + 0.2) < 1.3 - radius;
+}
+
+int AimedPanel(int level, float3 origin, float3 direction, float gate = 1)
+{
+    mut var nearest = 80.0;
+    mut var chosen = -1;
+    for (var i = 0; i < PanelCount(level); i++)
+    {
+        var normal = PanelNormal(level, i);
+        var denominator = Math.Dot(direction, normal);
+        if (denominator >= -0.01) continue;
+        var distance = Math.Dot(PanelPosition(level, i) - origin, normal) / denominator;
+        if (distance <= 0 || distance >= nearest) continue;
+        var hit = origin + direction * distance;
+        var relative = hit - PanelPosition(level, i);
+        if (Math.Abs(Math.Dot(relative, PanelRight(level, i))) > 1.65 || Math.Abs(relative.y) > 1.6) continue;
+        // The divider's opaque wings stop shots; its central passage permits them.
+        if ((origin.z < 2.8 && hit.z > 3.2) || (origin.z > 3.2 && hit.z < 2.8))
+        {
+            var crossing = origin + direction * ((3 - origin.z) / direction.z);
+            if (Math.Abs(crossing.x) > 2.1 || gate < 0.9) continue;
+        }
+        nearest = distance;
+        chosen = i;
+    }
+    return chosen;
+}
+
+// Crossing the plane rotates position, horizontal look and momentum together.
+bool Traverse(int level, Fold fold, float3 previousCenter, mut float3 center,
+              mut float3 velocity, mut float yaw, mut float cooldown, float radius)
+{
+    if (cooldown > 0 || fold.a == fold.b) return false;
+    for (var side = 0; side < 2; side++)
+    {
+        var source = side == 0 ? fold.a : fold.b;
+        var destination = side == 0 ? fold.b : fold.a;
+        var normal = PanelNormal(level, source);
+        var plane = PanelPosition(level, source);
+        var before = Math.Dot(previousCenter - plane, normal);
+        var after = Math.Dot(center - plane, normal);
+        if (before <= 0 || after > 0 || !PortalAperture(level, source, center, radius)) continue;
+        center = PortalMapPoint(level, source, destination, center) + PanelNormal(level, destination) * 0.05;
+        velocity = PortalMapDirection(level, source, destination, velocity);
+        var facing = PortalMapDirection(level, source, destination, LookDirection(yaw, 0));
+        yaw = Math.Atan2(facing.x, facing.z);
+        cooldown = 0.18;
+        return true;
+    }
+    return false;
+}
+
+bool NearOpening(int level, Fold fold, float3 center, float radius, int panel)
+{
+    return (fold.a == panel || fold.b == panel) && fold.a != fold.b
+        && PortalAperture(level, panel, center, radius);
+}
+
+float3 Confine(int level, Arena arena, Fold fold, float3 previous, float3 proposed, float radius, bool openings = true)
+{
+    mut var result = proposed;
+    // An active fold cuts an actual opening into its wall.
+    if (!openings || !NearOpening(level, fold, result, radius, result.z < 3 ? 0 : 2))
+        result.x = Math.Max(-9.8 + radius, result.x);
+    if (!openings || !NearOpening(level, fold, result, radius, result.z < 3 ? 1 : 3))
+        result.x = Math.Min(9.8 - radius, result.x);
+    result.z = Math.Clamp(result.z, -12.7 + radius, 12.7 - radius);
+    var doorway = Math.Abs(result.x) < 2.1 - radius && arena.gate > 0.9;
+    if (!doorway)
+    {
+        if (previous.z <= 3 && result.z > 2.8 - radius && (!openings || !NearOpening(level, fold, result, radius, 4)))
+            result.z = 2.8 - radius;
+        if (previous.z > 3 && result.z < 3.2 + radius && (!openings || !NearOpening(level, fold, result, radius, 5)))
+            result.z = 3.2 + radius;
+    }
+    return result;
+}
+
+bool IsPit(int level, Arena arena, float3 position)
+{
+    return level == 2 && position.z > 5 && position.z < 9
+        && (!arena.bridge || Math.Abs(position.x) > 1.65);
+}
+
+bool Weighs(float3 position, float3 plate)
+{
+    return position.y < 0.8 && Math.DistanceSq(position.xz, plate.xz) < 1.2;
+}
+
+void ResetChamber(mut Arena arena, mut Fold fold, mut World world, int level)
+{
+    arena.level = level;
+    arena.gate = 0;
+    arena.solved = false;
+    arena.complete = false;
+    arena.plateA = false;
+    arena.plateB = false;
+    arena.bridge = false;
+    arena.ticks = 0;
+    fold.a = 4;
+    fold.b = 2;
+    fold.cube = CubeStart(level);
+    fold.cubeVelocity = float3(0);
+    fold.carried = -1;
+    fold.cubeCooldown = 0;
+    fold.pingTime = 0;
+    fold.traversals = 0;
+    world.Set<Operator>(arena.op0, Operator { id = 0, position = OperatorStart(0) });
+    world.Set<Operator>(arena.op1, Operator { id = 1, position = OperatorStart(1) });
+}
+
+event(Spawned) BuildAtrium(with Main, mut Arena arena, mut Fold fold)
+{
+    arena.op0 = Spawn(Operator { id = 0, position = OperatorStart(0) }, Owner);
+    arena.op1 = Spawn(Operator { id = 1, position = OperatorStart(1) }, Owner);
+    fold.cube = CubeStart(0);
+}
+
+event(PlayerJoined joined) AssignOperator(mut Arena arena, mut World world)
+{
+    if (joined.player == arena.first || joined.player == arena.second) return;
+    if (arena.joined == 0)
+    {
+        arena.first = joined.player;
+        arena.joined = 1;
+        world.Set<Owner>(arena.op0, Owner { player = joined.player });
+        world.Set<Owner>(arena.op1, Owner { player = joined.player });
+    }
+    else if (arena.joined == 1)
+    {
+        arena.second = joined.player;
+        arena.joined = 2;
+        world.Set<Owner>(arena.op1, Owner { player = joined.player });
+    }
+}
+
+event(PlayerLeft left) ReassignOperator(mut Arena arena, mut World world)
+{
+    if (left.player != arena.first && left.player != arena.second) return;
+    if (left.player == arena.first) arena.first = arena.second;
+    arena.second = default;
+    arena.joined = Math.Max(0, arena.joined - 1);
+    world.Set<Owner>(arena.op0, Owner { player = arena.first });
+    world.Set<Owner>(arena.op1, Owner { player = arena.first });
+}
+
+event(Restart) RestartChamber(mut Arena arena, mut Fold fold, mut World world)
+{
+    ResetChamber(arena, fold, world, arena.level);
+}
+
+command(SelectChamber selection, PlayerID sender) ChooseChamber(mut Arena arena, mut Fold fold, mut World world)
+{
+    if (sender != arena.first && sender != arena.second) return;
+    if (selection.level < 0 || selection.level > 2) return;
+    ResetChamber(arena, fold, world, selection.level);
+}
+
+system MoveOperators(mut Operator body, PilotInput input, Arena arena, mut Fold fold, Time time)
+{
+    var controlling = arena.joined >= 2 || input.active == body.id;
+    body.portalCooldown = Math.Max(0, body.portalCooldown - time.dt);
+    if (controlling)
+    {
+        body.yaw += input.look.x;
+        body.yaw = Math.Atan2(Math.Sin(body.yaw), Math.Cos(body.yaw));
+        body.pitch = Math.Clamp(body.pitch + input.look.y, -1.4, 1.4);
+        if (input.reset.down) Send(Restart);
+        var facing = LookDirection(body.yaw, body.pitch);
+        var aimed = AimedPanel(arena.level, body.position + float3(0, 1.55, 0), facing, arena.gate);
+        if (input.amber.down && aimed >= 0 && aimed != fold.b) fold.a = aimed;
+        if (input.cyan.down && aimed >= 0 && aimed != fold.a) fold.b = aimed;
+        if (input.ping.down)
+        {
+            fold.ping = aimed >= 0 ? PanelPosition(arena.level, aimed) : body.position + facing * 4 + float3(0, 1.1, 0);
+            fold.pingTime = 3;
+            fold.pingOperator = body.id;
+        }
+        if (input.carry.down)
+        {
+            if (fold.carried == body.id)
+            {
+                fold.carried = -1;
+                fold.cubeVelocity = facing * 2;
+            }
+            else if (fold.carried < 0 && Math.DistanceSq(body.position + float3(0, 1, 0), fold.cube) < 6.25)
+                fold.carried = body.id;
+        }
+        var movement = Math.Normalize(input.move);
+        var forward = LookDirection(body.yaw, 0);
+        var right = float3(forward.z, 0, -forward.x);
+        var desired = (right * movement.x + forward * movement.y) * 5.2;
+        body.velocity.x = Math.Lerp(body.velocity.x, desired.x, Math.Min(1, time.dt * 12));
+        body.velocity.z = Math.Lerp(body.velocity.z, desired.z, Math.Min(1, time.dt * 12));
+        if (input.jump.down && body.position.y <= 0.001 && !IsPit(arena.level, arena, body.position))
+            body.velocity.y = 6.2;
+    }
+    else
+    {
+        body.velocity.x *= Math.Max(0, 1 - time.dt * 12);
+        body.velocity.z *= Math.Max(0, 1 - time.dt * 12);
+    }
+    body.velocity.y -= 18 * time.dt;
+    mut var previous = body.position + float3(0, 0.95, 0);
+    mut var proposed = previous + body.velocity * time.dt;
+    if (Traverse(arena.level, fold, previous, proposed, body.velocity, body.yaw, body.portalCooldown, 0.26))
+    {
+        fold.traversals += 1;
+        previous = proposed;
+        if (fold.carried == body.id) fold.Snap();
+        this.Snap();
+    }
+    proposed = Confine(arena.level, arena, fold, previous, proposed, 0.26, body.portalCooldown <= 0);
+    body.position = proposed - float3(0, 0.95, 0);
+    if (!IsPit(arena.level, arena, body.position) && body.position.y < 0)
+    {
+        body.position.y = 0;
+        body.velocity.y = 0;
+    }
+    if (body.position.y < -6)
+    {
+        body.position = OperatorStart(body.id);
+        body.velocity = float3(0);
+        if (fold.carried == body.id) fold.carried = -1;
+        this.Snap();
+    }
+    if (fold.carried == body.id)
+    {
+        var held = body.position + float3(0, 1.15, 0) + LookDirection(body.yaw, body.pitch) * 1.25;
+        fold.cube = Confine(arena.level, arena, fold, body.position + float3(0, 1.15, 0), held, 0.43);
+        fold.cubeVelocity = float3(0);
+    }
+}
+
+system MoveCube(mut Fold fold, Arena arena, Time time)
+{
+    fold.pingTime = Math.Max(0, fold.pingTime - time.dt);
+    fold.cubeCooldown = Math.Max(0, fold.cubeCooldown - time.dt);
+    if (fold.carried >= 0) return;
+    fold.cubeVelocity.y -= time.dt * 18;
+    mut var previous = fold.cube;
+    mut var proposed = fold.cube + fold.cubeVelocity * time.dt;
+    mut var ignoredYaw = 0.0;
+    if (Traverse(arena.level, fold, previous, proposed, fold.cubeVelocity, ignoredYaw, fold.cubeCooldown, 0.43))
+    {
+        fold.traversals += 1;
+        previous = proposed;
+    }
+    fold.cube = Confine(arena.level, arena, fold, previous, proposed, 0.43, fold.cubeCooldown <= 0);
+    if (!IsPit(arena.level, arena, fold.cube) && fold.cube.y < 0.5)
+    {
+        fold.cube.y = 0.5;
+        fold.cubeVelocity = float3(0);
+    }
+    if (fold.cube.y < -6)
+    {
+        fold.cube = CubeStart(arena.level);
+        fold.cubeVelocity = float3(0);
+    }
+}
+
+system EvaluateChamber(mut Arena arena, Fold fold, query (Operator body) operators, Time time)
+{
+    arena.ticks += 1;
+    var cubeA = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 0));
+    var cubeB = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 1));
+    mut var operatorA = false;
+    mut var operatorB = false;
+    mut var exiting = 0;
+    foreach (var entry in operators)
+    {
+        if (Weighs(entry.body.position, PlatePosition(arena.level, 0))) operatorA = true;
+        if (Weighs(entry.body.position, PlatePosition(arena.level, 1))) operatorB = true;
+        if (entry.body.position.z > 11 && Math.Abs(entry.body.position.x) < 3 && entry.body.position.y > -0.1) exiting += 1;
+    }
+    arena.plateA = cubeA || operatorA;
+    arena.plateB = cubeB || operatorB;
+    if (arena.level == 0 && arena.plateA) arena.solved = true;
+    if (arena.level == 1 && arena.plateA && arena.plateB) arena.solved = true;
+    if (arena.level == 2 && cubeA && operatorB) arena.solved = true;
+    arena.bridge = arena.level == 2 && (cubeA || arena.solved);
+    if (arena.solved) arena.gate = Math.Min(1, arena.gate + time.dt * 1.6);
+    if (arena.solved && exiting == 2) arena.complete = true;
+}

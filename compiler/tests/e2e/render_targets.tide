@@ -83,5 +83,7 @@ view Prepare(mut Buffers buffers)
     buffers.scene.Cube(float3(0, 0, 5), float3(2), Color.green);
     buffers.scene.SetClip(Rect(-2, -2, 4, 4));
     buffers.scratch.Clear(Color.blue);
+    buffers.scratch.ClearDepth();
+    Draw.ClearDepth();
     WindowMark(Draw.list);
 }

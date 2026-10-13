@@ -1,5 +1,5 @@
-// expect: a target of depth alone has one sample a pixel: a multisampled target's depth can't be read
-// expect: 'target.depth' of a target with samples isn't a shader's to read (a GPU keeps several depths a pixel there), so nothing could be read of this one: leave 'samples' out, as a shadow map does, or give the target a color image, whose edges the samples smooth
+// expect: a target of depth alone has one sample a pixel: samples smooth a target's colors, and it has none
+// expect: 'target.depth' is one depth a pixel whatever a target's samples are, so they'd change nothing that's read of this one: leave 'samples' out, as a shadow map does, or give the target a color image, whose edges the samples smooth
 // A shadow map's depth is read, which a multisampled depth can't be
 scene Main { }
 view Show() { var shadow = RenderTarget(64, 64, Format.Depth, samples: 4); }

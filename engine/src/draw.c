@@ -72,7 +72,7 @@ static tide_target_formats several_formats(const tide_target_format *formats, co
 
 // The bits of a target's id for `samples` a pixel: 1, 2, 4 or 8, any other
 // number being the one of those under it (1 for what's under 1), having said
-// so. A target with no color image has 1: nothing reads a multisampled depth.
+// so. A target with no color image has 1: samples smooth colors, and it has none.
 static uint16_t samples_of(const int32_t samples, const tide_target_formats formats)
 {
     uint32_t power = 0;
@@ -83,7 +83,7 @@ static uint16_t samples_of(const int32_t samples, const tide_target_formats form
     }
     if (power && formats.count == 0) {
         fprintf(stderr, "RenderTarget: a target of depth alone (Format.Depth) has one sample a pixel, and this asked "
-                        "for %d: a multisampled target's depth can't be read, so nothing could be read of it\n",
+                        "for %d: samples smooth a target's colors, and it has none\n",
                 1 << power);
         power = 0;
     }
@@ -1172,6 +1172,11 @@ uint32_t tide_draw_target_depth_sized(tide_draw_list *d, const uint64_t id, cons
 void tide_draw_clear(tide_draw_list *d, const tide_color color)
 {
     push(d, TIDE_DRAW_CLEAR, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), color);
+}
+
+void tide_draw_clear_depth(tide_draw_list *d)
+{
+    push(d, TIDE_DRAW_CLEAR, tide_f2(1.0f, 0.0f), tide_f2(0.0f, 0.0f), (tide_color){0});
 }
 
 // ---------------------------------------------------------------------------

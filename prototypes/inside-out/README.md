@@ -5,7 +5,7 @@ You are two small test robots packed in a small box, itself inside another
 room, on a model that sits on a table. Work your way out.
 Push rooms with your partner inside, fit them through tight passages, and
 move boxes into their own interiors. Repeated views of a room share one
-set of parcels, boxes and people.
+set of batteries, boxes and people.
 
 The 3D rooms keep a fixed, gently tilted view of a painted model: pale
 floors, matte painted boxes, soft shadows, marks that glow, and a lens that
@@ -22,24 +22,24 @@ chat alongside the game to discuss plans.
 ## Playing
 
 The scene fills the window, with the controls laid over it. Each screen
-follows its own dummy in one continuous scene. Step inside a
+follows its own robot in one continuous scene. Step inside a
 room and the camera zooms into its actual doorway. Your whole current room
 stays in view, with a wider fixed rim of containing-world context around it.
-You can see part of a dummy standing beside your box.
+You can see part of a robot standing beside your box.
 The camera keeps that framing when your partner moves or leaves the screen.
-Your dummy walks and shrinks through the doorway; leaving grows them back
+Your robot walks and shrinks through the doorway; leaving grows them back
 into the surrounding world. Your partner can watch that passage from outside.
 The outside follows the doorway you used: a moved shell changes your surroundings,
 and a recursive doorway can put the same room
 around itself. Amber and Teal keep their identity colours wherever they
 travel. A room shell contains a live miniature of its shared interior;
 nested and recursive preview details collapse to markers after a few layers.
-Floors, walls, parcels and dummies are real 3D geometry. The orthographic view
+Floors, walls, batteries and robots are real 3D geometry. The orthographic view
 keeps the grid and movement directions familiar; there is no camera rotation.
 
 | Action | Keyboard |
 | --- | --- |
-| Walk and push a parcel or room | WASD or arrow keys |
+| Walk and push a battery or room | WASD or arrow keys |
 | Enter a room | Walk into its doorway when the room cannot be pushed |
 | Leave a room | Walk outward through an edge doorway |
 | Undo the last shared move | Z or Backspace |
@@ -57,55 +57,33 @@ it: a yellow bar against a box you would push, a green arrow into a doorway
 you would enter. The direction buttons show the same for every direction,
 with a bar across the arrow where you cannot go.
 
-The shelf can revisit or skip any of the twelve puzzles. A plus beside a
+The shelf can revisit or skip any of the nine puzzles. A plus beside a
 title marks one you have completed in this match. Hints start with a small
 nudge; ask for more to reveal an arrangement and then a more specific plan.
 They are optional. Ambience, sound and reduced motion are local settings.
 
 ## The rules
 
-- Both dummies can enter any blocked room through an open doorway. People in
-  the same room block each other, even if they arrived through different
-  recursive doorways.
-- A moving shell carries its entire interior without changing anything's
-  position within that room. A shell can contain another shell.
-- Walking into a room first tries to push it. If that push cannot happen,
-  the same move tries its doorway instead. Parcels are pushed normally.
-  Nothing can be pulled, and pushes cannot move a chain.
-- A parcel or room pushed through another room's doorway enters its
-  interior. Parcels pushed outward through an edge door emerge beside the
-  containing room's physical shell.
-- Two boxes side by side are joined only where their open doorways face
-  each other at the same place along the shared edge; the floor between
-  them is drawn where they do. Dummies, parcels and boxes all cross a
-  joined doorway directly, and a dummy walks through it instead of pushing
-  the neighbor. Where the doorways do not line up, a parcel or box pushed
-  out is blocked by the neighbor, and a dummy stepping out pushes the
-  neighbor if it can move and is blocked if it cannot.
-- A box standing in a doorway is pushed on in by whoever comes through, as
-  a parcel there is. If it cannot move, the doorway is blocked.
-- A robot is drawn solid only where it really is: in the copy of a box it
-  came in through, and at the depth it is at where a room holds itself.
-  Everywhere else it is a stippled, see-through echo. A partner who came in
-  through another copy still stands in your way; one at another depth of a
-  room that holds itself does not.
-- A repeated box is another movable entrance into an existing room. Boxes
-  can enter themselves, and two boxes can contain one another. Moving a
-  parcel during one visit changes it for every visit. A parcel or box
-  pushed out of a room comes out beside the box its pusher came in through,
-  which is where the pusher would come out too. A small number marks a
-  room's first box; a prime mark (`1′`) marks its copy.
-- A dummy's return path remembers the entrance used. Leaving through an
-  edge door returns beside that entrance; if a shell has moved, the return
-  moves with it. Up to eight entrance layers are available.
-- Every room is a square grid, so a box always fills the cell it stands
-  in. Room sizes, wall shapes and edge doorway positions vary. There are no
-  switch locks. Make space and use walls, boxes or your partner as a
-  backstop when you need to enter a box instead of pushing it.
-- Fill every box-marked parcel target, park each shell on its matching numbered
-  dock in the correct dimension, and put both dummies on distinct player goals.
-  Parcels must finish on targets. A filled target can be emptied while
-  arranging the solution.
+One rule moves everything: robots, batteries and boxes.
+
+- Whatever you walk into is pushed, and whatever is beyond it is pushed too.
+  A row of any length moves as one. Nothing can be pulled.
+- Only a wall or the other robot stops a row. A robot is never pushed.
+- When a row is stopped, the thing against the stop stays put, and the thing
+  behind it goes into it instead, if it is a box with a doorway facing that
+  way. So you get into a box only when it cannot be pushed, and so does a
+  battery or a box you push at it. The one stop you can put in place and
+  take away again is your partner.
+- A moving box carries everything inside it.
+- A room has one box that is its outside. Walk out through an edge door and
+  you come out beside that box; so does anything you push out.
+- A pale box is a copy of a room: a way in, and never the way out. A room is
+  one place, so what is in it shows in every box of it, and a room can hold
+  a copy of itself.
+- Every room is a square grid, so a box always fills the cell it stands in.
+- Seat every battery in a socket, park each box on its numbered outline, and
+  put both robots on goals. A seated battery can be moved again while you
+  arrange things.
 
 Shared undo takes back the last successful action, whoever made it, and
 retains 128 actions. Reset restores the complete starting arrangement.
