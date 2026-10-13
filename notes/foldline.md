@@ -43,10 +43,11 @@ touchscreen movement is not implemented.
 
 ## Rendering
 
-`render.tide` owns local geometry, materials and render targets. The scene is
-original procedural architecture: limestone panels, dark machinery, warm and
-cool luminous accents, planting and a skylit research atrium. The other
-operator and held device are drawn in 3D.
+`render.tide` owns local geometry, materials, light and render targets. The
+scene is original procedural architecture: a stone atrium under a glass roof,
+dark machinery, warm and cool luminous accents and planting. The owner asked
+on 2026-10-13 for the best look achievable with free rein; the renderer was
+rewritten that day. Its choices are Claude's and unconfirmed by the owner.
 
 Portal views use mapped cameras and render the real scene into separate local
 targets. The portal surface samples the camera image by screen coordinates,
@@ -55,6 +56,46 @@ Scene fragments clip against the destination portal plane. The renderer uses
 a bounded second portal level, drawn from deepest to nearest into distinct
 targets, rather than reading a destination target while writing it. Local GPU
 resources are outside match state and never affect deterministic simulation.
+
+Light stays light until the last blit:
+
+- The room draws into a 4-sample `Rgba16f` window target with a second float
+  image holding each pixel's distance from the eye over 64 m. A multisampled
+  target's depth can't be read, so the second image is what the air pass reads.
+- First-level portal images are window-sized 4-sample `Rgba8`, second-level
+  ones half-size. They hold light folded as `sqrt(x / (1 + x))`; `Through`
+  unfolds it, so glow seen through a fold still blooms. `Sight.packed` and
+  `Aperture.packed` say which form a pass writes.
+- `Daylight` is a 2,048 px depth-only sun map over the whole atrium, redrawn
+  each frame from every list except the roof glass, the handheld and dust.
+  `Sunlight` takes nine compared looks; `FromSun` steps off the surface along
+  its normal. The viewer's own body casts a shadow though it isn't drawn.
+- `Surface` shades everything solid: sun and shadow, a sky/floor ambient,
+  analytic creases for the room's planes, contact shade under the cube and
+  both operators, the two folds, pressed plates, the cube, the wall ribbons
+  and the exit as unshadowed lamps, a sun highlight, and a reflection of the
+  roof (`Mirror`) weighted by gloss and angle. `Fixture.size` gives each box
+  rounded edges in the frag and keeps normals right under uneven scale.
+  Panel seams widen to the pixel they're seen through and fade as they do.
+- The roof glass (`kind` 2) draws `Sky`: a gradient, two octaves of cloud and
+  the sun. Leaves (`kind` 1) are two-sided blades that let the sun through.
+- `Shafts` marches 20 dithered steps through the sun map at half size, to the
+  stored distance, for the main view only. `Bright`, `Halve` and `Blur` build
+  three sizes of spill. `Develop` adds both, applies a film curve, a grade,
+  a vignette, a slight fringe and grain, and writes the window.
+
+`OpeningOnScreen` gives each fold's pixel rectangle. A fold's camera is
+skipped when its opening can't be seen and otherwise clipped to that
+rectangle; a second-level camera runs only when the first can see an opening
+again. The clip is set under `SetScreen` before the 3D camera.
+
+Operators are balls and tubes with a visor that follows pitch and legs that
+swing with speed. The handheld is drawn at a fifth of its size a fifth as far
+from the eye, with ordinary depth, so it never enters a wall. Behind the menu
+the view is a drifting camera of its own and the viewer's body is drawn. The
+aimed panel's ribbon brightens, and a partner's ping is a 3D beacon, which
+nothing drew before. Leaf sway, shafts inside portal views, shadows from the
+lamps and touchscreen controls are not built.
 
 ## Integration and verification
 
@@ -89,6 +130,15 @@ catalog thumbnail is that actual gameplay frame. Visual inspection corrected
 the first-person camera initially drawing its own robot body, which obscured
 the lower scene; self geometry now draws only in portal passes. The polished
 captures show compact equipment, warmer stone, roof shadows and chamber signs.
+
+The 2026-10-13 renderer passes the same scoped suites with the render test
+unchanged and at its original tolerances: 2/2 native (OpenGL) and 3/3 web
+(WebGL 2 and WebGPU with validation on). Looks were checked from standard-host
+captures: each chamber, the menu, facing folds with a second crossing, and a
+two-process co-op run whose frame is the new thumbnail and repeats byte for
+byte. Frame cost was not measured on a slow GPU or a browser; 1,200 windowless
+1080p frames took about a second on this machine. The full native and web
+suites were not rerun, as only this game's files changed.
 
 Docs checks and production/public-route validation are recorded in
 `notes/docs-site.md`. The collaborative preview's snapshot operation failed,
