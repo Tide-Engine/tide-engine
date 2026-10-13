@@ -237,4 +237,3 @@ int main(void)
     puts("DEADWEIGHT simulation checks passed");
     return 0;
 }
-
