@@ -17,6 +17,7 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 static int failures;
+static bool scene_samples;
 
 static void check(bool passed, const char *message)
 {
@@ -97,7 +98,7 @@ static void record(image *out)
     // Independently project the source aperture, for a yaw-zero camera.
     const Operator viewer = tide_get_Operator(&world, world.Arena.op0);
     const float focal = HEIGHT * 0.5f / tide_tan_f(75 * TIDE_DEG2RAD_F * 0.5f);
-    const float center_x = WIDTH * 0.5f + (-5 - viewer.position.x) * focal / (2.4f - viewer.position.z);
+    const float center_x = scene_samples ? WIDTH * 0.5f : WIDTH * 0.5f + (-5 - viewer.position.x) * focal / (2.4f - viewer.position.z);
     out->count = 0;
     for (int row = 0; row < GRID_Y; row++) {
         for (int column = 0; column < GRID_X; column++) {
@@ -121,6 +122,93 @@ static void prepare(float camera_x)
     cube_at((tide_float3){-3, 0.5f, -8});
     world.Fold.cubeTurn = (tide_quaternion){0, 0, 0, 1};
     world.Fold.carried = -1;
+}
+
+static int red_interior(const image *seen)
+{
+    int red = 0;
+    for (int i = 0; i < seen->count; i++) {
+        if (tide_abs_f(seen->points[i].x - WIDTH * .5f) > 35 || tide_abs_f(seen->points[i].y - HEIGHT * .5f) > 60) continue;
+        const int r = (seen->pixels[i] >> 24) & 255, g = (seen->pixels[i] >> 16) & 255, b = (seen->pixels[i] >> 8) & 255;
+        if (r > g + 35 && r > b + 35) red++;
+    }
+    return red;
+}
+
+static void select_level(int level)
+{
+    uint8_t payload[11] = {0};
+    payload[0] = (uint8_t)TIDE_COMMAND_ID_SelectChamber;
+    payload[1] = (uint8_t)(TIDE_COMMAND_ID_SelectChamber >> 8);
+    payload[10] = (uint8_t)(level * 2);
+    const tide_player_id owner = tide_player_from_index(0);
+    const uint32_t sequence = tide_game_api.command_sequence(&world, owner, 0) + 1;
+    check(tide_game_api.command(&world, owner, 0, sequence, payload, sizeof payload), "select render fixture room");
+    tide_world_tick(&world);
+    tide_world_tick(&world);
+}
+
+static void body_at(tide_entity entity, tide_float3 feet)
+{
+    Operator body = tide_get_Operator(&world, entity);
+    Box3D_Body rigid = tide_get_Box3D_Body(&world, entity);
+    body.position = feet;
+    body.yaw = 0;
+    body.pitch = 0;
+    body.last = (tide_float3){feet.x, feet.y + .9f, feet.z};
+    rigid.position = body.last;
+    rigid.velocity = (tide_float3){0};
+    check(tide_set_Operator(&world, entity, body) && tide_set_Box3D_Body(&world, entity, rigid), "position lift riders");
+}
+
+static void transition_checks(void)
+{
+    static const struct { int level; tide_float3 lift, arrival; } route[] = {
+        {0, {0,0,15.6f}, {6.5f,0,-15.6f}}, {1, {0,0,15.6f}, {6.5f,0,-15.6f}},
+        {6, {0,0,15.6f}, {6.5f,0,-15.6f}}, {3, {0,0,15.6f}, {0,0,-24}},
+        {12, {0,0,16.6f}, {6.5f,0,-15.6f}}, {7, {0,0,15.6f}, {6.5f,0,-15.6f}},
+        {4, {0,0,15.6f}, {6.5f,0,-15.6f}}, {5, {0,0,15.6f}, {6.5f,0,-15.6f}},
+        {8, {0,0,15.6f}, {0,0,-24}}, {10, {0,0,12.6f}, {0,0,-20}},
+        {9, {0,5,26.6f}, {0,0,-24}}, {11, {10,0,12.6f}, {6.5f,0,-15.6f}},
+        {6, {0,0,15.6f}, {6.5f,0,-15.6f}}
+    };
+    scene_samples = true;
+    for (int stop = 0; stop < 13; stop++) {
+        select_level(route[stop].level);
+        world.Arena.depth = stop; // The second maze is the last stop, not the first occurrence.
+        world.Arena.arrive = 2;
+        world.Arena.gate = 0;
+        world.Arena.ride = 0;
+        const tide_float3 lift = route[stop].lift, arrival = route[stop].arrival;
+        body_at(world.Arena.op0, (tide_float3){lift.x - .8f, lift.y, lift.z + .2f});
+        body_at(world.Arena.op1, (tide_float3){lift.x + 1.2f, lift.y, lift.z + .2f});
+        for (int step = 0; step < 10; step++) tide_world_tick(&world); // Settle physical placement before measuring continuity.
+        world.Arena.ride = 0;
+        const Operator departed_a = tide_get_Operator(&world, world.Arena.op0), departed_b = tide_get_Operator(&world, world.Arena.op1);
+        image before, crossing, after;
+        record(&before);
+        const int chamber = world.Arena.chamber;
+        world.Arena.ride = 1.3f - 1.0f / 60;
+        for (int step = 0; step < 3 && world.Arena.chamber == chamber; step++) tide_world_tick(&world);
+        check(world.Arena.chamber == chamber + 1, "every lift advances to its next room");
+        record(&crossing); // Includes the first frame before the arriving bodies are updated.
+        int dark = 0;
+        for (int i = 0; i < crossing.count; i++)
+            if ((crossing.pixels[i] >> 8) == 0) dark++;
+        check(dark > crossing.count * 9 / 10, "the scene change occurs inside the lift blackout");
+        for (int step = 0; step < 31; step++) tide_world_tick(&world);
+        record(&after);
+        const Operator a = tide_get_Operator(&world, world.Arena.op0), b = tide_get_Operator(&world, world.Arena.op1);
+        check(tide_abs_f(a.position.x - (arrival.x + departed_a.position.x - lift.x)) < .05f && tide_abs_f(a.position.z - (arrival.z + departed_a.position.z - lift.z)) < .05f
+              && tide_abs_f(a.position.y - arrival.y) < .05f, "camera retains its position relative to the lift");
+        check(tide_abs_f(b.position.x - (arrival.x + departed_b.position.x - lift.x)) < .05f && tide_abs_f(b.position.z - (arrival.z + departed_b.position.z - lift.z)) < .05f,
+              "partner retains their position relative to the lift");
+        check(local.Lens.lift < .01f, "arrival fades back in before its door opens");
+        // The shutter is still closed, at the same local plane, throughout the reveal.
+        check(world.Arena.arrive < .7f, "geometry comparison precedes the opening door");
+        check(changed(&crossing, &after) > after.count / 2, "arrival reveals a rendered lift rather than remaining black");
+    }
+    scene_samples = false;
 }
 
 static int render_checks(void *user, float seconds)
@@ -181,6 +269,20 @@ static int render_checks(void *user, float seconds)
     check(tide_abs_f(right_center - expected_right) < 22, "right camera agrees with independently projected destination cube");
     check(left_center - right_center > 35 && left_center - right_center < 90,
           "lateral camera movement preserves destination depth parallax");
+
+    // A destination below the blood is opaque red, both directly and inside the other pair.
+    prepare(-5);
+    world.Fold.ends.at[1].at = (tide_float3){-9.8f, -2, 0};
+    record(&occupied);
+    printf("Submerged portal interior red samples: %d\n", red_interior(&occupied));
+    check(red_interior(&occupied) > 90, "a submerged destination shows opaque red instead of dry geometry");
+    prepare(-5);
+    world.Fold.ends.at[2] = (Portal){.open=true, .at={-7.5f,1.55f,10}, .face={-1,0,0}, .size=1};
+    world.Fold.ends.at[3] = (Portal){.open=true, .at={-9.8f,-2,0}, .face={1,0,0}, .size=1};
+    record(&occupied);
+    printf("Nested submerged portal interior red samples: %d\n", red_interior(&occupied));
+    check(red_interior(&occupied) > 55, "a submerged destination remains red through the other operator's fold");
+    transition_checks();
 
     tide_draw_forget(&draw);
     tide_draw_free(&draw);

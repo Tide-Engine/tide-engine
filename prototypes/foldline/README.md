@@ -24,26 +24,34 @@ you leave it in solo mode, including on a pressure plate.
 | R | Reset the current room |
 | Escape | Open the menu |
 
-Wallpaper and marked panels take folds; bare machinery refuses them. Shots
+Wallpaper and marked panels take folds; bare concrete, strapped pillars and machinery refuse them. Shots
 pass through grilles, but closed doors and moving platforms block them. Small
 frames set an end's size: leaving one makes you and your carried object smaller.
 You keep that size until another fold changes it. Folds are on upright walls;
-floors and ceilings do not take them yet.
+floors and ceilings do not take them yet. An end placed below the blood is
+allowed, and its linked view is opaque red, including through another fold.
 
-Both A and B must stay weighted to open an exit. The first operator through
+Every puzzle starts with its cube clamped in place. Two different operators
+must occupy the green C and D controls together to release it and power the
+exit circuit; crates cannot substitute for either operator. The controls are
+at the room's puzzle workstations: galleries, separate vent rooms, opposite
+banks or machinery stations. Once released, the cube stays free.
+
+Both A and B must then stay weighted to open an exit. The first operator through
 stands on the lift's HOLD plate to let the other leave their plate. Both walk
-into the lift to continue. Ordinary puzzle rooms have one loose cube, so
+into the lift to continue. Its doors stay at the same positions through a brief
+blackout, then the forward door opens. Your position and facing inside are kept. Ordinary puzzle rooms have one loose cube, so
 parking a spare crate on the other plate cannot replace that handoff. The
 water challenges retain several physical objects for throwing and distraction.
 
 The descent alternates spatial puzzles with horror passages:
 
-1. **A shortcut through space:** learn crossings, carrying and the exit relay.
-2. **High Ground:** two fenced galleries, one weight and two independent folds.
-3. After the **Maze**, **Smaller** introduces a vent and a wall-owned small end.
+1. **A shortcut through space:** one controls the far-wall cover, the other builds a crossing and takes over from the far bank.
+2. **High Ground:** reach both fenced galleries, release the cube together, and keep routes back down.
+3. After the **Maze**, **Smaller** needs both operators to shrink and navigate separate vents and baffles.
 4. **Undertow:** an underwater circuit, a creature and limited distractions.
-5. After the **Long Pool**, **The Drums** tests timing and a hidden gallery.
-6. **All of It** combines retrieval, size, a restricted entrance and drums.
+5. After the **Long Pool**, **The Drums** pairs brake controls with a crossing and a hidden gallery.
+6. **All of It** pairs a gallery controller with a shrinking partner crossing the drums.
 7. After **The Works**, **Line of Sight** needs two door circuits and two folds.
 8. **The Shaft** combines a rising deck, moving platforms and a small cargo slot.
 9. **Blackout** combines a launch pad, controlled lighting and a creature.
