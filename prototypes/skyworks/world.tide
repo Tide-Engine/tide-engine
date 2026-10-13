@@ -1,0 +1,500 @@
+// SKYWORKS: all terrain, inventories and factory state belong to the match.
+settings { title = "SKYWORKS"; tickRate = 30; maxPlayers = 1; }
+enum Block : byte { Air, Grass, Stone, Wood, Leaves, Copper, Crystal, Spring, Plank, Machine }
+enum Kind { None, Drill, Tube, Kiln, Chest, Pump, Tank, Switch, Wire, Sensor, Beacon }
+struct Machine
+{
+    Kind kind;
+    int direction;
+    int input;
+    int item;
+    int count;
+    int clock;
+    bool enabled = true;
+    bool signal;
+    int moved;
+}
+singleton Island
+{
+    Grid3<Block> blocks = Grid3(48, 12, 48);
+    Grid2<Machine> machines = Grid2(48, 48);
+    Grid2<int> deposits = Grid2(48, 48);
+    List<int2> sites;
+    int revision = 1;
+    int produced;
+    int water;
+    bool beacon;
+}
+singleton Pilot
+{
+    float3 position = float3(16.5, 4.01, 11.5);
+    float yaw;
+    float pitch = 0.18;
+    float velocity;
+    bool grounded;
+    int cooldown;
+    int3 target = int3(-1);
+    int progress;
+    int[8] bag; // 1 wood, 2 stone, 3 ore, 4 ingot, 5 gear, 6 crystal, 7 water
+    int[12] built;
+    int planks = 16;
+    string message = "Chop a tree. Mine copper. Build your first wind-powered factory.";
+}
+local singleton Tools
+{
+    bool menu;
+    bool looking;
+    Kind selected = Kind.Drill;
+    int direction;
+}
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    [Clamp(-1, 1)] float2 look;
+    bool jump;
+    bool mine;
+    bool place;
+    bool use;
+    [Absolute] Kind selected;
+    [Absolute, Clamp(0, 3)] int direction;
+    Sample(Devices devices, Tools tools)
+    {
+        selected = tools.selected;
+        direction = tools.direction;
+        if (tools.menu) return;
+        var k = devices.keyboard;
+        move = float2((k.d.pressed ? 1 : 0) - (k.a.pressed ? 1 : 0),
+                      (k.w.pressed ? 1 : 0) - (k.s.pressed ? 1 : 0));
+        if (Cursor.locked) look = devices.mouse.delta * 0.003;
+        // Arrow look also makes the first-person game usable without pointer lock.
+        look += float2((k.rightArrow.pressed ? 1 : 0) - (k.leftArrow.pressed ? 1 : 0),
+                       (k.upArrow.pressed ? 1 : 0) - (k.downArrow.pressed ? 1 : 0)) * 0.045;
+        jump = k.space.pressed;
+        mine = devices.mouse.left.pressed || k.f.pressed;
+        place = devices.mouse.right.pressed || k.g.pressed;
+        use = k.e.pressed;
+    }
+}
+scene Main { }
+
+bool Inside(int3 p) { return p.x >= 0 && p.x < 48 && p.y >= 0 && p.y < 12 && p.z >= 0 && p.z < 48; }
+int3 Cell(float3 p) { return int3(int(Math.Floor(p.x)), int(Math.Floor(p.y)), int(Math.Floor(p.z))); }
+int2 Step(int direction)
+{
+    if (direction == 0) return int2(1, 0);
+    if (direction == 1) return int2(0, 1);
+    if (direction == 2) return int2(-1, 0);
+    return int2(0, -1);
+}
+string Facing(int direction)
+{
+    if (direction == 0) return "EAST";
+    if (direction == 1) return "SOUTH";
+    if (direction == 2) return "WEST";
+    return "NORTH";
+}
+string Name(Kind kind)
+{
+    switch (kind)
+    {
+        case Kind.Drill: return "Wind drill";
+        case Kind.Tube: return "Transfer tube";
+        case Kind.Kiln: return "Wind kiln";
+        case Kind.Chest: return "Storage crate";
+        case Kind.Pump: return "Spring pump";
+        case Kind.Tank: return "Water tank";
+        case Kind.Switch: return "Signal switch";
+        case Kind.Wire: return "Copper wire";
+        case Kind.Sensor: return "Stock sensor";
+        case Kind.Beacon: return "Sky beacon";
+        default: return "Bridge plank";
+    }
+}
+string Item(int item)
+{
+    switch (item)
+    {
+        case 1: return "wood";
+        case 2: return "stone";
+        case 3: return "copper ore";
+        case 4: return "copper ingots";
+        case 5: return "gears";
+        case 6: return "sky crystals";
+        case 7: return "water";
+        default: return "empty";
+    }
+}
+void Land(mut Island island, int2 center, int radius)
+{
+    for (mut var z = center.y - radius; z <= center.y + radius; z++)
+    for (mut var x = center.x - radius; x <= center.x + radius; x++)
+    {
+        var d = (x - center.x) * (x - center.x) + (z - center.y) * (z - center.y);
+        if (d > radius * radius) continue;
+        island.blocks[x, 3, z] = Block.Grass;
+        island.blocks[x, 2, z] = Block.Stone;
+        if (d < (radius - 1) * (radius - 1)) island.blocks[x, 1, z] = Block.Stone;
+        if (d < (radius - 3) * (radius - 3)) island.blocks[x, 0, z] = Block.Stone;
+    }
+}
+void Tree(mut Island island, int x, int z)
+{
+    for (mut var y = 4; y < 7; y++) island.blocks[x, y, z] = Block.Wood;
+    for (mut var dx = -2; dx <= 2; dx++)
+    for (mut var dz = -2; dz <= 2; dz++)
+    {
+        if (Math.Abs(dx) + Math.Abs(dz) > 3) continue;
+        island.blocks[x + dx, 7, z + dz] = Block.Leaves;
+        if (Math.Abs(dx) + Math.Abs(dz) <= 2) island.blocks[x + dx, 8, z + dz] = Block.Leaves;
+    }
+}
+event(Spawned) Generate(with Main, mut Island island)
+{
+    Land(island, int2(16, 16), 7);
+    Land(island, int2(35, 17), 5);
+    Land(island, int2(16, 35), 5);
+    Tree(island, 12, 14);
+    Tree(island, 20, 19);
+    Tree(island, 14, 20);
+    Tree(island, 33, 19);
+    for (mut var x = 17; x <= 19; x++)
+    {
+        island.blocks[x, 3, 15] = Block.Copper;
+        island.deposits[x, 15] = 80;
+    }
+    for (mut var x = 33; x <= 37; x++)
+    {
+        island.blocks[x, 3, 16] = Block.Copper;
+        island.deposits[x, 16] = 240;
+        island.blocks[x, 4, 14] = Block.Crystal;
+    }
+    island.blocks[16, 3, 35] = Block.Spring;
+    island.blocks[18, 4, 36] = Block.Crystal;
+}
+
+// Exact voxel traversal. Placement uses the face crossed into the hit cell.
+bool Pick(Island island, float3 origin, float3 direction, out int3 hit, out int3 before)
+{
+    mut var p = Cell(origin);
+    before = p;
+    hit = int3(-1);
+    var s = int3(direction.x >= 0 ? 1 : -1, direction.y >= 0 ? 1 : -1, direction.z >= 0 ? 1 : -1);
+    var delta = float3(Math.Abs(direction.x) < 0.00001 ? 100000 : Math.Abs(1 / direction.x),
+                       Math.Abs(direction.y) < 0.00001 ? 100000 : Math.Abs(1 / direction.y),
+                       Math.Abs(direction.z) < 0.00001 ? 100000 : Math.Abs(1 / direction.z));
+    mut var t = float3((s.x > 0 ? float(p.x + 1) - origin.x : origin.x - float(p.x)) * delta.x,
+                       (s.y > 0 ? float(p.y + 1) - origin.y : origin.y - float(p.y)) * delta.y,
+                       (s.z > 0 ? float(p.z + 1) - origin.z : origin.z - float(p.z)) * delta.z);
+    mut var distance = 0.0;
+    for (mut var i = 0; i < 32; i++)
+    {
+        if (distance > 6) return false;
+        if (Inside(p) && island.blocks[p] != Block.Air) { hit = p; return true; }
+        before = p;
+        if (t.x <= t.y && t.x <= t.z) { distance = t.x; t.x += delta.x; p.x += s.x; }
+        else if (t.y <= t.z) { distance = t.y; t.y += delta.y; p.y += s.y; }
+        else { distance = t.z; t.z += delta.z; p.z += s.z; }
+    }
+    return false;
+}
+bool Solid(Island island, float3 p)
+{
+    var c = Cell(p);
+    if (!Inside(c)) return false;
+    var b = island.blocks[c];
+    return b != Block.Air && b != Block.Spring;
+}
+bool BodyBlocked(Island island, float3 p)
+{
+    for (mut var x = -1; x <= 1; x += 2)
+    for (mut var z = -1; z <= 1; z += 2)
+    {
+        var offset = float3(float(x) * 0.25, 0, float(z) * 0.25);
+        if (Solid(island, p + offset + float3(0, 0.05, 0)) ||
+            Solid(island, p + offset + float3(0, 0.9, 0)) ||
+            Solid(island, p + offset + float3(0, 1.7, 0))) return true;
+    }
+    return false;
+}
+void Recover(mut Pilot pilot)
+{
+    pilot.position = float3(16.5, 4.01, 11.5);
+    pilot.velocity = 0;
+    pilot.message = "The wind brought you home. Your inventory is safe.";
+}
+system Walk(Controls input, Time time, Island island, mut Pilot pilot)
+{
+    pilot.yaw += input.look.x;
+    if (pilot.yaw > Math.PI) pilot.yaw -= 2 * Math.PI;
+    if (pilot.yaw < -Math.PI) pilot.yaw += 2 * Math.PI;
+    pilot.pitch = Math.Clamp(pilot.pitch - input.look.y, -1.45, 1.45);
+    var forward = float3(Math.Sin(pilot.yaw), 0, Math.Cos(pilot.yaw));
+    var right = float3(forward.z, 0, -forward.x);
+    var movement = forward * input.move.y + right * input.move.x;
+    var speed = Math.Length(movement) > 1 ? Math.Normalize(movement) * 4.5 : movement * 4.5;
+    mut var next = pilot.position + float3(speed.x * time.dt, 0, 0);
+    if (!BodyBlocked(island, next)) pilot.position = next;
+    next = pilot.position + float3(0, 0, speed.z * time.dt);
+    if (!BodyBlocked(island, next)) pilot.position = next;
+    if (input.jump.down && pilot.grounded) pilot.velocity = 7.2;
+    pilot.velocity = Math.Max(pilot.velocity - 20 * time.dt, -20);
+    next = pilot.position + float3(0, pilot.velocity * time.dt, 0);
+    pilot.grounded = false;
+    if (!BodyBlocked(island, next)) pilot.position = next;
+    else
+    {
+        if (pilot.velocity < 0) pilot.grounded = true;
+        pilot.velocity = 0;
+    }
+    if (pilot.position.y < -12) Recover(pilot);
+}
+void RemoveMachine(mut Island island, mut Pilot pilot, int2 at)
+{
+    var machine = island.machines[at];
+    pilot.built[int(machine.kind)] += 1;
+    if (machine.item > 0 && machine.item < 8) pilot.bag[machine.item] += machine.count;
+    pilot.bag[3] += machine.input;
+    island.machines[at] = default;
+    island.blocks[at.x, 4, at.y] = Block.Air;
+    for (mut var i = 0; i < island.sites.count; i++)
+        if (island.sites[i].x == at.x && island.sites[i].y == at.y) { island.sites.RemoveAt(i); break; }
+    if (machine.kind == Kind.Beacon)
+    {
+        island.beacon = false;
+        foreach (var site in island.sites)
+            if (island.machines[site].kind == Kind.Beacon) island.beacon = true;
+    }
+    island.revision += 1;
+}
+void Interact(mut Island island, mut Pilot pilot, int3 at)
+{
+    if (at.y != 4 || island.blocks[at] != Block.Machine) return;
+    var cell = int2(at.x, at.z);
+    mut var m = island.machines[cell];
+    if (m.kind == Kind.Switch) { m.enabled = !m.enabled; }
+    else if (m.count > 0)
+    {
+        pilot.bag[m.item] += m.count;
+        pilot.message = $"Collected {m.count} {Item(m.item)}.";
+        m.count = 0;
+        m.item = 0;
+    }
+    else if (m.kind == Kind.Kiln && pilot.bag[3] > 0 && m.input < 24)
+    {
+        var amount = Math.Min(pilot.bag[3], 24 - m.input);
+        m.input += amount;
+        pilot.bag[3] -= amount;
+        pilot.message = $"Loaded {amount} ore. The wind kiln needs no fuel.";
+    }
+    else pilot.message = "Empty. Tubes move items in the direction of their copper arrow.";
+    island.machines[cell] = m;
+}
+system Hands(Controls input, mut Island island, mut Pilot pilot)
+{
+    if (pilot.cooldown > 0) pilot.cooldown -= 1;
+    var rotation = quaternion.Euler(float3(pilot.pitch, pilot.yaw, 0));
+    var direction = Math.Rotate(rotation, float3(0, 0, 1));
+    if (!Pick(island, pilot.position + float3(0, 1.6, 0), direction, out var hit, out var before))
+    { pilot.target = int3(-1); pilot.progress = 0; return; }
+    if (pilot.target.x != hit.x || pilot.target.y != hit.y || pilot.target.z != hit.z) pilot.progress = 0;
+    pilot.target = hit;
+    if (input.use.down) Interact(island, pilot, hit);
+    if (!input.mine) pilot.progress = 0;
+    else
+    {
+        pilot.progress += 1;
+        var b = island.blocks[hit];
+        var duration = b == Block.Leaves ? 3 : b == Block.Stone ? 24 : 16;
+        if (pilot.progress >= duration)
+        {
+            pilot.progress = 0;
+            if (b == Block.Machine) RemoveMachine(island, pilot, int2(hit.x, hit.z));
+            else if (b == Block.Spring) pilot.message = "A permanent spring. Place a pump on top to collect water.";
+            else
+            {
+                if (hit.y == 3 && island.blocks[hit.x, 4, hit.z] == Block.Machine)
+                { pilot.message = "Dismantle the machine before mining its foundation."; return; }
+                if (hit.y == 3 && hit.x >= 15 && hit.x <= 17 && hit.z >= 10 && hit.z <= 12)
+                { pilot.message = "This landing pad is your safe return point."; return; }
+                if (b == Block.Wood) pilot.bag[1] += 3;
+                if (b == Block.Stone || b == Block.Grass) pilot.bag[2] += 1;
+                if (b == Block.Crystal) pilot.bag[6] += 2;
+                if (b == Block.Plank) pilot.planks += 1;
+                if (b == Block.Copper)
+                {
+                    pilot.bag[3] += 1;
+                    island.deposits[hit.x, hit.z] -= 1;
+                    if (island.deposits[hit.x, hit.z] > 0) return;
+                }
+                island.blocks[hit] = Block.Air;
+                if (b == Block.Wood)
+                {
+                    mut var trunk = false;
+                    for (mut var y = 4; y <= 6; y++)
+                        if (island.blocks[hit.x, y, hit.z] == Block.Wood) trunk = true;
+                    if (!trunk)
+                    {
+                        for (mut var dx = -2; dx <= 2; dx++)
+                        for (mut var dz = -2; dz <= 2; dz++)
+                        for (mut var y = 7; y <= 8; y++)
+                            if (island.blocks[hit.x + dx, y, hit.z + dz] == Block.Leaves)
+                                island.blocks[hit.x + dx, y, hit.z + dz] = Block.Air;
+                    }
+                }
+                island.revision += 1;
+            }
+        }
+    }
+    if (!input.place || pilot.cooldown > 0 || !Inside(before)) return;
+    if (before.x >= 15 && before.x <= 17 && before.z >= 10 && before.z <= 12 && before.y >= 4 && before.y <= 5)
+    { pilot.message = "Keep the landing pad clear for your return."; return; }
+    if (input.selected == Kind.None)
+    {
+        if (pilot.planks <= 0) { pilot.message = "Craft bridge planks in the workshop (Tab)."; return; }
+        mut var placeAt = before;
+        // Aiming down at a floor extends it horizontally, so bridging never
+        // requires placing a block while falling over the void.
+        if (hit.y <= 3 && before.y == hit.y + 1)
+            placeAt = hit + (Math.Abs(direction.x) > Math.Abs(direction.z) ? int3(direction.x > 0 ? 1 : -1, 0, 0) : int3(0, 0, direction.z > 0 ? 1 : -1));
+        if (!Inside(placeAt) || island.blocks[placeAt] != Block.Air) return;
+        island.blocks[placeAt] = Block.Plank;
+        if (BodyBlocked(island, pilot.position)) { island.blocks[placeAt] = Block.Air; return; }
+        pilot.planks -= 1;
+    }
+    else
+    {
+        if (before.y != 4 || island.blocks[before.x, 3, before.z] == Block.Air)
+        { pilot.message = "Machines stand on the island surface. Build a floor first."; return; }
+        if (island.sites.count >= 256) { pilot.message = "This first island can hold 256 machines."; return; }
+        if (int(input.selected) < 1 || int(input.selected) > 10 || pilot.built[int(input.selected)] <= 0)
+        { pilot.message = "Craft this machine in the workshop (Tab)."; return; }
+        island.blocks[before] = Block.Machine;
+        if (BodyBlocked(island, pilot.position)) { island.blocks[before] = Block.Air; return; }
+        pilot.built[int(input.selected)] -= 1;
+        island.machines[before.x, before.z] = Machine { kind = input.selected, direction = input.direction };
+        island.sites.Add(int2(before.x, before.z));
+        if (input.selected == Kind.Beacon) island.beacon = true;
+        pilot.message = $"Placed {Name(input.selected)}. Output faces {Facing(input.direction)}.";
+        if (input.selected == Kind.Beacon) pilot.message = "Beacon lit. Your sky factory is alive! Keep expanding or experiment with circuits.";
+    }
+    island.revision += 1;
+    pilot.cooldown = 8;
+}
+
+command Craft { int recipe; }
+int WoodCost(int recipe)
+{
+    if (recipe == 11 || recipe == 12) return 1;
+    if (recipe == 4) return 3;
+    if (recipe == 1 || recipe == 3 || recipe == 5 || recipe == 6) return 2;
+    return 0;
+}
+int StoneCost(int recipe) { return recipe == 1 ? 3 : recipe == 3 ? 5 : recipe == 6 ? 3 : 0; }
+int CopperCost(int recipe)
+{
+    if (recipe == 1 || recipe == 5) return 2;
+    if (recipe == 2 || recipe == 7 || recipe == 8) return 1;
+    if (recipe == 9 || recipe == 13) return 2;
+    if (recipe == 10) return 12;
+    return 0;
+}
+command(Craft craft, PlayerID sender) Make(Island island, mut Pilot pilot)
+{
+    if (sender != PlayerID(0) || craft.recipe < 1 || craft.recipe > 13) return;
+    var r = craft.recipe;
+    if (r == 10 && island.produced < 12)
+    { pilot.message = "Automate 12 copper ingots before building the sky beacon."; return; }
+    var wood = WoodCost(r);
+    var stone = StoneCost(r);
+    var copper = CopperCost(r);
+    var gears = r == 1 || r == 5 ? 1 : 0;
+    var crystals = r == 9 ? 1 : r == 10 ? 4 : 0;
+    var ore = r == 12 ? 1 : 0;
+    var water = r == 10 ? 8 : 0;
+    if (pilot.bag[1] < wood || pilot.bag[2] < stone || pilot.bag[4] < copper ||
+        pilot.bag[5] < gears || pilot.bag[6] < crystals || pilot.bag[3] < ore || pilot.bag[7] < water)
+    { pilot.message = "Missing ingredients. Chop wood, mine stone/copper, then hand-smelt ingots."; return; }
+    pilot.bag[1] -= wood; pilot.bag[2] -= stone; pilot.bag[4] -= copper;
+    pilot.bag[5] -= gears; pilot.bag[6] -= crystals; pilot.bag[3] -= ore;
+    pilot.bag[7] -= water;
+    if (r == 11) { pilot.planks += 4; pilot.message = "Crafted 4 bridge planks."; }
+    else if (r == 12) { pilot.bag[4] += 1; pilot.message = "Hand-smelted a copper ingot."; }
+    else if (r == 13) { pilot.bag[5] += 1; pilot.message = "Crafted a copper gear."; }
+    else { pilot.built[r] += 1; pilot.message = $"Crafted {Name(Kind(r))}. Select it, then place on a floor."; }
+}
+bool Accept(Machine m, int item)
+{
+    if (m.kind == Kind.Kiln) return item == 3 && m.input < 24;
+    if (m.kind == Kind.Tank) return item == 7 && m.count < 64;
+    return (m.kind == Kind.Tube || m.kind == Kind.Chest) && m.count < 24 && (m.count == 0 || m.item == item);
+}
+system Factory(Time time, mut Island island)
+{
+    if (time.tick % 15 != 0) return;
+    // Reset signals; evaluate sensors against stock before this factory step.
+    foreach (var at in island.sites)
+    {
+        mut var m = island.machines[at];
+        m.moved = 0;
+        m.signal = m.kind == Kind.Switch && m.enabled;
+        if (m.kind == Kind.Sensor) m.signal = island.machines[at + Step(m.direction)].count >= 8;
+        island.machines[at] = m;
+    }
+    // A bounded circuit reaches all 256 installed cells, including loops.
+    for (mut var pass = 0; pass < island.sites.count; pass++)
+    {
+        mut var changed = false;
+        foreach (var at in island.sites)
+        {
+            mut var m = island.machines[at];
+            if (m.kind != Kind.Wire || m.signal) continue;
+            for (mut var d = 0; d < 4; d++)
+            {
+                var other = island.machines[at + Step(d)];
+                if ((other.kind == Kind.Switch || other.kind == Kind.Sensor || other.kind == Kind.Wire) && other.signal)
+                { m.signal = true; changed = true; }
+            }
+            island.machines[at] = m;
+        }
+        if (!changed) break;
+    }
+    foreach (var at in island.sites)
+    {
+        mut var m = island.machines[at];
+        mut var wired = false;
+        mut var powered = false;
+        for (mut var d = 0; d < 4; d++)
+        {
+            var wire = island.machines[at + Step(d)];
+            if (wire.kind == Kind.Wire) { wired = true; powered = powered || wire.signal; }
+        }
+        m.enabled = m.kind == Kind.Switch ? m.enabled : !wired || powered;
+        if (m.enabled)
+        {
+            m.clock += 1;
+            if (m.kind == Kind.Drill && m.clock >= 6 && m.count < 24 && island.deposits[at] > 0)
+            { m.item = 3; m.count += 1; m.clock = 0; island.deposits[at] -= 1; }
+            if (m.kind == Kind.Kiln && m.clock >= 4 && m.input > 0 && m.count < 24)
+            { m.item = 4; m.count += 1; m.input -= 1; m.clock = 0; island.produced += 1; }
+            if (m.kind == Kind.Pump && m.clock >= 2 && m.count < 24 && island.blocks[at.x, 3, at.y] == Block.Spring)
+            { m.item = 7; m.count += 1; m.clock = 0; island.water += 1; }
+        }
+        island.machines[at] = m;
+    }
+    // Incoming units are marked: they cannot travel a second hop in this step.
+    foreach (var at in island.sites)
+    {
+        mut var source = island.machines[at];
+        if (!source.enabled || source.count <= source.moved ||
+            (source.kind != Kind.Drill && source.kind != Kind.Kiln && source.kind != Kind.Tube && source.kind != Kind.Pump)) continue;
+        var target = at + Step(source.direction);
+        mut var destination = island.machines[target];
+        if (!Accept(destination, source.item)) continue;
+        if (destination.kind == Kind.Kiln) destination.input += 1;
+        else { destination.item = source.item; destination.count += 1; destination.moved += 1; }
+        source.count -= 1;
+        if (source.count == 0) source.item = 0;
+        island.machines[at] = source;
+        island.machines[target] = destination;
+    }
+}

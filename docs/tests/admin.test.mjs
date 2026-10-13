@@ -8,7 +8,7 @@ import test from 'node:test';
 import { createAnalytics } from '../analytics.js';
 import { createAdmin } from '../admin.js';
 
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'skyworks'];
 
 async function site(t, options = {}) {
     const folder = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-'));
@@ -140,7 +140,8 @@ test('prototype files are public while the catalog and retired copies remain pro
         '/samples/underfoot/index.html', '/underfoot.html', '/samples/%75nderfoot/game.wasm',
         '/samples/thumbnails/underfoot.png',
         '/samples/foldline/index.html', '/foldline.html', '/samples/%66oldline/game.wasm',
-        '/samples/thumbnails/foldline.png']) {
+        '/samples/thumbnails/foldline.png', '/samples/skyworks/index.html', '/skyworks.html',
+        '/samples/%73kyworks/game.wasm', '/samples/thumbnails/skyworks.png']) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);
