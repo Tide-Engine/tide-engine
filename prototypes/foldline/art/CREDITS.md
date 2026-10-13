@@ -14,3 +14,6 @@ plaster) were generated for this game.
 
 Kenney's assets are Creative Commons Zero (CC0):
 <http://creativecommons.org/publicdomain/zero/1.0/>.
+
+The sounds in `sfx/` were made for this game by `make_sfx.py`, from sines and
+noise: no recording is in them. Run it with the folder to write them again.

@@ -704,9 +704,14 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     // With the cube in hand a click throws it; with empty hands it shoots a fold's end
     var holding = fold.carried == pilot.id;
     var thrown = holding && (input.amber.down || input.cyan.down || input.hurl.down);
-    // An end that's shot is there at once: nothing shows it sliding over from where it was
-    if (!holding && input.amber.down && Shoot(fold, true, arena.level, eye, facing, physics, world)) fold.Snap();
-    if (!holding && input.cyan.down && Shoot(fold, false, arena.level, eye, facing, physics, world)) fold.Snap();
+    if (!holding && (input.amber.down || input.cyan.down))
+    {
+        // An end that's shot is there at once, and so are the shards of one that wasn't: nothing slides over
+        // from where the last was
+        if (input.amber.down) Shoot(fold, true, arena.level, eye, facing, physics, world);
+        if (input.cyan.down) Shoot(fold, false, arena.level, eye, facing, physics, world);
+        fold.Snap();
+    }
     if (input.ping.down)
     {
         fold.ping = physics.Raycast(eye, eye + facing * 40, out var seen) ? seen.point : eye + facing * 4;

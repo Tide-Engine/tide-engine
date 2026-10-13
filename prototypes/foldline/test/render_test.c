@@ -76,6 +76,7 @@ static void record(image *out)
     local.Interface.introduced = true;
     local.Control.active = 0;
     local.Control.started = true;
+    local.Optics.warmed = 3; // Past the first frames, which are drawn with folds that aren't there
     tide_local_frame_time(&local, 0);
     tide_draw_reset(&draw);
     tide_draw_screen_size(&draw, screen);

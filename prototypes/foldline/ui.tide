@@ -1,4 +1,6 @@
 // FOLDLINE's local interface. Menus never pause the shared match.
+// It's drawn as an old console's was: square, in a few flat colors, each
+// letter with a hard shadow, and a list to choose from in place of buttons.
 local singleton Interface
 {
     bool open = true;
@@ -8,9 +10,11 @@ local singleton Interface
     string message;
 }
 
-const Color UI_INK = Color(0.91, 0.95, 0.93);
-const Color UI_MUTED = Color(0.56, 0.68, 0.7);
-const Color UI_DARK = Color(0.025, 0.065, 0.085, 0.94);
+const Color UI_INK = Color(0.87, 0.83, 0.70);
+const Color UI_MUTED = Color(0.52, 0.48, 0.39);
+const Color UI_DARK = Color(0.02, 0.018, 0.014, 0.93);
+const Color UI_SHADOW = Color(0, 0, 0, 0.85);
+const Color UI_RED = Color(0.74, 0.07, 0.05);
 const Color UI_CYAN = Color(0.21, 0.87, 0.89);
 const Color UI_AMBER = Color(1, 0.65, 0.28);
 
@@ -25,18 +29,46 @@ string ChamberHint(int level)
     };
 }
 
-bool InterfaceButton(Rect rect, string label, Color accent, bool primary)
+string ChamberName(int level)
+{
+    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "APART", 2 => "SMALLER", 3 => "LARGER", _ => "BOTH" };
+}
+
+// One of the picture's big pixels, in the window's: what every edge and shadow here is a multiple of.
+float Dot()
+{
+    return Math.Max(2, Math.Round(Screen.height / 360));
+}
+
+// Letters, with their shadow a pixel down and across.
+void Ink(string text, float2 at, float size, Color tint, Anchor anchor)
+{
+    Draw.Text(text, at + float2(Dot(), Dot()), size, UI_SHADOW, anchor, Font.Bold);
+    Draw.Text(text, at, size, tint, anchor, Font.Bold);
+}
+
+// A flat dark slab with a hard edge along its top and left.
+void Slab(Rect rect)
+{
+    var middle = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+    Draw.Rect(middle, float2(rect.width, rect.height), Color(0.02, 0.018, 0.014, 0.78));
+    Draw.Rect(float2(middle.x, rect.y + Dot() * 0.5), float2(rect.width, Dot()), Color(0.87, 0.83, 0.70, 0.28));
+    Draw.Rect(float2(rect.x + Dot() * 0.5, middle.y), float2(Dot(), rect.height), Color(0.87, 0.83, 0.70, 0.28));
+}
+
+// A line of a list: plain letters, and a red mark before the one that's pointed at.
+bool InterfaceChoice(Rect rect, string label, float size)
 {
     var button = GUI.Control(rect);
     var hot = button.hovered || button.focused;
     var middle = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-    Draw.RoundRect(middle, float2(rect.width, rect.height), 7,
-        primary ? (hot ? Color(0.45, 0.97, 0.93) : accent) : (hot ? Color(0.12, 0.24, 0.28) : Color(0.065, 0.14, 0.17)));
-    if (!primary) Draw.WireRoundRect(middle, float2(rect.width, rect.height), 7, 1, hot ? accent : Color(0.2, 0.32, 0.35));
-    Draw.Text(label, float2(rect.x + 18, middle.y), 17, primary ? UI_DARK : UI_INK, Anchor.MiddleLeft, Font.Bold);
-    Draw.Line(float2(rect.x + rect.width - 30, middle.y), float2(rect.x + rect.width - 19, middle.y), 2, primary ? UI_DARK : accent);
-    Draw.Line(float2(rect.x + rect.width - 24, middle.y - 5), float2(rect.x + rect.width - 19, middle.y), 2, primary ? UI_DARK : accent);
-    Draw.Line(float2(rect.x + rect.width - 24, middle.y + 5), float2(rect.x + rect.width - 19, middle.y), 2, primary ? UI_DARK : accent);
+    if (hot)
+    {
+        Draw.Rect(middle, float2(rect.width, rect.height), Color(0.74, 0.07, 0.05, 0.22));
+        Draw.Rect(float2(rect.x + Dot() * 2, middle.y), float2(Dot() * 4, rect.height), UI_RED);
+    }
+    Ink(label, float2(rect.x + (hot ? 26 : 16), middle.y), size, hot ? Color(1, 0.96, 0.84) : UI_INK, Anchor.MiddleLeft);
+    if (button.clicked) Audio.Play(menuAccept, 0.6);
     return button.clicked;
 }
 
@@ -62,17 +94,20 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     var pad = Math.Clamp(Screen.width * 0.045, 22, 58);
     var width = Math.Min(450, Screen.width - pad * 2);
     var headingY = compact ? 26.0 : 94.0;
+    // The dark it's read against: all of the left, thinning to nothing across the picture
     Draw.Rect(float2((width + pad * 2) * 0.5, Screen.height * 0.5), float2(width + pad * 2, Screen.height), UI_DARK);
-    Draw.Line(float2(width + pad * 2, 0), float2(width + pad * 2, Screen.height), 1, Color(0.31, 0.59, 0.62, 0.35));
-    Draw.Text("F O L D   R E S E A R C H   /   C O O P E R A T I V E", float2(pad, headingY - 22), 11, UI_CYAN);
-    Draw.Text("FOLDLINE", float2(pad - 3, headingY), Math.Min(compact ? 56 : 74, width / 5.1), UI_INK, Font.Bold);
+    for (var band = 0; band < 6; band++)
+        Draw.Rect(float2(width + pad * 2 + band * 28 + 14, Screen.height * 0.5), float2(28, Screen.height), Color(0.02, 0.018, 0.014, 0.8 - band * 0.14));
+    Ink("SUBLEVEL 4   /   TWO OPERATORS", float2(pad, headingY - 22), 11, UI_MUTED, Anchor.UpperLeft);
+    var title = Math.Min(compact ? 56 : 74, width / 5.1);
+    Draw.Text("FOLDLINE", float2(pad - 3 + Dot() * 2, headingY + Dot() * 2), title, UI_RED, Anchor.UpperLeft, Font.Bold);
+    Draw.Text("FOLDLINE", float2(pad - 3, headingY), title, UI_INK, Anchor.UpperLeft, Font.Bold);
     var ruleY = headingY + (compact ? 72 : 100);
-    Draw.Line(float2(pad, ruleY), float2(pad + 70, ruleY), 3, UI_AMBER);
-    Draw.Line(float2(pad + 78, ruleY), float2(pad + 148, ruleY), 3, UI_CYAN);
-    Draw.Text("Two minds. One impossible shortcut.", float2(pad, headingY + (compact ? 87 : 122)), Math.Min(21, width / 18), UI_INK);
-    if (!compact) Draw.Text("A first-person puzzle for two operators.\nConnect spaces. Move the cube. Find a way together.", float2(pad, headingY + 157), 16, UI_MUTED);
+    Draw.Rect(float2(pad + 74, ruleY), float2(148, Dot() * 2), UI_RED);
+    Ink("Nobody has left by the way they came in.", float2(pad, headingY + (compact ? 87 : 122)), Math.Min(19, width / 20), UI_INK, Anchor.UpperLeft);
+    if (!compact) Draw.Text("A first-person puzzle for two.\nFold the rooms together. Mind the floor.", float2(pad, headingY + 157), 16, UI_MUTED);
     var top = headingY + (compact ? 126 : 239);
-    if (InterfaceButton(Rect(pad, top, width, 48), ui.introduced ? "CONTINUE EXPERIMENT" : "ENTER THE FACILITY", UI_CYAN, true))
+    if (InterfaceChoice(Rect(pad, top, width, 46), ui.introduced ? "GO BACK DOWN" : "GO DOWN", 22))
     {
         if (session.state == SessionState.Offline) Session.Start();
         ui.open = false;
@@ -80,34 +115,35 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
         control.started = true;
         Cursor.Lock();
     }
-    if (InterfaceButton(Rect(pad, top + 60, width, 46), session.open ? "COPY CO-OP ROOM CODE" : "HOST A CO-OP EXPERIMENT", UI_AMBER, false))
+    if (InterfaceChoice(Rect(pad, top + 52, width, 40), session.open ? "COPY THE ROOM'S CODE" : "BRING SOMEONE", 18))
     {
         if (session.open) Clipboard.Copy(session.room);
         else
         {
             if (session.state == SessionState.Offline) Session.Start();
             Session.Open();
-            ui.message = "Room is open. Share its code with your partner.";
+            ui.message = "The room is open. Give its code to whoever is coming.";
         }
     }
-    GUI.SetTheme(GUITheme { text = UI_INK, field = Color(0.05, 0.12, 0.15), fieldHot = Color(0.1, 0.21, 0.24), accent = UI_CYAN, radius = 6 });
-    GUI.TextField(Rect(pad, top + 119, width - 116, 40), "Room", ui.code, out var entered);
-    var join = InterfaceButton(Rect(pad + width - 104, top + 119, 104, 40), "JOIN", UI_CYAN, false);
+    GUI.SetTheme(GUITheme { text = UI_INK, field = Color(0.07, 0.06, 0.05), fieldHot = Color(0.14, 0.11, 0.09), accent = UI_RED, radius = 0 });
+    GUI.TextField(Rect(pad + 16, top + 104, width - 132, 38), "Room", ui.code, out var entered);
+    var join = InterfaceChoice(Rect(pad + width - 108, top + 104, 108, 38), "JOIN", 18);
     if ((join || entered) && ui.code != "")
     {
         Session.Join(ui.code);
-        ui.message = "Connecting to your partner...";
+        ui.message = "Going to them...";
         ui.introduced = true;
     }
-    if (session.room != "") Draw.Text($"ROOM  {session.room}", float2(pad, top + 174), 17, UI_AMBER, Font.Bold);
-    else if (session.state == SessionState.Connecting) Draw.Text("CONNECTING...", float2(pad, top + 174), 15, UI_CYAN);
-    else Draw.Text(ui.message, float2(pad, top + 174), 14, UI_MUTED);
+    if (session.room != "") Ink($"ROOM  {session.room}", float2(pad + 16, top + 158), 17, UI_AMBER, Anchor.UpperLeft);
+    else if (session.state == SessionState.Connecting) Ink("CONNECTING...", float2(pad + 16, top + 158), 15, UI_INK, Anchor.UpperLeft);
+    else Draw.Text(ui.message, float2(pad + 16, top + 158), 14, UI_MUTED);
     if (session.state == SessionState.Connected)
     {
+        Ink("ROOM", float2(pad + 16, top + 196), 11, UI_MUTED, Anchor.UpperLeft);
         for (var i = 0; i < 5; i++)
         {
             var slotWidth = (width - 32) / 5;
-            if (InterfaceButton(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), $"0{i + 1}", i == 0 ? UI_AMBER : UI_CYAN, false))
+            if (InterfaceChoice(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), $"0{i + 1}", 18))
             {
                 Send(SelectChamber { level = i });
                 ui.open = false;
@@ -117,15 +153,10 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
             }
         }
     }
-    var foot = Math.Max(top + 268, Screen.height - 114);
-    Draw.Text("SOLO EXPLORATION", float2(pad, foot), 11, UI_CYAN, Font.Bold);
-    Draw.Text("Tab switches operators when playing alone.\nYour other body stays where you leave it.", float2(pad, foot + 22), 14, UI_MUTED);
-    Draw.Text("PROTOTYPE 01   /   TIDE", float2(pad, Screen.height - 22), 10, Color(0.4, 0.55, 0.57));
-    if (Screen.width > 900)
-    {
-        Draw.Text("SPATIAL COOPERATION DIVISION", float2(Screen.width - 36, 32), 11, UI_MUTED, Anchor.UpperRight, Font.Bold);
-        Draw.Text("EST. 2086", float2(Screen.width - 36, 53), 11, UI_MUTED, Anchor.UpperRight);
-    }
+    var foot = Math.Max(top + 268, Screen.height - 104);
+    Ink("ALONE", float2(pad, foot), 11, UI_RED, Anchor.UpperLeft);
+    Draw.Text("Tab is your other body.\nIt stays where you leave it.", float2(pad, foot + 20), 14, UI_MUTED);
+    Draw.Text("PROTOTYPE 01   /   TIDE", float2(pad, Screen.height - 22), 10, Color(0.36, 0.33, 0.27));
 }
 
 local event(Connected connected) EnterConnectedRoom(mut Interface ui)
@@ -144,43 +175,23 @@ local event(Disconnected gone) ConnectionEnded(mut Interface ui)
     ui.message = $"Connection ended: {gone.reason}.";
 }
 
-// A pane of dark glass the picture shows through, with a hairline around it.
-void HudPane(Rect rect)
+// A circuit's lamp: a square, hollow until its plate is weighted. It gives where the next goes.
+float HudLamp(float2 at, string label, float reach, Color tint, bool lit)
 {
-    var middle = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-    Draw.RoundRect(middle, float2(rect.width, rect.height), 10, Color(0.02, 0.05, 0.07, 0.6));
-    Draw.WireRoundRect(middle, float2(rect.width, rect.height), 10, 1, Color(0.6, 0.8, 0.83, 0.2));
+    var side = Dot() * 4;
+    Draw.Rect(at + float2(Dot(), Dot()), float2(side, side), UI_SHADOW);
+    Draw.Rect(at, float2(side, side), lit ? tint : Color(0.3, 0.28, 0.23));
+    if (!lit) Draw.Rect(at, float2(side - Dot() * 2, side - Dot() * 2), Color(0.05, 0.045, 0.04));
+    Ink(label, at + float2(side * 0.5 + 6, 0), 11, lit ? UI_INK : UI_MUTED, Anchor.MiddleLeft);
+    return at.x + side + 18 + reach;
 }
 
-// A circuit's lamp: dim until its plate is weighted, then lit with a halo.
-void HudLamp(float2 at, string label, Color tint, bool lit)
-{
-    if (lit)
-    {
-        Draw.Circle(at, 9, Color(tint.r, tint.g, tint.b, 0.22));
-        Draw.Circle(at, 4.5, tint);
-    }
-    else
-    {
-        Draw.Circle(at, 4.5, Color(0.2, 0.27, 0.29));
-        Draw.WireCircle(at, 4.5, 1, Color(0.45, 0.56, 0.58));
-    }
-    Draw.Text(label, at + float2(13, 0), 10, lit ? UI_INK : UI_MUTED, Anchor.MiddleLeft, Font.Bold);
-}
-
-// A key's cap and what it does. `wide` is the cap's width and `reach` the label's; it gives where the next goes.
+// A key and what it does, as two words. It gives where the next goes.
 float HudKey(float2 at, string key, float wide, string label, float reach)
 {
-    Draw.RoundRect(at + float2(wide * 0.5, 0), float2(wide, 19), 4, Color(0.02, 0.05, 0.07, 0.55));
-    Draw.WireRoundRect(at + float2(wide * 0.5, 0), float2(wide, 19), 4, 1, Color(0.7, 0.86, 0.88, 0.45));
-    Draw.Text(key, at + float2(wide * 0.5, 0), 10, UI_INK, Anchor.MiddleCenter, Font.Bold);
-    Draw.Text(label, at + float2(wide + 7, 0), 10, Color(0.86, 0.92, 0.91, 0.9), Anchor.MiddleLeft);
-    return at.x + wide + reach + 22;
-}
-
-string ChamberName(int level)
-{
-    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "APART", 2 => "SMALLER", 3 => "LARGER", _ => "BOTH" };
+    Ink(key, at, 10, UI_INK, Anchor.MiddleLeft);
+    Ink(label, at + float2(wide + 4, 0), 10, Color(0.68, 0.64, 0.53), Anchor.MiddleLeft);
+    return at.x + wide + reach + 20;
 }
 
 [After(Render)]
@@ -191,66 +202,66 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     var pad = Math.Clamp(Screen.width * 0.025, 18, 34);
     var narrow = Screen.width < 800;
     var middle = float2(Screen.width * 0.5, Screen.height * 0.5);
+    var dot = Dot();
 
-    // The experiment and its two circuits.
-    var plate = Math.Min(narrow ? 236.0 : 330.0, Screen.width - pad * 2 - 150);
-    HudPane(Rect(pad, 18, plate, 78));
-    Draw.RoundRect(float2(pad + 12, 34), float2(3, 16), 1.5, UI_AMBER);
-    Draw.RoundRect(float2(pad + 12, 52), float2(3, 16), 1.5, UI_CYAN);
-    Draw.Text($"EXPERIMENT 0{arena.level + 1}", float2(pad + 24, 27), 10, UI_CYAN, Font.Bold);
-    Draw.Text(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 24, 41), 14, UI_INK, Font.Bold);
-    HudLamp(float2(pad + 30, 78), "A", UI_AMBER, arena.plateA);
-    HudLamp(float2(pad + 66, 78), "B", UI_CYAN, arena.plateB);
-    HudLamp(float2(pad + 102, 78), "HOLD", UI_INK, arena.hold);
-    if (!narrow) Draw.Text(arena.gate > 0.9 ? "GATE OPEN" : "GATE SEALED", float2(pad + plate - 14, 78), 10, arena.gate > 0.9 ? UI_INK : UI_MUTED, Anchor.MiddleRight, Font.Bold);
+    // The room, its name, and its three plates.
+    Draw.Rect(float2(pad + dot * 1.5, 43), float2(dot * 3, 46), UI_RED);
+    Ink($"ROOM 0{arena.level + 1}", float2(pad + 14, 22), 11, UI_MUTED, Anchor.UpperLeft);
+    Ink(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 14, 37), 17, UI_INK, Anchor.UpperLeft);
+    mut var lamp = float2(pad + 14 + dot * 2, 78);
+    lamp.x = HudLamp(lamp, "A", 8, UI_AMBER, arena.plateA);
+    lamp.x = HudLamp(lamp, "B", 8, UI_CYAN, arena.plateB);
+    lamp.x = HudLamp(lamp, "HELD", 32, UI_INK, arena.hold);
+    if (!narrow) Ink(arena.gate > 0.9 ? "GATE UP" : "GATE DOWN", float2(lamp.x + 10, 78), 11, arena.gate > 0.9 ? UI_INK : UI_MUTED, Anchor.MiddleLeft);
 
     // Whose eyes these are, and the room others join.
-    var chip = 138.0;
-    HudPane(Rect(Screen.width - pad - chip, 18, chip, 34));
-    Draw.Circle(float2(Screen.width - pad - chip + 18, 35), 8, control.active == 0 ? Color(1, 0.65, 0.28, 0.25) : Color(0.21, 0.87, 0.89, 0.25));
-    Draw.Circle(float2(Screen.width - pad - chip + 18, 35), 4, control.active == 0 ? UI_AMBER : UI_CYAN);
-    Draw.Text(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - chip + 32, 35), 11, UI_INK, Anchor.MiddleLeft, Font.Bold);
-    if (session.room != "") Draw.Text($"CO-OP  {session.room}", float2(Screen.width - pad - 4, 66), 10, UI_INK, Anchor.MiddleRight, Font.Bold);
+    var mark = control.active == 0 ? UI_AMBER : UI_CYAN;
+    Draw.Rect(float2(Screen.width - pad - dot * 2 + dot, 30 + dot), float2(dot * 4, dot * 4), UI_SHADOW);
+    Draw.Rect(float2(Screen.width - pad - dot * 2, 30), float2(dot * 4, dot * 4), mark);
+    Ink(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - dot * 4 - 8, 30), 11, UI_INK, Anchor.MiddleRight);
+    if (session.room != "") Ink($"WITH  {session.room}", float2(Screen.width - pad, 52), 10, UI_MUTED, Anchor.MiddleRight);
 
-    // The reticle: each fold's half, and a point.
-    Draw.Arc(middle, 11, -1.2, 2.4, 2, UI_AMBER);
-    Draw.Arc(middle, 11, 1.94, 2.4, 2, UI_CYAN);
-    Draw.Circle(middle, 1.7, UI_INK);
-    if (fold.carried == control.active) Draw.Text("E  DROP    /    CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter, Font.Bold);
+    // The reticle: a point, with each fold's color either side of it.
+    Draw.Rect(middle, float2(dot, dot), UI_INK);
+    Draw.Rect(middle - float2(dot * 4, 0), float2(dot * 2, dot), UI_AMBER);
+    Draw.Rect(middle + float2(dot * 4, 0), float2(dot * 2, dot), UI_CYAN);
+    Draw.Rect(middle - float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
+    Draw.Rect(middle + float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
+    if (fold.carried == control.active) Ink("E  DROP      CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter);
 
     // What to do, and the keys that do it.
     var legend = Screen.width > 960;
-    var hintWidth = Math.Min(560, Screen.width - 36);
-    var hintY = Screen.height - (legend ? 76 : 40);
-    HudPane(Rect(middle.x - hintWidth * 0.5, hintY - 16, hintWidth, 32));
-    Draw.Text(arena.gate > 0.9 ? "Gate open. Both operators to the exit." : ChamberHint(arena.level), float2(middle.x, hintY),
-              Math.Min(13, hintWidth / 44), UI_INK, Anchor.MiddleCenter);
+    var hintWidth = Math.Min(680, Screen.width - 36);
+    var hintY = Screen.height - (legend ? 62 : 34);
+    Slab(Rect(middle.x - hintWidth * 0.5, hintY - 15, hintWidth, 30));
+    Ink(arena.gate > 0.9 ? "The gate is up. Both of you, out." : ChamberHint(arena.level), float2(middle.x, hintY),
+        Math.Min(13, hintWidth / 50), UI_INK, Anchor.MiddleCenter);
     if (legend)
     {
         var solo = arena.joined < 2;
-        var row = solo ? 832.0 : 736.0;
-        HudPane(Rect(middle.x - row * 0.5 - 12, Screen.height - 47, row + 24, 30));
-        mut var at = float2(middle.x - row * 0.5, Screen.height - 32);
-        at.x = HudKey(at, "WASD", 44, "MOVE", 30);
-        at.x = HudKey(at, "SPACE", 46, "JUMP", 28);
-        at.x = HudKey(at, "LMB", 34, "AMBER", 36);
-        at.x = HudKey(at, "RMB", 34, "CYAN", 30);
-        at.x = HudKey(at, "E", 20, "CARRY", 36);
-        at.x = HudKey(at, "F", 20, "THROW", 40);
-        at.x = HudKey(at, "Q", 20, "PING", 26);
-        if (solo) at.x = HudKey(at, "TAB", 32, "SWITCH", 42);
-        at.x = HudKey(at, "R", 20, "RESET", 34);
-        at.x = HudKey(at, "ESC", 32, "MENU", 30);
+        var row = solo ? 650.0 : 570.0;
+        mut var at = float2(middle.x - row * 0.5, Screen.height - 24);
+        at.x = HudKey(at, "WASD", 34, "MOVE", 30);
+        at.x = HudKey(at, "SPACE", 38, "JUMP", 28);
+        at.x = HudKey(at, "LMB", 26, "AMBER", 36);
+        at.x = HudKey(at, "RMB", 26, "CYAN", 30);
+        at.x = HudKey(at, "E", 10, "CARRY", 36);
+        at.x = HudKey(at, "F", 10, "THROW", 40);
+        at.x = HudKey(at, "Q", 10, "PING", 26);
+        if (solo) at.x = HudKey(at, "TAB", 24, "SWITCH", 42);
+        at.x = HudKey(at, "R", 10, "RESET", 34);
+        at.x = HudKey(at, "ESC", 24, "MENU", 30);
     }
     if (arena.complete)
     {
         GUI.Navigate();
-        Draw.Rect(middle, float2(Screen.width, Screen.height), Color(0.025, 0.065, 0.085, 0.72));
-        Draw.Line(middle - float2(74, 118), middle - float2(4, 118), 3, UI_AMBER);
-        Draw.Line(middle - float2(-4, 118), middle - float2(-74, 118), 3, UI_CYAN);
-        Draw.Text("A GOOD CONNECTION.", middle - float2(0, 75), Math.Min(48, Screen.width / 15), UI_INK, Anchor.MiddleCenter, Font.Bold);
-        Draw.Text("Both operators made it. Space is better shared.", middle - float2(0, 23), 17, UI_MUTED, Anchor.MiddleCenter);
-        if (InterfaceButton(Rect(middle.x - 165, middle.y + 30, 330, 48), arena.level < 4 ? "NEXT EXPERIMENT" : "BACK TO EXPERIMENT 01", UI_CYAN, true))
+        Draw.Rect(middle, float2(Screen.width, Screen.height), Color(0.02, 0.018, 0.014, 0.8));
+        Draw.Rect(middle - float2(0, 118), float2(148, dot * 2), UI_RED);
+        var size = Math.Min(48, Screen.width / 15);
+        Draw.Text("YOU MAY BOTH GO ON.", middle - float2(0, 75) + float2(dot * 2, dot * 2), size, UI_RED, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("YOU MAY BOTH GO ON.", middle - float2(0, 75), size, UI_INK, Anchor.MiddleCenter, Font.Bold);
+        Ink("It gets no better further down.", middle - float2(0, 23), 17, UI_MUTED, Anchor.MiddleCenter);
+        if (InterfaceChoice(Rect(middle.x - 165, middle.y + 30, 330, 46), arena.level < 4 ? "THE NEXT ROOM" : "BACK TO ROOM 01", 22))
             Send(SelectChamber { level = (arena.level + 1) % 5 });
     }
 }

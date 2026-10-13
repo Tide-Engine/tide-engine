@@ -1,0 +1,175 @@
+// FOLDLINE's sound: this machine's, made of what the match shows it. Nothing
+// here is heard by the match.
+asset List<Clip> steps = "art/sfx/step*.wav";
+asset Clip foldOpen = "art/sfx/open.wav";
+asset Clip foldFizzle = "art/sfx/fizzle.wav";
+asset Clip foldCross = "art/sfx/cross.wav";
+asset Clip foldHum = "art/sfx/fold.wav";
+asset Clip plateOn = "art/sfx/plate_on.wav";
+asset Clip plateOff = "art/sfx/plate_off.wav";
+asset Clip gateRun = "art/sfx/gate.wav";
+asset Clip cubePickup = "art/sfx/pickup.wav";
+asset Clip cubeThrow = "art/sfx/throw.wav";
+asset Clip cubeThud = "art/sfx/thud.wav";
+asset Clip handsGrab = "art/sfx/grab.wav";
+asset Clip redUnder = "art/sfx/under.wav";
+asset Clip pitTurning = "art/sfx/pit.wav";
+asset Clip lampHum = "art/sfx/hum.wav";
+asset Clip lampBuzz = "art/sfx/buzz.wav";
+asset Clip building = "art/sfx/drone.wav";
+asset Clip seen = "art/sfx/sting.wav";
+asset Clip menuAccept = "art/sfx/accept.wav";
+
+// What was so a frame ago, to hear what changed, and the sounds that go on.
+local singleton Ears
+{
+    Sound hum;
+    Sound drone;
+    Sound gate;
+    Sound under;
+    Sound pit;
+    Sound amber;
+    Sound cyan;
+    int chamber = -1;
+    Portal wasAmber;
+    Portal wasCyan;
+    float fizzle;
+    int traversals;
+    bool plateA;
+    bool plateB;
+    bool hold;
+    float gateAt;
+    int carried = -1;
+    float3 cube;
+    float3 cubeSpeed;
+    float3 at0;
+    float3 at1;
+    float walked0;
+    float walked1;
+    float taken0;
+    float taken1;
+    int stepped;
+    Watching watching;
+    float blink;
+}
+
+void Looping(mut Sound sound, Clip clip, float volume, bool playing)
+{
+    sound.clip = clip;
+    sound.loop = true;
+    sound.volume = volume;
+    sound.playing = playing;
+}
+
+void LoopingAt(mut Sound sound, Clip clip, float3 position, float volume, bool playing)
+{
+    Looping(sound, clip, volume, playing);
+    sound.spatial = true;
+    sound.position = position;
+}
+
+[After(Render)]
+view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, mut Ears ears)
+{
+    if (viewer.id != control.active) return;
+    float3 eye = viewer.position + float3(0, 1.55 * viewer.scale, 0);
+    Audio.SetListener(eye, quaternion.Euler(-viewer.pitch, viewer.yaw, 0));
+    Audio.SetFalloff(2.5, 42);
+    bool pitted = arena.level == 0 || arena.level >= 3;
+    float pitMiddle = arena.level == 0 ? -1.0 : 1.0;
+    bool sunk = viewer.taken > 0 && eye.y < PIT_SURFACE;
+
+    // What goes on: the lamps, the building, the gate while it moves, the pit, the folds, and the red over one's head
+    float quiet = ui.open ? 0.5 : sunk ? 0.25 : 1.0;
+    Looping(ears.hum, lampHum, 0.16 * quiet * (watcher.blink > 0 ? 0.0 : 1.0), true);
+    Looping(ears.drone, building, 0.3 * quiet, true);
+    LoopingAt(ears.gate, gateRun, float3(0, 2, 13.5), 0.9, Math.Abs(arena.gate - ears.gateAt) > 0.0005);
+    LoopingAt(ears.pit, pitTurning, float3(Math.Clamp(eye.x, -9, 9), PIT_SURFACE, pitMiddle), 0.8, pitted);
+    LoopingAt(ears.amber, foldHum, fold.amber.at, 0.3, Linked(fold));
+    LoopingAt(ears.cyan, foldHum, fold.cyan.at, 0.3, Linked(fold));
+    ears.cyan.pitch = 1.5;
+    Looping(ears.under, redUnder, 0.9, sunk && !ui.open);
+
+    // A new chamber: everything is as it is, and nothing just happened
+    bool fresh = ears.chamber != arena.chamber;
+    ears.chamber = arena.chamber;
+    if (!fresh)
+    {
+        if (fold.amber.open && (!ears.wasAmber.open || Math.DistanceSq(fold.amber.at, ears.wasAmber.at) > 0.0001)) Audio.Play(foldOpen, fold.amber.at, 0.8);
+        if (fold.cyan.open && (!ears.wasCyan.open || Math.DistanceSq(fold.cyan.at, ears.wasCyan.at) > 0.0001)) Audio.Play(foldOpen, fold.cyan.at, 0.8, 0.84);
+        if (fold.fizzleTime > ears.fizzle + 0.02) Audio.Play(foldFizzle, fold.fizzleAt, 0.7);
+        if (fold.traversals > ears.traversals)
+        {
+            Audio.Play(foldCross, fold.amber.at, 0.7);
+            Audio.Play(foldCross, fold.cyan.at, 0.7);
+        }
+        if (arena.plateA != ears.plateA) Audio.Play(arena.plateA ? plateOn : plateOff, PlatePosition(arena.level, 0), 0.9);
+        if (arena.plateB != ears.plateB) Audio.Play(arena.plateB ? plateOn : plateOff, PlatePosition(arena.level, 1), 0.9, 1.12);
+        if (arena.hold != ears.hold) Audio.Play(arena.hold ? plateOn : plateOff, HOLD_PLATE, 0.9, 0.8);
+
+        // The cube: taken up, thrown, and stopped by something
+        float dt = Math.Max(Frame.dt, 0.001);
+        float3 speed = (fold.cube - ears.cube) / dt;
+        if (fold.carried >= 0 && ears.carried < 0) Audio.Play(cubePickup, fold.cube, 0.7);
+        if (fold.carried < 0 && ears.carried >= 0 && Math.Length(speed) > 6) Audio.Play(cubeThrow, fold.cube, 0.8);
+        float stopped = Math.Length(ears.cubeSpeed) - Math.Length(speed);
+        if (fold.carried < 0 && ears.carried < 0 && stopped > 2.2 && Math.Length(ears.cubeSpeed) < 40)
+            Audio.Play(cubeThud, fold.cube, Math.Saturate(stopped / 8) * 0.9 + 0.1, 1 / Math.Sqrt(fold.cubeScale));
+        ears.cubeSpeed = speed;
+
+        // Each operator's steps, and the hands
+        foreach (var row in operators)
+        {
+            var body = row.body;
+            float3 was = body.id == 0 ? ears.at0 : ears.at1;
+            mut float walked = body.id == 0 ? ears.walked0 : ears.walked1;
+            float moved = Math.Distance(body.position.xz, was.xz);
+            if (body.grounded && moved < 1) walked += moved;
+            if (walked > 1.75 * body.scale)
+            {
+                walked = 0;
+                ears.stepped += 1;
+                Audio.Play(steps[ears.stepped % steps.count], body.position, body.id == viewer.id ? 0.35 : 0.6, 1.15 - body.scale * 0.2 + (ears.stepped % 3) * 0.04);
+            }
+            float had = body.id == 0 ? ears.taken0 : ears.taken1;
+            if (body.taken > 0 && had <= 0)
+            {
+                if (body.id == viewer.id) Audio.Play(handsGrab, 1.0);
+                else Audio.Play(handsGrab, body.position, 1.0);
+            }
+            if (body.id == 0) ears.walked0 = walked;
+            else ears.walked1 = walked;
+        }
+
+        // What watches: the lamps going out as it comes, and the moment it goes for someone
+        if (watcher.blink > 0 && ears.blink <= 0) Audio.Play(lampBuzz, 0.6);
+        if (watcher.state == Watching.Lunging && ears.watching != Watching.Lunging) Audio.Play(seen, 0.9);
+    }
+    else ears.cubeSpeed = float3(0);
+
+    ears.wasAmber = fold.amber;
+    ears.wasCyan = fold.cyan;
+    ears.fizzle = fold.fizzleTime;
+    ears.traversals = fold.traversals;
+    ears.plateA = arena.plateA;
+    ears.plateB = arena.plateB;
+    ears.hold = arena.hold;
+    ears.gateAt = arena.gate;
+    ears.carried = fold.carried;
+    ears.cube = fold.cube;
+    ears.watching = watcher.state;
+    ears.blink = watcher.blink;
+    foreach (var row in operators)
+    {
+        if (row.body.id == 0)
+        {
+            ears.at0 = row.body.position;
+            ears.taken0 = row.body.taken;
+        }
+        else
+        {
+            ears.at1 = row.body.position;
+            ears.taken1 = row.body.taken;
+        }
+    }
+}
