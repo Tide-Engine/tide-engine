@@ -59,9 +59,9 @@ resources are outside match state and never affect deterministic simulation.
 
 Light stays light until the last blit:
 
-- The room draws into a 4-sample `Rgba16f` window target with a second float
-  image holding each pixel's distance from the eye over 64 m. A multisampled
-  target's depth can't be read, so the second image is what the air pass reads.
+- The room draws into a 4-sample `Rgba16f` window target. The air pass reads
+  that target's depth, which the engine resolves since 2026-10-13
+  (`notes/render-targets.md`); until then a second float image held distances.
 - First-level portal images are window-sized 4-sample `Rgba8`, second-level
   ones half-size. They hold light folded as `sqrt(x / (1 + x))`; `Through`
   unfolds it, so glow seen through a fold still blooms. `Sight.packed` and
@@ -70,6 +70,11 @@ Light stays light until the last blit:
   each frame from every list except the roof glass, the handheld and dust.
   `Sunlight` takes nine compared looks; `FromSun` steps off the surface along
   its normal. The viewer's own body casts a shadow though it isn't drawn.
+- Each fold's lamp has a 768 px depth map of its own, seen from 0.55 m off
+  its panel through a 140 degree camera (`FoldLight`), so a fold's light
+  stops at the divider, the gate, the cube and the operators. What's beside
+  or behind that camera is lit. The plates', the cube's, the wall ribbons'
+  and the exit's lamps are still unshadowed.
 - `Surface` shades everything solid: sun and shadow, a sky/floor ambient,
   analytic creases for the room's planes, contact shade under the cube and
   both operators, the two folds, pressed plates, the cube, the wall ribbons
@@ -79,10 +84,13 @@ Light stays light until the last blit:
   Panel seams widen to the pixel they're seen through and fade as they do.
 - The roof glass (`kind` 2) draws `Sky`: a gradient, two octaves of cloud and
   the sun. Leaves (`kind` 1) are two-sided blades that let the sun through.
-- `Shafts` marches 20 dithered steps through the sun map at half size, to the
-  stored distance, for the main view only. `Bright`, `Halve` and `Blur` build
-  three sizes of spill. `Develop` adds both, applies a film curve, a grade,
-  a vignette, a slight fringe and grain, and writes the window.
+- `Shafts` marches 20 dithered steps through the sun map at half size, from
+  the eye to the scene's depth (`Scatter`, `Unprojected`). The viewer's fold
+  openings draw through `ThroughAir`, which marches the same way from the far
+  opening to the fold camera's own depth, so shafts continue through a fold;
+  a fold seen by a fold's camera (`Through`) has none. `Bright`, `Halve` and
+  `Blur` build three sizes of spill. `Develop` adds both, applies a film
+  curve, a grade, a vignette, a slight fringe and grain, and writes the window.
 
 `OpeningOnScreen` gives each fold's pixel rectangle. A fold's camera is
 skipped when its opening can't be seen and otherwise clipped to that
@@ -90,12 +98,20 @@ rectangle; a second-level camera runs only when the first can see an opening
 again. The clip is set under `SetScreen` before the 3D camera.
 
 Operators are balls and tubes with a visor that follows pitch and legs that
-swing with speed. The handheld is drawn at a fifth of its size a fifth as far
-from the eye, with ordinary depth, so it never enters a wall. Behind the menu
-the view is a drifting camera of its own and the viewer's body is drawn. The
-aimed panel's ribbon brightens, and a partner's ping is a 3D beacon, which
-nothing drew before. Leaf sway, shafts inside portal views, shadows from the
-lamps and touchscreen controls are not built.
+swing with speed. The handheld is drawn at its own size after the room, over
+`scene.ClearDepth()` (`notes/drawing.md`), so it's in front of a wall the
+operator stands against; `Sight.held` lights it as the eye is lit, since its
+own place may be inside that wall. The air pass's blit is recorded before
+that clear, so it reads the room's depth. Behind the menu the view is a
+drifting camera of its own and the viewer's body is drawn. The aimed panel's
+ribbon brightens, and a partner's ping is a 3D beacon, which nothing drew
+before. Leaves stir through the `Sway` vert in every pass and every light's
+map. Touchscreen controls are not built.
+
+`ui.tide`'s HUD (2026-10-13) is panes of dark glass: the experiment with its
+two circuit lamps and the gate's state, the operator, one line of what to do
+and a row of key caps. The menu and the completion screen's layout are as
+they were.
 
 ## Integration and verification
 
@@ -130,6 +146,13 @@ catalog thumbnail is that actual gameplay frame. Visual inspection corrected
 the first-person camera initially drawing its own robot body, which obscured
 the lower scene; self geometry now draws only in portal passes. The polished
 captures show compact equipment, warmer stone, roof shadows and chamber signs.
+
+After the engine gained the multisampled depth read and `Draw.ClearDepth()`
+the same day, the game was moved onto both and the full suites were run:
+2,265/2,265 native debug (OpenGL) and 2,235/2,235 web debug (WASI, WebGL 2 and
+WebGPU), with this game's render test unchanged. The web runs used Node
+24.15.0, under the 24.16 `notes/testing.md` asks for on Windows. Android,
+Linux, macOS, MinGW and sanitizers were not run. No CI was dispatched.
 
 The 2026-10-13 renderer passes the same scoped suites with the render test
 unchanged and at its original tolerances: 2/2 native (OpenGL) and 3/3 web

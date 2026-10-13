@@ -146,41 +146,108 @@ local event(Disconnected gone) ConnectionEnded(mut Interface ui)
     ui.message = $"Connection ended: {gone.reason}.";
 }
 
+// A pane of dark glass the picture shows through, with a hairline around it.
+void HudPane(Rect rect)
+{
+    var middle = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+    Draw.RoundRect(middle, float2(rect.width, rect.height), 10, Color(0.02, 0.05, 0.07, 0.6));
+    Draw.WireRoundRect(middle, float2(rect.width, rect.height), 10, 1, Color(0.6, 0.8, 0.83, 0.2));
+}
+
+// A circuit's lamp: dim until its plate is weighted, then lit with a halo.
+void HudLamp(float2 at, string label, Color tint, bool lit)
+{
+    if (lit)
+    {
+        Draw.Circle(at, 9, Color(tint.r, tint.g, tint.b, 0.22));
+        Draw.Circle(at, 4.5, tint);
+    }
+    else
+    {
+        Draw.Circle(at, 4.5, Color(0.2, 0.27, 0.29));
+        Draw.WireCircle(at, 4.5, 1, Color(0.45, 0.56, 0.58));
+    }
+    Draw.Text(label, at + float2(13, 0), 10, lit ? UI_INK : UI_MUTED, Anchor.MiddleLeft, Font.Bold);
+}
+
+// A key's cap and what it does. `wide` is the cap's width and `reach` the label's; it gives where the next goes.
+float HudKey(float2 at, string key, float wide, string label, float reach)
+{
+    Draw.RoundRect(at + float2(wide * 0.5, 0), float2(wide, 19), 4, Color(0.02, 0.05, 0.07, 0.55));
+    Draw.WireRoundRect(at + float2(wide * 0.5, 0), float2(wide, 19), 4, 1, Color(0.7, 0.86, 0.88, 0.45));
+    Draw.Text(key, at + float2(wide * 0.5, 0), 10, UI_INK, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text(label, at + float2(wide + 7, 0), 10, Color(0.86, 0.92, 0.91, 0.9), Anchor.MiddleLeft);
+    return at.x + wide + reach + 22;
+}
+
+string ChamberName(int level)
+{
+    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "TWO SIDES OF THE SAME IDEA", _ => "THE RESONANCE BRIDGE" };
+}
+
 [After(Render)]
 view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session session)
 {
     if (ui.open) return;
     Draw.SetScreen();
     var pad = Math.Clamp(Screen.width * 0.025, 18, 34);
-    var labelWidth = Math.Min(450, Screen.width - 170);
-    Draw.RoundRect(float2(pad + labelWidth * 0.5, 47), float2(labelWidth, 56), 8, Color(0.025, 0.065, 0.085, 0.83));
-    Draw.Text(Screen.width < 800 ? $"EXPERIMENT 0{arena.level + 1}" : ChamberTitle(arena.level), float2(pad + 16, 29), 12, UI_CYAN, Font.Bold);
-    Draw.Text(arena.gate > 0.9 ? (Screen.width < 800 ? "BOTH OPERATORS TO EXIT" : "CIRCUIT COMPLETE  /  BOTH OPERATORS TO THE EXIT") : "CONNECT. COOPERATE. CROSS.", float2(pad + 16, 49), 10, UI_INK);
-    Draw.RoundRect(float2(Screen.width - pad - 65, 47), float2(130, 56), 8, Color(0.025, 0.065, 0.085, 0.83));
-    Draw.Circle(float2(Screen.width - pad - 110, 47), 4, control.active == 0 ? UI_AMBER : UI_CYAN);
-    Draw.Text(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - 98, 47), 12, UI_INK, Anchor.MiddleLeft, Font.Bold);
+    var narrow = Screen.width < 800;
     var middle = float2(Screen.width * 0.5, Screen.height * 0.5);
+
+    // The experiment and its two circuits.
+    var plate = Math.Min(narrow ? 236.0 : 330.0, Screen.width - pad * 2 - 150);
+    HudPane(Rect(pad, 18, plate, 78));
+    Draw.RoundRect(float2(pad + 12, 34), float2(3, 16), 1.5, UI_AMBER);
+    Draw.RoundRect(float2(pad + 12, 52), float2(3, 16), 1.5, UI_CYAN);
+    Draw.Text($"EXPERIMENT 0{arena.level + 1}", float2(pad + 24, 27), 10, UI_CYAN, Font.Bold);
+    Draw.Text(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 24, 41), 14, UI_INK, Font.Bold);
+    HudLamp(float2(pad + 30, 78), "CIRCUIT A", UI_AMBER, arena.plateA || arena.solved);
+    HudLamp(float2(pad + 124, 78), "CIRCUIT B", UI_CYAN, arena.plateB || arena.solved);
+    if (!narrow) Draw.Text(arena.gate > 0.9 ? "GATE OPEN" : "GATE SEALED", float2(pad + plate - 14, 78), 10, arena.gate > 0.9 ? UI_INK : UI_MUTED, Anchor.MiddleRight, Font.Bold);
+
+    // Whose eyes these are, and the room others join.
+    var chip = 138.0;
+    HudPane(Rect(Screen.width - pad - chip, 18, chip, 34));
+    Draw.Circle(float2(Screen.width - pad - chip + 18, 35), 8, control.active == 0 ? Color(1, 0.65, 0.28, 0.25) : Color(0.21, 0.87, 0.89, 0.25));
+    Draw.Circle(float2(Screen.width - pad - chip + 18, 35), 4, control.active == 0 ? UI_AMBER : UI_CYAN);
+    Draw.Text(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - chip + 32, 35), 11, UI_INK, Anchor.MiddleLeft, Font.Bold);
+    if (session.room != "") Draw.Text($"CO-OP  {session.room}", float2(Screen.width - pad - 4, 66), 10, UI_INK, Anchor.MiddleRight, Font.Bold);
+
+    // The reticle: each fold's half, and a point.
     Draw.Arc(middle, 11, -1.2, 2.4, 2, UI_AMBER);
     Draw.Arc(middle, 11, 1.94, 2.4, 2, UI_CYAN);
     Draw.Circle(middle, 1.7, UI_INK);
-    if (fold.carried == control.active) Draw.Text("E  /  RELEASE RESONANCE CUBE", middle + float2(0, 40), 12, UI_INK, Anchor.MiddleCenter);
-    var hintWidth = Math.Min(610, Screen.width - 36);
-    Draw.RoundRect(float2(Screen.width * 0.5, Screen.height - 92), float2(hintWidth, 38), 7, Color(0.025, 0.065, 0.085, 0.82));
-    Draw.Text(ChamberHint(arena.level), float2(Screen.width * 0.5, Screen.height - 92), Math.Min(13, hintWidth / 47), UI_INK, Anchor.MiddleCenter);
-    if (Screen.width > 780)
+    if (fold.carried == control.active) Draw.Text("E  /  RELEASE RESONANCE CUBE", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter, Font.Bold);
+
+    // What to do, and the keys that do it.
+    var legend = Screen.width > 780;
+    var hintWidth = Math.Min(560, Screen.width - 36);
+    var hintY = Screen.height - (legend ? 76 : 40);
+    HudPane(Rect(middle.x - hintWidth * 0.5, hintY - 16, hintWidth, 32));
+    Draw.Text(arena.gate > 0.9 ? "Circuit complete. Both operators to the exit." : ChamberHint(arena.level), float2(middle.x, hintY),
+              Math.Min(13, hintWidth / 44), UI_INK, Anchor.MiddleCenter);
+    if (legend)
     {
-        Draw.Text("WASD  MOVE    /    SPACE  JUMP    /    E  CARRY    /    LMB + RMB  PORTALS", float2(pad, Screen.height - 34), 11, UI_INK);
-        Draw.Text(arena.joined > 1 ? "Q  PING    R  RESET    ESC  MENU" : "TAB  SWITCH    Q  PING    R  RESET    ESC  MENU", float2(Screen.width - pad, Screen.height - 34), 11, UI_INK, Anchor.UpperRight);
+        var solo = arena.joined < 2;
+        var row = solo ? 750.0 : 654.0;
+        HudPane(Rect(middle.x - row * 0.5 - 12, Screen.height - 47, row + 24, 30));
+        mut var at = float2(middle.x - row * 0.5, Screen.height - 32);
+        at.x = HudKey(at, "WASD", 44, "MOVE", 30);
+        at.x = HudKey(at, "SPACE", 46, "JUMP", 28);
+        at.x = HudKey(at, "LMB", 34, "AMBER", 36);
+        at.x = HudKey(at, "RMB", 34, "CYAN", 30);
+        at.x = HudKey(at, "E", 20, "CARRY", 36);
+        at.x = HudKey(at, "Q", 20, "PING", 26);
+        if (solo) at.x = HudKey(at, "TAB", 32, "SWITCH", 42);
+        at.x = HudKey(at, "R", 20, "RESET", 34);
+        at.x = HudKey(at, "ESC", 32, "MENU", 30);
     }
-    if (session.room != "") Draw.Text($"CO-OP  {session.room}", float2(pad + 3, 90), 11, UI_INK);
-    Draw.Circle(float2(pad + 10, 126), 5, arena.plateA ? UI_AMBER : UI_MUTED);
-    Draw.Text("CIRCUIT A", float2(pad + 23, 126), 11, UI_INK, Anchor.MiddleLeft);
-    Draw.Circle(float2(pad + 10, 148), 5, arena.plateB ? UI_CYAN : UI_MUTED);
-    Draw.Text("CIRCUIT B", float2(pad + 23, 148), 11, UI_INK, Anchor.MiddleLeft);
     if (arena.complete)
     {
         GUI.Navigate();
         Draw.Rect(middle, float2(Screen.width, Screen.height), Color(0.025, 0.065, 0.085, 0.72));
+        Draw.Line(middle - float2(74, 118), middle - float2(4, 118), 3, UI_AMBER);
+        Draw.Line(middle - float2(-4, 118), middle - float2(-74, 118), 3, UI_CYAN);
         Draw.Text("A GOOD CONNECTION.", middle - float2(0, 75), Math.Min(48, Screen.width / 15), UI_INK, Anchor.MiddleCenter, Font.Bold);
         Draw.Text("Both operators made it. Space is better shared.", middle - float2(0, 23), 17, UI_MUTED, Anchor.MiddleCenter);
         if (InterfaceButton(Rect(middle.x - 165, middle.y + 30, 330, 48), arena.level < 2 ? "NEXT EXPERIMENT" : "BACK TO EXPERIMENT 01", UI_CYAN, true))
