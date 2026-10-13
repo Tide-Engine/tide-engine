@@ -68,6 +68,15 @@ its `<id>_page` target and its `private_games` block, plus the id in
   stages `/prototypes/swindle/` with its gameplay thumbnail, collected by
   `private_games`. Rules, tests and validation are in `notes/swindle.md`.
 
+Removal (2026-10-13): the owner scrapped NIGHT ROUTE after finding its delivery
+and parcel-rule loop unfun. Its source, tests, thumbnail, game note, build
+targets and catalog/public-id registrations are removed. The single-player
+implementation and validation record remain in git history at `43f402a5`.
+No engine code was changed by the prototype or its removal. No CI/deployment.
+Validation: native/web debug configuration succeeds with no NIGHT ROUTE tests;
+the production docs build and all nineteen analytics/admin/production HTTP
+checks pass, including 404s for the removed page and thumbnail.
+
 Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
 game note, build targets and catalog/public-id registrations are removed. Its
 implementation and engine-gap record remain in git history at `7c047a87`.
