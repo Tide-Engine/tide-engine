@@ -98,6 +98,7 @@ component Operator
     float3 last;         // Its body's middle a tick ago: a fold is crossed between the two
     bool grounded;
     float resize;        // The size it's to be made again at, 0 for as it is: a body's shape is made once
+    float taken;         // How long the hands in a pit have had it, 0 while they don't
     int chamber = -1;
 }
 
@@ -135,7 +136,7 @@ local singleton Control
 {
     int active;
     bool started;
-    bool crisp;          // P: the picture at the window's own resolution, without the big pixels
+    int crisp;           // P: the picture's rows, 0 LINES, 1 SOFT_LINES, 2 the window's own
     int size;            // Which size the next fold's end is shot at: 0 whole, 1 half, 2 half as big again
     float sensitivity = 0.003;
 }
@@ -188,6 +189,8 @@ const float CUBE_SIDE = 0.74;
 const float CEILING_HIGH = 4.4;
 const int PILLARS = 2;
 const int CHAMBERS = 5;
+const float TAKEN_UNDER = -1.5; // A body's middle this far under the floor is in the hands' reach
+const float TAKEN_FOR = 1.9;    // How long they drag it down before it's gone
 const float SMALLEST = 0.5;  // The sizes a fold's end is shot at, and so the sizes anything comes out of one
 const float LARGEST = 1.5;
 
@@ -635,6 +638,21 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     // It stands upright whatever it's pushed by
     body.rotation = quaternion.identity;
     body.angularVelocity = float3(0);
+    if (pilot.taken > 0 || body.position.y < TAKEN_UNDER)
+    {
+        // The hands in the pit have it: it's stopped where they caught it and dragged under, whatever it does
+        pilot.taken += time.dt;
+        pilot.grounded = false;
+        body.velocity = float3(0, pilot.taken < 0.35 ? 0.0 : -1.3, 0);
+        if (fold.carried == pilot.id) fold.carried = -1;
+        if (arena.joined >= 2 || input.active == pilot.id)
+        {
+            pilot.yaw += input.look.x;
+            pilot.yaw = Math.Atan2(Math.Sin(pilot.yaw), Math.Cos(pilot.yaw));
+            pilot.pitch = Math.Clamp(pilot.pitch + input.look.y, -1.4, 1.4);
+        }
+        return;
+    }
     var half = BODY_HIGH * 0.5 * pilot.scale;
     pilot.grounded = physics.Raycast(body.position, body.position - float3(0, half + 0.1, 0), out _);
     var controlling = arena.joined >= 2 || input.active == pilot.id;
@@ -765,9 +783,10 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
         if (Math.Abs(scale - pilot.scale) > 0.01) pilot.resize = scale;
         this.Snap();
     }
-    if (center.y < -8)
+    if (pilot.taken > TAKEN_FOR || center.y < -8)
     {
-        // Fell out of the chamber
+        // Gone under: back where it started
+        pilot.taken = 0;
         center = OperatorStart(arena.level, pilot.id) + float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
         velocity = float3(0);
         body.position = center;
@@ -784,7 +803,7 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
         // Through a fold its middle is where the fold put it; made again where it stands, its feet are
         var feet = ratio > 0 ? center - half : center - float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
         var born = Spawn(Operator { id = pilot.id, position = feet, yaw = pilot.yaw, pitch = pilot.pitch, velocity = velocity, scale = scale,
-                                    last = feet + half, grounded = pilot.grounded, chamber = pilot.chamber },
+                                    last = feet + half, grounded = pilot.grounded, taken = pilot.taken, chamber = pilot.chamber },
                          Owner { player = owner.player }, Body { position = feet + half, velocity = velocity },
                          Capsule { radius = BODY_RADIUS * scale, height = BODY_HIGH * scale, density = 250, friction = 0 });
         if (pilot.id == 0) arena.op0 = born;
