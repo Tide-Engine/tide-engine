@@ -11,6 +11,11 @@ const prototypes = [
         image: '/prototypes/copper-coil/thumbnail.png',
     },
     {
+        id: 'deadweight', title: 'DEADWEIGHT', kind: 'Cooperative salvage · Physics', players: '1–2 players',
+        description: 'Two workers extract enormous machinery from an abandoned pumping station. Rig winches, balance lifting lines, walk on your cargo and use a loose ballast as a counterweight. Three physical salvage jobs, online or on a shared keyboard.',
+        image: '/prototypes/deadweight/thumbnail.png',
+    },
+    {
         id: 'swindle', title: 'SWINDLE', kind: 'Competitive heist · Bluff and steal', players: '1–4 players',
         description: 'A very civil rooftop robbery. Steal a prism whose value grows while you carry it, dash into a friend to snatch it, and send a fake carrier running while you vanish. Cash out at the moving getaway. Ninety-second duels, free-for-all and two-versus-two, with bots, friend rooms and same-keyboard play.',
         image: '/prototypes/swindle/thumbnail.png',

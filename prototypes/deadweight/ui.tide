@@ -1,0 +1,114 @@
+using Box3D;
+using Rooms;
+
+[Stage(Layers.Camera, -1)]
+view ControlState(Site site, Session session, mut Lobby lobby, mut Hands hands, Devices devices)
+{
+    hands.playing = lobby.playing;
+    hands.seat = session.player == site.second && site.joined >= 2 ? 1 : 0;
+    lobby.seats = 2;
+    lobby.manned = site.joined >= 2 ? 3 : site.joined == 1 ? 1 : 0;
+    lobby.mine = hands.seat;
+    lobby.offersNewGame = true;
+    if (lobby.newGame) Send(ResetJob);
+    if (!lobby.playing) return;
+    if (devices.keyboard.tab.down || devices.gamepad.buttonNorth.down) hands.active = 1 - hands.active;
+    if (devices.keyboard.h.down) hands.help = !hands.help;
+    if (devices.keyboard.r.down) Send(ResetJob);
+}
+
+void Caption(string words, float2 at, float size, Color color = INK, Anchor anchor = Anchor.UpperLeft)
+{
+    Draw.Text(words, at, size, color, anchor);
+}
+
+void Meter(float2 at, float width, float value, Color color)
+{
+    Draw.RoundRect(at + float2(width * 0.5, 3), float2(width, 6), 3, Color(0.16, 0.23, 0.24));
+    var fill = Math.Saturate(value) * width;
+    if (fill > 0) Draw.RoundRect(at + float2(fill * 0.5, 3), float2(fill, 6), 3, color);
+}
+
+[Stage(Layers.Hud)]
+view Hud(Site site, World world, mut Hands hands, Lobby lobby, Session session)
+{
+    if (!lobby.playing) return;
+    Draw.Screen()
+    {
+        var narrow = Screen.width < 750;
+        var left = 22.0;
+        Caption("DEADWEIGHT", float2(left, 18), narrow ? 24 : 32, INK);
+        Caption("SALVAGE CREW / PUMP STATION 04", float2(left + 1, narrow ? 47 : 57), 10, QUIET);
+        var top = narrow ? 73.0 : 83.0;
+        Caption($"0{site.job + 1}   {JobName(site.job)}", float2(left, top), 15, AMBER);
+        if (!narrow) Caption(JobBrief(site.job), float2(left, top + 24), 12, QUIET);
+        var jobWidth = narrow ? 38 : 122;
+        for (var job = 0; job < 3; job++)
+        {
+            var done = (site.completed & (1 << job)) != 0;
+            var text = narrow ? $"{job + 1}" : $"{job + 1}  {(job == 0 ? "Spine" : job == 1 ? "Drum" : "Vessel")}{(done ? "  OK" : "")}";
+            if (GUI.Button(Rect(Screen.width - 18 - (3 - job) * (jobWidth + 5), 18, jobWidth, 32), text)) Send(ChooseJob { job = job });
+        }
+        if (site.joined < 2)
+        {
+            if (GUI.Button(Rect(Screen.width - 192, 56, 174, 28), hands.shared ? "Shared keyboard: ON" : "Shared keyboard: OFF"))
+                hands.shared = !hands.shared;
+            if (!hands.shared)
+            {
+                if (GUI.Button(Rect(Screen.width - 192, 90, 174, 28), hands.active == 0 ? "Swap to B / Tab" : "Swap to A / Tab"))
+                    hands.active = 1 - hands.active;
+            }
+        }
+        var helpY = site.joined < 2 && !hands.shared ? 124.0 : 90.0;
+        if (GUI.Button(Rect(Screen.width - 135, helpY, 117, 28), hands.help ? "Hide controls" : "Controls / H")) hands.help = !hands.help;
+
+        // Persistent per-worker winch status: release always applies the brake.
+        for (var id = 0; id < 2; id++)
+        {
+            if (!world.TryGet<Worker>(site.crew[id], out var worker)) continue;
+            var y = Screen.height - (narrow ? 142 : 129);
+            var x = narrow ? 20 + id * (Screen.width * 0.5) : 24 + id * 260;
+            var mine = site.joined >= 2 ? world.Get<Owner>(site.crew[id]).player == session.player : hands.shared || hands.active == id;
+            var color = CrewColor(id);
+            Caption($"{(id == 0 ? "A / AMBER" : "B / CYAN")}{(mine ? "  •" : "")}", float2(x, y), 12, color);
+            if (worker.winch < 0) { Caption("E at a console to take a winch", float2(x, y + 22), 11, QUIET); continue; }
+            var cable = site.cables[worker.winch];
+            Caption(worker.hook ? $"WINCH {worker.winch + 1} / HOOK IN HAND" : $"WINCH {worker.winch + 1} / {cable.length:F1} m", float2(x, y + 23), 11);
+            Caption(worker.hook ? "E near a gold socket to attach" : cable.tension > 2.8 ? "HEAVY LOAD / ease off" : cable.tension > 0.08 ? "TAUT / brake holds" : "SLACK / reel to take up", float2(x, y + 43), 10, cable.tension > 2.8 ? RED : QUIET);
+            Meter(float2(x, y + 64), narrow ? Screen.width * 0.42 : 224, cable.tension / 3, color);
+        }
+        Caption(site.joined >= 2 ? "WASD move   E interact   Q reel   F pay out   X unhook   R reset"
+            : hands.shared ? "A: WASD / E / Q / F / X     B: arrows / R Shift / , / . / /"
+            : "WASD move   Q reel   F pay out   E interact   X unhook   Tab swap   R reset", float2(Screen.width * 0.5, Screen.height - 43), narrow ? 9 : 12, QUIET, Anchor.MiddleCenter);
+        if (site.messageTime > 0)
+            Caption(site.message == 1 ? "Worker recovered. The load is still yours." : site.message == 2 ? "Mind the swing!" : "Cargo recovered from the trench. Try a gentler pull.", float2(Screen.width * 0.5, 142), 14, AMBER, Anchor.MiddleCenter);
+        if (site.job == 0 && site.bridge && !site.delivered)
+            Caption("BRIDGE MADE / walk on your cargo, or keep hauling", float2(Screen.width * 0.5, Screen.height - 170), 12, GREEN, Anchor.MiddleCenter);
+        if (site.job == 1 && site.delivered && !site.complete)
+            Caption("DRUM RECOVERED / reel the amber ballast back into its rack", float2(Screen.width * 0.5, Screen.height - 170), 14, GREEN, Anchor.MiddleCenter);
+        if (site.complete)
+        {
+            var width = Math.Min(440, Screen.width - 30);
+            var center = float2(Screen.width * 0.5, Screen.height * 0.45);
+            Draw.RoundRect(center, float2(width, 155), 12, DARK);
+            Caption("LOAD SECURED", center - float2(0, 45), 25, GREEN, Anchor.MiddleCenter);
+            Caption($"{JobName(site.job)}  /  {site.mishaps} crew mishaps", center - float2(0, 9), 12, QUIET, Anchor.MiddleCenter);
+            if (GUI.Button(Rect(center.x - 130, center.y + 20, 260, 40), site.job < 2 ? "Next salvage job" : "Back to the conveyor"))
+                Send(ChooseJob { job = (site.job + 1) % 3 });
+        }
+        if (hands.help)
+        {
+            var width = Math.Min(520, Screen.width - 30);
+            var x = Screen.width * 0.5;
+            var y = Screen.height * 0.42;
+            Draw.RoundRect(float2(x, y), float2(width, 235), 10, DARK);
+            Caption("THE CREW'S FIELD GUIDE", float2(x, y - 90), 19, AMBER, Anchor.MiddleCenter);
+            Caption("Q reels in. F pays out. Let go to brake and hold.", float2(x, y - 51), 13, INK, Anchor.MiddleCenter);
+            Caption("X unhooks your line. Walk to a gold socket; E attaches.", float2(x, y - 22), 12, INK, Anchor.MiddleCenter);
+            Caption("E at another numbered console changes your winch.", float2(x, y + 7), 12, INK, Anchor.MiddleCenter);
+            Caption("Tab swaps workers alone. Shared keyboard controls both.", float2(x, y + 36), 12, INK, Anchor.MiddleCenter);
+            Caption("Scroll to zoom. R resets this job. Cargo can knock you over.", float2(x, y + 65), 12, QUIET, Anchor.MiddleCenter);
+            Caption("The first two lines are already rigged. Try pulling together.", float2(x, y + 92), 12, GREEN, Anchor.MiddleCenter);
+        }
+    }
+}
