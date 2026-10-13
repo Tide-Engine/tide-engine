@@ -356,6 +356,46 @@ current.
   - Asked for and not built: other things between the rooms than this one
     ("different monsters or challenges in between levels that are more
     horror driven"), and the harder rooms.
+- **A place is its own, not a coat of paint (2026-10-13).** The owner, of
+  the themes above: "these look more so like a re-skin; we should make
+  props different, instead of the blood with hands make it something else;
+  some other hazzard. why are we being so cheap about variation." What a
+  place's pit is now goes with the place (`Hazard(level, theme)`), and so
+  does what stands in it. This replaces "water in the pits... and the same
+  hands in it" above.
+  - *Paper and carpet (theme 0):* blood with no bottom and the hands, as
+    it was; planters, doors to nowhere, boards.
+  - *The pool (1):* a pool to wade. It has a floor 1.5 m down and a slope
+    from each side (`Ramp`: two static boxes tilted about x, which the
+    renderer draws from the same numbers), water to `POOL_SURFACE`, and
+    wading is at 0.45 of a run. In it is `Lurker`: it goes up and down the
+    pool, at 5.5 m/s for whoever is in the water, and before them for the
+    last thing that splashed, for 7 s. So the cube thrown in is the time to
+    cross in, and the cube is then on the pool's floor to be fetched.
+    Within about 1.25 m of someone in the water it has them (`taken`, as
+    the hands do: held under, back at the start). Drawn as a back of ten
+    pieces breaking the water, its head up and eyes lit when it's after
+    something. About it: loungers where the planters were (the same
+    boxes), lane floats, rails down the slopes, rings on the walls.
+  - *The concrete (2):* a trench 1 m deep with slopes, and two drums that
+    go its length and back at 6 m/s, half a pass apart (`DrumAt`, a
+    function of the tick). Anyone on the trench's floor within 0.95 m of
+    one along it is `shredded`: in pieces (`Pieces`), nothing left
+    standing, back at the start after `SHRED_FOR`. A drum throws the cube
+    out of its way. About it: barriers with warning stripes, ducts under
+    the roof, boxes on the walls, the trench's edges marked.
+  - The rooms were made for a pit nobody crosses, and two of them now
+    have one that can be crossed: room 4 ("Larger") is in the pool and
+    room 5 in the concrete, by where they fall in `LevelAt`. Their frames
+    and plates are as they were; they're easier, and differently solved,
+    until the rooms are remade.
+  - `test.c`: the pool waded dry-shod of the lurker while the cube draws
+    it off, and not without; the trench crossed with both drums at their
+    ends, someone in a drum's way shredded and returned, the cube thrown
+    out. Replay hash `15445941946088048879` natively and under WASI. Sounds added and unheard: `drum.wav`,
+    `shred.wav`.
+  - Still one maze and one thing in it for every stretch between, whatever
+    the place.
 - P now goes round three pictures for the owner to compare: 300 rows, 480
   (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would

@@ -193,6 +193,22 @@ for at, loud in ((0.02, 1.0), (0.27, 0.7)):
     beat[i:i + m] += np.sin(2 * np.pi * 52 * t(0.16)) * decay(0.16, 26) * loud + low(noise(0.16), 180) * decay(0.16, 40) * loud
 save('heart', loop(low(beat, 240), 0.05), 0.8)
 
+# A drum going along its trench: iron on concrete, and the motor that drives it
+n = 1.5
+grind = band(noise(n), 500, 3200) * (0.6 + 0.4 * np.sign(np.sin(2 * np.pi * 16 * t(n))))
+motor = np.sign(np.sin(2 * np.pi * 88 * t(n) + np.sin(2 * np.pi * 8 * t(n)) * 0.5)) * 0.5
+save('drum', loop(grind + low(motor, 900) + low(noise(n), 110) * 2), 0.75)
+
+# ...and someone under it
+n = 0.8
+crunch = np.zeros(int(RATE * n))
+for k in range(9):
+    at = int(rng.uniform(0, 0.35) * RATE)
+    m = int(RATE * 0.06)
+    crunch[at:at + m] += band(noise(0.06), 300, 2800) * decay(0.06, 50) * rng.uniform(0.5, 1)
+wet = low(noise(n), 900) * decay(n, 7) * 0.9
+save('shred', crunch + wet + np.sin(2 * np.pi * 58 * t(n)) * decay(n, 12), 0.9)
+
 # Seen: four notes that shouldn't be together, struck
 n = 1.6
 sting = sum(np.sin(2 * np.pi * f * t(n)) for f in (220, 233.1, 311.1, 466.2, 493.9))

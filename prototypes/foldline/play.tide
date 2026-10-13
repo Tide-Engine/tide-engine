@@ -109,6 +109,7 @@ component Operator
     bool grounded;
     float resize;        // The size it's to be made again at, 0 for as it is: a body's shape is made once
     float taken;         // How long the hands in a pit have had it, 0 while they don't
+    bool shredded;       // ...or a drum has: it's in pieces, and back sooner
     int chamber = -1;
 }
 
@@ -142,6 +143,20 @@ component Piece
 
 component Gate { int chamber; }
 component Door { int chamber; }   // The door of the lift a place is come to by
+component Ramp { int chamber; }   // A slope into a pool or a trench
+
+// What's in a pool. It goes about under the water, for whoever is in it, and before them for the last thing
+// that splashed: a cube thrown in is a few seconds to wade across in.
+singleton Lurker
+{
+    int chamber = -1;
+    float3 at;
+    float3 way = float3(1, 0, 0);
+    float3 lure;
+    float lureLeft;
+    bool wasCube;
+    float rush;          // 1 while it's after something
+}
 
 local singleton Control
 {
@@ -228,6 +243,47 @@ int LevelAt(int depth)
         case 6: return 4;
         default: return BETWEEN;
     }
+}
+
+// What a place's pit is, which goes with what the place is made of. 1: blood with no bottom, and hands in it.
+// 2: a pool to wade, and something in it that goes for whatever went in last. 3: a trench to run across,
+// and two drums that never stop going along it.
+int Hazard(int level, int theme)
+{
+    return Pitted(level) ? theme + 1 : 0;
+}
+
+float PitMiddle(int level)
+{
+    return level == 0 ? -1.0 : 1.0;
+}
+
+// A pool or a trench has a floor, this far down, and a slope to it from each side this long.
+float PitDeep(int hazard)
+{
+    return hazard == 2 ? 1.5 : 1.0;
+}
+
+float PitRun(int hazard)
+{
+    return hazard == 2 ? 1.9 : 1.4;
+}
+
+const float POOL_SURFACE = -0.3;
+const float DRUM_REACH = 17.2;   // How far a drum goes along the trench, and back
+const float DRUM_SPEED = 6.0;
+const float SHRED_FOR = 1.1;
+
+// Where each drum is along the trench at a tick: one end to the other and back, the second a pass behind.
+float DrumAt(int ticks, int which)
+{
+    var along = Math.Frac((ticks / 60.0 * DRUM_SPEED + which * DRUM_REACH) / (DRUM_REACH * 2)) * DRUM_REACH * 2;
+    return -DRUM_REACH * 0.5 + (along < DRUM_REACH ? along : DRUM_REACH * 2 - along);
+}
+
+float DrumWay(int ticks, int which)
+{
+    return Math.Frac((ticks / 60.0 * DRUM_SPEED + which * DRUM_REACH) / (DRUM_REACH * 2)) < 0.5 ? 1.0 : -1.0;
 }
 
 // The place changes every third lift down.
@@ -552,6 +608,25 @@ void BuildChamber(mut Arena arena, int level)
         Raise(arena, float3(-5.5, 2.2, 10), float3(5, 4.4, 1), wallpaper, true);
     }
     else Raise(arena, float3(0, -0.5, 0), float3(21.6, 1, 28), carpet);
+    var hazard = Hazard(level, arena.theme);
+    if (hazard >= 2)
+    {
+        // A pool or a trench: a floor, and a slope down to it from each side
+        var deep = PitDeep(hazard);
+        var run = PitRun(hazard);
+        var middle = PitMiddle(level);
+        var slope = Math.Atan2(deep, run);
+        Raise(arena, float3(0, -deep - 0.5, middle), float3(21.6, 1, 5), concrete);
+        for (var side = -1; side <= 1; side += 2)
+        {
+            var top = float3(0, 0, middle + side * 2.5);
+            var foot = float3(0, -deep, middle + side * (2.5 - run));
+            var normal = float3(0, Math.Cos(slope), -side * Math.Sin(slope));
+            Spawn(Ramp { chamber = arena.chamber },
+                  Body { type = BodyType.Static, position = (top + foot) * 0.5 - normal * 0.2, rotation = quaternion.Euler(-side * slope, 0, 0) },
+                  Box { size = float3(21.6, 0.4, Math.Sqrt(deep * deep + run * run)) });
+        }
+    }
 
     if (level == 1)
     {
@@ -813,7 +888,60 @@ bool Shoot(mut Fold fold, int end, int level, float3 origin, float3 way, Physics
 }
 
 [Before(PhysicsStages.Step)]
-system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena arena, mut Fold fold, Physics physics, mut World world, Time time)
+system SweepRamps(Ramp ramp, Arena arena)
+{
+    if (ramp.chamber != arena.chamber) this.Destroy();
+}
+
+system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) operators, Time time)
+{
+    if (Hazard(arena.level, arena.theme) != 2) return;
+    var middle = PitMiddle(arena.level);
+    if (lurker.chamber != arena.chamber)
+    {
+        lurker.chamber = arena.chamber;
+        lurker.at = float3(-7, POOL_SURFACE, middle);
+        lurker.lureLeft = 0;
+        lurker.wasCube = false;
+    }
+    // The cube going in is the last thing that splashed
+    var cubeIn = fold.carried < 0 && fold.cube.y < POOL_SURFACE && Math.Abs(fold.cube.z - middle) < 2.5;
+    if (cubeIn && !lurker.wasCube)
+    {
+        lurker.lure = fold.cube;
+        lurker.lureLeft = 7;
+    }
+    lurker.wasCube = cubeIn;
+    lurker.lureLeft = Math.Max(0, lurker.lureLeft - time.dt);
+    // Up and down the pool with nothing to go for; for the nearest of whoever is in it; for a splash before them
+    mut var target = float3(Math.Sin(arena.ticks / 60.0 * 0.35) * 8, POOL_SURFACE, middle);
+    mut var speed = 2.2;
+    mut var nearest = 1000.0;
+    foreach (var entry in operators)
+    {
+        var feet = entry.pilot.position;
+        if (Math.Abs(feet.z - middle) > 2.5 || feet.y > POOL_SURFACE - 0.5 || entry.pilot.taken > 0) continue;
+        var away = Math.Distance(feet.xz, lurker.at.xz);
+        if (away >= nearest) continue;
+        nearest = away;
+        target = feet;
+        speed = 5.5;
+    }
+    if (lurker.lureLeft > 0)
+    {
+        target = lurker.lure;
+        speed = 5.5;
+    }
+    target = float3(Math.Clamp(target.x, -9, 9), POOL_SURFACE, Math.Clamp(target.z, middle - 1.9, middle + 1.9));
+    var gap = Math.Distance(target.xz, lurker.at.xz);
+    lurker.rush = speed > 3 ? 1.0 : 0.0;
+    if (gap < 0.05) return;
+    var step = Math.Min(gap, speed * time.dt);
+    lurker.way = (target - lurker.at) / gap;
+    lurker.at += lurker.way * step;
+}
+
+system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena arena, Lurker lurker, mut Fold fold, Physics physics, mut World world, Time time)
 {
     if (pilot.chamber != arena.chamber)
     {
@@ -836,6 +964,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
             pilot.pitch = 0;
         }
         pilot.taken = 0;
+        pilot.shredded = false;
         body.position = feet + float3(0, BODY_HIGH * 0.5 * pilot.scale + 0.02, 0);
         body.velocity = float3(0);
         pilot.last = body.position;
@@ -845,12 +974,27 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     // It stands upright whatever it's pushed by
     body.rotation = quaternion.identity;
     body.angularVelocity = float3(0);
-    if (pilot.taken > 0 || body.position.y < TAKEN_UNDER)
+    // What a pit does to whoever is in it
+    var hazard = Hazard(arena.level, arena.theme);
+    var low = body.position.y - BODY_HIGH * 0.5 * pilot.scale;
+    var within = Math.Abs(body.position.z - PitMiddle(arena.level)) < 2.5;
+    if (pilot.taken <= 0 && hazard == 2 && within && low < POOL_SURFACE - 0.5 && Math.DistanceSq(lurker.at.xz, body.position.xz) < 1.6) pilot.taken = 0.0001;
+    if (pilot.taken <= 0 && hazard == 3 && within && low < -0.6)
     {
-        // The hands in the pit have it: it's stopped where they caught it and dragged under, whatever it does
+        for (var which = 0; which < 2; which++)
+        {
+            if (Math.Abs(body.position.x - DrumAt(arena.ticks, which)) > 0.95) continue;
+            pilot.taken = 0.0001;
+            pilot.shredded = true;
+        }
+    }
+    if (pilot.taken > 0 || (hazard == 1 && body.position.y < TAKEN_UNDER))
+    {
+        // The hands in the pit have it, or what's in the pool: it's stopped where it was caught and dragged
+        // under, whatever it does. A drum leaves nothing to drag.
         pilot.taken += time.dt;
         pilot.grounded = false;
-        body.velocity = float3(0, pilot.taken < 0.35 ? 0.0 : -1.3, 0);
+        body.velocity = float3(0, pilot.taken < 0.35 || pilot.shredded ? 0.0 : -1.3, 0);
         if (fold.carried == pilot.id) fold.carried = -1;
         if (arena.joined >= 2 || input.active == pilot.id)
         {
@@ -906,7 +1050,9 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     var movement = Math.Normalize(input.move);
     var forward = LookDirection(pilot.yaw, 0);
     var right = float3(forward.z, 0, -forward.x);
-    var desired = (right * movement.x + forward * movement.y) * (5.2 * pilot.scale);
+    // Water to the waist is slow going
+    var wading = hazard == 2 && within && low < POOL_SURFACE - 0.4 ? 0.45 : 1.0;
+    var desired = (right * movement.x + forward * movement.y) * (5.2 * pilot.scale * wading);
     body.velocity.x = Math.Lerp(body.velocity.x, desired.x, Math.Min(1, time.dt * 12));
     body.velocity.z = Math.Lerp(body.velocity.z, desired.z, Math.Min(1, time.dt * 12));
     if (input.jump.down && pilot.grounded) body.velocity.y = 6.2 * Math.Sqrt(pilot.scale);
@@ -998,10 +1144,11 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
         if (Math.Abs(scale - pilot.scale) > 0.01) pilot.resize = scale;
         this.Snap();
     }
-    if (pilot.taken > TAKEN_FOR || center.y < -8)
+    if (pilot.taken > (pilot.shredded ? SHRED_FOR : TAKEN_FOR) || center.y < -8)
     {
-        // Gone under: back where it started
+        // Gone under, or to pieces: back where it started
         pilot.taken = 0;
+        pilot.shredded = false;
         center = OperatorStart(arena.level, pilot.id) + float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
         velocity = float3(0);
         body.position = center;
@@ -1019,7 +1166,7 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
         // Through a fold its middle is where the fold put it; made again where it stands, its feet are
         var feet = ratio > 0 ? center - half : center - float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
         var born = Spawn(Operator { id = pilot.id, position = feet, yaw = pilot.yaw, pitch = pilot.pitch, velocity = velocity, scale = scale,
-                                    last = feet + half, grounded = pilot.grounded, taken = pilot.taken, chamber = pilot.chamber },
+                                    last = feet + half, grounded = pilot.grounded, taken = pilot.taken, shredded = pilot.shredded, chamber = pilot.chamber },
                          Owner { player = owner.player }, Body { position = feet + half, velocity = velocity },
                          Capsule { radius = BODY_RADIUS * scale, height = BODY_HIGH * scale, density = 250, friction = 0 });
         if (pilot.id == 0) arena.op0 = born;
@@ -1064,6 +1211,12 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
     }
     for (var pair = 0; pair < 2; pair++)
         if (AtMouth(fold, pair, center, 0.6 * cube.scale)) fold.busy[pair] = 3;
+    // A drum throws the cube out of its way
+    if (Hazard(arena.level, arena.theme) == 3 && center.y < -0.2 && Math.Abs(center.z - PitMiddle(arena.level)) < 1.4)
+    {
+        for (var which = 0; which < 2; which++)
+            if (Math.Abs(center.x - DrumAt(arena.ticks, which)) < 1.0) body.velocity = float3(DrumWay(arena.ticks, which) * 7, 6.5, 0);
+    }
     fold.cube = center;
     fold.cubeTurn = body.rotation;
     fold.cubeScale = scale;

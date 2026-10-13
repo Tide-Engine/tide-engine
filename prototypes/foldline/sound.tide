@@ -21,6 +21,8 @@ asset Clip building = "art/sfx/drone.wav";
 asset Clip seen = "art/sfx/sting.wav";
 asset Clip stalking = "art/sfx/scrape.wav";
 asset Clip heart = "art/sfx/heart.wav";
+asset Clip drumRun = "art/sfx/drum.wav";
+asset Clip shredded = "art/sfx/shred.wav";
 asset Clip menuAccept = "art/sfx/accept.wav";
 
 // What was so a frame ago, to hear what changed, and the sounds that go on.
@@ -32,6 +34,7 @@ local singleton Ears
     Sound under;
     Sound scrape;
     Sound pulse;
+    Sound drum;
     bool dark;
     float caught;
     Sound pit;
@@ -79,15 +82,15 @@ void LoopingAt(mut Sound sound, Clip clip, float3 position, float volume, bool p
 }
 
 [After(Render)]
-view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Stalker stalker, Control control, Interface ui, Optics optics, mut Ears ears)
+view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Stalker stalker, Lurker lurker, Control control, Interface ui, Optics optics, mut Ears ears)
 {
     if (viewer.id != control.active) return;
     float3 eye = viewer.position + float3(0, 1.55 * viewer.scale, 0);
     Audio.SetListener(eye, quaternion.Euler(-viewer.pitch, viewer.yaw, 0));
     Audio.SetFalloff(2.5, 42);
-    bool pitted = Pitted(arena.level);
-    float pitMiddle = arena.level == 0 ? -1.0 : 1.0;
-    bool sunk = viewer.taken > 0 && eye.y < PIT_SURFACE;
+    int hazard = Hazard(arena.level, arena.theme);
+    float pitMiddle = PitMiddle(arena.level);
+    bool sunk = viewer.taken > 0 && !viewer.shredded && (hazard == 2 ? viewer.taken > 0.7 : eye.y < PIT_SURFACE);
 
     // What goes on: the lamps, the building, the gate while it moves, the pit, the folds, and the red over one's head
     float quiet = ui.open ? 0.5 : sunk ? 0.25 : 1.0;
@@ -107,7 +110,13 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     ears.dark = stalker.dark;
     if (arena.caught > 0 && ears.caught <= 0) Audio.Play(seen, 1.0);
     ears.caught = arena.caught;
-    LoopingAt(ears.pit, pitTurning, float3(Math.Clamp(eye.x, -9, 9), PIT_SURFACE, pitMiddle), 0.8, pitted);
+    // The blood turning over; what's in the pool, where it is; the nearer drum
+    LoopingAt(ears.pit, pitTurning, hazard == 2 ? lurker.at : float3(Math.Clamp(eye.x, -9, 9), PIT_SURFACE, pitMiddle), hazard == 2 ? 0.5 + lurker.rush * 0.5 : 0.8,
+              hazard == 1 || hazard == 2);
+    ears.pit.pitch = hazard == 2 ? 0.7 + lurker.rush * 0.5 : 1.0;
+    float drumA = DrumAt(arena.ticks, 0);
+    float drumB = DrumAt(arena.ticks, 1);
+    LoopingAt(ears.drum, drumRun, float3(Math.Abs(drumA - eye.x) < Math.Abs(drumB - eye.x) ? drumA : drumB, -0.3, pitMiddle), 1.0, hazard == 3);
     LoopingAt(ears.end0, foldHum, fold.ends[0].at, 0.3, Linked(fold, 0));
     LoopingAt(ears.end1, foldHum, fold.ends[1].at, 0.3, Linked(fold, 0));
     LoopingAt(ears.end2, foldHum, fold.ends[2].at, 0.3, Linked(fold, 1));
@@ -170,7 +179,8 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
             float had = body.id == 0 ? ears.taken0 : ears.taken1;
             if (body.taken > 0 && had <= 0)
             {
-                if (body.id == viewer.id) Audio.Play(handsGrab, 1.0);
+                if (body.shredded) Audio.Play(shredded, body.position, 1.0);
+                else if (body.id == viewer.id) Audio.Play(handsGrab, 1.0);
                 else Audio.Play(handsGrab, body.position, 1.0);
             }
             if (body.id == 0) ears.walked0 = walked;
