@@ -1,41 +1,58 @@
 # FOLDLINE
 
-A first-person cooperative spatial puzzle built in Tide. Two operators share
-one amber/cyan portal pair inside a sunlit research atrium. Portals show live,
-perspective-correct views of the space beyond them. Walk through a fold to carry
-your position, facing and momentum to its other end.
+A first-person cooperative spatial puzzle in a descending, liminal building.
+Each operator has a portal pair: A uses amber/cyan, B uses rose/violet. Anyone
+and any loose object can travel through either pair. Linked folds show the
+actual space beyond them and carry position, facing, size and momentum.
 
-Play alone by switching between the two bodies, or host a room and share its
-code with a partner. A joining partner takes operator B. The unused body remains
-in place in solo mode and can hold a pressure plate.
+Play alone by switching between two bodies, or host a room and share its code
+with a partner. A joining partner takes operator B. The unused body stays where
+you leave it in solo mode, including on a pressure plate.
 
 | Control | Action |
 |---|---|
 | WASD / left stick | Move |
 | Mouse / right stick | Look |
 | Space / south button | Jump |
-| Left click / right trigger | Place the amber portal on a receptive panel |
-| Right click / left trigger | Place the cyan portal on a receptive panel |
-| E / west button | Pick up or release the resonance cube |
+| Left click / right trigger | Place your first fold end; throw a held object |
+| Right click / left trigger | Place your second fold end; throw a held object |
+| E / west button | Pick up or drop a cube or crate |
+| F / east button | Throw a held object |
 | Q / north button | Ping a location for your partner |
+| H | Show or hide the current puzzle hint |
 | Tab | Switch operators while alone |
-| R | Reset the current chamber |
+| R | Reset the current room |
 | Escape | Open the menu |
 
-The menu's **01 / 02 / 03** buttons select an experiment. A successful experiment
-opens the next one from its completion screen.
+Wallpaper and marked panels take folds; bare machinery refuses them. Shots
+pass through grilles, but closed doors and moving platforms block them. Small
+frames set an end's size: leaving one makes you and your carried object smaller.
+You keep that size until another fold changes it. Folds are on upright walls;
+floors and ceilings do not take them yet.
 
-1. **A shortcut through space:** weight circuit A, then bring both operators to
-   the exit beyond the divider. The cube can keep the circuit occupied.
-2. **Two sides of the same idea:** weight both circuits at once. Reconnect the
-   rooms to move a cube or an operator into position.
-3. **The resonance bridge:** leave the cube on circuit A to power the bridge.
-   An operator reaches circuit B across the lower machine bay. Completing the
-   circuit sustains the bridge and opens the exit.
+Both A and B must stay weighted to open an exit. The first operator through
+stands on the lift's HOLD plate to let the other leave their plate. Both walk
+into the lift to continue. Ordinary puzzle rooms have one loose cube, so
+parking a spare crate on the other plate cannot replace that handoff. The
+water challenges retain several physical objects for throwing and distraction.
 
-Circuits latch after solving; there is no timed sprint to an exit. Falling into
-the machine bay returns an operator or a loose cube to its starting point.
-Opening a menu stops this machine's controls while the shared match keeps going.
+The descent alternates spatial puzzles with horror passages:
+
+1. **A shortcut through space:** learn crossings, carrying and the exit relay.
+2. **High Ground:** two fenced galleries, one weight and two independent folds.
+3. After the **Maze**, **Smaller** introduces a vent and a wall-owned small end.
+4. **Undertow:** an underwater circuit, a creature and limited distractions.
+5. After the **Long Pool**, **The Drums** tests timing and a hidden gallery.
+6. **All of It** combines retrieval, size, a restricted entrance and drums.
+7. After **The Works**, **Line of Sight** needs two door circuits and two folds.
+8. **The Shaft** combines a rising deck, moving platforms and a small cargo slot.
+9. **Blackout** combines a launch pad, controlled lighting and a creature.
+
+A final Maze leads back to the start. The menu's stop selector follows this
+order. The older **The Lure** room remains selectable through the test command
+but is outside the descent. Later puzzle hints appear only when H is pressed;
+passages always explain their survival rule. Opening a menu stops this machine's
+controls while the shared match continues.
 
 ## Build and run
 
@@ -43,23 +60,20 @@ From the repository root:
 
 ```sh
 cmake --preset debug -DTIDE_PRIVATE_PROTOTYPES=ON
-cmake --build --preset debug --target foldline foldline_test
-ctest --preset debug -R '^foldline_test$'
+cmake --build --preset debug --target foldline foldline_test foldline_render_test
+ctest --preset debug -R '^foldline'
 build/debug/bin/foldline
 ```
 
-Or run `tide run` inside this folder. No external packages are required.
-For the public browser page:
+Or run `tide run` inside this folder. The bundled Box3D package supplies physics;
+no external package download is required. For the browser page:
 
 ```sh
 cmake --preset web-debug -DTIDE_PRIVATE_PROTOTYPES=ON
-cmake --build --preset web-debug --target foldline_page foldline_test
-ctest --preset web-debug -R '^foldline_test$'
+cmake --build --preset web-debug --target foldline_page foldline_test foldline_render_test
+ctest --preset web-debug -R '^foldline'
 ```
 
-The staged address is `/prototypes/foldline/`. Keyboard and mouse are the primary
-controls; gamepad bindings are available for gameplay. The prototype does not
-yet provide touchscreen movement.
-
-This is original game code with procedural geometry and materials. The current
-scope is three experiments, six vertical portal panels and a single shared pair.
+Serve `docs/static` and visit `/prototypes/foldline/`. The page is self-contained.
+Keyboard/mouse and gamepad gameplay are supported; touchscreen movement is not.
+The PSX-style picture uses 300 rows with nearest textures and dithered lighting.

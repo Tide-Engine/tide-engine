@@ -1334,7 +1334,7 @@ void Dress(mut Optics optics, int level, int theme)
     if (!Between(level))
     {
         float3 sign = LiftAt(level) + float3(5.4, 3.1, -2.64);
-        int number = level < BETWEEN ? level + 1 : level == SIGHT ? 7 : level == SHAFT ? 8 : level == DARK ? 9 : 10;
+        int number = RoomNumber(level);
         optics.furnishings.Add(Block(sign, float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
         WallDigit(optics, number / 10, sign + float3(-.54, 0, -.045));
         WallDigit(optics, number % 10, sign + float3(.54, 0, -.045));
