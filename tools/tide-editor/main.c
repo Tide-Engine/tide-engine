@@ -7,10 +7,14 @@
 #include "document.h"
 #include "asset_files.h"
 #include "model.h"
+#include "preview.h"
+#include "interaction.h"
+#include "embed.h"
 #include "packages.h"
 #include "sys.h"
 #include "tide/platform.h"
 #include "tide/text.h"
+#include "tide/time.h"
 
 typedef enum action { NONE, SAVE, RELOAD, DISCARD, UNDO, REDO, SET, RESET, ADD, REMOVE, CHILD, DELETE_NODE, PREFAB, RECOVER, DROP_RECOVERY } action;
 typedef struct editor {
@@ -37,7 +41,25 @@ typedef struct editor {
     editor_model *scene_models;
     int scene_model_count;
     uint64_t scene_model_revision;
+    editor_preview preview;
+    float frame_seconds;
+    bool bounded_preview;
+    bool embedded;
+    uint64_t embedded_time;
+    int tool; // 0 select, 1 move, 2 rotate, 3 scale.
+    struct {
+        bool active;
+        int node, axis, tool;
+        uint64_t revision;
+        tide_float2 start, center;
+        tide_float3 position, scale, current_position, current_scale, direction, a, b;
+        tide_quaternion rotation, current_rotation;
+        float angle;
+    } drag;
 } editor;
+
+static editor *closing_editor;
+static void close_preview(void) { if (closing_editor) editor_preview_close(&closing_editor->preview, &closing_editor->draw); }
 
 static char *own(const char *s)
 {
@@ -82,7 +104,8 @@ static int scroll_rows(float value, int factor)
 
 // Preview understands literal TRS, constants and basic float arithmetic. An
 // unsupported transform is reported and its subtree omitted, never shown at
-// a guessed position. No script, extern or user view executes in the editor.
+// a guessed position. This fallback does not execute game code; compiled
+// opted-in views use their own world and rendering path instead.
 static bool scalar(const expr *v, float *out, int depth)
 {
     if (!v || depth > 64) return false;
@@ -137,20 +160,25 @@ static bool vector(const expr *v, float *out, int count, int depth)
     return false;
 }
 
-static bool local_matrix(const editor_node *n, tide_float4x4 *m)
+static bool local_trs(const editor_node *n, tide_float3 *position, tide_quaternion *rotation, tide_float3 *scaling)
 {
     if (!n->effective) return false;
     expr *c = editor_component(n, str_from("Transform"));
-    *m = tide_identity_f4x4();
-    if (!c || !c->type_decl) return true;
     float pos[3] = {0}, rot[4] = {0, 0, 0, 1}, scale[3] = {1, 1, 1};
-    for (int i = 0; i < c->type_decl->fields.count; i++) {
+    if (c && c->type_decl) for (int i = 0; i < c->type_decl->fields.count; i++) {
         field *f = &c->type_decl->fields.items[i];
         float *out = str_eq_c(f->name, "localPosition") ? pos : str_eq_c(f->name, "localRotation") ? rot : scale;
         if (!vector(editor_value(c, f), out, out == rot ? 4 : 3, 0)) return false;
     }
-    *m = tide_trs_f4x4(tide_f3(pos[0], pos[1], pos[2]), tide_q(rot[0], rot[1], rot[2], rot[3]), tide_f3(scale[0], scale[1], scale[2]));
+    *position = tide_f3(pos[0],pos[1],pos[2]); *rotation = tide_q(rot[0],rot[1],rot[2],rot[3]); *scaling = tide_f3(scale[0],scale[1],scale[2]);
     return true;
+}
+
+static bool local_matrix(const editor_node *n, tide_float4x4 *m)
+{
+    tide_float3 p, s; tide_quaternion q;
+    if (!local_trs(n,&p,&q,&s)) return false;
+    *m = tide_trs_f4x4(p,q,s); return true;
 }
 
 static void asset_stamp_path(void *user, const char *path)
@@ -277,9 +305,10 @@ static void models(editor *e, tide_rect r, tide_float2 size)
 
 static tide_float2 project(editor *e, tide_rect r, tide_float3 p)
 {
-    return tide_f2(r.x + r.width / 2 + e->pan.x + (p.x + (e->xy ? 0 : p.z * 0.6f)) * e->zoom,
-                   r.y + r.height / 2 + e->pan.y + (-p.y + (e->xy ? 0 : p.z * 0.35f)) * e->zoom);
+    return editor_project((editor_camera){tide_f2(r.x+r.width/2+e->pan.x,r.y+r.height/2+e->pan.y),e->zoom,e->xy},p);
 }
+
+#include "interaction_ui.inc"
 
 static void viewport(editor *e, tide_rect r, tide_float2 size)
 {
@@ -295,7 +324,13 @@ static void viewport(editor *e, tide_rect r, tide_float2 size)
     tide_draw_set_clip(&e->gui.list, r);
     if (button(e, 70, (tide_rect){r.x + 14, r.y + 42, 82, 26}, e->xy ? "XY" : "Isometric")) e->xy = !e->xy;
     if (button(e, 71, (tide_rect){r.x + 106, r.y + 42, 82, 26}, "Center")) e->pan = tide_f2(0, 0);
-    if (contains(r, e->gui.mouse)) {
+    if (e->preview.enabled && !e->preview.builder && button(e, 73, (tide_rect){r.x+198,r.y+42,90,26}, e->preview.local ? "Local" : "Match")) {
+        const bool local = !e->preview.local;
+        editor_preview_close(&e->preview, &e->draw);
+        e->preview.enabled = true; e->preview.local = local;
+    }
+    const tide_rect content = {r.x,r.y+112,r.width,r.height-154};
+    if (contains(content, e->gui.mouse) && !e->drag.active) {
         e->zoom *= 1 + e->devices.mouse.poll_scroll.y * 0.1f;
         e->zoom = tide_clamp_f(e->zoom, 8, 256);
         if (e->devices.mouse.middle.pressed) {
@@ -313,14 +348,27 @@ static void viewport(editor *e, tide_rect r, tide_float2 size)
         }
     }
     const int count = e->doc.nodes.count;
+    tide_float4x4 preview_projection = tide_identity_f4x4();
+    preview_projection.c0.x = 2*e->zoom/r.width; preview_projection.c1.y = 2*e->zoom/r.height;
+    // SetCameraMatrices turns view-space z for the renderer's convention;
+    // compensate here so the wire markers and compiled geometry coincide.
+    preview_projection.c2.x = e->xy ? 0 : -.6f*preview_projection.c0.x;
+    preview_projection.c2.y = e->xy ? 0 : .35f*preview_projection.c1.y;
+    preview_projection.c0.z = -.0001f; preview_projection.c1.z = -.0001f; preview_projection.c2.z = -.0001f;
+    preview_projection.c3 = tide_f4(2*e->pan.x/r.width,-2*e->pan.y/r.height,.5f,1);
+    const bool compiled_preview = editor_preview_draw(&e->preview, &e->draw, e->frame_seconds, r, tide_identity_f4x4(), preview_projection, tide_platform_measure_text);
     tide_float4x4 *matrices = arena_alloc((size_t)count * sizeof(*matrices));
     bool *valid = arena_alloc((size_t)count * sizeof(*valid));
     int omitted = 0, omitted_models = 0;
+    int picked = -1;
+    double picked_depth = INFINITY;
+    const editor_camera picking_camera = {tide_f2(r.x+r.width/2+e->pan.x,r.y+r.height/2+e->pan.y),e->zoom,e->xy};
     for (int i = 0; i < count; i++) {
         editor_node *n = &e->doc.nodes.items[i];
         const int parent = n->parent;
         valid[i] = local_matrix(n, &matrices[i]) && (parent < 0 || (parent < i && valid[parent]));
         if (!valid[i]) { omitted++; continue; }
+        if (e->drag.active && e->drag.node == i) matrices[i] = tide_trs_f4x4(e->drag.current_position,e->drag.current_rotation,e->drag.current_scale);
         if (parent >= 0) matrices[i] = tide_mul_f4x4(matrices[parent], matrices[i]);
         if (n->effective) for (int c = 0; c < n->effective->args.count; c++) {
             const expr *comp = n->effective->args.items[c];
@@ -340,16 +388,36 @@ static void viewport(editor *e, tide_rect r, tide_float2 size)
                     editor_model *model = &e->scene_models[a];
                     if (!model->mesh.vertex_count) editor_model_set(model, &asset->asset->items[0].mesh, true);
                     if (!model->mesh.vertex_count) continue;
+                    if (e->gui.mouse_pressed && !e->drag.active && contains(content,e->gui.mouse)) {
+                        editor_camera relative = picking_camera; relative.origin = tide_f2(0,0);
+                        const tide_float2 center = editor_project(picking_camera,tide_transform_f4x4(matrices[i],model->center));
+                        const tide_float2 a = editor_project(relative,direction(matrices[i],tide_f3(1,0,0)));
+                        const tide_float2 b = editor_project(relative,direction(matrices[i],tide_f3(0,1,0)));
+                        const tide_float2 c = editor_project(relative,direction(matrices[i],tide_f3(0,0,1)));
+                        // Conservative sphere projection rejects off-pointer models
+                        // before reading their triangles. Picking runs only on press.
+                        const double width = (double)model->radius*(fabs(a.x)+fabs(b.x)+fabs(c.x));
+                        const double height = (double)model->radius*(fabs(a.y)+fabs(b.y)+fabs(c.y));
+                        if (fabs((double)e->gui.mouse.x-center.x) <= width && fabs((double)e->gui.mouse.y-center.y) <= height &&
+                            editor_pick_mesh(&model->mesh,matrices[i],picking_camera,e->gui.mouse,&picked_depth)) picked = i;
+                    }
                     tide_float4x4 projection = tide_identity_f4x4();
                     projection.c0.x = 2*e->zoom/size.x;
                     projection.c1.y = 2*e->zoom/size.y;
-                    projection.c2.x = e->xy ? 0 : .6f*projection.c0.x;
-                    projection.c2.y = e->xy ? 0 : -.35f*projection.c1.y;
-                    projection.c0.z = -.0001f; projection.c1.z = -.0001f; projection.c2.z = .0001f;
+                    // Compensate the matrix camera's view-space z turn, as the
+                    // compiled preview does, so surfaces and picking coincide.
+                    projection.c2.x = e->xy ? 0 : -.6f*projection.c0.x;
+                    projection.c2.y = e->xy ? 0 : .35f*projection.c1.y;
+                    projection.c0.z = -.0001f; projection.c1.z = -.0001f; projection.c2.z = -.0001f;
                     projection.c3 = tide_f4(2*(r.x+r.width/2+e->pan.x)/size.x-1,1-2*(r.y+r.height/2+e->pan.y)/size.y,.5f,1);
-                    const uint32_t camera = tide_draw_push_camera_matrices(&e->draw, tide_identity_f4x4(), projection);
-                    tide_draw_mesh_3d(&e->draw, &model->mesh, matrices[i], NULL, TIDE_FILTER_POINT);
-                    tide_draw_pop(&e->draw, camera);
+                    if (!compiled_preview) {
+                        const uint32_t camera = tide_draw_push_camera_matrices(&e->draw, tide_identity_f4x4(), projection);
+                        // Authoring proxies/picking are double-sided; a flat
+                        // imported mesh stays inspectable from either projection.
+                        tide_draw_push_cull(&e->draw,TIDE_CULL_NONE);
+                        tide_draw_mesh_3d(&e->draw, &model->mesh, matrices[i], NULL, TIDE_FILTER_POINT);
+                        tide_draw_pop(&e->draw, camera);
+                    }
                     drawn = true;
                 }
                 if (!drawn) omitted_models++;
@@ -368,25 +436,32 @@ static void viewport(editor *e, tide_rect r, tide_float2 size)
             if (isfinite(a.x) && isfinite(a.y) && isfinite(b.x) && isfinite(b.y) && fabsf(a.x) < 1e6f && fabsf(a.y) < 1e6f && fabsf(b.x) < 1e6f && fabsf(b.y) < 1e6f)
                 tide_draw_line(&e->draw, a, b, color);
         }
-        if (contains(r, screen) && screen.y > r.y + 85) {
-            const tide_rect hit = {screen.x - 10, screen.y - 10, 20, 20};
-            if (tide_gui_control(&e->gui, 10000u + (uint32_t)i, hit).clicked) { e->selected = i; e->inspector_scroll = 0; clear_field(e); }
+        if (contains(content, screen)) {
+            if (picked < 0 && fabsf(screen.x-e->gui.mouse.x) <= 10 && fabsf(screen.y-e->gui.mouse.y) <= 10) picked = i;
             tide_draw_circle(&e->draw, screen, i == e->selected ? 5 : 3, color);
             label(e, screen.x + 10, screen.y - 8, n->path.len ? str_to_cstr(n->path) : "Root", color);
         }
-        if (i == e->selected) {
+        if (i == e->selected && !e->tool) {
             static const tide_float3 axes[] = {{1,0,0}, {0,1,0}, {0,0,1}};
             static const tide_color colors[] = {{.95f,.35f,.35f,1}, {.4f,.87f,.4f,1}, {.4f,.6f,.95f,1}};
             for (int axis = 0; axis < 3; axis++) tide_draw_thick_line(&e->draw, screen, project(e, r, tide_transform_f4x4(matrices[i], axes[axis])), 2, colors[axis]);
         }
     }
+    const bool gizmo_used = gizmo(e,r,matrices,valid);
+    if (!gizmo_used && picked >= 0 && e->gui.mouse_pressed && !e->picker && !e->discard && !e->recovery && e->pending == NONE) {
+        e->selected = picked; e->inspector_scroll = 0; clear_field(e);
+    }
     panel(e, (tide_rect){r.x,r.y,r.width,34}, rgb(.075f,.095f,.115f));
-    label(e, r.x + 16, r.y + 10, "SCENE PREVIEW", dim);
+    label(e, r.x + 16, r.y + 10, e->preview.enabled ? "VIEWS PREVIEW" : "SCENE PREVIEW", dim);
+    static const char *tools[] = {"Select", "Move", "Rotate", "Scale"};
+    for (int t = 0; t < 4; t++) if (button(e, 700u+(uint32_t)t,(tide_rect){r.x+14+(float)t*90,r.y+78,82,26},tools[t])) { e->tool = t; e->drag.active = false; }
     panel(e, (tide_rect){r.x,r.y+r.height-42,r.width,42}, rgb(.075f,.095f,.115f));
     char message[180];
-    if (omitted || omitted_models) snprintf(message, sizeof message, "%d transform(s), %d model field(s) not previewed. Inspect expressions/diagnostics.", omitted, omitted_models);
-    else snprintf(message, sizeof message, "Static models + markers  |  Wheel: zoom  |  Middle drag: pan");
+    if (compiled_preview && omitted) snprintf(message, sizeof message, "%d marker(s) need constant transforms; views can still render them.", omitted);
+    else if (omitted || omitted_models) snprintf(message, sizeof message, "%d transform(s), %d model field(s) not previewed. Inspect expressions/diagnostics.", omitted, omitted_models);
+    else snprintf(message, sizeof message, "%s | Q/W/E/R tools | Shift snap | Esc cancel", compiled_preview ? "Views (authored picking)" : "Static models");
     label(e, r.x + 16, r.y + r.height - 30, message, omitted || omitted_models ? rgb(.95f,.65f,.3f) : dim);
+    if (e->preview.enabled) label(e, r.x+300, r.y+48, e->preview.builder ? "Building views..." : e->preview.revision != e->doc.revision ? "Preview stale / build needed" : e->preview.api && !e->preview.api->views ? "No opted-in views" : "Game shaders / authored state", dim);
     tide_draw_unset_clip(&e->draw); tide_draw_unset_clip(&e->gui.list);
 }
 
@@ -530,6 +605,14 @@ static void picker(editor *e, tide_float2 screen)
 static int frame(void *user, float seconds)
 {
     editor *e = user;
+    if (e->embedded) {
+        const int result = editor_embed_input();
+        if (result != -1) return result;
+        const uint64_t now = tide_time_now_ns();
+        seconds = e->embedded_time ? tide_clamp_f((float)((double)(now-e->embedded_time)/1e9),0,1) : 1.0f/60;
+        e->embedded_time = now;
+    }
+    e->frame_seconds = seconds;
     char *selected_path = e->selected >= 0 && e->selected < e->doc.nodes.count ? own_slice(e->doc.nodes.items[e->selected].path) : NULL;
     const uint64_t revision = e->doc.revision;
     e->poll += seconds;
@@ -540,12 +623,24 @@ static int frame(void *user, float seconds)
         e->asset_stamp = asset_stamp(&e->doc);
     }
     if (e->doc.revision != revision) {
+        e->drag.active = false;
         e->selected = 0;
         for (int i = 0; selected_path && i < e->doc.nodes.count; i++) if (str_eq_c(e->doc.nodes.items[i].path, selected_path)) e->selected = i;
         clear_field(e);
     }
     free(selected_path);
     if (e->selected >= e->doc.nodes.count) e->selected = 0;
+    // Polling can replace the analysis/revision too: bounded output must build
+    // that current document, rather than the state from before the poll.
+    editor_preview_update(&e->preview, &e->doc, &e->draw, 0);
+    if (e->bounded_preview && e->preview.enabled) {
+        while (e->preview.builder) editor_preview_update(&e->preview, &e->doc, &e->draw, 50);
+        if (!e->preview.api || e->preview.revision != e->doc.revision) {
+            fprintf(stderr, "tide editor: %s\n", e->preview.message);
+            if (e->doc.errors) for (int i = 0; i < e->doc.diagnostics.count; i++) fprintf(stderr, "%s\n", e->doc.diagnostics.items[i]);
+            return 1;
+        }
+    }
     tide_platform_poll(&e->devices);
     const uint32_t scratch = tide_scratch_mark();
     const arena_mark mark = arena_checkpoint();
@@ -571,14 +666,27 @@ static int frame(void *user, float seconds)
     if (button(e, 4, (tide_rect){336,12,86,28}, "Reload")) { if (editor_dirty(&e->doc)) e->discard = true; else queue(e, RELOAD); }
     if (button(e, 5, (tide_rect){432,12,86,28}, e->source ? "Viewport" : "Source")) e->source = !e->source;
     if (button(e, 6, (tide_rect){528,12,86,28}, e->models ? "Scene" : "Models")) { e->models = !e->models; e->source = false; }
+    if (button(e, 7, (tide_rect){624,12,86,28}, e->preview.enabled ? "Views: on" : "Views: off")) {
+        e->preview.enabled = !e->preview.enabled;
+        e->models = e->source = false;
+    }
+    if (e->models || e->source) e->drag.active = false;
     sb title = {0}; sb_printf(&title, "%s%s", path_base(e->doc.path), editor_dirty(&e->doc) ? " *" : "");
-    label(e, 634, 18, title.data, ink);
+    label(e, 730, 18, title.data, ink);
     // Shortcuts read presses before GUI consumption, except while typing/modal.
     const bool ctrl = e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
     if (ctrl && !tide_gui_typing(&e->gui) && !e->picker && !e->discard && !e->recovery) {
         if (e->devices.keyboard.s.down) queue(e, SAVE);
         if (e->devices.keyboard.z.down) queue(e, e->devices.keyboard.leftShift.pressed ? REDO : UNDO);
         if (e->devices.keyboard.y.down) queue(e, REDO);
+    }
+    if (!ctrl && !tide_gui_typing(&e->gui) && !e->picker && !e->discard && !e->recovery) {
+        int tool = -1;
+        if (e->devices.keyboard.q.down) tool = 0;
+        if (e->devices.keyboard.w.down) tool = 1;
+        if (e->devices.keyboard.e.down) tool = 2;
+        if (e->devices.keyboard.r.down) tool = 3;
+        if (tool >= 0) { e->tool = tool; e->drag.active = false; }
     }
     const float height = size.y - 230, right = size.x - 390;
     panel(e, (tide_rect){0,56,250,height}, rgb(.10f,.125f,.15f));
@@ -612,8 +720,9 @@ static int frame(void *user, float seconds)
     const int maximum = e->doc.diagnostics.count > 3 ? e->doc.diagnostics.count - 3 : 0;
     e->diagnostic_scroll = e->diagnostic_scroll < 0 ? 0 : e->diagnostic_scroll > maximum ? maximum : e->diagnostic_scroll;
     tide_draw_set_clip(&e->draw, diagnostics);
-    if (!e->doc.diagnostics.count) label(e, 16, size.y-126, "Project checked. Save writes only authored overrides; game code remains in .tide files.", dim);
-    for (int i = e->diagnostic_scroll; i < e->doc.diagnostics.count && i < e->diagnostic_scroll + 3; i++) label(e, 16, size.y-126 + (float)(i-e->diagnostic_scroll)*25, e->doc.diagnostics.items[i], ink);
+    const bool preview_failure = e->preview.enabled && !e->preview.builder && !e->doc.errors && e->preview.revision != e->doc.revision;
+    if (preview_failure || !e->doc.diagnostics.count) label(e, 16, size.y-126, e->preview.enabled ? e->preview.message : "Project checked. Save writes only authored overrides; game code remains in .tide files.", preview_failure ? rgb(.98f,.53f,.4f) : dim);
+    if (!preview_failure) for (int i = e->diagnostic_scroll; i < e->doc.diagnostics.count && i < e->diagnostic_scroll + 3; i++) label(e, 16, size.y-126 + (float)(i-e->diagnostic_scroll)*25, e->doc.diagnostics.items[i], ink);
     tide_draw_unset_clip(&e->draw);
     label(e, 16, size.y-34, e->doc.message[0] ? e->doc.message : "Ctrl+S save   |   Ctrl+Z undo   |   Ctrl+Y redo   |   Edits stay in memory until saved", dim);
     if (e->picker) picker(e, size);
@@ -661,6 +770,7 @@ static int frame(void *user, float seconds)
     }
     free(selected_path);
     free(e->pending_name); e->pending_name = NULL; e->pending = NONE;
+    if (e->embedded && !editor_embed_frame(editor_dirty(&e->doc),e->doc.revision,e->doc.errors,e->doc.warnings)) return 1;
     return TIDE_KEEP_RUNNING;
 }
 
@@ -668,6 +778,7 @@ static void usage(void)
 {
     puts("usage: tide open <file.tprefab> [--project <folder>] [--check]\n"
          "A native scene/prefab editor. Root: nearest tide.packages, otherwise the file's folder.\n"
+         "--preview runs opted-in views on authored match entities; --local-preview uses local placement.\n"
          "--check validates without a window. --frames N, --capture file.png and --script file\n"
          "use the standard hidden input/capture loop; --size W H defaults to 1440 900.");
 }
@@ -681,12 +792,20 @@ static bool positive(const char *text, uint32_t *out)
 
 int main(int argc, char **argv)
 {
-    const char *path = NULL, *project_root = NULL; bool check_only = false;
+    const char *path = NULL, *project_root = NULL; bool check_only = false, preview = false, preview_local = false, embedded = false;
+    uint32_t embed_port = 0; const char *embed_token = NULL;
     tide_headless_desc hidden = {.width=1440,.height=900};
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) { usage(); return 0; }
         if (strcmp(argv[i], "--project") == 0 && i + 1 < argc) project_root = argv[++i];
         else if (strcmp(argv[i], "--check") == 0) check_only = true;
+        else if (strcmp(argv[i], "--embed") == 0 && i + 2 < argc) {
+            embedded = true;
+            if (!positive(argv[++i],&embed_port) || embed_port > 65535) { usage(); return 2; }
+            embed_token = argv[++i];
+        }
+        else if (strcmp(argv[i], "--preview") == 0) preview = true;
+        else if (strcmp(argv[i], "--local-preview") == 0) preview = preview_local = true;
         else if (strcmp(argv[i], "--capture") == 0 && i + 1 < argc) hidden.capture = argv[++i];
         else if (strcmp(argv[i], "--script") == 0 && i + 1 < argc) hidden.script = argv[++i];
         else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) { if (!positive(argv[++i], &hidden.frames)) { usage(); return 2; } }
@@ -706,12 +825,17 @@ int main(int argc, char **argv)
 #endif
     }
     if (!prefab_file) { fputs("tide open: first editor supports .tprefab files\n", stderr); return 2; }
-    if (sys_hidden() && !check_only && !hidden.frames && !hidden.capture && !hidden.script) { fputs("tide open: TIDE_HIDDEN requires --check, --frames, --capture or --script\n", stderr); return 2; }
+    if (embedded && (check_only || hidden.frames || hidden.capture || hidden.script)) { fputs("tide open: --embed cannot be combined with --check/--frames/--capture/--script\n",stderr); return 2; }
+    if (sys_hidden() && !embedded && !check_only && !hidden.frames && !hidden.capture && !hidden.script) { fputs("tide open: TIDE_HIDDEN requires --check, --frames, --capture or --script\n", stderr); return 2; }
+    if (embedded && !editor_embed_open((uint16_t)embed_port,embed_token)) { fputs("tide open: could not connect to the IDE frame transport\n",stderr); return 2; }
     char *bin = sys_exe_dir(), *root = path_dir(bin), *builtin = path_join(root, "src/packages");
     if (!sys_is_dir(builtin)) { free(builtin); builtin = own(TIDE_SOURCE_DIR "/packages"); }
     packages_set_builtin_folder(builtin); free(builtin); free(root); free(bin);
     editor *e = calloc(1, sizeof(*e)); if (!e) abort(); e->zoom = 48; e->model_lighting = true;
     if (!editor_open(&e->doc, path, project_root)) { fprintf(stderr, "tide open: %s\n", e->doc.message); editor_close(&e->doc); free(e); return 2; }
+    e->preview.enabled = preview; e->preview.local = preview_local;
+    e->bounded_preview = hidden.capture || hidden.frames || hidden.script;
+    e->embedded = embedded;
     if (check_only) {
         printf("project: %s\n", e->doc.project);
         for (int i = 0; i < e->doc.diagnostics.count; i++) puts(e->doc.diagnostics.items[i]);
@@ -719,12 +843,15 @@ int main(int argc, char **argv)
         const int code = e->doc.errors ? 1 : 0; editor_close(&e->doc); free(e); return code;
     }
     e->recovery = e->doc.recovery != NULL;
+    closing_editor = e; atexit(close_preview);
     e->asset_stamp = asset_stamp(&e->doc);
-    if (hidden.capture || hidden.frames || hidden.script) {
+    if (embedded) { hidden.frames = UINT32_MAX; tide_platform_open_headless(&hidden); }
+    else if (hidden.capture || hidden.frames || hidden.script) {
         if (!hidden.frames && !hidden.script) hidden.frames = 2;
         tide_platform_open_headless(&hidden);
     } else tide_platform_open(&(tide_window_desc){.title="Tide Scene Editor", .width=hidden.width, .height=hidden.height});
     tide_platform_run(frame, e);
+    editor_preview_close(&e->preview, &e->draw);
     editor_model_free(&e->model);
     free(e->model_asset); free(e->model_key);
     for (int i = 0; i < e->scene_model_count; i++) editor_model_free(&e->scene_models[i]);

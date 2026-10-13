@@ -1,5 +1,26 @@
 # Releases, installing and CI
 
+## Optional Windows prefab registration (2026-10-13)
+
+With TIDE_ASSOCIATE_PREFABS=1, install.ps1 registers this user's Tide.Prefab
+ProgID, quoted tide-editor.exe open command and .tprefab/OpenWithProgids entry,
+after a fresh install or successful installer-driven upgrade. It checks that
+the native editor exists, leaves extension defaults and UserChoice untouched,
+and does not claim an association on Linux/macOS. Windows owns the default
+selection; the user can choose Tide in Open With. This follows Microsoft's
+[Open With registration](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-include-an-application-on-the-open-with-dialog-box).
+Direct tide upgrade leaves the stable installed path's registry entries alone.
+The native editor's GUI subsystem avoids an additional Explorer-launched console.
+
+The installer harness intercepts every registry write, checks the quoted command
+and candidate entry, and rejects extension-default changes. Its optional case
+uses only dummy binaries and never writes this user's registry. All nine Windows
+cases pass; existing download/checksum/upgrade failure checks remain. The Install
+guide documents the opt-in and removal of just Tide's registered keys/values.
+No installation or file association was changed on the owner's machine, and no
+CI workflow was dispatched. Remaining-platform validation follows the normal
+manually requested release workflow.
+
 Build run 38367850012 (2026-10-13, `dev` at b08fc1bc) failed three ways, fixed the same day:
 
 - **Every Package job:** `tools/tide-editor` installs `tide-editor` in the `tide` component, and the Package step built neither tree's `tide_editor`, so `cmake --install` found no file (the native tree's on Linux and macOS, the MinGW tree's on Windows). The step now builds `tide_editor` in both. Not tried locally: the package preset needs the LLVM libraries.

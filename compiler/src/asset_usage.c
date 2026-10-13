@@ -91,6 +91,7 @@ static void declaration(asset_usage *w, const decl *d)
     queue(w, USAGE_EXPR, d->value);
     queue(w, USAGE_STMT, d->body);
     queue(w, USAGE_STMT, d->sanitize);
+    queue(w, USAGE_STMT, d->predict);
     parameters(w, d->params.items, d->params.count);
     attributes(w, d->attributes.items, d->attributes.count);
     for (int i = 0; i < d->fields.count; i++) {

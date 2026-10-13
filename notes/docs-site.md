@@ -1,5 +1,25 @@
 # The docs site
 
+SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
+public id, asset-gate entries, thumbnail and test registrations are removed;
+its source/build targets and game note are removed too. The existing catalog
+remains unchanged. No deployment or CI dispatch is requested.
+The production build and eighteen analytics/admin tests pass; the production
+HTTP test checks the removed SKYWORKS page and thumbnail return 404.
+
+## Input prediction controls (2026-10-13)
+
+Input documents owner-approved Predict()/[DontPredict] with action-reset and
+computed-fade examples. The spec separates their agreed availability from
+first-build ordering, capabilities, attribute placement/conflicts and client-only
+semantics. Functions, Tasks and Editors include the new input body. Docs explain
+normal bool .down history, guessed-edge suppression, immediate real actions and
+the unchanged authoritative missing-input rule and 0.15-second guess cutoff.
+No site deployment is part of this task.
+
+Validation: full native/web suites, grammar and production docs build pass;
+counts and remaining platform coverage are in notes/language.md.
+
 FOLDLINE catalog addition (2026-10-12): the new first-person 3D cooperative
 portal prototype adds `foldline` to the server-only catalog, public root and
 outside-root asset gates. Its page stages at `/prototypes/foldline/` through

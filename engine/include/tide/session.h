@@ -150,9 +150,14 @@ typedef struct tide_game {
     // its player had let go, each field back to its default but those the
     // game marks [Absolute], and with no button going up for it. True if that
     // changed any of them. Only ever on a predicted world: the server's
-    // inputs, and a confirmed tick's, are what was sent. NULL: nothing is let
-    // go, and a guess is the last input for as far as the client runs ahead.
+    // inputs, and a confirmed tick's, are what was sent. NULL: no default
+    // let-go step; predict_inputs can still adjust guesses each tick.
     bool (*let_go_inputs)(void *world, const tide_player_set *keep);
+    // Adjust guessed inputs before each predicted tick, excluding keep's
+    // real samples. No invented button edges. True if any input changed,
+    // so confirmation replays that tick instead of reusing its guess.
+    // NULL: guesses keep their previous values until let_go_inputs.
+    bool (*predict_inputs)(void *world, const tide_player_set *keep);
     // Commands are bounded, copied wire values. Checking only decodes them,
     // and says which channel the command's type is in: 0, the default, one
     // of the game's own (1 to command_channels - 1), or

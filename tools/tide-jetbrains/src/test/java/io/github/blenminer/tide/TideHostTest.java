@@ -30,6 +30,25 @@ import com.intellij.util.ui.UIUtil;
 
 // Opt-in real process/browser boundaries, in the isolated IntelliJ application.
 public final class TideHostTest extends BasePlatformTestCase {
+    public void testNativePrefabCanvasUsesTheRealBackend() throws Exception {
+        final Path folder=Files.createTempDirectory("tide-jb-prefab-");
+        final Path file=folder.resolve("Level.tprefab");
+        Files.writeString(folder.resolve("tide.packages"),"");
+        Files.writeString(file,"prefab Level { Transform; }\n");
+        final var panel=new TidePrefabEditor(Path.of(System.getProperty("tide.test.editor")),file,folder);
+        try {
+            panel.setSize(1440,900); panel.request();
+            final var pixels=new java.awt.image.BufferedImage(1440,900,java.awt.image.BufferedImage.TYPE_INT_RGB);
+            PlatformTestUtil.waitWithEventsDispatching("native prefab canvas",() -> {
+                final var graphics=pixels.createGraphics();panel.paint(graphics);graphics.dispose();
+                return (pixels.getRGB(20,140)&0xFFFFFF)!=0x131A20;
+            },30);
+            assertTrue(panel.process.isAlive());
+            assertTrue(pixels.getRGB(20,140)!=pixels.getRGB(260,140));
+        } finally { panel.dispose(); }
+        PlatformTestUtil.waitWithEventsDispatching("native prefab EOF shutdown",() -> !panel.process.isAlive(),30);
+        assertEquals(0,panel.process.exitValue());
+    }
     @Override
     protected void setUp() throws Exception {
         super.setUp();

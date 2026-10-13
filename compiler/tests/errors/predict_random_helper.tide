@@ -1,0 +1,4 @@
+// expect: 'Die' rolls with Random, which this code can't
+int Die() { return Random.NextInt(6); }
+input I { int luck; Predict() { luck = Die(); } }
+scene Main { }

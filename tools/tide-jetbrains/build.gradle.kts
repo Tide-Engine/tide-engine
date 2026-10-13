@@ -83,9 +83,11 @@ tasks {
         // headless and do not download or launch a game or external browser.
         providers.gradleProperty("tideTestNode").orNull?.let { systemProperty("tide.test.node", it) }
         providers.gradleProperty("tideTestServer").orNull?.let { systemProperty("tide.test.server", it) }
+        providers.gradleProperty("tideTestEditor").orNull?.let { systemProperty("tide.test.editor", it) }
         filter {
             if (!providers.gradleProperty("tideTestNode").isPresent) excludeTestsMatching("*.TideHostTest.testRealRunConfigurationKillsDescendants")
             if (!providers.gradleProperty("tideTestServer").isPresent) excludeTestsMatching("*.TideHostTest.testRealLsp4ijClientStartsRestartsAndNavigates")
+            if (!providers.gradleProperty("tideTestEditor").isPresent) excludeTestsMatching("*.TideHostTest.testNativePrefabCanvasUsesTheRealBackend")
             if (providers.gradleProperty("tideTestJcef").orNull != "true") excludeTestsMatching("*.TideHostTest.testRealJcefLoadsAndReusesPage")
         }
         if (providers.gradleProperty("tideTestJcef").orNull == "true") {

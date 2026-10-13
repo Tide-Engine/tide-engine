@@ -72,6 +72,25 @@ exports.run = async function () {
     const web = JSON.parse(fs.readFileSync(path.join(folder, webFile)));
     await until('embedded browser loads the complete split URL and executes JS', () => fs.existsSync(path.join(folder, `page-${web[0]}`)), 60_000);
     await vscode.commands.executeCommand('tide.openDevTools');
+    if (process.env.TIDE_HOST_TIDE) {
+        const prefab=path.join(folder,'Level.tprefab');fs.writeFileSync(prefab,'prefab Level { Transform; }\n');
+        fs.writeFileSync(path.join(folder,'tide.packages'),'');
+        await vscode.workspace.getConfiguration('tide').update('path',process.env.TIDE_HOST_TIDE,vscode.ConfigurationTarget.Workspace);
+        const logPid=() => {
+            const root=process.env.TIDE_HOST_LOGS;
+            if (!fs.existsSync(root)) return null;
+            for (const date of fs.readdirSync(root)) {
+                const file=path.join(root,date,'window1/exthost/tide-engine.tide/Tide.log');
+                if(fs.existsSync(file)){const match=/Prefab editor displayed:.*\(PID (\d+)\)/.exec(fs.readFileSync(file,'utf8'));if(match)return +match[1];}
+            }
+        };
+        await vscode.commands.executeCommand('tide.editPrefab',vscode.Uri.file(prefab));
+        const pid=await until('real native prefab frame displayed in webview',logPid);
+        assert.ok(alive(pid));fs.writeFileSync(path.join(folder,'prefab-pids.json'),JSON.stringify([pid]));
+        await vscode.commands.executeCommand('tide.prefabSave');
+        await vscode.commands.executeCommand('tide.editPrefab',vscode.Uri.file(prefab));
+        log('HOST: real native prefab backend, PNG webview display, command bridge and panel reuse passed');
+    }
     // Returning ends this extension-host test. VS Code invokes deactivation;
     // the outer runner checks all PIDs after the real host has shut down.
     log('HOST: embedded page and developer tools passed; returning for real deactivation');

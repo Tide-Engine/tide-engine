@@ -1,0 +1,3 @@
+// expect: only inputs have Predict
+struct I { bool jump; Predict() { } }
+scene Main { }

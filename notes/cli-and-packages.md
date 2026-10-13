@@ -1,5 +1,25 @@
 # `tide`, packages and the package
 
+## Native editor preview builds (2026-10-13)
+
+The native editor's private _editor-preview command takes project, original
+prefab source, draft file, qualified prefab, output directory and match/local
+placement. tide_build_editor reuses ordinary folder/package/generated C/native
+library compilation and asset packs, with DEBUG. The unsaved source overlay
+keeps its original path, checked against the selected project boundary. Engine
+objects reuse the ordinary native cache; revision modules have separate game
+outputs. The command is an internal transport, not advertised as a user build
+mode. Preview flags and lifecycle are documented under tide open and Editors.
+Installed packages include the private tide/editor_preview.h callback header.
+
+On Windows, logged/quiet children use CREATE_NO_WINDOW so preview compiler jobs
+create no console windows. Unredirected children explicitly inherit the caller's
+stdio handles, preserving --check/hidden-run output when tide-editor is a GUI
+subsystem app. Existing sys_run's output contract stays the same. Installed
+preview.mjs checks the real native build/asset/library path, shader captures,
+unsaved drafts/undo/redo and C link failure. Ordinary CLI/hidden/installer tests
+run in the full native suite. No browser or new runtime entry point is needed.
+
 ## Native authoring command (2026-10-12)
 
 tide open forwards arguments to the sibling tide-editor executable and returns

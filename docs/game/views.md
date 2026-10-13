@@ -23,6 +23,13 @@ Drawing is immediate mode: views record their drawing calls every frame. Views r
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
+`[RunInEditor]` also runs a view in the native prefab editor's compiled preview.
+`[EditorOnly]` runs it only there; an unmarked view runs only in the game. Choose
+one attribute, without arguments. Both keep the ordinary view access rules.
+The preview has authored values/defaults and its own local visual state, with
+no gameplay handlers or systems. See [the native editor](../tools/editors.md#native-scene-editor)
+for initialization, camera and service limits.
+
 For see-through shapes, sprites and 3D meshes, see [Transparency](./draw-settings.md#transparency): alpha controls opacity, and 3D also needs the right depth setting and draw order.
 
 Tap a circle to select it, then change the camera's size. The grid and circles use world coordinates; the heading and slider keep their size in screen pixels. Pointer picking uses `ScreenToWorld` with that frame's camera.

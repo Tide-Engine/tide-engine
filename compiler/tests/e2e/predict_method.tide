@@ -1,0 +1,15 @@
+input Controls
+{
+    bool jump;
+    int selection = 3;
+    float move;
+    Predict() { jump = false; selection = 3; }
+}
+singleton Seen { int jumps; int releases; float position; }
+scene Main { }
+system Apply(Controls input, mut Seen seen)
+{
+    if (input.jump) seen.jumps += 1;
+    if (input.jump.up) seen.releases += 1;
+    seen.position += input.move;
+}
