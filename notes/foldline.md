@@ -73,8 +73,16 @@ Light stays light until the last blit:
 - Each fold's lamp has a 768 px depth map of its own, seen from 0.55 m off
   its panel through a 140 degree camera (`FoldLight`), so a fold's light
   stops at the divider, the gate, the cube and the operators. What's beside
-  or behind that camera is lit. The plates', the cube's, the wall ribbons'
-  and the exit's lamps are still unshadowed.
+  or behind that camera is lit.
+- The plates', the cube's, the low wall ribbons' and the exit's lamps are
+  stopped by what moves, worked out in the frag with no map (`Unblocked`): the
+  cube as one ball and each operator as three, each a soft test of the
+  lamp-to-surface segment (`Past`). A ball the lamp is under or inside stops
+  nothing, so a plate still glows around what weighs it. The low ribbons are
+  also kept off the floor before each planter by where their ray passes the
+  planter's front edge. Walls don't stop these lamps: the exit's is only
+  applied past the divider, and the high warm ribbons have nothing between
+  them and the walls they light.
 - `Surface` shades everything solid: sun and shadow, a sky/floor ambient,
   analytic creases for the room's planes, contact shade under the cube and
   both operators, the two folds, pressed plates, the cube, the wall ribbons
@@ -87,8 +95,11 @@ Light stays light until the last blit:
 - `Shafts` marches 20 dithered steps through the sun map at half size, from
   the eye to the scene's depth (`Scatter`, `Unprojected`). The viewer's fold
   openings draw through `ThroughAir`, which marches the same way from the far
-  opening to the fold camera's own depth, so shafts continue through a fold;
-  a fold seen by a fold's camera (`Through`) has none. `Bright`, `Halve` and
+  opening to the fold camera's own depth (`Beyond`), so shafts continue
+  through a fold. A fold seen by a fold's camera draws through `ThroughFar`,
+  the same against the second crossing's depth; the two frags differ only in
+  which depths they read, as a camera's image can't be read while it's drawn
+  into. The last fold (`LastFold`) has none. `Bright`, `Halve` and
   `Blur` build three sizes of spill. `Develop` adds both, applies a film
   curve, a grade, a vignette, a slight fringe and grain, and writes the window.
 
@@ -146,6 +157,11 @@ catalog thumbnail is that actual gameplay frame. Visual inspection corrected
 the first-person camera initially drawing its own robot body, which obscured
 the lower scene; self geometry now draws only in portal passes. The polished
 captures show compact equipment, warmer stone, roof shadows and chamber signs.
+
+The lamps' occlusion and `ThroughFar` (later on 2026-10-13) were validated by
+this game's suites alone, 2/2 native and 3/3 web, and by captures of a
+weighted plate, facing folds and the far room. Chamber three's planter row
+over the machine bay is gone: it hung in the air there.
 
 After the engine gained the multisampled depth read and `Draw.ClearDepth()`
 the same day, the game was moved onto both and the full suites were run:
