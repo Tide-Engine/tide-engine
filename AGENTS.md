@@ -170,7 +170,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `prototypes/inside-out/` | `notes/inside-out.md` |
 | `prototypes/underfoot/` | `notes/underfoot.md` |
 | `prototypes/foldline/` | `notes/foldline.md` |
-| `prototypes/copper-coil/` | `notes/copper-coil.md` |
+| `prototypes/swindle/` | `notes/swindle.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
