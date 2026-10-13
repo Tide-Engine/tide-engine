@@ -61,6 +61,14 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- DEADWEIGHT (`deadweight`): `prototypes/deadweight/`, the owner's two-worker
+  cooperative salvage prototype, approved and built on 2026-10-13. Three jobs
+  in one industrial pumping station use Box3D cargo, winches, a bridge and a
+  counterweight. It supports online rooms, shared keyboard and switching alone.
+  `deadweight_page` stages `/prototypes/deadweight/`; `private_games` collects
+  it or the native `deadweight`. Its main target uses STATS. Rules, contracts,
+  tests and coverage are in `notes/deadweight.md`.
+
 Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
 game note, build targets and catalog/public-id registrations are removed. Its
 implementation and engine-gap record remain in git history at `7c047a87`.

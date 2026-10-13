@@ -1,0 +1,578 @@
+using Box3D;
+using Rooms;
+
+settings { title = "DEADWEIGHT"; tickRate = 60; maxPlayers = 2; hostMigration = true; }
+
+const float CREW_HEIGHT = 1.5;
+const float CREW_RADIUS = 0.3;
+const float WINCH_SPEED = 1.8;
+const float REACH = 2.25;
+
+struct Cable
+{
+    float3 anchor;
+    float3 station;
+    Entity target;
+    int socket;
+    float length;
+    float tension;
+    int worker = -1;
+}
+
+singleton Site
+{
+    bool built;
+    bool rebuild;
+    int job;
+    int revision;
+    int joined;
+    PlayerID first;
+    PlayerID second;
+    Entity[2] crew;
+    Entity[3] cargo;
+    Entity shutter;
+    Cable[6] cables;
+    bool bridge;
+    bool delivered;
+    bool complete;
+    int completed;
+    float settle;
+    int mishaps;
+    float messageTime;
+    int message;
+}
+
+component Worker
+{
+    int id;
+    int winch = -1;
+    bool hook;
+    float tumble;
+    float yaw;
+    bool grounded;
+    float3 safe;
+}
+
+component Cargo
+{
+    int kind; // conveyor, turbine, ballast, vessel
+    float3 size;
+    float mass;
+    float3 home;
+    quaternion homeTurn = quaternion.identity;
+}
+component Structure { float3 size; int material; }
+component SitePiece { }
+component GuideRail { float3 at; float minimum; float maximum; }
+
+local singleton Hands
+{
+    bool playing;
+    int active;
+    bool shared;
+    int seat;
+    bool help;
+    float zoom = 1;
+}
+
+input Controls
+{
+    [Absolute, Clamp(0, 1)] int active;
+    bool shared;
+    [Clamp(-1, 1)] float2 move;
+    [Clamp(-1, 1)] float2 secondMove;
+    bool use;
+    bool reel;
+    bool payout;
+    bool release;
+    bool secondUse;
+    bool secondReel;
+    bool secondPayout;
+    bool secondRelease;
+
+    Sample(Devices devices, Hands hands)
+    {
+        active = hands.active;
+        shared = hands.shared;
+        if (!hands.playing) return;
+        var k = devices.keyboard;
+        move = float2((k.d.pressed ? 1 : 0) - (k.a.pressed ? 1 : 0),
+                      (k.w.pressed ? 1 : 0) - (k.s.pressed ? 1 : 0));
+        move += devices.gamepad.leftStick;
+        use = k.e.pressed || devices.gamepad.buttonSouth.pressed;
+        reel = k.q.pressed || devices.gamepad.rightTrigger > 0.3;
+        payout = k.f.pressed || devices.gamepad.leftTrigger > 0.3;
+        release = k.x.pressed || devices.gamepad.buttonWest.pressed;
+        secondMove = float2((k.rightArrow.pressed ? 1 : 0) - (k.leftArrow.pressed ? 1 : 0),
+                            (k.upArrow.pressed ? 1 : 0) - (k.downArrow.pressed ? 1 : 0));
+        secondUse = k.rightShift.pressed;
+        secondReel = k.comma.pressed;
+        secondPayout = k.period.pressed;
+        secondRelease = k.slash.pressed;
+    }
+}
+
+command ChooseJob { int job; }
+command ResetJob { }
+scene Main { }
+
+float3 Socket(Cargo cargo, int socket)
+{
+    if (cargo.kind == 0)
+        return float3(socket % 2 == 0 ? -0.64 : 0.64, 0.28, socket < 2 ? 3.85 : -3.85);
+    if (cargo.kind == 1)
+        return float3(socket % 2 == 0 ? -0.85 : 0.85, 0.8, socket < 2 ? 0.85 : -0.85);
+    if (cargo.kind == 2) return float3(0, 0.65, 0);
+    return float3(socket % 2 == 0 ? -0.95 : 0.95, socket < 2 ? 2.55 : -2.35, 0);
+}
+
+int SocketCount(Cargo cargo) { return cargo.kind == 2 ? 1 : 4; }
+float3 SocketAt(Body body, Cargo cargo, int socket) { return body.position + Math.Mul(body.rotation, Socket(cargo, socket)); }
+float3 WorkerStart(int id) { return float3(id == 0 ? -4 : 4, 0.78, -9); }
+
+void Solid(float3 at, float3 size, int material, quaternion turn = quaternion.identity)
+{
+    Spawn(Body { type = BodyType.Static, position = at, rotation = turn }, Box { size = size, friction = 0.55 },
+          Structure { size = size, material = material }, SitePiece);
+}
+
+Entity Load(float3 at, float3 size, float mass, int kind, quaternion turn = quaternion.identity)
+{
+    return Spawn(Body { position = at, rotation = turn, linearDamping = 0.14, angularDamping = 0.8 },
+        Box { size = size, density = mass / (size.x * size.y * size.z), friction = 0.22, bounce = 0.04 },
+        Cargo { kind = kind, size = size, mass = mass, home = at, homeTurn = turn }, SitePiece);
+}
+
+void Rig(mut Site site, int cable, Entity target, int socket, float3 point, int worker)
+{
+    site.cables[cable].target = target;
+    site.cables[cable].socket = socket;
+    site.cables[cable].length = Math.Distance(site.cables[cable].anchor, point);
+    site.cables[cable].worker = worker;
+}
+
+[Before(PhysicsStages.Step)]
+system BuildSite(mut Site site, mut Physics physics, mut World world, query (with SitePiece) pieces)
+{
+    if (site.built && !site.rebuild) return;
+    if (!site.built)
+    {
+        for (var id = 0; id < 2; id++)
+            site.crew[id] = Spawn(Worker { id = id, winch = site.job == 2 && id == 0 ? 4 : id, safe = WorkerStart(id) }, Owner,
+                Body { position = WorkerStart(id), angularDamping = 20 },
+                Capsule { radius = CREW_RADIUS, height = CREW_HEIGHT, density = 160, friction = 0 });
+    }
+    else foreach (var piece in pieces) piece.entity.Destroy();
+    site.built = true;
+    site.rebuild = false;
+    site.revision += 1;
+    site.bridge = false;
+    site.delivered = false;
+    site.complete = false;
+    site.settle = 0;
+    site.message = 0;
+    site.messageTime = 0;
+    site.shutter = default;
+    physics.substeps = 8;
+    physics.contactDamping = 20;
+    physics.contactStiffness = 40;
+
+    // A single hall. The center trench is open on job one; its maintenance
+    // covers are in place for the other two jobs. Side walks always offer recovery.
+    Solid(float3(0, -0.5, -7), float3(28, 1, 12), 0);
+    Solid(float3(0, -0.5, 10), float3(28, 1, 14), 0);
+    Solid(float3(-11.5, -0.5, 1), float3(5, 1, 4), 1);
+    Solid(float3(11.5, -0.5, 1), float3(5, 1, 4), 1);
+    Solid(float3(0, -3.5, 1), float3(18, 1, 4), 2);
+    if (site.job != 0) Solid(float3(0, -0.5, 1), float3(18, 1, 4), 1);
+    Solid(float3(-14.3, 1.5, 2), float3(0.6, 3, 30), 2);
+    Solid(float3(14.3, 1.5, 2), float3(0.6, 3, 30), 2);
+    Solid(float3(0, 1.5, 17.3), float3(28, 3, 0.6), 2);
+    Solid(float3(0, 1, -13.3), float3(28, 2, 0.6), 2);
+    // Shared loading sled: flush chamfer ramps prevent a small lip blocking salvage.
+    Solid(float3(0, 0.18, 11.75), float3(18, 0.36, 10.5), 3);
+    Solid(float3(0, 0.09, 6.1), float3(18, 0.2, 1.1), 3, quaternion.Euler(float3(-0.18, 0, 0)));
+    for (var row = 0; row < 3; row++)
+    {
+        Solid(float3(-10, 3.5, -8 + row * 10), float3(0.5, 7, 0.5), 4);
+        Solid(float3(10, 3.5, -8 + row * 10), float3(0.5, 7, 0.5), 4);
+    }
+
+    for (var i = 0; i < 6; i++)
+    {
+        var left = i % 2 == 0;
+        var station = float3(left ? -4 : 4, 0, i < 2 ? -9 : i < 4 ? 8 : 13.5);
+        var anchor = float3(left ? -4 : 4, i < 4 ? 1.2 : 8, i < 2 ? 16 : i < 4 ? -10.5 : 12);
+        site.cables[i] = Cable { station = station, anchor = anchor };
+    }
+    if (site.job == 0)
+    {
+        // Slightly skewed in the throat: the crew learns to correct the yaw.
+        var turn = quaternion.Euler(float3(0, 0.12, 0));
+        site.cargo[0] = Load(float3(0, 0.45, -6.6), float3(1.8, 0.8, 9), 2400, 0, turn);
+        Solid(float3(-5, 1.3, -4.1), float3(5.8, 2.6, 0.7), 2);
+        Solid(float3(5, 1.3, -4.1), float3(5.8, 2.6, 0.7), 2);
+        Rig(site, 0, site.cargo[0], 0, float3(0, 0.45, -6.6) + Math.Mul(turn, float3(-0.64, 0.28, 3.85)), 0);
+        Rig(site, 1, site.cargo[0], 1, float3(0, 0.45, -6.6) + Math.Mul(turn, float3(0.64, 0.28, 3.85)), 1);
+    }
+    else if (site.job == 1)
+    {
+        site.cargo[0] = Load(float3(0, 1.35, -6), float3(2.8, 2.6, 2.8), 2200, 1);
+        site.cargo[1] = Load(float3(-7.5, 5, 5), float3(1.6, 1.3, 1.6), 1800, 2);
+        site.cargo[1].Add(GuideRail { at = float3(-7.5, 0, 5), minimum = 0.67, maximum = 5.05 });
+        site.shutter = Spawn(Body { position = float3(0, 3, 2), linearDamping = 0.3 },
+            Box { size = float3(7.8, 6, 0.45), density = 50, friction = 0.3 },
+            Structure { size = float3(7.8, 6, 0.45), material = 5 },
+            GuideRail { at = float3(0, 0, 2), minimum = 3, maximum = 7.5 }, SitePiece);
+        Solid(float3(-7, 2.5, 2), float3(6, 5, 0.6), 2);
+        Solid(float3(7, 2.5, 2), float3(6, 5, 0.6), 2);
+        site.cables[0].anchor = float3(-7.5, 8, 5);
+        Rig(site, 0, site.cargo[1], 0, float3(-7.5, 5.65, 5), 0);
+        Rig(site, 1, site.cargo[0], 1, float3(0.85, 2.15, -5.15), 1);
+    }
+    else
+    {
+        site.cargo[0] = Load(float3(0, 3.02, -6), float3(2.6, 6, 2.6), 3200, 3);
+        Solid(float3(-7, 2, -1), float3(4, 4, 0.6), 2);
+        Solid(float3(7, 2, -1), float3(4, 4, 0.6), 2);
+        Solid(float3(0, 4.5, -1), float3(10, 1, 0.8), 4);
+        // A roof hoist supports one top socket; the floor capstan pulls the
+        // other forward. The crew must lower as they tip under the lintel.
+        Rig(site, 4, site.cargo[0], 0, float3(-0.95, 5.57, -6), 0);
+        Rig(site, 1, site.cargo[0], 1, float3(0.95, 5.57, -6), 1);
+    }
+    // Loose offcuts make swings readable without filling the route with clutter.
+    for (var i = 0; i < 5; i++)
+        Load(float3(i % 2 == 0 ? -7 : 7, 0.25, 5.8 + (i / 2) * 0.9), float3(0.8, 0.45, 0.65), 25, 4);
+    for (var id = 0; id < 2; id++)
+    {
+        if (!world.TryGet<Worker>(site.crew[id], out mut var worker)) continue;
+        worker.winch = site.job == 2 && id == 0 ? 4 : id;
+        worker.hook = false;
+        worker.tumble = 0;
+        worker.safe = WorkerStart(id);
+        world.Set<Worker>(site.crew[id], worker);
+        mut var body = world.Get<Body>(site.crew[id]);
+        body.position = WorkerStart(id);
+        body.velocity = float3(0);
+        world.Set<Body>(site.crew[id], body);
+        site.crew[id].Snap();
+    }
+}
+
+event(PlayerJoined joined) JoinCrew(mut Site site)
+{
+    if (joined.player == site.first || joined.player == site.second) return;
+    if (site.joined == 0)
+    {
+        site.first = joined.player;
+        site.joined = 1;
+    }
+    else if (site.joined == 1)
+    {
+        site.second = joined.player;
+        site.joined = 2;
+    }
+}
+event(PlayerLeft left) LeaveCrew(mut Site site)
+{
+    if (left.player != site.first && left.player != site.second) return;
+    if (left.player == site.first) site.first = site.second;
+    site.second = default;
+    site.joined = Math.Max(0, site.joined - 1);
+}
+[Before(PhysicsStages.Step), Before(Workers)]
+system CrewOwnership(Worker worker, mut Owner owner, Site site)
+{
+    // Joining can be handled in the tick that queues the workers' spawns.
+    // Assign from the roster once their entities exist, including migration.
+    var player = worker.id == 1 && site.joined >= 2 ? site.second : site.first;
+    if (owner.player != player) owner.player = player;
+}
+command(ChooseJob choice, PlayerID sender) SelectJob(mut Site site)
+{
+    if (sender != site.first && sender != site.second) return;
+    if (choice.job < 0 || choice.job > 2) return;
+    site.job = choice.job;
+    site.rebuild = true;
+}
+command(ResetJob, PlayerID sender) Restart(mut Site site)
+{
+    if (sender == site.first || sender == site.second) site.rebuild = true;
+}
+
+// Effective mass at an offset point includes the box's angular inertia.
+float3 InverseInertia(Cargo cargo, float3 torque, quaternion turn)
+{
+    var local = Math.Mul(Math.Inverse(turn), torque);
+    var s = cargo.size;
+    var inertia = cargo.mass / 12 * float3(s.y * s.y + s.z * s.z, s.x * s.x + s.z * s.z, s.x * s.x + s.y * s.y);
+    return Math.Mul(turn, local / inertia);
+}
+
+void Pull(mut Body body, Cargo cargo, float3 point, float3 anchor, float length, float dt, out float tension)
+{
+    tension = 0;
+    var delta = anchor - point;
+    var distance = Math.Length(delta);
+    if (distance <= length || distance < 0.01) return;
+    var direction = delta / distance;
+    var arm = point - body.position;
+    var cross = Math.Cross(arm, direction);
+    var inverseMass = 1 / cargo.mass + Math.Dot(cross, InverseInertia(cargo, cross, body.rotation));
+    var effective = 1 / inverseMass;
+    // Sequential cables see the impulses already accumulated by earlier ones.
+    var velocity = body.velocity + body.impulse / cargo.mass
+                 + Math.Cross(body.angularVelocity + InverseInertia(cargo, body.angularImpulse, body.rotation), arm);
+    var speed = Math.Dot(velocity, direction);
+    var force = effective * (1600 * (distance - length) - 80 * speed) / (1 + 80 * dt + 1600 * dt * dt);
+    tension = Math.Clamp(force, 0, cargo.mass * 65);
+    var impulse = direction * (tension * dt);
+    body.impulse += impulse;
+    body.angularImpulse += Math.Cross(arm, impulse);
+}
+
+// The counterweight and shutter share a cable over two roof pulleys. Both
+// masses are simulated; rails constrain horizontal travel, never their heights.
+[Before(PhysicsStages.Step)]
+system Counterweight(Site site, mut World world, Time time)
+{
+    if (site.job != 1 || !world.TryGet<Body>(site.shutter, out mut var gate) ||
+        !world.TryGet<Body>(site.cargo[1], out mut var ballast)) return;
+    var error = 8 - gate.position.y - ballast.position.y;
+    if (error <= 0) return;
+    var gateMass = 7.8 * 6 * 0.45 * 50;
+    var effective = 1 / (1 / gateMass + 1 / 1800);
+    var speed = gate.velocity.y + ballast.velocity.y;
+    var tension = Math.Clamp(effective * (1600 * error - 80 * speed) / (1 + 80 * time.dt + 1600 * time.dt * time.dt), 0, 150000);
+    gate.impulse.y += tension * time.dt;
+    ballast.impulse.y += tension * time.dt;
+    world.Set<Body>(site.shutter, gate);
+    world.Set<Body>(site.cargo[1], ballast);
+}
+
+[Before(PhysicsStages.Step)]
+system Rails(GuideRail rail, mut Body body)
+{
+    body.position.x = rail.at.x;
+    body.position.z = rail.at.z;
+    body.position.y = Math.Clamp(body.position.y, rail.minimum, rail.maximum);
+    body.velocity.x = 0;
+    body.velocity.z = 0;
+    if (body.position.y <= rail.minimum && body.velocity.y < 0) body.velocity.y = 0;
+    if (body.position.y >= rail.maximum && body.velocity.y > 0) body.velocity.y = 0;
+    body.rotation = quaternion.identity;
+    body.angularVelocity = float3(0);
+}
+
+// Highlight and interaction use the same nearest candidate search.
+int NearbyStation(Site site, float3 at, int worker)
+{
+    mut var nearest = REACH * REACH;
+    mut var found = -1;
+    for (var i = 0; i < 6; i++)
+    {
+        if (site.cables[i].worker >= 0 && site.cables[i].worker != worker) continue;
+        var gap = Math.DistanceSq(at.xz, site.cables[i].station.xz);
+        if (gap >= nearest) continue;
+        nearest = gap;
+        found = i;
+    }
+    return found;
+}
+
+bool NearbySocket(Site site, World world, float3 at, int winch, out Entity target, out int socket)
+{
+    target = default;
+    socket = 0;
+    mut var nearest = REACH * REACH;
+    for (var id = 0; id < 2; id++)
+    {
+        var entity = site.cargo[id];
+        if (!world.TryGet<Cargo>(entity, out var cargo) || !world.TryGet<Body>(entity, out var body)) continue;
+        for (var s = 0; s < SocketCount(cargo); s++)
+        {
+            var point = SocketAt(body, cargo, s);
+            if (point.y > at.y + 2 || point.y < at.y - 1.6) continue;
+            var gap = Math.DistanceSq(at.xz, point.xz);
+            if (gap >= nearest) continue;
+            mut var used = false;
+            for (var cable = 0; cable < 6; cable++)
+                if (cable != winch && site.cables[cable].target == entity && site.cables[cable].socket == s) used = true;
+            if (used) continue;
+            nearest = gap;
+            target = entity;
+            socket = s;
+        }
+    }
+    return target != default;
+}
+
+[Before(PhysicsStages.Step)]
+system Workers(mut Worker worker, mut Body body, Controls input, mut Site site, Physics physics, World world, Time time)
+{
+    var second = site.joined == 1 && input.shared && worker.id == 1;
+    var controlled = site.joined >= 2 || input.shared || input.active == worker.id;
+    var move = !controlled ? float2(0) : second ? input.secondMove : input.move;
+    var use = controlled && (second ? input.secondUse.down : input.use.down);
+    var release = controlled && (second ? input.secondRelease.down : input.release.down);
+    var reel = controlled && (second ? input.secondReel : input.reel);
+    var payout = controlled && (second ? input.secondPayout : input.payout);
+    worker.tumble = Math.Max(0, worker.tumble - time.dt);
+    if (body.position.y < -1.8 || Math.Abs(body.position.x) > 15 || body.position.z < -14 || body.position.z > 18)
+    {
+        body.position = worker.safe;
+        body.velocity = float3(0);
+        worker.tumble = 0.65;
+        site.mishaps += 1;
+        site.message = 1;
+        site.messageTime = 3;
+        this.Snap();
+    }
+    body.rotation = quaternion.identity;
+    body.angularVelocity = float3(0);
+    worker.grounded = physics.Raycast(body.position, body.position - float3(0, 0.86, 0), out var floor);
+    mut var carried = float3(0);
+    if (worker.grounded && world.TryGet<Body>(floor.entity, out var support))
+    {
+        carried = support.velocity + Math.Cross(support.angularVelocity, body.position - support.position);
+        if (!world.Has<Cargo>(floor.entity) && body.position.y < 1)
+            worker.safe = body.position;
+    }
+    var steering = Math.Clamp(Math.Length(move), 0, 1) * Math.Normalize(move);
+    // Camera-aligned, fixed for both machines.
+    var forward = float3(-0.342, 0, 0.94);
+    var right = float3(0.94, 0, 0.342);
+    var desired = (right * steering.x + forward * steering.y) * 4.2;
+    if (worker.tumble <= 0)
+    {
+        // Walk up onto low salvage decks without a jump button. The probe is
+        // beyond the capsule; only a walkable cargo top within one step qualifies.
+        if (worker.grounded && Math.LengthSq(desired) > 0.1)
+        {
+            var ahead = body.position + Math.Normalize(desired) * 0.52;
+            if (physics.Raycast(ahead + float3(0, 0.85, 0), ahead - float3(0, 0.75, 0), out var step)
+                && step.normal.y > 0.65 && world.Has<Cargo>(step.entity))
+            {
+                var rise = step.point.y - (body.position.y - 0.75);
+                if (rise > 0.06 && rise < 0.86)
+                {
+                    body.position.y += rise + 0.015;
+                    body.velocity.y = Math.Max(body.velocity.y, 0);
+                }
+            }
+        }
+        body.velocity.x = Math.Lerp(body.velocity.x, desired.x + carried.x, 0.32);
+        body.velocity.z = Math.Lerp(body.velocity.z, desired.z + carried.z, 0.32);
+        if (Math.LengthSq(desired) > 0.1) worker.yaw = Math.Atan2(desired.x, desired.z);
+    }
+    if (worker.tumble > 0 || site.complete) return;
+    if (release && worker.winch >= 0)
+    {
+        site.cables[worker.winch].target = default;
+        worker.hook = true;
+    }
+    if (use)
+    {
+        if (worker.hook && worker.winch >= 0 && NearbySocket(site, world, body.position, worker.winch, out var target, out var socket))
+        {
+            var point = SocketAt(world.Get<Body>(target), world.Get<Cargo>(target), socket);
+            Rig(site, worker.winch, target, socket, point, worker.id);
+            worker.hook = false;
+        }
+        else
+        {
+            var nearby = NearbyStation(site, body.position, worker.id);
+            if (nearby >= 0)
+            {
+                if (worker.winch >= 0) site.cables[worker.winch].worker = -1;
+                worker.winch = nearby;
+                site.cables[nearby].worker = worker.id;
+                worker.hook = site.cables[nearby].target == default;
+            }
+        }
+    }
+    if (worker.winch >= 0 && !worker.hook)
+    {
+        var change = (reel ? -1 : 0) + (payout ? 1 : 0);
+        site.cables[worker.winch].length = Math.Clamp(site.cables[worker.winch].length + change * WINCH_SPEED * time.dt, 0.5, 45);
+    }
+}
+
+[Before(PhysicsStages.Step), After(Workers), After(Counterweight)]
+system Tethers(mut Site site, mut World world, Time time)
+{
+    for (var i = 0; i < 6; i++)
+    {
+        mut var cable = site.cables[i];
+        cable.tension = 0;
+        if (world.TryGet<Body>(cable.target, out mut var body) && world.TryGet<Cargo>(cable.target, out var cargo))
+        {
+            var point = SocketAt(body, cargo, cable.socket);
+            Pull(body, cargo, point, cable.anchor, cable.length, time.dt, out var tension);
+            cable.tension = tension / (cargo.mass * 10);
+            world.Set<Body>(cable.target, body);
+        }
+        site.cables[i] = cable;
+    }
+}
+
+event(Hit hit) Battered(mut Worker worker, mut Site site, World world)
+{
+    if (!world.Has<Cargo>(hit.other) || hit.speed < 2.5 || worker.tumble > 0) return;
+    worker.tumble = 0.65;
+    site.mishaps += 1;
+    site.message = 2;
+    site.messageTime = 3;
+}
+
+[After(PhysicsStages.Step)]
+system Inspect(mut Site site, mut World world, Time time)
+{
+    site.messageTime = Math.Max(0, site.messageTime - time.dt);
+    if (site.rebuild || !world.TryGet<Body>(site.cargo[0], out mut var body) || !world.TryGet<Cargo>(site.cargo[0], out var cargo)) return;
+    if (body.position.y < -2.4)
+    {
+        body.position = cargo.home;
+        body.rotation = cargo.homeTurn;
+        body.velocity = float3(0);
+        body.angularVelocity = float3(0);
+        world.Set<Body>(site.cargo[0], body);
+        site.cargo[0].Snap();
+        for (var i = 0; i < 6; i++)
+            if (site.cables[i].target == site.cargo[0])
+                site.cables[i].length = Math.Distance(site.cables[i].anchor, SocketAt(body, cargo, site.cables[i].socket));
+        site.mishaps += 1;
+        site.message = 3;
+        site.messageTime = 4;
+    }
+    if (site.job == 0)
+    {
+        var a = body.position + Math.Mul(body.rotation, float3(0, 0, -4.5));
+        var b = body.position + Math.Mul(body.rotation, float3(0, 0, 4.5));
+        if (Math.Min(a.z, b.z) < -1.05 && Math.Max(a.z, b.z) > 3.05 && Math.Abs(body.position.x) < 6 && body.position.y < 1.2)
+            site.bridge = true;
+    }
+    mut var extent = float3(0);
+    // Full oriented box must be inside the sled, with a settled load.
+    for (var corner = 0; corner < 8; corner++)
+    {
+        var offset = cargo.size * 0.5 * float3((corner & 1) == 0 ? -1 : 1, (corner & 2) == 0 ? -1 : 1, (corner & 4) == 0 ? -1 : 1);
+        var rotated = Math.Abs(Math.Mul(body.rotation, offset));
+        extent = Math.Max(extent, rotated);
+    }
+    var within = Math.Abs(body.position.x) + extent.x < 9.05 && body.position.z - extent.z > 6.55 && body.position.z + extent.z < 17.1
+              && body.position.y - extent.y > 0.15 && body.position.y - extent.y < 0.65;
+    var resting = Math.LengthSq(body.velocity) < 0.16 && Math.LengthSq(body.angularVelocity) < 0.08;
+    if (within && resting) site.settle += time.dt;
+    else site.settle = 0;
+    if (site.settle > 1.1) site.delivered = true;
+    mut var recovered = site.job != 1;
+    if (site.job == 1 && world.TryGet<Body>(site.cargo[1], out var ballast))
+        recovered = ballast.position.y > 4.6 && Math.Abs(ballast.velocity.y) < 0.3;
+    if (!site.complete && site.delivered && recovered)
+    {
+        site.complete = true;
+        site.completed |= 1 << site.job;
+    }
+}

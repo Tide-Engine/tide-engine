@@ -1,5 +1,16 @@
 # The docs site
 
+DEADWEIGHT catalog addition (2026-10-13): the approved cooperative salvage
+prototype adds `deadweight` to the server-only catalog, public-root and
+outside-root asset gates, and both prototype test id lists. Its self-contained
+page stages at `/prototypes/deadweight/` with an actual-gameplay thumbnail.
+Discovery and catalog authentication retain their existing contracts. Game
+rules and validation belong in `notes/deadweight.md`; no site deployment or
+CI dispatch was requested.
+Local production build and Svelte check pass with zero errors/warnings. All
+nineteen analytics/admin and production prototype HTTP checks pass on Node
+24.16.0, including the new public id, outside-root aliases and discovery gates.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog
