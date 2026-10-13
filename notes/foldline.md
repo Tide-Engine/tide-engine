@@ -580,6 +580,48 @@ current.
   - The owner agreed the next four: a place's pit anywhere, doors and
     bridges on plates (doors are in, by this), throwing oneself through a
     fold with a fall's speed, and the lamps as something to switch.
+- **What was owed, in part (2026-10-13).** The owner: "go ahead and tackle
+  the still owed". Thirteen places down now; the twelfth is *Blackout*
+  (level 11, "room 09").
+  - *Thrown, and keeping it.* A pad (`PadCount`, `PadAt`, `PadThrow`)
+    gives whoever or whatever steps on it a speed. `Operator.flung` is the
+    time since: while it's above 0 an operator's own speed is left alone
+    in the air, where before every tick pulled it towards what the stick
+    said, so nothing thrown got anywhere. Coming out of a fold faster than
+    6.5 m/s sets it too. This is what there is of "momentum": a fold's
+    ends are on walls still, so a fall isn't turned into a throw. Folds
+    on floors and ceilings are not built.
+  - *Lamps on a plate.* `Sight.dim` is a part of a place and `dimmed` how
+    much of its lamps' light there is, for the surfaces' light and the
+    fittings' glow there. In Blackout it's the passage, and the green
+    plate's.
+  - *What moves in the dark* (`Shade`, `Shadow`): it keeps to its side of
+    the pit, stands while the passage is lit, and with it dark goes at
+    3.6 m/s for the nearest operator, as near as its side lets it. Within
+    1.35 m of anyone it has them and the room starts over. Drawn as the
+    watcher. It makes no sound.
+  - *A pit where a room puts it*, for the blood: `Hazard` says a room's
+    own, `PitFrom`/`PitTo` how far along x it runs, and the red and the
+    hands keep to that. **The pool and the drums are the hall's still:**
+    their floors, slopes, lanes and what's in them are written to its
+    width and its floor at 0.
+  - *Blackout* (`BuildDark`): a lit room; a passage with the pit across
+    it, a pad each side, and the lamps' plate at the pit's south-east
+    corner; the thing past the pit, standing where the pad lands; the
+    passage turns into a room whose one wall that takes a fold faces away
+    from the passage. In the dark it follows the nearest of them along
+    the far edge, so someone walks it away to the east and steps on the
+    plate there, which stops it where it is; the other is thrown over,
+    walks past it and round the corner, and puts an end on that wall, for
+    the first to come by with the cube: the plate can't be held and left.
+  - `test.c` (`dark`): where it starts; drawn east by someone at the
+    corner; stopped by the plate and not moving while the other is thrown
+    over, lands past the pit and isn't had; no fold from this side into
+    the far room, and one on its wall from inside; dark with someone on
+    its side, caught, and the room built again; the pit taking who falls
+    in. Replay hash `7217484059584344468` natively and under WASI.
+  - Still owed: the pool and the drums off the hall's coordinates; folds
+    on floors; the hall's six rooms remade to this difficulty.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the gate closing on a body
   under it, two operators through one fold at once and the cube in a hole

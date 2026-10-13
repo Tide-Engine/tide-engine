@@ -33,13 +33,14 @@ string ChamberHint(int level)
         7 => "The device is dead down here. The floats mark the shallows. It has nobody in the shallows.",
         8 => "The device is dead down here. Four of them. Stand between.",
         9 => "The green plate raises the deck. The slot is for something smaller than the cube is.",
-        _ => "A door is open while its plate is weighted. Mind which side of it you are when it isn't."
+        10 => "A door is open while its plate is weighted. Mind which side of it you are when it isn't.",
+        _ => "The passage's lamps are the green plate's. It stands still in the light. It follows the nearest of you."
     };
 }
 
 string ChamberName(int level)
 {
-    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "HIGH GROUND", 2 => "THE LURE", 3 => "SMALLER", 4 => "THE DRUMS", 5 => "ALL OF IT", 6 => "BETWEEN", 7 => "THE LONG POOL", 8 => "THE WORKS", 9 => "THE SHAFT", _ => "LINE OF SIGHT" };
+    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "HIGH GROUND", 2 => "THE LURE", 3 => "SMALLER", 4 => "THE DRUMS", 5 => "ALL OF IT", 6 => "BETWEEN", 7 => "THE LONG POOL", 8 => "THE WORKS", 9 => "THE SHAFT", 10 => "LINE OF SIGHT", _ => "BLACKOUT" };
 }
 
 // One of the picture's big pixels, in the window's: what every edge and shadow here is a multiple of.
@@ -147,10 +148,10 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     if (session.state == SessionState.Connected)
     {
         Ink("ROOM", float2(pad + 16, top + 196), 11, UI_MUTED, Anchor.UpperLeft);
-        for (var i = 0; i < 11; i++)
+        for (var i = 0; i < 12; i++)
         {
-            var slotWidth = (width - 80) / 11;
-            if (InterfaceChoice(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), i < 6 ? $"0{i + 1}" : i == 6 ? "A" : i == 7 ? "B" : i == 8 ? "C" : i == 9 ? "08" : "07", 15))
+            var slotWidth = (width - 88) / 12;
+            if (InterfaceChoice(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), i < 6 ? $"0{i + 1}" : i == 6 ? "A" : i == 7 ? "B" : i == 8 ? "C" : i == 9 ? "08" : i == 10 ? "07" : "09", 14))
             {
                 Send(SelectChamber { level = i });
                 ui.open = false;
@@ -213,7 +214,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
 
     // The room, its name, and its three plates.
     Draw.Rect(float2(pad + dot * 1.5, 43), float2(dot * 3, 46), UI_RED);
-    Ink(Between(arena.level) ? $"{arena.depth + 1} DOWN" : $"ROOM 0{(arena.level < BETWEEN ? arena.level + 1 : arena.level == SIGHT ? 7 : 8)}   /   {arena.depth + 1} DOWN", float2(pad + 14, 22), 11, UI_MUTED, Anchor.UpperLeft);
+    Ink(Between(arena.level) ? $"{arena.depth + 1} DOWN" : $"ROOM 0{(arena.level < BETWEEN ? arena.level + 1 : arena.level == SIGHT ? 7 : arena.level == SHAFT ? 8 : 9)}   /   {arena.depth + 1} DOWN", float2(pad + 14, 22), 11, UI_MUTED, Anchor.UpperLeft);
     Ink(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 14, 37), 17, UI_INK, Anchor.UpperLeft);
     mut var lamp = float2(pad + 14 + dot * 2, 78);
     lamp.x = HudLamp(lamp, "A", 8, UI_AMBER, arena.plateA);
