@@ -20,6 +20,7 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 - Each system's place in [the schedule](../game/schedule.md) above it: its stage, what it reaches through its `World`, each system it waits for and why, and what runs alongside it. A part that names a system goes to it when clicked.
 - Above a declaration a package replaced, which package did, and above an [override](../language/overrides.md), what it replaces. A click goes to the other.
 - Above a declaration, how many places name it ("3 references"), which a click lists: types, functions, methods, constants, assets, frags and verts, where "0 references" is code nothing uses. A system, view or handler has the line only when a `[Before]` or `[After]` names it.
+- Above functions and methods, an **entry points** lens traces callers through helpers to the systems, views, event or command handlers that can reach them. Input `Sample`, `Sanitize` and `Predict`, custom `Interpolate` methods and audio callbacks are entry points too. Clicking a single entry point goes to its declaration; several open a list to choose from. Each entry point counts once, even through several paths or recursive calls. This is static call reachability, independent of runtime branches; tracing stops at handlers rather than following event sends or command submissions. A helper with no known root says **0 entry points**. The call hierarchy lets you inspect the intermediate calls.
 
 ## Native scene editor
 
