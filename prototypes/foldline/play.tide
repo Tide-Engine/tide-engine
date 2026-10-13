@@ -47,6 +47,7 @@ singleton Fold
     Portal cyan;
     [Position] float3 cube = float3(-3, 0.5, -8);
     [Rotation] quaternion cubeTurn = quaternion.identity;
+    float cubeScale = 1;
     int carried = -1;
     bool tossed;         // The cube was let go of this tick, at `toss`
     float3 toss;
@@ -97,6 +98,7 @@ component Operator
     float scale = 1;
     float3 last;         // Its body's middle a tick ago: a fold is crossed between the two
     bool grounded;
+    float resize;        // The size it's to be made again at, 0 for as it is: a body's shape is made once
     int chamber = -1;
 }
 
@@ -136,12 +138,14 @@ local singleton Control
     int active;
     bool started;
     bool crisp;          // P: the picture at the window's own resolution, without the big pixels
+    int size;            // Which size the next fold's end is shot at: 0 whole, 1 half, 2 half as big again
     float sensitivity = 0.003;
 }
 
 input PilotInput
 {
     [Absolute, Clamp(0, 1)] int active;
+    [Absolute, Clamp(0, 2)] int size;
     [Clamp(-1, 1)] float2 move;
     [Clamp(-0.4, 0.4)] float2 look;
     bool jump;
@@ -155,6 +159,7 @@ input PilotInput
     Sample(Devices devices, Control control)
     {
         active = control.active;
+        size = control.size;
         if (!control.started) return;
         var keys = devices.keyboard;
         move.x = (keys.d.pressed ? 1 : 0) - (keys.a.pressed ? 1 : 0);
@@ -184,6 +189,13 @@ const float EYE_HIGH = 1.55;
 const float CUBE_SIDE = 0.74;
 const float CEILING_HIGH = 4.4;
 const int PILLARS = 4;
+const float SMALLEST = 0.5;  // The sizes a fold's end is shot at, and so the sizes anything comes out of one
+const float LARGEST = 1.5;
+
+float FoldSize(int choice)
+{
+    return choice == 1 ? SMALLEST : choice == 2 ? LARGEST : 1.0;
+}
 
 float3 OperatorStart(int id)
 {
@@ -393,6 +405,7 @@ void ResetChamber(mut Arena arena, mut Fold fold, int level)
     fold.cyan = Portal { };
     fold.cube = CubeStart(level);
     fold.cubeTurn = quaternion.identity;
+    fold.cubeScale = 1;
     fold.carried = -1;
     fold.tossed = false;
     fold.pingTime = 0;
@@ -474,7 +487,7 @@ void Fizzle(mut Fold fold, bool amber, float3 at, float3 face)
 // A shot: a fold's end goes where it lands, nudged to fit on that face, or
 // fizzles there. It fits on an upright face of a wall that takes folds, clear
 // of the floor, the ceiling, what stands against the wall and the other end.
-bool Shoot(mut Fold fold, bool amber, float3 origin, float3 way, Physics physics, mut World world)
+bool Shoot(mut Fold fold, bool amber, float size, float3 origin, float3 way, Physics physics, mut World world)
 {
     if (!physics.Raycast(origin, origin + way * 60, out var first)) return false;
     // Through whoever and whatever stands in the way that's no part of the room
@@ -491,7 +504,6 @@ bool Shoot(mut Fold fold, bool amber, float3 origin, float3 way, Physics physics
         Fizzle(fold, amber, hit.point, hit.normal);
         return false;
     }
-    var size = 1.0;
     var halfWide = FOLD_HALF_WIDE * size;
     var halfHigh = FOLD_HALF_HIGH * size;
     var right = FoldRight(face);
@@ -528,7 +540,7 @@ bool Shoot(mut Fold fold, bool amber, float3 origin, float3 way, Physics physics
     u = Math.Clamp(u, lowU, highU);
     v = Math.Clamp(v, lowV, highV);
     // Near the floor it stands on it, to be walked into
-    if (v - halfHigh - floor < 0.8 * size) v = lowV;
+    if (v - halfHigh - floor < 1.0) v = lowV;
     var at = float3(plane.x + right.x * u, v, plane.z + right.z * u);
     var overlaps = other.open && Math.Dot(other.face, face) > 0.9 && Math.Abs(Math.Dot(other.at - at, face)) < 0.2
                 && Math.Abs(Math.Dot(other.at - at, right)) < halfWide + FOLD_HALF_WIDE * other.size + 0.1
@@ -563,10 +575,10 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     {
         // A new chamber: back to the start, standing still
         pilot.chamber = arena.chamber;
-        pilot.scale = 1;
+        if (pilot.scale != 1) pilot.resize = 1;
         pilot.yaw = 0;
         pilot.pitch = 0;
-        body.position = OperatorStart(pilot.id) + float3(0, BODY_HIGH * 0.5 + 0.02, 0);
+        body.position = OperatorStart(pilot.id) + float3(0, BODY_HIGH * 0.5 * pilot.scale + 0.02, 0);
         body.velocity = float3(0);
         pilot.last = body.position;
         pilot.position = OperatorStart(pilot.id);
@@ -594,8 +606,8 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     var holding = fold.carried == pilot.id;
     var thrown = holding && (input.amber.down || input.cyan.down || input.hurl.down);
     // An end that's shot is there at once: nothing shows it sliding over from where it was
-    if (!holding && input.amber.down && Shoot(fold, true, eye, facing, physics, world)) fold.Snap();
-    if (!holding && input.cyan.down && Shoot(fold, false, eye, facing, physics, world)) fold.Snap();
+    if (!holding && input.amber.down && Shoot(fold, true, FoldSize(input.size), eye, facing, physics, world)) fold.Snap();
+    if (!holding && input.cyan.down && Shoot(fold, false, FoldSize(input.size), eye, facing, physics, world)) fold.Snap();
     if (input.ping.down)
     {
         fold.ping = physics.Raycast(eye, eye + facing * 40, out var seen) ? seen.point : eye + facing * 4;
@@ -674,7 +686,7 @@ system HoldCube(mut Body body, Cube cube, mut Fold fold, Arena arena, query (Ope
                 target = through;
             }
         }
-        if (nearest > 16)
+        if (nearest > 16 * entry.pilot.scale * entry.pilot.scale)
         {
             // Out of reach: it's dropped
             fold.carried = -1;
@@ -689,8 +701,10 @@ system HoldCube(mut Body body, Cube cube, mut Fold fold, Arena arena, query (Ope
     }
 }
 
-// After the step: an operator that crossed a fold's face is at the other end.
-system CrossOperators(mut Operator pilot, mut Body body, mut Fold fold)
+// After the step: an operator that crossed a fold's face is at the other end,
+// and the size that end makes of it. A body's shape is made once, so one that
+// changes size is another entity, with what this one was.
+system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold fold, mut Arena arena)
 {
     mut var center = body.position;
     mut var velocity = body.velocity;
@@ -699,30 +713,50 @@ system CrossOperators(mut Operator pilot, mut Body body, mut Fold fold)
     {
         body.position = center;
         body.velocity = velocity;
+        var scale = Math.Clamp(pilot.scale * ratio, SMALLEST, LARGEST);
+        if (Math.Abs(scale - pilot.scale) > 0.01) pilot.resize = scale;
         this.Snap();
     }
     if (center.y < -8)
     {
         // Fell out of the chamber
-        center = OperatorStart(pilot.id) + float3(0, BODY_HIGH * 0.5, 0);
+        center = OperatorStart(pilot.id) + float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
+        velocity = float3(0);
         body.position = center;
-        body.velocity = float3(0);
+        body.velocity = velocity;
         if (fold.carried == pilot.id) fold.carried = -1;
         this.Snap();
     }
     if (AtMouth(fold, center, 0.7 * pilot.scale)) fold.busy = 3;
+    if (pilot.resize > 0)
+    {
+        // Standing where it stood, at its new size
+        var scale = pilot.resize;
+        var half = float3(0, BODY_HIGH * 0.5 * scale, 0);
+        // Through a fold its middle is where the fold put it; made again where it stands, its feet are
+        var feet = ratio > 0 ? center - half : center - float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
+        var born = Spawn(Operator { id = pilot.id, position = feet, yaw = pilot.yaw, pitch = pilot.pitch, velocity = velocity, scale = scale,
+                                    last = feet + half, grounded = pilot.grounded, chamber = pilot.chamber },
+                         Owner { player = owner.player }, Body { position = feet + half, velocity = velocity },
+                         Capsule { radius = BODY_RADIUS * scale, height = BODY_HIGH * scale, density = 250, friction = 0 });
+        if (pilot.id == 0) arena.op0 = born;
+        else arena.op1 = born;
+        this.Destroy();
+        return;
+    }
     pilot.last = center;
     pilot.position = center - float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
     pilot.velocity = body.velocity;
 }
 
-system CrossCube(mut Cube cube, mut Body body, mut Fold fold, Arena arena)
+system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
 {
     mut var center = body.position;
     mut var velocity = body.velocity;
     mut var unused = 0.0;
     var amberSide = Math.Abs(Math.Dot(cube.last - fold.amber.at, fold.amber.face)) < Math.Abs(Math.Dot(cube.last - fold.cyan.at, fold.cyan.face));
     var ratio = Traverse(fold, cube.last, center, velocity, unused);
+    mut var scale = cube.scale;
     if (ratio > 0)
     {
         // It comes out turned as the fold turns the world
@@ -734,6 +768,7 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, Arena arena)
         body.angularVelocity = FoldDirection(from, to, body.angularVelocity);
         body.position = center;
         body.velocity = velocity;
+        scale = Math.Clamp(cube.scale * ratio, SMALLEST, LARGEST);
         fold.Snap();
     }
     if (center.y < -8)
@@ -746,9 +781,20 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, Arena arena)
         fold.Snap();
     }
     if (AtMouth(fold, center, 0.6 * cube.scale)) fold.busy = 3;
-    cube.last = center;
     fold.cube = center;
     fold.cubeTurn = body.rotation;
+    fold.cubeScale = scale;
+    if (Math.Abs(scale - cube.scale) > 0.01)
+    {
+        // At its new size: another body, with this one's speed and spin
+        arena.cube = Spawn(Cube { chamber = cube.chamber, last = center, scale = scale },
+                           Body { position = center, rotation = body.rotation, velocity = body.velocity, angularVelocity = body.angularVelocity,
+                                  gravityScale = body.gravityScale },
+                           Box { size = float3(CUBE_SIDE * scale), density = 120, friction = 0.7 });
+        this.Destroy();
+        return;
+    }
+    cube.last = center;
 }
 
 // A wall's pieces: the wall with a hole in it where each fold on it is, as

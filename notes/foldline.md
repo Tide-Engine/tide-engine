@@ -80,6 +80,26 @@ be replaced. Where Match and controls below differs, this section is current.
   place from where it was, and the owner saw it slide. P (`Control.crisp`,
   this machine's) shows the picture at the window's own rows, without the
   300-row pixels or the corner snapping, for the owner to compare.
+- **Sizes (step 2, built the same day).** An end is shot at half, whole or
+  one and a half times the usual size (`FoldSize`; 1, 2, 3 or the wheel pick
+  it on this machine, `Control.size`, sent as `PilotInput.size`, 0 for
+  whole). Double doesn't fit under a 4.4 m ceiling, which is why the largest
+  is 1.5. `FoldPoint` scales by the ends' ratio, speed with it, and what
+  comes out is that many times its size, kept from 0.5 to 1.5. A Box3D shape
+  is made once, so a body that changes size is destroyed and spawned again
+  with what it was (`Operator.resize` in `CrossOperators`, which sets
+  `Arena.op0`/`op1`; `CrossCube` sets `Arena.cube`); a new chamber makes
+  operators whole again the same way. Speed, jump, eye height, reach and the
+  hand's place follow `Operator.scale`. Nothing but the hole stops a body
+  that's too big for an end: a whole operator doesn't fit a half one. A low
+  shot stands on the floor at any size. The renderer takes each end's size
+  (`Sight.sizes`, `Aperture.size` and `ratio`) for the opening, the hole,
+  the box behind it and what's part of the way through. `test.c`'s `sizes`
+  walks in whole and out half, back to whole, is refused at its own size,
+  and is made whole by a new chamber. Replay hash `14983226645209546878`.
+- Inside a hole the room's boxes are cut behind the opening's whole
+  rectangle, its rounded corners too: the floor showed there as two patches
+  either side of the sill.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the watcher's pillars and the
   props are where they were.
