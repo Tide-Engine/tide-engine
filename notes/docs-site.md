@@ -1,5 +1,14 @@
 # The docs site
 
+Elsewhere catalog addition (2026-10-13): `elsewhere` joins the server-only
+prototype catalog and all three public/retired asset gates, with a gameplay
+thumbnail and normal opt-in `elsewhere_page` staging. The prototype id lists
+and stale-alias/discovery checks cover it. Its cozy restoration journey and
+native/web/GPU validation are recorded in `notes/elsewhere.md`. No deployment
+or CI dispatch is requested. The local docs check is clean, production build
+passes and the eighteen analytics/admin unit checks and production prototype
+HTTP check pass with Node 24.21.0.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog
