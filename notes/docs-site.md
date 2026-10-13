@@ -1,13 +1,11 @@
 # The docs site
 
-SKYWORKS catalog addition (2026-10-13): `skyworks` is a new server-only card and
-public prototype root, covered by the outside-root gates and admin/HTTP tests.
-Its game page stages through `skyworks_page`; its thumbnail comes from its own
-render fixture. Gameplay, limitations and validation are in `notes/skyworks.md`.
-No site deployment is part of this task. Svelte check has zero errors/warnings;
-eighteen analytics/admin tests, the production build and the production
-prototype HTTP test pass with Node 24.16.0. Public serving/omission from discovery
-and refusal of stale outside-root SKYWORKS copies are covered.
+SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
+public id, asset-gate entries, thumbnail and test registrations are removed;
+its source/build targets and game note are removed too. The existing catalog
+remains unchanged. No deployment or CI dispatch is requested.
+The production build and eighteen analytics/admin tests pass; the production
+HTTP test checks the removed SKYWORKS page and thumbnail return 404.
 
 ## Input prediction controls (2026-10-13)
 
