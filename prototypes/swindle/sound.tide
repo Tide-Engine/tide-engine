@@ -1,0 +1,31 @@
+asset Clip clubMusic = "sfx/club.wav";
+asset Clip takeSound = "sfx/take.wav";
+asset Clip dashSound = "sfx/dash.wav";
+asset Clip bluffSound = "sfx/bluff.wav";
+asset Clip fooledSound = "sfx/fooled.wav";
+asset Clip bankSound = "sfx/bank.wav";
+asset Clip exitSound = "sfx/exit.wav";
+asset Clip finishSound = "sfx/finish.wav";
+local singleton Hearing { Sound music; }
+[Stage(ArtStage.Sound)]
+view ClubMusic(Menu menu, mut Hearing hearing)
+{
+    hearing.music.clip = clubMusic;
+    hearing.music.loop = true;
+    hearing.music.playing = menu.music;
+    hearing.music.volume = 0.28;
+}
+local event(HeistSound cue) HearHeist()
+{
+    switch (cue.kind)
+    {
+        case HeistCue.Pickup: Audio.Play(takeSound, 0.38); break;
+        case HeistCue.Dash: Audio.Play(dashSound, 0.22); break;
+        case HeistCue.Steal: Audio.Play(takeSound, 0.58, 0.8); break;
+        case HeistCue.Bluff: Audio.Play(bluffSound, 0.36); break;
+        case HeistCue.Fooled: Audio.Play(fooledSound, 0.42); break;
+        case HeistCue.Bank: Audio.Play(bankSound, 0.6, 0.9 + cue.amount * 0.025); break;
+        case HeistCue.Exit: Audio.Play(exitSound, 0.30); break;
+        case HeistCue.Finish: Audio.Play(finishSound, 0.55); break;
+    }
+}
