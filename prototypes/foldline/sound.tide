@@ -50,6 +50,7 @@ local singleton Ears
     int traversals;
     bool plateA;
     bool plateB;
+    bool plateC;
     bool hold;
     float gateAt;
     int carried = -1;
@@ -98,7 +99,7 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     Looping(ears.drone, building, 0.3 * quiet, true);
     // The gate while it moves, and the lift all round while it goes down
     bool lift = arena.ride > 0 || (arena.arrive < 0.7 && arena.rode == arena.chamber);
-    LoopingAt(ears.gate, gateRun, lift ? eye : float3(0, 2, 13.5), 0.9, lift || Math.Abs(arena.gate - ears.gateAt) > 0.0005);
+    LoopingAt(ears.gate, gateRun, lift ? eye : LiftAt(arena.level) + float3(0, 2, -2.1), 0.9, lift || Math.Abs(arena.gate - ears.gateAt) > 0.0005);
     ears.gate.pitch = lift ? 0.6 : 1.0;
     // What's between the rooms is heard only while it moves, which is while nobody sees it
     LoopingAt(ears.scrape, stalking, stalker.at + float3(0, 1, 0), stalker.moved, arena.level == BETWEEN && stalker.moved > 0.02);
@@ -151,7 +152,8 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         }
         if (arena.plateA != ears.plateA) Audio.Play(arena.plateA ? plateOn : plateOff, PlatePosition(arena.level, 0), 0.9);
         if (arena.plateB != ears.plateB) Audio.Play(arena.plateB ? plateOn : plateOff, PlatePosition(arena.level, 1), 0.9, 1.12);
-        if (arena.hold != ears.hold) Audio.Play(arena.hold ? plateOn : plateOff, HOLD_PLATE, 0.9, 0.8);
+        if (arena.hold != ears.hold) Audio.Play(arena.hold ? plateOn : plateOff, HoldPlate(arena.level), 0.9, 0.8);
+        if (arena.plateC != ears.plateC) Audio.Play(arena.plateC ? plateOn : plateOff, PlatePosition(arena.level, 2), 0.9, 1.3);
 
         // What the renderer saw go into the red
         if (optics.splashed != ears.splashed)
@@ -206,6 +208,7 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     ears.traversals = fold.traversals;
     ears.plateA = arena.plateA;
     ears.plateB = arena.plateB;
+    ears.plateC = arena.plateC;
     ears.hold = arena.hold;
     ears.gateAt = arena.gate;
     ears.carried = fold.carried;
