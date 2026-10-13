@@ -696,7 +696,7 @@ float3 PlatePosition(int level, int index)
         case 9: return index == 0 ? float3(-5.6, 5.04, 22.75) : index == 1 ? float3(3, 5.04, 22.7) : float3(-5, 0.04, -6);
         case 10: return index == 0 ? float3(-3.5, 4.44, 8.5) : index == 1 ? float3(3.5, 4.44, 8.5) : index == 2 ? float3(4, 0.04, -15) : float3(-4, 0.04, -9.6);
         case 11: return index == 0 ? float3(9, 0.04, 7) : index == 1 ? float3(13, 0.04, 3) : float3(2.8, 0.04, -7.1);
-        case 12: return index == 0 ? float3(-4, 0.04, 10) : index == 1 ? float3(4, 0.04, 10) : float3(0, -1.46, -3);
+        case 12: return index == 0 ? float3(-4, 0.04, 10) : index == 1 ? float3(4, 0.04, 10) : float3(0, -0.36, -3);
         default: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 8);
     }
 }
@@ -1008,7 +1008,7 @@ void PitWorks(mut Arena arena, int level)
 }
 
 // A dry room with the cube and three crates; a flooded channel 18 m long with something in it; and at its far
-// end a door that's open only while a plate on the channel's floor, half-way along, is weighted. Nothing past
+// end a door that's open only while the shallow control step, half-way along, is weighted. Nothing past
 // the water takes a fold. What goes in last is what the thing goes for, so who throws what, and when, is the
 // room.
 void BuildUndertow(mut Arena arena)
@@ -1032,6 +1032,8 @@ void BuildUndertow(mut Arena arena)
     Fill(arena, 3, 4, -2.5, 4.4, -11, 6, panels);
     Fill(arena, -4, 4, 4.4, 5.4, -11, 6, roof, false, 2);
     PitWorks(arena, UNDERTOW);
+    // A shallow control step: readable and reachable without fishing on the channel floor.
+    Fill(arena, -.9, .9, -1.5, -.4, -3.9, -2.1, panels);
     // The far room, behind its door
     Fill(arena, -7, 7, -1, 0, 6, 14, carpet);
     Fill(arena, -7, -3, 0, 4.4, 6, 7, panels);
@@ -1521,7 +1523,7 @@ system MoveMovers(mut Mover mover, mut Body body, Arena arena, Time time)
     mover.at = body.position;
 }
 
-system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) operators, Time time)
+system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) operators, query (Cube cube) objects, Time time)
 {
     if (Hazard(arena.level, arena.theme) != 2) return;
     var middle = PitMiddle(arena.level);
@@ -1535,10 +1537,14 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
     }
     // A loose thing going in is the last thing that splashed
     mut var nowIn = 0;
-    for (var index = 0; index < fold.count; index++)
+    foreach (var entry in objects)
     {
+        var index = entry.cube.index;
+        if (entry.cube.chamber != arena.chamber) continue;
         var spot = fold.spots[index];
-        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1 || spot.y > POOL_SURFACE || Math.Abs(spot.z - middle) > reach) continue;
+        var bottom = spot.y - CUBE_SIDE * entry.cube.scale * .5;
+        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1 || bottom > POOL_SURFACE || Math.Abs(spot.z - middle) > reach
+            || spot.x < PitFrom(arena.level) || spot.x > PitTo(arena.level)) continue;
         nowIn |= 1 << index;
         if ((lurker.wasIn & (1 << index)) != 0) continue;
         lurker.lure = spot;
@@ -1737,7 +1743,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
 // Where a carried cube is held: before its holder's eyes, or through a fold
 // where the arm reaches into one, whichever the cube is nearer.
 [Before(PhysicsStages.Step)]
-system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query (Operator pilot) operators)
+system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query (Operator pilot) operators, Time time)
 {
     if (cube.chamber != arena.chamber)
     {
@@ -1784,7 +1790,20 @@ system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query 
     }
     if (cube.holder < 0)
     {
-        if (body.gravityScale != 1) body.gravityScale = 1;
+        var half = CUBE_SIDE * cube.scale * .5;
+        var afloat = Hazard(arena.level, arena.theme) == 2 && body.position.x > PitFrom(arena.level) && body.position.x < PitTo(arena.level)
+                     && Math.Abs(body.position.z - PitMiddle(arena.level)) < PitHalf(arena.level) && body.position.y - half < POOL_SURFACE;
+        body.gravityScale = afloat ? 0.0 : 1.0;
+        if (afloat)
+        {
+            // Damped buoyancy leaves the upper half visible, with throws settling within reach.
+            var surface = POOL_SURFACE + half * .4;
+            body.velocity.y += ((surface - body.position.y) * 24 - body.velocity.y * 7) * time.dt;
+            var drag = Math.Max(0, 1 - time.dt * 2);
+            body.velocity.x *= drag;
+            body.velocity.z *= drag;
+            body.angularVelocity *= drag;
+        }
         return;
     }
     foreach (var entry in operators)
