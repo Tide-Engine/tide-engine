@@ -76,6 +76,10 @@ be replaced. Where Match and controls below differs, this section is current.
   stand on them"): `Arena.solved` is the circuit as it is now, the gate shuts
   at 2.4 a second when a plate is let up, and both operators in the lobby
   complete the chamber however they got there. Nothing latches any more.
+- A shot that places an end calls `fold.Snap()`: views blended the end's
+  place from where it was, and the owner saw it slide. P (`Control.crisp`,
+  this machine's) shows the picture at the window's own rows, without the
+  300-row pixels or the corner snapping, for the owner to compare.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the watcher's pillars and the
   props are where they were.

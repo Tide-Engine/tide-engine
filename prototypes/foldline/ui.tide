@@ -51,6 +51,7 @@ view InterfaceInput(Devices devices, Session session, Arena arena, mut Control c
     if (devices.keyboard.escape.down || (ui.looking && !Cursor.locked && !arena.complete)) ui.open = true;
     ui.looking = Cursor.locked;
     control.started = !ui.open && !arena.complete;
+    if (devices.keyboard.p.down) control.crisp = !control.crisp;
     if (control.started) Cursor.Lock();
 }
 
