@@ -61,6 +61,14 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- HOT SWAP (`hot-swap`): `prototypes/hot-swap/`, requested on 2026-10-13,
+  a solo/two-player warehouse possession heist. Electrical creatures borrow
+  cleaners, forklifts, cameras and door controllers to free a storm case and
+  escape by ducts, loading shutters or shipping belt. `hot_swap_page` stages
+  its public page; `private_games` collects it or native `hot_swap`, with STATS.
+  Its isolated C test host is `hot_swap_tests`. Rules and validation are in
+  `notes/hot-swap.md`.
+
 Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
 game note, build targets and catalog/public-id registrations are removed. Its
 implementation and engine-gap record remain in git history at `7c047a87`.
