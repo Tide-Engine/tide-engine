@@ -61,6 +61,13 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- SWINDLE (`swindle`): `prototypes/swindle/`, the competitive publisher-demo
+  prototype requested on 2026-10-13. Ninety-second rooftop heists with a growing
+  prism, dash steals, fake carriers, moving cash-outs, duel/FFA/2v2, bots,
+  friend rooms and same-keyboard play. `swindle` has STATS; `swindle_page`
+  stages `/prototypes/swindle/` with its gameplay thumbnail, collected by
+  `private_games`. Rules, tests and validation are in `notes/swindle.md`.
+
 Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
 game note, build targets and catalog/public-id registrations are removed. Its
 implementation and engine-gap record remain in git history at `7c047a87`.
