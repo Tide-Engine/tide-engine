@@ -113,11 +113,11 @@ static void ownership_and_movement(void)
     input(&world, 0, (PilotInput){.jump = true});
     ticks(&world, 8);
     CHECK(pilot(&world, 0).position.y > 0.3f);
-    // The first chamber's pit has no bottom: whoever walks into it is back at the start
+    // The first chamber's pit: whoever walks into it is back at the start
     input(&world, 0, (PilotInput){.move = {0, 1}});
-    ticks(&world, 300);
+    for (int step = 0; step < 300 && pilot(&world, 0).taken == 0; step++) tide_world_tick(&world);
     input(&world, 0, (PilotInput){0});
-    ticks(&world, 60);
+    ticks(&world, 150);
     CHECK(pilot(&world, 0).position.z < -3.5f && near(pilot(&world, 0).position.y, 0, 0.05f));
     tide_world_player_joined(&world, player(1));
     tide_world_tick(&world);
@@ -316,6 +316,23 @@ static void chambers_and_commands(void)
 static void chambers_hold(void)
 {
     tide_world world = {0};
+    // Someone who walks into the pit is caught under the floor, held however they move, and back at the start
+    start(&world);
+    ticks(&world, 8);
+    place(&world, 0, (tide_float3){0, 0, -1}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}, .jump = true});
+    bool caught = false;
+    for (int step = 0; step < 120 && !caught; step++) {
+        tide_world_tick(&world);
+        caught = pilot(&world, 0).taken > 0;
+    }
+    CHECK(caught && pilot(&world, 0).position.y < -2 && pilot(&world, 0).position.y > -4);
+    const float caught_at = pilot(&world, 0).position.z;
+    ticks(&world, 60);
+    CHECK(pilot(&world, 0).taken > 0.9f && near(pilot(&world, 0).position.z, caught_at, 0.1f) && pilot(&world, 0).position.y > -5);
+    ticks(&world, 70);
+    CHECK(pilot(&world, 0).taken == 0 && pilot(&world, 0).position.y > -0.1f && pilot(&world, 0).position.z < -5);
+    tide_world_free(&world);
     // The vent is too low for a whole operator, and takes a half one
     start(&world);
     choose(&world, 0, 2);
@@ -341,6 +358,8 @@ static void chambers_hold(void)
         CHECK(!(pilot(&world, 0).position.z > 3.5f && pilot(&world, 0).position.y > -0.2f));
     }
     // ...but not past the jump of one who came out of a larger end
+    input(&world, 0, (PilotInput){0});
+    for (int step = 0; step < 200 && (pilot(&world, 0).taken > 0 || !pilot(&world, 0).grounded); step++) tide_world_tick(&world);
     place(&world, 0, (tide_float3){-4, 0, -8}, SOUTH, 0);
     input(&world, 0, (PilotInput){0});
     ticks(&world, 3);

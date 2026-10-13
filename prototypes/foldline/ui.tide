@@ -48,7 +48,7 @@ view InterfaceInput(Devices devices, Session session, Arena arena, mut Control c
     if (devices.keyboard.escape.down || (ui.looking && !Cursor.locked && !arena.complete)) ui.open = true;
     ui.looking = Cursor.locked;
     control.started = !ui.open && !arena.complete;
-    if (devices.keyboard.p.down) control.crisp = !control.crisp;
+    if (devices.keyboard.p.down) control.crisp = (control.crisp + 1) % 3;
     // The size of the next fold's end: 1, 2 and 3 from small to large, or the wheel a step either way
     mut var rank = control.size == 1 ? 0 : control.size == 0 ? 1 : 2;
     if (devices.keyboard.digit1.down) rank = 0;

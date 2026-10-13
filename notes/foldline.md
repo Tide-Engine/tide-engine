@@ -130,6 +130,26 @@ current.
   hash `4283102527126451263` natively and under WASI.
 - The number by the gate is drawn in segments 0.12 m thick: at 0.08 the
   corner snapping lost half of them from across the hall.
+- **After the owner's play of the five (2026-10-13).** Open, the owner's
+  to settle: every chamber can be solved by one operator, the other only
+  has to walk through the gate (the owner's observation, and true); and the
+  sizes "felt annoying having to find the right size for it and juggle back
+  and forth more than it did satisfying", so the mechanic is to be rethought
+  or polished. Nothing was changed for either yet.
+- **The pit takes whoever falls in** (the owner: death "more brutal and
+  gore... hands from hell grabbing us down", saws later). An operator whose
+  middle is 1.5 m under the floor is `taken`: stopped for 0.35 s, dragged
+  down at 1.3 m/s whatever it does, the cube let go, and back at the start
+  after `TAKEN_FOR` (1.9 s). `Operator.taken` is match state. The renderer
+  draws eleven arms of boxes up round the body, one to its face (`Taken`,
+  `Arm`), shakes the eye, reddens the picture (`Lens.scare`) and closes it
+  to black (`Lens.under`); 22 more arms sway far down in a pit all the
+  time. The cube still falls through to -8 and comes back. No sound, no
+  blood, and the partner's view of it was not captured. `chambers_hold`
+  checks the catch, the hold and the return. Replay hash
+  `5183574008336881480` natively and under WASI, 2/2 and 3/3.
+- P now goes round three pictures for the owner to compare: 300 rows, 480
+  (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the gate closing on a body
   under it, two operators through one fold at once and the cube in a hole
