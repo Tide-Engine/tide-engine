@@ -22,6 +22,7 @@ singleton Arena
     bool plateB;
     bool plateC;         // A third and a fourth plate, which work a room's own machinery and not its gate
     bool plateD;
+    bool released;       // Both operators have worked the room's release controls; its cube is unclamped.
     float3 left;         // The lift that was left by, for where its riders stand in the one they come by
     bool hold;           // The lift's plate is stood on: the gate stays up for whoever is still to come
     int depth;           // How many lifts down: which room or stretch between rooms this is
@@ -31,6 +32,7 @@ singleton Arena
     int rode = -1;       // The chamber that was come to by lift: operators keep their places in it, turned about
     float caught;        // Seconds since what's between the rooms got someone: it all starts over at CAUGHT
     int ticks;
+    int drumTicks;       // Machinery time pauses while a drum-room control is held.
     int joined;
     PlayerID first;
     PlayerID second;
@@ -147,7 +149,7 @@ component Wall
     float paint;         // Which square of the renderer's sheet it's painted with
     float tiles = 0.5;   // ...and how many of them a meter
     bool takes;          // A fold can be put on its upright faces
-    int kind;            // 0 a wall, 1 a planter, 2 a ceiling, 3 a crate
+    int kind;            // 0 a wall, 1 a planter, 2 a ceiling, 3 a crate, 4 a grille, 5 the lift shell
     int version;         // Counts the folds put on it and taken off
     int made;            // ...and which of those its pieces are for
     int chamber;
@@ -549,12 +551,12 @@ struct Mount
 
 int MountCount(int level)
 {
-    return level == 3 || level == 5 || level == SHAFT ? 1 : 0;
+    return level == 3 ? 2 : level == 5 || level == SHAFT ? 1 : 0;
 }
 
 Mount ChamberMount(int level, int index)
 {
-    if (level == 3) return Mount { at = float3(9.8, FOLD_HALF_HIGH * SMALLEST, 1.5), face = float3(-1, 0, 0), size = SMALLEST };
+    if (level == 3) return Mount { at = float3(index == 0 ? 9.8 : -9.8, FOLD_HALF_HIGH * SMALLEST, 1.5), face = float3(index == 0 ? -1 : 1, 0, 0), size = SMALLEST };
     if (level == SHAFT) return Mount { at = float3(-8, FOLD_HALF_HIGH * SMALLEST, -4), face = float3(1, 0, 0), size = SMALLEST };
     return Mount { at = float3(0.5, FOLD_HALF_HIGH * SMALLEST, -13), face = float3(0, 0, 1), size = SMALLEST };
 }
@@ -613,18 +615,19 @@ float3 CubeStart(int level, int index)
 
 int PlateCount(int level)
 {
-    return level == SHAFT || level == DARK || level == UNDERTOW ? 3 : level == SIGHT ? 4 : 2;
+    return Between(level) ? 2 : 4;
 }
 
 // A room's machinery: how many things it moves, each one's two places, its size, and the plate that sends it
 // to its second place (under 0 for one that goes back and forth by itself).
 int MoverCount(int level)
 {
-    return level == SHAFT ? 3 : level == SIGHT ? 2 : level == UNDERTOW ? 1 : 0;
+    return level == SHAFT ? 3 : level == SIGHT ? 2 : level == UNDERTOW || level == 0 ? 1 : 0;
 }
 
 float3 MoverFrom(int level, int index)
 {
+    if (level == 0) return float3(-9.55, 1.5, 6);
     // Three rooms in a row have a door between each two, which is shut
     if (level == SIGHT) return float3(0, 1.5, index == 0 ? -11.5 : -2.5);
     if (level == UNDERTOW) return float3(0, 1.5, 6.5);
@@ -633,6 +636,7 @@ float3 MoverFrom(int level, int index)
 
 float3 MoverTo(int level, int index)
 {
+    if (level == 0) return float3(-9.55, 5.1, 6);
     if (level == SIGHT) return float3(0, 4.7, index == 0 ? -11.5 : -2.5);
     if (level == UNDERTOW) return float3(0, 4.7, 6.5);
     return index == 0 ? float3(5, 4.85, -0.6) : index == 1 ? float3(4.5, 4.85, 14.5) : float3(-3, 4.85, 18.5);
@@ -640,11 +644,13 @@ float3 MoverTo(int level, int index)
 
 float3 MoverSize(int level, int index)
 {
+    if (level == 0) return float3(0.3, 3, 4.1);
     return level == SIGHT ? float3(3, 3, 0.3) : level == UNDERTOW ? float3(6, 3, 0.3) : float3(3, 0.3, 3);
 }
 
 int MoverPlate(int level, int index)
 {
+    if (level == 0) return 2;
     if (level == SIGHT) return 2 + index;
     if (level == UNDERTOW) return 2;
     return index == 0 ? 2 : -1;
@@ -669,16 +675,28 @@ float3 MoverAt(int level, int index, int ticks)
 float3 PlatePosition(int level, int index)
 {
     if (index >= PlateCount(level)) return float3(0, -50, 0);
+    if (index >= 2)
+    {
+        if (level == 0) return index == 2 ? float3(-5, 0.04, -6) : float3(5, 0.04, 6);
+        if (level == 1) return index == 2 ? float3(-7, GALLERY + 0.04, 4) : float3(7, GALLERY + 0.04, 7);
+        if (level == 2) return index == 2 ? float3(7.5, GALLERY + 0.04, -6) : float3(-5, 0.04, 6);
+        if (level == 3) return index == 2 ? float3(-8.5, 0.04, 8) : float3(8.5, 0.04, 8);
+        if (level == 4) return index == 2 ? float3(3, 0.04, -5) : float3(-7.5, GALLERY + 0.04, 7);
+        if (level == 5) return index == 2 ? float3(-7.5, GALLERY + 0.04, -7) : float3(7, 0.04, 8);
+        if (level == SHAFT && index == 3) return float3(1, 5.04, 22.7);
+        if (level == DARK && index == 3) return float3(10, 0.04, 5);
+        if (level == UNDERTOW && index == 3) return float3(-4, 0.04, 8);
+    }
     switch (level)
     {
         case 1: return index == 0 ? float3(-7, GALLERY + 0.04, 6) : float3(7, GALLERY + 0.04, 9);
-        case 3: return index == 0 ? float3(6, 0.04, 10) : float3(8.5, 0.04, 8);
+        case 3: return index == 0 ? float3(-6, 0.04, 10) : float3(6, 0.04, 10);
         case 4: return index == 0 ? float3(5, 0.04, 8) : float3(-7.5, GALLERY + 0.04, 9);
         case 5: return index == 0 ? float3(7, 0.04, 10) : float3(-5, 0.04, 8);
         case 9: return index == 0 ? float3(-5.6, 5.04, 22.75) : index == 1 ? float3(3, 5.04, 22.7) : float3(-5, 0.04, -6);
         case 10: return index == 0 ? float3(-3.5, 4.44, 8.5) : index == 1 ? float3(3.5, 4.44, 8.5) : index == 2 ? float3(4, 0.04, -15) : float3(-4, 0.04, -9.6);
         case 11: return index == 0 ? float3(9, 0.04, 7) : index == 1 ? float3(13, 0.04, 3) : float3(2.8, 0.04, -7.1);
-        case 12: return index == 0 ? float3(-4, 0.04, 10) : index == 1 ? float3(4, 0.04, 10) : float3(0, -1.46, -3);
+        case 12: return index == 0 ? float3(-4, 0.04, 10) : index == 1 ? float3(4, 0.04, 10) : float3(0, -0.36, -3);
         default: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 8);
     }
 }
@@ -794,7 +812,7 @@ bool Weighs(float3 position, float3 plate)
 // A box of the room, with its one piece.
 Entity Raise(Arena arena, float3 center, float3 size, float paint, bool takes = false, int kind = 0, float tiles = 0.5)
 {
-    var wall = Spawn(Wall { center = center, size = size, paint = paint, tiles = tiles, takes = takes, kind = kind, chamber = arena.chamber });
+    var wall = Spawn(Wall { center = center, size = size, paint = paint == 12 && !takes ? 3.0 : paint, tiles = tiles, takes = takes, kind = kind, chamber = arena.chamber });
     Spawn(Piece { wall = wall }, Body { type = BodyType.Static, position = center }, Box { size = size });
     return wall;
 }
@@ -802,19 +820,25 @@ Entity Raise(Arena arena, float3 center, float3 size, float paint, bool takes = 
 // A box of a room by its corners.
 Entity Fill(Arena arena, float x0, float x1, float y0, float y1, float z0, float z1, float paint, bool takes = false, int kind = 0)
 {
-    return Raise(arena, float3((x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5), float3(x1 - x0, y1 - y0, z1 - z0), paint, takes, kind, kind == 2 ? 0.833 : 0.5);
+    var seam = !takes && x1 - x0 > 1 && z1 - z0 > 1 && y1 - y0 <= 2.5 ? 0.06 : 0.0;
+    return Raise(arena, float3((x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5), float3(x1 - x0 + seam, y1 - y0, z1 - z0 + seam), paint, takes, kind, kind == 2 ? 0.833 : 0.5);
 }
 
 // A lift's box about the middle of its floor: floor, sides, far wall, the beam over its way in, and its roof.
 // `way` is 1 for the lift a place is come to by, whose door is on its north, and -1 for the one it's left by.
 void LiftShell(mut Arena arena, float3 at, float way)
 {
-    Raise(arena, at + float3(0, -0.5, 0), float3(6, 1, 3.2), 3.0);
-    Raise(arena, at + float3(-3.5, 2.2, 0), float3(1, 4.4, 3.2), 2.0);
-    Raise(arena, at + float3(3.5, 2.2, 0), float3(1, 4.4, 3.2), 2.0);
-    Raise(arena, at + float3(0, 2.2, -2.1 * way), float3(8, 4.4, 1), 2.0);
-    Raise(arena, at + float3(0, 4.2, 2.1 * way), float3(6, 0.4, 1), 2.0);
-    Raise(arena, at + float3(0, 4.9, -0.5 * way), float3(8, 1, 4.2), 14.0, false, 2, 0.833);
+    Raise(arena, at + float3(0, -0.5, 0), float3(6, 1, 5.4), 3.0, false, 5);
+    Raise(arena, at + float3(-3.5, 2.2, 0), float3(1, 4.4, 5.4), 2.0, false, 5);
+    Raise(arena, at + float3(3.5, 2.2, 0), float3(1, 4.4, 5.4), 2.0, false, 5);
+    Raise(arena, at + float3(0, 2.2, -2.72 * way), float3(8, 4.4, 1), 2.0, false, 5);
+    Raise(arena, at + float3(0, 4.2, 2.1 * way), float3(6, 0.4, 1), 2.0, false, 5);
+    Raise(arena, at + float3(0, 4.9, 0), float3(8, 1, 4.2), 14.0, false, 5, 0.833);
+    // The room's opening is eight metres wide, the shutter six: solid jambs fill the metre each side.
+    for (var end = -1; end <= 1; end += 2)
+        for (var side = -1; side <= 1; side += 2)
+            Raise(arena, at + float3(side * 3.5, 2.2, 2.1 * end), float3(1.08, 4.4, 1.08), 2.0, false, 5);
+    Raise(arena, at + float3(0, -0.5, 2.1 * way), float3(6.08, 1, 1.2), 3.0, false, 5);
 }
 
 // The loose things a room starts with.
@@ -984,7 +1008,7 @@ void PitWorks(mut Arena arena, int level)
 }
 
 // A dry room with the cube and three crates; a flooded channel 18 m long with something in it; and at its far
-// end a door that's open only while a plate on the channel's floor, half-way along, is weighted. Nothing past
+// end a door that's open only while the shallow control step, half-way along, is weighted. Nothing past
 // the water takes a fold. What goes in last is what the thing goes for, so who throws what, and when, is the
 // room.
 void BuildUndertow(mut Arena arena)
@@ -1008,6 +1032,8 @@ void BuildUndertow(mut Arena arena)
     Fill(arena, 3, 4, -2.5, 4.4, -11, 6, panels);
     Fill(arena, -4, 4, 4.4, 5.4, -11, 6, roof, false, 2);
     PitWorks(arena, UNDERTOW);
+    // A shallow control step: readable and reachable without fishing on the channel floor.
+    Fill(arena, -.9, .9, -1.5, -.4, -3.9, -2.1, panels);
     // The far room, behind its door
     Fill(arena, -7, 7, -1, 0, 6, 14, carpet);
     Fill(arena, -7, -3, 0, 4.4, 6, 7, panels);
@@ -1095,13 +1121,21 @@ void BuildChamber(mut Arena arena, int level)
     // Which of the hall's walls take a fold. Its side walls are each two: this side of z 3.5 and past it.
     var south = !Between(level);
     var westNear = level == 0 || level == 1 || level == 3 || level == 5;
-    var westFar = level == 0 || level == 1 || level == 3 || level == 4;
+    var westFar = level == 1 || level == 3 || level == 4;
     var eastNear = level == 0 || level == 1 || level == 2 || level == 3;
-    var eastFar = level == 0 || level == 1;
-    var north = level == 0 || level == 1;
+    var eastFar = level == 1;
+    var north = level == 1;
     Raise(arena, float3(0, CEILING_HIGH + 0.5, 2.1), float3(21.6, 1, 32.2), ceilingTile, false, 2, 0.833);
     Raise(arena, float3(-10.3, 1.2, -5.25), float3(1, 8.4, 17.5), westNear ? wallpaper : panels, westNear);
-    Raise(arena, float3(-10.3, 1.2, 8.75), float3(1, 8.4, 10.5), westFar ? wallpaper : panels, westFar);
+    if (level == 0 || level == 3)
+    {
+        var low = level == 0 ? 4.0 : 8.7;
+        var high = level == 0 ? 8.0 : 12.7;
+        Raise(arena, float3(-10.3, 1.2, (3.5 + low) * 0.5), float3(1, 8.4, low - 3.5), panels);
+        Raise(arena, float3(-10.3, 1.2, (low + high) * 0.5), float3(1, 8.4, high - low), wallpaper, true);
+        Raise(arena, float3(-10.3, 1.2, (high + 14) * 0.5), float3(1, 8.4, 14 - high), panels);
+    }
+    else Raise(arena, float3(-10.3, 1.2, 8.75), float3(1, 8.4, 10.5), westFar ? wallpaper : panels, westFar);
     Raise(arena, float3(10.3, 1.2, -5.25), float3(1, 8.4, 17.5), eastNear ? wallpaper : panels, eastNear);
     if (level == 3)
     {
@@ -1115,20 +1149,13 @@ void BuildChamber(mut Arena arena, int level)
     Raise(arena, float3(-3.15, 1.2, -13.5), float3(13.3, 8.4, 1), south ? wallpaper : concrete, south);
     Raise(arena, float3(9.65, 1.2, -13.5), float3(0.3, 8.4, 1), panels);
     Raise(arena, float3(6.5, 4.2, -13.5), float3(6, 0.4, 1), panels);
-    Raise(arena, float3(6.5, -0.5, -15.6), float3(6, 1, 3.2), concrete);
-    Raise(arena, float3(3, 2.2, -15.6), float3(1, 4.4, 3.2), panels);
-    Raise(arena, float3(10, 2.2, -15.6), float3(1, 4.4, 3.2), panels);
-    Raise(arena, float3(6.5, 2.2, -17.7), float3(8, 4.4, 1), panels);
-    Raise(arena, float3(6.5, CEILING_HIGH + 0.5, -16.1), float3(8, 1, 4.2), ceilingTile, false, 2, 0.833);
+    LiftShell(arena, ArrivalAt(level), 1);
     Spawn(Door { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = float3(6.5, 2, -13.5) }, Box { size = float3(6, 4, 0.24) });
     // The north wall, and the lift they leave by
     Raise(arena, float3(-6.4, 1.2, 13.5), float3(6.8, 8.4, 1), north ? wallpaper : panels, north);
     Raise(arena, float3(6.4, 1.2, 13.5), float3(6.8, 8.4, 1), north ? wallpaper : panels, north);
     Raise(arena, float3(0, 4.2, 13.5), float3(6, 0.4, 1), panels);
-    Raise(arena, float3(0, -0.5, 15.6), float3(6, 1, 3.2), concrete);
-    Raise(arena, float3(-3.5, 2.2, 15.6), float3(1, 4.4, 3.2), panels);
-    Raise(arena, float3(3.5, 2.2, 15.6), float3(1, 4.4, 3.2), panels);
-    Raise(arena, float3(0, 2.2, 17.7), float3(8, 4.4, 1), panels);
+    LiftShell(arena, LiftAt(level), -1);
     Spawn(Gate { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = float3(0, 2, 13.5) }, Box { size = float3(6, 4, 0.24) });
 
     // The floor: whole, or with a pit across it, which is what the place makes of it
@@ -1137,10 +1164,10 @@ void BuildChamber(mut Arena arena, int level)
     var half = PitHalf(level);
     if (hazard > 0)
     {
-        Raise(arena, float3(0, -0.5, (middle - half - 14) * 0.5), float3(21.6, 1, middle - half + 14), carpet);
-        Raise(arena, float3(0, -0.5, (middle + half + 14) * 0.5), float3(21.6, 1, 14 - middle - half), carpet);
+        Raise(arena, float3(0, -0.5, (middle - half - 14) * 0.5), float3(21.66, 1, middle - half + 14.06), carpet);
+        Raise(arena, float3(0, -0.5, (middle + half + 14) * 0.5), float3(21.66, 1, 14.06 - middle - half), carpet);
     }
-    else Raise(arena, float3(0, -0.5, 0), float3(21.6, 1, 28), carpet);
+    else Raise(arena, float3(0, -0.5, 0), float3(21.66, 1, 28.06), carpet);
     if (hazard >= 2) PitWorks(arena, level);
 
     if (level == 1)
@@ -1148,12 +1175,14 @@ void BuildChamber(mut Arena arena, int level)
         // A gallery along the west and one in the north-east, each too high to climb onto, with a plate on it
         Raise(arena, float3(-6.9, GALLERY * 0.5, 5.5), float3(5.8, GALLERY, 15), panels);
         Raise(arena, float3(6.9, GALLERY * 0.5, 8.5), float3(5.8, GALLERY, 9), panels);
+        Raise(arena, float3(0, 2.2, 7), float3(0.6, 4.4, 8), panels);
         // Maintenance grilles, to the roof: shots pass, bodies don't. Nothing stood on, the cube or the other
         // operator or both, gets anyone over one, so the fold isn't skipped.
         Raise(arena, float3(-3.85, 3.0, 5.5), float3(0.3, 2.8, 15), rust, false, 4);
         Raise(arena, float3(-6.9, 3.0, -2.1), float3(5.8, 2.8, 0.3), rust, false, 4);
         Raise(arena, float3(3.85, 3.0, 8.5), float3(0.3, 2.8, 9), rust, false, 4);
         Raise(arena, float3(6.9, 3.0, 3.9), float3(5.8, 2.8, 0.3), rust, false, 4);
+
     }
     if (level == 2)
     {
@@ -1162,12 +1191,15 @@ void BuildChamber(mut Arena arena, int level)
     }
     if (level == 3)
     {
-        // A room in the corner whose only way in is a vent a meter high, with a baffle behind it
-        Raise(arena, float3(3.8, 2.2, 8.8), float3(0.4, 4.4, 8.4), panels);
-        Raise(arena, float3(4.3, 2.2, 4.8), float3(1.4, 4.4, 0.4), panels);
-        Raise(arena, float3(7.9, 2.2, 4.8), float3(3.8, 4.4, 0.4), panels);
-        Raise(arena, float3(5.5, 2.7, 4.8), float3(1, 3.4, 0.4), panels);
-        Raise(arena, float3(6, 0.8, 6.4), float3(4, 1.6, 0.4), rust);
+        // Mirrored service rooms: both operators must shrink and work a release control.
+        for (var side = -1; side <= 1; side += 2)
+        {
+            Raise(arena, float3(side * 3.8, 2.2, 8.8), float3(0.4, 4.4, 8.4), panels);
+            Raise(arena, float3(side * 4.3, 2.2, 4.8), float3(1.4, 4.4, 0.4), panels);
+            Raise(arena, float3(side * 7.9, 2.2, 4.8), float3(3.8, 4.4, 0.4), panels);
+            Raise(arena, float3(side * 5.5, 2.7, 4.8), float3(1, 3.4, 0.4), panels);
+            Raise(arena, float3(side * 6, 0.8, 6.4), float3(4, 1.6, 0.4), rust);
+        }
     }
     if (level == 4)
     {
@@ -1222,7 +1254,7 @@ void BuildChamber(mut Arena arena, int level)
         Raise(arena, float3(-8.15, 2.2, 9.75), float3(3.3, 4.4, 6.5), panels);
         Raise(arena, float3(8.15, 2.2, 9.75), float3(3.3, 4.4, 6.5), panels);
     }
-    if (level == 3) Raise(arena, float3(-7.9, 2.2, 9), float3(3.8, 4.4, 8), wallpaper, true);
+
     if (level == 4)
     {
         Raise(arena, float3(-6.9, 2.2, -9), float3(5.8, 4.4, 8), panels);
@@ -1235,6 +1267,12 @@ void BuildChamber(mut Arena arena, int level)
     }
     if (level == 0) Raise(arena, float3(0, 3.7, -5), float3(19.6, 1.4, 0.8), wallpaper);
 
+    if (level == 0)
+    {
+        var at = MoverFrom(level, 0);
+        Spawn(Mover { chamber = arena.chamber, index = 0, at = at, size = MoverSize(level, 0) },
+              Body { type = BodyType.Kinematic, position = at }, Box { size = MoverSize(level, 0) });
+    }
     SpawnLoose(arena, level);
 }
 
@@ -1248,10 +1286,12 @@ void ResetChamber(mut Arena arena, mut Fold fold, int level)
     arena.plateC = false;
     arena.plateD = false;
     arena.hold = false;
+    arena.released = Between(level);
     arena.ride = 0;
     arena.arrive = 0;
     arena.caught = 0;
     arena.ticks = 0;
+    arena.drumTicks = 0;
     for (var end = 0; end < 4; end++) fold.ends[end] = Portal { };
     fold.cube = CubeStart(level, 0);
     fold.cubeTurn = quaternion.identity;
@@ -1471,7 +1511,8 @@ system MoveMovers(mut Mover mover, mut Body body, Arena arena, Time time)
     mut var target = MoverAt(arena.level, mover.index, arena.ticks + 1);
     if (plate >= 0)
     {
-        var down = plate == 0 ? arena.plateA : plate == 1 ? arena.plateB : plate == 2 ? arena.plateC : arena.plateD;
+        mut var down = plate == 0 ? arena.plateA : plate == 1 ? arena.plateB : plate == 2 ? arena.plateC : arena.plateD;
+        if (arena.level == 0) down = down || arena.plateD;
         target = down ? MoverTo(arena.level, mover.index) : MoverFrom(arena.level, mover.index);
     }
     mut var speed = (target - body.position) / time.dt;
@@ -1482,7 +1523,7 @@ system MoveMovers(mut Mover mover, mut Body body, Arena arena, Time time)
     mover.at = body.position;
 }
 
-system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) operators, Time time)
+system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) operators, query (Cube cube) objects, Time time)
 {
     if (Hazard(arena.level, arena.theme) != 2) return;
     var middle = PitMiddle(arena.level);
@@ -1496,10 +1537,14 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
     }
     // A loose thing going in is the last thing that splashed
     mut var nowIn = 0;
-    for (var index = 0; index < fold.count; index++)
+    foreach (var entry in objects)
     {
+        var index = entry.cube.index;
+        if (entry.cube.chamber != arena.chamber) continue;
         var spot = fold.spots[index];
-        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1 || spot.y > POOL_SURFACE || Math.Abs(spot.z - middle) > reach) continue;
+        var bottom = spot.y - CUBE_SIDE * entry.cube.scale * .5;
+        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1 || bottom > POOL_SURFACE || Math.Abs(spot.z - middle) > reach
+            || spot.x < PitFrom(arena.level) || spot.x > PitTo(arena.level)) continue;
         nowIn |= 1 << index;
         if ((lurker.wasIn & (1 << index)) != 0) continue;
         lurker.lure = spot;
@@ -1553,7 +1598,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
             feet = pilot.position + arrival - arena.left;
             feet.x = Math.Clamp(feet.x, arrival.x - 2.6, arrival.x + 2.6);
             feet.y = arrival.y;
-            feet.z = Math.Clamp(feet.z, arrival.z - 1.3, arrival.z + 1.3);
+            feet.z = Math.Clamp(feet.z, arrival.z - 1.8, arrival.z + 1.8);
         }
         else
         {
@@ -1582,7 +1627,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     {
         for (var which = 0; which < DrumCount(arena.level); which++)
         {
-            if (Math.Abs(body.position.z - DrumLane(arena.level, which)) > 1.2 || Math.Abs(body.position.x - DrumAt(arena.level, arena.ticks, which)) > 0.95) continue;
+            if (Math.Abs(body.position.z - DrumLane(arena.level, which)) > 1.2 || Math.Abs(body.position.x - DrumAt(arena.level, arena.drumTicks, which)) > 0.95) continue;
             pilot.taken = 0.0001;
             pilot.shredded = true;
         }
@@ -1669,6 +1714,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
         for (var index = 0; index < fold.count; index++)
         {
             if (fold.holding[1 - pilot.id] == index + 1 && arena.joined >= 2) continue;
+            if (index == 0 && !arena.released) continue;
             var far = Reach(fold, eye, fold.spots[index]);
             if (far >= nearest) continue;
             nearest = far;
@@ -1697,13 +1743,23 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
 // Where a carried cube is held: before its holder's eyes, or through a fold
 // where the arm reaches into one, whichever the cube is nearer.
 [Before(PhysicsStages.Step)]
-system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query (Operator pilot) operators)
+system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query (Operator pilot) operators, Time time)
 {
     if (cube.chamber != arena.chamber)
     {
         this.Destroy();
         return;
     }
+    if (cube.index == 0 && !arena.released)
+    {
+        body.type = BodyType.Kinematic;
+        body.position = CubeStart(arena.level, 0);
+        body.velocity = float3(0);
+        body.angularVelocity = float3(0);
+        cube.holder = -1;
+        return;
+    }
+    body.type = BodyType.Dynamic;
     for (var hand = 0; hand < 2; hand++)
     {
         if (fold.tossing[hand] != cube.index + 1) continue;
@@ -1734,7 +1790,20 @@ system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query 
     }
     if (cube.holder < 0)
     {
-        if (body.gravityScale != 1) body.gravityScale = 1;
+        var half = CUBE_SIDE * cube.scale * .5;
+        var afloat = Hazard(arena.level, arena.theme) == 2 && body.position.x > PitFrom(arena.level) && body.position.x < PitTo(arena.level)
+                     && Math.Abs(body.position.z - PitMiddle(arena.level)) < PitHalf(arena.level) && body.position.y - half < POOL_SURFACE;
+        body.gravityScale = afloat ? 0.0 : 1.0;
+        if (afloat)
+        {
+            // Damped buoyancy leaves the upper half visible, with throws settling within reach.
+            var surface = POOL_SURFACE + half * .4;
+            body.velocity.y += ((surface - body.position.y) * 24 - body.velocity.y * 7) * time.dt;
+            var drag = Math.Max(0, 1 - time.dt * 2);
+            body.velocity.x *= drag;
+            body.velocity.z *= drag;
+            body.angularVelocity *= drag;
+        }
         return;
     }
     foreach (var entry in operators)
@@ -1864,8 +1933,8 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
     {
         for (var which = 0; which < DrumCount(arena.level); which++)
         {
-            if (Math.Abs(center.z - DrumLane(arena.level, which)) < 1.4 && Math.Abs(center.x - DrumAt(arena.level, arena.ticks, which)) < 1.0)
-                body.velocity = float3(DrumWay(arena.level, arena.ticks, which) * 7, 6.5, 0);
+            if (Math.Abs(center.z - DrumLane(arena.level, which)) < 1.4 && Math.Abs(center.x - DrumAt(arena.level, arena.drumTicks, which)) < 1.0)
+                body.velocity = float3(DrumWay(arena.level, arena.drumTicks, which) * 7, 6.5, 0);
         }
     }
     cube.at = center;
@@ -2005,6 +2074,7 @@ system MoveDoor(mut Body body, Door door, Arena arena)
 system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) operators, Time time)
 {
     arena.ticks += 1;
+    if (!((arena.level == 4 || arena.level == 5) && (arena.plateC || arena.plateD))) arena.drumTicks += 1;
     arena.arrive += time.dt;
     fold.pingTime = Math.Max(0, fold.pingTime - time.dt);
     fold.fizzleTime = Math.Max(0, fold.fizzleTime - time.dt);
@@ -2020,6 +2090,15 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
         foreach (var entry in operators)
             if (Weighs(entry.pilot.position, at)) down[plate] = true;
     }
+    mut var atC = -1;
+    mut var atD = -1;
+    foreach (var entry in operators)
+    {
+        if (entry.pilot.taken > 0) continue;
+        if (Weighs(entry.pilot.position, PlatePosition(arena.level, 2))) atC = entry.pilot.id;
+        if (Weighs(entry.pilot.position, PlatePosition(arena.level, 3))) atD = entry.pilot.id;
+    }
+    if (atC >= 0 && atD >= 0 && atC != atD) arena.released = true;
     fold.carried = fold.holding[0] > 0 ? 0 : fold.holding[1] > 0 ? 1 : -1;
     var lift = LiftAt(arena.level);
     mut var exiting = 0;
@@ -2036,7 +2115,7 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     arena.plateD = down[3];
     // A circuit is closed only while its plates are weighted: the gate shuts again when one is let up, so
     // something has to stay behind on each. The cube, or a partner.
-    arena.solved = Between(arena.level) || (arena.plateA && (PlateCount(arena.level) < 2 || arena.plateB));
+    arena.solved = Between(arena.level) || (arena.released && arena.plateA && (PlateCount(arena.level) < 2 || arena.plateB));
     // ...or the one who went through first stands on the lobby's plate, for the one who stayed
     arena.hold = holding;
     // With both in the lift its door shuts whatever holds it, and the lift goes down: to the next place, where
@@ -2056,6 +2135,37 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     {
         arena.caught += time.dt;
         if (arena.caught >= CAUGHT) ResetChamber(arena, fold, arena.level);
+    }
+}
+
+[After(EvaluateChamber)]
+system RetireRoom(Arena arena, World world, with Body, without Operator)
+{
+    // Retire the old physical room in the same tick that builds its replacement. Waiting for its own
+    // systems next tick leaves old colliders in the arriving lift for one physics step.
+    if (world.TryGet<Piece>(this, out var piece))
+    {
+        if (!world.TryGet<Wall>(piece.wall, out var wall) || wall.chamber != arena.chamber) this.Destroy();
+    }
+    else if (world.TryGet<Cube>(this, out var cube))
+    {
+        if (cube.chamber != arena.chamber) this.Destroy();
+    }
+    else if (world.TryGet<Mover>(this, out var mover))
+    {
+        if (mover.chamber != arena.chamber) this.Destroy();
+    }
+    else if (world.TryGet<Ramp>(this, out var ramp))
+    {
+        if (ramp.chamber != arena.chamber) this.Destroy();
+    }
+    else if (world.TryGet<Gate>(this, out var gate))
+    {
+        if (gate.chamber != arena.chamber) this.Destroy();
+    }
+    else if (world.TryGet<Door>(this, out var door))
+    {
+        if (door.chamber != arena.chamber) this.Destroy();
     }
 }
 

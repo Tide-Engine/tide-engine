@@ -8,6 +8,25 @@ Admin and production HTTP fixtures cover the new id and its stale aliases.
 The existing catalog/auth/discovery contract is unchanged. Game validation
 and remaining playtest gaps are in `notes/hot-swap.md`. No deployment or CI.
 
+SWINDLE catalog addition (2026-10-13): the owner's competitive heist demo adds
+`swindle` to the server-only catalog, public root and outside-root asset gates.
+`swindle_page` stages its self-contained page and gameplay thumbnail under
+`/prototypes/swindle/`, collected by `private_games`. Admin and production HTTP
+tests include the id and retain omission from Samples/search/sitemap. Rules,
+native/web play evidence and packaging are recorded in `notes/swindle.md`.
+Site check has zero errors/warnings; eighteen analytics/admin tests, production
+build and prototype HTTP test pass with Node 24.21.0. No deployment or CI.
+
+NIGHT ROUTE removal (2026-10-13): the owner scrapped the delivery prototype
+after playtesting. Its source, tests, build targets, game note, catalog card,
+public id, asset-gate entries and thumbnail are removed, including the local
+staged page. Production HTTP checks require its former page and thumbnail
+to return 404. The five remaining prototypes keep their existing serving
+contract. No site deployment or CI dispatch is requested.
+Validation: the production build and all nineteen analytics/admin/production
+HTTP checks pass with Node 24.16.0; the former NIGHT ROUTE page and thumbnail
+return 404, and no catalog card or staged copy remains.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog
