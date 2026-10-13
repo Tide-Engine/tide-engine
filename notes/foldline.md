@@ -538,6 +538,48 @@ current.
   - Not built: rooms of the hall's nine remade on this ground; a place's
     pit anywhere but the hall's band; lifts turned; anything hinged.
     Asked for and not chosen yet: what other new mechanics.
+- **Two rooms meant to be hard (2026-10-13).** The owner, of the shaft as
+  first built: "we don't need to prove it we need to make it hard! I feel
+  like you have been slacking here on the puzzle design and the room
+  limitations". The way down is twelve places now: the nine, then *Line of
+  sight* (level 10, "room 07"), the shaft (9, "room 08"), and the maze.
+  - *Line of sight* (`BuildSight`): three rooms in a row. A door between
+    each two is a `Mover` that's up only while its plate is weighted, and
+    the plate is on the near side (C in the first room, D in the second).
+    The first room is papered; nothing in the second takes a fold; the
+    third is two storeys and bare but for its far wall above a gallery
+    4.4 m up over the way out, where the gate's plates are, one each side
+    of a wall across it. One cube. That far wall is seen only from the
+    second room's far end through its open door, and (over the gallery's
+    edge) from the back of the third room's floor: not from the first
+    room through both doors, nor from plate D, which the lintels see to.
+    So: the cube on C; one stands on D while the other shoots an end from
+    the doorway, then they change places for the other's; both back to
+    the first room, the only place their other ends can go; the cube
+    comes off C with nobody left in the second room, or they're shut in
+    it; each walks in at their own end and is on their own side of the
+    gallery; the cube on one plate, someone on the other, the other down
+    to the lift to hold it.
+  - *The shaft, again:* one cube and no crates. One of the gate's plates
+    is in a cage of bars on the far ledge whose only way in is a slot at
+    the floor, half a meter high. The tall room has a small frame on its
+    west wall: the cube thrown into a whole end comes out of it half its
+    size, and goes through the slot. So the cube can't hold the deck's
+    plate up and be upstairs: someone stays on the plate, and is fetched
+    by a fold whose near end was left downstairs and whose far end goes
+    on the passage's walls upstairs, the only ones up there that take one.
+  - `test.c` (`sight`) holds every one of those claims: each door shut and
+    opening on its plate, the second room refusing a fold, the far wall
+    not hit from the first room or from D with both doors open, hit from
+    the doorway and from the third room's floor, the two near ends, the
+    second room shutting on who's left in it, each operator up on their
+    side by their own fold, and the gate. `shaft` adds the cube made small
+    by the frame, nobody whole getting into the cage, and the small cube
+    on its plate. So the intended way through each is known to work; that
+    there's no shorter one isn't, and nobody has played either.
+  - The owner agreed the next four: a place's pit anywhere, doors and
+    bridges on plates (doors are in, by this), throwing oneself through a
+    fold with a fall's speed, and the lamps as something to switch.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the gate closing on a body
   under it, two operators through one fold at once and the cube in a hole
