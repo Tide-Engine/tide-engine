@@ -69,6 +69,14 @@ its `<id>_page` target and its `private_games` block, plus the id in
   Its isolated C test host is `hot_swap_tests`. Rules and validation are in
   `notes/hot-swap.md`.
 
+- DEADWEIGHT (`deadweight`): `prototypes/deadweight/`, the owner's two-worker
+  cooperative salvage prototype, approved and built on 2026-10-13. Three jobs
+  in one industrial pumping station use Box3D cargo, winches, a bridge and a
+  counterweight. It supports online rooms, shared keyboard and switching alone.
+  `deadweight_page` stages `/prototypes/deadweight/`; `private_games` collects
+  it or the native `deadweight`. Its main target uses STATS. Rules, contracts,
+  tests and coverage are in `notes/deadweight.md`.
+
 - SWINDLE (`swindle`): `prototypes/swindle/`, the competitive publisher-demo
   prototype requested on 2026-10-13. Ninety-second rooftop heists with a growing
   prism, dash steals, fake carriers, moving cash-outs, duel/FFA/2v2, bots,

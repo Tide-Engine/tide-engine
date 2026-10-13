@@ -165,3 +165,10 @@ pass. Site check/build, eighteen analytics/admin checks, production prototype
 HTTP and three SEO checks pass again with all seven catalog ids. HOT SWAP's
 optimized release, staging and production-package page bytes remain identical.
 No shared engine/compiler/runtime implementation changed in that integration.
+
+The first push met the concurrent DEADWEIGHT addition, integrated through
+`03cb14af`. Its game is retained; conflicts again covered catalog/index/gate
+entries only. Native/web debug configuration succeeds with both additions.
+The combined eight-game site passes its production build, zero-warning check,
+eighteen analytics/admin cases and production prototype HTTP check. HOT SWAP
+source and simulation contracts are unchanged; no full-suite restart is needed.
