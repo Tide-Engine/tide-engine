@@ -135,7 +135,7 @@ current.
   has to walk through the gate (the owner's observation, and true); and the
   sizes "felt annoying having to find the right size for it and juggle back
   and forth more than it did satisfying", so the mechanic is to be rethought
-  or polished. Nothing was changed for either yet.
+  or polished. Both are answered by "Co-op and the wall's sizes" below.
 - **The pit takes whoever falls in** (the owner: death "more brutal and
   gore... hands from hell grabbing us down", saws later). An operator whose
   middle is 1.5 m under the floor is `taken`: stopped for 0.35 s, dragged
@@ -148,6 +148,42 @@ current.
   blood, and the partner's view of it was not captured. `chambers_hold`
   checks the catch, the hold and the return. Replay hash
   `5183574008336881480` natively and under WASI, 2/2 and 3/3.
+- **The pit is full of red** (the owner: "the floor should be like a red
+  liquid with hands poking out"): a slab whose top is `PIT_SURFACE`, 0.8 m
+  under the floor, with the 22 arms out of it to the wrist or elbow. A body
+  is caught chin deep (`TAKEN_UNDER` is -1.05 for its middle), and under the
+  surface the picture is red and half dark at once. The red is a box with a
+  flat top: it doesn't move but for a 2 cm swell, and nothing splashes.
+- **Co-op and the wall's sizes (2026-10-13, the owner: "go on the co-op and
+  wall-owned-size recommendations").** These replace what the five chambers
+  above say of plates, sizes and the second chamber.
+  - *Two bodies:* every gate takes two plates weighted at once
+    (`PlateCount` is 2) and there's one cube, so someone stands on the
+    other. Past the gate the lobby has a plate of its own (`HOLD_PLATE`,
+    `Arena.hold`): the one who went through stands on it and the gate stays
+    up for the one who held it open. The lobby's walls take no fold. Alone,
+    Tab still does it, with the other body left on a plate.
+  - *Sizes are the wall's:* the gun shoots whole ends only. A chamber has
+    frames painted on its walls (`Mount`, `MountCount`, `ChamberMount`), and
+    a shot that lands in one or within 0.35 m of it goes into it at its
+    size, 0.5 or 1.5. `PilotInput.size`, `Control.size`, the 1 to 3 keys,
+    the wheel and the ovals under the reticle are gone. The owner had found
+    picking sizes "annoying... more than it did satisfying".
+  - *Chamber 2 is "Apart":* a grille (`Wall.kind` 4: one solid box to the
+    match, bars to the eye) shuts operator A and the cube in the south-west.
+    A shot from either side fizzles on it, so each shoots one end. The cage
+    and its window are gone.
+  - Chamber 3 has a small frame on the east wall by the vent room, with
+    plate B inside the room; 4 a large frame on the south wall; 5 a small
+    one on the west wall by the cube's room and a large one on the south.
+  - `test.c`: one plate alone opens nothing, two do, only while both are
+    weighted, and the lobby's plate keeps the gate up; a shot by a frame
+    takes its size and place and one clear of it is whole; the grille
+    refuses shots from both sides and nobody walks through it, and with an
+    end each the one shut in walks out; the last chamber's two frames take.
+    Not tested or played: any chamber from start to gate, a large operator
+    carrying the cube over the pit, a half one bringing the cube out of the
+    room in 5. Replay hash `17728616113333077166`.
 - P now goes round three pictures for the owner to compare: 300 rows, 480
   (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
