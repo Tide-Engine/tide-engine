@@ -57,9 +57,15 @@ singleton Fold
     [Position] float3 cube = float3(-3, 0.5, -8);
     [Rotation] quaternion cubeTurn = quaternion.identity;
     float cubeScale = 1;
-    int carried = -1;
-    bool tossed;         // The cube was let go of this tick, at `toss`
-    float3 toss;
+    int carried = -1;    // Who has something in their hands, if anyone: the first of them
+    // Every loose thing of the room, a cube or a crate, by its number: where it is, and how many there are.
+    // `cube`, above, is the first's. Each operator holds one at most (its number and one, or 0), and lets go
+    // of or throws one in a tick (`tossing`, at `toss`)
+    float3[8] spots;
+    int count;
+    int[2] holding;
+    int[2] tossing;
+    float3[2] toss;
     float3 ping;
     float pingTime;
     int pingOperator;
@@ -113,8 +119,15 @@ component Operator
     int chamber = -1;
 }
 
+// A loose thing: the cube, or a crate, which is lighter. All are picked up, carried through folds, thrown,
+// stood on and stacked, and weigh a plate.
 component Cube
 {
+    int index;
+    int kind;            // 0 the cube, 1 a crate
+    int holder = -1;
+    [Position] float3 at;
+    [Rotation] quaternion turn = quaternion.identity;
     float3 last;
     float scale = 1;
     int chamber;
@@ -154,7 +167,7 @@ singleton Lurker
     float3 way = float3(1, 0, 0);
     float3 lure;
     float lureLeft;
-    bool wasCube;
+    int wasIn;           // A bit a loose thing, set while it's in the water
     float rush;          // 1 while it's after something
 }
 
@@ -405,16 +418,32 @@ float3 OperatorStart(int level, int id)
     return ARRIVAL + float3(id == 0 ? -1.2 : 1.2, 0, 0);
 }
 
-float3 CubeStart(int level)
+// The loose things a room starts with: the cube first, then crates.
+int CubeCount(int level)
 {
     switch (level)
     {
-        case 1: return float3(0, 0.5, -6);
-        case 2: return float3(7.5, 2.0, -6);
-        case 3: return float3(0, 0.5, -6);
-        case 5: return float3(-7.5, 2.0, -9);
-        case 6: return float3(4.2, 0.5, -16.7);
-        default: return float3(-3, 0.5, -8);
+        case 0: return 4;
+        case 1: return 2;
+        case 2: return 4;
+        case 3: return 2;
+        case 4: return 3;
+        case 5: return 2;
+        default: return 1;
+    }
+}
+
+float3 CubeStart(int level, int index)
+{
+    switch (level)
+    {
+        case 0: return index == 0 ? float3(-3, 0.5, -8) : index == 1 ? float3(-6.4, 0.4, -6) : index == 2 ? float3(-5.6, 0.4, -6) : float3(-6, 1.2, -6);
+        case 1: return index == 0 ? float3(0, 0.5, -6) : float3(2.5, 0.5, -9);
+        case 2: return index == 0 ? float3(7.5, 2.0, -6) : index == 1 ? float3(-4.4, 0.4, -8) : index == 2 ? float3(-3.6, 0.4, -8) : float3(-4, 1.2, -8);
+        case 3: return index == 0 ? float3(0, 0.5, -6) : float3(3, 0.5, -9.5);
+        case 4: return index == 0 ? float3(-3, 0.5, -8) : index == 1 ? float3(1, 0.4, -9) : float3(1, 1.2, -9);
+        case 5: return index == 0 ? float3(-7.5, 2.0, -9) : float3(3, 0.5, -6);
+        default: return float3(4.2, 0.5, -16.7);
     }
 }
 
@@ -442,8 +471,8 @@ float4 Pillar(int level, int index)
     switch (level)
     {
         case 0: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(6.8, 6, 0.45, 0.45);
-        case 1: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-1.5, 2, 0.45, 0.45);
-        case 2: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-7, 9.5, 0.45, 0.45);
+        case 1: return index == 0 ? float4(2, -3, 0.45, 0.45) : float4(-1.5, 2, 0.45, 0.45);
+        case 2: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(2, -9, 0.45, 0.45);
         case 3: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-6.5, 2, 0.45, 0.45);
         case 4: return index == 0 ? float4(-2, -9, 0.45, 0.45) : float4(7, 10.5, 0.45, 0.45);
         default: return index == 0 ? float4(1.5, -8, 0.45, 0.45) : float4(-6, 10, 0.45, 0.45);
@@ -681,17 +710,47 @@ void BuildChamber(mut Arena arena, int level)
     }
 
     // What stands about, where a room has the floor for it: a planter each side, a crate, and the pillars
-    if (level == 0 || level == 1 || level == 3 || level == 4) Raise(arena, float3(-9, 0.36, -11.5), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
-    if (level == 0 || level == 1 || level == 3 || level == 5) Raise(arena, float3(9, 0.36, -7), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
-    if (level == 0 || level == 3) Raise(arena, float3(-8.6, 0.45, 12.3), float3(0.9, 0.9, 0.9), planks, false, 3);
+    if (level == 0 || level == 3) Raise(arena, float3(-9, 0.36, -11.5), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
+    if (level == 0 || level == 1 || level == 3) Raise(arena, float3(9, 0.36, -7), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
+    if (level == 1) Raise(arena, float3(-3.4, 0.36, -7), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
+    if (level == 4 || level == 5) Raise(arena, float3(-3.4, 0.36, -11.5), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
+    if (level == 0) Raise(arena, float3(-8.6, 0.45, 12.3), float3(0.9, 0.9, 0.9), planks, false, 3);
     for (var pillar = 0; pillar < PILLARS && level != BETWEEN; pillar++)
     {
         var box = Pillar(level, pillar);
         Raise(arena, float3(box.x, CEILING_HIGH * 0.5, box.y), float3(0.9, CEILING_HIGH, 0.9), wallpaper);
     }
 
-    arena.cube = Spawn(Cube { chamber = arena.chamber, last = CubeStart(level) }, Body { position = CubeStart(level) },
-          Box { size = float3(CUBE_SIDE), density = 120, friction = 0.7 });
+    // The hall isn't every room's shape: a room fills what it leaves out, from floor to roof, and hangs a beam
+    // or two under its roof
+    if (level == 1) Raise(arena, float3(-6.9, 2.2, -7.7), float3(5.8, 4.4, 10.6), wallpaper, true);
+    if (level == 2)
+    {
+        Raise(arena, float3(-8.15, 2.2, 9.75), float3(3.3, 4.4, 6.5), panels);
+        Raise(arena, float3(8.15, 2.2, 9.75), float3(3.3, 4.4, 6.5), panels);
+    }
+    if (level == 3) Raise(arena, float3(-7.9, 2.2, 9), float3(3.8, 4.4, 8), wallpaper, true);
+    if (level == 4)
+    {
+        Raise(arena, float3(-6.9, 2.2, -9), float3(5.8, 4.4, 8), panels);
+        Raise(arena, float3(0, 3.6, -2.4), float3(19.6, 1.6, 0.8), panels);
+    }
+    if (level == 5)
+    {
+        Raise(arena, float3(7.9, 2.2, -6), float3(3.8, 4.4, 6), panels);
+        Raise(arena, float3(0, 3.6, 4.4), float3(19.6, 1.6, 0.8), panels);
+    }
+    if (level == 0) Raise(arena, float3(0, 3.7, -5), float3(19.6, 1.4, 0.8), wallpaper);
+
+    // The loose things
+    arena.cube = default;
+    for (var index = 0; index < CubeCount(level); index++)
+    {
+        var at = CubeStart(level, index);
+        var made = Spawn(Cube { chamber = arena.chamber, last = at, at = at, index = index, kind = index == 0 ? 0 : 1 }, Body { position = at },
+                         Box { size = float3(CUBE_SIDE), density = index == 0 ? 120.0 : 60.0, friction = 0.7 });
+        if (index == 0) arena.cube = made;
+    }
 }
 
 void ResetChamber(mut Arena arena, mut Fold fold, int level)
@@ -707,11 +766,17 @@ void ResetChamber(mut Arena arena, mut Fold fold, int level)
     arena.caught = 0;
     arena.ticks = 0;
     for (var end = 0; end < 4; end++) fold.ends[end] = Portal { };
-    fold.cube = CubeStart(level);
+    fold.cube = CubeStart(level, 0);
     fold.cubeTurn = quaternion.identity;
     fold.cubeScale = 1;
     fold.carried = -1;
-    fold.tossed = false;
+    fold.count = CubeCount(level);
+    for (var index = 0; index < 8; index++) fold.spots[index] = CubeStart(level, Math.Min(index, CubeCount(level) - 1));
+    for (var hand = 0; hand < 2; hand++)
+    {
+        fold.holding[hand] = 0;
+        fold.tossing[hand] = 0;
+    }
     fold.pingTime = 0;
     fold.fizzleTime = 0;
     fold.traversals = 0;
@@ -913,16 +978,20 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
         lurker.chamber = arena.chamber;
         lurker.at = float3(-7, POOL_SURFACE, middle);
         lurker.lureLeft = 0;
-        lurker.wasCube = false;
+        lurker.wasIn = 0;
     }
-    // The cube going in is the last thing that splashed
-    var cubeIn = fold.carried < 0 && fold.cube.y < POOL_SURFACE && Math.Abs(fold.cube.z - middle) < 2.5;
-    if (cubeIn && !lurker.wasCube)
+    // A loose thing going in is the last thing that splashed
+    mut var nowIn = 0;
+    for (var index = 0; index < fold.count; index++)
     {
-        lurker.lure = fold.cube;
+        var spot = fold.spots[index];
+        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1 || spot.y > POOL_SURFACE || Math.Abs(spot.z - middle) > 2.5) continue;
+        nowIn |= 1 << index;
+        if ((lurker.wasIn & (1 << index)) != 0) continue;
+        lurker.lure = spot;
         lurker.lureLeft = 7;
     }
-    lurker.wasCube = cubeIn;
+    lurker.wasIn = nowIn;
     lurker.lureLeft = Math.Max(0, lurker.lureLeft - time.dt);
     // Up and down the pool with nothing to go for; for the nearest of whoever is in it; for a splash before them
     mut var target = float3(Math.Sin(arena.ticks / 60.0 * 0.35) * 8, POOL_SURFACE, middle);
@@ -1006,7 +1075,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
         pilot.taken += time.dt;
         pilot.grounded = false;
         body.velocity = float3(0, pilot.taken < 0.35 || pilot.shredded ? 0.0 : -1.3, 0);
-        if (fold.carried == pilot.id) fold.carried = -1;
+        fold.holding[pilot.id] = 0;
         if (arena.joined >= 2 || input.active == pilot.id)
         {
             pilot.yaw += input.look.x;
@@ -1031,7 +1100,7 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     var facing = LookDirection(pilot.yaw, pilot.pitch);
     var eye = body.position + float3(0, (EYE_HIGH - BODY_HIGH * 0.5) * pilot.scale, 0);
     // With the cube in hand a click throws it; with empty hands it shoots a fold's end
-    var holding = fold.carried == pilot.id;
+    var holding = fold.holding[pilot.id] > 0;
     var thrown = holding && (input.amber.down || input.cyan.down || input.hurl.down);
     if (!holding && (input.amber.down || input.cyan.down) && arena.level != BETWEEN)
     {
@@ -1051,13 +1120,30 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     if (holding && (input.carry.down || thrown))
     {
         // Let go of, or thrown
-        fold.carried = -1;
-        fold.tossed = true;
-        fold.toss = facing * (thrown ? 11.0 : 1.5);
+        fold.tossing[pilot.id] = fold.holding[pilot.id];
+        fold.toss[pilot.id] = facing * (thrown ? 11.0 : 1.5);
+        fold.holding[pilot.id] = 0;
     }
-    // Alone, the cube is taken from the hands of the body that was left holding it
-    else if (input.carry.down && (fold.carried < 0 || arena.joined < 2) && Reach(fold, eye, fold.cube) < 6.25 * pilot.scale * pilot.scale)
-        fold.carried = pilot.id;
+    else if (input.carry.down)
+    {
+        // The nearest loose thing within reach, straight or through a fold. Alone, it's taken from the hands
+        // of the body that was left holding it
+        mut var best = 0;
+        mut var nearest = 6.25 * pilot.scale * pilot.scale;
+        for (var index = 0; index < fold.count; index++)
+        {
+            if (fold.holding[1 - pilot.id] == index + 1 && arena.joined >= 2) continue;
+            var far = Reach(fold, eye, fold.spots[index]);
+            if (far >= nearest) continue;
+            nearest = far;
+            best = index + 1;
+        }
+        if (best > 0)
+        {
+            if (fold.holding[1 - pilot.id] == best) fold.holding[1 - pilot.id] = 0;
+            fold.holding[pilot.id] = best;
+        }
+    }
     var movement = Math.Normalize(input.move);
     var forward = LookDirection(pilot.yaw, 0);
     var right = float3(forward.z, 0, -forward.x);
@@ -1072,41 +1158,44 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
 // Where a carried cube is held: before its holder's eyes, or through a fold
 // where the arm reaches into one, whichever the cube is nearer.
 [Before(PhysicsStages.Step)]
-system HoldCube(mut Body body, Cube cube, mut Fold fold, Arena arena, query (Operator pilot) operators)
+system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query (Operator pilot) operators)
 {
     if (cube.chamber != arena.chamber)
     {
         this.Destroy();
         return;
     }
-    if (fold.tossed)
+    for (var hand = 0; hand < 2; hand++)
     {
-        fold.tossed = false;
-        mut var toss = fold.toss;
+        if (fold.tossing[hand] != cube.index + 1) continue;
+        fold.tossing[hand] = 0;
+        mut var toss = fold.toss[hand];
         // Thrown through a fold the arm was in, it leaves the other end
         foreach (var entry in operators)
         {
-            var hand = entry.pilot.position + float3(0, EYE_HIGH * entry.pilot.scale, 0);
-            if (Math.DistanceSq(hand, body.position) < 9) continue;
+            if (entry.pilot.id != hand) continue;
+            var reach = entry.pilot.position + float3(0, EYE_HIGH * entry.pilot.scale, 0);
+            if (Math.DistanceSq(reach, body.position) < 9) continue;
             for (var end = 0; end < 4; end++)
             {
                 if (!Linked(fold, end / 2)) continue;
                 var from = fold.ends[end];
                 var to = fold.ends[end ^ 1];
-                if (Math.DistanceSq(FoldPoint(from, to, hand), body.position) < 9) toss = FoldDirection(from, to, fold.toss) * (to.size / from.size);
+                if (Math.DistanceSq(FoldPoint(from, to, reach), body.position) < 9) toss = FoldDirection(from, to, fold.toss[hand]) * (to.size / from.size);
             }
         }
         body.velocity = body.velocity * 0.3 + toss;
         body.gravityScale = 1;
     }
-    if (fold.carried < 0)
+    cube.holder = fold.holding[0] == cube.index + 1 ? 0 : fold.holding[1] == cube.index + 1 ? 1 : -1;
+    if (cube.holder < 0)
     {
         if (body.gravityScale != 1) body.gravityScale = 1;
         return;
     }
     foreach (var entry in operators)
     {
-        if (entry.pilot.id != fold.carried) continue;
+        if (entry.pilot.id != cube.holder) continue;
         var hand = entry.pilot.position + float3(0, 1.15 * entry.pilot.scale, 0);
         var held = hand + LookDirection(entry.pilot.yaw, entry.pilot.pitch) * (1.25 * entry.pilot.scale);
         mut var target = held;
@@ -1127,7 +1216,8 @@ system HoldCube(mut Body body, Cube cube, mut Fold fold, Arena arena, query (Ope
         if (nearest > 16 * entry.pilot.scale * entry.pilot.scale)
         {
             // Out of reach: it's dropped
-            fold.carried = -1;
+            fold.holding[cube.holder] = 0;
+            cube.holder = -1;
             body.gravityScale = 1;
             return;
         }
@@ -1164,7 +1254,7 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
         velocity = float3(0);
         body.position = center;
         body.velocity = velocity;
-        if (fold.carried == pilot.id) fold.carried = -1;
+        fold.holding[pilot.id] = 0;
         this.Snap();
     }
     for (var pair = 0; pair < 2; pair++)
@@ -1213,12 +1303,13 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
     }
     if (center.y < -8)
     {
-        center = CubeStart(arena.level);
+        center = CubeStart(arena.level, cube.index);
         body.position = center;
         body.velocity = float3(0);
         body.angularVelocity = float3(0);
-        fold.carried = -1;
-        fold.Snap();
+        for (var hand = 0; hand < 2; hand++)
+            if (fold.holding[hand] == cube.index + 1) fold.holding[hand] = 0;
+        this.Snap();
     }
     for (var pair = 0; pair < 2; pair++)
         if (AtMouth(fold, pair, center, 0.6 * cube.scale)) fold.busy[pair] = 3;
@@ -1228,16 +1319,24 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
         for (var which = 0; which < 2; which++)
             if (Math.Abs(center.x - DrumAt(arena.ticks, which)) < 1.0) body.velocity = float3(DrumWay(arena.ticks, which) * 7, 6.5, 0);
     }
-    fold.cube = center;
-    fold.cubeTurn = body.rotation;
-    fold.cubeScale = scale;
+    cube.at = center;
+    cube.turn = body.rotation;
+    fold.spots[cube.index] = center;
+    if (cube.index == 0)
+    {
+        fold.cube = center;
+        fold.cubeTurn = body.rotation;
+        fold.cubeScale = scale;
+    }
     if (Math.Abs(scale - cube.scale) > 0.01)
     {
         // At its new size: another body, with this one's speed and spin
-        arena.cube = Spawn(Cube { chamber = cube.chamber, last = center, scale = scale },
-                           Body { position = center, rotation = body.rotation, velocity = body.velocity, angularVelocity = body.angularVelocity,
-                                  gravityScale = body.gravityScale },
-                           Box { size = float3(CUBE_SIDE * scale), density = 120, friction = 0.7 });
+        var again = Spawn(Cube { chamber = cube.chamber, last = center, scale = scale, index = cube.index, kind = cube.kind, holder = cube.holder, at = center,
+                                 turn = body.rotation },
+                          Body { position = center, rotation = body.rotation, velocity = body.velocity, angularVelocity = body.angularVelocity,
+                                 gravityScale = body.gravityScale },
+                          Box { size = float3(CUBE_SIDE * scale), density = cube.kind == 0 ? 120.0 : 60.0, friction = 0.7 });
+        if (cube.index == 0) arena.cube = again;
         this.Destroy();
         return;
     }
@@ -1360,8 +1459,16 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     fold.fizzleTime = Math.Max(0, fold.fizzleTime - time.dt);
     fold.busy[0] = Math.Max(0, fold.busy[0] - 1);
     fold.busy[1] = Math.Max(0, fold.busy[1] - 1);
-    var cubeA = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 0));
-    var cubeB = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 1));
+    // Any loose thing that's been put down weighs a plate
+    mut var cubeA = false;
+    mut var cubeB = false;
+    for (var index = 0; index < fold.count; index++)
+    {
+        if (fold.holding[0] == index + 1 || fold.holding[1] == index + 1) continue;
+        if (Weighs(fold.spots[index], PlatePosition(arena.level, 0))) cubeA = true;
+        if (Weighs(fold.spots[index], PlatePosition(arena.level, 1))) cubeB = true;
+    }
+    fold.carried = fold.holding[0] > 0 ? 0 : fold.holding[1] > 0 ? 1 : -1;
     mut var operatorA = false;
     mut var operatorB = false;
     mut var exiting = 0;

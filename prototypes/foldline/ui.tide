@@ -230,7 +230,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     Draw.Rect(middle + float2(dot * 4, 0), float2(dot * 2, dot), control.active == 0 ? UI_CYAN : UI_VIOLET);
     Draw.Rect(middle - float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
     Draw.Rect(middle + float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
-    if (fold.carried == control.active) Ink("E  DROP      CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter);
+    if (fold.holding[control.active] > 0) Ink("E  DROP      CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter);
 
     // What to do, and the keys that do it.
     var legend = Screen.width > 960;
