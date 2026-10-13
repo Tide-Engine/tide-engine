@@ -10,6 +10,14 @@ production build, zero-error/warning Svelte check, eighteen analytics/admin
 checks and production HTTP test pass. No deployment or CI dispatch.
 
 
+HOT SWAP addition (2026-10-13): the server-only catalog and public-root/
+outside-root asset gates include `hot-swap`, a solo/two-player warehouse
+possession heist. `hot_swap_page` stages its self-contained, STATS-enabled
+page beneath `/prototypes/hot-swap/`; the thumbnail is captured gameplay.
+Admin and production HTTP fixtures cover the new id and its stale aliases.
+The existing catalog/auth/discovery contract is unchanged. Game validation
+and remaining playtest gaps are in `notes/hot-swap.md`. No deployment or CI.
+
 DEADWEIGHT catalog addition (2026-10-13): the approved cooperative salvage
 prototype adds `deadweight` to the server-only catalog, public-root and
 outside-root asset gates, and both prototype test id lists. Its self-contained

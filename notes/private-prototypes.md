@@ -70,6 +70,14 @@ its `<id>_page` target and its `private_games` block, plus the id in
   publisher material, tests and limitations are in `notes/copper-coil.md`.
 
 
+- HOT SWAP (`hot-swap`): `prototypes/hot-swap/`, requested on 2026-10-13,
+  a solo/two-player warehouse possession heist. Electrical creatures borrow
+  cleaners, forklifts, cameras and door controllers to free a storm case and
+  escape by ducts, loading shutters or shipping belt. `hot_swap_page` stages
+  its public page; `private_games` collects it or native `hot_swap`, with STATS.
+  Its isolated C test host is `hot_swap_tests`. Rules and validation are in
+  `notes/hot-swap.md`.
+
 - DEADWEIGHT (`deadweight`): `prototypes/deadweight/`, the owner's two-worker
   cooperative salvage prototype, approved and built on 2026-10-13. Three jobs
   in one industrial pumping station use Box3D cargo, winches, a bridge and a

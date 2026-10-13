@@ -11,6 +11,11 @@ const prototypes = [
         image: '/prototypes/copper-coil/thumbnail.png',
     },
     {
+        id: 'hot-swap', title: 'HOT SWAP', kind: 'Cooperative heist · Machine possession', players: '1–2 players',
+        description: 'Electrical creatures borrow cleaners, forklifts, cameras and door controllers to steal a captive storm. Rearrange the warehouse, split jobs with a friend and improvise an escape through maintenance ducts, loading shutters or the shipping conveyor.',
+        image: '/prototypes/hot-swap/thumbnail.png',
+    },
+    {
         id: 'deadweight', title: 'DEADWEIGHT', kind: 'Cooperative salvage · Physics', players: '1–2 players',
         description: 'Two workers extract enormous machinery from an abandoned pumping station. Rig winches, balance lifting lines, walk on your cargo and use a loose ballast as a counterweight. Three physical salvage jobs, online or on a shared keyboard.',
         image: '/prototypes/deadweight/thumbnail.png',
