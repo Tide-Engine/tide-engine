@@ -65,6 +65,10 @@ be replaced. Where Match and controls below differs, this section is current.
   changed). Not checked: two players through one fold at once, the cube
   wedged in a hole when a fold is moved (its wall closes on it), cost on a
   slow machine.
+- **The room's floor runs on under its walls,** so inside a hole it lay over
+  the sill of what's seen through the fold, and hid the foot of a cube
+  crossing it (the owner's screenshot). `InFold` now discards the room's
+  boxes anywhere in the opening up to 0.9 m past the face.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the watcher's pillars and the
   props are where they were.

@@ -628,8 +628,10 @@ bool InFold(float3 world, float3 wall, float3 face)
 {
     float3 from = world - wall;
     float depth = Math.Dot(from, face);
-    if (depth > 0.12 || depth < -0.05) return false;
-    return Opening(float2(Math.Dot(from, Math.Cross(float3(0, 1, 0), face)), from.y)) < -0.002;
+    if (depth > 0.12 || depth < -0.9) return false;
+    // Past the face, inside the wall, nothing of the room shows in the opening: the floor that runs on under
+    // the wall would lie over the sill of what's seen through the fold
+    return Opening(float2(Math.Dot(from, Math.Cross(float3(0, 1, 0), face)), from.y)) < (depth < -0.001 ? 0.04 : -0.002);
 }
 
 // Whether a place is past a fold's wall's face: a thing part of the way through stops there, and the rest of
