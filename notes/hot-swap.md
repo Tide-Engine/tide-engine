@@ -156,3 +156,12 @@ Android, sanitizers, real phones/gamepads, two physical PCs/Internet latency,
 real-relay host migration, or a human fun/duration playtest. No CI or deployment
 was dispatched. The public website gains the page when its normal manually
 requested Docs workflow next deploys; the handoff is a running localhost page.
+
+Integration through origin/dev `a2ae312f` retains the incoming SWINDLE catalog/
+build entries, FOLDLINE fixes and NIGHT ROUTE removal. Conflicts were limited
+to the shared prototype registrations and notes; both new games are retained.
+The resolved native/web debug HOT SWAP targets rebuild and all fourteen cases
+pass. Site check/build, eighteen analytics/admin checks, production prototype
+HTTP and three SEO checks pass again with all seven catalog ids. HOT SWAP's
+optimized release, staging and production-package page bytes remain identical.
+No shared engine/compiler/runtime implementation changed in that integration.
