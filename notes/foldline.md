@@ -1161,3 +1161,12 @@ reveal before the forward door opens. Standard-host captures visually check
 the paired Small rooms, cube clamps, bare pillars and Undertow's filled doorway
 and threshold. Later rooms do not yet have full input-driven solves; live
 human co-op and sound balance remain unverified. No CI was dispatched.
+
+Final validation after merging the concurrent gallery hardening: the grilles
+reach the roof, the boosted-on-player-and-cube bypass regression remains, and
+the H hint legend is retained. Native debug passes 2/2 scoped tests; web debug
+passes 3/3 (WASI, WebGL 2 and WebGPU with graphics validation enabled), using
+Node 24.16.0. Native and WASI replay hashes both equal
+`14010256285904244944`. All thirteen transition checks and both submerged-red
+checks pass on each GPU backend. Only this game's targets/suites were run;
+other platforms and CI were not run.
