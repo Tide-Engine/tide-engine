@@ -81,6 +81,10 @@ pass with the final transport. Production docs and all ten admin/HTTP checks
 pass. Isometric alignment is pinned with a single flat model so identical
 overlapping models cannot hide a mirrored camera. No CI was dispatched;
 other host operating systems, Rider itself and Android were not run here.
+Integration through origin/dev 7e490870 is clean. Incoming changes touch only
+prototype-removal notes and its docs HTTP check; no editor/compiler/runtime
+dependency changed. The merged production docs build and ten admin/HTTP checks
+pass, including the new removed-route assertions.
 
 ## Compiled authored-view preview (2026-10-13)
 
