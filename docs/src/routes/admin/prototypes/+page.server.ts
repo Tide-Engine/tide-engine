@@ -6,6 +6,11 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'night-route', title: 'NIGHT ROUTE', kind: 'Delivery strategy · Strange cargo', players: '1 player',
+        description: 'A late shift in Willow Quarter. Choose up to three parcels that demand lamplight, constant movement, north-facing travel or fresh streets. Plan the handoffs, risk the dark shortcuts, and deliver the whole bundle for a bonus before dawn.',
+        image: '/prototypes/night-route/thumbnail.png',
+    },
+    {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
         description: 'Fold space together in a sunlit research atrium. Place linked portals, look through them into the other side, and carry a resonance cube across the divide. Play both operators alone or solve the chambers with a partner.',
         image: '/prototypes/foldline/thumbnail.png',
