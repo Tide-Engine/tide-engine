@@ -652,6 +652,31 @@ async function openDevTools() {
     await vscode.commands.executeCommand('workbench.action.webview.openDeveloperTools');
 }
 
+// The native authoring app remains open independently of this IDE window.
+async function openPrefab(resource) {
+    if (!vscode.workspace.isTrusted) {
+        vscode.window.showErrorMessage('Tide: prefab preview can run project code; trust this workspace before opening the editor.');
+        return;
+    }
+    const document = vscode.window.activeTextEditor?.document;
+    const uri = resource ?? document?.uri;
+    if (uri?.scheme !== 'file' || path.extname(uri.fsPath).toLowerCase() !== '.tprefab') {
+        vscode.window.showErrorMessage('Tide: select or open a .tprefab file.'); return;
+    }
+    const found = gameFolder(uri.fsPath);
+    if (found.error) { vscode.window.showErrorMessage(`Tide: ${found.error}`); return; }
+    const configured = settingProgram('path', 'tide', vscode.Uri.file(found.folder));
+    const tide = configured ? configured.file : installedProgram('tide');
+    if (!tide) {
+        await missing(configured ? `Tide: ${configured.error}` : "Tide: couldn't find tide. Install it, or set tide.path.", 'tide.path'); return;
+    }
+    if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
+    const child = spawn(tide, ['open', uri.fsPath, '--project', found.folder],
+        { cwd: found.folder, windowsHide: true, detached: true, stdio: 'ignore' });
+    child.on('error', error => vscode.window.showErrorMessage(`Tide: couldn't open the prefab editor: ${error.message}`));
+    child.unref();
+}
+
 function activate(context) {
     output = vscode.window.createOutputChannel('Tide', { log: true });
     trace = traceChannel();
@@ -663,6 +688,7 @@ function activate(context) {
         vscode.commands.registerCommand('tide.runWeb', () => run('web')),
         vscode.commands.registerCommand('tide.runAndroid', () => run('android')),
         vscode.commands.registerCommand('tide.openDevTools', openDevTools),
+        vscode.commands.registerCommand('tide.openPrefab', openPrefab),
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('tide.server.path')) restart();
         }),

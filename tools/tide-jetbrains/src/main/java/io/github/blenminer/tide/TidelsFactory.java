@@ -76,7 +76,7 @@ public final class TidelsFactory implements LanguageServerFactory, LanguageServe
     // older TrustedProjects.isTrusted, which it replaces. Looked up by name:
     // 2024.2 lacks the first, and later platforms deprecate the second. Not
     // trusted when neither answers.
-    private static boolean isTrusted(@NotNull Project project) {
+    static boolean isTrusted(@NotNull Project project) {
         final String[][] apis = {
             {"com.intellij.ide.trustedProjects.TrustedProjects", "isProjectTrusted"},
             {"com.intellij.ide.impl.TrustedProjects", "isTrusted"},

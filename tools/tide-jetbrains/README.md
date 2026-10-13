@@ -26,6 +26,11 @@ Tide's repo, the game `build/tools/games.txt` lists it in. For a file
 of a package no game here lists), running says why. Errors and warnings in the Run console link to their
 place in the file.
 
+An existing `.tprefab` offers **Open Tide Prefab Editor** in the project/editor
+context menu. It requires project trust, saves that prefab and launches installed
+Tide's native app in the file's game context. The app is a separate window; save
+script changes in the IDE to refresh its compiled preview.
+
 ## Colors
 
 JetBrains' dark schemes draw type names like plain text, as in Java, so

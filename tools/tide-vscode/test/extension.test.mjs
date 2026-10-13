@@ -60,6 +60,7 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
         child.stdin.write = value => child.writes.push(value);
         child.kills = 0;
         child.kill = () => { child.kills++; };
+        child.unref = () => { child.unreferenced = true; };
         children.push({ file, args, options, child });
         return child;
     };
@@ -80,8 +81,33 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
     })[name] };
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox);
-    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle, signals };
+    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand, openPrefab})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle, signals };
 }
+
+test('Native prefab launch uses the selected file, project and configured executable without a shell', async () => {
+    const e = editor({ settings: { path: { globalValue: 'C:\\Tide tools\\tide.exe' } },
+        files: ['C:\\Tide tools\\tide.exe', 'C:\\game\\tide.packages'] });
+    await e.api.openPrefab(e.vscode.Uri.file('C:\\game\\assets\\Some Level.tprefab'));
+    assert.equal(e.children.length, 1);
+    const c = e.children[0];
+    assert.deepEqual(Array.from(c.args), ['open', 'C:\\game\\assets\\Some Level.tprefab', '--project', 'C:\\game']);
+    assert.equal(c.options.windowsHide, true); assert.equal(c.options.stdio, 'ignore');
+    assert.equal(c.child.unreferenced, true);
+    c.child.emit('error', new Error('missing editor')); assert.match(e.notifications.at(-1), /missing editor/);
+});
+
+test('Native prefab launch refuses Restricted Mode and saves a dirty active prefab before launching', async () => {
+    const locked = editor({ trusted: false });
+    await locked.api.openPrefab(locked.vscode.Uri.file('C:\\game\\Level.tprefab'));
+    assert.equal(locked.children.length, 0); assert.match(locked.notifications[0], /trust/);
+    const e = editor({ files: ['C:\\Tide\\bin\\tide.exe'], env: { PATH: 'C:\\Tide\\bin' } });
+    let saves = 0;
+    e.vscode.window.activeTextEditor = { document: { uri: e.vscode.Uri.file('C:\\game\\Level.tprefab'), isDirty: true,
+        save: async () => { saves++; return false; } } };
+    await e.api.openPrefab(); assert.equal(saves, 1); assert.equal(e.children.length, 0);
+    e.vscode.window.activeTextEditor.document.save = async () => true;
+    await e.api.openPrefab(); assert.equal(e.children.length, 1);
+});
 
 test('Restricted Mode skips workspace servers on PATH and keeps searching', () => {
     const e = editor({ trusted: false, env: { PATH: 'C:\\game\\bin;C:\\tide\\bin' }, files: ['C:\\game\\bin\\tidels.exe', 'C:\\tide\\bin\\tidels.exe'] });

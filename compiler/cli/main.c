@@ -159,6 +159,16 @@ int main(const int argc, char **argv)
     char *builtin = path_join(root, "src/packages");
     packages_set_builtin_folder(builtin);
     free(builtin);
+    if (strcmp(command, "_editor-preview") == 0) {
+        if (argc != 8 || (strcmp(argv[7], "match") && strcmp(argv[7], "local"))) return 2;
+        setvbuf(stdout, NULL, _IONBF, 0); setvbuf(stderr, NULL, _IONBF, 0);
+        const char *defines[] = {"DEBUG"};
+        const build_options opts = {.folder=argv[2], .editor_source=argv[3], .editor_draft=argv[4], .editor_prefab=argv[5],
+            .output=argv[6], .editor_local=strcmp(argv[7], "local") == 0, .defines=defines, .define_count=1};
+        char *built = tide_build_editor(root, &opts);
+        const int result = built ? 0 : 1;
+        free(built); free(root); return result;
+    }
     tide_cleanup(root);
 
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0) return version(root);

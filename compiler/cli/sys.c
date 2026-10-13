@@ -490,7 +490,15 @@ static bool start_process(const char *const *argv, const char *cwd, const bool q
         startup.hStdOutput = output;
         startup.hStdError = output;
     }
-    const BOOL started = CreateProcessA(NULL, command, NULL, NULL, redirected, 0, NULL, cwd, &startup, process);
+    if (!redirected) {
+        // GUI-subsystem programs (the native editor) also need the caller's
+        // pipe handles for --check and bounded-run diagnostics.
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    }
+    const BOOL started = CreateProcessA(NULL, command, NULL, NULL, TRUE, redirected ? CREATE_NO_WINDOW : 0, NULL, cwd, &startup, process);
     if (command != line) free(command);
     free(line);
     if (output != INVALID_HANDLE_VALUE) CloseHandle(output);

@@ -8,6 +8,11 @@ declaration to a file of its own, and each system's schedule above it, for
 `.tide` files. It works in
 VS Code, Cursor, VSCodium and Windsurf.
 
+**Tide: Open Prefab Editor**, in a `.tprefab`'s Explorer context menu or editor
+title, opens the native scene app beside the IDE. It requires workspace trust,
+uses `tide.path` or the installed command, and saves a dirty active prefab first.
+Save script changes to refresh the scene app; its window stays open independently.
+
 tide's installer adds this extension to the editors it finds, and `tide
 editors` adds it again, for example after installing a new editor. The
 language server is `tidels`, which comes with tide. The extension runs it from

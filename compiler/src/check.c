@@ -16610,6 +16610,28 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
             if (prog->archetype_local.items[a] != sys->entity_local) continue;
             if (filters_admit(prog, sys, prog->archetypes.items[a], &prog->possible.items[a])) matched = true;
         }
+        // An authoring preview constructs its selected prefab directly. These
+        // combinations need no Spawn in ordinary game code; either placement
+        // can be selected in the editor, subject to the view's usual filters.
+        if (!matched && prog->editor_authoring && sys->is_view && (sys->run_in_editor || sys->editor_only)) {
+            for (int d = 0; d < prog->decls.count && !matched; d++) {
+                const prefab_instance *p = prog->decls.items[d]->prefab_checked;
+                if (!p) continue;
+                for (int e = 0; e < p->entities.count && !matched; e++) {
+                    comp_mask mask = mask_none();
+                    const expr *spawn = p->entities.items[e].spawn;
+                    for (int k = 0; k < spawn->args.count; k++) mask = mask_or(mask, bit(spawn->args.items[k]->type_decl));
+                    comp_mask need = mask_none(), without = mask_none();
+                    for (int k = 0; k < prog->components.count; k++) {
+                        const decl *comp = prog->components.items[k];
+                        const decl *base = comp->placement_of ? comp->placement_of : comp;
+                        if (mask_has(sys->need_mask, k)) need = mask_or(need, bit(base));
+                        if (mask_has(sys->without_mask, k)) without = mask_or(without, bit(base));
+                    }
+                    matched = mask_subset(need, mask) && !mask_intersects(mask, without);
+                }
+            }
+        }
         if (!matched) {
             diag_warning(sys->at, "%s '" STR_FMT "' never runs: no entity matches its parameters", system_what(sys),
                          STR_ARG(sys->name));
@@ -17036,6 +17058,14 @@ static void check_attributes(checker *c)
         bool stage_seen = false;
         for (int a = 0; a < d->attributes.count; a++) {
             attribute *attr = &d->attributes.items[a];
+            if (str_eq_c(attr->name, "RunInEditor") || str_eq_c(attr->name, "EditorOnly")) {
+                if (!d->is_view) diag_error(attr->at, "" STR_FMT " applies to views only; editor preview does not run systems or handlers", STR_ARG(attr->name));
+                else if (attr->args.count || attr->values.count) diag_error(attr->at, "" STR_FMT " takes no arguments", STR_ARG(attr->name));
+                else if (d->run_in_editor || d->editor_only) diag_error(attr->at, "a view declares its editor inclusion once: choose RunInEditor or EditorOnly");
+                else if (str_eq_c(attr->name, "EditorOnly")) d->editor_only = true;
+                else d->run_in_editor = true;
+                continue;
+            }
             if (str_eq_c(attr->name, "Stage")) {
                 if (stage_seen) {
                     diag_error(attr->at, "'" STR_FMT "' already has a Stage", STR_ARG(d->name));
@@ -17109,6 +17139,8 @@ static void check_attributes(checker *c)
                 diag_error(attr->at, "unknown attribute '" STR_FMT "'", STR_ARG(attr->name));
                 suggestion s = suggest_start(attr->name);
                 suggest_consider_c(&s, "Before");
+                suggest_consider_c(&s, "RunInEditor");
+                suggest_consider_c(&s, "EditorOnly");
                 suggest_consider_c(&s, "After");
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");

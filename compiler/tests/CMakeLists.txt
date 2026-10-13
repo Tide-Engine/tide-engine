@@ -70,6 +70,33 @@ tide_e2e_test(random) # Random's state in the world, and the match's seed: the s
 tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
 tide_e2e_test(gpu_rolls) # ...and in frags and verts: the frame's number and the seed their draws send, alike for a frame's draws
 tide_e2e_test(views)
+tide_e2e_test(editor_views)
+# Compile the private native-preview entry point as C on both native and web
+# test hosts. The editor itself dynamically loads this ABI only on desktop.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/preview-include/tide")
+configure_file("${PROJECT_SOURCE_DIR}/tools/tide-editor/preview_api.h"
+    "${CMAKE_CURRENT_BINARY_DIR}/preview-include/tide/editor_preview.h" COPYONLY)
+foreach(placement match local)
+    set(preview_dir "${CMAKE_CURRENT_BINARY_DIR}/preview-${placement}")
+    set(preview_flags "")
+    set(preview_local 0)
+    if(placement STREQUAL "local")
+        set(preview_flags --editor-local)
+        set(preview_local 1)
+    endif()
+    add_custom_command(OUTPUT "${preview_dir}/game.c" "${preview_dir}/game.h"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${preview_dir}"
+        COMMAND "${TIDEC_PATH}" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/editor_views.tide"
+            --editor-prefab Preview ${preview_flags} --no-line --name game -o "${preview_dir}"
+        DEPENDS ${TIDEC_DEPENDS} "e2e/editor_views.tide" VERBATIM)
+    add_executable(tidec_editor_preview_${placement} "${preview_dir}/game.c"
+        editor_preview_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_compile_definitions(tidec_editor_preview_${placement} PRIVATE EDITOR_LOCAL=${preview_local})
+    target_include_directories(tidec_editor_preview_${placement} PRIVATE "${preview_dir}"
+        "${CMAKE_CURRENT_BINARY_DIR}/preview-include" "${PROJECT_SOURCE_DIR}/platform/include" "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_editor_preview_${placement} PRIVATE tide)
+    add_test(NAME tidec_editor_preview_${placement} COMMAND tidec_editor_preview_${placement})
+endforeach()
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it

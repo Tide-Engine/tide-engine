@@ -30,6 +30,9 @@ typedef struct codegen_options {
     const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL
     const char *const *defines; // The symbols the build defines for every file's #if (`--define FAST`, DEBUG), or NULL
     int define_count;
+    const char *editor_prefab; // Internal native-editor build: qualified prefab to instantiate without gameplay startup.
+    bool editor_local;
+    const char *editor_source, *editor_text; // Unsaved source overlay, retaining the original path and asset scope.
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

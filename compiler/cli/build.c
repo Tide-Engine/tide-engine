@@ -1748,11 +1748,16 @@ static bool generate(build *b, const char *gen, const bool layout)
     game_info next_info = {0};
     char *pack = pack_of(gen);
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
+    char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
+    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); return false; }
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout, .externs = &b->externs,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
                                      .strip_unused_assets = strip_game_assets(b, layout),
-                                     .defines = b->opts->defines, .define_count = b->opts->define_count};
+                                     .defines = b->opts->defines, .define_count = b->opts->define_count,
+                                     .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
+                                     .editor_source = b->opts->editor_source, .editor_text = editor_text};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
+    free(editor_text);
     if (ok) {
         free_asset_paths(&b->info);
         b->info = next_info;
@@ -1966,6 +1971,21 @@ static bool build_library(run *r)
     free(pdb);
     free(library);
     return ok;
+}
+
+char *tide_build_editor(const char *root, const build_options *opts)
+{
+    if (!opts->editor_prefab || !opts->output || opts->web || opts->android) return NULL;
+    run r = {0};
+    if (!build_setup(&r.b, root, opts, true)) return NULL;
+    r.dir = path_absolute(opts->output);
+    r.gen = path_join(r.dir, "gen");
+    if (!sys_mkdirs(r.gen)) return NULL;
+    char *stub = path_join(r.gen, "library.c");
+    const bool wrote = sys_write_text(stub, "#include \"game.h\"\n");
+    free(stub);
+    if (!wrote || !build_library(&r)) return NULL;
+    return build_path(&r, 1, LIBRARY_SUFFIX);
 }
 
 // The host: tide/host.h's loop, reloading the libraries in the run's folder.

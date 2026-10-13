@@ -1,5 +1,60 @@
 # Language features, as tidec builds them
 
+## View inclusion in authored preview (2026-10-13)
+
+The owner approved views-only preview after discussing initialization and the
+ambiguity of [Editor]. [RunInEditor] includes a view in both normal and preview
+frames; [EditorOnly] includes it only in preview. Unmarked views are game-only.
+Attributes take no arguments, are mutually exclusive, and reject systems and
+handlers. Normal view capabilities and ordering still apply. The checker reads
+these attributes after bodies; codegen selects the scheduled views before binding
+their hidden draw/GUI parameters. Excluded views have no run/body wrapper.
+
+Private codegen_options select an editor prefab/placement and an optional source
+overlay. compile_inputs preserves the original source path for asset/namespace
+resolution, rejects an overlay outside the chosen source boundary, and injects
+a checked private Spawn factory. This derives ordinary archetypes and prefab
+recorders instead of adding a runtime type registry. Preview world/local startup
+omits Main; command dispatch and Forgotten callbacks omit user handlers, and
+frames omit the match-event listener path. Systems are never ticked by this host.
+Views can construct local visual state through ordinary helper/task capabilities.
+Generated editor_codegen.inc owns the isolated module and viewport drawing;
+details and limitations are in notes/editors.md. No new runtime function was
+required, and ordinary game callback signatures remain unchanged.
+
+Correction found by the new fixture: a nested prefab with no Transform anywhere
+crashed gen_hierarchy when its optional Transform load had no C type, especially
+in local placement. check_prefab_spawn now ensures the Transform placement needed
+by parenting helpers, just as explicit SetParent already did. It does not add a
+Transform instance to authored entities. The same transformless root/child tree
+is exercised in normal game and both preview-mode tests.
+
+Coverage: editor_views E2E proves game startup/events/systems and normal/shared
+views still run, while EditorOnly does not; private preview hosts pin the
+complementary selection, defaults, full nested tree, no gameplay startup,
+resize and repeated cleanup for match/local placement on native and WASI.
+Three compiler error fixtures reject wrong target, arguments and duplicate
+inclusion. Native/LSP analysis also recognizes opted-in views against composed
+prefabs that ordinary game code never spawns. Existing unmarked-game unreachable
+warnings remain intact. Native integration checks actual shader output and
+draft rebuild behavior through the installed CLI/editor, rather than checking
+generated strings alone.
+
+Validation on Windows: complete native/web debug builds and all 2,266 native
+and 2,231 web CTests pass, including native OpenGL and WebGL/WebGPU. Final
+editor/LSP changes also pass the eight focused native CTests (full server,
+stdio, both preview hosts, game selection and document/CLI/UI). The installed
+CLI/editor, staged with this checkout's MinGW platform library and pinned
+toolchain, passes preview.mjs; bounded native PNGs show the custom shader and
+unsaved overrides. The VS Code extension bundles successfully; all 259 combined
+grammar/adapter checks pass. JetBrains buildPlugin and its isolated platform
+tests pass on JDK 21 against IntelliJ 2024.2.6. The MinGW release native editor
+also builds and passes its real --check, covering its GUI-subsystem CRT entry.
+All nine Windows installer cases
+pass with mocked registry writes, and the production docs build passes.
+Other host OSes, Android, sanitizers and plugin verification against newer IDEs
+were not run; no CI workflow or real installer/association action was invoked.
+
 ## Checked static asset references (2026-10-12)
 
 The owner approved checked asset-reference fields for prefab model selections.

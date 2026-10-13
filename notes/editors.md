@@ -1,5 +1,63 @@
 # The language server and the editors
 
+## Compiled authored-view preview (2026-10-13)
+
+The native editor has an explicit Views toggle (off by default), plus --preview
+and --local-preview. It compiles selected [RunInEditor]/[EditorOnly] views through
+the ordinary project/package/native C pipeline, using the applied unsaved prefab
+as a source overlay at its original path. The selected prefab's complete tree is
+constructed in match or local placement before any view runs. Main, Spawned,
+ordinary/verified/local/Forgotten event handlers and systems do not initialize it.
+Singleton/component defaults still evaluate normally, including trusted helpers.
+Views retain normal capabilities and own local visual state/tasks; match time is
+frozen, input neutral, and no session/audio/IO services are hosted. This is not a
+sandbox for extern C. Authoring analysis counts composed prefab component sets
+when checking opted-in views for unreachable filters, in both native UI and tidels.
+Normal game compilation still checks its own reachable archetypes.
+
+preview.c schedules one background CLI helper at a time and accepts only the
+current document revision. Applied edits, undo/redo, switching prefab roots,
+source changes and detected asset changes trigger fresh worlds. Failed C/link
+builds preserve the old module with a stale banner and visible diagnostics.
+Bounded captures/scripts wait for the current build and fail on build errors.
+Disabling views waits asynchronously for a worker already running, then releases
+its module; close waits for the worker, avoiding abandoned compiler children.
+Build outputs/logs persist beneath .tide/editor-preview/<pid>-<revision>-<side>.
+
+The private version-1 preview ABI is installed as tide/editor_preview.h, from
+tools/tide-editor/preview_api.h. Module allocations, world/local state, GUI and
+draw lists never cross CRT ownership boundaries (MSVC editor vs MinGW game).
+The module renders Draw/Draw.window and GUI into its viewport-sized target, then
+composites it into the host window. The editor copies its prepared commands and
+forgets target/mesh/shader caches before unloading; metadata pointers remain valid
+through synchronous submission. Initial 2D/3D cameras follow editor pan/zoom and
+XY/isometric projection, with renderer z conversion compensated to align markers.
+Views can override the camera; markers still follow the editor camera. Mesh
+picking, gizmos, host services, systems in preview and IDE embedding remain gaps.
+No engine/runtime functions or public game callback signatures were changed.
+
+VS Code exposes Tide: Open Prefab Editor in Explorer/title and respects configured
+tide.path, workspace trust and game/package folder discovery. A dirty active
+prefab saves first; the app's process is independent of extension deactivation.
+JetBrains exposes Open Tide Prefab Editor in project/editor menus, using installed
+Tide and existing trusted-project detection. It saves the selected prefab and
+reports process failures. Neither integration embeds the viewport. Windows builds
+give tide-editor the GUI subsystem with the ordinary main CRT entry: Explorer
+does not create an extra console, and inherited CLI pipes retain --check output.
+
+Coverage: compiler E2E game-mode selection and private preview ABI tests on
+native/WASI pin shared vs editor-only views, root/child defaults, no startup/events
+or systems, both placements, resize and cleanup/recreation. Error fixtures reject
+wrong targets, arguments and conflicting inclusion. LSP tests cover completion,
+hover, diagnostics and authored matches without ordinary Spawn; the native
+document test covers the same warning correction. Installed preview.mjs checks
+actual custom fragment-shader pixels and editor-only shapes, nested models,
+invalid cross-placement references, local placement at another viewport size,
+unsaved overrides/undo/redo, root selection, disable/re-enable and link errors.
+The VS Code adapter tests cover launch arguments/paths, trust, save refusal and
+spawn errors; the isolated IntelliJ test checks registered action visibility.
+Final validation is recorded with this feature in notes/language.md.
+
 ## Static model preview and assignment (2026-10-12)
 
 The native editor now browses static Mesh assets, including each resolved list/map

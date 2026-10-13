@@ -3,6 +3,11 @@ package io.github.blenminer.tide;
 import com.intellij.execution.configurations.ConfigurationTypeUtil;
 import com.intellij.execution.configurations.RuntimeConfigurationError;
 import com.intellij.execution.actions.ConfigurationContext;
+import com.intellij.openapi.actionSystem.ActionManager;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.ActionPlaces;
+import com.intellij.openapi.actionSystem.CommonDataKeys;
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext;
 import com.intellij.execution.filters.Filter;
 import com.intellij.execution.filters.OpenFileHyperlinkInfo;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -14,6 +19,20 @@ import java.nio.file.Path;
 
 // Real IntelliJ settings, VFS, console hyperlinks and configuration storage.
 public final class TidePlatformTest extends BasePlatformTestCase {
+    public void testNativePrefabActionIsRegisteredAndOnlyOfferedForPrefabs() throws Exception {
+        final var action = ActionManager.getInstance().getAction("Tide.OpenPrefab");
+        assertNotNull(action);
+        final Path folder = Files.createTempDirectory("tide-platform-");
+        for (final String name : new String[]{"Level.tprefab", "game.tide"}) {
+            final Path file = folder.resolve(name); Files.writeString(file, "");
+            final var virtual = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(file);
+            final var data = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject())
+                .add(CommonDataKeys.VIRTUAL_FILE, virtual).build();
+            final var event = AnActionEvent.createFromAnAction(action, null, ActionPlaces.UNKNOWN, data);
+            action.update(event);
+            assertEquals(name.endsWith(".tprefab"), event.getPresentation().isEnabledAndVisible());
+        }
+    }
     public void testConsoleHyperlinkUsesFileAndOneBasedCoordinates() throws Exception {
         final Path folder = Files.createTempDirectory("tide-platform-");
         Files.writeString(folder.resolve("game file.tide"), "scene Main {}\n// target\n");

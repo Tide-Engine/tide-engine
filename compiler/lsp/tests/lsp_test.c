@@ -390,6 +390,24 @@ TIDE_TEST(lsp_field_attributes)
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
 }
 
+TIDE_TEST(lsp_editor_view_attributes)
+{
+    start();
+    const char *names = complete("[$] view Render() { }\nscene Main { }\n");
+    TIDE_CHECK(offers(names, "RunInEditor") && offers(names, "EditorOnly"));
+    open_document("[RunIn$Editor] view Render() { }\nscene Main { }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "both game rendering and the authored prefab preview"));
+    open_document("[Editor$Only] view Render() { }\nscene Main { }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "not in game frames"));
+    open_document("scene Main {}\ncomponent Body { int value; }\nprefab Level { Body; }\n"
+        "[RunInEditor] view DrawBody(Body body) { Draw.Circle(float2(body.value,0),1,Color.white); }\n"
+        "[EditorOnly] view DrawLocal(local Body body) { Draw.Circle(float2(body.value,0),1,Color.white); }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    open_document("[RunInEditor] system Update() { }\nscene Main { }\n");
+    TIDE_CHECK(has(sent[0], "applies to views only"));
+}
+
 TIDE_TEST(lsp_complete_builtin_owners)
 {
     start();

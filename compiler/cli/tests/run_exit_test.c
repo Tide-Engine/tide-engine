@@ -10,6 +10,7 @@
 
 static char calls[16];
 int tide_open(int argc, char **argv) { (void)argc; (void)argv; return 0; }
+char *tide_build_editor(const char *root, const build_options *opts) { (void)root; (void)opts; return NULL; }
 static size_t call_count;
 static const char *passed[40]; // What the last run was given for its game
 static int passed_count;

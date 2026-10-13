@@ -2130,6 +2130,13 @@ input PlayerInput
 
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
+- `[RunInEditor]` on a view includes it in game frames and authored prefab
+  preview. `[EditorOnly]` includes it only in preview; unmarked views are game
+  only. Choose one, without arguments. Neither applies to systems or handlers.
+  The same view access rules apply in preview. The editor constructs the whole
+  selected prefab from authored values/defaults before running views, without
+  Main, gameplay event handlers or simulation systems. Local visual state is
+  isolated from authored data and starts fresh on a successful rebuild.
 - Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
 - Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
@@ -3266,9 +3273,25 @@ component Aim
 - The viewport uses transform markers with local TRS/parent composition, XY or
   isometric projection, zoom and pan. It interprets a limited set of constant
   TRS expressions; unsupported transforms and their subtrees are visibly omitted.
-  No game views, meshes or scripts run there. `--check` validates without a
-  window; bounded `--frames`/`--capture`/`--script` modes use the native platform
-  loop. UI details and controls remain provisional.
+  The fixed preview draws named static mesh references with editor lighting.
+  `--check` validates without a window; bounded `--frames`/`--capture`/`--script`
+  modes use the native platform loop. UI details and controls remain provisional.
+- Compiled view preview (2026-10-13): off by default, enabled by Views or
+  `--preview`/`--local-preview`. Native modules use normal project/package/C
+  compilation and the current unsaved prefab as a source overlay at its original
+  path. Selected match/local placement retains normal component/reference checks.
+  The editor supplies initial 2D/3D cameras and viewport dimensions; views may
+  override them, but hierarchy markers use the editor camera. Device input is
+  neutral; audio/session/IO services are not hosted. Opted-in views can initialize
+  and change their isolated local state, including helper/task calls permitted
+  by normal view capabilities. Trusted extern C is not sandboxed. Successful
+  rebuilds replace the preview with fresh authored state; failures retain the
+  last successful state with diagnostics/stale status. Bounded previews wait
+  and fail instead of recording stale results. Closing waits for a current
+  compile; private cached builds/logs remain under .tide/editor-preview.
+- IDE launch actions open this native app for .tprefab files in a trusted
+  game context; embedding remains future work. Optional Windows installer
+  registration adds Tide to Open With without replacing the user's default.
 
 ### Open
 
@@ -3286,7 +3309,7 @@ Further authoring/editor work:
 - Defaults-versus-overrides during live editing/hot reload of existing instances.
   The first slice can instantiate new trees; automatic modification of existing
   gameplay instances needs a separate policy.
-- IDE embedding, model/game-view previews, transform drag gizmos, authored
+- IDE embedding, mesh picking, transform drag gizmos, authored
   reparent/rename refactoring, new-file creation and conflict merge UI. The first
   native app edits existing files and keeps conflicting drafts without merging
   them automatically. CMake/consumer project selection and remembered context

@@ -158,6 +158,10 @@ int main(const int argc, char **argv)
             pack_c = true;
         } else if (strcmp(argv[i], "--layout") == 0) {
             opts.layout = true;
+        } else if (strcmp(argv[i], "--editor-prefab") == 0 && i + 1 < argc) {
+            opts.editor_prefab = argv[++i];
+        } else if (strcmp(argv[i], "--editor-local") == 0) {
+            opts.editor_local = true;
         } else if (strcmp(argv[i], "--schedule") == 0) {
             schedule = true;
         } else if (strcmp(argv[i], "--shaders") == 0) {

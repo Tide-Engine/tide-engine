@@ -22,6 +22,17 @@ static const char *tree = "// untouched h\xc3\xa9llo\r\n"
     "prefab Level {\r\n    Transform;\r\n    Health { value = 5 /* keep value comment */, label = \"hello\" };\r\n"
     "    entity Child { Transform; Health; }\r\n}\r\n";
 
+TIDE_TEST(editor_opted_views_match_authored_prefabs_without_game_spawns)
+{
+    const char *text = "scene Main {}\ncomponent Health { int value = 5; }\n"
+        "[RunInEditor] view Shared(Health health) { Draw.Circle(float2(health.value,0),1,Color.white); }\n"
+        "[EditorOnly] view Local(local Health health) { Draw.Circle(float2(health.value,0),1,Color.white); }\n";
+    char *file = fixture("opted-views", text, "prefab Level { Health; entity Child { Health; } }\n");
+    editor_document d; TIDE_REQUIRE(editor_open(&d, file, NULL));
+    TIDE_CHECK(d.errors == 0 && d.warnings == 0);
+    editor_close(&d); free(file);
+}
+
 static int node(editor_document *d, const char *path)
 {
     for (int i = 0; i < d->nodes.count; i++) if (str_eq_c(d->nodes.items[i].path, path)) return i;
