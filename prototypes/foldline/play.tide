@@ -251,7 +251,7 @@ const int PILLARS = 2;
 const int BETWEEN = 6;
 const int POOLWAY = 7;
 const int GAUNTLET = 8;
-const int CHAMBERS = 10;
+const int CHAMBERS = 11;
 
 bool Between(int level)
 {
@@ -266,16 +266,17 @@ const float BLACKOUT_FOR = 0.4;
 // Where a place's two lifts are, by the middle of each one's floor. The rooms of the hall have them in its
 // south-east and the middle of its north; a room that isn't the hall's has them where it likes, at any height.
 // A lift's door into its place is on its north side, and out of it on its south.
-const int SHAFT = 9;         // The first room that isn't built in the hall
+const int SHAFT = 9;         // The rooms that aren't built in the hall: a shaft, and three rooms in a row
+const int SIGHT = 10;
 
 float3 ArrivalAt(int level)
 {
-    return level == SHAFT ? float3(0, 0, -20) : float3(6.5, 0, -15.6);
+    return level == SHAFT ? float3(0, 0, -20) : level == SIGHT ? float3(0, 0, -24) : float3(6.5, 0, -15.6);
 }
 
 float3 LiftAt(int level)
 {
-    return level == SHAFT ? float3(0, 5, 26.6) : float3(0, 0, 15.6);
+    return level == SHAFT ? float3(0, 5, 26.6) : level == SIGHT ? float3(0, 0, 12.6) : float3(0, 0, 15.6);
 }
 
 float3 HoldPlate(int level)
@@ -295,7 +296,7 @@ bool Pitted(int level)
 // What's at each depth: a room, then the stretch between it and the next.
 int LevelAt(int depth)
 {
-    switch (depth % 11)
+    switch (depth % 12)
     {
         case 0: return 0;
         case 1: return 1;
@@ -306,7 +307,8 @@ int LevelAt(int depth)
         case 6: return 4;
         case 7: return 5;
         case 8: return GAUNTLET;
-        case 9: return SHAFT;
+        case 9: return SIGHT;
+        case 10: return SHAFT;
         default: return BETWEEN;
     }
 }
@@ -399,7 +401,7 @@ int ThemeAt(int depth)
 
 int DepthOf(int level)
 {
-    for (var depth = 0; depth < 11; depth++)
+    for (var depth = 0; depth < 12; depth++)
         if (LevelAt(depth) == level) return depth;
     return 0;
 }
@@ -481,12 +483,13 @@ struct Mount
 
 int MountCount(int level)
 {
-    return level == 3 || level == 5 ? 1 : 0;
+    return level == 3 || level == 5 || level == SHAFT ? 1 : 0;
 }
 
 Mount ChamberMount(int level, int index)
 {
     if (level == 3) return Mount { at = float3(9.8, FOLD_HALF_HIGH * SMALLEST, 1.5), face = float3(-1, 0, 0), size = SMALLEST };
+    if (level == SHAFT) return Mount { at = float3(-8, FOLD_HALF_HIGH * SMALLEST, -4), face = float3(1, 0, 0), size = SMALLEST };
     return Mount { at = float3(0.5, FOLD_HALF_HIGH * SMALLEST, -13), face = float3(0, 0, 1), size = SMALLEST };
 }
 
@@ -521,7 +524,8 @@ int CubeCount(int level)
         case 4: return 3;
         case 5: return 2;
         case 7: return 5;
-        case 9: return 3;
+        case 9: return 1;
+        case 10: return 1;
         default: return 1;
     }
 }
@@ -537,40 +541,45 @@ float3 CubeStart(int level, int index)
         case 4: return index == 0 ? float3(-3, 0.5, -8) : index == 1 ? float3(1, 0.4, -9) : float3(1, 1.2, -9);
         case 5: return index == 0 ? float3(-7.5, 2.0, -9) : float3(3, 0.5, -6);
         case 7: return index == 0 ? float3(4.2, 0.5, -16.7) : float3(-1.5 + (index - 1) * 0.9, 0.4, -11);
-        case 9: return index == 0 ? float3(3, 0.5, -6) : float3(-2 - (index - 1) * 0.9, 0.4, -3);
+        case 9: return float3(3, 0.5, -6);
+        case 10: return float3(-3, 0.5, -17);
         default: return float3(4.2, 0.5, -16.7);
     }
 }
 
 int PlateCount(int level)
 {
-    return level == SHAFT ? 3 : 2;
+    return level == SHAFT ? 3 : level == SIGHT ? 4 : 2;
 }
 
 // A room's machinery: how many things it moves, each one's two places, its size, and the plate that sends it
 // to its second place (under 0 for one that goes back and forth by itself).
 int MoverCount(int level)
 {
-    return level == SHAFT ? 3 : 0;
+    return level == SHAFT ? 3 : level == SIGHT ? 2 : 0;
 }
 
 float3 MoverFrom(int level, int index)
 {
+    // Three rooms in a row have a door between each two, which is shut
+    if (level == SIGHT) return float3(0, 1.5, index == 0 ? -11.5 : -2.5);
     return index == 0 ? float3(5, -0.15, -0.6) : index == 1 ? float3(-3, 4.85, 14.5) : float3(4.5, 4.85, 18.5);
 }
 
 float3 MoverTo(int level, int index)
 {
+    if (level == SIGHT) return float3(0, 4.7, index == 0 ? -11.5 : -2.5);
     return index == 0 ? float3(5, 4.85, -0.6) : index == 1 ? float3(4.5, 4.85, 14.5) : float3(-3, 4.85, 18.5);
 }
 
 float3 MoverSize(int level, int index)
 {
-    return float3(3, 0.3, 3);
+    return level == SIGHT ? float3(3, 3, 0.3) : float3(3, 0.3, 3);
 }
 
 int MoverPlate(int level, int index)
 {
+    if (level == SIGHT) return 2 + index;
     return index == 0 ? 2 : -1;
 }
 
@@ -599,7 +608,8 @@ float3 PlatePosition(int level, int index)
         case 3: return index == 0 ? float3(6, 0.04, 10) : float3(8.5, 0.04, 8);
         case 4: return index == 0 ? float3(5, 0.04, 8) : float3(-7.5, GALLERY + 0.04, 9);
         case 5: return index == 0 ? float3(7, 0.04, 10) : float3(-5, 0.04, 8);
-        case 9: return index == 0 ? float3(-3, 5.04, 22.7) : index == 1 ? float3(3, 5.04, 22.7) : float3(-5, 0.04, -6);
+        case 9: return index == 0 ? float3(-5.6, 5.04, 22.75) : index == 1 ? float3(3, 5.04, 22.7) : float3(-5, 0.04, -6);
+        case 10: return index == 0 ? float3(-3.5, 4.44, 8.5) : index == 1 ? float3(3.5, 4.44, 8.5) : index == 2 ? float3(4, 0.04, -15) : float3(-4, 0.04, -9.6);
         default: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 8);
     }
 }
@@ -788,8 +798,8 @@ void BuildShaft(mut Arena arena)
     Fill(arena, -8, 8, 4.4, 5, 1, 4, panels);
     // The passage off the balcony
     Fill(arena, -1.5, 1.5, 4, 5, 5, 10, carpet);
-    Fill(arena, -2.5, -1.5, 5, 8, 5, 9, panels);
-    Fill(arena, 1.5, 2.5, 5, 8, 5, 9, panels);
+    Fill(arena, -2.5, -1.5, 5, 8, 5, 9, wallpaper, true);
+    Fill(arena, 1.5, 2.5, 5, 8, 5, 9, wallpaper, true);
     Fill(arena, -2.5, 2.5, 8, 9, 5, 9, roof, false, 2);
     // The far room: a ledge each end, the floor between them 2.5 m down, and a slope back up to the near one
     Fill(arena, -9, 9, 2.5, 5, 10, 12.5, carpet);
@@ -803,6 +813,11 @@ void BuildShaft(mut Arena arena)
     Fill(arena, -9, -3, 5, 9.4, 24, 25, panels);
     Fill(arena, 3, 9, 5, 9.4, 24, 25, panels);
     Fill(arena, -10, 10, 9.4, 10.4, 9, 25, roof, false, 2);
+    // A cage of bars about one of the gate's plates: the only way in is a slot at the floor, half a meter high
+    Fill(arena, -9, -4.35, 5, 9.4, 21.5, 21.8, 9.0, false, 4);
+    Fill(arena, -4.65, -4.35, 5.5, 9.4, 21.8, 24, 9.0, false, 4);
+    Fill(arena, -4.65, -4.35, 5, 5.5, 21.8, 22.15, 9.0, false, 4);
+    Fill(arena, -4.65, -4.35, 5, 5.5, 23.35, 24, 9.0, false, 4);
     var tilt = Math.Atan2(2.5, 4.0);
     var normal = float3(0, Math.Cos(tilt), Math.Sin(tilt));
     var slope = float3(-8, 3.75, 14.5) - normal * 0.2;
@@ -819,6 +834,61 @@ void BuildShaft(mut Arena arena)
     }
 }
 
+// Three rooms in a row, with a door between each two that's open only while its plate is weighted, and the
+// plate is on the near side of it. The first room is papered. The second is bare: nothing in it takes a fold.
+// The third is two storeys high and bare, but for its far wall above a gallery over the way out, where the
+// gate's two plates are, one each side of a wall across it. That far wall is seen from the second room's far
+// end, through its door, and from the third room's floor: from nowhere else. One cube.
+void BuildSight(mut Arena arena)
+{
+    var concrete = 3.0;
+    var panels = 2.0;
+    var wallpaper = 12.0;
+    var carpet = 13.0;
+    var roof = 14.0;
+    LiftShell(arena, ArrivalAt(SIGHT), 1);
+    Spawn(Door { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = ArrivalAt(SIGHT) + float3(0, 2, 2.1) }, Box { size = float3(6, 4, 0.24) });
+    // The first room
+    Fill(arena, -6, 6, -1, 0, -22.4, -11, carpet);
+    Fill(arena, -7, -6, 0, 4.4, -22.4, -11, wallpaper, true);
+    Fill(arena, 6, 7, 0, 4.4, -22.4, -11, wallpaper, true);
+    Fill(arena, -6, -4, 0, 4.4, -22.4, -21.4, wallpaper, true);
+    Fill(arena, 4, 6, 0, 4.4, -22.4, -21.4, wallpaper, true);
+    Fill(arena, -6, -1.5, 0, 4.4, -12, -11, wallpaper, true);
+    Fill(arena, 1.5, 6, 0, 4.4, -12, -11, wallpaper, true);
+    Fill(arena, -1.5, 1.5, 3, 4.4, -12, -11, panels);
+    Fill(arena, -7, 7, 4.4, 5.4, -22.4, -11, roof, false, 2);
+    // The second
+    Fill(arena, -5, 5, -1, 0, -11, -2, concrete);
+    Fill(arena, -6, -5, 0, 4.4, -11, -2, panels);
+    Fill(arena, 5, 6, 0, 4.4, -11, -2, panels);
+    Fill(arena, -5, -1.5, 0, 4.4, -3, -2, panels);
+    Fill(arena, 1.5, 5, 0, 4.4, -3, -2, panels);
+    Fill(arena, -1.5, 1.5, 3, 4.4, -3, -2, panels);
+    Fill(arena, -6, 6, 4.4, 5.4, -11, -2, roof, false, 2);
+    // The third, with its gallery over the way out
+    Fill(arena, -6, 6, -1, 0, -2, 10, concrete);
+    Fill(arena, -7, -6, 0, 9.4, -3, 11, panels);
+    Fill(arena, 6, 7, 0, 9.4, -3, 11, panels);
+    Fill(arena, -6, -5, 4.4, 9.4, -3, -2, panels);
+    Fill(arena, 5, 6, 4.4, 9.4, -3, -2, panels);
+    Fill(arena, -5, 5, 5.4, 9.4, -3, -2, panels);
+    Fill(arena, -6, -3, 0, 4.4, 10, 11, panels);
+    Fill(arena, 3, 6, 0, 4.4, 10, 11, panels);
+    Fill(arena, -6, 6, 4.4, 9.4, 10, 11, wallpaper, true);
+    Fill(arena, -6, 6, 3.8, 4.4, 7, 10, panels);
+    Fill(arena, -0.3, 0.3, 4.4, 9.4, 7, 10, panels);
+    Fill(arena, -7, 7, 9.4, 10.4, -3, 11, roof, false, 2);
+    LiftShell(arena, LiftAt(SIGHT), -1);
+    Spawn(Gate { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = LiftAt(SIGHT) + float3(0, 2, -2.1) }, Box { size = float3(6, 4, 0.24) });
+    for (var index = 0; index < MoverCount(SIGHT); index++)
+    {
+        var at = MoverFrom(SIGHT, index);
+        Spawn(Mover { chamber = arena.chamber, index = index, at = at, size = MoverSize(SIGHT, index) },
+              Body { type = BodyType.Kinematic, position = at }, Box { size = MoverSize(SIGHT, index), friction = 0.9 });
+    }
+}
+
 // A room's boxes. Wallpaper takes a fold and concrete refuses one; a wall
 // under 0.6 m thick takes none whatever it's papered with.
 void BuildChamber(mut Arena arena, int level)
@@ -826,9 +896,10 @@ void BuildChamber(mut Arena arena, int level)
     arena.level = level;
     arena.theme = ThemeAt(arena.depth);
     arena.chamber += 1;
-    if (level == SHAFT)
+    if (level == SHAFT || level == SIGHT)
     {
-        BuildShaft(arena);
+        if (level == SHAFT) BuildShaft(arena);
+        else BuildSight(arena);
         SpawnLoose(arena, level);
         return;
     }

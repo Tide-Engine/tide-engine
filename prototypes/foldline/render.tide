@@ -1161,6 +1161,12 @@ const float PLASTER = 15;
 // Whether a lamp's fitting hangs at a place: 0 for none, 1 under a roof, 2 on rods under a higher one.
 int Fitted(int level, float3 at)
 {
+    if (level == SIGHT)
+    {
+        if (at.y > STOREY) return Math.Abs(at.x) < 6 && at.z > -2 && at.z < 10 ? 1 : 0;
+        if (at.z > -2) return Math.Abs(at.x) < 6 && at.z < 7 ? 2 : 0;
+        return Math.Abs(at.x) < 6 && at.z > -22 ? 1 : 0;
+    }
     if (level != SHAFT) return at.y < STOREY && Math.Abs(at.x) < 9.8 && Math.Abs(at.z) < 13 ? 1 : 0;
     if (at.y < STOREY) return Math.Abs(at.x) < 8 && at.z > -10 && at.z < 1 ? 2 : 0;
     if (Math.Abs(at.x) < 8 && at.z > -10 && at.z < 4) return 1;
@@ -1173,7 +1179,7 @@ void Dress(mut Optics optics, int level, int theme)
     Color steel = Color(.16, .17, .17);
     // The lamps' fittings: one over each bay there's a roof at that height for, and on rods from the roof where
     // a room is taller than a storey
-    for (int row = -3; row < 13; row++)
+    for (int row = -4; row < 13; row++)
     {
         for (int column = -1; column < 5; column++)
         {
@@ -1228,7 +1234,7 @@ void Dress(mut Optics optics, int level, int theme)
         optics.furnishings.Add(Faced(at + normal * .03, r, float3(.95, 2.1, .06), DOORS, 2));
         optics.furnishings.Add(Turned(at + float3(0, .03, 0) + normal * .012, r, float3(1.11, 2.2, .06), wood));
     }
-    if (theme == 0)
+    if (theme == 0 && level < SHAFT)
     {
         optics.furnishings.Add(Faced(float3(-3.4, .06, -12.1), quaternion.Euler(0, .3, 0), float3(2.2, .12, 1.1), PLANKS, 0));
         optics.furnishings.Add(Faced(float3(-3.6, .18, -12.2), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
@@ -1310,7 +1316,7 @@ void Dress(mut Optics optics, int level, int theme)
     if (!Between(level))
     {
         float3 sign = LiftAt(level) + float3(5.4, 3.1, -2.64);
-        int number = level < BETWEEN ? level + 1 : level - 2;
+        int number = level < BETWEEN ? level + 1 : level == SIGHT ? 7 : 8;
         optics.furnishings.Add(Block(sign, float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
         WallDigit(optics, number / 10, sign + float3(-.54, 0, -.045));
         WallDigit(optics, number % 10, sign + float3(.54, 0, -.045));
@@ -2015,6 +2021,11 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         // Behind the menu the atrium is seen from a camera of its own, adrift.
         eye = float3(-3.6 + Math.Sin(optics.phase) * .45, 2.5 + Math.Sin(optics.phase * 2) * .06, -12.2);
         rotation = quaternion.Euler(-.05, .04 + Math.Cos(optics.phase) * .015, 0);
+        if (arena.level == SIGHT)
+        {
+            eye = float3(-4.5 + Math.Sin(optics.phase) * .3, 7.6, -1);
+            rotation = quaternion.Euler(.3, .45 + Math.Cos(optics.phase) * .015, 0);
+        }
         if (arena.level == SHAFT)
         {
             // ...which in the shaft looks down its far room from over the near ledge
@@ -2045,6 +2056,14 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         if (row.mover.chamber != arena.chamber) continue;
         float3 at = row.mover.at;
         float3 size = row.mover.size;
+        if (size.y > 1)
+        {
+            // A door: a shutter, with the color of its plate down its edges
+            optics.dynamic.Add(Faced(at, quaternion.identity, size, SHUTTER, 0, Color(.8, .8, .8)));
+            for (int edge = -1; edge <= 1; edge += 2)
+                optics.dynamic.Add(Block(at + float3(edge * (size.x * .5 - .08), 0, 0), float3(.06, size.y - .1, size.z + .04), Color(.45, 1, .3), 0, .8));
+            continue;
+        }
         mut Fixture deck = Block(at, size, Color(.5, .52, .5), 0, 0, .5);
         deck.cell = 4;
         deck.tiles = .5;
