@@ -237,7 +237,9 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     var hintWidth = Math.Min(680, Screen.width - 36);
     var hintY = Screen.height - (legend ? 62 : 34);
     Slab(Rect(middle.x - hintWidth * 0.5, hintY - 15, hintWidth, 30));
-    Ink(arena.gate > 0.9 && arena.level != BETWEEN ? "The lift is open. Both of you, in." : ChamberHint(arena.level), float2(middle.x, hintY),
+    var hazard = Hazard(arena.level, arena.theme);
+    var hint = hazard == 2 ? "Something is in the water. It goes for whatever went in last." : hazard == 3 ? "They don't stop. Go when they're past." : ChamberHint(arena.level);
+    Ink(arena.gate > 0.9 && arena.level != BETWEEN ? "The lift is open. Both of you, in." : hint, float2(middle.x, hintY),
         Math.Min(13, hintWidth / 50), UI_INK, Anchor.MiddleCenter);
     if (legend)
     {

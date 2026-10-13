@@ -52,6 +52,14 @@ static void place(tide_world *world, int id, tide_float3 feet, float yaw, float 
     CHECK(tide_set_Box3D_Body(world, entity, body));
 }
 
+// Where a drum is along the trench, as play.tide's DrumAt has it.
+static float drum_at(int ticks, int which)
+{
+    float along = (ticks / 60.0f * 6.0f + which * 17.2f) / 34.4f;
+    along = (along - floorf(along)) * 34.4f;
+    return -8.6f + (along < 17.2f ? along : 34.4f - along);
+}
+
 static void put_cube(tide_world *world, tide_float3 at, tide_float3 velocity)
 {
     Box3D_Body cube = tide_get_Box3D_Body(world, world->Arena.cube);
@@ -436,24 +444,98 @@ static void chambers_hold(void)
     ticks(&world, 90);
     CHECK(pilot(&world, 0).position.z < 4.6f);
     tide_world_free(&world);
-    // The fourth chamber's pit is past a whole operator's jump, and its side walls take no fold
+    // The fourth room is five lifts down, where the place is a pool's. Its side walls take no fold
     start(&world);
     choose(&world, 0, 3);
     ticks(&world, 8);
+    CHECK(world.Arena.depth == 5 && world.Arena.theme == 1);
     place(&world, 0, (tide_float3){0, 0, -6}, WEST, 0);
     ticks(&world, 2);
     press(&world, (PilotInput){.amber = true});
     CHECK(!world.Fold.ends.at[0].open && world.Fold.fizzleTime > 0);
-    place(&world, 0, (tide_float3){0, 0, -6}, 0, 0);
+    // What's in the pool goes for the cube thrown in, and the pool is waded meanwhile: down a slope, slowly
+    // through the water, up the other side
+    put_cube(&world, (tide_float3){8, 1, 1}, (tide_float3){0});
+    ticks(&world, 60);
+    CHECK(world.Lurker.lureLeft > 0);
+    place(&world, 0, (tide_float3){-8, 0, -2}, 0, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
-    for (int step = 0; step < 200; step++) {
-        input(&world, 0, (PilotInput){.move = {0, 1}, .jump = pilot(&world, 0).position.z > -1.9f});
+    float lowest = 0;
+    int waded = 0;
+    bool across = false;
+    for (int step = 0; step < 400 && !across; step++) {
         tide_world_tick(&world);
-        CHECK(!(pilot(&world, 0).position.z > 3.5f && pilot(&world, 0).position.y > -0.2f));
+        const Operator now = pilot(&world, 0);
+        CHECK(now.taken == 0);
+        if (now.position.y < lowest) lowest = now.position.y;
+        if (now.position.y < -1) waded += 1;
+        across = now.position.z > 4 && now.position.y > -0.05f && now.grounded;
     }
-    // ...but not past the jump of one who came out of a larger end
+    CHECK(across && lowest < -1.4f && lowest > -1.6f && waded > 20 && world.Lurker.at.x > 4);
+    // With nothing to draw it off it has whoever wades, and they're back where they started
     input(&world, 0, (PilotInput){0});
-    for (int step = 0; step < 200 && (pilot(&world, 0).taken > 0 || !pilot(&world, 0).grounded); step++) tide_world_tick(&world);
+    ticks(&world, 480);
+    CHECK(world.Lurker.lureLeft == 0);
+    place(&world, 0, (tide_float3){world.Lurker.at.x - 3, 0, -2}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    bool had = false;
+    for (int step = 0; step < 300 && !had; step++) {
+        tide_world_tick(&world);
+        had = pilot(&world, 0).taken > 0;
+    }
+    CHECK(had && pilot(&world, 0).position.y < -0.8f);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 150);
+    CHECK(pilot(&world, 0).taken == 0 && near(pilot(&world, 0).position.z, -15.6f, 0.1f));
+    tide_world_free(&world);
+    // The fifth is six down, in bare concrete: its pit is a trench, and a drum going along it leaves nothing
+    start(&world);
+    choose(&world, 0, 4);
+    ticks(&world, 8);
+    CHECK(world.Arena.depth == 6 && world.Arena.theme == 2);
+    bool clear = false;
+    for (int step = 0; step < 600 && !clear; step++) {
+        tide_world_tick(&world);
+        clear = fabsf(drum_at(world.Arena.ticks, 0)) > 8.3f && fabsf(drum_at(world.Arena.ticks, 1)) > 8.3f;
+    }
+    CHECK(clear);
+    // Run across while both are at the ends
+    place(&world, 0, (tide_float3){0, 0, -1.6f}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    across = false;
+    lowest = 0;
+    for (int step = 0; step < 200 && !across; step++) {
+        tide_world_tick(&world);
+        const Operator now = pilot(&world, 0);
+        CHECK(now.taken == 0);
+        if (now.position.y < lowest) lowest = now.position.y;
+        across = now.position.z > 3.6f && now.position.y > -0.05f;
+    }
+    CHECK(across && lowest < -0.9f);
+    // Stood in its way
+    place(&world, 0, (tide_float3){0, -1, 1}, 0, 0);
+    input(&world, 0, (PilotInput){0});
+    had = false;
+    for (int step = 0; step < 400 && !had; step++) {
+        tide_world_tick(&world);
+        had = pilot(&world, 0).shredded;
+    }
+    CHECK(had && pilot(&world, 0).taken > 0 && (fabsf(drum_at(world.Arena.ticks, 0)) < 1.2f || fabsf(drum_at(world.Arena.ticks, 1)) < 1.2f));
+    ticks(&world, 90);
+    CHECK(!pilot(&world, 0).shredded && pilot(&world, 0).taken == 0 && near(pilot(&world, 0).position.z, -15.6f, 0.1f));
+    // ...and it throws the cube out of its way
+    put_cube(&world, (tide_float3){3, -0.6f, 1}, (tide_float3){0});
+    bool thrown = false;
+    for (int step = 0; step < 400 && !thrown; step++) {
+        tide_world_tick(&world);
+        thrown = world.Fold.cube.y > 0.5f;
+    }
+    CHECK(thrown);
+    tide_world_free(&world);
+    // A room with a large frame: who leaves by it is large
+    start(&world);
+    choose(&world, 0, 3);
+    ticks(&world, 8);
     place(&world, 0, (tide_float3){1.5f, 0, -8}, SOUTH, 0);
     input(&world, 0, (PilotInput){0});
     ticks(&world, 3);
