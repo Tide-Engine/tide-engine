@@ -1,5 +1,76 @@
 # The docs site
 
+## Browser playground (2026-10-14)
+
+The owner requested a docs page for editing a running game and hot reloading
+entirely in the browser. `/guide/playground` is in Get started and linked from
+the introduction. Its Markdown explains the experiment and current limits;
+`Playground.svelte` supplies the editor/preview at its explicit marker. Source
+comes directly from `docs/playground/demo.tide`, the same file compiled into
+the initial preview. The page starts that small build immediately and downloads
+the compiler only on the first edit/Compile request. Auto reload waits 700 ms
+after typing. Ctrl/Cmd+Enter compiles, Restart runs the last successful build
+fresh, and Reset code restores the original source and starts it fresh. Reset
+also returns the editor to the top. Builds do not take keyboard focus away
+from the editor. Stale compilation results are discarded and subsequent edits
+are queued; errors leave the last successful game running. Leaving the page
+terminates the compiler worker and disposes its frame through the keyed page.
+
+The compiler is the checked-in Tide transpiler compiled to WASI, with its normal
+parser/checker/codegen, shaders, layout metadata and importers. The parser uses
+WASI's libsetjmp with native Wasm exception handling. Browser-only host glue
+provides a failing popen/pclose rather than starting curl. The worker's pinned
+WASI filesystem shim hosts it and Clang/LLD 22.1.8 (CppStudio's wasm-clang-runtime
+v0.1.0, SHA-256 checked). Generated game C and the standard reload host compile
+with strict float contraction disabled and ordinary Wasm SIMD/atomics, then
+link the checkout's release engine/platform archives and pinned wasi-sdk 24 C
+runtime. This introduces no interpreted Tide subset, game/runtime ABI change,
+compiler language change, remote build endpoint or build-service dependency.
+
+`cmake --preset web-release -DTIDE_DOC_PLAYGROUND=ON`, then
+`cmake --build --preset web-release --target docs_playground` builds/stages the
+bundle in ignored `docs/static/playground/generated/`. Run `npm ci --prefix docs`
+first for the shim license. TIDE_DOC_PLAYGROUND defaults to TIDE_DOC_EXAMPLES,
+and docs_examples depends on docs_playground on web, so the existing requested
+Docs workflow stages it and runs its checks without a separate deployment job.
+On native, the option builds only tide_playground_demo for ordinary hidden
+captures. The script caches hash-checked third-party tools in build/playground-tools,
+packages the Tide/WASI and matching Clang headers and libraries, and ships the
+toolchain/importer/shim notices. Generated payloads use explicit gzip inside
+`.bin`, avoiding static hosts' automatic Content-Encoding treatment of `.gz`.
+The worker verifies the exact compressed bytes against its manifest before
+decompression. The compressed payload total is about 25.2 MiB (13.04 compiler,
+7.34 linker, 1.04 transpiler, 3.80 headers/libraries); the initial game is separate.
+Local warmed small-game compilation takes roughly 1–2 seconds, excluding this
+first download and module compilation; this is not a cross-device timing promise.
+
+Scope: one editable Tide file and a solo match; no asset upload, package resolver,
+native-only integrations or full IDE/LSP. The actual compiler supports the normal
+language and procedural drawing/shaders. Asset filenames must exist in the
+virtual filesystem. The preview has noindex and uses the site's existing
+cross-origin isolation, with WebGL/WebGPU selection passed from backend=.
+Multiplayer web reload still closes connections, as before. Product-wide
+hosted-match tick budgets remain unimplemented, not a playground guarantee.
+
+Validation: Node 24.16.0; full native debug 2,286/2,286 and web debug
+2,249/2,249, including GPU backends and the existing reload checks. The browser
+pipeline's four Node integration tests compile a real game, inspect its reload
+exports, recover from a source syntax error, change a component layout and
+report missing assets. `test:examples` now runs those after its browser smoke.
+Its focused playground fixture on WebGL and WebGPU compiles source locally,
+restarts a counter at 37, retains 37 through adding a field defaulted to 7,
+checks editor focus, verifies source diagnostics while rendering continues,
+repairs the source and resets it. It also checks the phone layout. The
+collaborative browser independently retained 56 bounces and initialized the
+new field to 7, with syntax errors leaving that build active. Native hidden
+390×350 capture verifies the same source. Svelte check is warning/error-free
+and the production build passes with existing allowed missing-example pages.
+All three production SEO checks pass, including the new page's metadata and
+social image. Final desktop/390-pixel phone test captures were visually checked;
+the phone capture waits for the existing sidebar's closing transition.
+Real phones, Safari/Firefox, other OS builds and Android are not exercised;
+no CI dispatch or site deployment is part of this task.
+
 Elsewhere catalog addition (2026-10-13): `elsewhere` joins the server-only
 prototype catalog and all three public/retired asset gates, with a gameplay
 thumbnail and normal opt-in `elsewhere_page` staging. The prototype id lists

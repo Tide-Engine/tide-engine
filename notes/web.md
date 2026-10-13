@@ -1,5 +1,18 @@
 # Web builds
 
+Browser playground (2026-10-14): `Tide.reload = 'manual'` opts the docs preview
+into supplied builds. After device setup, `Tide.ready()` is called with
+`Tide.replace(bytes, pack, fresh = false)` and `Tide.restart()` installed.
+These provisional JS host properties reuse the watching page's replace/save/
+migration path, serialize replacements and restarts, copy submitted bytes and
+retain the last successfully installed program for restart. The first install
+is fresh; later ones migrate unless explicitly reset. A module that fails to
+instantiate leaves the running program, room, assets and restart cache intact.
+There is no /build poll in manual mode. Existing watched and standalone paths
+are unchanged; all new lines are inside the excluded `tide run` markers.
+`tide.release.js` remains 68,931 bytes; its source fingerprint was regenerated.
+The docs compiler worker/bundle and integration checks are in notes/docs-site.md.
+
 Texture compression (2026-10-11): WebGL enables `WEBGL_compressed_texture_s3tc` before querying supported formats; WebGPU requests `texture-compression-bc` only when advertised, alongside optional timestamps. Timestamp failure retains BC support on a fresh adapter; an adapter without requested optional features still gets a plain device request. BC uploads include physical block extents for tail mips. Missing format support uses the existing RGBA upload path. Test pages can disable compression with `?texture-compression=off` (or `Tide.textureCompression = false`); renderer fallback checks run on both web backends and repeat after WebGPU device loss. The checked-in release runtime was regenerated with the pinned toolchain (66,519 bytes). Contracts and final validation are in `notes/textures.md`.
 
 Multisampled depth (2026-10-13): `gpu_resolve_depth` in `tide.js` and its import in `gpu_web.c` make a multisampled WebGPU target's depth a texture a shader reads (`notes/render-targets.md`). WebGL 2 goes through `gpu_gl.c`'s blit with functions the page already had. The checked-in release runtime was regenerated with `node cmake/web_runtime.mjs --write` (68,931 bytes).

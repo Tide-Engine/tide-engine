@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Tide playground preview</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#161618}
+canvas{display:block;width:100%;height:100%;outline:none}
+</style>
+<canvas id="canvas" tabindex="0" aria-label="Running Tide game"></canvas>
+<script>
+const send = data => parent.postMessage(data, location.origin);
+window.Tide = {
+    canvas: document.querySelector('canvas'),
+    reload: 'manual', embedded: true,
+    print: text => send({type:'tide-log',text}),
+    printErr: text => send({type:'tide-log',text,error:true}),
+    async ready() {
+        try {
+            const response = await fetch('generated/demo.wasm');
+            if (!response.ok) throw new Error('The playground demo is unavailable in this docs build.');
+            await Tide.replace(new Uint8Array(await response.arrayBuffer()), new Uint8Array(), true);
+            await Tide.start();
+            send({type:'tide-ready'});
+        } catch(error) { send({type:'tide-error',text:error.message}); }
+    }
+};
+addEventListener('message', async ({source,origin,data}) => {
+    if (source !== parent || origin !== location.origin) return;
+    if (data.type !== 'tide-build' && data.type !== 'tide-restart') return;
+    try {
+        if (data.type === 'tide-build') await Tide.replace(data.wasm, data.pack, data.fresh === true);
+        else await Tide.restart();
+        send({type:'tide-applied',id:data.id,operation:data.type});
+    } catch(error) { send({type:'tide-error',id:data.id,text:error.message}); }
+});
+</script>
+<script src="generated/tide.js" onerror="send({type:'tide-error',text:'The playground is unavailable in this docs build.'})"></script>
+</html>

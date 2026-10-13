@@ -17,10 +17,12 @@
     "test:releases": "node --test tests/releases.test.mjs",
     "test:analytics": "node --test tests/analytics.test.mjs tests/admin.test.mjs",
     "test:admin-http": "node --test tests/admin-http.test.mjs",
-    "test:examples": "node tests/examples.mjs",
+    "test:examples": "node tests/examples.mjs && node --test tests/playground.test.mjs",
+    "test:playground": "node --test tests/playground.test.mjs",
     "test:seo": "node --test tests/seo.test.mjs"
   },
   "devDependencies": {
+    "@bjorn3/browser_wasi_shim": "0.4.2",
     "@fontsource-variable/inter": "^5.3.0",
     "@resvg/resvg-js": "^2.6.2",
     "@sveltejs/adapter-node": "^6.0.0",

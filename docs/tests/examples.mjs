@@ -229,6 +229,49 @@ try {
         await shoot(`sample-${id}`);
         console.log(`${id}: the gallery's game draws on its page (${backend})`);
     }
+    // The playground's edits run the actual WASI compiler tools in its worker.
+    // Freeze a known counter, migrate a new field, then break and repair syntax.
+    if (!only || only.has('playground')) {
+        await command('Page.navigate', { url: `${origin}/guide/playground?backend=${backend}` });
+        await until(`location.pathname === '/guide/playground' && document.querySelector('#playground-source')`, 'playground page');
+        await until(`document.querySelector('iframe')?.contentWindow.__draws > 5`, 'playground initial game draws');
+        const source = readFileSync(join(docs, 'playground/demo.tide'), 'utf8');
+        assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
+        const frozen = source.replace('const float SPEED = 1;', 'const float SPEED = 0;')
+            .replace('Spawn(Ball);', 'Spawn(Ball { bounces = 37 });')
+            .replace('view Show(Ball ball)\n{', 'view Show(Ball ball)\n{\n    Debug.Log($"state {ball.bounces}");');
+        const edit = async text => {
+            await evaluate(`(() => { const editor = document.querySelector('#playground-source'); editor.focus(); editor.value = ${JSON.stringify(text)}; editor.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+        };
+        const running = `document.querySelector('.status').textContent.includes('your changes are live')`;
+        await edit(frozen);
+        await until(running, 'playground compiles and applies source locally');
+        await evaluate(`Array.from(document.querySelectorAll('.actions button')).find(button => button.textContent === 'Restart').click()`);
+        await until(`document.querySelector('.console pre')?.textContent.includes('state 37')`, 'playground restarts the successful build');
+        const changed = frozen.replace('int bounces;', 'int bounces;\n    float added = 7;')
+            .replace('Color(0.98, 0.75, 0.14)', 'Color(0.18, 0.83, 0.75)')
+            .replace('Debug.Log($"state {ball.bounces}");', 'Debug.Log($"state {ball.bounces} added {ball.added}");');
+        await edit(changed);
+        await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`, 'playground preserves state and migrates new defaults');
+        assert.equal(await evaluate('document.activeElement.id'), 'playground-source', 'reload retains editor focus');
+        await edit(changed.replace('Spawn(Ball { bounces = 37 });', 'Spawn(Ball { bounces = 37 })'));
+        await until(`document.querySelector('.diagnostics.error')?.textContent.includes("expected ';'")`, 'playground reports a source diagnostic');
+        const draws = await evaluate(`document.querySelector('iframe').contentWindow.__draws`);
+        await until(`document.querySelector('iframe').contentWindow.__draws > ${draws + 5}`, 'last good game keeps drawing after a compile error');
+        await edit(changed);
+        await until(running, 'playground recovers after fixing the error');
+        await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`, 'playground still has the preserved state');
+        await evaluate(`Array.from(document.querySelectorAll('.actions button')).find(button => button.textContent === 'Reset code').click()`);
+        await until(running, 'playground resets its source');
+        assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
+        await shoot('playground');
+        await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+        await until('innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth', 'playground fits a phone without page overflow');
+        await until('document.querySelector(".sidebar").getBoundingClientRect().right <= 1', 'phone sidebar finishes closing');
+        await evaluate(`document.querySelector('.preview').scrollIntoView({block:'center'})`);
+        await shoot('playground-phone');
+        console.log(`playground: browser compilation, state migration, diagnostics, recovery and reset passed (${backend})`);
+    }
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');
     assert.deepEqual([...written].sort(), built);

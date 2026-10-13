@@ -16,6 +16,7 @@ docs/static/duel/
 docs/static/towers/
 docs/static/sumo/
 docs/static/examples/
+docs/static/playground/generated/
 docs/static/samples/*/index.html
 docs/static/prototypes/*/index.html
 docs/static/install.sh

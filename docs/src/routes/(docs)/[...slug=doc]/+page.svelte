@@ -2,6 +2,7 @@
     import { goto } from '$app/navigation';
     import { liveExamples } from '#lib/examples.ts';
     import Seo from '#lib/components/Seo.svelte';
+    import Playground from '#lib/components/Playground.svelte';
 
     let { data } = $props();
 
@@ -41,7 +42,13 @@
 
 {#key data.path}
     <article class="prose" {@attach copyButtons} {@attach liveExamples} {@attach movedSections}>
-        {@html data.html}
+        {#if data.path === '/guide/playground'}
+            {@html data.html.split('<div data-tide-playground></div>')[0]}
+            <Playground />
+            {@html data.html.split('<div data-tide-playground></div>')[1]}
+        {:else}
+            {@html data.html}
+        {/if}
     </article>
 {/key}
 
