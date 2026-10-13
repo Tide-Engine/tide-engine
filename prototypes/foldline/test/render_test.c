@@ -106,8 +106,8 @@ static void prepare(float camera_x)
     operator_at(world.Arena.op0, (tide_float3){camera_x, 0, -1.5f}, 0);
     operator_at(world.Arena.op1, (tide_float3){4, 0, -10}, 0);
     // One end on the divider before the viewer, the other on the far room's side wall
-    world.Fold.amber = (Portal){.open = true, .at = {-5, 1.55f, 2.4f}, .face = {0, 0, -1}, .size = 1};
-    world.Fold.cyan = (Portal){.open = true, .at = {-9.8f, 1.55f, 10}, .face = {1, 0, 0}, .size = 1};
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-5, 1.55f, 2.4f}, .face = {0, 0, -1}, .size = 1};
+    world.Fold.ends.at[1] = (Portal){.open = true, .at = {-9.8f, 1.55f, 10}, .face = {1, 0, 0}, .size = 1};
     world.Fold.cube = (tide_float3){-3, 0.5f, -8};
     world.Fold.cubeTurn = (tide_quaternion){0, 0, 0, 1};
     world.Fold.carried = -1;
@@ -127,7 +127,7 @@ static int render_checks(void *user, float seconds)
         if (distance > spread) spread = distance;
     }
     check(spread > 30, "portal interior contains destination geometry rather than a flat fill");
-    world.Fold.cyan.open = false;
+    world.Fold.ends.at[1].open = false;
     record(&wall);
     check(changed(&empty, &wall) >= 40, "a linked opening shows a different image from the solid source wall");
 
