@@ -120,6 +120,13 @@ inspected. Moving offcuts out of the mandatory ramp approach, widening the
 loading sled and separating the low lintel from the landing ramp removed a
 fussy simultaneous floor/ceiling wedge without removing the required tilt.
 
+Integration retained the incoming SWINDLE registration, unrelated FOLDLINE
+updates and NIGHT ROUTE removal. Conflicts in the shared catalog/id lists,
+prototype CMake list and navigation notes were resolved by retaining both
+live additions and the removal. DEADWEIGHT targets were rebuilt and all three
+native/four web checks pass again with unchanged pins; the merged production
+docs build, zero-warning Svelte check and nineteen HTTP/admin checks pass.
+
 Real Internet room play, a physical gamepad, phones, other operating systems and sanitizers
 are outside the coverage of this Windows prototype task. No CI or deployment
 was requested.

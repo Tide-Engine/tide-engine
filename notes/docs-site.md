@@ -10,6 +10,9 @@ CI dispatch was requested.
 Local production build and Svelte check pass with zero errors/warnings. All
 nineteen analytics/admin and production prototype HTTP checks pass on Node
 24.16.0, including the new public id, outside-root aliases and discovery gates.
+After merging the concurrent SWINDLE catalog addition and NIGHT ROUTE removal,
+the live id lists retain both SWINDLE and DEADWEIGHT. Production build,
+zero-warning Svelte check and all nineteen HTTP/admin checks pass again.
 
 SWINDLE catalog addition (2026-10-13): the owner's competitive heist demo adds
 `swindle` to the server-only catalog, public root and outside-root asset gates.
