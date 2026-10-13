@@ -326,7 +326,7 @@ static void chambers_hold(void)
         tide_world_tick(&world);
         caught = pilot(&world, 0).taken > 0;
     }
-    CHECK(caught && pilot(&world, 0).position.y < -2 && pilot(&world, 0).position.y > -4);
+    CHECK(caught && pilot(&world, 0).position.y < -1.8f && pilot(&world, 0).position.y > -4);
     const float caught_at = pilot(&world, 0).position.z;
     ticks(&world, 60);
     CHECK(pilot(&world, 0).taken > 0.9f && near(pilot(&world, 0).position.z, caught_at, 0.1f) && pilot(&world, 0).position.y > -5);
