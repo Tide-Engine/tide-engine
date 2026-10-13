@@ -657,10 +657,10 @@ static void undertow(void)
     CHECK(had);
     input(&world, 0, (PilotInput){0});
     ticks(&world, 150);
-    // The cube on the plate under the water opens the door, and is what it goes for
+    // A block on the shallow control step opens the door, and its splash draws the creature.
     put_cube(&world, (tide_float3){0, 0.2f, -3}, (tide_float3){0});
     ticks(&world, 200);
-    CHECK(world.Arena.plateC && world.Fold.cube.y < -1 && hypotf(world.Lurker.at.x, world.Lurker.at.z + 3) < 1 && world.Lurker.lureLeft > 0);
+    CHECK(world.Arena.plateC && near(world.Fold.cube.y, -.03f, .06f) && hypotf(world.Lurker.at.x, world.Lurker.at.z + 3) < 1 && world.Lurker.lureLeft > 0);
     // A crate thrown in at the near end after it is what it goes for then: the last thing in
     place(&world, 0, (tide_float3){3, 0, -17.8f}, 0, -0.3f);
     ticks(&world, 3);
@@ -671,6 +671,7 @@ static void undertow(void)
         ticks(&world, 12);
     }
     CHECK(world.Fold.holding.at[0] > 1);
+    const int thrown_crate = world.Fold.holding.at[0] - 1;
     press(&world, (PilotInput){.hurl = true});
     ticks(&world, 90);
     CHECK(world.Fold.holding.at[0] == 0 && world.Lurker.lure.z < -6 && world.Lurker.lureLeft > 4);
@@ -684,6 +685,9 @@ static void undertow(void)
         through = pilot(&world, 1).position.z > 7.5f && pilot(&world, 1).position.y > -0.05f;
     }
     CHECK(through && world.Lurker.at.z < -4);
+    ticks(&world, 180);
+    CHECK(near(world.Fold.spots.at[thrown_crate].y, -.152f, .08f));
+    CHECK(world.Fold.count == 4); // The creature leaves its distraction intact and floating.
     tide_world_free(&world);
 }
 
@@ -1333,7 +1337,7 @@ static void releases_require_two_bodies(void)
         {2, {7.5f, 1.6f, -6}, {-5, 0, 6}}, {3, {-8.5f, 0, 8}, {8.5f, 0, 8}},
         {4, {3, 0, -5}, {-7.5f, 1.6f, 7}}, {5, {-7.5f, 1.6f, -7}, {7, 0, 8}},
         {9, {-5, 0, -6}, {1, 5, 22.7f}}, {10, {4, 0, -15}, {-4, 0, -9.6f}},
-        {11, {2.8f, 0, -7.1f}, {10, 0, 5}}, {12, {0, -1.5f, -3}, {-4, 0, 8}}
+        {11, {2.8f, 0, -7.1f}, {10, 0, 5}}, {12, {0, -.4f, -3}, {-4, 0, 8}}
     };
     tide_world world = {0};
     start(&world);
@@ -1362,6 +1366,31 @@ static void releases_require_two_bodies(void)
         ticks(&world, 2);
         CHECK(world.Arena.released); // The physical clamp stays open after the joint release.
     }
+    tide_world_free(&world);
+}
+
+static void floating_blocks_are_recoverable(void)
+{
+    tide_world world = {0};
+    start(&world);
+    choose(&world, 0, 12);
+    ticks(&world, 60);
+    // Missed throws stay visible at the surface, rather than on the opaque pool's floor.
+    put_cube(&world, (tide_float3){0, .5f, -10.3f}, (tide_float3){0, -3, 0});
+    ticks(&world, 240);
+    CHECK(near(world.Fold.cube.y, -.152f, .05f));
+    CHECK(world.Lurker.lureLeft > 0 && world.Fold.count == 4);
+    ticks(&world, 300);
+    CHECK(world.Lurker.lureLeft == 0); // Bobbing does not grant an endless distraction.
+    CHECK(tide_has_Cube(&world, world.Arena.cube) && world.Fold.count == 4);
+    CHECK(near(world.Fold.cube.y, -.152f, .05f)); // Reaching the splash destroys nothing.
+    // From the bank, E retrieves the floating cube with the ordinary reach.
+    place(&world, 0, (tide_float3){0, 0, -12.05f}, 0, -.65f);
+    ticks(&world, 2);
+    press(&world, (PilotInput){.carry = true});
+    CHECK(world.Fold.holding.at[0] == 1);
+    ticks(&world, 25);
+    CHECK(world.Fold.cube.y > .2f); // The hand lifts it out; buoyancy no longer fights carrying.
     tide_world_free(&world);
 }
 
@@ -1411,6 +1440,7 @@ int main(void)
     smaller_solution();
     submerged_shots_and_brakes();
     releases_require_two_bodies();
+    floating_blocks_are_recoverable();
     replay_and_pack_are_identical();
     puts("FOLDLINE simulation checks passed");
     return 0;
