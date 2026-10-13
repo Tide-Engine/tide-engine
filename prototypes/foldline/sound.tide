@@ -13,6 +13,7 @@ asset Clip cubeThrow = "art/sfx/throw.wav";
 asset Clip cubeThud = "art/sfx/thud.wav";
 asset Clip handsGrab = "art/sfx/grab.wav";
 asset Clip redUnder = "art/sfx/under.wav";
+asset Clip redSplash = "art/sfx/splash.wav";
 asset Clip pitTurning = "art/sfx/pit.wav";
 asset Clip lampHum = "art/sfx/hum.wav";
 asset Clip lampBuzz = "art/sfx/buzz.wav";
@@ -35,6 +36,7 @@ local singleton Ears
     int chamber = -1;
     Portal[4] was;
     float crossed;       // Seconds since a crossing was heard: one at a time
+    int splashed;
     float fizzle;
     int traversals;
     bool plateA;
@@ -71,7 +73,7 @@ void LoopingAt(mut Sound sound, Clip clip, float3 position, float volume, bool p
 }
 
 [After(Render)]
-view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, mut Ears ears)
+view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, Optics optics, mut Ears ears)
 {
     if (viewer.id != control.active) return;
     float3 eye = viewer.position + float3(0, 1.55 * viewer.scale, 0);
@@ -116,6 +118,12 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         if (arena.plateB != ears.plateB) Audio.Play(arena.plateB ? plateOn : plateOff, PlatePosition(arena.level, 1), 0.9, 1.12);
         if (arena.hold != ears.hold) Audio.Play(arena.hold ? plateOn : plateOff, HOLD_PLATE, 0.9, 0.8);
 
+        // What the renderer saw go into the red
+        if (optics.splashed != ears.splashed)
+        {
+            int last = (optics.splashed + 5) % 6;
+            Audio.Play(redSplash, optics.splashAt[last], Math.Saturate(0.5 + optics.splashBig[last] * 0.35), 1.2 - optics.splashBig[last] * 0.15);
+        }
         // The cube: taken up, thrown, and stopped by something
         float dt = Math.Max(Frame.dt, 0.001);
         float3 speed = (fold.cube - ears.cube) / dt;
@@ -157,6 +165,7 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     else ears.cubeSpeed = float3(0);
 
     for (int end = 0; end < 4; end++) ears.was[end] = fold.ends[end];
+    ears.splashed = optics.splashed;
     ears.fizzle = fold.fizzleTime;
     ears.traversals = fold.traversals;
     ears.plateA = arena.plateA;

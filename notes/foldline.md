@@ -258,6 +258,27 @@ current.
     the next in place of a button, and a place between them with no
     device and things to keep away from. Proposed to the owner; see the
     conversation of this date.
+- **After the owner's play of a fold each (2026-10-13).**
+  - *One fold seen through the other* ("we should render all portals
+    ideally"): an end's camera now follows each end of the other fold it
+    can see (`crossSeen`, `Optics.cross0` to `cross7` at half size, drawn
+    before everything else), where it drew light on a sheet. So what's
+    followed is: the room, through an end, through one more end of either
+    fold. Past that an end is a sheet, and a look into the other fold has
+    no lit air of its own (`Aperture.end` -1). Seen in a capture (a rose
+    end with its picture inside a cyan one); eight more cameras at worst,
+    and their cost isn't measured.
+  - *Under the red there's fog* ("i can see a long while through it"):
+    `HowFar` keeps each pixel's distance (`Lens.reach`) before the hand's
+    device clears the depth, and `Develop` thickens the murk by it, to
+    nothing seen past a few meters. The device in the hand is fogged as
+    what's behind it is.
+  - *What goes into the red splashes:* the renderer sees the cube or an
+    operator go down through `PIT_SURFACE` (`Enter`), and draws sixteen
+    drops thrown up and a ring running out (`Splashes`, six at once), and
+    `Sounds` plays `splash.wav` for each (`Optics.splashed`). This is the
+    renderer's and not the match's: a machine that didn't draw the frame
+    it happened in sees and hears nothing of it.
 - P now goes round three pictures for the owner to compare: 300 rows, 480
   (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
