@@ -1,0 +1,130 @@
+5 key tab
+6 key enter
+10 move -52 0
+12 key f
+15 capture elsewhere-opening.png
+19 pad leftStick -0.82949309 0.55299539
+89 pad leftStick 0 0
+92 pad leftStick 0.00000000 0.99255583
+209 pad leftStick 0 0
+212 pad leftStick -0.99255583 0.00000000
+251 pad leftStick 0 0
+254 pad leftStick 0.00000000 0.99947118
+376 pad leftStick 0 0
+419 capture elsewhere-garden-1.png
+423 pad leftStick -0.87976540 0.47507331
+533 pad leftStick 0 0
+536 pad leftStick 0.00000000 1.00000000
+656 pad leftStick 0 0
+659 key e down
+664 key e up
+670 pad leftStick 0.92165899 0.36866359
+712 pad leftStick 0 0
+715 pad leftStick 0.00000000 0.98414434
+774 pad leftStick 0 0
+777 pad leftStick 0.96774194 0.16129032
+801 pad leftStick 0 0
+804 key e down
+1024 key e up
+1030 key e down
+1035 key e up
+1041 capture elsewhere-seed-1.png
+1045 pad leftStick -0.47399605 -0.86899276
+1094 pad leftStick 0 0
+1097 pad leftStick 0.98414434 0.00000000
+1156 pad leftStick 0 0
+1159 pad leftStick 0.00000000 -0.99867433
+1378 pad leftStick 0 0
+1421 pad leftStick 0.00000000 -0.99751861
+1551 pad leftStick 0 0
+1554 pad leftStick 0.99255583 0.00000000
+1632 pad leftStick 0 0
+1635 key e down
+1640 key e up
+1646 pad leftStick -0.36866359 -0.92165899
+1751 pad leftStick 0 0
+1754 pad leftStick 0.00000000 0.99255583
+1871 pad leftStick 0 0
+1874 pad leftStick 0.00000000 0.99895942
+2029 pad leftStick 0 0
+2032 pad leftStick 0.99767210 0.00000000
+2129 pad leftStick 0 0
+2132 pad leftStick 0.00000000 0.98924731
+2177 pad leftStick 0 0
+2220 capture elsewhere-garden-2.png
+2224 pad leftStick -0.87976540 0.47507331
+2334 pad leftStick 0 0
+2337 pad leftStick 0.00000000 1.00000000
+2457 pad leftStick 0 0
+2460 key e down
+2465 key e up
+2471 pad leftStick 0.92165899 0.36866359
+2513 pad leftStick 0 0
+2516 pad leftStick 0.00000000 0.98414434
+2575 pad leftStick 0 0
+2578 pad leftStick 0.96774194 0.16129032
+2602 pad leftStick 0 0
+2605 key e down
+2825 key e up
+2831 key e down
+2836 key e up
+2842 capture elsewhere-seed-2.png
+2846 pad leftStick -0.47399605 -0.86899276
+2895 pad leftStick 0 0
+2898 pad leftStick 0.98414434 0.00000000
+2957 pad leftStick 0 0
+2960 pad leftStick 0.00000000 -0.99867433
+3179 pad leftStick 0 0
+3222 pad leftStick -0.91081594 -0.38709677
+3307 pad leftStick 0 0
+3310 pad leftStick 0.00000000 -0.99539171
+3485 pad leftStick 0 0
+3488 pad leftStick 0.99255583 0.00000000
+3566 pad leftStick 0 0
+3569 key e down
+3574 key e up
+3580 pad leftStick -0.70638097 -0.70638097
+3717 pad leftStick 0 0
+3720 pad leftStick 0.00000000 0.99255583
+3837 pad leftStick 0 0
+3840 pad leftStick 0.99681573 0.00000000
+4073 pad leftStick 0 0
+4076 pad leftStick 0.00000000 0.99947118
+4198 pad leftStick 0 0
+4241 capture elsewhere-garden-3.png
+4245 pad leftStick -0.87976540 0.47507331
+4355 pad leftStick 0 0
+4358 pad leftStick 0.00000000 1.00000000
+4478 pad leftStick 0 0
+4481 key e down
+4486 key e up
+4492 pad leftStick 0.92165899 0.36866359
+4534 pad leftStick 0 0
+4537 pad leftStick 0.00000000 0.98414434
+4596 pad leftStick 0 0
+4599 pad leftStick 0.96774194 0.16129032
+4623 pad leftStick 0 0
+4626 key e down
+4846 key e up
+4852 key e down
+4857 key e up
+4863 capture elsewhere-seed-3.png
+4867 pad leftStick -0.47399605 -0.86899276
+4916 pad leftStick 0 0
+4919 pad leftStick 0.98414434 0.00000000
+4978 pad leftStick 0 0
+4981 pad leftStick 0.00000000 -0.99867433
+5200 pad leftStick 0 0
+5243 pad leftStick 0.00000000 -0.99751861
+5373 pad leftStick 0 0
+5376 pad leftStick -0.99255583 0.00000000
+5454 pad leftStick 0 0
+5457 key e down
+5462 key e up
+6048 key f
+6054 capture elsewhere-complete.png
+6058 pad leftStick -0.78043704 -0.62434964
+6182 pad leftStick 0 0
+6185 key f
+6190 capture elsewhere-bloom.png
+6198 quit

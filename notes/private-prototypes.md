@@ -61,6 +61,15 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- Elsewhere (`elsewhere`): `prototypes/elsewhere/`, a cozy first-person
+  exploration/restoration demo for one or two, requested on 2026-10-13 for
+  publisher review. Brass windows connect three impossible gardens to a
+  shared conservatory; three grown seeds flower the home. It builds with
+  `STATS`; `elsewhere_page` stages `/prototypes/elsewhere/` and `private_games`
+  collects that page or the native game. Its two C fixtures stay under
+  `test/tide.packages`. Game contracts, limits and validation are in
+  `notes/elsewhere.md`. Source/catalog registration does not deploy the demo.
+
 Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
 game note, build targets and catalog/public-id registrations are removed. Its
 implementation and engine-gap record remain in git history at `7c047a87`.
