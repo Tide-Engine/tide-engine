@@ -1,4 +1,5 @@
 extern void Observe(int tag);
+settings { tickRate = 30; }
 component Body { int value = 7; }
 local singleton VisualState { bool ready; }
 prefab Preview
@@ -23,3 +24,5 @@ view LocalShared(local Body body) { Draw.Circle(float2(body.value, 1), 1, Color.
 view Authoring(Body body) { Draw.Circle(float2(body.value, 2), 1, Color.yellow); }
 [EditorOnly]
 view LocalAuthoring(local Body body) { Draw.Circle(float2(body.value, 3), 1, Color.cyan); }
+[EditorOnly]
+view AuthoredTime(Time time) { Debug.Assert(time.tick == 0 && time.tickRate == 30); }

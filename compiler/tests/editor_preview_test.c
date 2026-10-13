@@ -8,7 +8,7 @@ void Observe(int tag) { observed += tag; }
 TIDE_TEST(editor_preview_authored_tree_and_isolation)
 {
     const tide_editor_preview_api *api = tide_editor_preview();
-    TIDE_REQUIRE(api && api->version == TIDE_EDITOR_PREVIEW_VERSION && api->views == 4);
+    TIDE_REQUIRE(api && api->version == TIDE_EDITOR_PREVIEW_VERSION && api->views == 5);
     void *context = api->create(NULL, 0);
     TIDE_REQUIRE(context);
     TIDE_CHECK(observed == 0); // No Main, Spawned or runtime-only view startup.

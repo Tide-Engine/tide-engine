@@ -35,6 +35,8 @@ XY/isometric projection, with renderer z conversion compensated to align markers
 Views can override the camera; markers still follow the editor camera. Mesh
 picking, gizmos, host services, systems in preview and IDE embedding remain gaps.
 No engine/runtime functions or public game callback signatures were changed.
+The private ABI version must change if shared draw/shader layouts or command
+contracts become incompatible. The preview's frozen Time uses the game's tickRate.
 
 VS Code exposes Tide: Open Prefab Editor in Explorer/title and respects configured
 tide.path, workspace trust and game/package folder discovery. A dirty active
