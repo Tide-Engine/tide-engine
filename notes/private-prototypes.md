@@ -61,6 +61,13 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- NIGHT ROUTE (`night-route`): `prototypes/night-route/`, the owner's approved
+  overhead night-delivery slice for one player, with Mothbox, Restless,
+  Northbound and Echo. `private_games` collects `night_route_page` or
+  `night_route`; the page stages at `/prototypes/night-route/` beside its
+  gameplay thumbnail, with STATS. Its C host is `night_route_tests` under
+  `test/`. Rules, validation and open playtest questions: `notes/night-route.md`.
+
 Removal (2026-10-13): the owner scrapped SKYWORKS. Its source, tests, thumbnail,
 game note, build targets and catalog/public-id registrations are removed. Its
 implementation and engine-gap record remain in git history at `7c047a87`.

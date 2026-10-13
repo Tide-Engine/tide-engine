@@ -1,0 +1,400 @@
+const Color INK = Color(0.91, 0.91, 0.82);
+const Color DIM = Color(0.48, 0.59, 0.65);
+const Color DARK = Color(0.035, 0.065, 0.10);
+const Color AMBER = Color(1, 0.72, 0.34);
+const Color RED = Color(1, 0.37, 0.36);
+const Color PANEL = Color(0.065, 0.11, 0.16);
+
+local singleton Desk
+{
+    int mask = 1;
+    int serial = -1;
+    bool help;
+    bool fingers;
+    bool brace;
+    float handoffTime;
+    int inspect = -1;
+}
+bool Compact() { return Screen.width < 800; }
+float CardHeight() { return Math.Min(102, Math.Max(64, (Screen.height - 340) / 4)); }
+float CardTop() { return Math.Min(164, Screen.height * 0.27); }
+Rect MapRect()
+{
+    return Compact() ? Rect(16, 102, Screen.width - 32, Screen.height * 0.38) : Rect(24, 110, Screen.width - 382, Screen.height - 224);
+}
+float MapScale()
+{
+    var rect = MapRect();
+    return Math.Min(rect.width / 38, rect.height / 26);
+}
+float2 Seen(float2 point)
+{
+    var rect = MapRect();
+    return float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5) + float2(point.x, -point.y) * MapScale();
+}
+Color CargoColor(int kind)
+{
+    return kind == 0 ? AMBER : kind == 1 ? Color(0.47, 0.86, 0.76) : kind == 2 ? Color(0.56, 0.73, 1) : Color(0.79, 0.60, 0.97);
+}
+void Text(string words, float2 at, float size = 14, Color color = INK, Anchor anchor = Anchor.MiddleLeft)
+{
+    Draw.Text(words, at, size, color, anchor);
+}
+void Box(Rect rect, Color color = PANEL)
+{
+    Draw.RoundRect(float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5), float2(rect.width, rect.height), 7, color);
+}
+bool Button(Rect rect, string words, bool enabled = true, bool gold = false)
+{
+    mut var clicked = false;
+    GUI.Disabled(!enabled)
+    {
+        var control = GUI.Control(rect);
+        var fill = !enabled ? Color(0.1, 0.14, 0.18) : gold ? AMBER : control.hovered || control.focused ? Color(0.19, 0.27, 0.32) : Color(0.13, 0.20, 0.25);
+        Box(rect, fill);
+        Text(words, float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5), 14, gold && enabled ? DARK : !enabled ? DIM : INK, Anchor.MiddleCenter);
+        clicked = control.clicked;
+    }
+    return clicked;
+}
+void RoadLine(float2 a, float2 b, float width, Color color)
+{
+    Draw.Line(Seen(a), Seen(b), width * MapScale(), color);
+}
+void House(float2 at, float2 size, int identity)
+{
+    var scale = MapScale();
+    var center = Seen(at);
+    var width = size.x * scale;
+    var height = size.y * scale;
+    Draw.Rect(center + float2(5, 8), float2(width, height), Color(0.025, 0.045, 0.07));
+    Draw.Rect(center, float2(width, height), Color(0.11 + identity * 0.006, 0.16, 0.20));
+    Draw.Rect(center - float2(0, height * 0.1), float2(width - 6, height * 0.68), Color(0.14, 0.20, 0.25));
+    Draw.Line(center + float2(-width * 0.48, -height * 0.1), center + float2(width * 0.48, -height * 0.1), 2, Color(0.21, 0.29, 0.32));
+    for (var window = 0; window < 3; window++)
+    {
+        var warm = (identity + window) % 3 == 0;
+        Draw.Rect(center + float2((window - 1) * width * 0.26, height * 0.37), float2(width * 0.11, Math.Max(3, height * 0.12)), warm ? Color(0.65, 0.45, 0.25) : Color(0.07, 0.12, 0.18));
+    }
+    Draw.Rect(center + float2(width * 0.24, -height * 0.25), float2(width * 0.1, height * 0.17), Color(0.085, 0.13, 0.17));
+}
+void ParcelIcon(int kind, float2 at, float size, Color color)
+{
+    Draw.RoundRect(at, float2(size, size), 3, Color(color.r, color.g, color.b, 0.13));
+    if (kind == 0)
+    {
+        Draw.Circle(at + float2(-size * 0.14, 0), size * 0.17, color);
+        Draw.Circle(at + float2(size * 0.14, 0), size * 0.17, color);
+        Draw.Line(at - float2(0, size * 0.25), at + float2(0, size * 0.25), 2, DARK);
+    }
+    else if (kind == 1)
+    {
+        for (var i = 0; i < 3; i++) Draw.Line(at + float2(-size * 0.24, (i - 1) * size * 0.16), at + float2(size * 0.24, (i - 1) * size * 0.16 - size * 0.13), 2, color);
+    }
+    else if (kind == 2)
+    {
+        Draw.Line(at + float2(0, size * 0.28), at - float2(0, size * 0.28), 2, color);
+        Draw.Line(at - float2(0, size * 0.28), at + float2(-size * 0.18, 0), 2, color);
+        Draw.Line(at - float2(0, size * 0.28), at + float2(size * 0.18, 0), 2, color);
+    }
+    else
+    {
+        Draw.Circle(at, size * 0.27, color);
+        Draw.Circle(at, size * 0.19, DARK);
+        Draw.Circle(at, size * 0.1, color);
+    }
+}
+
+void Neighbourhood(Night night, Desk desk, float clock)
+{
+    var scale = MapScale();
+    var rect = MapRect();
+    Box(rect, Color(0.045, 0.09, 0.125));
+    // River and embankment. These are scenery, outside the walkable streets.
+    Draw.Rect(Seen(float2(0, -11.6)), float2(36 * scale, 2 * scale), Color(0.035, 0.13, 0.18));
+    for (var ripple = 0; ripple < 22; ripple++)
+    {
+        var x = -17 + (ripple * 7 % 35);
+        var y = -11.1 - (ripple % 3) * 0.4;
+        RoadLine(float2(x, y), float2(x + 0.8 + Math.Sin(clock + ripple) * 0.15, y), 0.04, Color(0.13, 0.27, 0.32));
+    }
+    // Pavements, street surfaces and wet reflections.
+    for (var edge = 0; edge < STREETS; edge++)
+    {
+        var a = Junction(StreetA(edge));
+        var b = Junction(StreetB(edge));
+        RoadLine(a, b, 2.1, Color(0.19, 0.25, 0.28));
+        RoadLine(a, b, 1.65, Alley(edge) ? Color(0.055, 0.08, 0.11) : Color(0.085, 0.13, 0.18));
+        for (var dash = 0; dash < 6; dash++)
+        {
+            if (Alley(edge)) continue;
+            RoadLine(OnStreet(edge, (dash + 0.2) / 6), OnStreet(edge, (dash + 0.47) / 6), 0.035, Color(0.27, 0.33, 0.34));
+        }
+        if (night.phase == 1 && night.visited[edge]) RoadLine(a, b, 0.08, Color(0.56, 0.43, 0.70, 0.6));
+    }
+    for (var row = 0; row < 2; row++)
+        for (var column = 0; column < 3; column++)
+        {
+            var center = float2(-10 + column * 10, 4.5 - row * 9);
+            // The diagonal cuts occupy their blocks. Smaller houses leave
+            // the actual shortcuts visible rather than covering the graph.
+            var split = column == 1 || (row == 1 && column == 2);
+            if (split)
+            {
+                House(center + float2(-1.8, -1.6), float2(2.6, 1.7), column + row * 3);
+                House(center + float2(1.8, 1.6), float2(2.6, 1.7), column + row * 3 + 1);
+            }
+            else House(center, float2(6.7, 5.2), column + row * 3);
+        }
+    // Light footprints are the exact gameplay radius, with faint falloff
+    // outside. Warm halos make the safe network legible at a glance.
+    for (var edge = 0; edge < STREETS; edge++)
+        for (var lamp = 0; lamp < LampCount(edge); lamp++)
+        {
+            var at = Seen(Lamp(edge, lamp));
+            Draw.Circle(at, 2.65 * scale, Color(1, 0.72, 0.33, 0.065));
+            Draw.Circle(at, 1.65 * scale, Color(1, 0.72, 0.33, 0.035));
+            Draw.Circle(at, 0.8 * scale, Color(1, 0.77, 0.43, 0.06));
+            Draw.Circle(at, 3, AMBER);
+            Draw.Line(at + float2(0, 2), at + float2(4, 8), 2, Color(0.05, 0.075, 0.09));
+        }
+    Text("HIGH STREET", Seen(float2(0, 10.5)), Compact() ? 10.0 : 12.0, DIM, Anchor.MiddleCenter);
+    Text("RIVERSIDE WALK", Seen(float2(0, -12.8)), Compact() ? 9.0 : 11.0, DIM, Anchor.MiddleCenter);
+    Text("CUT THROUGH", Seen(float2(0, 0.6)), Compact() ? 8.0 : 10.0, Color(0.44, 0.48, 0.59), Anchor.MiddleCenter);
+    // Address rings and cargo marks are drawn above roofs and lighting.
+    for (var address = 0; address < 4; address++)
+    {
+        var point = Junction(AddressNode(address));
+        var at = Seen(point);
+        mut var active = false;
+        mut var tint = DIM;
+        for (var kind = 0; kind < 4; kind++)
+            if (night.parcels[kind].destination == address && (night.parcels[kind].carried || (night.phase == 0 && (desk.mask & (1 << kind)) != 0)))
+            {
+                active = true;
+                tint = CargoColor(kind);
+                ParcelIcon(kind, at + float2(0, -18), 22, tint);
+            }
+        Draw.Circle(at, (active ? 0.68 : 0.52) * scale, tint);
+        Draw.Circle(at, (active ? 0.58 : 0.44) * scale, DARK);
+        Text($"{address + 1}", at, Compact() ? 11.0 : 14.0, tint, Anchor.MiddleCenter);
+        var offset = point.x < 0 ? float2(12, -38) : float2(-12, -38);
+        Text(AddressName(address), at + offset, Compact() ? 9.0 : 11.0, active ? INK : DIM, point.x < 0 ? Anchor.MiddleLeft : Anchor.MiddleRight);
+    }
+    var depot = Seen(Junction(8));
+    Draw.Circle(depot, 1.5 * scale, Color(0.35, 0.76, 0.70, 0.10));
+    Draw.RoundRect(depot, float2(1.1, 0.9) * scale, 3, Color(0.29, 0.63, 0.58));
+    Text("DEPOT", depot + float2(0, 28), 11, INK, Anchor.MiddleCenter);
+    // Courier: coat, backpack, head, facing indicator and tiny walking feet.
+    var courier = Seen(night.position);
+    var facing = float2(night.facing.x, -night.facing.y);
+    var step = Math.Sin(clock * 16) * (night.speed > 0.6 ? 2.0 : 0.0);
+    Draw.Circle(courier + float2(2, 5), 9, Color(0, 0, 0, 0.42));
+    Draw.Line(courier + float2(-3, 6), courier + float2(-3, 10 + step), 3, Color(0.47, 0.58, 0.64));
+    Draw.Line(courier + float2(3, 6), courier + float2(3, 10 - step), 3, Color(0.47, 0.58, 0.64));
+    Draw.Circle(courier, 8, Color(0.80, 0.40, 0.29));
+    Draw.Rect(courier - facing * 4, float2(8, 7), AMBER);
+    Draw.Circle(courier + facing * 4, 4, INK);
+    Draw.Line(courier + facing * 10, courier + facing * 19, 2, INK);
+    if (night.phase == 1)
+    {
+        for (var kind = 0; kind < 4; kind++)
+            if (night.parcels[kind].carried && night.parcels[kind].breaking)
+                Draw.Circle(courier + float2((kind - 1.5) * 6, -25), 2.5, Math.Sin(clock * 8) > 0 ? CargoColor(kind) : RED);
+    }
+    var compass = float2(rect.x + rect.width - 27, rect.y + 32);
+    Draw.Line(compass + float2(0, 12), compass - float2(0, 12), 1, DIM);
+    Text("N", compass - float2(0, 22), 11, AMBER, Anchor.MiddleCenter);
+}
+
+Rect CardRect(int kind)
+{
+    if (Compact())
+    {
+        var width = (Screen.width - 42) * 0.5;
+        return Rect(16 + (kind % 2) * (width + 10), 126 + Screen.height * 0.38 + (kind / 2) * 88, width, 80);
+    }
+    return Rect(Screen.width - 326, CardTop() + kind * (CardHeight() + 10), 302, CardHeight());
+}
+void CargoCards(Night night, mut Desk desk)
+{
+    for (var kind = 0; kind < 4; kind++)
+    {
+        var rect = CardRect(kind);
+        var parcel = night.parcels[kind];
+        var selected = night.phase == 0 ? (desk.mask & (1 << kind)) != 0 : parcel.carried;
+        var tint = CargoColor(kind);
+        if (night.phase == 0)
+        {
+            var control = GUI.Control(rect);
+            if (control.clicked)
+            {
+                if (selected) desk.mask &= ~(1 << kind);
+                else if (BitCount(desk.mask) < 3) desk.mask |= 1 << kind;
+                else desk.inspect = kind;
+            }
+            Box(rect, selected ? Color(0.13, 0.20, 0.25) : PANEL);
+            if (control.hovered) desk.inspect = kind;
+        }
+        else Box(rect);
+        Draw.Rect(float2(rect.x + 2, rect.y + rect.height * 0.5), float2(3, rect.height - 12), selected ? tint : Color(0.20, 0.28, 0.32));
+        if (!Compact()) ParcelIcon(kind, float2(rect.x + 27, rect.y + 28), 30, tint);
+        var left = rect.x + (Compact() ? 12 : 52);
+        Text(ParcelName(kind), float2(left, rect.y + 21), Compact() ? 11.0 : 14.0, selected ? tint : DIM);
+        Text(ParcelRule(kind), float2(left, rect.y + (!Compact() && CardHeight() < 80 ? 35.0 : 42.0)), Compact() ? 10.0 : 12.0, INK);
+        var detailY = Compact() ? 62.0 : CardHeight() < 80 ? CardHeight() - 16 : 66.0;
+        Text($"To {parcel.destination + 1}   ${parcel.value}", float2(rect.x + 12, rect.y + detailY), 11, DIM);
+        if (night.phase == 0)
+        {
+            if (!Compact()) Text(selected ? "LOADED" : BitCount(desk.mask) >= 3 ? "FULL" : "+ LOAD", float2(rect.x + rect.width - 12, rect.y + 22), 10, selected ? tint : DIM, Anchor.MiddleRight);
+        }
+        else
+        {
+            var status = parcel.delivered ? "DELIVERED" : parcel.spoiled ? "SPOILED  -$10" : parcel.carried ? parcel.breaking ? "RULE BROKEN" : "SETTLING" : "AT DEPOT";
+            if (!Compact()) Text(status, float2(rect.x + rect.width - 12, rect.y + detailY), 10, parcel.breaking || parcel.spoiled ? RED : tint, Anchor.MiddleRight);
+            var barY = rect.y + rect.height - 9;
+            Draw.Rect(float2(rect.x + rect.width * 0.5, barY), float2(rect.width - 24, 3), Color(0.16, 0.24, 0.29));
+            var length = (rect.width - 24) * parcel.strain / 100;
+            if (length > 0) Draw.Rect(float2(rect.x + 12 + length * 0.5, barY), float2(length, 3), parcel.breaking ? RED : tint);
+            if (Compact() && (parcel.spoiled || parcel.delivered)) Text(parcel.delivered ? "OK" : "LOST", float2(rect.x + rect.width - 8, rect.y + 21), 10, parcel.delivered ? tint : RED, Anchor.MiddleRight);
+        }
+    }
+}
+string Detail(int kind)
+{
+    return kind == 0 ? "Darkness: +18 strain/s. Light: -8/s." : kind == 1 ? "Standing: +24 strain/s. Walk to settle." : kind == 2 ? "Turning: +15 strain/s. Shift holds north." : "Old street: +18 strain/s. Purple = visited.";
+}
+
+view Paint(Devices devices, Night night, mut Desk desk, mut TouchPad touch, Time time)
+{
+    GUI.ClaimKeyboard();
+    if (desk.serial != night.serial)
+    {
+        desk.serial = night.serial;
+        desk.inspect = -1;
+        if (night.phase == 0) desk.mask = 1;
+    }
+    if (devices.touchscreen.connected) desk.fingers = true;
+    if (devices.keyboard.h.down) desk.help = !desk.help;
+    var keys = devices.keyboard;
+    desk.handoffTime = Math.Max(0, desk.handoffTime - Frame.dt);
+    touch.move = float2((keys.d.pressed || keys.rightArrow.pressed ? 1 : 0) - (keys.a.pressed || keys.leftArrow.pressed ? 1 : 0),
+        (keys.w.pressed || keys.upArrow.pressed ? 1 : 0) - (keys.s.pressed || keys.downArrow.pressed ? 1 : 0));
+    touch.move += devices.gamepad.leftStick;
+    touch.brace = keys.leftShift.pressed || keys.rightShift.pressed || desk.brace || devices.gamepad.leftShoulder.pressed;
+    touch.handoff = keys.e.pressed || devices.gamepad.buttonSouth.pressed || desk.handoffTime > 0;
+    Draw.SetScreen();
+    Draw.Clear(DARK);
+    // A restrained header leaves most of the frame to the neighbourhood.
+    Text("NIGHT ROUTE", float2(24, 37), Compact() ? 26.0 : 32.0, INK);
+    Text("THE LATE SHIFT  /  WILLOW QUARTER", float2(25, 70), Compact() ? 10.0 : 12.0, DIM);
+    var minutes = int(Math.Ceil(night.left)) / 60;
+    var seconds = int(Math.Ceil(night.left)) % 60;
+    Text($"{minutes}:{seconds:D2}", float2(Screen.width - 26, 36), Compact() ? 23.0 : 30.0, night.left < 30 ? RED : AMBER, Anchor.MiddleRight);
+    Text($"${night.earnings}  /  SEED {night.seed}", float2(Screen.width - 26, 71), 12, DIM, Anchor.MiddleRight);
+    Neighbourhood(night, desk, time.t);
+
+    if (night.phase != 2)
+    {
+        var panelX = Compact() ? 16.0 : Screen.width - 326;
+        var panelY = Compact() ? 108 + Screen.height * 0.38 : CardTop() - 40;
+        Text(night.phase == 0 ? $"CHOOSE CARGO  {BitCount(desk.mask)}/3" : $"ON YOUR BACK  {CargoCount(night)}", float2(panelX, panelY), 13, AMBER);
+        if (!Compact()) Text(night.phase == 0 ? "The lamps are kind. The parcels aren't." : "100 strain spoils a parcel. Watch the bars.", float2(panelX, panelY + 21), 11, DIM);
+        CargoCards(night, desk);
+        var buttonY = Compact() ? 306 + Screen.height * 0.38 : CardTop() + 60 + CardHeight() * 4;
+        var panelW = Compact() ? Screen.width - 32 : 302.0;
+        if (night.phase == 0)
+        {
+            var count = BitCount(desk.mask);
+            if (Button(Rect(panelX, buttonY, panelW, 42), count > 1 ? $"DEPART   +{(count - 1) * 35}% BUNDLE PAY" : "DEPART / START WALKING", count > 0, true) || (devices.keyboard.enter.down && count > 0)) Send(Depart { serial = night.serial, mask = desk.mask });
+            if (Screen.height > 650) Text("Bundle bonus needs every parcel delivered.", float2(panelX, buttonY + 58), Compact() ? 10.0 : 11.0, DIM);
+            if (!Compact() && Screen.height > 740) Text(!night.started ? "Clock starts on departure. Pick your route." : "Dawn is coming. The clock keeps running.", float2(panelX, buttonY + 78), 11, DIM);
+        }
+        else
+        {
+            mut var nearDoor = false;
+            for (var kind = 0; kind < 4; kind++)
+                if (night.parcels[kind].carried && Math.Length(night.position - Junction(AddressNode(night.parcels[kind].destination))) < 1.5) nearDoor = true;
+            var depot = Math.Length(night.position - Junction(8)) < 1.5;
+            var action = depot ? CargoCount(night) > 0 ? "UNLOAD / ABANDON CARGO" : "OPEN DEPOT MANIFEST" : nearDoor ? "HAND OVER PARCEL" : CargoCount(night) == 0 ? "RETURN TO THE DEPOT" : "E  /  HAND OVER AT THE DOOR";
+            if (Button(Rect(panelX, buttonY, panelW, 42), action, depot || nearDoor, nearDoor))
+            {
+                if (depot) Send(ReturnToDepot { serial = night.serial });
+                else { desk.handoffTime = 0.12; touch.handoff = true; }
+            }
+            if (Screen.height > 650) Text(night.lit ? "IN LAMPLIGHT" : "IN THE DARK", float2(panelX, buttonY + 61), 11, night.lit ? AMBER : DIM);
+            if (!Compact() && Screen.height > 650)
+            {
+                Text($"{night.delivered} delivered   /   {night.spoiled} spoiled", float2(panelX + panelW, buttonY + 61), 11, DIM, Anchor.MiddleRight);
+                if (Screen.height > 740) Text(night.tripFailed ? "Bundle bonus lost. Save the remaining cargo." : $"${night.pendingBonus} bonus pending: deliver the whole bundle.", float2(panelX, buttonY + 82), 11, DIM);
+            }
+        }
+    }
+    else
+    {
+        var width = Math.Min(Screen.width - 32, 490);
+        var rect = Rect((Screen.width - width) * 0.5, Math.Max(96, (Screen.height - 460) * 0.5), width, 460);
+        Box(rect, Color(0.06, 0.105, 0.15, 0.98));
+        Text("THE TOWN WAKES", float2(rect.x + 24, rect.y + 36), 26, AMBER);
+        Text($"SHIFT {night.seed}   /   ${night.earnings} EARNED", float2(rect.x + 24, rect.y + 75), 17, INK);
+        Text($"{night.delivered} delivered   {night.spoiled} spoiled   {night.trip + 1} trips", float2(rect.x + 24, rect.y + 105), 13, DIM);
+        Text($"Bundle pay: ${night.bonuses}    Walked: {night.distance:F0} m", float2(rect.x + 24, rect.y + 132), 13, DIM);
+        Text("TIME BREAKING EACH RULE", float2(rect.x + 24, rect.y + 174), 11, DIM);
+        for (var kind = 0; kind < 4; kind++)
+        {
+            Text(ParcelName(kind), float2(rect.x + 24, rect.y + 205 + kind * 31), 13, CargoColor(kind));
+            Text($"{night.violations[kind]:F1}s", float2(rect.x + width - 24, rect.y + 205 + kind * 31), 13, INK, Anchor.MiddleRight);
+        }
+        if (Button(Rect(rect.x + 24, rect.y + 346, width - 48, 40), "RETRY THIS SHIFT", true, true)) Send(Shift { serial = night.serial, seed = night.seed });
+        if (Button(Rect(rect.x + 24, rect.y + 398, width - 48, 36), "NEXT NIGHT / NEW DESTINATIONS")) Send(Shift { serial = night.serial, seed = night.seed % 999 + 1 });
+    }
+
+    // Guidance occupies the map footer and leaves the stats corner free.
+    if (!Compact())
+    {
+        Text("WASD / ARROWS  walk     SHIFT  face north, slower strafe     E  handoff / depot     H  rules", float2(24, Screen.height - 83), 12, DIM);
+        Text("Light circles = safe ground     Purple streets = your route so far     Dark alleys = a calculated risk", float2(24, Screen.height - 60), 11, DIM);
+    }
+    if (night.notice > 0 && night.phase != 2)
+    {
+        var rect = MapRect();
+        var words = night.message == 1 ? $"{ParcelName(night.messageKind)} delivered. Its rule is gone." : night.message == 2 ? $"{ParcelName(night.messageKind)} spoiled. -$10. Keep going." : "Back at the depot. A new manifest awaits.";
+        Text(words, float2(rect.x + rect.width * 0.5, rect.y + rect.height - 12), Compact() ? 10.0 : 13.0, night.message == 2 ? RED : INK, Anchor.MiddleCenter);
+    }
+    if (Compact() || desk.fingers)
+    {
+        if (night.phase == 1)
+        {
+            var x = Compact() ? 65.0 : 100.0;
+            var y = Screen.height - 82;
+            var up = GUI.Control(Rect(x - 20, y - 59, 40, 38));
+            var down = GUI.Control(Rect(x - 20, y + 21, 40, 38));
+            var left = GUI.Control(Rect(x - 61, y - 19, 40, 38));
+            var right = GUI.Control(Rect(x + 21, y - 19, 40, 38));
+            touch.move += float2((right.pressed ? 1 : 0) - (left.pressed ? 1 : 0), (up.pressed ? 1 : 0) - (down.pressed ? 1 : 0));
+            Box(Rect(x - 61, y - 19, 122, 38), Color(0.17, 0.25, 0.30, 0.8));
+            Box(Rect(x - 20, y - 59, 40, 118), Color(0.17, 0.25, 0.30, 0.8));
+            Text("N", float2(x, y - 40), 14, INK, Anchor.MiddleCenter);
+            Text("S", float2(x, y + 40), 14, INK, Anchor.MiddleCenter);
+            Text("W", float2(x - 41, y), 14, INK, Anchor.MiddleCenter);
+            Text("E", float2(x + 41, y), 14, INK, Anchor.MiddleCenter);
+            if (Button(Rect(Screen.width - 140, y - 30, 120, 42), desk.brace ? "NORTH: HELD" : "HOLD NORTH")) desk.brace = !desk.brace;
+        }
+    }
+    if (Button(Rect(24, Screen.height - 40, 76, 26), desk.help ? "CLOSE" : "RULES")) desk.help = !desk.help;
+    if (desk.help && night.phase != 2)
+    {
+        var width = Math.Min(Screen.width - 32, 620);
+        var rect = Rect((Screen.width - width) * 0.5, 100, width, Compact() ? 330 : 370);
+        Box(rect, Color(0.04, 0.075, 0.11, 0.98));
+        Text("A FEW THINGS THE DEPOT WON'T TELL YOU", float2(rect.x + 18, rect.y + 28), Compact() ? 13.0 : 18.0, AMBER);
+        for (var kind = 0; kind < 4; kind++)
+        {
+            Text(ParcelName(kind), float2(rect.x + 18, rect.y + 64 + kind * 48), 12, CargoColor(kind));
+            Text(Detail(kind), float2(rect.x + 18, rect.y + 83 + kind * 48), Compact() ? 10.0 : 13.0, INK);
+        }
+        Text("100 strain = spoiled (-$10). Obeying removes 8/s.", float2(rect.x + 18, rect.y + 265), Compact() ? 10.0 : 13.0, INK);
+        Text("Deliver the whole bundle: 2 +35%, 3 +70% pay.", float2(rect.x + 18, rect.y + 289), Compact() ? 10.0 : 13.0, INK);
+        if (!Compact()) Text("Rules keep ticking while this guide is open.", float2(rect.x + 18, rect.y + 325), 12, DIM);
+    }
+}
