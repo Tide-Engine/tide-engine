@@ -329,7 +329,13 @@ static type check_prefab_spawn(checker *c, expr *e, decl *d, const bool load)
         root->spawn_mask = mask_or(root->spawn_mask, bit(marker));
         e->type_decl = marker;
     }
-    if (p->entities.count > 1) ensure_hierarchy(c->prog, local);
+    if (p->entities.count > 1) {
+        ensure_hierarchy(c->prog, local);
+        // Parenting helpers also support transformless organizational nodes.
+        // Their optional Transform loads still need the placement's C type.
+        decl *transform = find_type(c, str_from("Transform"), e->at);
+        component_placement(c->prog, transform, local, e->at);
+    }
     e->spawn_mask = root->spawn_mask;
     vec_push(c->spawns, e);
     if (inherits(c)) note_act(c, local, e->at, local ? "spawns local prefab entities" : "spawns prefab entities", true, text);

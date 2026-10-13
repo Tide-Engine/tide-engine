@@ -1350,6 +1350,7 @@ void analysis_run(const analysis_file *given, const int given_count)
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
     A.prog->asset_metadata_only = true; // Checked model names never need geometry, side buffers or a network request.
+    A.prog->editor_authoring = true; // Opted-in views can match authored trees without a game Spawn.
     // The symbols #if lines read, as `tide run` has them: DEBUG, and the game's packages. What a
     // command line would --define isn't known here, and reads as not defined.
     lex_symbols_reset();
@@ -3356,6 +3357,8 @@ static void describe(const occurrence *o, sb *out)
             const char *form;
             const char *doc;
         } attributes[] = {
+            {"RunInEditor", "[RunInEditor]", "Includes this view in both game rendering and the authored prefab preview. Preview does not run systems or gameplay handlers."},
+            {"EditorOnly", "[EditorOnly]", "Runs this view only in the authored prefab preview, not in game frames. Ordinary view access rules still apply."},
             {"Stage", "[Stage(Stages.Phase, offset = 0)]",
              "Places this declaration in an enum phase. Phases follow the enum's declaration order; signed integer "
              "offsets order work within a phase. The enum's numeric values don't affect phase order."},
@@ -8750,6 +8753,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     case CTX_ATTRIBUTE:
         if (pk == T_LBRACKET || pk == T_COMMA) {
+            item(&c, "RunInEditor", CK_FUNCTION, "[RunInEditor]", "Includes a view in game rendering and authored prefab preview.", "RunInEditor");
+            item(&c, "EditorOnly", CK_FUNCTION, "[EditorOnly]", "Includes a view only in authored prefab preview.", "EditorOnly");
             item(&c, "Stage", CK_FUNCTION, "[Stage(Stages.Phase, offset = 0)]",
                  "Places work in an enum phase, with an optional signed integer offset within that phase.", "Stage($1)");
             item(&c, "Before", CK_FUNCTION, "[Before(DeclarationOrPhase)]",

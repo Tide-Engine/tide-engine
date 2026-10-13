@@ -42,4 +42,11 @@
         <toolWindow id="Tide Game" anchor="right" icon="AllIcons.General.Web" doNotActivateOnStart="true"
                     factoryClass="io.github.blenminer.tide.TideGamePage$Window"/>
     </extensions>
+    <actions>
+        <action id="Tide.OpenPrefab" class="io.github.blenminer.tide.TideOpenPrefab" text="Open Tide Prefab Editor"
+                description="Edit this prefab in Tide's native scene editor">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

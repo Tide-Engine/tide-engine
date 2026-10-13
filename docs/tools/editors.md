@@ -55,8 +55,44 @@ local position, rotation and scale. Use the wheel to zoom, middle drag to pan,
 and **XY**/**Isometric** to change projection. Literal TRS, constants and basic
 float arithmetic are previewed, including `quaternion.Euler(float3(...))`.
 Unsupported expressions and their subtrees are explicitly omitted from the
-preview. Game views, materials and scripts are not executed; there are no drag
-gizmos yet. Static model previews use imported colors and editor lighting.
+preview. With **Views: off**, static models use imported colors and editor lighting
+without executing game code. There are no drag gizmos yet.
+
+**Views: on** compiles the project and renders its opted-in views, including their
+frags, verts and textures. `[RunInEditor]` includes a view in both the game and
+the editor; `[EditorOnly]` includes it only in the editor. Unmarked views run only
+in the game. These attributes take no arguments and apply only to views:
+
+```csharp
+[RunInEditor]
+view Models(Model model, World world)
+{
+    Draw.Mesh(model.model.Value, world.LocalToWorld(this));
+}
+```
+
+The editor constructs the selected prefab's whole tree from its authored values
+and defaults. It does not start `Main`, run `Spawned` or other event handlers,
+tick systems, or start a session. A view can prepare its own local visual state
+using the usual view permissions; that state belongs to the preview. Systems
+cannot opt in. Put values needed for rendering in defaults or authored overrides,
+or prepare local rendering resources from the view.
+
+The editor supplies the initial camera and viewport size. Views can set their own
+camera; hierarchy markers continue to use the editor camera, so keep a shared
+preview view from replacing it when selecting entities. **Match**/**Local** picks
+the prefab's placement, with the normal type checks: an `Entity` reference cannot
+become a `LocalEntity` reference automatically. Game input is neutral in this
+first preview, and match time stays at its initial tick. Audio, networking and
+file/request services are not provided.
+Opting in executes project code, including helpers and trusted C it calls.
+
+Applied edits, undo/redo, prefab selection and detected source/asset changes
+compile a fresh authored world, including edits not yet saved. Builds happen in
+the background. A failed build shows diagnostics and keeps the last successful
+preview visibly marked stale; it does not change the authored file. Turning views
+off releases it. Closing waits for an active compile to finish. Private build
+outputs and logs remain under `<project>/.tide/editor-preview/`.
 
 Declare a field such as `Asset<Mesh<Vertex3>> model` in your own component and
 add that component to an entity. Select its field and choose **Browse**, select
@@ -90,8 +126,8 @@ These recovery files are local cache files, not authored project content.
 The first app opens existing `.tprefab` files and uses the folder/package project
 context described under [`tide open`](cli.md#open). It supports Tide expression
 fields rather than a full text editor: long expressions and source syntax errors
-are edited in your usual code editor. Entity rename/reparent authoring, model
-previews, game rendering and embedded IDE windows are future work.
+are edited in your usual code editor. Entity rename/reparent authoring, mesh
+picking, transform gizmos and embedded IDE windows are future work.
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
@@ -100,6 +136,13 @@ game/package context as scripts, report invalid authored components and referenc
 and include prefab files when renaming components, fields and named prefabs.
 Authored entity names and paths currently need manual text edits. See
 [Authored prefabs](../game/scenes.md#authored-prefabs) for the text format.
+
+**Tide: Open Prefab Editor** in the Explorer context menu or above an open
+`.tprefab` launches the native app beside the IDE. It uses `tide.path` when set
+and requires a trusted workspace. A dirty active prefab is saved before launch;
+save script changes in the IDE for the native app to detect them. The app stays
+open independently of the IDE window. This is a native launch, not an embedded
+IDE viewport.
 
 The installer adds Tide to the ones it finds, and `tide upgrade` keeps it up to date. Installed one later? Run:
 
@@ -132,6 +175,11 @@ On the web, each reload says what it did in the page's console: **Tide: Game Dev
 ## JetBrains IDEs
 
 CLion, Rider, IntelliJ and the others, 2024.2 or later: install the Tide plugin from **Settings > Plugins > Marketplace**. It brings the LSP4IJ plugin it needs.
+
+An existing `.tprefab` offers **Open Tide Prefab Editor** in its project/editor
+context menu. It saves that prefab and launches the installed `tide` in the
+file's game context. The project must be trusted. The scene app is a separate
+native window; save scripts in the IDE to refresh its preview.
 
 The plugin runs the `tidels` chosen under **Settings > Languages & Frameworks > Tide**, if any; else the project's own `build/tools/tidels`, like Tide's repo once it's built, once you trust the project; else the one on your `PATH`, or where `tide` is installed. When there's none, `.tide` files say so above the code, with links to install `tide`, choose a `tidels`, or try again. The **Language Servers** tool window restarts the server, after an update, and shows what it and the IDE say to each other.
 

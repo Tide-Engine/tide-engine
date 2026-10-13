@@ -214,6 +214,7 @@ void editor_refresh(editor_document *d)
     d->prog = program_new();
     d->prog->game_folder = d->project;
     d->prog->asset_metadata_only = true;
+    d->prog->editor_authoring = true;
     diag_set_sink(collect, d);
     lex_symbols_reset(); lex_define("DEBUG");
     game_packages packages = {0};

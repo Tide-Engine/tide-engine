@@ -115,6 +115,12 @@
         "title": "Game Developer Tools",
         "category": "Tide",
         "icon": "$(tools)"
+      },
+      {
+        "icon": "$(preview)",
+        "command": "tide.openPrefab",
+        "title": "Open Prefab Editor",
+        "category": "Tide"
       }
     ],
     "menus": {
@@ -137,12 +143,24 @@
           "command": "tide.openDevTools",
           "when": "activeWebviewPanelId == 'simpleBrowser.view' && tide.gamePage",
           "group": "navigation"
+        },
+        {
+          "group": "navigation",
+          "command": "tide.openPrefab",
+          "when": "resourceExtname == .tprefab && isWorkspaceTrusted"
         }
       ],
       "commandPalette": [
         {
           "command": "tide.openDevTools",
           "when": "tide.gamePage"
+        }
+      ],
+      "explorer/context": [
+        {
+          "group": "navigation",
+          "command": "tide.openPrefab",
+          "when": "resourceExtname == .tprefab && isWorkspaceTrusted"
         }
       ]
     },

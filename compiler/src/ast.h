@@ -662,6 +662,7 @@ typedef struct decl {
     stmt *sanitize; // An input's Sanitize() { ... }
     loc sanitize_at;
     bool is_view;        // A view: a DECL_SYSTEM that runs once per frame, reads the world and draws.
+    bool run_in_editor, editor_only; // Explicit authoring-preview inclusion, on views only.
     bool is_handler;     // An event handler: a DECL_SYSTEM that runs when its event is sent, `event(Hit hit) Name(...)`.
     struct decl *event;  // A handler's event
     struct decl *forgets; // A local handler of Forgotten: the match component or singleton whose local fields it hears go
@@ -1334,6 +1335,7 @@ typedef struct program {
     decl *player_joined;
     decl *player_left;
     decl *main;          // The scene named Main, where the program starts
+    decl *editor_create; // Private preview factory, present only in an editor build.
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.
     decl *scene_visibility; // The built-in enum SceneVisibility
@@ -1412,6 +1414,7 @@ typedef struct program {
     VEC(decl *) skinned_types; // Owned model values and their inferred/contracted catalog views.
     decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
+    bool editor_authoring; // Native authoring can instantiate checked prefabs without game startup.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.

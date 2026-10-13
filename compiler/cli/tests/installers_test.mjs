@@ -23,6 +23,7 @@ const cases = [
     { name: 'installed stable updater stays on stable', installed: true },
     { name: 'installed updater failure is reported, and the override restored', installed: true, failUpgrade: true },
     { name: 'checksum failure never invokes an installed updater', installed: true, damaged: true },
+    { name: 'optional Windows prefab Open With registration preserves defaults', installed: true, associate: true },
 ];
 
 const powershell = String.raw`
@@ -92,8 +93,25 @@ foreach ($mock in @('Invoke-RestMethod', 'Invoke-WebRequest', 'Expand-Archive'))
     if ((Get-Command $mock).CommandType -ne 'Function') { throw "The $mock mock was not selected." }
 }
 Phase 'mock command resolution verified'
+# Intercept registry operations before running the actual installer. No test
+# changes this user's file associations, even when registration is requested.
+function New-Item {
+    param($Path, $ItemType, [switch]$Force)
+    if ($Path.StartsWith('HKCU:')) { Record @{ op = 'registry-key'; path = $Path }; return }
+    Microsoft.PowerShell.Management\New-Item @PSBoundParameters
+}
+function Set-Item {
+    param($LiteralPath, $Value)
+    if ($LiteralPath.StartsWith('HKCU:')) { Record @{ op = 'registry-default'; path = $LiteralPath; value = $Value }; return }
+    Microsoft.PowerShell.Management\Set-Item @PSBoundParameters
+}
+function New-ItemProperty {
+    param($LiteralPath, $Name, $Value, $PropertyType, [switch]$Force)
+    if (-not $LiteralPath.StartsWith('HKCU:')) { throw 'Unexpected registry fixture path' }
+    Record @{ op = 'registry-value'; path = $LiteralPath; name = $Name; value = $Value }
+}
 $testTide = Join-Path $env:LOCALAPPDATA 'Tide/bin/tide.exe'
-Set-Item -LiteralPath "Function:$testTide" -Value {
+Set-Item -LiteralPath "Function:global:$testTide" -Value {
     if ($args[0] -eq 'upgrade') {
         $manifestText = [IO.File]::ReadAllText(([Uri]$env:TIDE_RELEASES_URL).LocalPath)
         if (-not $manifestText.TrimStart().StartsWith('[')) { throw 'The local manifest must be an array.' }
@@ -173,6 +191,7 @@ fi
 `;
 
 for (const runtime of shells) for (const c of cases) {
+    if (c.associate && runtime !== 'powershell') continue;
     test(`${runtime}: ${c.name}`, () => {
         const work = mkdtempSync(join(tmpdir(), 'tide-installers-test-'));
         let passed = false;
@@ -196,10 +215,14 @@ for (const runtime of shells) for (const c of cases) {
                 if (runtime === 'sh') {
                     writeFileSync(join(installation, 'bin', 'tide'), oldTide);
                     chmodSync(join(installation, 'bin', 'tide'), 0o755);
-                } else writeFileSync(join(installation, 'bin', 'tide.exe'), '');
+                } else {
+                    writeFileSync(join(installation, 'bin', 'tide.exe'), '');
+                    writeFileSync(join(installation, 'bin', 'tide-editor.exe'), '');
+                }
             }
             const env = { ...process.env, GH_TOKEN: 'a-token-nobody-is-sent', GITHUB_TOKEN: 'another-token-nobody-is-sent',
                 TIDE_CHANNEL: c.channel || '', TIDE_RELEASES_URL: 'file:///original-override.json',
+                TIDE_ASSOCIATE_PREFABS: c.associate ? '1' : '',
                 LOCALAPPDATA: join(work, 'local'), HOME: join(work, 'user'),
                 TEST_LOG: join(work, 'requests.jsonl'), TEST_WORK: join(work, 'temporary'),
                 TEST_INSTALLER: join(source, `install.${runtime === 'powershell' ? 'ps1' : 'sh'}`),
@@ -249,6 +272,16 @@ for (const runtime of shells) for (const c of cases) {
             }
             if (runtime === 'powershell' && c.failUpgrade) assert.ok(said.includes('Upgrade refused.'), said);
             assert.equal(entries.filter((entry) => entry.op === 'editors').length, c.installed && !c.damaged && !c.failUpgrade ? 1 : 0);
+            const registry = entries.filter(entry => entry.op.startsWith('registry-'));
+            assert.equal(registry.length, runtime === 'powershell' && c.associate ? 6 : 0);
+            if (registry.length) {
+                const defaults = registry.filter(entry => entry.op === 'registry-default');
+                assert.ok(defaults.every(entry => entry.path.includes('Tide.Prefab')), 'never replace an extension default or UserChoice');
+                assert.equal(defaults.find(entry => entry.path.endsWith('command')).value,
+                    `"${join(installation, 'bin', 'tide-editor.exe')}" "%1"`);
+                const value = registry.find(entry => entry.op === 'registry-value');
+                assert.ok(value.path.endsWith('.tprefab\\OpenWithProgids')); assert.equal(value.name, 'Tide.Prefab');
+            }
             assert.equal(entries.filter((entry) => entry.op === 'unpack').length, !c.installed && !c.damaged ? 1 : 0);
             if (runtime === 'sh') assert.ok(!existsSync(env.TEST_WORK), 'The temporary downloads were not removed.');
             passed = true;

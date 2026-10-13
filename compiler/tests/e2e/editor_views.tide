@@ -1,0 +1,25 @@
+extern void Observe(int tag);
+component Body { int value = 7; }
+local singleton VisualState { bool ready; }
+prefab Preview
+{
+    Body { value = 11 };
+    entity Child { Body { value = 23 }; }
+}
+scene Main { }
+event(Spawned) Setup(with Main) { Observe(1); Spawn(Preview); }
+event(Spawned) SpawnBody(Body body) { Observe(body.value); }
+system Update(mut Body body) { body.value += 100; Observe(2); }
+view RuntimeOnly(mut VisualState state)
+{
+    Observe(3);
+    if (!state.ready) { local Spawn(Preview); state.ready = true; }
+}
+[RunInEditor]
+view Shared(Body body) { Draw.Circle(float2(body.value, 0), 1, Color.green); }
+[RunInEditor]
+view LocalShared(local Body body) { Draw.Circle(float2(body.value, 1), 1, Color.blue); }
+[EditorOnly]
+view Authoring(Body body) { Draw.Circle(float2(body.value, 2), 1, Color.yellow); }
+[EditorOnly]
+view LocalAuthoring(local Body body) { Draw.Circle(float2(body.value, 3), 1, Color.cyan); }
