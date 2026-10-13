@@ -478,7 +478,7 @@ float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, 
         light += Glow(p, n, sight.plateB, float3(0.10, 0.82, 0.90) * 2.4, 4) * (sight.held ? 1.0 : Unblocked(sight.plateB, lifted, sight, true));
     if (Math.DistanceSq(p, cubeLamp) < 5.8)
         light += Glow(p, n, cubeLamp, float3(0.2, 0.78, 0.72) * 0.7, 2.4) * (sight.held ? 1.0 : Unblocked(cubeLamp, lifted, sight, false));
-    if (p.z > 3.2)
+    if (p.z > 9)
         light += Glow(p, n, float3(0, 3.2, 16.6), float3(0.25, 1.0, 0.45) * 2.6, 10) * (sight.held ? 1.0 : Unblocked(float3(0, 3.2, 16.6), lifted, sight, true));
     if (!sight.held)
         light += Torch(p, n, sight.torchAt, sight.torchWay) + Torch(p, n, sight.otherAt, sight.otherWay);
@@ -543,7 +543,6 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
     if (n.y > 0.7 && p.y < 0.3)
     {
         mut float wall = Math.Min(9.8 - Math.Abs(p.x), 13 - Math.Abs(p.z));
-        if (Math.Abs(p.x) > 2.1) wall = Math.Min(wall, Math.Abs(Math.Abs(p.z - 3) - 0.2));
         shade *= 1 - 0.36 * Math.Exp(-Math.Max(wall, 0) * 3.2);
         float underCube = Math.Exp(-Math.DistanceSq(p.xz, sight.cube.xz) * 3.4) * Math.Saturate(1.6 - (sight.cube.y - p.y)) * 0.42;
         float underPartner = Math.Exp(-Math.DistanceSq(p.xz, sight.partner.xz) * 5.5) * Math.Saturate(1.5 - (sight.partner.y - p.y)) * 0.4;
@@ -1044,7 +1043,8 @@ void Dress(mut Optics optics, int level)
             normal = float3(0, 0, 1);
             at = float3(door == 6 ? -6.2 : door == 7 ? 1.4 : 7.1, 1.05, -12.97);
         }
-        if (level == 2 && at.z > 4.5 && at.z < 9.5) continue;
+        if (level != 0 && level != 3) continue;
+        if (door < 6 && Math.Abs(at.z) < 4.5) continue;
         quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
         optics.furnishings.Add(Faced(at + normal * .03, r, float3(.95, 2.1, .06), DOORS, 2));
         optics.furnishings.Add(Turned(at + float3(0, .03, 0) + normal * .012, r, float3(1.11, 2.2, .06), wood));
@@ -1053,9 +1053,9 @@ void Dress(mut Optics optics, int level)
     optics.furnishings.Add(Faced(float3(3.6, .18, -12.2), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
 
     // The chamber's number, by the gate.
-    optics.furnishings.Add(Block(float3(4.4, 3.1, 2.36), float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
-    WallDigit(optics, 0, float3(3.86, 3.1, 2.315));
-    WallDigit(optics, level + 1, float3(4.94, 3.1, 2.315));
+    optics.furnishings.Add(Block(float3(5.4, 3.1, 12.96), float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
+    WallDigit(optics, 0, float3(4.86, 3.1, 12.915));
+    WallDigit(optics, level + 1, float3(5.94, 3.1, 12.915));
 }
 
 // A box of the room, as the match has it: a wall, a ceiling, a planter with what grows in it, or a crate.
@@ -1087,16 +1087,16 @@ void DressWall(mut Optics optics, Wall wall, int number)
 
 void WallDigit(mut Optics optics, int digit, float3 position)
 {
-    int mask = digit == 0 ? 63 : digit == 1 ? 6 : digit == 2 ? 91 : 79;
+    int mask = digit == 0 ? 63 : digit == 1 ? 6 : digit == 2 ? 91 : digit == 3 ? 79 : digit == 4 ? 102 : 109;
     for (int segment = 0; segment < 7; segment++)
     {
         if ((mask & (1 << segment)) == 0) continue;
         mut float3 at = float3(0, .46, 0);
-        mut float3 size = float3(.47, .08, .025);
+        mut float3 size = float3(.5, .12, .06);
         if (segment == 1 || segment == 2 || segment == 4 || segment == 5)
         {
             at = float3(segment < 3 ? .265 : -.265, segment == 1 || segment == 5 ? .23 : -.23, 0);
-            size = float3(.08, .4, .025);
+            size = float3(.12, .46, .06);
         }
         else if (segment == 3) at.y = -.46;
         else if (segment == 6) at.y = 0;
@@ -1183,7 +1183,7 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
     Color amberTint = Color(1, .64, .24);
     Color cyanTint = Color(.2, .96, .88);
     Color steel = Color(.10, .14, .16);
-    for (int plate = 0; plate < 2; plate++)
+    for (int plate = 0; plate < PlateCount(arena.level); plate++)
     {
         float3 at = PlatePosition(arena.level, plate);
         bool pressed = plate == 0 ? arena.plateA : arena.plateB;
@@ -1197,21 +1197,14 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
             optics.dynamic.Add(Block(at + float3(0, .074, edge * .72), float3(1.3, .012, .05), tint, 0, pressed ? 1.3 : .55));
         }
     }
-    if (arena.level == 2 && arena.bridge)
-    {
-        optics.dynamic.Add(Block(float3(0, -.075, 7), float3(3.4, .15, 4.0), Color(.2, .29, .31), 2, 0, .7));
-        optics.dynamic.Add(Block(float3(-1.68, .02, 7), float3(.04, .03, 4), cyanTint, 0, 1.2));
-        optics.dynamic.Add(Block(float3(1.68, .02, 7), float3(.04, .03, 4), cyanTint, 0, 1.2));
-    }
-
     // The split gate physically retreats upwards as its two circuits latch.
     float gateY = 2.0 + arena.gate * 4.3;
-    optics.dynamic.Add(Faced(float3(0, gateY, 3), quaternion.identity, float3(4.14, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
+    optics.dynamic.Add(Faced(float3(0, gateY, 13.5), quaternion.identity, float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
     for (int rib = 0; rib < 4; rib++)
-        optics.dynamic.Add(Block(float3(0, gateY - 1.5 + rib, 2.87), float3(3.5, .07, .04), steel, 0, 0, .7));
-    optics.dynamic.Add(Block(float3(-1.9, gateY, 2.86), float3(.05, 3.9, .04), amberTint, 0, arena.plateA || arena.solved ? 1.4 : .5));
-    optics.dynamic.Add(Block(float3(1.9, gateY, 2.86), float3(.05, 3.9, .04), cyanTint, 0, arena.plateB || arena.solved ? 1.4 : .5));
-    optics.dynamic.Add(Block(float3(0, gateY, 2.865), float3(.04, 3.9, .05), Color(.36, .46, .47), 0, 0, .8));
+        optics.dynamic.Add(Block(float3(0, gateY - 1.5 + rib, 13.37), float3(5.4, .07, .04), steel, 0, 0, .7));
+    optics.dynamic.Add(Block(float3(-2.85, gateY, 13.36), float3(.05, 3.9, .04), amberTint, 0, arena.solved ? 1.4 : .5));
+    optics.dynamic.Add(Block(float3(2.85, gateY, 13.36), float3(.05, 3.9, .04), amberTint, 0, arena.solved ? 1.4 : .5));
+    optics.dynamic.Add(Block(float3(0, gateY, 13.365), float3(.04, 3.9, .05), Color(.36, .46, .47), 0, 0, .8));
 
     // The cube, turned as Box3D has it.
     float3 cube = fold.cube;

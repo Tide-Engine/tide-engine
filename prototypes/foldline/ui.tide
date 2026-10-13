@@ -14,17 +14,14 @@ const Color UI_DARK = Color(0.025, 0.065, 0.085, 0.94);
 const Color UI_CYAN = Color(0.21, 0.87, 0.89);
 const Color UI_AMBER = Color(1, 0.65, 0.28);
 
-string ChamberTitle(int level)
-{
-    return level switch { 0 => "01 / A SHORTCUT THROUGH SPACE", 1 => "02 / TWO SIDES OF THE SAME IDEA", _ => "03 / THE RESONANCE BRIDGE" };
-}
-
 string ChamberHint(int level)
 {
     return level switch {
-        0 => "The gate is open only while the amber plate is weighted. Leave something on it.",
-        1 => "Both plates at once, and they're a wall apart. Fold the rooms together.",
-        _ => "The cube on plate A holds the bridge. Someone stands on plate B."
+        0 => "The gate opens while the plate is weighted. The plate is across the pit: fold the walls together.",
+        1 => "The plate is in the cage. A fold goes anywhere you can see a wall that takes one.",
+        2 => "A vent, too low for you as you are. A fold's ends needn't be the same size.",
+        3 => "Too far to jump as you are. Concrete takes no fold; what's behind it might.",
+        _ => "The cube is shut in one room and the plate is past the pit."
     };
 }
 
@@ -115,9 +112,9 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     else Draw.Text(ui.message, float2(pad, top + 174), 14, UI_MUTED);
     if (session.state == SessionState.Connected)
     {
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < 5; i++)
         {
-            var slotWidth = (width - 16) / 3;
+            var slotWidth = (width - 32) / 5;
             if (InterfaceButton(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), $"0{i + 1}", i == 0 ? UI_AMBER : UI_CYAN, false))
             {
                 Send(SelectChamber { level = i });
@@ -191,7 +188,7 @@ float HudKey(float2 at, string key, float wide, string label, float reach)
 
 string ChamberName(int level)
 {
-    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "TWO SIDES OF THE SAME IDEA", _ => "THE RESONANCE BRIDGE" };
+    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "THROUGH THE WINDOW", 2 => "SMALLER", 3 => "LARGER", _ => "BOTH" };
 }
 
 [After(Render)]
@@ -210,8 +207,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     Draw.RoundRect(float2(pad + 12, 52), float2(3, 16), 1.5, UI_CYAN);
     Draw.Text($"EXPERIMENT 0{arena.level + 1}", float2(pad + 24, 27), 10, UI_CYAN, Font.Bold);
     Draw.Text(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 24, 41), 14, UI_INK, Font.Bold);
-    HudLamp(float2(pad + 30, 78), "CIRCUIT A", UI_AMBER, arena.plateA || arena.solved);
-    HudLamp(float2(pad + 124, 78), "CIRCUIT B", UI_CYAN, arena.plateB || arena.solved);
+    HudLamp(float2(pad + 30, 78), "PLATE", UI_AMBER, arena.plateA);
     if (!narrow) Draw.Text(arena.gate > 0.9 ? "GATE OPEN" : "GATE SEALED", float2(pad + plate - 14, 78), 10, arena.gate > 0.9 ? UI_INK : UI_MUTED, Anchor.MiddleRight, Font.Bold);
 
     // Whose eyes these are, and the room others join.
@@ -269,7 +265,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
         Draw.Line(middle - float2(-4, 118), middle - float2(-74, 118), 3, UI_CYAN);
         Draw.Text("A GOOD CONNECTION.", middle - float2(0, 75), Math.Min(48, Screen.width / 15), UI_INK, Anchor.MiddleCenter, Font.Bold);
         Draw.Text("Both operators made it. Space is better shared.", middle - float2(0, 23), 17, UI_MUTED, Anchor.MiddleCenter);
-        if (InterfaceButton(Rect(middle.x - 165, middle.y + 30, 330, 48), arena.level < 2 ? "NEXT EXPERIMENT" : "BACK TO EXPERIMENT 01", UI_CYAN, true))
-            Send(SelectChamber { level = (arena.level + 1) % 3 });
+        if (InterfaceButton(Rect(middle.x - 165, middle.y + 30, 330, 48), arena.level < 4 ? "NEXT EXPERIMENT" : "BACK TO EXPERIMENT 01", UI_CYAN, true))
+            Send(SelectChamber { level = (arena.level + 1) % 5 });
     }
 }
