@@ -47,6 +47,67 @@ so the next-experiment control can be clicked. The README describes the player
 controls and build commands. Gameplay supports keyboard/mouse and gamepad;
 touchscreen movement is not implemented.
 
+## The look: a PSX backrooms (2026-10-13)
+
+The owner asked to try models and a horror PSX style, chose a liminal
+backrooms theme from the options offered, and said of the first pass "i like
+this style" and that its darkness is right for the puzzles. Horror is
+atmosphere and "sprinkles": puzzles leave time to think, and spooks come
+between and around them. Everything below this heading and above Rendering
+describes that pass; the Rendering section is the same pipeline's earlier
+description, kept for the parts that still hold (the fold cameras, the hole,
+the copies at a fold's other end, the lamps' occlusion, the air pass, the
+light kept as light until the last blit). Where the two differ, this one is
+current: there's no roof glass, sky, sun, rounded edges, floor reflection,
+wall ribbons or robots any more.
+
+**Art** (`prototypes/foldline/art/`, credited in its `CREDITS.md`, all CC0):
+Kenney's Animated Characters Retro gives the operators' model
+(`character.fbx`), three clip files and the skins. Each clip file holds a
+one-frame "Targeting Pose" before its clip, so the catalog's odd entries are
+Idle, Run and Jump (`FigurePose`). `kit.png` is a sheet of sixteen 64-texel
+squares: twelve textures of Kenney's Retro Urban Kit and four generated for
+the game (wallpaper, carpet, ceiling tile, plaster). The kit's models aren't
+used: each has several textures, which a mesh import doesn't carry, so doors
+and crates are the game's own boxes painted from the sheet (`Clad` by place in
+the room, `Faced` by a box's faces).
+
+**The picture** (`Develop`, `Snap`): 300 rows whatever the window's are, each
+taking one pixel of the full-size scene; corners snapped to that grid in the
+vertex stage (`Snapped`, also in `Sway`); textures read at their nearest
+texel; 32 steps a channel with a four by four ordered dither; a yellow-green
+grade, grain and a heavy vignette. Rendering really at 300 rows is not built:
+the scene targets are still the window's size.
+
+**Light:** the ceiling at 4.4 m has a lamp every 5 m across and 3.25 m along
+(`LampCell`, `LampOn`): about two in nine are dead and one in nine stutters.
+`Lamps` sums the nine nearest for a surface, each a tight downward beam plus a
+quarter as much all around, so floors get pools and walls an arc that's dark
+towards the ceiling. This replaced a first version (rectangular pools and an
+offset wash up the walls) the owner found "a bit weird with the walls/floor".
+The one shadow map looks straight down, so shadows fall under things, and only
+on what faces up. `LampWide` adds a little bounce to each bay, `LampAir` is
+the cone in the haze the air pass marches, and each operator carries a torch
+(`Torch`), unshadowed, which the partner sees. The exit's light is its sign's
+green.
+
+**The watcher** (`Watcher` and `Haunt` in `play.tide`, the owner's idea: a
+figure that goes away when approached or stared at, and sometimes doesn't): it
+is match state, so both players see the same one. After 25 to 60 seconds it
+stands at one of six spots nobody is within 7.5 m of, and comes and goes in
+the middle of 0.22 seconds with every ceiling lamp out (`Sight.lamps`). It
+leaves when an operator comes within 4.6 m, after 2.4 s of being looked at
+within 18 m, or after 28 s. One in four is bold: it stays when approached and
+at 2.7 m goes for that operator, standing in their face for 0.75 s; that
+player's picture jolts and reddens (`Lens.scare`). Nothing else happens to
+them. It's the zombie skin on the operators' model. No sound is built.
+
+Not built: vents, chases, timed puzzles, sound, a HUD and menu in the style.
+
+**Stats:** every catalog game is built with `STATS` since 2026-10-13 (the
+owner: prototypes show their frame rate), so the drawer's line is in the
+corner of each page and of captures.
+
 ## Rendering
 
 `render.tide` owns local geometry, materials, light and render targets. The
@@ -191,6 +252,11 @@ catalog thumbnail is that actual gameplay frame. Visual inspection corrected
 the first-person camera initially drawing its own robot body, which obscured
 the lower scene; self geometry now draws only in portal passes. The polished
 captures show compact equipment, warmer stone, roof shadows and chamber signs.
+
+The PSX pass, the watcher and `STATS` were validated by this game's suites
+and the other catalog games' own, native and web: 6/6 native and 11/11 web debug (the
+other games' browser play tests among them, with the drawer's line in their
+corner). The full suites were not rerun.
 
 The hole, the copies and the opening's size were validated by this game's
 suites, 2/2 native and 3/3 web, with the same replay hash natively and under

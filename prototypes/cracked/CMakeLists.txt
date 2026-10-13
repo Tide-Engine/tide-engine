@@ -16,7 +16,7 @@ endif()
 if(NOT TARGET tide_platform)
     return()
 endif()
-tide_add_game(cracked SOURCES ${CRACKED_SOURCES} ${CRACKED_ROOMS})
+tide_add_game(cracked SOURCES ${CRACKED_SOURCES} ${CRACKED_ROOMS} STATS)
 if(TIDE_WEB)
     set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/cracked")
     add_custom_target(cracked_page

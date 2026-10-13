@@ -28,7 +28,12 @@ foreach(id pong snake tanks bomberman connect-four asteroids sumo tower-defense 
     set(target "sample_${name}")
     file(GLOB sources LIST_DIRECTORIES false CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${id}/*.tide")
     list(SORT sources)
-    tide_add_game(${target} SOURCES ${sources} ${SAMPLE_ROOMS})
+    # Two Forks is in the prototype catalog, whose games all show their frame rate.
+    set(stats "")
+    if(id STREQUAL "two-forks")
+        set(stats STATS)
+    endif()
+    tide_add_game(${target} SOURCES ${sources} ${SAMPLE_ROOMS} ${stats})
     if(TIDE_WEB)
         # Stage even an unchanged build, so clearing docs/static is recoverable.
         set(destination "${PROJECT_SOURCE_DIR}/docs/static/samples/${id}")

@@ -10,6 +10,7 @@ asset SkinnedMesh<StoneVertex> figure = "art/character.fbx";
 asset AnimationCatalog moves = ["art/idle.fbx", "art/run.fbx", "art/jump.fbx"];
 [Filter(Filter.Point)] asset Texture skinA = "art/operator-a.png";
 [Filter(Filter.Point)] asset Texture skinB = "art/operator-b.png";
+[Filter(Filter.Point)] asset Texture skinWatcher = "art/watcher.png";
 [Filter(Filter.Point)] asset Texture kit = "art/kit.png";
 struct StoneVertex
 {
@@ -58,6 +59,7 @@ struct Sight
     float3 torchWay;
     float3 otherAt;
     float3 otherWay;
+    float lamps;      // How much of the ceiling's light there is: none for the moment a watcher comes or goes
     bool cut;         // The piece is the room's: a fold opens a hole in it
     bool moving;      // The piece can cross a fold: what's past the wall's face is at the other end
 }
@@ -72,6 +74,7 @@ struct Aperture
     bool clipped;
     bool packed;
     float phase;
+    float lamps;
     float3 wall;      // The middle of the fold's panel, which way it faces and its right
     float3 face;
     float3 right;
@@ -86,6 +89,7 @@ struct Ray
 {
     float4x4 fromClip;
     float3 eye;
+    float lamps;
 }
 
 struct BlurStep
@@ -189,6 +193,7 @@ local singleton Lens
     Texture wide;
     float2 pixel;
     float phase;
+    float scare;      // A watcher has this machine's operator: 1 as it lands, fading
     bool made;
 }
 
@@ -209,10 +214,10 @@ const float FOLD_DEEP = 0.3;
 const float FOLD_SOFT = 1.2 / FOLD_PIXELS;
 const float FIGURE_SCALE = 0.45;
 
-// The ceiling's lamps shine nearly straight down: the one light with shadows.
+// Shadows fall straight down from the ceiling's lamps.
 float3 SunWay()
 {
-    return Math.Normalize(float3(-0.16, 1, -0.1));
+    return float3(0, 1, 0);
 }
 
 float3 LampTint()
@@ -288,7 +293,36 @@ float LampOn(int2 cell, float phase)
     int roll = Math.Hash(cell) % 9;
     if (roll < 2) return 0;
     if (roll == 2) return Math.Step(0.2, Math.Sin(phase * 31 + cell.x) * Math.Sin(phase * 7 + cell.y) + 0.5) * 0.9;
-    return 0.94 + 0.06 * Math.Sin(phase * 53 + cell.x * 2.1 + cell.y);
+    return 1;
+}
+
+// The light of the lamps about a place on a surface that faces `normal`: each
+// is a small bright sheet that shines mostly down, so the floor has a pool
+// under each, and a wall its arc, dark towards the ceiling.
+float Lamps(float3 at, float3 normal, float phase)
+{
+    int2 home = LampCell(at.xz);
+    mut float sum = 0;
+    for (int row = -1; row <= 1; row++)
+    {
+        for (int column = -1; column <= 1; column++)
+        {
+            int2 cell = int2(home.x + column, home.y + row);
+            float on = LampOn(cell, phase);
+            if (on <= 0) continue;
+            float2 middle = LampMiddle(cell);
+            float3 to = float3(middle.x, CEILING, middle.y) - at;
+            float far = Math.Dot(to, to);
+            float3 along = to / Math.Sqrt(far + 0.0001);
+            float down = Math.Max(along.y, 0);
+            // A tight beam under it, and a quarter as much all around
+            mut float tight = down * down * down * down;
+            tight *= tight;
+            tight *= tight;
+            sum += on * Math.Saturate(Math.Dot(normal, along)) * (0.75 * tight + 0.25 * down * down * down) / (far + 0.6);
+        }
+    }
+    return sum * 36;
 }
 
 // A lamp's pool: how much of its light leaves the ceiling at a place, the
@@ -314,7 +348,7 @@ float LampAir(DepthTexture depth, float4x4 toSun, float3 at, float phase)
 {
     float up = Math.Max(CEILING - at.y, 0);
     float3 way = SunWay();
-    return LampPool(at.xz + way.xz * (up / way.y), 0.06 + up * 0.2, phase) * SunThrough(depth, at, toSun);
+    return LampPool(at.xz + way.xz * (up / way.y), 0.05 + up * 0.26, phase) * SunThrough(depth, at, toSun) / (1 + up * 0.35);
 }
 
 // A torch's light on a surface: a cone that fades with its reach.
@@ -418,17 +452,16 @@ float3 Lit(float3 paint, float3 p, float3 n, float shade, float gloss, bool leaf
         shadow = SunThrough(sun, p + sunWay * 0.06, toSun);
         facing = Math.Abs(facing) * 0.6 + 0.4;
     }
-    else if (sight.held) shadow = facing > 0 ? SunThrough(sun, at, toSun) : 0;
-    else if (facing > 0) shadow = Sunlight(sun, p, n, toSun);
+    else if (sight.held) shadow = SunThrough(sun, at, toSun);
+    else if (facing > 0.02) shadow = Sunlight(sun, p, n, toSun);
     facing = Math.Max(facing, 0);
 
-    float3 lamp = LampTint();
+    float3 lamp = LampTint() * sight.lamps;
     mut float3 light = float3(0.030, 0.032, 0.028) * shade;
-    light += lamp * (LampPool(over, 0.06 + up * 0.2, sight.phase) * facing * shadow * 2.4);
-    light += lamp * (LampWide(at.xz, sight.phase) * (0.16 + 0.16 * Math.Saturate(n.y * 0.5 + 0.5)) * shade);
-    float upright = 1 - Math.Abs(n.y);
-    if (upright > 0.3)
-        light += lamp * (LampPool(at.xz + n.xz * (0.2 + up * 0.45), 0.2 + up * 0.5, sight.phase) * upright * shade * 0.75 / (1 + up * 0.2));
+    // What's under something is in its shadow; a wall is lit whatever stands before it
+    float under = Math.Lerp(1, shadow, Math.Saturate(n.y * 2));
+    light += lamp * (Lamps(at, leaf ? float3(0, 1, 0) : n, sight.phase) * (leaf ? 0.7 * shadow : under));
+    light += lamp * (LampWide(at.xz, sight.phase) * 0.13 * shade);
 
     // Each fold's light is stopped by what stands in its way.
     if (sight.linked > 0 && Math.DistanceSq(p, sight.amberAt) < 42)
@@ -474,7 +507,7 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
     if (fixture.kind > 1.5)
     {
         // A lamp: its tube's light where it burns, a grey sheet where it's dead.
-        float on = LampOn(LampCell(p.xz), sight.phase);
+        float on = LampOn(LampCell(p.xz), sight.phase) * sight.lamps;
         float3 tube = Math.Lerp(float3(0.05, 0.05, 0.045), LampTint() * 3.4, on);
         color = Shown(tube, sight.packed);
         return;
@@ -546,7 +579,7 @@ frag Mote(StoneVertex vertex, Fixture fixture, Sight sight, Daylight day, out Co
 {
     if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < 0.025)
         this.Discard();
-    float lit = LampAir(day.depth, day.toSun, this.world, sight.phase);
+    float lit = LampAir(day.depth, day.toSun, this.world, sight.phase) * sight.lamps;
     float near = Math.Saturate(Math.Distance(this.world, sight.eye) * 0.6 - 0.3);
     mut float3 c = Rgb(fixture.tint) * (lit * near * 1.2);
     if (sight.packed) c *= 0.25;
@@ -640,7 +673,7 @@ float3 Beyond(DepthTexture sun, float4x4 toSun, Aperture aperture, float depth, 
     float3 way0 = world - aperture.eye;
     float near = Math.Length(way0) * (Math.Dot(aperture.wall - aperture.eye, aperture.face) / Math.Min(Math.Dot(way0, aperture.face), -0.00001));
     float3 way = to / Math.Max(far, 0.0001);
-    return Scatter(sun, toSun, aperture.farEye + way * near, way, Math.Clamp(far - near, 0, 36), pixel, aperture.phase);
+    return Scatter(sun, toSun, aperture.farEye + way * near, way, Math.Clamp(far - near, 0, 36), pixel, aperture.phase) * aperture.lamps;
 }
 
 // A fold as the viewer sees it, with the sunlit air beyond it.
@@ -710,7 +743,7 @@ frag Shafts(Vertex vertex, Texture source, Ray ray, Daylight day, Lens lens, out
 {
     float3 to = Unprojected(ray.fromClip, vertex.uv, lens.sceneDepth.Sample(vertex.uv)) - ray.eye;
     float far = Math.Length(to);
-    float3 lit = Scatter(day.depth, day.toSun, ray.eye, to / Math.Max(far, 0.0001), Math.Min(far, 36), this.position, lens.phase);
+    float3 lit = Scatter(day.depth, day.toSun, ray.eye, to / Math.Max(far, 0.0001), Math.Min(far, 36), this.position, lens.phase) * ray.lamps;
     color = Color(lit.x, lit.y, lit.z, 1);
 }
 
@@ -751,7 +784,9 @@ frag Blur(Vertex vertex, Texture source, BlurStep step, out Color color)
 frag Develop(Vertex vertex, Texture source, Lens lens, out Color color)
 {
     float2 cells = float2(Math.Round(LINES * lens.pixel.y / lens.pixel.x), LINES);
-    float2 cell = Math.Floor(vertex.uv * cells);
+    // Caught: the picture jolts, and goes red from its edges
+    float2 jolt = float2(Math.Sin(lens.phase * 97), Math.Cos(lens.phase * 131)) * lens.scare * 0.02;
+    float2 cell = Math.Floor(Math.Saturate(vertex.uv + jolt) * cells);
     float2 uv = (cell + 0.5) / cells;
     float2 off = uv - 0.5;
     mut float3 light = Rgb(source.Sample(uv, Filter.Point, Wrap.Clamp));
@@ -767,6 +802,7 @@ frag Develop(Vertex vertex, Texture source, Lens lens, out Color color)
     film = Math.Saturate(film);
     mut float3 shown = float3(Math.Sqrt(film.x), Math.Sqrt(film.y), Math.Sqrt(film.z));
     shown *= 1 - Math.SmoothStep(0.2, 1.1, Math.Dot(off, off) * 2) * 0.45;
+    shown = Math.Lerp(shown, shown * float3(1.5, 0.25, 0.2), Math.Saturate(lens.scare * (0.35 + Math.Dot(off, off) * 3)));
     float grain = Math.Frac(Math.Sin(Math.Dot(cell + float2(lens.phase * 37, lens.phase * 91), float2(12.9898, 78.233))) * 43758.5453) - 0.5;
     shown += grain * 0.02;
     // The ordered pattern of four by four that hides the steps
@@ -1137,21 +1173,22 @@ void WallDigit(mut Optics optics, int digit, float3 position)
 Pose FigurePose(Operator body, float clock)
 {
     mut var pose = figure.defaultPose;
-    if (moves.TryGetAt(0, out var idle)) pose.Sample(idle, clock, Playback.Loop);
+    // Each of Kenney's files holds a one-frame targeting pose before its clip: the clips are the odd ones.
+    if (moves.TryGetAt(1, out var idle)) pose.Sample(idle, Math.Frac(clock / Math.Max(idle.duration, 0.01)) * idle.duration, Playback.Loop);
     float pace = Math.Saturate(Math.Length(body.velocity.xz) / 4);
     if (body.position.y > 0.05)
     {
-        if (moves.TryGetAt(2, out var jump))
+        if (moves.TryGetAt(5, out var jump))
         {
             mut var leaping = figure.defaultPose;
             leaping.Sample(jump, jump.duration * 0.5);
             pose.Blend(leaping, 0.8);
         }
     }
-    else if (pace > 0.01 && moves.TryGetAt(1, out var run))
+    else if (pace > 0.01 && moves.TryGetAt(3, out var run))
     {
         mut var running = figure.defaultPose;
-        running.Sample(run, clock, Playback.Loop);
+        running.Sample(run, Math.Frac(clock / Math.Max(run.duration, 0.01)) * run.duration, Playback.Loop);
         pose.Blend(running, pace);
     }
     return pose;
@@ -1413,7 +1450,8 @@ float4 OpeningOnScreen(int level, int panel, float3 eye, quaternion rotation, fl
 
 // Second crossings, their parents, then the room. Targets are disjoint and
 // portal cameras and all visible simulation objects update in this frame.
-view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Control control, Interface ui, mut Optics optics, mut Daylight day, mut Lens lens)
+view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, mut Optics optics, mut Daylight day,
+            mut Lens lens)
 {
     if (viewer.id != control.active) return;
     if (!optics.made) MakeOptics(optics, day, lens);
@@ -1463,6 +1501,23 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     bool partnerCyan = fold.a != fold.b && AtFold(arena.level, fold.b, partner.position);
     bool selfAmber = fold.a != fold.b && AtFold(arena.level, fold.a, viewer.position);
     bool selfCyan = fold.a != fold.b && AtFold(arena.level, fold.b, viewer.position);
+    // The watcher, turned to whoever is nearest, or in the face of whoever it has. It comes and goes in the
+    // middle of the moment the lamps are out.
+    bool watched = watcher.state != Watching.Away ? watcher.blink < 0.11 : watcher.blink > 0.11;
+    float lamps = watcher.blink > 0 ? 0.0 : 1.0;
+    mut Operator prey = Math.DistanceSq(viewer.position, WatchSpot(watcher.spot)) < Math.DistanceSq(partner.position, WatchSpot(watcher.spot)) ? viewer : partner;
+    mut float3 watcherAt = WatchSpot(watcher.spot);
+    if (watcher.state == Watching.Lunging)
+    {
+        prey = watcher.victim == viewer.id ? viewer : partner;
+        float reach = Math.Saturate(watcher.timer / 0.12);
+        watcherAt = Math.Lerp(watcherAt, prey.position + LookDirection(prey.yaw, 0) * 0.85, reach);
+    }
+    float3 watcherTo = prey.position - watcherAt;
+    float4x4 watcherPlace = float4x4.TRS(watcherAt, quaternion.Euler(0, Math.Atan2(watcherTo.x, watcherTo.z), 0), float3(FIGURE_SCALE * 1.12));
+    Pose watcherPose = FigurePose(Operator { position = watcherAt }, optics.clock + 3.1);
+    float caught = watcher.state == Watching.Lunging && watcher.victim == viewer.id && !ui.open ? 1 - Math.Saturate(watcher.timer / 0.75) * 0.6 : 0.0;
+    lens.scare = Math.Max(caught, lens.scare - dt * 2.5);
 
     float2 window = float2(Screen.width, Screen.height);
     Color amberRim = Color(1, .64, .24);
@@ -1512,6 +1567,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         map.Instanced(optics.tube, optics.tubeTriangles, optics.echoTubes);
         map.SkinnedMesh(figure, partnerPlace, partnerPose);
         map.SkinnedMesh(figure, selfPlace, selfPose);
+        if (watched) map.SkinnedMesh(figure, watcherPlace, watcherPose);
         if (partnerAmber) map.SkinnedMesh(figure, Math.Mul(throughAmber, partnerPlace), partnerPose);
         if (partnerCyan) map.SkinnedMesh(figure, Math.Mul(throughCyan, partnerPlace), partnerPose);
         map.Cull(Cull.None)
@@ -1532,7 +1588,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
                                   plateA = PlatePosition(arena.level, 0) + float3(0, .35, 0), plateB = PlatePosition(arena.level, 1) + float3(0, .35, 0),
                                   plates = float2(arena.plateA ? 1 : 0, arena.plateB ? 1 : 0),
                                   amberFace = PanelNormal(arena.level, fold.a), cyanFace = PanelNormal(arena.level, fold.b),
-                                  grid = float2(LINES * Screen.width / Screen.height, LINES) * .5,
+                                  grid = float2(LINES * Screen.width / Screen.height, LINES) * .5, lamps = lamps,
                                   torchAt = viewer.position + float3(0, 1.35, 0), torchWay = LookDirection(viewer.yaw, viewer.pitch),
                                   otherAt = partner.position + float3(0, 1.35, 0), otherWay = LookDirection(partner.yaw, partner.pitch) };
         mut float2 pixels = window * .5;
@@ -1623,6 +1679,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
             if (selfAmber && pass != 2) target.SkinnedMesh(figure, Math.Mul(throughAmber, selfPlace), selfPose, skinA, Snap, Figure, mover);
             if (selfCyan && pass != 3) target.SkinnedMesh(figure, Math.Mul(throughCyan, selfPlace), selfPose, skinA, Snap, Figure, mover);
         }
+        if (watched) target.SkinnedMesh(figure, watcherPlace, watcherPose, skinWatcher, Snap, Figure, sight);
         if (pass == 4) held = sight;
 
         for (int opening = 0; opening < 2; opening++)
@@ -1634,7 +1691,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
             float3 p = PanelPosition(arena.level, panel) - normal * FOLD_DEEP - float3(0, FOLD_DROP, 0);
             quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
             mut Aperture aperture = Aperture { rim = opening == 0 ? amberRim : cyanRim, pixels = pixels, eye = camera, clipPoint = sight.clipPoint, clipNormal = sight.clipNormal,
-                                               clipped = sight.clipped, packed = sight.packed, phase = sight.phase, cyan = opening == 1,
+                                               clipped = sight.clipped, packed = sight.packed, phase = sight.phase, cyan = opening == 1, lamps = lamps,
                                                wall = PanelPosition(arena.level, panel), face = normal, right = PanelRight(arena.level, panel) };
             if (pass == 4)
             {
@@ -1680,7 +1737,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     // The air is lit by the room's depth, before depth is set back for what's in the hand.
     lens.pixel = float2(1 / Screen.width, 1 / Screen.height);
     lens.phase = optics.phase;
-    Draw.Blit(optics.scene.color, lens.air, Shafts, Ray { fromClip = Math.Inverse(optics.scene.WorldToClip()), eye = eye });
+    Draw.Blit(optics.scene.color, lens.air, Shafts, Ray { fromClip = Math.Inverse(optics.scene.WorldToClip()), eye = eye, lamps = lamps });
     if (!ui.open)
     {
         held.held = true;

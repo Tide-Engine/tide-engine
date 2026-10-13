@@ -38,6 +38,25 @@ singleton Fold
     int traversals;
 }
 
+// Something that watches from where the room is dark, in every player's match
+// alike. It comes and goes while the lamps are out for a moment. Most leave
+// when an operator comes near or looks at them for long; a bold one waits,
+// and goes for whoever comes too close.
+enum Watching { Away, Standing, Lunging }
+
+singleton Watcher
+{
+    Watching state;
+    int spot;
+    float wait = 24;     // Seconds until the next one, while it's away
+    float timer;         // Seconds it has stood, or lunged
+    float stared;        // Seconds operators have looked at it
+    float blink;         // Seconds the lamps stay out
+    bool bold;
+    int victim;
+    int seen;            // How many have come, in this chamber
+}
+
 component Operator
 {
     int id;
@@ -155,6 +174,32 @@ float3 PortalMapPoint(int level, int source, int destination, float3 point)
 {
     return PanelPosition(level, destination)
          + PortalMapDirection(level, source, destination, point - PanelPosition(level, source));
+}
+
+const int WATCH_SPOTS = 6;
+
+// Where a watcher stands: by the doorway's jambs past the divider, behind the
+// crates, in the room's far corners and by the fire doors.
+float3 WatchSpot(int spot)
+{
+    switch (spot)
+    {
+        case 0: return float3(2.45, 0, 3.75);
+        case 1: return float3(-2.45, 0, 3.75);
+        case 2: return float3(9.1, 0, -11.75);
+        case 3: return float3(-9.2, 0, -12.4);
+        case 4: return float3(2.4, 0, 16.7);
+        default: return float3(9.2, 0, 12.4);
+    }
+}
+
+// Whether a watcher can stand there now: the jambs only show through an open
+// gate from the first room, and the far room's spots only while it's reached.
+bool WatchSpotOpen(int level, int spot, float gate, bool anyoneFar)
+{
+    if (spot < 2) return gate > 0.9 && !anyoneFar;
+    if (spot >= 4) return anyoneFar || gate > 0.9;
+    return true;
 }
 
 float3 LookDirection(float yaw, float pitch)
@@ -452,4 +497,76 @@ system EvaluateChamber(mut Arena arena, Fold fold, query (Operator body) operato
     arena.bridge = arena.level == 2 && (cubeA || arena.solved);
     if (arena.solved) arena.gate = Math.Min(1, arena.gate + time.dt * 1.6);
     if (arena.solved && exiting == 2) arena.complete = true;
+}
+
+system Haunt(mut Watcher watcher, Arena arena, query (Operator body) operators, Time time)
+{
+    if (arena.ticks < 2)
+    {
+        watcher.state = Watching.Away;
+        watcher.wait = 24;
+        watcher.blink = 0;
+        watcher.seen = 0;
+    }
+    watcher.blink = Math.Max(0, watcher.blink - time.dt);
+    if (arena.complete) return;
+    var place = WatchSpot(watcher.spot);
+    mut var nearest = 1000.0;
+    mut var nearestId = 0;
+    mut var looked = false;
+    mut var anyoneFar = false;
+    foreach (var entry in operators)
+    {
+        var to = place + float3(0, 1.2, 0) - (entry.body.position + float3(0, 1.55, 0));
+        var far = Math.Length(to);
+        if (far < nearest)
+        {
+            nearest = far;
+            nearestId = entry.body.id;
+        }
+        if (far < 18 && Math.Dot(to / Math.Max(far, 0.001), LookDirection(entry.body.yaw, entry.body.pitch)) > 0.93) looked = true;
+        if (entry.body.position.z > 3.2) anyoneFar = true;
+    }
+    if (watcher.state == Watching.Away)
+    {
+        watcher.wait -= time.dt;
+        if (watcher.wait > 0) return;
+        // Somewhere nobody is near, or not this time
+        var spot = Random.NextInt(WATCH_SPOTS);
+        var bold = Random.NextInt(4) == 0;
+        watcher.wait = 6;
+        if (!WatchSpotOpen(arena.level, spot, arena.gate, anyoneFar)) return;
+        mut var clear = true;
+        foreach (var entry in operators)
+            if (Math.Distance(entry.body.position, WatchSpot(spot)) < 7.5) clear = false;
+        if (!clear) return;
+        watcher.state = Watching.Standing;
+        watcher.spot = spot;
+        watcher.bold = bold;
+        watcher.timer = 0;
+        watcher.stared = 0;
+        watcher.blink = 0.22;
+        watcher.seen += 1;
+        return;
+    }
+    watcher.timer += time.dt;
+    if (watcher.state == Watching.Lunging)
+    {
+        if (watcher.timer < 0.75) return;
+    }
+    else
+    {
+        if (looked) watcher.stared += time.dt;
+        if (watcher.bold && nearest < 2.7)
+        {
+            watcher.state = Watching.Lunging;
+            watcher.victim = nearestId;
+            watcher.timer = 0;
+            return;
+        }
+        if (!(watcher.timer > 28 || watcher.stared > 2.4 || (!watcher.bold && nearest < 4.6))) return;
+    }
+    watcher.state = Watching.Away;
+    watcher.blink = 0.22;
+    watcher.wait = 25 + Random.NextInt(35);
 }
