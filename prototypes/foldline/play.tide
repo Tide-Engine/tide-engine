@@ -263,6 +263,7 @@ const int BETWEEN = 6;
 const int POOLWAY = 7;
 const int GAUNTLET = 8;
 const int CHAMBERS = 13;
+const int DESCENT = 13;
 
 bool Between(int level)
 {
@@ -310,13 +311,13 @@ bool Pitted(int level)
 // What's at each depth: a room, then the stretch between it and the next.
 int LevelAt(int depth)
 {
-    switch (depth % 13)
+    switch (depth % DESCENT)
     {
         case 0: return 0;
         case 1: return 1;
         case 2: return BETWEEN;
-        case 3: return UNDERTOW;
-        case 4: return 3;
+        case 3: return 3;
+        case 4: return UNDERTOW;
         case 5: return POOLWAY;
         case 6: return 4;
         case 7: return 5;
@@ -451,10 +452,24 @@ int ThemeAt(int depth)
 
 int DepthOf(int level)
 {
-    for (var depth = 0; depth < 13; depth++)
+    for (var depth = 0; depth < DESCENT; depth++)
         if (LevelAt(depth) == level) return depth;
     // The pool's first room of the hall's is off the way down, and still the pool's
     return level == 2 ? 3 : 0;
+}
+
+// Story numbers follow the descent, rather than the order rooms were built in.
+int RoomNumber(int level)
+{
+    mut var number = 0;
+    for (var depth = 0; depth < DESCENT; depth++)
+    {
+        var room = LevelAt(depth);
+        if (Between(room)) continue;
+        number += 1;
+        if (room == level) return number;
+    }
+    return 0; // The old lure room is available separately, outside the descent.
 }
 
 // The maze's walls: a bit a cell, set where there's a wall on its east side, and on its north.
@@ -568,12 +583,7 @@ int CubeCount(int level)
 {
     switch (level)
     {
-        case 0: return 4;
-        case 1: return 2;
         case 2: return 4;
-        case 3: return 2;
-        case 4: return 3;
-        case 5: return 2;
         case 7: return 5;
         case 9: return 1;
         case 10: return 1;
@@ -1087,13 +1097,20 @@ void BuildChamber(mut Arena arena, int level)
     var westNear = level == 0 || level == 1 || level == 3 || level == 5;
     var westFar = level == 0 || level == 1 || level == 3 || level == 4;
     var eastNear = level == 0 || level == 1 || level == 2 || level == 3;
-    var eastFar = level == 0 || level == 1 || level == 3;
-    var north = level == 0 || level == 1 || level == 3;
+    var eastFar = level == 0 || level == 1;
+    var north = level == 0 || level == 1;
     Raise(arena, float3(0, CEILING_HIGH + 0.5, 2.1), float3(21.6, 1, 32.2), ceilingTile, false, 2, 0.833);
     Raise(arena, float3(-10.3, 1.2, -5.25), float3(1, 8.4, 17.5), westNear ? wallpaper : panels, westNear);
     Raise(arena, float3(-10.3, 1.2, 8.75), float3(1, 8.4, 10.5), westFar ? wallpaper : panels, westFar);
     Raise(arena, float3(10.3, 1.2, -5.25), float3(1, 8.4, 17.5), eastNear ? wallpaper : panels, eastNear);
-    Raise(arena, float3(10.3, 1.2, 8.75), float3(1, 8.4, 10.5), eastFar ? wallpaper : panels, eastFar);
+    if (level == 3)
+    {
+        // Only the back of the vent room takes a fold, hidden by the baffle from outside.
+        Raise(arena, float3(10.3, 1.2, 6.1), float3(1, 8.4, 5.2), panels);
+        Raise(arena, float3(10.3, 1.2, 10.7), float3(1, 8.4, 4), wallpaper, true);
+        Raise(arena, float3(10.3, 1.2, 13.35), float3(1, 8.4, 1.3), panels);
+    }
+    else Raise(arena, float3(10.3, 1.2, 8.75), float3(1, 8.4, 10.5), eastFar ? wallpaper : panels, eastFar);
     // The south wall, with the way in from the lift they came by: its floor, walls, roof and door
     Raise(arena, float3(-3.15, 1.2, -13.5), float3(13.3, 8.4, 1), south ? wallpaper : concrete, south);
     Raise(arena, float3(9.65, 1.2, -13.5), float3(0.3, 8.4, 1), panels);
@@ -1131,6 +1148,11 @@ void BuildChamber(mut Arena arena, int level)
         // A gallery along the west and one in the north-east, each too high to climb onto, with a plate on it
         Raise(arena, float3(-6.9, GALLERY * 0.5, 5.5), float3(5.8, GALLERY, 15), panels);
         Raise(arena, float3(6.9, GALLERY * 0.5, 8.5), float3(5.8, GALLERY, 9), panels);
+        // Maintenance grilles: shots pass, bodies don't. A box used as a step no longer skips the fold.
+        Raise(arena, float3(-3.85, 2.25, 5.5), float3(0.3, 1.3, 15), rust, false, 4);
+        Raise(arena, float3(-6.9, 2.25, -2.1), float3(5.8, 1.3, 0.3), rust, false, 4);
+        Raise(arena, float3(3.85, 2.25, 8.5), float3(0.3, 1.3, 9), rust, false, 4);
+        Raise(arena, float3(6.9, 2.25, 3.9), float3(5.8, 1.3, 0.3), rust, false, 4);
     }
     if (level == 2)
     {
@@ -1330,6 +1352,8 @@ bool Shoot(mut Fold fold, int end, int level, float3 origin, float3 way, Physics
     mut var hit = first;
     for (var past = 0; past < 4; past++)
     {
+        // Machinery is part of the room too. Shooting through a shut door would skip its plate relay.
+        if (world.Has<Mover>(hit.entity) || world.Has<Gate>(hit.entity) || world.Has<Door>(hit.entity)) break;
         if (world.TryGet<Piece>(hit.entity, out var struck) && world.TryGet<Wall>(struck.wall, out var met) && met.kind != 4) break;
         if (!physics.Raycast(hit.point + way * 0.9, origin + way * 60, out hit)) return false;
     }

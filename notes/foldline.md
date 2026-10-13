@@ -665,6 +665,74 @@ current.
   under it, two operators through one fold at once and the cube in a hole
   when its fold is moved are unchecked.
 
+## Progression and puzzle review (2026-10-13)
+
+The owner requested a review of difficulty, progression, pace and flow, with
+permission to polish presentation and add obstacles. This pass changes game
+files only. Earlier sections are implementation history; this section is the
+current resource, ordering, hint and shot-blocking contract.
+
+The main problem was that the hall's resource budget contradicted its puzzles:
+extra crates held both gate plates, and a cube used as a step skipped High
+Ground's fold lesson. A separate bug let shots pass through closed kinematic
+doors, undermining Line of Sight's plate relay. A regression reproduced that
+closed-door escape before the shot fix.
+
+- Shortcut, High Ground, Smaller, The Drums and All of It now have one cube.
+  The other operator must supply the second weight, then be released by the
+  first operator's lift plate. Undertow and the Long Pool keep their crates:
+  throwing, retrieving and distracting are their physical resource puzzles.
+- High Ground has 1.3 m maintenance grilles over its gallery edges. They pass
+  shots and block bodies, so the cube-as-step bypass no longer works. Gallery
+  height, ceiling, light and fold traversal remain as before.
+- Smaller's interior has one receptive wall patch, at the back of the vent
+  room (east wall, z 8.7 to 12.7), behind the baffle. The earlier east wall and
+  north wall are bare. A whole operator cannot just shoot an exit through the
+  vent and skip shrinking; a small operator can reach the patch and establish
+  a route for the other body and cube.
+- `Shoot` stops at movers, gates and arrival doors as well as static room
+  pieces. Operators, loose objects and grilles still allow shots past them.
+  Closed doors visibly fizzle; an open doorway still allows the intended shot.
+- Smaller precedes Undertow. The descent now teaches crossing/carrying, then
+  elevation and two pairs, then size, before the longer water relay. The
+  remaining puzzle/horror alternation is retained: drums, size plus drums,
+  door sightlines, vertical machinery/cargo size, and lighting plus launch.
+  The final maze and looping descent remain; no ending was added.
+- Later puzzle hints are opt-in with H and reset on chamber changes. The HUD
+  gives the objective, rather than the solution, by default. The first room
+  and survival passages keep their rules visible. An open gate explains the
+  lift handoff. Menu stops follow the actual route in two readable rows; HUD
+  and physical room signs use the same sequential numbers, 01 to 09. The old
+  Lure room is outside the route and menu, still reachable by `SelectChamber`.
+- Replaced the obsolete README (shared folds, three rooms and latched gates)
+  with current controls, resource rules and descent order.
+
+Validation: the native game and its two tests build without warnings; 2/2
+native debug tests pass. The staged browser page and tests build without
+warnings; 3/3 web debug tests pass under Node 24.16.0, including WASI, WebGL 2
+and WebGPU. The unchanged portal pixel checks retain their tolerances and GPU
+validation. Native/WASI replay hashes both are `4736870446065504779`; changes
+reflect the intentional loose-object count and room geometry changes.
+
+`teaching_solutions` now solves rooms 01 and 02 from their arrival lifts using
+only player inputs: movement, aiming, shots, carrying/dropping, both bodies,
+plate handoffs, and riding to the next place. It never positions a body, cube
+or end directly. Existing fixtures continue to check later-room prerequisites
+and intended routes. Added regression checks cover a cube step blocked by the
+new grille, 42 whole-body vent sightlines failing to establish an interior
+exit, the small operator's reachable interior patch, and shots blocked by
+both closed doors in Line of Sight (including the reverse escape).
+
+Visual inspection used silent standard-host captures of High Ground, its
+optional hint, and the revised menu, plus the existing real portal rendering
+fixture. The established PSX treatment is retained. This is mechanical
+verification and a design review, not evidence of human solve times: the later
+rooms have not had a complete input-only solve added, live human co-op and
+audio balance are still unverified, and extreme stacking/body-boosting exploits
+have not been exhaustively ruled out. The early rooms deliberately teach;
+the final rooms carry the deeper sequencing challenge. No engine/package code,
+full repository suites, CI or other-platform validation was needed or run.
+
 ## Match and controls
 
 `prototypes/foldline/play.tide` contains a deterministic 60 Hz, two-player match.

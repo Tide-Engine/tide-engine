@@ -6,6 +6,8 @@ local singleton Interface
     bool open = true;
     bool looking;
     bool introduced;
+    bool hint;
+    int chamber = -1;
     string code;
     string message;
 }
@@ -85,6 +87,12 @@ bool InterfaceChoice(Rect rect, string label, float size)
 [Before(Render)]
 view InterfaceInput(Devices devices, Session session, Arena arena, mut Control control, mut Interface ui)
 {
+    if (ui.chamber != arena.chamber)
+    {
+        ui.chamber = arena.chamber;
+        ui.hint = false;
+    }
+    if (!ui.open && devices.keyboard.h.down) ui.hint = !ui.hint;
     if (arena.joined > 1) control.active = session.player == arena.second ? 1 : 0;
     else if (!ui.open && devices.keyboard.tab.down) control.active = 1 - control.active;
     if (devices.keyboard.escape.down || (ui.looking && !Cursor.locked && !arena.complete)) ui.open = true;
@@ -148,13 +156,15 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     else Draw.Text(ui.message, float2(pad + 16, top + 158), 14, UI_MUTED);
     if (session.state == SessionState.Connected)
     {
-        Ink("ROOM", float2(pad + 16, top + 196), 11, UI_MUTED, Anchor.UpperLeft);
-        for (var i = 0; i < 13; i++)
+        Ink("DESCENT / CHOOSE A STOP", float2(pad + 16, top + 196), 11, UI_MUTED, Anchor.UpperLeft);
+        for (var i = 0; i < DESCENT - 1; i++)
         {
-            var slotWidth = (width - 96) / 13;
-            if (InterfaceChoice(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), i < 6 ? $"0{i + 1}" : i == 6 ? "A" : i == 7 ? "B" : i == 8 ? "C" : i == 9 ? "08" : i == 10 ? "07" : i == 11 ? "09" : "10", 13))
+            var level = LevelAt(i);
+            var slotWidth = (width - 40) / 6;
+            var label = Between(level) ? level == BETWEEN ? "MAZE" : level == POOLWAY ? "POOL" : "WORKS" : $"0{RoomNumber(level)}";
+            if (InterfaceChoice(Rect(pad + (i % 6) * (slotWidth + 8), top + 211 + (i / 6) * 34, slotWidth, 30), label, 12))
             {
-                Send(SelectChamber { level = i });
+                Send(SelectChamber { level = level });
                 ui.open = false;
                 ui.introduced = true;
                 control.started = true;
@@ -162,7 +172,7 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
             }
         }
     }
-    var foot = Math.Max(top + 268, Screen.height - 104);
+    var foot = Math.Max(top + 290, Screen.height - 82);
     Ink("ALONE", float2(pad, foot), 11, UI_RED, Anchor.UpperLeft);
     Draw.Text("Tab is your other body.\nIt stays where you leave it.", float2(pad, foot + 20), 14, UI_MUTED);
     Draw.Text("PROTOTYPE 01   /   TIDE", float2(pad, Screen.height - 22), 10, Color(0.36, 0.33, 0.27));
@@ -215,7 +225,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
 
     // The room, its name, and its three plates.
     Draw.Rect(float2(pad + dot * 1.5, 43), float2(dot * 3, 46), UI_RED);
-    Ink(Between(arena.level) ? $"{arena.depth + 1} DOWN" : $"ROOM {(arena.level < BETWEEN ? arena.level + 1 : arena.level == SIGHT ? 7 : arena.level == SHAFT ? 8 : arena.level == DARK ? 9 : 10)}   /   {arena.depth + 1} DOWN", float2(pad + 14, 22), 11, UI_MUTED, Anchor.UpperLeft);
+    Ink(Between(arena.level) ? $"{arena.depth + 1} DOWN" : $"ROOM {RoomNumber(arena.level)}   /   {arena.depth + 1} DOWN", float2(pad + 14, 22), 11, UI_MUTED, Anchor.UpperLeft);
     Ink(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 14, 37), 17, UI_INK, Anchor.UpperLeft);
     mut var lamp = float2(pad + 14 + dot * 2, 78);
     lamp.x = HudLamp(lamp, "A", 8, UI_AMBER, arena.plateA);
@@ -245,7 +255,9 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     var hintWidth = Math.Min(680, Screen.width - 36);
     var hintY = Screen.height - (legend ? 62 : 34);
     Slab(Rect(middle.x - hintWidth * 0.5, hintY - 15, hintWidth, 30));
-    Ink(arena.gate > 0.9 && !Between(arena.level) ? "The lift is open. Both of you, in." : ChamberHint(arena.level), float2(middle.x, hintY),
+    var objective = Between(arena.level) ? ChamberHint(arena.level) : arena.level == 0 ? ChamberHint(0)
+                  : "Weight A and B together. Reach the lift.   H / HINT";
+    Ink(arena.gate > 0.9 && !Between(arena.level) ? "Hold the lift's plate for your partner. Then both of you, in." : ui.hint ? ChamberHint(arena.level) : objective, float2(middle.x, hintY),
         Math.Min(13, hintWidth / 50), UI_INK, Anchor.MiddleCenter);
     if (legend)
     {
