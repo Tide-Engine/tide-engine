@@ -13,7 +13,7 @@ if(NOT TARGET tide_platform)
     return()
 endif()
 set(TIDE_WEB_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/web.html")
-tide_add_game(inside_out SOURCES ${INSIDE_OUT_SOURCES} ${INSIDE_OUT_ROOMS})
+tide_add_game(inside_out SOURCES ${INSIDE_OUT_SOURCES} ${INSIDE_OUT_ROOMS} STATS)
 if(TIDE_WEB)
     set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/inside-out")
     add_custom_target(inside_out_page

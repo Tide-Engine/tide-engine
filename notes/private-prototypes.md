@@ -47,6 +47,14 @@ Shareable prototypes.
   so `tide run` in the game's folder does not compile it as game code, as Two
   Forks' does.
 
+Every catalog game's own target is built with `STATS` (the owner,
+2026-10-13: prototypes show their frame rate, as `tide run --stats` does), so
+its page has the stats drawer's line in a corner. A new game says it too.
+
+To hand the owner a build to try, give a local address, not a path to find
+(the owner, 2026-10-13): build the game's `<id>_page` target, serve
+`docs/static` on localhost and name the game's URL.
+
 Adding a game is a card, its id in the three patterns above, its thumbnail,
 its `<id>_page` target and its `private_games` block, plus the id in
 `prototypeIds` of `docs/tests/admin.test.mjs` and `admin-http.test.mjs`.

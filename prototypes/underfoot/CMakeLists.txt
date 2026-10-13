@@ -13,7 +13,7 @@ if(NOT TARGET tide_platform)
     return()
 endif()
 set(TIDE_WEB_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/web.html")
-tide_add_game(underfoot SOURCES ${UNDERFOOT_SOURCES} ${UNDERFOOT_ROOMS})
+tide_add_game(underfoot SOURCES ${UNDERFOOT_SOURCES} ${UNDERFOOT_ROOMS} STATS)
 if(TIDE_WEB)
     set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/underfoot")
     add_custom_target(underfoot_page

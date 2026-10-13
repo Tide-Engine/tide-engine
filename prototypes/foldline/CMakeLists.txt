@@ -2,7 +2,8 @@
 file(GLOB foldline_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
     "${CMAKE_CURRENT_SOURCE_DIR}/*.tide")
 
-tide_add_game(foldline SOURCES ${foldline_sources} TITLE "FOLDLINE")
+# Every prototype shows its frame rate, and the rest of the stats at a click on it.
+tide_add_game(foldline SOURCES ${foldline_sources} TITLE "FOLDLINE" STATS)
 
 if(TIDE_WEB)
     set(foldline_page_dir "${PROJECT_SOURCE_DIR}/docs/static/prototypes/foldline")
