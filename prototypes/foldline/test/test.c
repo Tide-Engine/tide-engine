@@ -83,7 +83,7 @@ static void press(tide_world *world, PilotInput controls)
 static void choose(tide_world *world, int sender, int level)
 {
     // The game's only command: generated wire ID, null entity target, zigzag int.
-    CHECK(level >= -1 && level <= 6);
+    CHECK(level >= -1 && level <= 7);
     uint8_t payload[11] = {0};
     payload[0] = (uint8_t)TIDE_COMMAND_ID_SelectChamber;
     payload[1] = (uint8_t)(TIDE_COMMAND_ID_SelectChamber >> 8);
@@ -93,16 +93,16 @@ static void choose(tide_world *world, int sender, int level)
     tide_world_tick(world);
 }
 
-// The third chamber, whose floor is whole: an end on the south wall before an
+// The fourth room, whose floor is whole: an end on the south wall before an
 // operator at (0, -8) who looks south, and one on the west wall when they look west.
 static const float SOUTH = TIDE_PI_F, WEST = -TIDE_PI_F / 2, EAST = TIDE_PI_F / 2;
 
 static void open_floor(tide_world *world)
 {
     start(world);
-    choose(world, 0, 2);
+    choose(world, 0, 3);
     ticks(world, 8);
-    CHECK(world->Arena.level == 2);
+    CHECK(world->Arena.level == 3);
 }
 
 static void ownership_and_movement(void)
@@ -329,32 +329,37 @@ static void chambers_and_commands(void)
     ticks(&world, 60);
     CHECK(!world.Arena.solved && world.Arena.gate > 0.99f);
     // With both in the lift its door shuts on them whatever holds it, and the lift goes down: they're in the
-    // stretch between the rooms, in the lift they came by, standing as they stood and facing as they faced
+    // next room, in the lift they came by, standing as they stood and facing as they faced
     place(&world, 1, (tide_float3){1.5f, 0, 15}, 0.5f, 0);
     const int32_t built = world.Arena.chamber;
     ticks(&world, 20);
     CHECK(world.Arena.gate < 0.5f && world.Arena.chamber == built && world.Arena.level == 0);
     ticks(&world, 120);
-    CHECK(world.Arena.level == 5 && world.Arena.depth == 1 && world.Arena.chamber == built + 1 && world.Arena.rode == built + 1);
+    CHECK(world.Arena.level == 1 && world.Arena.depth == 1 && world.Arena.chamber == built + 1 && world.Arena.rode == built + 1);
     CHECK(near(pilot(&world, 0).position.x, 6.5f, 0.1f) && near(pilot(&world, 0).position.z, -15.2f, 0.1f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     CHECK(near(pilot(&world, 1).position.x, 8, 0.1f) && near(pilot(&world, 1).position.z, -16.2f, 0.1f));
     CHECK(near(pilot(&world, 1).yaw, 0.5f, 0.01f));
-    // Its door opens, and no shot does anything down here
+    // Its door opens
     ticks(&world, 100);
     place(&world, 0, (tide_float3){6.5f, 0, -15}, 0, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     ticks(&world, 40);
     CHECK(pilot(&world, 0).position.z > -13);
-    press(&world, (PilotInput){.amber = true});
-    CHECK(!world.Fold.ends.at[0].open && world.Fold.fizzleTime <= 0);
+    input(&world, 0, (PilotInput){0});
     choose(&world, 0, 4);
-    CHECK(world.Arena.level == 4 && world.Arena.depth == 6 && world.Arena.chamber == built + 2 && !world.Arena.solved);
+    CHECK(world.Arena.level == 4 && world.Arena.depth == 6 && world.Arena.theme == 2 && world.Arena.chamber == built + 2 && !world.Arena.solved);
     ticks(&world, 20);
     CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
-    CHECK(near(world.Fold.cube.z, -11, 0.4f) && near(world.Fold.cube.x, -7, 0.4f) && !world.Fold.ends.at[0].open);
-    // A chamber that isn't one changes nothing
-    choose(&world, 0, 6);
-    CHECK(world.Arena.level == 4);
+    CHECK(near(world.Fold.cube.z, -8, 0.4f) && near(world.Fold.cube.x, -3, 0.4f) && !world.Fold.ends.at[0].open);
+    // The places in order: two rooms and a stretch between, three times, each three its own place
+    static const int levels[9] = {0, 1, 6, 2, 3, 6, 4, 5, 6};
+    for (int room = 0; room < 7; room++) {
+        choose(&world, 0, room);
+        CHECK(world.Arena.level == room && levels[world.Arena.depth] == room && world.Arena.theme == world.Arena.depth / 3);
+    }
+    // A room that isn't one changes nothing
+    choose(&world, 0, 7);
+    CHECK(world.Arena.level == 6);
     tide_world_free(&world);
 }
 
@@ -363,9 +368,15 @@ static void between(void)
 {
     tide_world world = {0};
     start(&world);
-    choose(&world, 0, 5);
+    choose(&world, 0, 6);
     ticks(&world, 8);
-    CHECK(world.Arena.level == 5 && world.Arena.solved);
+    CHECK(world.Arena.level == 6 && world.Arena.solved);
+    // No shot does anything down here
+    place(&world, 0, (tide_float3){-3, 0, -15}, TIDE_PI_F, 0);
+    ticks(&world, 2);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(!world.Fold.ends.at[0].open && world.Fold.fizzleTime <= 0);
+    place(&world, 0, (tide_float3){5.3f, 0, -15.6f}, 0, 0);
     // Both in the lift, where it comes for nobody: it stays where it starts
     const tide_float3 began = world.Stalker.at;
     ticks(&world, 400);
@@ -386,7 +397,7 @@ static void between(void)
     CHECK(came && world.Arena.caught > 0 && nearest < 1.4f);
     const int32_t built = world.Arena.chamber;
     ticks(&world, 90);
-    CHECK(world.Arena.chamber == built + 1 && world.Arena.level == 5 && world.Arena.caught == 0);
+    CHECK(world.Arena.chamber == built + 1 && world.Arena.level == 6 && world.Arena.caught == 0);
     CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 1).position.z, -15.6f, 0.05f));
     // Looked at down a clear way, it doesn't move; looked away from, it does
     ticks(&world, 260);
@@ -437,18 +448,19 @@ static void chambers_hold(void)
     tide_world_free(&world);
     // The vent is too low for a whole operator, and takes a half one
     start(&world);
-    choose(&world, 0, 2);
+    choose(&world, 0, 3);
     ticks(&world, 8);
     place(&world, 0, (tide_float3){5.5f, 0, 2.5f}, 0, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     ticks(&world, 90);
     CHECK(pilot(&world, 0).position.z < 4.6f);
     tide_world_free(&world);
-    // The fourth room is five lifts down, where the place is a pool's. Its side walls take no fold
+    // The third room is three lifts down, where the place is a pool's. Past the water no wall takes a fold
     start(&world);
-    choose(&world, 0, 3);
+    choose(&world, 0, 2);
     ticks(&world, 8);
-    CHECK(world.Arena.depth == 5 && world.Arena.theme == 1);
+    CHECK(world.Arena.depth == 3 && world.Arena.theme == 1);
+    CHECK(world.Fold.cube.y > 1.8f && world.Fold.cube.x > 5.5f); // The cube is up on its gallery
     place(&world, 0, (tide_float3){0, 0, -6}, WEST, 0);
     ticks(&world, 2);
     press(&world, (PilotInput){.amber = true});
@@ -488,7 +500,7 @@ static void chambers_hold(void)
     ticks(&world, 150);
     CHECK(pilot(&world, 0).taken == 0 && near(pilot(&world, 0).position.z, -15.6f, 0.1f));
     tide_world_free(&world);
-    // The fifth is six down, in bare concrete: its pit is a trench, and a drum going along it leaves nothing
+    // The fifth room is six down, in bare concrete: its pit is a trench, and a drum going along it leaves nothing
     start(&world);
     choose(&world, 0, 4);
     ticks(&world, 8);
@@ -532,93 +544,89 @@ static void chambers_hold(void)
     }
     CHECK(thrown);
     tide_world_free(&world);
-    // A room with a large frame: who leaves by it is large
-    start(&world);
-    choose(&world, 0, 3);
-    ticks(&world, 8);
-    place(&world, 0, (tide_float3){1.5f, 0, -8}, SOUTH, 0);
-    input(&world, 0, (PilotInput){0});
-    ticks(&world, 3);
-    press(&world, (PilotInput){.amber = true});
-    place(&world, 0, (tide_float3){-2.2f, 0, -8}, SOUTH, 0);
-    ticks(&world, 3);
-    press(&world, (PilotInput){.cyan = true});
-    CHECK(world.Fold.ends.at[0].open && world.Fold.ends.at[0].size == 1 && world.Fold.ends.at[1].open && world.Fold.ends.at[1].size == 1.5f);
-    CHECK(near(world.Fold.ends.at[1].at.x, -2.5f, 0.001f));
-    place(&world, 0, (tide_float3){1.5f, 0, -11}, SOUTH, 0);
-    input(&world, 0, (PilotInput){.move = {0, 1}});
-    for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
-    CHECK(world.Fold.traversals == 1);
-    bool over = false;
-    for (int step = 0; step < 240 && !over; step++) {
-        input(&world, 0, (PilotInput){.move = {0, 1}, .jump = pilot(&world, 0).position.z > -2.4f && pilot(&world, 0).position.z < -1.5f});
-        tide_world_tick(&world);
-        over = pilot(&world, 0).position.z > 3.8f && pilot(&world, 0).grounded;
-    }
-    CHECK(pilot(&world, 0).scale == 1.5f && over);
-    // The slab past the pit takes a fold on the side that faces away from it
-    place(&world, 0, (tide_float3){-5.5f, 0, 12.5f}, SOUTH, 0);
-    input(&world, 0, (PilotInput){0});
-    ticks(&world, 4);
-    press(&world, (PilotInput){.amber = true});
-    CHECK(near(world.Fold.ends.at[0].at.z, 10.5f, 0.001f) && world.Fold.ends.at[0].face.z > 0.99f);
-    tide_world_free(&world);
-    // Apart: nobody walks through the grille, and a shot goes between its bars
+    // The second room's galleries are past a jump
     start(&world);
     choose(&world, 0, 1);
     ticks(&world, 8);
-    place(&world, 0, (tide_float3){-5, 0, -3}, EAST, 0);
-    input(&world, 0, (PilotInput){.move = {0, 1}});
-    ticks(&world, 120);
-    CHECK(pilot(&world, 0).position.x < -1.3f);
-    place(&world, 0, (tide_float3){-5, 0, -3}, EAST, 0);
+    place(&world, 0, (tide_float3){-2, 0, 6}, WEST, 0);
+    for (int step = 0; step < 150; step++) {
+        input(&world, 0, (PilotInput){.move = {0, 1}, .jump = step % 20 == 0});
+        tide_world_tick(&world);
+        CHECK(pilot(&world, 0).position.y < 1.3f && pilot(&world, 0).position.x > -4.4f);
+    }
+    // A fold shot at the wall over one stands on it, and whoever walks in at the other end is up there
+    place(&world, 0, (tide_float3){2, 0, 6}, WEST, 0.13f);
     input(&world, 0, (PilotInput){0});
     ticks(&world, 3);
     press(&world, (PilotInput){.amber = true});
-    CHECK(world.Fold.ends.at[0].open && near(world.Fold.ends.at[0].at.x, 9.8f, 0.001f) && near(world.Fold.ends.at[0].at.z, -3, 0.05f));
-    // Each operator's shots are their own fold's: the other's two ends are another fold, and don't link with these
-    place(&world, 1, (tide_float3){4, 0, 2}, EAST, 0);
-    ticks(&world, 3);
-    press(&world, (PilotInput){.active = 1, .cyan = true});
-    CHECK(world.Fold.ends.at[3].open && !world.Fold.ends.at[1].open && !world.Fold.ends.at[2].open && near(world.Fold.ends.at[0].at.z, -3, 0.05f));
-    place(&world, 0, (tide_float3){-5, 0, -3}, EAST, 0);
-    input(&world, 0, (PilotInput){.move = {0, 1}});
-    ticks(&world, 60);
-    CHECK(world.Fold.traversals == 0);
-    // The one shut in puts their other end beside them, and walks out; so does anyone, by a fold that isn't theirs
-    place(&world, 0, (tide_float3){-5, 0, -3}, WEST, 0);
-    input(&world, 0, (PilotInput){0});
+    CHECK(world.Fold.ends.at[0].open && near(world.Fold.ends.at[0].at.x, -9.8f, 0.001f) && near(world.Fold.ends.at[0].at.y, 2.9f, 0.01f));
+    place(&world, 0, (tide_float3){0, 0, -8}, SOUTH, 0);
     ticks(&world, 3);
     press(&world, (PilotInput){.cyan = true});
-    CHECK(world.Fold.ends.at[1].open && near(world.Fold.ends.at[1].at.x, -9.8f, 0.001f));
-    place(&world, 0, (tide_float3){-8, 0, -3}, WEST, 0);
+    place(&world, 0, (tide_float3){0, 0, -11}, SOUTH, 0);
     input(&world, 0, (PilotInput){.move = {0, 1}});
     for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
-    ticks(&world, 20);
-    CHECK(world.Fold.traversals == 1 && pilot(&world, 0).position.x > 5 && pilot(&world, 0).position.x < 9.8f);
-    place(&world, 1, (tide_float3){8, 0, -3}, EAST, 0);
-    input(&world, 0, (PilotInput){.active = 1, .move = {0, 1}});
-    for (int step = 0; step < 90 && world.Fold.traversals == 1; step++) tide_world_tick(&world);
-    input(&world, 0, (PilotInput){.active = 1});
-    ticks(&world, 20);
-    CHECK(world.Fold.traversals == 2 && pilot(&world, 1).position.x < -5);
+    ticks(&world, 30);
+    CHECK(world.Fold.traversals == 1 && near(pilot(&world, 0).position.y, 1.6f, 0.05f) && pilot(&world, 0).position.x < -5 && pilot(&world, 0).grounded);
+    // ...where its plate is, which counts only who's up there with it
+    place(&world, 0, (tide_float3){-7, 1.6f, 6}, 0, 0);
+    place(&world, 1, (tide_float3){7, 0, 9}, 0, 0);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 10);
+    CHECK(world.Arena.plateA && !world.Arena.plateB);
     tide_world_free(&world);
-    // The last chamber has a frame of each size, each clear of what stands by it
+    // The fifth room's plate is on a gallery walled off from this side of the trench: the wall over it takes a
+    // fold only from past the drums
     start(&world);
     choose(&world, 0, 4);
     ticks(&world, 8);
-    place(&world, 0, (tide_float3){-6, 0, -3.5f}, WEST, 0);
+    place(&world, 0, (tide_float3){0, 0, -6}, -0.61f, 0.1f);
     ticks(&world, 3);
     press(&world, (PilotInput){.amber = true});
-    CHECK(world.Fold.ends.at[0].open && world.Fold.ends.at[0].size == 0.5f && near(world.Fold.ends.at[0].at.z, -3.5f, 0.001f));
-    place(&world, 0, (tide_float3){0.5f, 0, -8}, SOUTH, 0);
+    CHECK(!world.Fold.ends.at[0].open && world.Fold.fizzleTime > 0);
+    place(&world, 0, (tide_float3){0, 0, 8}, WEST, 0.13f);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(world.Fold.ends.at[0].open && near(world.Fold.ends.at[0].at.x, -9.8f, 0.001f) && near(world.Fold.ends.at[0].at.y, 2.9f, 0.01f));
+    tide_world_free(&world);
+    // The last room: the cube up on its gallery, and a cage whose way in is a meter square
+    start(&world);
+    choose(&world, 0, 5);
+    ticks(&world, 30);
+    CHECK(world.Arena.depth == 7 && world.Arena.theme == 2 && world.Fold.cube.y > 1.8f && world.Fold.cube.x < -5.5f);
+    place(&world, 0, (tide_float3){6.5f, 0, 4.6f}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 90);
+    CHECK(pilot(&world, 0).position.z < 5.9f);
+    // Small by the frame on the south wall, an operator goes in
+    place(&world, 0, (tide_float3){-3, 0, -3}, WEST, 0);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 3);
+    press(&world, (PilotInput){.amber = true});
+    place(&world, 0, (tide_float3){0.5f, 0, -9}, SOUTH, 0);
     ticks(&world, 3);
     press(&world, (PilotInput){.cyan = true});
-    CHECK(world.Fold.ends.at[1].open && world.Fold.ends.at[1].size == 1.5f && near(world.Fold.ends.at[1].at.x, 0.5f, 0.001f));
+    CHECK(world.Fold.ends.at[0].open && world.Fold.ends.at[0].size == 1 && world.Fold.ends.at[1].open && world.Fold.ends.at[1].size == 0.5f);
+    place(&world, 0, (tide_float3){-8, 0, -3}, WEST, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    for (int step = 0; step < 90 && world.Fold.traversals == 0; step++) tide_world_tick(&world);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 20);
+    CHECK(pilot(&world, 0).scale == 0.5f);
+    place(&world, 0, (tide_float3){6.5f, 0, 4.6f}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 120);
+    CHECK(pilot(&world, 0).position.z > 6.6f && pilot(&world, 0).position.x > 4.2f);
+    // ...and on its plate, with the cube on the other, the gate opens
+    place(&world, 0, (tide_float3){7, 0, 10}, 0, 0);
+    put_cube(&world, (tide_float3){-5, 0.5f, 8}, (tide_float3){0});
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 90);
+    CHECK(world.Arena.plateA && world.Arena.plateB && world.Arena.gate > 0.99f);
     tide_world_free(&world);
     // A half operator goes through the vent, round the baffle and into the room
     start(&world);
-    choose(&world, 0, 2);
+    choose(&world, 0, 3);
     ticks(&world, 8);
     place(&world, 0, (tide_float3){0, 0, -8}, SOUTH, 0);
     ticks(&world, 3);

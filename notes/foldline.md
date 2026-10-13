@@ -396,8 +396,53 @@ current.
     `shred.wav`.
   - Still one maze and one thing in it for every stretch between, whatever
     the place.
-- P now goes round three pictures for the owner to compare: 300 rows, 480
-  (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
+- **Six rooms, for a demo (2026-10-13).** The owner: "let's add more
+  puzzles and make sure we increase difficulty it's a puzzle game after
+  all, play with room layouts so they are not all the same. we need a demo
+  worthy version of this." And the picture: "i decided the current
+  pixelation is what I like so we can keep that and likely downscale the
+  render scale to match". This replaces the five rooms above, "Apart" and
+  the large frame's room with them, and `LevelAt`.
+  - *The way down* is nine places and round again: rooms 1 and 2, a
+    stretch between; 3 and 4, a stretch; 5 and 6, a stretch
+    (`LevelAt(depth % 9)`, `BETWEEN` is 6). The first three are paper and
+    carpet, the next three the pool, the last three concrete.
+  - *What a room can be made of now:* a gallery (`GALLERY`, 1.6 m: past a
+    jump, with room over it for a fold, which stands on it); plates at any
+    height (`Weighs` goes by the plate's own); the side walls each in two,
+    this side of z 3.5 and past it, so a room says which of six walls take
+    a fold.
+  - *1, A shortcut through space* (blood): fold across the pit. As it was.
+  - *2, High ground:* a plate on each of two galleries. Shoot the wall
+    over one from the floor.
+  - *3, The lure* (pool): the cube is up on a gallery this side; nothing
+    past the water takes a fold. Wade it, with the cube thrown in or
+    someone at the edge to draw the thing off.
+  - *4, Smaller:* both plates are in the room behind the vent. Only
+    someone small gets in, and has to shoot an end of their own fold
+    inside for the cube and the other to follow; then they're small until
+    the other's fold has an end in the frame.
+  - *5, The drums* (concrete): run the trench. One plate is on a gallery
+    walled off from this side: the wall over it is seen only from past the
+    drums, and the other end goes on the south wall.
+  - *6, All of it:* the cube on a gallery this side, a small frame on the
+    south wall, the trench, and past it a cage of bars round one plate
+    with a way in a meter square. Someone small crosses the trench at half
+    speed.
+  - `test.c` holds what each rests on, not a room played through: the
+    galleries past a jump and reached by a fold shot over them, the plate
+    up there counting only who's up there, the walled-off wall refusing a
+    shot from this side and taking one from past the trench, the cage
+    stopping a whole operator and passing a half one, and the gate opening
+    with them on its plate; the order of places and their themes. Replay
+    hash `9879513412636022908` natively and under WASI. **Nobody has
+    played a room from its lift to the next.** The large frame is in no
+    room now, and nothing tests it.
+  - *The picture* is 300 rows for good: P and `Control.crisp` are gone.
+    The room is drawn at half the window's pixels (`RENDER`), an end's
+    camera at half and its second crossing and looks into the other fold
+    at a quarter. Not measured: what that saves.
+
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the gate closing on a body
   under it, two operators through one fold at once and the cube in a hole
