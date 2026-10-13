@@ -208,17 +208,17 @@ static void folds_are_shot_and_crossed(void)
     place(&world, 0, (tide_float3){0, 0, -12}, SOUTH, 0);
     ticks(&world, 6);
     press(&world, (PilotInput){.carry = true});
-    CHECK(world.Fold.carried == 0);
+    CHECK(world.Fold.holding.at[0] == 1);
     // ...and it comes back through the fold with the hand that holds it
     input(&world, 0, (PilotInput){.move = {0, -1}});
     ticks(&world, 30);
     input(&world, 0, (PilotInput){0});
     ticks(&world, 40);
-    CHECK(world.Fold.carried == 0 && world.Fold.cube.z > -13 && world.Fold.cube.z < -8.5f && near(world.Fold.cube.x, 0, 0.6f));
+    CHECK(world.Fold.holding.at[0] == 1 && world.Fold.cube.z > -13 && world.Fold.cube.z < -8.5f && near(world.Fold.cube.x, 0, 0.6f));
     // A click with it in hand throws it, and shoots no fold
     const tide_float3 amber = world.Fold.ends.at[0].at;
     press(&world, (PilotInput){.amber = true});
-    CHECK(world.Fold.carried == -1 && world.Fold.ends.at[0].at.x == amber.x && world.Fold.ends.at[0].at.z == amber.z && world.Fold.fizzleTime <= 0);
+    CHECK(world.Fold.holding.at[0] == 0 && world.Fold.ends.at[0].at.x == amber.x && world.Fold.ends.at[0].at.z == amber.z && world.Fold.fizzleTime <= 0);
     tide_world_free(&world);
 }
 
@@ -290,12 +290,12 @@ static void carrying_and_throwing(void)
     place(&world, 0, (tide_float3){0, 0, -7.8f}, 0, -0.3f);
     tide_world_tick(&world);
     press(&world, (PilotInput){.carry = true});
-    CHECK(world.Fold.carried == 0);
+    CHECK(world.Fold.holding.at[0] == 1);
     ticks(&world, 40);
     // Held up before its holder
     CHECK(world.Fold.cube.y > 0.6f && near(world.Fold.cube.x, 0, 0.3f));
     press(&world, (PilotInput){.hurl = true});
-    CHECK(world.Fold.carried == -1);
+    CHECK(world.Fold.holding.at[0] == 0);
     CHECK(tide_get_Box3D_Body(&world, world.Arena.cube).velocity.z > 5);
     ticks(&world, 60);
     CHECK(world.Fold.cube.z > -3);
@@ -574,6 +574,43 @@ static void chambers_hold(void)
     input(&world, 0, (PilotInput){0});
     ticks(&world, 10);
     CHECK(world.Arena.plateA && !world.Arena.plateB);
+    tide_world_free(&world);
+    // There's more than the cube to pick up. A crate is carried up there and set down on the other gallery's
+    // plate, and with the cube on the first the gate opens with nobody standing on anything
+    start(&world);
+    choose(&world, 0, 1);
+    ticks(&world, 30);
+    CHECK(world.Fold.count == 2);
+    place(&world, 0, (tide_float3){2.5f, 0, -10.8f}, 0, -0.3f);
+    ticks(&world, 2);
+    press(&world, (PilotInput){.carry = true});
+    CHECK(world.Fold.holding.at[0] == 2);
+    for (int step = 0; step <= 14; step++) {
+        // Carried there a stride at a time, over the gallery's edge
+        const float along = step / 14.0f;
+        place(&world, 0, (tide_float3){2.5f + 4.5f * along, 2.6f, -10.8f + 18.2f * along}, 0, -0.5f);
+        ticks(&world, 12);
+        CHECK(world.Fold.holding.at[0] == 2);
+    }
+    place(&world, 0, (tide_float3){7, 1.6f, 7.4f}, 0, -0.5f);
+    ticks(&world, 40);
+    CHECK(world.Fold.holding.at[0] == 2 && world.Fold.spots.at[1].z > 7.5f && world.Fold.spots.at[1].y > 1.9f);
+    press(&world, (PilotInput){.carry = true});
+    CHECK(world.Fold.holding.at[0] == 0);
+    put_cube(&world, (tide_float3){-7, 2.0f, 6}, (tide_float3){0});
+    ticks(&world, 90);
+    CHECK(world.Arena.plateA && world.Arena.plateB && world.Arena.solved && world.Arena.gate > 0.99f);
+    // ...and a gallery is climbed from on top of the cube
+    put_cube(&world, (tide_float3){-3.55f, 0.4f, 2}, (tide_float3){0});
+    ticks(&world, 40);
+    place(&world, 0, (tide_float3){-3.5f, 0.78f, 2}, WEST, 0);
+    ticks(&world, 10);
+    CHECK(pilot(&world, 0).position.y > 0.6f && pilot(&world, 0).grounded);
+    input(&world, 0, (PilotInput){.move = {0, 1}, .jump = true});
+    tide_world_tick(&world);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 60);
+    CHECK(near(pilot(&world, 0).position.y, 1.6f, 0.05f) && pilot(&world, 0).position.x < -4.3f);
     tide_world_free(&world);
     // The fifth room's plate is on a gallery walled off from this side of the trench: the wall over it takes a
     // fold only from past the drums

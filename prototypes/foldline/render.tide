@@ -137,8 +137,11 @@ local singleton Optics
     List<Fixture> furnishings;
     List<Fixture> dynamic;
     // The cube's pieces, and the same again at a fold's other end while it's part of the way through one
+    // The loose things: the one that's part of the way through a fold, that one again at the fold's other end,
+    // and all the rest
     List<Fixture> cubeParts;
     List<Fixture> cubeEcho;
+    List<Fixture> cubeRest;
     List<Fixture> device;
     List<Fixture> deviceBalls;
     List<Fixture> deviceTubes;
@@ -1592,11 +1595,48 @@ void Taken(mut Optics optics, Operator body)
     }
 }
 
+// A loose thing, turned as Box3D has it: the cube with its corners and lit faces, or a crate of planks.
+void Loose(mut Optics optics, Cube cube, bool crossing)
+{
+    Color steel = Color(.10, .14, .16);
+    float big = cube.scale;
+    if (cube.kind == 1)
+    {
+        Fixture crate = Faced(cube.at, cube.turn, float3(.74 * big), PLANKS, 0, cube.holder >= 0 ? Color(1.15, 1.1, 1) : Color.white);
+        if (crossing) optics.cubeParts.Add(crate);
+        else optics.cubeRest.Add(crate);
+        return;
+    }
+    for (int part = 0; part < 15; part++)
+    {
+        mut Fixture piece = Turned(cube.at, cube.turn, float3(.74 * big), Color(.86, .86, .80), 0, .6);
+        if (part >= 1 && part < 9)
+        {
+            int corner = part - 1;
+            float3 way = float3((corner & 1) == 0 ? -1 : 1, (corner & 2) == 0 ? -1 : 1, (corner & 4) == 0 ? -1 : 1);
+            piece = Turned(cube.at + Math.Rotate(cube.turn, way * (.3 * big)), cube.turn, float3(.2 * big), steel, 0, .7);
+        }
+        else if (part >= 9)
+        {
+            int face = part - 9;
+            int axis = face / 2;
+            float sign = face % 2 == 0 ? 1 : -1;
+            float3 way = float3(axis == 0 ? sign : 0, axis == 1 ? sign : 0, axis == 2 ? sign : 0);
+            float3 size = float3(axis == 0 ? .03 : .3, axis == 1 ? .03 : .3, axis == 2 ? .03 : .3);
+            piece = Turned(cube.at + Math.Rotate(cube.turn, way * (.366 * big)), cube.turn, size * big, face == 2 ? Color(1, .64, .24) : Color(.16, .86, .80),
+                           cube.holder >= 0 ? 1.5 : 1.0);
+        }
+        if (crossing) optics.cubeParts.Add(piece);
+        else optics.cubeRest.Add(piece);
+    }
+}
+
 void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator viewer, Operator partner)
 {
     optics.dynamic.Clear();
     optics.cubeParts.Clear();
     optics.cubeEcho.Clear();
+    optics.cubeRest.Clear();
     optics.device.Clear();
     optics.deviceBalls.Clear();
     optics.deviceTubes.Clear();
@@ -1632,25 +1672,6 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
     optics.dynamic.Add(Block(float3(-2.85, gateY, 13.36), float3(.05, 3.9, .04), amberTint, 0, arena.solved ? 1.4 : .5));
     optics.dynamic.Add(Block(float3(2.85, gateY, 13.36), float3(.05, 3.9, .04), amberTint, 0, arena.solved ? 1.4 : .5));
     optics.dynamic.Add(Block(float3(0, gateY, 13.365), float3(.04, 3.9, .05), Color(.36, .46, .47), 0, 0, .8));
-
-    // The cube, turned as Box3D has it.
-    float3 cube = fold.cube;
-    quaternion turn = fold.cubeTurn;
-    float big = fold.cubeScale;
-    optics.cubeParts.Add(Turned(cube, turn, float3(.74 * big), Color(.86, .86, .80), 0, .6));
-    for (int corner = 0; corner < 8; corner++)
-    {
-        float3 way = float3((corner & 1) == 0 ? -1 : 1, (corner & 2) == 0 ? -1 : 1, (corner & 4) == 0 ? -1 : 1);
-        optics.cubeParts.Add(Turned(cube + Math.Rotate(turn, way * (.3 * big)), turn, float3(.2 * big), steel, 0, .7));
-    }
-    for (int face = 0; face < 6; face++)
-    {
-        int axis = face / 2;
-        float sign = face % 2 == 0 ? 1 : -1;
-        float3 way = float3(axis == 0 ? sign : 0, axis == 1 ? sign : 0, axis == 2 ? sign : 0);
-        float3 size = float3(axis == 0 ? .03 : .3, axis == 1 ? .03 : .3, axis == 2 ? .03 : .3);
-        optics.cubeParts.Add(Turned(cube + Math.Rotate(turn, way * (.366 * big)), turn, size * big, face == 2 ? amberTint : Color(.16, .86, .80), fold.carried >= 0 ? 1.5 : 1));
-    }
 
     // A shot that found no place: shards of its color, flung off the spot and gone.
     if (fold.fizzleTime > 0)
@@ -1882,7 +1903,7 @@ float4 OpeningOnScreen(Portal portal, float3 eye, quaternion rotation, float2 wi
 
 // Second crossings, their parents, then the room. Targets are disjoint and
 // portal cameras and all visible simulation objects update in this frame.
-view Render(Operator viewer, query (Operator body) operators, query (Wall wall) walls, Arena arena, Fold match, Watcher watcher, Stalker stalker, Lurker lurker, Control control, Interface ui, mut Optics optics, mut Daylight day,
+view Render(Operator viewer, query (Operator body) operators, query (Wall wall) walls, query (Cube cube) cubes, Arena arena, Fold match, Watcher watcher, Stalker stalker, Lurker lurker, Control control, Interface ui, mut Optics optics, mut Daylight day,
             mut Lens lens)
 {
     if (viewer.id != control.active) return;
@@ -1969,7 +1990,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     quaternion[4] turns = [FoldedRotation(e0, e1, rotation), FoldedRotation(e1, e0, rotation), FoldedRotation(e2, e3, rotation), FoldedRotation(e3, e2, rotation)];
     float4x4[4] across = [Across(e0, e1), Across(e1, e0), Across(e2, e3), Across(e3, e2)];
     Furnish(optics, arena, fold, lurker, viewer, partner);
-    if (!ui.open) Handheld(optics, eye, rotation, pace, fold.carried == viewer.id ? 1.0 : 0.0, viewer.scale);
+    if (!ui.open) Handheld(optics, eye, rotation, pace, fold.holding[viewer.id] > 0 ? 1.0 : 0.0, viewer.scale);
     // Both operators as they stand or run, and each again at a fold's other end while part of the way through it.
     Pose partnerPose = FigurePose(partner, optics.clock);
     Pose selfPose = FigurePose(viewer, optics.clock + 1.7);
@@ -1977,7 +1998,15 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     float4x4 selfPlace = FigurePlace(viewer);
     int partnerFold = Crossing(fold, partner.position + float3(0, .9 * partner.scale, 0), .55 * partner.scale);
     int selfFold = Crossing(fold, viewer.position + float3(0, .9 * viewer.scale, 0), .55 * viewer.scale);
-    int cubeFold = Crossing(fold, fold.cube, .7 * fold.cubeScale);
+    // Every loose thing; the first that's part of the way through a fold is drawn again at its other end
+    mut int cubeFold = 0;
+    foreach (var row in cubes)
+    {
+        if (row.cube.chamber != arena.chamber) continue;
+        int through = cubeFold == 0 ? Crossing(fold, row.cube.at, .7 * row.cube.scale) : 0;
+        if (through > 0) cubeFold = through;
+        Loose(optics, row.cube, through > 0);
+    }
     float4x4 partnerEcho = Math.Mul(across[Math.Max(partnerFold - 1, 0)], partnerPlace);
     float4x4 selfEcho = Math.Mul(across[Math.Max(selfFold - 1, 0)], selfPlace);
     for (int i = 0; i < optics.cubeParts.count && cubeFold > 0; i++)
@@ -2079,6 +2108,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         map.Instanced(optics.box, optics.triangles, optics.furnishings);
         map.Instanced(optics.box, optics.triangles, optics.dynamic);
         map.Instanced(optics.box, optics.triangles, optics.cubeParts);
+        map.Instanced(optics.box, optics.triangles, optics.cubeRest);
         map.Instanced(optics.box, optics.triangles, optics.cubeEcho);
         map.SkinnedMesh(figure, partnerPlace, partnerPose);
         map.SkinnedMesh(figure, selfPlace, selfPose);
@@ -2160,6 +2190,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         there.fold = cubeFold > 0 ? ((cubeFold - 1) ^ 1) + 1 : 0;
         there.echoed = true;
         there.back = across[(Math.Max(cubeFold, 1) - 1) ^ 1];
+        target.Instanced(optics.box, optics.triangles, optics.cubeRest, kit, Snap, Surface, sight);
         target.Instanced(optics.box, optics.triangles, optics.cubeParts, kit, Snap, Surface, here);
         if (cubeFold > 0) target.Instanced(optics.box, optics.triangles, optics.cubeEcho, kit, Snap, Surface, there);
         target.Cull(Cull.None)
