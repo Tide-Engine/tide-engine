@@ -30,7 +30,7 @@ struct Fixture
     float luminous;   // Its own light: 1 glows, more glows harder
     float gloss;      // 0 chalk, 1 polished
     float crop;       // For a square painted by its faces: 0 all of it, 1 its left half, 2 its right half
-    float kind;       // 0 solid, 1 leaf, 2 a ceiling lamp
+    float kind;       // 0 solid, 1 leaf, 2 a ceiling lamp, -1 the red of a pit
     float cell = -1;  // Which square of the sheet it's painted with: its tint alone, under 0
 }
 
@@ -138,6 +138,7 @@ local singleton Optics
     float4x4 amberFarView;
     float4x4 cyanFarView;
     int dressed = -1;
+    int warmed;       // How many frames have been drawn with made-up folds, to have everything ready
     bool made;
     float phase;
     float clock;
@@ -188,6 +189,7 @@ local singleton Lens
     float phase;
     float scare;      // A watcher has this machine's operator: 1 as it lands, fading
     float under;      // The hands in a pit have it: 0 to 1 as the picture goes out
+    float sunk;       // The eye is under a pit's red: 1, or 0
     float lines = 300; // The picture's rows: LINES, or the window's own with the big pixels off
     bool made;
 }
@@ -518,6 +520,36 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
     }
 
     float3 flat = instance.Normal(vertex.normal);
+    if (fixture.kind < -0.5)
+    {
+        // The red of a pit: thick, slow, clotted, with a skin the lamps show in. From under, a dim red roof.
+        float2 drift = float2(Math.Cos(sight.phase), Math.Sin(sight.phase)) * 0.3;
+        float2 q = p.xz * 0.5;
+        float a = Math.Simplex(q + drift);
+        float b = Math.Simplex(q * 2.3 - drift * 1.6 + float2(a * 0.7, 3.1));
+        float c = Math.Simplex(q * 5.3 + float2(b, a) * 0.9 + drift);
+        float thick = a * 0.5 + b * 0.32 + c * 0.18;
+        mut float3 red = Math.Lerp(float3(0.05, 0.0, 0.002), float3(0.42, 0.012, 0.008), Math.SmoothStep(-0.55, 0.65, thick));
+        red = Math.Lerp(red, float3(0.014, 0.0, 0.0), Math.SmoothStep(0.2, 0.55, c * 0.55 + b * 0.5));
+        if (flat.y < 0)
+        {
+            mut float3 roof = red * (0.5 + Math.Saturate(thick + 0.4) * 1.3);
+            roof = Math.Lerp(roof, float3(0.05, 0.0, 0.0), 1 - Math.Exp(-far * 0.5));
+            color = Shown(roof, sight.packed);
+            return;
+        }
+        float3 wave = Math.Normalize(float3((b + c * 0.6) * 0.16, 1, (a - c * 0.6) * 0.16));
+        float3 look = Math.Normalize(p - sight.eye);
+        float3 back = look - wave * (2 * Math.Dot(look, wave));
+        mut float glint = 0;
+        if (back.y > 0.02) glint = LampPool(p.xz + back.xz * ((CEILING - p.y) / back.y), 0.5, sight.phase) * sight.lamps;
+        mut float graze = 1 - Math.Saturate(-Math.Dot(look, wave));
+        graze = 0.05 + graze * graze * graze * 0.85;
+        mut float3 wet = red * (0.25 + Lamps(p, float3(0, 1, 0), sight.phase) * sight.lamps * 1.4) + LampTint() * (glint * graze * 2.2);
+        wet = Math.Lerp(wet, float3(0.030, 0.034, 0.024), 1 - Math.Exp(-far * 0.028));
+        color = Shown(wet, sight.packed);
+        return;
+    }
     mut float3 n = flat;
     if (fixture.kind > 0.5 && Math.Dot(n, sight.eye - p) < 0) n = -n;
 
@@ -792,7 +824,9 @@ frag Develop(Vertex vertex, Texture source, Lens lens, out Color color)
     float2 cells = float2(Math.Round(lens.lines * lens.pixel.y / lens.pixel.x), lens.lines);
     // Caught: the picture jolts, and goes red from its edges
     float2 jolt = float2(Math.Sin(lens.phase * 97), Math.Cos(lens.phase * 131)) * lens.scare * 0.02;
-    float2 cell = Math.Floor(Math.Saturate(vertex.uv + jolt) * cells);
+    // Under the red the picture swims
+    float2 swim = float2(Math.Sin(vertex.uv.y * 23 + lens.phase * 3), Math.Cos(vertex.uv.x * 19 + lens.phase * 2)) * (0.014 * lens.sunk);
+    float2 cell = Math.Floor(Math.Saturate(vertex.uv + jolt + swim) * cells);
     float2 uv = (cell + 0.5) / cells;
     float2 off = uv - 0.5;
     mut float3 light = Rgb(source.Sample(uv, Filter.Point, Wrap.Clamp));
@@ -800,6 +834,15 @@ frag Develop(Vertex vertex, Texture source, Lens lens, out Color color)
     light += Rgb(lens.near.Sample(uv, Filter.Bilinear, Wrap.Clamp)) * 0.5 + Rgb(lens.mid.Sample(uv, Filter.Bilinear, Wrap.Clamp)) * 0.4
            + Rgb(lens.wide.Sample(uv, Filter.Bilinear, Wrap.Clamp)) * 0.34;
     light *= 1.15;
+    if (lens.sunk > 0)
+    {
+        // ...and is seen through it: red, thick a little way off, with clouds of it adrift
+        float2 adrift = float2(Math.Cos(lens.phase), Math.Sin(lens.phase));
+        float cloud = Math.Simplex(uv * float2(5, 3) + adrift * 0.8) * 0.5 + Math.Simplex(uv * float2(11, 7) - adrift * 1.3) * 0.5;
+        float lightness = Math.Dot(light, float3(0.3, 0.5, 0.2));
+        float3 murk = float3(0.2, 0.008, 0.006) * (0.35 + Math.Saturate(cloud * 0.5 + 0.5) * 0.9) + float3(0.9, 0.05, 0.03) * lightness * 0.6;
+        light = Math.Lerp(light, murk, 0.88 * lens.sunk);
+    }
 
     mut float3 film = Math.Saturate(light * (light * 2.51 + float3(0.03)) / (light * (light * 2.43 + float3(0.59)) + float3(0.14)));
     float luma = Math.Dot(film, float3(0.2126, 0.7152, 0.0722));
@@ -1355,7 +1398,9 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
         }
         // The red itself, which hides how far down it goes
         float swell = Math.Sin(optics.phase) * .02;
-        optics.dynamic.Add(Block(float3(0, PIT_SURFACE - .5 + swell, middle), float3(19.6, 1, 5), Color(.46, .015, .02), 0, .32, .95));
+        mut Fixture red = Block(float3(0, PIT_SURFACE - .02 + swell, middle), float3(19.6, .04, 5), Color(.46, .015, .02), 0, .32, .95);
+        red.kind = -1;
+        optics.dynamic.Add(red);
         Taken(optics, viewer);
         if (partner.id != viewer.id) Taken(optics, partner);
     }
@@ -1447,11 +1492,21 @@ float4 OpeningOnScreen(Portal portal, float3 eye, quaternion rotation, float2 wi
 
 // Second crossings, their parents, then the room. Targets are disjoint and
 // portal cameras and all visible simulation objects update in this frame.
-view Render(Operator viewer, query (Operator body) operators, query (Wall wall) walls, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, mut Optics optics, mut Daylight day,
+view Render(Operator viewer, query (Operator body) operators, query (Wall wall) walls, Arena arena, Fold match, Watcher watcher, Control control, Interface ui, mut Optics optics, mut Daylight day,
             mut Lens lens)
 {
     if (viewer.id != control.active) return;
     if (!optics.made) MakeOptics(optics, day, lens);
+    // The first frames, behind the menu, are drawn with two ends that aren't there and then with one: every
+    // way a fold is drawn has been drawn once before the first real pair links, and nothing is made ready then.
+    mut Fold fold = match;
+    bool warming = optics.warmed < 3;
+    if (warming)
+    {
+        fold.amber = Portal { open = true, at = float3(-9.8, 1.3, 4), face = float3(1, 0, 0), size = 1 };
+        fold.cyan = Portal { open = optics.warmed < 2, at = float3(9.8, 1.3, 4), face = float3(-1, 0, 0), size = 1 };
+        optics.warmed += 1;
+    }
     // The room's boxes are the match's walls: dressed again when the chamber or their number changes
     mut int standing = 0;
     foreach (var row in walls)
@@ -1494,7 +1549,12 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     // In the hands' grip the eye is shaken
     if (viewer.taken > 0) eye += float3(Math.Sin(optics.clock * 61), Math.Sin(optics.clock * 83), Math.Cos(optics.clock * 71)) * (.03 * Math.Saturate(viewer.taken * 4));
     mut quaternion rotation = quaternion.Euler(-viewer.pitch, viewer.yaw, 0);
-    if (ui.open)
+    if (warming)
+    {
+        eye = float3(0, 2, -8);
+        rotation = quaternion.identity;
+    }
+    else if (ui.open)
     {
         // Behind the menu the atrium is seen from a camera of its own, adrift.
         eye = float3(-3.6 + Math.Sin(optics.phase) * .45, 2.5 + Math.Sin(optics.phase * 2) * .06, -12.2);
@@ -1533,9 +1593,10 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     Pose watcherPose = FigurePose(Operator { position = watcher.at, grounded = true }, optics.clock + 3.1);
     float caught = watcher.state == Watching.Lunging && watcher.victim == viewer.id && !ui.open ? 1 - Math.Saturate(watcher.timer / 0.75) * 0.6 : 0.0;
     // In the grip the picture reddens, and under the surface it's all red
-    float gripped = ui.open ? 0.0 : viewer.taken > 0 && eye.y < PIT_SURFACE ? 1.0 : viewer.taken > 0 ? Math.Saturate(viewer.taken / 0.3) * 0.75 : 0.0;
+    float gripped = ui.open || viewer.taken <= 0 ? 0.0 : Math.Saturate(viewer.taken / 0.3) * 0.75;
+    lens.sunk = !ui.open && viewer.taken > 0 && eye.y < PIT_SURFACE - .04 ? 1.0 : 0.0;
     lens.scare = Math.Max(Math.Max(caught, gripped), lens.scare - dt * 2.5);
-    lens.under = ui.open ? 0.0 : Math.Max(Math.Saturate((viewer.taken - 0.7) / (TAKEN_FOR - 0.8)), viewer.taken > 0 && eye.y < PIT_SURFACE ? 0.5 : 0.0);
+    lens.under = ui.open ? 0.0 : Math.Saturate((viewer.taken - 1.1) / (TAKEN_FOR - 1.15));
 
     float2 window = float2(Screen.width, Screen.height);
     Color amberRim = Color(1, .64, .24);

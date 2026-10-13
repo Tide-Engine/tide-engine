@@ -184,6 +184,44 @@ current.
     Not tested or played: any chamber from start to gate, a large operator
     carrying the cube over the pit, a half one bringing the cube out of the
     room in 5. Replay hash `17728616113333077166`.
+- **After the owner's play of that (2026-10-13).**
+  - *The red has a surface* ("better texture", and under it "see under
+    water... instead of it being a clear plane"): the slab is a sheet 4 cm
+    thick of `Fixture.kind` -1, which `Surface` paints from three octaves of
+    `Math.Simplex` that drift, with clots, and the ceiling's lamps mirrored
+    in it by a normal made from the same noise. Its underside is a dim red
+    roof. With the eye under it (`Lens.sunk`) `Develop` bends the picture
+    with two sines and lays red murk with drifting cloud over it.
+  - *The first link stuttered.* Every way a fold is drawn was first drawn
+    when the first pair linked. `Render` now copies the match's `Fold` and,
+    for its first three frames (`Optics.warmed`, behind the menu), draws
+    two made-up ends and then one, from a camera that sees both. This is
+    the likely cause and it wasn't measured: there's no frame timing in a
+    scripted run, and nobody has played it since. `render_test.c` sets
+    `warmed` past it.
+  - *A fizzle's shards slid* from the last fizzle's place when clicks came
+    fast: every shot snaps `Fold` now, placed or not.
+  - *The owner asked whether Portal 2 shares folds as this does.* It
+    doesn't: each player there has a pair of their own. Shared stays for
+    now (Claude's pick, the owner's to overrule): "Apart" rests on it, and
+    two pairs would double what the fold cameras draw.
+  - *The interface was redrawn* ("rework the UI") to go with the picture:
+    square, bone on near-black with one red, every letter with a hard
+    shadow a big pixel off (`Ink`, `Dot`), a list in place of buttons
+    (`InterfaceChoice`), square lamps for plates A, B and the lobby's, and
+    a reticle of five squares. It's still drawn at the window's own
+    resolution over the picture, not in its big pixels.
+  - *Sound* ("add some sounds too"): `sound.tide`, one view, `Sounds`,
+    after `Render`, which hears what changed in the match since the frame
+    before (`Ears`) and plays it: steps by distance walked, a fold's end
+    placed, a fizzle, a crossing, plates, the cube taken up, thrown and
+    stopped, the hands, the watcher's lamps and its lunge; and loops for
+    the lamps' hum, the building, the gate while it moves, the pit, both
+    ends of a linked fold, and the red over one's head. All 23 clips in
+    `art/sfx/` are made by `art/make_sfx.py` (numpy, 22,050 Hz mono), which
+    is kept to make them again. **Nobody has heard any of it:** Claude's
+    runs open no audio device. Levels, pitches and whether any of it is
+    good are unchecked.
 - P now goes round three pictures for the owner to compare: 300 rows, 480
   (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
