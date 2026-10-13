@@ -83,7 +83,7 @@ static void press(tide_world *world, PilotInput controls)
 static void choose(tide_world *world, int sender, int level)
 {
     // The game's only command: generated wire ID, null entity target, zigzag int.
-    CHECK(level >= -1 && level <= 9);
+    CHECK(level >= -1 && level <= 10);
     uint8_t payload[11] = {0};
     payload[0] = (uint8_t)TIDE_COMMAND_ID_SelectChamber;
     payload[1] = (uint8_t)(TIDE_COMMAND_ID_SelectChamber >> 8);
@@ -352,14 +352,14 @@ static void chambers_and_commands(void)
     CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     CHECK(near(world.Fold.cube.z, -8, 0.4f) && near(world.Fold.cube.x, -3, 0.4f) && !world.Fold.ends.at[0].open);
     // The places in order: two rooms and a stretch between, three times, each three its own place
-    static const int levels[9] = {0, 1, 6, 2, 3, 7, 4, 5, 8};
-    for (int room = 0; room < 9; room++) {
+    static const int levels[11] = {0, 1, 6, 2, 3, 7, 4, 5, 8, 9, 6};
+    for (int room = 0; room < 10; room++) {
         choose(&world, 0, room);
-        CHECK(world.Arena.level == room && levels[world.Arena.depth] == room && world.Arena.theme == world.Arena.depth / 3);
+        CHECK(world.Arena.level == room && levels[world.Arena.depth] == room && world.Arena.theme == world.Arena.depth / 3 % 3);
     }
     // A room that isn't one changes nothing
-    choose(&world, 0, 9);
-    CHECK(world.Arena.level == 8);
+    choose(&world, 0, 10);
+    CHECK(world.Arena.level == 9);
     tide_world_free(&world);
 }
 
@@ -469,6 +469,80 @@ static void stretches(void)
         had = pilot(&world, 0).shredded;
     }
     CHECK(had);
+    tide_world_free(&world);
+}
+
+// Where the shaft's first deck that goes by itself is, from x -3 to 4.5, as play.tide's MoverAt has it.
+static float deck_at(int ticks)
+{
+    const float travel = 7.5f / 2.2f, wait = 1.3f, cycle = (travel + wait) * 2;
+    float now = ticks / 60.0f / cycle;
+    now = (now - floorf(now)) * cycle;
+    const float along = now < wait ? 0 : now < wait + travel ? (now - wait) / travel : now < wait * 2 + travel ? 1 : 1 - (now - wait * 2 - travel) / travel;
+    return -3 + 7.5f * along;
+}
+
+// The shaft: a room that isn't the hall's, on two storeys, with what it moves.
+static void shaft(void)
+{
+    tide_world world = {0};
+    start(&world);
+    choose(&world, 0, 9);
+    ticks(&world, 30);
+    CHECK(world.Arena.level == 9 && world.Arena.depth == 9 && world.Fold.count == 3);
+    // Come to by a lift of its own, at the end of a passage
+    CHECK(near(pilot(&world, 0).position.z, -20, 0.05f) && near(pilot(&world, 0).position.x, -1.2f, 0.05f) && pilot(&world, 0).grounded);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 240);
+    CHECK(pilot(&world, 0).position.z > -9 && near(pilot(&world, 0).position.y, 0, 0.05f));
+    // The tall room's walls take a fold to the balcony's height and none above it
+    place(&world, 0, (tide_float3){0, 0, -4}, WEST, 0);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 3);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(world.Fold.ends.at[0].open && near(world.Fold.ends.at[0].at.x, -8, 0.001f));
+    place(&world, 0, (tide_float3){0, 0, -4}, WEST, 0.75f);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(!world.Fold.ends.at[1].open && world.Fold.fizzleTime > 0 && world.Fold.fizzleAt.y > 5);
+    // The deck rises for as long as its plate is weighted, with whoever is on it, and goes down when it's let up
+    place(&world, 0, (tide_float3){5, 0, -0.6f}, 0, 0);
+    ticks(&world, 30);
+    CHECK(near(pilot(&world, 0).position.y, 0, 0.05f) && !world.Arena.plateC);
+    put_cube(&world, (tide_float3){-5, 0.5f, -6}, (tide_float3){0});
+    ticks(&world, 240);
+    CHECK(world.Arena.plateC && near(pilot(&world, 0).position.y, 5, 0.06f) && near(pilot(&world, 0).position.x, 5, 0.3f));
+    put_cube(&world, (tide_float3){0, 0.5f, -6}, (tide_float3){0});
+    ticks(&world, 240);
+    CHECK(!world.Arena.plateC && near(pilot(&world, 0).position.y, 0, 0.06f));
+    // Upstairs: someone standing on a deck that goes from side to side goes with it
+    place(&world, 0, (tide_float3){deck_at(world.Arena.ticks), 5.1f, 14.5f}, 0, 0);
+    float least = 100, most = -100;
+    for (int step = 0; step < 600; step++) {
+        tide_world_tick(&world);
+        const Operator now = pilot(&world, 0);
+        if (step < 20) continue;
+        CHECK(near(now.position.y, 5, 0.08f) && near(now.position.z, 14.5f, 0.3f));
+        if (now.position.x < least) least = now.position.x;
+        if (now.position.x > most) most = now.position.x;
+    }
+    CHECK(most - least > 6.5f && least > -4.6f && most < 6.1f);
+    // Off the decks the floor is 2.5 m down, and a slope goes back up to the near ledge
+    place(&world, 0, (tide_float3){-8, 5.5f, 19}, TIDE_PI_F, 0);
+    ticks(&world, 60);
+    CHECK(near(pilot(&world, 0).position.y, 2.5f, 0.06f));
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 200);
+    CHECK(near(pilot(&world, 0).position.y, 5, 0.06f) && pilot(&world, 0).position.z < 12.4f);
+    // The lift out is on the upper storey; both in it ride to the next place and stand on its floor
+    input(&world, 0, (PilotInput){0});
+    place(&world, 0, (tide_float3){-1, 5, 26.8f}, 0, 0);
+    place(&world, 1, (tide_float3){1, 5, 26.2f}, 0, 0);
+    const int32_t built = world.Arena.chamber;
+    ticks(&world, 160);
+    CHECK(world.Arena.chamber == built + 1 && world.Arena.depth == 10 && world.Arena.level == 6);
+    CHECK(near(pilot(&world, 0).position.x, 5.5f, 0.1f) && near(pilot(&world, 0).position.z, -15.4f, 0.1f) && near(pilot(&world, 0).position.y, 0, 0.06f));
+    CHECK(near(pilot(&world, 1).position.x, 7.5f, 0.1f) && near(pilot(&world, 1).position.z, -16, 0.1f));
     tide_world_free(&world);
 }
 
@@ -772,6 +846,7 @@ int main(void)
     chambers_and_commands();
     between();
     stretches();
+    shaft();
     chambers_hold();
     replay_and_pack_are_identical();
     puts("FOLDLINE simulation checks passed");

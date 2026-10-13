@@ -487,6 +487,57 @@ current.
   - Unplayed, all of it. Not done: joints (nothing hinged or hung), things
     of other sizes or weights, and a crate half-way through a fold while
     another is (the second isn't drawn at the far end).
+- **Out of the hall (2026-10-13).** The owner: "yes I want freeing us and
+  allow corridors and other rooms and maybe even more verticality. moving
+  platforms. we might also need to introduce more mechanics". This is the
+  ground for it and one room built on it; the six rooms and three
+  stretches are still the hall's.
+  - *Lifts are where a place says* (`ArrivalAt(level)`, `LiftAt(level)`,
+    the middle of each one's floor, at any height; `HoldPlate`). The gate,
+    the door, who's in the lift, where riders stand on arriving
+    (`Arena.left` is the lift they left by) and all the renderer draws of a
+    lift go by them. A lift's way in is still on its north side and its way
+    out on its south: lifts aren't turned.
+  - *A room builds itself* where it isn't the hall's: `Fill` (a box by its
+    corners), `LiftShell`, and `BuildChamber` hands over to it
+    (`BuildShaft`). Nothing in a room so built is a pit of a place's kind
+    (`Hazard` is the hall's band), has a watcher, or a maze.
+  - *Light isn't the hall's:* the lamps are a grid without end, a storey at
+    a time (`STOREY` 5 m: `LampPlane(y)` is 4.4 over the floor of the storey
+    a place is in), and their fittings hang where a room says a roof or a
+    taller room's rods are (`Fitted`). The floor's and walls' darkening
+    towards the hall's own corners is gone, in the hall too. The shadow map
+    is 56 m long. A floor that has a room under it is a roof to the light
+    (`Wall.kind` 2), so what's on an upper storey can shadow the lower.
+  - *What a room moves* (`Mover`, `MoverCount`/`From`/`To`/`Size`/`Plate`):
+    a kinematic box moved by its speed, so what's on it is carried. One
+    with no plate goes between its two places by itself, waiting 1.3 s at
+    each (`MoverAt`, a function of the tick); one with a plate goes to its
+    second place while that's weighted and back when it's let up, at
+    2.2 m/s. An operator standing on one is given its speed
+    (`MoveOperators`, by what's under its feet). A room has up to four
+    plates: A and B are its gate's, C and D its machinery's
+    (`Arena.plateC`, `plateD`), drawn green.
+  - *A slope* is a `Ramp` with its own place, size, tilt and paint, drawn
+    from a query; a pit's are still the pit's.
+  - *The shaft* (level 9, tenth down, "room 07"): a passage from the lift
+    into a room two storeys high, papered to the balcony's height (takes a
+    fold) and bare above it (doesn't); a deck that rises to the balcony
+    while the green plate is weighted; a passage off the balcony; a room
+    whose floor is 2.5 m down between two ledges, with a slope back up,
+    crossed on two decks that go from side to side by themselves; and the
+    lift out on the upper storey. The menu behind it looks down the far
+    room. It's a first room on the new ground, to show it stands, more
+    than it's a hard puzzle.
+  - `test.c` (`shaft`): arriving at the passage's end and walking in; the
+    tall room's wall taking a fold low and none high; the deck up with its
+    rider while the cube is on the plate and down when it's off; a rider
+    carried on a deck that goes by itself for ten seconds; the floor
+    between the ledges and the slope back; both in the upper lift riding
+    to the next place's floor. Replay hash `13255449979531731272`.
+  - Not built: rooms of the hall's nine remade on this ground; a place's
+    pit anywhere but the hall's band; lifts turned; anything hinged.
+    Asked for and not chosen yet: what other new mechanics.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
   nudge sideways; a lone end gives no light; the gate closing on a body
   under it, two operators through one fold at once and the cube in a hole
