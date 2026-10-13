@@ -78,10 +78,9 @@ gate = (rng.uniform(0, 1, int(RATE * n)) > 0.82).astype(float)
 crackle = high(noise(n), 2500) * gate * decay(n, 9)
 save('fizzle', crush(crackle + sweep(n, 520, 90, 0.6) * decay(n, 10) * 0.6, 32), 0.6)
 
-# Through a fold: air pulled the wrong way
-n = 0.5
-air = band(noise(n), 300, 2400) * np.sin(np.pi * t(n) / n) ** 2
-save('cross', air + sweep(n, 90, 260) * np.sin(np.pi * t(n) / n) * 0.5, 0.6)
+# Through a fold: a breath of air, over before it's noticed
+n = 0.13
+save('cross', low(noise(n), 700) * np.sin(np.pi * t(n) / n) ** 2 + np.sin(2 * np.pi * 95 * t(n)) * decay(n, 30) * 0.5, 0.4)
 
 # A plate going down and coming up
 n = 0.3

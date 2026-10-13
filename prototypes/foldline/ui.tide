@@ -17,12 +17,14 @@ const Color UI_SHADOW = Color(0, 0, 0, 0.85);
 const Color UI_RED = Color(0.74, 0.07, 0.05);
 const Color UI_CYAN = Color(0.21, 0.87, 0.89);
 const Color UI_AMBER = Color(1, 0.65, 0.28);
+const Color UI_ROSE = Color(1, 0.3, 0.55);
+const Color UI_VIOLET = Color(0.62, 0.4, 1);
 
 string ChamberHint(int level)
 {
     return level switch {
         0 => "Two plates open the gate, only while weighted. The plate past it holds it for whoever stayed.",
-        1 => "Apart. Neither of you can fold the other's side of the grille: one end each.",
+        1 => "Apart. A shot goes between the bars. You don't.",
         2 => "The vent is too low for you. A fold in the small frame is small, and so is who leaves by it.",
         3 => "Too far to jump as you are. Who leaves by the large frame is large.",
         _ => "The cube is shut in a room, and the plates are past the pit."
@@ -215,7 +217,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     if (!narrow) Ink(arena.gate > 0.9 ? "GATE UP" : "GATE DOWN", float2(lamp.x + 10, 78), 11, arena.gate > 0.9 ? UI_INK : UI_MUTED, Anchor.MiddleLeft);
 
     // Whose eyes these are, and the room others join.
-    var mark = control.active == 0 ? UI_AMBER : UI_CYAN;
+    var mark = control.active == 0 ? UI_AMBER : UI_ROSE;
     Draw.Rect(float2(Screen.width - pad - dot * 2 + dot, 30 + dot), float2(dot * 4, dot * 4), UI_SHADOW);
     Draw.Rect(float2(Screen.width - pad - dot * 2, 30), float2(dot * 4, dot * 4), mark);
     Ink(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - dot * 4 - 8, 30), 11, UI_INK, Anchor.MiddleRight);
@@ -223,8 +225,8 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
 
     // The reticle: a point, with each fold's color either side of it.
     Draw.Rect(middle, float2(dot, dot), UI_INK);
-    Draw.Rect(middle - float2(dot * 4, 0), float2(dot * 2, dot), UI_AMBER);
-    Draw.Rect(middle + float2(dot * 4, 0), float2(dot * 2, dot), UI_CYAN);
+    Draw.Rect(middle - float2(dot * 4, 0), float2(dot * 2, dot), control.active == 0 ? UI_AMBER : UI_ROSE);
+    Draw.Rect(middle + float2(dot * 4, 0), float2(dot * 2, dot), control.active == 0 ? UI_CYAN : UI_VIOLET);
     Draw.Rect(middle - float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
     Draw.Rect(middle + float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
     if (fold.carried == control.active) Ink("E  DROP      CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter);
@@ -243,8 +245,8 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
         mut var at = float2(middle.x - row * 0.5, Screen.height - 24);
         at.x = HudKey(at, "WASD", 34, "MOVE", 30);
         at.x = HudKey(at, "SPACE", 38, "JUMP", 28);
-        at.x = HudKey(at, "LMB", 26, "AMBER", 36);
-        at.x = HudKey(at, "RMB", 26, "CYAN", 30);
+        at.x = HudKey(at, "LMB", 26, "FOLD", 36);
+        at.x = HudKey(at, "RMB", 26, "FOLD", 30);
         at.x = HudKey(at, "E", 10, "CARRY", 36);
         at.x = HudKey(at, "F", 10, "THROW", 40);
         at.x = HudKey(at, "Q", 10, "PING", 26);

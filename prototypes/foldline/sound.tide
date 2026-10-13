@@ -28,11 +28,13 @@ local singleton Ears
     Sound gate;
     Sound under;
     Sound pit;
-    Sound amber;
-    Sound cyan;
+    Sound end0;
+    Sound end1;
+    Sound end2;
+    Sound end3;
     int chamber = -1;
-    Portal wasAmber;
-    Portal wasCyan;
+    Portal[4] was;
+    float crossed;       // Seconds since a crossing was heard: one at a time
     float fizzle;
     int traversals;
     bool plateA;
@@ -85,9 +87,14 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     Looping(ears.drone, building, 0.3 * quiet, true);
     LoopingAt(ears.gate, gateRun, float3(0, 2, 13.5), 0.9, Math.Abs(arena.gate - ears.gateAt) > 0.0005);
     LoopingAt(ears.pit, pitTurning, float3(Math.Clamp(eye.x, -9, 9), PIT_SURFACE, pitMiddle), 0.8, pitted);
-    LoopingAt(ears.amber, foldHum, fold.amber.at, 0.3, Linked(fold));
-    LoopingAt(ears.cyan, foldHum, fold.cyan.at, 0.3, Linked(fold));
-    ears.cyan.pitch = 1.5;
+    LoopingAt(ears.end0, foldHum, fold.ends[0].at, 0.3, Linked(fold, 0));
+    LoopingAt(ears.end1, foldHum, fold.ends[1].at, 0.3, Linked(fold, 0));
+    LoopingAt(ears.end2, foldHum, fold.ends[2].at, 0.3, Linked(fold, 1));
+    LoopingAt(ears.end3, foldHum, fold.ends[3].at, 0.3, Linked(fold, 1));
+    ears.end1.pitch = 1.5;
+    ears.end2.pitch = 0.75;
+    ears.end3.pitch = 1.125;
+    ears.crossed += Frame.dt;
     Looping(ears.under, redUnder, 0.9, sunk && !ui.open);
 
     // A new chamber: everything is as it is, and nothing just happened
@@ -95,13 +102,15 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     ears.chamber = arena.chamber;
     if (!fresh)
     {
-        if (fold.amber.open && (!ears.wasAmber.open || Math.DistanceSq(fold.amber.at, ears.wasAmber.at) > 0.0001)) Audio.Play(foldOpen, fold.amber.at, 0.8);
-        if (fold.cyan.open && (!ears.wasCyan.open || Math.DistanceSq(fold.cyan.at, ears.wasCyan.at) > 0.0001)) Audio.Play(foldOpen, fold.cyan.at, 0.8, 0.84);
+        for (int end = 0; end < 4; end++)
+            if (fold.ends[end].open && (!ears.was[end].open || Math.DistanceSq(fold.ends[end].at, ears.was[end].at) > 0.0001))
+                Audio.Play(foldOpen, fold.ends[end].at, 0.8, (end & 1) == 0 ? 1.0 : 0.84);
         if (fold.fizzleTime > ears.fizzle + 0.02) Audio.Play(foldFizzle, fold.fizzleAt, 0.7);
-        if (fold.traversals > ears.traversals)
+        // A crossing is a short breath of air, once however many things crossed together
+        if (fold.traversals > ears.traversals && ears.crossed > 0.25)
         {
-            Audio.Play(foldCross, fold.amber.at, 0.7);
-            Audio.Play(foldCross, fold.cyan.at, 0.7);
+            ears.crossed = 0;
+            Audio.Play(foldCross, 0.35);
         }
         if (arena.plateA != ears.plateA) Audio.Play(arena.plateA ? plateOn : plateOff, PlatePosition(arena.level, 0), 0.9);
         if (arena.plateB != ears.plateB) Audio.Play(arena.plateB ? plateOn : plateOff, PlatePosition(arena.level, 1), 0.9, 1.12);
@@ -147,8 +156,7 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     }
     else ears.cubeSpeed = float3(0);
 
-    ears.wasAmber = fold.amber;
-    ears.wasCyan = fold.cyan;
+    for (int end = 0; end < 4; end++) ears.was[end] = fold.ends[end];
     ears.fizzle = fold.fizzleTime;
     ears.traversals = fold.traversals;
     ears.plateA = arena.plateA;

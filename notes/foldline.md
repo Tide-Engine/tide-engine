@@ -222,6 +222,42 @@ current.
     is kept to make them again. **Nobody has heard any of it:** Claude's
     runs open no audio device. Levels, pitches and whether any of it is
     good are unchecked.
+- **A fold each (2026-10-13).** The owner, of the shared pair: "i dont want
+  shared portals, i feel like its limiting and the coop becomes a fight of
+  power and taking turns instead of cooperating". This replaces what's said
+  above of `Fold.amber` and `Fold.cyan`, of one `busy`, and of "Apart".
+  - `Fold.ends` is four `Portal`s: 0 and 1 are operator A's (amber, cyan),
+    2 and 3 operator B's (rose, violet), and an end's other is `end ^ 1`.
+    An operator's two buttons shoot their own two ends and nobody else's;
+    anyone and the cube go through any fold that's whole. `Linked(fold,
+    pair)`, `Traverse` (which says the end crossed), `Reach`, `AtMouth`,
+    `Carve` and the hold all go over four ends; `Fold.busy` is one count a
+    fold, so someone in A's fold doesn't stop B's shots; an end clears
+    every other end, whoever's. In C the ends are `world.Fold.ends.at[i]`.
+  - The renderer draws four ends: a shadow map a lit end (`Daylight.fold0`
+    to `fold3`), a camera an end that's on screen (`Optics.first0` to
+    `first3`, now one sample a pixel where two ends had four), and its
+    second crossing (`deep0` to `deep3`). `Sight` carries all four
+    (`foldAt`, `foldFace`, `foldSize`, `foldOn`) for the holes, the light
+    and what's part of the way through one (`Sight.fold` is the end plus
+    one). **Through a fold's camera the other fold's ends are light on a
+    sheet,** not a view: only a fold's own ends are followed twice.
+    Not measured: what four cameras cost on a slow machine or in a browser.
+  - "Apart" can't rest on sharing any more. A shot now goes between the
+    grille's bars (`Shoot` passes a `Wall.kind` 4), so the one shut in
+    shoots an end out and walks out. It's a small puzzle, alone solvable,
+    and to be replaced with the rest when the chambers are made harder.
+  - A crossing's sound was half a second, and played at both ends for
+    each thing that crossed (the owner: "sucks... make it something
+    simpler shorter"): it's 0.13 s of soft air, once however many crossed
+    together, a quarter of a second apart at least.
+  - `test.c`: each operator's shots move their own ends only, one end of
+    each fold links nothing, and both walk out by the fold of the one
+    shut in. Replay hash `8964366398197912681` natively and under WASI.
+  - **Asked for and not built yet:** harder chambers, walking from one to
+    the next in place of a button, and a place between them with no
+    device and things to keep away from. Proposed to the owner; see the
+    conversation of this date.
 - P now goes round three pictures for the owner to compare: 300 rows, 480
   (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would

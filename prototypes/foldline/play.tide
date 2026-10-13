@@ -41,10 +41,13 @@ struct Portal
     float size = 1;
 }
 
+// Each operator has a fold of their own: two ends, shot by that operator and
+// by nobody else, and walked through by anyone. Ends 0 and 1 are operator A's
+// (amber and cyan), 2 and 3 operator B's (rose and violet); an end's other is
+// the one beside it.
 singleton Fold
 {
-    Portal amber;
-    Portal cyan;
+    Portal[4] ends;
     [Position] float3 cube = float3(-3, 0.5, -8);
     [Rotation] quaternion cubeTurn = quaternion.identity;
     float cubeScale = 1;
@@ -55,12 +58,12 @@ singleton Fold
     float pingTime;
     int pingOperator;
     int traversals;
-    int busy;            // Ticks since something was in a fold's mouth: neither end moves while it is
+    int[2] busy;         // Ticks since something was in each fold's mouth: neither of its ends moves while it is
     // A shot that found no place for a fold: where, on what, and for how long it shows
     float3 fizzleAt;
     float3 fizzleFace;
     float fizzleTime;
-    bool fizzleAmber;
+    int fizzleEnd;
 }
 
 // Something that watches from behind a pillar, in every player's match alike,
@@ -284,9 +287,9 @@ float3 FoldRight(float3 face)
     return Math.Cross(float3(0, 1, 0), face);
 }
 
-bool Linked(Fold fold)
+bool Linked(Fold fold, int pair)
 {
-    return fold.amber.open && fold.cyan.open;
+    return fold.ends[pair * 2].open && fold.ends[pair * 2 + 1].open;
 }
 
 // What a fold does to a direction: into one wall is out of the other, turned
@@ -315,13 +318,14 @@ bool InMouth(Portal portal, float3 point, float margin)
 // Crossing a fold: a body whose middle went from before a wall's face to past
 // it is as far past the other face, with its speed turned and scaled. Says by
 // how much the body's size changes, 0 for no crossing.
-float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 velocity, mut float yaw)
+float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 velocity, mut float yaw, out int through)
 {
-    if (!Linked(fold)) return 0;
-    for (var side = 0; side < 2; side++)
+    through = -1;
+    for (var end = 0; end < 4; end++)
     {
-        var from = side == 0 ? fold.amber : fold.cyan;
-        var to = side == 0 ? fold.cyan : fold.amber;
+        if (!Linked(fold, end / 2)) continue;
+        var from = fold.ends[end];
+        var to = fold.ends[end ^ 1];
         var was = Math.Dot(before - from.at, from.face);
         var now = Math.Dot(center - from.at, from.face);
         if (was < 0 || now >= 0 || !InMouth(from, center, 0.3)) continue;
@@ -331,6 +335,7 @@ float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 veloc
         var facing = FoldDirection(from, to, LookDirection(yaw, 0));
         yaw = Math.Atan2(facing.x, facing.z);
         fold.traversals += 1;
+        through = end;
         return ratio;
     }
     return 0;
@@ -341,17 +346,17 @@ float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 veloc
 float Reach(Fold fold, float3 hand, float3 thing)
 {
     mut var nearest = Math.DistanceSq(hand, thing);
-    if (!Linked(fold)) return nearest;
-    nearest = Math.Min(nearest, Math.DistanceSq(FoldPoint(fold.amber, fold.cyan, hand), thing));
-    return Math.Min(nearest, Math.DistanceSq(FoldPoint(fold.cyan, fold.amber, hand), thing));
+    for (var end = 0; end < 4; end++)
+        if (Linked(fold, end / 2)) nearest = Math.Min(nearest, Math.DistanceSq(FoldPoint(fold.ends[end], fold.ends[end ^ 1], hand), thing));
+    return nearest;
 }
 
-// Whether a body is in either fold's mouth: neither end is moved while one is.
-bool AtMouth(Fold fold, float3 center, float reach)
+// Whether a body is in the mouth of either end of a fold: neither is moved while one is.
+bool AtMouth(Fold fold, int pair, float3 center, float reach)
 {
     for (var side = 0; side < 2; side++)
     {
-        var portal = side == 0 ? fold.amber : fold.cyan;
+        var portal = fold.ends[pair * 2 + side];
         if (!portal.open) continue;
         var depth = Math.Dot(center - portal.at, portal.face);
         if (depth > -0.3 && depth < reach && InMouth(portal, center, 0.1)) return true;
@@ -426,7 +431,7 @@ void BuildChamber(mut Arena arena, int level)
 
     if (level == 1)
     {
-        // A grille shuts the south-west of the hall off: seen through, and nothing else goes through, a shot neither
+        // A grille shuts the south-west of the hall off: seen through and shot through, and nothing else goes through
         Raise(arena, float3(-1, 2.2, -3.6), float3(0.3, 4.4, 18.8), rust, false, 4);
         Raise(arena, float3(-5.5, 2.2, 5.95), float3(8.7, 4.4, 0.3), rust, false, 4);
     }
@@ -473,8 +478,7 @@ void ResetChamber(mut Arena arena, mut Fold fold, int level)
     arena.plateB = false;
     arena.hold = false;
     arena.ticks = 0;
-    fold.amber = Portal { };
-    fold.cyan = Portal { };
+    for (var end = 0; end < 4; end++) fold.ends[end] = Portal { };
     fold.cube = CubeStart(level);
     fold.cubeTurn = quaternion.identity;
     fold.cubeScale = 1;
@@ -483,7 +487,8 @@ void ResetChamber(mut Arena arena, mut Fold fold, int level)
     fold.pingTime = 0;
     fold.fizzleTime = 0;
     fold.traversals = 0;
-    fold.busy = 0;
+    fold.busy[0] = 0;
+    fold.busy[1] = 0;
     BuildChamber(arena, level);
 }
 
@@ -548,32 +553,36 @@ void Rework(mut World world, Entity wall)
     world.Set<Wall>(wall, changed);
 }
 
-void Fizzle(mut Fold fold, bool amber, float3 at, float3 face)
+void Fizzle(mut Fold fold, int end, float3 at, float3 face)
 {
     fold.fizzleAt = at;
     fold.fizzleFace = face;
     fold.fizzleTime = 0.6;
-    fold.fizzleAmber = amber;
+    fold.fizzleEnd = end;
 }
 
 // A shot: a fold's end goes where it lands, nudged to fit on that face, or
 // fizzles there. It fits on an upright face of a wall that takes folds, clear
 // of the floor, the ceiling, what stands against the wall and the other end.
-bool Shoot(mut Fold fold, bool amber, int level, float3 origin, float3 way, Physics physics, mut World world)
+bool Shoot(mut Fold fold, int end, int level, float3 origin, float3 way, Physics physics, mut World world)
 {
     if (!physics.Raycast(origin, origin + way * 60, out var first)) return false;
     // Through whoever and whatever stands in the way that's no part of the room
+    // ...and through a grille, which stops everything else
     mut var hit = first;
-    for (var past = 0; past < 3 && !world.Has<Piece>(hit.entity); past++)
+    for (var past = 0; past < 4; past++)
+    {
+        if (world.TryGet<Piece>(hit.entity, out var struck) && world.TryGet<Wall>(struck.wall, out var met) && met.kind != 4) break;
         if (!physics.Raycast(hit.point + way * 0.9, origin + way * 60, out hit)) return false;
+    }
     mut var face = float3(0, 1, 0);
     if (Math.Abs(hit.normal.y) < 0.3)
         face = Math.Abs(hit.normal.x) > Math.Abs(hit.normal.z) ? float3(Math.Sign(hit.normal.x), 0, 0) : float3(0, 0, Math.Sign(hit.normal.z));
-    var mine = amber ? fold.amber : fold.cyan;
-    var other = amber ? fold.cyan : fold.amber;
-    if (fold.busy > 0 || face.y > 0.5 || !world.TryGet<Piece>(hit.entity, out var piece) || !world.TryGet<Wall>(piece.wall, out var wall) || !wall.takes)
+    var mine = fold.ends[end];
+    var other = fold.ends[end ^ 1];
+    if (fold.busy[end / 2] > 0 || face.y > 0.5 || !world.TryGet<Piece>(hit.entity, out var piece) || !world.TryGet<Wall>(piece.wall, out var wall) || !wall.takes)
     {
-        Fizzle(fold, amber, hit.point, hit.normal);
+        Fizzle(fold, end, hit.point, hit.normal);
         return false;
     }
     var right = FoldRight(face);
@@ -594,11 +603,13 @@ bool Shoot(mut Fold fold, bool amber, int level, float3 origin, float3 way, Phys
     var along = Math.Abs(face.x) > 0.5;
     var thick = along ? wall.size.x : wall.size.z;
     var wide = along ? wall.size.z : wall.size.x;
-    // The other end on this wall's other pair of faces would need holes two ways through it
-    var crossed = other.open && other.wall == piece.wall && Math.Abs(Math.Dot(other.face, face)) < 0.5;
+    // Another end on this wall's other pair of faces would need holes two ways through it
+    mut var crossed = false;
+    for (var k = 0; k < 4; k++)
+        if (k != end && fold.ends[k].open && fold.ends[k].wall == piece.wall && Math.Abs(Math.Dot(fold.ends[k].face, face)) < 0.5) crossed = true;
     if (thick < 0.6 || wide < halfWide * 2 || crossed)
     {
-        Fizzle(fold, amber, hit.point, face);
+        Fizzle(fold, end, hit.point, face);
         return false;
     }
     var plane = wall.center + face * (thick * 0.5);
@@ -618,7 +629,7 @@ bool Shoot(mut Fold fold, bool amber, int level, float3 origin, float3 way, Phys
     if (physics.Raycast(probe, probe + right * 3, out var after)) highU = Math.Min(highU, Math.Dot(after.point - wall.center, right) - halfWide);
     if (lowU > highU || lowV > highV)
     {
-        Fizzle(fold, amber, hit.point, face);
+        Fizzle(fold, end, hit.point, face);
         return false;
     }
     u = Math.Clamp(u, lowU, highU);
@@ -626,9 +637,16 @@ bool Shoot(mut Fold fold, bool amber, int level, float3 origin, float3 way, Phys
     // Near the floor it stands on it, to be walked into
     if (v - halfHigh - floor < 1.0) v = lowV;
     var at = float3(plane.x + right.x * u, v, plane.z + right.z * u);
-    var overlaps = other.open && Math.Dot(other.face, face) > 0.9 && Math.Abs(Math.Dot(other.at - at, face)) < 0.2
-                && Math.Abs(Math.Dot(other.at - at, right)) < halfWide + FOLD_HALF_WIDE * other.size + 0.1
-                && Math.Abs(other.at.y - at.y) < halfHigh + FOLD_HALF_HIGH * other.size + 0.1;
+    // ...clear of every other end, whoever's it is
+    mut var overlaps = false;
+    for (var k = 0; k < 4; k++)
+    {
+        var there = fold.ends[k];
+        if (k == end || !there.open) continue;
+        if (Math.Dot(there.face, face) > 0.9 && Math.Abs(Math.Dot(there.at - at, face)) < 0.2
+            && Math.Abs(Math.Dot(there.at - at, right)) < halfWide + FOLD_HALF_WIDE * there.size + 0.1
+            && Math.Abs(there.at.y - at.y) < halfHigh + FOLD_HALF_HIGH * there.size + 0.1) overlaps = true;
+    }
     // ...and nothing of the room stands in the opening's way
     mut var blocked = false;
     if (physics.Overlap(Box { size = float3(halfWide * 2 - 0.12, halfHigh * 2 - 0.12, 0.3) }, at + face * 0.3,
@@ -639,7 +657,7 @@ bool Shoot(mut Fold fold, bool amber, int level, float3 origin, float3 way, Phys
     }
     if (overlaps || blocked)
     {
-        Fizzle(fold, amber, at, face);
+        Fizzle(fold, end, at, face);
         return false;
     }
     // Every wall an end was or is on: a hole is only there while both ends are
@@ -647,8 +665,7 @@ bool Shoot(mut Fold fold, bool amber, int level, float3 origin, float3 way, Phys
     if (other.open && other.wall != piece.wall && !(mine.open && other.wall == mine.wall)) Rework(world, other.wall);
     Rework(world, piece.wall);
     var placed = Portal { open = true, at = at, face = face, wall = piece.wall, size = size };
-    if (amber) fold.amber = placed;
-    else fold.cyan = placed;
+    fold.ends[end] = placed;
     return true;
 }
 
@@ -708,8 +725,9 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     {
         // An end that's shot is there at once, and so are the shards of one that wasn't: nothing slides over
         // from where the last was
-        if (input.amber.down) Shoot(fold, true, arena.level, eye, facing, physics, world);
-        if (input.cyan.down) Shoot(fold, false, arena.level, eye, facing, physics, world);
+        // Its own fold's two ends: nobody else's
+        if (input.amber.down) Shoot(fold, pilot.id * 2, arena.level, eye, facing, physics, world);
+        if (input.cyan.down) Shoot(fold, pilot.id * 2 + 1, arena.level, eye, facing, physics, world);
         fold.Snap();
     }
     if (input.ping.down)
@@ -756,10 +774,11 @@ system HoldCube(mut Body body, Cube cube, mut Fold fold, Arena arena, query (Ope
         {
             var hand = entry.pilot.position + float3(0, EYE_HIGH * entry.pilot.scale, 0);
             if (Math.DistanceSq(hand, body.position) < 9) continue;
-            for (var side = 0; side < 2 && Linked(fold); side++)
+            for (var end = 0; end < 4; end++)
             {
-                var from = side == 0 ? fold.amber : fold.cyan;
-                var to = side == 0 ? fold.cyan : fold.amber;
+                if (!Linked(fold, end / 2)) continue;
+                var from = fold.ends[end];
+                var to = fold.ends[end ^ 1];
                 if (Math.DistanceSq(FoldPoint(from, to, hand), body.position) < 9) toss = FoldDirection(from, to, fold.toss) * (to.size / from.size);
             }
         }
@@ -778,10 +797,11 @@ system HoldCube(mut Body body, Cube cube, mut Fold fold, Arena arena, query (Ope
         var held = hand + LookDirection(entry.pilot.yaw, entry.pilot.pitch) * (1.25 * entry.pilot.scale);
         mut var target = held;
         mut var nearest = Math.DistanceSq(held, body.position);
-        for (var side = 0; side < 2 && Linked(fold); side++)
+        for (var end = 0; end < 4; end++)
         {
-            var from = side == 0 ? fold.amber : fold.cyan;
-            var to = side == 0 ? fold.cyan : fold.amber;
+            if (!Linked(fold, end / 2)) continue;
+            var from = fold.ends[end];
+            var to = fold.ends[end ^ 1];
             var through = FoldPoint(from, to, held);
             var far = Math.DistanceSq(through, body.position);
             if (far < nearest)
@@ -812,7 +832,7 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
 {
     mut var center = body.position;
     mut var velocity = body.velocity;
-    var ratio = Traverse(fold, pilot.last, center, velocity, pilot.yaw);
+    var ratio = Traverse(fold, pilot.last, center, velocity, pilot.yaw, out _);
     if (ratio > 0)
     {
         body.position = center;
@@ -832,7 +852,8 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
         if (fold.carried == pilot.id) fold.carried = -1;
         this.Snap();
     }
-    if (AtMouth(fold, center, 0.7 * pilot.scale)) fold.busy = 3;
+    for (var pair = 0; pair < 2; pair++)
+        if (AtMouth(fold, pair, center, 0.7 * pilot.scale)) fold.busy[pair] = 3;
     if (pilot.resize > 0)
     {
         // Standing where it stood, at its new size
@@ -859,14 +880,13 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
     mut var center = body.position;
     mut var velocity = body.velocity;
     mut var unused = 0.0;
-    var amberSide = Math.Abs(Math.Dot(cube.last - fold.amber.at, fold.amber.face)) < Math.Abs(Math.Dot(cube.last - fold.cyan.at, fold.cyan.face));
-    var ratio = Traverse(fold, cube.last, center, velocity, unused);
+    var ratio = Traverse(fold, cube.last, center, velocity, unused, out var through);
     mut var scale = cube.scale;
     if (ratio > 0)
     {
         // It comes out turned as the fold turns the world
-        var from = amberSide ? fold.amber : fold.cyan;
-        var to = amberSide ? fold.cyan : fold.amber;
+        var from = fold.ends[through];
+        var to = fold.ends[through ^ 1];
         var ahead = FoldDirection(from, to, Math.Forward(body.rotation));
         var up = FoldDirection(from, to, Math.Up(body.rotation));
         body.rotation = quaternion.LookRotation(ahead, up);
@@ -885,7 +905,8 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena)
         fold.carried = -1;
         fold.Snap();
     }
-    if (AtMouth(fold, center, 0.6 * cube.scale)) fold.busy = 3;
+    for (var pair = 0; pair < 2; pair++)
+        if (AtMouth(fold, pair, center, 0.6 * cube.scale)) fold.busy[pair] = 3;
     fold.cube = center;
     fold.cubeTurn = body.rotation;
     fold.cubeScale = scale;
@@ -916,14 +937,20 @@ system Carve(mut Wall wall, Fold fold, Arena arena)
     }
     if (wall.made == wall.version) return;
     wall.made = wall.version;
-    var first = Linked(fold) && fold.amber.wall == this;
-    var second = Linked(fold) && fold.cyan.wall == this;
-    if (!first && !second)
+    // The ends on this wall whose folds are whole
+    mut var holes = 0;
+    mut var face = float3(0, 0, 1);
+    for (var end = 0; end < 4; end++)
+    {
+        if (!Linked(fold, end / 2) || fold.ends[end].wall != this) continue;
+        holes += 1;
+        face = fold.ends[end].face;
+    }
+    if (holes == 0)
     {
         Spawn(Piece { wall = this, version = wall.version }, Body { type = BodyType.Static, position = wall.center }, Box { size = wall.size });
         return;
     }
-    var face = first ? fold.amber.face : fold.cyan.face;
     var along = Math.Abs(face.x) > 0.5;
     var axis = along ? float3(1, 0, 0) : float3(0, 0, 1);
     var across = along ? float3(0, 0, 1) : float3(1, 0, 0);
@@ -931,10 +958,10 @@ system Carve(mut Wall wall, Fold fold, Arena arena)
     var wide = along ? wall.size.z : wall.size.x;
     mut List<float> us = [-wide * 0.5, wide * 0.5];
     mut List<float> vs = [-wall.size.y * 0.5, wall.size.y * 0.5];
-    for (var end = 0; end < 2; end++)
+    for (var end = 0; end < 4; end++)
     {
-        var portal = end == 0 ? fold.amber : fold.cyan;
-        if (!(end == 0 ? first : second)) continue;
+        var portal = fold.ends[end];
+        if (!Linked(fold, end / 2) || portal.wall != this) continue;
         var u = Math.Dot(portal.at - wall.center, across);
         var v = portal.at.y - wall.center.y;
         us.Add(Math.Clamp(u - FOLD_HALF_WIDE * portal.size, -wide * 0.5, wide * 0.5));
@@ -956,10 +983,10 @@ system Carve(mut Wall wall, Fold fold, Arena arena)
             var v = (vs[row] + vs[row + 1]) * 0.5;
             mut var low = -thick * 0.5;
             mut var high = thick * 0.5;
-            for (var end = 0; end < 2; end++)
+            for (var end = 0; end < 4; end++)
             {
-                var portal = end == 0 ? fold.amber : fold.cyan;
-                if (!(end == 0 ? first : second)) continue;
+                var portal = fold.ends[end];
+                if (!Linked(fold, end / 2) || portal.wall != this) continue;
                 if (Math.Abs(u - Math.Dot(portal.at - wall.center, across)) > FOLD_HALF_WIDE * portal.size) continue;
                 if (Math.Abs(v - (portal.at.y - wall.center.y)) > FOLD_HALF_HIGH * portal.size) continue;
                 var deep = Math.Min(thick - 0.1, 0.95 * portal.size);
@@ -997,7 +1024,8 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     arena.ticks += 1;
     fold.pingTime = Math.Max(0, fold.pingTime - time.dt);
     fold.fizzleTime = Math.Max(0, fold.fizzleTime - time.dt);
-    fold.busy = Math.Max(0, fold.busy - 1);
+    fold.busy[0] = Math.Max(0, fold.busy[0] - 1);
+    fold.busy[1] = Math.Max(0, fold.busy[1] - 1);
     var cubeA = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 0));
     var cubeB = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 1));
     mut var operatorA = false;
