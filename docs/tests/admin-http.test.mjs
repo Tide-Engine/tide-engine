@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'night-route'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -53,8 +53,7 @@ test('production website shares prototypes while protecting analytics, catalog a
         '/samples/underfoot/index.html', '/underfoot.html', '/samples/underfoot/game.wasm',
         '/samples/thumbnails/underfoot.png',
         '/samples/foldline/index.html', '/foldline.html', '/samples/foldline/game.wasm',
-        '/samples/thumbnails/foldline.png', '/samples/night-route/index.html', '/night_route.html',
-        '/samples/night-route/game.wasm', '/samples/thumbnails/night-route.png']) {
+        '/samples/thumbnails/foldline.png']) {
         files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
@@ -172,7 +171,8 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     }
     // An id outside the catalog is an ordinary unknown path.
     assert.equal((await fetch(`${origin}/prototypes/not-a-game/`, { redirect: 'manual' })).status, 404);
-    for (const route of ['/prototypes/skyworks/', '/prototypes/skyworks/index.html', '/prototypes/skyworks/thumbnail.png']) {
+    for (const route of ['/prototypes/skyworks/', '/prototypes/skyworks/index.html', '/prototypes/skyworks/thumbnail.png',
+        '/prototypes/night-route/', '/prototypes/night-route/index.html', '/prototypes/night-route/thumbnail.png']) {
         assert.equal((await fetch(`${origin}${route}`, { redirect: 'manual' })).status, 404, route);
     }
     for (const id of prototypeIds) {
