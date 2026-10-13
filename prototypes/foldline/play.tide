@@ -34,27 +34,33 @@ singleton Fold
     float cubeCooldown;
     float3 ping;
     float pingTime;
+    bool cubeThrough;    // The carried cube is held through a fold, at the fold's other end
     int pingOperator;
     int traversals;
 }
 
-// Something that watches from where the room is dark, in every player's match
-// alike. It comes and goes while the lamps are out for a moment. Most leave
-// when an operator comes near or looks at them for long; a bold one waits,
-// and goes for whoever comes too close.
-enum Watching { Away, Standing, Lunging }
+// Something that watches from behind a pillar, in every player's match alike,
+// and rarely: minutes apart. It leans out as far as half of itself, keeps the
+// pillar between it and whoever is nearest, and goes back behind it when an
+// operator comes near or looks at it for long: nothing is there by the time
+// anyone gets round. A bold one waits, and goes for whoever comes too close.
+enum Watching { Away, Peeking, Hiding, Lunging }
 
 singleton Watcher
 {
     Watching state;
     int spot;
-    float wait = 24;     // Seconds until the next one, while it's away
-    float timer;         // Seconds it has stood, or lunged
+    float wait = 100;    // Seconds until the next one, while it's away
+    float timer;         // Seconds it has peeked, or lunged
     float stared;        // Seconds operators have looked at it
-    float blink;         // Seconds the lamps stay out
+    float blink;         // Seconds the lamps stay out as it comes
+    float lean;          // How far out from behind its pillar it is, 0 to 1
+    float side = 1;      // Which side of the pillar it leans out of
     bool bold;
     int victim;
     int seen;            // How many have come, in this chamber
+    float3 at;           // Where it stands, and which way it faces
+    float yaw;
 }
 
 component Operator
@@ -176,32 +182,6 @@ float3 PortalMapPoint(int level, int source, int destination, float3 point)
          + PortalMapDirection(level, source, destination, point - PanelPosition(level, source));
 }
 
-const int WATCH_SPOTS = 6;
-
-// Where a watcher stands: by the doorway's jambs past the divider, behind the
-// crates, in the room's far corners and by the fire doors.
-float3 WatchSpot(int spot)
-{
-    switch (spot)
-    {
-        case 0: return float3(2.45, 0, 3.75);
-        case 1: return float3(-2.45, 0, 3.75);
-        case 2: return float3(9.4, 0, -12.55);
-        case 3: return float3(-9.2, 0, -12.4);
-        case 4: return float3(2.4, 0, 16.7);
-        default: return float3(9.2, 0, 12.4);
-    }
-}
-
-// Whether a watcher can stand there now: the jambs only show through an open
-// gate from the first room, and the far room's spots only while it's reached.
-bool WatchSpotOpen(int level, int spot, float gate, bool anyoneFar)
-{
-    if (spot < 2) return gate > 0.9 && !anyoneFar;
-    if (spot >= 4) return anyoneFar || gate > 0.9;
-    return true;
-}
-
 float3 LookDirection(float yaw, float pitch)
 {
     var flat = Math.Cos(pitch);
@@ -246,7 +226,7 @@ int AimedPanel(int level, float3 origin, float3 direction, float gate = 1)
 bool Traverse(int level, Fold fold, float3 previousCenter, mut float3 center,
               mut float3 velocity, mut float yaw, mut float cooldown, float radius)
 {
-    if (cooldown > 0 || fold.a == fold.b) return false;
+    if (fold.a == fold.b) return false;
     for (var side = 0; side < 2; side++)
     {
         var source = side == 0 ? fold.a : fold.b;
@@ -255,12 +235,13 @@ bool Traverse(int level, Fold fold, float3 previousCenter, mut float3 center,
         var plane = PanelPosition(level, source);
         var before = Math.Dot(previousCenter - plane, normal);
         var after = Math.Dot(center - plane, normal);
-        if (before <= 0 || after > 0 || !PortalAperture(level, source, center, radius)) continue;
-        center = PortalMapPoint(level, source, destination, center) + PanelNormal(level, destination) * 0.05;
+        // From before the wall's face to past it: what comes out is as far past the other face, so the
+        // crossing has no step in it, and a body is never left behind a face
+        if (before < 0 || after >= 0 || !PortalAperture(level, source, center, radius)) continue;
+        center = PortalMapPoint(level, source, destination, center);
         velocity = PortalMapDirection(level, source, destination, velocity);
         var facing = PortalMapDirection(level, source, destination, LookDirection(yaw, 0));
         yaw = Math.Atan2(facing.x, facing.z);
-        cooldown = 0.18;
         return true;
     }
     return false;
@@ -293,10 +274,11 @@ float3 Confine(int level, Arena arena, Fold fold, float3 previous, float3 propos
     return result;
 }
 
-const int OBSTACLES = 8;
+const int OBSTACLES = 12;
+const int PILLARS = 4;
 
-// What stands on the floor and is walked around: the planters, the crates and
-// the locker, each its middle's x and z and half its size along each. A
+// What stands on the floor and is walked around: the planters, the crates,
+// the locker and the pillars, each its middle's x and z and half its size along each. A
 // planter that a chamber hasn't got is nothing. render.tide draws them where
 // these say they are.
 float4 Obstacle(int level, int index)
@@ -310,7 +292,11 @@ float4 Obstacle(int level, int index)
         case 4: return float4(9, 1.8, 0.425, 1);
         case 5: return level == 2 ? float4(0) : float4(9, 8.2, 0.425, 1);
         case 6: return float4(8.25, -11.05, 0.85, 1.05);
-        default: return float4(7.6, 11.9, 0.55, 0.5);
+        case 7: return float4(7.6, 11.9, 0.55, 0.5);
+        case 8: return float4(-6.6, -10.6, 0.45, 0.45);
+        case 9: return float4(6.8, 0.6, 0.45, 0.45);
+        case 10: return float4(-6.6, 12.1, 0.45, 0.45);
+        default: return level == 2 ? float4(0) : float4(6.6, 6.4, 0.45, 0.45);
     }
 }
 
@@ -438,7 +424,8 @@ system MoveOperators(mut Operator body, PilotInput input, Arena arena, mut Fold 
                 fold.carried = -1;
                 fold.cubeVelocity = facing * 2;
             }
-            else if (fold.carried < 0 && Math.DistanceSq(body.position + float3(0, 1, 0), fold.cube) < 6.25)
+            // Alone, the cube is taken from the hands of the body that was left holding it
+            else if ((fold.carried < 0 || arena.joined < 2) && Math.DistanceSq(body.position + float3(0, 1, 0), fold.cube) < 6.25)
                 fold.carried = body.id;
         }
         var movement = Math.Normalize(input.move);
@@ -465,7 +452,7 @@ system MoveOperators(mut Operator body, PilotInput input, Arena arena, mut Fold 
         if (fold.carried == body.id) fold.Snap();
         this.Snap();
     }
-    proposed = Confine(arena.level, arena, fold, previous, proposed, 0.26, body.portalCooldown <= 0);
+    proposed = Confine(arena.level, arena, fold, previous, proposed, 0.26);
     body.position = proposed - float3(0, 0.95, 0);
     if (!IsPit(arena.level, arena, body.position) && body.position.y < 0)
     {
@@ -481,8 +468,26 @@ system MoveOperators(mut Operator body, PilotInput input, Arena arena, mut Fold 
     }
     if (fold.carried == body.id)
     {
-        var held = body.position + float3(0, 1.15, 0) + LookDirection(body.yaw, body.pitch) * 1.25;
-        fold.cube = Confine(arena.level, arena, fold, body.position + float3(0, 1.15, 0), held, 0.43);
+        // Held out before the body, and through a fold where the arm reaches into one: the cube is then
+        // at the fold's other end, where it can be let go of.
+        var hand = body.position + float3(0, 1.15, 0);
+        mut var held = hand + LookDirection(body.yaw, body.pitch) * 1.25;
+        mut var through = false;
+        for (var side = 0; side < 2 && fold.a != fold.b && !through; side++)
+        {
+            var source = side == 0 ? fold.a : fold.b;
+            var normal = PanelNormal(arena.level, source);
+            var before = Math.Dot(hand - PanelPosition(arena.level, source), normal);
+            var after = Math.Dot(held - PanelPosition(arena.level, source), normal);
+            if (before < 0 || after >= 0) continue;
+            var crossing = hand + (held - hand) * (before / (before - after));
+            if (!PortalAperture(arena.level, source, crossing, 0.43)) continue;
+            held = PortalMapPoint(arena.level, source, side == 0 ? fold.b : fold.a, held);
+            through = true;
+        }
+        if (through != fold.cubeThrough) fold.Snap();
+        fold.cubeThrough = through;
+        fold.cube = Confine(arena.level, arena, fold, through ? held : hand, held, 0.43);
         fold.cubeVelocity = float3(0);
     }
 }
@@ -501,7 +506,7 @@ system MoveCube(mut Fold fold, Arena arena, Time time)
         fold.traversals += 1;
         previous = proposed;
     }
-    fold.cube = Confine(arena.level, arena, fold, previous, proposed, 0.43, fold.cubeCooldown <= 0);
+    fold.cube = Confine(arena.level, arena, fold, previous, proposed, 0.43);
     if (!IsPit(arena.level, arena, fold.cube) && fold.cube.y < 0.5)
     {
         fold.cube.y = 0.5;
@@ -543,69 +548,105 @@ system Haunt(mut Watcher watcher, Arena arena, query (Operator body) operators, 
     if (arena.ticks < 2)
     {
         watcher.state = Watching.Away;
-        watcher.wait = 24;
+        watcher.wait = 100;
         watcher.blink = 0;
+        watcher.lean = 0;
         watcher.seen = 0;
     }
     watcher.blink = Math.Max(0, watcher.blink - time.dt);
     if (arena.complete) return;
-    var place = WatchSpot(watcher.spot);
+    var pillar = Obstacle(arena.level, OBSTACLES - PILLARS + watcher.spot);
+    var middle = float3(pillar.x, 0, pillar.y);
     mut var nearest = 1000.0;
-    mut var nearestId = 0;
+    mut var nearestAt = middle + float3(0, 0, 1);
+    mut var victimAt = middle;
+    mut var victimYaw = 0.0;
     mut var looked = false;
     mut var anyoneFar = false;
+    mut var nearestId = 0;
     foreach (var entry in operators)
     {
-        var to = place + float3(0, 1.2, 0) - (entry.body.position + float3(0, 1.55, 0));
-        var far = Math.Length(to);
+        var far = Math.Distance(entry.body.position.xz, middle.xz);
         if (far < nearest)
         {
             nearest = far;
+            nearestAt = entry.body.position;
             nearestId = entry.body.id;
         }
-        if (far < 18 && Math.Dot(to / Math.Max(far, 0.001), LookDirection(entry.body.yaw, entry.body.pitch)) > 0.93) looked = true;
+        if (entry.body.id == watcher.victim)
+        {
+            victimAt = entry.body.position;
+            victimYaw = entry.body.yaw;
+        }
+        var to = watcher.at + float3(0, 1.2, 0) - (entry.body.position + float3(0, 1.55, 0));
+        var away = Math.Length(to);
+        if (away < 18 && Math.Dot(to / Math.Max(away, 0.001), LookDirection(entry.body.yaw, entry.body.pitch)) > 0.93) looked = true;
         if (entry.body.position.z > 3.2) anyoneFar = true;
     }
     if (watcher.state == Watching.Away)
     {
         watcher.wait -= time.dt;
         if (watcher.wait > 0) return;
-        // Somewhere nobody is near, or not this time
-        var spot = Random.NextInt(WATCH_SPOTS);
-        var bold = Random.NextInt(4) == 0;
-        watcher.wait = 6;
-        if (!WatchSpotOpen(arena.level, spot, arena.gate, anyoneFar)) return;
+        // Behind a pillar nobody is near, or not this time
+        var spot = Random.NextInt(PILLARS);
+        var bold = Random.NextInt(5) == 0;
+        var left = Random.NextBool();
+        watcher.wait = 15;
+        var chosen = Obstacle(arena.level, OBSTACLES - PILLARS + spot);
+        if (chosen.z <= 0) return;
+        if (spot >= 2 && !anyoneFar && arena.gate < 0.9) return;
         mut var clear = true;
         foreach (var entry in operators)
-            if (Math.Distance(entry.body.position, WatchSpot(spot)) < 7.5) clear = false;
+            if (Math.Distance(entry.body.position.xz, chosen.xy) < 5.5) clear = false;
         if (!clear) return;
-        watcher.state = Watching.Standing;
+        watcher.state = Watching.Peeking;
         watcher.spot = spot;
         watcher.bold = bold;
+        watcher.side = left ? -1 : 1;
         watcher.timer = 0;
         watcher.stared = 0;
-        watcher.blink = 0.22;
+        watcher.lean = 0;
+        watcher.blink = 0.16;
         watcher.seen += 1;
         return;
     }
     watcher.timer += time.dt;
     if (watcher.state == Watching.Lunging)
     {
+        watcher.at = Math.Lerp(watcher.at, victimAt + LookDirection(victimYaw, 0) * 0.85, Math.Saturate(watcher.timer / 0.12));
+        var back = victimAt - watcher.at;
+        watcher.yaw = Math.Atan2(back.x, back.z);
         if (watcher.timer < 0.75) return;
+        watcher.state = Watching.Away;
+        watcher.blink = 0.2;
+        watcher.lean = 0;
+        watcher.wait = 150 + Random.NextInt(240);
+        return;
     }
-    else
+    // It keeps its pillar between itself and whoever is nearest, and leans out of one side of it
+    mut var toward = nearestAt.xz - middle.xz;
+    toward = nearest > 0.01 ? toward / nearest : float2(0, 1);
+    var hidden = middle.xz - toward * 0.8;
+    var out = float2(toward.y, -toward.x) * (watcher.side * 0.6 * watcher.lean);
+    watcher.at = float3(hidden.x + out.x, 0, hidden.y + out.y);
+    watcher.yaw = Math.Atan2(toward.x, toward.y);
+    if (watcher.state == Watching.Hiding)
     {
-        if (looked) watcher.stared += time.dt;
-        if (watcher.bold && nearest < 2.7)
-        {
-            watcher.state = Watching.Lunging;
-            watcher.victim = nearestId;
-            watcher.timer = 0;
-            return;
-        }
-        if (!(watcher.timer > 28 || watcher.stared > 2.4 || (!watcher.bold && nearest < 4.6))) return;
+        watcher.lean -= time.dt * 3.2;
+        if (watcher.lean > 0) return;
+        watcher.lean = 0;
+        watcher.state = Watching.Away;
+        watcher.wait = 150 + Random.NextInt(240);
+        return;
     }
-    watcher.state = Watching.Away;
-    watcher.blink = 0.22;
-    watcher.wait = 25 + Random.NextInt(35);
+    watcher.lean = Math.Min(1, watcher.lean + time.dt * 1.6);
+    if (looked) watcher.stared += time.dt;
+    if (watcher.bold && nearest < 2.7)
+    {
+        watcher.state = Watching.Lunging;
+        watcher.victim = nearestId;
+        watcher.timer = 0;
+        return;
+    }
+    if (watcher.timer > 25 || watcher.stared > 2.2 || (!watcher.bold && nearest < 5)) watcher.state = Watching.Hiding;
 }

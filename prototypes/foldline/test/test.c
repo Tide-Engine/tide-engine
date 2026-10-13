@@ -153,12 +153,17 @@ static void portals_rotate_and_cross(void)
             CHECK(near(body.position.y, 0));
             CHECK(body.velocity.x * dn.x + body.velocity.z * dn.z > 5.1f);
             CHECK(tide_sin_f(body.yaw) * dn.x + tide_cos_f(body.yaw) * dn.z > 0.999f);
-            CHECK(body.portalCooldown > 0.1f);
-            // Reverse during cooldown cannot slip out of the destination wall.
+            // It comes out as far past the destination's face as it went past the source's: no step.
+            const float out = (body.position.x - panels[destination].x) * dn.x + (body.position.z - panels[destination].z) * dn.z;
+            CHECK(out > 0 && out < 0.06f);
+            // Turning back goes back through the fold, or stays in the room: never behind a wall's face.
             input(&world, 0, (PilotInput){.move = {0, -1}});
-            ticks(&world, 3);
-            body = tide_get_Operator(&world, world.Arena.op0);
-            CHECK(body.position.x >= -9.55f && body.position.x <= 9.55f);
+            for (int step = 0; step < 12; step++) {
+                tide_world_tick(&world);
+                body = tide_get_Operator(&world, world.Arena.op0);
+                CHECK(body.position.x >= -9.801f && body.position.x <= 9.801f);
+                CHECK(body.position.z >= -12.7f && body.position.z <= 12.7f);
+            }
             tide_world_free(&world);
         }
     }

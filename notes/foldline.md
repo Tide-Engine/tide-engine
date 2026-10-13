@@ -91,23 +91,54 @@ the cone in the haze the air pass marches, and each operator carries a torch
 (`Torch`), unshadowed, which the partner sees. The exit's light is its sign's
 green.
 
-**The watcher** (`Watcher` and `Haunt` in `play.tide`, the owner's idea: a
-figure that goes away when approached or stared at, and sometimes doesn't): it
-is match state, so both players see the same one. After 25 to 60 seconds it
-stands at one of six spots nobody is within 7.5 m of, and comes and goes in
-the middle of 0.22 seconds with every ceiling lamp out (`Sight.lamps`). It
-leaves when an operator comes within 4.6 m, after 2.4 s of being looked at
-within 18 m, or after 28 s. One in four is bold: it stays when approached and
-at 2.7 m goes for that operator, standing in their face for 0.75 s; that
-player's picture jolts and reddens (`Lens.scare`). Nothing else happens to
-them. It's the zombie skin on the operators' model. No sound is built.
+**The watcher** (`Watcher` and `Haunt` in `play.tide`; the owner's: something
+peeking round a corner that goes back behind it when approached or stared at,
+sometimes a jumpscare instead, and rare, "odd, not some companion that annoys
+you"): match state, so both players see the same one. The first can come 100
+seconds into a chamber and the next 150 to 390 seconds after one left. It
+picks one of four pillars nobody is within 5.5 m of, leans out of one side of
+it by 0.6 m, and keeps the pillar between itself and the nearest operator as
+they move. It goes back behind the pillar, and is gone by the time anyone gets
+round, when an operator comes within 5 m, after 2.2 s of being looked at
+within 18 m, or after 25 s. The ceiling lamps go out for 0.16 s as it comes
+(`Sight.lamps`). One in five is bold: it stays, and at 2.7 m goes for that
+operator, in their face for 0.75 s; that player's picture jolts and reddens
+(`Lens.scare`). Nothing else happens to them. It's the zombie skin on the
+operators' model. No sound is built. An earlier version stood in the open
+every 25 to 60 seconds and vanished in a blackout; the owner asked for this.
 
-**Obstacles:** the planters, the crates and the locker are `Obstacle` boxes in
-`play.tide` that `Confine` pushes operators and the cube out of (`Around`),
-and `Dress` draws the planters from the same list. Until then nothing stopped
-a body walking into them, and the camera inside a planter read as Z-fighting
-to the owner. With the watcher's state in the world, the replay hash is
-`2444141639418552689`, natively and under WASI.
+**Obstacles:** the planters, the crates, the locker and the four pillars are
+`Obstacle` boxes in `play.tide` that `Confine` pushes operators and the cube
+out of (`Around`), and `Dress` draws the planters and pillars from the same
+list. Until then nothing stopped a body walking into a planter, and the camera
+inside one read as Z-fighting to the owner.
+
+**Crossing a fold** (2026-10-13, after the owner's play: the camera jumped,
+a player was cut in half, the cube stopped drawing near a fold and the floor
+had a gap at the sill; "this is the main mechanic it needs to be perfect"):
+
+- `Traverse` crosses when a middle goes from before a wall's face to past it,
+  and comes out exactly as far past the other face, with no 0.05 m push and
+  no cooldown. The cooldown had made the destination wall solid for 0.18 s,
+  which threw the body 0.26 m out of it: the jump. `portalCooldown` and
+  `cubeCooldown` are still fields and are unused.
+- A carried cube whose place is past a fold's face is at the fold's other end
+  (`Fold.cubeThrough`), not inside the wall, where it could be dropped and
+  never reached. Alone, the cube can be taken from the body left holding it.
+- What's part of the way through is decided for each thing, not each pixel
+  (`Crossing`: the cube, each operator): it draws stopped at that wall's face
+  (`Sight.fold`) and again at the other end, stopped at that face. The old
+  rule cut anything within a box behind either wall, the other room's side of
+  the divider included, and only copied pieces within 1.4 m.
+- What's seen through a fold is drawn on the inside of a box behind the hole,
+  a back and four sides, so a look down at the sill lands on it.
+- The near plane is 0.07 m and the far 90 m (0.035 and 120): lamp frames,
+  lintels and jambs a few millimeters from the surfaces behind them flickered,
+  and were also moved clear of them.
+
+The replay hash is `2788051018070455625`, natively and under WASI. The
+crossing test in `test.c` now checks that a body comes out under 0.06 m past
+the destination's face and that turning back never leaves it behind a wall.
 
 Not built: vents, chases, timed puzzles, sound, a HUD and menu in the style.
 
