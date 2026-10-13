@@ -171,6 +171,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `prototypes/underfoot/` | `notes/underfoot.md` |
 | `prototypes/foldline/` | `notes/foldline.md` |
 | `prototypes/copper-coil/` | `notes/copper-coil.md` |
+| `prototypes/hot-swap/` | `notes/hot-swap.md` |
 | `prototypes/deadweight/` | `notes/deadweight.md` |
 | `prototypes/swindle/` | `notes/swindle.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
