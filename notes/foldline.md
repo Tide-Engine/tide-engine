@@ -20,6 +20,12 @@ completion state. `Fold` stores the shared pair of panel indices, loose cube,
 carry state and partner ping. Match inputs contain movement, look and actions;
 menu selection uses a bounded `SelectChamber` command with sender checks.
 
+A fold's opening is 1.36 m wide and 2.6 m high and stands on the floor (the
+owner, 2026-10-13: nearer Portal's, more upright; it was 1.8 by 2.8, which no
+puzzle needed). `PortalAperture` lets a body through where its middle is
+within 0.68 m less its radius of the panel's middle sideways, and within
+1.3 m less its radius of a point 0.2 m under it. The replay hash is unchanged.
+
 Portals are restricted to six vertical receptive panels. Mapping resolves a
 point or vector in the entry panel's right/up/normal basis, turns right/normal
 by 180 degrees and resolves it into the exit basis. Traversal maps position,
@@ -103,6 +109,34 @@ Light stays light until the last blit:
   `Blur` build three sizes of spill. `Develop` adds both, applies a film
   curve, a grade, a vignette, a slight fringe and grain, and writes the window.
 
+A fold is a hole, not a picture on the wall (the owner, 2026-10-13: the
+camera's near distance made a fold look solid before going through, and what
+passed through wasn't shown at the other end):
+
+- `Opening` is the opening's shape in meters on its panel: a rounded box,
+  nearly an oval. The room's pieces (`Sight.cut`) are discarded inside it at
+  the wall's face (`InFold`), so the wall and the panel have a real hole.
+- The sheet a fold is seen on is set 0.3 m back into the wall and is 5 by
+  4.4 m. Its frags find where the eye's ray crosses the wall's face (`OnWall`)
+  and take the rim and the cut-off from there, so the picture is the same
+  from any angle and the eye reaches the wall's face, and crosses it, with the
+  sheet still filling the opening. The image is still read by screen position.
+- What moves (`Sight.moving`: the cube, both operators, the plates and gate)
+  is discarded past either fold's wall face (`PastFold`), and `Echoes` adds a
+  copy of every such piece near a fold at the fold's other end, turned as the
+  fold turns the world. A thing part of the way through is so whole from
+  either side, lit where each part is. The viewer's own copies are kept in
+  lists by fold and left out of the pass whose camera looks out of that end,
+  which sits inside them. Copies cast shadows.
+- The ducts and low ribbons along the side walls stop either side of each
+  receptive panel; they ran across the openings there.
+
+The match still moves a body across in one tick when its middle crosses the
+wall's face and puts it 0.05 m out of the far wall, so the view steps by that
+much at the crossing. `render_test.c`'s clipped-cube case now puts its cube
+3.2 m behind the wall where it was 1.2 m: within 1.4 m it's part of the way
+through a fold by this rule, and is drawn at the other end.
+
 `OpeningOnScreen` gives each fold's pixel rectangle. A fold's camera is
 skipped when its opening can't be seen and otherwise clipped to that
 rectangle; a second-level camera runs only when the first can see an opening
@@ -157,6 +191,11 @@ catalog thumbnail is that actual gameplay frame. Visual inspection corrected
 the first-person camera initially drawing its own robot body, which obscured
 the lower scene; self geometry now draws only in portal passes. The polished
 captures show compact equipment, warmer stone, roof shadows and chamber signs.
+
+The hole, the copies and the opening's size were validated by this game's
+suites, 2/2 native and 3/3 web, with the same replay hash natively and under
+WASI, and by frame-by-frame captures of walking through a fold and of a
+partner crossing one.
 
 The lamps' occlusion and `ThroughFar` (later on 2026-10-13) were validated by
 this game's suites alone, 2/2 native and 3/3 web, and by captures of a

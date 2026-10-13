@@ -166,8 +166,9 @@ float3 LookDirection(float yaw, float pitch)
 bool PortalAperture(int level, int panel, float3 center, float radius)
 {
     var offset = center - PanelPosition(level, panel);
-    return Math.Abs(Math.Dot(offset, PanelRight(level, panel))) < 0.9 - radius
-        && Math.Abs(offset.y) < 1.4 - radius;
+    // An opening 1.36 wide and 2.6 high that stands on the floor: its middle is 0.2 under its panel's.
+    return Math.Abs(Math.Dot(offset, PanelRight(level, panel))) < 0.68 - radius
+        && Math.Abs(offset.y + 0.2) < 1.3 - radius;
 }
 
 int AimedPanel(int level, float3 origin, float3 direction, float gate = 1)

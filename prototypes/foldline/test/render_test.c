@@ -141,9 +141,10 @@ static int render_checks(void *user, float seconds)
     record(&occupied);
     check(changed(&empty, &occupied) >= 8, "the other operator is rendered live beyond the exit");
 
-    // Geometry between the virtual eye and exit plane must be discarded.
+    // Geometry between the virtual eye and exit plane must be discarded. The cube is further behind the wall
+    // than anything part of the way through a fold is, which would also be drawn at the fold's other end.
     prepare(-5);
-    world.Fold.cube = (tide_float3){-11, 1.55f, 10.6f};
+    world.Fold.cube = (tide_float3){-13, 1.55f, 10.6f};
     record(&occupied);
     check(changed(&empty, &occupied) <= 4, "the exit plane clips a cube on the camera side of its wall");
 
