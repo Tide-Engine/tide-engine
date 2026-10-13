@@ -117,3 +117,19 @@ fixture checks Escape opens that menu and resumes. Repeat navigation uses a
 distinct review query so a previous frame cannot satisfy a new page's readiness
 predicate. The optimized shipping page also passes the shared-keyboard and
 online walkthrough on WebGPU.
+
+Final validation: all three registered web debug CTest targets pass (six C
+cases plus WebGL and WebGPU playthroughs, including the new keyboard/menu
+regressions). Native debug's six C cases and hidden solo/shared-keyboard
+completion runs pass; native/web optimized C cases also pass. The final
+optimized WebGPU page passes the entire browser fixture. Merged the later
+DEADWEIGHT registration through `03cb14af`, retaining all eight catalog ids;
+the production docs build and all nineteen analytics/admin/HTTP checks pass
+again. No incoming engine/compiler dependency changed.
+
+The 1.68 MB delivery archive is CRC-checked and every listed SHA-256 matches.
+Its renamed Windows executable requires the identically named
+`Copper-and-Coil.pack`; this was corrected during the packaged-launch check.
+The actual packaged executable completes the scripted chamber and produces
+nonzero audio with peak 5,962. The staged browser bytes equal the optimized
+page; the PDF contains four readable, visually checked pages.
