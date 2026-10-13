@@ -6985,6 +6985,154 @@ TIDE_TEST(lsp_positions_outside_the_document_are_safe)
     lsp_free(&server);
 }
 
+static void check_reference_lenses(const char *uri);
+
+// Check the full navigation contract, including the root declaration ranges.
+static void check_entry_lens(const char *uri, const int line, const char *root_uri, const int *lines, const int *columns,
+                             const int *lengths, const int count_expected)
+{
+    const char *reply = request_at(uri, "textDocument/codeLens", 0, 0, "");
+    const json *lenses = json_get(json_parse(reply, strlen(reply)), "result");
+    TIDE_REQUIRE(lenses && lenses->kind == JSON_ARRAY);
+    int found = 0;
+    for (int i = 0; i < lenses->count; i++) {
+        const json *lens = lenses->items[i];
+        const json *start_at = json_get(json_get(lens, "range"), "start");
+        const json *command = json_get(lens, "command");
+        const char *title = json_str(json_get(command, "title"));
+        if (json_int(json_get(start_at, "line"), -1) != line || !title || !strstr(title, " entry point")) continue;
+        found++;
+        char expected[40];
+        snprintf(expected, sizeof expected, "%d entry point%s", count_expected, count_expected == 1 ? "" : "s");
+        TIDE_CHECK(strcmp(title, expected) == 0);
+        const char *name = json_str(json_get(command, "command"));
+        TIDE_REQUIRE(name);
+        if (!count_expected) {
+            TIDE_CHECK(strcmp(name, "") == 0);
+            continue;
+        }
+        TIDE_CHECK(strcmp(name, "editor.action.goToLocations") == 0);
+        const json *args = json_get(command, "arguments");
+        TIDE_REQUIRE(args && args->kind == JSON_ARRAY && args->count == 4);
+        TIDE_CHECK(strcmp(json_str(args->items[0]), uri) == 0);
+        TIDE_CHECK(json_int(json_get(args->items[1], "line"), -1) == line);
+        TIDE_CHECK(strcmp(json_str(args->items[3]), count_expected == 1 ? "goto" : "peek") == 0);
+        const json *locations = args->items[2];
+        TIDE_REQUIRE(locations->kind == JSON_ARRAY && locations->count == count_expected);
+        for (int k = 0; k < count_expected; k++) {
+            const json *location = locations->items[k];
+            const json *range = json_get(location, "range");
+            const json *from = json_get(range, "start"), *to = json_get(range, "end");
+            TIDE_CHECK(strcmp(json_str(json_get(location, "uri")), root_uri) == 0);
+            TIDE_CHECK(json_int(json_get(from, "line"), -1) == lines[k]);
+            TIDE_CHECK(json_int(json_get(to, "line"), -1) == lines[k]);
+            TIDE_CHECK(json_int(json_get(from, "character"), -1) == columns[k]);
+            TIDE_CHECK(json_int(json_get(to, "character"), -1) == columns[k] + lengths[k]);
+        }
+    }
+    TIDE_CHECK(found == 1);
+    json_release();
+}
+
+TIDE_TEST(lsp_entry_points_follow_helpers_and_stop_at_handlers)
+{
+    start();
+    open_document("extern void Touch();\n"
+                  "void Leaf() { Touch(); }\n"
+                  "void Left() { Leaf(); }\n"
+                  "void Right() { Leaf(); }\n"
+                  "void Unused() { Leaf(); }\n"
+                  "event Ping { }\n"
+                  "command Move { }\n"
+                  "scene Main { }\n"
+                  "system Tick() { Left(); Right(); Leaf(); }\n"
+                  "view Show() { Left(); }\n"
+                  "event(Ping) OnPing() { Right(); }\n"
+                  "command(Move move, PlayerID sender) OnMove() { Leaf(); }\n"
+                  "system Emit() { Send(Ping); }\n"
+                  "event(Spawned) Setup(with Main) { Leaf(); }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    static const int lines[] = {8, 9, 10, 11, 13}, columns[] = {7, 5, 12, 36, 15}, lengths[] = {4, 4, 6, 6, 5};
+    check_entry_lens("file:///test.tide", 1, "file:///test.tide", lines, columns, lengths, 5);
+    check_entry_lens("file:///test.tide", 0, "file:///test.tide", lines, columns, lengths, 5); // extern boundary
+    check_entry_lens("file:///test.tide", 4, NULL, NULL, NULL, NULL, 0); // No caller does not make a root
+    check_repeat_lenses("file:///test.tide");
+    check_reference_lenses("file:///test.tide");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 1, 6, ""), "void Leaf()"));
+}
+
+TIDE_TEST(lsp_entry_points_handle_recursion_methods_and_overloads)
+{
+    start();
+    open_document("void CycleA() { CycleB(); }\n"
+                  "void CycleB() { CycleA(); }\n"
+                  "void Leaf(int n) { CycleA(); }\n"
+                  "void Leaf(float n) { }\n"
+                  "struct Helper { void Run() { Leaf(1); } }\n"
+                  "scene Main { }\n"
+                  "system Tick() { var h = Helper {}; h.Run(); CycleB(); }\n"
+                  "view Show() { Leaf(1.0); }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    static const int lines[] = {6}, columns[] = {7}, lengths[] = {4};
+    for (int i = 0; i < 3; i++) check_entry_lens("file:///test.tide", i, "file:///test.tide", lines, columns, lengths, 1);
+    check_entry_lens("file:///test.tide", 4, "file:///test.tide", lines, columns, lengths, 1);
+    check_entry_lens("file:///test.tide", 3, "file:///test.tide", (int[]){7}, (int[]){5}, (int[]){4}, 1);
+    check_repeat_lenses("file:///test.tide");
+    open_document("void CycleA() { CycleB(); }\nvoid CycleB() { CycleA(); }\nscene Main { }\n");
+    check_entry_lens("file:///test.tide", 0, NULL, NULL, NULL, NULL, 0);
+    check_entry_lens("file:///test.tide", 1, NULL, NULL, NULL, NULL, 0);
+}
+
+TIDE_TEST(lsp_entry_points_distinguish_input_hooks)
+{
+    start();
+    open_document("float Value() { return 1; }\n"
+                  "input Keys {\n"
+                  "    float value;\n"
+                  "    Sample() { value = Value(); }\n"
+                  "    Sanitize() { value = Value(); }\n"
+                  "    Predict() { value = Value(); }\n"
+                  "}\n"
+                  "scene Main { }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    check_entry_lens("file:///test.tide", 0, "file:///test.tide", (int[]){3, 4, 5}, (int[]){4, 4, 4}, (int[]){6, 8, 7}, 3);
+    check_repeat_lenses("file:///test.tide");
+}
+
+TIDE_TEST(lsp_entry_points_follow_local_methods_and_engine_callbacks)
+{
+    start();
+    open_document("component Marker { LocalEntity Self() { return this; } }\n"
+                  "scene Main { }\n"
+                  "view Setup() { local Spawn(Marker); }\n"
+                  "view Show(local Marker marker) { _ = marker.Self(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    check_entry_lens("file:///test.tide", 0, "file:///test.tide", (int[]){3}, (int[]){5}, (int[]){4}, 1);
+    open_document("float Value() { return 1; }\n"
+                  "struct Angle { float degrees;\n"
+                  "    Angle Interpolate(Angle from, Angle to, float t) { return Angle { degrees = Value() }; }\n"
+                  "}\n"
+                  "audio Tone(mut Samples samples) { samples.values[0] = Value(); }\n"
+                  "scene Main { }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    check_entry_lens("file:///test.tide", 0, "file:///test.tide", (int[]){2, 4}, (int[]){10, 6}, (int[]){11, 4}, 2);
+    check_repeat_lenses("file:///test.tide");
+}
+
+TIDE_TEST(lsp_entry_points_follow_shader_calls_and_refresh_unsaved_edits)
+{
+    start();
+    open_document(SHADERS);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    check_entry_lens("file:///test.tide", 27, "file:///test.tide", (int[]){41}, (int[]){5}, (int[]){7}, 1);
+    // Adding/removing the view in the unsaved buffer changes the same helper's roots.
+    open_document(SHADER_CODE);
+    check_entry_lens("file:///test.tide", 27, NULL, NULL, NULL, NULL, 0);
+    open_document(SHADERS);
+    check_entry_lens("file:///test.tide", 27, "file:///test.tide", (int[]){41}, (int[]){5}, (int[]){7}, 1);
+    check_repeat_lenses("file:///test.tide");
+}
+
 // Above each system: its stage and why it waits. Access a system doesn't use
 // gets a warning and a quick fix.
 TIDE_TEST(lsp_schedule_lenses_and_fixes)
@@ -9149,6 +9297,12 @@ TIDE_TEST(lsp_virtual_and_override)
     const char *fast_lenses = request_at(uri_fast, "textDocument/codeLens", 0, 0, "");
     TIDE_CHECK(has(fast_lenses, "replaces Combat.Move of the game") && has(fast_lenses, "replaces Combat.Stats.IsDead of the game"));
     TIDE_CHECK(has(fast_lenses, "stage 1"));
+    // Both spellings lead to the active override's callers, across files.
+    // The replaced Move body does not create a second entry point.
+    check_entry_lens(uri_main, 8, uri_fast, (int[]){2}, (int[]){23}, (int[]){4}, 1);
+    check_entry_lens(uri_fast, 6, uri_fast, (int[]){2}, (int[]){23}, (int[]){4}, 1);
+    check_entry_lens(uri_main, 5, uri_main, (int[]){13}, (int[]){7}, (int[]){5}, 1);
+    check_entry_lens(uri_fast, 7, uri_main, (int[]){13}, (int[]){7}, (int[]){5}, 1);
     check_repeat_lenses(uri_main);
     check_repeat_lenses(uri_fast);
     TIDE_CHECK(has(request_at(uri_fast, "textDocument/hover", 7, 21, ""), "Overrides `Combat.Stats.IsDead` of the game"));

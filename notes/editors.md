@@ -1,5 +1,59 @@
 # The language server and the editors
 
+## Entry-point navigation (2026-10-14)
+
+Functions and methods now have an `N entry points` lens beside their ordinary
+reference lens. Roots are systems, views, event/command handlers (including
+startup, verified and local handlers), the input's separate Sample/Sanitize/
+Predict bodies, custom Interpolate methods and audio callbacks. Each reachable
+root appears once in source order. One destination uses goToLocations/goto;
+several use goToLocations/peek, through the existing VS Code argument middleware
+and LSP4IJ commands. Zero roots produce a nonclickable `0 entry points` lens;
+ordinary unused functions and recursive cycles never become roots themselves.
+Root declarations do not get a redundant entry-point lens of their own.
+
+The graph uses the call hierarchy's source-call classification, including
+operators and shader selection in draws. It follows helpers across the analyzed
+game/packages, resolves active overrides and normalizes private local methods.
+Replaced bodies contribute no edges. Event sends and command submissions do
+not connect handlers back to senders; tracing stops at each handler. This is
+static reachability through indexed source bodies, not proof a branch executes.
+Implicit field/default initialization and trusted C's internal calls are not
+modeled. Intermediate paths remain available through the existing call hierarchy;
+the lens lists root declarations without adding a separate path UI.
+
+Each request builds one temporary graph. Source-sorted bodies associate calls
+in one pass; sorted declaration keys look up callees. Iterative traversals reuse
+their stack and visit marks, deduplicate diamonds/recursion, and sort only the
+found roots. Everything is inside the existing code-lens arena checkpoint;
+no temporary graph or output string is retained in the analysis.
+
+Five protocol tests cover direct/transitive roots, duplicate paths, orphan
+functions/cycles, recursion, overloads, ordinary and local methods, extern
+declarations, event/command/startup boundaries, input hooks, interpolators,
+audio callbacks, shader-to-view paths and unsaved source replacement. Existing
+override coverage now pins cross-file root ranges from both virtual and override
+declarations and excludes replaced callers. Repeated lens responses and later
+hover/reference requests preserve the retained analysis. Adapter code is unchanged;
+click contracts are checked at the protocol boundary and use existing tested
+native-argument conversion. Actual IDE rendering was not separately exercised.
+The real Inside Out MovePuzzle source returns exactly two roots: the MoveHand
+command handler in game.tide and WorkshopControls in ui.tide. Seven repeated
+real-pipe responses were identical, with a 3.01 ms median for all 90 lenses.
+
+Validation: all 2,286 native debug CTests pass, including GPU tests. The final
+server suite passes 233/233 checks, plus stdio and real-pipe tests. The production
+docs build passes with its existing allowed missing-game/example placeholders.
+A warm native-debug real-pipe probe with 1,000/2,000/4,000 helpers, a shared leaf
+and one calling system returned 2,003/4,003/8,003 lenses in median
+32.58/68.27/130.02 ms over seven requests; every response was identical. Calls
+were on separate source lines, and these are local whole-response timings,
+including reference lenses, transport and JSON parsing, not universal budgets.
+All 2,249 web debug CTests pass, including WebGL/WebGPU. Clang 23.1.2 and
+Node 24.21.0 were used. Other operating systems, Android and sanitizers were
+not run; no CI was dispatched. Integration with origin/dev has no incoming
+changes or conflicts.
+
 ## Mesh picking, transform tools and IDE canvases (2026-10-13)
 
 The native viewport picks named static Asset<Mesh<...>> fields and constant
