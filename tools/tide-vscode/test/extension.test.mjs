@@ -6,13 +6,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
+const realRequire = createRequire(new URL('../src/extension.js',import.meta.url));
 
 const source = fs.readFileSync(new URL('../src/extension.js', import.meta.url), 'utf8');
 
 function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], env = {}, files = [], realPaths = {}, settings = {}, failStarts = 0, killGroupFails = false } = {}) {
     const paths = platform === 'win32' ? path.win32 : path.posix;
     const contents = new Map(files.map(f => Array.isArray(f) ? f : [f, '']));
-    const children = [], terminals = [], notifications = [], picks = [], clients = [], lifecycle = [], signals = [];
+    const children = [], terminals = [], notifications = [], picks = [], clients = [], lifecycle = [], signals = [], panels = [], servers=[];
     const key = f => platform === 'win32' ? paths.normalize(f).toLowerCase() : paths.normalize(f);
     const lookup = f => [...contents].find(([name]) => key(name) === key(f));
     class Emitter {
@@ -25,6 +27,7 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
     const uri = f => ({ fsPath: f, scheme: 'file', toString: () => f });
     const vscode = {
         EventEmitter: Emitter,
+        ViewColumn: { Active: -1 },
         ThemeIcon: class { constructor(id) { this.id = id; } },
         Position: class { constructor(line, character) { this.line = line; this.character = character; } },
         Range: class { constructor(startLine, startCharacter, endLine, endCharacter) { this.start = { line: startLine, character: startCharacter }; this.end = { line: endLine, character: endCharacter }; } },
@@ -43,6 +46,10 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
             getConfiguration: () => ({ inspect: k => settings[k] }),
         },
         window: {
+            createWebviewPanel(kind,title,column,options) {
+                const messages=[],panel={kind,title,column,options,active:true,reveals:0,webview:{messages,postMessage(message){messages.push(message);},onDidReceiveMessage(listener){this.receive=listener;}}};
+                panel.onDidDispose=listener=>{panel.close=listener;}; panel.reveal=()=>panel.reveals++;panels.push(panel);return panel;
+            },
             createTerminal(options) { const terminal = { options, show() {}, dispose() { options.pty.close(); } }; terminals.push(terminal); return terminal; },
             showErrorMessage(message) { notifications.push(message); },
             async showQuickPick(items) { picks.push(items); return items[0]; },
@@ -58,6 +65,7 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
         child.stdin = new EventEmitter();
         child.writes = [];
         child.stdin.write = value => child.writes.push(value);
+        child.stdin.end = () => { child.inputEnded=true; };
         child.kills = 0;
         child.kill = () => { child.kills++; };
         child.unref = () => { child.unreferenced = true; };
@@ -69,20 +77,58 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
         readFileSync(f) { const found = lookup(f); if (!found) throw new Error('missing'); return found[1]; },
         realpathSync(f) { return realPaths[f] ?? f; },
     };
+    const fakeNet={createServer(listener){
+        const server=new EventEmitter();
+        server.listen=(options,callback)=>{queueMicrotask(callback);};server.address=()=>({port:45678});server.close=()=>{};
+        server.accept=()=>{const socket=new EventEmitter();socket.setTimeout=()=>{};socket.destroy=()=>{socket.destroyed=true;socket.emit('close');};listener(socket);return socket;};
+        servers.push(server);return server;
+    }};
     class LanguageClient {
         _pendingChangeDelayer = { cancel: () => { this.cancelledDelivery = true; } };
         constructor(id, name, server, options) { this.server = server; this.options = options; this.id = clients.length; clients.push(this); }
         async start() { lifecycle.push(`start ${this.id}`); if (this.id < failStarts) throw new Error('start failed'); }
         async dispose() { lifecycle.push(`stop ${this.id}`); await this.holdDispose; }
     }
-    const sandbox = { module: { exports: {} }, setTimeout, clearTimeout, process: { platform, env, kill: (pid, signal) => { signals.push([pid, signal]); if (killGroupFails) throw new Error('group kill failed'); } }, require: name => ({
+    const sandbox = { module: { exports: {} }, Buffer, setTimeout, clearTimeout, process: { platform, env, kill: (pid, signal) => { signals.push([pid, signal]); if (killGroupFails) throw new Error('group kill failed'); } }, require: name => ({
         child_process: { spawn }, fs: fakeFs, os: { homedir: () => platform === 'win32' ? 'C:\\home' : '/home/user' },
+        net: fakeNet,
         path: paths, vscode, 'vscode-languageclient/node': { LanguageClient },
-    })[name] };
+    })[name] ?? realRequire(name) };
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox);
-    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand, openPrefab})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle, signals };
+    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand, openPrefab, editPrefab, prefabAction})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle, signals, panels, servers };
 }
+
+test('Embedded prefab panel uses a native backend, frames binary chunks and reuses the file panel', async () => {
+    const e=editor({settings:{path:{globalValue:'C:\\Tide tools\\tide.exe'}},files:['C:\\Tide tools\\tide.exe','C:\\Tide tools\\tide-editor.exe','C:\\game\\tide.packages']});
+    const uri=e.vscode.Uri.file('C:\\game\\Level.tprefab');
+    await e.api.editPrefab(uri);
+    const {child,args,file,options}=e.children[0],panel=e.panels[0];
+    assert.equal(file,'C:\\Tide tools\\tide-editor.exe');assert.deepEqual(Array.from(args).slice(0,5),[uri.fsPath,'--project','C:\\game','--embed','45678']);assert.match(args[5],/^[a-f0-9]{32}$/);assert.equal(options.windowsHide,true);
+    const rejected=e.servers[0].accept();rejected.emit('data',Buffer.from('TIDEHELLO 1 wrong-token\n'));assert.equal(rejected.destroyed,true);
+    const socket=e.servers[0].accept();socket.emit('data',Buffer.from(`TIDEHELLO 1 ${args[5]}\n`));
+    assert.equal(panel.options.localResourceRoots.length,0);assert.match(panel.webview.html,/default-src 'none'/);
+    await e.api.editPrefab(uri);assert.equal(e.children.length,1);assert.equal(panel.reveals,1);
+    panel.webview.receive({type:'frame',events:['mouse 640 300','button left down']});
+    assert.equal(child.writes.at(-1),'INPUT mouse 640 300\nINPUT button left down\nFRAME 1\n');
+    panel.webview.receive({type:'frame',events:[]});assert.equal(child.writes.length,1,'one request in flight');
+    const png=Buffer.from([137,80,78,71,0,10,255]);const frame=Buffer.concat([Buffer.from(`TIDEFRAME 1 ${png.length} 1 7 0 0\n`),png]);
+    for(const byte of frame)socket.emit('data',Buffer.from([byte]));
+    assert.equal(panel.title,'Level.tprefab *');assert.equal(panel.webview.messages.at(-1).png,png.toString('base64'));
+    e.api.prefabAction('undo');assert.equal(panel.webview.messages.at(-1).action,'undo');
+    const disposed=panel.close();assert.equal(child.inputEnded,true);assert.equal(child.kills,0);
+    child.emit('close',0);await disposed;
+});
+
+test('Embedded prefab panel rejects untrusted projects, failed saves and injected input lines', async () => {
+    const locked=editor({trusted:false});await locked.api.editPrefab(locked.vscode.Uri.file('C:\\game\\Level.tprefab'));assert.equal(locked.children.length,0);
+    const e=editor({settings:{path:{globalValue:'C:\\Tide\\tide.exe'}},files:['C:\\Tide\\tide.exe','C:\\Tide\\tide-editor.exe','C:\\game\\tide.packages']});
+    const uri=e.vscode.Uri.file('C:\\game\\Level.tprefab');e.vscode.window.activeTextEditor={document:{uri,isDirty:true,save:async()=>false}};
+    await e.api.editPrefab();assert.equal(e.children.length,0);e.vscode.window.activeTextEditor.document.isDirty=false;
+    await e.api.editPrefab();e.panels[0].webview.receive({type:'frame',events:['mouse 2 3\nQUIT']});
+    assert.equal(e.children[0].child.writes.length,0);assert.equal(e.children[0].child.inputEnded,true);
+    assert.match(e.panels[0].webview.messages.at(-1).message,/Invalid prefab editor input/);e.children[0].child.emit('close',0);
+});
 
 test('Native prefab launch uses the selected file, project and configured executable without a shell', async () => {
     const e = editor({ settings: { path: { globalValue: 'C:\\Tide tools\\tide.exe' } },

@@ -43,6 +43,11 @@
                     factoryClass="io.github.blenminer.tide.TideGamePage$Window"/>
     </extensions>
     <actions>
+        <action id="Tide.EditPrefab" class="io.github.blenminer.tide.TidePrefabEditor$Open" text="Edit Tide Prefab in IDE"
+                description="Edit this prefab with Tide's native renderer embedded in the IDE">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
         <action id="Tide.OpenPrefab" class="io.github.blenminer.tide.TideOpenPrefab" text="Open Tide Prefab Editor"
                 description="Edit this prefab in Tide's native scene editor">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>

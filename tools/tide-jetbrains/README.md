@@ -31,6 +31,12 @@ context menu. It requires project trust, saves that prefab and launches installe
 Tide's native app in the file's game context. The app is a separate window; save
 script changes in the IDE to refresh its compiled preview.
 
+**Edit Tide Prefab in IDE** hosts the same hidden native app in the **Tide Prefab**
+tool window. Its Swing canvas scales the fixed 1440×900 native image; no JCEF or
+browser server is needed. Mesh picking, Move/Rotate/Scale, validation, save/undo
+and recovery stay in the native backend. Closing a content tab/project closes
+its process. The standalone app remains available for a resizable window.
+
 ## Colors
 
 JetBrains' dark schemes draw type names like plain text, as in Java, so
@@ -73,6 +79,10 @@ to the muted embedded-browser test:
 These checks use the Gradle test sandbox and its JBR; they do not install a
 plugin in, restart, or change settings in an existing IDE. The JCEF check uses
 offscreen rendering, executes page JavaScript and reloads the same browser.
+
+Add `-PtideTestEditor="<built tide-editor>"` to check actual native PNG rendering
+in the Swing prefab canvas and graceful backend shutdown. That check needs the
+native headless OpenGL context; it uses private temporary project files.
 
 The manually requested Build workflow builds and verifies it, and publishes it to Marketplace with
 each stable release (see `.github/workflows/build.yml`).
