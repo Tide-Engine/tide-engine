@@ -97,3 +97,11 @@ No engine/compiler/platform changes, deployment or CI dispatch. Real phones,
 gamepads, WAN/TURN/host migration and other operating systems are untested.
 This is a six-circuit prototype in a shared layout; free wiring, different
 physical chambers and persistence are future production work.
+
+Integration: merged `origin/dev` through `a2ae312f`, retaining the incoming
+SWINDLE catalog/build entries and this prototype's entries. The initial
+resolution script stopped on Windows' default text encoding; the restored
+registrations were reapplied with explicit UTF-8. Both scoped debug game
+builds/tests and the merged docs production build, eighteen analytics/admin
+checks and production HTTP test pass. The PDF has a scoped binary attribute
+so git cannot normalize its bytes or treat its streams as text diffs.

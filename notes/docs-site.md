@@ -1,5 +1,15 @@
 # The docs site
 
+Copper & Coil catalog addition (2026-10-13): `copper-coil` is registered in
+the server-only prototype catalog, public root, outside-root asset gates and
+admin/HTTP prototype lists. `copper_coil_page` stages its self-contained page
+at `/prototypes/copper-coil/`; checked-in artwork and the publisher PDF live
+beside it. Public discovery and catalog authentication retain their existing
+contracts. Game rules and validation are in `notes/copper-coil.md`. The docs
+production build, zero-error/warning Svelte check, eighteen analytics/admin
+checks and production HTTP test pass. No deployment or CI dispatch.
+
+
 SWINDLE catalog addition (2026-10-13): the owner's competitive heist demo adds
 `swindle` to the server-only catalog, public root and outside-root asset gates.
 `swindle_page` stages its self-contained page and gameplay thumbnail under

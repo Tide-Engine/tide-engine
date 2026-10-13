@@ -61,6 +61,15 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- Copper & Coil (`copper-coil`): `prototypes/copper-coil/`, a cooperative
+  logic-circuit puzzle requested with a publisher demo on 2026-10-13. Two
+  maintenance robots configure AND/OR/XOR/NOT consoles, test all input rows,
+  commission a bridge and reunite at its exit. Six circuits share one workshop,
+  with online, shared-keyboard and solo play. `copper_coil_page` stages the
+  public page; `private_games` collects it and the game uses STATS. Gameplay,
+  publisher material, tests and limitations are in `notes/copper-coil.md`.
+
+
 - SWINDLE (`swindle`): `prototypes/swindle/`, the competitive publisher-demo
   prototype requested on 2026-10-13. Ninety-second rooftop heists with a growing
   prism, dash steals, fake carriers, moving cash-outs, duel/FFA/2v2, bots,
