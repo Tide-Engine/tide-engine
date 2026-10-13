@@ -20,6 +20,7 @@ asset Clip lampBuzz = "art/sfx/buzz.wav";
 asset Clip building = "art/sfx/drone.wav";
 asset Clip seen = "art/sfx/sting.wav";
 asset Clip stalking = "art/sfx/scrape.wav";
+asset Clip heart = "art/sfx/heart.wav";
 asset Clip menuAccept = "art/sfx/accept.wav";
 
 // What was so a frame ago, to hear what changed, and the sounds that go on.
@@ -30,6 +31,8 @@ local singleton Ears
     Sound gate;
     Sound under;
     Sound scrape;
+    Sound pulse;
+    bool dark;
     float caught;
     Sound pit;
     Sound end0;
@@ -96,6 +99,12 @@ view Sounds(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     ears.gate.pitch = lift ? 0.6 : 1.0;
     // What's between the rooms is heard only while it moves, which is while nobody sees it
     LoopingAt(ears.scrape, stalking, stalker.at + float3(0, 1, 0), stalker.moved, arena.level == BETWEEN && stalker.moved > 0.02);
+    // One's own heart, louder and quicker the nearer it is; and the lights going
+    float close = arena.level == BETWEEN ? Math.Saturate(1 - Math.Distance(stalker.at.xz, viewer.position.xz) / 11) : 0.0;
+    Looping(ears.pulse, heart, close * close * 1.2, close > 0.02);
+    ears.pulse.pitch = 0.85 + close * 0.55;
+    if (stalker.dark && !ears.dark && arena.level == BETWEEN) Audio.Play(lampBuzz, 0.8);
+    ears.dark = stalker.dark;
     if (arena.caught > 0 && ears.caught <= 0) Audio.Play(seen, 1.0);
     ears.caught = arena.caught;
     LoopingAt(ears.pit, pitTurning, float3(Math.Clamp(eye.x, -9, 9), PIT_SURFACE, pitMiddle), 0.8, pitted);

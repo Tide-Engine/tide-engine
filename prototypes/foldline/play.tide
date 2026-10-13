@@ -22,6 +22,7 @@ singleton Arena
     bool plateB;
     bool hold;           // The lift's plate is stood on: the gate stays up for whoever is still to come
     int depth;           // How many lifts down: which room or stretch between rooms this is
+    int theme;           // What the place is made of: 0 paper and carpet, 1 a pool's tiles and water, 2 bare concrete
     float ride;          // Seconds both have been shut in the lift: it goes down, and at RIDE they're somewhere else
     float arrive;        // Seconds since this place was come to: the lift they came by opens after a moment
     int rode = -1;       // The chamber that was come to by lift: operators keep their places in it, turned about
@@ -199,8 +200,12 @@ const int BETWEEN = 5;       // The stretch between rooms: a maze where no fold 
 const int CHAMBERS = 6;
 const float RIDE = 1.3;
 const float CAUGHT = 1.2;
-// The lift they come by is the lift they left by, turned half about: a place in one is this in the other
+const float BLACKOUT_EVERY = 6.5;
+const float BLACKOUT_FOR = 0.4;
+// The lift has a door at each end. They go in by one, and it comes to rest with its other against the next
+// place: the lift they come by is the lift they left by, as far off as this, and they stand in it as they stood
 const float3 ARRIVAL = float3(6.5, 0, -15.6);
+const float3 LIFT = float3(0, 0, 15.6);
 const int MAZE_WIDE = 8;
 const int MAZE_LONG = 10;
 const float CELL_WIDE = 2.45;
@@ -223,6 +228,12 @@ int LevelAt(int depth)
         case 6: return 4;
         default: return BETWEEN;
     }
+}
+
+// The place changes every third lift down.
+int ThemeAt(int depth)
+{
+    return (depth / 3) % 3;
 }
 
 int DepthOf(int level)
@@ -484,6 +495,7 @@ Entity Raise(Arena arena, float3 center, float3 size, float paint, bool takes = 
 void BuildChamber(mut Arena arena, int level)
 {
     arena.level = level;
+    arena.theme = ThemeAt(arena.depth);
     arena.chamber += 1;
     // The squares of the renderer's sheet: render.tide's names for them
     var concrete = 3.0;
@@ -805,18 +817,18 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
 {
     if (pilot.chamber != arena.chamber)
     {
-        // A new place. Come to by lift, it's where it stood in the lift it left by, which is this one turned
-        // half about. Otherwise it's back at the start, standing still.
+        // A new place. Come to by lift, it stands in the lift as it stood, facing as it faced: the door before
+        // it is the one that opens. Otherwise it's back at the start, standing still.
         var rode = arena.rode == arena.chamber && pilot.chamber >= 0;
         pilot.chamber = arena.chamber;
         if (pilot.scale != 1) pilot.resize = 1;
         mut var feet = OperatorStart(arena.level, pilot.id);
         if (rode)
         {
-            feet = float3(ARRIVAL.x - pilot.position.x, 0, -pilot.position.z);
+            feet = pilot.position + ARRIVAL - LIFT;
             feet.x = Math.Clamp(feet.x, ARRIVAL.x - 2.6, ARRIVAL.x + 2.6);
+            feet.y = 0;
             feet.z = Math.Clamp(feet.z, -16.9, -14.3);
-            pilot.yaw = Math.Atan2(-Math.Sin(pilot.yaw), -Math.Cos(pilot.yaw));
         }
         else
         {
@@ -1233,6 +1245,9 @@ singleton Stalker
     float3 at;
     bool seen;
     float moved;         // 1 while it moves, falling off when it stops: what's heard of it
+    float walked;        // How far it has come: it's never standing as it stood
+    float clock;         // Counts toward the lamps and torches failing, which they do for a moment every so often
+    bool dark;           // ...as they are now: nobody sees anything, and it's quick
     int[80] far;         // How many cells each cell is from whoever it's after
     int[80] line;
 }
@@ -1248,6 +1263,8 @@ system Stalk(mut Watcher watcher, mut Stalker stalker, mut Arena arena, query (O
         stalker.next = stalker.cell;
         stalker.at = CellMiddle(stalker.cell);
         stalker.moved = 0;
+        stalker.walked = 0;
+        stalker.clock = 0;
     }
     mut var nearest = 1000.0;
     mut var prey = stalker.at;
@@ -1276,6 +1293,11 @@ system Stalk(mut Watcher watcher, mut Stalker stalker, mut Arena arena, query (O
         if (physics.Raycast(eye, chest, out var hit) && Math.Distance(hit.point, eye) < away - 0.4 && !world.Has<Operator>(hit.entity)) clear = false;
         if (clear) seen = true;
     }
+    // Every few seconds every light there is fails for a moment, and nobody sees anything
+    stalker.clock += time.dt;
+    if (stalker.clock >= BLACKOUT_EVERY) stalker.clock -= BLACKOUT_EVERY;
+    stalker.dark = arena.arrive > 6 && stalker.clock < BLACKOUT_FOR;
+    if (stalker.dark) seen = false;
     stalker.seen = seen;
     stalker.moved = Math.Max(0, stalker.moved - time.dt * 3);
     watcher.state = Watching.Peeking;
@@ -1283,7 +1305,8 @@ system Stalk(mut Watcher watcher, mut Stalker stalker, mut Arena arena, query (O
     watcher.lean = 1;
     if (nearest < 900) watcher.yaw = Math.Atan2(prey.x - stalker.at.x, prey.z - stalker.at.z);
     if (arena.caught > 0 || arena.arrive < 4 || nearest > 900) return;
-    if (nearest < 0.95)
+    // Near enough to touch, it has them, looked at or not
+    if (nearest < 1.35)
     {
         arena.caught = time.dt;
         return;
@@ -1313,7 +1336,7 @@ system Stalk(mut Watcher watcher, mut Stalker stalker, mut Arena arena, query (O
     // To the middle of the next cell nearer; in its prey's cell, straight at it
     mut var target = CellMiddle(stalker.next);
     if (stalker.cell == goal && stalker.next == goal) target = float3(prey.x, 0, prey.z);
-    var step = 3.3 * time.dt;
+    var step = (stalker.dark ? 9.0 : 4.5) * time.dt;
     var gap = Math.Distance(target.xz, stalker.at.xz);
     if (gap <= step)
     {
@@ -1324,6 +1347,7 @@ system Stalk(mut Watcher watcher, mut Stalker stalker, mut Arena arena, query (O
     }
     else stalker.at += (target - stalker.at) * (step / gap);
     stalker.moved = 1;
+    stalker.walked += step;
 }
 
 system Haunt(mut Watcher watcher, Arena arena, query (Operator pilot) operators, Time time)

@@ -326,6 +326,36 @@ current.
     same one); whether 3.3 m/s against a run of about 5 is frightening or
     only slow; it going through an operator's other body; the thing seen in
     a capture (the tests see it, Claude's captures didn't find it).
+- **After the owner's play of the way down (2026-10-13):** "that was
+  fun-ish". This corrects what "One way down" says of the lift's turn, the
+  thing's speed and reach, and adds themes.
+  - *The lift is walked through* ("weird that the transition looks like a
+    teleport, the doors go away, and new ones open behind us, i was hoping
+    for the double doors to open"). It has a door at each end. An operator
+    is moved by `ARRIVAL - LIFT` and not turned, so the door it faced, the
+    far one, is the one that opens on the next place, and the one it came
+    in at is shut behind it (`Dress` draws a shutter on each lift's far
+    wall, with a green lamp over the way on and a red one over the way
+    back).
+  - *What's between is worse to be near* ("wasn't really scary and i got
+    close-ish to him without being punished at all"; the owner did like one
+    staring while the other moves). It has anyone within 1.35 m, looked at
+    or not; goes at 4.5 m/s; and every 6.5 s every lamp and both torches
+    fail for 0.4 s (`Stalker.dark`), when nobody sees anything and it goes
+    at 9. It's half as tall again as an operator and is drawn caught
+    mid-stride, differently each time it has moved (`Stalker.walked`). A
+    heart (`heart.wav`) is heard louder and quicker within 11 m. Whether
+    this is frightening is the owner's to say: nobody but tests has met it.
+  - *Themes* ("as we progress it would be fun changing the environment").
+    `Arena.theme` is `ThemeAt(depth)`, another every third lift: 0 paper and
+    carpet, 1 a pool (pale tiles, a cool cast, water in the pits where the
+    blood was, and the same hands in it), 2 bare concrete. It's the
+    renderer's remap of two paints (`ThemeCell`, `ThemeTint`), a cast over
+    the picture (`Lens.grade`) and the liquid's color (`Liquid`); the rooms
+    are the same rooms.
+  - Asked for and not built: other things between the rooms than this one
+    ("different monsters or challenges in between levels that are more
+    horror driven"), and the harder rooms.
 - P now goes round three pictures for the owner to compare: 300 rows, 480
   (`SOFT_LINES`) and the window's own (`Control.crisp` 0, 1, 2).
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
