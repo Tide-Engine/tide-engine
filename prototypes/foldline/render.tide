@@ -184,6 +184,7 @@ local singleton Lens
     float2 pixel;
     float phase;
     float scare;      // A watcher has this machine's operator: 1 as it lands, fading
+    float lines = 300; // The picture's rows: LINES, or the window's own with the big pixels off
     bool made;
 }
 
@@ -782,7 +783,7 @@ frag Blur(Vertex vertex, Texture source, BlurStep step, out Color color)
 // between them dithered.
 frag Develop(Vertex vertex, Texture source, Lens lens, out Color color)
 {
-    float2 cells = float2(Math.Round(LINES * lens.pixel.y / lens.pixel.x), LINES);
+    float2 cells = float2(Math.Round(lens.lines * lens.pixel.y / lens.pixel.x), lens.lines);
     // Caught: the picture jolts, and goes red from its edges
     float2 jolt = float2(Math.Sin(lens.phase * 97), Math.Cos(lens.phase * 131)) * lens.scare * 0.02;
     float2 cell = Math.Floor(Math.Saturate(vertex.uv + jolt) * cells);
@@ -1363,6 +1364,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         optics.walls = standing;
     }
     float dt = Math.Min(Frame.dt, .05);
+    lens.lines = control.crisp ? Screen.height : LINES;
     optics.phase += dt;
     if (optics.phase >= Math.TAU) optics.phase -= Math.TAU;
     optics.clock += dt;
@@ -1483,7 +1485,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
                                   plateA = PlatePosition(arena.level, 0) + float3(0, .35, 0), plateB = PlatePosition(arena.level, 1) + float3(0, .35, 0),
                                   plates = float2(arena.plateA ? 1 : 0, arena.plateB ? 1 : 0),
                                   amberFace = fold.amber.face, cyanFace = fold.cyan.face,
-                                  grid = float2(LINES * Screen.width / Screen.height, LINES) * .5, lamps = lamps,
+                                  grid = float2(lens.lines * Screen.width / Screen.height, lens.lines) * .5, lamps = lamps,
                                   torchAt = viewer.position + float3(0, 1.35, 0), torchWay = LookDirection(viewer.yaw, viewer.pitch),
                                   otherAt = partner.position + float3(0, 1.35, 0), otherWay = LookDirection(partner.yaw, partner.pitch) };
         mut float2 pixels = window * .5;
