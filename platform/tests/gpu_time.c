@@ -13,8 +13,13 @@
 #include "../src/gl.h"
 #endif
 
+// How many frames a timer that's supported is given to hand back its first
+// sample: results come back when the device answers, not after a count of
+// frames, so each round ends at the first sample and only fails at this many.
+enum { ROUND = 60, PATIENCE = 3600 };
+
 static tide_draw_list list;
-static int failures, frames, samples;
+static int failures, frames, samples, rounds, since;
 static bool supported;
 
 static void check(const bool ok, const char *what)
@@ -60,12 +65,15 @@ static int frame(void *user, const float seconds)
         tide_platform_read_pixels(&list, &point, 1, &color);
         check((color >> 8) == 0xFF0000u, "timing leaves the rendered pixels unchanged");
     }
-    if (frames == 60 || frames == 120) {
+    since++;
+    if (since >= ROUND && (!supported || samples > 0 || since >= PATIENCE)) {
+        since = 0;
+        rounds++;
         check(!supported || samples > 0, "a supported timer produces asynchronous samples");
         check(supported || samples == 0, "an unsupported timer produces no invented sample");
         tide_platform_gpu_timing(false);
         check(tide_platform_gpu_ms() < 0.0, "closing discards pending samples");
-        if (frames == 120) {
+        if (rounds == 2) {
             tide_draw_free(&list);
             return failures ? 1 : 0;
         }
