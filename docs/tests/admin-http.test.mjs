@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'skyworks'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -53,7 +53,8 @@ test('production website shares prototypes while protecting analytics, catalog a
         '/samples/underfoot/index.html', '/underfoot.html', '/samples/underfoot/game.wasm',
         '/samples/thumbnails/underfoot.png',
         '/samples/foldline/index.html', '/foldline.html', '/samples/foldline/game.wasm',
-        '/samples/thumbnails/foldline.png']) {
+        '/samples/thumbnails/foldline.png', '/samples/skyworks/index.html', '/skyworks.html',
+        '/samples/skyworks/game.wasm', '/samples/thumbnails/skyworks.png']) {
         files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
@@ -165,7 +166,8 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.equal(response.headers.get('cache-control'), 'private, no-store');
     }
     for (const route of ['/samples/two%2dforks/index.html', '/sample%5ftwo%5fforks.html', '/samples/%63racked/index.html',
-        '/samples/inside%2dout/index.html', '/inside%5fout.html', '/samples/%66oldline/index.html']) {
+        '/samples/inside%2dout/index.html', '/inside%5fout.html', '/samples/%66oldline/index.html',
+        '/samples/%73kyworks/index.html', '/skyworks.html', '/samples/thumbnails/skyworks.png']) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(response.status, 404, route);
     }
@@ -201,9 +203,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out|underfoot|foldline/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out|underfoot|foldline|skyworks/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out|Underfoot|underfoot|FOLDLINE|foldline/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out|Underfoot|underfoot|FOLDLINE|foldline|SKYWORKS|skyworks/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);

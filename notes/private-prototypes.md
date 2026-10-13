@@ -53,6 +53,12 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
+- SKYWORKS (`skyworks`): `prototypes/skyworks/`, an original single-player voxel
+  automation game requested on 2026-10-13. Manual gathering/crafting leads to
+  copper/water lines, signal circuits, bridges to resource islands and a beacon.
+  `skyworks_page` stages the public page; `private_games` collects its page or
+  native target. Rules, limits, engine workarounds and tests: `notes/skyworks.md`.
+
 - FOLDLINE (`foldline`): `prototypes/foldline/`, a new first-person 3D
   cooperative portal puzzle requested on 2026-10-12. Its chambers sit in a
   sunlit research atrium. Linked portals show the actual

@@ -1,0 +1,283 @@
+local singleton Scenery
+{
+    int revision;
+    List<Vertex3> vertices;
+    List<int> indices;
+    Grid3<Block> cached = Grid3(48, 12, 48);
+}
+Color Ink() { return Color(0.075, 0.13, 0.16); }
+Color Copper() { return Color(0.94, 0.61, 0.32); }
+Color BlockColor(Block block)
+{
+    switch (block)
+    {
+        case Block.Grass: return Color(0.49, 0.65, 0.39);
+        case Block.Stone: return Color(0.44, 0.49, 0.51);
+        case Block.Wood: return Color(0.48, 0.31, 0.19);
+        case Block.Leaves: return Color(0.25, 0.49, 0.33);
+        case Block.Copper: return Color(0.76, 0.45, 0.26);
+        case Block.Crystal: return Color(0.43, 0.83, 0.87);
+        case Block.Spring: return Color(0.22, 0.65, 0.79);
+        case Block.Plank: return Color(0.77, 0.63, 0.43);
+        default: return Color.white;
+    }
+}
+void Face(mut Scenery scenery, float3 center, float3 u, float3 v, Color color)
+{
+    var n = scenery.vertices.count;
+    scenery.vertices.Add(Vertex3 { position = center - u - v, color = color });
+    scenery.vertices.Add(Vertex3 { position = center + u - v, color = color });
+    scenery.vertices.Add(Vertex3 { position = center + u + v, color = color });
+    scenery.vertices.Add(Vertex3 { position = center - u + v, color = color });
+    scenery.indices.Add(n); scenery.indices.Add(n + 1); scenery.indices.Add(n + 2);
+    scenery.indices.Add(n); scenery.indices.Add(n + 2); scenery.indices.Add(n + 3);
+}
+view Terrain(Island island, mut Scenery scenery)
+{
+    mut var dirty = scenery.revision != island.revision;
+    // Rollback can replace terrain with another branch at the same revision.
+    if (!dirty)
+    {
+        for (mut var z = 0; z < 48; z++)
+        for (mut var y = 0; y < 12; y++)
+        for (mut var x = 0; x < 48; x++)
+            if (scenery.cached[x, y, z] != island.blocks[x, y, z]) dirty = true;
+    }
+    if (!dirty) return;
+    scenery.vertices.Clear(); scenery.indices.Clear();
+    scenery.cached.Clear();
+    for (mut var z = 0; z < 48; z++)
+    for (mut var y = 0; y < 12; y++)
+    for (mut var x = 0; x < 48; x++)
+    {
+        var b = island.blocks[x, y, z];
+        if (b != Block.Air) scenery.cached[x, y, z] = b;
+        if (b == Block.Air || b == Block.Machine) continue;
+        var center = float3(float(x) + 0.5, float(y) + 0.5, float(z) + 0.5);
+        mut var c = BlockColor(b);
+        var variation = 0.94 + float((x * 17 + y * 7 + z * 31) % 7) * 0.012;
+        c = Color(c.r * variation, c.g * variation, c.b * variation);
+        for (mut var side = 0; side < 6; side++)
+        {
+            var normal = side == 0 ? int3(1, 0, 0) : side == 1 ? int3(-1, 0, 0) :
+                         side == 2 ? int3(0, 1, 0) : side == 3 ? int3(0, -1, 0) :
+                         side == 4 ? int3(0, 0, 1) : int3(0, 0, -1);
+            var adjacent = island.blocks[int3(x, y, z) + normal];
+            if (adjacent != Block.Air && adjacent != Block.Machine) continue;
+            var face = center + float3(float(normal.x), float(normal.y), float(normal.z)) * 0.5;
+            mut var u = side < 2 ? float3(0, 0, 0.5) : float3(0.5, 0, 0);
+            var v = side < 2 ? float3(0, 0.5, 0) : side < 4 ? float3(0, 0, 0.5) : float3(0, 0.5, 0);
+            if (side == 0 || side == 2 || side == 5) u = -u;
+            var light = side == 2 ? 1.12 : side == 3 ? 0.53 : side == 0 || side == 4 ? 0.83 : 0.68;
+            mut var tint = Color(c.r * light, c.g * light, c.b * light);
+            if (b == Block.Grass && side != 2) tint = Color(0.43 * light, 0.35 * light, 0.25 * light);
+            Face(scenery, face, u, v, tint);
+        }
+    }
+    scenery.revision = island.revision;
+}
+view Camera(Devices devices, mut Tools tools)
+{
+    if (devices.keyboard.escape.down || (tools.looking && !Cursor.locked)) tools.menu = true;
+    if (!tools.menu) Cursor.Lock();
+    tools.looking = Cursor.locked;
+    if (devices.keyboard.r.down) tools.direction = (tools.direction + 1) % 4;
+    if (devices.keyboard.digit1.down) tools.selected = Kind.None;
+    if (devices.keyboard.digit2.down) tools.selected = Kind.Drill;
+    if (devices.keyboard.digit3.down) tools.selected = Kind.Tube;
+    if (devices.keyboard.digit4.down) tools.selected = Kind.Kiln;
+    if (devices.keyboard.digit5.down) tools.selected = Kind.Chest;
+    if (devices.keyboard.digit6.down) tools.selected = Kind.Pump;
+    if (devices.keyboard.digit7.down) tools.selected = Kind.Tank;
+    if (devices.keyboard.digit8.down) tools.selected = Kind.Switch;
+    if (devices.keyboard.digit9.down) tools.selected = Kind.Wire;
+    if (devices.keyboard.digit0.down) tools.selected = Kind.Sensor;
+}
+void MachineLook(int2 at, Machine machine, Time time)
+{
+    var p = float3(float(at.x) + 0.5, 4.5, float(at.y) + 0.5);
+    var d = Step(machine.direction);
+    var arrow = float3(float(d.x), 0, float(d.y));
+    var dark = Color(0.16, 0.24, 0.27);
+    var brass = Copper();
+    if (machine.kind == Kind.Tube || machine.kind == Kind.Wire)
+    {
+        var tint = machine.kind == Kind.Wire ? (machine.signal ? Color(1, 0.77, 0.32) : Color(0.42, 0.27, 0.18)) : dark;
+        var size = machine.kind == Kind.Wire ? 0.08 : 0.22;
+        Draw.Cube(p - float3(0, 0.28, 0), float3(0.84, size, size), tint);
+        Draw.Cube(p - float3(0, 0.28, 0), float3(size, size, 0.84), tint);
+        if (machine.kind == Kind.Tube)
+        {
+            Draw.Cube(p - float3(0, 0.28, 0), float3(0.32), brass);
+            Draw.Cube(p + arrow * 0.28 - float3(0, 0.12, 0), float3(0.12), brass);
+            if (machine.count > 0) Draw.Cube(p + float3(0, 0.08, 0), float3(0.17), machine.item == 7 ? Color(0.3, 0.8, 0.94) : brass);
+        }
+        return;
+    }
+    mut var body = machine.kind == Kind.Chest ? Color(0.56, 0.38, 0.22) : dark;
+    if (machine.kind == Kind.Tank) body = Color(0.27, 0.49, 0.56);
+    Draw.Cube(p, float3(0.78, 0.8, 0.78), body);
+    Draw.Cube(p - float3(0, 0.34, 0), float3(0.88, 0.12, 0.88), Color(0.25, 0.31, 0.33));
+    Draw.Cube(p + arrow * 0.4, float3(0.19, 0.24, 0.19), brass);
+    var lamp = machine.enabled ? Color(0.65, 0.92, 0.62) : Color(0.65, 0.29, 0.23);
+    Draw.Cube(p + float3(-0.23, 0.43, -0.23), float3(0.12), lamp);
+    if (machine.kind == Kind.Kiln)
+    {
+        Draw.Cube(p + float3(0, 0, -0.4), float3(0.43, 0.38, 0.035), Color(0.9, 0.4, 0.16));
+        Draw.Cube(p + float3(0.2, 0.65, 0.2), float3(0.22, 0.6, 0.22), dark);
+    }
+    if (machine.kind == Kind.Drill || machine.kind == Kind.Pump)
+    {
+        Draw.Cube(p + float3(0, 0.82, 0), float3(0.10, 0.9, 0.10), brass);
+        var rotor = quaternion.Euler(float3(0, time.t * (machine.enabled ? 2 : 0), 0));
+        Draw.Cube(p + float3(0, 1.25, 0), float3(1.45, 0.06, 0.15), rotor, Color(0.85, 0.85, 0.70));
+        Draw.Cube(p + float3(0, 1.25, 0), float3(0.15, 0.06, 1.45), rotor, Color(0.85, 0.85, 0.70));
+    }
+    if (machine.kind == Kind.Chest) Draw.Cube(p + float3(0, 0.22, 0), float3(0.8, 0.12, 0.8), brass);
+    if (machine.kind == Kind.Tank)
+        Draw.Cube(p + float3(0, -0.2 + float(machine.count) / 128, -0.405), float3(0.55, 0.05 + float(machine.count) / 128, 0.035), Color(0.3, 0.83, 0.93));
+    if (machine.kind == Kind.Switch)
+        Draw.Cube(p + float3(0, 0.62, 0), float3(0.12, 0.5, 0.12), quaternion.Euler(float3(machine.enabled ? 0.45 : -0.45, 0, 0)), brass);
+    if (machine.kind == Kind.Sensor) Draw.Sphere(p + arrow * 0.45, 0.22, Color(0.45, 0.87, 0.88));
+    if (machine.kind == Kind.Beacon)
+    {
+        Draw.Cube(p + float3(0, 1.1, 0), float3(0.34, 1.2, 0.34), Color(0.55, 0.94, 0.94));
+        Draw.Depth(Depth.Read) { Draw.Cube(p + float3(0, 9, 0), float3(0.12, 16, 0.12), Color(0.55, 0.94, 0.94, 0.4)); }
+    }
+}
+view World(Island island, Pilot pilot, Scenery scenery, Time time)
+{
+    Draw.Clear(Color(0.68, 0.83, 0.86));
+    Draw.SetScreen();
+    Draw.Shape(Shape { center = float2(Screen.width / 2, Screen.height / 2), size = float2(Screen.width, Screen.height), color = Color(0.54, 0.76, 0.82), color2 = Color(0.88, 0.90, 0.80) });
+    Draw.SetCamera(pilot.position + float3(0, 1.6, 0), quaternion.Euler(float3(pilot.pitch, pilot.yaw, 0)), 72);
+    Draw.Mesh(scenery.vertices, scenery.indices, float4x4.identity);
+    for (mut var c = 0; c < 15; c++)
+    {
+        var cloud = float3(float((c * 29) % 120) - 35, -3 - float(c % 3), float((c * 43) % 120) - 25);
+        Draw.Cube(cloud, float3(10 + float(c % 4) * 4, 0.6, 5), Color(0.90, 0.93, 0.89));
+        Draw.Cube(cloud + float3(2, 0.4, 1), float3(6, 0.7, 4), Color(0.95, 0.96, 0.91));
+    }
+    foreach (var at in island.sites) MachineLook(at, island.machines[at], time);
+    if (pilot.target.x >= 0)
+    {
+        var p = float3(float(pilot.target.x) + 0.5, float(pilot.target.y) + 0.5, float(pilot.target.z) + 0.5);
+        // Twelve thin edges show the exact selected voxel.
+        for (mut var a = -1; a <= 1; a += 2)
+        for (mut var b = -1; b <= 1; b += 2)
+        {
+            Draw.Cube(p + float3(0, float(a) * 0.505, float(b) * 0.505), float3(1.03, 0.018, 0.018), Color(1, 0.87, 0.52));
+            Draw.Cube(p + float3(float(a) * 0.505, 0, float(b) * 0.505), float3(0.018, 1.03, 0.018), Color(1, 0.87, 0.52));
+            Draw.Cube(p + float3(float(a) * 0.505, float(b) * 0.505, 0), float3(0.018, 0.018, 1.03), Color(1, 0.87, 0.52));
+        }
+    }
+}
+void Label(string text, float2 at, float size, Color color) { Draw.Text(text, at, size, color); }
+void Panel(float2 center, float2 size) { Draw.RoundRect(center, size, 12, Color(0.06, 0.12, 0.15, 0.93)); }
+view Hud(Island island, Pilot pilot, Tools tools)
+{
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    Panel(float2(167, 47), float2(286, 64));
+    Label("SKYWORKS", float2(38, 23), 26, Color.white);
+    Label("A FACTORY ABOVE THE CLOUDS", float2(39, 54), 11, Copper());
+    Panel(float2(w - 177, 72), float2(306, 98));
+    Label("YOUR FIRST SKY FACTORY", float2(w - 312, 36), 12, Copper());
+    Label($"Automated copper   {island.produced} / 12", float2(w - 312, 58), 17, Color.white);
+    Label(island.beacon ? "Beacon lit. The sky is yours." : "Crystals east. Water south. Light a beacon.", float2(w - 312, 85), 12, Color(0.73, 0.82, 0.81));
+    Panel(float2(213, h - 113), float2(374, 94));
+    Label($"Wood {pilot.bag[1]}    Stone {pilot.bag[2]}    Ore {pilot.bag[3]}", float2(42, h - 148), 16, Color.white);
+    Label($"Copper {pilot.bag[4]}    Gears {pilot.bag[5]}    Crystal {pilot.bag[6]}", float2(42, h - 123), 16, Color.white);
+    Label($"Planks {pilot.planks}    Water {pilot.bag[7]}", float2(42, h - 98), 14, Color(0.72, 0.83, 0.83));
+    Panel(float2(w - 211, h - 113), float2(374, 94));
+    Label(Name(tools.selected), float2(w - 380, h - 148), 20, Copper());
+    Label($"Ready: {(tools.selected == Kind.None ? pilot.planks : pilot.built[int(tools.selected)])}   Output: {Facing(tools.direction)}   [R] rotate", float2(w - 380, h - 120), 14, Color.white);
+    Label("[Tab] workshop    [1-0] select tool", float2(w - 380, h - 95), 13, Color(0.72, 0.83, 0.83));
+    Panel(float2(w / 2, h - 34), float2(w - 48, 56));
+    Label(pilot.message, float2(40, h - 53), 14, Color.white);
+    Label("WASD move  /  Space jump  /  Hold LMB or F gather  /  RMB or G place  /  E load & collect", float2(40, h - 29), 12, Color(0.73, 0.83, 0.83));
+    if (tools.menu) return;
+    var center = float2(w / 2, h / 2);
+    Draw.Line(center - float2(7, 0), center + float2(7, 0), 2, Color.white);
+    Draw.Line(center - float2(0, 7), center + float2(0, 7), 2, Color.white);
+    if (pilot.target.x >= 0)
+    {
+        var block = island.blocks[pilot.target];
+        var machine = island.machines[pilot.target.x, pilot.target.z];
+        var title = block == Block.Machine ? Name(machine.kind) : $"{block}";
+        Label(title, center + float2(20, 22), 16, Ink());
+        if (block == Block.Copper) Label($"{island.deposits[pilot.target.x, pilot.target.z]} ore remaining", center + float2(20, 43), 12, Ink());
+        if (block == Block.Machine)
+        {
+            Label($"{machine.count} {Item(machine.item)}  /  input {machine.input}  /  {Facing(machine.direction)}", center + float2(20, 44), 12, Ink());
+            Label(machine.enabled ? "Running  |  E collect / load" : "Signal off  |  connect a live wire", center + float2(20, 62), 12, Ink());
+        }
+        if (pilot.progress > 0) Draw.Rect(center + float2(0, 26), float2(float(pilot.progress) * 3, 4), Copper());
+    }
+    if (!Cursor.locked) Label("Click to look around. Arrow keys also turn the camera.", float2(w / 2 - 190, 115), 14, Ink());
+}
+string RecipeName(int r) { return r == 11 ? "4 bridge planks" : r == 12 ? "Hand-smelt copper" : r == 13 ? "Copper gear" : Name(Kind(r)); }
+string RecipeCost(int r)
+{
+    if (r == 11) return "1 wood";
+    if (r == 12) return "1 ore + 1 wood";
+    if (r == 13) return "2 ingots";
+    if (r == 1) return "2 wood + 3 stone + 2 ingots + 1 gear";
+    if (r == 2 || r == 7 || r == 8) return "1 ingot";
+    if (r == 3) return "2 wood + 5 stone";
+    if (r == 4) return "3 wood";
+    if (r == 5) return "2 wood + 2 ingots + 1 gear";
+    if (r == 6) return "2 wood + 3 stone";
+    if (r == 9) return "2 ingots + 1 crystal";
+    return "12 ingots + 4 crystals + 8 water";
+}
+bool Affordable(Pilot pilot, Island island, int r)
+{
+    return pilot.bag[1] >= WoodCost(r) && pilot.bag[2] >= StoneCost(r) && pilot.bag[4] >= CopperCost(r) &&
+           pilot.bag[5] >= (r == 1 || r == 5 ? 1 : 0) && pilot.bag[6] >= (r == 9 ? 1 : r == 10 ? 4 : 0) && pilot.bag[3] >= (r == 12 ? 1 : 0) &&
+           (r != 10 || (pilot.bag[7] >= 8 && island.produced >= 12));
+}
+view Workshop(Devices devices, Pilot pilot, Island island, mut Tools tools)
+{
+    if (devices.keyboard.tab.down) { tools.menu = !tools.menu; tools.looking = false; }
+    if (!tools.menu) return;
+    GUI.ClaimPointer(Rect(0, 0, Screen.width, Screen.height));
+    GUI.ClaimKeyboard();
+    GUI.Navigate();
+    Draw.SetScreen();
+    Draw.Rect(float2(Screen.width / 2, Screen.height / 2), float2(Screen.width, Screen.height), Color(0.04, 0.09, 0.12, 0.72));
+    var left = Screen.width / 2 - 370;
+    var top = Math.Max(8, Screen.height / 2 - 258);
+    Panel(float2(left + 370, top + 258), float2(740, 516));
+    Label("THE WIND WORKSHOP", float2(left + 26, top + 22), 25, Color.white);
+    Label("Gather by hand. Build a line. Let the sky do the work.", float2(left + 27, top + 57), 14, Color(0.72, 0.83, 0.83));
+    for (mut var index = 0; index < 14; index++)
+    {
+        // Foundations first, then the production chain, liquids and circuits.
+        var recipe = index == 0 ? 11 : index == 1 ? 12 : index == 2 ? 13 : index == 13 ? 0 : index - 2;
+        var x = left + 24 + float(index / 7) * 354;
+        var y = top + 84 + float(index % 7) * 50;
+        var select = GUI.Control(Rect(x, y, 248, 48));
+        var active = recipe <= 10 && recipe >= 1 && tools.selected == Kind(recipe);
+        Draw.RoundRect(float2(x + 124, y + 24), float2(248, 48), 6, active || select.hovered ? Color(0.22, 0.33, 0.36) : Color(0.11, 0.20, 0.23));
+        if (select.clicked)
+        {
+            if (recipe == 0 || recipe == 11) tools.selected = Kind.None;
+            else if (recipe <= 10) tools.selected = Kind(recipe);
+        }
+        Label(recipe == 0 ? "Select bridge planks" : RecipeName(recipe), float2(x + 10, y + 5), 16, active ? Copper() : Color.white);
+        Label(recipe == 0 ? $"{pilot.planks} ready / [1] select" : RecipeCost(recipe), float2(x + 10, y + 28), 10, Color(0.69, 0.79, 0.79));
+        if (recipe > 0)
+        {
+            GUI.Disabled(!Affordable(pilot, island, recipe))
+            {
+                if (GUI.Button(Rect(x + 254, y + 4, 72, 40), "Craft")) Send(Craft { recipe = recipe });
+            }
+        }
+    }
+    Label("DRILL on copper > TUBE > KILN > TUBE > CRATE. All arrows face along the line.", float2(left + 26, top + 444), 12, Copper());
+    Label("Pump on a spring > tube > tank. A sensor reads 8+ units ahead; wires gate nearby machines.", float2(left + 26, top + 465), 11, Color(0.73, 0.83, 0.83));
+    if (GUI.Button(Rect(left + 530, top + 480, 182, 30), "Back to the island")) tools.menu = false;
+    Label("[R] rotate output  /  Tab closes", float2(left + 26, top + 487), 12, Color(0.73, 0.83, 0.83));
+}

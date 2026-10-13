@@ -1,5 +1,14 @@
 # The docs site
 
+SKYWORKS catalog addition (2026-10-13): `skyworks` is a new server-only card and
+public prototype root, covered by the outside-root gates and admin/HTTP tests.
+Its game page stages through `skyworks_page`; its thumbnail comes from its own
+render fixture. Gameplay, limitations and validation are in `notes/skyworks.md`.
+No site deployment is part of this task. Svelte check has zero errors/warnings;
+eighteen analytics/admin tests, the production build and the production
+prototype HTTP test pass with Node 24.16.0. Public serving/omission from discovery
+and refusal of stale outside-root SKYWORKS copies are covered.
+
 ## Input prediction controls (2026-10-13)
 
 Input documents owner-approved Predict()/[DontPredict] with action-reset and
