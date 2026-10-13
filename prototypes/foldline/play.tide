@@ -277,6 +277,16 @@ float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 veloc
     return 0;
 }
 
+// How far a thing is from a hand, squared: straight there, or through a fold
+// where that's nearer, so what lies just past a fold can be picked up.
+float Reach(Fold fold, float3 hand, float3 thing)
+{
+    mut var nearest = Math.DistanceSq(hand, thing);
+    if (!Linked(fold)) return nearest;
+    nearest = Math.Min(nearest, Math.DistanceSq(FoldPoint(fold.amber, fold.cyan, hand), thing));
+    return Math.Min(nearest, Math.DistanceSq(FoldPoint(fold.cyan, fold.amber, hand), thing));
+}
+
 // Whether a body is in either fold's mouth: neither end is moved while one is.
 bool AtMouth(Fold fold, float3 center, float reach)
 {
@@ -579,23 +589,26 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     if (input.reset.down) Send(Restart);
     var facing = LookDirection(pilot.yaw, pilot.pitch);
     var eye = body.position + float3(0, (EYE_HIGH - BODY_HIGH * 0.5) * pilot.scale, 0);
-    if (input.amber.down) Shoot(fold, true, eye, facing, physics, world);
-    if (input.cyan.down) Shoot(fold, false, eye, facing, physics, world);
+    // With the cube in hand a click throws it; with empty hands it shoots a fold's end
+    var holding = fold.carried == pilot.id;
+    var thrown = holding && (input.amber.down || input.cyan.down || input.hurl.down);
+    if (!holding && input.amber.down) Shoot(fold, true, eye, facing, physics, world);
+    if (!holding && input.cyan.down) Shoot(fold, false, eye, facing, physics, world);
     if (input.ping.down)
     {
         fold.ping = physics.Raycast(eye, eye + facing * 40, out var seen) ? seen.point : eye + facing * 4;
         fold.pingTime = 3;
         fold.pingOperator = pilot.id;
     }
-    if (fold.carried == pilot.id && (input.carry.down || input.hurl.down))
+    if (holding && (input.carry.down || thrown))
     {
         // Let go of, or thrown
         fold.carried = -1;
         fold.tossed = true;
-        fold.toss = facing * (input.hurl.down ? 11.0 : 1.5);
+        fold.toss = facing * (thrown ? 11.0 : 1.5);
     }
     // Alone, the cube is taken from the hands of the body that was left holding it
-    else if (input.carry.down && (fold.carried < 0 || arena.joined < 2) && Math.DistanceSq(eye, fold.cube) < 6.25 * pilot.scale * pilot.scale)
+    else if (input.carry.down && (fold.carried < 0 || arena.joined < 2) && Reach(fold, eye, fold.cube) < 6.25 * pilot.scale * pilot.scale)
         fold.carried = pilot.id;
     var movement = Math.Normalize(input.move);
     var forward = LookDirection(pilot.yaw, 0);
@@ -856,12 +869,12 @@ system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) op
     }
     arena.plateA = cubeA || operatorA;
     arena.plateB = cubeB || operatorB;
-    if (arena.level == 0 && arena.plateA) arena.solved = true;
-    if (arena.level == 1 && arena.plateA && arena.plateB) arena.solved = true;
-    if (arena.level == 2 && cubeA && operatorB) arena.solved = true;
-    arena.bridge = arena.level == 2 && (cubeA || arena.solved);
-    if (arena.solved) arena.gate = Math.Min(1, arena.gate + time.dt * 1.6);
-    if (arena.solved && exiting == 2) arena.complete = true;
+    // A circuit is closed only while its plates are weighted: the gate shuts again when one is let up, so
+    // something has to stay behind on each. The cube, or a partner.
+    arena.solved = arena.level == 0 ? arena.plateA : arena.level == 1 ? arena.plateA && arena.plateB : cubeA && operatorB;
+    arena.bridge = arena.level == 2 && cubeA;
+    arena.gate = Math.Clamp(arena.gate + (arena.solved ? time.dt * 1.6 : -time.dt * 2.4), 0, 1);
+    if (exiting == 2) arena.complete = true;
 }
 
 system Haunt(mut Watcher watcher, Arena arena, query (Operator pilot) operators, Time time)

@@ -168,6 +168,26 @@ static void folds_are_shot_and_crossed(void)
     ticks(&world, 40);
     CHECK(world.Fold.traversals == 2);
     CHECK(world.Fold.cube.x > -9.8f && world.Fold.cube.x < 0 && world.Fold.cube.z < 0);
+    // What lies just past a fold is within reach through it: picked up from before the other end
+    ticks(&world, 90);
+    cube = tide_get_Box3D_Body(&world, world.Arena.cube);
+    cube.position = (tide_float3){-8.8f, 0.4f, -2};
+    cube.velocity = (tide_float3){0};
+    CHECK(tide_set_Box3D_Body(&world, world.Arena.cube, cube));
+    place(&world, 0, (tide_float3){-5, 0, 1.4f}, 0, 0);
+    ticks(&world, 6);
+    press(&world, (PilotInput){.carry = true});
+    CHECK(world.Fold.carried == 0);
+    // ...and it comes back through the fold with the hand that holds it
+    input(&world, 0, (PilotInput){.move = {0, -1}});
+    ticks(&world, 30);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 40);
+    CHECK(world.Fold.carried == 0 && world.Fold.cube.z > -1 && world.Fold.cube.z < 2.4f && near(world.Fold.cube.x, -5, 0.6f));
+    // A click with it in hand throws it, and shoots no fold
+    const tide_float3 amber = world.Fold.amber.at;
+    press(&world, (PilotInput){.amber = true});
+    CHECK(world.Fold.carried == -1 && world.Fold.amber.at.x == amber.x && world.Fold.amber.at.z == amber.z && world.Fold.fizzleTime <= 0);
     tide_world_free(&world);
 }
 
@@ -202,6 +222,12 @@ static void chambers_and_commands(void)
     CHECK(tide_set_Box3D_Body(&world, world.Arena.cube, cube));
     ticks(&world, 90);
     CHECK(world.Arena.plateA && world.Arena.solved && world.Arena.gate > 0.99f);
+    // ...and only while it stays there
+    cube = tide_get_Box3D_Body(&world, world.Arena.cube);
+    cube.position = (tide_float3){0, 0.5f, -6};
+    CHECK(tide_set_Box3D_Body(&world, world.Arena.cube, cube));
+    ticks(&world, 60);
+    CHECK(!world.Arena.plateA && !world.Arena.solved && world.Arena.gate < 0.01f);
     const int32_t built = world.Arena.chamber;
     choose(&world, 0, 2);
     CHECK(world.Arena.level == 2 && world.Arena.chamber == built + 1 && !world.Arena.solved);

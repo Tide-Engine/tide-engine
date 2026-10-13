@@ -22,9 +22,9 @@ string ChamberTitle(int level)
 string ChamberHint(int level)
 {
     return level switch {
-        0 => "Shoot two walls to fold them together. Weight the amber plate, then both to the exit.",
-        1 => "Weight both plates together. Your partner can hold one while you work.",
-        _ => "The cube powers the bridge from plate A. Reach plate B together."
+        0 => "The gate is open only while the amber plate is weighted. Leave something on it.",
+        1 => "Both plates at once, and they're a wall apart. Fold the rooms together.",
+        _ => "The cube on plate A holds the bridge. Someone stands on plate B."
     };
 }
 
@@ -217,14 +217,14 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     Draw.Arc(middle, 11, -1.2, 2.4, 2, UI_AMBER);
     Draw.Arc(middle, 11, 1.94, 2.4, 2, UI_CYAN);
     Draw.Circle(middle, 1.7, UI_INK);
-    if (fold.carried == control.active) Draw.Text("E  /  RELEASE RESONANCE CUBE", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter, Font.Bold);
+    if (fold.carried == control.active) Draw.Text("E  DROP    /    CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter, Font.Bold);
 
     // What to do, and the keys that do it.
     var legend = Screen.width > 880;
     var hintWidth = Math.Min(560, Screen.width - 36);
     var hintY = Screen.height - (legend ? 76 : 40);
     HudPane(Rect(middle.x - hintWidth * 0.5, hintY - 16, hintWidth, 32));
-    Draw.Text(arena.gate > 0.9 ? "Circuit complete. Both operators to the exit." : ChamberHint(arena.level), float2(middle.x, hintY),
+    Draw.Text(arena.gate > 0.9 ? "Gate open. Both operators to the exit." : ChamberHint(arena.level), float2(middle.x, hintY),
               Math.Min(13, hintWidth / 44), UI_INK, Anchor.MiddleCenter);
     if (legend)
     {
