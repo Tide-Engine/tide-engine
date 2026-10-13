@@ -55,6 +55,17 @@ pass with mocked registry writes, and the production docs build passes.
 Other host OSes, Android, sanitizers and plugin verification against newer IDEs
 were not run; no CI workflow or real installer/association action was invoked.
 
+Integration: origin/dev eb4c09f3 merged cleanly in code; three top-of-file note
+conflicts retain both new sections. Incoming input prediction and render-target
+changes touch the compiler/runtime boundary, so complete native/web debug builds
+and suites were repeated: all 2,284 native and 2,249 web CTests pass, including
+OpenGL/WebGL/WebGPU. Preview tests also pin the project's tickRate in frozen Time.
+The refreshed private installation uses current engine headers/sources, compiled
+editor/CLI and rebuilt MinGW platform library; preview.mjs passes again. The
+merged grammar/adapter suite passes 262 checks. The merged production docs build
+and all ten admin/public-index HTTP tests pass, preserving the public catalog
+boundary. No CI was dispatched.
+
 ## Custom input prediction (2026-10-13)
 
 The owner approved `Predict()` and `[DontPredict]`. Inputs now have an optional

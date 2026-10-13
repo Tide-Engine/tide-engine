@@ -14,7 +14,7 @@ static void gen_editor_preview(gen *g)
     sb_put(o, "    tide_editor_state *p = calloc(1, sizeof *p);\n    if (!p) return NULL;\n");
     if (g->prog->assets.count) sb_put(o, "    if (!tide_assets_load(pack, size)) { tide_run_unload(); free(p); return NULL; }\n");
     else sb_put(o, "    (void)pack; (void)size;\n");
-    sb_put(o, "    tide_world_init(&p->world, 1.0f/60.0f);\n    tide_local_init(&p->local);\n");
+    sb_put(o, "    tide_world_init(&p->world, 1.0f/(tide_game_api.tick_rate ? tide_game_api.tick_rate : 60));\n    tide_local_init(&p->local);\n");
     sb_printf(o, "    (void)tide_function_%s(", decl_cname(factory));
     bool comma = false;
     if (takes_world(factory)) { sb_put(o, "&p->world"); comma = true; }
