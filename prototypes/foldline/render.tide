@@ -486,7 +486,9 @@ float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, 
 // Every solid thing: walls, floor and ceiling, machinery, leaves and the ceiling's lamps.
 frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixture, Sight sight, Daylight day, out Color color)
 {
-    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < 0.025)
+    // A fold's camera sees nothing behind the wall it looks out of, and nothing within 2.5 cm before it, but for
+    // what's part of the way through that fold, which it sees right up to the wall's face: no slice of it is lost
+    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < (sight.fold > 0.5 ? 0.0 : 0.025))
         this.Discard();
 
     float3 p = this.world;
@@ -556,7 +558,7 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
 // An operator: the model's skin in the room's light.
 frag Figure(StoneVertex vertex, Texture skin, Instance instance, Sight sight, Daylight day, out Color color)
 {
-    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < 0.025)
+    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < (sight.fold > 0.5 ? 0.0 : 0.025))
         this.Discard();
     float3 p = this.world;
     if (sight.linked > 0 && sight.fold > 0.5

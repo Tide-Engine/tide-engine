@@ -136,6 +136,11 @@ had a gap at the sill; "this is the main mechanic it needs to be perfect"):
   each half stood, a body had a seam of light at the wall's face that the
   owner read as the cut still being there. The light changes at once when
   the body's middle crosses.
+- A fold's camera discards what's within 2.5 cm before the wall it looks out
+  of, so that the wall's own face never shows. For what's part of the way
+  through that fold the margin is none: with it, a 2.5 cm slice of a crossing
+  body was missing at the wall's face, the gap the owner kept seeing. The
+  light seam above was fixed first, on a wrong reading of that picture.
 - What's seen through a fold is drawn on the inside of a box behind the hole,
   a back and four sides, so a look down at the sill lands on it.
 - The near plane is 0.07 m and the far 90 m (0.035 and 120): lamp frames,
