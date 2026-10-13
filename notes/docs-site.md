@@ -1,5 +1,12 @@
 # The docs site
 
+SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
+public id, asset-gate entries, thumbnail and test registrations are removed;
+its source/build targets and game note are removed too. The existing catalog
+remains unchanged. No deployment or CI dispatch is requested.
+The production build and eighteen analytics/admin tests pass; the production
+HTTP test checks the removed SKYWORKS page and thumbnail return 404.
+
 ## Input prediction controls (2026-10-13)
 
 Input documents owner-approved Predict()/[DontPredict] with action-reset and
