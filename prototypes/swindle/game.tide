@@ -1,0 +1,544 @@
+using Rooms;
+
+settings
+{
+    title = "SWINDLE";
+    appId = "dev.tideengine.swindle";
+    tickRate = 60;
+    maxPlayers = 4;
+    hostMigration = true;
+}
+
+enum RoundPhase { Ready, Countdown, Playing, Finished }
+enum MatchMode { Duel, FreeForAll, Teams }
+enum SimStage { Input, Play, Mirror }
+enum HeistCue { Pickup, Dash, Steal, Bluff, Fooled, Bank, Exit, Finish }
+
+struct Intent { float2 move; bool dash; bool bluff; }
+struct Thief
+{
+    float2 position;
+    float2 facing = float2(0, -1);
+    float2 push;
+    float dashTime;
+    float dashCooldown;
+    float bluffCooldown;
+    float cloak;
+    float stun;
+    float safe;
+    float banking;
+    float navigation;
+    float2 waypoint;
+    float2 goal;
+    int score;
+    int steals;
+    int fooled;
+    Intent intent;
+}
+struct Replica
+{
+    float2 position;
+    float2 direction;
+    float life;
+    bool jewel;
+}
+
+singleton Heist
+{
+    Thief[4] thieves;
+    Replica[4] replicas;
+    bool[4] present;
+    PlayerID[4] players;
+    Map<PlayerID, int> seats;
+    Map<PlayerID, Entity> participants;
+    RoundPhase phase;
+    MatchMode mode = MatchMode.FreeForAll;
+    bool couch;
+    bool bots = true;
+    int hostSeat = -1;
+    int round;
+    int map;
+    int carrier = -1;
+    float2 jewel;
+    float jewelWait;
+    float charge;
+    float clock = 90;
+    float countdown;
+    int exit;
+    float exitClock = 12;
+    int winner = -1;
+    bool overtime;
+}
+component Participant { int seat; }
+component Figure { int seat; [Position] float2 position; float2 facing; }
+scene Main { }
+event HeistSound { HeistCue kind; float2 position; int seat; int amount; }
+command Deal { int mode; bool couch; bool bots = true; }
+command ReturnToLobby { }
+
+local singleton TouchHand { float2 move; bool dash; bool bluff; }
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    bool dash;
+    bool bluff;
+    [Clamp(-1, 1)] float2 second;
+    bool secondDash;
+    bool secondBluff;
+    Sample(Devices devices, Lobby lobby, TouchHand touch)
+    {
+        if (!lobby.playing) return;
+        var pad = devices.gamepad;
+        move = float2((devices.keyboard.d.pressed ? 1 : 0) - (devices.keyboard.a.pressed ? 1 : 0),
+                      (devices.keyboard.s.pressed ? 1 : 0) - (devices.keyboard.w.pressed ? 1 : 0));
+        move += float2(pad.leftStick.x, -pad.leftStick.y) + touch.move;
+        dash = devices.keyboard.space.pressed || pad.buttonSouth.pressed || touch.dash;
+        bluff = devices.keyboard.e.pressed || pad.buttonWest.pressed || touch.bluff;
+        second = float2((devices.keyboard.rightArrow.pressed ? 1 : 0) - (devices.keyboard.leftArrow.pressed ? 1 : 0),
+                        (devices.keyboard.downArrow.pressed ? 1 : 0) - (devices.keyboard.upArrow.pressed ? 1 : 0));
+        secondDash = devices.keyboard.rightShift.pressed;
+        secondBluff = devices.keyboard.enter.pressed;
+    }
+    Sanitize()
+    {
+        if (Math.LengthSq(move) > 1) move = Math.Normalize(move);
+        if (Math.LengthSq(second) > 1) second = Math.Normalize(second);
+    }
+}
+
+int SeatOf(Heist heist, PlayerID player)
+{
+    return heist.seats.Has(player) ? heist.seats[player] : -1;
+}
+int CountSeats(Heist heist) { return heist.mode == MatchMode.Duel ? 2 : 4; }
+bool Human(Heist heist, int seat) { return heist.present[seat] || (heist.couch && seat == 1); }
+bool Active(Heist heist, int seat) { return seat < CountSeats(heist) && (Human(heist, seat) || heist.bots); }
+bool Allied(Heist heist, int a, int b) { return heist.mode == MatchMode.Teams && a % 2 == b % 2; }
+int Value(Heist heist) { return Math.Min(8, 2 + int(heist.charge / 3)); }
+float2 ExitAt(int exit)
+{
+    return exit == 0 ? float2(-390, -190) : exit == 1 ? float2(390, -190) : exit == 2 ? float2(390, 190) : float2(-390, 190);
+}
+float2 SpawnAt(int seat)
+{
+    return seat == 0 ? float2(-325, 0) : seat == 1 ? float2(325, 0) : seat == 2 ? float2(0, -195) : float2(0, 195);
+}
+Rect BlockAt(int map, int block)
+{
+    var x = block % 2 == 0 ? -180.0 : 180.0;
+    var y = block < 2 ? -105.0 : 105.0;
+    if (map == 1) return Rect(x - 29, y - 52, 58, 104);
+    if (map == 2) return Rect(x - 64, y - 20, 128, 40);
+    return Rect(x - 46, y - 32, 92, 64);
+}
+bool Inside(float2 at, Rect rect, float margin)
+{
+    return at.x > rect.x - margin && at.x < rect.x + rect.width + margin
+        && at.y > rect.y - margin && at.y < rect.y + rect.height + margin;
+}
+float2 Bound(float2 at) { return Math.Clamp(at, float2(-435, -235), float2(435, 235)); }
+float2 Walk(int map, float2 from, float2 delta)
+{
+    mut var at = Bound(from + float2(delta.x, 0));
+    for (var b = 0; b < 4; b++)
+        if (Inside(at, BlockAt(map, b), 17)) at.x = from.x;
+    var y = Bound(at + float2(0, delta.y));
+    for (var b = 0; b < 4; b++)
+        if (Inside(y, BlockAt(map, b), 17)) return at;
+    return y;
+}
+bool RouteClear(int map, float2 from, float2 to)
+{
+    var delta = to - from;
+    for (var b = 0; b < 4; b++)
+    {
+        var rect = BlockAt(map, b);
+        mut var low = 0.0;
+        mut var high = 1.0;
+        var min = float2(rect.x - 24, rect.y - 24);
+        var max = min + float2(rect.width + 48, rect.height + 48);
+        if (Math.Abs(delta.x) < 0.001)
+        {
+            if (from.x <= min.x || from.x >= max.x) continue;
+        }
+        else
+        {
+            var t0 = (min.x - from.x) / delta.x;
+            var t1 = (max.x - from.x) / delta.x;
+            low = Math.Max(low, Math.Min(t0, t1));
+            high = Math.Min(high, Math.Max(t0, t1));
+        }
+        if (Math.Abs(delta.y) < 0.001)
+        {
+            if (from.y <= min.y || from.y >= max.y) continue;
+        }
+        else
+        {
+            var t0 = (min.y - from.y) / delta.y;
+            var t1 = (max.y - from.y) / delta.y;
+            low = Math.Max(low, Math.Min(t0, t1));
+            high = Math.Min(high, Math.Max(t0, t1));
+        }
+        if (low < high) return false;
+    }
+    return true;
+}
+float2 Navigate(int map, float2 from, float2 target)
+{
+    if (RouteClear(map, from, target)) return target;
+    mut float2[18] points = default;
+    mut float[18] distance = default;
+    mut int[18] previous = default;
+    mut bool[18] visited = default;
+    points[0] = from;
+    points[1] = target;
+    for (var n = 2; n < 18; n++)
+    {
+        var rect = BlockAt(map, (n - 2) / 4);
+        var corner = (n - 2) % 4;
+        points[n] = float2(rect.x + (corner % 2 == 0 ? -31 : rect.width + 31), rect.y + (corner < 2 ? -31 : rect.height + 31));
+    }
+    for (var n = 0; n < 18; n++) { distance[n] = n == 0 ? 0.0 : 1000000.0; previous[n] = -1; }
+    for (var iteration = 0; iteration < 18; iteration++)
+    {
+        mut var nearest = -1;
+        mut var best = 1000000.0;
+        for (var n = 0; n < 18; n++)
+            if (!visited[n] && distance[n] < best) { nearest = n; best = distance[n]; }
+        if (nearest < 0 || nearest == 1) break;
+        visited[nearest] = true;
+        for (var n = 1; n < 18; n++)
+        {
+            if (visited[n] || n == nearest || !RouteClear(map, points[nearest], points[n])) continue;
+            var cost = best + Math.Distance(points[nearest], points[n]);
+            if (cost >= distance[n]) continue;
+            distance[n] = cost;
+            previous[n] = nearest;
+        }
+    }
+    mut var next = 1;
+    for (var guard = 0; guard < 18; guard++)
+    {
+        if (previous[next] <= 0) break;
+        next = previous[next];
+    }
+    return previous[next] == 0 ? points[next] : target;
+}
+
+void ResetRound(mut Heist heist, MatchMode mode, bool couch, bool bots)
+{
+    heist.mode = mode;
+    heist.couch = couch;
+    heist.bots = bots;
+    heist.round++;
+    heist.map = (heist.round - 1) % 3;
+    heist.carrier = -1;
+    heist.jewel = float2(0);
+    heist.jewelWait = 0;
+    heist.charge = 0;
+    heist.clock = 90;
+    heist.exit = (heist.round - 1) % 4;
+    heist.exitClock = 12;
+    heist.countdown = 3;
+    heist.phase = RoundPhase.Countdown;
+    heist.winner = -1;
+    heist.overtime = false;
+    for (var s = 0; s < 4; s++)
+    {
+        heist.thieves[s] = Thief { position = SpawnAt(s), facing = Math.Normalize(-SpawnAt(s)) };
+        heist.replicas[s] = Replica { };
+    }
+}
+
+event(Spawned) Setup(mut Heist heist, with Main)
+{
+    for (var s = 0; s < 4; s++)
+    {
+        heist.thieves[s].position = SpawnAt(s);
+        Spawn(Figure { seat = s, position = SpawnAt(s) });
+    }
+}
+event(PlayerJoined joined) Arrive(mut Heist heist)
+{
+    if (heist.seats.Has(joined.player)) return;
+    mut var seat = -1;
+    for (var s = 0; s < 4; s++)
+        if (!heist.present[s] && !(heist.couch && s == 1) && seat < 0) seat = s;
+    if (seat < 0) return;
+    heist.present[seat] = true;
+    if (seat >= 2 && heist.mode == MatchMode.Duel) heist.mode = MatchMode.FreeForAll;
+    heist.players[seat] = joined.player;
+    heist.seats[joined.player] = seat;
+    heist.participants[joined.player] = Spawn(Participant { seat = seat }, Owner { player = joined.player });
+    if (heist.hostSeat < 0) heist.hostSeat = seat;
+}
+event(PlayerLeft left) Depart(mut Heist heist)
+{
+    if (!heist.seats.TryGet(left.player, out var seat)) return;
+    if (heist.participants.TryGet(left.player, out var entity)) entity.Destroy();
+    heist.participants.Remove(left.player);
+    heist.seats.Remove(left.player);
+    heist.present[seat] = false;
+    heist.thieves[seat].intent = Intent { };
+    if (heist.carrier == seat)
+    {
+        heist.carrier = -1;
+        heist.jewel = heist.thieves[seat].position;
+    }
+    if (heist.hostSeat != seat) return;
+    heist.hostSeat = -1;
+    for (var s = 0; s < 4; s++)
+        if (heist.present[s] && heist.hostSeat < 0) heist.hostSeat = s;
+}
+command(Deal deal, PlayerID sender) StartHeist(mut Heist heist)
+{
+    if (SeatOf(heist, sender) != heist.hostSeat || heist.hostSeat < 0) return;
+    if (deal.mode < 0 || deal.mode > 2) return;
+    // A room with three or four humans cannot silently bench them for a duel.
+    if (deal.mode == 0 && (heist.present[2] || heist.present[3])) return;
+    if (deal.couch && heist.present[1]) return;
+    ResetRound(heist, MatchMode(deal.mode), deal.couch, deal.bots);
+}
+command(ReturnToLobby back, PlayerID sender) ReadyAgain(mut Heist heist)
+{
+    if (SeatOf(heist, sender) != heist.hostSeat || heist.hostSeat < 0) return;
+    heist.phase = RoundPhase.Ready;
+    heist.couch = false;
+}
+
+[Stage(SimStage.Input)]
+system ReadHands(Controls input, Participant participant, mut Heist heist, with Owner)
+{
+    var s = participant.seat;
+    heist.thieves[s].intent = Intent { move = input.move, dash = input.dash.down, bluff = input.bluff.down };
+    if (heist.couch && s == heist.hostSeat)
+        heist.thieves[1].intent = Intent { move = input.second, dash = input.secondDash.down, bluff = input.secondBluff.down };
+}
+
+Intent BotIntent(mut Heist heist, int seat, float dt)
+{
+    var me = heist.thieves[seat];
+    mut var target = heist.carrier < 0 ? heist.jewel : heist.thieves[heist.carrier].position;
+    mut var chasing = heist.carrier >= 0 && heist.carrier != seat && !Allied(heist, seat, heist.carrier);
+    if (heist.carrier == seat) target = ExitAt(heist.exit);
+    else if (heist.carrier >= 0 && Allied(heist, seat, heist.carrier))
+    {
+        target = heist.thieves[heist.carrier].position + float2(seat % 2 == 0 ? -65 : 65, 50);
+        for (var enemy = 0; enemy < 4; enemy++)
+            if (Active(heist, enemy) && !Allied(heist, seat, enemy) && Math.Distance(me.position, heist.thieves[enemy].position) < 150)
+            { target = heist.thieves[enemy].position; chasing = true; }
+    }
+    // A plausible nearer replica is a target until its collision reveals the trick.
+    if (chasing)
+        for (var r = 0; r < 4; r++)
+            if (r != seat && heist.replicas[r].life > 0 && heist.replicas[r].jewel && !Allied(heist, seat, r)
+                && Math.Distance(me.position, heist.replicas[r].position) < Math.Distance(me.position, target) * 1.25)
+                target = heist.replicas[r].position;
+    heist.thieves[seat].navigation -= dt;
+    if (heist.thieves[seat].navigation <= 0 || Math.Distance(me.position, me.waypoint) < 10 || Math.Distance(me.goal, target) > 70)
+    {
+        heist.thieves[seat].waypoint = Navigate(heist.map, me.position, target);
+        heist.thieves[seat].goal = target;
+        heist.thieves[seat].navigation = 0.3;
+    }
+    var next = heist.thieves[seat].waypoint;
+    var far = Math.Distance(me.position, target);
+    mut var direction = Math.Normalize(next - me.position);
+    if (far < 12) direction = float2(0);
+    mut var closeEnemy = false;
+    for (var s = 0; s < 4; s++)
+        if (s != seat && Active(heist, s) && !Allied(heist, s, seat) && Math.Distance(me.position, heist.thieves[s].position) < 160)
+            closeEnemy = true;
+    return Intent {
+        move = direction,
+        dash = me.dashCooldown <= 0 && RouteClear(heist.map, me.position, target) && ((chasing && far < 140) || (heist.carrier == seat && far > 90 && closeEnemy)),
+        bluff = heist.carrier == seat && closeEnemy && me.bluffCooldown <= 0
+    };
+}
+
+void Signal(HeistCue kind, float2 position, int seat, int amount = 0)
+{
+    Send(HeistSound { kind = kind, position = position, seat = seat, amount = amount });
+}
+void StepThief(mut Heist heist, int s, float dt)
+{
+    mut var me = heist.thieves[s];
+    me.dashCooldown = Math.Max(0, me.dashCooldown - dt);
+    me.bluffCooldown = Math.Max(0, me.bluffCooldown - dt);
+    me.cloak = Math.Max(0, me.cloak - dt);
+    me.stun = Math.Max(0, me.stun - dt);
+    me.safe = Math.Max(0, me.safe - dt);
+    var move = me.intent.move;
+    if (me.dashTime <= 0 && Math.LengthSq(move) > 0.05) me.facing = Math.Normalize(move);
+    if (me.intent.bluff && me.bluffCooldown <= 0 && me.stun <= 0)
+    {
+        heist.replicas[s] = Replica { position = me.position, direction = me.facing, life = 2.6, jewel = heist.carrier == s };
+        me.bluffCooldown = 5.5;
+        me.cloak = 1.0;
+        Signal(HeistCue.Bluff, me.position, s);
+    }
+    if (me.intent.dash && me.dashCooldown <= 0 && me.stun <= 0)
+    {
+        me.dashTime = 0.17;
+        me.dashCooldown = 1.35;
+        Signal(HeistCue.Dash, me.position, s);
+    }
+    var speed = heist.carrier == s ? 188.0 : 225.0;
+    var velocity = me.dashTime > 0 ? me.facing * 860 : me.stun > 0 ? float2(0) : move * speed;
+    me.position = Walk(heist.map, me.position, (velocity + me.push) * dt);
+    me.push *= Math.Max(0, 1 - dt * 9);
+    me.dashTime = Math.Max(0, me.dashTime - dt);
+    heist.thieves[s] = me;
+}
+void Collide(mut Heist heist)
+{
+    for (var s = 0; s < 4; s++)
+    {
+        if (!Active(heist, s)) continue;
+        for (var r = 0; r < 4; r++)
+        {
+            if (r == s || Allied(heist, s, r) || heist.replicas[r].life <= 0) continue;
+            if (heist.thieves[s].dashTime <= 0 || Math.Distance(heist.thieves[s].position, heist.replicas[r].position) >= 35) continue;
+            heist.replicas[r].life = 0;
+            heist.thieves[s].dashTime = 0;
+            heist.thieves[s].stun = 0.65;
+            heist.thieves[r].fooled++;
+            Signal(HeistCue.Fooled, heist.thieves[s].position, s);
+        }
+        for (var other = s + 1; other < 4; other++)
+        {
+            if (!Active(heist, other)) continue;
+            var delta = heist.thieves[other].position - heist.thieves[s].position;
+            var distance = Math.Length(delta);
+            if (distance >= 34) continue;
+            var normal = distance > 0.001 ? delta / distance : float2(1, 0);
+            var dashS = heist.thieves[s].dashTime > 0;
+            var dashO = heist.thieves[other].dashTime > 0;
+            if (!Allied(heist, s, other) && (dashS || dashO))
+            {
+                var attacker = dashS ? s : other;
+                var victim = dashS ? other : s;
+                if (heist.thieves[victim].safe <= 0)
+                {
+                    heist.thieves[victim].push = (dashS ? normal : -normal) * 420;
+                    heist.thieves[victim].stun = 0.40;
+                    heist.thieves[victim].safe = 0.6;
+                    heist.thieves[attacker].dashTime = 0;
+                    if (heist.carrier == victim)
+                    {
+                        heist.carrier = attacker;
+                        heist.thieves[attacker].safe = 0.65;
+                        heist.thieves[attacker].steals++;
+                        heist.thieves[victim].banking = 0;
+                        heist.thieves[attacker].cloak = 0;
+                        Signal(HeistCue.Steal, heist.thieves[attacker].position, attacker, Value(heist));
+                    }
+                }
+            }
+            var separate = normal * (34 - distance) * 0.5;
+            heist.thieves[s].position = Walk(heist.map, heist.thieves[s].position, -separate);
+            heist.thieves[other].position = Walk(heist.map, heist.thieves[other].position, separate);
+        }
+    }
+}
+int ScoreOf(Heist heist, int s)
+{
+    return heist.mode == MatchMode.Teams ? heist.thieves[s % 2].score + heist.thieves[s % 2 + 2].score : heist.thieves[s].score;
+}
+int Leader(Heist heist)
+{
+    mut var best = -1;
+    mut var score = -1;
+    mut var tied = false;
+    for (var s = 0; s < (heist.mode == MatchMode.Teams ? 2 : CountSeats(heist)); s++)
+    {
+        if (!Active(heist, s) && heist.mode != MatchMode.Teams) continue;
+        var value = ScoreOf(heist, s);
+        if (value > score) { best = s; score = value; tied = false; }
+        else if (value == score) tied = true;
+    }
+    return tied ? -1 : best;
+}
+void EndHeist(mut Heist heist)
+{
+    heist.winner = Leader(heist);
+    heist.phase = RoundPhase.Finished;
+    Signal(HeistCue.Finish, float2(0), heist.winner);
+}
+
+[Stage(SimStage.Play)]
+system Play(mut Heist heist, Time time)
+{
+    var dt = time.dt;
+    if (heist.phase == RoundPhase.Ready || heist.phase == RoundPhase.Finished) return;
+    if (heist.phase == RoundPhase.Countdown)
+    {
+        heist.countdown -= dt;
+        if (heist.countdown <= 0) heist.phase = RoundPhase.Playing;
+        return;
+    }
+    heist.clock = Math.Max(0, heist.clock - dt);
+    heist.exitClock -= dt;
+    if (heist.exitClock <= 0)
+    {
+        heist.exit = (heist.exit + (heist.map == 1 ? 3 : 1)) % 4;
+        heist.exitClock += 12;
+        Signal(HeistCue.Exit, ExitAt(heist.exit), -1);
+    }
+    for (var s = 0; s < 4; s++)
+    {
+        if (heist.replicas[s].life > 0)
+        {
+            heist.replicas[s].life = Math.Max(0, heist.replicas[s].life - dt);
+            heist.replicas[s].position = Walk(heist.map, heist.replicas[s].position, heist.replicas[s].direction * 235 * dt);
+        }
+        if (!Active(heist, s)) continue;
+        if (!Human(heist, s)) heist.thieves[s].intent = BotIntent(heist, s, dt);
+        StepThief(heist, s, dt);
+    }
+    Collide(heist);
+    heist.jewelWait = Math.Max(0, heist.jewelWait - dt);
+    if (heist.carrier < 0 && heist.jewelWait <= 0)
+        for (var s = 0; s < 4; s++)
+            if (Active(heist, s) && heist.thieves[s].stun <= 0 && Math.Distance(heist.thieves[s].position, heist.jewel) < 32)
+            {
+                heist.carrier = s;
+                heist.thieves[s].safe = 0.3;
+                Signal(HeistCue.Pickup, heist.jewel, s);
+                break;
+            }
+    for (var s = 0; s < 4; s++)
+        if (heist.carrier != s) heist.thieves[s].banking = 0;
+    if (heist.carrier >= 0)
+    {
+        var s = heist.carrier;
+        heist.charge += dt;
+        heist.jewel = heist.thieves[s].position;
+        if (Math.Distance(heist.jewel, ExitAt(heist.exit)) < 42 && heist.thieves[s].stun <= 0 && heist.thieves[s].dashTime <= 0)
+            heist.thieves[s].banking += dt;
+        else heist.thieves[s].banking = 0;
+        if (heist.thieves[s].banking >= 0.65)
+        {
+            var value = Value(heist);
+            heist.thieves[s].score += value;
+            Signal(HeistCue.Bank, heist.jewel, s, value);
+            heist.carrier = -1;
+            heist.jewel = float2(0);
+            heist.jewelWait = 1.2;
+            heist.charge = 0;
+            heist.thieves[s].banking = 0;
+            if (heist.overtime && Leader(heist) >= 0) EndHeist(heist);
+        }
+    }
+    if (heist.clock <= 0 && heist.phase == RoundPhase.Playing)
+    {
+        if (Leader(heist) >= 0) EndHeist(heist);
+        else heist.overtime = true;
+    }
+}
+[Stage(SimStage.Mirror)]
+system Mirror(mut Figure figure, Heist heist)
+{
+    figure.position = heist.thieves[figure.seat].position;
+    figure.facing = heist.thieves[figure.seat].facing;
+}
