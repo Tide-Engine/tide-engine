@@ -1,5 +1,14 @@
 # The docs site
 
+SWINDLE catalog addition (2026-10-13): the owner's competitive heist demo adds
+`swindle` to the server-only catalog, public root and outside-root asset gates.
+`swindle_page` stages its self-contained page and gameplay thumbnail under
+`/prototypes/swindle/`, collected by `private_games`. Admin and production HTTP
+tests include the id and retain omission from Samples/search/sitemap. Rules,
+native/web play evidence and packaging are recorded in `notes/swindle.md`.
+Site check has zero errors/warnings; eighteen analytics/admin tests, production
+build and prototype HTTP test pass with Node 24.21.0. No deployment or CI.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog

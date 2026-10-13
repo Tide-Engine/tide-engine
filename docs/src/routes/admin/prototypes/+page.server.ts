@@ -6,6 +6,11 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'swindle', title: 'SWINDLE', kind: 'Competitive heist · Bluff and steal', players: '1–4 players',
+        description: 'A very civil rooftop robbery. Steal a prism whose value grows while you carry it, dash into a friend to snatch it, and send a fake carrier running while you vanish. Cash out at the moving getaway. Ninety-second duels, free-for-all and two-versus-two, with bots, friend rooms and same-keyboard play.',
+        image: '/prototypes/swindle/thumbnail.png',
+    },
+    {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
         description: 'Fold space together in a sunlit research atrium. Place linked portals, look through them into the other side, and carry a resonance cube across the divide. Play both operators alone or solve the chambers with a partner.',
         image: '/prototypes/foldline/thumbnail.png',
