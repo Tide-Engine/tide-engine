@@ -162,7 +162,6 @@ local singleton Control
 {
     int active;
     bool started;
-    int crisp;           // P: the picture's rows, 0 LINES, 1 SOFT_LINES, 2 the window's own
     float sensitivity = 0.003;
 }
 
@@ -211,8 +210,8 @@ const float EYE_HIGH = 1.55;
 const float CUBE_SIDE = 0.74;
 const float CEILING_HIGH = 4.4;
 const int PILLARS = 2;
-const int BETWEEN = 5;       // The stretch between rooms: a maze where no fold goes, and something in it
-const int CHAMBERS = 6;
+const int BETWEEN = 6;       // The stretch between rooms: a maze where no fold goes, and something in it
+const int CHAMBERS = 7;
 const float RIDE = 1.3;
 const float CAUGHT = 1.2;
 const float BLACKOUT_EVERY = 6.5;
@@ -228,19 +227,20 @@ const float CELL_LONG = 2.6;
 
 bool Pitted(int level)
 {
-    return level == 0 || level == 3 || level == 4;
+    return level == 0 || level == 2 || level == 4 || level == 5;
 }
 
 // What's at each depth: a room, then the stretch between it and the next.
 int LevelAt(int depth)
 {
-    switch (depth % 8)
+    switch (depth % 9)
     {
         case 0: return 0;
-        case 2: return 1;
+        case 1: return 1;
         case 3: return 2;
-        case 5: return 3;
+        case 4: return 3;
         case 6: return 4;
+        case 7: return 5;
         default: return BETWEEN;
     }
 }
@@ -294,7 +294,7 @@ int ThemeAt(int depth)
 
 int DepthOf(int level)
 {
-    for (var depth = 0; depth < 8; depth++)
+    for (var depth = 0; depth < 9; depth++)
         if (LevelAt(depth) == level) return depth;
     return 0;
 }
@@ -376,26 +376,28 @@ struct Mount
 
 int MountCount(int level)
 {
-    return level == 4 ? 2 : level == 2 || level == 3 ? 1 : 0;
+    return level == 3 || level == 5 ? 1 : 0;
 }
 
 Mount ChamberMount(int level, int index)
 {
-    var small = Mount { at = float3(9.8, FOLD_HALF_HIGH * SMALLEST, 1.5), face = float3(-1, 0, 0), size = SMALLEST };
-    if (level == 2) return small;
-    if (level == 3) return Mount { at = float3(-2.5, FOLD_HALF_HIGH * LARGEST, -13), face = float3(0, 0, 1), size = LARGEST };
-    if (index == 0) return Mount { at = float3(-9.8, FOLD_HALF_HIGH * SMALLEST, -3.5), face = float3(1, 0, 0), size = SMALLEST };
-    return Mount { at = float3(0.5, FOLD_HALF_HIGH * LARGEST, -13), face = float3(0, 0, 1), size = LARGEST };
+    if (level == 3) return Mount { at = float3(9.8, FOLD_HALF_HIGH * SMALLEST, 1.5), face = float3(-1, 0, 0), size = SMALLEST };
+    return Mount { at = float3(0.5, FOLD_HALF_HIGH * SMALLEST, -13), face = float3(0, 0, 1), size = SMALLEST };
 }
 
-// Each chamber is the same hall, 19.6 m by 26, with the way out through a
-// gate in its north wall, and its own floor, walls and rooms inside:
-// 0 a pit to fold across; 1 the two apart, behind a grille; 2 a room whose
-// only way in is a vent; 3 a pit only someone made larger jumps; 4 both.
+// Every room is in the same hall, 19.6 m by 26, come to by a lift in its
+// south wall and left by one in its north, and is its own inside:
+// 0 a pit to fold across. 1 two galleries too high to climb, a plate on each.
+// 2 a pool with something in it, and the cube up on a gallery. 3 a room
+// whose only way in is a vent, with both plates in it. 4 a trench with its
+// drums, and a plate on a gallery that's only seen from past them. 5 all of
+// it: the cube on a gallery, a cage only someone small gets into, and the
+// trench between.
 // Every gate takes two plates weighted at once, and the cube is one weight:
 // someone stands on the other, and is let through by whoever went first and
-// stands on the lobby's plate.
+// stands on the lift's plate.
 const float3 HOLD_PLATE = float3(0, 0.04, 16);
+const float GALLERY = 1.6;   // How high a gallery's floor is: past a jump, and with room over it for a fold
 
 // Everyone starts in the lift they came by.
 float3 OperatorStart(int level, int id)
@@ -407,10 +409,11 @@ float3 CubeStart(int level)
 {
     switch (level)
     {
-        case 1: return float3(-5, 0.5, -6);
-        case 2: return float3(0, 0.5, -6);
-        case 4: return float3(-7, 0.5, -11);
-        case 5: return float3(4.2, 0.5, -16.7);
+        case 1: return float3(0, 0.5, -6);
+        case 2: return float3(7.5, 2.0, -6);
+        case 3: return float3(0, 0.5, -6);
+        case 5: return float3(-7.5, 2.0, -9);
+        case 6: return float3(4.2, 0.5, -16.7);
         default: return float3(-3, 0.5, -8);
     }
 }
@@ -425,10 +428,11 @@ float3 PlatePosition(int level, int index)
     if (index >= PlateCount(level)) return float3(0, -50, 0);
     switch (level)
     {
-        case 0: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 8);
-        case 1: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 9.5);
-        case 2: return index == 0 ? float3(-4, 0.04, 9) : float3(7.5, 0.04, 10);
-        default: return index == 0 ? float3(5, 0.04, 8) : float3(-6, 0.04, 12);
+        case 1: return index == 0 ? float3(-7, GALLERY + 0.04, 6) : float3(7, GALLERY + 0.04, 9);
+        case 3: return index == 0 ? float3(6, 0.04, 10) : float3(8.5, 0.04, 8);
+        case 4: return index == 0 ? float3(5, 0.04, 8) : float3(-7.5, GALLERY + 0.04, 9);
+        case 5: return index == 0 ? float3(7, 0.04, 10) : float3(-5, 0.04, 8);
+        default: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 8);
     }
 }
 
@@ -438,9 +442,11 @@ float4 Pillar(int level, int index)
     switch (level)
     {
         case 0: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(6.8, 6, 0.45, 0.45);
-        case 1: return index == 0 ? float4(6.5, -6, 0.45, 0.45) : float4(7.5, 4, 0.45, 0.45);
-        case 2: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-6.5, 2, 0.45, 0.45);
-        default: return index == 0 ? float4(7, -9, 0.45, 0.45) : float4(7, 10.5, 0.45, 0.45);
+        case 1: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-1.5, 2, 0.45, 0.45);
+        case 2: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-7, 9.5, 0.45, 0.45);
+        case 3: return index == 0 ? float4(-6.6, -10.6, 0.45, 0.45) : float4(-6.5, 2, 0.45, 0.45);
+        case 4: return index == 0 ? float4(-2, -9, 0.45, 0.45) : float4(7, 10.5, 0.45, 0.45);
+        default: return index == 0 ? float4(1.5, -8, 0.45, 0.45) : float4(-6, 10, 0.45, 0.45);
     }
 }
 
@@ -535,7 +541,7 @@ bool AtMouth(Fold fold, int pair, float3 center, float reach)
 
 bool Weighs(float3 position, float3 plate)
 {
-    return position.y < 0.8 && Math.DistanceSq(position.xz, plate.xz) < 1.2;
+    return Math.Abs(position.y - plate.y) < 0.8 && Math.DistanceSq(position.xz, plate.xz) < 1.2;
 }
 
 // A box of the room, with its one piece.
@@ -546,7 +552,7 @@ Entity Raise(Arena arena, float3 center, float3 size, float paint, bool takes = 
     return wall;
 }
 
-// A chamber's boxes. Wallpaper takes a fold and concrete refuses one; a wall
+// A room's boxes. Wallpaper takes a fold and concrete refuses one; a wall
 // under 0.6 m thick takes none whatever it's papered with.
 void BuildChamber(mut Arena arena, int level)
 {
@@ -562,20 +568,20 @@ void BuildChamber(mut Arena arena, int level)
     var carpet = 13.0;
     var ceilingTile = 14.0;
 
-    // The hall: its ceiling, its walls, the lobby past the gate, and the gate.
-    var sides = level < 3;
-    var folds = level != BETWEEN;
+    // Which of the hall's walls take a fold. Its side walls are each two: this side of z 3.5 and past it.
+    var south = level != BETWEEN;
+    var westNear = level == 0 || level == 1 || level == 3 || level == 5;
+    var westFar = level == 0 || level == 1 || level == 3 || level == 4;
+    var eastNear = level == 0 || level == 1 || level == 2 || level == 3;
+    var eastFar = level == 0 || level == 1 || level == 3;
+    var north = level == 0 || level == 1 || level == 3;
     Raise(arena, float3(0, CEILING_HIGH + 0.5, 2.1), float3(21.6, 1, 32.2), ceilingTile, false, 2, 0.833);
-    if (level == 4)
-    {
-        // Only the stretch of the west wall this side of the pit takes a fold
-        Raise(arena, float3(-10.3, 1.2, -7.75), float3(1, 8.4, 12.5), wallpaper, true);
-        Raise(arena, float3(-10.3, 1.2, 6.25), float3(1, 8.4, 15.5), panels);
-    }
-    else Raise(arena, float3(-10.3, 1.2, 0), float3(1, 8.4, 28), sides ? wallpaper : panels, sides);
-    Raise(arena, float3(10.3, 1.2, 0), float3(1, 8.4, 28), sides ? wallpaper : panels, sides);
+    Raise(arena, float3(-10.3, 1.2, -5.25), float3(1, 8.4, 17.5), westNear ? wallpaper : panels, westNear);
+    Raise(arena, float3(-10.3, 1.2, 8.75), float3(1, 8.4, 10.5), westFar ? wallpaper : panels, westFar);
+    Raise(arena, float3(10.3, 1.2, -5.25), float3(1, 8.4, 17.5), eastNear ? wallpaper : panels, eastNear);
+    Raise(arena, float3(10.3, 1.2, 8.75), float3(1, 8.4, 10.5), eastFar ? wallpaper : panels, eastFar);
     // The south wall, with the way in from the lift they came by: its floor, walls, roof and door
-    Raise(arena, float3(-3.15, 1.2, -13.5), float3(13.3, 8.4, 1), folds ? wallpaper : concrete, folds);
+    Raise(arena, float3(-3.15, 1.2, -13.5), float3(13.3, 8.4, 1), south ? wallpaper : concrete, south);
     Raise(arena, float3(9.65, 1.2, -13.5), float3(0.3, 8.4, 1), panels);
     Raise(arena, float3(6.5, 4.2, -13.5), float3(6, 0.4, 1), panels);
     Raise(arena, float3(6.5, -0.5, -15.6), float3(6, 1, 3.2), concrete);
@@ -584,8 +590,9 @@ void BuildChamber(mut Arena arena, int level)
     Raise(arena, float3(6.5, 2.2, -17.7), float3(8, 4.4, 1), panels);
     Raise(arena, float3(6.5, CEILING_HIGH + 0.5, -16.1), float3(8, 1, 4.2), ceilingTile, false, 2, 0.833);
     Spawn(Door { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = float3(6.5, 2, -13.5) }, Box { size = float3(6, 4, 0.24) });
-    Raise(arena, float3(-6.4, 1.2, 13.5), float3(6.8, 8.4, 1), sides ? wallpaper : panels, sides);
-    Raise(arena, float3(6.4, 1.2, 13.5), float3(6.8, 8.4, 1), sides ? wallpaper : panels, sides);
+    // The north wall, and the lift they leave by
+    Raise(arena, float3(-6.4, 1.2, 13.5), float3(6.8, 8.4, 1), north ? wallpaper : panels, north);
+    Raise(arena, float3(6.4, 1.2, 13.5), float3(6.8, 8.4, 1), north ? wallpaper : panels, north);
     Raise(arena, float3(0, 4.2, 13.5), float3(6, 0.4, 1), panels);
     Raise(arena, float3(0, -0.5, 15.6), float3(6, 1, 3.2), concrete);
     Raise(arena, float3(-3.5, 2.2, 15.6), float3(1, 4.4, 3.2), panels);
@@ -593,28 +600,20 @@ void BuildChamber(mut Arena arena, int level)
     Raise(arena, float3(0, 2.2, 17.7), float3(8, 4.4, 1), panels);
     Spawn(Gate { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = float3(0, 2, 13.5) }, Box { size = float3(6, 4, 0.24) });
 
-    // The floor: whole, or with a pit across it that has no bottom.
-    if (level == 0)
+    // The floor: whole, or with a pit across it, which is what the place makes of it
+    var hazard = Hazard(level, arena.theme);
+    var middle = PitMiddle(level);
+    if (hazard > 0)
     {
-        Raise(arena, float3(0, -0.5, -8.75), float3(21.6, 1, 10.5), carpet);
-        Raise(arena, float3(0, -0.5, 7.75), float3(21.6, 1, 12.5), carpet);
-    }
-    else if (level == 3 || level == 4)
-    {
-        Raise(arena, float3(0, -0.5, -7.75), float3(21.6, 1, 12.5), carpet);
-        Raise(arena, float3(0, -0.5, 8.75), float3(21.6, 1, 10.5), carpet);
-        // A slab past the pit: concrete towards it, and paper on the side that can't be seen from there
-        Raise(arena, float3(-5.5, 2.2, 9.25), float3(5, 4.4, 0.5), panels);
-        Raise(arena, float3(-5.5, 2.2, 10), float3(5, 4.4, 1), wallpaper, true);
+        Raise(arena, float3(0, -0.5, (middle - 16.5) * 0.5), float3(21.6, 1, middle + 11.5), carpet);
+        Raise(arena, float3(0, -0.5, (middle + 16.5) * 0.5), float3(21.6, 1, 11.5 - middle), carpet);
     }
     else Raise(arena, float3(0, -0.5, 0), float3(21.6, 1, 28), carpet);
-    var hazard = Hazard(level, arena.theme);
     if (hazard >= 2)
     {
         // A pool or a trench: a floor, and a slope down to it from each side
         var deep = PitDeep(hazard);
         var run = PitRun(hazard);
-        var middle = PitMiddle(level);
         var slope = Math.Atan2(deep, run);
         Raise(arena, float3(0, -deep - 0.5, middle), float3(21.6, 1, 5), concrete);
         for (var side = -1; side <= 1; side += 2)
@@ -630,11 +629,16 @@ void BuildChamber(mut Arena arena, int level)
 
     if (level == 1)
     {
-        // A grille shuts the south-west of the hall off: seen through and shot through, and nothing else goes through
-        Raise(arena, float3(-1, 2.2, -3.6), float3(0.3, 4.4, 18.8), rust, false, 4);
-        Raise(arena, float3(-5.5, 2.2, 5.95), float3(8.7, 4.4, 0.3), rust, false, 4);
+        // A gallery along the west and one in the north-east, each too high to climb onto, with a plate on it
+        Raise(arena, float3(-6.9, GALLERY * 0.5, 5.5), float3(5.8, GALLERY, 15), panels);
+        Raise(arena, float3(6.9, GALLERY * 0.5, 8.5), float3(5.8, GALLERY, 9), panels);
     }
     if (level == 2)
+    {
+        // The cube's gallery, this side of the pool
+        Raise(arena, float3(7.65, GALLERY * 0.5, -6), float3(4.3, GALLERY, 6), panels);
+    }
+    if (level == 3)
     {
         // A room in the corner whose only way in is a vent a meter high, with a baffle behind it
         Raise(arena, float3(3.8, 2.2, 8.8), float3(0.4, 4.4, 8.4), panels);
@@ -645,14 +649,21 @@ void BuildChamber(mut Arena arena, int level)
     }
     if (level == 4)
     {
-        // The same room in the near corner, with the cube shut in it
-        Raise(arena, float3(-3.8, 2.2, -9.3), float3(0.4, 4.4, 7.4), panels);
-        Raise(arena, float3(-8.9, 2.2, -5.8), float3(1.8, 4.4, 0.4), panels);
-        Raise(arena, float3(-5.3, 2.2, -5.8), float3(3.4, 4.4, 0.4), panels);
-        Raise(arena, float3(-7.5, 2.7, -5.8), float3(1, 3.4, 0.4), panels);
-        Raise(arena, float3(-7.9, 0.8, -7.4), float3(3.8, 1.6, 0.4), rust);
+        // Past the trench a gallery with a plate on it, walled off from this side: the wall over it is only
+        // seen, and shot, from past the drums
+        Raise(arena, float3(-7.4, GALLERY * 0.5, 8.45), float3(4.8, GALLERY, 9.1), panels);
+        Raise(arena, float3(-7.4, 2.2, 3.7), float3(4.8, 4.4, 0.4), panels);
     }
-
+    if (level == 5)
+    {
+        // The cube's gallery this side of the trench, and past it a cage of bars round one plate, with a way
+        // in a meter square
+        Raise(arena, float3(-7.65, GALLERY * 0.5, -9), float3(4.3, GALLERY, 6), panels);
+        Raise(arena, float3(4, 2.2, 9.5), float3(0.3, 4.4, 7.3), rust, false, 4);
+        Raise(arena, float3(5, 2.2, 6), float3(2, 4.4, 0.3), rust, false, 4);
+        Raise(arena, float3(8.4, 2.2, 6), float3(2.8, 4.4, 0.3), rust, false, 4);
+        Raise(arena, float3(6.5, 2.7, 6), float3(1, 3.4, 0.3), rust, false, 4);
+    }
     if (level == BETWEEN)
     {
         // The maze: a wall on a cell's east or north side wherever its bit says
@@ -660,19 +671,19 @@ void BuildChamber(mut Arena arena, int level)
         {
             for (var column = 0; column < MAZE_WIDE; column++)
             {
-                var middle = CellMiddle(row * MAZE_WIDE + column);
+                var cell = CellMiddle(row * MAZE_WIDE + column);
                 if (!MazeOpen(row * MAZE_WIDE + column, 0) && column < MAZE_WIDE - 1)
-                    Raise(arena, middle + float3(CELL_WIDE * 0.5, 2.2, 0), float3(0.3, 4.4, CELL_LONG + 0.3), concrete);
+                    Raise(arena, cell + float3(CELL_WIDE * 0.5, 2.2, 0), float3(0.3, 4.4, CELL_LONG + 0.3), concrete);
                 if (!MazeOpen(row * MAZE_WIDE + column, 2) && row < MAZE_LONG - 1)
-                    Raise(arena, middle + float3(0, 2.2, CELL_LONG * 0.5), float3(CELL_WIDE + 0.3, 4.4, 0.3), concrete);
+                    Raise(arena, cell + float3(0, 2.2, CELL_LONG * 0.5), float3(CELL_WIDE + 0.3, 4.4, 0.3), concrete);
             }
         }
     }
 
-    // What stands about: planters, a crate, and the pillars.
-    if (level != 4 && level != BETWEEN) Raise(arena, float3(-9, 0.36, -11.5), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
-    if (level != BETWEEN) Raise(arena, float3(9, 0.36, -7), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
-    if (level != BETWEEN) Raise(arena, float3(-8.6, 0.45, 12.3), float3(0.9, 0.9, 0.9), planks, false, 3);
+    // What stands about, where a room has the floor for it: a planter each side, a crate, and the pillars
+    if (level == 0 || level == 1 || level == 3 || level == 4) Raise(arena, float3(-9, 0.36, -11.5), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
+    if (level == 0 || level == 1 || level == 3 || level == 5) Raise(arena, float3(9, 0.36, -7), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
+    if (level == 0 || level == 3) Raise(arena, float3(-8.6, 0.45, 12.3), float3(0.9, 0.9, 0.9), planks, false, 3);
     for (var pillar = 0; pillar < PILLARS && level != BETWEEN; pillar++)
     {
         var box = Pillar(level, pillar);

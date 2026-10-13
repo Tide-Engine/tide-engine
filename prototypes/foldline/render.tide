@@ -214,7 +214,7 @@ local singleton Lens
     float3 grade = float3(1, 1, 1);           // The place's cast over the whole picture
     RenderTarget reach; // How far off each pixel of the room is, in meters, for the red's fog
     Texture far;
-    float lines = 300; // The picture's rows: LINES, or the window's own with the big pixels off
+    float lines = 300; // The picture's rows: LINES
     bool made;
 }
 
@@ -223,7 +223,7 @@ const float SUN_WIDE = 28;
 const float SUN_LONG = 38;
 const float CEILING = 4.4;   // Where the lamps are
 const float LINES = 300;     // The picture's rows, whatever the window's are
-const float SOFT_LINES = 480; // A softer picture, to compare
+const float RENDER = 0.5;    // How much of the window's pixels the room is drawn at: the picture has fewer still
 const float SUN_SOFT = 1.1 / SUN_PIXELS;
 const int FOLD_PIXELS = 768;
 // A fold's opening: half as wide and half as high as this, its middle this far under its panel's, its corners
@@ -1042,24 +1042,26 @@ void MakeBlade(mut Optics optics, int along)
 
 void MakeOptics(mut Optics optics, mut Daylight day, mut Lens lens)
 {
-    optics.scene = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    // The picture is 300 rows whatever the window's, so the room is drawn at half the window's pixels, and what's
+    // seen through a fold at half and a quarter
+    optics.scene = RenderTarget.Window(RENDER, Format.Rgba16f, samples: 4);
     // Four ends' pictures, where two were: each a sample a pixel now, which the picture's big pixels hide
-    optics.first0 = RenderTarget.Window(1.0);
-    optics.first1 = RenderTarget.Window(1.0);
-    optics.first2 = RenderTarget.Window(1.0);
-    optics.first3 = RenderTarget.Window(1.0);
-    optics.deep0 = RenderTarget.Window(0.5);
-    optics.deep1 = RenderTarget.Window(0.5);
-    optics.deep2 = RenderTarget.Window(0.5);
-    optics.deep3 = RenderTarget.Window(0.5);
-    optics.cross0 = RenderTarget.Window(0.5);
-    optics.cross1 = RenderTarget.Window(0.5);
-    optics.cross2 = RenderTarget.Window(0.5);
-    optics.cross3 = RenderTarget.Window(0.5);
-    optics.cross4 = RenderTarget.Window(0.5);
-    optics.cross5 = RenderTarget.Window(0.5);
-    optics.cross6 = RenderTarget.Window(0.5);
-    optics.cross7 = RenderTarget.Window(0.5);
+    optics.first0 = RenderTarget.Window(RENDER);
+    optics.first1 = RenderTarget.Window(RENDER);
+    optics.first2 = RenderTarget.Window(RENDER);
+    optics.first3 = RenderTarget.Window(RENDER);
+    optics.deep0 = RenderTarget.Window(RENDER * 0.5);
+    optics.deep1 = RenderTarget.Window(RENDER * 0.5);
+    optics.deep2 = RenderTarget.Window(RENDER * 0.5);
+    optics.deep3 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross0 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross1 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross2 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross3 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross4 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross5 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross6 = RenderTarget.Window(RENDER * 0.5);
+    optics.cross7 = RenderTarget.Window(RENDER * 0.5);
     day.map = RenderTarget(SUN_PIXELS, SUN_PIXELS, 1, Format.Depth);
     day.depth = day.map.depth;
     day.fold0 = RenderTarget(FOLD_PIXELS, FOLD_PIXELS, 1, Format.Depth);
@@ -1195,7 +1197,7 @@ void Dress(mut Optics optics, int level, int theme)
             normal = float3(0, 0, 1);
             at = float3(door == 6 ? -6.2 : door == 7 ? 1.4 : 7.1, 1.05, -12.97);
         }
-        if ((level != 0 && level != 3) || door == 8 || theme != 0) continue;
+        if (level != 0 || door == 8) continue;
         if (door < 6 && Math.Abs(at.z) < 4.5) continue;
         quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
         optics.furnishings.Add(Faced(at + normal * .03, r, float3(.95, 2.1, .06), DOORS, 2));
@@ -1314,14 +1316,15 @@ void DressWall(mut Optics optics, Wall wall, int number, int theme)
         Color iron = Color(.13, .11, .10);
         bool along = wall.size.z > wall.size.x;
         float run = along ? wall.size.z : wall.size.x;
-        int bars = int(run / .34);
+        int bars = Math.Max(1, int(run / .34));
         for (int bar = 0; bar <= bars; bar++)
         {
             float offset = -run * .5 + bar * (run / bars);
             optics.furnishings.Add(Block(wall.center + (along ? float3(0, 0, offset) : float3(offset, 0, 0)), float3(.07, wall.size.y, .07), iron, 0, 0, .5));
         }
         for (int rail = 0; rail < 3; rail++)
-            optics.furnishings.Add(Block(float3(wall.center.x, .06 + rail * (wall.size.y - .12) * .5, wall.center.z), along ? float3(.11, .1, run) : float3(run, .1, .11), iron, 0, 0, .5));
+            optics.furnishings.Add(Block(float3(wall.center.x, wall.center.y - wall.size.y * .5 + .06 + rail * (wall.size.y - .12) * .5, wall.center.z),
+                                         along ? float3(.11, .1, run) : float3(run, .1, .11), iron, 0, 0, .5));
     }
     else if (wall.kind == 1 && theme == 1)
     {
@@ -1372,7 +1375,7 @@ void DressWall(mut Optics optics, Wall wall, int number, int theme)
 
 void WallDigit(mut Optics optics, int digit, float3 position)
 {
-    int mask = digit == 0 ? 63 : digit == 1 ? 6 : digit == 2 ? 91 : digit == 3 ? 79 : digit == 4 ? 102 : 109;
+    int mask = digit == 0 ? 63 : digit == 1 ? 6 : digit == 2 ? 91 : digit == 3 ? 79 : digit == 4 ? 102 : digit == 5 ? 109 : 125;
     for (int segment = 0; segment < 7; segment++)
     {
         if ((mask & (1 << segment)) == 0) continue;
@@ -1917,7 +1920,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         optics.walls = standing;
     }
     float dt = Math.Min(Frame.dt, .05);
-    lens.lines = control.crisp == 2 ? Screen.height : control.crisp == 1 ? Math.Min(SOFT_LINES, Screen.height) : LINES;
+    lens.lines = LINES;
     optics.phase += dt;
     if (optics.phase >= Math.TAU) optics.phase -= Math.TAU;
     optics.clock += dt;
@@ -2104,7 +2107,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         mut var target = optics.scene;
         mut float3 camera = eye;
         mut quaternion turned = rotation;
-        mut float2 pixels = window;
+        mut float2 pixels = window * RENDER;
         mut Sight sight = base;
         if (pass < 0)
         {
@@ -2112,14 +2115,14 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
                    : step == 4 ? optics.cross4 : step == 5 ? optics.cross5 : step == 6 ? optics.cross6 : optics.cross7;
             camera = FoldPoint(near, far, eyes[step / 2]);
             turned = FoldedRotation(near, far, turns[step / 2]);
-            pixels = window * .5;
+            pixels = window * (RENDER * .5);
         }
         else if (pass < 4)
         {
             target = through == 0 ? optics.deep0 : through == 1 ? optics.deep1 : through == 2 ? optics.deep2 : optics.deep3;
             camera = FoldPoint(near, far, eyes[through]);
             turned = FoldedRotation(near, far, turns[through]);
-            pixels = window * .5;
+            pixels = window * (RENDER * .5);
         }
         else if (pass < 8)
         {
@@ -2134,7 +2137,7 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
             sight.clipNormal = far.face;
             sight.clipped = true;
             sight.packed = true;
-            float part = pass < 4 ? .5 : 1.0;
+            float part = pass < 4 ? RENDER * .5 : RENDER;
             target.SetScreen();
             target.SetClip(Rect(rect.x * part, rect.y * part, rect.z * part, rect.w * part));
         }

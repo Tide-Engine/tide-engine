@@ -23,18 +23,19 @@ const Color UI_VIOLET = Color(0.62, 0.4, 1);
 string ChamberHint(int level)
 {
     return level switch {
-        0 => "Two plates open the gate, only while weighted. The plate past it holds it for whoever stayed.",
-        1 => "Apart. A shot goes between the bars. You don't.",
-        2 => "The vent is too low for you. A fold in the small frame is small, and so is who leaves by it.",
-        3 => "Too far to jump as you are. Who leaves by the large frame is large.",
-        4 => "The cube is shut in a room, and the plates are past the pit.",
+        0 => "Two plates open the gate, only while weighted. The plate in the lift holds it for whoever stayed.",
+        1 => "Too high to climb. A fold goes wherever on a wall you can see.",
+        2 => "Something is in the water. It goes for whatever went in last.",
+        3 => "The vent is too low for you. Who leaves by the small frame is small, and stays small.",
+        4 => "They don't stop. Go when they're past.",
+        5 => "The cube is up there. The plate is in there. The drums are between.",
         _ => "The device is dead down here. It only moves when neither of you is looking."
     };
 }
 
 string ChamberName(int level)
 {
-    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "APART", 2 => "SMALLER", 3 => "LARGER", 4 => "BOTH", _ => "BETWEEN" };
+    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "HIGH GROUND", 2 => "THE LURE", 3 => "SMALLER", 4 => "THE DRUMS", 5 => "ALL OF IT", _ => "BETWEEN" };
 }
 
 // One of the picture's big pixels, in the window's: what every edge and shadow here is a multiple of.
@@ -83,7 +84,6 @@ view InterfaceInput(Devices devices, Session session, Arena arena, mut Control c
     if (devices.keyboard.escape.down || (ui.looking && !Cursor.locked && !arena.complete)) ui.open = true;
     ui.looking = Cursor.locked;
     control.started = !ui.open && !arena.complete;
-    if (devices.keyboard.p.down) control.crisp = (control.crisp + 1) % 3;
     if (control.started) Cursor.Lock();
 }
 
@@ -143,10 +143,10 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     if (session.state == SessionState.Connected)
     {
         Ink("ROOM", float2(pad + 16, top + 196), 11, UI_MUTED, Anchor.UpperLeft);
-        for (var i = 0; i < 6; i++)
+        for (var i = 0; i < 7; i++)
         {
-            var slotWidth = (width - 40) / 6;
-            if (InterfaceChoice(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), i < 5 ? $"0{i + 1}" : "--", 18))
+            var slotWidth = (width - 48) / 7;
+            if (InterfaceChoice(Rect(pad + i * (slotWidth + 8), top + 211, slotWidth, 36), i < 6 ? $"0{i + 1}" : "--", 18))
             {
                 Send(SelectChamber { level = i });
                 ui.open = false;
@@ -237,9 +237,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     var hintWidth = Math.Min(680, Screen.width - 36);
     var hintY = Screen.height - (legend ? 62 : 34);
     Slab(Rect(middle.x - hintWidth * 0.5, hintY - 15, hintWidth, 30));
-    var hazard = Hazard(arena.level, arena.theme);
-    var hint = hazard == 2 ? "Something is in the water. It goes for whatever went in last." : hazard == 3 ? "They don't stop. Go when they're past." : ChamberHint(arena.level);
-    Ink(arena.gate > 0.9 && arena.level != BETWEEN ? "The lift is open. Both of you, in." : hint, float2(middle.x, hintY),
+    Ink(arena.gate > 0.9 && arena.level != BETWEEN ? "The lift is open. Both of you, in." : ChamberHint(arena.level), float2(middle.x, hintY),
         Math.Min(13, hintWidth / 50), UI_INK, Anchor.MiddleCenter);
     if (legend)
     {
