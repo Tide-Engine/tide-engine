@@ -1311,10 +1311,15 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
             float a = (roll & 1023) / 1023.0;
             float b = ((roll >> 10) & 1023) / 1023.0;
             float c = ((roll >> 20) & 1023) / 1023.0;
-            float3 root = float3(-9 + a * 18, -7.5, middle - 2 + b * 4);
-            float3 sway = float3(Math.Sin(optics.phase + a * 30), 0, Math.Cos(optics.phase * 2 + b * 30)) * .5;
-            Arm(optics, root, root + float3(0, 2.6 + c * 1.6 + Math.Sin(optics.phase * 2 + c * 20) * .25, 0) + sway, float3(Math.Cos(c * 9), 0, Math.Sin(c * 9)), 1.2, .5);
+            // Out of the red to the wrist or the elbow, groping
+            float3 root = float3(-9.2 + a * 18.4, PIT_SURFACE - 1.4, middle - 2.1 + b * 4.2);
+            float3 sway = float3(Math.Sin(optics.phase + a * 30), 0, Math.Cos(optics.phase * 2 + b * 30)) * .28;
+            float high = 1.55 + c * .75 + Math.Sin(optics.phase * 2 + c * 20) * .12;
+            Arm(optics, root, root + float3(0, high, 0) + sway, float3(Math.Cos(c * 9), 0, Math.Sin(c * 9)), 1.15, .35 + Math.Sin(optics.phase * 3 + a * 20) * .3);
         }
+        // The red itself, which hides how far down it goes
+        float swell = Math.Sin(optics.phase) * .02;
+        optics.dynamic.Add(Block(float3(0, PIT_SURFACE - .5 + swell, middle), float3(19.6, 1, 5), Color(.46, .015, .02), 0, .32, .95));
         Taken(optics, viewer);
         if (partner.id != viewer.id) Taken(optics, partner);
     }
@@ -1491,9 +1496,10 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
     float4x4 watcherPlace = float4x4.TRS(watcher.at, quaternion.Euler(0, watcher.yaw, 0), float3(FIGURE_SCALE * 1.12));
     Pose watcherPose = FigurePose(Operator { position = watcher.at, grounded = true }, optics.clock + 3.1);
     float caught = watcher.state == Watching.Lunging && watcher.victim == viewer.id && !ui.open ? 1 - Math.Saturate(watcher.timer / 0.75) * 0.6 : 0.0;
-    float gripped = viewer.taken > 0 && !ui.open ? Math.Saturate(viewer.taken / 0.3) * 0.75 : 0.0;
+    // In the grip the picture reddens, and under the surface it's all red
+    float gripped = ui.open ? 0.0 : viewer.taken > 0 && eye.y < PIT_SURFACE ? 1.0 : viewer.taken > 0 ? Math.Saturate(viewer.taken / 0.3) * 0.75 : 0.0;
     lens.scare = Math.Max(Math.Max(caught, gripped), lens.scare - dt * 2.5);
-    lens.under = ui.open ? 0.0 : Math.Saturate((viewer.taken - 0.7) / (TAKEN_FOR - 0.8));
+    lens.under = ui.open ? 0.0 : Math.Max(Math.Saturate((viewer.taken - 0.7) / (TAKEN_FOR - 0.8)), viewer.taken > 0 && eye.y < PIT_SURFACE ? 0.5 : 0.0);
 
     float2 window = float2(Screen.width, Screen.height);
     Color amberRim = Color(1, .64, .24);
