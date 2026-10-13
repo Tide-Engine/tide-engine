@@ -1899,14 +1899,32 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
                                          float2 % 4 < 2 ? Color(.85, .1, .08) : Color(.92, .92, .88)));
             }
         }
-        // A plate under the water is marked on it: four floats of its green over where it lies
+        // Submerged controls have a surface outline and a raised, two-sided C/D beacon.
         for (int plate = 0; plate < PlateCount(arena.level); plate++)
         {
             float3 under = PlatePosition(arena.level, plate);
-            if (under.y > -1) continue;
+            if (under.y >= POOL_SURFACE) continue;
+            bool pressed = plate == 0 ? arena.plateA : plate == 1 ? arena.plateB : plate == 2 ? arena.plateC : arena.plateD;
+            Color marker = Color(.45, 1, .3);
             for (int corner = 0; corner < 4; corner++)
                 optics.dynamic.Add(Block(float3(under.x + ((corner & 1) == 0 ? -.75 : .75), POOL_SURFACE + .05 + Math.Sin(optics.phase * 2 + corner) * .02, under.z + ((corner & 2) == 0 ? -.75 : .75)),
-                                         float3(.22, .14, .22), Color(.45, 1, .3), 0, arena.plateC ? 1.6 : .7));
+                                         float3(.3, .18, .3), marker, 0, pressed ? 1.6 : .9));
+            for (int side = -1; side <= 1; side += 2)
+            {
+                optics.dynamic.Add(Block(float3(under.x + side * .95, .35, under.z), float3(.08, 1.65, .08), steel));
+                optics.dynamic.Add(Block(float3(under.x + side * .75, POOL_SURFACE + .03, under.z), float3(.07, .06, 1.5), marker, 0, .9));
+                optics.dynamic.Add(Block(float3(under.x, POOL_SURFACE + .03, under.z + side * .75), float3(1.5, .06, .07), marker, 0, .9));
+            }
+            optics.dynamic.Add(Block(float3(under.x, .9, under.z), float3(1.9, .8, .12), steel));
+            for (int face = -1; face <= 1; face += 2)
+            {
+                float3 sign = float3(under.x, .95, under.z + face * .08);
+                optics.dynamic.Add(Block(sign + float3(face * .22, 0, 0), float3(.09, .48, .04), marker, 0, pressed ? 1.6 : .9));
+                optics.dynamic.Add(Block(sign + float3(0, .24, 0), float3(.5, .09, .04), marker, 0, .9));
+                optics.dynamic.Add(Block(sign + float3(0, -.24, 0), float3(.5, .09, .04), marker, 0, .9));
+                if (plate == 3) optics.dynamic.Add(Block(sign + float3(-face * .22, 0, 0), float3(.09, .48, .04), marker, 0, .9));
+                optics.dynamic.Add(Block(sign + float3(0, -.38, 0), float3(.08, .14, .04), marker, 0, .9));
+            }
         }
         // Someone it has: the water thrown about over them
         if (viewer.taken > 0 && int(viewer.taken / .24) != int((viewer.taken - Math.Min(Frame.dt, .05)) / .24)) Splash(optics, float3(viewer.position.x, POOL_SURFACE, viewer.position.z), 1.3);
