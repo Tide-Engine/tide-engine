@@ -16,9 +16,9 @@ recommendations: fixed sizes that apply to operators and the cube, walls that
 refuse a fold, floors and ceilings after the chambers, and a fold that can't
 be moved while something is in its mouth (the owner's own first option, over
 cutting or killing what's in it). Order agreed: (1) this section, (2) sizes,
-(3) five or six real chambers, (4) floor and ceiling folds. Only (1) is
-built; the three chambers are the old ones on the new floor and are still to
-be replaced. Where Match and controls below differs, this section is current.
+(3) five or six real chambers, (4) floor and ceiling folds. (1) to (3) are
+built; (4) is not. Where Match and controls below differs, this section is
+current.
 
 - **The room is Box3D's.** `Wall` is a box of the room (center, size, the
   renderer's paint, whether it takes folds, a kind for planters, ceilings and
@@ -100,9 +100,40 @@ be replaced. Where Match and controls below differs, this section is current.
 - Inside a hole the room's boxes are cut behind the opening's whole
   rectangle, its rounded corners too: the floor showed there as two patches
   either side of the sill.
+- **Five chambers (step 3, built the same day),** each for one thing the
+  folds do, in the order a player meets them. All are one hall, 19.6 m by
+  26 m, with the gate (6 m wide) in the north wall at z 13.5 and the lobby
+  past z 14.2; one plate each (`PlateCount`, `PlatePosition`; `Arena.plateB`
+  is kept for a second), the cube and both operators from `CubeStart` and
+  `OperatorStart`, the watcher's two corners from `Pillar`. `BuildChamber`
+  spawns the walls; the old bridge is gone.
+  1. *A shortcut through space:* a pit across the hall (z -3.5 to 1.5) with
+     the plate past it. Fold the south wall to one past the pit and carry
+     the cube through.
+  2. *Through the window:* the plate is in a cage on the west wall with only
+     a slit to see through. A fold goes where the shot lands, so one is shot
+     through the slit onto the wall inside.
+  3. *Smaller:* the plate is in a room whose only way in is a vent 1 m
+     square behind a baffle. An operator who walks out of a half end fits
+     it; the cube follows the same way.
+  4. *Larger:* a pit (z -1.5 to 3.5) that a whole operator can't jump, with
+     concrete on the walls beside and past it. An operator out of a large
+     end jumps it, and the slab past the pit takes a fold on its far side
+     only, for the cube and the other operator.
+  5. *Both:* the pit of 4, and the cube shut in a room behind a vent.
+  `test.c`'s `chambers_hold` holds what each relies on: the vent refuses a
+  whole operator and passes a half one round the baffle into the room; the
+  pit of 4 isn't jumped at size 1 and is at 1.5; its concrete refuses a
+  shot and the slab's far side takes one; a shot through the cage's slit
+  lands on the wall inside. No test plays a chamber from start to gate, and
+  nobody but these tests has played 3 to 5. 2/2 native and 3/3 web; replay
+  hash `4283102527126451263` natively and under WASI.
+- The number by the gate is drawn in segments 0.12 m thick: at 0.08 the
+  corner snapping lost half of them from across the hall.
 - **Known gaps:** a shot blocked by a planter fizzles where Portal would
-  nudge sideways; a lone end gives no light; the watcher's pillars and the
-  props are where they were.
+  nudge sideways; a lone end gives no light; the gate closing on a body
+  under it, two operators through one fold at once and the cube in a hole
+  when its fold is moved are unchecked.
 
 ## Match and controls
 
