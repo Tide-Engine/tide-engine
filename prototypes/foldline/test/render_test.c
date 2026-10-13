@@ -58,6 +58,16 @@ static float changed_center(const image *empty, const image *occupied)
     return count ? sum / (float)count : 0;
 }
 
+// The cube, where the renderer reads it: its own component, and the fold's copy of the first loose thing.
+static void cube_at(tide_float3 position)
+{
+    Cube cube = tide_get_Cube(&world, world.Arena.cube);
+    cube.at = position;
+    cube.turn = (tide_quaternion){0, 0, 0, 1};
+    check(tide_set_Cube(&world, world.Arena.cube, cube), "test cube exists");
+    world.Fold.cube = position;
+}
+
 static void operator_at(tide_entity entity, tide_float3 position, float yaw)
 {
     Operator body = tide_get_Operator(&world, entity);
@@ -108,7 +118,7 @@ static void prepare(float camera_x)
     // One end on the divider before the viewer, the other on the far room's side wall
     world.Fold.ends.at[0] = (Portal){.open = true, .at = {-5, 1.55f, 2.4f}, .face = {0, 0, -1}, .size = 1};
     world.Fold.ends.at[1] = (Portal){.open = true, .at = {-9.8f, 1.55f, 10}, .face = {1, 0, 0}, .size = 1};
-    world.Fold.cube = (tide_float3){-3, 0.5f, -8};
+    cube_at((tide_float3){-3, 0.5f, -8});
     world.Fold.cubeTurn = (tide_quaternion){0, 0, 0, 1};
     world.Fold.carried = -1;
 }
@@ -132,10 +142,10 @@ static int render_checks(void *user, float seconds)
     check(changed(&empty, &wall) >= 40, "a linked opening shows a different image from the solid source wall");
 
     prepare(-5);
-    world.Fold.cube = (tide_float3){-7, 1.55f, 10.6f};
+    cube_at((tide_float3){-7, 1.55f, 10.6f});
     record(&occupied);
     check(changed(&empty, &occupied) >= 8, "moving the cube beyond the exit updates the portal in the next drawn frame");
-    world.Fold.cube = (tide_float3){-7, 1.55f, 9.4f};
+    cube_at((tide_float3){-7, 1.55f, 9.4f});
     record(&moved);
     check(changed(&occupied, &moved) >= 8, "a cube moving sideways beyond the exit moves in the portal image");
 
@@ -147,7 +157,7 @@ static int render_checks(void *user, float seconds)
     // Geometry between the virtual eye and exit plane must be discarded. The cube is further behind the wall
     // than anything part of the way through a fold is, which would also be drawn at the fold's other end.
     prepare(-5);
-    world.Fold.cube = (tide_float3){-13, 1.55f, 10.6f};
+    cube_at((tide_float3){-13, 1.55f, 10.6f});
     record(&occupied);
     check(changed(&empty, &occupied) <= 4, "the exit plane clips a cube on the camera side of its wall");
 
@@ -155,12 +165,12 @@ static int render_checks(void *user, float seconds)
     // rather than sliding rigidly with a picture painted on the source wall.
     prepare(-5.5f);
     record(&empty);
-    world.Fold.cube = (tide_float3){-7, 1.55f, 10.6f};
+    cube_at((tide_float3){-7, 1.55f, 10.6f});
     record(&occupied);
     const float left_center = changed_center(&empty, &occupied);
     prepare(-4.5f);
     record(&empty);
-    world.Fold.cube = (tide_float3){-7, 1.55f, 10.6f};
+    cube_at((tide_float3){-7, 1.55f, 10.6f});
     record(&occupied);
     const float right_center = changed_center(&empty, &occupied);
     const float focal = HEIGHT * 0.5f / tide_tan_f(75 * TIDE_DEG2RAD_F * 0.5f);
