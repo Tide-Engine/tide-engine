@@ -7,17 +7,8 @@
     fprintf(stderr, "FOLDLINE check failed: %s (%s:%d)\n", #value, __FILE__, __LINE__); \
     exit(1); } } while (0)
 
-static const tide_float3 panels[6] = {
-    {-9.8f, 1.5f, -6}, {9.8f, 1.5f, -6},
-    {-9.8f, 1.5f, 10}, {9.8f, 1.5f, 10},
-    {-5, 1.5f, 2.8f}, {5, 1.5f, 3.2f}
-};
-static const tide_float3 normals[6] = {
-    {1, 0, 0}, {-1, 0, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 0, -1}, {0, 0, 1}
-};
-
 static tide_player_id player(int index) { return tide_player_from_index(index); }
-static bool near(float a, float b) { return fabsf(a - b) < 0.002f; }
+static bool near(float a, float b, float within) { return fabsf(a - b) < within; }
 
 static void start(tide_world *world)
 {
@@ -40,16 +31,34 @@ static void ticks(tide_world *world, int count)
     for (int i = 0; i < count; i++) tide_world_tick(world);
 }
 
-static void place(tide_world *world, int id, tide_float3 position, float yaw)
+static Operator pilot(const tide_world *world, int id)
 {
-    tide_entity entity = id == 0 ? world->Arena.op0 : world->Arena.op1;
-    Operator body = tide_get_Operator(world, entity);
-    body.position = position;
-    body.yaw = yaw;
-    body.pitch = 0;
+    return tide_get_Operator(world, id == 0 ? world->Arena.op0 : world->Arena.op1);
+}
+
+// An operator standing at a place on the floor, looking a way.
+static void place(tide_world *world, int id, tide_float3 feet, float yaw, float pitch)
+{
+    const tide_entity entity = id == 0 ? world->Arena.op0 : world->Arena.op1;
+    Operator seen = tide_get_Operator(world, entity);
+    Box3D_Body body = tide_get_Box3D_Body(world, entity);
+    body.position = (tide_float3){feet.x, feet.y + 0.9f, feet.z};
     body.velocity = (tide_float3){0};
-    body.portalCooldown = 0;
-    CHECK(tide_set_Operator(world, entity, body));
+    seen.position = feet;
+    seen.last = body.position;
+    seen.yaw = yaw;
+    seen.pitch = pitch;
+    CHECK(tide_set_Operator(world, entity, seen));
+    CHECK(tide_set_Box3D_Body(world, entity, body));
+}
+
+// A key pressed for one tick, then let go for another.
+static void press(tide_world *world, PilotInput controls)
+{
+    input(world, 0, controls);
+    tide_world_tick(world);
+    input(world, 0, (PilotInput){0});
+    tide_world_tick(world);
 }
 
 static void choose(tide_world *world, int sender, int level)
@@ -71,210 +80,137 @@ static void ownership_and_movement(void)
     start(&world);
     CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op0).player, player(0)));
     CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op1).player, player(0)));
-    input(&world, 0, (PilotInput){.active = 1, .move = {0, 1}});
     ticks(&world, 30);
-    CHECK(near(tide_get_Operator(&world, world.Arena.op0).position.z, -9));
-    CHECK(tide_get_Operator(&world, world.Arena.op1).position.z > -7);
-    input(&world, 0, (PilotInput){0});
+    // Standing on the floor, which is Box3D's
+    CHECK(near(pilot(&world, 0).position.y, 0, 0.03f) && pilot(&world, 0).grounded);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 60);
+    CHECK(pilot(&world, 0).position.z > -6.5f);
+    CHECK(near(pilot(&world, 1).position.z, -9, 0.05f)); // Alone, the other body stays where it's left
+    // The gate in the doorway stops a walk
+    ticks(&world, 400);
+    CHECK(pilot(&world, 0).position.z < 2.7f && pilot(&world, 0).position.z > 2.3f);
+    input(&world, 0, (PilotInput){.jump = true});
+    ticks(&world, 8);
+    CHECK(pilot(&world, 0).position.y > 0.3f);
     tide_world_player_joined(&world, player(1));
     tide_world_tick(&world);
     CHECK(world.Arena.joined == 2);
     CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op1).player, player(1)));
-    const float before = tide_get_Operator(&world, world.Arena.op1).position.x;
-    input(&world, 1, (PilotInput){.active = 0, .move = {1, 0}});
-    ticks(&world, 30);
-    CHECK(tide_get_Operator(&world, world.Arena.op1).position.x > before + 2);
-    tide_world_player_left(&world, player(0));
+    tide_world_player_left(&world, player(1));
     tide_world_tick(&world);
     CHECK(world.Arena.joined == 1);
-    CHECK(tide_player_equal(world.Arena.first, player(1)));
-    CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op0).player, player(1)));
-    CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op1).player, player(1)));
+    CHECK(tide_player_equal(tide_get_Owner(&world, world.Arena.op1).player, player(0)));
     tide_world_free(&world);
 }
 
-static void menus_gate_sampling_and_stop_momentum(void)
+static void folds_are_shot_and_crossed(void)
 {
-    tide_local local = {0};
-    tide_devices devices = {0};
-    tide_local_init(&local);
-    local.Control.active = 1;
-    tide_button_set(&devices.keyboard.w, true);
-    tide_button_set(&devices.keyboard.space, true);
-    tide_button_set(&devices.mouse.left, true);
-    devices.mouse.locked = true;
-    devices.mouse.delta = (tide_float2){20, 10};
-    PilotInput controls = tide_input_sample(&devices, &local);
-    CHECK(controls.active == 1 && controls.move.y == 0 && controls.look.x == 0);
-    CHECK(!controls.jump && !controls.amber);
-    local.Control.started = true;
-    controls = tide_input_sample(&devices, &local);
-    CHECK(controls.move.y == 1 && controls.look.x > 0.05f && controls.jump && controls.amber);
     tide_world world = {0};
     start(&world);
-    input(&world, 0, controls);
-    ticks(&world, 15);
-    CHECK(tide_get_Operator(&world, world.Arena.op1).velocity.z > 3);
-    local.Control.started = false;
-    input(&world, 0, tide_input_sample(&devices, &local));
-    ticks(&world, 40);
-    CHECK(fabsf(tide_get_Operator(&world, world.Arena.op1).velocity.z) < 0.01f);
-    CHECK(fabsf(tide_get_Operator(&world, world.Arena.op0).velocity.z) < 0.01f);
-    tide_world_free(&world);
-    tide_local_free(&local);
-}
-
-static void portals_rotate_and_cross(void)
-{
-    for (int source = 0; source < 6; source++) {
-        for (int destination = 0; destination < 6; destination++) {
-            if (source == destination) continue;
-            tide_world world = {0};
-            start(&world);
-            world.Fold.a = source;
-            world.Fold.b = destination;
-            const tide_float3 n = normals[source];
-            const tide_float3 dn = normals[destination];
-            tide_float3 position = panels[source];
-            position.y = 0;
-            position.x += n.x * 0.04f;
-            position.z += n.z * 0.04f;
-            const float yaw = n.x > 0 ? -TIDE_PI_F / 2 : n.x < 0 ? TIDE_PI_F / 2 : n.z < 0 ? 0 : TIDE_PI_F;
-            place(&world, 0, position, yaw);
-            Operator body = tide_get_Operator(&world, world.Arena.op0);
-            body.velocity = (tide_float3){-n.x * 5.2f, 0, -n.z * 5.2f};
-            CHECK(tide_set_Operator(&world, world.Arena.op0, body));
-            input(&world, 0, (PilotInput){.move = {0, 1}});
-            tide_world_tick(&world);
-            body = tide_get_Operator(&world, world.Arena.op0);
-            CHECK(world.Fold.traversals == 1);
-            CHECK(fabsf(body.position.x - panels[destination].x) < 0.5f);
-            CHECK(fabsf(body.position.z - panels[destination].z) < 0.5f);
-            CHECK(near(body.position.y, 0));
-            CHECK(body.velocity.x * dn.x + body.velocity.z * dn.z > 5.1f);
-            CHECK(tide_sin_f(body.yaw) * dn.x + tide_cos_f(body.yaw) * dn.z > 0.999f);
-            // It comes out as far past the destination's face as it went past the source's: no step.
-            const float out = (body.position.x - panels[destination].x) * dn.x + (body.position.z - panels[destination].z) * dn.z;
-            CHECK(out > 0 && out < 0.06f);
-            // Turning back goes back through the fold, or stays in the room: never behind a wall's face.
-            input(&world, 0, (PilotInput){.move = {0, -1}});
-            for (int step = 0; step < 12; step++) {
-                tide_world_tick(&world);
-                body = tide_get_Operator(&world, world.Arena.op0);
-                CHECK(body.position.x >= -9.801f && body.position.x <= 9.801f);
-                CHECK(body.position.z >= -12.7f && body.position.z <= 12.7f);
-            }
-            tide_world_free(&world);
-        }
-    }
-    // Being beside a fold is ordinary solid wall, including the divider.
-    tide_world world = {0};
-    start(&world);
-    place(&world, 0, (tide_float3){-7, 0, 2.4f}, 0);
+    ticks(&world, 5);
+    // A shot at the ceiling, and one at the lobby's concrete past nothing: neither takes a fold
+    place(&world, 0, (tide_float3){-5, 0, -2}, 0, 1.3f);
+    tide_world_tick(&world);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(!world.Fold.amber.open && world.Fold.fizzleTime > 0 && world.Fold.fizzleAmber);
+    // The divider takes one, standing on the floor where it was aimed near it
+    place(&world, 0, (tide_float3){-5, 0, -2}, 0, 0);
+    tide_world_tick(&world);
+    press(&world, (PilotInput){.amber = true});
+    CHECK(world.Fold.amber.open);
+    CHECK(near(world.Fold.amber.at.x, -5, 0.01f) && near(world.Fold.amber.at.z, 2.4f, 0.001f) && near(world.Fold.amber.at.y, 1.3f, 0.001f));
+    CHECK(world.Fold.amber.face.z < -0.99f);
+    // One end alone is still a wall
     input(&world, 0, (PilotInput){.move = {0, 1}});
-    ticks(&world, 20);
-    CHECK(tide_get_Operator(&world, world.Arena.op0).position.z <= 2.541f);
-    CHECK(world.Fold.traversals == 0);
-    tide_world_free(&world);
-    // Loose and carried cubes reach the same destination region as operators.
-    start(&world);
-    world.Fold.cube = (tide_float3){-5, 1.5f, 2.76f};
-    world.Fold.cubeVelocity = (tide_float3){0, 0, 5.2f};
-    tide_world_tick(&world);
-    CHECK(world.Fold.traversals == 1 && near(world.Fold.cube.z, 10));
-    CHECK(world.Fold.cubeVelocity.x > 5.1f);
-    tide_world_free(&world);
-    start(&world);
-    place(&world, 0, (tide_float3){-5, 0, 2.76f}, 0);
-    Operator body = tide_get_Operator(&world, world.Arena.op0);
-    body.velocity.z = 5.2f;
-    CHECK(tide_set_Operator(&world, world.Arena.op0, body));
-    world.Fold.carried = 0;
-    input(&world, 0, (PilotInput){.move = {0, 1}});
-    tide_world_tick(&world);
-    CHECK(world.Fold.traversals == 1 && world.Fold.carried == 0 && near(world.Fold.cube.z, 10));
-    CHECK(world.Fold.cube.x > -9);
-    tide_world_free(&world);
-}
-
-static void aiming_carry_and_jump(void)
-{
-    tide_world world = {0};
-    start(&world);
-    world.Fold.a = 0;
-    place(&world, 0, (tide_float3){-5, 0, 0}, 0);
-    input(&world, 0, (PilotInput){.amber = true, .jump = true, .ping = true});
-    tide_world_tick(&world);
-    CHECK(world.Fold.a == 4);
-    CHECK(world.Fold.pingTime > 2.9f);
-    CHECK(tide_get_Operator(&world, world.Arena.op0).position.y > 0.08f);
+    ticks(&world, 120);
+    CHECK(world.Fold.traversals == 0 && pilot(&world, 0).position.z < 2.4f);
+    // The other end, on the side wall. Not while someone stands in an end's mouth, nor for a moment after
     input(&world, 0, (PilotInput){0});
-    ticks(&world, 70);
-    CHECK(near(tide_get_Operator(&world, world.Arena.op0).position.y, 0));
-    place(&world, 0, (tide_float3){-3, 0, -7.5f}, 0);
-    input(&world, 0, (PilotInput){.carry = true});
     tide_world_tick(&world);
-    CHECK(world.Fold.carried == 0);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(!world.Fold.cyan.open);
+    place(&world, 0, (tide_float3){-5, 0, -2}, -TIDE_PI_F / 2, 0);
+    ticks(&world, 6);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(world.Fold.cyan.open && world.Fold.cyan.face.x > 0.99f);
+    CHECK(near(world.Fold.cyan.at.x, -9.8f, 0.001f) && near(world.Fold.cyan.at.z, -2, 0.01f));
+    // An end can't go where it would overlap the other
+    press(&world, (PilotInput){.amber = true});
+    CHECK(near(world.Fold.amber.at.z, 2.4f, 0.001f) && world.Fold.fizzleTime > 0);
     ticks(&world, 3);
-    CHECK(world.Fold.carried == 0); // A held press never toggles repeatedly.
-    place(&world, 0, (tide_float3){5, 0, -3.25f}, 0);
+    // Walking into one comes out of the other, turned, with its speed, and never behind a wall's face
+    place(&world, 0, (tide_float3){-5, 0, 0.5f}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    bool crossed = false;
+    for (int step = 0; step < 90 && !crossed; step++) {
+        tide_world_tick(&world);
+        const Operator now = pilot(&world, 0);
+        CHECK(now.position.x > -9.9f && now.position.z < 3.4f);
+        crossed = world.Fold.traversals == 1;
+    }
+    CHECK(crossed);
+    Operator out = pilot(&world, 0);
+    CHECK(out.position.x > -9.8f && out.position.x < -9.6f && near(out.position.z, -2, 0.3f));
+    CHECK(out.velocity.x > 3 && tide_sin_f(out.yaw) > 0.99f);
+    ticks(&world, 30);
+    CHECK(pilot(&world, 0).position.x > -8.5f && world.Fold.traversals == 1);
+    // A cube thrown at one flies out of the other
+    Box3D_Body cube = tide_get_Box3D_Body(&world, world.Arena.cube);
+    cube.position = (tide_float3){-5, 1.2f, 0.5f};
+    cube.velocity = (tide_float3){0, 0, 7};
+    CHECK(tide_set_Box3D_Body(&world, world.Arena.cube, cube));
+    Cube marks = tide_get_Cube(&world, world.Arena.cube);
+    marks.last = cube.position;
+    CHECK(tide_set_Cube(&world, world.Arena.cube, marks));
+    place(&world, 0, (tide_float3){4, 0, -9}, 0, 0);
     input(&world, 0, (PilotInput){0});
-    tide_world_tick(&world);
-    input(&world, 0, (PilotInput){.carry = true});
-    tide_world_tick(&world);
-    CHECK(world.Fold.carried == -1);
-    input(&world, 0, (PilotInput){0});
-    ticks(&world, 70);
-    CHECK(world.Arena.plateA && world.Arena.solved && world.Arena.gate > 0.99f);
-    input(&world, 0, (PilotInput){.reset = true});
-    tide_world_tick(&world);
-    CHECK(!world.Arena.solved && !world.Arena.complete && near(world.Arena.gate, 0));
-    CHECK(near(tide_get_Operator(&world, world.Arena.op0).position.z, -9));
-    CHECK(world.Fold.carried == -1);
+    ticks(&world, 40);
+    CHECK(world.Fold.traversals == 2);
+    CHECK(world.Fold.cube.x > -9.8f && world.Fold.cube.x < 0 && world.Fold.cube.z < 0);
     tide_world_free(&world);
 }
 
-static void chamber_conditions_and_commands(void)
+static void carrying_and_throwing(void)
 {
     tide_world world = {0};
     start(&world);
-    choose(&world, 1, 2); // A valid player ID which has not joined has no authority.
-    CHECK(world.Arena.level == 0);
-    choose(&world, 0, -1);
+    ticks(&world, 30);
+    place(&world, 0, (tide_float3){-3, 0, -8.3f}, 0, -0.3f);
+    tide_world_tick(&world);
+    press(&world, (PilotInput){.carry = true});
+    CHECK(world.Fold.carried == 0);
+    ticks(&world, 40);
+    // Held up before its holder
+    CHECK(world.Fold.cube.y > 0.6f && near(world.Fold.cube.x, -3, 0.3f));
+    press(&world, (PilotInput){.hurl = true});
+    CHECK(world.Fold.carried == -1);
+    CHECK(tide_get_Box3D_Body(&world, world.Arena.cube).velocity.z > 5);
+    ticks(&world, 60);
+    CHECK(world.Fold.cube.z > -5);
+    tide_world_free(&world);
+}
+
+static void chambers_and_commands(void)
+{
+    tide_world world = {0};
+    start(&world);
+    ticks(&world, 10);
+    // The cube on plate A opens the first chamber's gate
+    Box3D_Body cube = tide_get_Box3D_Body(&world, world.Arena.cube);
+    cube.position = (tide_float3){5, 0.5f, -2};
+    CHECK(tide_set_Box3D_Body(&world, world.Arena.cube, cube));
+    ticks(&world, 90);
+    CHECK(world.Arena.plateA && world.Arena.solved && world.Arena.gate > 0.99f);
+    const int32_t built = world.Arena.chamber;
+    choose(&world, 0, 2);
+    CHECK(world.Arena.level == 2 && world.Arena.chamber == built + 1 && !world.Arena.solved);
+    ticks(&world, 20);
+    CHECK(near(pilot(&world, 0).position.z, -9, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
+    CHECK(near(world.Fold.cube.z, -8, 0.1f) && !world.Fold.amber.open);
+    // A chamber that isn't one, and a sender who isn't in the match, change nothing
     choose(&world, 0, 3);
-    CHECK(world.Arena.level == 0);
-    choose(&world, 0, 1);
-    CHECK(world.Arena.level == 1);
-    world.Fold.cube = (tide_float3){5, 0.5f, -4};
-    tide_world_tick(&world);
-    CHECK(world.Arena.plateA && !world.Arena.plateB && !world.Arena.solved);
-    place(&world, 1, (tide_float3){-5, 0, 10}, 0);
-    tide_world_tick(&world);
-    CHECK(world.Arena.plateB && world.Arena.solved);
-    world.Fold.cube = (tide_float3){0, 0.5f, -4};
-    place(&world, 1, (tide_float3){0, 0, 10}, 0);
-    ticks(&world, 60);
-    CHECK(world.Arena.solved && world.Arena.gate > 0.99f); // Resonance stays latched.
-    choose(&world, 0, 2);
-    CHECK(world.Arena.level == 2 && !world.Arena.bridge && !world.Arena.solved);
-    world.Fold.cube = (tide_float3){5, 0.5f, 10.5f};
-    place(&world, 0, (tide_float3){-5, 0, -2}, 0);
-    tide_world_tick(&world);
-    CHECK(world.Arena.plateA && world.Arena.plateB && !world.Arena.solved && !world.Arena.bridge);
-    world.Fold.cube = (tide_float3){-5, 0.5f, -2};
-    place(&world, 0, (tide_float3){5, 0, 10.5f}, 0);
-    tide_world_tick(&world);
-    CHECK(world.Arena.solved && world.Arena.bridge);
-    place(&world, 0, (tide_float3){-1, 0, 11.5f}, 0);
-    tide_world_tick(&world);
-    CHECK(!world.Arena.complete);
-    place(&world, 1, (tide_float3){1, 0, 11.5f}, 0);
-    tide_world_tick(&world);
-    CHECK(world.Arena.complete);
-    choose(&world, 0, 2);
-    place(&world, 0, (tide_float3){0, 0, 7}, 0);
-    ticks(&world, 60);
-    CHECK(near(tide_get_Operator(&world, world.Arena.op0).position.z, -9));
+    CHECK(world.Arena.level == 2);
     tide_world_free(&world);
 }
 
@@ -309,10 +245,9 @@ static void replay_and_pack_are_identical(void)
 int main(void)
 {
     ownership_and_movement();
-    menus_gate_sampling_and_stop_momentum();
-    portals_rotate_and_cross();
-    aiming_carry_and_jump();
-    chamber_conditions_and_commands();
+    folds_are_shot_and_crossed();
+    carrying_and_throwing();
+    chambers_and_commands();
     replay_and_pack_are_identical();
     puts("FOLDLINE simulation checks passed");
     return 0;

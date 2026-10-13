@@ -22,7 +22,7 @@ string ChamberTitle(int level)
 string ChamberHint(int level)
 {
     return level switch {
-        0 => "Carry the cube onto the amber plate. Get both operators to the exit.",
+        0 => "Shoot two walls to fold them together. Weight the amber plate, then both to the exit.",
         1 => "Weight both plates together. Your partner can hold one while you work.",
         _ => "The cube powers the bridge from plate A. Reach plate B together."
     };
@@ -220,7 +220,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     if (fold.carried == control.active) Draw.Text("E  /  RELEASE RESONANCE CUBE", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter, Font.Bold);
 
     // What to do, and the keys that do it.
-    var legend = Screen.width > 780;
+    var legend = Screen.width > 880;
     var hintWidth = Math.Min(560, Screen.width - 36);
     var hintY = Screen.height - (legend ? 76 : 40);
     HudPane(Rect(middle.x - hintWidth * 0.5, hintY - 16, hintWidth, 32));
@@ -229,7 +229,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     if (legend)
     {
         var solo = arena.joined < 2;
-        var row = solo ? 750.0 : 654.0;
+        var row = solo ? 832.0 : 736.0;
         HudPane(Rect(middle.x - row * 0.5 - 12, Screen.height - 47, row + 24, 30));
         mut var at = float2(middle.x - row * 0.5, Screen.height - 32);
         at.x = HudKey(at, "WASD", 44, "MOVE", 30);
@@ -237,6 +237,7 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
         at.x = HudKey(at, "LMB", 34, "AMBER", 36);
         at.x = HudKey(at, "RMB", 34, "CYAN", 30);
         at.x = HudKey(at, "E", 20, "CARRY", 36);
+        at.x = HudKey(at, "F", 20, "THROW", 40);
         at.x = HudKey(at, "Q", 20, "PING", 26);
         if (solo) at.x = HudKey(at, "TAB", 32, "SWITCH", 42);
         at.x = HudKey(at, "R", 20, "RESET", 34);

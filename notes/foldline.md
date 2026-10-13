@@ -6,6 +6,69 @@ emphasis on appearance. The owner explicitly required portals to render the
 space inside them. Other repository games' source was not used as a reference;
 implementation follows Tide's public documentation and subsystem contracts.
 
+## Box3D rooms and shot folds (2026-10-13)
+
+The owner, after playing the first chambers ("currently it makes no sense"):
+Box3D for physics "so we can launch the box", folds shot onto any wall that
+fail visibly where they can't go, as Portal's do, and resizable folds
+("dope lets try it"). The decisions put to the owner were left to Claude's
+recommendations: fixed sizes that apply to operators and the cube, walls that
+refuse a fold, floors and ceilings after the chambers, and a fold that can't
+be moved while something is in its mouth (the owner's own first option, over
+cutting or killing what's in it). Order agreed: (1) this section, (2) sizes,
+(3) five or six real chambers, (4) floor and ceiling folds. Only (1) is
+built; the three chambers are the old ones on the new floor and are still to
+be replaced. Where Match and controls below differs, this section is current.
+
+- **The room is Box3D's.** `Wall` is a box of the room (center, size, the
+  renderer's paint, whether it takes folds, a kind for planters, ceilings and
+  crates), and its colliders are `Piece` entities with a static `Body` and
+  `Box`. Operators are dynamic capsules (0.26 m radius, 1.8 m high, friction
+  0, kept upright by writing their rotation each tick) moved by writing
+  `Body.velocity` before the step; `Operator.position` is the feet, copied
+  after it. The cube is a dynamic box of 48 kg. The gate and the third
+  chamber's bridge are kinematic bodies moved by position. `Arena.chamber`
+  counts chambers; anything of an older one destroys itself.
+- **A shot** (`Shoot`) is a raycast from the eye that passes operators and the
+  cube. It needs an upright face of a wall that `takes`, at least 0.6 m
+  thick. The opening is nudged to fit: inside the face, above the floor and
+  under the ceiling found by rays from a point 0.2 m off the wall, and clear
+  of what stands within 3 m either side at that height; within 0.8 m of the
+  floor it stands on it. It fizzles (`Fold.fizzle*`, drawn as shards) on
+  anything else, where it would overlap the other end, where a box 0.3 m
+  deep before the opening overlaps a piece of the room, and while
+  `Fold.busy` says something was in a mouth within three ticks.
+- **A hole is real, and only while both ends are open.** `Carve` rebuilds a
+  wall's pieces when `Wall.version` changes: the face is cut into a grid by
+  the openings' edges, and a cell inside one is only what the hole leaves at
+  the back (the hole is `min(thickness - 0.1, 0.95 * size)` deep). `Uncarve`
+  destroys pieces of an older version. So a body walks into the wall, its
+  middle crosses the face, and `CrossOperators`/`CrossCube` move it after the
+  step (`Traverse`), with its speed turned; a cube's rotation and spin turn
+  too. Nothing filters collisions: Box3D's package has no filter.
+- **Carrying:** the cube is pulled to a point before its holder by its
+  velocity, with no gravity, so it collides; through a fold when the mapped
+  point is nearer it. E lets go, F throws at 11 m/s; out of reach (4 m) it
+  drops. `Portal.size` and `Operator.scale` are threaded through the mapping
+  and are always 1 until step (2).
+- **The renderer** takes its boxes from the match's walls (`DressWall`, again
+  when the chamber or their count changes) and the folds from `Fold.amber`
+  and `Fold.cyan`; one end alone is drawn as a dark sheet on the wall.
+- **Tests:** `test.c` was rewritten: standing and walking on Box3D's floor, a
+  shot that fizzles on the ceiling, one that places and is nudged to the
+  floor, one end alone staying solid, the busy-mouth and overlap refusals,
+  walking through and coming out turned with speed and never behind a face,
+  a thrown cube through a fold, carrying and throwing, chambers and the
+  command, replay and pack. `render_test.c` sets the two ends directly. 2/2
+  native and 3/3 web pass; the replay hash is `3005331974280731993` natively
+  and under WASI. The full suites were not rerun (no engine or package file
+  changed). Not checked: two players through one fold at once, the cube
+  wedged in a hole when a fold is moved (its wall closes on it), cost on a
+  slow machine.
+- **Known gaps:** a shot blocked by a planter fizzles where Portal would
+  nudge sideways; a lone end gives no light; the watcher's pillars and the
+  props are where they were.
+
 ## Match and controls
 
 `prototypes/foldline/play.tide` contains a deterministic 60 Hz, two-player match.

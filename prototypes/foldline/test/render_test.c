@@ -86,7 +86,7 @@ static void record(image *out)
     // Independently project the source aperture, for a yaw-zero camera.
     const Operator viewer = tide_get_Operator(&world, world.Arena.op0);
     const float focal = HEIGHT * 0.5f / tide_tan_f(75 * TIDE_DEG2RAD_F * 0.5f);
-    const float center_x = WIDTH * 0.5f + (-5 - viewer.position.x) * focal / (2.8f - viewer.position.z);
+    const float center_x = WIDTH * 0.5f + (-5 - viewer.position.x) * focal / (2.4f - viewer.position.z);
     out->count = 0;
     for (int row = 0; row < GRID_Y; row++) {
         for (int column = 0; column < GRID_X; column++) {
@@ -104,9 +104,11 @@ static void prepare(float camera_x)
 {
     operator_at(world.Arena.op0, (tide_float3){camera_x, 0, -1.5f}, 0);
     operator_at(world.Arena.op1, (tide_float3){4, 0, -10}, 0);
-    world.Fold.a = 4;
-    world.Fold.b = 2;
+    // One end on the divider before the viewer, the other on the far room's side wall
+    world.Fold.amber = (Portal){.open = true, .at = {-5, 1.55f, 2.4f}, .face = {0, 0, -1}, .size = 1};
+    world.Fold.cyan = (Portal){.open = true, .at = {-9.8f, 1.55f, 10}, .face = {1, 0, 0}, .size = 1};
     world.Fold.cube = (tide_float3){-3, 0.5f, -8};
+    world.Fold.cubeTurn = (tide_quaternion){0, 0, 0, 1};
     world.Fold.carried = -1;
 }
 
@@ -124,7 +126,7 @@ static int render_checks(void *user, float seconds)
         if (distance > spread) spread = distance;
     }
     check(spread > 30, "portal interior contains destination geometry rather than a flat fill");
-    world.Fold.a = 0;
+    world.Fold.cyan.open = false;
     record(&wall);
     check(changed(&empty, &wall) >= 40, "a linked opening shows a different image from the solid source wall");
 
@@ -148,7 +150,7 @@ static int render_checks(void *user, float seconds)
     record(&occupied);
     check(changed(&empty, &occupied) <= 4, "the exit plane clips a cube on the camera side of its wall");
 
-    // The cube unfolds to (-5.6, 1.55, 5.6). Its image follows that depth,
+    // The cube unfolds to (-5.6, 1.55, 5.2). Its image follows that depth,
     // rather than sliding rigidly with a picture painted on the source wall.
     prepare(-5.5f);
     record(&empty);
@@ -161,8 +163,8 @@ static int render_checks(void *user, float seconds)
     record(&occupied);
     const float right_center = changed_center(&empty, &occupied);
     const float focal = HEIGHT * 0.5f / tide_tan_f(75 * TIDE_DEG2RAD_F * 0.5f);
-    const float expected_left = WIDTH * 0.5f + (-5.6f + 5.5f) * focal / 7.1f;
-    const float expected_right = WIDTH * 0.5f + (-5.6f + 4.5f) * focal / 7.1f;
+    const float expected_left = WIDTH * 0.5f + (-5.6f + 5.5f) * focal / 6.7f;
+    const float expected_right = WIDTH * 0.5f + (-5.6f + 4.5f) * focal / 6.7f;
     printf("Portal cube projection: left %.1f (%.1f), right %.1f (%.1f)\n", left_center, expected_left, right_center, expected_right);
     check(tide_abs_f(left_center - expected_left) < 22, "left camera agrees with independently projected destination cube");
     check(tide_abs_f(right_center - expected_right) < 22, "right camera agrees with independently projected destination cube");

@@ -140,8 +140,9 @@ local singleton Optics
     float clock;
     float stride;
     float fired;
-    int lastAmber = -1;
-    int lastCyan = -1;
+    float3 lastAmber;
+    float3 lastCyan;
+    int walls = -1;
 }
 
 // What the sun sees, and what each fold's light sees: how far, along each
@@ -197,7 +198,7 @@ const int FOLD_PIXELS = 768;
 // rounded by this much. `PortalAperture` in play.tide lets through what fits it.
 const float FOLD_WIDE = 0.68;
 const float FOLD_HIGH = 1.3;
-const float FOLD_DROP = 0.2;
+const float FOLD_DROP = 0;
 const float FOLD_ROUND = 0.6;
 const float FOLD_DEEP = 0.3;
 const float FOLD_SOFT = 1.2 / FOLD_PIXELS;
@@ -995,60 +996,13 @@ const float CARPET = 13;
 const float CEILING_TILE = 14;
 const float PLASTER = 15;
 
-// The rooms: an office floor nobody works on. Yellowed paper on the walls,
-// damp carpet, a ceiling of tiles with a lamp in every bay, doors to nowhere.
+// What's hung in the rooms, beside the walls themselves, which are the
+// match's: lamps in the ceiling, doors to nowhere, the way out and its sign,
+// boards, and the chamber's number.
 void Dress(mut Optics optics, int level)
 {
-    optics.architecture.Clear();
-    optics.glass.Clear();
-    optics.leaves.Clear();
-    optics.furnishings.Clear();
     Color wood = Color(.30, .22, .15);
     Color steel = Color(.16, .17, .17);
-    Color mint = Color(0.29, 0.89, 0.82);
-    Color dull = Color(.8, .8, .76);
-
-    if (level < 2) optics.architecture.Add(Clad(float3(0, -.2, 0), float3(19.6, .4, 26), CARPET, .5));
-    else
-    {
-        optics.architecture.Add(Clad(float3(0, -.2, -4), float3(19.6, .4, 18), CARPET, .5));
-        optics.architecture.Add(Clad(float3(0, -.2, 11), float3(19.6, .4, 4), CARPET, .5));
-        optics.architecture.Add(Clad(float3(0, -3.2, 7), float3(19.6, .4, 4), CONCRETE, .5, dull));
-        optics.architecture.Add(Clad(float3(-9.95, -1.7, 7), float3(.3, 3.4, 4.4), PANELS, .5, dull));
-        optics.architecture.Add(Clad(float3(9.95, -1.7, 7), float3(.3, 3.4, 4.4), PANELS, .5, dull));
-        optics.architecture.Add(Clad(float3(0, -1.9, 4.9), float3(19.6, 3, .2), PANELS, .5, dull));
-        optics.architecture.Add(Clad(float3(0, -1.9, 9.1), float3(19.6, 3, .2), PANELS, .5, dull));
-        for (int i = 0; i < 9; i++)
-        {
-            optics.architecture.Add(Clad(float3(-8 + i * 2, -1.6, 7), float3(.16, 2.8, 3.8), RUST, .5));
-            optics.architecture.Add(Block(float3(-8 + i * 2, -2.65, 7), float3(.08, .07, 3.8), mint, 0, 1));
-        }
-    }
-    optics.architecture.Add(Clad(float3(-10.1, 3.5, 0), float3(.6, 7, 26.6), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(10.1, 3.5, 0), float3(.6, 7, 26.6), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(0, 3.5, -13.3), float3(20.8, 7, .6), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(-6.5, 3.5, 13.3), float3(7, 7, .6), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(6.5, 3.5, 13.3), float3(7, 7, .6), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(0, 5.5, 13.3), float3(6.2, 3, .6), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(-6.05, 3.5, 3), float3(7.9, 7, .4), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(6.05, 3.5, 3), float3(7.9, 7, .4), WALLPAPER, .5));
-    optics.architecture.Add(Clad(float3(0, 5.5, 3), float3(4.4, 3, .4), WALLPAPER, .5));
-    // Skirting along every wall, and the doorways' wooden linings.
-    for (int side = -1; side <= 1; side += 2)
-    {
-        optics.architecture.Add(Block(float3(side * 9.77, .09, 0), float3(.06, .18, 26), wood));
-        optics.architecture.Add(Block(float3(side * 6.05, .09, 3 - .23), float3(7.9, .18, .06), wood));
-        optics.architecture.Add(Block(float3(side * 6.05, .09, 3 + .23), float3(7.9, .18, .06), wood));
-        optics.architecture.Add(Block(float3(side * 6.5, .09, 12.97), float3(7, .18, .06), wood));
-        optics.architecture.Add(Block(float3(side * 2.13, 1.94, 3), float3(.12, 3.88, .52), wood));
-        optics.architecture.Add(Block(float3(side * 3.02, 1.94, 13.3), float3(.12, 3.88, .72), wood));
-    }
-    optics.architecture.Add(Block(float3(0, .09, -12.97), float3(19.6, .18, .06), wood));
-    optics.architecture.Add(Block(float3(0, 3.94, 3), float3(4.38, .12, .52), wood));
-    optics.architecture.Add(Block(float3(0, 3.94, 13.3), float3(6.16, .12, .72), wood));
-
-    // The ceiling and its lamps, which stop no light: the lamps' is what there is.
-    optics.glass.Add(Clad(float3(0, CEILING + .15, 0), float3(20.8, .3, 26.6), CEILING_TILE, .833));
     for (int row = 0; row < 8; row++)
     {
         for (int column = 0; column < 4; column++)
@@ -1059,34 +1013,11 @@ void Dress(mut Optics optics, int level)
             optics.glass.Add(Block(at + float3(0, .015, 0), float3(1.34, .05, .74), steel));
         }
     }
-
-    // The way out: a concrete lobby, fire doors and the one sign that's lit.
-    optics.architecture.Add(Clad(float3(0, -.25, 15.2), float3(6, .5, 4.4), CONCRETE, .5, dull));
-    optics.architecture.Add(Clad(float3(-3.2, 2.1, 15.5), float3(.3, 4.8, 3.8), PANELS, .5, dull));
-    optics.architecture.Add(Clad(float3(3.2, 2.1, 15.5), float3(.3, 4.8, 3.8), PANELS, .5, dull));
-    optics.architecture.Add(Clad(float3(0, 4.2, 15.5), float3(6.7, .3, 3.8), CONCRETE, .5, dull));
-    optics.architecture.Add(Clad(float3(0, 2.1, 17.35), float3(6.7, 4.8, .3), PANELS, .5, dull));
     optics.furnishings.Add(Faced(float3(-.72, 1.3, 17.17), quaternion.identity, float3(1.4, 2.6, .08), DOORS, 1));
     optics.furnishings.Add(Faced(float3(.72, 1.3, 17.17), quaternion.identity, float3(1.4, 2.6, .08), DOORS, 1));
     optics.furnishings.Add(Block(float3(0, 1.35, 17.19), float3(3.04, 2.74, .06), steel));
     optics.furnishings.Add(Block(float3(0, 3.2, 17.14), float3(1.1, .34, .08), Color(.2, 1, .45), 0, 1.3));
     optics.furnishings.Add(Block(float3(0, 3.2, 17.17), float3(1.24, .48, .06), steel));
-
-    // Receptive panels: bolted sheets in a steel frame, the one clean thing on each wall.
-    for (int i = 0; i < PanelCount(level); i++)
-    {
-        float3 p = PanelPosition(level, i);
-        float3 normal = PanelNormal(level, i);
-        quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
-        optics.furnishings.Add(Fixture { transform = float4x4.TRS(p + normal * .012, r, float3(2.9, 3.5, .04)), tint = Color(1.15, 1.15, 1.1), size = float3(2.9, 3.5, .04),
-                                         tiles = 1, cell = PANELS, gloss = .5 });
-        optics.furnishings.Add(Turned(p + Math.Rotate(r, float3(-1.5, .15, .03)), r, float3(.1, 3.3, .1), steel, 0, .4));
-        optics.furnishings.Add(Turned(p + Math.Rotate(r, float3(1.5, .15, .03)), r, float3(.1, 3.3, .1), steel, 0, .4));
-        optics.furnishings.Add(Turned(p + Math.Rotate(r, float3(0, 1.85, .03)), r, float3(3.1, .1, .1), steel, 0, .4));
-        optics.furnishings.Add(Turned(p + Math.Rotate(r, float3(0, 2.08, .07)), r, float3(2.9, .035, .05), mint, 1));
-        for (int mark = 0; mark <= i; mark++)
-            optics.furnishings.Add(Turned(p + Math.Rotate(r, float3(-.9 + mark * .22, 2.2, .05)), r, float3(.1, .11, .02), steel));
-    }
 
     // Doors that lead nowhere, each in its frame.
     for (int door = 0; door < 9; door++)
@@ -1110,35 +1041,30 @@ void Dress(mut Optics optics, int level)
         optics.furnishings.Add(Faced(at + normal * .03, r, float3(.95, 2.1, .06), DOORS, 2));
         optics.furnishings.Add(Turned(at + float3(0, .03, 0) + normal * .012, r, float3(1.11, 2.2, .06), wood));
     }
-
-    // What was left behind: crates, a stack of boards, and plants nobody waters.
-    // Each is one of play.tide's obstacles, which keep the operators and the cube out of them.
-    optics.furnishings.Add(Faced(float3(7.95, .45, -11.55), quaternion.identity, float3(.9), PLANKS, 0));
-    optics.furnishings.Add(Faced(float3(8.6, .45, -10.55), quaternion.identity, float3(.9), PLANKS, 0));
-    optics.furnishings.Add(Faced(float3(8.2, 1.3, -11.2), quaternion.Euler(0, .5, 0), float3(.8), PLANKS, 0));
     optics.furnishings.Add(Faced(float3(3.4, .06, -12.1), quaternion.Euler(0, .3, 0), float3(2.2, .12, 1.1), PLANKS, 0));
     optics.furnishings.Add(Faced(float3(3.6, .18, -12.2), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
-    // Pillars from floor to ceiling: corners to see round, or not.
-    for (int pillar = 0; pillar < PILLARS; pillar++)
+
+    // The chamber's number, by the gate.
+    optics.furnishings.Add(Block(float3(4.4, 3.1, 2.36), float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
+    WallDigit(optics, 0, float3(3.86, 3.1, 2.315));
+    WallDigit(optics, level + 1, float3(4.94, 3.1, 2.315));
+}
+
+// A box of the room, as the match has it: a wall, a ceiling, a planter with what grows in it, or a crate.
+void DressWall(mut Optics optics, Wall wall, int number)
+{
+    if (wall.kind == 2) optics.glass.Add(Clad(wall.center, wall.size, wall.paint, wall.tiles));
+    else if (wall.kind == 3) optics.furnishings.Add(Faced(wall.center, quaternion.identity, wall.size, wall.paint, 0));
+    else if (wall.kind == 1)
     {
-        float4 box = Obstacle(level, OBSTACLES - PILLARS + pillar);
-        if (box.z <= 0) continue;
-        optics.furnishings.Add(Clad(float3(box.x, CEILING * .5, box.y), float3(.9, CEILING, .9), WALLPAPER, .5));
-        optics.furnishings.Add(Block(float3(box.x, .09, box.y), float3(.96, .18, .96), wood));
-    }
-    optics.furnishings.Add(Faced(float3(7.6, .5, 11.9), quaternion.identity, float3(1.1, 1.0, 1.0), RUST, 0));
-    for (int planter = 0; planter < 6; planter++)
-    {
-        float4 box = Obstacle(level, planter);
-        if (box.z <= 0) continue;
-        float x = box.x;
-        float z = box.y;
-        optics.furnishings.Add(Clad(float3(x, .36, z), float3(.85, .72, 2.0), CONCRETE, 1, Color(.7, .7, .68)));
+        float x = wall.center.x;
+        float z = wall.center.z;
+        optics.furnishings.Add(Clad(wall.center, wall.size, wall.paint, wall.tiles, Color(.7, .7, .68)));
         optics.furnishings.Add(Block(float3(x, .7, z), float3(.72, .06, 1.87), Color(.07, .06, .045)));
         for (int leaf = 0; leaf < 22; leaf++)
         {
-            int roll = Math.Hash(int2(planter, leaf));
-            float a = leaf * 2.39996 + planter * 1.7;
+            int roll = Math.Hash(int2(number, leaf));
+            float a = leaf * 2.39996 + number * 1.7;
             float long = .45 + ((roll >> 3) & 63) / 63.0 * .7;
             float lean = .25 + ((roll >> 9) & 63) / 63.0 * .75;
             float3 p = float3(x + Math.Cos(a) * .2, .72, z + ((leaf % 6) - 2.5) * .29 + Math.Sin(a) * .08);
@@ -1148,12 +1074,7 @@ void Dress(mut Optics optics, int level)
                                         tint = Color(.34 + shadeOf * .22, .44 + shadeOf * .12, .18 + shadeOf * .06), size = float3(1), kind = 1 });
         }
     }
-
-    // The chamber's number, by the gate.
-    optics.furnishings.Add(Block(float3(4.4, 3.1, 2.76), float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
-    WallDigit(optics, 0, float3(3.86, 3.1, 2.715));
-    WallDigit(optics, level + 1, float3(4.94, 3.1, 2.715));
-    optics.dressed = level;
+    else optics.architecture.Add(Clad(wall.center, wall.size, wall.paint, wall.tiles));
 }
 
 void WallDigit(mut Optics optics, int digit, float3 position)
@@ -1182,7 +1103,7 @@ Pose FigurePose(Operator body, float clock)
     // Each of Kenney's files holds a one-frame targeting pose before its clip: the clips are the odd ones.
     if (moves.TryGetAt(1, out var idle)) pose.Sample(idle, Math.Frac(clock / Math.Max(idle.duration, 0.01)) * idle.duration, Playback.Loop);
     float pace = Math.Saturate(Math.Length(body.velocity.xz) / 4);
-    if (body.position.y > 0.05)
+    if (!body.grounded)
     {
         if (moves.TryGetAt(5, out var jump))
         {
@@ -1242,7 +1163,7 @@ void Handheld(mut Optics optics, float3 eye, quaternion rotation, float pace, fl
     Held(optics, eye, rotation, 0, hand + Math.Rotate(aim, float3(.022, .0515, -.04)), aim, float3(.011, .006, .09), Color(.2, .96, .88), .8);
 }
 
-void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operator partner, int aimed)
+void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operator partner)
 {
     optics.dynamic.Clear();
     optics.cubeParts.Clear();
@@ -1284,13 +1205,14 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
     optics.dynamic.Add(Block(float3(1.9, gateY, 2.86), float3(.05, 3.9, .04), cyanTint, 0, arena.plateB || arena.solved ? 1.4 : .5));
     optics.dynamic.Add(Block(float3(0, gateY, 2.865), float3(.04, 3.9, .05), Color(.36, .46, .47), 0, 0, .8));
 
-    // A carried resonator remains part of the world in every portal pass.
+    // The cube, turned as Box3D has it.
     float3 cube = fold.cube;
-    optics.cubeParts.Add(Block(cube, float3(.74), Color(.86, .86, .80), 0, 0, .6, .05));
+    quaternion turn = fold.cubeTurn;
+    optics.cubeParts.Add(Turned(cube, turn, float3(.74), Color(.86, .86, .80), 0, .6));
     for (int corner = 0; corner < 8; corner++)
     {
         float3 way = float3((corner & 1) == 0 ? -1 : 1, (corner & 2) == 0 ? -1 : 1, (corner & 4) == 0 ? -1 : 1);
-        optics.cubeParts.Add(Block(cube + way * .3, float3(.2), steel, 0, 0, .7, .04));
+        optics.cubeParts.Add(Turned(cube + Math.Rotate(turn, way * .3), turn, float3(.2), steel, 0, .7));
     }
     for (int face = 0; face < 6; face++)
     {
@@ -1298,15 +1220,21 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
         float sign = face % 2 == 0 ? 1 : -1;
         float3 way = float3(axis == 0 ? sign : 0, axis == 1 ? sign : 0, axis == 2 ? sign : 0);
         float3 size = float3(axis == 0 ? .03 : .3, axis == 1 ? .03 : .3, axis == 2 ? .03 : .3);
-        optics.cubeParts.Add(Block(cube + way * .366, size, face == 2 ? amberTint : Color(.16, .86, .80), 0, fold.carried >= 0 ? 1.5 : 1));
+        optics.cubeParts.Add(Turned(cube + Math.Rotate(turn, way * .366), turn, size, face == 2 ? amberTint : Color(.16, .86, .80), fold.carried >= 0 ? 1.5 : 1));
     }
 
-    // Each receptive panel's ribbon answers the operator's aim.
-    if (aimed >= 0)
+    // A shot that found no place: shards of its color, flung off the spot and gone.
+    if (fold.fizzleTime > 0)
     {
-        float3 normal = PanelNormal(arena.level, aimed);
-        quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
-        optics.dynamic.Add(Turned(PanelPosition(arena.level, aimed) + Math.Rotate(r, float3(0, 2.08, .085)), r, float3(2.9, .06, .05), Color(.85, 1, .97), 1.8));
+        float gone = 1 - fold.fizzleTime / 0.6;
+        Color tint = fold.fizzleAmber ? amberTint : cyanTint;
+        for (int shard = 0; shard < 7; shard++)
+        {
+            float a = shard * 0.9 + 0.4;
+            float3 side = Math.Normalize(Math.Cross(fold.fizzleFace, float3(Math.Cos(a), Math.Sin(a * 1.7), Math.Sin(a))) + float3(0, .001, 0));
+            float3 at = fold.fizzleAt + fold.fizzleFace * (.06 + gone * .35) + side * (gone * (.35 + shard * .05)) - float3(0, gone * gone * .5, 0);
+            optics.dynamic.Add(Turned(at, quaternion.Euler(a + gone * 5, a * 2, gone * 7), float3(.07 * (1 - gone) + .01), tint, 1.6));
+        }
     }
 
     // A partner's ping: a beacon that turns and fades.
@@ -1336,43 +1264,44 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Operator viewer, Operato
 
 // What a fold does to the world, as a matrix: it turns it about the vertical, so that what faces into one
 // wall faces out of the other.
-float4x4 Across(int level, int source, int destination)
+float4x4 Across(Portal from, Portal to)
 {
-    float3 into = PanelNormal(level, source);
-    float3 out = -PanelNormal(level, destination);
+    float3 into = from.face;
+    float3 out = -to.face;
+    float ratio = to.size / from.size;
     quaternion turn = quaternion.Euler(0, Math.Atan2(out.x, out.z) - Math.Atan2(into.x, into.z), 0);
-    return float4x4.TRS(PanelPosition(level, destination) - Math.Rotate(turn, PanelPosition(level, source)), turn, float3(1));
+    return float4x4.TRS(to.at - Math.Rotate(turn, from.at) * ratio, turn, float3(ratio));
 }
 
 // Which fold a body is part of the way through: 0 for neither, 1 for the amber one and 2 for the cyan. Its
 // middle is before that wall's face and within `reach` of it, where the opening is.
-int Crossing(int level, Fold fold, float3 middle, float reach)
+int Crossing(Fold fold, float3 middle, float reach)
 {
-    if (fold.a == fold.b) return 0;
+    if (!Linked(fold)) return 0;
     for (int way = 0; way < 2; way++)
     {
-        int panel = way == 0 ? fold.a : fold.b;
-        float3 from = middle - PanelPosition(level, panel);
-        float depth = Math.Dot(from, PanelNormal(level, panel));
-        if (depth > -0.02 && depth < reach && Math.Abs(Math.Dot(from, PanelRight(level, panel))) < FOLD_WIDE + 0.12 && Math.Abs(from.y + FOLD_DROP) < FOLD_HIGH + 0.7)
+        Portal portal = way == 0 ? fold.amber : fold.cyan;
+        float3 from = middle - portal.at;
+        float depth = Math.Dot(from, portal.face);
+        if (depth > -0.02 && depth < reach && Math.Abs(Math.Dot(from, FoldRight(portal.face))) < FOLD_WIDE + 0.12 && Math.Abs(from.y) < FOLD_HIGH + 0.7)
             return way + 1;
     }
     return 0;
 }
 
-quaternion FoldedRotation(int level, int source, int destination, quaternion rotation)
+quaternion FoldedRotation(Portal from, Portal to, quaternion rotation)
 {
-    float3 forward = PortalMapDirection(level, source, destination, Math.Forward(rotation));
-    float3 up = PortalMapDirection(level, source, destination, Math.Up(rotation));
+    float3 forward = FoldDirection(from, to, Math.Forward(rotation));
+    float3 up = FoldDirection(from, to, Math.Up(rotation));
     return quaternion.LookRotation(forward, up);
 }
 
 // The part of the window an opening covers, as a corner and a size in
 // pixels: nothing where the eye can't see it, so its camera has no work.
-float4 OpeningOnScreen(int level, int panel, float3 eye, quaternion rotation, float2 window)
+float4 OpeningOnScreen(Portal portal, float3 eye, quaternion rotation, float2 window)
 {
-    float3 middle = PanelPosition(level, panel);
-    if (Math.Dot(eye - middle, PanelNormal(level, panel)) < -0.06) return float4(0);
+    float3 middle = portal.at;
+    if (!portal.open || Math.Dot(eye - middle, portal.face) < -0.06) return float4(0);
     float3 forward = Math.Forward(rotation);
     float3 up = Math.Up(rotation);
     float3 right = Math.Cross(up, forward);
@@ -1382,7 +1311,7 @@ float4 OpeningOnScreen(int level, int panel, float3 eye, quaternion rotation, fl
     mut int behind = 0;
     for (int corner = 0; corner < 4; corner++)
     {
-        float3 at = middle + PanelRight(level, panel) * ((corner & 1) == 0 ? -FOLD_WIDE - .04 : FOLD_WIDE + .04)
+        float3 at = middle + FoldRight(portal.face) * ((corner & 1) == 0 ? -FOLD_WIDE - .04 : FOLD_WIDE + .04)
                   + float3(0, ((corner & 2) == 0 ? -FOLD_HIGH - .04 : FOLD_HIGH + .04) - FOLD_DROP, 0);
         float3 from = at - eye;
         float depth = Math.Dot(from, forward);
@@ -1405,23 +1334,43 @@ float4 OpeningOnScreen(int level, int panel, float3 eye, quaternion rotation, fl
 
 // Second crossings, their parents, then the room. Targets are disjoint and
 // portal cameras and all visible simulation objects update in this frame.
-view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, mut Optics optics, mut Daylight day,
+view Render(Operator viewer, query (Operator body) operators, query (Wall wall) walls, Arena arena, Fold fold, Watcher watcher, Control control, Interface ui, mut Optics optics, mut Daylight day,
             mut Lens lens)
 {
     if (viewer.id != control.active) return;
     if (!optics.made) MakeOptics(optics, day, lens);
-    if (optics.dressed != arena.level) Dress(optics, arena.level);
+    // The room's boxes are the match's walls: dressed again when the chamber or their number changes
+    mut int standing = 0;
+    foreach (var row in walls)
+        if (row.wall.chamber == arena.chamber) standing += 1;
+    if (optics.dressed != arena.chamber || optics.walls != standing)
+    {
+        optics.architecture.Clear();
+        optics.glass.Clear();
+        optics.leaves.Clear();
+        optics.furnishings.Clear();
+        mut int number = 0;
+        foreach (var row in walls)
+        {
+            if (row.wall.chamber != arena.chamber) continue;
+            DressWall(optics, row.wall, number);
+            number += 1;
+        }
+        Dress(optics, arena.level);
+        optics.dressed = arena.chamber;
+        optics.walls = standing;
+    }
     float dt = Math.Min(Frame.dt, .05);
     optics.phase += dt;
     if (optics.phase >= Math.TAU) optics.phase -= Math.TAU;
     optics.clock += dt;
     if (optics.clock >= 3600) optics.clock -= 3600;
-    float pace = Math.Saturate(Math.Length(viewer.velocity.xz) / 4) * (viewer.position.y < 0.05 ? 1.0 : 0.0);
+    float pace = Math.Saturate(Math.Length(viewer.velocity.xz) / 4) * (viewer.grounded ? 1.0 : 0.0);
     optics.stride += dt * 9.5;
     if (optics.stride >= Math.TAU) optics.stride -= Math.TAU;
-    if (optics.lastAmber >= 0 && (optics.lastAmber != fold.a || optics.lastCyan != fold.b)) optics.fired = 1;
-    optics.lastAmber = fold.a;
-    optics.lastCyan = fold.b;
+    if (Math.DistanceSq(optics.lastAmber, fold.amber.at) + Math.DistanceSq(optics.lastCyan, fold.cyan.at) > 0.0001 || fold.fizzleTime > 0.55) optics.fired = 1;
+    optics.lastAmber = fold.amber.at;
+    optics.lastCyan = fold.cyan.at;
     optics.fired = Math.Max(0, optics.fired - dt * 4);
 
     mut var partner = viewer;
@@ -1435,25 +1384,24 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         eye = float3(-7.4 + Math.Sin(optics.phase) * .45, 2.5 + Math.Sin(optics.phase * 2) * .06, -11.4);
         rotation = quaternion.Euler(-.05, .04 + Math.Cos(optics.phase) * .015, 0);
     }
-    float3 amberEye = PortalMapPoint(arena.level, fold.a, fold.b, eye);
-    float3 cyanEye = PortalMapPoint(arena.level, fold.b, fold.a, eye);
-    quaternion amberTurn = FoldedRotation(arena.level, fold.a, fold.b, rotation);
-    quaternion cyanTurn = FoldedRotation(arena.level, fold.b, fold.a, rotation);
+    float3 amberEye = FoldPoint(fold.amber, fold.cyan, eye);
+    float3 cyanEye = FoldPoint(fold.cyan, fold.amber, eye);
+    quaternion amberTurn = FoldedRotation(fold.amber, fold.cyan, rotation);
+    quaternion cyanTurn = FoldedRotation(fold.cyan, fold.amber, rotation);
     optics.amberEye = amberEye;
     optics.cyanEye = cyanEye;
-    int aimed = control.started ? AimedPanel(arena.level, eye, LookDirection(viewer.yaw, viewer.pitch), arena.gate) : -1;
-    Furnish(optics, arena, fold, viewer, partner, aimed);
+    Furnish(optics, arena, fold, viewer, partner);
     if (!ui.open) Handheld(optics, eye, rotation, pace, fold.carried == viewer.id ? 1.0 : 0.0);
     // Both operators as they stand or run, and each again at a fold's other end while part of the way through it.
     Pose partnerPose = FigurePose(partner, optics.clock);
     Pose selfPose = FigurePose(viewer, optics.clock + 1.7);
     float4x4 partnerPlace = FigurePlace(partner);
     float4x4 selfPlace = FigurePlace(viewer);
-    float4x4 throughAmber = Across(arena.level, fold.a, fold.b);
-    float4x4 throughCyan = Across(arena.level, fold.b, fold.a);
-    int partnerFold = Crossing(arena.level, fold, partner.position + float3(0, .9, 0), .55);
-    int selfFold = Crossing(arena.level, fold, viewer.position + float3(0, .9, 0), .55);
-    int cubeFold = Crossing(arena.level, fold, fold.cube, .48);
+    float4x4 throughAmber = Across(fold.amber, fold.cyan);
+    float4x4 throughCyan = Across(fold.cyan, fold.amber);
+    int partnerFold = Crossing(fold, partner.position + float3(0, .9, 0), .55);
+    int selfFold = Crossing(fold, viewer.position + float3(0, .9, 0), .55);
+    int cubeFold = Crossing(fold, fold.cube, .48);
     float4x4 partnerEcho = Math.Mul(partnerFold == 2 ? throughCyan : throughAmber, partnerPlace);
     float4x4 selfEcho = Math.Mul(selfFold == 2 ? throughCyan : throughAmber, selfPlace);
     for (int i = 0; i < optics.cubeParts.count && cubeFold > 0; i++)
@@ -1466,7 +1414,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     bool watched = watcher.state != Watching.Away;
     float lamps = watcher.blink > 0 ? 0.0 : 1.0;
     float4x4 watcherPlace = float4x4.TRS(watcher.at, quaternion.Euler(0, watcher.yaw, 0), float3(FIGURE_SCALE * 1.12));
-    Pose watcherPose = FigurePose(Operator { position = watcher.at }, optics.clock + 3.1);
+    Pose watcherPose = FigurePose(Operator { position = watcher.at, grounded = true }, optics.clock + 3.1);
     float caught = watcher.state == Watching.Lunging && watcher.victim == viewer.id && !ui.open ? 1 - Math.Saturate(watcher.timer / 0.75) * 0.6 : 0.0;
     lens.scare = Math.Max(caught, lens.scare - dt * 2.5);
 
@@ -1475,14 +1423,14 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     Color cyanRim = Color(.2, .96, .88);
     // A fold's camera only draws the part of the window its opening covers,
     // and a second crossing only where the first can see an opening again.
-    float3 amberAt = PanelPosition(arena.level, fold.a);
-    float3 cyanAt = PanelPosition(arena.level, fold.b);
-    float4 amberSeen = OpeningOnScreen(arena.level, fold.a, eye, rotation, window);
-    float4 cyanSeen = OpeningOnScreen(arena.level, fold.b, eye, rotation, window);
-    bool amberAgain = amberSeen.z > 0 && Math.Dot(amberAt - cyanAt, PanelNormal(arena.level, fold.b)) > -1.2
-                   && Math.Dot(amberEye - amberAt, PanelNormal(arena.level, fold.a)) > 0;
-    bool cyanAgain = cyanSeen.z > 0 && Math.Dot(cyanAt - amberAt, PanelNormal(arena.level, fold.a)) > -1.2
-                  && Math.Dot(cyanEye - cyanAt, PanelNormal(arena.level, fold.b)) > 0;
+    float3 amberAt = fold.amber.at;
+    float3 cyanAt = fold.cyan.at;
+    float4 amberSeen = Linked(fold) ? OpeningOnScreen(fold.amber, eye, rotation, window) : float4(0);
+    float4 cyanSeen = Linked(fold) ? OpeningOnScreen(fold.cyan, eye, rotation, window) : float4(0);
+    bool amberAgain = amberSeen.z > 0 && Math.Dot(amberAt - cyanAt, fold.cyan.face) > -1.2
+                   && Math.Dot(amberEye - amberAt, fold.amber.face) > 0;
+    bool cyanAgain = cyanSeen.z > 0 && Math.Dot(cyanAt - amberAt, fold.amber.face) > -1.2
+                  && Math.Dot(cyanEye - cyanAt, fold.cyan.face) > 0;
     // Everything that stops a light, drawn from where the light is: the sun's image of the whole atrium, and
     // each fold's lamp's of what's before its wall.
     mut Sight held = Sight { phase = optics.phase };
@@ -1498,9 +1446,10 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         }
         else
         {
-            int panel = lamp == 1 ? fold.a : fold.b;
-            float3 normal = PanelNormal(arena.level, panel);
-            map.SetCamera(float4x4.TRS(PanelPosition(arena.level, panel) + normal * .55, quaternion.LookRotation(normal, float3(0, 1, 0)), float3(1)),
+            Portal portal = lamp == 1 ? fold.amber : fold.cyan;
+            float3 normal = portal.face;
+            if (!portal.open) continue;
+            map.SetCamera(float4x4.TRS(portal.at + normal * .55, quaternion.LookRotation(normal, float3(0, 1, 0)), float3(1)),
                           float4x4.PerspectiveFov(140deg, 1, .12, 9));
             if (lamp == 1) day.toAmber = map.WorldToClip();
             else day.toCyan = map.WorldToClip();
@@ -1523,15 +1472,15 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
     {
         if ((pass == 0 && !amberAgain) || (pass == 1 && !cyanAgain) || (pass == 2 && amberSeen.z <= 0) || (pass == 3 && cyanSeen.z <= 0)) continue;
         mut var target = optics.amberDeep;
-        mut float3 camera = PortalMapPoint(arena.level, fold.a, fold.b, amberEye);
-        mut quaternion turned = FoldedRotation(arena.level, fold.a, fold.b, amberTurn);
-        mut Sight sight = Sight { eye = camera, clipPoint = PanelPosition(arena.level, fold.b), clipNormal = PanelNormal(arena.level, fold.b), clipped = true, packed = true,
-                                  cube = fold.cube, partner = partner.position, self = viewer.position, phase = optics.phase, linked = fold.a != fold.b ? 1.0 : 0.0,
-                                  amberAt = PanelPosition(arena.level, fold.a) + PanelNormal(arena.level, fold.a) * .55,
-                                  cyanAt = PanelPosition(arena.level, fold.b) + PanelNormal(arena.level, fold.b) * .55,
+        mut float3 camera = FoldPoint(fold.amber, fold.cyan, amberEye);
+        mut quaternion turned = FoldedRotation(fold.amber, fold.cyan, amberTurn);
+        mut Sight sight = Sight { eye = camera, clipPoint = fold.cyan.at, clipNormal = fold.cyan.face, clipped = true, packed = true,
+                                  cube = fold.cube, partner = partner.position, self = viewer.position, phase = optics.phase, linked = Linked(fold) ? 1.0 : 0.0,
+                                  amberAt = fold.amber.at + fold.amber.face * .55,
+                                  cyanAt = fold.cyan.at + fold.cyan.face * .55,
                                   plateA = PlatePosition(arena.level, 0) + float3(0, .35, 0), plateB = PlatePosition(arena.level, 1) + float3(0, .35, 0),
                                   plates = float2(arena.plateA ? 1 : 0, arena.plateB ? 1 : 0),
-                                  amberFace = PanelNormal(arena.level, fold.a), cyanFace = PanelNormal(arena.level, fold.b),
+                                  amberFace = fold.amber.face, cyanFace = fold.cyan.face,
                                   grid = float2(LINES * Screen.width / Screen.height, LINES) * .5, lamps = lamps,
                                   torchAt = viewer.position + float3(0, 1.35, 0), torchWay = LookDirection(viewer.yaw, viewer.pitch),
                                   otherAt = partner.position + float3(0, 1.35, 0), otherWay = LookDirection(partner.yaw, partner.pitch) };
@@ -1539,10 +1488,10 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         if (pass == 1)
         {
             target = optics.cyanDeep;
-            camera = PortalMapPoint(arena.level, fold.b, fold.a, cyanEye);
-            turned = FoldedRotation(arena.level, fold.b, fold.a, cyanTurn);
-            sight.clipPoint = PanelPosition(arena.level, fold.a);
-            sight.clipNormal = PanelNormal(arena.level, fold.a);
+            camera = FoldPoint(fold.cyan, fold.amber, cyanEye);
+            turned = FoldedRotation(fold.cyan, fold.amber, cyanTurn);
+            sight.clipPoint = fold.amber.at;
+            sight.clipNormal = fold.amber.face;
         }
         else if (pass == 2)
         {
@@ -1556,8 +1505,8 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
             target = optics.cyan;
             camera = cyanEye;
             turned = cyanTurn;
-            sight.clipPoint = PanelPosition(arena.level, fold.a);
-            sight.clipNormal = PanelNormal(arena.level, fold.a);
+            sight.clipPoint = fold.amber.at;
+            sight.clipNormal = fold.amber.face;
             pixels = window;
         }
         else if (pass == 4)
@@ -1638,16 +1587,17 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
 
         for (int opening = 0; opening < 2; opening++)
         {
-            int panel = opening == 0 ? fold.a : fold.b;
-            float3 normal = PanelNormal(arena.level, panel);
+            Portal portal = opening == 0 ? fold.amber : fold.cyan;
+            if (!portal.open) continue;
+            float3 normal = portal.face;
             // What's seen through a fold is drawn on the inside of a box set into its wall behind the hole: a
             // back and four sides, so that a look through the opening from any angle, straight down at its sill
             // too, lands on it, and the eye comes right up to the wall's face without reaching any of it.
-            float3 p = PanelPosition(arena.level, panel) - normal * FOLD_DEEP - float3(0, FOLD_DROP, 0);
+            float3 p = portal.at - normal * FOLD_DEEP - float3(0, FOLD_DROP, 0);
             quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
             mut Aperture aperture = Aperture { rim = opening == 0 ? amberRim : cyanRim, pixels = pixels, eye = camera, clipPoint = sight.clipPoint, clipNormal = sight.clipNormal,
                                                clipped = sight.clipped, packed = sight.packed, phase = sight.phase, cyan = opening == 1, lamps = lamps,
-                                               wall = PanelPosition(arena.level, panel), face = normal, right = PanelRight(arena.level, panel) };
+                                               wall = portal.at, face = normal, right = FoldRight(portal.face) };
             if (pass == 4)
             {
                 aperture.farEye = opening == 0 ? amberEye : cyanEye;
@@ -1655,11 +1605,17 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
             }
             else if (pass >= 2)
             {
-                aperture.farEye = opening == 0 ? PortalMapPoint(arena.level, fold.a, fold.b, amberEye) : PortalMapPoint(arena.level, fold.b, fold.a, cyanEye);
+                aperture.farEye = opening == 0 ? FoldPoint(fold.amber, fold.cyan, amberEye) : FoldPoint(fold.cyan, fold.amber, cyanEye);
                 aperture.fromClip = Math.Inverse(opening == 0 ? optics.amberFarView : optics.cyanFarView);
             }
             float wide = FOLD_WIDE * 2 + .12;
             float high = FOLD_HIGH * 2 + .12;
+            if (!Linked(fold))
+            {
+                // An end with no other end yet: its color on the wall, and nothing through it
+                target.Mesh(optics.card, optics.cardTriangles, float4x4.TRS(portal.at + normal * .02, r, float3(wide, high, 1)), LastFold, aperture);
+                continue;
+            }
             float3 within = p + normal * (FOLD_DEEP * .5);
             target.Cull(Cull.None)
             {
@@ -1667,7 +1623,7 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
                 {
                     mut float4x4 transform = float4x4.TRS(p, r, float3(wide, high, 1));
                     if (face == 1 || face == 2)
-                        transform = float4x4.TRS(within + PanelRight(arena.level, panel) * (face == 1 ? -wide * .5 : wide * .5), Math.Mul(r, quaternion.Euler(0, 90deg, 0)),
+                        transform = float4x4.TRS(within + FoldRight(portal.face) * (face == 1 ? -wide * .5 : wide * .5), Math.Mul(r, quaternion.Euler(0, 90deg, 0)),
                                                  float3(FOLD_DEEP, high, 1));
                     else if (face > 2)
                         transform = float4x4.TRS(within + float3(0, face == 3 ? -high * .5 : high * .5, 0), Math.Mul(r, quaternion.Euler(90deg, 0, 0)), float3(wide, FOLD_DEEP, 1));
@@ -1689,13 +1645,14 @@ view Render(Operator viewer, query (Operator body) operators, Arena arena, Fold 
         {
             for (int opening = 0; opening < 2; opening++)
             {
-                int panel = opening == 0 ? fold.a : fold.b;
-                float3 normal = PanelNormal(arena.level, panel);
+                Portal portal = opening == 0 ? fold.amber : fold.cyan;
+                if (!portal.open) continue;
+                float3 normal = portal.face;
                 quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
                 Aperture aperture = Aperture { rim = opening == 0 ? amberRim : cyanRim, pixels = pixels, eye = camera, clipPoint = sight.clipPoint, clipNormal = sight.clipNormal,
                                                clipped = sight.clipped, packed = sight.packed, phase = sight.phase,
-                                               wall = PanelPosition(arena.level, panel), face = normal, right = PanelRight(arena.level, panel) };
-                target.Mesh(optics.card, optics.cardTriangles, float4x4.TRS(PanelPosition(arena.level, panel) + normal * .052 - float3(0, FOLD_DROP, 0), r,
+                                               wall = portal.at, face = normal, right = FoldRight(portal.face) };
+                target.Mesh(optics.card, optics.cardTriangles, float4x4.TRS(portal.at + normal * .052 - float3(0, FOLD_DROP, 0), r,
                                                                             float3(FOLD_WIDE * 4.4, FOLD_HIGH * 3.2, 1)), Halo, aperture);
             }
             if (pass >= 2) target.Instanced(optics.box, optics.triangles, optics.motes, Mote, sight);

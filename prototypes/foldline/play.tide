@@ -1,4 +1,8 @@
-// FOLDLINE — a shared pair of folds, two operators, one resonant cube.
+// FOLDLINE: two operators, a pair of folds shot onto any wall that takes one,
+// and a cube that keeps its speed through them. The rooms, the operators and
+// the cube are Box3D's.
+using Box3D;
+
 settings
 {
     title = "FOLDLINE";
@@ -10,6 +14,7 @@ settings
 singleton Arena
 {
     int level;
+    int chamber;         // Counts the chambers built: what's of an older one is swept away
     float gate;
     bool solved;
     bool complete;
@@ -22,21 +27,39 @@ singleton Arena
     PlayerID second;
     Entity op0;
     Entity op1;
+    Entity cube;
+}
+
+// One end of the fold: an opening on a wall's face. `at` is its middle, and
+// `size` how many times the usual 1.36 by 2.6 meters it is.
+struct Portal
+{
+    bool open;
+    float3 at;
+    float3 face = float3(0, 0, 1);
+    Entity wall;
+    float size = 1;
 }
 
 singleton Fold
 {
-    int a = 4;
-    int b = 2;
+    Portal amber;
+    Portal cyan;
     [Position] float3 cube = float3(-3, 0.5, -8);
-    float3 cubeVelocity;
+    [Rotation] quaternion cubeTurn = quaternion.identity;
     int carried = -1;
-    float cubeCooldown;
+    bool tossed;         // The cube was let go of this tick, at `toss`
+    float3 toss;
     float3 ping;
     float pingTime;
-    bool cubeThrough;    // The carried cube is held through a fold, at the fold's other end
     int pingOperator;
     int traversals;
+    int busy;            // Ticks since something was in a fold's mouth: neither end moves while it is
+    // A shot that found no place for a fold: where, on what, and for how long it shows
+    float3 fizzleAt;
+    float3 fizzleFace;
+    float fizzleTime;
+    bool fizzleAmber;
 }
 
 // Something that watches from behind a pillar, in every player's match alike,
@@ -63,6 +86,7 @@ singleton Watcher
     float yaw;
 }
 
+// An operator: a capsule of Box3D's, with where its feet are for what draws it.
 component Operator
 {
     int id;
@@ -70,8 +94,42 @@ component Operator
     [Rotation] float yaw;
     float pitch;
     float3 velocity;
-    float portalCooldown;
+    float scale = 1;
+    float3 last;         // Its body's middle a tick ago: a fold is crossed between the two
+    bool grounded;
+    int chamber = -1;
 }
+
+component Cube
+{
+    float3 last;
+    float scale = 1;
+    int chamber;
+}
+
+// A wall, a floor, a ceiling or a thing standing on one: a box of the room.
+// Its colliders are its pieces, which leave a hole where a fold is on it.
+component Wall
+{
+    float3 center;
+    float3 size;
+    float paint;         // Which square of the renderer's sheet it's painted with
+    float tiles = 0.5;   // ...and how many of them a meter
+    bool takes;          // A fold can be put on its upright faces
+    int kind;            // 0 a wall, 1 a planter, 2 a ceiling, 3 a crate
+    int version;         // Counts the folds put on it and taken off
+    int made;            // ...and which of those its pieces are for
+    int chamber;
+}
+
+component Piece
+{
+    Entity wall;
+    int version;
+}
+
+component Gate { int chamber; }
+component Bridge { int chamber; }
 
 local singleton Control
 {
@@ -89,6 +147,7 @@ input PilotInput
     bool amber;
     bool cyan;
     bool carry;
+    bool hurl;
     bool ping;
     bool reset;
 
@@ -106,6 +165,7 @@ input PilotInput
         amber = devices.mouse.left.pressed || devices.gamepad.rightTrigger > 0.3;
         cyan = devices.mouse.right.pressed || devices.gamepad.leftTrigger > 0.3;
         carry = keys.e.pressed || devices.gamepad.buttonWest.pressed;
+        hurl = keys.f.pressed || devices.gamepad.buttonEast.pressed;
         ping = keys.q.pressed || devices.gamepad.buttonNorth.pressed;
         reset = keys.r.pressed;
     }
@@ -114,6 +174,15 @@ input PilotInput
 scene Main { }
 event Restart { }
 command SelectChamber { int level; }
+
+const float FOLD_HALF_WIDE = 0.68;
+const float FOLD_HALF_HIGH = 1.3;
+const float BODY_RADIUS = 0.26;
+const float BODY_HIGH = 1.8;
+const float EYE_HIGH = 1.55;
+const float CUBE_SIDE = 0.74;
+const float CEILING_HIGH = 4.4;
+const int PILLARS = 4;
 
 float3 OperatorStart(int id)
 {
@@ -132,54 +201,16 @@ float3 PlatePosition(int level, int index)
     return index == 0 ? float3(-5, 0.04, -2) : float3(5, 0.04, 10.5);
 }
 
-int PanelCount(int level)
+// The pillars: each its middle's x and z, or nothing where a chamber hasn't got it.
+float4 Pillar(int level, int index)
 {
-    return level >= 0 ? 6 : 0;
-}
-
-float3 PanelPosition(int level, int index)
-{
-    if (level < 0) return float3(0);
     switch (index)
     {
-        case 0: return float3(-9.8, 1.5, -6);
-        case 1: return float3(9.8, 1.5, -6);
-        case 2: return float3(-9.8, 1.5, 10);
-        case 3: return float3(9.8, 1.5, 10);
-        case 4: return float3(-5, 1.5, 2.8);
-        default: return float3(5, 1.5, 3.2);
+        case 0: return float4(-6.6, -10.6, 0.45, 0.45);
+        case 1: return float4(6.8, 0.6, 0.45, 0.45);
+        case 2: return float4(-6.6, 11.6, 0.45, 0.45);
+        default: return level == 2 ? float4(0) : float4(6.6, 6.6, 0.45, 0.45);
     }
-}
-
-float3 PanelNormal(int level, int index)
-{
-    if (level < 0) return float3(0, 0, 1);
-    switch (index)
-    {
-        case 0: case 2: return float3(1, 0, 0);
-        case 1: case 3: return float3(-1, 0, 0);
-        case 4: return float3(0, 0, -1);
-        default: return float3(0, 0, 1);
-    }
-}
-
-float3 PanelRight(int level, int index)
-{
-    return Math.Cross(float3(0, 1, 0), PanelNormal(level, index));
-}
-
-float3 PortalMapDirection(int level, int source, int destination, float3 direction)
-{
-    var x = Math.Dot(direction, PanelRight(level, source));
-    var z = Math.Dot(direction, PanelNormal(level, source));
-    return -PanelRight(level, destination) * x + float3(0, direction.y, 0)
-         - PanelNormal(level, destination) * z;
-}
-
-float3 PortalMapPoint(int level, int source, int destination, float3 point)
-{
-    return PanelPosition(level, destination)
-         + PortalMapDirection(level, source, destination, point - PanelPosition(level, source));
 }
 
 float3 LookDirection(float yaw, float pitch)
@@ -188,139 +219,75 @@ float3 LookDirection(float yaw, float pitch)
     return float3(Math.Sin(yaw) * flat, Math.Sin(pitch), Math.Cos(yaw) * flat);
 }
 
-bool PortalAperture(int level, int panel, float3 center, float radius)
+// A fold's right, as it's looked at from before its wall.
+float3 FoldRight(float3 face)
 {
-    var offset = center - PanelPosition(level, panel);
-    // An opening 1.36 wide and 2.6 high that stands on the floor: its middle is 0.2 under its panel's.
-    return Math.Abs(Math.Dot(offset, PanelRight(level, panel))) < 0.68 - radius
-        && Math.Abs(offset.y + 0.2) < 1.3 - radius;
+    return Math.Cross(float3(0, 1, 0), face);
 }
 
-int AimedPanel(int level, float3 origin, float3 direction, float gate = 1)
+bool Linked(Fold fold)
 {
-    mut var nearest = 80.0;
-    mut var chosen = -1;
-    for (var i = 0; i < PanelCount(level); i++)
-    {
-        var normal = PanelNormal(level, i);
-        var denominator = Math.Dot(direction, normal);
-        if (denominator >= -0.01) continue;
-        var distance = Math.Dot(PanelPosition(level, i) - origin, normal) / denominator;
-        if (distance <= 0 || distance >= nearest) continue;
-        var hit = origin + direction * distance;
-        var relative = hit - PanelPosition(level, i);
-        if (Math.Abs(Math.Dot(relative, PanelRight(level, i))) > 1.65 || Math.Abs(relative.y) > 1.6) continue;
-        // The divider's opaque wings stop shots; its central passage permits them.
-        if ((origin.z < 2.8 && hit.z > 3.2) || (origin.z > 3.2 && hit.z < 2.8))
-        {
-            var crossing = origin + direction * ((3 - origin.z) / direction.z);
-            if (Math.Abs(crossing.x) > 2.1 || gate < 0.9) continue;
-        }
-        nearest = distance;
-        chosen = i;
-    }
-    return chosen;
+    return fold.amber.open && fold.cyan.open;
 }
 
-// Crossing the plane rotates position, horizontal look and momentum together.
-bool Traverse(int level, Fold fold, float3 previousCenter, mut float3 center,
-              mut float3 velocity, mut float yaw, mut float cooldown, float radius)
+// What a fold does to a direction: into one wall is out of the other, turned
+// about the vertical.
+float3 FoldDirection(Portal from, Portal to, float3 direction)
 {
-    if (fold.a == fold.b) return false;
+    var x = Math.Dot(direction, FoldRight(from.face));
+    var z = Math.Dot(direction, from.face);
+    return -FoldRight(to.face) * x + float3(0, direction.y, 0) - to.face * z;
+}
+
+// ...and to a place: as far from the other end's middle, by that end's size.
+float3 FoldPoint(Portal from, Portal to, float3 point)
+{
+    return to.at + FoldDirection(from, to, point - from.at) * (to.size / from.size);
+}
+
+// Whether a place is within a fold's opening, seen along its wall.
+bool InMouth(Portal portal, float3 point, float margin)
+{
+    var offset = point - portal.at;
+    return Math.Abs(Math.Dot(offset, FoldRight(portal.face))) < FOLD_HALF_WIDE * portal.size + margin
+        && Math.Abs(offset.y) < FOLD_HALF_HIGH * portal.size + margin;
+}
+
+// Crossing a fold: a body whose middle went from before a wall's face to past
+// it is as far past the other face, with its speed turned and scaled. Says by
+// how much the body's size changes, 0 for no crossing.
+float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 velocity, mut float yaw)
+{
+    if (!Linked(fold)) return 0;
     for (var side = 0; side < 2; side++)
     {
-        var source = side == 0 ? fold.a : fold.b;
-        var destination = side == 0 ? fold.b : fold.a;
-        var normal = PanelNormal(level, source);
-        var plane = PanelPosition(level, source);
-        var before = Math.Dot(previousCenter - plane, normal);
-        var after = Math.Dot(center - plane, normal);
-        // From before the wall's face to past it: what comes out is as far past the other face, so the
-        // crossing has no step in it, and a body is never left behind a face
-        if (before < 0 || after >= 0 || !PortalAperture(level, source, center, radius)) continue;
-        center = PortalMapPoint(level, source, destination, center);
-        velocity = PortalMapDirection(level, source, destination, velocity);
-        var facing = PortalMapDirection(level, source, destination, LookDirection(yaw, 0));
+        var from = side == 0 ? fold.amber : fold.cyan;
+        var to = side == 0 ? fold.cyan : fold.amber;
+        var was = Math.Dot(before - from.at, from.face);
+        var now = Math.Dot(center - from.at, from.face);
+        if (was < 0 || now >= 0 || !InMouth(from, center, 0.3)) continue;
+        var ratio = to.size / from.size;
+        center = FoldPoint(from, to, center);
+        velocity = FoldDirection(from, to, velocity) * ratio;
+        var facing = FoldDirection(from, to, LookDirection(yaw, 0));
         yaw = Math.Atan2(facing.x, facing.z);
-        return true;
+        fold.traversals += 1;
+        return ratio;
+    }
+    return 0;
+}
+
+// Whether a body is in either fold's mouth: neither end is moved while one is.
+bool AtMouth(Fold fold, float3 center, float reach)
+{
+    for (var side = 0; side < 2; side++)
+    {
+        var portal = side == 0 ? fold.amber : fold.cyan;
+        if (!portal.open) continue;
+        var depth = Math.Dot(center - portal.at, portal.face);
+        if (depth > -0.3 && depth < reach && InMouth(portal, center, 0.1)) return true;
     }
     return false;
-}
-
-bool NearOpening(int level, Fold fold, float3 center, float radius, int panel)
-{
-    return (fold.a == panel || fold.b == panel) && fold.a != fold.b
-        && PortalAperture(level, panel, center, radius);
-}
-
-float3 Confine(int level, Arena arena, Fold fold, float3 previous, float3 proposed, float radius, bool openings = true)
-{
-    mut var result = proposed;
-    // An active fold cuts an actual opening into its wall.
-    if (!openings || !NearOpening(level, fold, result, radius, result.z < 3 ? 0 : 2))
-        result.x = Math.Max(-9.8 + radius, result.x);
-    if (!openings || !NearOpening(level, fold, result, radius, result.z < 3 ? 1 : 3))
-        result.x = Math.Min(9.8 - radius, result.x);
-    result.z = Math.Clamp(result.z, -12.7 + radius, 12.7 - radius);
-    result = Around(level, result, radius);
-    var doorway = Math.Abs(result.x) < 2.1 - radius && arena.gate > 0.9;
-    if (!doorway)
-    {
-        if (previous.z <= 3 && result.z > 2.8 - radius && (!openings || !NearOpening(level, fold, result, radius, 4)))
-            result.z = 2.8 - radius;
-        if (previous.z > 3 && result.z < 3.2 + radius && (!openings || !NearOpening(level, fold, result, radius, 5)))
-            result.z = 3.2 + radius;
-    }
-    return result;
-}
-
-const int OBSTACLES = 12;
-const int PILLARS = 4;
-
-// What stands on the floor and is walked around: the planters, the crates,
-// the locker and the pillars, each its middle's x and z and half its size along each. A
-// planter that a chamber hasn't got is nothing. render.tide draws them where
-// these say they are.
-float4 Obstacle(int level, int index)
-{
-    switch (index)
-    {
-        case 0: return float4(-9, -11, 0.425, 1);
-        case 1: return float4(-9, -4.6, 0.425, 1);
-        case 2: return float4(9, -4.6, 0.425, 1);
-        case 3: return float4(-9, 1.8, 0.425, 1);
-        case 4: return float4(9, 1.8, 0.425, 1);
-        case 5: return level == 2 ? float4(0) : float4(9, 8.2, 0.425, 1);
-        case 6: return float4(8.25, -11.05, 0.85, 1.05);
-        case 7: return float4(7.6, 11.9, 0.55, 0.5);
-        case 8: return float4(-6.6, -10.6, 0.45, 0.45);
-        case 9: return float4(6.8, 0.6, 0.45, 0.45);
-        case 10: return float4(-6.6, 12.1, 0.45, 0.45);
-        default: return level == 2 ? float4(0) : float4(6.6, 6.4, 0.45, 0.45);
-    }
-}
-
-// A body kept out of what stands on the floor: pushed out the short way.
-float3 Around(int level, float3 at, float radius)
-{
-    mut var result = at;
-    for (var i = 0; i < OBSTACLES; i++)
-    {
-        var box = Obstacle(level, i);
-        if (box.z <= 0) continue;
-        var from = float2(result.x - box.x, result.z - box.y);
-        var inside = float2(box.z + radius - Math.Abs(from.x), box.w + radius - Math.Abs(from.y));
-        if (inside.x <= 0 || inside.y <= 0) continue;
-        if (inside.x < inside.y) result.x += from.x < 0 ? -inside.x : inside.x;
-        else result.z += from.y < 0 ? -inside.y : inside.y;
-    }
-    return result;
-}
-
-bool IsPit(int level, Arena arena, float3 position)
-{
-    return level == 2 && position.z > 5 && position.z < 9
-        && (!arena.bridge || Math.Abs(position.x) > 1.65);
 }
 
 bool Weighs(float3 position, float3 plate)
@@ -328,9 +295,82 @@ bool Weighs(float3 position, float3 plate)
     return position.y < 0.8 && Math.DistanceSq(position.xz, plate.xz) < 1.2;
 }
 
-void ResetChamber(mut Arena arena, mut Fold fold, mut World world, int level)
+// A box of the room, with its one piece.
+Entity Raise(Arena arena, float3 center, float3 size, float paint, bool takes = false, int kind = 0, float tiles = 0.5)
+{
+    var wall = Spawn(Wall { center = center, size = size, paint = paint, tiles = tiles, takes = takes, kind = kind, chamber = arena.chamber });
+    Spawn(Piece { wall = wall }, Body { type = BodyType.Static, position = center }, Box { size = size });
+    return wall;
+}
+
+// The chamber: two rooms with a divider and a doorway between them, a lobby
+// past the far one, and what was left standing about. Walls a meter thick,
+// which a fold's opening is cut into.
+void BuildChamber(mut Arena arena, int level)
 {
     arena.level = level;
+    arena.chamber += 1;
+    // The squares of the renderer's sheet: render.tide's names for them
+    var concrete = 3.0;
+    var panels = 2.0;
+    var planks = 5.0;
+    var rust = 9.0;
+    var wallpaper = 12.0;
+    var carpet = 13.0;
+    var ceilingTile = 14.0;
+
+    if (level < 2) Raise(arena, float3(0, -0.5, 0), float3(21.6, 1, 28), carpet);
+    else
+    {
+        Raise(arena, float3(0, -0.5, -4.5), float3(21.6, 1, 19), carpet);
+        Raise(arena, float3(0, -0.5, 11.5), float3(21.6, 1, 5), carpet);
+        Raise(arena, float3(0, -3.5, 7), float3(21.6, 1, 4), concrete);
+    }
+    Raise(arena, float3(0, CEILING_HIGH + 0.5, 2.1), float3(21.6, 1, 32.2), ceilingTile, false, 2, 0.833);
+    Raise(arena, float3(-10.3, 1.2, 0), float3(1, 8.4, 28), wallpaper, true);
+    Raise(arena, float3(10.3, 1.2, 0), float3(1, 8.4, 28), wallpaper, true);
+    Raise(arena, float3(0, 1.2, -13.5), float3(19.6, 8.4, 1), wallpaper, true);
+    Raise(arena, float3(-6.4, 1.2, 13.5), float3(6.8, 8.4, 1), wallpaper, true);
+    Raise(arena, float3(6.4, 1.2, 13.5), float3(6.8, 8.4, 1), wallpaper, true);
+    Raise(arena, float3(0, 4.2, 13.5), float3(6, 0.4, 1), wallpaper);
+    Raise(arena, float3(-5.95, 1.2, 3), float3(7.7, 8.4, 1.2), wallpaper, true);
+    Raise(arena, float3(5.95, 1.2, 3), float3(7.7, 8.4, 1.2), wallpaper, true);
+    Raise(arena, float3(0, 4.2, 3), float3(4.2, 0.4, 1.2), wallpaper);
+    // The lobby past the exit: concrete, which takes no fold.
+    Raise(arena, float3(0, -0.5, 15.6), float3(6, 1, 3.2), concrete);
+    Raise(arena, float3(-3.5, 2.2, 15.6), float3(1, 4.4, 3.2), panels);
+    Raise(arena, float3(3.5, 2.2, 15.6), float3(1, 4.4, 3.2), panels);
+    Raise(arena, float3(0, 2.2, 17.7), float3(8, 4.4, 1), panels);
+
+    // What stands about: planters, crates, a locker and the pillars.
+    for (var planter = 0; planter < 6; planter++)
+    {
+        var x = planter == 0 || planter == 1 || planter == 3 ? -9.0 : 9.0;
+        var z = planter == 0 ? -11.0 : planter < 3 ? -4.6 : planter < 5 ? 1.8 : 8.2;
+        if (level == 2 && z > 4 && z < 10) continue;
+        Raise(arena, float3(x, 0.36, z), float3(0.85, 0.72, 2.0), concrete, false, 1, 1);
+    }
+    Raise(arena, float3(7.95, 0.45, -11.55), float3(0.9, 0.9, 0.9), planks, false, 3);
+    Raise(arena, float3(8.6, 0.45, -10.55), float3(0.9, 0.9, 0.9), planks, false, 3);
+    Raise(arena, float3(8.2, 1.3, -11.2), float3(0.8, 0.8, 0.8), planks, false, 3);
+    Raise(arena, float3(7.6, 0.5, 11.9), float3(1.1, 1.0, 1.0), rust, false, 3);
+    for (var pillar = 0; pillar < PILLARS; pillar++)
+    {
+        var box = Pillar(level, pillar);
+        if (box.z <= 0) continue;
+        Raise(arena, float3(box.x, CEILING_HIGH * 0.5, box.y), float3(0.9, CEILING_HIGH, 0.9), wallpaper);
+    }
+
+    // The gate in the doorway, the bridge the third chamber's cube powers, and the cube.
+    Spawn(Gate { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = float3(0, 2, 3) }, Box { size = float3(4.2, 4, 0.24) });
+    if (level == 2)
+        Spawn(Bridge { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = float3(0, -30, 7) }, Box { size = float3(3.4, 0.3, 4) });
+    arena.cube = Spawn(Cube { chamber = arena.chamber, last = CubeStart(level) }, Body { position = CubeStart(level) },
+          Box { size = float3(CUBE_SIDE), density = 120, friction = 0.7 });
+}
+
+void ResetChamber(mut Arena arena, mut Fold fold, int level)
+{
     arena.gate = 0;
     arena.solved = false;
     arena.complete = false;
@@ -338,23 +378,29 @@ void ResetChamber(mut Arena arena, mut Fold fold, mut World world, int level)
     arena.plateB = false;
     arena.bridge = false;
     arena.ticks = 0;
-    fold.a = 4;
-    fold.b = 2;
+    fold.amber = Portal { };
+    fold.cyan = Portal { };
     fold.cube = CubeStart(level);
-    fold.cubeVelocity = float3(0);
+    fold.cubeTurn = quaternion.identity;
     fold.carried = -1;
-    fold.cubeCooldown = 0;
+    fold.tossed = false;
     fold.pingTime = 0;
+    fold.fizzleTime = 0;
     fold.traversals = 0;
-    world.Set<Operator>(arena.op0, Operator { id = 0, position = OperatorStart(0) });
-    world.Set<Operator>(arena.op1, Operator { id = 1, position = OperatorStart(1) });
+    fold.busy = 0;
+    BuildChamber(arena, level);
 }
 
-event(Spawned) BuildAtrium(with Main, mut Arena arena, mut Fold fold)
+event(Spawned) BuildAtrium(with Main, mut Arena arena, mut Fold fold, mut Physics physics)
 {
-    arena.op0 = Spawn(Operator { id = 0, position = OperatorStart(0) }, Owner);
-    arena.op1 = Spawn(Operator { id = 1, position = OperatorStart(1) }, Owner);
-    fold.cube = CubeStart(0);
+    physics.gravity = float3(0, -18, 0);
+    arena.op0 = Spawn(Operator { id = 0, position = OperatorStart(0) }, Owner,
+                      Body { position = OperatorStart(0) + float3(0, BODY_HIGH * 0.5, 0) },
+                      Capsule { radius = BODY_RADIUS, height = BODY_HIGH, density = 250, friction = 0 });
+    arena.op1 = Spawn(Operator { id = 1, position = OperatorStart(1) }, Owner,
+                      Body { position = OperatorStart(1) + float3(0, BODY_HIGH * 0.5, 0) },
+                      Capsule { radius = BODY_RADIUS, height = BODY_HIGH, density = 250, friction = 0 });
+    ResetChamber(arena, fold, 0);
 }
 
 event(PlayerJoined joined) AssignOperator(mut Arena arena, mut World world)
@@ -385,143 +431,418 @@ event(PlayerLeft left) ReassignOperator(mut Arena arena, mut World world)
     world.Set<Owner>(arena.op1, Owner { player = arena.first });
 }
 
-event(Restart) RestartChamber(mut Arena arena, mut Fold fold, mut World world)
+event(Restart) RestartChamber(mut Arena arena, mut Fold fold)
 {
-    ResetChamber(arena, fold, world, arena.level);
+    ResetChamber(arena, fold, arena.level);
 }
 
-command(SelectChamber selection, PlayerID sender) ChooseChamber(mut Arena arena, mut Fold fold, mut World world)
+command(SelectChamber selection, PlayerID sender) ChooseChamber(mut Arena arena, mut Fold fold)
 {
     if (sender != arena.first && sender != arena.second) return;
     if (selection.level < 0 || selection.level > 2) return;
-    ResetChamber(arena, fold, world, selection.level);
+    ResetChamber(arena, fold, selection.level);
 }
 
-system MoveOperators(mut Operator body, PilotInput input, Arena arena, mut Fold fold, Time time)
+// A wall's folds changed: its pieces are made again.
+void Rework(mut World world, Entity wall)
 {
-    var controlling = arena.joined >= 2 || input.active == body.id;
-    body.portalCooldown = Math.Max(0, body.portalCooldown - time.dt);
-    if (controlling)
+    if (!world.TryGet<Wall>(wall, out var found)) return;
+    mut var changed = found;
+    changed.version += 1;
+    world.Set<Wall>(wall, changed);
+}
+
+void Fizzle(mut Fold fold, bool amber, float3 at, float3 face)
+{
+    fold.fizzleAt = at;
+    fold.fizzleFace = face;
+    fold.fizzleTime = 0.6;
+    fold.fizzleAmber = amber;
+}
+
+// A shot: a fold's end goes where it lands, nudged to fit on that face, or
+// fizzles there. It fits on an upright face of a wall that takes folds, clear
+// of the floor, the ceiling, what stands against the wall and the other end.
+bool Shoot(mut Fold fold, bool amber, float3 origin, float3 way, Physics physics, mut World world)
+{
+    if (!physics.Raycast(origin, origin + way * 60, out var first)) return false;
+    // Through whoever and whatever stands in the way that's no part of the room
+    mut var hit = first;
+    for (var past = 0; past < 3 && !world.Has<Piece>(hit.entity); past++)
+        if (!physics.Raycast(hit.point + way * 0.9, origin + way * 60, out hit)) return false;
+    mut var face = float3(0, 1, 0);
+    if (Math.Abs(hit.normal.y) < 0.3)
+        face = Math.Abs(hit.normal.x) > Math.Abs(hit.normal.z) ? float3(Math.Sign(hit.normal.x), 0, 0) : float3(0, 0, Math.Sign(hit.normal.z));
+    var mine = amber ? fold.amber : fold.cyan;
+    var other = amber ? fold.cyan : fold.amber;
+    if (fold.busy > 0 || face.y > 0.5 || !world.TryGet<Piece>(hit.entity, out var piece) || !world.TryGet<Wall>(piece.wall, out var wall) || !wall.takes)
     {
-        body.yaw += input.look.x;
-        body.yaw = Math.Atan2(Math.Sin(body.yaw), Math.Cos(body.yaw));
-        body.pitch = Math.Clamp(body.pitch + input.look.y, -1.4, 1.4);
-        if (input.reset.down) Send(Restart);
-        var facing = LookDirection(body.yaw, body.pitch);
-        var aimed = AimedPanel(arena.level, body.position + float3(0, 1.55, 0), facing, arena.gate);
-        if (input.amber.down && aimed >= 0 && aimed != fold.b) fold.a = aimed;
-        if (input.cyan.down && aimed >= 0 && aimed != fold.a) fold.b = aimed;
-        if (input.ping.down)
-        {
-            fold.ping = aimed >= 0 ? PanelPosition(arena.level, aimed) : body.position + facing * 4 + float3(0, 1.1, 0);
-            fold.pingTime = 3;
-            fold.pingOperator = body.id;
-        }
-        if (input.carry.down)
-        {
-            if (fold.carried == body.id)
-            {
-                fold.carried = -1;
-                fold.cubeVelocity = facing * 2;
-            }
-            // Alone, the cube is taken from the hands of the body that was left holding it
-            else if ((fold.carried < 0 || arena.joined < 2) && Math.DistanceSq(body.position + float3(0, 1, 0), fold.cube) < 6.25)
-                fold.carried = body.id;
-        }
-        var movement = Math.Normalize(input.move);
-        var forward = LookDirection(body.yaw, 0);
-        var right = float3(forward.z, 0, -forward.x);
-        var desired = (right * movement.x + forward * movement.y) * 5.2;
-        body.velocity.x = Math.Lerp(body.velocity.x, desired.x, Math.Min(1, time.dt * 12));
-        body.velocity.z = Math.Lerp(body.velocity.z, desired.z, Math.Min(1, time.dt * 12));
-        if (input.jump.down && body.position.y <= 0.001 && !IsPit(arena.level, arena, body.position))
-            body.velocity.y = 6.2;
+        Fizzle(fold, amber, hit.point, hit.normal);
+        return false;
     }
-    else
+    var size = 1.0;
+    var halfWide = FOLD_HALF_WIDE * size;
+    var halfHigh = FOLD_HALF_HIGH * size;
+    var right = FoldRight(face);
+    var along = Math.Abs(face.x) > 0.5;
+    var thick = along ? wall.size.x : wall.size.z;
+    var wide = along ? wall.size.z : wall.size.x;
+    // The other end on this wall's other pair of faces would need holes two ways through it
+    var crossed = other.open && other.wall == piece.wall && Math.Abs(Math.Dot(other.face, face)) < 0.5;
+    if (thick < 0.6 || wide < halfWide * 2 || crossed)
+    {
+        Fizzle(fold, amber, hit.point, face);
+        return false;
+    }
+    var plane = wall.center + face * (thick * 0.5);
+    mut var u = Math.Dot(hit.point - wall.center, right);
+    mut var v = hit.point.y;
+    mut var lowU = -wide * 0.5 + halfWide;
+    mut var highU = wide * 0.5 - halfWide;
+    mut var lowV = wall.center.y - wall.size.y * 0.5 + halfHigh;
+    mut var highV = wall.center.y + wall.size.y * 0.5 - halfHigh;
+    // What's around the place, a hand's width off the wall: the floor, the ceiling and what stands either side
+    var probe = float3(plane.x + right.x * u, v, plane.z + right.z * u) + face * 0.2;
+    mut var floor = lowV - halfHigh;
+    if (physics.Raycast(probe, probe - float3(0, 8, 0), out var under)) floor = under.point.y;
+    lowV = Math.Max(lowV, floor + halfHigh);
+    if (physics.Raycast(probe, probe + float3(0, 8, 0), out var over)) highV = Math.Min(highV, over.point.y - halfHigh);
+    if (physics.Raycast(probe, probe - right * 3, out var before)) lowU = Math.Max(lowU, Math.Dot(before.point - wall.center, right) + halfWide);
+    if (physics.Raycast(probe, probe + right * 3, out var after)) highU = Math.Min(highU, Math.Dot(after.point - wall.center, right) - halfWide);
+    if (lowU > highU || lowV > highV)
+    {
+        Fizzle(fold, amber, hit.point, face);
+        return false;
+    }
+    u = Math.Clamp(u, lowU, highU);
+    v = Math.Clamp(v, lowV, highV);
+    // Near the floor it stands on it, to be walked into
+    if (v - halfHigh - floor < 0.8 * size) v = lowV;
+    var at = float3(plane.x + right.x * u, v, plane.z + right.z * u);
+    var overlaps = other.open && Math.Dot(other.face, face) > 0.9 && Math.Abs(Math.Dot(other.at - at, face)) < 0.2
+                && Math.Abs(Math.Dot(other.at - at, right)) < halfWide + FOLD_HALF_WIDE * other.size + 0.1
+                && Math.Abs(other.at.y - at.y) < halfHigh + FOLD_HALF_HIGH * other.size + 0.1;
+    // ...and nothing of the room stands in the opening's way
+    mut var blocked = false;
+    if (physics.Overlap(Box { size = float3(halfWide * 2 - 0.12, halfHigh * 2 - 0.12, 0.3) }, at + face * 0.3,
+                        quaternion.LookRotation(face, float3(0, 1, 0)), out var found))
+    {
+        foreach (var entity in found)
+            if (world.Has<Piece>(entity)) blocked = true;
+    }
+    if (overlaps || blocked)
+    {
+        Fizzle(fold, amber, at, face);
+        return false;
+    }
+    // Every wall an end was or is on: a hole is only there while both ends are
+    if (mine.open && mine.wall != piece.wall) Rework(world, mine.wall);
+    if (other.open && other.wall != piece.wall && !(mine.open && other.wall == mine.wall)) Rework(world, other.wall);
+    Rework(world, piece.wall);
+    var placed = Portal { open = true, at = at, face = face, wall = piece.wall, size = size };
+    if (amber) fold.amber = placed;
+    else fold.cyan = placed;
+    return true;
+}
+
+[Before(PhysicsStages.Step)]
+system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena arena, mut Fold fold, Physics physics, mut World world, Time time)
+{
+    if (pilot.chamber != arena.chamber)
+    {
+        // A new chamber: back to the start, standing still
+        pilot.chamber = arena.chamber;
+        pilot.scale = 1;
+        pilot.yaw = 0;
+        pilot.pitch = 0;
+        body.position = OperatorStart(pilot.id) + float3(0, BODY_HIGH * 0.5 + 0.02, 0);
+        body.velocity = float3(0);
+        pilot.last = body.position;
+        pilot.position = OperatorStart(pilot.id);
+        this.Snap();
+    }
+    // It stands upright whatever it's pushed by
+    body.rotation = quaternion.identity;
+    body.angularVelocity = float3(0);
+    var half = BODY_HIGH * 0.5 * pilot.scale;
+    pilot.grounded = physics.Raycast(body.position, body.position - float3(0, half + 0.1, 0), out _);
+    var controlling = arena.joined >= 2 || input.active == pilot.id;
+    if (!controlling)
     {
         body.velocity.x *= Math.Max(0, 1 - time.dt * 12);
         body.velocity.z *= Math.Max(0, 1 - time.dt * 12);
+        return;
     }
-    body.velocity.y -= 18 * time.dt;
-    mut var previous = body.position + float3(0, 0.95, 0);
-    mut var proposed = previous + body.velocity * time.dt;
-    if (Traverse(arena.level, fold, previous, proposed, body.velocity, body.yaw, body.portalCooldown, 0.26))
+    pilot.yaw += input.look.x;
+    pilot.yaw = Math.Atan2(Math.Sin(pilot.yaw), Math.Cos(pilot.yaw));
+    pilot.pitch = Math.Clamp(pilot.pitch + input.look.y, -1.4, 1.4);
+    if (input.reset.down) Send(Restart);
+    var facing = LookDirection(pilot.yaw, pilot.pitch);
+    var eye = body.position + float3(0, (EYE_HIGH - BODY_HIGH * 0.5) * pilot.scale, 0);
+    if (input.amber.down) Shoot(fold, true, eye, facing, physics, world);
+    if (input.cyan.down) Shoot(fold, false, eye, facing, physics, world);
+    if (input.ping.down)
     {
-        fold.traversals += 1;
-        previous = proposed;
-        if (fold.carried == body.id) fold.Snap();
-        this.Snap();
+        fold.ping = physics.Raycast(eye, eye + facing * 40, out var seen) ? seen.point : eye + facing * 4;
+        fold.pingTime = 3;
+        fold.pingOperator = pilot.id;
     }
-    proposed = Confine(arena.level, arena, fold, previous, proposed, 0.26);
-    body.position = proposed - float3(0, 0.95, 0);
-    if (!IsPit(arena.level, arena, body.position) && body.position.y < 0)
+    if (fold.carried == pilot.id && (input.carry.down || input.hurl.down))
     {
-        body.position.y = 0;
-        body.velocity.y = 0;
+        // Let go of, or thrown
+        fold.carried = -1;
+        fold.tossed = true;
+        fold.toss = facing * (input.hurl.down ? 11.0 : 1.5);
     }
-    if (body.position.y < -6)
-    {
-        body.position = OperatorStart(body.id);
-        body.velocity = float3(0);
-        if (fold.carried == body.id) fold.carried = -1;
-        this.Snap();
-    }
-    if (fold.carried == body.id)
-    {
-        // Held out before the body, and through a fold where the arm reaches into one: the cube is then
-        // at the fold's other end, where it can be let go of.
-        var hand = body.position + float3(0, 1.15, 0);
-        mut var held = hand + LookDirection(body.yaw, body.pitch) * 1.25;
-        mut var through = false;
-        for (var side = 0; side < 2 && fold.a != fold.b && !through; side++)
-        {
-            var source = side == 0 ? fold.a : fold.b;
-            var normal = PanelNormal(arena.level, source);
-            var before = Math.Dot(hand - PanelPosition(arena.level, source), normal);
-            var after = Math.Dot(held - PanelPosition(arena.level, source), normal);
-            if (before < 0 || after >= 0) continue;
-            var crossing = hand + (held - hand) * (before / (before - after));
-            if (!PortalAperture(arena.level, source, crossing, 0.43)) continue;
-            held = PortalMapPoint(arena.level, source, side == 0 ? fold.b : fold.a, held);
-            through = true;
-        }
-        if (through != fold.cubeThrough) fold.Snap();
-        fold.cubeThrough = through;
-        fold.cube = Confine(arena.level, arena, fold, through ? held : hand, held, 0.43);
-        fold.cubeVelocity = float3(0);
-    }
+    // Alone, the cube is taken from the hands of the body that was left holding it
+    else if (input.carry.down && (fold.carried < 0 || arena.joined < 2) && Math.DistanceSq(eye, fold.cube) < 6.25 * pilot.scale * pilot.scale)
+        fold.carried = pilot.id;
+    var movement = Math.Normalize(input.move);
+    var forward = LookDirection(pilot.yaw, 0);
+    var right = float3(forward.z, 0, -forward.x);
+    var desired = (right * movement.x + forward * movement.y) * (5.2 * pilot.scale);
+    body.velocity.x = Math.Lerp(body.velocity.x, desired.x, Math.Min(1, time.dt * 12));
+    body.velocity.z = Math.Lerp(body.velocity.z, desired.z, Math.Min(1, time.dt * 12));
+    if (input.jump.down && pilot.grounded) body.velocity.y = 6.2 * Math.Sqrt(pilot.scale);
 }
 
-system MoveCube(mut Fold fold, Arena arena, Time time)
+// Where a carried cube is held: before its holder's eyes, or through a fold
+// where the arm reaches into one, whichever the cube is nearer.
+[Before(PhysicsStages.Step)]
+system HoldCube(mut Body body, Cube cube, mut Fold fold, Arena arena, query (Operator pilot) operators)
 {
-    fold.pingTime = Math.Max(0, fold.pingTime - time.dt);
-    fold.cubeCooldown = Math.Max(0, fold.cubeCooldown - time.dt);
-    if (fold.carried >= 0) return;
-    fold.cubeVelocity.y -= time.dt * 18;
-    mut var previous = fold.cube;
-    mut var proposed = fold.cube + fold.cubeVelocity * time.dt;
-    mut var ignoredYaw = 0.0;
-    if (Traverse(arena.level, fold, previous, proposed, fold.cubeVelocity, ignoredYaw, fold.cubeCooldown, 0.43))
+    if (cube.chamber != arena.chamber)
     {
-        fold.traversals += 1;
-        previous = proposed;
+        this.Destroy();
+        return;
     }
-    fold.cube = Confine(arena.level, arena, fold, previous, proposed, 0.43);
-    if (!IsPit(arena.level, arena, fold.cube) && fold.cube.y < 0.5)
+    if (fold.tossed)
     {
-        fold.cube.y = 0.5;
-        fold.cubeVelocity = float3(0);
+        fold.tossed = false;
+        mut var toss = fold.toss;
+        // Thrown through a fold the arm was in, it leaves the other end
+        foreach (var entry in operators)
+        {
+            var hand = entry.pilot.position + float3(0, EYE_HIGH * entry.pilot.scale, 0);
+            if (Math.DistanceSq(hand, body.position) < 9) continue;
+            for (var side = 0; side < 2 && Linked(fold); side++)
+            {
+                var from = side == 0 ? fold.amber : fold.cyan;
+                var to = side == 0 ? fold.cyan : fold.amber;
+                if (Math.DistanceSq(FoldPoint(from, to, hand), body.position) < 9) toss = FoldDirection(from, to, fold.toss) * (to.size / from.size);
+            }
+        }
+        body.velocity = body.velocity * 0.3 + toss;
+        body.gravityScale = 1;
     }
-    if (fold.cube.y < -6)
+    if (fold.carried < 0)
     {
-        fold.cube = CubeStart(arena.level);
-        fold.cubeVelocity = float3(0);
+        if (body.gravityScale != 1) body.gravityScale = 1;
+        return;
+    }
+    foreach (var entry in operators)
+    {
+        if (entry.pilot.id != fold.carried) continue;
+        var hand = entry.pilot.position + float3(0, 1.15 * entry.pilot.scale, 0);
+        var held = hand + LookDirection(entry.pilot.yaw, entry.pilot.pitch) * (1.25 * entry.pilot.scale);
+        mut var target = held;
+        mut var nearest = Math.DistanceSq(held, body.position);
+        for (var side = 0; side < 2 && Linked(fold); side++)
+        {
+            var from = side == 0 ? fold.amber : fold.cyan;
+            var to = side == 0 ? fold.cyan : fold.amber;
+            var through = FoldPoint(from, to, held);
+            var far = Math.DistanceSq(through, body.position);
+            if (far < nearest)
+            {
+                nearest = far;
+                target = through;
+            }
+        }
+        if (nearest > 16)
+        {
+            // Out of reach: it's dropped
+            fold.carried = -1;
+            body.gravityScale = 1;
+            return;
+        }
+        var pull = (target - body.position) * 16;
+        var speed = Math.Length(pull);
+        body.velocity = speed > 14 ? pull * (14 / speed) : pull;
+        body.angularVelocity = body.angularVelocity * 0.8;
+        body.gravityScale = 0;
     }
 }
 
-system EvaluateChamber(mut Arena arena, Fold fold, query (Operator body) operators, Time time)
+// After the step: an operator that crossed a fold's face is at the other end.
+system CrossOperators(mut Operator pilot, mut Body body, mut Fold fold)
+{
+    mut var center = body.position;
+    mut var velocity = body.velocity;
+    var ratio = Traverse(fold, pilot.last, center, velocity, pilot.yaw);
+    if (ratio > 0)
+    {
+        body.position = center;
+        body.velocity = velocity;
+        this.Snap();
+    }
+    if (center.y < -8)
+    {
+        // Fell out of the chamber
+        center = OperatorStart(pilot.id) + float3(0, BODY_HIGH * 0.5, 0);
+        body.position = center;
+        body.velocity = float3(0);
+        if (fold.carried == pilot.id) fold.carried = -1;
+        this.Snap();
+    }
+    if (AtMouth(fold, center, 0.7 * pilot.scale)) fold.busy = 3;
+    pilot.last = center;
+    pilot.position = center - float3(0, BODY_HIGH * 0.5 * pilot.scale, 0);
+    pilot.velocity = body.velocity;
+}
+
+system CrossCube(mut Cube cube, mut Body body, mut Fold fold, Arena arena)
+{
+    mut var center = body.position;
+    mut var velocity = body.velocity;
+    mut var unused = 0.0;
+    var amberSide = Math.Abs(Math.Dot(cube.last - fold.amber.at, fold.amber.face)) < Math.Abs(Math.Dot(cube.last - fold.cyan.at, fold.cyan.face));
+    var ratio = Traverse(fold, cube.last, center, velocity, unused);
+    if (ratio > 0)
+    {
+        // It comes out turned as the fold turns the world
+        var from = amberSide ? fold.amber : fold.cyan;
+        var to = amberSide ? fold.cyan : fold.amber;
+        var ahead = FoldDirection(from, to, Math.Forward(body.rotation));
+        var up = FoldDirection(from, to, Math.Up(body.rotation));
+        body.rotation = quaternion.LookRotation(ahead, up);
+        body.angularVelocity = FoldDirection(from, to, body.angularVelocity);
+        body.position = center;
+        body.velocity = velocity;
+        fold.Snap();
+    }
+    if (center.y < -8)
+    {
+        center = CubeStart(arena.level);
+        body.position = center;
+        body.velocity = float3(0);
+        body.angularVelocity = float3(0);
+        fold.carried = -1;
+        fold.Snap();
+    }
+    if (AtMouth(fold, center, 0.6 * cube.scale)) fold.busy = 3;
+    cube.last = center;
+    fold.cube = center;
+    fold.cubeTurn = body.rotation;
+}
+
+// A wall's pieces: the wall with a hole in it where each fold on it is, as
+// deep as the wall less a back to it. The face is cut into a grid by the
+// holes' edges, and each cell is a box: all of the wall's depth, or what a
+// hole leaves of it.
+[Before(PhysicsStages.Step)]
+system Carve(mut Wall wall, Fold fold, Arena arena)
+{
+    if (wall.chamber != arena.chamber)
+    {
+        this.Destroy();
+        return;
+    }
+    if (wall.made == wall.version) return;
+    wall.made = wall.version;
+    var first = Linked(fold) && fold.amber.wall == this;
+    var second = Linked(fold) && fold.cyan.wall == this;
+    if (!first && !second)
+    {
+        Spawn(Piece { wall = this, version = wall.version }, Body { type = BodyType.Static, position = wall.center }, Box { size = wall.size });
+        return;
+    }
+    var face = first ? fold.amber.face : fold.cyan.face;
+    var along = Math.Abs(face.x) > 0.5;
+    var axis = along ? float3(1, 0, 0) : float3(0, 0, 1);
+    var across = along ? float3(0, 0, 1) : float3(1, 0, 0);
+    var thick = along ? wall.size.x : wall.size.z;
+    var wide = along ? wall.size.z : wall.size.x;
+    mut List<float> us = [-wide * 0.5, wide * 0.5];
+    mut List<float> vs = [-wall.size.y * 0.5, wall.size.y * 0.5];
+    for (var end = 0; end < 2; end++)
+    {
+        var portal = end == 0 ? fold.amber : fold.cyan;
+        if (!(end == 0 ? first : second)) continue;
+        var u = Math.Dot(portal.at - wall.center, across);
+        var v = portal.at.y - wall.center.y;
+        us.Add(Math.Clamp(u - FOLD_HALF_WIDE * portal.size, -wide * 0.5, wide * 0.5));
+        us.Add(Math.Clamp(u + FOLD_HALF_WIDE * portal.size, -wide * 0.5, wide * 0.5));
+        vs.Add(Math.Clamp(v - FOLD_HALF_HIGH * portal.size, -wall.size.y * 0.5, wall.size.y * 0.5));
+        vs.Add(Math.Clamp(v + FOLD_HALF_HIGH * portal.size, -wall.size.y * 0.5, wall.size.y * 0.5));
+    }
+    us.Sort(a, b) { return a < b; }
+    vs.Sort(a, b) { return a < b; }
+    for (var column = 0; column + 1 < us.count; column++)
+    {
+        var wideHere = us[column + 1] - us[column];
+        if (wideHere < 0.01) continue;
+        for (var row = 0; row + 1 < vs.count; row++)
+        {
+            var highHere = vs[row + 1] - vs[row];
+            if (highHere < 0.01) continue;
+            var u = (us[column] + us[column + 1]) * 0.5;
+            var v = (vs[row] + vs[row + 1]) * 0.5;
+            mut var low = -thick * 0.5;
+            mut var high = thick * 0.5;
+            for (var end = 0; end < 2; end++)
+            {
+                var portal = end == 0 ? fold.amber : fold.cyan;
+                if (!(end == 0 ? first : second)) continue;
+                if (Math.Abs(u - Math.Dot(portal.at - wall.center, across)) > FOLD_HALF_WIDE * portal.size) continue;
+                if (Math.Abs(v - (portal.at.y - wall.center.y)) > FOLD_HALF_HIGH * portal.size) continue;
+                var deep = Math.Min(thick - 0.1, 0.95 * portal.size);
+                if (Math.Dot(portal.face, axis) > 0) high = Math.Min(high, thick * 0.5 - deep);
+                else low = Math.Max(low, -thick * 0.5 + deep);
+            }
+            if (high - low < 0.02) continue;
+            var middle = wall.center + across * u + float3(0, v, 0) + axis * ((low + high) * 0.5);
+            var size = across * wideHere + float3(0, highHere, 0) + axis * (high - low);
+            Spawn(Piece { wall = this, version = wall.version }, Body { type = BodyType.Static, position = middle }, Box { size = size });
+        }
+    }
+}
+
+// A piece of a wall that's gone, or that was made for other folds, goes.
+[Before(PhysicsStages.Step)]
+system Uncarve(Piece piece, World world)
+{
+    if (!world.TryGet<Wall>(piece.wall, out var wall) || wall.version != piece.version) this.Destroy();
+}
+
+system MoveGate(mut Body body, Gate gate, Arena arena)
+{
+    if (gate.chamber != arena.chamber)
+    {
+        this.Destroy();
+        return;
+    }
+    var height = 2.0 + arena.gate * 4.3;
+    if (Math.Abs(body.position.y - height) > 0.001) body.position = float3(0, height, 3);
+}
+
+system MoveBridge(mut Body body, Bridge bridge, Arena arena)
+{
+    if (bridge.chamber != arena.chamber)
+    {
+        this.Destroy();
+        return;
+    }
+    var height = arena.bridge ? -0.15 : -30.0;
+    if (Math.Abs(body.position.y - height) > 0.001) body.position = float3(0, height, 7);
+}
+
+system EvaluateChamber(mut Arena arena, mut Fold fold, query (Operator pilot) operators, Time time)
 {
     arena.ticks += 1;
+    fold.pingTime = Math.Max(0, fold.pingTime - time.dt);
+    fold.fizzleTime = Math.Max(0, fold.fizzleTime - time.dt);
+    fold.busy = Math.Max(0, fold.busy - 1);
     var cubeA = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 0));
     var cubeB = fold.carried < 0 && Weighs(fold.cube, PlatePosition(arena.level, 1));
     mut var operatorA = false;
@@ -529,9 +850,9 @@ system EvaluateChamber(mut Arena arena, Fold fold, query (Operator body) operato
     mut var exiting = 0;
     foreach (var entry in operators)
     {
-        if (Weighs(entry.body.position, PlatePosition(arena.level, 0))) operatorA = true;
-        if (Weighs(entry.body.position, PlatePosition(arena.level, 1))) operatorB = true;
-        if (entry.body.position.z > 11 && Math.Abs(entry.body.position.x) < 3 && entry.body.position.y > -0.1) exiting += 1;
+        if (Weighs(entry.pilot.position, PlatePosition(arena.level, 0))) operatorA = true;
+        if (Weighs(entry.pilot.position, PlatePosition(arena.level, 1))) operatorB = true;
+        if (entry.pilot.position.z > 13.6 && Math.Abs(entry.pilot.position.x) < 3 && entry.pilot.position.y > -0.1) exiting += 1;
     }
     arena.plateA = cubeA || operatorA;
     arena.plateB = cubeB || operatorB;
@@ -543,7 +864,7 @@ system EvaluateChamber(mut Arena arena, Fold fold, query (Operator body) operato
     if (arena.solved && exiting == 2) arena.complete = true;
 }
 
-system Haunt(mut Watcher watcher, Arena arena, query (Operator body) operators, Time time)
+system Haunt(mut Watcher watcher, Arena arena, query (Operator pilot) operators, Time time)
 {
     if (arena.ticks < 2)
     {
@@ -555,7 +876,7 @@ system Haunt(mut Watcher watcher, Arena arena, query (Operator body) operators, 
     }
     watcher.blink = Math.Max(0, watcher.blink - time.dt);
     if (arena.complete) return;
-    var pillar = Obstacle(arena.level, OBSTACLES - PILLARS + watcher.spot);
+    var pillar = Pillar(arena.level, watcher.spot);
     var middle = float3(pillar.x, 0, pillar.y);
     mut var nearest = 1000.0;
     mut var nearestAt = middle + float3(0, 0, 1);
@@ -566,22 +887,22 @@ system Haunt(mut Watcher watcher, Arena arena, query (Operator body) operators, 
     mut var nearestId = 0;
     foreach (var entry in operators)
     {
-        var far = Math.Distance(entry.body.position.xz, middle.xz);
+        var far = Math.Distance(entry.pilot.position.xz, middle.xz);
         if (far < nearest)
         {
             nearest = far;
-            nearestAt = entry.body.position;
-            nearestId = entry.body.id;
+            nearestAt = entry.pilot.position;
+            nearestId = entry.pilot.id;
         }
-        if (entry.body.id == watcher.victim)
+        if (entry.pilot.id == watcher.victim)
         {
-            victimAt = entry.body.position;
-            victimYaw = entry.body.yaw;
+            victimAt = entry.pilot.position;
+            victimYaw = entry.pilot.yaw;
         }
-        var to = watcher.at + float3(0, 1.2, 0) - (entry.body.position + float3(0, 1.55, 0));
+        var to = watcher.at + float3(0, 1.2, 0) - (entry.pilot.position + float3(0, 1.55, 0));
         var away = Math.Length(to);
-        if (away < 18 && Math.Dot(to / Math.Max(away, 0.001), LookDirection(entry.body.yaw, entry.body.pitch)) > 0.93) looked = true;
-        if (entry.body.position.z > 3.2) anyoneFar = true;
+        if (away < 18 && Math.Dot(to / Math.Max(away, 0.001), LookDirection(entry.pilot.yaw, entry.pilot.pitch)) > 0.93) looked = true;
+        if (entry.pilot.position.z > 3.6) anyoneFar = true;
     }
     if (watcher.state == Watching.Away)
     {
@@ -592,12 +913,12 @@ system Haunt(mut Watcher watcher, Arena arena, query (Operator body) operators, 
         var bold = Random.NextInt(5) == 0;
         var left = Random.NextBool();
         watcher.wait = 15;
-        var chosen = Obstacle(arena.level, OBSTACLES - PILLARS + spot);
+        var chosen = Pillar(arena.level, spot);
         if (chosen.z <= 0) return;
         if (spot >= 2 && !anyoneFar && arena.gate < 0.9) return;
         mut var clear = true;
         foreach (var entry in operators)
-            if (Math.Distance(entry.body.position.xz, chosen.xy) < 5.5) clear = false;
+            if (Math.Distance(entry.pilot.position.xz, chosen.xy) < 5.5) clear = false;
         if (!clear) return;
         watcher.state = Watching.Peeking;
         watcher.spot = spot;
