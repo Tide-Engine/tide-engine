@@ -1,5 +1,13 @@
 # The docs site
 
+HOT SWAP addition (2026-10-13): the server-only catalog and public-root/
+outside-root asset gates include `hot-swap`, a solo/two-player warehouse
+possession heist. `hot_swap_page` stages its self-contained, STATS-enabled
+page beneath `/prototypes/hot-swap/`; the thumbnail is captured gameplay.
+Admin and production HTTP fixtures cover the new id and its stale aliases.
+The existing catalog/auth/discovery contract is unchanged. Game validation
+and remaining playtest gaps are in `notes/hot-swap.md`. No deployment or CI.
+
 SKYWORKS removal (2026-10-13): the owner scrapped the prototype. Its catalog card,
 public id, asset-gate entries, thumbnail and test registrations are removed;
 its source/build targets and game note are removed too. The existing catalog

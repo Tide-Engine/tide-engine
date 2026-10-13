@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'hot-swap'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -53,7 +53,9 @@ test('production website shares prototypes while protecting analytics, catalog a
         '/samples/underfoot/index.html', '/underfoot.html', '/samples/underfoot/game.wasm',
         '/samples/thumbnails/underfoot.png',
         '/samples/foldline/index.html', '/foldline.html', '/samples/foldline/game.wasm',
-        '/samples/thumbnails/foldline.png']) {
+        '/samples/thumbnails/foldline.png',
+        '/samples/hot-swap/index.html', '/hot_swap.html', '/samples/hot-swap/game.wasm',
+        '/samples/thumbnails/hot-swap.png']) {
         files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
