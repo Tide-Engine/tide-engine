@@ -2668,19 +2668,19 @@ static int target_samples(expr *e, const char *made, int64_t *said)
     return 1;
 }
 
-// A target of depth alone with samples: nothing could be read of it, as a
-// multisampled target's depth isn't a shader's to read. Said where the
-// samples are known as the game is compiled; true then.
+// A target of depth alone with samples: they'd smooth nothing, as its depth
+// is read one depth a pixel whatever they are. Said where the samples are
+// known as the game is compiled; true then.
 static bool depth_alone_sampled(const expr *e, const int formats, const int64_t said)
 {
     if (formats != 1 || said <= 1) return false;
     const expr *format = e->args.items[e->args.count - 2];
     if (!format->enum_member || !str_eq_c(format->enum_member->name, "Depth")) return false;
-    diag_error(e->args.items[e->args.count - 1]->at, "a target of depth alone has one sample a pixel: a multisampled "
-                                                     "target's depth can't be read");
-    diag_note("'target.depth' of a target with samples isn't a shader's to read (a GPU keeps several depths a pixel "
-              "there), so nothing could be read of this one: leave 'samples' out, as a shadow map does, or give the "
-              "target a color image, whose edges the samples smooth");
+    diag_error(e->args.items[e->args.count - 1]->at, "a target of depth alone has one sample a pixel: samples smooth a "
+                                                     "target's colors, and it has none");
+    diag_note("'target.depth' is one depth a pixel whatever a target's samples are, so they'd change nothing that's "
+              "read of this one: leave 'samples' out, as a shadow map does, or give the target a color image, whose "
+              "edges the samples smooth");
     return true;
 }
 

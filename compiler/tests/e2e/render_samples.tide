@@ -1,7 +1,7 @@
 // A render target's samples: `samples: 4` after its size and what it holds,
 // where a target is made. Each pixel is drawn with that many samples, which
 // smooths the edges of the triangles drawn into it, and its color images are
-// what those come to. Its depth isn't a shader's to read.
+// what those come to. Its depth is read one depth a pixel.
 
 struct Pass
 {

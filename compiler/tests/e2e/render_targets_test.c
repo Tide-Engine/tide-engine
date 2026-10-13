@@ -29,12 +29,15 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
     TIDE_CHECK(local.Buffers.projected3.x == 8 && local.Buffers.projected3.y == 6);
     TIDE_CHECK(local.Buffers.projected3.z > 0 && local.Buffers.projected3.z < 1);
 
-    uint32_t destination = 0, objects = 0, blits = 0, cubes = 0, marked = 0;
+    uint32_t destination = 0, objects = 0, blits = 0, cubes = 0, marked = 0, depths = 0;
     bool prepared = false;
     for (uint32_t i = 0; i < draw.count; i++) {
         const tide_draw_command *c = &draw.commands[i];
         if (c->kind == TIDE_DRAW_TARGET) {
             destination = c->target ? (uint32_t)draw.targets[c->target - 1u].id : 0;
+        } else if (c->kind == TIDE_DRAW_CLEAR && c->a.x == 1) { // ClearDepth: the scratch target's, then the window's
+            TIDE_CHECK(destination == (depths == 0 ? 12u : 0u));
+            depths++;
         } else if (c->kind == TIDE_DRAW_CLEAR && destination == 11) {
             prepared = true;
         } else if (c->kind == TIDE_DRAW_CLEAR && c->color.g == 1 && c->color.r == 0) {
@@ -59,7 +62,7 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
         }
     }
     TIDE_CHECK(blits == 4 && objects == 2 && destination == 0);
-    TIDE_CHECK(cubes == 1 && marked == 1);
+    TIDE_CHECK(cubes == 1 && marked == 1 && depths == 2);
     TIDE_CHECK(draw.commands[draw.count - 1u].kind == TIDE_DRAW_CLEAR);
     tide_local_free(&local);
     tide_draw_free(&draw);
