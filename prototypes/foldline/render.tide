@@ -1115,18 +1115,19 @@ void Dress(mut Optics optics, int level)
     }
 
     // What was left behind: crates, a stack of boards, and plants nobody waters.
-    optics.furnishings.Add(Faced(float3(7.9, .45, -11.6), quaternion.Euler(0, .2, 0), float3(.9), PLANKS, 0));
-    optics.furnishings.Add(Faced(float3(8.6, .45, -10.5), quaternion.Euler(0, -.4, 0), float3(.9), PLANKS, 0));
-    optics.furnishings.Add(Faced(float3(8.1, 1.3, -11.2), quaternion.Euler(0, .7, 0), float3(.8), PLANKS, 0));
+    // Each is one of play.tide's obstacles, which keep the operators and the cube out of them.
+    optics.furnishings.Add(Faced(float3(7.95, .45, -11.55), quaternion.identity, float3(.9), PLANKS, 0));
+    optics.furnishings.Add(Faced(float3(8.6, .45, -10.55), quaternion.identity, float3(.9), PLANKS, 0));
+    optics.furnishings.Add(Faced(float3(8.2, 1.3, -11.2), quaternion.Euler(0, .5, 0), float3(.8), PLANKS, 0));
     optics.furnishings.Add(Faced(float3(-7.6, .06, 11.6), quaternion.Euler(0, .3, 0), float3(2.2, .12, 1.1), PLANKS, 0));
     optics.furnishings.Add(Faced(float3(-7.4, .18, 11.5), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
-    optics.furnishings.Add(Faced(float3(7.6, .5, 11.9), quaternion.Euler(0, .1, 0), float3(1.0, 1.0, .9), RUST, 0));
-    for (int planter = 0; planter < 8; planter++)
+    optics.furnishings.Add(Faced(float3(7.6, .5, 11.9), quaternion.identity, float3(1.1, 1.0, 1.0), RUST, 0));
+    for (int planter = 0; planter < 6; planter++)
     {
-        float x = planter % 2 == 0 ? -9.0 : 9.0;
-        float z = -11 + (planter / 2) * 6.4;
-        if (level == 2 && z > 4 && z < 10) continue;
-        if (planter == 1 || planter == 6) continue;
+        float4 box = Obstacle(level, planter);
+        if (box.z <= 0) continue;
+        float x = box.x;
+        float z = box.y;
         optics.furnishings.Add(Clad(float3(x, .36, z), float3(.85, .72, 2.0), CONCRETE, 1, Color(.7, .7, .68)));
         optics.furnishings.Add(Block(float3(x, .7, z), float3(.72, .06, 1.87), Color(.07, .06, .045)));
         for (int leaf = 0; leaf < 22; leaf++)

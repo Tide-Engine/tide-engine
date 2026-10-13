@@ -102,6 +102,13 @@ at 2.7 m goes for that operator, standing in their face for 0.75 s; that
 player's picture jolts and reddens (`Lens.scare`). Nothing else happens to
 them. It's the zombie skin on the operators' model. No sound is built.
 
+**Obstacles:** the planters, the crates and the locker are `Obstacle` boxes in
+`play.tide` that `Confine` pushes operators and the cube out of (`Around`),
+and `Dress` draws the planters from the same list. Until then nothing stopped
+a body walking into them, and the camera inside a planter read as Z-fighting
+to the owner. With the watcher's state in the world, the replay hash is
+`2444141639418552689`, natively and under WASI.
+
 Not built: vents, chases, timed puzzles, sound, a HUD and menu in the style.
 
 **Stats:** every catalog game is built with `STATS` since 2026-10-13 (the
