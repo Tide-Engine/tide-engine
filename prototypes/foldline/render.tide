@@ -1165,6 +1165,13 @@ const float PLASTER = 15;
 // Whether a lamp's fitting hangs at a place: 0 for none, 1 under a roof, 2 on rods under a higher one.
 int Fitted(int level, float3 at)
 {
+    if (level == UNDERTOW)
+    {
+        if (at.y > STOREY) return 0;
+        if (at.z < -12) return Math.Abs(at.x) < 7 && at.z > -22 ? 1 : 0;
+        if (at.z < 6) return Math.Abs(at.x) < 3 ? 1 : 0;
+        return Math.Abs(at.x) < 7 && at.z < 14 ? 1 : 0;
+    }
     if (level == DARK)
     {
         if (at.y > STOREY) return 0;
@@ -1255,7 +1262,7 @@ void Dress(mut Optics optics, int level, int theme)
     if (theme == 1)
     {
         // A pool's things: rings on the walls, a rail down each slope, and the depth painted by the water
-        for (int ring = 0; ring < 4; ring++)
+        for (int ring = 0; ring < 4 && level < SHAFT; ring++)
         {
             float3 at = float3(ring < 2 ? -9.74 : 9.74, 1.6, ring % 2 == 0 ? -7.5 : 8.5);
             for (int part = 0; part < 12; part++)
@@ -1268,14 +1275,14 @@ void Dress(mut Optics optics, int level, int theme)
         for (int rail = 0; rail < 4 && hazard == 2; rail++)
         {
             float side = rail < 2 ? -1 : 1;
-            float x = rail % 2 == 0 ? -4.0 : 4.0;
+            float x = (PitFrom(level) + PitTo(level)) * .5 + (rail % 2 == 0 ? -.2 : .2) * (PitTo(level) - PitFrom(level));
             Color chrome = Color(.7, .74, .76);
             float edge = PitHalf(level);
             optics.furnishings.Add(Block(float3(x, .45, middle + side * (edge + .1)), float3(.05, .9, .05), chrome, 0, 0, .9));
             optics.furnishings.Add(Block(float3(x, -.5, middle + side * (edge - 1.5)), float3(.05, .9, .05), chrome, 0, 0, .9));
             optics.furnishings.Add(Turned(float3(x, .42, middle + side * (edge - .7)), quaternion.Euler(-side * .57, 0, 0), float3(.05, .05, 1.95), chrome, 0, .9));
         }
-        for (int mark = 0; mark < 6 && hazard == 2; mark++)
+        for (int mark = 0; mark < 6 && hazard == 2 && level < SHAFT; mark++)
             optics.furnishings.Add(Block(float3(-7.5 + mark * 3, .012, middle - PitHalf(level) - .4), float3(.5, .02, .22), Color(.1, .2, .5)));
     }
     if (theme == 2)
@@ -1327,7 +1334,7 @@ void Dress(mut Optics optics, int level, int theme)
     if (!Between(level))
     {
         float3 sign = LiftAt(level) + float3(5.4, 3.1, -2.64);
-        int number = level < BETWEEN ? level + 1 : level == SIGHT ? 7 : level == SHAFT ? 8 : 9;
+        int number = level < BETWEEN ? level + 1 : level == SIGHT ? 7 : level == SHAFT ? 8 : level == DARK ? 9 : 10;
         optics.furnishings.Add(Block(sign, float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
         WallDigit(optics, number / 10, sign + float3(-.54, 0, -.045));
         WallDigit(optics, number % 10, sign + float3(.54, 0, -.045));
@@ -1790,7 +1797,8 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
             float3 top = float3(0, 0, middle + side * half);
             float3 foot = float3(0, -deep, middle + side * (half - run));
             float3 normal = float3(0, Math.Cos(slope), -side * Math.Sin(slope));
-            mut Fixture ramp = Turned((top + foot) * .5 - normal * .2, quaternion.Euler(-side * slope, 0, 0), float3(19.6, .4, Math.Sqrt(deep * deep + run * run)),
+            mut Fixture ramp = Turned((top + foot) * .5 - normal * .2 + float3((PitFrom(arena.level) + PitTo(arena.level)) * .5, 0, 0), quaternion.Euler(-side * slope, 0, 0),
+                                      float3(PitTo(arena.level) - PitFrom(arena.level), .4, Math.Sqrt(deep * deep + run * run)),
                                       hazard == 2 ? Color(.62, .95, 1) : Color(.62, .6, .56));
             ramp.cell = hazard == 2 ? 3 : 2;
             optics.dynamic.Add(ramp);
@@ -1836,7 +1844,8 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
         // The lanes' floats, which ride the water
         for (int float2 = 0; float2 < 40; float2++)
         {
-            float x = -9.3 + float2 * .477;
+            float x = PitFrom(arena.level) + .5 + float2 * .477;
+            if (x > PitTo(arena.level) - .4) continue;
             // A room's two lanes; in the long pool a line each side of every shallow, which is how they're found
             for (int lane = 0; lane < (arena.level == POOLWAY ? 6 : 2); lane++)
             {
@@ -1844,6 +1853,15 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
                 optics.dynamic.Add(Block(float3(x, POOL_SURFACE + .03 + Math.Sin(optics.phase * 2 + float2 * .7 + lane) * .015, z), float3(.2, .1, .1),
                                          float2 % 4 < 2 ? Color(.85, .1, .08) : Color(.92, .92, .88)));
             }
+        }
+        // A plate under the water is marked on it: four floats of its green over where it lies
+        for (int plate = 0; plate < PlateCount(arena.level); plate++)
+        {
+            float3 under = PlatePosition(arena.level, plate);
+            if (under.y > -1) continue;
+            for (int corner = 0; corner < 4; corner++)
+                optics.dynamic.Add(Block(float3(under.x + ((corner & 1) == 0 ? -.75 : .75), POOL_SURFACE + .05 + Math.Sin(optics.phase * 2 + corner) * .02, under.z + ((corner & 2) == 0 ? -.75 : .75)),
+                                         float3(.22, .14, .22), Color(.45, 1, .3), 0, arena.plateC ? 1.6 : .7));
         }
         // Someone it has: the water thrown about over them
         if (viewer.taken > 0 && int(viewer.taken / .24) != int((viewer.taken - Math.Min(Frame.dt, .05)) / .24)) Splash(optics, float3(viewer.position.x, POOL_SURFACE, viewer.position.z), 1.3);
@@ -1860,7 +1878,8 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
             float x = DrumAt(arena.level, arena.ticks, which);
             float lane = DrumLane(arena.level, which);
             for (int rail = -1; rail <= 1; rail += 2)
-                optics.dynamic.Add(Block(float3(0, -deep + .02, lane + rail * 1.14), float3(19.4, .04, .09), steel2, 0, 0, .8));
+                optics.dynamic.Add(Block(float3((PitFrom(arena.level) + PitTo(arena.level)) * .5, -deep + .02, lane + rail * 1.14),
+                                         float3(PitTo(arena.level) - PitFrom(arena.level) - .2, .04, .09), steel2, 0, 0, .8));
             float rolled = x / .7;
             float3 axle = float3(x, -deep + .74, lane);
             optics.dynamic.Add(Turned(axle, quaternion.Euler(0, 0, rolled), float3(1.0, 1.0, 2.1), Color(.3, .19, .13), 0, .5));
@@ -2048,6 +2067,11 @@ view Render(Operator viewer, query (Operator body) operators, query (Wall wall) 
         // Behind the menu the atrium is seen from a camera of its own, adrift.
         eye = float3(-3.6 + Math.Sin(optics.phase) * .45, 2.5 + Math.Sin(optics.phase * 2) * .06, -12.2);
         rotation = quaternion.Euler(-.05, .04 + Math.Cos(optics.phase) * .015, 0);
+        if (arena.level == UNDERTOW)
+        {
+            eye = float3(-2 + Math.Sin(optics.phase) * .3, 3, -14.5);
+            rotation = quaternion.Euler(.2, .12 + Math.Cos(optics.phase) * .015, 0);
+        }
         if (arena.level == DARK)
         {
             eye = float3(-2.8 + Math.Sin(optics.phase) * .3, 3.2, -15);

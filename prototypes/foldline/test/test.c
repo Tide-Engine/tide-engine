@@ -83,7 +83,7 @@ static void press(tide_world *world, PilotInput controls)
 static void choose(tide_world *world, int sender, int level)
 {
     // The game's only command: generated wire ID, null entity target, zigzag int.
-    CHECK(level >= -1 && level <= 12);
+    CHECK(level >= -1 && level <= 13);
     uint8_t payload[11] = {0};
     payload[0] = (uint8_t)TIDE_COMMAND_ID_SelectChamber;
     payload[1] = (uint8_t)(TIDE_COMMAND_ID_SelectChamber >> 8);
@@ -352,14 +352,15 @@ static void chambers_and_commands(void)
     CHECK(near(pilot(&world, 0).position.z, -15.6f, 0.05f) && near(pilot(&world, 0).position.y, 0, 0.05f));
     CHECK(near(world.Fold.cube.z, -8, 0.4f) && near(world.Fold.cube.x, -3, 0.4f) && !world.Fold.ends.at[0].open);
     // The places in order: two rooms and a stretch between, three times, each three its own place
-    static const int levels[13] = {0, 1, 6, 2, 3, 7, 4, 5, 8, 10, 9, 11, 6};
-    for (int room = 0; room < 12; room++) {
+    static const int levels[13] = {0, 1, 6, 12, 3, 7, 4, 5, 8, 10, 9, 11, 6};
+    for (int room = 0; room < 13; room++) {
         choose(&world, 0, room);
-        CHECK(world.Arena.level == room && levels[world.Arena.depth] == room && world.Arena.theme == world.Arena.depth / 3 % 3);
+        // The pool's first room of the hall's is off the way down, at the depth of the room that took its place
+        CHECK(world.Arena.level == room && (room == 2 ? world.Arena.depth == 3 : levels[world.Arena.depth] == room) && world.Arena.theme == world.Arena.depth / 3 % 3);
     }
     // A room that isn't one changes nothing
-    choose(&world, 0, 12);
-    CHECK(world.Arena.level == 11);
+    choose(&world, 0, 13);
+    CHECK(world.Arena.level == 12);
     tide_world_free(&world);
 }
 
@@ -622,6 +623,64 @@ static void dark(void)
     place(&world, 0, (tide_float3){0, 0, -3.5f}, 0, 0);
     ticks(&world, 60);
     CHECK(pilot(&world, 0).taken > 0);
+    tide_world_free(&world);
+}
+
+// The flooded channel: its door, the plate under the water, and what the thing in it goes for.
+static void undertow(void)
+{
+    tide_world world = {0};
+    start(&world);
+    choose(&world, 0, 12);
+    ticks(&world, 60);
+    CHECK(world.Arena.level == 12 && world.Arena.depth == 3 && world.Arena.theme == 1 && world.Fold.count == 4);
+    // It's in a pool as wide as the channel, and no wider
+    for (int step = 0; step < 600; step++) {
+        tide_world_tick(&world);
+        CHECK(world.Lurker.at.x > -2.3f && world.Lurker.at.x < 2.3f && world.Lurker.at.z > -11.5f && world.Lurker.at.z < 5.5f);
+    }
+    // The door at the far end is shut
+    place(&world, 0, (tide_float3){0, 0, 5.8f}, 0, 0);
+    input(&world, 0, (PilotInput){.move = {0, 1}});
+    ticks(&world, 60);
+    CHECK(pilot(&world, 0).position.z < 6.3f && !world.Arena.plateC);
+    // Someone who wades with nothing to draw it off is had
+    place(&world, 0, (tide_float3){0, -1.5f, -6}, 0, 0);
+    bool had = false;
+    for (int step = 0; step < 400 && !had; step++) {
+        tide_world_tick(&world);
+        had = pilot(&world, 0).taken > 0;
+    }
+    CHECK(had);
+    input(&world, 0, (PilotInput){0});
+    ticks(&world, 150);
+    // The cube on the plate under the water opens the door, and is what it goes for
+    put_cube(&world, (tide_float3){0, 0.2f, -3}, (tide_float3){0});
+    ticks(&world, 200);
+    CHECK(world.Arena.plateC && world.Fold.cube.y < -1 && hypotf(world.Lurker.at.x, world.Lurker.at.z + 3) < 1 && world.Lurker.lureLeft > 0);
+    // A crate thrown in at the near end after it is what it goes for then: the last thing in
+    place(&world, 0, (tide_float3){3, 0, -17.8f}, 0, -0.3f);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.carry = true});
+    CHECK(world.Fold.holding.at[0] > 1);
+    for (int step = 0; step <= 4; step++) {
+        place(&world, 0, (tide_float3){3 - 0.75f * step, 0, -17.8f + 1.2f * step}, 0, 0);
+        ticks(&world, 12);
+    }
+    CHECK(world.Fold.holding.at[0] > 1);
+    press(&world, (PilotInput){.hurl = true});
+    ticks(&world, 90);
+    CHECK(world.Fold.holding.at[0] == 0 && world.Lurker.lure.z < -6 && world.Lurker.lureLeft > 4);
+    // ...and with it down there someone wades the far half, out up the slope and through the open door
+    place(&world, 1, (tide_float3){0, -1.5f, -1}, 0, 0);
+    input(&world, 0, (PilotInput){.active = 1, .move = {0, 1}});
+    bool through = false;
+    for (int step = 0; step < 400 && !through; step++) {
+        tide_world_tick(&world);
+        CHECK(pilot(&world, 1).taken == 0);
+        through = pilot(&world, 1).position.z > 7.5f && pilot(&world, 1).position.y > -0.05f;
+    }
+    CHECK(through && world.Lurker.at.z < -4);
     tide_world_free(&world);
 }
 
@@ -1008,6 +1067,7 @@ int main(void)
     shaft();
     sight();
     dark();
+    undertow();
     chambers_hold();
     replay_and_pack_are_identical();
     puts("FOLDLINE simulation checks passed");

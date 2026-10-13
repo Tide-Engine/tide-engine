@@ -262,7 +262,7 @@ const int PILLARS = 2;
 const int BETWEEN = 6;
 const int POOLWAY = 7;
 const int GAUNTLET = 8;
-const int CHAMBERS = 12;
+const int CHAMBERS = 13;
 
 bool Between(int level)
 {
@@ -279,16 +279,18 @@ const float BLACKOUT_FOR = 0.4;
 // A lift's door into its place is on its north side, and out of it on its south.
 const int SHAFT = 9;         // The rooms that aren't built in the hall: a shaft, and three rooms in a row
 const int SIGHT = 10;
-const int DARK = 11;         // ...and a passage whose lamps are on only while a plate is weighted
+const int DARK = 11;         // ...a passage whose lamps are on only while a plate is weighted
+const int UNDERTOW = 12;     // ...and a flooded channel with a door at its far end
 
 float3 ArrivalAt(int level)
 {
-    return level == SHAFT ? float3(0, 0, -20) : level == SIGHT || level == DARK ? float3(0, 0, -24) : float3(6.5, 0, -15.6);
+    return level == SHAFT ? float3(0, 0, -20) : level >= SIGHT ? float3(0, 0, -24) : float3(6.5, 0, -15.6);
 }
 
 float3 LiftAt(int level)
 {
-    return level == SHAFT ? float3(0, 5, 26.6) : level == SIGHT ? float3(0, 0, 12.6) : level == DARK ? float3(10, 0, 12.6) : float3(0, 0, 15.6);
+    return level == SHAFT ? float3(0, 5, 26.6) : level == SIGHT ? float3(0, 0, 12.6) : level == DARK ? float3(10, 0, 12.6)
+         : level == UNDERTOW ? float3(0, 0, 16.6) : float3(0, 0, 15.6);
 }
 
 float3 HoldPlate(int level)
@@ -313,7 +315,7 @@ int LevelAt(int depth)
         case 0: return 0;
         case 1: return 1;
         case 2: return BETWEEN;
-        case 3: return 2;
+        case 3: return UNDERTOW;
         case 4: return 3;
         case 5: return POOLWAY;
         case 6: return 4;
@@ -333,18 +335,19 @@ int Hazard(int level, int theme)
 {
     // A room that isn't the hall's has the pit it's built with, whatever the place
     if (level == DARK) return 1;
+    if (level == UNDERTOW) return 2;
     return Pitted(level) ? theme + 1 : 0;
 }
 
 // How far along x a pit runs: the hall's whole width, or a room's own.
 float PitFrom(int level)
 {
-    return level == DARK ? -4.0 : -9.8;
+    return level == DARK ? -4.0 : level == UNDERTOW ? -3.0 : -9.8;
 }
 
 float PitTo(int level)
 {
-    return level == DARK ? 4.0 : 9.8;
+    return level == DARK ? 4.0 : level == UNDERTOW ? 3.0 : 9.8;
 }
 
 // What throws whoever and whatever steps on it: where each is, and the speed it gives.
@@ -365,13 +368,13 @@ float3 PadThrow(int level, int index)
 
 float PitMiddle(int level)
 {
-    return level == 0 ? -1.0 : level == POOLWAY ? 0.5 : level == DARK ? -3.5 : 1.0;
+    return level == 0 ? -1.0 : level == POOLWAY ? 0.5 : level == DARK ? -3.5 : level == UNDERTOW ? -3.0 : 1.0;
 }
 
 // How far a pit reaches either side of its middle: a room's is 5 m across, a stretch's most of the hall.
 float PitHalf(int level)
 {
-    return level == POOLWAY ? 9.0 : level == GAUNTLET ? 7.0 : 2.5;
+    return level == POOLWAY || level == UNDERTOW ? 9.0 : level == GAUNTLET ? 7.0 : 2.5;
 }
 
 // A pool or a trench has a floor, this far down, and a slope to it from each side this long.
@@ -400,7 +403,11 @@ bool InShallows(int level, float z)
 }
 
 const float POOL_SURFACE = -0.3;
-const float DRUM_REACH = 17.2;   // How far a drum goes along the trench, and back
+// How far a drum goes along its trench, and back: the trench's length less the drum's own.
+float DrumReach(int level)
+{
+    return PitTo(level) - PitFrom(level) - 2.4;
+}
 const float DRUM_SPEED = 6.0;
 const float SHRED_FOR = 1.1;
 
@@ -421,13 +428,14 @@ float DrumTurn(int level, int ticks, int which)
 {
     var speed = level == GAUNTLET ? 5.0 + which * 1.1 : DRUM_SPEED;
     var start = level == GAUNTLET ? which * 0.31 : which * 0.5;
-    return Math.Frac(ticks / 60.0 * speed / (DRUM_REACH * 2) + start);
+    return Math.Frac(ticks / 60.0 * speed / (DrumReach(level) * 2) + start);
 }
 
 float DrumAt(int level, int ticks, int which)
 {
-    var along = DrumTurn(level, ticks, which) * DRUM_REACH * 2;
-    return -DRUM_REACH * 0.5 + (along < DRUM_REACH ? along : DRUM_REACH * 2 - along);
+    var reach = DrumReach(level);
+    var along = DrumTurn(level, ticks, which) * reach * 2;
+    return (PitFrom(level) + PitTo(level)) * 0.5 - reach * 0.5 + (along < reach ? along : reach * 2 - along);
 }
 
 float DrumWay(int level, int ticks, int which)
@@ -445,7 +453,8 @@ int DepthOf(int level)
 {
     for (var depth = 0; depth < 13; depth++)
         if (LevelAt(depth) == level) return depth;
-    return 0;
+    // The pool's first room of the hall's is off the way down, and still the pool's
+    return level == 2 ? 3 : 0;
 }
 
 // The maze's walls: a bit a cell, set where there's a wall on its east side, and on its north.
@@ -568,6 +577,7 @@ int CubeCount(int level)
         case 7: return 5;
         case 9: return 1;
         case 10: return 1;
+        case 12: return 4;
         default: return 1;
     }
 }
@@ -586,43 +596,47 @@ float3 CubeStart(int level, int index)
         case 9: return float3(3, 0.5, -6);
         case 10: return float3(-3, 0.5, -17);
         case 11: return float3(-3, 0.5, -17);
+        case 12: return index == 0 ? float3(-4, 0.5, -17) : index == 1 ? float3(3, 0.4, -16) : index == 2 ? float3(3.9, 0.4, -16) : float3(3.45, 1.2, -16);
         default: return float3(4.2, 0.5, -16.7);
     }
 }
 
 int PlateCount(int level)
 {
-    return level == SHAFT || level == DARK ? 3 : level == SIGHT ? 4 : 2;
+    return level == SHAFT || level == DARK || level == UNDERTOW ? 3 : level == SIGHT ? 4 : 2;
 }
 
 // A room's machinery: how many things it moves, each one's two places, its size, and the plate that sends it
 // to its second place (under 0 for one that goes back and forth by itself).
 int MoverCount(int level)
 {
-    return level == SHAFT ? 3 : level == SIGHT ? 2 : 0;
+    return level == SHAFT ? 3 : level == SIGHT ? 2 : level == UNDERTOW ? 1 : 0;
 }
 
 float3 MoverFrom(int level, int index)
 {
     // Three rooms in a row have a door between each two, which is shut
     if (level == SIGHT) return float3(0, 1.5, index == 0 ? -11.5 : -2.5);
+    if (level == UNDERTOW) return float3(0, 1.5, 6.5);
     return index == 0 ? float3(5, -0.15, -0.6) : index == 1 ? float3(-3, 4.85, 14.5) : float3(4.5, 4.85, 18.5);
 }
 
 float3 MoverTo(int level, int index)
 {
     if (level == SIGHT) return float3(0, 4.7, index == 0 ? -11.5 : -2.5);
+    if (level == UNDERTOW) return float3(0, 4.7, 6.5);
     return index == 0 ? float3(5, 4.85, -0.6) : index == 1 ? float3(4.5, 4.85, 14.5) : float3(-3, 4.85, 18.5);
 }
 
 float3 MoverSize(int level, int index)
 {
-    return level == SIGHT ? float3(3, 3, 0.3) : float3(3, 0.3, 3);
+    return level == SIGHT ? float3(3, 3, 0.3) : level == UNDERTOW ? float3(6, 3, 0.3) : float3(3, 0.3, 3);
 }
 
 int MoverPlate(int level, int index)
 {
     if (level == SIGHT) return 2 + index;
+    if (level == UNDERTOW) return 2;
     return index == 0 ? 2 : -1;
 }
 
@@ -654,6 +668,7 @@ float3 PlatePosition(int level, int index)
         case 9: return index == 0 ? float3(-5.6, 5.04, 22.75) : index == 1 ? float3(3, 5.04, 22.7) : float3(-5, 0.04, -6);
         case 10: return index == 0 ? float3(-3.5, 4.44, 8.5) : index == 1 ? float3(3.5, 4.44, 8.5) : index == 2 ? float3(4, 0.04, -15) : float3(-4, 0.04, -9.6);
         case 11: return index == 0 ? float3(9, 0.04, 7) : index == 1 ? float3(13, 0.04, 3) : float3(2.8, 0.04, -7.1);
+        case 12: return index == 0 ? float3(-4, 0.04, 10) : index == 1 ? float3(4, 0.04, 10) : float3(0, -1.46, -3);
         default: return index == 0 ? float3(5, 0.04, 8) : float3(-5, 0.04, 8);
     }
 }
@@ -933,6 +948,72 @@ void BuildSight(mut Arena arena)
     }
 }
 
+// A pool's or a trench's own: its floor, and a slope down to it from each side, as wide as the pit runs.
+void PitWorks(mut Arena arena, int level)
+{
+    var hazard = Hazard(level, arena.theme);
+    var middle = PitMiddle(level);
+    var half = PitHalf(level);
+    var across = (PitFrom(level) + PitTo(level)) * 0.5;
+    var wide = PitTo(level) - PitFrom(level) + 2;
+    var deep = PitDeep(level, hazard);
+    var run = PitRun(level, hazard);
+    var slope = Math.Atan2(deep, run);
+    Raise(arena, float3(across, -deep - 0.5, middle), float3(wide, 1, half * 2), 3.0);
+    for (var index = 0; index < 3 && level == POOLWAY; index++)
+        Raise(arena, float3(across, -0.85, ShallowAt(index)), float3(wide, 0.8, 1.6), 3.0);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var top = float3(across, 0, middle + side * half);
+        var foot = float3(across, -deep, middle + side * (half - run));
+        var normal = float3(0, Math.Cos(slope), -side * Math.Sin(slope));
+        Spawn(Ramp { chamber = arena.chamber },
+              Body { type = BodyType.Static, position = (top + foot) * 0.5 - normal * 0.2, rotation = quaternion.Euler(-side * slope, 0, 0) },
+              Box { size = float3(wide, 0.4, Math.Sqrt(deep * deep + run * run)) });
+    }
+}
+
+// A dry room with the cube and three crates; a flooded channel 18 m long with something in it; and at its far
+// end a door that's open only while a plate on the channel's floor, half-way along, is weighted. Nothing past
+// the water takes a fold. What goes in last is what the thing goes for, so who throws what, and when, is the
+// room.
+void BuildUndertow(mut Arena arena)
+{
+    var panels = 2.0;
+    var wallpaper = 12.0;
+    var carpet = 13.0;
+    var roof = 14.0;
+    LiftShell(arena, ArrivalAt(UNDERTOW), 1);
+    Spawn(Door { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = ArrivalAt(UNDERTOW) + float3(0, 2, 2.1) }, Box { size = float3(6, 4, 0.24) });
+    Fill(arena, -7, 7, -1, 0, -22.4, -12, carpet);
+    Fill(arena, -8, -7, 0, 4.4, -22.4, -11, wallpaper, true);
+    Fill(arena, 7, 8, 0, 4.4, -22.4, -11, wallpaper, true);
+    Fill(arena, -7, -4, 0, 4.4, -22.4, -21.4, wallpaper, true);
+    Fill(arena, 4, 7, 0, 4.4, -22.4, -21.4, wallpaper, true);
+    Fill(arena, -7, -3, 0, 4.4, -12, -11, wallpaper, true);
+    Fill(arena, 3, 7, 0, 4.4, -12, -11, wallpaper, true);
+    Fill(arena, -8, 8, 4.4, 5.4, -22.4, -11, roof, false, 2);
+    // The channel
+    Fill(arena, -4, -3, -2.5, 4.4, -11, 6, panels);
+    Fill(arena, 3, 4, -2.5, 4.4, -11, 6, panels);
+    Fill(arena, -4, 4, 4.4, 5.4, -11, 6, roof, false, 2);
+    PitWorks(arena, UNDERTOW);
+    // The far room, behind its door
+    Fill(arena, -7, 7, -1, 0, 6, 14, carpet);
+    Fill(arena, -7, -3, 0, 4.4, 6, 7, panels);
+    Fill(arena, 3, 7, 0, 4.4, 6, 7, panels);
+    Fill(arena, -3, 3, 3, 4.4, 6, 7, panels);
+    Fill(arena, -8, -7, 0, 4.4, 6, 15, panels);
+    Fill(arena, 7, 8, 0, 4.4, 6, 15, panels);
+    Fill(arena, -7, -3, 0, 4.4, 14, 15, panels);
+    Fill(arena, 3, 7, 0, 4.4, 14, 15, panels);
+    Fill(arena, -8, 8, 4.4, 5.4, 6, 15, roof, false, 2);
+    LiftShell(arena, LiftAt(UNDERTOW), -1);
+    Spawn(Gate { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = LiftAt(UNDERTOW) + float3(0, 2, -2.1) }, Box { size = float3(6, 4, 0.24) });
+    Spawn(Mover { chamber = arena.chamber, index = 0, at = MoverFrom(UNDERTOW, 0), size = MoverSize(UNDERTOW, 0) },
+          Body { type = BodyType.Kinematic, position = MoverFrom(UNDERTOW, 0) }, Box { size = MoverSize(UNDERTOW, 0), friction = 0.9 });
+}
+
 // A lit room, then a passage whose lamps are on only while a plate at the edge of its pit is weighted, with
 // something past the pit that moves only in the dark; the passage turns, into a room whose one wall that takes
 // a fold can't be seen from the passage. The pit is crossed by a pad that throws whoever steps on it.
@@ -987,7 +1068,8 @@ void BuildChamber(mut Arena arena, int level)
     {
         if (level == SHAFT) BuildShaft(arena);
         else if (level == SIGHT) BuildSight(arena);
-        else BuildDark(arena);
+        else if (level == DARK) BuildDark(arena);
+        else BuildUndertow(arena);
         SpawnLoose(arena, level);
         return;
     }
@@ -1042,25 +1124,7 @@ void BuildChamber(mut Arena arena, int level)
         Raise(arena, float3(0, -0.5, (middle + half + 14) * 0.5), float3(21.6, 1, 14 - middle - half), carpet);
     }
     else Raise(arena, float3(0, -0.5, 0), float3(21.6, 1, 28), carpet);
-    if (hazard >= 2)
-    {
-        // A pool or a trench: a floor, and a slope down to it from each side
-        var deep = PitDeep(level, hazard);
-        var run = PitRun(level, hazard);
-        var slope = Math.Atan2(deep, run);
-        Raise(arena, float3(0, -deep - 0.5, middle), float3(21.6, 1, half * 2), concrete);
-        for (var index = 0; index < 3 && level == POOLWAY; index++)
-            Raise(arena, float3(0, -0.85, ShallowAt(index)), float3(21.6, 0.8, 1.6), concrete);
-        for (var side = -1; side <= 1; side += 2)
-        {
-            var top = float3(0, 0, middle + side * half);
-            var foot = float3(0, -deep, middle + side * (half - run));
-            var normal = float3(0, Math.Cos(slope), -side * Math.Sin(slope));
-            Spawn(Ramp { chamber = arena.chamber },
-                  Body { type = BodyType.Static, position = (top + foot) * 0.5 - normal * 0.2, rotation = quaternion.Euler(-side * slope, 0, 0) },
-                  Box { size = float3(21.6, 0.4, Math.Sqrt(deep * deep + run * run)) });
-        }
-    }
+    if (hazard >= 2) PitWorks(arena, level);
 
     if (level == 1)
     {
@@ -1401,7 +1465,7 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
     if (lurker.chamber != arena.chamber)
     {
         lurker.chamber = arena.chamber;
-        lurker.at = float3(-7, POOL_SURFACE, middle);
+        lurker.at = float3(PitFrom(arena.level) + 2.8, POOL_SURFACE, middle);
         lurker.lureLeft = 0;
         lurker.wasIn = 0;
     }
@@ -1419,7 +1483,9 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
     lurker.wasIn = nowIn;
     lurker.lureLeft = Math.Max(0, lurker.lureLeft - time.dt);
     // Up and down the pool with nothing to go for; for the nearest of whoever is in it; for a splash before them
-    mut var target = float3(Math.Sin(arena.ticks / 60.0 * 0.35) * 8, POOL_SURFACE, middle + Math.Sin(arena.ticks / 60.0 * 0.23) * (reach - 1.5));
+    var across = (PitFrom(arena.level) + PitTo(arena.level)) * 0.5;
+    var wide = PitTo(arena.level) - PitFrom(arena.level);
+    mut var target = float3(across + Math.Sin(arena.ticks / 60.0 * 0.35) * (wide * 0.5 - 1.8), POOL_SURFACE, middle + Math.Sin(arena.ticks / 60.0 * 0.23) * (reach - 1.5));
     mut var speed = 2.2;
     mut var nearest = 1000.0;
     foreach (var entry in operators)
@@ -1437,7 +1503,7 @@ system Lurk(mut Lurker lurker, Arena arena, Fold fold, query (Operator pilot) op
         target = lurker.lure;
         speed = 5.5;
     }
-    target = float3(Math.Clamp(target.x, -9, 9), POOL_SURFACE, Math.Clamp(target.z, middle - reach + 0.6, middle + reach - 0.6));
+    target = float3(Math.Clamp(target.x, PitFrom(arena.level) + 0.8, PitTo(arena.level) - 0.8), POOL_SURFACE, Math.Clamp(target.z, middle - reach + 0.6, middle + reach - 0.6));
     var gap = Math.Distance(target.xz, lurker.at.xz);
     lurker.rush = speed > 3 ? 1.0 : 0.0;
     if (gap < 0.05) return;
@@ -1484,7 +1550,8 @@ system MoveOperators(mut Operator pilot, mut Body body, PilotInput input, Arena 
     // What a pit does to whoever is in it
     var hazard = Hazard(arena.level, arena.theme);
     var low = body.position.y - BODY_HIGH * 0.5 * pilot.scale;
-    var within = Math.Abs(body.position.z - PitMiddle(arena.level)) < PitHalf(arena.level);
+    var within = Math.Abs(body.position.z - PitMiddle(arena.level)) < PitHalf(arena.level) && body.position.x > PitFrom(arena.level) - 0.3
+              && body.position.x < PitTo(arena.level) + 0.3;
     if (pilot.taken <= 0 && hazard == 2 && within && low < POOL_SURFACE - 0.5 && Math.DistanceSq(lurker.at.xz, body.position.xz) < 1.6) pilot.taken = 0.0001;
     if (pilot.taken <= 0 && hazard == 3 && within && low < -0.6)
     {
