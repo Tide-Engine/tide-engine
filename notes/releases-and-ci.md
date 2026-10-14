@@ -1,5 +1,22 @@
 # Releases, installing and CI
 
+## Stable upgrade fixture failure (2026-10-14)
+
+Build run 38577620235 builds release commit b23c42ff as 0.3.0 on the stable
+channel. All five failed suites in attempt 1 failed only `tide_cli_upgrade`;
+Windows, macOS and Linux native plus MinGW repeat that failure in attempt 2;
+its sanitizer job was still running during investigation. Packages, web
+suites, Docs and JetBrains verification passed. The test's local release list
+hardcoded `prerelease: true` and nightly output, so the stable CLI correctly
+reported no stable package. This does not query published releases and is
+unrelated to the age of the previous stable release.
+
+The fixture now follows the built CLI's default channel; implementation and
+local reproduction are in notes/cli-and-packages.md, Upgrade fixture channels.
+An old-run retry still checks out b23c42ff. Hosted validation of the fix requires
+the correction on `release` and a newly requested Build run. No suite or
+publication gate was removed, and no workflow was dispatched for this fix.
+
 ## Docs LLVM alignment (2026-10-14)
 
 The Docs workflow now installs the LLVM major selected by cmake/LLVM.cmake
