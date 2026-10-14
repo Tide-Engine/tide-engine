@@ -11,6 +11,8 @@ installation has Bash pipefail and prints clang's version. The staging ABI
 guard, reproducer and local full-suite validation are in notes/docs-site.md.
 No triggers, suites, deployment/publishing gates or retry policy changed.
 The owner explicitly requested a new workflow run and following it to completion.
+Docs run 38557265795 on 9b81435d passed the full job with Clang 23.1.2,
+including playground staging/browser checks, and deployed successfully to Fly.
 
 ## Optional Windows prefab registration (2026-10-13)
 
