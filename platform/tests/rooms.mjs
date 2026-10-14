@@ -279,13 +279,39 @@ function openBrowser(which, query) {
         const hiding = `user_pref("media.peerconnection.ice.obfuscate_host_addresses", ${which.hidden});
 `;
         writeFileSync(`${profile}/user.js`, FIREFOX_PREFS + hiding);
-        // --wait-for-browser: on Windows, the process started is only a
-        // launcher, and without it, stopping it would leave the browser.
+        // The process started lasts as long as the browser, so stopping it
+        // stops the browser. On Windows it's either a launcher, which waits
+        // for the browser it starts since it's headless, or the browser
+        // itself: Firefox decides at each start from what its last start on
+        // this machine left in the registry, and skips the launcher when that
+        // one's browser hasn't come up yet (any Firefox starting at the same
+        // time). So no --wait-for-browser: a launcher takes it off the command
+        // line, but a browser started without one is given it, and then never
+        // opens the page.
         // MOZ_DISABLE_SAFE_MODE_KEY: Shift held as Firefox starts (someone
         // typing on this machine) puts it in safe mode, whose prompt nobody
         // answers headless, so it would never open the page.
-        child = spawn(which.path, ['--headless', '--no-remote', '--wait-for-browser', '--profile', profile, url],
-            { stdio: 'ignore', env: { ...process.env, MOZ_DISABLE_SAFE_MODE_KEY: '1' } });
+        // MOZ_DISABLE_UPDATE_PROCESSING: an update this machine's Firefox
+        // downloaded is otherwise installed by whichever start comes next,
+        // which asks for elevation, exits with 0 and starts Firefox again,
+        // a browser this test never started and can't stop.
+        // MOZ_STARTUP_CACHE, in a folder that isn't there: a new profile's
+        // first start writes its startup cache from a thread of low priority
+        // that holds the cache's lock as it compresses, while the browser's
+        // main thread waits for that lock to load its scripts. With every
+        // core busy (a full test suite), that thread got no time for
+        // minutes. Pointed at a folder that isn't there, the write fails
+        // before it compresses anything; a profile used once has no use for
+        // the cache.
+        child = spawn(which.path, ['--headless', '--no-remote', '--profile', profile, url], {
+            stdio: 'ignore',
+            env: {
+                ...process.env,
+                MOZ_DISABLE_SAFE_MODE_KEY: '1',
+                MOZ_DISABLE_UPDATE_PROCESSING: '1',
+                MOZ_STARTUP_CACHE: resolve(profile, 'none', 'startupCache'),
+            },
+        });
     } else {
         // --remote-debugging-pipe: DevTools on fds 3 and 4, which stopBrowser
         // asks to close the browser
