@@ -1,5 +1,30 @@
 # The language server and the editors
 
+## JetBrains prefab tool-window API correction (2026-10-14)
+
+Build run 38471050893 reached plugin verification after successful adapter tests
+and packaging, then rejected the prefab action's direct RegisterToolWindowTask
+registration. IntelliJ 2024.2.6 marks the task/class and registration method
+internal; CLion 263.6800.10 marks the method override-only. Repeated CI attempts
+cannot repair this API usage.
+
+The action now calls ToolWindowManager's public String/builder overload from
+Java, returning Kotlin Unit from its builder callback. The window retains its
+right anchor, closable contents, visibility with no tabs, per-file reuse and
+existing panel disposal.
+No IDE version pin, verifier failure policy or workflow gate changed. The
+plugin README records that verification rejects these API violations.
+
+Validation: JDK 21 and Gradle 9.8.0 `--no-configuration-cache buildPlugin
+verifyPlugin` pass on Windows, including all eight ordinary adapter/platform
+tests. Plugin Verifier 1.410 reports Compatible with no API violations against
+IC-242.26775.15 and CL-263.6800.10, the exact IDE builds used by the failed CI
+run. The existing 2024.2 TextMate extension still requires an IDE restart for
+plugin enable/disable. Upstream IDE layout diagnostics remain; they do not
+report Tide API usages. Optional native-process/LSP/JCEF host tests and other
+operating systems were not rerun for this registration-only fix; no CI was
+dispatched. `git diff --check` passes.
+
 ## Entry-point navigation (2026-10-14)
 
 Functions and methods now have an `N entry points` lens beside their ordinary
