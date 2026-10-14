@@ -34,8 +34,8 @@ function check(ok, what) {
 
 // Runs `program` with TIDE_HIDDEN as `hidden` says: a value, or undefined for
 // an environment without it.
-function run(program, args, hidden) {
-    const env = { ...process.env };
+function run(program, args, hidden, more = {}) {
+    const env = { ...process.env, ...more };
     delete env.TIDE_HIDDEN;
     if (hidden !== undefined) env.TIDE_HIDDEN = hidden;
     const ran = spawnSync(program, args, { cwd: scratch, env, encoding: 'utf8', timeout: 60000 });
@@ -69,8 +69,10 @@ if (mode === 'runs') {
               'audio: the microphone closes', plays, 'audio: the output device closes'].join('; '),
           `and without it, it opens the output, and the microphone while frames name it: ${heard.status === 0 ? asked(heard) : how(heard)}`);
 
-    // And a window that asks to show, past the platform's refusal, doesn't
-    const shown = run(host, ['window'], '1');
+    // And a window that asks to show, past the platform's refusal, doesn't. The host finds the window by
+    // its OpenGL context, so this one draws with OpenGL: whether a window shows is the window's own,
+    // whatever draws in it (make_window in desktop/glfw.c)
+    const shown = run(host, ['window'], '1', { TIDE_BACKEND: 'opengl' });
     check(shown.status === 0 && shown.out.includes("ok: a window asked to show doesn't"), `a window asked to show stays hidden${shown.status === 0 ? '' : `: ${how(shown)}`}`);
     process.exit(failures ? 1 : 0);
 }

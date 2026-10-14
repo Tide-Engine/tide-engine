@@ -9,5 +9,5 @@ if(TIDE_WEB)
 elseif(NOT TIDE_ANDROID)
     # Opens a hidden window, so it needs a desktop session with working OpenGL.
     add_test(NAME demo_smoke COMMAND demo --smoke)
-    set_tests_properties(demo_smoke PROPERTIES LABELS gpu)
+    tide_gpu_test(demo_smoke)
 endif()

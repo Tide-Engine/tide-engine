@@ -1182,11 +1182,19 @@ typedef enum tide_shader_read {
 // GLSL is without its version line, its uniforms a std140 block named
 // `uniforms`. WGSL has both stages, `vertex` and `fragment`, its uniforms at
 // binding 0 of group 0, and texture i and its sampler at bindings 1 + 2i and
-// 2 + 2i; it's NULL off the web.
+// 2 + 2i; it's NULL off the web. SPIR-V, for Vulkan, is the WGSL's (tidec
+// translates it): its entry points `vertex` and `fragment`, its bindings
+// those of descriptor set 0; it's NULL where no build draws with Vulkan
+// (where TIDE_SPIRV isn't defined).
+#if !defined(__wasm__) && !defined(__ANDROID__)
+#define TIDE_SPIRV 1
+#endif
 typedef struct tide_shader {
     const char *name; // For messages: "Wave and Shade on BoxVertex"
     const char *glsl_vertex, *glsl_fragment;
     const char *wgsl;
+    const uint32_t *spirv; // ...and its words
+    uint32_t spirv_words;
     uint64_t id;   // A hash of all of the above and below: another shader, another id
     uint32_t dims; // 2: drawn in order, through the 2D camera or the screen; 3: through the 3D camera, with depth
     uint32_t vertex_size;

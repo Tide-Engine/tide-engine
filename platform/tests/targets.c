@@ -12,6 +12,9 @@
 
 #include "gpu.h"
 #include "window.h"
+#ifdef TIDE_SPIRV
+#include "spirv.h" // compiler/src's translator, which the test's build adds
+#endif
 
 #ifdef __wasm__
 #include "tide_web.h"
@@ -3246,6 +3249,9 @@ static int frame(void *user, const float seconds)
 
 int main(void)
 {
+#ifdef TIDE_SPIRV
+    tide_gpu_spirv_of = tide_wgsl_to_spirv; // The shaders here have WGSL alone: Vulkan's SPIR-V is made of it
+#endif
     tide_platform_open(&(tide_window_desc){.title = "targets", .width = WIDTH * 2, .height = HEIGHT * 2, .hidden = true});
     tide_platform_run(frame, NULL);
 }

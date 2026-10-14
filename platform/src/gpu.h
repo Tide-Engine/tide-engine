@@ -12,10 +12,11 @@
 // - Drawing happens in a pass on a target, which starts cleared or as it was
 //   left. There's no clear inside a pass: the renderer draws one.
 //
-// Each has one, which the window says (tide_window_gpu): OpenGL (gpu_gl.c, on
-// gl.h) and, on the web, WebGPU (web/gpu_web.c, in tide.js). Vulkan is to come.
-// Clip space is OpenGL's (depth from -1 to 1, y up), pixels are counted from a
-// target's top left, and textures' and targets' rows go from the top.
+// Each has one, which the window says (tide_window_gpu): Vulkan on desktop
+// (gpu_vk.c), OpenGL where there's none (gpu_gl.c, on gl.h) and, on the web,
+// WebGPU (web/gpu_web.c, in tide.js). Clip space is OpenGL's (depth from -1
+// to 1, y up), pixels are counted from a target's top left, and textures' and
+// targets' rows go from the top.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -227,6 +228,10 @@ typedef struct tide_gpu_pipeline_desc {
     // A cube is a `samplerCube`, and a `texture_cube<f32>` with a `sampler`.
     const char *glsl_vertex, *glsl_fragment;
     const char *wgsl;
+    // Vulkan's: the WGSL as SPIR-V (tidec translates it, and the renderer's
+    // own at its build), whose entry points and bindings are the WGSL's.
+    const uint32_t *spirv;
+    uint32_t spirv_words;
     // The vertex buffers it reads, by slot: how far apart their elements are,
     // and whether they're one for each vertex or for each instance.
     struct {
@@ -416,6 +421,12 @@ typedef struct tide_gpu {
     void (*draw)(uint32_t first, uint32_t count, uint32_t instances);
     void (*draw_indexed)(uint32_t count, uint32_t instances);
 } tide_gpu;
+
+// What makes SPIR-V of a pipeline's WGSL where it has none, for Vulkan
+// (gpu_vk.c): a test's shaders written by hand in C have WGSL alone, and
+// the test hands tidec's translator over (compiler/src/spirv.h). NULL in a
+// game, whose shaders tidec translated as it built them.
+extern uint32_t *(*tide_gpu_spirv_of)(const char *wgsl, size_t *count, char *error, size_t error_size);
 
 extern const tide_gpu tide_gpu_gl; // gpu_gl.c
 // A test's: has OpenGL make its targets as a device that can't draw into

@@ -192,14 +192,16 @@ int Native(int value)
                     `${target} ${release ? "release" : "debug"}: ${name} ${expected ? "was removed" : "was retained"}`);
             }
             if (target === "native" && process.platform === "win32") {
-                // GLFW's Vulkan termination shares an archive member with
-                // APIs this OpenGL host never calls. Collect their code/data
-                // inside that member, while debug links keep them available.
-                const unusedGlfw = Buffer.from("Vulkan: Loader not found");
+                // GLFW's gamma setter shares an archive member (monitor.c)
+                // with the monitor queries the window makes, and no host
+                // calls it. Collect its code/data inside that member, while
+                // debug links keep it available. (GLFW's Vulkan loader was
+                // the sentinel until desktop drew with Vulkan, which uses it.)
+                const unusedGlfw = Buffer.from("Invalid gamma value");
                 check(readFileSync(join(installation, "lib", "native", "libtide_platform.a")).includes(unusedGlfw),
                     "unused GLFW sentinel missing from the prebuilt platform archive");
                 check(program.includes(unusedGlfw) === !release,
-                    `native ${release ? "release" : "debug"}: unused GLFW Vulkan API ${release ? "was retained" : "was removed"}`);
+                    `native ${release ? "release" : "debug"}: unused GLFW gamma API ${release ? "was retained" : "was removed"}`);
             }
             if (release) {
                 // Both unused bodies/data really entered the link: their
