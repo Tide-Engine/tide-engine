@@ -63,7 +63,7 @@
     X(vkEndCommandBuffer) X(vkCreateFence) X(vkDestroyFence) X(vkWaitForFences) X(vkResetFences)                      \
     X(vkCreateSemaphore) X(vkDestroySemaphore) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkGetQueryPoolResults)    \
     X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkCmdPipelineBarrier) X(vkCmdCopyBuffer)                          \
-    X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdClearColorImage)   \
+    X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage)   \
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBindPipeline) X(vkCmdSetViewport) X(vkCmdSetScissor)           \
     X(vkCmdSetStencilReference) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw)                        \
     X(vkCmdDrawIndexed) X(vkCmdPushDescriptorSetKHR)
@@ -81,6 +81,7 @@ static PFN_vkGetInstanceProcAddr get_instance_proc;
 // What there is
 
 enum { FRAMES = 2 };                 // Frames in flight
+enum { TIME_PAIRS = 4 };             // Pairs of timestamps waiting to be read
 enum { BLOCK_BYTES = 64u << 20 };    // Device memory is taken in blocks this big...
 enum { DEDICATED_BYTES = 16u << 20 }; // ...and an allocation this big or bigger on its own
 enum { RING_BYTES = 4u << 20 };      // A frame's uploads and uniforms start with this much room
@@ -176,7 +177,8 @@ typedef struct vk_frame {
     VkCommandBuffer *buffers;
     uint32_t allocated, used;
     VkFence fence;
-    bool fenced; // Its fence is to be waited for
+    bool fenced;     // Its fence is to be waited for...
+    uint64_t serial; // ...which signals that submission's done
     VkSemaphore acquired, rendered;
     vk_ring ring;
     vk_garbage *garbage;
@@ -251,7 +253,7 @@ static struct {
     bool in_pass, skip_pass;
     tide_gpu_id pass_target; // 0 for the window
     int pass_width, pass_height;
-    const vk_pipeline *current;
+    tide_gpu_id current; // The pipeline the pass uses: 0 for none
     bool bound; // The pass's descriptors are what the draws after it read
     VkDeviceSize uniforms_at;
     tide_gpu_id textures_bound[TIDE_GPU_MAX_TEXTURES];
@@ -261,10 +263,13 @@ static struct {
     VkQueryPool queries;
     uint32_t query_first, query_count; // Pairs written and not yet read, in a ring of them
     uint32_t query_sent;               // ...of which the first this many went to the GPU, to be read once they're there
+    uint64_t query_serial[TIME_PAIRS]; // ...with the submission each went with
+    uint64_t timestamp_mask;           // The bits a timestamp has
     bool query_active;
+    uint64_t submitted, completed;     // Submissions made, and how many of them the GPU is done with
+    int made_width, made_height;       // The window's pixels as the swapchain was made for them
 } vk;
 
-enum { TIME_PAIRS = 4 };
 
 static void say_result(const char *what, const VkResult result)
 {
@@ -470,6 +475,7 @@ static void destroy(const vk_garbage *g)
     case VK_OBJECT_TYPE_IMAGE: vkDestroyImage(vk.device, (VkImage)(uintptr_t)g->handle, NULL); break;
     case VK_OBJECT_TYPE_IMAGE_VIEW: vkDestroyImageView(vk.device, (VkImageView)(uintptr_t)g->handle, NULL); break;
     case VK_OBJECT_TYPE_PIPELINE: vkDestroyPipeline(vk.device, (VkPipeline)(uintptr_t)g->handle, NULL); break;
+    case VK_OBJECT_TYPE_SEMAPHORE: vkDestroySemaphore(vk.device, (VkSemaphore)(uintptr_t)g->handle, NULL); break;
     default: break;
     }
     give_back(&g->memory);
@@ -633,6 +639,8 @@ static void flush(void)
         if (wait) vk.acquire_waited = true;
         result = vkQueueSubmit(vk.queue, 1, &submit, VK_NULL_HANDLE);
         vk.pending_count = 0;
+        vk.submitted++;
+        for (uint32_t i = vk.query_sent; i < vk.query_count; i++) vk.query_serial[(vk.query_first + i) % TIME_PAIRS] = vk.submitted;
         vk.query_sent = vk.query_count;
     }
     // ...and what the frames before it sent, which may still be on their way
@@ -642,6 +650,7 @@ static void flush(void)
         return;
     }
     // Everything the GPU had is done: every frame's room, garbage and command buffers are free again
+    vk.completed = vk.submitted;
     for (uint32_t i = 0; i < FRAMES; i++) {
         vk_frame *f = &vk.frames[i];
         if (f->fenced) {
@@ -662,7 +671,7 @@ static void flush(void)
 static void flush_if_full(void)
 {
     const vk_frame *f = &vk.frames[vk.frame];
-    if (vk.pending_count >= 512 || f->used >= 1024 || f->ring.size >= (256u << 20)) flush();
+    if (vk.pending_count >= 512 || f->used >= 1024 || f->ring.used >= (256u << 20)) flush();
 }
 
 // ---------------------------------------------------------------------------
@@ -738,7 +747,7 @@ static bool make_swapchain(void)
     if (!vk.window.paced) {
         VkPresentModeKHR modes[16];
         uint32_t mode_count = 16;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(vk.physical, vk.surface, &mode_count, modes);
+        if (vkGetPhysicalDeviceSurfacePresentModesKHR(vk.physical, vk.surface, &mode_count, modes) < 0) mode_count = 0;
         for (uint32_t i = 0; i < mode_count; i++) {
             if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) mode = modes[i];
             if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR && mode == VK_PRESENT_MODE_FIFO_KHR) mode = modes[i];
@@ -775,17 +784,25 @@ static bool make_swapchain(void)
         if (result == VK_ERROR_DEVICE_LOST) lose(result);
         return false;
     }
+    // As many images as the driver made, which may be more than asked for: eight at most here
+    uint32_t images = 0;
+    if (vkGetSwapchainImagesKHR(vk.device, made, &images, NULL) != VK_SUCCESS || images > 8u
+        || vkGetSwapchainImagesKHR(vk.device, made, &images, vk.images) != VK_SUCCESS) {
+        vkDestroySwapchainKHR(vk.device, made, NULL);
+        return false;
+    }
     vk.swapchain = made;
-    vk.image_count = 8;
-    vkGetSwapchainImagesKHR(vk.device, made, &vk.image_count, vk.images);
+    vk.image_count = images;
     for (uint32_t i = 0; i < vk.image_count; i++) {
         vk.views[i] = make_view(vk.images[i], VK_IMAGE_VIEW_TYPE_2D, vk.window_format, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-        if (!rendered[i]) {
-            const VkSemaphoreCreateInfo semaphore = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, NULL, 0};
-            check(vkCreateSemaphore(vk.device, &semaphore, NULL, &rendered[i]), "vkCreateSemaphore");
-        }
+        // New ones for new images: a present on the old swapchain may still wait on the old one, which goes once the
+        // frame is done (nothing waits for presentation itself)
+        if (rendered[i]) DISCARD(VK_OBJECT_TYPE_SEMAPHORE, rendered[i], NULL);
+        const VkSemaphoreCreateInfo semaphore = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, NULL, 0};
+        check(vkCreateSemaphore(vk.device, &semaphore, NULL, &rendered[i]), "vkCreateSemaphore");
     }
     vk.extent = extent;
+    vk.made_width = width, vk.made_height = height; // What it's made again for: another size than this
     // Its depth and stencil, which every target has: the window's are drawn into and never read
     if (vk.window_depth_view) vkDestroyImageView(vk.device, vk.window_depth_view, NULL);
     if (vk.window_depth) vkDestroyImage(vk.device, vk.window_depth, NULL);
@@ -814,7 +831,7 @@ static bool acquire(void)
     vk.window.pixel_size(&width, &height);
     if (width <= 0 || height <= 0) return false;
     for (int tries = 0; tries < 2; tries++) {
-        if (!vk.swapchain || vk.stale || vk.extent.width != (uint32_t)width || vk.extent.height != (uint32_t)height) {
+        if (!vk.swapchain || vk.stale || vk.made_width != width || vk.made_height != height) {
             flush(); // What's recorded draws into nothing of the old images
             if (vk.lost || !make_swapchain()) return false;
         }
@@ -862,6 +879,9 @@ void tide_gpu_vk_present(void)
                                      vk.pending_count, vk.pending, showing ? 1u : 0u, &rendered[vk.image]};
         const VkResult result = vkQueueSubmit(vk.queue, 1, &submit, f->fence);
         vk.pending_count = 0;
+        vk.submitted++;
+        f->serial = vk.submitted;
+        for (uint32_t i = vk.query_sent; i < vk.query_count; i++) vk.query_serial[(vk.query_first + i) % TIME_PAIRS] = vk.submitted;
         vk.query_sent = vk.query_count;
         if (result != VK_SUCCESS) {
             lose(result);
@@ -889,6 +909,7 @@ void tide_gpu_vk_present(void)
         }
         vkResetFences(vk.device, 1, &f->fence);
         f->fenced = false;
+        if (f->serial > vk.completed) vk.completed = f->serial;
     }
     collect(f);
     vkResetCommandPool(vk.device, f->pool, 0);
@@ -968,7 +989,12 @@ static void vk_buffer_write(const tide_gpu_id id, const size_t offset, const voi
     const VkDeviceSize start = ring_take(size, 16u, size, &from, &at);
     memcpy(at, data, size);
     const VkBufferCopy copy = {start, offset, size};
-    vkCmdCopyBuffer(outside(), from, b->buffer, 1, &copy);
+    const VkCommandBuffer cb = outside();
+    // Copies in one command buffer have no order of their own: one into the same bytes as another goes after it
+    const VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, NULL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                   VK_ACCESS_TRANSFER_WRITE_BIT};
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &after, 0, NULL, 0, NULL);
+    vkCmdCopyBuffer(cb, from, b->buffer, 1, &copy);
 }
 
 static tide_gpu_id vk_buffer_make(const tide_gpu_buffer_kind kind, const size_t size, const void *data)
@@ -1312,19 +1338,29 @@ static tide_gpu_id vk_target_make(const tide_gpu_target_format format, const int
         const VkCommandBuffer cb = outside();
         for (uint32_t i = 0; i < colors; i++) {
             const VkFormat f = color_format(tide_gpu_target_color(format, i));
-            if (!many_image(f, width, height, t->samples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, &t->many[i], &t->many_memory[i],
-                            &t->many_views[i])) {
+            if (!many_image(f, width, height, t->samples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                            &t->many[i], &t->many_memory[i], &t->many_views[i])) {
                 fprintf(stderr, "tide: Vulkan: no memory for a target of %u samples a pixel\n", (unsigned)t->samples);
                 abort();
             }
-            turn(cb, t->many[i], f, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            turn(cb, t->many[i], f, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            const VkClearColorValue zero = {{0}};
+            const VkImageSubresourceRange all = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cb, t->many[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &all);
+            turn(cb, t->many[i], f, 0, 1, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
-        if (!many_image(vk.depth_format, width, height, t->samples, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, &t->many_depth,
+        if (!many_image(vk.depth_format, width, height, t->samples,
+                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, &t->many_depth,
                         &t->many_depth_memory, &t->many_depth_view)) {
             fprintf(stderr, "tide: Vulkan: no memory for a target of %u samples a pixel\n", (unsigned)t->samples);
             abort();
         }
-        turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        const VkClearDepthStencilValue far = {1.0f, 0};
+        const VkImageSubresourceRange whole = {aspects_of(vk.depth_format), 0, 1, 0, 1};
+        vkCmdClearDepthStencilImage(cb, t->many_depth, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &whole);
+        turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     } else {
         const tide_gpu_id depth = depth_texture(width, height);
         t = &vk.targets[id - 1u];
@@ -1457,6 +1493,8 @@ static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
     const VkBufferImageCopy copy = {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1}, {0, 0, 0},
                                     {(uint32_t)t->width, (uint32_t)t->height, 1}};
     vkCmdCopyImageToBuffer(cb, c->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1, &copy);
+    const VkMemoryBarrier seen = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, NULL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT};
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &seen, 0, NULL, 0, NULL);
     turn(cb, c->image, c->format, 0, 1, layer, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->rest);
     flush();
     if (vk.lost) {
@@ -1651,8 +1689,10 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
 {
     vk.in_pass = true;
     vk.skip_pass = true; // Until there's something to draw in
-    vk.current = NULL;
+    vk.current = 0;
     vk.bound = false;
+    uniform_buffer = VK_NULL_HANDLE; // A pass's draws read the uniforms written in it
+    vk.uniforms_at = 0;
     turned_count = 0;
     if (vk.lost) return;
     if (!target && !acquire()) return; // A window with nothing to draw in (minimized): its draws go nowhere
@@ -1769,7 +1809,7 @@ static void vk_use(const tide_gpu_id id)
                         "(tide_gpu_pipeline_desc.into)\n");
         abort();
     }
-    vk.current = p;
+    vk.current = id;
     vk.bound = false;
     vkCmdBindPipeline(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
 }
@@ -1813,11 +1853,13 @@ static void vk_indices(const tide_gpu_id buffer, const bool wide)
 }
 
 // What a draw reads: the uniforms where they were written, and each texture
-// through the sampler for how the pipeline reads it.
-static void bind(void)
+// through the sampler for how the pipeline reads it. False for a draw with
+// no uniforms written in its pass, which draws nothing.
+static bool bind(void)
 {
-    if (vk.bound) return;
-    const vk_pipeline *p = vk.current;
+    if (vk.bound) return true;
+    if (!uniform_buffer) return false;
+    const vk_pipeline *p = &vk.pipelines[vk.current - 1u];
     VkDescriptorBufferInfo block = {uniform_buffer, vk.uniforms_at, TIDE_GPU_MAX_UNIFORMS};
     VkDescriptorImageInfo images[TIDE_GPU_MAX_TEXTURES], samplers[TIDE_GPU_MAX_TEXTURES];
     VkWriteDescriptorSet writes[1 + 2 * TIDE_GPU_MAX_TEXTURES];
@@ -1847,19 +1889,18 @@ static void bind(void)
     }
     if (count) vkCmdPushDescriptorSetKHR(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.layout, 0, count, writes);
     vk.bound = true;
+    return true;
 }
 
 static void vk_draw(const uint32_t first, const uint32_t count, const uint32_t instances)
 {
-    if (vk.skip_pass || !vk.current) return;
-    bind();
+    if (vk.skip_pass || !vk.current || !bind()) return;
     vkCmdDraw(vk.pass, count, instances, first, 0);
 }
 
 static void vk_draw_indexed(const uint32_t count, const uint32_t instances)
 {
-    if (vk.skip_pass || !vk.current) return;
-    bind();
+    if (vk.skip_pass || !vk.current || !bind()) return;
     vkCmdDrawIndexed(vk.pass, count, instances, 0, 0, 0);
 }
 
@@ -1891,7 +1932,8 @@ static void vk_time_end(void)
 
 static double vk_time_read(void)
 {
-    if (vk.lost || !vk.query_sent) return -1.0; // Nothing timed has gone to the GPU yet
+    // Nothing timed has gone to the GPU yet, or what went isn't done: its reset may not have run, which leaves the last results there
+    if (vk.lost || !vk.query_sent || vk.query_serial[vk.query_first] > vk.completed) return -1.0;
     uint64_t results[4]; // Two timestamps, each with whether it's there
     const VkResult result = vkGetQueryPoolResults(vk.device, vk.queries, 2u * vk.query_first, 2, sizeof results, results,
                                                   2 * sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
@@ -1899,7 +1941,8 @@ static double vk_time_read(void)
     vk.query_first = (vk.query_first + 1u) % TIME_PAIRS;
     vk.query_count--;
     vk.query_sent--;
-    return results[2] > results[0] ? (double)(results[2] - results[0]) * vk.timestamp_ns / 1000000.0 : 0.0;
+    const uint64_t ticks = (results[2] - results[0]) & vk.timestamp_mask;
+    return (double)ticks * vk.timestamp_ns / 1000000.0;
 }
 
 static void vk_time_reset(void)
@@ -1966,7 +2009,7 @@ static VkFormat pick_window_format(void)
 {
     VkSurfaceFormatKHR formats[64];
     uint32_t count = 64;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, vk.surface, &count, formats);
+    if (vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, vk.surface, &count, formats) < 0) count = 0;
     VkFormat found = VK_FORMAT_UNDEFINED;
     for (uint32_t i = 0; i < count; i++) {
         if (formats[i].colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) continue;
@@ -2013,6 +2056,7 @@ static void destroy_device(void)
     readback.buffer = VK_NULL_HANDLE, readback.memory = (vk_alloc){0}, readback.size = 0;
     if (vk.queries) vkDestroyQueryPool(vk.device, vk.queries, NULL);
     vk.queries = VK_NULL_HANDLE, vk.query_first = vk.query_count = vk.query_sent = 0, vk.query_active = false;
+    vk.made_width = vk.made_height = 0;
     forget_swapchain();
     for (uint32_t i = 0; i < SAMPLER_COUNT; i++) vkDestroySampler(vk.device, vk.samplers[i], NULL);
     vkDestroyPipelineLayout(vk.device, vk.layout, NULL);
@@ -2131,6 +2175,8 @@ static bool create_device(const bool say)
     vkGetPhysicalDeviceQueueFamilyProperties(vk.physical, &family_count, families);
     vk.timestamp_ns = families[vk.family].timestampValidBits && vk.properties.limits.timestampComputeAndGraphics
                     ? (double)vk.properties.limits.timestampPeriod : 0.0;
+    const uint32_t bits = families[vk.family].timestampValidBits;
+    vk.timestamp_mask = bits >= 64u ? UINT64_MAX : bits ? (UINT64_C(1) << bits) - 1u : 0u;
 
     // Depth and stencil, which every target has, and which a shader samples as its depth
     const VkFormat depths[] = {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT};
