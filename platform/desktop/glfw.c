@@ -1,6 +1,6 @@
 // Desktop windows (see src/window.h): GLFW's, drawn in with Vulkan where the
-// machine has it (src/gpu_vk.c) and with an OpenGL 3.3 context where it
-// hasn't, and the keyboard, mouse, gamepads and clipboard through it. Touchscreens are
+// machine has it (src/gpu_vk.c; on a Mac, MoltenVK beside the program) and
+// with an OpenGL 3.3 context where it hasn't, and the keyboard, mouse, gamepads and clipboard through it. Touchscreens are
 // Windows' own (src/touch_win32.c): GLFW has no touch, so other desktops have
 // none yet.
 
@@ -26,6 +26,7 @@
 #endif
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #else
 #include <unistd.h>
@@ -198,6 +199,31 @@ static void framebuffer_size(int *width, int *height)
     glfwGetFramebufferSize(window, width, height);
 }
 
+#ifdef __APPLE__
+// Vulkan on a Mac: a loader the system has (the Vulkan SDK's, which brings
+// its validation layer), else MoltenVK, Vulkan on Metal, which tide puts
+// beside every game it builds, and an app has in its bundle's Frameworks.
+// GLFW is handed the one found, and makes the window's surface with it; with
+// none, it looks where it does by itself, and the window draws with OpenGL.
+static void find_vulkan(void)
+{
+    static void *library;
+    if (library) return;
+    library = dlopen("libvulkan.1.dylib", RTLD_NOW | RTLD_LOCAL);
+    char path[4096];
+    uint32_t size = sizeof path;
+    char *slash = !library && _NSGetExecutablePath(path, &size) == 0 ? strrchr(path, '/') : NULL;
+    static const char *const beside[] = {"libMoltenVK.dylib", "../Frameworks/libMoltenVK.dylib"};
+    for (size_t i = 0; slash && i < COUNT_OF(beside) && !library; i++) {
+        if ((size_t)(slash + 1 - path) + strlen(beside[i]) >= sizeof path) break;
+        strcpy(slash + 1, beside[i]);
+        library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    }
+    const PFN_vkGetInstanceProcAddr proc = library ? (PFN_vkGetInstanceProcAddr)dlsym(library, "vkGetInstanceProcAddr") : NULL;
+    if (proc) glfwInitVulkanLoader(proc);
+}
+#endif
+
 // A window, not yet shown: one for Vulkan has no OpenGL context.
 static GLFWwindow *make_window(const tide_window_desc *desc, const bool hidden, const bool gl)
 {
@@ -229,6 +255,9 @@ bool tide_window_open(const tide_window_desc *desc)
     // In a run nobody watches (TIDE_HIDDEN), no window shows, whatever asked for it
     const bool hidden = desc->hidden || tide_hidden();
     glfwSetErrorCallback(on_error);
+#ifdef __APPLE__
+    find_vulkan(); // Before GLFW starts, which looks for Vulkan as it does
+#endif
     if (!glfwInit()) {
         fprintf(stderr, "tide: no desktop to open a window on\n");
         return false;

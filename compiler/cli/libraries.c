@@ -237,6 +237,22 @@ static lib_info identify_universal(const lib_read_fn read, void *user, const uns
     return info;
 }
 
+bool lib_universal_slice(const unsigned char *data, const size_t size, const unsigned cpu, size_t *offset, size_t *length)
+{
+    if (size < 8 || be32(data) != 0xCAFEBABEu) return false;
+    const uint32_t count = be32(data + 4);
+    if (count == 0 || count > 16 || size < 8 + 20 * (size_t)count) return false;
+    for (uint32_t i = 0; i < count; i++) {
+        const unsigned char *arch = data + 8 + 20 * (size_t)i;
+        const uint32_t at = be32(arch + 8), n = be32(arch + 12);
+        if (macho_cpu(be32(arch)) != cpu || at > size || n > size - at) continue;
+        *offset = at;
+        *length = n;
+        return true;
+    }
+    return false;
+}
+
 lib_info lib_identify(const lib_read_fn read, void *user)
 {
     unsigned char h[64];

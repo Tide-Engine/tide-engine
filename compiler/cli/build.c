@@ -1356,6 +1356,28 @@ static bool find_libraries(const build *b, c_side *out)
     return ok;
 }
 
+// On a Mac, MoltenVK (Vulkan on Metal, from lib/native) goes beside the
+// program too, which draws with it where the Mac has no Vulkan of its own
+// (platform/desktop/glfw.c): only its slice for the game's CPU, half of the
+// universal library. One already there and up to date stays.
+static void place_moltenvk(const build *b, const char *dir)
+{
+    if (target_platform(b) != LIB_MACOS) return;
+    char *from = path_join(b->root, "lib/native/libMoltenVK.dylib");
+    char *to = path_join(dir, "libMoltenVK.dylib");
+    size_t size = 0;
+    char *data = sys_exists(from) ? sys_read_file(from, &size) : NULL;
+    size_t at = 0, length = size;
+    if (data && !lib_universal_slice((const unsigned char *)data, size, target_cpu(b), &at, &length)) at = 0, length = size;
+    const bool current = data && sys_file_size(to) == (int64_t)length && sys_mtime(to) >= sys_mtime(from);
+    if (data && !current && !sys_write_file(to, data + at, length)) {
+        fprintf(stderr, "tide: can't put MoltenVK next to the game, at %s: the game draws with OpenGL where the Mac has no Vulkan\n", to);
+    }
+    free(data);
+    free(from);
+    free(to);
+}
+
 // Copies the game's dynamic libraries into `dir`, next to its program. Ones
 // already there and up to date stay: the running game may have them open.
 static void copy_dynamic(const c_side *c, const char *dir)
@@ -1842,6 +1864,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
     }
     free(pack);
     copy_dynamic(&c, output_dir);
+    place_moltenvk(&b, output_dir);
     free_game_c(&c);
     return output;
 }
@@ -1940,6 +1963,7 @@ static bool build_library(run *r)
     c_side c = {0};
     bool ok = compile_game(&r->b, r->gen, game_c, library_c, &objects, &c) && find_libraries(&r->b, &c);
     if (ok) copy_dynamic(&c, r->dir); // Next to the host, which loads the game's library
+    if (ok) place_moltenvk(&r->b, r->dir);
     const uint32_t n = r->builds + 1u;
     char *linked = build_path(r, n, ".tmp");
     char *pdb = build_path(r, n, ".pdb");
