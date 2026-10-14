@@ -1,0 +1,121 @@
+// The game stays in the world. Only room connection and an on-demand guide
+// use menus; ordinary play has no title bar, progress strip or button tray.
+const Color UI_PAPER = Color(0.94, 0.91, 0.82);
+const GUITheme QUIET_THEME = GUITheme {
+    text = UI_PAPER,
+    panel = Color(0.09, 0.12, 0.12, 0.94),
+    control = Color(0.2, 0.23, 0.21, 0.72),
+    hot = Color(0.3, 0.33, 0.29, 0.86),
+    pressed = Color(0.12, 0.17, 0.15),
+    field = Color(0.05, 0.08, 0.08),
+    fieldHot = Color(0.13, 0.18, 0.16),
+    accent = UI_PAPER,
+    radius = 0
+};
+
+local singleton Guide
+{
+    bool open;
+    bool testing;
+}
+
+[Stage(Layers.Camera, -2)]
+[Before(Rooms.Begin, Rooms.Pages)]
+view QuietMenus()
+{
+    GUI.SetTheme(QUIET_THEME);
+}
+
+[Stage(Layers.Hud, -1)]
+view RoomChefs(Kitchen kitchen, Me me, mut Rooms.Lobby lobby)
+{
+    lobby.seats = 2;
+    lobby.manned = kitchen.taken;
+    lobby.mine = me.seat;
+}
+
+void Whisper(string word, float2 at, float size, Color tone)
+{
+    Draw.Text(word, at + float2(1, 2), size, Color(0.03, 0.05, 0.05, 0.8), Anchor.MiddleCenter);
+    Draw.Text(word, at, size, tone, Anchor.MiddleCenter);
+}
+
+// The guide's labels have one line each. Wrap at word boundaries before
+// laying them out, keeping the font readable on a narrow screen.
+void GuideWords(string words)
+{
+    var width = Math.Clamp(Screen.width - 64, 180, 310);
+    mut var rest = words;
+    mut var line = "";
+    while (rest.length > 0)
+    {
+        var space = rest.IndexOf(' ');
+        var word = space < 0 ? rest : rest.Substring(0, space);
+        var next = line == "" ? word : $"{line} {word}";
+        if (line != "" && Draw.MeasureText(next, 16).x > width)
+        {
+            GUILayout.Label(line);
+            line = word;
+        }
+        else line = next;
+        rest = space < 0 ? "" : rest.Substring(space + 1);
+    }
+    if (line != "") GUILayout.Label(line);
+}
+
+// A touch player has the same undo/reset actions in this guide. The
+// testing skip stays out of the playfield and is revealed deliberately.
+[Stage(Layers.Hud, 3)]
+view FieldGuide(Kitchen kitchen, Devices devices, Pad pad, mut Guide guide, Rooms.Lobby lobby)
+{
+    if (lobby.page != Rooms.Page.Playing)
+    {
+        guide.open = false;
+        return;
+    }
+    if (devices.keyboard.h.down || devices.gamepad.buttonWest.down) guide.open = !guide.open;
+    if (pad.touched)
+    {
+        var help = GUI.Control(Rect(12, Screen.height - 52, 40, 40));
+        Draw.SetScreen();
+        Whisper("?", float2(32, Screen.height - 32), 24, help.hovered ? Color.white : UI_PAPER);
+        if (help.clicked) guide.open = true;
+    }
+    if (!guide.open) return;
+    GUI.Navigate();
+    GUILayout.Modal(Anchor.MiddleCenter, guide.open)
+    {
+        GUILayout.Label(Name(kitchen.level));
+        GUILayout.Label("Arrows / WASD: move");
+        GUILayout.Label("Space: change chef when alone");
+        GUILayout.Label("Z: undo. R: reset.");
+        if (Hint(kitchen.level) != "")
+        {
+            GUILayout.Space(6);
+            GuideWords(Hint(kitchen.level));
+        }
+        GUI.Disabled(kitchen.past.count == 0 || kitchen.cleared != 0)
+        {
+            if (GUILayout.Button("Undo last move"))
+            {
+                Send(Undo { level = kitchen.level });
+                guide.open = false;
+            }
+        }
+        if (GUILayout.Button("Reset this place"))
+        {
+            Send(Restart { level = kitchen.level });
+            guide.open = false;
+        }
+        GUILayout.Toggle("Testing shortcuts", guide.testing);
+        if (guide.testing)
+        {
+            if (GUILayout.Button("Skip kitchen (N)"))
+            {
+                Send(Goto { level = NextKitchen(kitchen.level) });
+                guide.open = false;
+            }
+        }
+        if (GUILayout.Button("Continue")) guide.open = false;
+    }
+}

@@ -1,0 +1,248 @@
+// ++i, i++, --i and i-- as values: the variable changes, and the expression
+// is what it holds after (before the variable) or held before (after it), in
+// its turn among what's read beside it, left to right, on every platform.
+
+struct Slot
+{
+    int at;
+    float level;
+}
+
+component Counter
+{
+    int count;
+    local int shown;
+}
+
+local singleton Seen
+{
+    int frames;
+    int even;
+    int odd;
+}
+
+singleton Out
+{
+    int prefix;        // ++i
+    int prefixLeft;    // ...and what i is then
+    int postfix;       // i++
+    int postfixLeft;
+    int down;          // --i
+    int downAfter;     // i--
+    int downLeft;
+
+    int before;        // i + ++i
+    int after;         // ++i + i
+    int twice;         // i++ + i++
+    int packed;        // Pack(i++, i++, ++i)
+    int compound;      // total += i++
+
+    int chosen;        // (++i % 2 == 0) ? a : b
+    int chosenCount;
+    bool stops;        // false && ++i > 0
+    int stopsCount;
+    bool runs;         // true && ++i > 0
+    int runsCount;
+    int oneSide;       // flag ? i++ : j++
+    int oneSideLeft;
+    int otherSideLeft;
+
+    int rounds;        // while (i++ < 5)
+    int roundsLeft;
+    int sum;           // for (...; ++i < 5; )
+    int returned;      // return i++
+
+    int field;         // ++slot.at
+    float level;       // slot.level++
+    Slot slot;
+    List<int> items;
+    int element;       // items[1]++
+    int elementIndex;  // items[i++]
+    int indexLeft;
+    Map<string, int> scores;
+    int score;         // ++scores["a"]
+    int[4] cells;
+    int cell;          // cells[2]++
+    long wide;         // ++wide
+    long wideWas;
+    byte small;        // small++ wraps
+    int smallWas;
+    float real;        // ++real
+
+    int ticks;         // A system's: ++counter.count
+    int ticked;
+}
+
+int Pack(int a, int b, int c)
+{
+    return a * 100 + b * 10 + c;
+}
+
+int Take(mut int from)
+{
+    return from++;
+}
+
+scene Main { }
+
+event(Spawned) Setup(mut Out out, with Main)
+{
+    mut var i = 5;
+    out.prefix = ++i;
+    out.prefixLeft = i;
+    out.postfix = i++;
+    out.postfixLeft = i;
+    out.down = --i;
+    out.downAfter = i--;
+    out.downLeft = i;
+
+    i = 1;
+    out.before = i + ++i;   // 1 + 2
+    i = 1;
+    out.after = ++i + i;    // 2 + 2
+    i = 1;
+    out.twice = i++ + i++;  // 1 + 2
+    i = 1;
+    out.packed = Pack(i++, i++, ++i); // 1, 2, 4
+    i = 3;
+    mut var total = 10;
+    total += i++;
+    out.compound = total * 10 + i; // 13, 4
+
+    i = 1;
+    out.chosen = (++i % 2 == 0) ? 7 : 9;
+    out.chosenCount = i;
+    i = 0;
+    out.stops = false && ++i > 0;
+    out.stopsCount = i;
+    out.runs = true && ++i > 0;
+    out.runsCount = i;
+    mut var j = 0;
+    i = 0;
+    out.oneSide = out.runs ? i++ : j++;
+    out.oneSideLeft = i;
+    out.otherSideLeft = j;
+
+    i = 0;
+    while (i++ < 5)
+    {
+        out.rounds += 1;
+    }
+    out.roundsLeft = i;
+    for (i = 0; ++i < 5;)
+    {
+        out.sum += i;
+    }
+    i = 8;
+    out.returned = Take(i) * 10 + i; // 8, then 9
+
+    out.field = ++out.slot.at + ++out.slot.at; // 1 + 2
+    out.level = out.slot.level++ + out.slot.level; // 0 + 1
+
+    out.items = [10, 20, 30];
+    out.element = out.items[1]++;
+    i = 0;
+    out.elementIndex = out.items[i++] + out.items[i++]; // 10 + 21
+    out.indexLeft = i;
+    out.scores["a"] = 4;
+    out.score = ++out.scores["a"];
+    out.cells[2] = 6;
+    out.cell = out.cells[2]++ + out.cells[2]; // 6 + 7
+
+    out.wide = 4000000000;
+    out.wideWas = out.wide++;
+    out.small = 255;
+    out.smallWas = out.small++;
+    out.real = 1.5;
+    out.real = ++out.real + 0.25;
+
+    Spawn(Counter { });
+}
+
+system Count(mut Counter counter, mut Out out)
+{
+    out.ticks = ++counter.count;
+    out.ticked = counter.count;
+}
+
+view Show(mut Counter counter, mut Seen seen)
+{
+    counter.shown = (++seen.frames % 2 == 0) ? 2 : 1;
+    if (counter.shown == 2) seen.even++;
+    else seen.odd++;
+}
+
+// ---------------------------------------------------------------------------
+// In steps that run at once: a step's own variable, its own cell and its own
+// element, with the value it gives checked in the step itself.
+
+singleton Field
+{
+    bool swept;
+    Grid2<int> locals = Grid2(8, 8);
+    Grid2<int> after = Grid2(8, 8);
+    Grid2<int> before = Grid2(8, 8);
+    Grid2<int> each = Grid2(8, 8);
+    List<int> values;
+    int localsRight;
+    int afterRight;
+    int beforeRight;
+    int eachRight;
+    int valuesRight;
+}
+
+system Sweep(mut Field field)
+{
+    if (field.swept) return;
+    field.swept = true;
+    for (var i = 0; i < 100; i++) field.values.Add(i * 2);
+    for (var y = 0; y < 8; y++)
+    {
+        for (var x = 0; x < 8; x++)
+        {
+            field.after[x, y] = x;
+            field.before[x, y] = y;
+        }
+    }
+
+    parallel (var at in field.locals)
+    {
+        mut var n = at.x;
+        field.locals[at] = n++ * 10 + n; // x, then x + 1
+    }
+    parallel (var at in field.after)
+    {
+        var got = ++field.after[at];
+        if (got != at.x + 1) field.after[at] = -1;
+    }
+    parallel (var at in field.before by int2(2, 1))
+    {
+        var got = field.before[at]-- + field.before[at + int2(1, 0)]--;
+        if (got != at.y * 2) field.before[at] = -100;
+    }
+    foreach (var at in field.each)
+    {
+        var got = field.each[at]++ + 5;
+        if (got != 5) field.each[at] = -1;
+    }
+    parallel (var i in field.values)
+    {
+        var got = field.values[i]++;
+        if (got != i * 2) field.values[i] = -1;
+    }
+
+    for (var y = 0; y < 8; y++)
+    {
+        for (var x = 0; x < 8; x++)
+        {
+            if (field.locals[x, y] == x * 11 + 1) field.localsRight += 1;
+            if (field.after[x, y] == x + 1) field.afterRight += 1;
+            if (field.before[x, y] == y - 1) field.beforeRight += 1;
+            if (field.each[x, y] == 1) field.eachRight += 1;
+        }
+    }
+    for (var i = 0; i < field.values.count; i++)
+    {
+        if (field.values[i] == i * 2 + 1) field.valuesRight += 1;
+    }
+}

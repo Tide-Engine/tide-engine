@@ -1,0 +1,131 @@
+// The game the package's tests run: it lists `lobby` and `steam`, and
+// writes nothing for Steam itself. Each player is a local state of its own
+// in one program, which the host tells what to ask (Remote) and which says
+// what it sees, against a Steam that isn't (fake_steam.c).
+using Lobbies;
+
+settings { title = "Steam test"; maxPlayers = 4; hostMigration = true; }
+
+scene Main { }
+
+component Runner
+{
+    float x;
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> runners;
+}
+
+input Controls
+{
+    float run;
+
+    Sample(Devices devices)
+    {
+        run = (devices.keyboard.d.pressed ? 1 : 0) - (devices.keyboard.a.pressed ? 1 : 0);
+    }
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    roster.runners[joined.player] = Spawn(Runner { }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.runners[left.player].Destroy();
+    roster.runners.Remove(left.player);
+}
+
+system Run(Controls controls, mut Runner runner, Time time)
+{
+    runner.x += controls.run * time.dt;
+}
+
+enum Order
+{
+    None,
+    Quick,    // A match of the mode `text`
+    Join,     // The first lobby the last list had
+    List,     // The lobbies of the mode `text`
+    Ready,
+    Color,    // This member's `color`, to `text`
+    Rename,   // The lobby, to `text`
+    Start,
+    Leave,
+    Kick,     // The member `text`
+    End       // The match this machine runs, for everyone
+}
+
+local singleton Remote
+{
+    Order order;
+    string text;
+
+    int listed;    // Lobbies the last list had
+    int members;
+    int ready;     // Members who are ready
+    string names;  // Their names, in Steam's order: "Ann,Bob"
+    string colors; // ...and the `color` each one's data has
+    int runners;
+    float mine;
+    float theirs;  // The furthest of the others'
+}
+
+view Obey(mut Remote remote, mut LobbyClient client)
+{
+    remote.runners = 0;
+    remote.theirs = 0;
+    remote.listed = client.lobbies.count;
+    remote.members = client.lobby.members.count;
+    remote.ready = 0;
+    mut var names = "";
+    mut var colors = "";
+    foreach (var member in client.lobby.members)
+    {
+        if (IsReady(member)) remote.ready += 1;
+        if (names != "") names += ",";
+        names += member.name;
+        if (colors != "") colors += ",";
+        colors += member.data["color"] != "" ? member.data["color"] : "-";
+    }
+    remote.names = names;
+    remote.colors = colors;
+    var order = remote.order;
+    remote.order = Order.None;
+    switch (order)
+    {
+        case Order.Quick: QuickMatch(client, MatchRequest { mode = remote.text, name = "Quick", max = 4 }); break;
+        case Order.Join:
+            if (client.lobbies.count > 0) JoinLobby(client, client.lobbies[0].id);
+            break;
+        case Order.List:
+            client.query = LobbyQuery { };
+            if (remote.text != "") client.query.filter["mode"] = remote.text;
+            RefreshLobbies(client);
+            break;
+        case Order.Ready: SetReady(client, true); break;
+        case Order.Color: SetMemberData(client, "color", remote.text); break;
+        case Order.Rename: SetLobbyName(client, remote.text); break;
+        case Order.Start: StartMatch(client); break;
+        case Order.Leave: LeaveLobby(client); break;
+        case Order.Kick: Kick(client, remote.text); break;
+        case Order.End: Session.End(); break;
+    }
+}
+
+[After(Obey)]
+view Mine(verified Runner runner, mut Remote remote, with ownership)
+{
+    remote.runners += 1;
+    remote.mine = runner.x;
+}
+
+[After(Obey)]
+view Theirs(verified Runner runner, mut Remote remote, without ownership)
+{
+    remote.runners += 1;
+    if (Math.Abs(runner.x) > Math.Abs(remote.theirs)) remote.theirs = runner.x;
+}

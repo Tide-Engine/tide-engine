@@ -1,0 +1,5 @@
+// expect: a parent must belong to the same world as its child
+component Enemy { int hp; }
+component Puff { int age; }
+scene Main { }
+void Dust(Entity target, LocalEntity parent) { target.SetParent(parent); }

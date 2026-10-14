@@ -1,9 +1,9 @@
 // expect: 'Health' belongs to the match, and a local handler's World is this machine's
-local component Spark { Entity follows; }
+component Spark { Entity follows; }
 local event Tap { }
 component Health { int value; }
 scene Main { }
-local event(Tap) OnTap(Spark spark, World world)
+local event(Tap) OnTap(local Spark spark, World world)
 {
     if (world.Has<Health>(spark.follows)) return;
 }

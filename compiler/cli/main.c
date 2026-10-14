@@ -8,6 +8,7 @@
 #include "editors.h"
 #include "install.h"
 #include "lexer.h"
+#include "open.h"
 #include "packages.h"
 #include "packages_cmd.h"
 #include "publish.h"
@@ -41,9 +42,11 @@ static void usage(void)
            "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
            "  add <source>       add a package to the game here: from git, a folder, or one that comes with tide (see below)\n"
            "  update [package]   move the game's packages from git to the newest commit of what they follow\n"
+           "  eject <package>    copy one of the game's packages into the game's folder, to change it as the game's own\n"
            "  fetch [folder]     download the game's packages from git that aren't on this machine yet, building nothing\n"
            "  publish [folder]   send this version of the game's source to the build service, which builds it with mods\n"
            "  editors            add Tide to VS Code, Cursor, VSCodium and Windsurf\n"
+           "  open <file.tprefab> open the native scene editor (--project <folder> selects its game)\n"
            "  upgrade            update tide to the newest version\n"
            "  version            show tide's version and channel, where it's installed, and which compilers it found\n"
            CC_USAGE
@@ -52,7 +55,7 @@ static void usage(void)
            "tide.packages lists.\n"
            "\n"
            "run and build:\n"
-           "  --release          optimized, the way players get it\n"
+           "  --release          optimize game code for players; the engine is always optimized\n"
            "  --web              a web page (WebGPU, or WebGL 2 where the browser has none), with clang's WebAssembly target\n"
            "  --android          an Android app (.apk); run installs it on the phone or emulator connected\n"
            "  --define <SYMBOL>  a symbol the game's #if lines read as defined, like `--define FAST`; as many as needed.\n"
@@ -75,6 +78,10 @@ static void usage(void)
     printf("run, with no window, to see what the game draws (not on the web or Android). The game runs once, in\n"
            "made-up time, a 60th of a second a frame, so a run repeats exactly, and tide ends with its exit code:\n"
            "  --capture <file.png>  the run's last frame, as a PNG\n"
+           "  --capture-audio <file.wav>\n"
+           "                        everything the run played, as a WAV\n"
+           "  --microphone <file>   a WAV or Ogg Vorbis file the run's microphone plays, looped: it hears nothing\n"
+           "                        without it\n"
            "  --frames <n>          the run ends after this many frames\n"
            "  --script <file>       input by frame, and when to capture and quit: lines like `120 key d down`,\n"
            "                        `200 mouse 640 360`, `201 button left`, `400 capture fight.png` and `500 quit`\n"
@@ -82,6 +89,10 @@ static void usage(void)
            "  --size <w> <h>        the window's size in pixels, for a run with a window too (960 by 540 without it)\n"
            "  --seed <n>            the seed of the matches the game starts, from 0 to 2147483647, for any run: without\n"
            "                        it, 0 with no window, and another one every match with one\n"
+           "  --players <n>         a run of this many players, each a copy of the game on a made-up network: the\n"
+           "                        first opens Main's match and the others join it. A script's line says whose it\n"
+           "                        is, like `120 player 2 key d down`, and a picture has its player's number\n"
+           "                        (fight-2.png)\n"
            "With TIDE_HIDDEN set (an agent's shell, a build server), games show no window: run takes one of\n"
            "these or says so, and run --web opens no browser.\n"
            "\n"
@@ -142,11 +153,22 @@ int main(const int argc, char **argv)
         return argc < 2 ? 2 : 0;
     }
     const char *command = argv[1];
+    if (strcmp(command, "open") == 0) return tide_open(argc, argv);
     char *root = install_root();
     // The packages that come with tide are sources of the installation, like the engine's
     char *builtin = path_join(root, "src/packages");
     packages_set_builtin_folder(builtin);
     free(builtin);
+    if (strcmp(command, "_editor-preview") == 0) {
+        if (argc != 8 || (strcmp(argv[7], "match") && strcmp(argv[7], "local"))) return 2;
+        setvbuf(stdout, NULL, _IONBF, 0); setvbuf(stderr, NULL, _IONBF, 0);
+        const char *defines[] = {"DEBUG"};
+        const build_options opts = {.folder=argv[2], .editor_source=argv[3], .editor_draft=argv[4], .editor_prefab=argv[5],
+            .output=argv[6], .editor_local=strcmp(argv[7], "local") == 0, .defines=defines, .define_count=1};
+        char *built = tide_build_editor(root, &opts);
+        const int result = built ? 0 : 1;
+        free(built); free(root); return result;
+    }
     tide_cleanup(root);
 
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0) return version(root);
@@ -183,6 +205,15 @@ int main(const int argc, char **argv)
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
     }
 
+    if (strcmp(command, "eject") == 0) {
+        if (argc != 3 || argv[2][0] == '-') {
+            fprintf(stderr, "tide: eject takes the name of one of the game's packages, like `tide eject rooms`\n");
+            return 2;
+        }
+        char *folder = path_absolute(".");
+        return tide_eject(folder, argv[2]);
+    }
+
     if (strcmp(command, "fetch") == 0 || strcmp(command, "publish") == 0) {
         if (argc > 3 || (argc == 3 && argv[2][0] == '-')) {
             fprintf(stderr, "tide: %s takes the game's folder, or none for this one\n", command);
@@ -213,24 +244,31 @@ int main(const int argc, char **argv)
     const bool schedule = strcmp(command, "schedule") == 0 || shaders;
     if (!run && !build && !schedule) {
         fprintf(stderr, "tide: unknown command '%s'\n", command);
-        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, fetch, publish, editors, upgrade "
-                        "and version; see `tide help`\n");
+        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, eject, fetch, publish, editors, "
+                        "upgrade and version; see `tide help`\n");
         return 2;
     }
 
-    build_options opts = {.folder = "."};
+    // There can be no more symbols than arguments, with room for DEBUG too.
+    // Keep these outside the compiler's arena: a watched run resets it at every build.
+    const char **defines = malloc((size_t)argc * sizeof *defines);
+    if (!defines) abort();
+    build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, its matches' seed, and a run with no window
-    const char *game_args[24] = {NULL};
+    // --connect <address>, the window's size, its matches' seed, and a run with no window. Each of them once is 25
+    // arguments
+    const char *game_args[32] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
-    bool headless = false; // --capture, --frames or --script: the game runs with no window
+    bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
+    bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
-        if (run && game_arg_count > 20) { // Room for the longest of them yet
+        if (run && game_arg_count > 28) { // Room for the longest of them yet, --size's 3, and the NULL after them
             fprintf(stderr, "tide: run takes each of its options once\n");
+            free(defines);
             return 2;
         }
         if (run && strcmp(a, "--host") == 0) {
@@ -239,9 +277,15 @@ int main(const int argc, char **argv)
         } else if (run && (strcmp(a, "--join") == 0 || strcmp(a, "--connect") == 0) && left >= 1) {
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
-        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--script") == 0)) {
+        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--script") == 0 ||
+                           strcmp(a, "--microphone") == 0)) {
             if (left < 1) {
-                fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, a[2] == 'c' ? "--capture menu.png" : "--script play.txt");
+                const char *like = "--capture menu.png";
+                if (a[2] == 's') like = "--script play.txt";
+                else if (a[2] == 'm') like = "--microphone voice.wav";
+                else if (a[9]) like = "--capture-audio run.wav"; // What's after --capture
+                fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, like);
+                free(defines);
                 return 2;
             }
             // The game runs in its own folder: the file is where the command says, from here
@@ -251,14 +295,25 @@ int main(const int argc, char **argv)
         } else if (run && (strcmp(a, "--frames") == 0 || strcmp(a, "--scale") == 0)) {
             if (left < 1) {
                 fprintf(stderr, "tide: %s takes a number, like `%s`\n", a, a[2] == 'f' ? "--frames 300" : "--scale 2");
+                free(defines);
                 return 2;
             }
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
             if (a[2] == 'f') headless = true;
+        } else if (run && strcmp(a, "--players") == 0) {
+            if (left < 1) {
+                fprintf(stderr, "tide: --players takes how many players the run has, like `--players 2`\n");
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+            players = true;
         } else if (run && strcmp(a, "--size") == 0) {
             if (left < 2) {
                 fprintf(stderr, "tide: --size takes the window's width and height, like `--size 1280 720`\n");
+                free(defines);
                 return 2;
             }
             game_args[game_arg_count++] = a;
@@ -274,6 +329,7 @@ int main(const int argc, char **argv)
             if (c == seed || *c || value > 2147483647u) {
                 fprintf(stderr, "tide: --seed takes the seed of the matches the game starts, a whole number from 0 to 2147483647, "
                                 "like `--seed 7`\n");
+                free(defines);
                 return 2;
             }
             game_args[game_arg_count++] = a;
@@ -286,19 +342,21 @@ int main(const int argc, char **argv)
         else if (strcmp(a, "--debug-views") == 0) opts.debug_views = true;
         else if (strcmp(a, "--define") == 0) {
             const char *name = left >= 1 ? argv[++i] : "";
-            if (!lex_symbol_ok(name) || opts.define_count >= 63) {
+            if (!lex_symbol_ok(name)) {
                 fprintf(stderr, "tide: --define takes a symbol for the game's #if lines, like `--define FAST`%s\n",
                         strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
                             ? ": symbols that start with TIDE_ and PACKAGE_ are tide's to say"
                             : "");
+                free(defines);
                 return 2;
             }
-            opts.defines[opts.define_count++] = name;
+            defines[opts.define_count++] = name;
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && build) opts.output = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {
             fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help`\n", command, a);
+            free(defines);
             return 2;
         }
     }
@@ -309,14 +367,24 @@ int main(const int argc, char **argv)
     // Interactive runs reload as files change. Runs with no window end once.
     opts.watch = run && !headless;
     // DEBUG is every build's but --release's
-    if (!opts.release) opts.defines[opts.define_count++] = "DEBUG";
+    if (!opts.release) defines[opts.define_count++] = "DEBUG";
+    // The game's tide.packages reads them too: its #if lines say which packages this build has
+    packages_set_symbols(defines, opts.define_count);
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
+        free(defines);
+        return 2;
+    }
+    if (players && !headless) {
+        // Said before anything is built: the game would refuse it too
+        fprintf(stderr, "tide: --players is for a run with no window: with --capture, --frames or --script\n");
+        free(defines);
         return 2;
     }
     if ((headless || sized) && (opts.web || opts.android)) {
         fprintf(stderr, "tide: %s on this machine: not with --web or --android\n",
                 headless ? "--capture, --frames and --script run the game with no window," : "--size is for a window");
+        free(defines);
         return 2;
     }
     if (run && sys_hidden()) {
@@ -324,6 +392,7 @@ int main(const int argc, char **argv)
         if (!headless && !opts.web && !opts.android) {
             fprintf(stderr, "tide: TIDE_HIDDEN is set, so the game shows no window, and nothing else would end its run: give run "
                             "--frames <n> (and --capture <file.png> for a picture of the last one), or --script <file>\n");
+            free(defines);
             return 2;
         }
         open_page = false;
@@ -346,5 +415,6 @@ int main(const int argc, char **argv)
         else printf("Built %s\n", program);
     }
     if (!run) tide_check_for_update(root);
+    free(defines);
     return code;
 }

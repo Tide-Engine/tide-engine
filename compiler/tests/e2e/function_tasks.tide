@@ -1,0 +1,236 @@
+// Functions and methods start tasks as the code that calls them would: in the
+// match from systems, handlers and tasks, on this machine from views and local
+// handlers, and for the entity that code runs for.
+
+extern void task_mark(int n); // What a task of no world of its own says it did (function_tasks_test.c)
+
+event Boom { int id; }
+local event Flash { int n; }
+
+component Fuse
+{
+    int id;
+    int age;
+}
+
+component Crate { int from; }
+
+scene Arena
+{
+    int round;
+}
+
+singleton Tally
+{
+    int ticks;
+    int counted;
+    int sum;
+    int booms;
+    int rolled;
+    List<int> order; // What each task was started with, in the order they went on
+    Entity arena;
+    Entity doomed;
+}
+
+local singleton Desk
+{
+    int frames;
+    int flows;
+    int heard;
+    int watched;
+    string note;
+    bool asked;
+}
+
+scene Main { }
+
+// The match's: it changes a singleton, which it gets again each time it goes on
+async void Count(mut Tally tally, int by)
+{
+    await Wait.Ticks(1);
+    tally.counted += by;
+    tally.order.Add(by);
+}
+
+// A function starts it, with the singleton its own caller handed it
+void StartCount(mut Tally tally, int by) { Count(tally, by); }
+
+// ...through other functions, however many
+void Both(mut Tally tally)
+{
+    StartCount(tally, 10);
+    StartCount(tally, 100);
+}
+
+// It gives a value and starts a task: its calls keep their order in an expression
+int Counted(mut Tally tally, int by)
+{
+    Count(tally, by);
+    return by;
+}
+
+struct Timer
+{
+    int by;
+
+    // A struct's method starts one, for whatever calls it
+    void Go(mut Tally tally) { Count(tally, by); }
+}
+
+// A function that takes a block starts one in its own code, around the block's
+void Around(mut Tally tally, Action each)
+{
+    Count(tally, 7);
+    each();
+}
+
+// A task that rolls takes a sequence of its own from the code that starts it, through the function
+async void Roll(mut Tally tally)
+{
+    await Wait.Ticks(1);
+    tally.rolled = 1 + Random.NextInt(1000000);
+}
+
+void StartRoll(mut Tally tally) { Roll(tally); }
+
+// A task belongs to the entity the calling code runs for, and ends with it
+async void Blow(int id)
+{
+    await Wait.Ticks(3);
+    Send(Boom { id = id });
+}
+
+void Light(int id) { Blow(id); }
+
+// What a task spawns joins the scene of the entity it belongs to, through the function too
+async void Stock(int from)
+{
+    await Wait.Ticks(1);
+    Spawn(Crate { from = from });
+}
+
+void Order(int from) { Stock(from); }
+
+// A task nothing decides the world of starts in the world of the code that calls the function
+async void Later(int n)
+{
+    await Wait.Seconds(1);
+    task_mark(n);
+}
+
+void Soon(int n) { Later(n); }
+void Sooner(int n) { Soon(n + 1); }
+
+// A task of the match's calls a function that starts another
+async void Chain(mut Tally tally)
+{
+    await Wait.Ticks(2);
+    StartCount(tally, 1000);
+}
+
+// Nothing calls these: they still compile
+void Never(int n) { Later(n); }
+void NeverCounts(mut Tally tally) { Count(tally, 1); }
+
+event(Spawned) Setup(with Main, mut Tally tally)
+{
+    tally.arena = Scene.Load(Arena);
+    tally.doomed = Spawn(Fuse { id = 1 });
+    Spawn(Fuse { id = 2 });
+}
+
+event(Spawned) Open(with Arena)
+{
+    Order(5); // The arena's own handler: the task's crate joins the arena
+}
+
+system Rounds(mut Arena arena)
+{
+    arena.round += 1;
+    if (arena.round == 5) Scene.Unload(this);
+}
+
+system Start(mut Tally tally)
+{
+    tally.ticks += 1;
+    if (tally.ticks == 1)
+    {
+        StartCount(tally, 1);
+        Both(tally);
+        tally.sum = Counted(tally, 2) + Counted(tally, 3) * Counted(tally, 4);
+        var timer = Timer { by = 5 };
+        timer.Go(tally);
+        Around(tally)
+        {
+            StartCount(tally, 8);
+        }
+        StartRoll(tally);
+        Chain(tally);
+        Soon(1);
+        Sooner(40);
+    }
+}
+
+[After(Start)]
+system Burn(mut Fuse fuse, Tally tally)
+{
+    fuse.age += 1;
+    if (fuse.age == 1) Light(fuse.id);
+    if (fuse.age == 2 && this == tally.doomed) this.Destroy();
+}
+
+event(Boom boom) Heard(mut Tally tally)
+{
+    tally.booms += boom.id;
+}
+
+// This machine's: it changes local state
+async void Flow(mut Desk desk, int n)
+{
+    await Wait.Frames(2);
+    desk.flows += n;
+}
+
+void Ask(mut Desk desk, int n) { Flow(desk, n); }
+
+string Named(mut Desk desk, string name)
+{
+    Ask(desk, 100);
+    return $"asked {name}";
+}
+
+// A local task that reads the match belongs to the match's entity its view ran for
+async void Watch(mut Desk desk, int id)
+{
+    await Wait.Frames(1);
+    desk.watched += id;
+}
+
+void Follow(mut Desk desk, int id) { Watch(desk, id); }
+
+view Menu(mut Desk desk)
+{
+    desk.frames += 1;
+    if (desk.frames == 1)
+    {
+        Ask(desk, 1);
+        desk.note = Named(desk, "ana");
+        Soon(2);
+        Send(Flash { n = 3 });
+    }
+}
+
+view Fuses(Fuse fuse, mut Desk desk)
+{
+    if (desk.asked) return;
+    Follow(desk, fuse.id);
+    if (fuse.id == 2) desk.asked = true;
+}
+
+// A local handler has no match to hand on: the function's tasks start with none
+local event(Flash flash) Seen(mut Desk desk)
+{
+    desk.heard += flash.n;
+    Ask(desk, 10);
+    Soon(flash.n);
+}

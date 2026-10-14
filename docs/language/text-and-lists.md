@@ -4,7 +4,7 @@ description: "Work with Tide strings, lists, arrays, maps and sets as values, in
 
 # Text and lists
 
-Text and lists are values, like everything else: assigning one copies it, and changing a copy never changes the original. Nothing about them fails, either: past the end, positions are clamped.
+Text and collections are values: assigning one copies it, and changing a copy never changes the original. Text clamps positions to its bounds. A list or array read outside its bounds gives zero, and a write there does nothing.
 
 ## Text
 
@@ -43,11 +43,113 @@ Matrices can't be shown yet, so neither can a value that holds one.
 ### Members
 
 - `length` counts characters (Unicode code points), not bytes.
-- `Contains`, `StartsWith`, `EndsWith` and `IndexOf`, which gives -1 when it's not there.
+- `text[i]` is the character at `i`, a [`char`](#characters), counting from 0.
+- `Contains`, `StartsWith`, `EndsWith` and `IndexOf`, which gives -1 when it's not there. Each takes text or a char: `name.Contains("ob")`, `name.IndexOf('b')`.
 - `Substring(start)` and `Substring(start, length)`.
 - `ToUpper` and `ToLower`, for ASCII letters for now.
-- `Trim` and `Replace(from, to)`.
+- `Trim` and `Replace(from, to)`, of text or of chars.
+- `Split(separator)`, the pieces between each separator and the next, and `ToBytes()`, the text as UTF-8 (see [Bytes, pieces and numbers](#bytes-pieces-and-numbers)).
 - `==` and `!=` compare text byte by byte. There's no `<` for text.
+
+### Bytes, pieces and numbers
+
+What comes from outside the game is bytes, and what a player types is text: these turn one into the other, and text into the values in it. They're the same on every machine, so the match can use them.
+
+```csharp
+bool ReadScore(List<byte> file, out string name, out int score)
+{
+    name = "";
+    score = 0;
+    var line = string.FromBytes(file) ?? "";      // "Ada;1200"
+    var parts = line.Trim().Split(';');
+    if (parts.count != 2) return false;
+    name = parts[0];
+    return int.TryParse(parts[1], out score);
+}
+```
+
+| Call | What it gives |
+| --- | --- |
+| `text.ToBytes()` | A `List<byte>`: the text's UTF-8 |
+| `string.FromBytes(bytes)` | A `string?`: the text those bytes are, or nothing when they aren't UTF-8 |
+| `text.Split(separator)` | A `List<string>`: the pieces between each separator and the next. The separator is text or a char |
+| `int.TryParse(text, out value)` | Whether the whole text is an int, which goes to `value` |
+| `long.TryParse(text, out value)` | The same, for a long |
+| `float.TryParse(text, out value)` | Whether the whole text is a number, which goes to `value` as the nearest float |
+
+- **`Split` keeps empty pieces**, so joining the pieces with the separator gives the text back: `"a,,b".Split(",")` is `["a", "", "b"]`, and `"".Split(",")` is one empty piece. A separator that isn't in the text, or an empty one, gives the whole text as one piece.
+- **`TryParse` takes a number and nothing else.** An int is digits, with `-` before them for a negative one. A float can have a point and an exponent too: `-12.5`, `.5`, `1e-3`. Spaces, a `+`, hex and words like `NaN` make it false, and so does a number its type doesn't hold. `Trim` the text first when it's what a player typed. When it's false, `value` is 0.
+- **A float read from text is the nearest one**, worked out exactly, the same bits on every platform. What `$"{x}"` shows of a float reads back as that float.
+- **`FromBytes` gives a [`string?`](./errors.md)**, since bytes from a file or a server can be anything: `?? ""` for a fallback, or `is string text` to run only when they're text.
+
+For JSON, there's [`Json.Read` and `Json.Write`](./json.md), which read and write a struct whole.
+
+### Characters
+
+`char` is one character of text, written in single quotes: `'a'`. `text[i]` reads a text's character at `i`, and `foreach` goes through them in order. That's what reading text a piece at a time is made of: a level drawn in characters, a line to cut at a space, a number typed by a player.
+
+```csharp
+enum Tile { Grass, Water, Rock }
+
+singleton Board
+{
+    Tile[64] tiles;
+    int2 size;
+}
+
+// A level's plan: a character a tile, with '/' between its rows
+void LayOut(mut Board board, string plan)
+{
+    mut var x = 0;
+    mut var y = 0;
+    foreach (var mark in plan)
+    {
+        if (mark == '/')
+        {
+            x = 0;
+            y += 1;
+            continue;
+        }
+        switch (mark)
+        {
+            case '~':
+                board.tiles[y * 8 + x] = Tile.Water;
+                break;
+            case '^':
+                board.tiles[y * 8 + x] = Tile.Rock;
+                break;
+            default:
+                break;
+        }
+        board.size = int2(Math.Max(board.size.x, x + 1), y + 1);
+        x += 1;
+    }
+}
+
+// A whole number at the start of some text, or -1
+int Leading(string text)
+{
+    mut var number = -1;
+    foreach (var c in text)
+    {
+        if (c < '0' || c > '9') break;
+        number = Math.Max(number, 0) * 10 + (c - '0');
+    }
+    return number;
+}
+```
+
+- A literal is one character, any of Unicode's (`'é'`, `'€'`), or one of the escapes `\'`, `\"`, `\\`, `\n`, `\r`, `\t` and `\0`.
+- `text[i]` counts characters the way `length` does. Before the start and past the end it gives `'\0'`, which is no character: text shows it as nothing, so `"a" + name[99]` is `"a"`. It's a char's zero, and its `default`.
+- Text only changes whole, so `name[0] = 'x'` is an error. Make the new text of its pieces: `name.Substring(0, i) + c + name.Substring(i + 1)`.
+- A `foreach` goes through the text as it was when the loop started, whatever its variable becomes on the way.
+- Chars compare with `==`, `!=`, `<`, `<=`, `>` and `>=`, in Unicode's order: `c >= 'a' && c <= 'z'` is a small letter.
+- A char goes where an int goes, as its number in Unicode (its code point): `int code = c;`, `var digit = c - '0';`. What an operator gives of one is an int, never a char: `char(n)` makes an int the character, so `char(c + 1)` is the one after `c`. A number no character has (under 0, past `0x10FFFF`, or from `0xD800` to `0xDFFF`) gives `'\0'`.
+- `switch` works on a char, with chars as its cases, and a char is a map's or a set's key: `Map<char, int> counts;`.
+- Text joins a char as its character: `"a" + 'b'` is `"ab"`, and `$"{c}"` shows it. Inside a value it's in its quotes, like text: `Glyph { mark = 'a' }`, `['a', 'b']`.
+- A char is a plain value of four bytes, so it goes where an int does: components, structs, arrays (`char[16]`), lists, a grid's cells, inputs, commands and events.
+
+To go through a text, use `foreach`: it reads each character once. `text[i]` is as quick where every character is one byte (English letters, digits, punctuation); in text with accents, other alphabets or emoji it has to count its way to `i` each time, so a `for` over a long one gets slow.
 
 ## Lists
 
@@ -72,19 +174,21 @@ system Collect(mut Inventory inventory, Pickup pickup)
 - `count`, `items[i]` to read, and `items[i] = x` or `items[i] += x` to write.
 - `Add(item)`, `Insert(index, item)`, `RemoveAt(index)` and `Clear()`.
 - `Resize(count)` makes the list `count` elements long in one go. New elements are the element type's zero, empty for text. With fewer, the rest go. A count under 0 is 0.
-- For elements that `==` compares (numbers, bools, enums, text, entities and players): `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
+- For elements that `==` compares (numbers, bools, chars, enums, text, entities and players): `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 
 Past the end, a read gives the element type's zero and a write does nothing.
 
 ### Elements are copies
 
-Reading an element gives a copy of it, so `items[i].count = 1` would only change the copy. It's an error: take the element out, change it, and put it back.
+Taking a whole element into a local, an argument or a `foreach` variable gives a copy. Changing that copy never changes the list:
 
 ```csharp
 mut var slot = inventory.slots[i];
 slot.count += 1;
 inventory.slots[i] = slot;
 ```
+
+Plain fields of struct elements can also be [changed where they are](#changing-an-element-where-it-is): `inventory.slots[i].count += 1`. A `mut` method or a `mut` argument can't change an element this way; use a mutable local and put it back. A struct element's text or collection fields also need that copy-and-replace form.
 
 Changing a list needs something that can change: a `mut` component or singleton, or a `mut` local.
 
@@ -119,7 +223,7 @@ system Upgrade(mut Fighter fighter, Draft draft)
 
 ## Arrays
 
-`T[N]` is a fixed number of values side by side in whatever holds them, with nothing in the heap: `int[32] cells;`. An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
+`T[N]` is a fixed number of values side by side in whatever holds them, with nothing in the heap: `int[32] cells;`, of up to 4,096 elements (an [audio declaration's state](../game/audio.md#echoes-and-reverbs) holds far longer ones, for an echo's delay line). An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
 
 ```csharp
 const int CAP = 32;
@@ -143,13 +247,13 @@ system Record(mut Trail trail, Body body)
 }
 ```
 
-Elements are plain values: numbers, bools, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
+Elements are plain values: numbers, bools, chars, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
 
 ## Changing an element where it is
 
-A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A field that holds text or a list, and anything in a list or a map inside the element, is still taken out, changed and put back (`var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
+A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A missing map key is added when its value is written this way. A field that holds text or a collection, and anything in a list or a map inside the struct element, is still taken out, changed and put back (`mut var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
 
 ## Lists inside lists
 
@@ -158,23 +262,25 @@ A list's elements can be lists, maps or sets, and structs that hold them, as dee
 An element that's a container is changed where it is, through any number of indexes:
 
 ```csharp
+component Item { }
+
 singleton Table
 {
     List<List<int>> rows;
     Map<int, List<Entity>> buckets;
 }
 
-system Fill(mut Table table)
+system Fill(mut Table table, with Item)
 {
     table.rows.Add([1, 2]);   // A new row
     table.rows[0].Add(3);     // Into the row where it is
     table.rows[0][1] = 20;
     table.rows[0][2] += 1;
-    table.buckets[7].Add(this); // Adds the key 7 if it isn't there, like `buckets[7] = ...`
+    table.buckets[7].Add(this); // This Item's entity; adds the key 7 if it isn't there
 }
 ```
 
-Past the end of the list it's in, such a write does nothing, as any write past the end does. A struct element is still a copy, so a list inside one is changed by taking the struct out and putting it back (`var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
+Past the end of the list it's in, such a write does nothing, as any write past the end does. A list inside a struct element is changed by taking the struct out and putting it back (`mut var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
 
 Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing, so a loop that only counts or reads is best written with indexes:
 
@@ -187,7 +293,7 @@ int Cells(Table table)
 }
 ```
 
-Text shows them inside out, `[[1, 20, 4], [3]]`. They don't go to C, nor into a `parallel` loop, an input or a command, which take plain lists.
+Text shows them inside out, `[[1, 20, 4], [3]]`. Nested collections don't go to C or into a `parallel` loop, whose list elements must be plain values. Inputs hold no lists; a [command](../game/commands.md#big-commands) can hold `List<byte>` for bytes, but no other list type.
 
 Rows that all have one length need no second list: `cells[row * width + column]`, or a [grid](./grids.md).
 
@@ -287,14 +393,14 @@ system Score(mut Scoreboard board, Hit hit)
 }
 ```
 
-Keys are `byte`, `int`, `long`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
+Keys are `byte`, `int`, `long`, `char`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
 
 ### Members
 
 - `count`.
 - A map: `scores[key]` to read, which gives the value type's zero when the key isn't there, and `scores[key] = value` or `scores[key] += x` to write. `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `TryGet(key, out value)` (whether the key is there, and its value), `Remove(key)` (whether it was there) and `Clear()`.
 - A set: `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`.
-- `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each with `key` and `value`; `foreach (var k in tagged)` goes through a set's keys the same way. The order is the same on every machine.
+- `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each with `key` and `value`; `foreach (var k in tagged)` goes through a set's keys the same way. Entries added during the loop are reached too, and entries removed before their turn are skipped, including when the loop waits between entries. The order is the same on every machine.
 
 ```csharp
 foreach (var e in board.scores)
@@ -311,7 +417,17 @@ if (board.byName.TryGet("last", out var stats))
 
 Where the key isn't there, the variable gets the value type's `default`.
 
-A value read out of a map is a copy, like a list's element: take it out, change it and put it back. A map taken out of a field is a copy too. Maps and sets go in components, singletons, structs and events, like lists, and not in inputs, lists, grids' cells or other maps. A map's values can't be lists, maps, sets or structs with one in them either, as a list's elements can't: see [Lists in structs](#lists-in-structs) for what to write instead.
+A whole value taken out of a map is a copy, like a list's element: take it out into a mutable local, change it and put it back. A plain field of a struct value can be [changed where it is](#changing-an-element-where-it-is), and a value that's a collection can be changed through its key: `buckets[key].Add(entity)`. A map taken out of a field is a copy too.
+
+Maps and sets go in components, singletons, structs and events. They also nest in lists and as map values, as [lists inside lists](#lists-inside-lists) do. Inputs and grid cells don't hold them. Keys stay the types listed above; a collection or a struct can't be a key.
+
+Choose a name below and add a score. A missing name joins the map; removing and adding it again puts it last in insertion order. Tagging it twice leaves one tag, and `TryGet` shows both whether its score exists and the value it gives.
+
+::: tide-example maps Scores by key, tags only once
+
+<<< @/examples/maps.tide
+
+:::
 
 ## Where they live
 
@@ -319,6 +435,6 @@ A world keeps the text, lists and maps in its components in its **heap**, which 
 
 Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, up to 1 GiB on each thread, and a list stops growing at 1 GiB of elements. A heap or a scratch area that's full ends the program, as running out of memory does.
 
-An input can't hold text or lists: what players send every tick is numbers, bools and enums.
+An input can't hold text or dynamic collections: what players send every tick is plain data, including vectors, structs and fixed-length arrays (see [Input](../game/input.md)).
 
-Systems that change the match's text or lists wait for each other, since they share one heap.
+Systems that change the match's text or collections wait for each other, since they share one heap.

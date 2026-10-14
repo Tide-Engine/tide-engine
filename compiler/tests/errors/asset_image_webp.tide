@@ -1,0 +1,3 @@
+// expect: '../e2e/assets/images/bad/unsupported.webp' can't be imported as an image: WebP image import isn't supported; export PNG, PSD, JPEG, TGA or BMP
+asset Texture image = "../e2e/assets/images/bad/unsupported.webp";
+scene Main { }

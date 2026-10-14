@@ -1,0 +1,92 @@
+[
+  {
+    "characters": 100,
+    "mode": 1,
+    "frames": 10,
+    "calls": 1000,
+    "failures": 0,
+    "mean_ms_per_frame": {
+      "validation": 4.42265,
+      "palette": 0.21797,
+      "palette_capture": 0.05624,
+      "hash_influence": 5.20168,
+      "total_function": 9.90492,
+      "open_cleanup_and_counter_residual": 0.00638
+    }
+  },
+  {
+    "characters": 100,
+    "mode": 2,
+    "frames": 10,
+    "calls": 1000,
+    "failures": 0,
+    "mean_ms_per_frame": {
+      "validation": 4.45471,
+      "palette": 0.22007,
+      "palette_capture": 0.05805,
+      "hash_influence": 5.29148,
+      "total_function": 10.0315,
+      "open_cleanup_and_counter_residual": 0.00719
+    }
+  },
+  {
+    "characters": 100,
+    "mode": 3,
+    "frames": 10,
+    "calls": 1000,
+    "failures": 0,
+    "mean_ms_per_frame": {
+      "validation": 4.40538,
+      "palette": 0.21416,
+      "palette_capture": 0.10269,
+      "hash_influence": 5.1944,
+      "total_function": 9.92376,
+      "open_cleanup_and_counter_residual": 0.00713
+    }
+  },
+  {
+    "characters": 1000,
+    "mode": 1,
+    "frames": 10,
+    "calls": 10000,
+    "failures": 0,
+    "mean_ms_per_frame": {
+      "validation": 44.37645,
+      "palette": 2.18805,
+      "palette_capture": 0.57242,
+      "hash_influence": 51.89767,
+      "total_function": 99.09804,
+      "open_cleanup_and_counter_residual": 0.06345
+    }
+  },
+  {
+    "characters": 1000,
+    "mode": 2,
+    "frames": 10,
+    "calls": 10000,
+    "failures": 0,
+    "mean_ms_per_frame": {
+      "validation": 44.36937,
+      "palette": 2.18907,
+      "palette_capture": 0.56533,
+      "hash_influence": 52.39907,
+      "total_function": 99.59419,
+      "open_cleanup_and_counter_residual": 0.07135
+    }
+  },
+  {
+    "characters": 1000,
+    "mode": 3,
+    "frames": 10,
+    "calls": 10000,
+    "failures": 0,
+    "mean_ms_per_frame": {
+      "validation": 44.11876,
+      "palette": 2.16278,
+      "palette_capture": 1.54847,
+      "hash_influence": 52.43752,
+      "total_function": 100.33719,
+      "open_cleanup_and_counter_residual": 0.06966
+    }
+  }
+]

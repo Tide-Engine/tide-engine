@@ -1,0 +1,4 @@
+// expect: local placement requires ordinary component fields
+component Visual { int kind; local int handle; }
+scene Main { }
+view Setup() { local Spawn(Visual); }

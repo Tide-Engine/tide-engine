@@ -71,25 +71,52 @@ static void compact(tide_map *m, const tide_map_kind *k, const uint32_t where)
     m->entries = packed;
 }
 
-int32_t tide_map_find(const tide_map m, const tide_map_kind *k, const void *probe)
+// Unsigned negation also handles a malformed INT64_MIN header without C's
+// signed overflow. Valid entries only have orders in [1, INT64_MAX].
+static uint64_t entry_order(const void *entry)
 {
-    if (!m.live || !slots(m)) return -1;
-    const uint32_t mask = slots(m) - 1u;
-    for (uint32_t s = k->hash_probe(probe) & mask;; s = (s + 1u) & mask) {
-        const uint32_t number = slot_at(m, s);
-        if (!number) return -1;
-        const void *e = tide_list_at(m.entries, (int32_t)(number - 1u), k->entry_size);
-        if (tide_map_live(e) && k->equal(key_of(k, e), probe)) return (int32_t)(number - 1u);
+    const int64_t order = *(const int64_t *)entry;
+    return order < 0 ? 0u - (uint64_t)order : (uint64_t)order;
+}
+
+int32_t tide_map_next(const tide_map m, const tide_map_kind *k, int64_t *order, int32_t *next)
+{
+    const int32_t n = tide_list_count(m.entries);
+    int32_t i = *next;
+    if (!*order) i = 0;
+    else if (i <= 0 || i > n || entry_order(tide_list_at(m.entries, i - 1, k->entry_size)) != (uint64_t)*order) {
+        // Orders stay sorted even in dead entries. Find the first after the
+        // cursor only when its previous entry no longer occupies its place.
+        int32_t lo = 0, hi = n;
+        while (lo < hi) {
+            const int32_t mid = lo + (hi - lo) / 2;
+            const void *entry = tide_list_at(m.entries, mid, k->entry_size);
+            if (entry_order(entry) <= (uint64_t)*order) lo = mid + 1;
+            else hi = mid;
+        }
+        i = lo;
     }
+    for (; i < n; i++) {
+        const void *entry = tide_list_at(m.entries, i, k->entry_size);
+        if (!tide_map_live(entry)) continue;
+        *order = *(const int64_t *)entry;
+        *next = i + 1;
+        return i;
+    }
+    *next = n;
+    return -1;
 }
 
 void *tide_map_insert(tide_map *m, const tide_map_kind *k, const void *probe, const uint32_t where, bool *added)
 {
+    tide_list_prepare(&m->entries, k->entry_size, where);
+    tide_list_prepare(&m->index, sizeof(uint32_t), where);
     const int32_t found = tide_map_find(*m, k, probe);
     if (found >= 0) {
         *added = false;
         return tide_list_at_mut(m->entries, found, k->entry_size);
     }
+    if (m->last_order == INT64_MAX) tide_out_of_memory();
     *added = true;
     const uint32_t entries = (uint32_t)tide_list_count(m->entries);
     const uint32_t dead = entries - m->live;
@@ -108,7 +135,7 @@ void *tide_map_insert(tide_map *m, const tide_map_kind *k, const void *probe, co
     if (rebuild) rebuild_index(m, k, count, where);
     void *e = tide_list_add(&m->entries, k->entry_size, where);
     if (!e) return NULL;
-    *(uint32_t *)e = 1u;
+    *(int64_t *)e = ++m->last_order;
     m->live++;
     set_slot(*m, empty_slot(*m, k->hash_probe(probe)), (uint32_t)tide_list_count(m->entries));
     return e;
@@ -116,7 +143,8 @@ void *tide_map_insert(tide_map *m, const tide_map_kind *k, const void *probe, co
 
 void tide_map_erase(tide_map *m, const tide_map_kind *k, const int32_t i, const uint32_t where)
 {
-    (void)where;
+    tide_list_prepare(&m->entries, k->entry_size, where);
+    tide_list_prepare(&m->index, sizeof(uint32_t), where);
     void *e = tide_list_at_mut(m->entries, i, k->entry_size);
     if (!tide_map_live(e)) return;
     // Its slot, then the ones after it moved back over the gap, each as far as
@@ -134,7 +162,9 @@ void tide_map_erase(tide_map *m, const tide_map_kind *k, const int32_t i, const 
         }
     }
     set_slot(*m, gap, 0u);
+    const int64_t order = *(const int64_t *)e;
     memset(e, 0, k->entry_size);
+    *(int64_t *)e = -order;
     m->live--;
 }
 
@@ -147,7 +177,8 @@ void tide_map_clear(tide_map *m, const tide_map_kind *k)
 
 tide_map tide_map_copy(const tide_map m, const tide_map_kind *k)
 {
-    return (tide_map){tide_list_copy(m.entries, k->entry_size), tide_list_copy(m.index, sizeof(uint32_t)), m.live};
+    return (tide_map){.entries = tide_list_copy(m.entries, k->entry_size), .index = tide_list_copy(m.index, sizeof(uint32_t)),
+                      .live = m.live, .last_order = m.last_order};
 }
 
 void tide_map_set(tide_map *to, const tide_map value, const tide_map_kind *k, const uint32_t where)
@@ -155,6 +186,8 @@ void tide_map_set(tide_map *to, const tide_map value, const tide_map_kind *k, co
     tide_list_set(&to->entries, value.entries, k->entry_size, where);
     tide_list_set(&to->index, value.index, sizeof(uint32_t), where);
     to->live = value.live;
+    to->reserved = 0;
+    to->last_order = value.last_order;
 }
 
 void tide_map_own(tide_map *m, const tide_map_kind *k, const uint32_t where)

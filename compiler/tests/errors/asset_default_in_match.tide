@@ -1,0 +1,12 @@
+// expect: 'Sign' contains machine-local field
+asset Texture hero = "../e2e/assets/hero.png";
+
+component Sign
+{
+    Texture face = hero;
+}
+
+scene Main
+{
+}
+event(Spawned) Setup(with Main) { Spawn(Sign); }

@@ -35,15 +35,31 @@ static void check_rang(const Heard *heard)
 
 // A host with one world and no server: what it ticks is all there is, so a
 // tick's events are heard by both kinds of handler, at the next frame. The
-// world goes the same with a log as without.
+// world goes the same with a log as without. What the world started with was
+// spawned in no tick: the host says so itself (tide_game.hear_arrived).
 TIDE_TEST(local_events_plain_host)
 {
-    static tide_world world, quiet;
+    static tide_world world, quiet, before;
     static tide_local local;
     tide_event_log events = {0};
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_init(&quiet, 1.0f / 60.0f);
     tide_local_init(&local);
+    TIDE_REQUIRE(tide_game_api.hear_arrived != NULL);
+    tide_game_api.hear_arrived(&world, NULL, &events);
+    // The scene and its three targets, each once for all its handlers, then the rows their queries read
+    TIDE_CHECK(events.count == 5);
+    TIDE_CHECK(tide_world_hash(&world) == tide_world_hash(&quiet));
+    tide_local_events(&local, &events);
+    tide_draw_reset(&draw);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    TIDE_CHECK(local.Heard.spawned == 0xE && local.Heard.sureSpawned == 0xE && local.Heard.entities == 4);
+    for (int32_t id = 1; id <= 3; id++) TIDE_CHECK(tide_get_Target_local(&local, target(&world, id)).born == id);
+    // Its handlers' queries go through the world as it started: all three targets
+    TIDE_CHECK(local.Heard.company == 0xE && local.Heard.sureCompany == 0xE);
+    // A world it had says which of them are new to it: none of its own
+    tide_game_api.hear_arrived(&world, &world, &events);
+    TIDE_CHECK(events.count == 0);
     tide_world *both[] = {&world, &quiet};
     for (int i = 0; i < 2; i++) {
         tide_world_player_joined(both[i], tide_player_from_index(0));
@@ -54,16 +70,17 @@ TIDE_TEST(local_events_plain_host)
         tide_world_tick_events(&world, NULL, &events);
         tide_world_tick(&quiet); // Nobody listens: the same world
         TIDE_CHECK(tide_world_hash(&world) == tide_world_hash(&quiet));
+        if (tick == 199u) tide_world_copy(&before, &world); // With target 2, and without target 5
         if (tick % 3u != 2u) continue; // A frame every three ticks: it hears them all, in order
         tide_local_events(&local, &events);
         TIDE_CHECK(events.count == 0);
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         if (tick < 30u) TIDE_CHECK(local.Heard.struck == 0);
     }
     tide_local_events(&local, &events);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     const Heard *heard = &local.Heard;
     // The shield was up at 90, 150 and 240: kinds 1 and 4, no 2 or 3
     TIDE_CHECK(heard->struck == 2 && heard->kinds == ((1 << 1) | (1 << 4)));
@@ -74,19 +91,29 @@ TIDE_TEST(local_events_plain_host)
     TIDE_CHECK(heard->sureRang == 11);
     TIDE_CHECK(heard->glanced == 1 && heard->sureGlanced == 1);
     TIDE_CHECK(heard->glancedAt.x == 1.5f && heard->glancedAt.y == -1.0f && heard->glancedTick == 150);
-    // The players, then target 5: the three first targets came as the world started, before any tick
-    TIDE_CHECK(heard->spawned == 1 << 5 && heard->sureSpawned == 1 << 5);
-    TIDE_CHECK(heard->entities == 3 && heard->shielded == 1);
+    // The three first targets came as the world started, before any tick; then the players, and target 5
+    TIDE_CHECK(heard->spawned == (0xE | 1 << 5) && heard->sureSpawned == (0xE | 1 << 5));
+    TIDE_CHECK(heard->entities == 7 && heard->shielded == 1);
     TIDE_CHECK(heard->joined == 2);
     // Destroyed is heard with the entity's components as they were
     TIDE_CHECK(heard->destroyed == 1 << 2 && heard->sureDestroyed == 1 << 2 && heard->destroyedHealth == 5);
     // Local fields a handler wrote are the entity's, for views to read
     TIDE_CHECK(tide_get_Target_local(&local, target(&world, 1)).struck == 2 && heard->looked == 2);
     TIDE_CHECK(tide_get_Target_local(&local, target(&world, 5)).born == 5);
+    // Against the world as it was at tick 200: target 5 is all it has since, as it is now
+    tide_game_api.hear_arrived(&world, &before, &events);
+    TIDE_REQUIRE(events.count == 2);
+    const tide_heard *arrived = (const tide_heard *)events.bytes;
+    TIDE_CHECK(tide_entity_equal(arrived->target, target(&world, 5)) && arrived->tick == (uint32_t)world.Time.tick);
+    TIDE_CHECK(arrived->as == 0); // Straight from the game: for both kinds of handler
+    // ...and the rows its handlers' queries read, which are that world's too: targets 1, 3 and 5
+    const tide_heard *rows = (const tide_heard *)(events.bytes + arrived->size);
+    TIDE_CHECK(rows->event == TIDE_HEARD_ROWS && rows->tick == arrived->tick && rows->same == 3);
     tide_event_log_free(&events);
     tide_local_free(&local);
     tide_world_free(&world);
     tide_world_free(&quiet);
+    tide_world_free(&before);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +167,7 @@ static void frame(tide_local *l, const tide_client *c, tide_event_log *events)
     const tide_view_worlds view = tide_client_view(c);
     tide_local_events(l, events);
     tide_draw_reset(&draw);
-    tide_frame(view.current, view.previous, view.alpha, view.verified, l, &draw, &gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, l, &draw, &gui);
 }
 
 static void first_frame(void)
@@ -214,6 +241,10 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
     TIDE_CHECK(heard->struck == 1 && heard->kinds == 1 << 1 && heard->sureStruck == 1 && heard->sure == 1 << 1);
     TIDE_CHECK(heard->health == 4 && heard->notes == 1);
     TIDE_CHECK(tide_get_Target_local(&local, target(match, 1)).struck == 1 && heard->looked == 1);
+    // The targets were in the world it was sent, spawned before it had one: heard as it came, by both
+    // kinds of handler, with the scene, and then each player's entity as its tick spawned it
+    TIDE_CHECK(heard->spawned == 0xE && heard->sureSpawned == 0xE && heard->entities == 6);
+    for (int32_t id = 1; id <= 3; id++) TIDE_CHECK(tide_get_Target_local(&local, target(match, id)).born == id);
 
     // Past tick 96. The shield went up at 89, which the first player's machine
     // heard of a round trip late: it ran the ticks around it again, and each
@@ -255,8 +286,14 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
     TIDE_CHECK(tide_client_status_of(clients[2]).state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(late.Heard.rang == 0 && late.Heard.destroyed == 0 && (late.Heard.kinds & ((1 << 1) | (1 << 2))) == 0);
     TIDE_CHECK(late.Heard.sure == 1 << 4 && late.Heard.sureGlanced == 1);
+    // ...but for the entities of the world it was sent, which are new to it: the scene, the targets
+    // as they were by then, the two players' entities, and then its own as its tick spawned it
+    TIDE_CHECK(late.Heard.spawned == 0xE && late.Heard.sureSpawned == 0xE && late.Heard.entities == 7);
+    TIDE_CHECK(tide_get_Target_local(&late, target(match, 1)).born == 1);
+    // ...whose handlers' queries go through that world, for both kinds of handler
+    TIDE_CHECK(late.Heard.company == 0xE && late.Heard.sureCompany == 0xE && heard->company == 0xE && heard->sureCompany == 0xE);
     // A machine hears every join from its own on: the world it was sent is from before it
-    TIDE_CHECK(heard->joined == 3 && heard->entities == 3 && late.Heard.joined == 1 && late.Heard.entities == 1);
+    TIDE_CHECK(heard->joined == 3 && heard->entities == 7 && late.Heard.joined == 1);
 
     // Past tick 241. Target 2 went at 200, for good. At 241 the first player's
     // machine predicted target 4, and the server had target 5 there, on the
@@ -269,11 +306,11 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
     TIDE_CHECK(heard->destroyed == ((1 << 3) | (1 << 2)) && heard->sureDestroyed == 1 << 2 && heard->destroyedHealth == 5);
     TIDE_REQUIRE(tide_entity_equal(five, predicted_spawn)); // One handle, two entities
     TIDE_CHECK((heard->spawned & ((1 << 4) | (1 << 5))) == ((1 << 4) | (1 << 5)));
-    TIDE_CHECK(heard->sureSpawned == 1 << 5 && spawn_sure_at > 241u);
+    TIDE_CHECK(heard->sureSpawned == (0xE | 1 << 5) && spawn_sure_at > 241u);
     TIDE_CHECK(tide_get_Target_local(&local, five).born == 5);
     TIDE_CHECK(heard->shielded == 1); // The singleton as the spawn's turn left it, in the tick the server ran
     // The machine that joined late predicted the same, and put it right the same
-    TIDE_CHECK(late.Heard.sureSpawned == 1 << 5 && tide_get_Target_local(&late, five).born == 5);
+    TIDE_CHECK(late.Heard.sureSpawned == (0xE | 1 << 5) && tide_get_Target_local(&late, five).born == 5);
     TIDE_CHECK(late.Heard.destroyed == 1 << 2 && late.Heard.sureDestroyed == 1 << 2);
     check_rang(heard); // Nothing rang again
     TIDE_CHECK(heard->sureRang == 11 && heard->struck == 4 && heard->sureStruck == 2);
@@ -282,6 +319,63 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
         TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0); // Every tick's hash matched the server's
     }
     for (int i = 0; i < 3; i++) tide_client_destroy(clients[i]);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    tide_event_log_free(&heard_0);
+    tide_event_log_free(&heard_2);
+    tide_local_free(&local);
+    tide_local_free(&late);
+}
+
+// A machine that stopped for longer than the server keeps ticks is sent the
+// world again. The ticks it missed say nothing, but what was spawned in them
+// and is still there is new to it: heard as the world comes, once, by both
+// kinds of handler, and nothing it had is heard again.
+TIDE_TEST(local_events_a_world_sent_again_says_what_is_new)
+{
+    now = 0.0;
+    net = tide_loopback_create(77);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.03});
+    const tide_server_desc desc = {.game = &tide_game_api, .tick_rate = 60, .transports = {tide_loopback_endpoint(net, 1)}};
+    server = tide_server_create(&desc, now);
+    memset(clients, 0, sizeof clients);
+    tide_local_init(&local);
+    tide_local_init(&late);
+    heard_0 = (tide_event_log){0};
+    heard_2 = (tide_event_log){0};
+    wrong_destroy_frames = 0;
+    join(0, &heard_0);
+    join(1, NULL);
+    run(3.0);
+    const Heard *heard = &local.Heard;
+    const tide_world *match = tide_server_world(server);
+    TIDE_REQUIRE(match->Time.tick > 160 && match->Time.tick < 199);
+    TIDE_CHECK(heard->spawned == 0xE && heard->sureSpawned == 0xE && heard->entities == 6);
+    const Heard before = *heard;
+
+    // Its machine stops: the server goes past target 2's end, at 200, and target 5's spawn, at 241
+    tide_client *stopped = clients[0];
+    clients[0] = NULL;
+    while (now < 7.5) {
+        now += 1.0 / 60.0;
+        tide_loopback_set_time(net, now);
+        tide_client_update(clients[1], now);
+        tide_server_update(server, now);
+    }
+    clients[0] = stopped;
+    run(10.0);
+    match = tide_server_world(server);
+    const tide_entity five = target(match, 5);
+    TIDE_REQUIRE(tide_client_status_of(clients[0]).state == TIDE_SESSION_CONNECTED && !tide_entity_is_null(five));
+    TIDE_CHECK(tide_client_status_of(clients[0]).resyncs == 1); // The world, once
+    // Target 5 is all that's new to it: heard once, with what its handler wrote for it
+    TIDE_CHECK(heard->spawned == (0xE | 1 << 5) && heard->sureSpawned == (0xE | 1 << 5));
+    TIDE_CHECK(heard->entities == before.entities + 1);
+    TIDE_CHECK(tide_get_Target_local(&local, five).born == 5);
+    // Nothing is made up for what went meanwhile, or was sent
+    TIDE_CHECK(heard->destroyed == before.destroyed && heard->sureDestroyed == before.sureDestroyed);
+    TIDE_CHECK(heard->joined == before.joined);
+    for (int i = 0; i < 2; i++) tide_client_destroy(clients[i]);
     tide_server_destroy(server);
     tide_loopback_destroy(net);
     tide_event_log_free(&heard_0);
@@ -314,7 +408,7 @@ TIDE_TEST(local_events_single_machine)
         const tide_view_worlds view = tide_session_view(s);
         tide_local_events(&own, tide_session_events(s));
         tide_draw_reset(&draw);
-        tide_frame(view.current, view.previous, view.alpha, view.verified, &own, &draw, &gui);
+        tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, &own, &draw, &gui);
         TIDE_CHECK(own.Heard.sureStruck <= own.Heard.struck);
     }
     const tide_world *match = tide_session_server_world(s);
@@ -325,7 +419,9 @@ TIDE_TEST(local_events_single_machine)
     TIDE_CHECK(heard->struck == 2 && heard->kinds == ((1 << 1) | (1 << 4)) && heard->sureStruck == 2 && heard->sure == heard->kinds);
     check_rang(heard);
     TIDE_CHECK(heard->sureRang == 11 && heard->glanced == 1 && heard->sureGlanced == 1);
-    TIDE_CHECK(heard->spawned == 1 << 5 && heard->sureSpawned == 1 << 5);
+    // What its match started with is new to it too: its own player's world is one it was sent
+    TIDE_CHECK(heard->spawned == (0xE | 1 << 5) && heard->sureSpawned == (0xE | 1 << 5));
+    TIDE_CHECK(heard->entities == 6); // The scene, the first targets, its player, target 5
     TIDE_CHECK(heard->destroyed == 1 << 2 && heard->sureDestroyed == 1 << 2);
     TIDE_CHECK(heard->notes == 2 && heard->looked == 2);
     TIDE_CHECK(tide_session_status_of(s).client.resyncs == 0);

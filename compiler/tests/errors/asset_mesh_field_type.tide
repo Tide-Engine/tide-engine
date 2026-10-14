@@ -1,0 +1,12 @@
+// expect: a mesh file's 'normal' is a float3, and 'Corner.normal' is float2
+struct Corner
+{
+    float3 position;
+    float2 normal;
+}
+
+asset Mesh<Corner> quad = "../e2e/assets/meshes/quad.glb";
+
+scene Main
+{
+}

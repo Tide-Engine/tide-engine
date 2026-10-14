@@ -1,0 +1,4 @@
+// expect: '../e2e/assets/meshes/bad/character.dae' isn't a supported AnimationCatalog format
+// expect: export the model's animations as glTF 2.0 (.gltf or .glb) or FBX (.fbx); scene files such as .blend, .dae and .usd aren't imported directly
+asset AnimationCatalog hero = "../e2e/assets/meshes/bad/character.dae";
+scene Main { }

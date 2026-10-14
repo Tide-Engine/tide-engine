@@ -1,0 +1,115 @@
+// A field's default can name an asset (docs/spec.md, Assets): what the pack
+// has under that name, read when the default is given. The match's text,
+// bytes, lists and maps, from files every machine has; and images, a clip and
+// a sound for this machine's fields: a local singleton's, a struct's own, and
+// a match component's local fields, for an entity nothing was written for and
+// for the row a view's write makes.
+
+asset Texture hero = "assets/hero.png";
+[Filter(Filter.Point), Wrap(Wrap.Repeat)]
+asset Texture tiles = "assets/run/0.png";
+asset Grid2<Color> cells = "assets/hero.png";
+asset string rules = "assets/rules.txt";
+asset List<byte> table = "assets/table.bin";
+asset List<string> noteList = "assets/notes/*.txt";
+asset Map<string, string> notes = "assets/notes/*.txt";
+asset Clip beep = "assets/beep.wav";
+
+namespace Art
+{
+    asset Texture badge = "assets/run/1.png";
+}
+
+scene Main { }
+
+struct Sprite
+{
+    Texture image = hero;
+    Color tint = Color.white;
+}
+
+component Sign
+{
+    string text = rules;
+    List<byte> bytes = table;
+    int size = table.count;          // An expression that reads one
+    local Texture face = hero;
+    local Texture tile = tiles;      // Sampled as its declaration says
+    local Texture fromCells = cells; // A grid's cells, as the texture they are
+    local Sprite art;                // The struct's own default
+    local Sprite badge = Sprite { image = Art.badge, tint = Color.red };
+    local Clip step = beep;
+    local int seen;
+}
+
+singleton Board
+{
+    string text = rules;
+    List<string> lines = noteList;
+    Map<string, string> byName = notes;
+    bool placed;
+    int lineCount;
+    string firstLine;
+    int keys;
+    string noteA;
+    int signs;
+    int sum;
+}
+
+local singleton Look
+{
+    Texture icon = hero;
+    Sprite art;
+    Sound hum = Sound { clip = beep };
+    List<Vertex> flat;
+    List<int> faces;
+    int frames;
+}
+
+// The board's defaults were given as the match started; a sign's are given as it's spawned
+system Place(mut Board board)
+{
+    if (board.placed) return;
+    board.placed = true;
+    board.lineCount = board.lines.count;
+    board.firstLine = board.lines[0];
+    board.keys = board.byName.count;
+    board.noteA = board.byName["assets/notes/a.txt"];
+    Spawn(Sign { });
+    Spawn(Sign { text = "mine", size = 2 });
+}
+
+system Read(Sign sign, mut Board board)
+{
+    board.signs += 1;
+    foreach (var b in sign.bytes) board.sum += b;
+}
+
+view Fill(mut Look look)
+{
+    look.frames += 1;
+    if (look.frames > 1) return;
+    look.flat = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(2, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 2) }];
+    look.faces = [0, 1, 2];
+}
+
+// Only the sign that was spawned with a size is written to: the other has no row, and reads the defaults
+view Mark(mut Sign sign)
+{
+    if (sign.size == 2) sign.seen += 1;
+}
+
+view Signs(Sign sign, Look look)
+{
+    Draw.Mesh(look.flat, look.faces, sign.face);
+    Draw.Mesh(look.flat, look.faces, sign.tile);
+    Draw.Mesh(look.flat, look.faces, sign.art.image);
+    Draw.Mesh(look.flat, look.faces, sign.badge.image);
+    Draw.Mesh(look.flat, look.faces, sign.fromCells);
+}
+
+view Icon(Look look)
+{
+    Draw.Mesh(look.flat, look.faces, look.art.image, Filter.Point);
+    Draw.Mesh(look.flat, look.faces, look.icon);
+}

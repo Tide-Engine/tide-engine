@@ -15,6 +15,56 @@ scene Arena
 
 A loaded scene is an entity like any other. The declaration is its component, and its fields are the scene's state, so a system that takes `Arena` runs once per loaded arena.
 
+## Authored prefabs
+
+An authored `.tprefab` file describes a reusable rooted entity tree. The same
+tree can be spawned as an entity or loaded as a scene:
+
+```csharp
+// Enemy.tprefab
+prefab Enemy
+{
+    Transform;
+    Health { value = 100 };
+    Target { weapon = Weapon };
+    entity Weapon
+    {
+        Transform { localPosition = float3(0, 1, 0) };
+    }
+}
+```
+
+Declare `Health` and `Target` in ordinary `.tide` code. A reference field can use
+`[SceneRequired] Entity weapon;` to require a named entity in authored prefabs.
+The compiler checks unused prefabs too; missing components, fields, references
+and recursive inclusion are errors. Ordinary code-driven construction can still
+leave these fields unset and initialize them later.
+
+```csharp
+var enemy = Spawn(Enemy, Health { value = 50 });
+var level = Scene.Load(Level, LevelSettings { difficulty = 2 });
+Scene.Unload(level);
+```
+
+Settings are normal root components. Component arguments override only the fields
+they name and can add root components. A bare component argument resets that
+component to its declared defaults. Match scene visibility comes last by name:
+`Scene.Load(Level, visibility: SceneVisibility.Private)`.
+
+All entities, component values, references and parenting exist before the
+instance's `Spawned` handlers run, root-first. Nested children move with their
+parents and are destroyed with them. `entity Weapon : Pistol { ... }` reuses
+another named prefab; fields in its block override that prefab's root. Paths such
+as `Weapon.Muzzle` resolve through nested instances, and omitted values use the
+authored prefab and component defaults.
+
+`local Spawn(Enemy)` creates local entities, and `Scene.Load` from local code
+loads into the local world. References must use the corresponding `Entity` or
+`LocalEntity` type. Prefab names are factories, so filters use explicit root
+components. Keep `scene Main` in `.tide` for startup. The initial limits are 1024
+entities per instance and 128 nesting levels. Use `tide open Level.tprefab` for
+the [native scene editor](../tools/editors.md#native-scene-editor).
+
 ## Main
 
 The game starts in the scene called `Main`, and there's exactly one. It sets up the first scene, not the game loop: the engine runs the tick.
@@ -24,7 +74,7 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Transform { scale = float3(1, 1, 1) }, Player);
+    Spawn(Transform { localScale = float3(1, 1, 1) }, Player);
 }
 ```
 
@@ -76,7 +126,7 @@ Loaded scenes share their world: the same systems, singletons and `Time`.
 
 ## Private scenes
 
-Scenes are public by default: every player in the world sees them. A private one is only seen by the server and the players given it, which is how a card game keeps each hand to its player:
+Scenes have visibility and membership metadata. They are public by default; `SceneVisibility.Private` and `Scene.AddPlayer` record who a scene is intended for:
 
 ```csharp
 scene Hand
@@ -91,8 +141,8 @@ event(PlayerJoined joined) DealIn()
 }
 ```
 
-`Scene.AddPlayer(scene, player)` and `Scene.RemovePlayer(scene, player)` change who sees it. Who sees a scene is part of the match, so the server decides it, and a player who's added receives the scene's state.
+`Scene.AddPlayer(scene, player)` and `Scene.RemovePlayer(scene, player)` change that membership. It is part of the match, so only match code changes it.
 
-A private scene with no players exists only on the server, which is where secrets like random seeds go. Code that reads a private scene only predicts correctly on machines that see it, and the server corrects the others.
-
-A client never loads match scenes on its own: it has the ones the server has it in.
+::: warning Visibility filtering isn't built yet
+Every player still receives the whole world, including scenes marked private and their entities. These calls record metadata; they do not hide cards, random seeds or other secrets from another player's machine. Selective state delivery is planned (see [Networking](../multiplayer/networking.md#who-sees-what)).
+:::

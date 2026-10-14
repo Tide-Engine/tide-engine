@@ -11,10 +11,10 @@ WORKDIR /builds
 COPY tide.version ./
 RUN set -eu; \
     version="$(cat tide.version)"; \
-    base="https://github.com/BlenMiner/tide-engine/releases/download/v$version"; \
+    base="https://tide-engine.dev/releases/v$version"; \
     cd /tmp; \
-    curl -fsSL "$base/tide-linux-x64.tar.gz" -o tide-linux-x64.tar.gz; \
-    curl -fsSL "$base/SHA256SUMS" -o SHA256SUMS; \
+    curl -fsSL --proto-redir =https "$base/tide-linux-x64.tar.gz" -o tide-linux-x64.tar.gz; \
+    curl -fsSL --proto-redir =https "$base/SHA256SUMS" -o SHA256SUMS; \
     grep ' tide-linux-x64.tar.gz$' SHA256SUMS | sha256sum -c -; \
     mkdir -p /opt/tide; \
     tar -xzf tide-linux-x64.tar.gz -C /opt/tide; \

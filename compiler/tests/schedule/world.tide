@@ -1,9 +1,9 @@
 // What a system reaches through its World is access to every entity's
 // component: Aim and Chase can't meet the same entity, but Chase reads any
-// Transform, so it waits for Aim's writes; Heal's Set writes any Health, so
+// TestTransform, so it waits for Aim's writes; Heal's Set writes any Health, so
 // Drain waits for it. A World nobody calls makes nothing wait.
 
-component Transform
+component TestTransform
 {
     float2 position;
 }
@@ -36,21 +36,21 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Transform, Turret);
-    Spawn(Transform, Runner);
+    Spawn(TestTransform, Turret);
+    Spawn(TestTransform, Runner);
     Spawn(Health, Armor);
     Spawn(Healer);
     Spawn(Idle);
 }
 
-system Aim(mut Transform trs, with Turret)
+system Aim(mut TestTransform trs, with Turret)
 {
     trs.position.x += 1;
 }
 
-system Chase(mut Transform trs, Runner runner, World world)
+system Chase(mut TestTransform trs, Runner runner, World world)
 {
-    trs.position = world.Get<Transform>(runner.leader).position;
+    trs.position = world.Get<TestTransform>(runner.leader).position;
 }
 
 system Heal(Healer healer, mut World world)

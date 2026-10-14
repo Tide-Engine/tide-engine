@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/meshes/*.glb' is a glob, which matches many files, and the type holds one
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> all = "../e2e/assets/meshes/*.glb";
+
+scene Main
+{
+}

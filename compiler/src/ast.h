@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "lexer.h"
+#include "skinned_language.h"
 
 // Components and archetypes a game can have. Components are bits of a mask,
 // which spawn sites, filters and archetypes are made of.
@@ -90,6 +91,21 @@ typedef struct decl decl;
 typedef struct expr expr;
 typedef struct stmt stmt;
 
+// Skinned values use ordinary structs and the ordinary list ownership rules.
+// Catalog members are compile-time views over the model's immutable bytes.
+typedef enum skinned_kind {
+    SKIN_NONE, SKIN_MESH, SKIN_ANIMATIONS, SKIN_SKELETON, SKIN_BONES,
+    SKIN_ANIMATION, SKIN_BONE, SKIN_POSE, SKIN_TRANSFORM,
+} skinned_kind;
+
+typedef struct skinned_member {
+    str name;
+    str source_name;
+    int index;
+    bool explicit_name; // Contract aliases use the exact export; inferred members already know it.
+    str source_file; // Original path for combined animation catalog completion/hover.
+} skinned_member;
+
 // ---------------------------------------------------------------------------
 // Types
 
@@ -98,6 +114,7 @@ typedef enum type_kind {
     TY_VOID,
     TY_BOOL,
     TY_BYTE,      // byte: an unsigned 8-bit integer; arithmetic promotes to int
+    TY_CHAR,      // char: one character, a Unicode code point in an int's 32 bits. It goes where an int does; an int becomes one with char(n)
     TY_INT,
     TY_LONG,       // long: a 64-bit int. An int converts to it implicitly; floats convert both ways only explicitly
     TY_INT2,
@@ -130,6 +147,7 @@ typedef enum type_kind {
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
     TY_ARRAY,      // T[N]: decl is the array type (DECL_ARRAY), whose one field is its element and array_length N
+    TY_MESH,       // Mesh<V>: decl is the mesh type (DECL_MESH), whose one field is its vertex. An asset's vertices and indices, the pack's own
     TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
     TY_QUERY,      // A system's read-only second entity set; decl is its compiler-only row struct
     TY_COMPONENT,
@@ -250,6 +268,9 @@ typedef struct field {
     bool is_local; // `local List<Vertex3> verts;` in a match component or singleton: this machine's, outside the match
     loc local_at;  // ...the `local` keyword
     const type_ref *type_ref; // The type as written; NULL for the engine's own fields and a container's
+    // A list, a grid, a map or a set that code the GPU runs reads: for each part of an element (shader_leaves),
+    // whether any frag or vert of the game reads it. Only those are sent. NULL: nothing reads its elements there
+    bool *gpu_leaves;
 } field;
 
 typedef enum param_mode {
@@ -288,6 +309,8 @@ typedef struct param {
     // confirmed, in a view; in a local handler's trigger, once the server confirmed the tick that sent the event
     bool verified;
     loc verified_at; // ...the word
+    bool placement_local; // `local Component value`: access to machine-local storage of a shared component type
+    loc placement_at;
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
     // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
     // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
@@ -298,13 +321,19 @@ typedef struct param {
     bool is_out;
     loc out_at; // ...the word
     int output; // A frag's `out Color`: which of its outputs it is, from 0, in the order they're written
+    bool place;  // A vert's `out float4`: where it puts its vertex itself, in clip space (decl.place)
     struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
     str default_text;           // ...as its declaration writes it, for messages and editors: "1"
     str mode_word;       // `mut` or `out` as a system, view, handler, frag or vert writes it, for what editors offer in its place
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
     bool whole;          // ...or reads it as a value, all its fields at once
+    bool *gpu_leaves;    // A function's list, grid, map or set, in code the GPU runs: the parts of an element it reads (field.gpu_leaves)
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
+    // A function's or method's singleton that it starts a task with, itself or through a function it passes it to:
+    // the task gets the world's own again each time it goes on, so every call passes its own parameter, never a copy
+    bool task_own;
+    loc task_own_at;     // ...where it first does
     // A match component or singleton with local fields (its type's local_part):
     bool local_use;      // The code reads or writes its local fields, itself or through a function it passes it to
     loc local_use_at;    // ...where it first does
@@ -381,6 +410,7 @@ typedef struct system_wait {
 } system_wait;
 
 typedef enum decl_kind {
+    DECL_PREFAB, // A named authored entity tree; neither a component nor a runtime value type.
     DECL_COMPONENT,
     DECL_SINGLETON,
     DECL_SYSTEM,
@@ -395,6 +425,7 @@ typedef enum decl_kind {
     DECL_MAP,      // Map<K, V> or Set<K>, one per key and value type: fields key and (maps) value; in program.maps
     DECL_GRID,     // Grid2<T> or Grid3<T>, one per cell type and dimensions: its one field is the cell; in program.grids
     DECL_ARRAY,    // T[N], one per element type and length: its one field is the element, array_length N; in program.arrays
+    DECL_MESH,     // Mesh<V>, one per vertex struct: its one field is the vertex; in program.meshes
     DECL_RESULT,   // T? or `T fails E`, one per combination: field 0 is the value, field 1 the error; in program.results
     DECL_CONST,    // const int MAX_HEALTH = 100;: a value code reads by name, the same on every machine
     DECL_SETTINGS, // settings { tickRate = 30; }: the engine's settings, as fields; in program.settings
@@ -406,7 +437,8 @@ typedef enum decl_kind {
 // number (depth.Sample) or compared with one of its own (depth.Compare). The
 // values are tide/draw.h's tide_shader_read's.
 // READ_CUBE is a Cubemap's color, read by a direction.
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE } shader_read;
+// READ_DATA is a list's elements, as numbers: read by their place (shader.c, Lists).
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -424,6 +456,19 @@ typedef struct shader_sample {
     bool filter_said, wrap_said;
 } shader_sample;
 
+// A texture a function or method samples, in code the GPU runs: its own
+// parameter's, which each call names, or an asset's by its name, and how the
+// Sample is written. A frag or vert that reaches the function samples the
+// texture it's called with that way (shader.c, pass_samples).
+typedef struct function_sample {
+    int param;                // Which of the function's parameters it samples: -1 for an asset...
+    const struct expr *asset; // ...whose name this is, where the function samples it
+    shader_read read;
+    int filter, wrap;         // As the Sample says them: -1 for what it leaves to the texture
+    loc at;                   // The Sample
+    bool warned, refused;     // That it can't read between a texture's smaller images there was said, once each way
+} function_sample;
+
 // One of an enum's members: `Options`, or `Options = 3`.
 typedef struct enum_member {
     str name;
@@ -431,6 +476,19 @@ typedef struct enum_member {
     struct expr *value; // The value written after '=', or NULL for the one after the previous member's
     int64_t number;     // Its value, once checked
 } enum_member;
+
+// A type Json.Read<T> or Json.Write is called with. Generated C has a function
+// for each way it's used (tide_json_read<n>, tide_json_read_bytes<n> and
+// tide_json_write<n>, by its place in program.json_roots), which calls the
+// reader or the writer of the type and of each type in it (decl.json_reads,
+// decl.json_writes).
+typedef struct json_root {
+    type type;
+    type result;      // T?, what reading it gives
+    bool reads_text;  // Json.Read<T>(text)
+    bool reads_bytes; // Json.Read<T>(bytes)
+    bool writes;      // Json.Write(value)
+} json_root;
 
 // A channel commands are in: an enum's member, named by [Channel]
 typedef struct command_channel {
@@ -450,8 +508,12 @@ typedef struct decl {
     bool query_row;   // Compiler-only foreach row: entity and named read-only component values
     struct param *query_source; // Its query parameter, for editor binding lookup
     bool is_local;    // `local`: belongs to this machine, not the match. Views are always local code.
+    struct decl *placement_of; // A private local storage specialization; values have the source component's type
+    struct decl *local_placement; // The source component's local specialization, created only when used
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
+    struct prefab_node *prefab_root;
+    struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
@@ -505,6 +567,18 @@ typedef struct decl {
     VEC(int) instances; // ...where each place it has in the devices starts in program.device_leaves
     struct decl *array_of; // Records that are arrays of another, like Touchscreen.touches: the element
     int array_length;      // ...and how many
+    int long_arrays;       // A struct: whether it holds an array of more than 4,096 elements (0 not worked out, 1 no, 2 yes: check.c, holds_long_array)
+    skinned_kind skin_kind;
+    struct decl *asset_ref_of; // Asset<Mesh<V>>: persistent named identity, resolved to borrowed mesh on .Value
+    type skin_vertex;
+    struct decl *skin_contract;
+    struct decl *skin_animations;
+    struct decl *skin_skeleton;
+    struct decl *skin_bones;
+    VEC(skinned_member) skin_catalog;
+    VEC(str) skin_sources; // Known original names, including names unavailable through dot access.
+    int skin_metadata_status; // 0 unknown, 1 known; unavailable metadata is never a missing-member error.
+    bool skin_inferred;
 
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
@@ -515,6 +589,8 @@ typedef struct decl {
     bool is_set;          // Maps: a Set<K>, with no values
     struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
     struct decl *optional; // Maps: the V? that Get gives, once something calls it
+    struct decl *optional_of; // Structs: the T? this one keeps for a field, `int? target;`: its fields are the value and whether there is one
+    struct decl *stored;      // A T?: the struct a field of it is kept as (optional_of), once a field is one
     bool tries;           // Maps: some code calls TryGet, so generated C has its helper
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
 
@@ -536,6 +612,8 @@ typedef struct decl {
 
     // Methods and functions
     struct decl *owner;       // A method's struct or component; NULL for a function
+    struct decl *placement_method; // Independently parsed body for a component method's local specialization
+    bool body_checked; // Prevents repeated checks of lazily instantiated placement methods
     bool is_mut_method;       // `mut void Damage(...)`: it may change the fields
     bool is_operator;         // `Money operator +(Money a, Money b)`: in a struct, with no value of its own
     bool is_interpolate;      // `Angle Interpolate(Angle from, Angle to, float t)`: how views blend its type, no value of its own
@@ -544,6 +622,8 @@ typedef struct decl {
     struct decl *interpolate; // Structs and components: their Interpolate, if they have one
     bool snapped;             // Singletons: something calls .Snap() on it, so it counts its snaps
     bool shown;               // Values with fields, and lists: text shows one somewhere, so it has a text helper
+    bool json_reads;          // Structs, enums, lists, maps and arrays: Json.Read reads one somewhere, so it has a reader
+    bool json_writes;         // ...and Json.Write writes one, so it has a writer
     tok_kind op;              // An operator's: T_PLUS, T_EQ, ...; T_MINUS is negation with one parameter
     str return_type_name;     // "void" if it returns nothing. A constant's type.
     const type_ref *return_type_ref; // ...as written; NULL for what has none (a system)
@@ -562,14 +642,18 @@ typedef struct decl {
     struct expr *value; // A constant expression of its type (return_type)
     // Assets: the files the path resolved to, once checked (asset_files.h); NULL where it couldn't
     struct asset_value *asset;
+    VEC(struct expr *) asset_paths; // Checked path literals, including an AnimationCatalog file list.
     int asset_kind;  // The asset_kind its type says, once checked (asset_files.h)
+    int asset_animation_index; // A singular Animation's checked source clip.
     // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
     // names it doesn't say: 1 + the enum member's number, or 0 for none (declared_sampling)
     int sample_filter, sample_wrap;
     // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
-    // only a frag or a vert reads, by its name (declared_raw)
+    // only code the GPU runs reads, by its name (declared_raw)
     bool sample_raw;
-    bool asset_many; // A List or Map of a glob's matches
+    // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
+    bool lod;
+    bool asset_many; // A List or Map: a glob's matches, or the one file its path names
 
     // Systems, views, methods, functions, and an input's Sample
     VEC(param) params;
@@ -577,7 +661,10 @@ typedef struct decl {
     loc body_at;
     stmt *sanitize; // An input's Sanitize() { ... }
     loc sanitize_at;
+    stmt *predict; // An input's Predict() { ... }, on guessed ticks only
+    loc predict_at;
     bool is_view;        // A view: a DECL_SYSTEM that runs once per frame, reads the world and draws.
+    bool run_in_editor, editor_only; // Explicit authoring-preview inclusion, on views only.
     bool is_handler;     // An event handler: a DECL_SYSTEM that runs when its event is sent, `event(Hit hit) Name(...)`.
     struct decl *event;  // A handler's event
     struct decl *forgets; // A local handler of Forgotten: the match component or singleton whose local fields it hears go
@@ -600,6 +687,10 @@ typedef struct decl {
     bool uses_fetch;      // Awaits Web.Fetch itself: its task's frame keeps the fetch's ticket
     bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
     loc frame_time_at;
+    bool rolls;           // Rolls with Random.NextInt and the like, directly or through helpers: it's handed a generator
+    loc rolls_at;
+    bool reads_seed;      // Reads Random.seed, directly or through helpers: a function is handed the match's seed
+    loc reads_seed_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
@@ -608,6 +699,8 @@ typedef struct decl {
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
     bool starts_tasks;   // Code that starts tasks, calling an async function without await: they're the world's, in order
     loc starts_at;       // ...where it first does
+    const char *starts_what; // ...and for a function or method, which starts them as the code that calls it would (itself
+                             // or through the functions and methods it calls), what, for messages: "starts 'Countdown'"
 
     // Async functions and handlers: they run as tasks, which can wait
     bool is_async;       // `async`
@@ -621,6 +714,7 @@ typedef struct decl {
     loc task_side_at;    // ...where it first decides
     bool task_root;      // Something starts it without await: its tasks have a table of their own
     bool runs_in[2];     // Worlds it runs in, the match's ([0]) and the local one ([1]): codegen makes each
+                         // ...and for a function or method that starts tasks, the worlds its callers run in
     VEC(struct decl *) awaits;  // Async functions it awaits, once each: their frames are in its own
     VEC(loc) await_at;          // ...and where it first awaits each
     VEC(struct decl *) callees; // Functions it calls, once each
@@ -635,6 +729,15 @@ typedef struct decl {
     bool world_match;
     bool world_local;
     bool world_sets;
+    // A function or method that sends, spawns or changes entities, itself or through the functions and
+    // methods it calls, does it as the code that calls it would: in the match ([0]) or on this machine
+    // ([1]). Nothing is wrong with it by itself: a call from code that couldn't do it is (check_acts).
+    // In generated C it's handed that world, and the scene its spawns join.
+    bool acts[2];
+    loc acts_at[2];           // ...where it first does: the Send itself, or the call of what does
+    const char *acts_what[2]; // ...and what, for messages: "sends 'Hit'"
+    bool acts_spawn[2];       // ...a Spawn among it: its entities join the scene of the entity its caller runs for
+    bool acts_text;           // ...and what it sends, spawns or adds in the match holds text or lists: the match's heap
     comp_mask need_mask; // Components an entity must have (access and `with`).
     comp_mask without_mask;
     // A view's `verified` parameters and filters name the world the server has
@@ -673,9 +776,18 @@ typedef struct decl {
     // Frags and verts (DECL_SHADER), and the functions they call
     bool is_frag;                 // A frag; else a vert
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
+    bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
+    struct param *place;          // A vert: its `out float4`, where it puts its vertex itself, in the engine's place; NULL when the engine does
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
+    // A function or method that takes a grid or samples a texture, or calls one that does: only code the GPU runs
+    // calls it, and no C is written for it
+    bool gpu_only;
+    loc gpu_only_at;
+    type_kind gpu_only_reads;     // ...what it reads there: TY_GRID for a grid it takes, or the type it samples
+    VEC(const struct decl *) gpu_data; // A function the GPU runs: the assets whose list or grid it reads the numbers of by name, in what it calls too
+    VEC(function_sample) gpu_samples;  // ...and the textures it samples, its parameters' and assets', in what it calls too
     VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its mesh draw calls read, which it doesn't take itself
 } decl;
 
@@ -695,6 +807,7 @@ typedef enum expr_kind {
     E_UNARY,
     E_LITERAL, // Transform { position = ... }
     E_CONDITIONAL, // cond ? lhs : rhs
+    E_SWITCH,      // object switch { inits[i].value => args[i] }; NULL label is the final '_'
     E_INTERP,  // $"score {score}": `parts` around the values in `args`, each with its format
     E_INDEX,   // object[lhs]: a list's element
     E_LIST,    // [a, b, c]: a list of `args`, whose type comes from where it goes
@@ -706,6 +819,7 @@ typedef enum expr_kind {
     E_TRY,       // try lhs: lhs's value, or its error passed on to the caller
     E_DEFAULTED, // lhs!: lhs's value, or its type's default when it failed or is nothing
     E_AWAIT,     // await lhs: an async call's value once it's done, or Wait.Ticks(n) and the like
+    E_STEP,      // ++lhs, lhs++, --lhs, lhs--: lhs goes up or down by 1, and its value after (or, `postfix`, before) is the expression's
 } expr_kind;
 
 // What `x is ...` looks for.
@@ -718,6 +832,7 @@ typedef enum is_pattern {
 typedef enum builtin_call {
     CALL_NONE,
     CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
+    CALL_ENUM_COUNT, // Enum.Count(): the number of declared members, a compile-time int
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
     CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
     CALL_AUDIO,     // Audio.Play(...): calls c_callee with the frame's audio list first (tide_l->tide_audio)
@@ -726,6 +841,8 @@ typedef enum builtin_call {
     CALL_ADD,
     CALL_REMOVE,
     CALL_DESTROY,
+    CALL_PARENT,    // entity.SetParent(parent[, worldPositionStays]): a checked deferred hierarchy change
+    CALL_TRANSFORM, // world.LocalToWorld(entity): explicit reads of ancestor transforms
     CALL_METHOD,    // stats.IsDead(), or IsDead() inside another of Stats' methods
     CALL_FUNCTION,  // Heal(unit.stats, 5), or Combat.Heal(...)
     CALL_SEND,      // Send(RoundOver { ... }), or target.Send(Hit { ... }): type_decl is the event
@@ -745,7 +862,12 @@ typedef enum builtin_call {
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
+    CALL_NORMAL,    // instance.Normal(normal), in a frag or a vert: the mesh's normal as it is in the world
+    CALL_SKINNED,   // Deterministic model lookup, sampling and pose operations.
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
+    CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
+    CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
+                    // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
 } builtin_call;
 
 // What a GUI call needs besides its arguments, and which form of a draw
@@ -774,6 +896,7 @@ typedef enum ctor_form {
     CTOR_COLOR,          // Color(v.xy, b): 3 or 4 components from scalars and vectors; alpha 1 for 3
     CTOR_RECT,           // Rect(x, y, width, height)
     CTOR_ENUM,           // Card(number), Combat.Stance(number): the enum's value with that number; type_decl is the enum
+    CTOR_CHAR,           // char(number): the character with that code point, or '\0' for a number none has
 } ctor_form;
 
 typedef enum binding_kind {
@@ -802,15 +925,49 @@ typedef struct field_init {
     field *field;
 } field_init;
 
+typedef struct prefab_node {
+    str name, base;
+    loc at;
+    const unit *unit;
+    loc base_at, base_qual_at;
+    decl *base_decl;
+    VEC(expr *) components;
+    VEC(struct prefab_node *) children;
+} prefab_node;
+
+typedef struct prefab_entity {
+    str path;
+    int parent;
+    expr *spawn;
+} prefab_entity;
+
+typedef struct prefab_instance {
+    decl *declaration;
+    int index;
+    bool load;
+    VEC(prefab_entity) entities;
+    VEC(expr *) overrides;
+    expr *visibility;
+} prefab_instance;
+
 struct expr {
     expr_kind kind;
     loc at;
+    const unit *authored_unit; // A copied prefab value keeps its source namespace.
+    str prefab_scope;          // Its source prefab instance's root path.
+    int prefab_entity;         // Authored entity reference, when prefab_reference is set.
+    bool prefab_reference;
+    prefab_instance *prefab;
+    loc end; // E_SWITCH: just past its closing brace, for editor spans
     type type;
 
     // E_INT, E_FLOAT. int_value is a case label's value too, worked out by the checker.
     str text;
     int64_t int_value;
+    float float_value; // E_FLOAT with is_degrees: the converted, single-precision radians
+    bool is_degrees;  // E_FLOAT: a deg suffix; text keeps the source spelling for editors
     bool is_long; // E_INT: a long literal (an L suffix, or a value past int's range)
+    bool is_char; // E_INT: a char literal, 'a', whose value is its code point
 
     // E_BOOL
     bool bool_value;
@@ -822,6 +979,8 @@ struct expr {
     stmt *local;        // BIND_LOCAL: the S_VAR declaring it
     decl *type_decl;    // BIND_TYPE, E_LITERAL's type, CALL_SEND's event, and CTOR_ENUM's enum
     decl *constant;     // BIND_CONST, on an E_NAME or E_MEMBER
+    bool asset_reference; // BIND_ASSET converted to its checked persistent reference
+    bool asset_ref_value; // .Value on an Asset<Mesh<V>>
 
     // E_MEMBER, E_METHOD
     expr *object;
@@ -832,6 +991,7 @@ struct expr {
     int swizzle[4];        // Component indices: 0..3 for x, y, z, w.
     const char *c_constant; // Static member such as quaternion.identity, as C.
     const enum_member *enum_member; // Page.Title: the member (type_decl is its enum)
+    bool enum_shorthand;   // .Title: object is an implicit enum type, supplied by the expected type
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
@@ -862,7 +1022,10 @@ struct expr {
     comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
+    bool placement_local; // `local Spawn(...)`: explicit machine-local placement
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
+    struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
+    bool postfix;         // ...written after its variable: the value is what the variable held before
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
     bool kept;            // ...or any value read before a call that writes: `hoisted` is its copy, as it was then
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
@@ -873,6 +1036,14 @@ struct expr {
                           // call after it, and the last one's the block itself
     struct decl *vert;    // mesh draw: the vert and the frag it names, or NULL
     bool instanced;      // Instanced: its third argument supplies the instances
+    bool skinned;        // SkinnedMesh: hidden palette/influences before the user vertex stage.
+    struct expr *skin_mesh;
+    struct expr *skin_pose;
+    int skin_operation;  // Checked model/pose operation; shared with generated adapters.
+    // E_MEMBER the checker made of a mesh draw's Mesh, 'Draw.Mesh(tree, ...)': 1 for its vertices and 2 for its
+    // indices, in the two arguments' places. Both have the Mesh's expression as their object, the same one: it's
+    // worked out for the first, and what's written of it again for the second reads what the first left
+    int mesh_part;
     bool blit;           // Draw.Blit: source texture, destination target and a frag
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
@@ -882,6 +1053,7 @@ struct expr {
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
     bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
+    bool web_request;        // ...and a WebRequest's Send, with web_fetch: its object is the request, its value a WebResponse
     int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct expr *values;        // mesh draw and Blit: the struct it gives its vert and frag after their names, or NULL
@@ -997,6 +1169,7 @@ struct stmt {
     // A local an `out` argument declares, `out var health`: it has no value of
     // its own, and is unassigned until the call that makes it has run
     bool out_decl;
+    bool delayed; // An explicitly typed local declared without an initializer
     bool discard;  // ...or the place `out _` makes for what the call gives, which no code names
     const expr *out_arg; // ...and the argument that declares it
     str type_name; // Empty for `var`. With its namespace if it's qualified.
@@ -1060,6 +1233,8 @@ typedef struct shader_texture {
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
     shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
     bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
+    int count_at; // A list's (READ_DATA): the word of the uniforms' ints that says how many elements it has
+    int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1084,18 +1259,25 @@ typedef struct shader {
     bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
+    bool skinned;        // Skin deformation before the optional user vert
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
     const field *instance_transform; // The instance struct's optional float4x4 transform
+    const field *instance_list;      // A list its code reads of the instance struct, which no draw can send
     VEC(shader_value) values;
     VEC(shader_texture) textures;
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
     VEC(shader_handed) handed; // What its vert writes for its frag, in the order the vert takes them
     int instance_floats, instance_ints; // Words
+    int skin_base_at; // Instance int word for an atlas matrix base, or -1 for individual palettes
     int uniform_floats, uniform_ints;
     int frag_floats, frag_ints; // Words of the instance the vertex stage passes on to the pixels
+    // Its vert or its frag rolls with Random (rolled_at: the word of the uniforms' ints that's the frame's
+    // number, which its generators are made of), or reads Random.seed (seed_at: the word that's the seed); -1 for neither
+    int rolled_at, seed_at;
     bool *frag_fields;          // By the vertex's field: whether its pixels read it
     bool frag_world;            // ...and whether they read where they are in the world
+    bool frag_normals;          // ...and whether they call instance.Normal: the vertex stage passes on what normals go through
     const char *name;           // For messages: "Wave and Shade on BoxVertex"
     const char *glsl_vertex, *glsl_fragment, *wgsl;
 } shader;
@@ -1132,6 +1314,8 @@ typedef struct decl_index {
 } decl_index;
 
 typedef struct program {
+    VEC(expr *) prefab_sites;
+    decl *prefab_scene[2]; // Private loaded-root marker, per placement.
     VEC(unit *) units; // Its files, in the order they're parsed: sorted by path
     VEC(decl *) decls; // In source order, file by file, builtins first.
     VEC(decl *) replaced; // What overrides replaced (decl.replaced_by), which is no longer in `decls` or any list made of it
@@ -1153,6 +1337,7 @@ typedef struct program {
     decl *player_joined;
     decl *player_left;
     decl *main;          // The scene named Main, where the program starts
+    decl *editor_create; // Private preview factory, present only in an editor build.
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.
     decl *scene_visibility; // The built-in enum SceneVisibility
@@ -1185,9 +1370,13 @@ typedef struct program {
     decl *stencil_op;    // The built-in enum StencilOp, what becomes of the stored number where a draw draws: the same
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
+    VEC(json_root) json_roots; // The types Json.Read and Json.Write are called with: generated C has their functions
+    bool from_bytes;     // string.FromBytes(bytes) is called: its adapter goes in the generated C
+    type from_bytes_result; // ...and what it gives: string?
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
     type decode_result;  // ...and what it gives: void fails IOError
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
+    decl *placed;        // The built-in record a vert's `this` is: its vertex as the engine would place it
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
     decl *time;          // The built-in singleton Time
     decl *random;        // The built-in struct Random: a random number generator's state
@@ -1196,6 +1385,10 @@ typedef struct program {
     // or a Random in the match's state, which the engine seeds from it.
     field *seed;
     bool uses_seed;
+    // Random.NextInt(6) and the like, on the type: whether the match's code rolls so, and local code
+    bool rolls_match;
+    bool rolls_local;
+    bool seed_local; // Local code reads Random.seed: this machine's local state has the match's, as the last frame had it
     // Application.title is read: generated C has the game's title as text
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
@@ -1218,8 +1411,18 @@ typedef struct program {
     VEC(decl *) maps;    // Every Map<K, V> and Set<K> type, one per key and value type
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
     VEC(decl *) arrays;  // Every T[N] type, one per element type and length
+    VEC(decl *) meshes;  // Every Mesh<V> type, one per vertex struct
+    VEC(decl *) asset_refs; // Persistent Asset<Mesh<V>> value types
+    VEC(decl *) skinned_types; // Owned model values and their inferred/contracted catalog views.
+    decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
+    bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
+    bool editor_authoring; // Native authoring can instantiate checked prefabs without game startup.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
+    VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.
+    decl *transform;     // Shared Transform component; placement determines its world
+    decl *hierarchy[2];  // Private per-world hierarchy state, present only when hierarchy operations are used
+    decl *hierarchy_node;
     decl *devices;       // The built-in Devices record.
     VEC(decl *) records; // Built-in records: Devices, Keyboard, Mouse, Gamepad, Dpad, Button.
     VEC(device_leaf) device_leaves; // Each value the devices send: a button, stick, trigger, axis, int or bool
@@ -1241,10 +1444,13 @@ typedef struct program {
     VEC(struct fix) fixes;     // Quick fixes for editors
 
     // The engine's settings for the game (builtins.h), from `settings { ... }`
-    VEC(decl *) settings;      // Each block written, though a game has one
+    VEC(decl *) settings;      // Each block written: a game's are one list, a setting set once among them
     VEC(decl *) assets;        // Every asset declaration, in source order: what the pack holds
     const char *game_folder;   // Where the game's .tide/ is (tide says; NULL for tidec on its own): asset hashes and fetched URLs are kept there
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set
+    float max_rewind;
+    bool uses_rewind_limit;
+    decl *view_time;
     uint32_t max_players;      // maxPlayers, or 0 where it isn't set: TIDE_PLAYERS_DEFAULT
     const expr *title;         // title, the text it's set to, or NULL
     const expr *app_id;        // appId, likewise
@@ -1361,12 +1567,18 @@ bool parse_file(program *prog, const source *src, token *toks, bool recover);
 bool attributes_before_field(const token *toks, int i);
 bool check(program *prog);
 
+// A bool known from a checked expression: constants, integer and bool
+// comparisons, and their conditional and short-circuit expressions. Shared
+// by compile-time choices and control-flow checks; no game code is run.
+bool fold_bool(const expr *e, bool *out);
+
 // Definite assignment, as C#'s, for what starts unassigned: a function's or
 // method's `out` parameters, which its code assigns before it reads them and
 // on every path that returns, and the locals `out` arguments declare, which
 // are only read where the call that makes them has run (assigned.c). `code`
 // is the function or method whose body it is, or NULL for other code.
 void check_assigned(program *prog, const decl *code, const stmt *body);
+int switch_choice(const expr *e); // A constant switch's selected arm, or -1 for a runtime selector
 
 // Checks every frag and vert, and the functions they call, for what the GPU
 // runs, and plans the shader each mesh draw draws through (program.shaders):
@@ -1383,10 +1595,26 @@ void declared_sampling(const expr *texture, int *filter, int *wrap);
 // Whether a texture's declaration says [Raw]: an asset by its name, or a grid's field.
 bool declared_raw(const expr *texture);
 bool field_is_raw(const field *f);
+// A field's key in JSON: what its [Json("key")] says, as written between the quotes, or its name.
+str json_field_key(const field *f);
 
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.
 bool shader_reads_local(const shader *sh, const decl *d);
+
+// What's sent of the elements of a list, a grid, a map or a set that code the
+// GPU runs reads: an element's parts are a struct's fields, each its own
+// parts, and anything else one (an array whole). `leaves` says, part by part,
+// which the game's frags and verts read (field.gpu_leaves; NULL: all of
+// them), and only those go: their floats, then their ints, each in the
+// element's order, as a value's words are anywhere.
+int shader_leaves(type t);
+// The floats and ints of the parts of `t` that `leaves` says are read, from part *leaf on, which moves past it.
+void shader_part_words(type t, const bool *leaves, int *leaf, int *floats, int *ints);
+// A number for which parts those are, for the draw list to tell two layouts of one list apart: 0 for all of them.
+unsigned shader_layout(type t, const bool *leaves);
+// The parts read of what the shader's texture `t` holds, a list's elements or a grid's cells: NULL for all.
+const bool *shader_texture_leaves(const shader_texture *t);
 
 // Every shader's sources as text, for `tidec --shaders`.
 void print_shaders(const program *prog, sb *out);

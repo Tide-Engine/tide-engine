@@ -27,6 +27,7 @@ typedef struct json {
     int count;          // JSON_ARRAY and JSON_OBJECT
     struct json **items;
     const char **keys;  // JSON_OBJECT
+    size_t *key_lens;
 } json;
 
 // Parses one JSON value. NULL if the text isn't valid JSON. The tree lives
@@ -38,7 +39,7 @@ void json_release(void);
 const json *json_get(const json *object, const char *key);
 // Follows a path of keys: json_path(msg, "params", "textDocument", "uri", NULL).
 const json *json_path(const json *root, ...);
-// NULL if `v` isn't a string.
+// A C string, or NULL if `v` isn't a string or contains an embedded NUL.
 const char *json_str(const json *v);
 int json_int(const json *v, int fallback);
 

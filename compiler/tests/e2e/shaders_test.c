@@ -12,7 +12,7 @@ static tide_gui gui;
 static void frame(const tide_world *previous, const float alpha)
 {
     tide_draw_reset(&draw);
-    tide_frame(&now, previous, alpha, NULL, &local, &draw, &gui);
+    tide_frame(&now, previous, alpha, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 // The nth command of `kind`'s run.

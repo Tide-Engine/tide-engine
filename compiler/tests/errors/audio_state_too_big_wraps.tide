@@ -1,0 +1,26 @@
+// expect: an audio declaration's state is 1048576 bytes at the most, and 'Hall' is over 2147483647
+// A size that's more than an int says is still too big: four gigabytes, which
+// an int would wrap to 0, and 0 fits anything.
+struct Room
+{
+    float4x4[4096] taps;
+}
+
+struct Wing
+{
+    Room[4096] rooms;
+}
+
+struct Hall
+{
+    Wing[4] wings;
+}
+
+audio Reverb(mut Samples samples, mut Hall hall)
+{
+    hall.wings[0].rooms[0].taps[0] = float4x4.identity;
+}
+
+scene Main
+{
+}

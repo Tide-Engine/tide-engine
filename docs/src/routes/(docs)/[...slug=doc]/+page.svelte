@@ -1,8 +1,22 @@
 <script lang="ts">
+    import { goto } from '$app/navigation';
     import { liveExamples } from '#lib/examples.ts';
     import Seo from '#lib/components/Seo.svelte';
+    import Playground from '#lib/components/Playground.svelte';
 
     let { data } = $props();
+
+    // A link to a section this page had before it went to another page still
+    // lands on that section, there (`moved`, see server/content.ts).
+    function movedSections() {
+        const follow = () => {
+            const to = data.moved?.[location.hash.slice(1)];
+            if (to) goto(to, { replaceState: true });
+        };
+        follow();
+        addEventListener('hashchange', follow);
+        return () => removeEventListener('hashchange', follow);
+    }
 
     // The copy buttons on code blocks.
     function copyButtons(article: HTMLElement) {
@@ -27,8 +41,14 @@
 <Seo title={`${data.title} | Tide Engine`} description={data.description} path={data.path} documentation />
 
 {#key data.path}
-    <article class="prose" {@attach copyButtons} {@attach liveExamples}>
-        {@html data.html}
+    <article class="prose" {@attach copyButtons} {@attach liveExamples} {@attach movedSections}>
+        {#if data.path === '/guide/playground'}
+            {@html data.html.split('<div data-tide-playground></div>')[0]}
+            <Playground />
+            {@html data.html.split('<div data-tide-playground></div>')[1]}
+        {:else}
+            {@html data.html}
+        {/if}
     </article>
 {/key}
 

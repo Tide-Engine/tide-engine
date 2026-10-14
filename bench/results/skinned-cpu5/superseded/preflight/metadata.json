@@ -1,0 +1,32 @@
+{
+  "purpose": "Pre-measurement orchestration diagnostics only; no interrupted measured attempt or saved rows",
+  "source_revision": "000a5986ba637eb9638f8b187b74736e95103378",
+  "measurement_started": false,
+  "saved_rows": 0,
+  "orchestration": [
+    {
+      "shell": "Windows PowerShell5",
+      "stage": "before configure",
+      "state": "failed",
+      "error": "Cannot convert System.Object[] to System.String for Join-Path ChildPath",
+      "builds_started": 0
+    },
+    {
+      "shell": "PowerShell7.6.5",
+      "stage": "configure and isolated release build",
+      "state": "passed",
+      "executable_sha256": "1f471332b38237fb6886aefcd311002e9084e18471b7b46e48216e6b919df6dc"
+    }
+  ],
+  "preservation_guard": {
+    "initial_state": "rejected",
+    "cause": "The explicit adapter adds two lines, shifting exactly two generated debug line numbers by+2",
+    "retained_initial_snapshot": "after-snapshot-incomplete-line-check",
+    "permitted_changes": "Exact approved adapter replacement; exact known debug paths;2755->2757 and2813->2815 only",
+    "source_rebuilt": false,
+    "raw_diff_retained": true
+  },
+  "timestamp_note": "Exact initial failure timestamps were not separately recorded; this record was written after successful build and before paired measurements",
+  "recordedAtUtc": "2026-10-10T22:21:11.5702047Z",
+  "manifest_reuse": "PowerShell5/7 JSON indentation and Sort-Object underscore ordering differ. All2895path/size/SHA identities matched. Preservation now checks the complete identities by ordinal path and copies the validated manifest bytes exactly, avoiding duplicate exported manifests."
+}

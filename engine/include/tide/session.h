@@ -61,9 +61,18 @@ typedef enum tide_prediction {
     TIDE_PREDICTION_DELAY,
 } tide_prediction;
 
+typedef struct tide_view_time {
+    int32_t tick; // Upper endpoint; the presented time is tick - 1 + alpha.
+    float alpha;
+    bool valid;
+} tide_view_time;
+
 // What a session needs from a game. tidec generates it as tide_game_api in
 // <game>.h; games without an input have no input functions.
 typedef struct tide_game {
+    float max_rewind; // Finite seconds of collider history; 0 disables it.
+    tide_view_time (*view_time)(const void *input);
+    void (*set_view_time)(void *input, tide_view_time time);
     uint64_t hash;            // Tells builds apart: servers only take players of the same game
     uint32_t world_size;      // sizeof(tide_world): a world starts as that many zeros
     uint32_t input_size;      // sizeof(tide_input), or 0
@@ -81,6 +90,15 @@ typedef struct tide_game {
     // the same as from `tick`. NULL: the game has no local handlers of the
     // match's events, and nothing is recorded for it.
     void (*tick_events)(void *world, const tide_jobs *jobs, tide_event_log *events);
+    // Records into `events` a `Spawned` for each entity `world` has that `had`
+    // doesn't (NULL: every one), for the local handlers that hear the match's:
+    // the entities a world starts with, or arrives with, were spawned in no
+    // tick this machine ran, and are heard as `world` has them, in its
+    // order. An entity is one `had` has by its handle. NULL: no local handler
+    // hears the match's `Spawned`. A host that ticks a world itself calls it
+    // once the world has started, and hands the log to the game's local state
+    // as it does a tick's.
+    void (*hear_arrived)(const void *world, const void *had, tide_event_log *events);
     // A snapshot: `to` becomes `from`, sharing its pages until one of them
     // changes. The hash covers what's in use, and only reads what changed since
     // it was last taken.
@@ -105,7 +123,8 @@ typedef struct tide_game {
     // to free(). Unpacking makes `world` from them and the base they were made
     // from (NULL for none, never `world`): false if they don't make the world
     // they say.
-    uint8_t *(*pack_delta)(const void *world, const void *base, const uint8_t *need, uint32_t need_size, uint32_t *size);
+    uint8_t *(*pack_delta)(const void *world, const void *base, const uint8_t *need, uint32_t need_size, bool assets,
+                           uint32_t *size);
     bool (*unpack_delta)(void *world, const void *base, const uint8_t *data, uint32_t size);
     // The hashes of a world's pages (bytes to free()), and which of them
     // `base` lacks, into `out`: its size, as much as fits in `capacity`, past
@@ -131,9 +150,14 @@ typedef struct tide_game {
     // its player had let go, each field back to its default but those the
     // game marks [Absolute], and with no button going up for it. True if that
     // changed any of them. Only ever on a predicted world: the server's
-    // inputs, and a confirmed tick's, are what was sent. NULL: nothing is let
-    // go, and a guess is the last input for as far as the client runs ahead.
+    // inputs, and a confirmed tick's, are what was sent. NULL: no default
+    // let-go step; predict_inputs can still adjust guesses each tick.
     bool (*let_go_inputs)(void *world, const tide_player_set *keep);
+    // Adjust guessed inputs before each predicted tick, excluding keep's
+    // real samples. No invented button edges. True if any input changed,
+    // so confirmation replays that tick instead of reusing its guess.
+    // NULL: guesses keep their previous values until let_go_inputs.
+    bool (*predict_inputs)(void *world, const tide_player_set *keep);
     // Commands are bounded, copied wire values. Checking only decodes them,
     // and says which channel the command's type is in: 0, the default, one
     // of the game's own (1 to command_channels - 1), or
@@ -328,7 +352,9 @@ typedef struct tide_client_desc {
     const tide_jobs *jobs; // Threads to run ticks on (tide/jobs.h), or NULL: this one
     // A world like the match's, such as the last one it had of a match that
     // changed hands (the game's tide_world, copied): the server only sends what
-    // it lacks. NULL: the whole world comes.
+    // it lacks. NULL: the whole world comes. It's a world this machine had, so
+    // its entities aren't new to it: with `events`, only the entities the
+    // match's world has beyond it are heard as spawned when that world comes.
     const void *base;
     // The real time, in nanoseconds, to measure what the game's ticks cost:
     // a client predicting (TIDE_PREDICTION_ROLLBACK) keeps running them again
@@ -350,7 +376,12 @@ typedef struct tide_client_desc {
     // (tide/events.h), once its host takes it from there (`taken`): each event
     // once, however often its tick ran again, and again, as verified, once the
     // server confirmed the tick. The host hands it to the game's local state
-    // before each frame (tide_local_events). NULL: nobody listens.
+    // before each frame (tide_local_events). NULL: nobody listens. The
+    // entities a world it's sent has that this machine didn't have are heard
+    // as spawned when the world comes (tide_game.hear_arrived): all of its
+    // first world's, but for `base`'s, and of one sent again, those its own
+    // world at that tick lacked, and for the handlers that hear confirmed
+    // ticks, those its last confirmed world lacked.
     tide_event_log *events;
 } tide_client_desc;
 
@@ -390,7 +421,9 @@ typedef struct tide_client_status {
 // What views draw: the latest tick's world, the one before it, and how far
 // this moment is between them (0 to 1), to blend them. Views draw a tick late
 // that way, but smoothly at any tick rate. `previous` is NULL right after the
-// world arrives. `verified` is the last world the server confirmed: an entity
+// world arrives. `verified` and `verified_previous` bracket a separate confirmed
+// presentation clock, which holds at the latest confirmation without extrapolating.
+// `verified_alpha` blends that interval. An entity
 // in neither it nor `current` is gone for good, where one only `current` lost
 // may be back once the server says how the tick went, so what this machine
 // keeps for the match's entities (their local fields) goes by both.
@@ -399,6 +432,9 @@ typedef struct tide_view_worlds {
     const void *previous;
     float alpha;
     const void *verified; // NULL outside a match
+    const void *verified_previous;
+    float verified_alpha;
+    uint32_t verified_tick; // Upper endpoint of the confirmed presentation interval.
 } tide_view_worlds;
 
 tide_client *tide_client_create(const tide_client_desc *desc, double now);

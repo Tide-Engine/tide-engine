@@ -1,0 +1,423 @@
+local singleton Optics
+{
+    bool built;
+    List<Sculpture> gardens;
+    Sculpture person;
+    Sculpture glow;
+    Sculpture flower;
+    Sculpture aperture;
+    List<Vertex> quad;
+    List<int> quadFaces;
+    List<Visitor> visitors;
+    List<PaintInstance> glows;
+    List<PaintInstance> flowers;
+    List<PaintInstance> actors;
+    RenderTarget picture;
+    RenderTarget window0;
+    RenderTarget window1;
+    RenderTarget window2;
+    RenderTarget shadowMap;
+    RenderTarget bloomA;
+    RenderTarget bloomB;
+    Texture bloom;
+    DepthTexture shadow;
+    float4x4 toSun;
+    float3 eye;
+    quaternion turn = quaternion.identity;
+    float2 screen;
+    float clock;
+    int realm;
+    int mine = -1;
+    float clipZ;
+    float clipFacing;
+    bool photo;
+}
+
+struct Air
+{
+    quaternion turn;
+    float aspect;
+    int realm;
+    float time;
+}
+struct BlurStep { float2 along; }
+struct Visitor
+{
+    float3 position;
+    float yaw;
+    float pitch;
+    int realm;
+    int seat;
+    int seed;
+    bool sitting;
+}
+struct PaintInstance
+{
+    float4x4 transform;
+    float3 tint = float3(1);
+}
+
+RenderTarget WindowTarget(Optics optics, int index)
+{
+    return index == 0 ? optics.window0 : index == 1 ? optics.window1 : optics.window2;
+}
+
+float3 SeedColor(int seed)
+{
+    return seed == 2 ? float3(0.36, 0.88, 0.92) : seed == 3 ? float3(1, 0.48, 0.48) : float3(1, 0.77, 0.28);
+}
+
+float3 Mist(int realm)
+{
+    return realm == 2 ? float3(0.43, 0.61, 0.73) : realm == 3 ? float3(0.94, 0.69, 0.54) : float3(0.72, 0.83, 0.79);
+}
+
+float3 Sky(float3 direction, int realm, float clock)
+{
+    var horizon = Mist(realm);
+    var top = realm == 2 ? float3(0.13, 0.23, 0.36) : realm == 3 ? float3(0.39, 0.36, 0.54) : float3(0.23, 0.51, 0.67);
+    mut var sky = Math.Lerp(horizon, top, Math.SmoothStep(0, 0.55, direction.y));
+    var sun = Math.Max(0, Math.Dot(direction, Math.Normalize(float3(-0.5, 0.55, 0.8))));
+    sky += float3(1, 0.73, 0.36) * Math.Pow(sun, 12) * 0.38;
+    sky += float3(1, 0.9, 0.62) * Math.SmoothStep(0.9985, 0.9997, sun) * (realm == 2 ? 0.15 : 1.4);
+    // Clouds live on an enormous horizontal sheet below the islands. Rays
+    // meet it at their own coordinates, so moving the eye never moves the sky.
+    var plane = direction.xz / Math.Max(0.025, Math.Abs(direction.y)) * 2.5;
+    var drift = plane + float2(clock * 0.008, 0);
+    var cloud = Math.Simplex(drift * 0.48) * 0.65 + Math.Simplex(drift * 1.03) * 0.2;
+    var veil = Math.SmoothStep(-0.16, 0.38, cloud) * Math.SmoothStep(0.015, 0.11, Math.Abs(direction.y))
+             * (direction.y < 0 ? 0.86 : Math.Saturate(0.45 - direction.y) * 0.35);
+    sky = Math.Lerp(sky, float3(0.98, 0.94, 0.82), veil);
+    if (realm == 2)
+    {
+        var curtain = Math.Pow(Math.Max(0, Math.Sin(direction.x * 13 + direction.z * 7 + clock * 0.03) * 0.5 + 0.5), 8);
+        sky += float3(0.10, 0.32, 0.23) * curtain * Math.SmoothStep(0.15, 0.65, direction.y) * 0.36;
+    }
+    return sky;
+}
+
+frag Atmosphere(Vertex vertex, out Color color, Air air)
+{
+    var ray = Math.Normalize(float3((vertex.uv.x * 2 - 1) * air.aspect * 0.65, (1 - vertex.uv.y * 2) * 0.65, 1));
+    var direction = Math.Rotate(air.turn, ray);
+    var rgb = Sky(direction, air.realm, air.time);
+    color = Color(rgb.x, rgb.y, rgb.z);
+}
+
+vert Breeze(mut Corner corner, Optics optics)
+{
+    if (corner.kind > 2.5 && corner.kind < 3.5)
+    {
+        var sway = Math.Sin(corner.position.x * 1.7 + corner.position.z * 0.8 + optics.clock * 1.1);
+        corner.position.x += sway * Math.Min(corner.position.y, 4) * 0.026;
+        corner.position.z += Math.Cos(corner.position.x + optics.clock * 0.8) * Math.Min(corner.position.y, 4) * 0.018;
+    }
+}
+
+vert Painted(mut Corner corner, PaintInstance item)
+{
+    corner.paint *= item.tint;
+}
+
+frag Porcelain(Corner corner, out Color color, Instance instance, Optics optics)
+{
+    if (optics.clipFacing != 0 && (this.world.z - optics.clipZ) * optics.clipFacing < -0.025) this.Discard();
+    var normal = instance.Normal(corner.normal);
+    var light = Math.Normalize(float3(-0.5, 0.55, 0.8));
+    var view = Math.Normalize(optics.eye - this.world);
+    var halfway = Math.Normalize(light + view);
+    var towards = Math.Max(0, Math.Dot(normal, light));
+    var clip = Math.Mul(optics.toSun, float4(this.world, 1));
+    var uv = float2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    var depth = clip.z * 0.5 + 0.5 - 0.0018;
+    mut float shade = 1;
+    if (uv.x > 0 && uv.y > 0 && uv.x < 1 && uv.y < 1)
+    {
+        shade = (optics.shadow.Compare(uv + float2(-0.0009, -0.0009), depth) + optics.shadow.Compare(uv + float2(0.0009, -0.0009), depth)
+               + optics.shadow.Compare(uv + float2(-0.0009, 0.0009), depth) + optics.shadow.Compare(uv + float2(0.0009, 0.0009), depth)) * 0.25;
+    }
+    var ambient = 0.27 + 0.12 * normal.y;
+    var material = corner.paint;
+    var noise = Math.Simplex(this.world.xz * 2.6) * 0.04;
+    mut float3 rgb = material * (ambient + towards * shade * 0.85 + noise);
+    if (corner.kind < 0.5)
+    {
+        var joint = Math.Min(Math.Abs(Math.Frac(this.world.x * 0.5) - 0.5), Math.Abs(Math.Frac(this.world.z * 0.5) - 0.5));
+        if (Math.Abs(normal.y) > 0.95 && this.world.y > -0.05 && this.world.y < 0.07)
+            rgb *= 0.82 + Math.SmoothStep(0.005, 0.017, joint) * 0.18;
+    }
+    if (corner.kind > 0.5 && corner.kind < 1.5)
+        rgb *= 0.88 + Math.Sin(this.world.y * 24 + Math.Simplex(this.world.xz * 3) * 5) * 0.1;
+    if (corner.kind > 1.5 && corner.kind < 2.5)
+        rgb += float3(0.95, 0.74, 0.38) * Math.Pow(Math.Max(0, Math.Dot(normal, halfway)), 48) * shade * 0.7;
+    if (corner.kind > 2.5 && corner.kind < 3.5)
+        rgb += material * Math.Max(0, Math.Dot(-normal, light)) * 0.14 + float3(0.11, 0.16, 0.055) * Math.Pow(1 - Math.Max(0, Math.Dot(normal, view)), 3);
+    if (corner.kind > 3.5 && corner.kind < 4.5)
+    {
+        var ripple = Math.Sin(this.world.x * 6 + optics.clock) * Math.Sin(this.world.z * 4 - optics.clock * 0.7);
+        rgb = Math.Lerp(material, Sky(Math.Reflect(-view, Math.Normalize(float3(ripple * 0.08, 1, ripple * 0.04))), optics.realm, optics.clock), 0.56);
+        rgb += float3(0.1, 0.26, 0.26) * (ripple * 0.5 + 0.5);
+    }
+    if (corner.kind > 4.5 && corner.kind < 5.5)
+        rgb = material * (0.56 + towards * 0.8) + material * Math.Pow(Math.Max(0, Math.Dot(normal, view)), 6) * 0.16;
+    if (corner.kind > 5.5) rgb += float3(1, 0.93, 0.78) * Math.Pow(Math.Max(0, Math.Dot(normal, halfway)), 64) * 0.18;
+    if (corner.kind > 7.5) rgb = material * (0.88 + towards * 0.12);
+    var distance = Math.Distance(this.world, optics.eye);
+    var fog = 1 - Math.Exp(-distance * (optics.realm == 2 ? 0.013 : 0.008));
+    rgb = Math.Lerp(rgb, Mist(optics.realm), fog * fog);
+    color = Color(rgb.x, rgb.y, rgb.z);
+}
+
+frag Window(Corner corner, out Color color, Texture destination, Optics optics)
+{
+    // This is a projective window, not a decal. The camera used the same
+    // mapping as the player, so every pixel is the destination at that ray.
+    var base = corner.position;
+    if (base.y > 2.1 && base.x * base.x / (DoorHalfWidth() * DoorHalfWidth()) + (base.y - 2.1) * (base.y - 2.1) / 2.8224 > 1) this.Discard();
+    color = destination.Sample(this.position / optics.screen, Filter.Bilinear);
+    color.a = 1;
+}
+
+frag Frosted(Corner corner, out Color color, Optics optics)
+{
+    var p = corner.position;
+    if (p.y > 2.1 && p.x * p.x / (DoorHalfWidth() * DoorHalfWidth()) + (p.y - 2.1) * (p.y - 2.1) / 2.8224 > 1) this.Discard();
+    var rgb = Mist(optics.realm) * 0.6 + float3(0.13, 0.21, 0.15) * Math.Sin(p.y * 3) * 0.08;
+    color = Color(rgb.x, rgb.y, rgb.z);
+}
+
+frag Bright(Vertex vertex, out Color color, Texture image)
+{
+    var sample = image.Sample(vertex.uv);
+    var rgb = float3(sample.r, sample.g, sample.b);
+    var value = Math.Max(rgb.x, Math.Max(rgb.y, rgb.z));
+    var glow = rgb * Math.SmoothStep(0.72, 1.5, value);
+    color = Color(glow.x, glow.y, glow.z);
+}
+
+frag Blur(Vertex vertex, out Color color, Texture image, BlurStep step)
+{
+    color = image.Sample(vertex.uv) * 0.28;
+    color += (image.Sample(vertex.uv + step.along) + image.Sample(vertex.uv - step.along)) * 0.23;
+    color += (image.Sample(vertex.uv + step.along * 2.4) + image.Sample(vertex.uv - step.along * 2.4)) * 0.13;
+    color.a = 1;
+}
+
+frag Develop(Vertex vertex, out Color color, Texture image, Optics optics)
+{
+    var sample = image.Sample(vertex.uv);
+    var bloom = optics.bloom.Sample(vertex.uv);
+    mut var rgb = float3(sample.r, sample.g, sample.b) + float3(bloom.r, bloom.g, bloom.b) * 0.27;
+    rgb = rgb / (rgb + float3(0.63)) * 1.22;
+    rgb = Math.Pow(Math.Max(rgb, float3(0)), float3(0.85));
+    var edge = Math.LengthSq((vertex.uv - float2(0.5)) * float2(1, 0.8));
+    rgb *= 1 - edge * 0.24;
+    color = Color(rgb.x, rgb.y, rgb.z);
+}
+
+void Prepare(mut Optics optics)
+{
+    if (optics.built) return;
+    optics.built = true;
+    for (var realm = 0; realm < 4; realm++) optics.gardens.Add(MakeGarden(realm));
+    optics.person = MakePerson();
+    Pebble(optics.glow, float3(0), float3(1), float3(1), 5);
+    for (var i = 0; i < 6; i++)
+    {
+        var a = i * Math.TAU / 6;
+        Pebble(optics.flower, float3(Math.Cos(a) * 0.19, 0, Math.Sin(a) * 0.19), float3(0.17, 0.065, 0.17), float3(0.99, 0.70, 0.43), 5);
+    }
+    Pebble(optics.flower, float3(0, 0.07, 0), float3(0.1, 0.1, 0.1), float3(1, 0.92, 0.57), 5);
+    var width = DoorHalfWidth();
+    Quad(optics.aperture, float3(-width, 0, 0), float3(width, 0, 0), float3(width, 3.8, 0), float3(-width, 3.8, 0), float3(0, 0, -1), float3(1), 0);
+    optics.picture = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    optics.window0 = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    optics.window1 = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    optics.window2 = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    optics.shadowMap = RenderTarget(1536, 1536, 1, Format.Depth);
+    optics.shadow = optics.shadowMap.depth;
+    optics.bloomA = RenderTarget.Window(0.25, Format.Rgba16f);
+    optics.bloomB = RenderTarget.Window(0.25, Format.Rgba16f);
+    optics.quadFaces = [0, 1, 2, 0, 2, 3];
+}
+
+void Orb(mut Optics optics, bool flower, float3 at, float3 size, float3 paint)
+{
+    var item = PaintInstance { transform = float4x4.TRS(at, quaternion.identity, size), tint = paint };
+    if (flower) optics.flowers.Add(item);
+    else optics.glows.Add(item);
+}
+
+void People(int realm, mut Optics optics, bool hideMine)
+{
+    foreach (var person in optics.visitors)
+    {
+        if (person.realm != realm || (hideMine && person.seat == optics.mine)) continue;
+        var spin = quaternion.Euler(0, person.yaw, 0);
+        var scale = person.sitting ? float3(1, 0.7, 1) : float3(1);
+        optics.actors.Add(PaintInstance { transform = float4x4.TRS(person.position, spin, scale), tint = person.seat == 0 ? float3(1, 0.87, 0.63) : float3(0.63, 0.87, 0.91) });
+        if (person.seed > 0) Orb(optics, false, person.position + float3(0, 0.8, 0.4), float3(0.16), SeedColor(person.seed));
+    }
+}
+
+void Life(int realm, Garden garden, mut Optics optics)
+{
+    if (realm != 0)
+    {
+        var index = realm - 1;
+        var tint = SeedColor(realm);
+        if (garden.source[index] > 0)
+        {
+            Orb(optics, false, SourceAt() + float3(0, 1.5, 0), float3(0.24), tint);
+            for (var i = 0; i < 22; i++)
+            {
+                var t = Math.Frac(i / 22.0 + optics.clock * 0.14);
+                var p = Math.Lerp(SourceAt(), SproutAt(), t) + float3(0, 0.15 + Math.Sin(t * Math.PI) * 1.5, 0);
+                Orb(optics, false, p, float3(0.023), tint);
+            }
+        }
+        if (!garden.harvested[index])
+        {
+            var growth = garden.growth[index];
+            var size = 0.08 + growth * 0.35;
+            var at = SproutAt() + float3(0, 1.2 + Math.Sin(optics.clock * 1.2) * 0.12, -1.25);
+            Orb(optics, false, at, float3(size), tint * (growth >= 1 ? 1 : 0.3));
+            if (growth > 0.01)
+                for (var i = 0; i < 20; i++)
+                {
+                    var a = i * 2.39996 + optics.clock * 0.2;
+                    Orb(optics, true, SproutAt() + float3(Math.Cos(a) * 1.5, 0.3 + i * 0.14 * growth, Math.Sin(a) * 1.5), float3(growth * 0.7), tint);
+                }
+        }
+    }
+    else
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            if (!garden.planted[i]) continue;
+            var at = SocketAt(i + 1);
+            Orb(optics, true, at + float3(0, 0.7, 0), float3(2.0), SeedColor(i + 1));
+            Orb(optics, false, at + float3(0, 0.8, 0), float3(0.12), SeedColor(i + 1));
+        }
+        if (garden.finale > 0)
+        {
+            for (var i = 0; i < 120; i++)
+            {
+                var a = i * 2.39996;
+                var y = 2.7 + Variation(i * 29) * 3.2;
+                var radius = 1.1 + Math.Sin((y - 2.7) / 3.2 * Math.PI) * 2.3;
+                var p = float3(Math.Cos(a) * radius, y, 3 + Math.Sin(a) * radius);
+                Orb(optics, true, p, float3(garden.finale * (0.7 + Variation(i) * 0.6)), float3(1, 0.84, 0.73));
+            }
+        }
+    }
+    // Fireflies and drifting petals are strictly local visual state.
+    for (var i = 0; i < 36; i++)
+    {
+        var a = i * 2.39996 + optics.clock * 0.027;
+        var r = 3 + Variation(i) * 6;
+        var p = float3(Math.Cos(a) * r, 0.5 + Variation(i * 3) * 3 + Math.Sin(optics.clock * 0.6 + i) * 0.3, Math.Sin(a) * r + 3);
+        Orb(optics, false, p, float3(0.018), realm == 2 ? float3(0.5, 1, 0.84) : float3(1, 0.81, 0.41));
+    }
+}
+
+[Before(Render)]
+view Collect(Session session, mut Optics optics, query (Gardener person, Owner owner) people)
+{
+    Prepare(optics);
+    optics.visitors.Clear();
+    optics.mine = -1;
+    foreach (var entry in people)
+    {
+        optics.visitors.Add(Visitor { position = entry.person.position, yaw = entry.person.yaw, pitch = entry.person.pitch, realm = entry.person.realm, seat = entry.person.seat, seed = entry.person.seed, sitting = entry.person.sitting });
+        if (entry.owner.player == session.player) optics.mine = entry.person.seat;
+    }
+}
+
+view Render(Garden garden, mut Optics optics, Menu menu)
+{
+    Prepare(optics);
+    optics.clock += Math.Min(Frame.dt, 0.05);
+    if (optics.clock > 600) optics.clock -= 600;
+    optics.screen = float2(Screen.width, Screen.height);
+    optics.quad = [Vertex { position = float2(0, 0), uv = float2(0, 0) }, Vertex { position = float2(Screen.width, 0), uv = float2(1, 0) },
+                   Vertex { position = float2(Screen.width, Screen.height), uv = float2(1, 1) }, Vertex { position = float2(0, Screen.height), uv = float2(0, 1) }];
+    mut int realm = 0;
+    mut float3 eye = float3(-12, 6.8, -17);
+    mut quaternion turn = quaternion.LookRotation(float3(2, 2.4, 2) - eye, float3(0, 1, 0));
+    foreach (var person in optics.visitors)
+    {
+        if (person.seat != optics.mine || !menu.begun) continue;
+        realm = person.realm;
+        eye = person.position + float3(0, person.sitting ? 1.05 : 1.63, 0);
+        turn = quaternion.Euler(person.pitch, person.yaw, 0);
+    }
+    var count = realm == 0 ? 3 : 2;
+    // Keep the entire near-plane rectangle on this side of every window,
+    // including its corners at an oblique angle or a wide screen aspect.
+    // Otherwise the aperture itself clips away before the visitor crosses.
+    var tangent = Math.Tan(Math.Radians(33));
+    var aspect = optics.screen.x / optics.screen.y;
+    var cornerDistance = Math.Sqrt(1 + tangent * tangent * (1 + aspect * aspect));
+    mut float near = 0.3;
+    for (var i = 0; i < count; i++)
+        near = Math.Min(near, Math.Max(0.00000001, Math.Abs(eye.z - Door(realm, i).at.z) / (2 * cornerDistance)));
+    for (var pass = 0; pass <= count; pass++)
+    {
+        var primary = pass == count;
+        var door = Door(realm, primary ? 0 : pass);
+        var chart = primary ? realm : door.realm;
+        var camera = primary ? eye : eye + door.to - door.at;
+        var target = primary ? optics.picture : WindowTarget(optics, pass);
+        optics.realm = chart;
+        optics.eye = camera;
+        optics.turn = turn;
+        optics.clipZ = door.to.z;
+        optics.clipFacing = primary ? 0 : door.facing < 0 ? 1 : -1;
+        optics.glows.Clear(); optics.flowers.Clear(); optics.actors.Clear();
+        People(chart, optics, primary);
+        Life(chart, garden, optics);
+        var light = Math.Normalize(float3(-0.5, 0.55, 0.8));
+        optics.shadowMap.Clear(Color.white);
+        optics.shadowMap.SetCamera(float4x4.TRS(light * 35 + float3(0, 0, 1), quaternion.LookRotation(-light, float3(0, 1, 0)), float3(1)), float4x4.Ortho(37, 37, 0.1, 80));
+        optics.toSun = optics.shadowMap.WorldToClip();
+        optics.shadowMap.Mesh(optics.gardens[chart].vertices, optics.gardens[chart].indices, float4x4.identity, Breeze);
+        optics.shadowMap.Instanced(optics.person.vertices, optics.person.indices, optics.actors, Painted);
+        target.Clear(Color(0.7, 0.8, 0.7));
+        target.SetScreen();
+        target.Mesh(optics.quad, optics.quadFaces, Atmosphere, Air { turn = turn, aspect = optics.screen.x / optics.screen.y, realm = chart, time = optics.clock });
+        target.SetCamera(camera, turn, 66);
+        mut var projection = target.CameraProjection();
+        projection.c3.z = -2 * near;
+        target.SetCamera(target.CameraTransform(), projection);
+        target.SetCull(Cull.None);
+        target.Mesh(optics.gardens[chart].vertices, optics.gardens[chart].indices, float4x4.identity, Breeze, Porcelain);
+        target.Instanced(optics.person.vertices, optics.person.indices, optics.actors, Painted, Porcelain);
+        target.Instanced(optics.glow.vertices, optics.glow.indices, optics.glows, Painted, Porcelain);
+        target.Instanced(optics.flower.vertices, optics.flower.indices, optics.flowers, Painted, Porcelain);
+        if (!primary)
+        {
+            for (var i = 0; i < (chart == 0 ? 3 : 2); i++)
+            {
+                var deep = Door(chart, i);
+                if (Math.Distance(deep.at, door.to) < 0.1) continue;
+                target.Mesh(optics.aperture.vertices, optics.aperture.indices, float4x4.Translate(deep.at - float3(0, 1.9, 0)), Frosted);
+            }
+        }
+    }
+    optics.realm = realm;
+    optics.eye = eye;
+    optics.turn = turn;
+    for (var i = 0; i < count; i++)
+    {
+        var door = Door(realm, i);
+        if ((eye.z - door.at.z) * door.facing <= 0) continue;
+        optics.picture.Mesh(optics.aperture.vertices, optics.aperture.indices, float4x4.Translate(door.at - float3(0, 1.9, 0)), WindowTarget(optics, i).color, Window);
+    }
+    optics.bloom = optics.bloomA.color;
+    Draw.Blit(optics.picture.color, optics.bloomA, Bright);
+    Draw.Blit(optics.bloomA.color, optics.bloomB, Blur, BlurStep { along = float2(5 / Screen.width, 0) });
+    Draw.Blit(optics.bloomB.color, optics.bloomA, Blur, BlurStep { along = float2(0, 5 / Screen.height) });
+    Draw.Blit(optics.picture.color, Draw.window, Develop);
+    Draw.SetScreen();
+}

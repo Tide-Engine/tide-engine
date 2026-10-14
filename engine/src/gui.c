@@ -1,5 +1,6 @@
 #include "tide/gui.h"
 
+#include <float.h>
 #include <stdio.h>
 
 #include "tide/text.h"
@@ -220,13 +221,33 @@ uint32_t tide_gui_id(tide_gui *g, const uint32_t seed, const uint32_t site)
 
 static const tide_gui_size *remembered(const tide_gui *g, const uint32_t id)
 {
-    const tide_gui_size *s = &g->sizes[id & (TIDE_GUI_MAX_SIZES - 1)];
-    return s->frame != 0 && s->id == id ? s : NULL;
+    uint32_t slot = id & (TIDE_GUI_MAX_SIZES - 1);
+    for (uint32_t probe = 0; probe < TIDE_GUI_MAX_SIZES; probe++) {
+        const tide_gui_size *s = &g->sizes[slot];
+        if (s->frame == 0) return NULL;
+        if (s->id == id) return s;
+        slot = (slot + 1) & (TIDE_GUI_MAX_SIZES - 1);
+    }
+    return NULL;
 }
 
 static void remember(tide_gui *g, const uint32_t id, const tide_float2 size, const float natural, const float least)
 {
-    g->sizes[id & (TIDE_GUI_MAX_SIZES - 1)] = (tide_gui_size){id, g->frame, size, natural, least};
+    uint32_t slot = id & (TIDE_GUI_MAX_SIZES - 1), oldest = slot;
+    tide_gui_size *place = NULL;
+    for (uint32_t probe = 0; probe < TIDE_GUI_MAX_SIZES; probe++) {
+        tide_gui_size *s = &g->sizes[slot];
+        if (s->frame == 0 || s->id == id) {
+            place = s;
+            break;
+        }
+        if (g->frame - s->frame > g->frame - g->sizes[oldest].frame) oldest = slot;
+        slot = (slot + 1) & (TIDE_GUI_MAX_SIZES - 1);
+    }
+    // Only a full cache evicts a container, preferably one not used recently.
+    // Occupied slots remain occupied, so lookup can still stop at an empty one.
+    if (!place) place = &g->sizes[oldest];
+    *place = (tide_gui_size){id, g->frame, size, natural, least};
 }
 
 // ---------------------------------------------------------------------------
@@ -385,9 +406,31 @@ static bool on_gui(const tide_gui *g, const tide_devices *d)
     tide_float2 at;
     if (!pointer_place(g, d, &at)) return false;
     for (uint32_t i = 0; i < g->rect_count; i++) {
-        if (contains(g->rects[i], at)) return true;
+        if (contains(g->rects[i].rect, at)) return true;
     }
     return g->rects_full && g->over; // More widgets than fit: as the frame saw it
+}
+
+#define WIDGET UINT32_MAX // The `content` of a place that's a widget's: no place is its content
+
+// Which widget or area is on top at `at`, in the GUI's pixels, where the last
+// frame drew them: the one drawn last of those there, and an area only where
+// none of its content is, as its panel is under it. 0 for none; else `where`
+// is its place. It's what a frame works out as it draws (hovered,
+// close_area), over again for a pointer that has moved since.
+static uint32_t on_top(const tide_gui *g, const tide_float2 at, tide_rect *where)
+{
+    uint32_t id = 0;
+    uint32_t found = 0; // How many places there are up to the one on top so far, with it
+    for (uint32_t i = 0; i < g->rect_count; i++) {
+        const tide_gui_rect *r = &g->rects[i];
+        if (!contains(r->rect, at)) continue;
+        if (r->content != WIDGET && found > r->content) continue; // An area with some of its content there
+        id = r->id;
+        *where = r->rect;
+        found = i + 1u;
+    }
+    return id;
 }
 
 // A key or a gamepad's button that goes down while the keyboard and the
@@ -573,6 +616,14 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     g->mouse_released = !g->mouse_held && g->mouse_was_held;
     g->mouse_was_held = g->mouse_held;
     g->press_was_held = p->press.held;
+    // Which widget the pointer is on goes by where it is now, as whose the
+    // pointer is does (on_gui), not by where the last frame saw it: a pointer
+    // that came onto a widget and pressed it since the last frame presses that
+    // widget, in the one frame that has the press. Every finger does, and a
+    // mouse in a slow frame. By where the last frame saw it, a tap on a button
+    // of a menu the mouse rested on pressed the menu's panel, which was on top
+    // there. With more widgets than a frame remembers, it's as that frame saw it.
+    if (!g->rects_full) g->hot = on_top(g, g->mouse, &g->hot_rect);
     const uint32_t keys = nav_keys(devices);
     g->keys_pressed = keys & ~g->keys;
     g->keys = keys;
@@ -772,21 +823,24 @@ static bool live(const tide_gui *g)
 }
 
 // Remembers where a widget or an area is: the pointer there is the GUI's, for
-// the game and views that read it before the next frame's GUI (see on_gui).
-static void remember_place(tide_gui *g, const tide_rect r)
+// the game and views that read it before the next frame's GUI (see on_gui),
+// and that frame's widgets go by which of them is on top there (see on_top).
+// `content` is WIDGET, or for an area, how many places there were before its
+// content's.
+static void remember_place(tide_gui *g, const uint32_t id, const tide_rect r, const uint32_t content)
 {
-    if (g->rect_count_next < TIDE_GUI_MAX_RECTS) g->rects_next[g->rect_count_next++] = r;
+    if (g->rect_count_next < TIDE_GUI_MAX_RECTS) g->rects_next[g->rect_count_next++] = (tide_gui_rect){r, id, content};
     else g->rects_full_next = true;
 }
 
 // Whether the mouse is on the widget. Where widgets overlap, the one drawn
-// last is on top: it was under the mouse last frame, and hides the others
-// while the mouse stays on it. A disabled widget does too, and keeps clicks on
-// it from the game, but it's never hovered itself.
+// last is on top: the last frame drew it where the mouse is now, and it hides
+// the others there. A disabled widget does too, and keeps clicks on it from
+// the game, but it's never hovered itself.
 static bool hovered(tide_gui *g, const uint32_t id, const tide_rect r)
 {
     if (under_modal(g)) return false;
-    remember_place(g, r);
+    remember_place(g, id, r, WIDGET);
     if (!contains(r, g->mouse)) return false;
     g->hot_next = id;
     g->hot_rect_next = r;
@@ -1062,8 +1116,8 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         }
         // Its widgets are remembered where they're drawn, too.
         for (uint32_t i = grp->rects_before; i < g->rect_count_next; i++) {
-            g->rects_next[i].x += dx;
-            g->rects_next[i].y += dy;
+            g->rects_next[i].rect.x += dx;
+            g->rects_next[i].rect.y += dy;
         }
         r = (tide_rect){at.x, at.y, size.x, size.y};
     }
@@ -1075,7 +1129,7 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         if (c->kind == TIDE_DRAW_SHAPE) g->list.shapes[c->shape].radius = grp->radius;
     }
     remember(g, grp->id, size, grp->natural, grp->least);
-    remember_place(g, r);
+    remember_place(g, grp->id, r, grp->rects_before);
     if (!contains(r, g->mouse)) return;
     g->over_next = true;
     // Under the mouse, but none of its widgets is: the panel hides what's below it.
@@ -1232,18 +1286,28 @@ bool tide_gui_layout_toggle(tide_gui *g, const uint32_t id, const char *text, bo
 }
 
 // A slider's track and thumb. `t` is where the value is, 0 to 1; returns
-// where the player moved it, or -1.
-static float slider(tide_gui *g, const uint32_t id, const tide_rect r, const float t, const float steps)
+// where the player moved it, or -1. An int slider also takes the direction
+// of a key's step, which it applies to the integer rather than its fraction.
+static double slider(tide_gui *g, const uint32_t id, const tide_rect r, const double t, const double steps, int *step)
 {
     const bool hover = hovered(g, id, r);
     const bool down = held_down(g, id, hover);
     const bool focused = focusable(g, id, true);
-    float moved = -1.0f;
+    double moved = -1.0;
+    if (step) *step = 0;
     if (down && g->mouse_held && r.width > 0.0f) moved = clamp_f((g->mouse.x - r.x) / r.width, 0.0f, 1.0f);
-    if (focused && pressed(g, KEY_LEFT | PAD_LEFT)) moved = clamp_f(t - 1.0f / steps, 0.0f, 1.0f);
-    if (focused && pressed(g, KEY_RIGHT | PAD_RIGHT)) moved = clamp_f(t + 1.0f / steps, 0.0f, 1.0f);
+    if (focused && pressed(g, KEY_LEFT | PAD_LEFT)) {
+        moved = t - 1.0 / steps;
+        if (moved < 0.0) moved = 0.0;
+        if (step) *step = -1;
+    }
+    if (focused && pressed(g, KEY_RIGHT | PAD_RIGHT)) {
+        moved = t + 1.0 / steps;
+        if (moved > 1.0) moved = 1.0;
+        if (step) *step = 1;
+    }
 
-    const float at = moved >= 0.0f ? moved : t;
+    const float at = (float)(moved >= 0.0 ? moved : t);
     const float middle = r.y + r.height * 0.5f;
     const tide_rect rail = {r.x, middle - 3.0f, r.width, 6.0f};
     if (focused) fill_around(g, rail, BORDER, g->theme.accent);
@@ -1254,11 +1318,11 @@ static float slider(tide_gui *g, const uint32_t id, const tide_rect r, const flo
 }
 
 // Where `v` is between `min` and `max`, 0 to 1; a reversed range works too.
-static float fraction(const float v, const float min, const float max)
+static double fraction(const double v, const double min, const double max)
 {
-    if (max == min) return 0.0f;
-    const float t = (v - min) / (max - min);
-    return t >= 0.0f ? min_f(t, 1.0f) : 0.0f; // Also NaN
+    if (max == min) return 0.0;
+    const double t = (v - min) / (max - min);
+    return t >= 0.0 ? t > 1.0 ? 1.0 : t : 0.0; // Also NaN
 }
 
 // The track's rect: the rest of the widget after its label, minus the value on the right.
@@ -1275,9 +1339,9 @@ bool tide_gui_slider(tide_gui *g, const uint32_t id, const tide_rect rect, const
 {
     char text[32];
     snprintf(text, sizeof text, "%.2f", (double)*value);
-    const float moved = slider(g, id, track(g, rect, label, text), fraction(*value, min, max), 20.0f);
-    if (moved < 0.0f) return false;
-    const float v = moved >= 1.0f ? max : min + (max - min) * moved;
+    const double moved = slider(g, id, track(g, rect, label, text), fraction(*value, min, max), 20.0, NULL);
+    if (!(moved >= 0.0)) return false; // Not moved, or by a rect that isn't one (NaN).
+    const float v = moved <= 0.0 ? min : moved >= 1.0 ? max : (float)((double)min + ((double)max - (double)min) * moved);
     if (v == *value) return false;
     *value = v;
     return true;
@@ -1295,11 +1359,20 @@ bool tide_gui_int_slider(tide_gui *g, const uint32_t id, const tide_rect rect, c
 {
     char text[32];
     snprintf(text, sizeof text, "%d", (int)*value);
-    const float range = (float)max - (float)min;
-    const float steps = range < 0.0f ? -range : range;
-    const float moved =
-        slider(g, id, track(g, rect, label, text), fraction((float)*value, (float)min, (float)max), steps > 0.0f ? steps : 1.0f);
-    if (!(moved >= 0.0f)) return false; // Not moved, or by a rect that isn't one (NaN)
+    const double range = (double)max - (double)min;
+    const double steps = range < 0.0 ? -range : range;
+    int step;
+    const double moved = slider(g, id, track(g, rect, label, text), fraction(*value, min, max), steps > 0.0 ? steps : 1.0, &step);
+    if (!(moved >= 0.0)) return false; // Not moved, or by a rect that isn't one (NaN)
+    if (step) {
+        const int32_t low = min < max ? min : max, high = min > max ? min : max;
+        int64_t next = *value < low ? low : *value > high ? high : *value;
+        next += min <= max ? step : -step;
+        const int32_t v = next < low ? low : next > high ? high : (int32_t)next;
+        if (v == *value) return false;
+        *value = v;
+        return true;
+    }
     // A range can be all the ints, which a float doesn't tell apart at its
     // ends: worked out in doubles, and no further than an int goes
     const double exact = (double)min + ((double)max - (double)min) * (double)moved;
@@ -1375,11 +1448,12 @@ static bool parse_number(tide_gui *g, const number_kind kind, double *out)
     if (kind == NUMBER_INT) {
         const long long n = strtoll(g->edit, &end, 10);
         v = n < INT32_MIN ? INT32_MIN : n > INT32_MAX ? INT32_MAX : (double)n;
+    } else if (kind == NUMBER_FLOAT) {
+        v = strtof(g->edit, &end); // Round to the field's float, including text for FLT_MAX.
     } else {
         v = strtod(g->edit, &end);
     }
     if (end == g->edit || *end != '\0' || v - v != 0.0) return false; // Empty, junk after it, infinite or NaN
-    if (kind == NUMBER_FLOAT && (v > 3.4028234663852886e38 || v < -3.4028234663852886e38)) return false;
     if (kind == NUMBER_UNIT) v = v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v;
     *out = v;
     return true;
@@ -1409,7 +1483,8 @@ static void start_typing(tide_gui *g, const uint32_t id, const double value, con
     g->editing = id;
     g->editing_seen = true;
     g->edit_kind = (uint8_t)kind;
-    format_number(g->edit, sizeof g->edit, value, kind);
+    if (kind == NUMBER_INT) format_number(g->edit, sizeof g->edit, value, kind);
+    else snprintf(g->edit, sizeof g->edit, "%.*g", FLT_DECIMAL_DIG, value); // Editing keeps every bit of a float.
     g->edit_len = (uint32_t)strlen(g->edit);
     g->edit_fresh = true;
 }

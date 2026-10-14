@@ -501,8 +501,21 @@ static void swap(const tide_host_game *next, void *library)
     // Release private caches with the code that made their layout, before
     // the new table can reinterpret an equally sized local structure.
     if (old->correct_views) old->correct_views(tide_run_local, &(tide_view_correction){.reset = true});
+    // The new build's assets, from the pack the host has, before anything asks
+    // it for a default: a field's can name one
+    if (next->assets && tide_run_pack) next->assets(tide_run_pack, tide_run_pack_size);
     bool retained = true;
-    if (next->game->hash == old->game->hash && next->local_size == old->local_size) {
+    // A match on the game's own network (tide/network.h) is on transports the
+    // old build's C made, whose code goes with it: nothing of that match can
+    // be carried into the new build
+    const bool own_network = tide_run_network.on;
+    if (own_network) {
+        printf("tide: the match is on the game's own network, which the new build replaces: starting over\n");
+        retained = false;
+        tide_run_end();
+        tide_run_game = next;
+        tide_run_begin();
+    } else if (next->game->hash == old->game->hash && next->local_size == old->local_size) {
         tide_session_set_game(tide_run_session, next->game);
         tide_run_game = next;
         printf("tide: reloaded\n");
@@ -522,8 +535,6 @@ static void swap(const tide_host_game *next, void *library)
         if (next->correct_views) next->correct_views(tide_run_local, &(tide_view_correction){.reset = true});
     }
     if (retained && next->rebind_resources) next->rebind_resources(tide_run_local, true);
-    // The new build's assets, from the pack the host has
-    if (next->assets && tide_run_pack) next->assets(tide_run_pack, tide_run_pack_size);
     fflush(stdout);
     tide_platform_audio_forget(); // The samples the old build's voices play are its own, and go with it
     old->unload();

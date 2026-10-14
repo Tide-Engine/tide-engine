@@ -1,0 +1,2 @@
+// expect: 'TryGetByName' makes its 'result', so the argument says 'out'
+bool Read(AnimationCatalog clips, mut Animation result) { return clips.TryGetByName("Run", result); }

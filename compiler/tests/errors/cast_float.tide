@@ -1,0 +1,4 @@
+// expect: Tide converts values with 'float(value)', not '(float)value'
+// expect: write 'float(number)' instead
+float Number(int number) { return (float)number; }
+scene Main { }

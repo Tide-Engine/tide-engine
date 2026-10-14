@@ -1,0 +1,782 @@
+// What a machine shows of a match of Tag, and hears: the camera, the kids,
+// what turns and swings, the frame's passes, the sounds, and the scores.
+using Rooms;
+
+asset Clip tagClip = "sfx/tag.wav";
+asset Clip dashClip = "sfx/dash.wav";
+asset Clip bellClip = "sfx/bell.wav";
+asset Clip itClip = "sfx/it.wav";
+asset Clip winClip = "sfx/win.wav";
+asset Clip splashClip = "sfx/splash.wav";
+asset Clip birdsClip = "sfx/birds.wav";
+
+struct Spark
+{
+    float3 position;
+    float3 velocity;
+    float age;
+    float life = 0.4;
+    float size = 0.1;
+    float weight = 1;
+    bool paper;       // A piece of paper: lit, with a shadow, and it tumbles
+    Color tone = Color.white;
+}
+
+struct Popup
+{
+    string text;
+    float3 position;
+    float age;
+    Color tone = Color.white;
+}
+
+// What moves, each mesh's in a list that's made again every frame, and this
+// machine's own effects.
+local singleton Fx
+{
+    List<Solid> boxes;
+    List<Solid> balls;
+    List<Solid> rods;
+    List<Solid> kids;
+    List<Solid> decks;
+    List<Solid> spinners;
+    List<Solid> bells;
+    List<Solid> clouds;
+    List<Decal> decals;
+    List<Mote> motes;
+    List<Spark> sparks;
+    List<Popup> popups;
+    float dt;
+    float beat;       // Radians, wrapped, for what pulses
+    float time;       // Seconds, wrapped once an hour, for what drifts
+    float shake;
+    float clock;      // Seconds, wrapped: which hint shows
+    int round = -1;   // The round this machine last saw start
+    float call;       // Seconds the call to run still shows
+    bool wasIt;       // This machine's kid was it, last frame
+    bool wasWet;      // ...and in the puddle
+    float alarm;      // Seconds "YOU'RE IT!" still shows
+    Sound birds;      // The yard's air, which goes on
+    Random random;
+}
+
+local singleton Layout
+{
+    float middle;  // The yard's middle on the screen, down from its top
+    float2 button; // The DASH button, in the screen's pixels
+    float reach = 30;
+}
+
+local singleton Me
+{
+    Entity self;
+    int color = -1;
+}
+
+Color Tone(int index)
+{
+    switch (index)
+    {
+        case 0: return Color(0.93, 0.3, 0.28);
+        case 1: return Color(0.25, 0.52, 0.95);
+        case 2: return Color(0.98, 0.75, 0.14);
+        case 3: return Color(0.2, 0.66, 0.33);
+        case 4: return Color(0.93, 0.45, 0.75);
+        case 5: return Color(0.18, 0.76, 0.76);
+        case 6: return Color(0.96, 0.55, 0.2);
+        case 7: return Color(0.62, 0.45, 0.9);
+    }
+    return Color.gray;
+}
+
+string ColorName(int index)
+{
+    switch (index)
+    {
+        case 0: return "RED";
+        case 1: return "BLUE";
+        case 2: return "YELLOW";
+        case 3: return "GREEN";
+        case 4: return "PINK";
+        case 5: return "TEAL";
+        case 6: return "ORANGE";
+        case 7: return "VIOLET";
+    }
+    return "SOMEONE";
+}
+
+// A mark painted on the ground: a disc, a ring, part of one, or with a ring
+// under 0 a soft blot.
+void Mark(mut Fx fx, float3 at, float size, Color tint, float ring, float arc)
+{
+    fx.decals.Add(Decal { transform = float4x4.TRS(at, quaternion.identity, float3(size, 1, size)), tint = tint, ring = ring, arc = arc });
+}
+
+local event(Tagged tag) ShowTag(mut Fx fx)
+{
+    var at = Up(tag.at, 0.75);
+    fx.popups.Add(Popup { text = "TAG!", position = at + float3(0, 1.2, 0), tone = Tone(tag.caught) });
+    for (var i = 0; i < 20; i++)
+    {
+        var way = fx.random.NextFloat3Direction() * fx.random.NextFloat(1.5, 5);
+        fx.sparks.Add(Spark { position = at, velocity = float3(way.x, Math.Abs(way.y) + 1, way.z), life = fx.random.NextFloat(0.35, 0.7),
+                              size = fx.random.NextFloat(0.1, 0.2), tone = i % 2 == 0 ? Tone(tag.caught) : Color.white });
+    }
+    fx.shake = Math.Max(fx.shake, 0.25);
+    Audio.Play(tagClip, 0.8, fx.random.NextFloat(0.94, 1.08));
+}
+
+local event(Dashed dash) ShowDash(mut Fx fx)
+{
+    for (var i = 0; i < 6; i++)
+    {
+        var way = fx.random.NextFloat2Direction() * 0.8 - dash.way * 2;
+        fx.sparks.Add(Spark { position = Up(dash.at - dash.way * 0.3, 0.12), velocity = float3(way.x, fx.random.NextFloat(0.5, 1.6), way.y), life = 0.45,
+                              size = fx.random.NextFloat(0.1, 0.2), weight = 0.3, tone = Color(0.9, 0.95, 0.8) });
+    }
+    Audio.Play(dashClip, 0.3, fx.random.NextFloat(0.9, 1.2));
+}
+
+// The bell: it rings, and paper in the winners' colors comes down over the yard.
+local event(Rang rang) ShowBell(mut Fx fx, Me me)
+{
+    for (var i = 0; i < 110; i++)
+    {
+        mut var color = fx.random.NextInt(COLORS);
+        for (var tries = 0; tries < COLORS && (rang.winners & (1 << color)) == 0; tries++)
+        {
+            color = (color + 1) % COLORS;
+        }
+        var from = float3(fx.random.NextFloat(-YARD, YARD), fx.random.NextFloat(4, 9), fx.random.NextFloat(-YARD, YARD));
+        var way = float3(fx.random.NextFloat(-1, 1), fx.random.NextFloat(-1, 0), fx.random.NextFloat(-1, 1));
+        fx.sparks.Add(Spark { position = from, velocity = way, life = fx.random.NextFloat(3, 4.5),
+                              size = fx.random.NextFloat(0.12, 0.2), weight = 0.16, paper = true, tone = Tone(color) });
+    }
+    Audio.Play(bellClip, 0.75);
+    if (me.color >= 0 && (rang.winners & (1 << me.color)) != 0) Audio.Play(winClip, 0.6);
+}
+
+// A frame starts: the meshes, the island and the targets are made, once, and
+// what the views after this one fill is emptied.
+[Stage(Layers.Camera, -1)]
+view Begin(mut Fx fx, mut Models models, mut Scenery scenery, mut Lens lens, mut Room room)
+{
+    if (!models.made) MakeModels(models);
+    if (!scenery.made) MakeScenery(scenery);
+    if (!lens.made)
+    {
+        lens.made = true;
+        lens.scene = RenderTarget.Window(samples: 4);
+        lens.half = RenderTarget.Window(0.5);
+        lens.halfB = RenderTarget.Window(0.5);
+        lens.bright = RenderTarget.Window(0.25);
+        lens.spread = RenderTarget.Window(0.25);
+        lens.soft = lens.half.color;
+        lens.glow = lens.bright.color;
+    }
+    lens.pixel = float2(1 / Screen.width, 1 / Screen.height);
+    fx.dt = Math.Min(Frame.dt, 0.05);
+    fx.beat += fx.dt * 3;
+    if (fx.beat > Math.TAU) fx.beat -= Math.TAU;
+    fx.time += fx.dt;
+    if (fx.time > 3600) fx.time -= 3600;
+    room.beat = fx.beat;
+    room.time = fx.time;
+    fx.shake = Math.Max(0, fx.shake - fx.dt);
+    fx.clock += fx.dt;
+    if (fx.clock > 8) fx.clock -= 8;
+    fx.boxes.Clear();
+    fx.balls.Clear();
+    fx.rods.Clear();
+    fx.kids.Clear();
+    fx.decks.Clear();
+    fx.spinners.Clear();
+    fx.bells.Clear();
+    fx.clouds.Clear();
+    fx.decals.Clear();
+
+    fx.birds.clip = birdsClip;
+    fx.birds.loop = true;
+    fx.birds.volume = 0.3;
+    fx.birds.playing = true;
+}
+
+// Where a ray from the camera meets the yard.
+float2 OnGround(float3 origin, float3 way)
+{
+    if (Math.Abs(way.y) < 0.00001) return float2(0);
+    var hit = origin + way * (-origin.y / way.y);
+    return float2(hit.x, hit.z);
+}
+
+// The camera, over the yard and tilted down at it, always from the same side,
+// so that up on the screen is the same way in the yard for every player. It
+// shows the whole yard, between the scores and the hints, in a window of any
+// shape, and sways a little, as someone holding it would. Then the pointer:
+// the mouse, held, and fingers steer towards where they point in the yard,
+// and the right button, a second finger and the DASH button dash.
+[Stage(Layers.Camera)]
+view Look(Devices devices, Fx fx, mut Room room, mut Layout layout, mut Pad pad, mut Me me, Lens lens, Lobby lobby)
+{
+    var screen = float2(Screen.width, Screen.height);
+    var top = 102.0;
+    var bottom = 46.0;
+    var tall = Math.Max(screen.y - top - bottom, 80);
+    layout.middle = top + tall * 0.5;
+    layout.reach = Math.Clamp(Math.Min(screen.x, screen.y) * 0.08, 22, 32);
+    layout.button = float2(screen.x - layout.reach - 8, screen.y - bottom - layout.reach - 4);
+
+    var pitch = 0.9;
+    var fov = 30.0;
+    var half = Math.Tan(Math.Radians(fov) * 0.5);
+    var span = YARD + 0.75;
+    var back = Math.Max(span / (half * screen.x / screen.y), span * Math.Sin(pitch) * 1.12 / half * (screen.y / tall));
+    // The yard's middle is between the scores and the hints, not the window's
+    var lift = (top - bottom) * 0.5 * (2 * half * back / screen.y) / Math.Sin(pitch);
+    var focus = float3(0, 0, lift + 0.4);
+    var sway = Math.Sin(fx.time * 0.23) * 0.03;
+    var from = float3(Math.Sin(sway) * -Math.Cos(pitch), Math.Sin(pitch) + Math.Sin(fx.time * 0.31) * 0.006, -Math.Cos(pitch) * Math.Cos(sway));
+    var eye = focus + from * back;
+    var turned = quaternion.LookRotation(Math.Normalize(focus - eye), float3(0, 1, 0));
+    var wobble = fx.beat * 23;
+    var jolt = float3(Math.Sin(wobble) + Math.Sin(wobble * 0.62 + 1.3) * 0.6, Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6, 0)
+             * (fx.shake * fx.shake * 0.02 * back);
+    room.eye = eye + jolt;
+    lens.scene.SetCamera(room.eye, turned, fov);
+    Audio.SetListener(float3(0, 6, -6), quaternion.identity);
+
+    me.self = default;
+    me.color = -1;
+    pad.steer = false;
+    pad.stick = float2(0);
+    if (!lobby.playing) { pad.dashHold = 0; return; }
+    mut var dash = false;
+    var mouse = devices.mouse;
+    var mouseAt = Screen.Flip(mouse.position);
+    if (mouse.left.down) pad.onButton = Math.Distance(mouseAt, layout.button) < layout.reach;
+    if (mouse.left.pressed)
+    {
+        if (pad.onButton)
+        {
+            dash = true;
+        }
+        else
+        {
+            pad.steer = true;
+            pad.target = OnGround(lens.scene.ScreenRayOrigin(mouseAt), lens.scene.ScreenRayDirection(mouseAt));
+        }
+    }
+    if (mouse.right.pressed) dash = true;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        if (pad.steer || Math.Distance(Screen.Flip(touch.startPosition), layout.button) < layout.reach * 1.4)
+        {
+            dash = true;
+            continue;
+        }
+        pad.steer = true;
+        var at = Screen.Flip(touch.position);
+        pad.target = OnGround(lens.scene.ScreenRayOrigin(at), lens.scene.ScreenRayDirection(at));
+    }
+    pad.dashHold = dash ? 0.1 : Math.Max(0, pad.dashHold - fx.dt);
+}
+
+// A kid: its body is one mesh, drawn in its color, leaning into its run, and
+// its arms, legs, hands and shoes are drawn where they've swung to. Whoever's
+// it reaches out, with red on the ground under them and a red gem over their
+// head, and one that runs through the puddle kicks water up.
+void AddKid(mut Fx fx, Kid kid, bool mine, bool it, float counted)
+{
+    var flat = kid.position;
+    var floor = Math.LengthSq(flat) < SPIN_RADIUS * SPIN_RADIUS ? DECK : 0.0;
+    var ground = Up(flat, floor + ON_FLOOR);
+    var pace = Math.Min(Math.Length(kid.velocity) / 5, 1);
+    Mark(fx, ground, 1.5, Color(0, 0, 0, 0.42), -1, 1); // The dark right under them, which the sun's shadow is too far off to be
+    if (it)
+    {
+        var pulse = 0.75 + Math.Sin(fx.beat * 3) * 0.25;
+        Mark(fx, ground, 2.6, Color(1, 0.2, 0.15, 0.55 * pulse), 0, 1);
+        if (counted < 1) Mark(fx, ground, 2.2, Color(1, 1, 1, 0.95), 0.14, 1 - counted); // Just caught: they count
+    }
+    if (mine)
+    {
+        // Your own has a ring around it, and a second one that fills up as the dash comes back
+        var filled = 1 - Math.Saturate(kid.cooldown / COOLDOWN);
+        Mark(fx, ground, 1.6, Color(1, 1, 1, 0.6), 0.12, 1);
+        if (filled < 1) Mark(fx, ground, 1.95, Color(1, 1, 1, 0.9), 0.1, filled);
+    }
+    if (pace > 0.35 && Math.Distance(flat, Puddle()) < PUDDLE_RADIUS - 0.1 && fx.random.NextFloat() < fx.dt * 26)
+    {
+        var splash = fx.random.NextFloat2Direction() * fx.random.NextFloat(0.4, 1.6);
+        fx.sparks.Add(Spark { position = Up(flat, 0.1), velocity = float3(splash.x, fx.random.NextFloat(2, 4.2), splash.y), life = 0.5,
+                              size = fx.random.NextFloat(0.06, 0.12), weight = 0.8, tone = Color(0.75, 0.9, 1) });
+    }
+    if (kid.safe > 0 && Math.Frac(kid.safe * 5) < 0.4) return; // Blinks while nobody can catch it
+
+    var way = Math.Normalize(kid.facing);
+    var front = float3(way.x, 0, way.y);
+    var right = float3(way.y, 0, -way.x);
+    var up = float3(0, 1, 0);
+    var big = KID;
+    var dashing = Math.Saturate(kid.burst / 0.25);
+    var upright = quaternion.LookRotation(front, up);
+    var lean = quaternion.LookRotation(Math.Normalize(front + up * (-0.5 * dashing - 0.12 * pace)), up); // Into its run
+    var phase = (flat.x + flat.y) * 5;
+    var stride = Math.Sin(phase) * pace * 0.24;
+    var foot = Up(flat, floor);
+    var root = foot + up * (Math.Abs(Math.Sin(phase)) * 0.1 * pace * big);
+    var tone = Tone(kid.color);
+    var skin = Color(0.99, 0.81, 0.66);
+    var dark = Color(0.17, 0.16, 0.22);
+    fx.kids.Add(Piece(root, lean, float3(big), tone, 0));
+
+    // Its legs, from its hips to its shoes, which step in turn
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var step = stride * side;
+        var shoe = foot + (right * (0.15 * side) + front * (step + 0.03) + up * (0.085 + Math.Max(step, 0) * 0.4)) * big;
+        var hip = root + Math.Mul(lean, float3(0.13 * side, 0.24, 0)) * big;
+        fx.balls.Add(Piece(shoe, upright, float3(0.12, 0.085, 0.19) * big, dark, 0.5));
+        fx.rods.Add(Rod(hip, shoe + up * (0.04 * big), 0.07 * big, skin, 0.3));
+    }
+    // Its arms, from its shoulders to its hands: out in front of whoever's it, and swinging otherwise
+    var reaching = it && counted >= 1;
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var shoulder = root + Math.Mul(lean, float3(0.27 * side, 0.63, 0.02)) * big;
+        var swung = reaching ? float3(0.2 * side, 0.6, 0.48) : float3(0.38 * side, 0.36, -stride * side * 0.9);
+        var hand = root + Math.Mul(lean, swung) * big;
+        fx.rods.Add(Rod(shoulder, hand, 0.062 * big, tone, 0.35));
+        fx.balls.Add(Piece(hand, upright, float3(0.085 * big), skin, 0.3));
+    }
+    if (!it) return;
+    var head = root + Math.Mul(lean, float3(0, 1.03, 0)) * big;
+    var gem = Piece(head + up * (0.72 + Math.Sin(fx.beat * 2) * 0.06), quaternion.Euler(float3(0.62, fx.beat * 2, 0.79)), float3(0.26),
+                    Color(1, 0.25, 0.2), 0.8);
+    fx.boxes.Add(Solid { transform = gem.transform, tint = gem.tint, gloss = gem.gloss, glow = 0.7 });
+}
+
+[Stage(Layers.Gather)]
+view Others(Kid kid, Recess recess, Time time, mut Fx fx, without ownership)
+{
+    var it = this == recess.it;
+    AddKid(fx, kid, false, it, it ? (time.tick - recess.since) * time.dt / COUNT : 1);
+}
+
+[Stage(Layers.Gather)]
+view Mine(Kid kid, Recess recess, Time time, mut Fx fx, mut Me me, mut Pad pad, with ownership)
+{
+    me.self = this;
+    me.color = kid.color;
+    var it = this == recess.it;
+    AddKid(fx, kid, true, it, it ? (time.tick - recess.since) * time.dt / COUNT : 1);
+    var wet = Math.Distance(kid.position, Puddle()) < PUDDLE_RADIUS - 0.1;
+    if (wet && !fx.wasWet) Audio.Play(splashClip, 0.55);
+    fx.wasWet = wet;
+    if (!pad.steer) return;
+    var way = pad.target - kid.position;
+    var far = Math.Length(way);
+    if (far > 0.15) pad.stick = way / far * Math.Min(1, far / 0.8);
+}
+
+// What moves by itself: the roundabout turns with the match's clock, as
+// whoever's on it does, the swings swing, the bell rings while a round is
+// cheered, and clouds go by behind the island.
+[Stage(Layers.Gather)]
+view Turning(Time time, Recess recess, mut Fx fx)
+{
+    var up = float3(0, 1, 0);
+    var steel = Color(0.72, 0.75, 0.8);
+    var turn = time.tick * time.dt * SPIN;
+    var facing = quaternion.LookRotation(float3(Math.Cos(turn), 0, Math.Sin(turn)), up);
+    fx.decks.Add(Piece(float3(0, DECK * 0.5, 0), facing, float3(SPIN_RADIUS, DECK, SPIN_RADIUS), Color(0.34, 0.36, 0.42), 0.5));
+    fx.spinners.Add(Piece(float3(0), facing, float3(1), Color.white, 0));
+
+    // The swings: two chains and a seat each, from the frame's bar
+    for (var i = 0; i < 2; i++)
+    {
+        var swung = Math.Sin(fx.time * 1.9 + i * 2.1) * (0.34 - i * 0.1);
+        var pivot = float3(8.9, 2.3, i == 0 ? 0.68 : -0.68);
+        var down = float3(Math.Sin(swung), -Math.Cos(swung), 0);
+        var seat = pivot + down * 1.62;
+        fx.rods.Add(Rod(pivot + float3(0, 0, 0.24), seat + float3(0, 0, 0.24), 0.014, steel, 1.2));
+        fx.rods.Add(Rod(pivot - float3(0, 0, 0.24), seat - float3(0, 0, 0.24), 0.014, steel, 1.2));
+        fx.boxes.Add(Piece(seat, quaternion.AxisAngle(float3(0, 0, 1), swung), float3(0.26, 0.05, 0.6), i == 0 ? Color(0.22, 0.47, 0.9) : Color(0.98, 0.78, 0.2), 0.6));
+    }
+
+    // The bell, in the school's tower
+    var swing = recess.cheering ? Math.Sin(fx.beat * 6) * 0.45 : Math.Sin(fx.time * 0.9) * 0.03;
+    fx.bells.Add(Piece(float3(2.4, 4.64, 8.9), quaternion.AxisAngle(float3(0, 0, 1), swing), float3(1), Color.white, 0));
+
+    // Clouds, behind the island and to its sides, going round it slowly
+    for (var i = 0; i < 7; i++)
+    {
+        var around = 0.5 + i * 0.36 + fx.time * 0.004 + Math.Sin(i * 1.7) * 0.1;
+        var far = 15.5 + Math.Frac(i * 0.37) * 5;
+        var at = float3(Math.Cos(around) * far, -2.2 + Math.Frac(i * 0.61) * 3.4, Math.Sin(around) * far);
+        var big = 1.1 + Math.Frac(i * 0.83) * 0.9;
+        fx.clouds.Add(Solid { transform = float4x4.TRS(at, quaternion.AxisAngle(up, i * 1.3), float3(big)), kind = CLOUD });
+    }
+}
+
+// The bell's paper: each piece falls, tumbling, and lies where it lands. It's
+// lit like everything else, so it has a shadow.
+[Stage(Layers.Gather)]
+view Paper(mut Fx fx)
+{
+    mut var i = 0;
+    while (i < fx.sparks.count)
+    {
+        mut var spark = fx.sparks[i];
+        if (!spark.paper)
+        {
+            i++;
+            continue;
+        }
+        spark.age += fx.dt;
+        if (spark.age >= spark.life)
+        {
+            fx.sparks.RemoveAt(i);
+            continue;
+        }
+        if (spark.position.y > 0.03)
+        {
+            spark.velocity.y -= 18 * spark.weight * fx.dt;
+            spark.velocity.x += Math.Sin(spark.age * 5 + spark.size * 60) * fx.dt * 2;
+            spark.position += spark.velocity * fx.dt;
+        }
+        fx.sparks[i] = spark;
+        var left = Math.Saturate((spark.life - spark.age) * 2);
+        var lying = spark.position.y <= 0.03;
+        var tumble = lying ? quaternion.identity : quaternion.Euler(float3(spark.age * 7, spark.age * 5 + spark.size * 40, spark.age * 3));
+        fx.boxes.Add(Piece(float3(spark.position.x, Math.Max(spark.position.y, 0.02), spark.position.z), tumble,
+                           float3(spark.size, 0.015, spark.size * 0.7) * left, spark.tone, 0.3));
+        i++;
+    }
+}
+
+// The sun's image: everything that casts a shadow, drawn through a camera
+// where the sun is, into a target that keeps how far the sun sees along each
+// of its pixels, and nothing else.
+[Stage(Layers.Lamp)]
+view Cast(Fx fx, Scenery scenery, Models models, mut Shadow shadow)
+{
+    if (!shadow.made)
+    {
+        shadow.made = true;
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
+        shadow.depth = shadow.map.depth;
+    }
+    // The sun looks along its light from far off, and sees a box with no perspective
+    var turned = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));
+    var lamp = float4x4.TRS(Math.Mul(turned, float3(0, 1.5, -LAMP_AWAY)), turned, float3(1));
+    var sees = float4x4.Ortho(LAMP_SPAN, LAMP_SPAN, 0, LAMP_FAR);
+    shadow.map.Clear(Color.white);
+    shadow.map.SetCamera(lamp, sees);
+    shadow.toLamp = shadow.map.WorldToClip();
+    shadow.map.Mesh(scenery.mesh, scenery.faces, float4x4.identity);
+    shadow.map.Instanced(models.kid, models.kidFaces, fx.kids);
+    shadow.map.Instanced(models.cube, models.cubeFaces, fx.boxes);
+    shadow.map.Instanced(models.ball, models.ballFaces, fx.balls);
+    shadow.map.Instanced(models.rod, models.rodFaces, fx.rods);
+    shadow.map.Instanced(models.roll, models.rollFaces, fx.decks);
+    shadow.map.Instanced(models.spinner, models.spinnerFaces, fx.spinners);
+    shadow.map.Instanced(models.bell, models.bellFaces, fx.bells);
+}
+
+// The frame starts here: the sky, the clouds, and the island.
+[Stage(Layers.Scene)]
+view Sky(Fx fx, Models models, Scenery scenery, Lens lens)
+{
+    var screen = float2(Screen.width, Screen.height);
+    lens.scene.Clear(Color(0.45, 0.7, 0.94));
+    lens.scene.Screen()
+    {
+        lens.scene.Shape(Shape { center = screen * 0.5, size = screen, color = Color(0.33, 0.6, 0.92), color2 = Color(0.68, 0.85, 0.97) });
+        // The sun's haze, up and to the left, where the light comes from
+        lens.scene.Shape(Shape { center = float2(screen.x * 0.16, screen.y * 0.1), size = float2(screen.y * 1.5), ellipse = true,
+                                 color = Color(1, 0.95, 0.8, 0.3), soft = screen.y * 0.7 });
+    }
+    lens.scene.Instanced(models.cloud, models.cloudFaces, fx.clouds, Plain);
+    lens.scene.Mesh(scenery.land, scenery.landFaces, float4x4.identity, GroundLook);
+}
+
+// Everything on the island: what stands still is one draw, each mesh of what
+// moves is another, and so is the grass.
+[Stage(Layers.Pieces)]
+view Pieces(Fx fx, Models models, Scenery scenery, Lens lens)
+{
+    lens.scene.Mesh(scenery.mesh, scenery.faces, float4x4.identity, Baked);
+    lens.scene.Instanced(models.kid, models.kidFaces, fx.kids, Plain);
+    lens.scene.Instanced(models.cube, models.cubeFaces, fx.boxes, Plain);
+    lens.scene.Instanced(models.ball, models.ballFaces, fx.balls, Plain);
+    lens.scene.Instanced(models.rod, models.rodFaces, fx.rods, Plain);
+    lens.scene.Instanced(models.spinner, models.spinnerFaces, fx.spinners, Plain);
+    lens.scene.Instanced(models.bell, models.bellFaces, fx.bells, Plain);
+    lens.scene.Instanced(models.roll, models.rollFaces, fx.decks, DeckLook);
+    lens.scene.Cull(Cull.None)
+    {
+        lens.scene.Instanced(models.blade, models.bladeFaces, scenery.grass, Sway, BladeLook);
+    }
+}
+
+// What's flat on the ground, over it. It reads depth and writes none: what's
+// in front hides it, and it hides nothing.
+[Stage(Layers.Marks)]
+view Marks(Fx fx, Models models, Lens lens)
+{
+    lens.scene.Depth(Depth.Read)
+    {
+        lens.scene.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
+    }
+}
+
+// The sparks, each a small cube that glows: they fly, fall and fade. All of
+// them are one draw, added to what's behind them.
+[Stage(Layers.Air)]
+view Glow(mut Fx fx, Models models, Lens lens)
+{
+    fx.motes.Clear();
+    mut var i = 0;
+    while (i < fx.sparks.count)
+    {
+        mut var spark = fx.sparks[i];
+        if (spark.paper)
+        {
+            i++;
+            continue;
+        }
+        spark.age += fx.dt;
+        if (spark.age >= spark.life)
+        {
+            fx.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.velocity.y -= 18 * spark.weight * fx.dt;
+        spark.velocity = spark.velocity * Math.Max(0, 1 - 2 * fx.dt);
+        spark.position += spark.velocity * fx.dt;
+        if (spark.position.y < 0.05 && spark.velocity.y < 0)
+        {
+            spark.position.y = 0.05;
+            spark.velocity = float3(spark.velocity.x * 0.6, -spark.velocity.y * 0.4, spark.velocity.z * 0.6);
+        }
+        fx.sparks[i] = spark;
+        var left = 1 - spark.age / spark.life;
+        fx.motes.Add(Mote { transform = float4x4.TRS(spark.position, quaternion.identity, float3(spark.size * (0.4 + 0.6 * left))),
+                            tint = Color(spark.tone.r, spark.tone.g, spark.tone.b, Math.Min(left * 1.6, 1)) });
+        i++;
+    }
+    lens.scene.Blend(Blend.Add),
+    lens.scene.Depth(Depth.Read),
+    lens.scene.Cull(Cull.None)
+    {
+        lens.scene.Instanced(models.cube, models.cubeFaces, fx.motes, MoteLook);
+    }
+}
+
+// The frame, to the window. It's halved and blurred for what's out of focus,
+// its bright parts are blurred again at a quarter of the size for the glow
+// around them, and one frag puts the three together.
+[Stage(Layers.Show)]
+view Show(Lens lens)
+{
+    Draw.Blit(lens.scene.color, lens.halfB, Halve);
+    Draw.Blit(lens.halfB.color, lens.half, Blur, BlurStep { along = float2(lens.pixel.x * 2, 0) });
+    Draw.Blit(lens.half.color, lens.halfB, Blur, BlurStep { along = float2(0, lens.pixel.y * 2) });
+    Draw.Blit(lens.halfB.color, lens.spread, Brights);
+    Draw.Blit(lens.spread.color, lens.bright, Blur, BlurStep { along = float2(lens.pixel.x * 4, 0) });
+    Draw.Blit(lens.bright.color, lens.spread, Blur, BlurStep { along = float2(0, lens.pixel.y * 4) });
+    Draw.Blit(lens.spread.color, lens.bright, Blur, BlurStep { along = float2(lens.pixel.x * 8, 0) });
+    Draw.Blit(lens.halfB.color, lens.half, Blur, BlurStep { along = float2(lens.pixel.x * 3, lens.pixel.y * 3) });
+    Draw.Blit(lens.scene.color, Draw.window, Finish);
+}
+
+// Who's it, and which kid is this machine's, over everything: the tree hides
+// neither.
+[Stage(Layers.Hud)]
+view Tags(Kid kid, Recess recess, Me me, Lens lens)
+{
+    Draw.SetScreen();
+    var it = this == recess.it;
+    var mine = this == me.self;
+    if (!it && !mine) return;
+    var floor = Math.LengthSq(kid.position) < SPIN_RADIUS * SPIN_RADIUS ? DECK : 0.0;
+    var place = lens.scene.WorldToScreen(Up(kid.position, floor + (it ? 2.55 : 1.95)));
+    var at = float2(place.x, place.y);
+    var label = it ? (mine ? "YOU'RE IT" : "IT") : "YOU";
+    Draw.Text(label, at + float2(1, 1.5), 13, Color(0, 0, 0, 0.55), Anchor.LowerCenter, Font.Bold);
+    Draw.Text(label, at, 13, it ? Color(1, 0.42, 0.36) : Color.white, Anchor.LowerCenter, Font.Bold);
+}
+
+[Stage(Layers.Hud, 1)]
+view Hud(Recess recess, Time time, Me me, Layout layout, mut Fx fx, Lens lens, query (Kid kid) all)
+{
+    Draw.SetScreen();
+    var center = Screen.width * 0.5;
+    var middle = float2(center, layout.middle);
+    var quiet = Color(0.86, 0.9, 0.95);
+    var ink = Color(0.1, 0.13, 0.2);
+    var gold = Color(0.98, 0.78, 0.2);
+    var red = Color(1, 0.42, 0.36);
+
+    // What was said over the yard: "TAG!", where it happened
+    mut var p = 0;
+    while (p < fx.popups.count)
+    {
+        mut var popup = fx.popups[p];
+        popup.age += fx.dt;
+        if (popup.age >= 1.1)
+        {
+            fx.popups.RemoveAt(p);
+            continue;
+        }
+        popup.position.y += fx.dt * 1.2;
+        fx.popups[p] = popup;
+        var place = lens.scene.WorldToScreen(popup.position);
+        var shown = Math.Saturate((1.1 - popup.age) * 3);
+        var size = 26 * (0.75 + Math.Saturate(popup.age * 8) * 0.25);
+        Draw.Text(popup.text, float2(place.x + 1.5, place.y + 2), size, Color(0, 0, 0, 0.6 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(popup.text, float2(place.x, place.y), size, Color(popup.tone.r, popup.tone.g, popup.tone.b, shown), Anchor.MiddleCenter, Font.Bold);
+        p++;
+    }
+
+    // The scores' board, and over it the clock: a bar that runs down to the bell.
+    mut var count = 0;
+    mut var players = 0;
+    mut var least = 100000.0;
+    mut var itColor = -1;
+    foreach (var row in all)
+    {
+        count += 1;
+        if (!row.kid.bot) players += 1;
+        least = Math.Min(least, row.kid.itTime);
+        if (row.entity == recess.it) itColor = row.kid.color;
+    }
+    var slot = Math.Min(72, (Screen.width - 12) / Math.Max(count, 1));
+    var ticks = recess.cheering ? 0 : Math.Max(0, recess.ends - time.tick);
+    var left = ticks * 1.0 / (time.tickRate * ROUND);
+    var seconds = (ticks + time.tickRate - 1) / time.tickRate;
+    var wide = Math.Min(170, Screen.width - 210);
+    var hurry = !recess.cheering && seconds <= 10;
+    Draw.RoundRect(float2(center, 74), float2(Math.Max(slot * count + 16, wide + 16), 62), 14, Color(ink.r, ink.g, ink.b, 0.72));
+    Draw.RoundRect(float2(center, 26), float2(wide, 22), 11, Color(ink.r, ink.g, ink.b, 0.72));
+    if (left > 0.02)
+    {
+        Draw.RoundRect(float2(center - (wide - 6) * (1 - left) * 0.5, 26), float2((wide - 6) * left, 16), 8,
+                       hurry ? red : Color(0.38, 0.72, 0.36));
+    }
+    Draw.Text($"{seconds}", float2(center, 26), 15, Color.white, Anchor.MiddleCenter, Font.Bold);
+
+    // A chip for each kid: its color, its seconds as it, and the rounds it took.
+    mut var x = (Screen.width - slot * count) * 0.5;
+    foreach (var row in all)
+    {
+        var mid = x + slot * 0.5;
+        var dot = float2(mid - 12, 65);
+        var it = row.entity == recess.it;
+        var whole = int(row.kid.itTime);
+        if (row.kid.itTime <= least + 0.05) Draw.Circle(dot, 13, gold);
+        Draw.Circle(dot, 10.5, ink);
+        Draw.Circle(dot, 8.5, Tone(row.kid.color));
+        Draw.Text($"{whole}s", float2(mid + 3, 65), 18, it ? red : Color.white, Anchor.MiddleLeft, Font.Bold);
+        if (it) Draw.Text("IT", float2(mid, 79), 10, red, Anchor.UpperCenter, Font.Bold);
+        else if (row.entity == me.self) Draw.Text("YOU", float2(mid, 79), 10, Color.white, Anchor.UpperCenter, Font.Bold);
+        else if (row.kid.bot) Draw.Text("bot", float2(mid, 79), 10, quiet, Anchor.UpperCenter);
+        var pips = Math.Min(row.kid.wins, 5);
+        for (var i = 0; i < pips; i++)
+        {
+            Draw.Circle(float2(mid - (pips - 1) * 3.5 + i * 7, 96), 2.4, gold);
+        }
+        x += slot;
+    }
+
+    // A round starts with a call, and being caught is said out loud.
+    var mineIt = me.self != default && me.self == recess.it;
+    if (fx.round != recess.round)
+    {
+        fx.round = recess.round;
+        fx.call = 1.3;
+    }
+    if (mineIt && !fx.wasIt)
+    {
+        fx.alarm = 1.4;
+        Audio.Play(itClip, 0.6);
+    }
+    fx.wasIt = mineIt;
+    fx.call = Math.Max(0, fx.call - fx.dt);
+    fx.alarm = Math.Max(0, fx.alarm - fx.dt);
+    if (fx.alarm > 0 || fx.call > 0)
+    {
+        var word = fx.alarm > 0 ? "YOU'RE IT!" : "RUN!";
+        var showing = fx.alarm > 0 ? fx.alarm : fx.call;
+        var shown = Math.Saturate(showing * 2.5);
+        var size = Math.Min(44, Screen.width * 0.11) * (1.25 - Math.Saturate(showing - 0.9));
+        var at = middle - float2(0, layout.middle * 0.3);
+        Draw.Text(word, at + float2(2, 3), size, Color(0, 0, 0, 0.5 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(word, at, size, fx.alarm > 0 ? Color(1, 0.42, 0.36, shown) : Color(1, 1, 1, shown), Anchor.MiddleCenter, Font.Bold);
+    }
+
+    // What's going on, and how to play, which a narrow window gets in smaller letters.
+    var under = Screen.height - 40;
+    var letters = Math.Min(1, Screen.width / 370);
+    Draw.RoundRect(float2(center, under + 16), float2(Math.Min(Screen.width - 8, 420 * letters), 42), 12, Color(ink.r, ink.g, ink.b, 0.72));
+    if (recess.cheering)
+    {
+        Draw.Text("Whoever was it the least takes the round", float2(center, under), 12.5 * letters, Color.white, Anchor.UpperCenter);
+    }
+    else if (players < 2 && fx.clock > 5)
+    {
+        Draw.Text("Bots fill in until friends join your room", float2(center, under), 12.5 * letters, Color.white, Anchor.UpperCenter);
+    }
+    else if (mineIt)
+    {
+        Draw.Text("You're it! Touch someone to pass it on", float2(center, under), 12.5 * letters, red, Anchor.UpperCenter, Font.Bold);
+    }
+    else if (itColor >= 0)
+    {
+        Draw.Text($"{ColorName(itColor)} is it. Whoever's it the least by the bell wins!", float2(center, under), 12.5 * letters,
+                  Color.white, Anchor.UpperCenter);
+    }
+    Draw.Text("Move: WASD, arrows or press and hold. Dash: Space or the button",
+              float2(center, under + 18), 11.5 * letters, quiet, Anchor.UpperCenter);
+
+    if (!recess.cheering) return;
+    mut var took = 0;
+    mut var first = -1;
+    for (var i = 0; i < COLORS; i++)
+    {
+        if ((recess.winners & (1 << i)) == 0) continue;
+        took += 1;
+        if (first < 0) first = i;
+    }
+    var mineWon = me.color >= 0 && (recess.winners & (1 << me.color)) != 0;
+    var word = mineWon ? "YOU WIN!" : (took == 1 ? $"{ColorName(first)} WINS!" : "A DRAW!");
+    var tone = mineWon ? Tone(me.color) : (took == 1 ? Tone(first) : Color.white);
+    var big = Math.Min(44, Screen.width * 0.098);
+    var box = Draw.MeasureText(word, big, Font.Bold);
+    Draw.RoundRect(middle + float2(0, 8), box + float2(32, 48), 16, Color(ink.r, ink.g, ink.b, 0.88));
+    Draw.Text(word, middle, big, tone, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text("The bell! Next round in a moment", middle + float2(0, box.y * 0.5 + 12), 13, Color.white, Anchor.MiddleCenter);
+}
+
+// The DASH button fills up again as the dash comes back.
+[Stage(Layers.Hud, 2)]
+view Button(Kid kid, Layout layout, with ownership)
+{
+    Draw.SetScreen();
+    var ready = kid.cooldown <= 0;
+    var filled = 1 - Math.Saturate(kid.cooldown / COOLDOWN);
+    Draw.Circle(layout.button, layout.reach, Color(0.1, 0.13, 0.2, 0.72));
+    Draw.Circle(layout.button, layout.reach - 4, ready ? Tone(kid.color) : Color(0.3, 0.33, 0.4));
+    Draw.Arc(layout.button, layout.reach, -Math.PI * 0.5, Math.TAU * filled, 4, Color.white);
+    Draw.Text("DASH", layout.button, layout.reach * 0.43, ready ? Color(0.1, 0.08, 0.08) : Color(0.7, 0.72, 0.78),
+              Anchor.MiddleCenter, Font.Bold);
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
+}

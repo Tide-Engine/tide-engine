@@ -27,7 +27,7 @@ view Options(Devices devices, mut Settings settings)
 }
 ```
 
-The GUI is local: widgets change this machine's state, never the match. To act on the match, put it in the [input](./input.md).
+The GUI is local: widgets change this machine's state, never the match. To act on the match, put continuous controls in the [input](./input.md), or send a [command](./commands.md) for a button's action.
 
 ## Widgets change what you pass them
 
@@ -114,7 +114,7 @@ view Join(mut Lobby lobby)
 }
 ```
 
-- **What the field returns is as ever:** whether it changed its value. A number field keeps its number as it's entered, so it can change and be entered in the same frame.
+- **What the field returns is as ever:** whether it changed its value. A number field keeps its number as it's entered, so it can change and be entered in the same frame. Opening and closing it without typing leaves its value unchanged; editing a float, a vector or a color keeps its full float precision.
 - **It's true for one frame, and false in every other:** while the player types, when Enter starts the typing in a field that already has the focus, and when the typing ends another way, with Escape, with Tab, with a click elsewhere, or because the field was disabled.
 - **The numpad's Enter is Enter,** and so is the one on a phone's keyboard, whatever it's labelled. A gamepad's south button enters a number field, as it ends its typing; it doesn't end a text field's.
 - **The button comes first** in `GUILayout.Button("Join") || entered`. A widget is called every frame, so it can't be on the right of `||`, which only runs when the left is false.
@@ -134,7 +134,7 @@ Positions and sizes are in pixels, as on a web page, so widgets keep their size 
 
 ## Modals
 
-While a modal is up, it has the focus, the widgets outside it don't work, and the game and views get nothing from the devices. Back (Escape or the gamepad's east button) closes it. The modal drawn last is on top. A [locked cursor](./views.md#looking-around) comes back while one is up, since its widgets need the pointer.
+While a modal is up, it has the focus, the widgets outside it don't work, and the game and views get nothing from the devices. Back (Escape or the gamepad's east button) closes it. The modal drawn last is on top. A [locked cursor](./cameras.md#looking-around) comes back while one is up, since its widgets need the pointer.
 
 The buttons below sit side by side in a `Horizontal`, while the labels stack in a `Vertical`. Open the modal and try choosing a color outside it: the choice count stays still until the modal closes. Its toggle can still change the guide around the shape.
 

@@ -1,0 +1,3 @@
+// expect: unknown type 'void'
+struct Slot { void? item; }
+scene Main { }

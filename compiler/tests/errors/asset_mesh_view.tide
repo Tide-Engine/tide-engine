@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/meshes/bad/view.gltf' has a buffer view that runs past its buffer's end
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> tree = "../e2e/assets/meshes/bad/view.gltf";
+
+scene Main
+{
+}

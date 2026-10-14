@@ -1,0 +1,148 @@
+Animation LookupClip(AnimationCatalog clips, string name) { clips.TryGetByName(name, out var result); return result; }
+Animation ClipAt(AnimationCatalog clips, int index) { clips.TryGetAt(index, out var result); return result; }
+
+// Checked imported catalogs, ordinary playback values, persistent poses,
+// contracts across helpers and collections, and explicit runtime decoding.
+struct Locomotion
+{
+    [Name("Move")] Animation walk;
+    Animation squash;
+    [Name("Arm")] Bone hand;
+}
+
+struct WrongRig { Animation idle; }
+
+asset SkinnedMesh<Vertex3> hero = "skinned/models/a.gltf";
+asset SkinnedMesh<Vertex3, Locomotion> rig = "skinned/models/a.gltf";
+asset List<SkinnedMesh<Vertex3, Locomotion>> models = "skinned/models/*.gltf";
+asset Map<string, SkinnedMesh<Vertex3, Locomotion>> modelsByName = "skinned/models/*.gltf";
+asset List<byte> packedModel = "skinned/model.glb";
+
+singleton Probe
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    SkinnedMesh<Vertex3> model;
+    SkinnedMesh<Vertex3, Locomotion> contracted;
+    Animation clip;
+    Bone hand;
+    Pose pose;
+    Pose original;
+    float clock;
+    float position;
+    int ticks;
+    int order;
+}
+
+scene Main { }
+
+void Expect(mut Probe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+
+Animation DynamicClip(SkinnedMesh<Vertex3> model)
+{
+    return LookupClip(model.animations, "Move");
+}
+
+Animation ContractClip(SkinnedMesh<Vertex3, Locomotion> model)
+{
+    return model.animations.walk;
+}
+
+SkinnedMesh<Vertex3> Erase(SkinnedMesh<Vertex3> model) { return model; }
+bool Same3(float3 a, float3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+float StampSeconds(mut Probe p) { p.order = p.order * 10 + 1; return 0.5; }
+Animation StampClip(mut Probe p) { p.order = p.order * 10 + 2; return hero.animations.move; }
+Playback StampPlayback(mut Probe p) { p.order = p.order * 10 + 3; return Playback.Clamp; }
+Pose StampPose(mut Probe p) { p.order = p.order * 10 + 4; return hero.animations.move.Sample(1); }
+
+system CheckAndAnimate(mut Probe p)
+{
+    if (p.ticks == 0)
+    {
+        var known = hero;
+        Expect(p, known.animations.move.name == "Move");
+        Expect(p, known.animations.squash.name == "Squash");
+        Expect(p, hero.animations.count == 2 && hero.skeleton.bones.count == 3);
+        Expect(p, hero.animations.move.duration == 1);
+        Expect(p, ClipAt(hero.animations, 0).name == "Move" && ClipAt(hero.animations, 1).name == "Squash");
+        Expect(p, !hero.animations.TryGetAt(-1, out _) && !hero.animations.TryGetAt(2, out _));
+        Expect(p, LookupClip(hero.animations, "Move").name == "Move" && !hero.animations.TryGetByName("move", out _));
+        Expect(p, hero.skeleton.TryGetByName("Arm", out _) && !hero.skeleton.bones.TryGetByName("arm", out _));
+        Expect(p, !hero.skeleton.bones.TryGetAt(-1, out _) && !hero.skeleton.bones.TryGetAt(3, out _));
+        Expect(p, ContractClip(rig).name == "Move" && rig.animations.squash.name == "Squash");
+        Expect(p, DynamicClip(hero).name == "Move" && DynamicClip(rig).name == "Move");
+        var erased = Erase(hero);
+        Expect(p, LookupClip(erased.animations, "Squash").name == "Squash");
+        SkinnedMesh<Vertex3, Locomotion> promised = hero;
+        Expect(p, promised.animations.walk.name == "Move");
+        Expect(p, models.count == 2 && ContractClip(models[0]).name == "Move");
+        Expect(p, modelsByName.count == 2 && modelsByName.Has("skinned/models/a.gltf"));
+        Expect(p, ContractClip(modelsByName["skinned/models/b.gltf"]).name == "Move");
+
+        var hand = hero.skeleton.bones.arm;
+        mut var pose = hero.skeleton.RestPose();
+        Expect(p, Same3(pose[hand].position, float3(0)));
+        Expect(p, Math.Dot(pose[hand].rotation, quaternion.identity) == 1 && Same3(pose[hand].scale, float3(1)));
+        pose.Sample(hero.animations.move, 0.5);
+        Expect(p, pose[hand].position.x == -12);
+        pose.Sample(animation: hero.animations.move, playback: Playback.Loop, seconds: -0.25);
+        Expect(p, pose[hand].position.x == -18);
+        var clamped = hero.animations.move.Sample(-5);
+        Expect(p, clamped[hand].position.x == 0);
+        var end = hero.animations.move.Sample(5, Playback.Clamp);
+        Expect(p, end[hand].position.x == -24);
+        var looping = hero.animations.move.Sample(1, Playback.Loop);
+        Expect(p, looping[hand].position.x == 0);
+        pose.Sample(hero.animations.squash, 1);
+        Expect(p, pose[hand].position.x == 0 && pose[hand].scale.x == 2);
+        pose.Sample(hero.animations.move, 0);
+        pose.Blend(end, 0.5);
+        Expect(p, pose[hand].position.x == -12 && pose[hand].scale.x == 1);
+        var untouched = pose;
+        pose[hand].position.x = -7;
+        pose[hand].position.y += 2;
+        Expect(p, Same3(pose[hand].position, float3(-7, 2, 0)) && untouched[hand].position.x == -12);
+        Expect(p, Same3(Math.Transform(pose.Model(hand), float3(0)), float3(-7, 2, 0)));
+        pose[hand].position.xz = float2(-8, 4);
+        Expect(p, Same3(pose[hand].position, float3(-8, 2, 4)));
+        pose[hand] = BoneTransform { position = float3(-9, 2, 3) };
+        Expect(p, Same3(pose[hand].position, float3(-9, 2, 3)) && Same3(pose[hand].scale, float3(1)));
+        Bone missing = default;
+        Expect(p, Same3(pose[missing].position, float3(0)) && Same3(Math.Transform(pose.Model(missing), float3(0)), float3(0)));
+
+        p.order = 0;
+        pose.Sample(seconds: StampSeconds(p), playback: StampPlayback(p), animation: StampClip(p));
+        Expect(p, p.order == 132 && pose[hand].position.x == -12);
+        p.order = 0;
+        var ordered = StampClip(p).Sample(playback: StampPlayback(p), seconds: StampSeconds(p));
+        Expect(p, p.order == 231 && ordered[hand].position.x == -12);
+        p.order = 0;
+        pose.Blend(weight: StampSeconds(p), other: StampPose(p));
+        Expect(p, p.order == 14 && pose[hand].position.x == -18);
+
+        var decoded = SkinnedMesh<Vertex3, Locomotion>.Decode(packedModel)!;
+        Expect(p, decoded.vertices.count == 4 && decoded.indices.count == 6);
+        Expect(p, decoded.animations.walk.name == "Move" && decoded.animations.squash.name == "Squash");
+        var decodedPose = decoded.animations.walk.Sample(0.5);
+        Expect(p, decodedPose[decoded.skeleton.bones.hand].position.x == -12);
+        Expect(p, SkinnedMesh<Vertex3, WrongRig>.Decode(packedModel) is IOError.InvalidData);
+        Expect(p, SkinnedMesh<Vertex3>.Decode([byte(1), byte(2), byte(3)]) is IOError.InvalidData);
+
+        p.model = decoded;
+        p.contracted = rig;
+        p.clip = decoded.animations.walk;
+        p.hand = decoded.skeleton.bones.hand;
+        p.pose = decoded.skeleton.RestPose();
+        p.original = p.pose;
+    }
+    p.clock += 0.25;
+    p.pose.Sample(p.clip, p.clock, Playback.Loop);
+    p.position = p.pose[p.hand].position.x;
+    p.ticks++;
+}

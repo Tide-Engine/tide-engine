@@ -59,6 +59,21 @@ void arena_reset(void)
     }
 }
 
+arena_mark arena_checkpoint(void)
+{
+    return (arena_mark){arena_head, arena_head ? arena_head->used : 0};
+}
+
+void arena_rewind(const arena_mark mark)
+{
+    while (arena_head != mark.block) {
+        arena_block *next = arena_head->next;
+        free(arena_head);
+        arena_head = next;
+    }
+    if (arena_head) arena_head->used = mark.used;
+}
+
 void *vec_grow(void *items, const size_t old_cap, const size_t new_cap, const size_t elem_size)
 {
     void *p = arena_alloc(new_cap * elem_size);
@@ -226,7 +241,7 @@ static void to_sink(const diag_severity severity, const loc at, const char *fmt,
 // Whether diagnostics are colored: stderr is a terminal that takes escape
 // sequences, and NO_COLOR isn't set (no-color.org). Never for a file or a
 // pipe, so what tools and tests read is plain text.
-static bool colored(void)
+bool diag_colored(void)
 {
     static int enabled = -1;
     if (enabled >= 0) return enabled;
@@ -254,7 +269,7 @@ static bool colored(void)
 
 static const char *paint(const char *color)
 {
-    return colored() ? color : "";
+    return diag_colored() ? color : "";
 }
 
 // An error's red, a warning's yellow.
@@ -343,6 +358,15 @@ void diag_warning(const loc at, const char *fmt, ...)
     va_start(args, fmt);
     if (sink) to_sink(DIAG_WARNING, at, fmt, args);
     else report(at, "warning", fmt, args);
+    va_end(args);
+}
+
+void diag_info(const loc at, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    if (sink) to_sink(DIAG_INFO, at, fmt, args);
+    else report(at, "info", fmt, args);
     va_end(args);
 }
 

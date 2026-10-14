@@ -1,0 +1,520 @@
+{
+  "state": "passed",
+  "revision": "969e1406bbcee1e9c8c64fd0812d418b1bb42967",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-11T10:22:41.9601736Z",
+  "runs": [
+    {
+      "exitCode": 0,
+      "name": "versus_particles",
+      "round": 1,
+      "wallSeconds": 0.5792745,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_wide",
+      "round": 1,
+      "wallSeconds": 0.8420366,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_sand",
+      "round": 1,
+      "wallSeconds": 0.7575942,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_life",
+      "round": 1,
+      "wallSeconds": 0.1856,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_churn",
+      "round": 1,
+      "wallSeconds": 0.623051,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_events",
+      "round": 1,
+      "wallSeconds": 0.5079544,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "round": 1,
+      "wallSeconds": 0.5007031,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "round": 1,
+      "wallSeconds": 0.1270866,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "round": 1,
+      "wallSeconds": 1.0433518,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_sand",
+      "round": 1,
+      "wallSeconds": 2.8724766,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_gallery",
+      "round": 1,
+      "wallSeconds": 0.6268317,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "tide_platform_draw",
+      "round": 1,
+      "wallSeconds": 2.3192624,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--bench",
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_skinned",
+      "round": 1,
+      "wallSeconds": 9.9270062,
+      "label": "scope-baseline-r1",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-baseline-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_particles",
+      "round": 2,
+      "wallSeconds": 0.5309461,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_wide",
+      "round": 2,
+      "wallSeconds": 0.9007167,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_sand",
+      "round": 2,
+      "wallSeconds": 0.6506337,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_life",
+      "round": 2,
+      "wallSeconds": 0.1716087,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_churn",
+      "round": 2,
+      "wallSeconds": 0.6011975,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_events",
+      "round": 2,
+      "wallSeconds": 0.4873367,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "round": 2,
+      "wallSeconds": 0.4851535,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "round": 2,
+      "wallSeconds": 0.1264995,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "round": 2,
+      "wallSeconds": 1.0294437,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_sand",
+      "round": 2,
+      "wallSeconds": 2.8502513,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_gallery",
+      "round": 2,
+      "wallSeconds": 0.6058086,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "tide_platform_draw",
+      "round": 2,
+      "wallSeconds": 2.3139277,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--bench",
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_skinned",
+      "round": 2,
+      "wallSeconds": 9.7983204,
+      "label": "scope-baseline-r2",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-baseline-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_particles",
+      "round": 3,
+      "wallSeconds": 0.5640491,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_wide",
+      "round": 3,
+      "wallSeconds": 0.9083581,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_sand",
+      "round": 3,
+      "wallSeconds": 0.6623554,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_life",
+      "round": 3,
+      "wallSeconds": 0.1698159,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_churn",
+      "round": 3,
+      "wallSeconds": 0.6134773,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_events",
+      "round": 3,
+      "wallSeconds": 0.4935743,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "round": 3,
+      "wallSeconds": 0.4976523,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "round": 3,
+      "wallSeconds": 0.1115761,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "round": 3,
+      "wallSeconds": 1.0357342,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_sand",
+      "round": 3,
+      "wallSeconds": 2.8429807,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_gallery",
+      "round": 3,
+      "wallSeconds": 0.6691464,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "tide_platform_draw",
+      "round": 3,
+      "wallSeconds": 2.1740775,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--bench",
+        "--save",
+        "scope-baseline-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "name": "bench_skinned",
+      "round": 3,
+      "wallSeconds": 10.2082155,
+      "label": "scope-baseline-r3",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-baseline-r3"
+      ]
+    }
+  ],
+  "binaries": [
+    {
+      "sha256": "4f66e0db767be27a78426b408084fa76f55ad9fd7fbf2a4e125cb7e159c26eb4",
+      "name": "bench_gallery.exe"
+    },
+    {
+      "sha256": "6015925cc1437f0c23e1e0a5441ab680b61cebff95f08d09f1329e467a7735b8",
+      "name": "bench_sand.exe"
+    },
+    {
+      "sha256": "de1b7ac11ac82c677ad01d5f9d11391eaf5ff7007fdb8ab84a518c2e7dc6c8ce",
+      "name": "bench_skinned.exe"
+    },
+    {
+      "sha256": "6e531baa38c9162e3ca0e00485945877b148e98309ef3cc6949f68e25424ecab",
+      "name": "tide_platform_draw.exe"
+    },
+    {
+      "sha256": "a9c855bff691ae0aaab06e77842b301ff5fae50c1c8e6dda40aafc294273ae8c",
+      "name": "versus_buckets.exe"
+    },
+    {
+      "sha256": "43b038156fbaa9ba54dc7901da14b2187bb8f933f2c676bf3ce10c90982b6b91",
+      "name": "versus_churn.exe"
+    },
+    {
+      "sha256": "9c6880ef33f36307449229967255edbe40d118bfbf3224da381fca9612eebd7f",
+      "name": "versus_events.exe"
+    },
+    {
+      "sha256": "67b9297eddf22efd40e85fb7571c62157cd9b9c5353af6168388c36541866070",
+      "name": "versus_life.exe"
+    },
+    {
+      "sha256": "6456db8403cd6500f4e3c82c9a624800f5cf857f85a48354369ce2487a4cacef",
+      "name": "versus_lookup.exe"
+    },
+    {
+      "sha256": "476959728b8c44d7dd276d7c622a6a6206559307369735f37090b4d03a33db4b",
+      "name": "versus_nbody.exe"
+    },
+    {
+      "sha256": "2f95ee917f992063ebd7718c82ad163bb6591a0e6e2dd85b160c1e068621b2c9",
+      "name": "versus_particles.exe"
+    },
+    {
+      "sha256": "fdf40ca267b343b5f45e7cccbd2deb29e8ebc5f3e3861e311dfc3902570d6324",
+      "name": "versus_sand.exe"
+    },
+    {
+      "sha256": "5f81955223c67c58a50cca163adffc96d3bdd179baf20bca12e82500b8848066",
+      "name": "versus_wide.exe"
+    }
+  ],
+  "interpretation": "Release -O2, deterministic flags. Median of three run medians. Native drawing/skinning synchronize readback; GPU and CPU intervals overlap and do not establish pipelined FPS.",
+  "finishedUtc": "2026-10-11T10:25:18.3720334Z"
+}

@@ -34,8 +34,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 // `tide run` on a game's folder, in the Run tool window: tide's output and the
 // game's, where errors link to their place, and what's typed there goes to
@@ -44,9 +42,6 @@ import java.util.regex.Pattern;
 // browser, and the Tide Game tool window shows it. On Android, the game plays
 // on the phone or emulator that's connected.
 public final class TideRunConfiguration extends LocatableConfigurationBase<TideRunConfiguration.Options> {
-    // Where tide says it serves the page (see tide_run_web in compiler/cli/build.c).
-    private static final Pattern PAGE = Pattern.compile("tide: the game is at (http://\\S+)");
-
     // Where a run plays the game, as the editor offers them
     private static final String[] WHERE = {"In a window", "On the web, in the Tide Game tool window",
                                            "On Android: the phone or emulator that's connected"};
@@ -118,8 +113,12 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
     public @Nullable String suggestedName() {
         final String folder = getOptions().getFolder();
         if (folder == null || folder.isEmpty()) return null;
-        final Path name = Path.of(folder).getFileName();
-        return (name != null ? name.toString() : folder) + getOptions().suffix();
+        try {
+            final Path name = Path.of(folder).getFileName();
+            return (name != null ? name.toString() : folder) + getOptions().suffix();
+        } catch (InvalidPathException e) {
+            return "Tide" + getOptions().suffix(); // The configuration explains the invalid path
+        }
     }
 
     @Override
@@ -128,10 +127,14 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
         if (problem != null && !problem.isEmpty()) throw new RuntimeConfigurationError(problem);
         final String folder = getOptions().getFolder();
         if (folder == null || folder.isEmpty()) throw new RuntimeConfigurationError("Choose the game's folder");
-        if (!Files.isDirectory(Path.of(folder))) throw new RuntimeConfigurationError("There's no folder " + folder);
         final String tide = getOptions().getTide();
-        if (tide != null && !tide.isEmpty() && !Files.isRegularFile(Path.of(tide))) {
-            throw new RuntimeConfigurationError("There's no tide at " + tide);
+        try {
+            if (!Files.isDirectory(Path.of(folder))) throw new RuntimeConfigurationError("There's no folder " + folder);
+            if (tide != null && !tide.isEmpty() && !Files.isRegularFile(Path.of(tide))) {
+                throw new RuntimeConfigurationError("There's no tide at " + tide);
+            }
+        } catch (InvalidPathException e) {
+            throw new RuntimeConfigurationError("Choose a valid game folder and tide executable path: " + e.getReason());
         }
     }
 
@@ -181,17 +184,14 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
         ProcessTerminatedListener.attach(handler);
         if (options.isWeb() && !options.isAndroid()) {
             handler.addProcessListener(new ProcessListener() {
-                private final StringBuilder seen = new StringBuilder(); // tide's output until it says where the page is
-                private boolean shown;
+                private final TidePageAddress address = new TidePageAddress();
 
                 @Override
                 public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                    if (shown || outputType != ProcessOutputTypes.STDOUT) return;
-                    seen.append(event.getText());
-                    final Matcher page = PAGE.matcher(seen);
-                    if (!page.find()) return;
-                    shown = true;
-                    TideGamePage.of(getProject()).show(page.group(1));
+                    if (outputType != ProcessOutputTypes.STDOUT) return;
+                    final String page = address.accept(event.getText());
+                    if (page != null) TideGamePage.of(getProject()).show(page,
+                        () -> !handler.isProcessTerminating() && !handler.isProcessTerminated());
                 }
             });
         }

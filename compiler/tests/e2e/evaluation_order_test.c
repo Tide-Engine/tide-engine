@@ -122,6 +122,23 @@ TIDE_TEST(evaluation_order_methods_read_their_value_as_they_run)
     TIDE_CHECK(r.methodBefore == 1); // Plus(0) on 0, then Bump
 }
 
+TIDE_TEST(evaluation_order_readonly_receivers_keep_their_own_containers)
+{
+    one_tick();
+    const ReceiverCopies r = world.ReceiverCopies;
+    TIDE_CHECK(r.field == 1 && r.fieldChanged == 9);
+    TIDE_CHECK(r.local == 1 && r.localChanged == 9);
+    TIDE_CHECK(r.whole == 1 && r.wholeChanged == 9);
+    TIDE_CHECK(r.replaced == 1 && r.replacedChanged == 9);
+    TIDE_CHECK(r.own == 1 && r.ownChanged == 9);
+    TIDE_CHECK(r.nestedField == 1 && r.nestedFieldChanged == 9);
+    TIDE_CHECK(r.afterArguments == 23 && r.afterChanged == 9);
+    TIDE_CHECK(r.rows == 1 && r.rowsChanged == 9);
+    TIDE_CHECK(r.scores == 1 && r.scoresChanged == 9);
+    TIDE_CHECK(r.words && r.wordsChanged);
+    TIDE_CHECK(r.set == 1 && r.setChanged == 0);
+}
+
 TIDE_TEST(evaluation_order_failing_calls_keep_their_turn)
 {
     one_tick();
@@ -223,11 +240,11 @@ TIDE_TEST(evaluation_order_local_fields_in_a_view)
     tide_world_init(&world, 1.0f);
     tide_local_init(&local);
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_REQUIRE(tide_has_Box_local(&local, slot(9)));
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).seen == 1); // Pack(0, 1)
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).seen == 12);
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).hits == 2);
 }
@@ -267,4 +284,19 @@ TIDE_TEST(evaluation_order_out_arguments_keep_their_turn)
     TIDE_CHECK(outs.same == 5636);   // Pack(Count(out seen), Count(out seen)) * 100 + seen: 5, 6, and 36
     TIDE_CHECK(outs.passed == 3719); // Pack3(seen, Count(out seen), seen): 36, then 7, then 49
     TIDE_CHECK(outs.looked == 1140); // score * 1000 + (TryGet(4, out score) ? 100 : 0) + score: 1, found, 40
+}
+
+TIDE_TEST(evaluation_order_awaited_named_arguments_keep_their_turn)
+{
+    one_tick();
+    const AwaitOrders a = world.AwaitOrders;
+    TIDE_CHECK(a.named == 210);
+    TIDE_CHECK(a.mixed == 132);
+    TIDE_CHECK(a.before == 870);
+    TIDE_CHECK(a.after == 880);
+    TIDE_CHECK(a.made == 930 && a.tally.n == 3);
+    TIDE_CHECK(a.delayed == 0 && a.count == 0);
+    tide_world_tick(&world);
+    TIDE_CHECK(world.AwaitOrders.delayed == 21);
+    TIDE_CHECK(world.AwaitOrders.count == 2); // Its arguments ran once, before the wait
 }

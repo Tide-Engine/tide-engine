@@ -1,0 +1,8 @@
+// expect: Frame has no member 'elapsed'
+// expect: Frame is this machine's, and has no clock: the match takes 'Time time' and reads 'time.t', the seconds since it started
+scene Main { }
+singleton Clock { float now; }
+system Tick(mut Clock clock)
+{
+    clock.now = Frame.elapsed;
+}

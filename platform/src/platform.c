@@ -17,9 +17,11 @@
 #include "tide/vorbis.h"
 #include "gpu.h"
 #include "mixer.h"
+#include "players.h"
 #include "png.h"
 #include "script.h"
 #include "shaders.h"
+#include "texture_residency.h"
 #include "window.h"
 
 uint8_t *tide_platform_pack(size_t *size)
@@ -80,6 +82,13 @@ static unsigned frames_counted;
 static bool headless;
 static tide_headless_desc headless_run;
 
+// Whether nobody hears this window: in a run nobody watches (TIDE_HIDDEN,
+// tide/page.h) nobody listens either, so it opens no output device and no
+// microphone, and its mixer is handed frames and goes unheard, as on a machine
+// with neither. Desktop only, as the variable is: a page's sound is its
+// browser's to mute.
+static bool unheard;
+
 // The microphone: open while frames name a voice of it, closed when none does
 static struct {
     bool open;
@@ -130,6 +139,7 @@ void tide_platform_open(const tide_window_desc *desc)
                         "(tide_platform_open_headless)\n");
         exit(2);
     }
+    unheard = tide_hidden(); // ...and nobody listens to it either
 #endif
     if (!tide_window_open(desc)) exit(1); // It said why
     gpu = tide_window_gpu();
@@ -138,7 +148,7 @@ void tide_platform_open(const tide_window_desc *desc)
 #ifdef __wasm__
     web_timer_frames = desc->hidden;
 #endif
-    tide_audio_out_open(); // With none, it said so, and the mixer goes unheard
+    if (!unheard) tide_audio_out_open(); // With none, it said so, and the mixer goes unheard
 }
 
 void tide_platform_open_headless(const tide_headless_desc *desc)
@@ -182,6 +192,10 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
                 headless_run.height, (double)headless_run.scale, TIDE_PNG_MAX_SIDE);
         exit(2);
     }
+    // Which player of the run this is, if it's one of several: its script's lines and its files are its own
+    tide_platform_players_configure(&headless_run);
+    if (headless_run.capture) headless_run.capture = tide_platform_players_file(headless_run.capture);
+    if (headless_run.capture_audio) headless_run.capture_audio = tide_platform_players_file(headless_run.capture_audio);
     // The script first: a line that's wrong needs no window to say so
     if (headless_run.script && !tide_script_load(headless_run.script)) exit(2);
     if (!headless_run.frames && !tide_script_quits()) {
@@ -189,7 +203,11 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
                         "`quit` line\n");
         exit(2);
     }
-    if (!tide_window_open(&(tide_window_desc){.title = "", .width = 64, .height = 64, .hidden = true})) exit(1); // It said why
+    // The other players' processes, started before this one has a window or a thread for them to take after
+    tide_platform_players_start();
+    if (!tide_window_open(&(tide_window_desc){.title = "", .width = 64, .height = 64, .hidden = true})) {
+        exit(tide_platform_players_finish(1)); // It said why
+    }
     headless = true;
     gpu = tide_window_gpu();
     opened = tide_time_now_ns();
@@ -279,7 +297,7 @@ void tide_platform_audio(const tide_audio_frame *frame)
         if (frame->microphone) headless_microphone();
         return;
     }
-    if (frame->microphone) {
+    if (frame->microphone && !unheard) {
         if (mic.open) return;
         if (mic.retry) {
             mic.retry--;
@@ -311,8 +329,9 @@ static int headless_drawn(void)
     return last ? 0 : TIDE_KEEP_RUNNING;
 }
 
-_Noreturn static void finish(const int code)
+_Noreturn static void finish(int code)
 {
+    code = tide_platform_players_finish(code); // A run of several players ends as one
     tide_platform_gpu_timing(false);
     if (mic.open) tide_audio_in_close();
     tide_audio_out_close();
@@ -344,6 +363,8 @@ static int step(void)
     int code = run_frame(run_user, seconds);
     if (headless) headless_audio_frame();
     if (headless && code == TIDE_KEEP_RUNNING) code = headless_drawn();
+    // In a run of several players: what this one sent in the frame goes, and what the others sent comes
+    if (headless && code == TIDE_KEEP_RUNNING) code = tide_platform_players_step(headless_frame);
     tide_window_present(); // Also takes the system's input
 #ifndef __wasm__
     // A window nobody sees (minimized, or an app in the background) has no
@@ -668,6 +689,7 @@ typedef struct draw_step {
     tide_float2 at;   // STEP_CLIP: its top left corner in window pixels
     tide_float2 to;   // ...and its bottom right one
     rgba color;       // STEP_CLEAR
+    bool depth_alone; // ...which sets depth back and leaves colors and stencil
 } draw_step;
 
 static shape *shapes;
@@ -1182,6 +1204,7 @@ static const tide_gpu_depth gpu_depths[DEPTHS] = {
 static struct {
     tide_gpu_id far; // A target of depth alone that's 1 everywhere: what a shader reads for a depth it wasn't given
     tide_gpu_id dark; // A cube of one black pixel a face: what a shader reads for a cube it wasn't given
+    tide_gpu_id nothing; // A pixel of four zeros: what a shader that reads a list's numbers is bound for a list with none
     tide_gpu_id corners; // The shapes' quad
     tide_gpu_id shape_instances;
     uint32_t shape_capacity; // Shapes the instance buffer holds
@@ -1217,6 +1240,7 @@ typedef struct engine_pipelines {
     tide_gpu_target_format into;
     tide_gpu_id made[PIPELINE_KINDS][BLENDS][DEPTHS][CULLS]; // Only the 3D meshes' have more than the first depth and cull
     tide_gpu_id clear; // The clears'
+    tide_gpu_id depth_clear; // ...and the ones of depth alone
 } engine_pipelines;
 
 static engine_pipelines *engine_made;
@@ -1325,11 +1349,13 @@ typedef struct mesh_3d_vertex {
 typedef struct gpu_held {
     uint64_t bytes;
     uint8_t mipped; // A bit for each image whose smaller images were made: a third more, once
+    bool resolved;  // A multisampled target's depth was resolved into a texture: 4 bytes a pixel more, once
 } gpu_held;
 
 static gpu_held *held_buffers, *held_textures, *held_targets; // By the backend's id
 static uint32_t held_buffer_count, held_texture_count, held_target_count;
 static uint64_t gpu_memory;
+static uint64_t gpu_written; // Bytes of textures' pixels sent to the GPU (tide_platform_gpu_written)
 
 static gpu_held *held(gpu_held **table, uint32_t *count, const tide_gpu_id id)
 {
@@ -1366,7 +1392,7 @@ static void hold_mipmaps(gpu_held *h, const uint64_t image_bytes, const uint32_t
 
 static uint64_t format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 ? 4u : format == TIDE_GPU_R16F ? 2u : 1u;
+    return format == TIDE_GPU_RGBA8 ? 4u : format == TIDE_GPU_R16F ? 2u : format == TIDE_GPU_RGBA32I ? 16u : 1u;
 }
 
 static uint64_t color_bytes(const tide_gpu_color color)
@@ -1468,6 +1494,11 @@ uint64_t tide_platform_gpu_memory(void)
     return gpu_memory;
 }
 
+uint64_t tide_platform_gpu_written(void)
+{
+    return gpu_written;
+}
+
 // The GPU's copy of a list's 3D mesh, kept in the place the list keeps it.
 typedef struct gpu_mesh {
     uint64_t id, other, version; // Which it is (see tide_draw_mesh_data)
@@ -1479,6 +1510,7 @@ typedef struct gpu_mesh {
     uint32_t index_count;          // Three a triangle...
     bool wide;                     // ...of 16 bits where they fit, or 32
     uint32_t frame;                // The frame that last drew it
+    uint32_t base;                 // A level of detail's: 1 + the place of the mesh whose `vertices` it draws with, having none
 } gpu_mesh;
 
 static gpu_mesh *gpu_meshes;
@@ -1497,8 +1529,8 @@ static void *upload_room(const size_t bytes)
 }
 
 // A texture on the GPU: a copy of a draw list's, uploaded when a list first
-// draws with it and again when its pixels changed, and let go once a frame
-// draws without it. Nothing else keeps it: the pixels are the game's.
+// draws with it and again when its pixels changed. Immutable pack images may
+// stay briefly in a bounded idle cache; other textures go after an unused frame.
 typedef struct gpu_texture {
     uint64_t id; // Whose pixels (see tide_draw_texture)
     uint64_t version;
@@ -1509,11 +1541,31 @@ typedef struct gpu_texture {
     tide_gpu_id texture;
     uint32_t frame; // The frame that last drew with it
     bool mipped;    // Its smaller images are of these pixels: made when a draw first reads it between them (prepare_mipmaps)
+    bool compressed;
+    bool protected; // Referenced by a later step of the current list
 } gpu_texture;
 
 static gpu_texture *gpu_textures;
 static uint32_t gpu_texture_count, gpu_texture_capacity;
+static uint32_t *gpu_texture_index; // Texture places by space/id: 1 + a place, or 0 for none
+static uint32_t gpu_texture_index_capacity; // A power of two, or 0: at most half taken
 static uint32_t gpu_frame;
+static tide_texture_idle *idle_textures;
+static uint32_t idle_texture_capacity;
+
+// Temporary integer-data storage detached from identities absent from this
+// list. Only the current invocation can take it; leftovers are freed before
+// overlays. The shape buckets and records retain CPU capacity, never GPU ids.
+typedef struct spare_data_texture {
+    tide_gpu_id texture;
+    int32_t width, height;
+    uint32_t next;
+} spare_data_texture;
+
+static spare_data_texture *spare_data_textures;
+static uint32_t spare_data_count, spare_data_capacity;
+static uint32_t *spare_data_index;
+static uint32_t spare_data_slots;
 
 // Render targets retain their attachments across passes and frames. Their
 // owner supplies a stable identity; resizing replaces both attachments, and
@@ -1529,6 +1581,9 @@ typedef struct gpu_target {
     // were last made: they're made again for a draw that reads between them once more have (prepare_mipmaps)
     uint32_t drawn;
     uint32_t mipped[TIDE_GPU_MAX_COLORS];
+    // A multisampled one's depth, as a texture: 1 + how many passes had drawn when it was last made of its
+    // samples, and 0 for never (prepare_source_target)
+    uint32_t resolved;
 } gpu_target;
 
 static gpu_target *gpu_targets;
@@ -1540,7 +1595,8 @@ static tide_gpu_read gpu_read(const tide_shader *shader, const uint32_t i)
     const uint8_t read = i < TIDE_SHADER_TEXTURES ? shader->texture_reads[i] : TIDE_SHADER_READ_COLOR;
     return read == TIDE_SHADER_READ_DEPTH ? TIDE_GPU_READ_DEPTH :
            read == TIDE_SHADER_READ_COMPARE ? TIDE_GPU_READ_COMPARE :
-           read == TIDE_SHADER_READ_CUBE ? TIDE_GPU_READ_CUBE : TIDE_GPU_READ_COLOR;
+           read == TIDE_SHADER_READ_CUBE ? TIDE_GPU_READ_CUBE :
+           read == TIDE_SHADER_READ_DATA ? TIDE_GPU_READ_DATA : TIDE_GPU_READ_COLOR;
 }
 static uint32_t target_epoch; // A hot reload discards the old build's target identities
 
@@ -1738,6 +1794,8 @@ static bool gpu_ready(void)
     target_most = gpu->target_limit();
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     gpu_texture_count = 0;
+    if (gpu_texture_index) memset(gpu_texture_index, 0, (size_t)gpu_texture_index_capacity * sizeof(uint32_t));
+    spare_data_count = 0; // A lost device took these objects too.
     gpu_target_count = 0;
     gpu_cube_count = 0;
     forget_held();
@@ -1925,6 +1983,26 @@ static tide_gpu_id clear_pipeline(const tide_gpu_target_format into)
     });
 }
 
+// A clear of depth alone: the clears' triangle with a clear color over what's
+// there, which leaves every color image as it is, and no stencil stored.
+static tide_gpu_id depth_clear_pipeline(const tide_gpu_target_format into)
+{
+    tide_gpu_id *made = &pipelines_into(into)->depth_clear;
+    if (*made) return *made;
+    const bool several = tide_gpu_target_colors(into) > 1;
+    return *made = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "clears of depth",
+        .glsl_vertex = clear_glsl_vertex,
+        .glsl_fragment = several ? clear_all_glsl_fragment : clear_glsl_fragment,
+        .wgsl = several ? clear_all_wgsl : clear_wgsl,
+        .uniform_size = 4 * sizeof(float),
+        .blend = TIDE_GPU_BLEND_ALPHA,
+        .depth = TIDE_GPU_DEPTH_RESET,
+        .into = into,
+        .outputs = several ? TIDE_GPU_MAX_COLORS : 1u,
+    });
+}
+
 // The window's clears' pipeline, the quad and the white pixel, the first time a list is drawn.
 static void renderer_start(void)
 {
@@ -1977,7 +2055,7 @@ static void find_pipelines(const tide_draw_list *list)
         case STEP_MESH_3D:
             s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, into, state);
             break;
-        case STEP_CLEAR: s->pipeline = clear_pipeline(into); break;
+        case STEP_CLEAR: s->pipeline = s->depth_alone ? depth_clear_pipeline(into) : clear_pipeline(into); break;
         default: break;
         }
     }
@@ -1994,14 +2072,26 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     const tide_draw_mesh_data *m = &list->meshes[mesh - 1u];
     gpu_mesh *g = &gpu_meshes[mesh - 1u];
     g->frame = gpu_frame;
-    if (g->vertices && g->id == m->id && g->other == m->other && g->version == m->version && g->space == m->space
-        && g->epoch == m->epoch) {
+    // A level of detail has its mesh's corners, which that mesh keeps: its own are its triangles
+    const bool level = m->base && m->base <= list->mesh_count && m->base != mesh && !list->meshes[m->base - 1u].base
+                    && list->meshes[m->base - 1u].space != TIDE_MESH_NONE;
+    if (level) mesh_for(list, m->base);
+    if ((g->vertices || g->base) && g->id == m->id && g->other == m->other && g->version == m->version && g->space == m->space
+        && g->epoch == m->epoch && g->base == (level ? m->base : 0u)) {
         return g;
     }
+    if (level && g->vertices) { // The place was a whole mesh's
+        free_buffer(g->vertices);
+        g->vertices = 0;
+        g->vertex_capacity = 0;
+    }
+    g->base = level ? m->base : 0u;
     // Its corners, each once: as they are for a shader of the game's, which reads their bytes
     const void *corners = m->bytes;
     size_t vertex_bytes = (size_t)m->vertex_count * m->vertex_size;
-    if (m->space != TIDE_MESH_BYTES) {
+    if (level) {
+        vertex_bytes = 0;
+    } else if (m->space != TIDE_MESH_BYTES) {
         vertex_bytes = (size_t)m->vertex_count * sizeof(mesh_3d_vertex);
         mesh_3d_vertex *packed = upload_room(vertex_bytes);
         for (uint32_t i = 0; i < m->vertex_count; i++) {
@@ -2012,7 +2102,9 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
         }
         corners = packed;
     }
-    if (g->vertices && vertex_bytes <= g->vertex_capacity) {
+    if (level) {
+        // Nothing of its own
+    } else if (g->vertices && vertex_bytes <= g->vertex_capacity) {
         gpu->buffer_write(g->vertices, 0, corners, vertex_bytes);
     } else {
         if (g->vertices) free_buffer(g->vertices);
@@ -2044,6 +2136,12 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     g->index_count = m->index_count;
     g->wide = wide;
     return g;
+}
+
+// The buffer a mesh's corners are in: its own, or for a level of detail, its mesh's.
+static tide_gpu_id corners_of(const gpu_mesh *g)
+{
+    return g->base && g->base <= gpu_mesh_count ? gpu_meshes[g->base - 1u].vertices : g->vertices;
 }
 
 // A buffer for `count` elements of `size` bytes, in place of `*buffer` when
@@ -2078,9 +2176,9 @@ static void upload_meshes_3d(const tide_draw_list *list)
 static void forget_meshes_3d(void)
 {
     for (uint32_t i = 0; i < gpu_mesh_count; i++) {
-        if (gpu_meshes[i].vertices && gpu_meshes[i].frame != gpu_frame) {
-            free_buffer(gpu_meshes[i].vertices);
-            free_buffer(gpu_meshes[i].indices);
+        if ((gpu_meshes[i].vertices || gpu_meshes[i].indices) && gpu_meshes[i].frame != gpu_frame) {
+            if (gpu_meshes[i].vertices) free_buffer(gpu_meshes[i].vertices);
+            if (gpu_meshes[i].indices) free_buffer(gpu_meshes[i].indices);
             gpu_meshes[i] = (gpu_mesh){0};
         }
     }
@@ -2268,7 +2366,10 @@ static bool upload_shaded(const tide_draw_list *list)
                 static const void *const faces[TIDE_GPU_CUBE_FACES] = {black, black, black, black, black, black};
                 gpu_state.dark = made_cube(TIDE_GPU_COLOR_BYTES, 1, faces);
             }
-            if (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || gpu_state.far) continue;
+            if (read == TIDE_GPU_READ_DATA && !gpu_state.nothing) { // ...and one that reads a list, no numbers
+                gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, (const int32_t[4]){0, 0, 0, 0});
+            }
+            if (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || read == TIDE_GPU_READ_DATA || gpu_state.far) continue;
             gpu_state.far = made_target(TIDE_GPU_TARGET_DEPTH, 1, 1);
             gpu->begin(gpu_state.far, true);
             gpu->end();
@@ -2318,13 +2419,142 @@ static void upload_atlas(void)
     gpu_state.atlas_version = version;
 }
 
+static uint32_t gpu_texture_hash(const uint32_t space, const uint64_t id)
+{
+    uint64_t h = id * UINT64_C(0x9E3779B97F4A7C15) ^ space;
+    h ^= h >> 32;
+    h *= UINT64_C(0xD6E8FEB86659FD93);
+    h ^= h >> 32;
+    return (uint32_t)h;
+}
+
+static void index_gpu_texture(const uint32_t place)
+{
+    const gpu_texture *g = &gpu_textures[place];
+    const uint32_t mask = gpu_texture_index_capacity - 1u;
+    uint32_t i = gpu_texture_hash(g->space, g->id) & mask;
+    while (gpu_texture_index[i]) i = (i + 1u) & mask;
+    gpu_texture_index[i] = place + 1u;
+}
+
+static void reindex_gpu_textures(void)
+{
+    uint32_t capacity = gpu_texture_index_capacity ? gpu_texture_index_capacity : 64u;
+    while (capacity / 2u <= gpu_texture_count) {
+        if (capacity > UINT32_MAX / 2u / sizeof(uint32_t)) tide_out_of_memory();
+        capacity *= 2u;
+    }
+    if (capacity != gpu_texture_index_capacity) {
+        free(gpu_texture_index);
+        gpu_texture_index = tide_alloc_zeroed(capacity, sizeof(uint32_t));
+        gpu_texture_index_capacity = capacity;
+    } else {
+        memset(gpu_texture_index, 0, (size_t)capacity * sizeof(uint32_t));
+    }
+    for (uint32_t i = 0; i < gpu_texture_count; i++) index_gpu_texture(i);
+}
+
+static gpu_texture *find_gpu_texture(const uint32_t space, const uint64_t id)
+{
+    if (gpu_texture_index_capacity) {
+        const uint32_t mask = gpu_texture_index_capacity - 1u;
+        for (uint32_t i = gpu_texture_hash(space, id) & mask; gpu_texture_index[i]; i = (i + 1u) & mask) {
+            gpu_texture *found = &gpu_textures[gpu_texture_index[i] - 1u];
+            if (found->id == id && found->space == space) return found;
+        }
+    }
+    return NULL;
+}
+
+static uint32_t data_shape_hash(const int32_t width, const int32_t height)
+{
+    return gpu_texture_hash((uint32_t)width, (uint32_t)height);
+}
+
+// Determine liveness before detaching anything: a later draw can still name a
+// previous frame's unchanged palette. Merely protecting it does not count it
+// as drawn; skipped destinations and invalid reads still prune as before.
+static void prepare_data_textures(const tide_draw_list *list)
+{
+    for (uint32_t i = 0; i < gpu_texture_count; i++) gpu_textures[i].protected = false;
+    for (uint32_t i = 0; i < step_count; i++) {
+        const draw_step *s = &steps[i];
+        if (s->kind != STEP_SHADED && s->kind != STEP_BLIT) continue;
+        const tide_draw_run *run = &list->runs[s->first];
+        for (uint32_t k = 0; k < run->shader->texture_count; k++) {
+            const uint32_t slot = run->textures[k];
+            if (gpu_read(run->shader, k) != TIDE_GPU_READ_DATA || !slot || slot > list->texture_count) continue;
+            const tide_draw_texture *t = &list->textures[slot - 1u];
+            gpu_texture *g = find_gpu_texture(t->space, t->id);
+            if (g) g->protected = true;
+        }
+    }
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < gpu_texture_count; i++) {
+        const gpu_texture *g = &gpu_textures[i];
+        if (g->texture && !g->protected && g->frame != gpu_frame && g->space == TIDE_PIXELS_LIST
+            && g->format == TIDE_TEXELS_INTS && (g->id >> 63)) count++;
+    }
+    spare_data_count = 0;
+    if (!count) return;
+    if (count > spare_data_capacity) {
+        if ((uint64_t)count * sizeof *spare_data_textures > SIZE_MAX) tide_out_of_memory();
+        spare_data_textures = tide_realloc(spare_data_textures, (size_t)spare_data_capacity * sizeof *spare_data_textures,
+                                           (size_t)count * sizeof *spare_data_textures);
+        spare_data_capacity = count;
+    }
+    uint32_t slots = spare_data_slots ? spare_data_slots : 16u;
+    while (slots / 2u < count) {
+        if (slots > UINT32_MAX / 2u) tide_out_of_memory();
+        slots *= 2u;
+    }
+    if ((uint64_t)slots * sizeof(uint32_t) > SIZE_MAX) tide_out_of_memory();
+    if (slots != spare_data_slots) {
+        spare_data_index = tide_realloc(spare_data_index, (size_t)spare_data_slots * sizeof(uint32_t),
+                                        (size_t)slots * sizeof(uint32_t));
+        spare_data_slots = slots;
+    }
+    memset(spare_data_index, 0, (size_t)slots * sizeof(uint32_t));
+    for (uint32_t i = 0; i < gpu_texture_count; i++) {
+        gpu_texture *g = &gpu_textures[i];
+        if (!g->texture || g->protected || g->frame == gpu_frame || g->space != TIDE_PIXELS_LIST
+            || g->format != TIDE_TEXELS_INTS || !(g->id >> 63)) continue;
+        const uint32_t bucket = data_shape_hash(g->width, g->height) & (slots - 1u);
+        spare_data_textures[spare_data_count] = (spare_data_texture){g->texture, g->width, g->height, spare_data_index[bucket]};
+        spare_data_index[bucket] = ++spare_data_count;
+        g->texture = 0; // The old logical identity no longer owns this object.
+    }
+}
+
+static tide_gpu_id take_data_texture(const tide_draw_texture *t)
+{
+    if (!spare_data_count || t->space != TIDE_PIXELS_LIST || t->format != TIDE_TEXELS_INTS || !(t->id >> 63)) return 0;
+    uint32_t *place = &spare_data_index[data_shape_hash(t->width, t->height) & (spare_data_slots - 1u)];
+    while (*place) {
+        spare_data_texture *s = &spare_data_textures[*place - 1u];
+        if (s->width == t->width && s->height == t->height) {
+            const tide_gpu_id texture = s->texture;
+            s->texture = 0;
+            *place = s->next;
+            return texture;
+        }
+        place = &s->next;
+    }
+    return 0;
+}
+
+static void free_spare_data_textures(void)
+{
+    for (uint32_t i = 0; i < spare_data_count; i++) {
+        if (spare_data_textures[i].texture) free_texture(spare_data_textures[i].texture);
+    }
+    spare_data_count = 0;
+}
+
 // The GPU's copy of a list's texture, uploaded if it hasn't got these pixels.
 static gpu_texture *texture_for(const tide_draw_texture *t)
 {
-    gpu_texture *g = NULL;
-    for (uint32_t i = 0; i < gpu_texture_count && !g; i++) {
-        if (gpu_textures[i].id == t->id && gpu_textures[i].space == t->space) g = &gpu_textures[i];
-    }
+    gpu_texture *g = find_gpu_texture(t->space, t->id);
     if (!g) {
         if (gpu_texture_count == gpu_texture_capacity) {
             const uint32_t capacity = gpu_texture_capacity ? gpu_texture_capacity * 2u : 8u;
@@ -2334,23 +2564,47 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         }
         g = &gpu_textures[gpu_texture_count++];
         *g = (gpu_texture){.id = t->id, .space = t->space};
+        if (gpu_texture_count >= gpu_texture_index_capacity / 2u) reindex_gpu_textures();
+        else index_gpu_texture(gpu_texture_count - 1u);
     }
     g->frame = gpu_frame;
-    if (g->texture && g->version == t->version && g->width == t->width && g->height == t->height
-        && g->format == t->format && g->epoch == t->epoch) {
-        return g;
-    }
-    g->mipped = false;
+    const bool same_shape = g->texture && g->width == t->width && g->height == t->height && g->format == t->format;
+    if (same_shape && g->version == t->version && g->epoch == t->epoch) return g;
+    const bool shaped = same_shape && !g->compressed && !t->compressed.pixels;
+    const tide_draw_area *areas;
+    uint32_t count = 1;
+    bool resident_mips = false;
     if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = made_cube(TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
-    } else if (g->texture && g->width == t->width && g->height == t->height && g->format == t->format) {
+    } else if (shaped && g->epoch == t->epoch && tide_draw_texture_since(t, g->version, &areas, &count)) {
+        // The list says all that changed since the pixels the GPU has: those go, and nothing else
+        for (uint32_t i = 0; i < count; i++) {
+            gpu->texture_write_part(g->texture, t->pixels, areas[i].x, areas[i].y, areas[i].width, areas[i].height);
+            gpu_written += (uint64_t)areas[i].width * (uint64_t)areas[i].height * tide_texels_bytes(t->format);
+        }
+    } else if (shaped) {
         gpu->texture_write(g->texture, t->pixels);
+        gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     } else {
         if (g->texture) free_texture(g->texture);
-        // A grid of floats' cells are one float of 16 bits a pixel
-        g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        g->texture = t->compressed.pixels && gpu->texture_blocks
+            ? gpu->texture_blocks(t->width, t->height, t->compressed) : 0;
+        if (g->texture) {
+            hold(held(&held_textures, &held_texture_count, g->texture), t->compressed.bytes);
+            gpu_written += t->compressed.bytes;
+            resident_mips = true;
+        } else g->texture = take_data_texture(t);
+        if (g->texture && !resident_mips) gpu->texture_write(g->texture, t->pixels);
+        else if (!g->texture) {
+            // A grid of floats' cells are one float of 16 bits a pixel
+            g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
+                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        }
+        if (!resident_mips) gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     }
+    if (count) g->mipped = resident_mips; // Uploaded blocks already contain every mip.
+    if (count) g->compressed = resident_mips;
     g->format = t->format;
     g->version = t->version;
     g->width = t->width;
@@ -2359,18 +2613,46 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     return g;
 }
 
-// Lets go of the textures the frame didn't draw with.
-static void forget_textures(void)
+// Retain only immutable content identities, never C addresses, grid handles,
+// targets or scratch data. The cache owns GPU ids, not borrowed pack pointers.
+static void forget_textures(const uint32_t epoch)
 {
-    uint32_t kept = 0;
+    if (gpu_texture_count > idle_texture_capacity) {
+        if ((uint64_t)gpu_texture_count * sizeof *idle_textures > SIZE_MAX) tide_out_of_memory();
+        idle_textures = tide_realloc(idle_textures, (size_t)idle_texture_capacity * sizeof *idle_textures,
+                                     (size_t)gpu_texture_count * sizeof *idle_textures);
+        idle_texture_capacity = gpu_texture_count;
+    }
+    uint32_t idle_count = 0;
     for (uint32_t i = 0; i < gpu_texture_count; i++) {
-        if (gpu_textures[i].frame != gpu_frame) {
-            if (gpu_textures[i].texture) free_texture(gpu_textures[i].texture);
+        gpu_texture *g = &gpu_textures[i];
+        if (g->frame == gpu_frame || !g->texture) continue;
+        if (g->epoch != epoch || (g->space != TIDE_PIXELS_PACK && g->space != TIDE_PIXELS_PACK_CUBE)) {
+            free_texture(g->texture);
+            g->texture = 0;
             continue;
         }
+        idle_textures[idle_count++] = (tide_texture_idle){
+            .bytes = g->texture < held_texture_count ? held_textures[g->texture].bytes : 0,
+            .age = gpu_frame - g->frame, .place = i,
+        };
+    }
+    tide_texture_idle_trim(idle_textures, idle_count, TIDE_TEXTURE_IDLE_BYTES, TIDE_TEXTURE_IDLE_COUNT);
+    for (uint32_t i = 0; i < idle_count; i++) {
+        if (idle_textures[i].keep) continue;
+        gpu_texture *g = &gpu_textures[idle_textures[i].place];
+        free_texture(g->texture);
+        g->texture = 0;
+    }
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < gpu_texture_count; i++) {
+        if (gpu_textures[i].frame != gpu_frame && !gpu_textures[i].texture) continue;
         gpu_textures[kept++] = gpu_textures[i];
     }
-    gpu_texture_count = kept;
+    if (kept != gpu_texture_count) {
+        gpu_texture_count = kept;
+        reindex_gpu_textures();
+    }
     gpu_frame++;
 }
 
@@ -2402,9 +2684,12 @@ static bool of_destination(const tide_draw_texture *t, const uint64_t id)
 static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t texture, const tide_gpu_read read)
 {
     const bool depth = read == TIDE_GPU_READ_DEPTH || read == TIDE_GPU_READ_COMPARE, cube = read == TIDE_GPU_READ_CUBE;
-    const tide_gpu_id none = cube ? gpu_state.dark : depth ? gpu->target_depth(gpu_state.far) : gpu_state.white;
+    const bool data = read == TIDE_GPU_READ_DATA; // A list's numbers, and nothing else is read so
+    const tide_gpu_id none = data ? gpu_state.nothing : cube ? gpu_state.dark : depth ? gpu->target_depth(gpu_state.far)
+                           : gpu_state.white;
     if (texture == 0 || texture > list->texture_count) return none;
     const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (data != (t->space == TIDE_PIXELS_LIST && t->format == TIDE_TEXELS_INTS)) return none;
     if (cube != of_cube(t)) return none;
     if (t->space == TIDE_PIXELS_TARGET_CUBE) {
         const gpu_cube *c = find_cube(t->id);
@@ -2457,11 +2742,7 @@ static const char *unavailable_texture(const tide_draw_list *list, const uint32_
     }
     if (!of_target(t)) return NULL;
     if (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target)) return "source render target is invalid or disposed";
-    if (t->space == TIDE_PIXELS_TARGET_DEPTH) {
-        // By what it asked for, whatever this device gave it: the same draws are passed by everywhere
-        return tide_render_target_samples(t->id) > 1u
-            ? "source render target is multisampled: its depth has several samples a pixel, which no shader reads" : NULL;
-    }
+    if (t->space == TIDE_PIXELS_TARGET_DEPTH) return NULL;
     const uint32_t colors = tide_render_target_colors(t->id);
     if (colors == 0) return "source render target holds depth alone: it has no color to sample";
     if (tide_render_target_image(t->id) >= colors) {
@@ -2506,15 +2787,29 @@ static bool prepare_source_target(const tide_draw_list *list, const uint32_t tex
     }
     if (!of_target(t)) return false;
     const uint64_t id = tide_render_target_whole(t->id); // The target, whichever of its images is sampled
-    const gpu_target *g = find_target(id);
-    if (g && (!tide_render_target_managed(id) || t->version < g->version)) return false;
-    float width, height;
-    int wide, high;
-    bool limited;
-    if (!target_extent(t->target, &root, &width, &height, &wide, &high, &limited)) return false;
-    if (g && g->target && t->version == g->version && g->width == wide && g->height == high) return false;
-    if (!check) target_for(id, t->target, t->version);
-    return true;
+    gpu_target *g = find_target(id);
+    // A multisampled target's depth is read as a texture of one depth a pixel, made of its samples outside a
+    // pass, and again once more passes have drawn into it
+    const bool depth = t->space == TIDE_PIXELS_TARGET_DEPTH && tide_render_target_samples(id) > 1u;
+    bool made = !g || (tide_render_target_managed(id) && t->version >= g->version);
+    float width = 0, height = 0;
+    int wide = 0, high = 0;
+    bool limited = false;
+    if (made && !target_extent(t->target, &root, &width, &height, &wide, &high, &limited)) made = false;
+    if (made && g && g->target && t->version == g->version && g->width == wide && g->height == high) made = false;
+    if (made && !check) g = target_for(id, t->target, t->version);
+    const bool stale = depth && (made || (g && g->target && g->resolved != g->drawn + 1u));
+    if (stale && !check && g && g->target) {
+        gpu->resolve_depth(g->target);
+        g->resolved = g->drawn + 1u;
+        gpu_held *h = held(&held_targets, &held_target_count, g->target);
+        if (!h->resolved && gpu->target_depth(g->target)) { // Where the device gave it one sample, its depth is its own
+            h->resolved = true;
+            h->bytes += (uint64_t)g->width * (uint64_t)g->height * 4u;
+            gpu_memory += (uint64_t)g->width * (uint64_t)g->height * 4u;
+        }
+    }
+    return made || stale;
 }
 
 static bool prepare_source_targets(const tide_draw_list *list, const draw_step *s, const bool check)
@@ -2667,7 +2962,7 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
         gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)),
                     gpu_filter(tide_sampling_filter(run->sampling, i)), gpu_wrap(tide_sampling_wrap(run->sampling, i)));
     }
-    gpu->vertices(0, g->vertices, 0);
+    gpu->vertices(0, corners_of(g), 0);
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, run->count);
@@ -2682,7 +2977,7 @@ static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
     use_pipeline(s);
     gpu->uniforms(&uniforms, sizeof uniforms);
     sample_step_texture(list, s);
-    gpu->vertices(0, g->vertices, 0);
+    gpu->vertices(0, corners_of(g), 0);
     gpu->vertices(1, gpu_state.matrices, (size_t)s->first * sizeof(tide_float4x4));
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, s->count);
@@ -2801,6 +3096,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         if (!over) draw_calls = 0;
         return;
     }
+    tide_draw_prepare(list, tide_platform_jobs());
     const tide_gpu_id target = to.gpu;
     root = to;
     if (!over && target_epoch != list->epoch) {
@@ -2869,7 +3165,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             add_step(STEP_TARGET);
             break;
         case TIDE_DRAW_CLEAR:
-            add_step(STEP_CLEAR)->color = color;
+            if (c->a.x != 0.0f) add_step(STEP_CLEAR)->depth_alone = true;
+            else add_step(STEP_CLEAR)->color = color;
             break;
         case TIDE_DRAW_CAMERA:
             cam->center = c->a;
@@ -2981,6 +3278,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
 
     // What the steps draw from goes to the GPU first
     renderer_start();
+    if (!over) prepare_data_textures(list);
     find_pipelines(list);
     upload_shapes_and_meshes();
     upload_meshes_3d(list);
@@ -2990,6 +3288,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     screen_uniforms uniforms = target_uniforms();
     // Start after the CPU expanded the list and prepared/uploaded resources.
     // Otherwise a desktop GPU waiting for that work would time the CPU too.
+    // Texture uploads requested by shaded draws still occur inside the query.
     if (timed && gpu->time_begin) gpu->time_begin();
     begin_pass(target, !over); // Every frame starts black; Draw.Clear picks another color
     bool pass_active = true;
@@ -3116,6 +3415,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     scaled = false;
     draw_target = 0;
     if (!over) {
+        free_spare_data_textures();
         draw_calls = calls;
         // The first frame through shaders after the list forgot (a hot reload): what's left of the last build's goes
         if (shaded && list->epoch != shader_epoch) {
@@ -3123,7 +3423,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             shader_epoch = list->epoch;
         }
         forget_meshes_3d();
-        forget_textures();
+        forget_textures(list->epoch);
     }
 }
 

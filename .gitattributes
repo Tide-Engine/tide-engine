@@ -10,12 +10,14 @@ compiler/tests/e2e/assets/** -text
 
 # The platform's font, and code vendored as it came.
 *.ttf binary
+docs/static/prototypes/copper-coil/*.pdf binary
 
 # Sounds the tests play.
 *.wav binary
 *.ogg binary
 *.pcm binary
 platform/third_party/* -text
+platform/third_party/fflate/** -text
 
 # Box2D, as it came (packages/box2d/box2d/TIDE.md lists what is changed).
 packages/box2d/box2d/** -text
@@ -27,3 +29,27 @@ packages/box3d/box3d/** -text
 .github/runner/*.sh text eol=lf
 # Publishing checks run in bash on any checkout.
 .github/*.sh text eol=lf
+
+# Models the tests and the examples draw.
+*.glb binary
+*.fbx binary
+compiler/third_party/ufbx/** -text
+compiler/third_party/stb_image/** -text
+compiler/third_party/dr_libs/** -text
+compiler/tests/e2e/audio_import/** -text
+
+# Reproducible skinned fixture and saved measurements retain their hashed bytes.
+bench/skinned/model.gltf text eol=lf
+bench/results/skinned.jsonl text eol=lf
+bench/results/skinned-baseline-metadata.json text eol=lf
+bench/results/skinned-gpu-monitor.csv text eol=lf
+bench/results/skinned-cpu/** text eol=lf
+bench/results/skinned-cpu2/** text eol=lf
+bench/results/skinned-cpu3/** text eol=lf
+bench/results/skinned-cpu4/** text eol=lf
+bench/results/skinned-cpu5/** text eol=lf
+bench/results/skinned-10k/** text eol=lf
+bench/results/asset-sharing-prototype/** text eol=lf
+bench/results/asset-owned-reuse/** text eol=lf
+bench/results/asset-relative-delta/** text eol=lf
+bench/results/optimization-levels/** text eol=lf

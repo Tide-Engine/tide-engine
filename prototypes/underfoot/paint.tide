@@ -1,0 +1,867 @@
+// How the yard looks. Nothing here is in the match: where things are drawn
+// eases towards where the match says they are.
+//
+// The crypt is 3D, a cell a meter across, north the world's +z and up its +y,
+// seen from the south and well above through a camera with no perspective, so
+// it reads as the flat board it is, with depth. Everything is a mesh built
+// here, of few flat faces: boxes for walls, floor, slabs and coffins, a hooded
+// figure for a keeper. One cold light in the north-west casts hard shadows
+// through a shadow map, candles add to it, and light comes in three flat steps.
+// What is cut or painted on a top face is a decal from art/decals.png, which
+// art/make_art.py makes.
+//
+// It is drawn the way a console of the nineties would have: a small frame of
+// about 270 lines, each of its pixels a square of the window's; every corner
+// moved onto a pixel, so what moves wobbles a little; paint in chunky texels
+// worked out from a hash; and colours cut to a few shades each, in a pattern.
+// Where surfaces meet in a crease the frame is darkened, from a second image
+// of how far the camera sees along each pixel. Where there is no ground there is the pit: the floor's
+// sides go down into it and darken, and what is down there looks back.
+asset Texture markSheet = "art/decals.png";
+
+// The decals, in the sheet's order: four across.
+enum Mark { Eye, Frost, Star, Cross, CrackA, CrackB, Ring, Border }
+
+const float PITCH = 1.12;            // How far above the horizon the camera is, in radians: about 64 degrees
+const float RIM = 0.5;               // Wall round the board, in cells
+const float WALL_H = 0.32;           // How high a wall stands over the floor: low, so it hides little of the cell north of it
+const float DEPTH = 3.0;             // How far down the floor's sides are built
+const float SLAB = 0.16;             // A loose slab's thickness
+const float FLIGHT = 0.15;
+const float LAMP_SPAN = 12.5;
+const int LAMP_PIXELS = 1024;
+const float LINES = 270;             // About how many lines the frame is drawn in
+const float SHADES = 31;             // How many shades of each colour the window gets
+const float TEXELS = 12;             // Texels a meter
+const float SEES = 100;              // How far the camera sees, in meters
+const float LAMP_AWAY = 30;
+
+const Color STONE = Color(0.47, 0.50, 0.52);
+const Color STONE_B = Color(0.43, 0.46, 0.49);
+const Color WALL = Color(0.20, 0.19, 0.27);
+const Color BONE = Color(0.90, 0.87, 0.78);
+const Color FROST = Color(0.72, 0.87, 0.93);
+const Color SLATE = Color(0.17, 0.14, 0.22);
+const Color WOOD = Color(0.46, 0.30, 0.19);
+const Color IRON = Color(0.26, 0.26, 0.32);
+const Color INK = Color(0.03, 0.025, 0.05);
+
+// A corner of a mesh: where it is, which way its face looks, and its paint,
+// which is its own above 0 and its instance's tint times it otherwise.
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color = Color.white;
+    float own = 1;
+    float glow;
+}
+
+// A mesh drawn somewhere: where, in what tint, and how much of its paint is
+// its own light.
+struct Solid
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+    float glow;
+}
+
+// A decal's corner, and a decal: a flat square on a top face, showing one
+// part of the sheet.
+struct Patch
+{
+    float3 position;
+    float2 uv;
+}
+struct Decal
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+    float4 part;
+    float glow;
+}
+
+// Four candles: where each is, with how far it reaches in w, and its colour
+// and strength.
+struct Candles
+{
+    float4 candle0;
+    float4 candle1;
+    float4 candle2;
+    float4 candle3;
+    float3 flame0;
+    float3 flame1;
+    float3 flame2;
+    float3 flame3;
+}
+
+// What the frags read: the light's image and the candles.
+local singleton Crypt
+{
+    RenderTarget scene;
+    RenderTarget eyes;       // How far the camera sees along each pixel of the frame
+    DepthTexture eyeDepth;
+    float2 size;             // The frame's pixels, across and down
+    float2 grid;             // Half of that: what moves a corner onto a pixel
+    RenderTarget map;
+    DepthTexture depth;
+    float4x4 toLamp;
+    bool made;
+    Candles candles;
+    List<Corner> box;
+    List<int> boxFaces;
+    List<Corner> keeper;
+    List<int> keeperFaces;
+    List<Patch> patch;
+    List<int> patchFaces;
+    List<Solid> solids;
+    List<Solid> keepers;
+    List<Decal> decals;
+}
+
+local singleton Picture
+{
+    bool ready;
+    int level = -1;
+    int serial = -1;
+    bool snap;
+    float2[2] pavers;
+    bool[2] jumped;
+    float[2] stride;
+    float2[6] crates;
+    Ground[63] ground;
+    float[63] age;
+    float clock;
+    float celebration;
+    bool solved;
+    int[6] sparkCell;
+    Cue[6] sparkKind;
+    float[6] sparkAge;
+    int sparkNext;
+    // A slab on its way between the ground and a keeper's hands.
+    int flyCell = -1;
+    int flyPaver;
+    bool flyLay;
+    float flyAge;
+    // Room kept at the foot of the screen for a hint or the solved card.
+    float reserved;
+}
+
+// How the board lies on the screen: pixels a meter, where the world's middle
+// is drawn, and which cells are open.
+struct Lens
+{
+    float2 origin;
+    float tile;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+}
+
+float2 CellPoint(int cell) { return float2(cell % BOARD_W, cell / BOARD_W); }
+
+// A cell's place in the world, on the floor: the board's middle is the world's.
+float3 Ground3(float2 cell, Lens lens)
+{
+    return float3(cell.x - (lens.x0 + lens.x1) * 0.5, 0, (lens.y0 + lens.y1) * 0.5 - cell.y);
+}
+
+// Where a place in the world is drawn, in the screen's pixels: the camera has
+// no perspective, so this is exact, and what's drawn flat over the 3D lines up.
+float2 Seen(float3 world, Lens lens)
+{
+    return lens.origin + float2(world.x, -(world.z * Math.Sin(PITCH) + world.y * Math.Cos(PITCH))) * lens.tile;
+}
+
+Lens BoardLens(Board board, float2 screen, float reserved = 0)
+{
+    mut var x0 = BOARD_W;
+    mut var y0 = BOARD_H;
+    mut var x1 = -1;
+    mut var y1 = -1;
+    for (var cell = 0; cell < CELLS; cell++)
+    {
+        if (board.ground[cell] == Ground.Wall) continue;
+        x0 = Math.Min(x0, cell % BOARD_W);
+        x1 = Math.Max(x1, cell % BOARD_W);
+        y0 = Math.Min(y0, cell / BOARD_W);
+        y1 = Math.Max(y1, cell / BOARD_W);
+    }
+    if (x1 < 0) { x0 = 1; y0 = 1; x1 = BOARD_W - 2; y1 = BOARD_H - 2; }
+    var narrow = screen.x < 720;
+    var top = narrow ? 150.0 : 100.0;
+    var bottom = screen.y - (narrow ? 164.0 : 78.0) - reserved;
+    var columns = x1 - x0 + 1 + RIM * 2;
+    // Up the screen from the board's middle: half its depth and a wall's
+    // height. Down from it: half its depth and some of the crypt's own face.
+    var above = (y1 - y0 + 1 + RIM * 2) * 0.5 * Math.Sin(PITCH) + (WALL_H + 0.9) * Math.Cos(PITCH);
+    var below = (y1 - y0 + 1 + RIM * 2) * 0.5 * Math.Sin(PITCH) + 0.9 * Math.Cos(PITCH);
+    var tile = Math.Clamp(Math.Min((screen.x - (narrow ? 12.0 : 60.0)) / columns, (bottom - top) / (above + below)), 8, 150);
+    var origin = float2(screen.x * 0.5, top + (bottom - top - (above + below) * tile) * 0.5 + above * tile);
+    return Lens { origin = origin, tile = tile, x0 = x0, y0 = y0, x1 = x1, y1 = y1 };
+}
+
+float Ease(float t)
+{
+    var x = Math.Clamp(t, 0, 1);
+    return 1 - (1 - x) * (1 - x) * (1 - x);
+}
+
+// ---- meshes ---------------------------------------------------------------
+
+// A flat four-sided face that looks along `normal`, whichever way round its
+// corners were given.
+void PutQuad(mut List<Corner> corners, mut List<int> faces, float3 a, float3 b, float3 c, float3 d, float3 normal, Color color, float own = 1, float glow = 0)
+{
+    var front = Math.Dot(Math.Cross(b - a, c - a), normal) > 0;
+    var first = corners.count;
+    corners.Add(Corner { position = a, normal = normal, color = color, own = own, glow = glow });
+    corners.Add(Corner { position = front ? b : d, normal = normal, color = color, own = own, glow = glow });
+    corners.Add(Corner { position = c, normal = normal, color = color, own = own, glow = glow });
+    corners.Add(Corner { position = front ? d : b, normal = normal, color = color, own = own, glow = glow });
+    faces.Add(first);
+    faces.Add(first + 1);
+    faces.Add(first + 2);
+    faces.Add(first);
+    faces.Add(first + 2);
+    faces.Add(first + 3);
+}
+
+void PutBox(mut List<Corner> corners, mut List<int> faces, float3 center, float3 size, Color color, float own = 1, float glow = 0)
+{
+    var half = size * 0.5;
+    for (var face = 0; face < 6; face++)
+    {
+        var axis = face / 2;
+        float way = face % 2 == 0 ? 1 : -1;
+        var normal = float3(axis == 0 ? way : 0, axis == 1 ? way : 0, axis == 2 ? way : 0);
+        var across = float3(axis == 1 ? 1 : 0, axis == 2 ? 1 : 0, axis == 0 ? 1 : 0);
+        var up = Math.Cross(normal, across);
+        var middle = center + normal * half;
+        var a = across * half;
+        var u = up * half;
+        PutQuad(corners, faces, middle - a - u, middle + a - u, middle + a + u, middle - a + u, normal, color, own, glow);
+    }
+}
+
+// A band of eight flat sides between two rings: a cloak, a hood, a cone where
+// the upper ring is nothing.
+void PutBand(mut List<Corner> corners, mut List<int> faces, float low, float lowRadius, float high, float highRadius, Color color, float own)
+{
+    for (var side = 0; side < 8; side++)
+    {
+        var from = side * 0.7853982 + 0.3926991;
+        var to = from + 0.7853982;
+        var a = float3(Math.Sin(from) * lowRadius, low, Math.Cos(from) * lowRadius);
+        var b = float3(Math.Sin(to) * lowRadius, low, Math.Cos(to) * lowRadius);
+        var c = float3(Math.Sin(to) * highRadius, high, Math.Cos(to) * highRadius);
+        var d = float3(Math.Sin(from) * highRadius, high, Math.Cos(from) * highRadius);
+        var mid = (from + to) * 0.5;
+        var lean = (lowRadius - highRadius) / Math.Max(high - low, 0.001);
+        var normal = Math.Normalize(float3(Math.Sin(mid), lean, Math.Cos(mid)));
+        PutQuad(corners, faces, a, b, c, d, normal, color, own);
+    }
+}
+
+// A keeper, a meter tall, looking along its own +z: a cloak, a pointed hood,
+// the dark where a face would be, and two lit eyes in it.
+void MakeKeeper(mut List<Corner> corners, mut List<int> faces)
+{
+    var cloth = Color(1, 1, 1);
+    var shade = Color(0.72, 0.72, 0.72);
+    PutBand(corners, faces, 0, 0.31, 0.10, 0.30, shade, 0);
+    PutBand(corners, faces, 0.10, 0.30, 0.50, 0.15, cloth, 0);
+    PutBand(corners, faces, 0.46, 0.17, 0.62, 0.235, shade, 0);
+    PutBand(corners, faces, 0.62, 0.235, 0.80, 0.20, cloth, 0);
+    PutBand(corners, faces, 0.80, 0.20, 1.02, 0.0, cloth, 0);
+    var front = float3(0, 0, 1);
+    PutQuad(corners, faces, float3(-0.12, 0.56, 0.224), float3(0.12, 0.56, 0.224), float3(0.10, 0.80, 0.20), float3(-0.10, 0.80, 0.20), front, INK);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var x = side * 0.055;
+        PutQuad(corners, faces, float3(x - 0.026, 0.655, 0.232), float3(x + 0.026, 0.655, 0.232), float3(x + 0.026, 0.715, 0.222), float3(x - 0.026, 0.715, 0.222), front, Color(1, 0.93, 0.70), 1, 1.6);
+    }
+}
+
+void MakeMeshes(mut Crypt crypt)
+{
+    PutBox(crypt.box, crypt.boxFaces, float3(0), float3(1), Color.white, 0);
+    MakeKeeper(crypt.keeper, crypt.keeperFaces);
+    crypt.patch.Add(Patch { position = float3(-0.5, 0, 0.5), uv = float2(0, 0) });
+    crypt.patch.Add(Patch { position = float3(0.5, 0, 0.5), uv = float2(1, 0) });
+    crypt.patch.Add(Patch { position = float3(0.5, 0, -0.5), uv = float2(1, 1) });
+    crypt.patch.Add(Patch { position = float3(-0.5, 0, -0.5), uv = float2(0, 1) });
+    crypt.patchFaces = [0, 2, 1, 0, 3, 2];
+}
+
+// ---- what a frame is made of ------------------------------------------------
+
+// A box: its middle, its size and its paint.
+void Block(mut List<Solid> solids, float3 center, float3 size, Color tint, float glow = 0)
+{
+    solids.Add(Solid { transform = float4x4.TRS(center, quaternion.identity, size), tint = tint, glow = glow });
+}
+
+// A decal lying on a top face, `size` across, turned about its middle.
+void Lay(mut List<Decal> decals, Mark mark, float3 at, float size, Color tint, float glow = 0, float turn = 0)
+{
+    var index = int(mark);
+    var low = float2(index % 4, index / 4) * float2(0.25, 0.5) + float2(0.002, 0.004);
+    var high = low + float2(0.25, 0.5) - float2(0.004, 0.008);
+    var turned = quaternion.LookRotation(float3(Math.Sin(turn), 0, Math.Cos(turn)), float3(0, 1, 0));
+    decals.Add(Decal { transform = float4x4.TRS(at + float3(0, 0.004, 0), turned, float3(size, 1, size)), tint = tint, part = float4(low.x, low.y, high.x, high.y), glow = glow });
+}
+
+// One cell's ground with its top at `top`: a deep block where it's set in the
+// floor, a thin slab where it's loose, and whatever is cut in it. Also, half
+// the size, the slab a keeper carries.
+void GroundBlocks(mut List<Solid> solids, mut List<Decal> decals, Ground ground, float3 top, float size, bool fixed, bool down, bool live, float clock, int seed)
+{
+    var thick = fixed ? DEPTH : SLAB * size;
+    // Set ground meets its neighbours with no gap: two greys, turn about, tell the cells apart.
+    var wide = fixed ? 1.0 : 0.93 * size;
+    var middle = top - float3(0, thick * 0.5, 0);
+    var body = float3(wide, thick, wide);
+    if (ground == Ground.Stone || ground == Ground.PlateA || ground == Ground.PlateB)
+    {
+        Block(solids, middle, body, fixed ? (seed % 2 == 0 ? STONE : STONE_B) : BONE);
+        if (ground == Ground.Stone)
+        {
+            if (!fixed) Lay(decals, Mark.Eye, top, wide, Color.white);
+            else if (seed % 7 == 0) Lay(decals, seed % 2 == 0 ? Mark.CrackA : Mark.CrackB, top, wide, Color.white, 0, (seed % 4) * 1.5707963);
+            return;
+        }
+        var tone = ground == Ground.PlateA ? GOLD : MINT;
+        if (!fixed) Lay(decals, Mark.Border, top, wide, Color.white);
+        var rise = (down ? 0.015 : 0.06) * size;
+        Block(solids, top + float3(0, rise * 0.5, 0), float3(0.62 * size, rise, 0.62 * size), down ? Math.Lerp(tone, Color.white, 0.25) : tone, down ? 0.5 : 0.0);
+        Lay(decals, Mark.Ring, top + float3(0, rise, 0), 0.56 * size, Math.Lerp(tone, INK, 0.55));
+    }
+    else if (ground == Ground.Ice)
+    {
+        Block(solids, middle, body, fixed ? Math.Lerp(FROST, STONE, 0.25) : FROST, 0.12);
+        Lay(decals, Mark.Frost, top, wide, Color.white, 0.3);
+    }
+    else if (ground == Ground.PortalP || ground == Ground.PortalQ)
+    {
+        Block(solids, middle, body, SLATE);
+        // Lit and turning while it leads somewhere; dull and still while its twin is in a hand.
+        if (live) Lay(decals, Mark.Star, top, wide, Color(0.36, 0.70, 0.28), 0.9, clock * 0.8);
+        else Lay(decals, Mark.Star, top, wide, Color(0.36, 0.35, 0.42));
+    }
+    else if (ground == Ground.Rubble)
+    {
+        Block(solids, top - float3(0, 0.5, 0), float3(1.0, 1.0, 1.0), Math.Lerp(WOOD, INK, 0.3));
+        Lay(decals, Mark.Cross, top, 1.0, Color(0.8, 0.8, 0.8));
+    }
+}
+
+// A coffin standing on the floor at `at`.
+void CoffinBlocks(mut List<Solid> solids, mut List<Decal> decals, float3 at, float size, float fade = 1)
+{
+    Block(solids, at + float3(0, 0.21 * size, 0), float3(0.62, 0.42, 0.62) * size, Math.Lerp(WOOD, INK, 0.35));
+    Block(solids, at + float3(0, 0.45 * size, 0), float3(0.68, 0.07, 0.68) * size, WOOD);
+    Lay(decals, Mark.Cross, at + float3(0, 0.485 * size, 0), 0.68 * size, Color(1, 1, 1, fade));
+}
+
+// A lantern standing at `at`: iron, and a candle in it that is lit or not.
+void LanternBlocks(mut List<Solid> solids, float3 at, float size, bool lit)
+{
+    Block(solids, at + float3(0, 0.03, 0) * size, float3(0.26, 0.06, 0.26) * size, IRON);
+    Block(solids, at + float3(0, 0.20, 0) * size, float3(0.15, 0.28, 0.15) * size, lit ? Color(1, 0.78, 0.36) : Color(0.42, 0.40, 0.50), lit ? 1.5 : 0.0);
+    for (var post = 0; post < 4; post++)
+        Block(solids, at + float3((post % 2 == 0 ? -0.09 : 0.09), 0.20, (post < 2 ? -0.09 : 0.09)) * size, float3(0.03, 0.28, 0.03) * size, IRON);
+    Block(solids, at + float3(0, 0.37, 0) * size, float3(0.24, 0.06, 0.24) * size, IRON);
+    Block(solids, at + float3(0, 0.44, 0) * size, float3(0.06, 0.08, 0.06) * size, IRON);
+}
+
+// ---- light ------------------------------------------------------------------
+
+// Where the cold light is, from anywhere: the north-west, and high.
+float3 Lamp()
+{
+    return Math.Normalize(float3(-0.30, 0.90, 0.24));
+}
+
+// How much of that light gets to a place on a surface: 0 in shadow and 1 out
+// of it, and only a pixel's width of anything between.
+float Moonlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp)
+{
+    float facing = Math.Dot(normal, Lamp());
+    float slant = Math.Sqrt(Math.Saturate(1 - facing * facing));
+    float step = LAMP_SPAN / LAMP_PIXELS;
+    float4 clip = Math.Mul(toLamp, float4(world + normal * (step * (2.6 + 4.0 * slant)), 1));
+    if (Math.Max(Math.Abs(clip.x), Math.Abs(clip.y)) > 1) return 1;
+    return depth.Compare(float2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5), clip.z * 0.5 + 0.5);
+}
+
+// A candle's light on a surface: it falls off with distance, and is weaker
+// on what faces away.
+float3 Candle(float4 candle, float3 flame, float3 world, float3 normal)
+{
+    float3 to = candle.xyz - world;
+    float far = Math.Length(to);
+    float near = Math.Saturate(1 - far / Math.Max(candle.w, 0.01));
+    float facing = Math.Dot(normal, to / Math.Max(far, 0.001));
+    float got = near * (facing > 0.05 ? 1.0 : 0.35);
+    return flame * (got * got * 1.6);
+}
+
+// A surface's paint in the crypt's light: a cold light in three flat steps
+// with a hard shadow, the candles, and the dark of the pit below the floor.
+float3 InCrypt(float3 base, float3 normal, float3 world, float moon, float glow, Candles crypt)
+{
+    float direct = Math.Max(Math.Dot(normal, Lamp()), 0) * moon;
+    float key = direct > 0.6 ? 1.0 : direct > 0.12 ? 0.55 : 0.0;
+    float3 light = float3(0.25, 0.26, 0.36) + float3(0.70, 0.74, 0.88) * key
+        + Candle(crypt.candle0, crypt.flame0, world, normal) + Candle(crypt.candle1, crypt.flame1, world, normal)
+        + Candle(crypt.candle2, crypt.flame2, world, normal) + Candle(crypt.candle3, crypt.flame3, world, normal);
+    float down = Math.Saturate(1 + (world.y + 0.02) / 1.5);
+    float pit = world.y < -0.02 ? down * down : 1.0;
+    return base * light * pit + base * glow;
+}
+
+// A corner is moved onto the nearest of the frame's pixels, as a console that
+// kept no fractions of one would have put it. `this.clip` is where the engine
+// would put the corner, and `clip` where it goes.
+vert Snap(mut Corner corner, out float4 clip, Crypt crypt)
+{
+    float4 at = this.clip;
+    float depth = Math.Max(at.w, 0.0001);
+    float2 seen = Math.Floor(at.xy / depth * crypt.grid + float2(0.5)) / crypt.grid;
+    clip = float4(seen * depth, at.z, at.w);
+}
+
+vert SnapPatch(mut Patch patch, out float4 clip, Crypt crypt)
+{
+    float4 at = this.clip;
+    float depth = Math.Max(at.w, 0.0001);
+    float2 seen = Math.Floor(at.xy / depth * crypt.grid + float2(0.5)) / crypt.grid;
+    clip = float4(seen * depth, at.z, at.w);
+}
+
+// A number from 0 to 1 for a texel of a surface, the same every frame: stone
+// and wood are a little lighter or darker a texel at a time.
+float Speck(float3 world, float3 normal)
+{
+    float2 on = Math.Abs(normal.y) > 0.5 ? float2(world.x, world.z) : Math.Abs(normal.x) > 0.5 ? float2(world.z, world.y) : float2(world.x, world.y);
+    return (Math.Hash(int2(int(Math.Floor(on.x * TEXELS)), int(Math.Floor(on.y * TEXELS)))) & 255) / 255.0;
+}
+
+frag SolidLook(Corner corner, out Color color, Solid solid, Instance instance, Crypt crypt)
+{
+    float3 normal = instance.Normal(corner.normal);
+    mut float3 base = float3(corner.color.r, corner.color.g, corner.color.b);
+    if (corner.own < 0.5) base = base * float3(solid.tint.r, solid.tint.g, solid.tint.b);
+    base = base * (0.88 + 0.20 * Speck(this.world, normal));
+    float moon = Moonlight(crypt.depth, this.world, normal, crypt.toLamp);
+    float3 lit = InCrypt(base, normal, this.world, moon, solid.glow + corner.glow, crypt.candles);
+    color = Color(lit.x, lit.y, lit.z, 1);
+}
+
+frag DecalLook(Patch patch, out Color color, Texture source, Decal decal, Crypt crypt)
+{
+    float2 uv = float2(decal.part.x + (decal.part.z - decal.part.x) * patch.uv.x, decal.part.y + (decal.part.w - decal.part.y) * patch.uv.y);
+    Color cut = source.Sample(uv, Filter.Point);
+    float3 up = float3(0, 1, 0);
+    float moon = Moonlight(crypt.depth, this.world, up, crypt.toLamp);
+    float3 lit = InCrypt(float3(cut.r * decal.tint.r, cut.g * decal.tint.g, cut.b * decal.tint.b), up, this.world, moon, decal.glow, crypt.candles);
+    color = Color(lit.x, lit.y, lit.z, cut.a * decal.tint.a);
+}
+
+// Which of sixteen steps a pixel takes between two shades: a pattern four
+// pixels across, so two shades stand for the ones between them.
+float Turn(float2 pixel)
+{
+    int x = int(pixel.x) & 3;
+    int y = int(pixel.y) & 3;
+    int low = ((x ^ y) & 1) * 2 + (y & 1);
+    int high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
+    return (low * 4 + high + 0.5) / 16;
+}
+
+// How much nearer the camera the frame is on both sides of a pixel than at it:
+// nothing on a flat face whichever way it slopes, and something in a crease.
+float Crease(DepthTexture depth, float2 uv, float2 off, float here)
+{
+    float bend = (2 * here - depth.Sample(uv + off) - depth.Sample(uv - off)) * SEES;
+    return bend > 1.2 ? 0.0 : Math.Saturate(bend / 0.22);
+}
+
+// The frame, to the window: each of its pixels a square of the window's,
+// darker where surfaces meet, and its colours cut to a few shades each.
+frag Present(Vertex vertex, out Color color, Texture source, Crypt crypt)
+{
+    float2 pixel = float2(Math.Floor(vertex.uv.x * crypt.size.x), Math.Floor(vertex.uv.y * crypt.size.y));
+    float2 uv = (pixel + float2(0.5)) / crypt.size;
+    Color seen = source.Sample(uv, Filter.Point);
+    float here = crypt.eyeDepth.Sample(uv);
+    float2 one = float2(1) / crypt.size;
+    mut float crease = 0;
+    for (var ring = 1; ring <= 2; ring++)
+    {
+        float reach = ring * 1.6;
+        crease += Crease(crypt.eyeDepth, uv, float2(one.x * reach, 0), here);
+        crease += Crease(crypt.eyeDepth, uv, float2(0, one.y * reach), here);
+        crease += Crease(crypt.eyeDepth, uv, float2(one.x, one.y) * (reach * 0.7), here);
+        crease += Crease(crypt.eyeDepth, uv, float2(one.x, -one.y) * (reach * 0.7), here);
+    }
+    float open = here >= 0.99999 ? 1.0 : 1 - Math.Saturate(crease / 8) * 0.75;
+    float turn = Turn(pixel);
+    color = Color(Math.Floor(seen.r * open * SHADES + turn) / SHADES, Math.Floor(seen.g * open * SHADES + turn) / SHADES, Math.Floor(seen.b * open * SHADES + turn) / SHADES, 1);
+}
+
+// ---- views ------------------------------------------------------------------
+
+[Stage(ArtStage.Backdrop)]
+view NightSky(mut Picture picture)
+{
+    Draw.SetScreen();
+    Draw.Clear(NIGHT);
+    picture.clock += Math.Min(Frame.dt, 0.08);
+    if (picture.clock > 4000) picture.clock -= 4000;
+}
+
+// Corner marks round a cell on the floor, in a keeper's colour: where its
+// hands would act.
+void Brackets(float2 at, float2 size, Color tone, float width)
+{
+    var half = size * 0.5;
+    for (var corner = 0; corner < 4; corner++)
+    {
+        var sx = corner % 2 == 0 ? -1.0 : 1.0;
+        var sy = corner < 2 ? -1.0 : 1.0;
+        var tip = at + float2(sx * half.x, sy * half.y);
+        Draw.Line(tip, tip - float2(sx * size.x * 0.22, 0), width, tone);
+        Draw.Line(tip, tip - float2(0, sy * size.y * 0.22), width, tone);
+    }
+}
+
+local event(PuzzleCue cue) WatchPuzzle(mut Picture picture)
+{
+    if (cue.kind == Cue.Portal && cue.paver >= 0 && cue.paver < 2) picture.jumped[cue.paver] = true;
+    if (cue.kind == Cue.Undo || cue.kind == Cue.Reset) picture.snap = true;
+    if ((cue.kind == Cue.Lift || cue.kind == Cue.Lay) && cue.cell >= 0 && cue.paver >= 0 && cue.paver < 2)
+    {
+        picture.flyCell = cue.cell;
+        picture.flyPaver = cue.paver;
+        picture.flyLay = cue.kind == Cue.Lay;
+        picture.flyAge = 0.001;
+        return;
+    }
+    if (cue.cell < 0 || cue.kind == Cue.Step || cue.kind == Cue.Blocked || cue.kind == Cue.Gate) return;
+    picture.sparkCell[picture.sparkNext] = cue.cell;
+    picture.sparkKind[picture.sparkNext] = cue.kind;
+    picture.sparkAge[picture.sparkNext] = 0.001;
+    picture.sparkNext = (picture.sparkNext + 1) % 6;
+}
+
+[Stage(ArtStage.Board)]
+view YardBoard(Yard yard, Rooms.Lobby lobby, Hands hands, mut Picture picture, mut Crypt crypt)
+{
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    var narrow = screen.x < 720;
+    var left = narrow ? 14.0 : Math.Max(24, (screen.x - 1180) * 0.5);
+    var board = yard.board;
+    var layout = yard.layout;
+    var playing = yard.initialized && lobby.page == Rooms.Page.Playing;
+
+    if (!crypt.made)
+    {
+        crypt.made = true;
+        crypt.scene = RenderTarget(16, 16, 1);
+        crypt.eyes = RenderTarget(16, 16, 1, Format.Depth);
+        crypt.eyeDepth = crypt.eyes.depth;
+        crypt.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
+        crypt.depth = crypt.map.depth;
+        MakeMeshes(crypt);
+    }
+
+    // The frame is drawn in about LINES lines, in pixels of its own, each a
+    // whole number of the window's across.
+    var each = Math.Max(2.0, Math.Round(screen.y / LINES));
+    var frame = float2(Math.Ceil(screen.x / each), Math.Ceil(screen.y / each));
+    if (frame.x != crypt.size.x || frame.y != crypt.size.y)
+    {
+        crypt.scene.Resize(int(frame.x), int(frame.y));
+        crypt.eyes.Resize(int(frame.x), int(frame.y));
+        crypt.eyeDepth = crypt.eyes.depth;
+        crypt.size = frame;
+        crypt.grid = frame * 0.5;
+    }
+
+    if (playing)
+    {
+        var dt = Math.Min(Frame.dt, 0.08);
+        if (board.solved && !picture.solved) picture.celebration = 0;
+        picture.solved = board.solved;
+        if (picture.solved) picture.celebration += dt;
+        var fresh = !picture.ready || picture.level != yard.level || picture.serial != yard.serial;
+        var snap = fresh || picture.snap || hands.reduceMotion;
+        var blend = snap ? 1.0 : 1 - Math.Exp(-dt * 22);
+        for (var paver = 0; paver < 2; paver++)
+        {
+            var target = CellPoint(board.paver[paver]);
+            picture.pavers[paver] = Math.Lerp(picture.pavers[paver], target, snap || picture.jumped[paver] ? 1.0 : blend);
+            picture.jumped[paver] = false;
+            // How far through a step the keeper is: what is left of the way, at most one cell.
+            var apart = target - picture.pavers[paver];
+            picture.stride[paver] = Math.Min(1, Math.Abs(apart.x) + Math.Abs(apart.y));
+        }
+        for (var crate = 0; crate < MAX_CRATES; crate++)
+            if (board.crate[crate] >= 0) picture.crates[crate] = Math.Lerp(picture.crates[crate], CellPoint(board.crate[crate]), blend);
+        for (var cell = 0; cell < CELLS; cell++)
+        {
+            if (fresh) picture.age[cell] = 1;
+            else if (picture.ground[cell] != board.ground[cell]) picture.age[cell] = snap ? 1.0 : 0.0;
+            else picture.age[cell] = Math.Min(1, picture.age[cell] + dt * 6);
+            picture.ground[cell] = board.ground[cell];
+        }
+        for (var spark = 0; spark < 6; spark++)
+            if (picture.sparkAge[spark] > 0) picture.sparkAge[spark] = picture.sparkAge[spark] + dt > 0.5 || snap ? 0.0 : picture.sparkAge[spark] + dt;
+        if (picture.flyAge > 0) picture.flyAge = picture.flyAge + dt > FLIGHT || snap ? 0.0 : picture.flyAge + dt;
+        picture.ready = true;
+        picture.snap = false;
+        picture.level = yard.level;
+        picture.serial = yard.serial;
+        // A hint or the solved card has the foot of the screen, and the board
+        // glides out of its way instead of hiding under it.
+        var room = board.solved ? (narrow ? 164.0 : 152.0) : hands.hintOpen ? hands.hintHeight + 8 : 0.0;
+        picture.reserved = snap ? room : Math.Lerp(picture.reserved, room, 1 - Math.Exp(-dt * 14));
+    }
+    // A flight is only shown while the board still agrees with it.
+    var flying = playing && picture.flyAge > 0 && picture.flyCell >= 0 && picture.flyCell < CELLS
+        && (picture.flyLay ? board.ground[picture.flyCell] != Ground.Void : board.held[picture.flyPaver] != Ground.Void);
+
+    var lens = BoardLens(board, screen, picture.reserved);
+    var tile = lens.tile;
+    var columns = lens.x1 - lens.x0 + 1;
+    var rows = lens.y1 - lens.y0 + 1;
+
+    // ---- the crypt, as boxes, keepers and decals ----
+    crypt.solids.Clear();
+    crypt.keepers.Clear();
+    crypt.decals.Clear();
+    crypt.candles.flame0 = float3(0);
+    crypt.candles.flame1 = float3(0);
+    crypt.candles.flame2 = float3(0);
+    crypt.candles.flame3 = float3(0);
+    if (playing)
+    {
+        var pressed = Pressed(board);
+        mut var hasP = false;
+        mut var hasQ = false;
+        for (var cell = 0; cell < CELLS; cell++)
+        {
+            if (board.ground[cell] == Ground.PortalP) hasP = true;
+            if (board.ground[cell] == Ground.PortalQ) hasQ = true;
+        }
+        var live = hasP && hasQ;
+        // The wall round the board: four long blocks.
+        var wallMiddle = WALL_H - (DEPTH + WALL_H) * 0.5;
+        var tall = DEPTH + WALL_H;
+        Block(crypt.solids, float3(0, wallMiddle, rows * 0.5 + RIM * 0.5), float3(columns + RIM * 2, tall, RIM), WALL);
+        // The south side is left at the floor's height: the crypt is open towards whoever looks in.
+        Block(crypt.solids, float3(0, -DEPTH * 0.5, -rows * 0.5 - RIM * 0.5), float3(columns, DEPTH, RIM), WALL);
+        Block(crypt.solids, float3(-columns * 0.5 - RIM * 0.5, wallMiddle, -RIM * 0.5), float3(RIM, tall, rows + RIM), WALL);
+        Block(crypt.solids, float3(columns * 0.5 + RIM * 0.5, wallMiddle, -RIM * 0.5), float3(RIM, tall, rows + RIM), WALL);
+
+        mut var lantern = 0;
+        for (var y = lens.y0; y <= lens.y1; y++)
+            for (var x = lens.x0; x <= lens.x1; x++)
+            {
+                var cell = y * BOARD_W + x;
+                var ground = board.ground[cell];
+                var at = Ground3(float2(x, y), lens);
+                if (ground == Ground.Wall)
+                {
+                    Block(crypt.solids, at + float3(0, wallMiddle, 0), float3(1, tall, 1), WALL);
+                    continue;
+                }
+                if (ground == Ground.Void)
+                {
+                    // Something down there, watching whoever is being moved. It blinks.
+                    if ((cell * 7 + yard.level * 3) % 4 != 0) continue;
+                    var watched = Ground3(picture.pavers[hands.active], lens);
+                    var gaze = watched - at;
+                    var look = gaze / (Math.Length(gaze) + 0.001) * 0.035;
+                    var blink = hands.reduceMotion ? 0.0 : Math.Sin(picture.clock * 0.83 + cell * 2.1);
+                    var open = blink > 0.965 ? 0.15 : 1.0;
+                    for (var side = -1; side <= 1; side += 2)
+                        Block(crypt.solids, at + float3(side * 0.10 + look.x, -0.42, 0.22 + look.z), float3(0.10, 0.065 * open, 0.03), Color(0.95, 0.88, 0.55), 1.4);
+                    continue;
+                }
+                if (flying && picture.flyLay && picture.flyCell == cell) continue;
+                var set = layout.fixed[cell] || ground == Ground.Rubble;
+                var occupied = PaverAt(board, cell) >= 0 || CrateAt(board, cell) >= 0;
+                // A slab just laid settles into place; a coffin just gone under is seen going.
+                var settle = hands.reduceMotion || set ? 0.0 : (1 - Ease(picture.age[cell])) * 0.25;
+                GroundBlocks(crypt.solids, crypt.decals, ground, at + float3(0, settle, 0), 1, layout.fixed[cell], occupied, live, picture.clock, x + y + (x * 7 + y * 13) * 2);
+                if (ground == Ground.Rubble && picture.age[cell] < 1 && !hands.reduceMotion)
+                    CoffinBlocks(crypt.solids, crypt.decals, at - float3(0, 0.5 * picture.age[cell], 0), 1, 1 - picture.age[cell]);
+                if (layout.goal[cell])
+                {
+                    var reached = PaverAt(board, cell) >= 0;
+                    if (!reached) LanternBlocks(crypt.solids, at, 1.5, false);
+                    // A ring on the floor says where a keeper has to end, lit or not.
+                    Lay(crypt.decals, Mark.Ring, at, 0.92, GOLD, reached ? 1.0 : 0.45);
+                    // A lantern that has been reached lights the floor round it.
+                    var flame = reached ? float3(1.0, 0.62, 0.26) * 0.42 : float3(0);
+                    if (lantern == 0) { crypt.candles.candle2 = float4(at.x, 0.6, at.z, 3.2); crypt.candles.flame2 = flame; }
+                    else { crypt.candles.candle3 = float4(at.x, 0.6, at.z, 3.2); crypt.candles.flame3 = flame; }
+                    lantern++;
+                }
+                if (layout.gate[cell] != 0)
+                {
+                    // Bars that stand across the cell, or have gone down into it.
+                    var shut = Shut(layout, cell, pressed) && !occupied;
+                    var tone = layout.gate[cell] == 1 ? GOLD : MINT;
+                    var bar = shut ? 0.74 : 0.05;
+                    for (var rod = 0; rod < 4; rod++)
+                        Block(crypt.solids, at + float3(-0.27 + rod * 0.18, bar * 0.5, 0), float3(0.07, bar, 0.07), tone);
+                    if (shut) Block(crypt.solids, at + float3(0, 0.62, 0), float3(0.74, 0.06, 0.05), tone);
+                    for (var post = -1; post <= 1; post += 2)
+                        Block(crypt.solids, at + float3(post * 0.44, 0.42, 0), float3(0.11, 0.84, 0.11), Math.Lerp(tone, INK, 0.45));
+                }
+            }
+
+        for (var crate = 0; crate < MAX_CRATES; crate++)
+            if (board.crate[crate] >= 0) CoffinBlocks(crypt.solids, crypt.decals, Ground3(picture.crates[crate], lens), 1);
+
+        for (var paver = 0; paver < 2; paver++)
+        {
+            if (board.paver[paver] < 0) continue;
+            mut var at = Ground3(picture.pavers[paver], lens);
+            var facing = board.solved ? 2 : board.facing[paver];
+            var ahead = float3(facing == 1 ? 1 : facing == 3 ? -1 : 0, 0, facing == 0 ? 1 : facing == 2 ? -1 : 0);
+            if (hands.blockTime > 0 && hands.blockPaver == paver && !hands.reduceMotion)
+                at += ahead * Math.Sin(hands.blockTime / 0.22 * 3.14) * 0.10;
+            // A breath while standing, a hop while walking.
+            var hop = hands.reduceMotion ? 0.0 : Math.Abs(Math.Sin(picture.stride[paver] * 3.14)) * 0.10;
+            var feet = at + float3(0, hop, 0);
+            crypt.keepers.Add(Solid { transform = float4x4.TRS(feet, quaternion.LookRotation(ahead, float3(0, 1, 0)), float3(0.88)), tint = PaverColor(paver) });
+            // Each keeper has a little light of its own, so the floor round it can be read.
+            if (paver == 0) { crypt.candles.candle0 = float4(feet.x, 0.7, feet.z, 2.1); crypt.candles.flame0 = float3(0.16, 0.14, 0.12); }
+            else { crypt.candles.candle1 = float4(feet.x, 0.7, feet.z, 2.1); crypt.candles.flame1 = float3(0.16, 0.14, 0.12); }
+            var active = hands.seat >= 0 && paver == hands.active && !board.solved;
+            if (active) Lay(crypt.decals, Mark.Ring, at, 0.86 + (hands.reduceMotion ? 0.0 : Math.Sin(picture.clock * 4.2) * 0.03), Color.white, 1.0);
+            var lifting = flying && !picture.flyLay && picture.flyPaver == paver;
+            if (board.held[paver] != Ground.Void && !lifting)
+                GroundBlocks(crypt.solids, crypt.decals, board.held[paver], feet + float3(0, 1.22, 0), 0.5, false, false, false, picture.clock, 0);
+            // A keeper on its lantern has taken it up, lit.
+            if (layout.goal[board.paver[paver]] && picture.stride[paver] < 0.3)
+                LanternBlocks(crypt.solids, feet + float3(0.36, 0.16, -0.05), 1.1, true);
+        }
+
+        // The slab in the air, between a keeper's hands and its cell.
+        if (flying)
+        {
+            var t = Ease(picture.flyAge / FLIGHT);
+            var hand = Ground3(picture.pavers[picture.flyPaver], lens) + float3(0, 1.22, 0);
+            var place = Ground3(CellPoint(picture.flyCell), lens);
+            var kind = picture.flyLay ? board.ground[picture.flyCell] : board.held[picture.flyPaver];
+            var from = picture.flyLay ? hand : place;
+            var to = picture.flyLay ? place : hand;
+            var size = picture.flyLay ? Math.Lerp(0.5, 1.0, t) : Math.Lerp(1.0, 0.5, t);
+            GroundBlocks(crypt.solids, crypt.decals, kind, Math.Lerp(from, to, t) + float3(0, Math.Sin(t * 3.14) * 0.25, 0), size, false, false, live, picture.clock, 0);
+        }
+    }
+
+    // ---- the light's image: everything solid, seen from where the light is ----
+    var lampTurn = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));
+    var lamp = float4x4.TRS(Math.Mul(lampTurn, float3(0, 0, -LAMP_AWAY)), lampTurn, float3(1));
+    crypt.map.Clear(Color.white);
+    crypt.map.SetCamera(lamp, float4x4.Ortho(LAMP_SPAN, LAMP_SPAN, 0, LAMP_AWAY * 2));
+    crypt.toLamp = crypt.map.WorldToClip();
+    crypt.map.Instanced(crypt.box, crypt.boxFaces, crypt.solids);
+    crypt.map.Instanced(crypt.keeper, crypt.keeperFaces, crypt.keepers);
+
+    // ---- the frame: a camera with no perspective, south of the board and high ----
+    var see = float2(screen.x, screen.y) / tile;
+    var focus = float3(0, 0, (lens.origin.y - screen.y * 0.5) / (Math.Sin(PITCH) * tile));
+    var forward = float3(0, -Math.Sin(PITCH), Math.Cos(PITCH));
+    var turn = quaternion.LookRotation(forward, float3(0, 1, 0));
+    var camera = float4x4.TRS(focus - forward * 40, turn, float3(1));
+    var sees = float4x4.Ortho(see.x, see.y, 0.1, SEES + 0.1);
+    crypt.eyes.Clear(Color.white);
+    crypt.eyes.SetCamera(camera, sees);
+    crypt.eyes.Instanced(crypt.box, crypt.boxFaces, crypt.solids);
+    crypt.eyes.Instanced(crypt.keeper, crypt.keeperFaces, crypt.keepers);
+    crypt.scene.Clear(NIGHT);
+    crypt.scene.SetCamera(camera, sees);
+    crypt.scene.Instanced(crypt.box, crypt.boxFaces, crypt.solids, Snap, SolidLook);
+    crypt.scene.Instanced(crypt.keeper, crypt.keeperFaces, crypt.keepers, Snap, SolidLook);
+    crypt.scene.Depth(Depth.Read),
+    crypt.scene.Cull(Cull.None)
+    {
+        crypt.scene.Instanced(crypt.patch, crypt.patchFaces, crypt.decals, markSheet, Filter.Point, SnapPatch, DecalLook);
+    }
+    Draw.Blit(crypt.scene.color, Draw.window, Present);
+
+    // ---- flat things over it: words, and marks that lie on the floor ----
+    // A plain bar behind the words: easier to read, and the same pixels on
+    // every machine, which the browser test compares.
+    var bar = narrow ? 126.0 : 66.0;
+    Draw.Rect(float2(screen.x * 0.5, bar * 0.5), float2(screen.x, bar), Color(0.07, 0.065, 0.095));
+    Draw.Rect(float2(screen.x * 0.5, bar + 1), float2(screen.x, 3), Color(0.02, 0.016, 0.035));
+    Label("underfoot", float2(left, 34), narrow ? 26.0 : 30.0, CREAM);
+    if (!yard.initialized) return;
+    Label($"{ChapterName(yard.level)}  /  {yard.level + 1} of {LEVEL_COUNT}", float2(left + (narrow ? 0.0 : 178.0), narrow ? 62.0 : 28.0), 12, GOLD);
+    Label(LevelName(yard.level), float2(left + (narrow ? 0.0 : 178.0), narrow ? 78.0 : 46.0), narrow ? 13.0 : 16.0, CREAM);
+    var counted = float2(left + (narrow ? 0.0 : 178.0) + Draw.MeasureText(LevelName(yard.level), narrow ? 13.0 : 16.0).x + 14, narrow ? 78.0 : 47.0);
+    Label(board.moves == 1 ? "1 move" : $"{board.moves} moves", counted, 12, MUTED);
+    if (!playing) return;
+    var cellSize = float2(tile, tile * Math.Sin(PITCH));
+
+    // While a hint is up the wall names the cells, as the hints do.
+    if (hands.hintOpen)
+    {
+        for (var x = lens.x0; x <= lens.x1; x++)
+            Label($"{char(64 + x)}", Seen(Ground3(float2(x, lens.y0 - 0.5 - RIM * 0.5), lens) + float3(0, WALL_H, 0), lens), Math.Max(10, tile * 0.17), GOLD, Anchor.MiddleCenter);
+        for (var y = lens.y0; y <= lens.y1; y++)
+            Label($"{y}", Seen(Ground3(float2(lens.x0 - 0.5 - RIM * 0.5, y), lens) + float3(0, WALL_H, 0), lens), Math.Max(10, tile * 0.17), GOLD, Anchor.MiddleCenter);
+    }
+
+    // The cell the keeper in hand faces, so a lift or a lay is never a guess.
+    if (hands.seat >= 0 && !board.solved)
+    {
+        var me = hands.active;
+        var ahead = Step(board.paver[me], board.facing[me]);
+        if (ahead >= 0 && board.ground[ahead] != Ground.Wall)
+        {
+            var can = board.held[me] == Ground.Void
+                ? Loose(board.ground[ahead]) && !layout.fixed[ahead] && Firm(layout, board, board.paver[me]) && PaverAt(board, ahead) < 0 && CrateAt(board, ahead) < 0
+                : board.ground[ahead] == Ground.Void;
+            var mark = Math.Lerp(PaverColor(me), Color.white, 0.35);
+            if (can) Brackets(Seen(Ground3(CellPoint(ahead), lens), lens), cellSize * (0.90 + 0.03 * Math.Sin(picture.clock * 4)), Color(mark.r, mark.g, mark.b, 0.90), Math.Max(2, tile * 0.03));
+        }
+    }
+
+    for (var spark = 0; spark < 6; spark++)
+    {
+        if (picture.sparkAge[spark] <= 0 || hands.reduceMotion) continue;
+        var t = picture.sparkAge[spark] / 0.5;
+        var at = Seen(Ground3(CellPoint(picture.sparkCell[spark]), lens), lens);
+        var kind = picture.sparkKind[spark];
+        var tone = kind == Cue.Portal ? VIOLET : kind == Cue.Sink ? Color(0.85, 0.62, 0.34) : kind == Cue.Slide ? Color(0.66, 0.88, 0.98) : kind == Cue.Solve ? GOLD : CREAM;
+        Draw.WireEllipse(at, cellSize * (0.25 + 0.45 * Ease(t)), Math.Max(1.5, tile * 0.04 * (1 - t)), Color(tone.r, tone.g, tone.b, 0.8 * (1 - t)));
+    }
+
+    if (board.solved && picture.celebration < 2.4 && !hands.reduceMotion)
+    {
+        for (var paver = 0; paver < 2; paver++)
+        {
+            var home = Seen(Ground3(picture.pavers[paver], lens) + float3(0, 0.5, 0), lens);
+            for (var mote = 0; mote < 14; mote++)
+            {
+                var rise = picture.celebration * (0.5 + mote % 5 * 0.16);
+                var sway = Math.Sin(picture.celebration * 3 + mote * 1.9) * tile * 0.18;
+                var at = home + float2((mote * 37 % 21 - 10) / 10.0 * tile * 0.5 + sway, -rise * tile * 1.4);
+                // They stay out of the band of words along the top.
+                if (at.y > 124) Draw.Circle(at, tile * 0.03, Color(1, 0.90, 0.55, Math.Max(0, 1 - picture.celebration / 2.4)));
+            }
+        }
+    }
+}

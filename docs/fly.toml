@@ -1,5 +1,6 @@
 # The docs site on Fly.io, at https://tide-engine.dev. www.tide-engine.dev
-# redirects there (server.js). In the domain's DNS on Cloudflare, not proxied:
+# redirects there, as does tide-website.fly.dev (server.js). In the domain's
+# DNS on Cloudflare, not proxied:
 # A and AAAA records for tide-engine.dev, to the app's addresses, and a CNAME
 # for www to tide-website.fly.dev; certificates come from Fly (fly certs).
 #
@@ -20,10 +21,14 @@ primary_region = 'fra'
   ADDRESS_HEADER = 'Fly-Client-IP'
   BODY_SIZE_LIMIT = '16K'
   TIDE_ACCESS_FILE = '/data/access-requests.jsonl'
+  TIDE_ANALYTICS_FILE = '/data/analytics.json'
+  TIDE_RELAY_STATS_URL = 'http://purrengine-relay.internal:8080/admin/stats'
+  # TIDE_ADMIN_PASSWORD protects /admin. TIDE_RELAY_STATS_TOKEN is shared
+  # with purrengine-relay; both are Fly secrets, never public client settings.
   # Whose releases /releases gives (releases.js). The token that reads them is
   # a secret: fly secrets set TIDE_RELEASES_TOKEN=<a token that can only read
   # that repository's contents>
-  TIDE_RELEASES_REPO = 'BlenMiner/tide-engine'
+  TIDE_RELEASES_REPO = 'Tide-Engine/tide-engine'
 
 [[mounts]]
   source = 'access_requests'

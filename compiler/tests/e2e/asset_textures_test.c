@@ -52,7 +52,7 @@ static void frame(void)
 {
     for (int i = 0; i < 2; i++) {
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     }
     draw_count = 0;
     uint32_t target = 0;
@@ -172,6 +172,11 @@ TIDE_TEST(asset_textures_are_values_drawn_where_the_pack_has_them)
     TIDE_CHECK(hero_named && tiles_named && tiles_named != run_named[0] && run_named[0] != run_named[1]);
     // tiles is run/0.png, as run[0] is: two names of one image
     TIDE_CHECK(image_of(tiles_named, NULL) == image_of(run_named[0], NULL));
+    // A list and a map of one file: each names its own declaration's image, which is the file's pixels, in the pack once
+    TIDE_CHECK(art->soloCount == 1 && art->soloByNameCount == 1);
+    TIDE_CHECK(art->keptSolo.image.version != hero_named && art->keptSolo.image.width == 8 && art->keptSolo.image.height == 6);
+    TIDE_CHECK(image_of(art->keptSolo.image.version, NULL) == image_of(hero_named, NULL));
+    TIDE_CHECK(art->keptByName.image.version != run_named[1] && image_of(art->keptByName.image.version, NULL) == image_of(run_named[1], NULL));
     TIDE_CHECK(hero_image && run_image[0] && run_image[1] && run_image[2]);
     TIDE_CHECK(run_image[0] != run_image[1] && run_image[1] != run_image[2] && hero_image != run_image[0]);
 

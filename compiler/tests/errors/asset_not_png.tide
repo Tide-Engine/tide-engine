@@ -1,4 +1,4 @@
-// expect: '../e2e/assets/bad.png' isn't a PNG that decodes
+// expect: '../e2e/assets/bad.png' can't be imported as an image: PNG image has invalid or truncated data
 asset Grid2<Color> hero = "../e2e/assets/bad.png";
 
 scene Main

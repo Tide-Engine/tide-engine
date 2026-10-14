@@ -1,0 +1,23 @@
+// expect: a Mesh's vertices and indices are read-only: they're the file it names, as the game was built
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> quad = "../e2e/assets/meshes/quad.glb";
+
+singleton Counter
+{
+    int n;
+}
+
+system Change(mut Counter counter)
+{
+    mut var mesh = quad;
+    mesh.indices.Add(counter.n);
+}
+
+scene Main
+{
+}

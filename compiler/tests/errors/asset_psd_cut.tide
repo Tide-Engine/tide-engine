@@ -1,0 +1,3 @@
+// expect: '../e2e/assets/psds/bad/cut.psd' can't be imported as an image: PSD image has truncated or invalid composite pixels
+asset Grid2<Color> image = "../e2e/assets/psds/bad/cut.psd";
+scene Main { }

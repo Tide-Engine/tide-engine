@@ -1,10 +1,10 @@
 // What a function reaches through the World it's passed is its caller's
-// reach, through however many functions it goes: Chase reads any Transform
+// reach, through however many functions it goes: Chase reads any TestTransform
 // through LeaderAt, so it waits for Aim's writes; Heal sets any Health through
 // Mend, which Patch calls, so Drain waits for it; and Rest, which passes its
 // World to a function that never calls it, makes nothing wait.
 
-component Transform
+component TestTransform
 {
     float2 position;
 }
@@ -40,8 +40,8 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Transform, Turret);
-    Spawn(Transform, Runner);
+    Spawn(TestTransform, Turret);
+    Spawn(TestTransform, Runner);
     Spawn(Health, Healer);
     Spawn(Armor);
     Spawn(Idle);
@@ -49,7 +49,7 @@ event(Spawned) Setup(with Main)
 
 float2 LeaderAt(Entity leader, World world)
 {
-    return world.Get<Transform>(leader).position;
+    return world.Get<TestTransform>(leader).position;
 }
 
 void Mend(Entity patient, int by, mut World world)
@@ -69,12 +69,12 @@ int Rested(int ticks, World world)
     return ticks + 1;
 }
 
-system Aim(mut Transform transform, with Turret)
+system Aim(mut TestTransform transform, with Turret)
 {
     transform.position.x += 1;
 }
 
-system Chase(mut Transform transform, Runner runner, World world)
+system Chase(mut TestTransform transform, Runner runner, World world)
 {
     transform.position = LeaderAt(runner.leader, world);
 }

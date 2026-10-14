@@ -1,0 +1,4 @@
+// expect: 'value' may already be assigned
+scene Main { }
+void G(out int value) { value = 1; }
+int F() { int value; G(out value); G(out value); return value; }

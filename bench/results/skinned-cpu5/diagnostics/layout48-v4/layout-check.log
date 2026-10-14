@@ -1,0 +1,95 @@
+{
+  "control_text_exact": true,
+  "control_text_sha256": "c6bdc970619d91ddf0a743fcb654ee5823200b645fdd3025f239855e1cf0917f",
+  "control": {
+    "tide_skinned_sample": {
+      "hex": "0x000000014001a3c0",
+      "address": 5368816576,
+      "mod64": 0
+    },
+    "sampled_value": {
+      "hex": "0x000000014001aa00",
+      "address": 5368818176,
+      "mod64": 0
+    },
+    "fill_rest": {
+      "hex": "0x000000014001a200",
+      "address": 5368816128,
+      "mod64": 0
+    },
+    "require_clip": {
+      "hex": "0x000000014001b3f0",
+      "address": 5368820720,
+      "mod64": 48
+    },
+    "tide_run_view_Show": {
+      "hex": "0x0000000140004130",
+      "address": 5368725808,
+      "mod64": 48
+    },
+    "tide_shade_1": {
+      "hex": "0x0000000140007340",
+      "address": 5368738624,
+      "mod64": 0
+    }
+  },
+  "prefix48": {
+    "tide_skinned_sample": {
+      "hex": "0x000000014001a3f0",
+      "address": 5368816624,
+      "mod64": 48
+    },
+    "sampled_value": {
+      "hex": "0x000000014001aa30",
+      "address": 5368818224,
+      "mod64": 48
+    },
+    "fill_rest": {
+      "hex": "0x000000014001a230",
+      "address": 5368816176,
+      "mod64": 48
+    },
+    "require_clip": {
+      "hex": "0x000000014001b420",
+      "address": 5368820768,
+      "mod64": 32
+    },
+    "tide_run_view_Show": {
+      "hex": "0x0000000140004130",
+      "address": 5368725808,
+      "mod64": 48
+    },
+    "tide_shade_1": {
+      "hex": "0x0000000140007340",
+      "address": 5368738624,
+      "mod64": 0
+    }
+  },
+  "linked_code_checks": [
+    {
+      "function": "tide_skinned_sample",
+      "bytes": 1593,
+      "nonrelocated_instruction_bytes_match_coff": true,
+      "direct_call_targets_verified": 12
+    },
+    {
+      "function": "sampled_value",
+      "bytes": 1015,
+      "nonrelocated_instruction_bytes_match_coff": true,
+      "direct_call_targets_verified": 6
+    },
+    {
+      "function": "fill_rest",
+      "bytes": 446,
+      "nonrelocated_instruction_bytes_match_coff": true,
+      "direct_call_targets_verified": 2
+    },
+    {
+      "function": "require_clip",
+      "bytes": 1294,
+      "nonrelocated_instruction_bytes_match_coff": true,
+      "direct_call_targets_verified": 6
+    }
+  ],
+  "interpretation": "Only an unreachable48-byte prefix is added to the private skinned object. Existing sampler/helper instructions, relocations and unwind input sections pass the separate COFF patch verification. Several skinned functions shift together, so this tests group code layout rather than one hot loop."
+}

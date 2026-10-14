@@ -80,7 +80,8 @@ public abstract class TideRunProducer extends LazyRunConfigurationProducer<TideR
         final PsiElement element = context.getPsiLocation();
         final PsiFile psi = element != null ? element.getContainingFile() : null;
         final VirtualFile file = psi != null ? psi.getVirtualFile() : null;
-        if (file == null || !file.isInLocalFileSystem() || !"tide".equals(file.getExtension())) return null;
+        if (file == null || !file.isInLocalFileSystem()
+                || (!"tide".equals(file.getExtension()) && !"tprefab".equals(file.getExtension()))) return null;
         return file;
     }
 

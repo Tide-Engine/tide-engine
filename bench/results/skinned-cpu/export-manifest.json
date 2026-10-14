@@ -1,0 +1,483 @@
+{
+  "format": 1,
+  "normalization": "UTF-8 without BOM; CRLF and CR become LF; append LF to a nonempty file lacking a final newline; empty files remain empty.",
+  "source_before": "b9faf142183e7ed41fb81e3e923af2a06cfbb4e3",
+  "source_after": "c06de5f51d5eb521d10f4e2803bf554866f23453",
+  "files": [
+    {
+      "path": "clock-summary.json",
+      "bytes": 3725,
+      "sha256": "155a3a62d94090af78c852e3a5647ac4a065677fb1423cbe2371879c1a8d3478",
+      "original": null
+    },
+    {
+      "path": "clocks/skinned-cpu-after-r1-gpu.csv",
+      "bytes": 2752,
+      "sha256": "720cc665a04d6ce32427443dd23a27023095526652612af82f74d5dec449ead7",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r1-gpu.csv",
+        "bytes": 2772,
+        "sha256": "1b1c2ceb0a5d35ecac38d867c6843fa92b42a7ae1d6a80cce0750cc1dcf69b81",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "clocks/skinned-cpu-after-r2-gpu.csv",
+      "bytes": 2790,
+      "sha256": "f1b20369365cf217b5abcc7225bde6c11366d1eb1f074897537bff3e3a5c7af3",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r2-gpu.csv",
+        "bytes": 2810,
+        "sha256": "a2167b4e6121f97ce27e66f058546d089987f29099aafedfcc99148e6aa491d6",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "clocks/skinned-cpu-after-r3-gpu.csv",
+      "bytes": 2624,
+      "sha256": "30e39532122ad751fec4bca5ed757f6b0e951ce926722adf1f0d18016c909813",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r3-gpu.csv",
+        "bytes": 2643,
+        "sha256": "fcc1403ca3acb288cef4b1e1ea37e1b8a334a4274a03671bb2ef744bc393b973",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "clocks/skinned-cpu-before-r1-gpu.csv",
+      "bytes": 32957,
+      "sha256": "713f27457a244ac9d3eade3194beb3385eb7e52617193b39c714ed1dc1924033",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r1-gpu.csv",
+        "bytes": 33218,
+        "sha256": "9a0d41f0e9f4a690d16c296063b2f2d48c48752e5b58a9ae124e2bced4f1b4a2",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "clocks/skinned-cpu-before-r2-gpu.csv",
+      "bytes": 33000,
+      "sha256": "6bee0242149a7ddca26771a4bf5a0e9f6e40429a584edf0db8f3ea6759fad4d8",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r2-gpu.csv",
+        "bytes": 33261,
+        "sha256": "6c5e5cb287efca4e20141bce1cf6c7918bd902acb40e1cbf5ace23cb2ed1b04f",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "clocks/skinned-cpu-before-r3-gpu.csv",
+      "bytes": 32812,
+      "sha256": "52e4c29cf117049a84a0aa79d07bc7541a3f4535e10975a494931b62815d90fe",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r3-gpu.csv",
+        "bytes": 33072,
+        "sha256": "98ee61a929b24d704279060fc7a42a5722eb8ffb3a8916d1b5f0b0befce89a90",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "diagnostic-before/build.ps1",
+      "bytes": 5809,
+      "sha256": "3243390f74567b64a19f443d543eb516e92df4981db7ddefdea385221e37ce0a",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\build.ps1",
+        "bytes": 5809,
+        "sha256": "3243390f74567b64a19f443d543eb516e92df4981db7ddefdea385221e37ce0a",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/gpu-clock-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\gpu-clock-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/gpu-clock.csv",
+      "bytes": 3672,
+      "sha256": "8297da3ce5e4335b58b205d4a1fd5677ec8d41f5557126ca27539e2e174bdd3a",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\gpu-clock.csv",
+        "bytes": 3700,
+        "sha256": "5079cb794dfc44bb8269543dea6de91e55297328644891244e6684e546690ef1",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/main.c",
+      "bytes": 17295,
+      "sha256": "83b0a4ce4c4ce1316a248770f88fda952a17d3c9e0d6409e3419be016dd6ca32",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\main.c",
+        "bytes": 17295,
+        "sha256": "83b0a4ce4c4ce1316a248770f88fda952a17d3c9e0d6409e3419be016dd6ca32",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/metadata.json",
+      "bytes": 3775,
+      "sha256": "e239aad4e50a4dbbe59099da80d4bca56fb075c3f7decb7ee4727e8abc93dafc",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\measurement-metadata.json",
+        "bytes": 3896,
+        "sha256": "ed69d72aebc68c2087f249ed8d6170906a561368fbef659ea96849ac0689b2f9",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "diagnostic-before/phase-summary.json",
+      "bytes": 2070,
+      "sha256": "0bff0dec4e0993a6e82657aae4c1c7693478be3202896273ff8a5ba624df7f17",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\phase-summary.json",
+        "bytes": 2162,
+        "sha256": "433008b37513d5a0bf10d284009c74b8d8faa851245c32339c16bef87ea6626d",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/run.ps1",
+      "bytes": 3327,
+      "sha256": "b9c98e8f2846348bb08b06602dd7112e0ffce948530f238e955fce25f9429108",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\run.ps1",
+        "bytes": 3327,
+        "sha256": "b9c98e8f2846348bb08b06602dd7112e0ffce948530f238e955fce25f9429108",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/skinned-original.c",
+      "bytes": 29110,
+      "sha256": "6c476012d227c2af58b0f9d311a509baa801ea363948728efafbe7bbbe880ab0",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\skinned-original.c",
+        "bytes": 29110,
+        "sha256": "6c476012d227c2af58b0f9d311a509baa801ea363948728efafbe7bbbe880ab0",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/skinned.c",
+      "bytes": 30820,
+      "sha256": "d8e518533cd5e55a95a666bffe6f6f6eb1aa0be7ca2424456a57de17d948d50e",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\skinned.c",
+        "bytes": 30820,
+        "sha256": "d8e518533cd5e55a95a666bffe6f6f6eb1aa0be7ca2424456a57de17d948d50e",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "diagnostic-before/stdout.txt",
+      "bytes": 2901,
+      "sha256": "e1e9241d8ce2f2fb1bec693e2b0eb3e47de0081a99119a03fb8d9e6d8244adc4",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-before\\diagnostic\\stdout.txt",
+        "bytes": 2915,
+        "sha256": "54684695fea4252cb72d9171205eec12c29b46059c14d4aa9d60ca97cc1c14d4",
+        "category": "diagnostic-text"
+      }
+    },
+    {
+      "path": "ledger-normalization.json",
+      "bytes": 694,
+      "sha256": "5f7082c278f05db482616dee711188e23229c16df05bd8d81482a61ff1084606",
+      "original": null
+    },
+    {
+      "path": "logs/skinned-cpu-after-r1-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r1-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r1-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r1-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r1-stdout.txt",
+      "bytes": 3945,
+      "sha256": "aa10fe05fb4ca560f557388e2e3dd495c0245ab51a0c02615aa27a5dd9a26c93",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r1-stdout.txt",
+        "bytes": 3963,
+        "sha256": "1cb2684faf4936a9cb7bb05819c20efe6740a88da1ead0c2e3deea7f5657479a",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r2-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r2-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r2-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r2-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r2-stdout.txt",
+      "bytes": 3945,
+      "sha256": "7fa43ca4540dc69167492a1e435a3fadc57449354dcd80eb2a952d9f5aa9c873",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r2-stdout.txt",
+        "bytes": 3963,
+        "sha256": "ba0071e23787f1c217fae927cf9fa5e52982daa7019866ea38c7057069fa2c75",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r3-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r3-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r3-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r3-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-after-r3-stdout.txt",
+      "bytes": 4082,
+      "sha256": "9bb35a97cb93642d693d6d6ce3bea6c2b1bc68f2db08c55a2b51105592e4b3c4",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-after-r3-stdout.txt",
+        "bytes": 4101,
+        "sha256": "bc4fba9e3cae23bde9a8fa416b43f820e99c76f302ed4da868363f4f1be180d2",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r1-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r1-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r1-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r1-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r1-stdout.txt",
+      "bytes": 3988,
+      "sha256": "59fda49cfdb41ae7388daee8de14bc7c1c2bc719ea0871ae771c9c247d1646f5",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r1-stdout.txt",
+        "bytes": 4006,
+        "sha256": "378f8110938906cc7bcf63a5c44f5f5ee0e6c516398d67153e97d31337768913",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r2-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r2-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r2-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r2-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r2-stdout.txt",
+      "bytes": 3988,
+      "sha256": "698acd70e0384573cf5ef9b1ad53b8e00348f865343d8adacbef9103e3a842bf",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r2-stdout.txt",
+        "bytes": 4006,
+        "sha256": "afd14062494dde049ba2c54bd08345d333f3a491b4e7b32b636bcc5e74f80f0f",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r3-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r3-gpu-errors.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r3-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r3-stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "logs/skinned-cpu-before-r3-stdout.txt",
+      "bytes": 4127,
+      "sha256": "90e98786a32db47e4e52b0798077f084330f9658b07b5276eb667ad572ea51db",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\skinned-cpu-before-r3-stdout.txt",
+        "bytes": 4146,
+        "sha256": "62e5641fc629897623f59d3df5cf064dbb6c4630c341526414af47aeac735f1e",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "metadata.json",
+      "bytes": 17414,
+      "sha256": "ad595e7b3a8850f902c7af28015d6437f3cdb5f71e778b81f9e5bc7ca1f16a57",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\metadata.json",
+        "bytes": 17824,
+        "sha256": "b116d189f30a9912364724783af8feaa18cece9b5ded8bb480431e87a2dfae96",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "original-artifacts.json",
+      "bytes": 16623,
+      "sha256": "a40474b5f9ab9ac733b6ab226d0cb815d47a43ca565b2107e7359caa512a8624",
+      "original": null
+    },
+    {
+      "path": "paired-rows.jsonl",
+      "bytes": 106658,
+      "sha256": "850f1fc596122fe02be196b8e29306336aad198d22ba458e91521a76bf06974a",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\paired-rows.jsonl",
+        "bytes": 106658,
+        "sha256": "850f1fc596122fe02be196b8e29306336aad198d22ba458e91521a76bf06974a",
+        "category": "measured"
+      }
+    },
+    {
+      "path": "README.md",
+      "bytes": 3764,
+      "sha256": "35142637a421164df484fba5055881ac60ab71c61d2001014f1f8e91d6f14453",
+      "original": null
+    },
+    {
+      "path": "reproduce/analyze.mjs",
+      "bytes": 8694,
+      "sha256": "9356c989ded2aa1abc6286835909ac99038081ccbbbada96faaf990ef3789b0a",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\analyze.mjs",
+        "bytes": 8694,
+        "sha256": "9356c989ded2aa1abc6286835909ac99038081ccbbbada96faaf990ef3789b0a",
+        "category": "measurement-script"
+      }
+    },
+    {
+      "path": "reproduce/export.mjs",
+      "bytes": 16863,
+      "sha256": "6e71f5b020f949a77dfacdc371c99293972e24038932a01200fb9a7fcf0eccae",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\export.mjs",
+        "bytes": 16863,
+        "sha256": "6e71f5b020f949a77dfacdc371c99293972e24038932a01200fb9a7fcf0eccae",
+        "category": "export-script"
+      }
+    },
+    {
+      "path": "reproduce/run_pairs.ps1",
+      "bytes": 14629,
+      "sha256": "627c7397296c74804a8c865af53fdabb1def3a25c20c8de7eb0e62439c2a0e4d",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\run_pairs.ps1",
+        "bytes": 14629,
+        "sha256": "627c7397296c74804a8c865af53fdabb1def3a25c20c8de7eb0e62439c2a0e4d",
+        "category": "measurement-script"
+      }
+    },
+    {
+      "path": "summary.json",
+      "bytes": 69545,
+      "sha256": "87c081a5d3cf869c1d81c1552c10594cdf93f1150ab35a7a589e3b880e3bd47b",
+      "original": {
+        "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-improvement\\final-cpu\\summary.json",
+        "bytes": 69545,
+        "sha256": "87c081a5d3cf869c1d81c1552c10594cdf93f1150ab35a7a589e3b880e3bd47b",
+        "category": "measured"
+      }
+    }
+  ]
+}

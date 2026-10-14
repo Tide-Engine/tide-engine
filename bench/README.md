@@ -1,5 +1,9 @@
 # Benchmarks
 
+The [October 11 large-scope rerun](results/scope-performance/README.md) records the current whole-suite baseline and paired map/skinned optimizations, with raw measurements, validation and remaining scale limits.
+
+The opt-in [GPU clip experiment](results/gpu-clip/README.md) uses `bench_skinned --modes gpu`: a resident 60 Hz table of bone palettes, interpolated in the vertex shader with an independent phase per character. Default runs keep the original four modes. `--subframe 0.5` adds a half-tick rendering offset to every selected mode; `--verify-gpu` compares the baked approximation against the exact CPU sampler at 240 phases outside timing when GPU mode is selected. The experiment is specific to the unchanged one-second, 64-bone, four-influence fixture; it adds no public animation API or IK implementation.
+
 Simulation benchmarks compare the same deterministic work in Tide and hand-written C. Build and run them with `cmake --build --preset release --target versus`; individual `build/release/bin/versus_<concept>` programs list their options with `--help`. Save repeated measurements with `--save <label>` in `bench/results/versus.jsonl`.
 
 Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the source revision and local changes before saving simulation or session runs, as for drawing below. New rows also record architecture, compiler version and whether C splitting was forced (`--split`, or `--quick`). Comparisons group matching options, machine, compiler and thread counts; older rows without that metadata form separate groups. Unidentified machines are reported as `unknown`; provide the machine label when comparing machines.
@@ -130,6 +134,10 @@ Use `--tidec build/release/bin/tidec.exe` to measure the frontend and code gener
 
 Every run appends individual samples, median and p95 wall times to `bench/results/compile.jsonl`, with the CPU, OS, Node and compiler versions, executable identity, Git commit and dirty state. `metadata.compilers.native` and `.web` identify each target's compiler, including macOS installations with Apple clang for native builds and Homebrew LLVM for web builds. `--results <path>` selects another destination, and `--keep` retains the temporary fixture for inspection. p95 uses the nearest rank; with five samples it is the slowest sample. Repeat runs on an otherwise idle machine and compare matching targets, configurations, source sizes and toolchains. Timings have no machine-dependent pass/fail threshold. Requested unavailable toolchains fail visibly.
 
+The `status-1008-*` runs (2026-10-08) were taken while other sessions built on the machine, with the package's tide (clang built in) and with one that runs an installed clang, as the earlier runs did. Their [record](results/compile-status-metadata.json) has the load, the same builds of Duel, Towers, Sumo and a sample, where a cold build's time goes file by file, and Sumo's compiles replayed several at a time: compare those rows by the least of a cell's samples.
+
+tide compiles a build's C files several at a time since (as many as the machine has processors, or what `TIDE_JOBS` says, which a record's `metadata.environment` has). The `parallel-compiles` rows are that against `parallel-compiles-one-at-a-time`, the same tide with `TIDE_JOBS=1`, in turn on a quiet machine; their [record](results/parallel-compiles-metadata.json) has the same for the real games. Cold builds before that change compiled one file at a time: compare across it with `TIDE_JOBS=1`.
+
 The harness never edits a game in the repository or a supplied installation. `--tide` must point to the installed CLI; a bare build-tree executable without the installation's headers, sources and platform libraries cannot build games.
 
 ## Drawing
@@ -144,6 +152,163 @@ build/release/bin/tide_platform_draw --bench --save change-name
 The drawing benchmark measures 65,536 rectangles, circles, rectangles interrupted by text, textured quads, cube instances, round rects (the smooth shapes' path) and rectangles with a round rect among every 1,024 (one run of both kinds, which all goes through the smooth shapes' pipeline), plus an empty scene showing the readback cost. Each workload has 20 warmup frames and 100 measured frames. It reports median and p95 for draw-list recording, rendering with readback, and the combined time. Saved rows in `bench/results/draw.jsonl` identify the renderer, dimensions, compiler, machine and revision. On a web build, `?bench&save=change-name` prints JSONL records; `backend=webgpu` or `backend=webgl` chooses the backend.
 
 These are C calls to Tide's drawing APIs. They exclude generated Tide view execution, and rendering time includes CPU submission, GPU completion and copying the target's pixels back. They are useful for tracking overhead and batching, but there is no handwritten GPU API baseline yet, so they do not establish competitive graphics performance. Pixel tests of generated shaders and manual instancing verify correctness separately.
+
+## Skinned meshes
+
+```powershell
+$env:TIDE_HIDDEN = '1'
+cmake --build --preset release --target bench_skinned
+$env:TIDE_BENCH_REVISION = "<revision and local changes>"
+$env:TIDE_BENCH_MACHINE = "<CPU, GPU and driver>"
+build/release/bin/bench_skinned --counts 1,10,100,1000 --frames 100 --warmup 20 --repeat 3 --save skinning-baseline
+```
+
+`bench_skinned` compares static geometry, an omitted default pose, an animated pose sampled once per frame and shared, and a separately sampled animated pose per character. Each character has its own local entity and Tide view. A preceding view sets the camera and samples the shared pose. Entity creation is outside the measurements. `--modes static,rest,shared,independent` selects cases; `--capture image.png` saves the final native frame.
+
+The self-contained fixture has 3,072 vertices, 6,048 triangles, 64 skin joints, four positive influences per vertex and a one-second looping clip with 17 rotation keys per joint. It is a tapered tube with a joint chain, rather than a particular game's character. Static and skinned cases import the same geometry and use the same fragment. The grid keeps every instance visible at 1024 by 576 and scales instances to keep their summed nominal projected areas constant as counts increase. Independently animated characters use different loop phases. Reproduce the fixture with `node bench/skinned/generate.mjs`; `--check` verifies it.
+
+Each case reports median and p95 generated-view/recording CPU time (including sampling and temporary cleanup), CPU submission time, asynchronous GPU query time with its sample count, draw calls (including the clear) and texture-upload bytes per frame. Native runs separately time waiting for and reading the completed framebuffer, and the whole frame through that readback. GPU queries start after upfront renderer preparation and geometry uploads, but include on-demand palette texture uploads inside shaded draws; they exclude readback and are not pure shader timings. These intervals overlap CPU work and cannot be added to infer FPS. WebGL has no GPU timer; WebGPU needs optional timestamp-query support. Web readback metrics are unavailable. The native readback intentionally synchronizes every measured frame, so these are isolated frame costs rather than a measurement of pipelined display throughput.
+
+`--save` appends one row per count, mode and repeat to `bench/results/skinned.jsonl`, including compiler, revision, machine, fixture SHA-256, resolution and workload dimensions. Process memory and renderer-tracked GPU memory are retained totals after each case, including caches from earlier cases, rather than allocations attributable solely to that case. On the web, `bench_skinned.html?bench&counts=1,10,100,1000&frames=100&warmup=20&repeat=3&save=label&backend=webgpu` prints the same JSONL. Web dimensions are logical pixels; hardware browser measurements should force device scale factor 1. The `bench` argument disables synchronous per-call GL error checking for measurements; omit it for correctness checks. CTest smoke runs exercise every mode on native OpenGL and software WebGL/WebGPU without timing assertions. Use a quiet machine and repeat measurements; software browser smoke timings are not hardware performance results.
+
+The initial 2026-10-10 baseline measures source `b9faf142` on Windows, Ryzen 9 7900X, RTX 4080 SUPER, NVIDIA 595.79 and Clang 23.1.2, using release OpenGL 3.3. Each of the 16 count/mode combinations has three repeats of 100 measured frames after 20 warmup frames. The table takes the median of the three per-repeat medians at 1,000 characters. GPU timings describe this shared desktop under its observed clock conditions: all 15 clock samples during the final independent-pose case report 210 MHz graphics, 405 MHz memory and P8. They do not establish peak GPU throughput. Other user applications remained running; this task's builds and tests had finished before measurement.
+
+| 1,000 characters | CPU views/recording (ms) | CPU submission (ms) | GPU query (ms) | Mesh draw calls | Palette uploads/frame |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Static geometry | 0.057 | 0.031 | 0.500 | 1 | 0 |
+| Omitted default pose | 133.064 | 0.110 | 5.784 | 1 | 0 |
+| Shared animated pose | 139.063 | 0.143 | 5.829 | 1 | 4,096 bytes |
+| Independent animated poses | 151.682 | 16.178 | 58.685 | 1,000 | 4,096,000 bytes |
+
+CPU preparation was the clearest bottleneck in the initial study: at 100 characters the three skinned modes already took 13.315, 13.837 and 15.097 ms respectively. Sharing a pose preserved GPU batching, while CPU work remained per character. The benchmark fixed missing compiler scratch cleanup exposed by owned value copies; it initially changed no renderer optimization. [Saved runs](results/skinned.jsonl), [measurement metadata](results/skinned-baseline-metadata.json) and [clock observations](results/skinned-gpu-monitor.csv) retain that study's full cases, p95 values and artifact identities. Its 2,040 native and 2,013 web debug checks passed.
+
+### CPU preparation improvements
+
+The follow-up removes four repeated costs. Generated skinned draws borrow model/Pose handles when later arguments cannot change them, while preserving ordinary snapshots before later writes or C calls. Loaded models reuse full validation and the canonical content hash established during pack loading; owned/decoded draws retain full validation and hashing, and replacement or overlapping geometry writes invalidate the loaded proof. Comparing a shared pose's rig reads its header instead of flattening the complete owned model. Sampling a verified model's clips reuses key validation, retaining the sampler's stricter first-time check. Palette evaluation and capture still happen per draw; interpolation still happens at each animation sample. Standalone `Animations` assets do not establish this proof and retain full sampling checks unless their bytes share a separately verified model block.
+
+A baseline phase diagnostic at 1,000 characters attributes about 44 ms/frame to complete model validation and 52 ms/frame to combined model hashing/influence capture. These are instrumented arithmetic means over ten frames, include clock overhead, and sit inside the draw-function interval; they are not the uninstrumented frame medians or an independent before/after comparison. The optimized code passes all 2,041 native and 2,014 web debug tests, including unchanged deterministic pose hashes, argument-order/COW regressions, pack invalidation, and OpenGL/WebGL/WebGPU pixel checks.
+
+The subsequent clean merge with the asset-import changes at `f23e5569` builds on native and web debug and passes 113 native plus 106 web checks for the overlapping imports, diagnostics, metadata, animation and rendering paths. The measurements below retain their exact pre-integration source and executable identities.
+
+The comparison uses the preserved original `b9faf142` release executable and the tested `c06de5f5` executable with unchanged host, fixture and settings. Three rounds alternate before/after, after/before, then before/after; each process measures all 16 cases for 100 frames after 20 warmup frames. Each build contributes 4,800 CPU/GPU samples. Summary times take the median of three per-round medians; paired speedups take the median of the three within-round before/after ratios. Builds and tests finish before the measurements, and a coordination gate and process checks guard the batch. Other user applications remain running, and GPU clocks are observed every 250 ms without changing power settings.
+
+| 1,000 characters | CPU views/recording before (ms) | After (ms) | Median paired speedup |
+| --- | ---: | ---: | ---: |
+| Static geometry | 0.057 | 0.057 | 1.01× |
+| Omitted default pose | 132.549 | 3.463 | 38.30× |
+| Shared animated pose | 139.436 | 2.663 | 52.37× |
+| Independent animated poses | 151.600 | 8.964 | 16.97× |
+
+The six processes completed 96 rows covering 16 count/mode cases, with 9,600 CPU frames and 9,600 GPU samples. Draw counts and upload bytes match before/after in every paired case. The final 1,000-character independent-pose captures at frame 119 have identical PNG bytes and decoded RGB pixels. At 100 characters the optimized rest/shared/independent CPU costs are 0.347, 0.292 and 0.860 ms/frame. Independently animated characters still need 1,000 mesh draws and 4,096,000 palette-upload bytes/frame at the largest count; this change removes CPU preparation overhead without introducing independently posed instancing.
+
+GPU timings also change, but clock conditions differ: the original processes mostly report P8, while the optimized processes mostly report P0. Across the whole processes graphics clocks range from 210 to 2,835 MHz and memory clocks from 405 to 11,501 MHz. These observations are not per-case clock normalization and do not establish a GPU shader speedup. CPU submission, GPU query, readback and total intervals remain in the saved records. Two earlier attempts interrupted by concurrent external builds were excluded and the original ledger restored before the clean batch; metadata records both exclusions.
+
+[Summary](results/skinned-cpu/summary.json), [measurement metadata](results/skinned-cpu/metadata.json), [paired rows](results/skinned-cpu/paired-rows.jsonl), [clock observations](results/skinned-cpu/clock-summary.json) and [baseline phase attribution](results/skinned-cpu/diagnostic-before/phase-summary.json) retain the measurements and their boundaries. [Reproduction instructions](results/skinned-cpu/README.md) include the measured scripts and artifact identities. Original measured hashes and LF-normalized committed hashes are recorded separately. Verify the exported text with:
+
+```powershell
+node bench/results/skinned-cpu/reproduce/export.mjs --verify bench/results/skinned-cpu
+```
+
+### Palette preparation and texture allocation
+
+The next CPU change reuses captured palettes for exact repeated poses within a frame, reads validated animation endpoints without decoding unrelated keys, and initializes rest transforms without repeating node checks. Mutable models keep their checked paths, and cached poses compare their current values rather than handles. Matrix and interpolation arithmetic are unchanged.
+
+Independent poses exposed another cost: the renderer created and deleted 1,000 palette textures per frame. It now determines which previous textures the complete current draw list references, then reuses obsolete integer-data allocations of the same size for new content identities. Each changed palette still uploads every byte; current and later draws retain separate textures, and unused allocations are freed by frame end. This does not introduce independently posed instancing.
+
+The comparison measures preserved `77be2f24` and tested `625596e8` release executables with the same fixture, host and three alternating pairs described above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after a 90-second quiet window, with no competing build/test jobs during measurement. Times below are medians of three round medians at 1,000 characters.
+
+| 1,000 characters | CPU views before (ms) | After (ms) | CPU submission before (ms) | After (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Static geometry | 0.057 | 0.059 | 0.033 | 0.032 |
+| Omitted default pose | 3.451 | 0.647 | 0.036 | 0.035 |
+| Shared animated pose | 2.650 | 0.671 | 0.050 | 0.037 |
+| Independent animated poses | 8.749 | 4.824 | 6.223 | 3.263 |
+
+Median paired view speedups are 5.36× for rest, 3.95× for shared animation and 1.83× for independent animation; independent submission improves 1.91×. Submission varies substantially across optimized rounds, from 0.621 to 3.275 ms at 1,000 independent poses, so the table retains the conservative three-round median. Static view differences are only 0.003 ms in the aggregate. GPU observations are mostly P0 (93 of 95 samples), with two initial P8 samples; graphics clocks span 210–2,835 MHz and memory 405–11,501 MHz. These whole-process observations do not normalize individual cases or establish a shader speedup or pipelined FPS.
+
+Draw counts and upload bytes match every before/after case, and the final frame-119 independent-pose captures match PNG bytes and decoded RGB pixels exactly. Separate phase diagnostics confirm one palette/hierarchy computation per frame for repeated rest/shared poses, and zero warmed texture creates/frees plus exactly 1,000 texture updates/frame for 1,000 independent poses. Those diagnostics include instrumentation overhead and do not supply the table's timings. Independently posed characters still issue 1,000 mesh draws and upload 4,096,000 palette bytes/frame. All 2,061 native and 2,032 web debug checks pass, including deterministic pose bits, malformed-data and snapshot boundaries, and OpenGL/WebGL/WebGPU rendering and device loss. [The complete comparison evidence](results/skinned-cpu2/README.md) retains paired rows, ranges, clocks, both diagnostics, validation summaries, reproduction scripts and artifact hashes. The historical 144 ledger rows are preserved alongside the 96 new rows.
+
+The subsequent clean merge with release stripping at `1886fbb9` passes 52 overlapping native/web debug and release checks. A standalone pruned game's native/WASI probe verifies retained used mesh/animation assets, current model validation after pack offsets change, repeated palette reuse and scratch cleanup; release OpenGL/WebGL/WebGPU rendering and benchmark smoke also pass. The measured executable hashes and source identities above remain unchanged.
+
+### Shared palette pages and worker preparation
+
+The third change captures independent poses into shared integer-texture palette pages. A hidden per-instance matrix offset lets compatible characters form one mesh draw even with different poses. Captured model dependencies and local transforms remain owned by the draw list; the existing worker pool calculates independent palettes before rendering. Small workloads run serially, shaders with fully occupied attribute layouts retain individual palettes, and animation sampling still happens immediately.
+
+Preserved `874422c0` and tested `a10d2f4b` release executables use the unchanged host, fixture and three alternating pairs above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after the 90-second quiet window, without competing builds/tests or excluded attempts. These are medians of three round medians at 1,000 characters:
+
+| Mode | CPU views before (ms) | After (ms) | CPU submission before (ms) | After (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Static geometry | 0.057 | 0.057 | 0.032 | 0.006 |
+| Omitted default pose | 0.646 | 0.671 | 0.034 | 0.009 |
+| Shared animated pose | 0.673 | 0.702 | 0.037 | 0.010 |
+| Independent animated poses | 4.920 | 2.961 | 3.331 | 0.465 |
+
+Palette math moves from views into CPU submission, so the view reduction alone overstates the net CPU gain. Summing the separate view/submission medians within each round gives a **derived estimate**, not a median of combined per-frame samples. The median of these sums is 8.178→3.425 ms for independent animation, with a median paired ratio of 2.21×. Baseline submission round medians are 3.497/0.646/3.331 ms; optimized medians are 0.465/0.426/0.650 ms. Static submission shows the same small alternating-process variation, so its isolated interval is not evidence of a static-rendering improvement. Rest/shared derived CPU sums are essentially unchanged at 0.680→0.682 and 0.710→0.711 ms; their full-readback frame medians slightly increase, 1.656→1.727 and 1.682→1.756 ms.
+
+Independent animation now uses one mesh draw plus the clear, replacing 1,001 total draws with two. Palette uploads remain 4,096,000 bytes/frame at 1,000 characters. At ten independent poses, final-row padding increases uploaded bytes from 40,960 to 49,152; at 100 and 1,000 they remain equal. Final frame-119 captures have identical PNG bytes and decoded RGB pixels. The independent full frame through synchronized readback falls from 13.588 to 4.788 ms; GPU queries fall from 6.375 to 1.071 ms. Queries still include on-demand uploads and draw execution, and the batching changes submission; these values do not isolate shader arithmetic or establish pipelined FPS. Whole-process clocks have 65 P0 observations and one initial P8, spanning 210–2,835 MHz graphics and 405–11,501 MHz memory. Other desktop applications remain running.
+
+All 2,064 native and 2,034 web debug CTests pass, alongside 40 focused skinned runtime tests and the docs production build. The native preparation probe observed three worker callbacks and matched every serial palette byte; the initial served WebGPU round completed on its caller, while WebGL exercised the no-pool fallback. [The complete comparison evidence](results/skinned-cpu3/README.md) retains rows, ranges, clocks, both immutable snapshots' identities/source hashes and validation summaries. The ledger preserves its exact previous 240 rows alongside 96 new rows. Verify the exported text with:
+
+```powershell
+node bench/results/skinned-cpu3/reproduce/export.mjs --verify bench/results/skinned-cpu3
+```
+
+Integration at `7c5566bf` with the latest web compression/private-header packaging passes 26 bounded native/web debug and release checks. Staged engine headers match their sources, and a standalone pruned game verifies separate-file clip binding, four instances with two poses in one batch, retained pack provenance, scratch cleanup and all 21 pixels across three frames on OpenGL, WebGL and WebGPU. Its release page verifies exact decoded bytes for separately compressed WASM and pack payloads under the generated minified runtime. The actual native standalone completes three hidden frames. Both measured executable identities remain unchanged; this adds no timing comparison.
+
+### 10,000-character scaling
+
+The same preserved final `a10d2f4b` executable measures 1,000 and 10,000 characters in three fresh processes, all four modes, 20 warmup and 100 measured frames per case (2026-10-10). The 24 rows contain 2,400 CPU frames and completed GPU samples. The named gate and 90-second quiet window exclude competing builds/tests; no attempts are excluded. At 10,000 characters, medians of three process medians are:
+
+| Mode | CPU views (ms) | CPU submission (ms) | GPU query (ms) |
+| --- | ---: | ---: | ---: |
+| Static geometry | 0.655 | 0.030 | 4.724 |
+| Omitted default pose | 6.798 | 0.043 | 8.179 |
+| Shared animated pose | 6.846 | 0.044 | 8.192 |
+| Independent animated poses | 30.492 | 5.090 | 13.698 |
+
+Fresh 1,000-character independent medians are 2.957 ms views, 0.454 ms submission and 1.078 ms GPU. Independent 10,000-character GPU process medians span 13.544–13.926 ms; the median of process p95 values is 15.412 ms, not a pooled p95. The derived CPU estimate (median of each process's separate view/submission median sum) scales 3.404→35.576 ms. Synchronized full-frame readback scales 4.922→48.281 ms; this does not establish pipelined FPS, and GPU queries must not be added to CPU intervals.
+
+Independent poses occupy ten palette pages, issuing ten mesh draws plus clear and uploading 40,960,000 bytes/frame; the other modes keep one mesh draw plus clear. Sampling stays serial, and palette preparation keeps its cap of three workers plus caller. The fixed 1024×576 viewport and summed nominal projected area make each of the 100×100 characters only about 4.6 pixels tall. The fixture still submits 30.72 million source vertices and 60.48 million triangles/frame without LOD, culling or match simulation; this is not a close-up crowd scene. Whole-process clocks have 134 P0/3 initial P8 samples, spanning 210–2,835 MHz graphics and 405–11,501 MHz memory; other desktop applications remain running, with no settings changes. [The scaling evidence](results/skinned-10k/README.md) retains exact source/executable/fixture identities, all rows, ranges, clocks and scripts. The final 10,000-character capture is retained in scratch with recorded PNG/RGB hashes; no pixel equality across different grids is expected. The ledger preserves its 336-row prefix plus these 24 rows. This measurement changes no production code.
+
+### Fourth CPU improvement
+
+At `711af038` (2026-10-10), sampling reuses current pack validation for private channel reads while checking each channel's first key time, then reuses binary-search intervals only for exactly equal short time arrays within one call. Pose-cache indexing uses the existing four-chain hash, and synchronous capture borrows contiguous scratch poses before making the retained copy. Animation arithmetic, pose bits, palette layout and rendering work are unchanged. All 2,067 native and 2,037 web debug CTests pass, including 42 focused native skinned checks and OpenGL/WebGL/WebGPU pixels.
+
+The comparison against preserved `a10d2f4b` uses three alternating before/after pairs at 1,000 and 10,000 characters, all four modes, 20 warmup and 100 measured frames. All 48 rows contain 4,800 CPU frames and completed GPU queries. At 10,000 characters, medians of three process medians are:
+
+| Mode | CPU views before → after (ms) | CPU submission before → after (ms) | GPU query before → after (ms) |
+| --- | ---: | ---: | ---: |
+| Static geometry | 0.694 → 0.709 | 0.026 → 0.026 | 4.630 → 4.707 |
+| Omitted default pose | 6.791 → 4.718 | 0.038 → 0.037 | 7.902 → 7.813 |
+| Shared animated pose | 6.691 → 5.187 | 0.039 → 0.039 | 7.866 → 7.903 |
+| Independent animated poses | 30.101 → 26.709 | 4.839 → 4.904 | 13.880 → 13.335 |
+
+Independent view recording falls about 11.3%; the derived median of per-round view/submission median sums falls 34.93990→31.61265 ms, about 9.5%. Its median within-pair speedup is 1.115×; these are distinct aggregations, and the sum is an estimate rather than a combined-frame median. View round medians are [29.8186, 30.1010, 30.3239] before and [26.8006, 26.3477, 26.7090] after. Median-of-process-p95 recording falls 30.5573→27.1997 ms. Default/shared derived CPU estimates fall 6.82880→4.75485 and 6.73065→5.22530 ms. At 1,000 independent poses, views are 2.93510→2.58355 ms, submission 0.43780→0.44060 and the derived CPU estimate 3.36680→3.02755 ms.
+
+Palette math remains inside CPU submission on both sides; its small change is not a claimed improvement. Static rendering is essentially unchanged. GPU queries include on-demand palette uploads and drawing, with the same shaders, geometry, draws and upload bytes; these observations do not establish a shader speedup. Independent synchronized readback-frame medians fall 47.3672→43.5442 ms, without establishing pipelined FPS. CPU and GPU intervals must not be added.
+
+Both 1,000- and 10,000-character final independent captures match exactly in PNG bytes and RGB pixels. The 10k workload retains ten mesh draws plus clear, 40,960,000 palette upload bytes and 60.48 million source triangles/frame, with tiny projected characters and no LOD, culling or match simulation. A named gate and 90-second sustained quiet guard detected no competing builds/tests or excluded measurement attempts. Whole-process observations have 252 P0/2 initial P8 samples, spanning 210–2,820 MHz graphics and 405–11,501 MHz memory; other desktop applications remain running and no settings change. [Saved comparison evidence](results/skinned-cpu4/README.md) retains all rows, ranges, clocks, validation, baseline phase attribution and reproduction scripts. Raw generated C differs only in two debug `#line` paths for the isolated build; exact normalized hashes match. The original 360-row ledger prefix stays exact, with 48 new rows bringing it to 408.
+
+### Fifth CPU improvement: known rest and sampling proof
+
+At `42a7ba2d` (2026-10-11), omitted-pose draws reuse one owned rest capture per current pack proof and frame. Repeated instances avoid constructing/hashing TRS and comparing model tables. Explicit poses keep ordinary edit-safe capture. Sampling also reuses a load-time proof that all channels start at nonnegative times, skipping the selected-channel preflight only while that proof remains current. Negative-first models retain selected-clip checks; invalidated and owned models retain full checks. This uses the statically known omitted-pose case; it adds no general hoisting of read-only locals or new `mut` semantics.
+
+The frozen final implementation passes all 2,067 native and 2,037 web debug CTests, 46 focused native skinned and 30 pack checks, and 406 WASI runtime checks with unchanged exact pose bits. OpenGL/WebGL/WebGPU palette and pixel checks pass, including native serial/pool equality with three workers. Three alternating pairs against immutable CPU4 `711af038` cover 1,000/10,000 characters and all four modes, with 20 warmup/100 measured frames: 48 final rows, 4,800 CPU frames and 4,800 completed GPU queries. At 10,000 characters, medians of three process medians are:
+
+| Mode | CPU views before → after (ms) | CPU submission before → after (ms) | GPU query before → after (ms) |
+| --- | ---: | ---: | ---: |
+| Static geometry | 0.589 → 0.604 | 0.027 → 0.026 | 4.421 → 4.409 |
+| Omitted default pose | 4.823 → 0.811 | 0.045 → 0.035 | 7.730 → 7.766 |
+| Shared animated pose | 5.306 → 5.102 | 0.046 → 0.042 | 7.932 → 7.462 |
+| Independent animated poses | 29.221 → 24.071 | 6.503 → 6.458 | 13.967 → 12.975 |
+
+Default recording is about 5.95× faster. Independent recording falls 17.6%; its round medians are [29.2047, 29.2205, 29.3683] before and [24.6077, 24.0712, 24.0413] after. Its median-of-process-p95 changes more modestly, 30.3179→29.1059 ms. The derived median of per-round view/submission median sums falls 35.86385→30.52960 ms (14.9% lower), with a distinct median paired ratio of 1.1747×. Default/shared derived sums fall 4.86260→0.84805 and 5.35595→5.14345 ms. At 1,000 characters, default views fall 0.46535→0.07720 ms and independent views/submission fall 2.89725→2.34155 / 0.49535→0.45605; independent derived sums fall 3.39260→2.80595. Shared 1k views are 0.52150→0.53410 ms.
+
+Palette preparation remains in CPU submission on both sides, with sampling serial and at most three palette workers plus caller. The derived sums combine separate interval medians, rather than combined per-frame samples. GPU queries include on-demand palette uploads and drawing; shaders, geometry, draws and upload bytes are unchanged, so these observations do not establish a shader speedup. Independent synchronized readback-frame medians fall 48.11180→42.11020 ms, and default 13.02110→9.02925. These are readback measurements, not pipelined FPS; CPU and GPU times must not be added.
+
+All four default/independent capture pairs at 1k/10k match exactly in PNG bytes and RGB pixels. The 10k independent workload still submits 60.48 million triangles/frame, ten mesh draws plus clear, and 40,960,000 palette bytes. Its 100×100 characters are about 4.6 pixels tall in the fixed viewport, with no LOD, culling or match simulation. The final named gate/90-second quiet guard has no detected contention, reset or excluded attempt; other desktop apps remain running and system settings stay unchanged. The six processes have 245 clock observations (243 P0, one P5, one initial P8), spanning 390–2,820 MHz graphics and 405–11,501 MHz memory. These whole-process observations do not normalize individual cases.
+
+The initial candidate `000a5986` completed an adverse comparison: 10k independent views rose 27.08380→30.48430 ms. Its 48 rows and evidence remain under [superseded](results/skinned-cpu5/superseded/README.md). Exploratory timer and private layout experiments show timing sensitivity to code placement; they neither isolate a sole cause nor contribute timings to the final aggregate. The final comparison measures the combined implementation and its compiled layout, rather than isolated savings from the removed scan. [Saved final evidence](results/skinned-cpu5/README.md) retains identities, ranges, clocks, validation, exact generated-adapter comparison and reproduction scripts. The ledger preserves its original 408 rows, then the 48 adverse rows, then 48 separately labeled final rows (504 total).
 
 ## Input delay in Sumo
 

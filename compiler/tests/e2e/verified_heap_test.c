@@ -20,7 +20,7 @@ static bool is(const tide_text field, const char *expected)
 static void frame(const tide_world *drawn, const tide_world *confirmed)
 {
     tide_draw_reset(&draw);
-    tide_frame(drawn, NULL, 1.0f, confirmed, &local, &draw, &gui);
+    tide_frame(drawn, NULL, 1.0f, confirmed, NULL, 1.0f, &local, &draw, &gui);
 }
 
 // A world's bytes, to tell that reading it changed nothing of it.
@@ -124,4 +124,28 @@ TIDE_TEST(verified_heap_one_world)
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_local_free(&local);
     tide_world_free(&world);
+}
+
+TIDE_TEST(verified_custom_interpolation_reads_each_endpoint_heap)
+{
+    tide_world lower = {0}, upper = {0}, prediction = {0};
+    tide_local seen = {0};
+    tide_world_init(&lower, 1.0f);
+    for (int i = 0; i < 2; i++) tide_world_tick(&lower);
+    tide_world_copy(&upper, &lower);
+    for (int i = 0; i < 3; i++) tide_world_tick(&upper);
+    tide_world_copy(&prediction, &upper);
+    for (int i = 0; i < 3; i++) tide_world_tick(&prediction);
+    const uint64_t low_hash = tide_world_hash(&lower), upper_hash = tide_world_hash(&upper);
+    tide_local_init(&seen);
+    tide_frame(&prediction, &upper, 0.5f, &upper, &lower, 0.25f, &seen, &draw, &gui);
+    TIDE_CHECK(seen.Probe.confirmedSample == 2.75f && seen.Probe.mixedSample == 2.75f);
+    TIDE_CHECK(seen.Probe.querySample == 2.75f && seen.Probe.singletonSample == 2.75f);
+    TIDE_CHECK(seen.Probe.predictedSample == 6.5f && seen.Probe.gridSample == 2.75f);
+    tide_text_use(&prediction.heap, &seen.heap);
+    const tide_str label = tide_text_read(&seen.heap, seen.Probe.interpolatedLabel);
+    TIDE_CHECK(label.bytes == 3 && memcmp(label.ptr, "2:5", 3) == 0);
+    TIDE_CHECK(tide_world_hash(&lower) == low_hash && tide_world_hash(&upper) == upper_hash);
+    TIDE_CHECK(tide_scratch_mark() == 0);
+    tide_local_free(&seen); tide_world_free(&prediction); tide_world_free(&upper); tide_world_free(&lower);
 }

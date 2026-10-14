@@ -400,9 +400,9 @@ float Free(Physics physics, Kind kind, float2 from, int quarter, float2 way, flo
 {
     mut var free = 1.0;
     var angle = Angle(quarter);
-    if (Cast(physics, Slim(First(kind), quarter, slack), from, angle, from + way, out var hit)) free = hit.fraction;
+    if (physics.Cast(Slim(First(kind), quarter, slack), from, angle, from + way, out var hit)) free = hit.fraction;
     var second = Second(kind);
-    if (second.size.x > 0 && Cast(physics, Slim(second, quarter, slack), from, angle, from + way, out var other))
+    if (second.size.x > 0 && physics.Cast(Slim(second, quarter, slack), from, angle, from + way, out var other))
     {
         free = Math.Min(free, other.fraction);
     }
@@ -414,9 +414,9 @@ float Free(Physics physics, Kind kind, float2 from, int quarter, float2 way, flo
 bool Room(Physics physics, Kind kind, float2 at, int quarter)
 {
     var angle = Angle(quarter);
-    if (Overlap(physics, Slim(First(kind), quarter, float2(SLACK)), at, angle, out _)) return false;
+    if (physics.Overlap(Slim(First(kind), quarter, float2(SLACK)), at, angle, out _)) return false;
     var second = Second(kind);
-    return second.size.x <= 0 || !Overlap(physics, Slim(second, quarter, float2(SLACK)), at, angle, out _);
+    return second.size.x <= 0 || !physics.Overlap(Slim(second, quarter, float2(SLACK)), at, angle, out _);
 }
 
 // A falling brick goes where its player wants it, half a cell at a time, and
@@ -496,7 +496,7 @@ system Move(mut Seat seat, mut Body body, mut Towers towers, Time time)
         seat.built = towers.built;
         seat.above = 0;
         seat.dealt = 0;
-        seat.next = Dealt(time.seed, towers.round, 0);
+        seat.next = Dealt(Random.seed, towers.round, 0);
         seat.busy = false;
         seat.wait = 30 + seat.index * 6;
         seat.lost = 0;
@@ -661,7 +661,7 @@ system Tend(Body body, mut Brick brick, Towers towers, mut World world)
 // over. `controls` is the input of the player who has the seat: while their
 // lobby or menu is up, or with nobody there, the tower builds by itself.
 [After(PhysicsStages.Step)]
-system Deal(Controls controls, mut Seat seat, Towers towers, Time time, query (Body at, Piece piece, Brick brick) bricks)
+system Deal(Controls controls, mut Seat seat, Towers towers, query (Body at, Piece piece, Brick brick) bricks)
 {
     if (towers.phase != Phase.Play || seat.built != towers.built) return;
     var player = Sitter(towers, seat.index);
@@ -680,7 +680,7 @@ system Deal(Controls controls, mut Seat seat, Towers towers, Time time, query (B
     }
     var kind = seat.next;
     seat.dealt += 1;
-    seat.next = Dealt(time.seed, towers.round, seat.dealt);
+    seat.next = Dealt(Random.seed, towers.round, seat.dealt);
     seat.serials += 1;
     seat.busy = true;
     var serial = seat.serials * SEATS + seat.index;
@@ -713,7 +713,7 @@ system Deal(Controls controls, mut Seat seat, Towers towers, Time time, query (B
         }
     }
     // No two towers are built alike: each seat is so careful, and so quick, for a round
-    var temper = Math.Hash(int3(time.seed, towers.round, seat.index));
+    var temper = Math.Hash(int3(Random.seed, towers.round, seat.index));
     var plan = Think(kind, heights, askew, temper % 100 * 0.003, seat.dice);
     Spawn(Body { type = BodyType.Kinematic, position = at, velocity = float2(0, -FALL), angularDamping = STEADY }, Piece { kind = kind },
           Falling { seat = seat.index, serial = serial, home = seat.home, column = Start(kind), wantColumn = plan.column,

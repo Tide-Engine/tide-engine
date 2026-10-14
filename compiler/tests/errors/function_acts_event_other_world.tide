@@ -1,0 +1,4 @@
+// expect: 'Hit' is a match event, and this entity is local
+event Hit { int damage; }
+scene Main { }
+void Poke(LocalEntity target) { target.Send(Hit { damage = 1 }); }

@@ -16,6 +16,8 @@
 //   github.com/owner/repo//sub 0123...   ...in a folder of the repository
 //   ../shared                            a package in a folder on this machine
 //   box2d                                a package that comes with tide, by its name
+//   #if STEAM                            the lines to its #elif, #else or #endif are the build's
+//                                        only when the condition holds (packages_set_symbols)
 //
 // A game's file lists every package it builds with, those its packages need
 // included, and its line for one wins over theirs.
@@ -40,6 +42,11 @@ typedef struct packages_file {
     int tide_line;
     package_line *lines;
     int count;
+    // The package lines a false #if leaves out of this build: no part of it,
+    // so nothing resolves or compiles them. For the commands that keep every
+    // line of the file (tide update, fetch, eject).
+    package_line *off;
+    int off_count;
 } packages_file;
 
 // What's wrong, said to tide's user or dropped by tidels: `where` is a file
@@ -133,6 +140,15 @@ bool packages_is_local(const char *source);
 // The packages that come with tide are in one folder, a folder each, named as
 // tide.packages names it: <folder>/<name>/. A line for one is its name alone,
 // with no commit: it's the version that tide came with.
+
+// The symbols a file's #if lines read as defined: a build's, which are DEBUG
+// without --release and what its command line named with --define. Until
+// something says, and after NULL, DEBUG alone is, as editors read code. The
+// names are kept, not copied. A condition is written as a .tide file's: a
+// symbol, a version of tide (TIDE_0_3_OR_NEWER), true and false, with !, &&,
+// ||, == and != and parentheses. PACKAGE_ symbols are what this file makes,
+// so no condition in it reads one.
+void packages_set_symbols(const char *const *names, int count);
 
 // Says which folder they're in: an installation's src/packages, beside the
 // engine's sources, or this repo's packages. tide and tidels say as they

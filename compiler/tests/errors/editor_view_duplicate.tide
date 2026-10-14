@@ -1,0 +1,3 @@
+// expect: a view declares its editor inclusion once
+[RunInEditor, EditorOnly] view Render() { }
+scene Main { }

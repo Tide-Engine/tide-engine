@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string.h>
 
 #include "game.h"
 #include "tide_test.h"
@@ -38,6 +39,8 @@ TIDE_TEST(math_defaults)
     TIDE_CHECK(b.color.y == 0.5f && b.color.w == 1.0f);
     TIDE_CHECK(b.cell.x == 3 && b.cell.y == -4);
     TIDE_CHECK(b.rotation.value.w == 1.0f && b.rotation.value.x == 0.0f);
+    const tide_quaternion initial_euler = tide_euler_q(tide_f3(0, TIDE_PI_F / 2.0f, 0));
+    TIDE_CHECK(memcmp(&b.initialEuler, &initial_euler, sizeof initial_euler) == 0);
     TIDE_CHECK(b.basis.c0.x == 1.0f && b.basis.c1.y == 1.0f && b.basis.c0.y == 0.0f);
     TIDE_CHECK(near(b.angle, TIDE_PI_F / 2.0f));
     TIDE_CHECK(b.pi == TIDE_PI_F);
@@ -45,6 +48,9 @@ TIDE_TEST(math_defaults)
     TIDE_CHECK(color_is(b.rgbaTint, 0.25f, 0.5f, 0.75f, 0.5f));
     TIDE_CHECK(color_is(b.mixedTint, 0.25f, 0.5f, 0.75f, 1));
     TIDE_CHECK(color_is(b.integerTint, 1, 0, 1, 0.5f));
+    TIDE_CHECK(b.degreeAngle == tide_radians_f(180.0f));
+    TIDE_CHECK(b.degreeConstant == tide_radians_f(90.0f));
+    TIDE_CHECK(memcmp(&b.degreeEuler, &initial_euler, sizeof initial_euler) == 0);
 }
 
 TIDE_TEST(math_constructors_and_swizzles)
@@ -82,6 +88,11 @@ TIDE_TEST(math_color_constructors)
     TIDE_CHECK(color_is(r.integerColor, 1, 0, 1, 1));
     TIDE_CHECK(color_is(r.integerRgbaColor, 1, 0, 1, 0));
     TIDE_CHECK(color_is(r.scalarColor, 0.25f, 0.5f, 0.75f, 0.5f));
+    TIDE_CHECK(color_is(r.lerpedColor, 0.25f, 0.5f, 0.75f, 0.25f));
+    TIDE_CHECK(color_is(r.perChannelColor, 0, 0.5f, 0.5f, 0.5f));
+    TIDE_CHECK(color_is(r.clampedColor, 0, 0.25f, 1, 0.75f));
+    TIDE_CHECK(color_is(r.saturatedColor, 0, 0.5f, 1, 1));
+    TIDE_CHECK(color_is(r.brighterColor, 0.25f, 0.5f, 1, 0.25f));
 }
 
 TIDE_TEST(math_conversions_saturate)
@@ -133,6 +144,44 @@ TIDE_TEST(math_swizzle_writes)
     TIDE_REQUIRE(tide_has_Results(&world, THING));
     // w = (0,0,0); w.xz = (4,5) -> (4,0,5); w.y += 1 -> (4,1,5); w.zx += (1,1) -> (5,1,6)
     TIDE_CHECK(eq3(r.written, 5, 1, 6));
+}
+
+TIDE_TEST(math_euler_scalar_arguments)
+{
+    const Results r = results();
+    TIDE_REQUIRE(tide_has_Results(&world, THING));
+    TIDE_CHECK(memcmp(&r.scalarEuler, &r.vectorEuler, sizeof r.scalarEuler) == 0);
+    TIDE_CHECK(memcmp(&r.namedEuler, &r.vectorEuler, sizeof r.namedEuler) == 0);
+    TIDE_CHECK(memcmp(&r.orderedEuler, &r.vectorEuler, sizeof r.orderedEuler) == 0);
+    TIDE_CHECK(memcmp(&r.reorderedEuler, &r.vectorEuler, sizeof r.reorderedEuler) == 0);
+    const tide_quaternion integers = tide_euler_q(tide_f3(0, 180, 0));
+    TIDE_CHECK(memcmp(&r.integerEuler, &integers, sizeof integers) == 0);
+    TIDE_CHECK(r.eulerOrder == 123 && r.namedEulerOrder == 312);
+}
+
+TIDE_TEST(math_degree_literals_are_exact_binary32_radians_in_float_contexts)
+{
+    const Results r = results();
+    TIDE_REQUIRE(tide_has_Results(&world, THING));
+    const tide_float4 forms = tide_f4(tide_radians_f(180.0f), tide_radians_f(0.5f), tide_radians_f(100.0f), tide_radians_f(180.0f));
+    TIDE_CHECK(memcmp(&r.degreeForms, &forms, sizeof forms) == 0);
+    // A decimal degree value rounds to binary32 before the multiplication,
+    // just as passing that value to Math.Radians does. 2^24+1 distinguishes
+    // this from multiplying its unrounded decimal value in binary64 first.
+    const tide_float4 rounding = tide_f4(tide_radians_f(16777217.0f), tide_radians_f(125.0f),
+        tide_radians_f(0.05f), tide_radians_f(3.4028234e38f));
+    TIDE_CHECK(memcmp(&r.degreeRounding, &rounding, sizeof rounding) == 0);
+    const tide_float4 zeros = tide_f4(0.0f, -0.0f, 0.0f, -0.0f);
+    TIDE_CHECK(memcmp(&r.degreeZeros, &zeros, sizeof zeros) == 0);
+    const tide_float2 subnormals = tide_f2(tide_radians_f(1e-37f), tide_radians_f(1e-40f));
+    TIDE_CHECK(memcmp(&r.degreeSubnormals, &subnormals, sizeof subnormals) == 0);
+    TIDE_CHECK(r.degreeArithmetic == -(tide_radians_f(45.0f) + tide_radians_f(90.0f)) * 2.0f);
+    TIDE_CHECK(r.degreeDefault == tide_radians_f(45.0f));
+    TIDE_CHECK(r.degreeNamed == tide_radians_f(30.0f));
+    TIDE_CHECK(r.degreeInferred == -tide_radians_f(180.0f));
+    TIDE_CHECK(r.degreeField == tide_radians_f(180.0f));
+    TIDE_CHECK(memcmp(&r.degreeScalarEuler, &r.degreeVectorEuler, sizeof r.degreeScalarEuler) == 0);
+    TIDE_CHECK(memcmp(&r.degreeNamedEuler, &r.degreeVectorEuler, sizeof r.degreeNamedEuler) == 0);
 }
 
 TIDE_TEST(math_hash)

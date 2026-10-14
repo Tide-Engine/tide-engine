@@ -1,0 +1,4 @@
+// expect: 'item' is int?, a value or nothing, so it needs unwrapping first
+struct Slot { int? item; }
+bool Same(Slot a, Slot b) { return a.item == b.item; }
+scene Main { }

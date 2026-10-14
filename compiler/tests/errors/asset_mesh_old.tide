@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/meshes/bad/old.gltf' is glTF 1.0, and Tide reads glTF 2.0
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> tree = "../e2e/assets/meshes/bad/old.gltf";
+
+scene Main
+{
+}

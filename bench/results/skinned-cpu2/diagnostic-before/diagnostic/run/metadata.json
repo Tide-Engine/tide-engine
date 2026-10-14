@@ -1,0 +1,70 @@
+{
+  "source_revision": "77be2f2441a2e91c9dc4c08a4b8ed2163dab32fd",
+  "state": "measured",
+  "counts": [
+    100,
+    1000
+  ],
+  "modes": [
+    "rest",
+    "shared",
+    "independent"
+  ],
+  "frames": 10,
+  "warmup": 2,
+  "repeat": 1,
+  "width": 1024,
+  "height": 576,
+  "gate": "Local\\TideClaudeContinuationBenchmark",
+  "monitor_interval_ms": 250,
+  "private_override": "skinned.obj and platform.obj before preserved static libraries",
+  "interpretation": "Instrumented phase totals are arithmetic accumulated CPU times across ten frames. Nested totals overlap and must not be added. Timer overhead changes code/driver scheduling. Host medians are exploratory instrumented values, not replacement performance evidence. GPU clocks are whole-process observations, not per-case attribution.",
+  "baseline": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-77be2f24\\bench_skinned.exe",
+    "bytes": 1865728,
+    "sha256": "478eb7ac6d09cb2d053b90de25a8ea6ab4166fda16557b28c87d42f8fd4d85df"
+  },
+  "diagnostic": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-77be2f24\\diagnostic\\bench_skinned_diagnostic.exe",
+    "bytes": 1870336,
+    "sha256": "67216cfdb01ccd105baccd2d5263ee1c5412800860ab2196770ffa50643e0215"
+  },
+  "arguments": [
+    "--counts",
+    "100,1000",
+    "--modes",
+    "rest,shared,independent",
+    "--frames",
+    "10",
+    "--warmup",
+    "2",
+    "--repeat",
+    "1"
+  ],
+  "started_at": "2026-10-10T17:53:38.7975546Z",
+  "exit_code": 0,
+  "wall_seconds": 0.8196893,
+  "ended_at": "2026-10-10T17:53:39.7255157Z",
+  "artifacts": [
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-77be2f24\\diagnostic\\run\\gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-77be2f24\\diagnostic\\run\\gpu.csv",
+      "bytes": 759,
+      "sha256": "a06a02f1b09d3765defe957771958c47ea258ab49966e30d6e153046b6f307fe"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-77be2f24\\diagnostic\\run\\stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-77be2f24\\diagnostic\\run\\stdout.txt",
+      "bytes": 10158,
+      "sha256": "d456c52bc52887c06c2b5dd8aa4f41ee72d9b755e00e6fe6f4ef8e68cb93a670"
+    }
+  ]
+}

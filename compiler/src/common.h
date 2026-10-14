@@ -13,6 +13,17 @@
 void *arena_alloc(size_t size); // Zeroed.
 void arena_reset(void);         // Frees everything arena_alloc returned.
 
+// A temporary allocation scope. Rewind invalidates everything allocated
+// after the checkpoint: none of it may be kept in an object that survives.
+// A checkpoint cannot outlive arena_reset or a rewind past its position.
+typedef struct arena_mark {
+    void *block;
+    size_t used;
+} arena_mark;
+
+arena_mark arena_checkpoint(void);
+void arena_rewind(arena_mark mark);
+
 #define NEW(T) ((T *)arena_alloc(sizeof(T)))
 
 // Growable array. Declare with `VEC(T) name;` zero-initialized.
@@ -86,6 +97,7 @@ typedef enum diag_severity {
     DIAG_ERROR,
     DIAG_WARNING,
     DIAG_NOTE, // Belongs to the previous error or warning; `at` is zero, or where it points.
+    DIAG_INFO, // A standalone informational diagnostic, without affecting compilation.
 } diag_severity;
 
 // Receives diagnostics instead of stderr, for tools such as the language server.
@@ -105,11 +117,16 @@ int diag_source_count(void);
 void diag_set_sink(diag_sink sink, void *user); // NULL prints to stderr again.
 void diag_error(loc at, const char *fmt, ...);
 void diag_warning(loc at, const char *fmt, ...);
+void diag_info(loc at, const char *fmt, ...);
 void diag_note(const char *fmt, ...); // Attaches to the previous error or warning.
 // A note about another place in the code, which its text names too: a sink
 // gets `at`, where diag_note gives it none.
 void diag_note_at(loc at, const char *fmt, ...);
 int diag_error_count(void);
+// Whether what's printed to stderr is colored: it's a terminal that takes
+// escape sequences, and NO_COLOR isn't set. For what else writes there, like
+// a C compiler tide runs.
+bool diag_colored(void);
 
 // "did you mean ...?" for a misspelled name: offer every name that would have
 // been right, then suggest_note adds a note naming the closest one, if any is

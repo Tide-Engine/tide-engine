@@ -38,6 +38,9 @@ singleton Literals
     int separatedMask = 0b1111_0000;
     int separatedHex = 0x_FF_FF;
     float separatedFloat = 1_000.25;
+    float pointFirst = .5f;
+    float pointFirstPlain = (1 + .25) * .5;
+    float pointFirstExponent = -.5e1;
 }
 
 component Bits

@@ -73,7 +73,7 @@ static void render(const tide_view_worlds view)
 {
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
-    tide_frame(view.current, view.previous, view.alpha, view.verified, &local, &draw, &gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     tide_platform_draw(&draw);
 }

@@ -34,7 +34,7 @@ local singleton Menu
     int others;
 }
 
-local component Tag
+component Tag
 {
     int clicks;
 }
@@ -43,8 +43,8 @@ local scene Main { }
 
 local event(Spawned) Setup(with Main)
 {
-    Spawn(Tag);
-    Spawn(Tag);
+    local Spawn(Tag);
+    local Spawn(Tag);
 }
 
 // A container of our own: runs its content only while open.
@@ -120,7 +120,7 @@ view Rows(mut Menu menu)
 }
 
 // Once per entity: each one's button is its own.
-view Tags(mut Tag tag)
+view Tags(mut local Tag tag)
 {
     if (GUILayout.Button("Tag")) tag.clicks += 1;
 }

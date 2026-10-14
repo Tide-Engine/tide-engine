@@ -41,6 +41,32 @@ static int check_fetches(tide_local *local)
     fetch_check(local->Fetches.endless, "a body that goes on past the limit is Failed");
     fetch_check(local->Fetches.empty == 0, "a 204 is no bytes and no error");
     fetch_check(local->Fetches.nothing == 0, "a body of 0 bytes is no bytes and no error");
+    static const char *const requests[] = {
+        "a POST's method, header and body arrive",
+        "a request with nothing set is a GET",
+        "an answer of another status is an answer, with its body",
+        "a 404 is an answer too",
+        "a request in a variable, changed by a field and by calls, is sent as it stands each time",
+        "a HEAD's answer has no body",
+        "a 303 is fetched with a GET",
+        "a 307 is the same request again",
+        "a header's value with a line break in it is one header",
+        "the connection's own headers are the sender's",
+        "a method that's no word is InvalidData",
+        "a method a page can't send is InvalidData",
+        "a header's name that's no token is InvalidData",
+        "a URL that isn't http:// or https:// is InvalidPath",
+        "a request nobody answers is Failed",
+        "a request with a time limit that's never answered is TimedOut",
+        "an answer that stops in its body is TimedOut at the limit too",
+        "an answer within the limit is the answer",
+        "a limit of 0 or less is none",
+        "the limit stays through the calls after it, and a field sets it",
+        "a request after one that timed out is answered",
+    };
+    for (size_t i = 0; i < sizeof requests / sizeof requests[0]; i++) {
+        fetch_check((local->Fetches.requests >> i & 1) == 1, requests[i]);
+    }
     fetch_check(local->Fetches.frames > 1, "the fetches took frames, which went on meanwhile");
     return fetch_failures;
 }

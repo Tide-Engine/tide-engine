@@ -30,14 +30,14 @@ static tide_voice *add_voice(tide_audio_frame *f)
 }
 
 // Copies an effect's knobs into the frame and says where they went. An effect
-// with no code has no knobs, whatever it says.
+// with no code has no knobs, whatever it says, and one whose state is more
+// than there can be is no effect: its code would write past what it's given.
 static uint32_t copy_knobs(tide_audio_frame *f, tide_audio_effect *e)
 {
-    if (!e->fn) {
+    if (!e->fn || e->state_size > TIDE_AUDIO_STATE_BYTES) {
         *e = (tide_audio_effect){0};
         return 0;
     }
-    if (e->state_size > TIDE_AUDIO_STATE_BYTES) e->state_size = TIDE_AUDIO_STATE_BYTES;
     if (!e->knobs) e->knobs_size = 0;
     if (e->knobs_size > TIDE_AUDIO_KNOBS_BYTES) e->knobs_size = TIDE_AUDIO_KNOBS_BYTES;
     const uint32_t at = f->knobs_used;
@@ -234,7 +234,7 @@ tide_clip tide_clip_of(const tide_clip_ref ref)
 typedef struct pending_clip {
     const uint8_t *bytes;
     uint32_t size;
-    decoded_clip *entry;
+    uint32_t entry; // An index: gathering later clips can move clips.items
 } pending_clip;
 
 typedef struct preparing {
@@ -252,7 +252,8 @@ static void gather_clip(const uint8_t *bytes, const uint32_t size, const uint64_
         p->items = tide_realloc(p->items, p->capacity * sizeof *p->items, c * sizeof *p->items);
         p->capacity = c;
     }
-    p->items[p->count++] = (pending_clip){.bytes = bytes, .size = size, .entry = add_clip_entry(version)};
+    add_clip_entry(version);
+    p->items[p->count++] = (pending_clip){.bytes = bytes, .size = size, .entry = clips.count - 1u};
 }
 
 static void prepare_work(void *context, const uint32_t thread)
@@ -262,7 +263,7 @@ static void prepare_work(void *context, const uint32_t thread)
     for (;;) {
         const uint32_t i = atomic_fetch_add_explicit(&p->next, 1u, memory_order_relaxed);
         if (i >= p->count) return;
-        decode_clip(p->items[i].entry, p->items[i].bytes, p->items[i].size);
+        decode_clip(&clips.items[p->items[i].entry], p->items[i].bytes, p->items[i].size);
     }
 }
 

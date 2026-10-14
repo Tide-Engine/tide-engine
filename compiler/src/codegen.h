@@ -9,6 +9,7 @@ typedef struct game_info {
     char version[64]; // version, likewise
     bool bold;        // Its C names the bold weight's file (it says Font.Bold), which is in the platform layer's library
     bool microphone;  // It says Clip.Microphone: its Android app's manifest asks to record audio
+    bool assets_affect_match; // Gameplay assets contribute to game identity; edits require a build, not only a new pack
     // The files and folders its assets name (asset_files.h), for whoever
     // watches them: malloc'd, each path malloc'd, for the caller to free.
     char **asset_paths;
@@ -20,6 +21,7 @@ typedef struct codegen_options {
     const char *out_dir;
     bool line_directives;    // Map generated code back to .tide lines for debuggers.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
+    bool strip_unused_assets; // Closed release games only: exclude assets never referenced by checked Tide code/defaults/shaders.
     sb *externs;             // If set, gets the C function of each extern function, a line each (for tide's checks).
     game_info *info;         // If set, gets what tide needs of the game's settings.
     bool shaders;            // Instead of the schedule, print the game's shaders (tidec --shaders).
@@ -28,6 +30,9 @@ typedef struct codegen_options {
     const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL
     const char *const *defines; // The symbols the build defines for every file's #if (`--define FAST`, DEBUG), or NULL
     int define_count;
+    const char *editor_prefab; // Internal native-editor build: qualified prefab to instantiate without gameplay startup.
+    bool editor_local;
+    const char *editor_source, *editor_text; // Unsaved source overlay, retaining the original path and asset scope.
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

@@ -400,6 +400,12 @@ void packages_free_file(packages_file *f)
         free(f->lines[i].ref);
         free(f->lines[i].commit);
     }
+    for (int i = 0; i < f->off_count; i++) {
+        free(f->off[i].source);
+        free(f->off[i].ref);
+        free(f->off[i].commit);
+    }
+    free(f->off);
     free(f->lines);
     free(f->path);
     free(f->folder);
@@ -422,6 +428,172 @@ static int split_words(char *line, char **words, const int max)
     return n;
 }
 
+// ---------------------------------------------------------------------------
+// #if lines
+
+static const char *const debug_alone[] = {"DEBUG"};
+static const char *const *symbols = debug_alone;
+static int symbol_count = 1;
+
+void packages_set_symbols(const char *const *names, const int count)
+{
+    symbols = names ? names : debug_alone;
+    symbol_count = names ? count : 1;
+}
+
+// A condition being read: what's wrong with it is said once, in `wrong`.
+typedef struct condition {
+    const char *p;
+    char wrong[160];
+} condition;
+
+static bool condition_or(condition *c);
+
+static void condition_space(condition *c)
+{
+    while (*c->p == ' ' || *c->p == '\t' || *c->p == '\r') c->p++;
+}
+
+static void condition_wrong(condition *c, const char *fmt, const int len, const char *text)
+{
+    if (!c->wrong[0]) snprintf(c->wrong, sizeof c->wrong, fmt, len, text);
+}
+
+// TIDE_0_3_OR_NEWER, or TIDE_0_3_1_OR_NEWER: its numbers into `v`.
+static bool version_symbol(const char *name, const int len, int v[3])
+{
+    const char *p = name + 5;
+    const char *end = name + len;
+    v[0] = v[1] = v[2] = 0;
+    for (int part = 0; part < 3; part++) {
+        if (p >= end || !isdigit((unsigned char)*p)) return false;
+        int n = 0;
+        while (p < end && isdigit((unsigned char)*p) && n < 100000) n = n * 10 + (*p++ - '0');
+        v[part] = n;
+        if (end - p == 9 && memcmp(p, "_OR_NEWER", 9) == 0) return part >= 1;
+        if (p >= end || *p != '_') return false;
+        p++;
+    }
+    return false;
+}
+
+static bool condition_primary(condition *c)
+{
+    condition_space(c);
+    if (*c->p == '!' && c->p[1] != '=') {
+        c->p++;
+        return !condition_primary(c);
+    }
+    if (*c->p == '(') {
+        c->p++;
+        const bool value = condition_or(c);
+        condition_space(c);
+        if (*c->p == ')') c->p++;
+        else condition_wrong(c, "a '(' in the condition is missing its ')'%.*s", 0, "");
+        return value;
+    }
+    if (isalpha((unsigned char)*c->p) || *c->p == '_') {
+        const char *name = c->p;
+        while (isalnum((unsigned char)*c->p) || *c->p == '_') c->p++;
+        const int len = (int)(c->p - name);
+        if (len == 4 && memcmp(name, "true", 4) == 0) return true;
+        if (len == 5 && memcmp(name, "false", 5) == 0) return false;
+        if (len >= 5 && memcmp(name, "TIDE_", 5) == 0) {
+            int v[3];
+            if (version_symbol(name, len, v)) return tide_version_at_least(v[0], v[1], v[2]);
+            condition_wrong(c, "'%.*s' isn't a symbol Tide knows: a version of tide is written like TIDE_0_3_OR_NEWER", len, name);
+            return false;
+        }
+        if (len >= 8 && memcmp(name, "PACKAGE_", 8) == 0) {
+            condition_wrong(c, "'%.*s' is a symbol this file's packages make, so no line of it depends on one", len, name);
+            return false;
+        }
+        for (int i = 0; i < symbol_count; i++) {
+            if ((int)strlen(symbols[i]) == len && memcmp(symbols[i], name, (size_t)len) == 0) return true;
+        }
+        return false;
+    }
+    if (!*c->p) condition_wrong(c, "a condition is missing: '#if DEBUG', or a symbol a build names with --define%.*s", 0, "");
+    else condition_wrong(c, "'%.*s' can't go in a condition: they're symbols, with !, &&, ||, == and !=", 1, c->p);
+    while (*c->p) c->p++;
+    return false;
+}
+
+static bool condition_equality(condition *c)
+{
+    bool value = condition_primary(c);
+    for (;;) {
+        condition_space(c);
+        const bool eq = c->p[0] == '=' && c->p[1] == '=';
+        const bool ne = c->p[0] == '!' && c->p[1] == '=';
+        if (!eq && !ne) return value;
+        c->p += 2;
+        const bool other = condition_primary(c);
+        value = eq ? value == other : value != other;
+    }
+}
+
+static bool condition_and(condition *c)
+{
+    bool value = condition_equality(c);
+    for (;;) {
+        condition_space(c);
+        if (c->p[0] != '&' || c->p[1] != '&') return value;
+        c->p += 2;
+        const bool other = condition_equality(c);
+        value = value && other;
+    }
+}
+
+static bool condition_or(condition *c)
+{
+    bool value = condition_and(c);
+    for (;;) {
+        condition_space(c);
+        if (c->p[0] != '|' || c->p[1] != '|') return value;
+        c->p += 2;
+        const bool other = condition_and(c);
+        value = value || other;
+    }
+}
+
+// An #if being read: whether its lines count now, whether one of its
+// branches has, and where it is.
+typedef struct branch {
+    bool on;     // This branch's lines are the build's, the #ifs around it allowing
+    bool taken;  // A branch of it held already, so no later one does
+    bool closed; // Its #else came
+    int line;
+} branch;
+
+#define PACKAGES_DEPTH 32
+
+// How long `text` is without the spaces at its end, a "\r" among them.
+static int trimmed(const char *text)
+{
+    size_t n = strlen(text);
+    while (n > 0 && isspace((unsigned char)text[n - 1])) n--;
+    return (int)n;
+}
+
+// The directive a line is, if it's one: `#if`, `#elif`, `#else` or `#endif`
+// at its start, then a space or the line's end. Any other `#` line is a comment.
+static const char *directive(const char *line, const char **rest)
+{
+    static const char *const words[] = {"ifdef", "ifndef", "if", "elif", "else", "endif"}; // The first two to say they're C's
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line != '#') return NULL;
+    line++;
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) {
+        const size_t n = strlen(words[i]);
+        if (strncmp(line, words[i], n) != 0) continue;
+        if (line[n] && !isspace((unsigned char)line[n]) && line[n] != '(' && line[n] != '!') continue;
+        *rest = line + n;
+        return words[i];
+    }
+    return NULL;
+}
+
 bool packages_read(const char *folder, packages_file *out, const packages_report_fn report, void *user)
 {
     memset(out, 0, sizeof *out);
@@ -433,11 +605,84 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
     bool ok = true;
     const char *path = out->path;
     int number = 0;
+    branch open[PACKAGES_DEPTH];
+    int depth = 0;
     for (char *line = text; *line;) {
         number++;
         char *end = line + strcspn(line, "\n");
         char *next = *end ? end + 1 : end;
         *end = '\0';
+        const char *rest = NULL;
+        const char *word = directive(line, &rest);
+        if (word && (strcmp(word, "ifdef") == 0 || strcmp(word, "ifndef") == 0)) {
+            line = next;
+            report_at(report, user, path, number,
+                      word[2] == 'd' ? "write `#if SYMBOL`" : "write `#if !SYMBOL`", "#%s is C's: a condition here is an #if's", word);
+            ok = false;
+            continue;
+        }
+        if (word) {
+            line = next;
+            const bool around = depth < 2 || open[depth - 2].on; // The #ifs around the one being read hold
+            if (strcmp(word, "if") == 0) {
+                if (depth == PACKAGES_DEPTH) {
+                    report_at(report, user, path, number, NULL, "#if lines go %d deep at the most", PACKAGES_DEPTH);
+                    ok = false;
+                    continue;
+                }
+                condition c = {rest, ""};
+                bool holds = condition_or(&c);
+                condition_space(&c);
+                if (*c.p == '#') *((char *)c.p) = '\0'; // A comment after it
+                if (*c.p) condition_wrong(&c, "the condition ends before '%.*s'", trimmed(c.p), c.p);
+                if (c.wrong[0]) {
+                    report_at(report, user, path, number, "conditions are symbols, like `#if DEBUG` or `#if STEAM && !DEMO`", "%s",
+                              c.wrong);
+                    ok = false;
+                    holds = false;
+                }
+                const bool outer = depth == 0 || open[depth - 1].on;
+                open[depth++] = (branch){outer && holds, holds, false, number};
+                continue;
+            }
+            if (depth == 0) {
+                report_at(report, user, path, number, "an `#if SYMBOL` line starts one", "this #%s has no #if before it", word);
+                ok = false;
+                continue;
+            }
+            branch *b = &open[depth - 1];
+            if (strcmp(word, "endif") == 0) {
+                depth--;
+                continue;
+            }
+            if (b->closed) {
+                report_at(report, user, path, number, "#else is the last branch of its #if, before #endif",
+                          "this #%s comes after the #else of the #if on line %d", word, b->line);
+                ok = false;
+                continue;
+            }
+            if (strcmp(word, "else") == 0) {
+                b->on = around && !b->taken;
+                b->taken = true;
+                b->closed = true;
+                continue;
+            }
+            condition c = {rest, ""}; // #elif
+            bool holds = condition_or(&c);
+            condition_space(&c);
+            if (*c.p == '#') *((char *)c.p) = '\0';
+            if (*c.p) condition_wrong(&c, "the condition ends before '%.*s'", trimmed(c.p), c.p);
+            if (c.wrong[0]) {
+                report_at(report, user, path, number, "conditions are symbols, like `#elif DEBUG` or `#elif STEAM && !DEMO`", "%s",
+                          c.wrong);
+                ok = false;
+                holds = false;
+            }
+            b->on = around && !b->taken && holds;
+            b->taken |= holds;
+            continue;
+        }
+        const bool counts = depth == 0 || open[depth - 1].on;
         // A comment starts the line, or follows a space
         for (char *c = line; *c; c++) {
             if (*c == '#' && (c == line || isspace((unsigned char)c[-1]))) {
@@ -452,6 +697,12 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
         if (count > 2) {
             report_at(report, user, path, number, "a line is a package and its commit, or `package Name`, or `tide 0.3`",
                       "this line has more than two words");
+            ok = false;
+            continue;
+        }
+        if (depth > 0 && (strcmp(words[0], "package") == 0 || strcmp(words[0], "tide") == 0)) {
+            report_at(report, user, path, number, "it's the same in every build: write it before the first #if",
+                      "a `%s` line can't be inside an #if", words[0]);
             ok = false;
             continue;
         }
@@ -535,6 +786,12 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
                 }
             }
         }
+        if (!counts) { // Left out of this build: kept for the commands that change every line
+            out->off = realloc(out->off, sizeof(package_line) * (size_t)(out->off_count + 1));
+            if (!out->off) abort();
+            out->off[out->off_count++] = l;
+            continue;
+        }
         bool repeated = false;
         for (int i = 0; i < out->count && !repeated; i++) {
             if (l.local && out->lines[i].local) { // ../shared and ../shared/ are one folder
@@ -562,6 +819,10 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
         out->lines = realloc(out->lines, sizeof(package_line) * (size_t)(out->count + 1));
         if (!out->lines) abort();
         out->lines[out->count++] = l;
+    }
+    if (depth > 0) {
+        report_at(report, user, path, open[depth - 1].line, "end it with a line that says `#endif`", "this #if never ends");
+        ok = false;
     }
     free(text);
     return ok;

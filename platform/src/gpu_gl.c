@@ -38,10 +38,11 @@ typedef struct gl_target {
     uint32_t drawn; // How many of them the framebuffer's draw buffers name (see draw_into)
     // A multisampled one's (above 1): the framebuffer is of renderbuffers of that many samples a pixel, its color
     // images' and its depth's, and each color image, a texture as any target's, is in a framebuffer of its own,
-    // which a pass's end resolves the samples into. It has no depth texture.
+    // which a pass's end resolves the samples into. Its depth texture is made, in a framebuffer of its own, the
+    // first time its depth is resolved (gl_resolve_depth).
     uint32_t samples;
     GLuint sampled[TIDE_GPU_MAX_COLORS], sampled_depth;
-    GLuint resolved[TIDE_GPU_MAX_COLORS];
+    GLuint resolved[TIDE_GPU_MAX_COLORS], resolved_depth;
     bool bytes;     // Its first color image is 4 bytes a pixel: what's read back
     bool face;      // Its color image is a cube's face (gl_cube_face), which isn't its own to free or to hand out
     tide_gpu_target_format format; // What it was made to hold, which the pipelines that draw into it are made for
@@ -231,6 +232,11 @@ static void texture_pixels(const gl_texture *t, const void *pixels, const bool a
     const bool red = t->format != TIDE_GPU_RGBA8, halves = t->format == TIDE_GPU_R16F;
     const GLenum type = halves ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // Rows of any width, one after the other
+    if (t->format == TIDE_GPU_RGBA32I) { // Four ints a pixel, as they are
+        if (again) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->width, t->height, GL_RGBA_INTEGER, GL_INT, pixels);
+        else glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32I, t->width, t->height, 0, GL_RGBA_INTEGER, GL_INT, pixels);
+        return;
+    }
     if (again) {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->width, t->height, red ? GL_RED : GL_RGBA, type, pixels);
     } else {
@@ -267,6 +273,58 @@ static void gl_texture_write(const tide_gpu_id texture, const void *pixels)
 {
     bind_texture(texture);
     texture_pixels(&textures[texture], pixels, true);
+}
+
+static tide_gpu_id gl_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
+{
+    const GLenum format = blocks.format == TIDE_BLOCKS_BC1 ? GL_COMPRESSED_RGB_S3TC_DXT1 : GL_COMPRESSED_RGBA_S3TC_DXT5;
+    GLint count = 0;
+    glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &count);
+    if (count <= 0 || count > 4096) return 0;
+    GLint *formats = tide_alloc((size_t)count * sizeof *formats);
+    glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, formats);
+    bool supported = false;
+    for (GLint i = 0; i < count; i++) if ((GLenum)formats[i] == format) supported = true;
+    free(formats);
+    if (!supported) return 0;
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    textures = room(textures, &texture_names, texture, sizeof(gl_texture));
+    textures[texture] = (gl_texture){.format = TIDE_GPU_RGBA8, .mipped = true, .width = width, .height = height};
+    bind_texture(texture);
+    int w = width, h = height;
+    uint32_t offset = 0;
+    for (uint32_t level = 0; level < blocks.levels; level++) {
+        const uint32_t bytes = ((uint32_t)w + 3u) / 4u * (((uint32_t)h + 3u) / 4u)
+                             * (blocks.format == TIDE_BLOCKS_BC1 ? 8u : 16u);
+        glCompressedTexImage2D(GL_TEXTURE_2D, (GLint)level, format, w, h, 0, (GLsizei)bytes, blocks.pixels + offset);
+        offset += bytes;
+        if (w > 1) w /= 2;
+        if (h > 1) h /= 2;
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, (GLint)blocks.levels - 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    return texture;
+}
+
+// Some of a texture's pixels, read where they are among all of them: its rows are the texture's own width apart.
+static void gl_texture_write_part(const tide_gpu_id texture, const void *pixels, const int x, const int y, const int width,
+                                  const int height)
+{
+    const gl_texture *t = &textures[texture];
+    const bool ints = t->format == TIDE_GPU_RGBA32I, red = t->format != TIDE_GPU_RGBA8 && !ints;
+    const GLenum format = ints ? GL_RGBA_INTEGER : red ? GL_RED : GL_RGBA;
+    const GLenum type = ints ? GL_INT : t->format == TIDE_GPU_R16F ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
+    const uint8_t *from = (const uint8_t *)pixels
+                        + ((size_t)y * (size_t)t->width + (size_t)x) * (size_t)tide_gpu_format_bytes((tide_gpu_format)t->format);
+    bind_texture(texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, t->width);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, format, type, from);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
 
 static void gl_texture_free(const tide_gpu_id texture)
@@ -663,6 +721,10 @@ static void gl_target_free(const tide_gpu_id target)
         glDeleteFramebuffers((GLsizei)t->color_count, t->resolved);
         glDeleteRenderbuffers((GLsizei)t->color_count, t->sampled);
         glDeleteRenderbuffers(1, &t->sampled_depth);
+        if (t->depth) {
+            glDeleteFramebuffers(1, &t->resolved_depth);
+            glDeleteTextures(1, &t->depth);
+        }
     } else {
         glDeleteTextures(1, &t->depth);
     }
@@ -678,6 +740,36 @@ static tide_gpu_id gl_target_texture(const tide_gpu_id target, const uint32_t co
 static tide_gpu_id gl_target_depth(const tide_gpu_id target)
 {
     return targets[target - 1u].depth;
+}
+
+// A multisampled target's depth as a texture: a sample of each pixel's, blitted from its samples.
+static void gl_resolve_depth(const tide_gpu_id target)
+{
+    gl_target *t = &targets[target - 1u];
+    if (t->samples <= 1u) return;
+    if (!t->depth) {
+        glGenTextures(1, &t->depth);
+        bind_texture(t->depth);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, t->width, t->height, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &t->resolved_depth);
+        glBindFramebuffer(GL_FRAMEBUFFER, t->resolved_depth);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, t->depth, 0);
+        glDrawBuffers(1, (const GLenum[]){GL_NONE});
+        glReadBuffer(GL_NONE);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            fprintf(stderr, "tide: no framebuffer to resolve a multisampled depth into\n");
+            abort();
+        }
+    }
+    glDisable(GL_SCISSOR_TEST); // All of it: a blit goes by the scissor
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, t->framebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, t->resolved_depth);
+    glBlitFramebuffer(0, 0, t->width, t->height, 0, 0, t->width, t->height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
@@ -863,8 +955,9 @@ static void gl_sample(const uint32_t slot, const tide_gpu_id texture, tide_gpu_f
         return;
     }
     glBindTexture(GL_TEXTURE_2D, texture);
+    // ...and ints are never blended: a texture of them read through a sampler that blends is no texture at all
     glBindSampler(slot, read == TIDE_GPU_READ_COMPARE ? samplers[SAMPLE_COMPARED] :
-                        read == TIDE_GPU_READ_DEPTH ? sampler_for(TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP) : sampler_for(filter, wrap));
+                        read == TIDE_GPU_READ_DEPTH || read == TIDE_GPU_READ_DATA ? sampler_for(TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP) : sampler_for(filter, wrap));
 }
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)
@@ -923,7 +1016,9 @@ const tide_gpu tide_gpu_gl = {
     .buffer_write = gl_buffer_write,
     .buffer_free = gl_buffer_free,
     .texture = gl_texture_make,
+    .texture_blocks = gl_texture_blocks,
     .texture_write = gl_texture_write,
+    .texture_write_part = gl_texture_write_part,
     .texture_free = gl_texture_free,
     .cube = gl_cube,
     .cube_face = gl_cube_face,
@@ -936,6 +1031,7 @@ const tide_gpu tide_gpu_gl = {
     .float_targets = gl_float_targets,
     .target_texture = gl_target_texture,
     .target_depth = gl_target_depth,
+    .resolve_depth = gl_resolve_depth,
     .target_free = gl_target_free,
     .target_read = gl_target_read,
     .begin = gl_begin,

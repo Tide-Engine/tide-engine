@@ -1,0 +1,50 @@
+// A spare int4 lane carries the atlas base at the 16-attribute limit.
+// A completely full layout keeps its individual palette without an extra attribute.
+scene Main { }
+
+struct Corner { float3 position; }
+asset SkinnedMesh<Corner> model = "../../../platform/tests/skinned.gltf";
+
+component Packed
+{
+    int4 a0; int4 a1; int4 a2; int4 a3; int4 a4;
+    int4 a5; int4 a6; int4 a7; int4 a8; int4 a9;
+    int3 tail = int3(100, 101, 102);
+}
+
+component Full
+{
+    int4 a0; int4 a1; int4 a2; int4 a3; int4 a4;
+    int4 a5; int4 a6; int4 a7; int4 a8; int4 a9;
+    int4 tail = int4(200, 201, 202, 203);
+}
+
+vert Spare(mut Corner corner, Packed item)
+{
+    corner.position.x += float(item.a0.x + item.a1.x + item.a2.x + item.a3.x + item.a4.x
+                             + item.a5.x + item.a6.x + item.a7.x + item.a8.x + item.a9.x + item.tail.x);
+}
+
+vert Saturated(mut Corner corner, Full item)
+{
+    corner.position.x += float(item.a0.x + item.a1.x + item.a2.x + item.a3.x + item.a4.x
+                             + item.a5.x + item.a6.x + item.a7.x + item.a8.x + item.a9.x + item.tail.x);
+}
+
+view PackedModels(with Packed)
+{
+    Draw.SkinnedMesh(model, float4x4.identity, Spare);
+    Draw.SkinnedMesh(model, float4x4.identity, model.animations.move.Sample(0.5), Spare);
+}
+
+view FullModels(with Full)
+{
+    Draw.SkinnedMesh(model, float4x4.identity, Saturated);
+    Draw.SkinnedMesh(model, float4x4.identity, model.animations.move.Sample(0.5), Saturated);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Packed);
+    Spawn(Full);
+}

@@ -1,0 +1,43 @@
+// expect: the GPU runs a frag, and 'Glow' sends 'Ping', which only code in a world does
+scene Main { }
+event Ping { int n; }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+float Glow(float x)
+{
+    Send(Ping { n = 1 });
+    return x * 2;
+}
+
+frag Shade(V vertex, out Color color)
+{
+    color = Color(Glow(vertex.uv.x), 0, 0);
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}
+
+event(Ping ping) Heard() { }

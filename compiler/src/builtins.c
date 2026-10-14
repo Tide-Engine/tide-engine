@@ -19,6 +19,7 @@ static const type T_F2 = {TY_FLOAT2, NULL};
 static const type T_F3 = {TY_FLOAT3, NULL};
 static const type T_COLOR = {TY_COLOR, NULL};
 static const type T_STR = {TY_STRING, NULL};
+static const type T_CHR = {TY_CHAR, NULL};
 static const type T_Q = {TY_QUATERNION, NULL};
 static const type T_F4X4 = {TY_FLOAT4X4, NULL};
 static const type T_F3X3 = {TY_FLOAT3X3, NULL};
@@ -535,6 +536,9 @@ static void build_signatures(void)
              "axis, angle", "A rotation of `angle` radians around `axis`.");
     describe(add("quaternion", "Euler", T_Q, "tide_euler_q", 1, T_F3, T_NONE, T_NONE),
              "radians", "A rotation from Euler angles in radians: Z first, then X, then Y.");
+    signature *euler = add("quaternion", "Euler", T_Q, "tide_euler_q", 3, T_F, T_F, T_F);
+    euler->pack = "tide_f3";
+    describe(euler, "x, y, z", "A rotation from Euler angles in radians: Z first, then X, then Y.");
     describe(add("quaternion", "LookRotation", T_Q, "tide_lookrotation_q", 2, T_F3, T_F3, T_NONE),
              "forward, up", "A rotation that looks along `forward`, with `up` as up.");
     describe(add("float4x4", "TRS", T_F4X4, "tide_trs_f4x4", 3, T_F3, T_Q, T_F3),
@@ -596,6 +600,9 @@ static void build_signatures(void)
     describe(add("Draw", "Clear", T_NONE, "tide_draw_clear", 1, T_COLOR, T_NONE, T_NONE),
              "color", "Fills the whole screen, or what the clip leaves of it, and clears depth and stencil. No blend, tint "
              "or transform changes a clear.");
+    describe(add("Draw", "ClearDepth", T_NONE, "tide_draw_clear_depth", 0, T_NONE, T_NONE, T_NONE),
+             "", "Sets depth back alone, over the whole screen or what the clip leaves of it: colors and stencil stay, "
+             "and the 3D meshes drawn after are in front of everything drawn before.");
     // The settings: what the draws after them, or in their block, are drawn with (tide/draw.h's Settings)
     add_setting("Draw", "Blend", "tide_draw_push_blend", "tide_draw_set_blend", NULL, "mode",
                 "How what's drawn goes over what's there: `Blend.Alpha` (by its alpha, each frame's first), `Blend.Add` "
@@ -661,6 +668,31 @@ static void build_signatures(void)
                 "way. Only 3D meshes' triangles have a back: the 2D draws draw whichever way they're wound.",
                 1, &T_CULL);
     add_unset("Draw", "SetCull", "tide_draw_unset_cull", "Back to `Cull.Back`, as each frame starts.");
+    // Levels of detail (docs/spec.md): a mesh asset marked [LOD] has simpler versions, which a draw picks among
+    add_setting("Draw", "LOD", "tide_draw_push_lod", "tide_draw_set_lod", NULL, "level",
+                "Which level of detail the meshes marked `[LOD]` draw at, in place of the one each would pick by how "
+                "big it is on screen: `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last "
+                "level is its last. Every instance of an instanced draw has it, in the order they're given. A mesh "
+                "with no levels draws as it always does.",
+                1, &T_WHOLE);
+    add_setting("Draw", "LOD", "tide_draw_push_no_lod", "tide_draw_unset_lod", NULL, "",
+                "Back to each mesh marked `[LOD]` picking its own level of detail, by how big it is on screen, as each "
+                "frame starts.", 0);
+    add_setting("Draw", "LODCamera", "tide_draw_push_lod_camera_3d", "tide_draw_set_lod_camera_3d", NULL,
+                "position, rotation, fieldOfView",
+                "The camera the meshes marked `[LOD]` pick their level of detail through, in place of the one they're "
+                "drawn through, which stays as it is: a shadow map told the player's camera casts, for each mesh, the "
+                "level the player sees. It's taken as the window's camera, so the pixels it counts are the window's.",
+                3, &T_F3, &T_Q, &T_F);
+    add_setting("Draw", "LODCamera", "tide_draw_push_lod_camera_matrices", "tide_draw_set_lod_camera_matrices", NULL,
+                "transform, projection",
+                "The camera the meshes marked `[LOD]` pick their level of detail through, as matrices: what "
+                "`Draw.CameraTransform()` and `Draw.CameraProjection()` give of the camera to pick by. The draws still "
+                "go through their destination's own camera.",
+                2, &T_F4X4, &T_F4X4);
+    add_setting("Draw", "LODCamera", "tide_draw_push_no_lod_camera", "tide_draw_unset_lod_camera", NULL, "",
+                "Back to picking levels of detail through the camera the meshes are drawn through, as each frame "
+                "starts.", 0);
     add_setting("Draw", "Camera", "tide_draw_push_camera", "tide_draw_set_camera", NULL, "center, size",
                 "The 2D camera, which the shapes, text and 2D meshes go through: `center` is the world position at the "
                 "middle of the screen and `size` is half the visible height, like Unity's orthographic size. The 3D "
@@ -795,6 +827,10 @@ static void build_signatures(void)
              "vertices, indices, instances", instanced_doc);
     describe(add("Draw", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES3, T_INDICES, T_INSTANCES),
              "vertices, indices, instances", instanced_doc);
+    // The checker resolves model and Pose types itself; this entry gives editors the public call's order.
+    describe(add("Draw", "SkinnedMesh", T_NONE, "tide_draw_mesh_shaded", 3, T_NONE, T_F4X4, T_NONE),
+             "model, transform, pose", "Draws a SkinnedMesh<V> at transform, deformed by pose before its vert runs. "
+             "Optional texture, vert, frag and draw values follow the pose. Reuse the same pose for color and shadow passes.");
     add_setting("Draw", "Clip", "tide_draw_push_clip", "tide_draw_set_clip", NULL, "rect",
                 "Only what's inside `rect` draws: from (x, y) to (x + width, y + height), in the units the 2D draws "
                 "are in. In a block, it's what of `rect` is inside the clip there is.",
@@ -916,6 +952,37 @@ static void build_signatures(void)
              NULL, "The text without spaces, tabs and new lines at its start and end.");
     describe(add("string", "Replace", T_STR, "tide_str_replace", 2, T_STR, T_STR, T_NONE),
              "from, to", "The text with every `from` in it replaced by `to`.");
+    // The same of one character, a char: after the text ones, which a call with text picks
+    describe(add("string", "Contains", T_BOOL, "tide_str_contains_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Whether the character is in the text.");
+    describe(add("string", "StartsWith", T_BOOL, "tide_str_starts_with_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Whether the text starts with the character.");
+    describe(add("string", "EndsWith", T_BOOL, "tide_str_ends_with_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Whether the text ends with the character.");
+    describe(add("string", "IndexOf", t_int, "tide_str_index_of_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Where the character first is in the text, counting characters from 0, or -1.");
+    describe(add("string", "Replace", T_STR, "tide_str_replace_char", 2, T_CHR, T_CHR, T_NONE),
+             "from, to", "The text with every character `from` in it replaced by `to`; `'\\0'`, which is no character, takes them out.");
+
+    // Text as bytes and in pieces (tide/list.h), and numbers out of text (tide/text.h): the same on every
+    // platform, so the match can use them
+    describe(add("string", "ToBytes", T_BYTES, "tide_str_to_bytes", 0, T_NONE, T_NONE, T_NONE),
+             NULL, "The text's bytes, as UTF-8: what `string.FromBytes` reads back.");
+    describe(add("string", "Split", T_PATHS, "tide_str_split", 1, T_STR, T_NONE, T_NONE),
+             "separator", "The pieces of the text between each `separator` and the next, empty ones too: one piece, the "
+             "whole text, when the separator isn't in it or is empty.");
+    describe(add("string", "Split", T_PATHS, "tide_str_split_char", 1, T_CHR, T_NONE, T_NONE),
+             "separator", "The pieces of the text between each of that character and the next, empty ones too.");
+    add_gui("int", "TryParse", T_BOOL, "tide_str_parse_int", "string text, out int value", 0,
+            "Whether the whole text is an int, which goes to `value`: digits, with a `-` before them for a negative "
+            "one. Anything else (spaces, a `+`, a point, a number past an int's range) gives false, and 0.");
+    add_gui("long", "TryParse", T_BOOL, "tide_str_parse_long", "string text, out long value", 0,
+            "Whether the whole text is a long, which goes to `value`: digits, with a `-` before them for a negative "
+            "one. Anything else gives false, and 0.");
+    add_gui("float", "TryParse", T_BOOL, "tide_str_parse_float", "string text, out float value", 0,
+            "Whether the whole text is a number, which goes to `value` as the nearest float: `-12.5`, `.5`, `1e-3`. "
+            "The same bits on every platform. Anything else (spaces, a `+`, `NaN`, a number past a float's range) "
+            "gives false, and 0.");
 
     // The GUI, in views: tide/gui.h. Codegen passes the view's GUI first, then
     // the widget's ID, then a mut argument's address.
@@ -1042,6 +1109,7 @@ static void build_signatures(void)
     describe(add("Path", "GetDirectoryName", T_STR, "tide_path_get_directory_name", 1, T_STR, T_NONE, T_NONE), "path", "Returns the parent path, or an empty string.");
     describe(add("Path", "GetExtension", T_STR, "tide_path_get_extension", 1, T_STR, T_NONE, T_NONE), "path", "Returns the extension, including its dot, or an empty string.");
     describe(add("Storage", "Flush", T_NONE, "tide_storage_flush_begin", 0, T_NONE, T_NONE, T_NONE), NULL, "Await until preceding filesystem changes are committed to persistent storage. Fails with IOError.");
+    // Web.Request(url) is in no table: it's a call of Tide's own code (see web_prelude in builtins.h)
     describe(add("Web", "Fetch", T_BYTES, "tide_web_fetch_begin", 1, T_STR, T_NONE, T_NONE), "url",
              "Await a URL's bytes, fetched over HTTP or HTTPS by this machine: `var bytes = await Web.Fetch(url)`. "
              "Local code only, like File. Fails with IOError: NotFound for a page that isn't there (404), InvalidPath "
@@ -1120,7 +1188,8 @@ static const char *member_doc(const size_t i)
         return "The seconds since this machine's previous frame started, as its host gave them: what moves things "
                "that aren't the match's, like particles and menus, at the same speed whatever the display's rate. "
                "It's there with no match too. Local code reads it: views, local handlers and tasks, and the "
-               "functions they call. The match's is `Time.dt`, a tick's length.";
+               "functions they call. The match's is `Time.dt`, a tick's length. It's all `Frame` has: for a clock, add "
+               "it up in a field of local state and wrap it where it repeats.";
     }
     return NULL;
 }
@@ -1137,6 +1206,23 @@ bool builtin_old_draw_owner(const str name)
     return str_eq_c(name, "Draw2D") || str_eq_c(name, "Draw3D");
 }
 
+bool builtin_frame_clock(const str name)
+{
+    // In lower case: a clock is asked for as a field ('time') and as a function ('Time()')
+    static const char *const clocks[] = {
+        "t", "time", "now", "clock", "seconds", "elapsed", "elapsedtime", "elapsedseconds", "totaltime", "totalseconds",
+        "sincestart", "timesincestart", "timesincestartup", "realtimesincestartup", "realtime", "unscaledtime",
+        "timeasdouble", "timestamp", "uptime", "runtime",
+    };
+    for (size_t i = 0; i < sizeof clocks / sizeof clocks[0]; i++) {
+        if (strlen(clocks[i]) != (size_t)name.len) continue;
+        bool same = true;
+        for (int k = 0; k < name.len && same; k++) same = tolower((unsigned char)name.ptr[k]) == clocks[i][k];
+        if (same) return true;
+    }
+    return false;
+}
+
 bool builtin_owner(const str name)
 {
     type ignored;
@@ -1144,6 +1230,7 @@ bool builtin_owner(const str name)
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Audio")
+        || str_eq_c(name, "Json")
         || builtin_type_named(name, &ignored);
 }
 
@@ -1153,9 +1240,15 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
 {
     int dim = 1;
     bool is_float = !ints_ok;
+    bool color = false;
     for (int i = 0; i < e->args.count; i++) {
         if (e->args.items[i]->kind == E_DEFAULT) continue;
         const type t = e->args.items[i]->type;
+        if (t.kind == TY_COLOR) { // Channel by channel, alpha too: with colors and numbers, never a vector
+            color = true;
+            continue;
+        }
+        if (t.kind == TY_CHAR) continue; // Its code point, an int, as a char is wherever an int goes
         if (!type_is_numeric(t)) return false;
         const int d = type_dim(t);
         if (d > 1) {
@@ -1164,7 +1257,8 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
         }
         if (type_is_float_based(t)) is_float = true;
     }
-    *out = vector_type(is_float, dim);
+    if (color && dim > 1) return false;
+    *out = color ? T_COLOR : vector_type(is_float, dim);
     return true;
 }
 
@@ -1245,7 +1339,8 @@ static int param_named(const signature *s, const str name)
 // take. Mesh and Instanced go by what each argument is, so theirs stay in order.
 static bool names_args(const expr *e)
 {
-    return e->arg_names.count > 0 && !str_eq_c(e->name, "Mesh") && !str_eq_c(e->name, "Instanced");
+    return e->arg_names.count > 0 && !str_eq_c(e->name, "Mesh") && !str_eq_c(e->name, "Instanced")
+        && !str_eq_c(e->name, "SkinnedMesh");
 }
 
 // Which parameter of `s` each argument of a call is for, as in C#: in order,
@@ -1291,6 +1386,10 @@ static bool fits(const signature *s, const expr *e)
         const type want = real_type(s->params[a]);
         const expr *arg = e->args.items[i];
         const bool mut = s->mut & (1u << a);
+        if (arg->enum_shorthand) {
+            if (mut || want.kind != TY_ENUM) return false;
+            continue;
+        }
         if (arg->is_out && (out_untyped(arg) || (s->out & (1u << a)))) continue;
         // A type the program doesn't have, like Grid2<Color> where no grid is one: nothing is it
         if (mesh_type(want)) return false;
@@ -1322,8 +1421,10 @@ static bool default_ambiguous(const int first, const expr *e)
         for (int i = 0; i < e->args.count; i++) {
             const type t = real_type(s->params[mine[i]]);
             const type u = real_type(other->params[theirs[i]]);
-            if (e->args.items[i]->kind != E_DEFAULT || (t.kind == u.kind && t.decl == u.decl)) continue;
-            diag_error(e->args.items[i]->at, "'default' could be %s or %s here: %s.%s has a version for each",
+            if ((e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand)
+                || (t.kind == u.kind && t.decl == u.decl)) continue;
+            diag_error(e->args.items[i]->at, "'%s' could be %s or %s here: %s.%s has a version for each",
+                       e->args.items[i]->enum_shorthand ? "enum shorthand" : "default",
                        signature_type_name(s->params[mine[i]]), signature_type_name(other->params[theirs[i]]), s->owner, s->name);
             diag_note("write the value itself instead, so the call says which version it means");
             return true;
@@ -1362,7 +1463,7 @@ type resolve_builtin_call(const str owner, expr *e)
     int defaults = 0; // `default` arguments take the type of the version the others pick
     for (int i = 0; i < e->args.count; i++) {
         const expr *arg = e->args.items[i];
-        if (arg->kind == E_DEFAULT) defaults++;
+        if (arg->kind == E_DEFAULT || arg->enum_shorthand) defaults++;
         // `out var entered` takes its parameter's type, where a version has an `out` parameter
         else if (out_untyped(arg) && builtin_takes_out(owner, e->name)) continue;
         else if (arg->type.kind == TY_ERROR) return (type){TY_ERROR, NULL};
@@ -1394,7 +1495,8 @@ type resolve_builtin_call(const str owner, expr *e)
                 char args[256];
                 arg_list(e, args, sizeof args);
                 diag_error(e->at, "Math.%s can't take (%s)", componentwise[i].name, args);
-                diag_note("it takes numbers and vectors; vectors in one call must be the same size");
+                diag_note("it takes numbers, vectors and colors; vectors in one call must be the same size, and a color "
+                          "goes with colors and numbers");
                 return (type){TY_ERROR, NULL};
             }
             for (int a = 0; a < e->args.count; a++) vec_push(e->arg_want, target);
@@ -1606,7 +1708,7 @@ static const char *componentwise_doc(const char *name)
         {"Clamp", "Clamps `x` between `a` and `b`, component by component. NaN gives `a`."},
         {"Min", "The smaller of `a` and `b`, component by component. If one is NaN, the other."},
         {"Max", "The larger of `a` and `b`, component by component. If one is NaN, the other."},
-        {"Lerp", "Linear interpolation: `a + (b - a) * t`, component by component."},
+        {"Lerp", "Linear interpolation: `a + (b - a) * t`, component by component. Between two colors, channel by channel."},
         {"Unlerp", "The `t` for which Lerp(a, b, t) gives `x`."},
         {"SmoothStep", "Smooth Hermite interpolation between 0 and 1 as `x` goes from `a` to `b`."},
         {"Step", "1 where `x >= edge`, 0 elsewhere."},
@@ -1621,7 +1723,7 @@ static const char *componentwise_doc(const char *name)
     for (size_t i = 0; i < sizeof docs / sizeof docs[0]; i++) {
         if (strcmp(docs[i].name, name) == 0) return docs[i].doc;
     }
-    return "Component by component, on numbers and vectors.";
+    return "Component by component, on numbers, vectors and colors.";
 }
 
 static const char *componentwise_params(const int argc, const char *name)
@@ -1786,6 +1888,8 @@ bool builtin_describe(const str owner, const str name, sb *out)
 // Settings
 
 static const setting settings[] = {
+    {"maxRewind", TY_FLOAT, "0", "Maximum historical physics query age in seconds. Zero disables collider history. "
+     "Input viewTime is engine-stamped and server-validated; games still validate firing and aim."},
     {"title", TY_STRING, "the game's name",
      "The window's title. Without it, it's the game's name: its folder's under tide, its target's under CMake. "
      "`--title` and CMake's `TITLE` take precedence."},
@@ -1841,4 +1945,77 @@ const setting *settings_list(int *count)
 {
     *count = (int)SETTING_COUNT;
     return settings;
+}
+
+static const char web_prelude_text[] =
+    "// What Web.Request(url) gives: a request to send, built up a call at a time.\n"
+    "// Each call gives the request with that one thing changed, so they chain:\n"
+    "// 'await Web.Request(url).SetMethod(\"POST\").SetBody(bytes).Send()'.\n"
+    "struct WebRequest\n"
+    "{\n"
+    "    string url;\n"
+    "    string method = \"GET\";\n"
+    "    string headers; // A line each: \"Name: value\"\n"
+    "    List<byte> body;\n"
+    "    float timeout;  // Seconds its answer may take; 0 or less is no limit\n"
+    "\n"
+    "    // The request with this method, like \"POST\" or \"DELETE\".\n"
+    "    WebRequest SetMethod(string value)\n"
+    "    {\n"
+    "        return WebRequest { url = url, method = value, headers = headers, body = body, timeout = timeout };\n"
+    "    }\n"
+    "\n"
+    "    // The request with this header too, like SetHeader(\"Content-Type\", \"text/plain\").\n"
+    "    WebRequest SetHeader(string name, string value)\n"
+    "    {\n"
+    "        var line = $\"{name.Replace(\"\\n\", \" \")}: {value.Replace(\"\\n\", \" \")}\\n\";\n"
+    "        return WebRequest { url = url, method = method, headers = $\"{headers}{line}\", body = body, timeout = timeout };\n"
+    "    }\n"
+    "\n"
+    "    // The request with these bytes as its body.\n"
+    "    WebRequest SetBody(List<byte> bytes)\n"
+    "    {\n"
+    "        return WebRequest { url = url, method = method, headers = headers, body = bytes, timeout = timeout };\n"
+    "    }\n"
+    "\n"
+    "    // The request with a time limit: Send fails with IOError.TimedOut when its\n"
+    "    // whole answer hasn't come in this many seconds. 0 or less is no limit.\n"
+    "    WebRequest SetTimeout(float seconds)\n"
+    "    {\n"
+    "        return WebRequest { url = url, method = method, headers = headers, body = body, timeout = seconds };\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "// What a request's Send gives: the answer's status, like 200 or 404, and its body.\n"
+    "struct WebResponse\n"
+    "{\n"
+    "    int status;\n"
+    "    List<byte> body;\n"
+    "}\n"
+    "\n"
+    "WebRequest " WEB_REQUEST_MAKER "(string url)\n"
+    "{\n"
+    "    return WebRequest { url = url };\n"
+    "}\n";
+
+const char *web_prelude(size_t *len)
+{
+    *len = sizeof web_prelude_text - 1;
+    return web_prelude_text;
+}
+
+static bool has_text(const char *text, const size_t len, const char *word)
+{
+    const size_t n = strlen(word);
+    for (size_t i = 0; i + n <= len; i++) {
+        if (text[i] == word[0] && memcmp(text + i, word, n) == 0) return true;
+    }
+    return false;
+}
+
+bool web_prelude_wanted(const char *text, const size_t len)
+{
+    // IOError.TimedOut is a request's own error, which only a program with this code has (add_builtins in check.c)
+    return has_text(text, len, "Web.Request") || has_text(text, len, "WebRequest") || has_text(text, len, "WebResponse")
+        || has_text(text, len, "IOError.TimedOut");
 }

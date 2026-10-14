@@ -1,0 +1,3 @@
+// expect: [Clamp] works on numbers and vectors, not int?
+struct Slot { [Clamp(0, 3)] int? item; }
+scene Main { }

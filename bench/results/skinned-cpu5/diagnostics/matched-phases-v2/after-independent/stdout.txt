@@ -1,0 +1,5 @@
+renderer: OpenGL 3.3; 2 warmup, 10 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+10000 characters, independent_poses, repeat 1 (median / p95 ms): view 27.551 / 30.021, submit 5.851 / 6.427, completion + readback 10.653 / 11.334, total 43.979 / 46.203, GPU 12.430 / 12.722 (10 samples); draw calls 11, texture uploads 40960000 bytes/frame
+game_phase {"characters":10000,"mode":3,"frames":10,"calls":100000,"sample_expression_ns":214097100,"draw_adapter_ns":57912400}
+host_diagnostic {"characters":10000,"mode":3,"frames":10,"gpu_samples":10,"view_median_ms":27.55135,"view_p95_ms":30.0215,"submit_median_ms":5.85055,"gpu_median_ms":12.429824,"total_median_ms":43.9792}

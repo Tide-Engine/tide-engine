@@ -1,0 +1,16 @@
+// expect: 'Shout' runs on the audio thread, so it can't start tasks
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+void Soon() { Later(); }
+
+audio Shout(mut Samples samples)
+{
+    samples.values[0] = 1;
+    Soon();
+}
+
+scene Main
+{
+}

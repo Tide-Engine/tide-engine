@@ -1,0 +1,8 @@
+// expect: 'Pick' returns int, not bool
+scene Main { }
+const bool NO = false;
+int Pick()
+{
+    if (NO) return true;
+    return 42;
+}

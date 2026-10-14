@@ -1,0 +1,3 @@
+// expect: Name selects a clip on an Animation asset
+[Name("Root|Run")] asset AnimationCatalog run = "../e2e/animation_imports/single.gltf";
+scene Main { }

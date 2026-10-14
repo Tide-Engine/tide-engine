@@ -1,0 +1,69 @@
+settings { title = "A small synthesizer"; }
+
+local scene Main { }
+
+struct Oscillator
+{
+    float phase;
+}
+
+struct Note
+{
+    float hertz;
+}
+
+// A source has no clip. Fill each stereo frame with the same sine wave.
+audio Sine(mut Samples samples, mut Oscillator oscillator, Note note)
+{
+    for (var i = 0; i < samples.values.count; i += 2)
+    {
+        var value = Math.Sin(oscillator.phase);
+        samples.values[i] = value;
+        samples.values[i + 1] = value;
+        oscillator.phase += note.hertz * (2 * Math.PI / 48000);
+        if (oscillator.phase >= 2 * Math.PI) oscillator.phase -= 2 * Math.PI;
+    }
+}
+
+local singleton Synth
+{
+    Sound tone;
+    float hertz = 220;
+    float volume = 0.08;
+}
+
+view Instrument(mut Synth synth)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
+    GUI.SetTheme(GUITheme { radius = 6 });
+
+    GUILayout.Area(Rect(16, 16, Screen.width - 32, 170))
+    {
+        GUILayout.Label($"Sine wave: {int(synth.hertz)} Hz");
+        GUILayout.Slider("Frequency", synth.hertz, 110, 880);
+        GUILayout.Slider("Volume", synth.volume, 0, 0.15);
+        if (GUILayout.Button(synth.tone.playing ? "Stop sound" : "Play sound"))
+            synth.tone.playing = !synth.tone.playing;
+    }
+
+    // New knobs keep the oscillator's phase; stopping starts it over.
+    synth.tone.effect = Sine(Note { hertz = synth.hertz });
+    synth.tone.volume = synth.volume;
+
+    var width = Screen.width - 40;
+    var center = Screen.height * 0.7;
+    var amplitude = synth.volume / 0.15 * 48;
+    var color = synth.tone.playing ? Color(0.98, 0.75, 0.14) : Color(0.64, 0.64, 0.68);
+    Draw.Line(float2(20, center), float2(20 + width, center), Color(0.24, 0.25, 0.27));
+    for (var i = 0; i < 160; i++)
+    {
+        var a = i / 160.0;
+        var b = (i + 1) / 160.0;
+        // A preview of ten milliseconds, calculated without reading audio state.
+        Draw.Line(float2(20 + width * a, center - Math.Sin(a * 0.01 * synth.hertz * 2 * Math.PI) * amplitude),
+                  float2(20 + width * b, center - Math.Sin(b * 0.01 * synth.hertz * 2 * Math.PI) * amplitude), 2, color);
+    }
+    Draw.Text("Waveform preview: 10 ms", float2(Screen.width * 0.5, center + 64), 13,
+              Color(0.64, 0.64, 0.68), Anchor.MiddleCenter);
+}

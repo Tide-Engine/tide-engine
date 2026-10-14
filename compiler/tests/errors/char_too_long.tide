@@ -1,0 +1,5 @@
+// expect: a char is one character, and this is more
+// expect: text goes in double quotes: "ab"
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark = 'ab'; }

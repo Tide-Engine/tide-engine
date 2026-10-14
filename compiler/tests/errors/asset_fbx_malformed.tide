@@ -1,0 +1,3 @@
+// expect: isn't an FBX that decodes (Failed to load)
+asset Mesh<Vertex3> broken = "../e2e/fbx/bad/malformed.fbx";
+scene Main { }

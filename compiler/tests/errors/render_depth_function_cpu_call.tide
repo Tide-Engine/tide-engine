@@ -1,0 +1,19 @@
+// expect: 'Lit' reads a render target's depth, which only code the GPU runs does: a frag, a vert and the functions they call
+// expect: it does on line 8, itself or through what it calls there: a target's depth stays on the GPU, where a frag or a vert that calls 'Lit' reads it
+// A function that reads the depth it's passed is the GPU's: a frag calls it,
+// and a view can't
+scene Main { }
+local singleton Lamp { RenderTarget map; DepthTexture shadow; float lit; List<Vertex3> mesh; }
+float Soft(DepthTexture shadow, float2 uv) { return shadow.Compare(uv, 0.5); }
+float Lit(DepthTexture shadow, float2 uv) { return Soft(shadow, uv) * 0.5 + 0.5; }
+frag Shade(Vertex3 vertex, out Color color, Lamp lamp)
+{
+    float lit = Lit(lamp.shadow, vertex.uv);
+    color = Color(lit, lit, lit);
+}
+view Show(mut Lamp lamp)
+{
+    lamp.shadow = lamp.map.depth;
+    lamp.lit = Lit(lamp.shadow, float2(0.5));
+    Draw.Mesh(lamp.mesh, [0, 1, 2], float4x4.identity, Shade);
+}

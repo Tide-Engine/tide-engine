@@ -15,7 +15,9 @@ function(tide_e2e_test name)
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
+tide_e2e_test(asset_sharing SOURCES e2e/asset_sharing.tide e2e/asset_sharing_c.c)
 tide_e2e_test(move_clamp)
+tide_e2e_test(map_iteration)
 tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
@@ -27,6 +29,12 @@ endif()
 tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
+tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
+tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
+tide_e2e_test(asset_references SOURCES e2e/asset_references.tide e2e/asset_references.tprefab)
+tide_e2e_test(asset_reference_empty)
+tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
+tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and for their callers' entities
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
@@ -41,9 +49,9 @@ tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
-target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=6375947640992776174ull)
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=15321220430701081947ull)
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
-target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9835394150231905810ull)
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9624744844104527802ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
 tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
@@ -57,8 +65,38 @@ tide_e2e_test(math)
 tide_e2e_test(input)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
+tide_e2e_test(increments) # ++i and i++ as values, in their turn
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
+tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
+tide_e2e_test(gpu_rolls) # ...and in frags and verts: the frame's number and the seed their draws send, alike for a frame's draws
 tide_e2e_test(views)
+tide_e2e_test(editor_views)
+# Compile the private native-preview entry point as C on both native and web
+# test hosts. The editor itself dynamically loads this ABI only on desktop.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/preview-include/tide")
+configure_file("${PROJECT_SOURCE_DIR}/tools/tide-editor/preview_api.h"
+    "${CMAKE_CURRENT_BINARY_DIR}/preview-include/tide/editor_preview.h" COPYONLY)
+foreach(placement match local)
+    set(preview_dir "${CMAKE_CURRENT_BINARY_DIR}/preview-${placement}")
+    set(preview_flags "")
+    set(preview_local 0)
+    if(placement STREQUAL "local")
+        set(preview_flags --editor-local)
+        set(preview_local 1)
+    endif()
+    add_custom_command(OUTPUT "${preview_dir}/game.c" "${preview_dir}/game.h"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${preview_dir}"
+        COMMAND "${TIDEC_PATH}" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/editor_views.tide"
+            --editor-prefab Preview ${preview_flags} --no-line --name game -o "${preview_dir}"
+        DEPENDS ${TIDEC_DEPENDS} "e2e/editor_views.tide" VERBATIM)
+    add_executable(tidec_editor_preview_${placement} "${preview_dir}/game.c"
+        editor_preview_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_compile_definitions(tidec_editor_preview_${placement} PRIVATE EDITOR_LOCAL=${preview_local})
+    target_include_directories(tidec_editor_preview_${placement} PRIVATE "${preview_dir}"
+        "${CMAKE_CURRENT_BINARY_DIR}/preview-include" "${PROJECT_SOURCE_DIR}/platform/include" "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_editor_preview_${placement} PRIVATE tide)
+    add_test(NAME tidec_editor_preview_${placement} COMMAND tidec_editor_preview_${placement})
+endforeach()
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it
@@ -69,11 +107,43 @@ tide_e2e_test(mipmaps) # Filter.Trilinear, wherever a filter is said: what a dra
 tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
+tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Texture and Grid2<Color> assets
+tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/texture assets
+tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
+tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
+tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
+tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
+tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+tide_e2e_test(animation_imports) # Cleaned exporter names, selected clips and combined source catalogs
+tide_e2e_test(animation_lookup) # Bool/out catalogs, failure defaults, evaluation order and owned outputs
+tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
+tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists after each entity and frame
+tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
+tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes
+tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=16503674684816165460ull)
+tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
+tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
+if(TIDE_NODE)
+    add_test(NAME tidec_animations_identity
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/animations_identity.mjs"
+            "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/animations-identity" "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(tidec_animations_identity PROPERTIES TIMEOUT 120)
+    add_test(NAME tidec_skinned_default_identity
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/skinned_default_identity.mjs"
+            "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(tidec_skinned_default_identity PROPERTIES TIMEOUT 120)
+endif()
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=8505980881375789176ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
 tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with state and knobs, on a Sound and a bus
+# Its echo keeps a delay line of 384 KB, which nothing may copy: a function of the generated C that had one on
+# its stack, on the audio thread's, doesn't build
+target_compile_options(tidec_e2e_effects PRIVATE -Wframe-larger-than=65536)
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
+tide_e2e_test(texture_compression)
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
@@ -83,6 +153,7 @@ tide_e2e_test(render_samples) # A target's samples, said by name where it's made
 tide_e2e_test(cubemaps) # Cubemaps: an asset's six files and a cube a view draws into a face at a time, read by a direction
 tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(conditional)
+tide_e2e_test(switch_values)
 tide_e2e_test(input_bounds)
 tide_e2e_test(structs)
 tide_e2e_test(methods)
@@ -105,6 +176,10 @@ add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/command_schema"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/command_schema.cmake")
+add_test(NAME tidec_map_layout
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/map_layout"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/map_layout.cmake")
 tide_e2e_test(local)
 # `local` fields of the match's components and singletons: this machine's, outside the match
 tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
@@ -127,7 +202,11 @@ tide_e2e_test(tasks)
 tide_e2e_test(tasks_local)
 tide_e2e_test(tasks_flow)
 tide_e2e_test(loops)
+tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch exits, loops and out assignment
 tide_e2e_test(strings)
+# char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
+tide_e2e_test(chars)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=8862496493692366551ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
@@ -137,6 +216,10 @@ tide_e2e_test(lists_resize) # Resize: a list sized in one call, a few elements o
 tide_e2e_test(lists_out SOURCES e2e/lists_out.tide e2e/lists_out_c.c) # `out List<T>`: lists C makes
 tide_e2e_test(resident SOURCES e2e/resident.tide e2e/resident_c.c) # A match singleton's Resident field: a C library's state as the world's pages
 tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out` parameters and arguments, as C#'s
+tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=7485469572211020663ull)
+tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=7606955030890254320ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
@@ -169,10 +252,14 @@ tide_e2e_test(cursor) # Cursor.Lock, asked each frame, and Cursor.locked, which 
 tide_e2e_test(frame_time) # Frame.dt: the frame's length a host gives, read by local code with a match and with none
 tide_e2e_test(session_main) # Session.Start() with no scene is Main, and Application.title the title setting
 tide_e2e_test(net)
+tide_e2e_test(view_time)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
 tide_e2e_test(guess) # Other players' inputs, guessed: their last ones for a while, then let go, but for [Absolute] fields
+tide_e2e_test(predict) # Per-tick custom guesses and immediate action resets
+tide_e2e_test(predict_fields) # Attribute-only input: no custom method or repair path
+tide_e2e_test(predict_method) # Method-only input: no attribute defaults
 tide_e2e_test(seen) # How late other players see what one does: from a key read to another's view
 tide_e2e_test(random_net) # Generators through prediction and rollback, and the seed a server picks for its match
 tide_e2e_test(blend)
@@ -199,7 +286,7 @@ endif()
 tide_e2e_test(cpp SOURCES e2e/cpp.tide e2e/cpp_code.cpp) # ...and from its C++ file, with no C++ runtime
 tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, and T?
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
-tide_e2e_test(settings)
+tide_e2e_test(settings SOURCES e2e/settings.tide e2e/settings_more.tide) # Several blocks, in two files, are one list
 tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What ticks and frames say to a host's profiler
 tide_e2e_test(handover)
 tide_e2e_test(players) # A match of 150 players, in a game whose maxPlayers is 200
@@ -376,3 +463,76 @@ foreach(source IN LISTS TIDE_SHADER_TESTS)
             "-DOPTION=--shaders"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
 endforeach()
+
+# The mesh files' reader on its own (src/mesh_files.c): the numbers it reads,
+# what it refuses, and that a file cut or wrong anywhere is never read past
+# its bytes. The language server reads a game's files at every keystroke.
+if(TARGET tidec_core)
+    add_executable(tidec_asset_usage_tests asset_usage_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_asset_usage_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_asset_usage_tests PRIVATE ASSET_USAGE_ROOT="${PROJECT_SOURCE_DIR}"
+        ASSET_USAGE_WORK="${CMAKE_CURRENT_BINARY_DIR}/asset_usage")
+    target_link_libraries(tidec_asset_usage_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_asset_usage COMMAND tidec_asset_usage_tests)
+    add_executable(tidec_lexer_tests lexer_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_lexer_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_lexer_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_lexer COMMAND tidec_lexer_tests)
+    add_executable(tidec_fbx_files_tests fbx_files_test.c fbx_parity_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_fbx_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_fbx_files_tests PRIVATE FBX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/fbx"
+        FBX_WORK="${CMAKE_CURRENT_BINARY_DIR}/fbx_cache")
+    target_link_libraries(tidec_fbx_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_fbx_files COMMAND tidec_fbx_files_tests)
+    set_tests_properties(tidec_fbx_files PROPERTIES TIMEOUT 180)
+    add_executable(tidec_asset_cache_tests asset_cache_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_asset_cache_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_asset_cache_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_asset_cache COMMAND tidec_asset_cache_tests)
+    add_executable(tidec_mesh_files_tests mesh_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_mesh_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_mesh_files_tests PRIVATE tide tidec_core) # The engine for the harness's clock
+    add_test(NAME tidec_mesh_files COMMAND tidec_mesh_files_tests)
+    # A mesh's levels of detail on their own (src/mesh_lod.c)
+    add_executable(tidec_mesh_lod_tests mesh_lod_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_mesh_lod_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_mesh_lod_tests PRIVATE MESH_LOD_WORK="${CMAKE_CURRENT_BINARY_DIR}/mesh_lod")
+    target_link_libraries(tidec_mesh_lod_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_mesh_lod COMMAND tidec_mesh_lod_tests)
+    add_executable(tidec_model_metadata_tests test_model_metadata.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_model_metadata_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_model_metadata_tests PRIVATE MODEL_METADATA_WORK="${CMAKE_CURRENT_BINARY_DIR}/model_metadata")
+    target_link_libraries(tidec_model_metadata_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_model_metadata COMMAND tidec_model_metadata_tests)
+    add_executable(tidec_asset_files_tests asset_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_asset_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_asset_files_tests PRIVATE ASSET_FILES_WORK="${CMAKE_CURRENT_BINARY_DIR}/asset_files")
+    target_link_libraries(tidec_asset_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_asset_files COMMAND tidec_asset_files_tests)
+    add_executable(tidec_pack_fingerprint_tests pack_fingerprint_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_pack_fingerprint_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_pack_fingerprint_tests PRIVATE
+        PACK_FINGERPRINT_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/e2e/skinned/model.glb")
+    target_link_libraries(tidec_pack_fingerprint_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_pack_fingerprint COMMAND tidec_pack_fingerprint_tests)
+    add_executable(tidec_psd_files_tests psd_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_psd_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_psd_files_tests PRIVATE PSD_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/assets/psds")
+    target_link_libraries(tidec_psd_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_psd_files COMMAND tidec_psd_files_tests)
+    add_executable(tidec_image_files_tests image_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_image_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_image_files_tests PRIVATE IMAGE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/assets/images")
+    target_link_libraries(tidec_image_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_image_files COMMAND tidec_image_files_tests)
+    add_executable(tidec_texture_compress_tests texture_compress_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_texture_compress_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_texture_compress_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_texture_compress COMMAND tidec_texture_compress_tests)
+    add_executable(tidec_audio_files_tests audio_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_audio_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_audio_files_tests PRIVATE AUDIO_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/audio_import"
+        AUDIO_WORK="${CMAKE_CURRENT_BINARY_DIR}/audio_files")
+    target_link_libraries(tidec_audio_files_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_audio_files COMMAND tidec_audio_files_tests)
+endif()

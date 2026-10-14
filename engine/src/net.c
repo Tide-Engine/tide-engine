@@ -65,6 +65,8 @@ void tide_address_format(const tide_address a, char *out, const size_t size)
         snprintf(out, size, "room %s, player %u", code, (unsigned)a.port);
     } else if (a.kind == TIDE_ADDRESS_ROOM) {
         snprintf(out, size, "room player %u", (unsigned)a.port);
+    } else if (a.kind == TIDE_ADDRESS_NETWORK) {
+        snprintf(out, size, "network %u:%u", (unsigned)a.host, (unsigned)a.port);
     } else {
         snprintf(out, size, "nowhere");
     }

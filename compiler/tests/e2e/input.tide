@@ -1,6 +1,6 @@
 // Input: sampling devices on the client, and reading each player's input in systems.
 
-component Transform
+component TestTransform
 {
     float3 position;
 }
@@ -48,10 +48,10 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Transform, Jumps, Owner { player = PlayerID(0) });
-    Spawn(Transform, Jumps, Owner { player = PlayerID(1) });
-    Spawn(Transform, Jumps, Owner); // Owned by no player: gets the server's input
-    Spawn(Transform, Jumps);        // No Owner at all: the server's input too
+    Spawn(TestTransform, Jumps, Owner { player = PlayerID(0) });
+    Spawn(TestTransform, Jumps, Owner { player = PlayerID(1) });
+    Spawn(TestTransform, Jumps, Owner); // Owned by no player: gets the server's input
+    Spawn(TestTransform, Jumps);        // No Owner at all: the server's input too
 }
 
 singleton ServerView
@@ -65,7 +65,7 @@ system Watch(PlayerInput input, mut ServerView view)
     view.moveX = input.move.x;
 }
 
-system Move(PlayerInput input, Time time, mut Transform trs)
+system Move(PlayerInput input, Time time, mut TestTransform trs)
 {
     trs.position += float3(input.move.x, 0, input.move.y) * input.speed * time.dt;
 }

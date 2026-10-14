@@ -1,0 +1,3 @@
+// expect: a field can't be a rendering resource or nothing: 'default' is the one that's none
+component Sprite { Texture? image; }
+scene Main { }

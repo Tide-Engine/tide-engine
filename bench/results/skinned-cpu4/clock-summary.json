@@ -1,0 +1,156 @@
+{
+  "note": "Whole-process clock observations at 250 ms; these are not per-case windows or clock-normalized GPU throughput. Timestamps are NVIDIA local wall time; metadata run boundaries are UTC. No power settings were changed.",
+  "runs": [
+    {
+      "label": "skinned-cpu4-before-r1",
+      "samples": 44,
+      "first_timestamp": "2026/10/10 23:41:23.991",
+      "last_timestamp": "2026/10/10 23:41:35.349",
+      "pstate_samples": {
+        "P0": 42,
+        "P8": 2
+      },
+      "graphics_mhz": {
+        "minimum": 210,
+        "maximum": 2820
+      },
+      "memory_mhz": {
+        "minimum": 405,
+        "maximum": 11501
+      },
+      "utilization_percent": {
+        "minimum": 21,
+        "maximum": 85
+      },
+      "power_watts": {
+        "minimum": 12.38,
+        "maximum": 151.95
+      }
+    },
+    {
+      "label": "skinned-cpu4-after-r1",
+      "samples": 41,
+      "first_timestamp": "2026/10/10 23:41:35.667",
+      "last_timestamp": "2026/10/10 23:41:46.260",
+      "pstate_samples": {
+        "P0": 41
+      },
+      "graphics_mhz": {
+        "minimum": 1740,
+        "maximum": 2820
+      },
+      "memory_mhz": {
+        "minimum": 11501,
+        "maximum": 11501
+      },
+      "utilization_percent": {
+        "minimum": 12,
+        "maximum": 86
+      },
+      "power_watts": {
+        "minimum": 44.04,
+        "maximum": 163.53
+      }
+    },
+    {
+      "label": "skinned-cpu4-after-r2",
+      "samples": 40,
+      "first_timestamp": "2026/10/10 23:41:46.438",
+      "last_timestamp": "2026/10/10 23:41:56.759",
+      "pstate_samples": {
+        "P0": 40
+      },
+      "graphics_mhz": {
+        "minimum": 1845,
+        "maximum": 2820
+      },
+      "memory_mhz": {
+        "minimum": 11501,
+        "maximum": 11501
+      },
+      "utilization_percent": {
+        "minimum": 5,
+        "maximum": 85
+      },
+      "power_watts": {
+        "minimum": 53.29,
+        "maximum": 164.39
+      }
+    },
+    {
+      "label": "skinned-cpu4-before-r2",
+      "samples": 44,
+      "first_timestamp": "2026/10/10 23:41:57.108",
+      "last_timestamp": "2026/10/10 23:42:08.479",
+      "pstate_samples": {
+        "P0": 44
+      },
+      "graphics_mhz": {
+        "minimum": 1800,
+        "maximum": 2820
+      },
+      "memory_mhz": {
+        "minimum": 11501,
+        "maximum": 11501
+      },
+      "utilization_percent": {
+        "minimum": 5,
+        "maximum": 86
+      },
+      "power_watts": {
+        "minimum": 50.14,
+        "maximum": 158.1
+      }
+    },
+    {
+      "label": "skinned-cpu4-before-r3",
+      "samples": 44,
+      "first_timestamp": "2026/10/10 23:42:08.843",
+      "last_timestamp": "2026/10/10 23:42:20.173",
+      "pstate_samples": {
+        "P0": 44
+      },
+      "graphics_mhz": {
+        "minimum": 1770,
+        "maximum": 2820
+      },
+      "memory_mhz": {
+        "minimum": 11501,
+        "maximum": 11501
+      },
+      "utilization_percent": {
+        "minimum": 7,
+        "maximum": 87
+      },
+      "power_watts": {
+        "minimum": 50.05,
+        "maximum": 161.9
+      }
+    },
+    {
+      "label": "skinned-cpu4-after-r3",
+      "samples": 41,
+      "first_timestamp": "2026/10/10 23:42:20.552",
+      "last_timestamp": "2026/10/10 23:42:31.132",
+      "pstate_samples": {
+        "P0": 41
+      },
+      "graphics_mhz": {
+        "minimum": 1785,
+        "maximum": 2820
+      },
+      "memory_mhz": {
+        "minimum": 11501,
+        "maximum": 11501
+      },
+      "utilization_percent": {
+        "minimum": 21,
+        "maximum": 83
+      },
+      "power_watts": {
+        "minimum": 52.55,
+        "maximum": 164.27
+      }
+    }
+  ]
+}

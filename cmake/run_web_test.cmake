@@ -20,12 +20,15 @@ endif()
 
 file(REMOVE_RECURSE "${PROFILE}")
 # Through browser_dump.mjs, which stops the browser once the page is out.
+# --mute-audio: headless, it still plays through the machine's device once a
+# page's AudioContext runs.
 execute_process(
     COMMAND "${NODE}" "${CMAKE_CURRENT_LIST_DIR}/browser_dump.mjs" "${BROWSER}"
         --headless
         --no-first-run
         --no-default-browser-check
         --disable-extensions
+        --mute-audio
         "--user-data-dir=${PROFILE}"
         --use-angle=swiftshader
         --enable-unsafe-swiftshader

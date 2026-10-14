@@ -224,7 +224,7 @@ TIDE_TEST(random_local_state_rolls_too)
     const uint64_t match = tide_world_hash(&world);
     for (int frame = 0; frame < 10; frame++) {
         tide_draw_reset(&draw);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         TIDE_CHECK(local.Fx.last == tide_random_next_float_between(&fx, -1.0f, 1.0f));
         TIDE_CHECK(local.Fx.coin == (tide_random_next_bool(&fixed) ? 1 : 0));
     }
@@ -233,8 +233,8 @@ TIDE_TEST(random_local_state_rolls_too)
     int32_t firsts[8];
     for (uint32_t i = 0; i < local.entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&local.entities, i);
-        if (!tide_has_Spark(&local, e)) continue;
-        const Spark s = tide_get_Spark(&local, e);
+        if (!tide_has_tide_local_component_Spark(&local, e)) continue;
+        const Spark s = tide_get_tide_local_component_Spark(&local, e);
         TIDE_CHECK(s.random.state != 0 && s.first != 0);
         for (int k = 0; k < sparks; k++) TIDE_CHECK(firsts[k] != s.first);
         if (sparks < 8) firsts[sparks++] = s.first;

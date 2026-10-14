@@ -6,6 +6,8 @@ asset Clip beep = "assets/beep.wav";
 asset Clip blip = "assets/blip.ogg";
 asset List<Clip> hits = "assets/hits/*.wav";
 asset Map<string, Clip> named = "assets/hits/*.wav";
+asset List<Clip> shot = "assets/hits/a.wav";          // One file where the type holds many: a list of that one
+asset Map<string, Clip> shotByName = "assets/hits/b.wav"; // ...and a map of it, under its path as written
 
 component Body
 {
@@ -29,6 +31,9 @@ local singleton Sfx
     int plays;  // 1: the keeper plays what it kept, through functions
     Clip kept;
     int count;  // How many hits the glob matched
+    int shots;  // How many the list of one file has
+    bool keyed; // Whether the map of one file has it under its path, and nothing else
+    float volume = 1; // Master volume without a stored Sound or a game's bus enum
 }
 
 scene Main { }
@@ -58,12 +63,21 @@ view Engines(Body body, mut Sfx sfx)
 
 view Keeper(mut Sfx sfx)
 {
+    Audio.SetVolume(Sound { }.bus, sfx.volume);
     if (sfx.plays == 1)
     {
         sfx.kept = named["assets/hits/b.wav"];
         Thud(sfx.kept);
     }
     if (sfx.plays == 2) Audio.Play(blip); // The Ogg Vorbis clip
+    if (sfx.plays == 3)
+    {
+        sfx.shots = shot.count;
+        sfx.keyed = shotByName.count == 1 && shotByName.Has("assets/hits/b.wav") && !shotByName.Has("assets/hits/a.wav");
+        Audio.Play(shot[0]);
+        Audio.Play(shotByName["assets/hits/b.wav"]);
+        Audio.Play(shot[1]); // Past its one: no clip
+    }
 }
 
 void Thud(Clip clip)

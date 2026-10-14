@@ -1,0 +1,7 @@
+// expect: 'Pick' doesn't return a value on every path
+scene Main { }
+const bool NO = false;
+int Pick(bool ready)
+{
+    if (ready || NO) return 42;
+}

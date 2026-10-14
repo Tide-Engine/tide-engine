@@ -1,0 +1,22 @@
+// expect: a Mesh has 'vertices' and 'indices', not 'count'
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> quad = "../e2e/assets/meshes/quad.glb";
+
+singleton Counter
+{
+    int n;
+}
+
+system Count(mut Counter counter)
+{
+    counter.n = quad.count;
+}
+
+scene Main
+{
+}

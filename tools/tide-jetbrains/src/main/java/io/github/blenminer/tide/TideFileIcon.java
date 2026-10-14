@@ -16,6 +16,6 @@ public final class TideFileIcon implements FileIconProvider, DumbAware {
 
     @Override
     public @Nullable Icon getIcon(@NotNull VirtualFile file, int flags, @Nullable Project project) {
-        return "tide".equals(file.getExtension()) ? ICON : null;
+        return "tide".equals(file.getExtension()) || "tprefab".equals(file.getExtension()) ? ICON : null;
     }
 }

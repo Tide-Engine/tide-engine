@@ -133,6 +133,89 @@ tide_add_game(tide_rooms_lobby SOURCES rooms/test/game.tide NAME game PACKAGES R
 target_include_directories(tide_rooms_lobby PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_rooms_lobby COMMAND tide_rooms_lobby)
 set_tests_properties(tide_rooms_lobby PROPERTIES TIMEOUT 120)
+# A game that draws pages of its own: an override of one, and a view of its own for another
+tide_add_game(tide_rooms_pages SOURCES rooms/test/pages.tide NAME game PACKAGES Rooms rooms/rooms.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" rooms/test/pages_test.c)
+target_include_directories(tide_rooms_pages PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_rooms_pages COMMAND tide_rooms_pages)
+set_tests_properties(tide_rooms_pages PROPERTIES TIMEOUT 120)
+
+# Lobby: the client of the relay's lobbies and its menu, in Tide alone. Its
+# tests' games are built with the package as tide builds one that lists it.
+set(lobby_files lobby/lobby.tide lobby/service.tide lobby/pages.tide)
+# With no service: a game that fills the identity, lobby and matchmaking slots itself, and draws a page its own way
+tide_add_game(tide_lobby_menu SOURCES lobby/test/game.tide NAME game PACKAGES Lobbies ${lobby_files}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" lobby/test/menu_test.c)
+target_include_directories(tide_lobby_menu PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_lobby_menu COMMAND tide_lobby_menu)
+set_tests_properties(tide_lobby_menu PROPERTIES TIMEOUT 120)
+# With a service and a network of the game's own (tide/network.h), in its C: every slot overridden, and four
+# players from a quick match's lobby into a match on that network, which changes hands when its host goes.
+# Each player is run as a host runs one (test/network_players.h), with a session of its own
+tide_add_game(tide_lobby_own SOURCES lobby/test/own.tide lobby/test/own.c NAME game PACKAGES Lobbies ${lobby_files}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" lobby/test/own_test.c)
+target_include_directories(tide_lobby_own PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/test")
+add_test(NAME tide_lobby_own COMMAND tide_lobby_own)
+set_tests_properties(tide_lobby_own PROPERTIES TIMEOUT 120)
+# A game that lists it beside rooms, with both namespaces imported: tidec checks it, with no name of one in the
+# other's way
+add_test(NAME tide_lobby_beside_rooms
+    COMMAND "${TIDEC_PATH}" "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/both.tide"
+        --package Rooms "${CMAKE_CURRENT_SOURCE_DIR}/rooms/rooms.tide"
+        --package Lobbies "${CMAKE_CURRENT_SOURCE_DIR}/lobby/lobby.tide" "${CMAKE_CURRENT_SOURCE_DIR}/lobby/service.tide"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lobby/pages.tide" --schedule)
+set_tests_properties(tide_lobby_beside_rooms PROPERTIES FAIL_REGULAR_EXPRESSION "warning:")
+# With Tide's own service: four players through the relay's lobbies on this machine (relay/lobbies.mjs), natively
+# through the platform's HTTP client against the relay lobby/test/relay.mjs starts, and in a page through the
+# page's fetch, with the lobbies answering beside the test's own server
+if(TIDE_PLATFORM)
+    if(TIDE_WEB)
+        tide_add_game(tide_lobby_relay_web SOURCES lobby/test/relay.tide NAME game PACKAGES Lobbies ${lobby_files}
+            HOST lobby/test/relay_web.c WINDOW)
+        target_link_libraries(tide_lobby_relay_web PRIVATE tide_platform)
+        tide_web_page(tide_lobby_relay_web SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        add_test(NAME tide_lobby_relay_web
+            COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
+                "$<TARGET_FILE_DIR:tide_lobby_relay_web>/tide_lobby_relay_web.html"
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_lobby_relay_web-browser" "backend=webgl"
+                --routes "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/relay_routes.mjs")
+        # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
+        set_tests_properties(tide_lobby_relay_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
+    elseif(NOT TIDE_ANDROID AND TIDE_NODE)
+        tide_add_game(tide_lobby_relay SOURCES lobby/test/relay.tide NAME game PACKAGES Lobbies ${lobby_files}
+            HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" lobby/test/relay_test.c)
+        target_include_directories(tide_lobby_relay PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+        target_link_libraries(tide_lobby_relay PRIVATE tide_platform)
+        add_test(NAME tide_lobby_relay
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/relay.mjs" "$<TARGET_FILE:tide_lobby_relay>")
+        set_tests_properties(tide_lobby_relay PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
+# Steam: the lobby package's four slots over Steamworks' flat API, in Tide and C (steam/bridge.c). The SDK
+# isn't here and nothing builds the package but this test, which links a Steam that isn't in the SDK's
+# library's place (steam/test/fake_steam.c): four users in one program, each with a session of its own,
+# from Steam's lobbies into a match on Steam's messages. Desktop only, as the package is.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(tide_steam_lobby SOURCES steam/test/game.tide steam/bridge.c steam/test/fake_steam.c NAME game
+        PACKAGES Lobbies ${lobby_files} Steam steam/steam.tide
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" steam/test/steam_test.c)
+    target_include_directories(tide_steam_lobby PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_SOURCE_DIR}/steam")
+    # One program is one Steam user to the package: the test's four each have its state
+    target_compile_definitions(tide_steam_lobby PRIVATE TIDE_STEAM_USERS=4)
+    add_test(NAME tide_steam_lobby COMMAND tide_steam_lobby)
+    set_tests_properties(tide_steam_lobby PROPERTIES TIMEOUT 120)
+endif()
+if(TIDE_WEB)
+    # A web build that lists it (a game's tide.packages with the symbol defined for the wrong target) is told
+    # so by the package's own C, in words: its bridge is compiled for the page as tide would
+    add_test(NAME tide_steam_web_refused
+        COMMAND "${CMAKE_C_COMPILER}" --target=wasm32-wasi -fsyntax-only "-I${PROJECT_SOURCE_DIR}/engine/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/steam/bridge.c")
+    set_tests_properties(tide_steam_web_refused PROPERTIES
+        PASS_REGULAR_EXPRESSION "The steam package is for desktop builds, where Steam is")
+endif()
 
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
@@ -202,3 +285,28 @@ if(TARGET tide_platform)
 endif()
 add_test(NAME tide_box3d_parts COMMAND tide_box3d_parts)
 set_tests_properties(tide_box3d_parts PROPERTIES TIMEOUT 300)
+
+tide_add_game(tide_box2d_rewind SOURCES box2d/bridge.c box2d/test/rewind.tide NAME rewind PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/rewind_test.c)
+target_include_directories(tide_box2d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_rewind PRIVATE tide_box2d)
+add_test(NAME tide_box2d_rewind COMMAND tide_box2d_rewind)
+
+tide_add_game(tide_box3d_rewind SOURCES box3d/bridge.c box3d/test/rewind.tide NAME rewind PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/rewind_test.c)
+target_include_directories(tide_box3d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_rewind PRIVATE tide_box3d)
+add_test(NAME tide_box3d_rewind COMMAND tide_box3d_rewind)
+
+# A client's actual confirmed frame -> sampled input -> server's historical hit,
+# with server ticks, each client's updates and presentation paced independently.
+foreach(dimension 2 3)
+    tide_add_game(tide_box${dimension}d_rewind_network
+        SOURCES box${dimension}d/bridge.c box${dimension}d/test/rewind_network.tide
+        NAME rewind_network PACKAGES Box${dimension}D box${dimension}d/box${dimension}d.tide
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/rewind_network_test.c)
+    target_include_directories(tide_box${dimension}d_rewind_network PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tide_box${dimension}d_rewind_network PRIVATE tide_box${dimension}d)
+    add_test(NAME tide_box${dimension}d_rewind_network COMMAND tide_box${dimension}d_rewind_network)
+    set_tests_properties(tide_box${dimension}d_rewind_network PROPERTIES TIMEOUT 120)
+endforeach()

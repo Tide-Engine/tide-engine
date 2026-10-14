@@ -1,0 +1,140 @@
+scene Main { }
+
+// Textures a function samples: its own parameter's, which is whichever
+// texture its call names, and an asset's by its name. Neither language
+// passes a texture to a function on every backend, so the function is
+// written once for each texture it's called with, and has no parameter for
+// it: tf_Soft_40 reads the lamp's depth, tf_Soft_42 the far one's.
+asset Texture hero = "../e2e/assets/hero.png";
+[Filter(Filter.Point)] [Wrap(Wrap.Repeat)] asset Texture tiles = "../e2e/assets/hero.png";
+[Raw] asset Texture masks = "../e2e/assets/hero.png";
+asset Cubemap sky = "../e2e/cubes/sky/sky_??.png";
+
+local singleton Lamp
+{
+    RenderTarget map;
+    DepthTexture shadow;
+    DepthTexture far;
+    float4x4 toLamp;
+    List<Vertex3> mesh;
+    List<int> faces;
+}
+
+local singleton Look
+{
+    Texture atlas;
+    Cubemap reflection;
+    Grid2<Color> wood = Grid2(2, 2);
+    [Raw] Grid2<Color> heights = Grid2(2, 2);
+    List<Vertex> flat;
+}
+
+// Where a point of the world is in the lamp's image, and how far from the lamp
+float3 FromLamp(float3 world, float4x4 toLamp)
+{
+    float4 clip = Math.Mul(toLamp, float4(world, 1));
+    return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
+}
+
+// Both ways a depth is read, each a texture of the shader's: in a branch, as each is read at its one level
+float Soft(DepthTexture depth, float3 seen)
+{
+    mut float lit = depth.Compare(seen.xy, seen.z - 0.01);
+    if (lit < 1) lit = (lit + depth.Compare(seen.xy + float2(0.01, 0), seen.z - 0.01)) * 0.5;
+    return depth.Sample(seen.xy) < 1 ? lit : 1;
+}
+
+// A function passes the depth it took on to another
+float Sunlight(DepthTexture depth, float3 world, float4x4 toLamp)
+{
+    return Soft(depth, FromLamp(world, toLamp));
+}
+
+// One that takes a depth and reads none of it is written with nothing of it
+float Ambient(DepthTexture depth, float lit)
+{
+    return 0.25 + 0.75 * lit;
+}
+
+struct Fog
+{
+    float thick;
+
+    // A method takes one as a function does
+    float Through(DepthTexture depth, float2 uv)
+    {
+        return depth.Sample(uv) * thick;
+    }
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp)
+{
+    float near = Sunlight(lamp.shadow, this.world, lamp.toLamp);
+    float far = Sunlight(lamp.far, this.world, lamp.toLamp);
+    Fog fog = Fog { thick = 0.5 };
+    color = Color.white * Ambient(lamp.shadow, near * far) * (1 - fog.Through(lamp.far, vertex.uv));
+}
+
+// The same function in a vert: written for the same texture, once in WGSL, where both stages are one module
+vert Sink(mut Vertex3 vertex, Lamp lamp)
+{
+    vertex.position.y -= Soft(lamp.shadow, vertex.position);
+}
+
+// A Texture a function takes: as it says, with a filter, and with a wrap too
+Color Tile(Texture image, float2 uv)
+{
+    return image.Sample(uv) + image.Sample(uv, Filter.Point, Wrap.Repeat);
+}
+
+// An asset by its name in a function, a [Raw] one as it is, and an asset passed on
+Color Decal(float2 uv)
+{
+    return hero.Sample(uv) * masks.Sample(uv).r + Tile(tiles, uv);
+}
+
+// A grid a function takes is read by its cells and sampled, each a texture of the shader's
+Color Plank(Grid2<Color> wood, float2 uv)
+{
+    return wood.Sample(uv) + wood[0, 0];
+}
+
+// A [Raw] grid's numbers, as they are
+float Height(Grid2<Color> heights, float2 uv)
+{
+    return heights.Sample(uv).r;
+}
+
+// A cube a function takes, and an asset's by its name
+Color Mirror(Cubemap cube, float3 way)
+{
+    return cube.Sample(way) + cube.Sample(way, Filter.Point) + sky.Sample(way);
+}
+
+// A field's Texture, which is whichever the view put there, and a grid, which is one too
+frag Paint(Vertex vertex, out Color color, Look look)
+{
+    color = Tile(look.atlas, vertex.uv) + Tile(look.wood, vertex.uv) + Decal(vertex.uv);
+}
+
+// The frag's own Texture, passed on
+frag Copy(Vertex vertex, Texture source, out Color color, Look look)
+{
+    color = Tile(source, vertex.uv) * Height(look.heights, vertex.uv) + Plank(look.wood, vertex.uv);
+}
+
+frag Shine(Vertex vertex, out Color color, Look look)
+{
+    color = Mirror(look.reflection, float3(vertex.uv, 1)) + Mirror(sky, float3(vertex.uv, -1));
+}
+
+view Show(mut Lamp lamp, mut Look look)
+{
+    lamp.shadow = lamp.map.depth;
+    look.atlas = look.wood;
+    Draw.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
+    Draw.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Sink, Lit);
+    Draw.Mesh(look.flat, [0, 1, 2], Paint);
+    Draw.Blit(lamp.map.color, Draw.window, Copy);
+    Draw.Mesh(look.flat, [0, 1, 2], Shine);
+}

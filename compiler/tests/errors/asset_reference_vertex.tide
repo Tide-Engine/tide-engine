@@ -1,0 +1,5 @@
+// expect: field 'model' is Asset<Mesh<Other>>, not Mesh<Vertex3>
+struct Other { float3 position; }
+asset Mesh<Vertex3> box = "../e2e/assets/meshes/box.obj";
+component Art { Asset<Mesh<Other>> model = box; }
+scene Main { }

@@ -22,6 +22,11 @@
 // The generator is PCG-XSH-RR 64/32 (O'Neill): a 64-bit linear congruential
 // state, and 32 bits of it out each step, rotated by its top bits. Any state
 // works, zero included, and the sequence comes back after 2^64 numbers.
+//
+// Code the GPU runs (a frag or a vert that rolls) has no 64-bit integers, so it
+// rolls with a 32-bit generator of the compiler's own. What it makes of each
+// 32 bits is what these functions make of theirs: its ranges and its floats
+// follow the formulas here.
 
 typedef struct tide_random {
     int64_t state;
@@ -73,6 +78,25 @@ static inline uint32_t tide_random_next(tide_random *r)
     const uint32_t mixed = (uint32_t)(((state >> 18) ^ state) >> 27);
     const uint32_t turn = (uint32_t)(state >> 59);
     return (mixed >> turn) | (mixed << ((32u - turn) & 31u));
+}
+
+// A generator of its own for something a generator's code starts: a task, or a
+// loop whose steps run at once. It steps `r` twice, and what it gives has
+// nothing to do with what `r` rolls next.
+static inline tide_random tide_random_fork(tide_random *r)
+{
+    const uint64_t high = tide_random_next(r);
+    const uint64_t low = tide_random_next(r);
+    return (tide_random){(int64_t)tide_random_mix((high << 32) | low)};
+}
+
+// One of those for each step of such a loop, from the loop's and the step's
+// place: a grid's cell or a list's index, whichever thread runs it.
+static inline tide_random tide_random_step(const tide_random loop, const int32_t x, const int32_t y, const int32_t z)
+{
+    uint64_t state = tide_random_mix((uint64_t)loop.state ^ (((uint64_t)(uint32_t)x << 32) | (uint32_t)y));
+    state = tide_random_mix(state + ((uint64_t)(uint32_t)z + 1u) * TIDE_RANDOM_GOLDEN);
+    return (tide_random){(int64_t)state};
 }
 
 // NextInt(): from 0 to 2147483647, like Math.Hash, so % never goes negative.

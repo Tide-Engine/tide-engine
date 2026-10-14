@@ -12,7 +12,9 @@ For how a game starts, hosts and joins matches, see [Matches](./matches.md). Thi
 
 Single-player is a match too: the machine runs a server itself, and connects to it through a loopback transport. There's no separate offline path, so what works alone works online.
 
-A minimized window or a browser tab in the background doesn't stop a game: it keeps running there without drawing, so the match goes on for the other players. Browsers slow a hidden page's timers and stop its animation frames, so a hidden page's frames come from a worker's timers instead. Meanwhile it runs a frame when its match is due a tick, at the game's `tickRate`, and none in between. When the machine that runs the server does stop for a while, like a program paused in a debugger, or a browser that freezes the page (a phone putting the browser away), the match stops with it, and goes on from where it was when the machine comes back.
+A minimized desktop window or a browser tab in the background keeps running without drawing, so the match goes on for the other players. Browsers slow a hidden page's timers and stop its animation frames, so a hidden page's frames come from a worker's timers instead. Meanwhile it runs a frame when its match is due a tick, at the game's `tickRate`, and none in between.
+
+A machine that stops simulating can't keep hosting: a program paused in a debugger, a browser that freezes its page, or a phone whose app is suspended can stop answering the other players. With [host migration](./matches.md#host-migration), another player's machine takes over a room's match. Without it, the other players eventually time out; the suspended host's own match resumes from where it stopped if its program comes back. Putting a phone's game in the background does not keep its match running there indefinitely.
 
 ## What the server sends
 
@@ -27,7 +29,7 @@ An input that didn't change, or didn't arrive, keeps its last value, on every ma
 
 ## Prediction and rollback
 
-Clients have no input delay. A client runs ahead of the server by about half the round trip, plus a small margin, so its inputs arrive in time for the tick they're meant for. The margin is as small as the connection allows: the server says how long each player's inputs waited before their ticks ran, and a client sends them only as early as the network's worst moments need, so that the one that waits least still waits one of the player's frames (a 60th of a second where its frames are shorter, and never more than a tick). All the time an input waits at the server is time later that the other players see it. A frame, because inputs are read and sent a frame at a time: one that came late still gets its input there in time. Its own input applies at once, and only other players' inputs are guessed, by repeating their last one: for 0.15 seconds past the verified tick, and from there on as if they'd let go, so a wrong guess moves things by what a player does in that long at most, however far ahead a slow connection has the client run (see [What other machines guess](../game/input.md#what-other-machines-guess)). In a game without an input there's nothing to get there in time, so clients keep the small lead they joined with.
+Clients start with no input delay in the default rollback mode. A client runs ahead of the server by about half the round trip, plus a small margin, so its inputs arrive in time for the tick they're meant for. The margin is as small as the connection allows: the server says how long each player's inputs waited before their ticks ran, and a client sends them only as early as the network's worst moments need, so that the one that waits least still waits one of the player's frames (a 60th of a second where its frames are shorter, and never more than a tick). All the time an input waits at the server is time later that the other players see it. A frame, because inputs are read and sent a frame at a time: one that came late still gets its input there in time. With no delay, its own input applies at once, and only other players' inputs are guessed, by repeating their last one: for 0.15 seconds past the verified tick, and from there on as if they'd let go, so a wrong guess moves things by what a player does in that long at most, however far ahead a slow connection has the client run (see [What other machines guess](../game/input.md#what-other-machines-guess)). In a game without an input there's nothing to get there in time, so clients keep the small lead they joined with.
 
 A client keeps a snapshot of every tick from the last one the server confirmed, the **verified tick**, to the one it's predicting. When the server's tick arrives:
 
@@ -75,7 +77,7 @@ Views draw the predicted world, blended between its last two ticks (see [Views](
 
 Local code tells what's predicted from what the server has confirmed with one word, `verified`. The match can't say it: it's the same on every machine, and has no "confirmed".
 
-- **Before a view's parameter or filter**, it reads the world as of the verified tick: `view HealthBar(Health health, verified Health confirmed)` gets the health this machine predicts, and the one the server confirmed. See [Confirmed state](../game/views.md#confirmed-state).
+- **Before a view's parameter or filter**, it reads the world as of the verified tick: `view HealthBar(Health health, verified Health confirmed)` gets the health this machine predicts, and the one the server confirmed. See [Confirmed state](../game/views-and-the-match.md#confirmed-state).
 - **Before a local handler's event**, it hears the event once its tick is verified: `local event(verified Died died) ShowDeath(...)` runs once, late by as far as this machine runs ahead, and is never wrong. See [`verified` handlers](../game/events.md#verified-handlers).
 
 Without it, a view draws the world as this machine predicts it, and a [local handler](../game/events.md#local-handlers) hears each tick as this machine first ran it.
@@ -110,13 +112,23 @@ A command too big for a datagram (one with a `List<byte>`: a file's bytes, up to
 
 Matches run over WebRTC data channels, which neither order nor resend, like UDP, on the web and on desktop alike: desktop games speak WebRTC with an implementation of Tide's own. That's what lets a browser host matches as well as join them, and web and desktop players meet in the same rooms. A desktop host also takes players on a UDP port, Tide's own thin layer, which `--connect` and `Session.Connect` reach by address; the web has no UDP, so a browser can't join by address. The protocol above the transport is the same.
 
-Players find each other in rooms, by a code (see [Matches](./matches.md#rooms)), whether they're in a browser or a desktop game. A relay of ours introduces them, passing along what WebRTC needs to connect them, and their packets then go straight between them. Players whose networks can't connect directly go through a TURN server, which carries their packets. Everything to and from the relay is encrypted (`wss://`), and so are the matches, as WebRTC requires. On desktop, the relay's encryption is the system's own TLS: Windows' and macOS's, and on Linux OpenSSL's `libssl`, which nearly every distribution has. A Linux game without it can't reach the relay, so it can't use rooms; it can still `--connect` by address.
+Players find each other in rooms, by a code (see [Matches](./matches.md#rooms)), whether they're in a browser or a desktop game. A relay of ours introduces them, passing along what WebRTC needs to connect them, and their packets then go straight between them. Players whose networks can't connect directly go through a TURN server, which carries their packets. Everything to and from the relay is encrypted (`wss://`), and WebRTC encrypts the match packets. Direct UDP connections by address are unencrypted. On desktop, the relay's encryption is the system's own TLS: Windows' and macOS's, and on Linux OpenSSL's `libssl`, which nearly every distribution has. A Linux game without it can't reach the relay, so it can't use rooms; it can still `--connect` by address.
 
 ## Who sees what
 
-The server can keep state from players: a [private scene](../game/scenes.md#private-scenes) is only sent to the players given it. Secrets like random seeds go in one with no players, which only the server has. Code that reads it only predicts correctly where it's seen, and the server corrects the others.
+[Private scenes](../game/scenes.md#private-scenes) record which players belong to them, but selective replication is not built yet: every client receives and simulates the whole match. A private scene therefore cannot keep cards, random seeds or other secrets from another player's machine. Hiding them in a view only changes what the screen draws.
 
 ## Coming later
 
-- Drawing other players from confirmed state, blended between confirmed ticks rather than predicted ahead: what a view reads `verified` steps at the tick rate for now.
-- Servers with no window and no player of their own, lobbies, and finding matches.
+- Selective state visibility and clients simulating only the parts of the world they receive.
+- Dedicated servers with no window and no player of their own, and a public match browser. Room codes and a [ready-made lobby](./matches.md#a-menu-that-comes-with-tide) are available now.
+
+## Collider rewind
+
+Draw remote players with `verified Body body` to interpolate confirmed positions without extrapolating guessed input around corners. The player's own movement can still use the predicted view. Verified event handlers receive exact event state.
+
+The physics packages offer a read-only query context for hit validation. Enable bounded history with `settings { maxRewind = 0.25; }` and opt bodies in with `Body { rewind = true }`. `physics.Rewind(controls.viewTime, out var query)` prepares one scene for all the queries in that shot; `query.Raycast(...)`, `Cast`, `Overlap` and `Inside` have the current physics query forms. Non-opted bodies use current geometry, so walls still block a historical player. Opt moving doors in when they should also rewind.
+
+With `maxRewind` enabled, every input has an engine-supplied, read-only `ViewTime viewTime`. Its `tick` is the upper confirmed endpoint, `alpha` is the interpolation fraction, and `valid` says whether a frame has been presented. The timestamp describes the last frame actually presented, not a future predicted tick. The server treats its wire value as an untrusted claim: it rejects malformed fractions, future ticks, times before that connection's snapshot, times beyond what it advertised and times outside the configured window. `Rewind` also checks retained physics history and returns false when the requested interval is unavailable. It never silently substitutes current geometry or clamps the time.
+
+The game still validates the shooter, origin, aim, weapon, ammunition and firing cadence from authoritative simulation state. A timestamp does not make a client-supplied hit trustworthy, or prove what a modified client really displayed. See [2D physics](../packages/box2d.md#rewinding-queries) and [3D physics](../packages/box3d.md#rewinding-queries).

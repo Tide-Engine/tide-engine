@@ -1,0 +1,5 @@
+// expect: Json.Write takes one argument, the value to write: 'Json.Write(value)'
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { seen.text = Json.Write(Info { }, 2); }

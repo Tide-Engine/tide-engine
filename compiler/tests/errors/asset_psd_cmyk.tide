@@ -1,0 +1,3 @@
+// expect: '../e2e/assets/psds/bad/cmyk.psd' can't be imported as an image: PSD image isn't RGB; convert the document to RGB before saving
+asset Texture image = "../e2e/assets/psds/bad/cmyk.psd";
+scene Main { }

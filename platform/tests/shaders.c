@@ -11,6 +11,7 @@
 // phone, that's a screen of another shape.
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "game.h"
@@ -182,7 +183,7 @@ static void run_checks(const char *when)
     local.Art.targetPass = 0;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
 
     uint32_t instances = 0;
@@ -232,7 +233,7 @@ static void run_target_checks(const char *when)
         local.Art.targetPass = pass;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         uint32_t got[8];
         tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 8, got);
@@ -283,7 +284,7 @@ static void run_screen_target_checks(const char *when)
         local.Art.targetPass = 6;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(w, h), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         tide_float2 points[COUNT];
         uint32_t got[COUNT];
@@ -375,7 +376,7 @@ static void run_wrap_checks(const char *when)
     local.Art.targetPass = 7;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -448,7 +449,7 @@ static void run_image_checks(const char *when)
     local.Art.targetPass = 10;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -512,7 +513,7 @@ static void run_shadow_checks(const char *when)
         local.Art.targetPass = 8;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         tide_float2 points[COUNT];
         uint32_t got[COUNT];
@@ -572,7 +573,7 @@ static void run_stencil_checks(const char *when)
         local.Art.targetPass = 9;
         tide_draw_reset(&list);
         tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         tide_float2 points[COUNT];
         uint32_t got[COUNT];
@@ -643,7 +644,7 @@ static void run_output_checks(const char *when)
     local.Art.targetPass = 11;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -692,7 +693,7 @@ static void run_values_checks(const char *when)
     local.Art.targetPass = 12;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -759,7 +760,7 @@ static void run_height_checks(const char *when)
     local.Art.targetPass = 13;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -822,7 +823,7 @@ static void run_mipmap_checks(const float lit, const char *when)
     local.Mips.lit = lit;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[2 * COUNT];
@@ -875,7 +876,7 @@ static void run_alpha_checks(const char *when)
     local.Art.targetPass = 15;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -915,7 +916,7 @@ static void run_raw_checks(const char *when)
     local.Art.targetPass = 16;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
@@ -979,7 +980,7 @@ static void run_cube_checks(const float lit, const char *when)
     local.Cubes.lit = lit;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     tide_float2 points[2 * 64];
@@ -1008,6 +1009,532 @@ static void run_cube_checks(const float lit, const char *when)
     printf("%s: a frag that reads an asset's cube towards twelve directions is one shader in twelve runs%s (%d runs)\n",
            runs == 12 ? "ok" : "FAIL", when, runs);
     if (runs != 12) failures++;
+}
+
+// Lists (pass 18, `ListReads` and `ListOwners` in shaders.tide): frags and a
+// vert read lists by an element, a count and foreach. Squares of 8 pixels, 16
+// apart. `turn` is what the first color's green is that frame.
+static void run_list_checks(const float turn, const char *when)
+{
+    const struct {
+        float x, y;
+        int want[3];
+        const char *what;
+    } wanted[] = {
+        {8, 8, {128, 128, 128}, "an element before a list's start is nothing"},
+        {24, 8, {255, (int)(turn * 255.0f), 0}, "a list's first element, as the view left it this frame"},
+        {40, 8, {0, 255, 0}, "its second"},
+        {56, 8, {0, 0, 255}, "its third"},
+        {72, 8, {255, 255, 0}, "its last"},
+        {88, 8, {128, 128, 128}, "an element past a list's end is nothing"},
+        {8, 24, {128, 64, 128}, "how many each list has, an empty one's none"},
+        {24, 24, {128, 128, 64}, "a foreach over structs of three pixels each, with a switch on an enum"},
+        {40, 24, {52, 53, 0}, "a list of floats, four to a pixel, longer than two rows of its texture"},
+        {56, 24, {85, 64, 255}, "an element that's across two rows of its list's texture"},
+        {72, 24, {187, 64, 255}, "a list's last element, in its third row"},
+        {88, 24, {128, 128, 128}, "a vert that reads a list moved its square away"},
+        {88, 40, {255, 255, 255}, "to where the list's element says"},
+        {8, 40, {255, 0, 0}, "an entity's own list"},
+        {24, 40, {0, 0, 255}, "another entity's, in the same frame"},
+        {8, 56, {0, 0, 255}, "a list the draw gives, made along the way"},
+        {24, 56, {0, 255, 0}, "another draw's, of the same frag"},
+        {40, 56, {128, 128, 128}, "a draw that gives no list reads nothing"},
+        {8, 72, {128, 191, 128}, "an array's elements, by a place the draw gives, and how many another has"},
+        {24, 72, {255, 0, 128}, "an array's last element, and nothing past it"},
+        {40, 72, {207, 191, 64}, "a copy of an array written at places inside it and past its ends, and arrays through foreach and a function"},
+        {56, 72, {255, 128, 64}, "an array that's in each element of a list"},
+        {8, 88, {200, 44, 128}, "a list of bytes, and a byte that keeps to 255 as it's added to"},
+        {24, 88, {64, 128, 191}, "a grid's cell by its place, past its first chunk, with nothing past its edges"},
+        {40, 88, {128, 128, 255}, "a grid's size, and a cell of a grid of ints"},
+        {56, 88, {0, 255, 0}, "an asset's grid, a cell by its place"},
+        {72, 88, {128, 191, 64}, "a while, a for that doubles, and a loop only a break ends"},
+        {8, 104, {0, 128, 128}, "a list under a local's name, and a local that names that one"},
+        {24, 104, {191, 159, 64}, "a function that takes two lists, which passes each on to another and goes through one"},
+        {40, 104, {159, 191, 32}, "the same functions called with the lists the other way round"},
+        {56, 104, {191, 191, 128}, "grids under locals' names and as functions' parameters, passed on"},
+        {72, 104, {126, 128, 64}, "an asset's list of bytes and an asset's grid, read in functions, with nothing past the list's end"},
+        {88, 104, {128, 128, 128}, "a vert that reads a list in a function moved its square away"},
+        {88, 88, {255, 255, 255}, "to where the list's element says, above"},
+        {8, 120, {255, (int)(turn * 255.0f), 0}, "a map's value by its key, as the view left it this frame"},
+        {24, 120, {64, 128, 191}, "another key's"},
+        {40, 120, {128, 128, 128}, "a key that was removed is nothing"},
+        {56, 120, {128, 128, 128}, "a key that never was there is nothing"},
+        {72, 120, {0, 0, 255}, "a key under zero"},
+        {88, 120, {255, 128, 191}, "TryGet and Has of a key that's there"},
+        {104, 120, {0, 0, 64}, "TryGet and Has of a key that was removed"},
+        {8, 136, {128, 128, 255}, "a map keyed by an enum, a struct for its value"},
+        {24, 136, {191, 191, 64}, "a key that isn't there: TryGet's default, and an index's zeros"},
+        {40, 136, {183, 0, 128}, "a map of 3000 keys: its last, the key after it, and how many"},
+        {56, 136, {255, 128, 64}, "a foreach over a map, in the order its keys were added, without the one removed"},
+        {72, 136, {255, 128, 128}, "a set's key, how many it has, and its keys in order"},
+        {88, 136, {0, 128, 128}, "a key removed from a set"},
+        {104, 136, {0, 191, 128}, "an empty map, and a map keyed by bytes"},
+        {120, 136, {0, 255, 255}, "a map the draw gives, made along the way"},
+        {136, 136, {255, 255, 0}, "a map under locals' names, and a map and a set as a function's parameters"},
+        {8, 152, {255, 64, 191}, "an array of arrays, read inside it and past either's end, and how many each has"},
+        {24, 152, {191, 64, 128}, "a copy of one written an element and a row at a time, inside it and past its ends"},
+        {40, 152, {128, 191, 64}, "a for whose step writes an array's element, through a continue, and one that starts by writing one"},
+        {56, 152, {128, 64, 255}, "'?:' between structs, arrays, rows and matrices, its first side"},
+        {72, 152, {64, 255, 64}, "and its second"},
+        {8, 168, {64, 128, 191}, "a Grid3's cell by its place, past its first chunk and layer, with nothing past its edges"},
+        {24, 168, {128, 128, 255}, "a Grid3's size, and a cell of a Grid3 of ints in its last layer"},
+        {40, 168, {191, 191, 191}, "a grid with no size: cells before 0 and far apart, and nothing elsewhere"},
+        {56, 168, {128, 128, 64}, "a Grid3 that's open along an axis, and a grid with nothing in it"},
+        {8, 184, {191, 64, 64}, "fields of a list's elements, of which only what's read is sent: by a chain of fields"},
+        {24, 184, {159, 128, 0}, "what a foreach reads of its variable, an array among it"},
+        {40, 184, {191, 128, 191}, "what locals that hold an element, and a part of one, are read of"},
+        {56, 184, {128, 255, 64}, "a list only a function reads, a float of each, four elements to a pixel"},
+        {72, 184, {128, 223, 64}, "parts of a map's values, by a key and through a foreach, with its keys"},
+        {88, 184, {64, 191, 128}, "a part of a grid's cells, and its size"},
+        {104, 184, {191, 96, 0}, "a list that's only counted, of which nothing is sent"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 18;
+    local.Tables.turn = turn;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + 4.5f, wanted[i].y + 4.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        bool ok = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(got[i] >> (24 - 8 * k) & 0xFFu) - wanted[i].want[k];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               (unsigned)wanted[i].want[0], (unsigned)wanted[i].want[1], (unsigned)wanted[i].want[2]);
+        if (!ok) failures++;
+    }
+}
+
+// Rolls (pass 19, `Rolls` in shaders.tide): Random's rolls on the type in
+// frags and verts, and Random.seed. The GPU's generator is whole numbers, so
+// every backend rolls the same, and so does this: the state a pixel's or a
+// vertex's starts from is Math.Hash of where it is, which instance of its draw
+// it's of, and the number the frame rolled with which frag or vert it is; and
+// each roll is PCG's RXS-M-XS (put_dice and tide_roll in the compiler's
+// shader.c). `state` is where this machine's generator is as the frame starts,
+// which the frame's number is the next roll of. Squares of 8 pixels, 16 apart.
+static uint32_t gpu_roll(uint32_t *dice)
+{
+    *dice = *dice * 747796405u + 2891336453u;
+    const uint32_t w = ((*dice >> ((*dice >> 28) + 4u)) ^ *dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+
+// Random.NextInt(max), as the GPU has it
+static int gpu_roll_below(uint32_t *dice, const uint32_t max)
+{
+    return (int)(((uint64_t)gpu_roll(dice) * max) >> 32);
+}
+
+// Which frag or vert a stage's text says it is: the number its generators are made with
+static int32_t roll_site(const char *glsl)
+{
+    const char *made = strstr(glsl, "tide_dice = uint(");
+    const char *with = made ? strstr(made, " ^ ") : NULL;
+    return with ? (int32_t)strtoul(with + 3, NULL, 10) : 0;
+}
+
+static const tide_shader *shader_named(const char *name)
+{
+    for (uint32_t i = 0; i < list.run_count; i++) {
+        if (list.runs[i].shader && strcmp(list.runs[i].shader->name, name) == 0) return list.runs[i].shader;
+    }
+    return NULL;
+}
+
+// What RollBytes writes at pixel (x, y) of instance `nth` of its draw
+static void roll_bytes(const int x, const int y, const int nth, const int32_t rolled, const int32_t site, float out[3])
+{
+    uint32_t dice = (uint32_t)tide_hash_i4((tide_int4){x, y, nth, rolled ^ site});
+    out[0] = (float)gpu_roll_below(&dice, 256);
+    out[1] = (float)(100 + gpu_roll_below(&dice, 100));
+    out[2] = (float)((gpu_roll(&dice) >> 1) % 256u);
+}
+
+// What the colors RollTint rolls for the square's four corners blend to at (dx, dy) in it: its
+// triangles are corners (0, 1, 2) and (0, 2, 3)
+static void roll_tint(const float dx, const float dy, const int32_t rolled, const int32_t site, float out[3])
+{
+    const float u = dx / 8.0f, v = dy / 8.0f;
+    float weights[4] = {0};
+    if (u >= v) weights[0] = 1.0f - u, weights[1] = u - v, weights[2] = v;
+    else weights[0] = 1.0f - v, weights[2] = u, weights[3] = v - u;
+    out[0] = out[1] = out[2] = 0.0f;
+    for (int corner = 0; corner < 4; corner++) {
+        uint32_t dice = (uint32_t)tide_hash_i3((tide_int3){corner, 0, rolled ^ site});
+        for (int c = 0; c < 3; c++) out[c] += weights[corner] * (float)gpu_roll_below(&dice, 256);
+    }
+}
+
+static void run_roll_checks(const int64_t state, const char *when)
+{
+    enum { BYTES, FIRST, SECOND, RANGES, TINT, SEED, OVER, FILL, PICK };
+    static const struct {
+        int kind, x, y; // The pixel
+        const char *what;
+    } wanted[] = {
+        {BYTES, 9, 9, "a pixel's rolls in a frag"},
+        {BYTES, 10, 9, "the pixel beside it rolls its own"},
+        {BYTES, 13, 14, "and so does one across the square"},
+        {BYTES, 15, 15, "and its last"},
+        {FIRST, 27, 11, "a pixel of a draw's first instance"},
+        {FIRST, 30, 14, "another of them"},
+        {SECOND, 43, 11, "the same place in its second instance, which rolls apart"},
+        {SECOND, 46, 14, "another of those"},
+        {RANGES, 57, 9, "every roll, 24 times over, is within what it says it gives"},
+        {RANGES, 60, 12, "at another pixel"},
+        {RANGES, 62, 10, "and another"},
+        {TINT, 78, 9, "a vert's rolls are each corner's own, blended across the triangle"},
+        {TINT, 73, 14, "and across the square's other triangle"},
+        {TINT, 76, 10, "and between"},
+        {SEED, 92, 12, "the match's seed, a byte a channel"},
+        {OVER, 14, 25, "a frag that rolls behind a vert that rolls: each with a generator of its own"},
+        {OVER, 10, 29, "in the square's other triangle"},
+        {FILL, 200, 60, "a blit's frag rolls for each pixel of its destination, over the image it reads"},
+        {FILL, 201, 60, "the next pixel"},
+        {FILL, 60, 200, "and one where the image is another color"},
+        {PICK, 27, 27, "a '?:' that rolls on both sides makes both rolls, the first side's first"},
+        {PICK, 30, 29, "at another pixel"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0], SEEDED = 0x00ABCDEF };
+    local.Art.targetPass = 19;
+    local.tide_dice.state = state;
+    world.Time.seed = SEEDED;
+    tide_random dice = {state};
+    const int32_t rolled = (int32_t)tide_random_next(&dice); // What tide_frame rolls for its draws
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    world.Time.seed = 0;
+
+    const tide_shader *bytes = shader_named("RollBytes on Vertex");
+    const tide_shader *placed = shader_named("SpotPlace and RollBytes on Vertex");
+    const tide_shader *tint = shader_named("RollTint on Vertex");
+    const tide_shader *over = shader_named("RollTint and RollOver on Vertex");
+    const tide_shader *fill = shader_named("RollFill on Vertex");
+    const tide_shader *pick = shader_named("RollPick on Vertex");
+    uint32_t instances = 0;
+    const bool drawn = bytes && placed && tint && over && fill && pick
+                    && runs_through("SpotPlace and RollBytes on Vertex", &instances) == 1 && instances == 2;
+    printf("%s: frags and verts that roll draw, two instances in one draw%s\n", drawn ? "ok" : "FAIL", when);
+    if (!drawn) {
+        failures++;
+        return;
+    }
+
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2((float)wanted[i].x + 0.5f, (float)wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const int x = wanted[i].x, y = wanted[i].y;
+        float want[3] = {0, 255, 0}; // RANGES: green
+        int within = 1; // Whole numbers come out as they are; what's blended between corners is the GPU's rounding
+        switch (wanted[i].kind) {
+        case BYTES: roll_bytes(x, y, 0, rolled, roll_site(bytes->glsl_fragment), want); break;
+        case FIRST: roll_bytes(x, y, 0, rolled, roll_site(placed->glsl_fragment), want); break;
+        case SECOND: roll_bytes(x, y, 1, rolled, roll_site(placed->glsl_fragment), want); break;
+        case TINT:
+            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site(tint->glsl_vertex), want);
+            within = 3;
+            break;
+        case SEED: want[0] = SEEDED & 255, want[1] = (SEEDED >> 8) & 255, want[2] = (SEEDED >> 16) & 255; break;
+        case OVER: {
+            float blended[3];
+            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site(over->glsl_vertex), blended);
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(over->glsl_fragment)});
+            want[0] = (float)gpu_roll_below(&pixel, 256), want[1] = blended[1], want[2] = 0;
+            within = 3;
+            break;
+        }
+        case FILL: // The image's cells are red and green above blue and white: its blue is 0 above and 1 below
+            roll_bytes(x, y, 0, rolled, roll_site(fill->glsl_fragment), want);
+            want[2] = y < SIZE / 2 ? 0 : 255;
+            break;
+        case PICK: { // The first roll is picked, the second made and left, and the third is what's rolled after
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(pick->glsl_fragment)});
+            want[0] = (float)gpu_roll_below(&pixel, 256);
+            (void)gpu_roll_below(&pixel, 256);
+            want[1] = (float)gpu_roll_below(&pixel, 256), want[2] = 0;
+            break;
+        }
+        default: break;
+        }
+        bool ok = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(got[i] >> (24 - 8 * k) & 0xFFu) - (int)(want[k] + 0.5f);
+            ok = ok && d >= -within && d <= within;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               (unsigned)(want[0] + 0.5f), (unsigned)(want[1] + 0.5f), (unsigned)(want[2] + 0.5f));
+        if (!ok) failures++;
+    }
+    // No two of the pixels that roll are alike, and a frame later they're all other colors
+    static uint32_t before[8];
+    static bool rolled_before;
+    bool apart = true, changed = true;
+    for (int i = 0; i < 8; i++) {
+        for (int k = i + 1; k < 8; k++) apart = apart && got[i] != got[k];
+        changed = changed && got[i] != before[i];
+    }
+    printf("%s: no two pixels that roll are alike%s\n", apart ? "ok" : "FAIL", when);
+    if (!apart) failures++;
+    if (rolled_before) {
+        printf("%s: and a frame later each is another color%s\n", changed ? "ok" : "FAIL", when);
+        if (!changed) failures++;
+    }
+    memcpy(before, got, sizeof before);
+    rolled_before = true;
+}
+
+static tide_float3 linear_column(const tide_float4 c)
+{
+    return tide_f3(c.x, c.y, c.z);
+}
+
+// `normal` through `m` as a normal goes: the inverse of its 3 by 3,
+// transposed. The shader works it out another way (cross products of the
+// columns, and nothing divided), so each checks the other.
+static tide_float3 normal_through(const tide_float4x4 m, const tide_float3 normal)
+{
+    const tide_float3x3 linear = {linear_column(m.c0), linear_column(m.c1), linear_column(m.c2)};
+    return tide_normalize_f3(tide_mul_f3x3_f3(tide_transpose_f3x3(tide_inverse_f3x3(linear)), normal));
+}
+
+// Normals (pass 20): instance.Normal in a frag and in a vert, under the
+// transforms the game keeps in its Facets. A square's color is the normal it
+// was given, a half for 0, read at its middle, which is where its transform
+// puts the mesh's.
+static void run_normal_checks(const char *when)
+{
+    local.Art.targetPass = 20;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+
+    const tide_float3 normal = tide_f3(1.0f, 2.0f, 2.0f); // The squares' corners', as the game made them
+    const tide_float4x4 flat = local.Facets.flat;
+    const tide_float4x4 through = tide_mul_f4x4(local.Facets.outer, local.Facets.inner);
+    const tide_float4x4 rotated = local.Facets.rotated;
+    // With no depth left there's no inverse, and the normals are along the axis that went, the way they leaned
+    const tide_float3 flattened = tide_normalize_f3(tide_cross_f3(linear_column(flat.c0), linear_column(flat.c1)));
+    const tide_float3 leaned = tide_normalize_f3(tide_rotate_f4x4(rotated, normal));
+    const tide_float3 right = normal_through(rotated, normal);
+    const struct {
+        float x, y; // The pixel
+        tide_float3 normal;
+        const char *what;
+    } wanted[] = {
+        {local.Facets.even.c3.x, local.Facets.even.c3.y, normal_through(local.Facets.even, normal),
+         "a mesh scaled as much every way"},
+        {local.Facets.squashed.c3.x, local.Facets.squashed.c3.y, normal_through(local.Facets.squashed, normal),
+         "a mesh scaled more one way than another"},
+        {local.Facets.mirrored.c3.x, local.Facets.mirrored.c3.y, normal_through(local.Facets.mirrored, normal),
+         "a mesh turned inside out as well: its normal still points out of it"},
+        {flat.c3.x, flat.c3.y, flattened, "a mesh with no depth left, whose transform has no inverse"},
+        {through.c3.x, through.c3.y, normal_through(through, normal), "a mesh under Draw.Transform, through both"},
+        {local.Facets.turned.c3.x, local.Facets.turned.c3.y, normal_through(local.Facets.turned, normal),
+         "a vert's, which its frag gets from the corners"},
+        {rotated.c3.x, rotated.c3.y, leaned, "what Math.Rotate makes of the same normal"},
+        {local.Facets.first.c3.x, local.Facets.first.c3.y, normal_through(local.Facets.first, normal),
+         "an item of an Instanced draw's list, by its own transform"},
+        {local.Facets.second.c3.x, local.Facets.second.c3.y, normal_through(local.Facets.second, normal),
+         "the next item, by its own, which mirrors it"},
+        {208.0f - 128.0f, 128.0f - 208.0f, tide_f3(0.6f, 0.0f, 0.8f), "a 2D mesh's, which has no transform: of length 1"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    // The camera has the world's (0, 0) at the window's middle, a pixel a unit, y up
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(SIZE / 2 + wanted[i].x + 0.5f, SIZE / 2 - wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const float channels[3] = {wanted[i].normal.x, wanted[i].normal.y, wanted[i].normal.z};
+        int want[3];
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            want[c] = byte(channels[c] * 0.5f + 0.5f);
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - want[c];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: the normal of %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when,
+               (unsigned)got[i], (unsigned)want[0], (unsigned)want[1], (unsigned)want[2]);
+        if (!ok) failures++;
+    }
+    // ...which is far from where the normal goes, or these checks would pass a Normal that only rotated
+    const bool apart = tide_dot_f3(leaned, right) < 0.7f;
+    printf("%s: and that's another direction than the normal's%s\n", apart ? "ok" : "FAIL", when);
+    if (!apart) failures++;
+}
+
+// Meshes from files (pass 21): squares 16 pixels across, each with its middle
+// at a pixel, whose corners are red (bottom left, seen from its front), green
+// (bottom right), blue (top right) and white (top left), in two triangles
+// that meet along the line from red to blue. Seen from the front, the file's
+// picture is as the file has it; a square seen from behind isn't drawn.
+static void run_model_checks(const char *when)
+{
+    enum { NEAR_RED, NEAR_GREEN, NEAR_BLUE, MIDDLE, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT };
+    // A spot's pixel from the square's middle, and what the corners' colors blend to there
+    static const float spots[][2] = {{-4.5f, 5.5f}, {4.5f, 5.5f}, {4.5f, -2.5f}, {0.5f, 0.5f},
+                                     {-4.5f, -4.5f}, {4.5f, -4.5f}, {-4.5f, 4.5f}, {4.5f, 4.5f}};
+    static const float red[3] = {0.78125f, 0.0625f, 0.15625f}, green[3] = {0.21875f, 0.625f, 0.15625f};
+    static const float blue[3] = {0.21875f, 0.125f, 0.65625f}, none[3] = {0, 0, 0};
+    static const float lit_first[3] = {0.5f, 1.0f, 0.15625f}, lit_third[3] = {0.5f, 1.0f, 0.65625f};
+    static const float pure_red[3] = {1, 0, 0}, pure_green[3] = {0, 1, 0}, pure_blue[3] = {0, 0, 1}, white[3] = {1, 1, 1};
+    static const struct {
+        float x, y; // The square's middle
+        int spot;
+        const float *is;
+        const char *what;
+    } wanted[] = {
+        {24, 24, NEAR_RED, red, "a mesh from a .glb, seen from its front: the color of its first corner"},
+        {24, 24, NEAR_GREEN, green, "its second, to the right, as the file has it"},
+        {24, 24, NEAR_BLUE, blue, "its third, above that"},
+        {56, 24, MIDDLE, none, "the same mesh from behind isn't drawn"},
+        {88, 24, NEAR_RED, green, "but with both sides drawn: mirrored"},
+        {88, 24, NEAR_GREEN, red, "its first corner to the right"},
+        {120, 24, NEAR_RED, lit_first, "a vertex of the game's through a frag: its default, its normal, its color"},
+        {120, 24, NEAR_BLUE, lit_third, "across the square"},
+        {152, 24, TOP_LEFT, pure_red, "its uvs: the texture's first pixel at its top left"},
+        {152, 24, TOP_RIGHT, pure_green, "its second to the right"},
+        {152, 24, BOTTOM_LEFT, pure_blue, "its third below"},
+        {152, 24, BOTTOM_RIGHT, white, "and its last"},
+        {184, 24, NEAR_RED, red, "a mesh from an .obj: the same square"},
+        {184, 24, NEAR_GREEN, green, "the same way round"},
+        {184, 24, NEAR_BLUE, blue, "and up"},
+        {24, 56, NEAR_RED, red, "an instance of a mesh from a file"},
+        {56, 56, NEAR_GREEN, green, "and a second"},
+        {88, 56, NEAR_BLUE, blue, "one of a glob's list"},
+        {120, 56, NEAR_RED, red, "one of a glob's map, by its path"},
+        {152, 56, NEAR_GREEN, green, "a mesh by its two lists"},
+        {184, 56, MIDDLE, none, "a key the map hasn't got draws nothing"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 21;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    // The quad by its name, in an instanced draw, from the list, from the map and by its lists: one mesh in the list
+    uint32_t first = 0, drawn[8] = {0}, plain = 0;
+    for (uint32_t i = 0; i < list.count; i++) {
+        if (list.commands[i].kind == TIDE_DRAW_CLEAR) first = i; // The pass's own draws come after its clear
+    }
+    for (uint32_t i = first; i < list.count; i++) {
+        const tide_draw_command *c = &list.commands[i];
+        if (c->kind != TIDE_DRAW_MESH_3D) continue;
+        bool known = false;
+        for (uint32_t k = 0; k < plain; k++) known = known || drawn[k] == c->mesh3.mesh;
+        if (!known && plain < 8) drawn[plain++] = c->mesh3.mesh;
+    }
+    expect(plain == 2, "a file drawn by its name, from a list, from a map and by its lists is one mesh, and the .obj another");
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + spots[wanted[i].spot][0], wanted[i].y + spots[wanted[i].spot][1]);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].is[0]), byte(wanted[i].is[1]), byte(wanted[i].is[2])};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -8 && d <= 8;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
+// Places (pass 22): verts that put their vertices themselves, `out float4`,
+// from where the engine would have, `this.clip`. Each square is read inside
+// where it has to be and outside it, which is often where its transform
+// alone would have drawn it.
+static void run_place_checks(const char *when)
+{
+    static const float black[3] = {0, 0, 0}, red[3] = {1, 0, 0}, green[3] = {0, 1, 0}, blue[3] = {0, 0, 1}, white[3] = {1, 1, 1};
+    // Where the square moved to the right is in the world, half a pixel from its middle: its transform's place, at pixel (56, 176)
+    static const float where[3] = {(56.5f - 128.0f) / 256.0f + 0.5f, (128.0f - 176.5f) / 256.0f + 0.5f, 0};
+    static const struct {
+        float x, y; // The pixel
+        const float *is;
+        const char *what;
+    } wanted[] = {
+        // With perspective, a unit 10 away is 22.17 pixels: a square with no vert from 17.1 to 61.5, each way...
+        {39.5f, 39.5f, red, "a square with no vert, under a camera with perspective"},
+        {20.5f, 39.5f, red, "its left edge"},
+        {13.5f, 39.5f, black, "and nothing left of it"},
+        {57.5f, 39.5f, red, "its right edge"},
+        {65.5f, 39.5f, black, "and nothing right of it"},
+        // ...and its mirror image, through a vert that writes this.clip back, from 194.5 to 238.9
+        {216.5f, 39.5f, green, "a vert that writes this.clip back draws where the engine would have, under perspective"},
+        {235.5f, 39.5f, green, "its right edge"},
+        {242.5f, 39.5f, black, "and nothing right of it"},
+        {198.5f, 39.5f, green, "its left edge"},
+        {190.5f, 39.5f, black, "and nothing left of it"},
+        {216.5f, 20.5f, green, "its top"},
+        {216.5f, 13.5f, black, "and nothing above it"},
+        {216.5f, 58.5f, green, "its bottom"},
+        {216.5f, 65.5f, black, "and nothing below it"},
+        // One from 110.3 to 154.6 across and 72.6 to 116.9 down, moved onto a grid of 32 pixels: 96 to 160, and 64 to 128
+        {99.5f, 100.5f, blue, "a corner moved onto its frame's pixel: left of where the square was"},
+        {92.5f, 100.5f, black, "and no further"},
+        {157.5f, 100.5f, blue, "right of where it was"},
+        {163.5f, 100.5f, black, "and no further"},
+        {128.5f, 67.5f, blue, "above where it was"},
+        {128.5f, 60.5f, black, "and no further"},
+        {128.5f, 124.5f, blue, "below where it was"},
+        {128.5f, 131.5f, black, "and no further"},
+        // A unit to a pixel
+        {24.5f, 176.5f, red, "a vert that writes this.clip back, a unit to a pixel"},
+        {40.5f, 176.5f, black, "and nothing beside it"},
+        {88.5f, 176.5f, where, "a square its vert moved 32 pixels right: its frag's this.world is still its transform's place"},
+        {56.5f, 176.5f, black, "and nothing is drawn where its transform alone would have put it"},
+        {120.5f, 152.5f, blue, "this.clip read after the vert changed its vertex: 24 pixels up"},
+        {120.5f, 176.5f, black, "and nothing where it was"},
+        {168.5f, 176.5f, green, "a square behind another, whose vert says its depth is nearer"},
+        {200.5f, 176.5f, red, "and one whose vert leaves its depth: hidden"},
+        {56.5f, 216.5f, green, "an Instanced draw's item, by its own transform and its own push to the right"},
+        {24.5f, 216.5f, black, "and nothing where its transform is"},
+        {88.5f, 216.5f, green, "the next item, pushed to the left"},
+        {120.5f, 216.5f, black, "and nothing where its transform is"},
+        {200.5f, 216.5f, white, "a 2D mesh's place, through its camera and Draw.Transform: 32 pixels right"},
+        {168.5f, 216.5f, black, "and nothing where its transform alone would have put it"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 22;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x, wanted[i].y);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].is[0]), byte(wanted[i].is[1]), byte(wanted[i].is[2])};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
 }
 
 static int frame(void *user, const float seconds)
@@ -1041,6 +1568,11 @@ static int frame(void *user, const float seconds)
         run_alpha_checks(", on another device");
         run_raw_checks(", on another device");
         run_cube_checks(2, ", on another device");
+        run_list_checks(0, ", on another device");
+        run_roll_checks(555, ", on another device");
+        run_normal_checks(", on another device");
+        run_model_checks(", on another device");
+        run_place_checks(", on another device");
         return failures;
     }
 #endif
@@ -1069,6 +1601,17 @@ static int frame(void *user, const float seconds)
     run_cube_checks(2, "");
     run_cube_checks(2, ", again");
     run_cube_checks(6, ", with other pixels drawn into the cube");
+    run_list_checks(0, "");
+    run_list_checks(0, ", again");
+    run_list_checks(1, ", with another element written");
+    run_list_checks(0, ", and written back");
+    run_roll_checks(1234, "");
+    run_roll_checks(987654321, ", the next frame");
+    run_normal_checks("");
+    run_model_checks("");
+    run_model_checks(", again");
+    run_place_checks("");
+    run_place_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

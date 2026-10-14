@@ -1,0 +1,7 @@
+// expect: 'Take' needs the entity a Hit is sent to, and this Send has none
+event Hit { int damage; }
+component Enemy { int hp; }
+scene Main { }
+void Poke(int damage) { Send(Hit { damage = damage }); }
+event(Spawned) Setup(with Main) { Spawn(Enemy); Poke(1); }
+event(Hit hit) Take(mut Enemy enemy) { enemy.hp -= hit.damage; }

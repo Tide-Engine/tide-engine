@@ -1,0 +1,93 @@
+// A game on a network of its own: udp.c opens and joins its matches on plain
+// UDP sockets, in the place of Tide's rooms. The Tide side is what any game
+// writes, Session.Open(), Session.Join(text) and Session.room, and one call
+// that says which network they go through.
+settings { title = "Own network"; maxPlayers = 4; }
+
+local scene Main { }
+
+scene Arena { }
+
+// udp.c: registers the game's network (tide/network.h). False where there's
+// no UDP, as in a page, and the game's matches are in Tide's rooms there.
+extern bool UseUdpNetwork();
+
+component Runner
+{
+    float x;
+}
+
+input Controls
+{
+    float run;
+
+    Sample(Devices devices)
+    {
+        run = (devices.keyboard.d.pressed ? 1 : 0) - (devices.keyboard.a.pressed ? 1 : 0);
+    }
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> runners;
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    roster.runners[joined.player] = Spawn(Runner { }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.runners[left.player].Destroy();
+    roster.runners.Remove(left.player);
+}
+
+system Run(Controls controls, mut Runner runner, Time time)
+{
+    runner.x += controls.run * time.dt;
+}
+
+local singleton Menu
+{
+    string address; // What's typed to join
+}
+
+// A match of this machine's, which others join by what Session.room says.
+void HostMatch()
+{
+    _ = UseUdpNetwork(); // Before the Open it's for: the same frame will do
+    Session.Start(Arena);
+    Session.Open();
+}
+
+// The match at `address`, as its host's Session.room said it.
+void JoinMatch(string address)
+{
+    _ = UseUdpNetwork();
+    Session.Join(address);
+}
+
+view Lobby(Session session, mut Menu menu)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0), 4);
+    GUILayout.Area(Rect(12, 12, Screen.width - 24, 160))
+    {
+        if (session.state == SessionState.Offline)
+        {
+            if (GUILayout.Button("Host")) HostMatch();
+            GUILayout.TextField("Address", menu.address, out var entered);
+            if (GUILayout.Button("Join") || entered) JoinMatch(menu.address);
+        }
+        else if (session.room != "")
+        {
+            GUILayout.Label($"Join at {session.room}");
+        }
+    }
+}
+
+view Runners(Runner runner)
+{
+    Draw.Circle(float2(runner.x, 0), 0.2, Color.white);
+}

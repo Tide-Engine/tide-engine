@@ -1,0 +1,10 @@
+// expect: can't assign AnimationCatalog to AnimationCatalog
+asset AnimationCatalog movement = "../e2e/animations/clips/a.gltf";
+scene Main { }
+system Check()
+{
+    mut var known = movement;
+    AnimationCatalog dynamic = movement;
+    known = dynamic;
+    Debug.Log(known.move.name);
+}

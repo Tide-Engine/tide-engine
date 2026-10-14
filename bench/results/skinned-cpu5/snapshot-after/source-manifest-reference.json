@@ -1,0 +1,10 @@
+{
+  "path": "validation/source-hashes.json",
+  "sha256": "4822d703ae494e87db869729c00450f198cc6b4be1fd3b464812e8d69c28efa8",
+  "raw_snapshot_source_hashes": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5-final\\after-snapshot\\source-hashes.json",
+    "bytes": 493098,
+    "sha256": "1dd4345b1f7e83daff026bc42459a52dd0155ce92fd46743efde442f9c2af85e"
+  },
+  "note": "One current complete source/test hash manifest is shared by candidate preservation and validation."
+}

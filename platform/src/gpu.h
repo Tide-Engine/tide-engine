@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "tide/texture_blocks.h"
 
 typedef uint32_t tide_gpu_id; // A buffer, texture, pipeline or target; 0 is none, and the window as a target
 
@@ -31,12 +32,15 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES } tide_g
 // bits is what every backend samples blended between pixels with nothing
 // asked of the device (OpenGL 3.3, OpenGL ES 3, WebGL 2 and WebGPU alike),
 // where one of 32 needs an extension or a feature a device may lack.
-typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F } tide_gpu_format;
+// TIDE_GPU_RGBA32I is four ints of 32 bits, which a pipeline reads as they
+// are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
+// of any kind, a float's as its bits. Every backend has it with nothing asked.
+typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I } tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 ? 4 : format == TIDE_GPU_R16F ? 2 : 1;
+    return format == TIDE_GPU_RGBA8 ? 4 : format == TIDE_GPU_R16F ? 2 : format == TIDE_GPU_RGBA32I ? 16 : 1;
 }
 
 // What one of a target's color images holds for each pixel: 4 bytes (red,
@@ -103,7 +107,12 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // which gives how much of the depth stored around there isn't nearer than it,
 // from 0 to 1, as the GPU filters it.
 // A cube (tide_gpu.cube) is read by a direction, as a color.
-typedef enum tide_gpu_read { TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE } tide_gpu_read;
+// TIDE_GPU_READ_DATA reads a texture of ints (TIDE_GPU_RGBA32I) a pixel at a
+// time, by its place: GLSL's `isampler2D` with texelFetch, and WGSL's
+// `texture_2d<i32>` with textureLoad, whose sampler binding nothing names.
+typedef enum tide_gpu_read {
+    TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA
+} tide_gpu_read;
 
 // A cube's six faces, in the order it has them: the one each axis points at,
 // +x, -x, +y, -y, +z, -z.
@@ -278,9 +287,15 @@ typedef struct tide_gpu {
     void (*buffer_write)(tide_gpu_id buffer, size_t offset, const void *data, size_t size);
     void (*buffer_free)(tide_gpu_id buffer);
 
-    // A texture. Writing takes all of it. How it's read is each draw's to say (sample).
+    // A texture. Writing takes all of it, or the `width` by `height` pixels of it from (x, y), inside it:
+    // `pixels` is all of the texture's either way, its rows one after the other, of which a part's are read
+    // where they are. How it's read is each draw's to say (sample).
     tide_gpu_id (*texture)(tide_gpu_format format, int width, int height, const void *pixels);
+    // Complete immutable BC1/BC3 mip chain, or 0 when unsupported. No upload
+    // or allocation on unsupported devices; the renderer then uses RGBA.
+    tide_gpu_id (*texture_blocks)(int width, int height, tide_texture_blocks blocks);
     void (*texture_write)(tide_gpu_id texture, const void *pixels);
+    void (*texture_write_part)(tide_gpu_id texture, const void *pixels, int x, int y, int width, int height);
     // Its smaller images, each half the last one's size down to one pixel
     // and each pixel the mean of the four it's made of, from its pixels as
     // they are: what TIDE_GPU_FILTER_MIPMAPS reads. Outside a pass. For a
@@ -338,9 +353,11 @@ typedef struct tide_gpu {
     // pass to pass, and a triangle's edge covers some of them. Its color
     // textures have one color a pixel, what its samples come to, as each
     // pass on it ends (`end` resolves them): those are what's sampled and
-    // read back. Its depth is no texture (target_depth is 0): no backend
-    // here resolves one. It takes that many times the memory, and its color
-    // textures beside.
+    // read back. Its depth is no texture until resolve_depth is first asked
+    // for it (target_depth is 0 until then): from there it's one depth a
+    // pixel, a sample of each pixel's, as it was when resolve_depth was last
+    // called, with 4 bytes a pixel more held. It takes that many times the
+    // memory, and its color textures beside.
     tide_gpu_id (*target)(tide_gpu_target_format format, int width, int height);
     int (*target_limit)(void); // The most pixels a side one has, on this device
     // How many samples a target that holds `format`, whose samples are what's
@@ -356,6 +373,10 @@ typedef struct tide_gpu {
     bool (*float_targets)(void);
     tide_gpu_id (*target_texture)(tide_gpu_id target, uint32_t color); // 0 for an image it hasn't got
     tide_gpu_id (*target_depth)(tide_gpu_id target);
+    // Outside a pass: a multisampled target's depth texture is made, the
+    // first time, and is what its samples hold now. Nothing, for a target
+    // that isn't multisampled, whose depth is always its texture.
+    void (*resolve_depth)(tide_gpu_id target);
     void (*target_free)(tide_gpu_id target);
     // Its first color image, read back: 4 bytes a pixel, rows from the top.
     // Zeros for a target whose first isn't 4 bytes a pixel, or that has none:

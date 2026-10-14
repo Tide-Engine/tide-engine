@@ -60,11 +60,12 @@ static bool command_unpack(void *world, const uint8_t *data, uint32_t size)
 }
 
 static uint8_t *command_pack_delta(const void *world, const void *base, const uint8_t *need, uint32_t need_size,
-                                  uint32_t *size)
+                                  bool assets, uint32_t *size)
 {
     (void)base;
     (void)need;
     (void)need_size;
+    (void)assets;
     *size = (uint32_t)sizeof(command_world);
     uint8_t *data = malloc(*size);
     if (data) memcpy(data, world, *size);
@@ -292,7 +293,7 @@ static void command_raw(uint32_t nonce, uint32_t sequence, const uint8_t *data, 
     uint8_t packet[TIDE_NET_MTU];
     tide_writer w = {packet, sizeof packet, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 13); // PROTOCOL
+    tide_write_u8(&w, 14); // PROTOCOL
     tide_write_u8(&w, 9); // MSG_COMMAND: no sender supplied by the packet
     tide_write_u32(&w, nonce);
     tide_write_varint(&w, sequence);

@@ -15,8 +15,9 @@
 // `where` (see tide/text.h): a list that's part of a world (a component's
 // field, a singleton's, the command queue's) has its own block in that
 // world's heap, and any other list has one in the scratch area. A list is
-// never shared: taking one out of a field or a variable copies it
-// (tide_list_copy), so changing a list in place is safe.
+// a value: taking one out of a field or variable copies it logically.
+// Immutable asset payloads may stay shared until tide_list_prepare before
+// writable element access. Other lists retain their ordinary copying path.
 //
 // Nothing fails: past the end, reads find nothing and writes do nothing. A
 // world's lists grow with its heap, and a list in the scratch area with the
@@ -40,6 +41,11 @@ typedef struct tide_list {
 #define TIDE_LIST_CHUNK ((1u << TIDE_HEAP_PAGE_SHIFT) - (uint32_t)sizeof(tide_block))
 // In a list's header's `b`: the elements are in chunks, as many as the rest says.
 #define TIDE_LIST_CHUNKED 0x80000000u
+// Immutable asset descriptor: count in a, SHA-256 after the block header.
+#define TIDE_LIST_ASSET 0x40000000u
+const void *tide_list_asset_at(tide_list l, int32_t i, uint32_t size);
+// Before writable access, make borrowed asset storage this value's own.
+void tide_list_prepare(tide_list *l, uint32_t size, uint32_t where);
 
 // Reading and writing elements is inline, as code does it for every element
 // it touches.
@@ -82,6 +88,7 @@ static inline void *tide_list_at(const tide_list l, const int32_t i, const uint3
     const tide_page *p = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
     tide_block *b = (tide_block *)(uintptr_t)((const uint8_t *)tide_page_data(p) + (offset - (p->first << TIDE_HEAP_PAGE_SHIFT)));
     if (i < 0 || (uint32_t)i >= b->a) return NULL;
+    if (b->b == TIDE_LIST_ASSET) return (void *)(uintptr_t)tide_list_asset_at(l, i, size);
     if (!(b->b & TIDE_LIST_CHUNKED)) return (char *)(b + 1) + (size_t)i * size;
     uint32_t place;
     const uint32_t chunk = tide_list_chunk(b, (uint32_t)i, size, &place);
@@ -96,6 +103,7 @@ static inline void *tide_list_at_mut(const tide_list l, const int32_t i, const u
     if (!l.at) return NULL;
     const uint32_t offset = l.at & 0x3FFFFFFFu;
     if (l.at >> 30 == TIDE_IN_SCRATCH) {
+        if (tide_pack_holds(l.at)) return NULL; // Prepare the value before writing a packed asset.
         tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(offset);
         return i >= 0 && (uint32_t)i < b->a ? (char *)(b + 1) + (size_t)i * size : NULL;
     }
@@ -104,6 +112,7 @@ static inline void *tide_list_at_mut(const tide_list l, const int32_t i, const u
     const tide_page *p = heap->page[offset >> TIDE_HEAP_PAGE_SHIFT];
     const tide_block *b = (const tide_block *)(uintptr_t)((const uint8_t *)tide_page_data(p) + (offset - (p->first << TIDE_HEAP_PAGE_SHIFT)));
     if (i < 0 || (uint32_t)i >= b->a) return NULL;
+    if (b->b == TIDE_LIST_ASSET) return NULL; // A value's handle must detach first.
     if (!(b->b & TIDE_LIST_CHUNKED)) return (char *)(tide_heap_write(heap, offset) + 1) + (size_t)i * size;
     uint32_t place;
     const uint32_t chunk = tide_list_chunk(b, (uint32_t)i, size, &place);
@@ -200,6 +209,18 @@ void tide_list_own(tide_list *l, uint32_t size, uint32_t where);
 
 // A world's list leaving it. Release its elements' text first.
 void tide_list_release(tide_list *l, uint32_t where);
+
+// Text and bytes (engine/src/text.c). tide_str_to_bytes is a List<byte> of
+// the text's UTF-8, and tide_str_from_bytes the text those bytes are, a copy,
+// or false when they aren't UTF-8 (tide_utf8_valid). tide_str_split is a
+// List<string> of the pieces of `a` between each `separator` and the next,
+// empty ones too, so joining them with the separator gives `a` back: one
+// piece, the whole text, when the separator isn't in it or is empty. All
+// three are in the scratch area.
+tide_list tide_str_to_bytes(tide_str a);
+bool tide_str_from_bytes(tide_list bytes, tide_str *text);
+tide_list tide_str_split(tide_str a, tide_str separator);
+tide_list tide_str_split_char(tide_str a, int32_t separator);
 
 // Sorts the elements, stable: `before(ctx, a, b)` says whether `a` goes before
 // `b` (a strict order), and elements it doesn't order keep their order. The

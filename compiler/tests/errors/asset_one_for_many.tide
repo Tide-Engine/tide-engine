@@ -1,6 +1,0 @@
-// expect: the type holds many files, and '../e2e/assets/hero.png' names one
-asset List<Grid2<Color>> frames = "../e2e/assets/hero.png";
-
-scene Main
-{
-}

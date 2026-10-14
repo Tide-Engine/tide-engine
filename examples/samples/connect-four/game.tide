@@ -256,7 +256,7 @@ system Reach(Controls controls, mut Hand hand, with Owner)
     hand.x += (controls.column - hand.x) * 0.4;
 }
 
-system Referee(mut Board board, mut Roster roster, Time time)
+system Referee(mut Board board, mut Roster roster)
 {
     if (board.fresh)
     {
@@ -289,7 +289,7 @@ system Referee(mut Board board, mut Roster roster, Time time)
     board.request = -1;
     var mine = board.turn == RED ? board.red : board.yellow;
     var theirs = board.turn == RED ? board.yellow : board.red;
-    var salt = Math.Hash(int3(board.moves, board.redTurns + board.yellowTurns, time.seed));
+    var salt = Math.Hash(int3(board.moves, board.redTurns + board.yellowTurns, Random.seed));
     if (Mover(board, roster) == default)
     {
         if (board.plan < 0 && board.clock >= BOT_PLANS) board.plan = Think(mine, theirs, salt);
@@ -405,12 +405,18 @@ local event(verified GameOver over) ShowOver(mut Fx fx)
     fx.burst = 0.55;
 }
 
-// A player's hand comes and goes with them.
-local event(Spawned) ShowArrival(Hand hand, Owner owner, Session session, mut Fx fx)
+// A player's hand comes and goes with them. A machine hears the joins from its
+// own on, where it hears a Spawned for the hands that were there too: so the
+// news is a join's, and the hand it brought is among the tick's.
+local event(PlayerJoined joined) ShowArrival(Session session, mut Fx fx, query (Hand hand, Owner owner) hands)
 {
-    if (owner.player == session.player) return;
-    fx.news = $"Player {hand.number} joined the game";
-    fx.newsLeft = 4;
+    if (joined.player == session.player) return;
+    foreach (var row in hands)
+    {
+        if (row.owner.player != joined.player) continue;
+        fx.news = $"Player {row.hand.number} joined the game";
+        fx.newsLeft = 4;
+    }
 }
 
 local event(Destroyed) ShowLeaving(Hand hand, mut Fx fx)

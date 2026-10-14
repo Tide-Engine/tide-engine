@@ -1,0 +1,10 @@
+timestamp, uuid, pstate, clocks.current.graphics [MHz], clocks.current.memory [MHz], utilization.gpu [%], power.draw [W], temperature.gpu, clocks_event_reasons.gpu_idle, clocks_event_reasons.sw_power_cap, clocks_event_reasons.hw_thermal_slowdown
+2026/10/10 22:29:00.403, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 46, 66.58, 36, Not Active, Not Active, Not Active
+2026/10/10 22:29:00.662, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 8, 60.55, 35, Not Active, Not Active, Not Active
+2026/10/10 22:29:00.931, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 8, 60.55, 35, Not Active, Not Active, Not Active
+2026/10/10 22:29:01.198, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 37, 55.93, 36, Not Active, Not Active, Not Active
+2026/10/10 22:29:01.463, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 37, 55.93, 36, Not Active, Not Active, Not Active
+2026/10/10 22:29:01.727, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 50, 74.94, 41, Not Active, Not Active, Not Active
+2026/10/10 22:29:01.993, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 50, 74.94, 41, Not Active, Not Active, Not Active
+2026/10/10 22:29:02.245, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 26, 102.12, 40, Not Active, Not Active, Not Active
+2026/10/10 22:29:02.507, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2835, 11501, 26, 102.12, 40, Not Active, Not Active, Not Active

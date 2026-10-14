@@ -55,7 +55,7 @@ static void play(tide_world *w, const uint32_t ticks, const bool shield)
 static void frame(const tide_world *w, const tide_world *previous, const float alpha, const tide_world *verified, tide_local *l)
 {
     tide_draw_reset(&draw);
-    tide_frame(w, previous, alpha, verified, l, &draw, &gui);
+    tide_frame(w, previous, alpha, verified, NULL, 1.0f, l, &draw, &gui);
 }
 
 // Between two ticks: a query's rows are blended as the view's own parameters
@@ -221,7 +221,8 @@ static void run(const double until)
         const tide_view_worlds view = tide_client_view(clients[0]);
         if (!tide_entity_is_null(body(view.current, 6)) || !tide_entity_is_null(body(view.current, 8))) ahead_frames++;
         tide_local_events(&local, &heard);
-        frame(view.current, view.previous, view.alpha, view.verified, &local);
+        tide_draw_reset(&draw);
+        tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, &local, &draw, &gui);
         const Seen *seen = &local.Seen;
         if (seen->behind) behind_frames++;
         if (tide_client_status_of(clients[0]).predicted_tick < 100u) {

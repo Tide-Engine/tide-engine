@@ -1,0 +1,500 @@
+using Rooms;
+
+settings { title = "Tag"; maxPlayers = 8; hostMigration = true; }
+
+// ---------------------------------------------------------------- the rules
+
+const float YARD = 6;            // Half the yard's side, in world units
+const float BODY = 0.5;          // A kid's radius
+const float ACCEL = 27;          // How hard a kid pushes off the grass
+const float DRAG = 5;            // ...and how fast the grass slows them
+const float IT_BOOST = 1.12;     // Whoever's it runs this much harder
+const float DASH = 7;            // The speed a dash adds, all at once
+const float COOLDOWN = 1.4;      // Seconds between dashes
+const float COUNT = 0.8;         // Seconds whoever was just caught stands and counts
+const float NO_BACK = 1.8;       // Seconds whoever caught them can't be caught back
+const float TOO_LONG = 15;       // Seconds as it before it moves on by itself: a kid who's away holds nobody up
+const float SAFE_TIME = 2;       // Seconds nobody can catch a kid who just walked in
+const float REACH = 0.06;        // How near a touch counts, past the two bodies
+const int ROUND = 60;            // Seconds until the bell
+const int CHEER = 5;             // Seconds the bell's result shows
+const int MIN_KIDS = 4;          // Bots fill the yard up to this many
+const int COLORS = 8;
+const float SPIN = 1.2;          // The roundabout's turn, in radians a second
+const float SPIN_RADIUS = 1.4;
+const float SAND_RADIUS = 1.55;
+const float PUDDLE_RADIUS = 1.45;
+const float TREE_RADIUS = 0.7;
+
+// The yard's things. The roundabout is in the middle, and the oak and the
+// boulder are in nobody's way but whoever runs into them.
+float2 Sand() { return float2(-3.3, -3.3); }
+float2 Puddle() { return float2(3.3, 3.3); }
+float2 Oak() { return float2(-3.7, 3.6); }
+float2 Rock() { return float2(3.7, -3.6); }
+
+scene Main { }
+
+// ------------------------------------------------------------ the match
+
+component Kid
+{
+    [Position] float2 position;
+    float2 velocity;
+    float2 facing = float2(0, -1);
+    int color;
+    float itTime;     // Seconds as it, this round: the least wins
+    int wins;
+    int round;        // The round that time is of
+    bool bot;
+    float cooldown;   // Seconds until the next dash
+    float burst;      // Seconds this dash still shows for
+    float wish;       // A dash asked for a moment early waits this long
+    float safe;       // Seconds nobody can catch them for, as they walk in
+}
+
+// What a kid is trying to do this tick: a player's input, or a bot's mind.
+component Drive
+{
+    float2 move;
+    bool dash;
+}
+
+// How far the others are in a kid's way this tick, worked out before anyone is moved.
+component Nudge
+{
+    float2 slide;
+}
+
+component Brain
+{
+    Random random;
+    float2 heading;
+    float think;      // Seconds until it looks again
+    float veer = 1;   // Which way round it runs from whoever's it
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> bodies;
+    List<Entity> bots;
+    int taken; // A bit for each color in the yard
+}
+
+singleton Recess
+{
+    Entity it;       // Who's it
+    Entity tagger;   // Who caught them: no tag-backs, for a moment
+    int since;       // The tick of that catch
+    int round;
+    int ends;        // The tick the bell rings at
+    bool cheering;   // The bell rang: its result shows, and nobody's caught
+    int winners;     // A bit for each color that took the round
+    int until;       // The tick the next round starts at
+    float fair;      // The kids' time as it, on average: what one who walks in late starts with
+    Random random;
+}
+
+event Tagged { float2 at; int caught; }   // For what's shown
+event Dashed { float2 at; float2 way; }   // For what's shown
+event Rang { int winners; }               // For what's shown
+event Won { }                             // Sent to each kid who took the round
+
+// This machine's pointer, turned into a stick by the views.
+local singleton Pad
+{
+    float2 stick;
+    float2 target;
+    bool steer;
+    bool onButton;
+    float dashHold;
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    bool dash;
+
+    Sample(Devices devices, Pad pad, Lobby lobby)
+    {
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
+        move += devices.gamepad.leftStick + pad.stick;
+        dash = keys.space.pressed || keys.leftShift.pressed || keys.enter.pressed
+            || devices.gamepad.buttonSouth.pressed || pad.dashHold > 0;
+    }
+}
+
+int PickColor(mut Roster roster)
+{
+    for (var i = 0; i < COLORS; i++)
+    {
+        if ((roster.taken & (1 << i)) == 0)
+        {
+            roster.taken |= 1 << i;
+            return i;
+        }
+    }
+    return 0;
+}
+
+// Where a kid walks in: each color has a place of its own around the
+// roundabout, so nobody starts on top of anybody.
+float2 Start(int color)
+{
+    var turn = color * Math.TAU * 0.375 + 0.4;
+    return float2(Math.Cos(turn), Math.Sin(turn)) * 2.7;
+}
+
+event(PlayerJoined joined) Enter(mut Roster roster, Recess recess)
+{
+    var color = PickColor(roster);
+    var spot = Start(color);
+    roster.bodies[joined.player] = Spawn(
+        Kid { position = spot, facing = Math.Normalize(spot), color = color, safe = SAFE_TIME,
+              itTime = recess.fair, round = recess.round },
+        Drive, Nudge,
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Leave(mut Roster roster)
+{
+    roster.bodies[left.player].Destroy();
+    roster.bodies.Remove(left.player);
+}
+
+event(Destroyed) FreeColor(Kid kid, mut Roster roster)
+{
+    roster.taken &= ~(1 << kid.color);
+}
+
+// Nobody plays tag alone: bots stand in until there are players enough.
+system Balance(mut Roster roster, Recess recess)
+{
+    var wanted = Math.Max(0, MIN_KIDS - roster.bodies.count);
+    if (roster.bots.count < wanted)
+    {
+        var color = PickColor(roster);
+        var spot = Start(color);
+        var bot = Spawn(
+            Kid { position = spot, facing = Math.Normalize(spot), color = color, bot = true, safe = SAFE_TIME,
+                  itTime = recess.fair, round = recess.round },
+            Drive, Nudge, Brain);
+        roster.bots.Add(bot);
+    }
+    else if (roster.bots.count > wanted)
+    {
+        var last = roster.bots.count - 1;
+        roster.bots[last].Destroy();
+        roster.bots.RemoveAt(last);
+    }
+}
+
+// The round's clock. At the bell, whoever was it the least takes the round,
+// and everyone level with them does too.
+system Bell(mut Recess recess, Time time, query (Kid kid) all)
+{
+    if (recess.ends == 0) recess.ends = time.tick + time.tickRate * ROUND;
+    if (recess.cheering)
+    {
+        if (time.tick < recess.until) return;
+        recess.cheering = false;
+        recess.winners = 0;
+        recess.round += 1; // Every kid sees it in Count, and starts over
+        recess.ends = time.tick + time.tickRate * ROUND;
+        recess.it = default; // Someone else starts as it: Chase picks
+        recess.tagger = default;
+        return;
+    }
+    if (time.tick < recess.ends) return;
+
+    mut var least = -1.0;
+    foreach (var row in all)
+    {
+        if (least < 0 || row.kid.itTime < least) least = row.kid.itTime;
+    }
+    if (least < 0)
+    {
+        recess.ends = time.tick + time.tickRate * ROUND; // An empty yard rings for nobody
+        return;
+    }
+    mut var winners = 0;
+    foreach (var row in all)
+    {
+        if (row.kid.itTime > least + 0.05) continue;
+        winners |= 1 << row.kid.color;
+        row.entity.Send(Won { });
+    }
+    recess.cheering = true;
+    recess.winners = winners;
+    recess.until = time.tick + time.tickRate * CHEER;
+    Send(Rang { winners = winners });
+}
+
+event(Won) Cheer(mut Kid kid)
+{
+    kid.wins += 1;
+}
+
+system Steer(Controls input, mut Drive drive, with Owner)
+{
+    drive.move = input.move;
+    drive.dash = input.dash.down;
+}
+
+// Away from the fence, the harder the nearer: a kid that only backs off ends
+// up in a corner.
+float2 OffTheFence(float2 at)
+{
+    var margin = 1.7;
+    mut var way = float2(0);
+    var x = Math.Abs(at.x) - (YARD - margin);
+    var y = Math.Abs(at.y) - (YARD - margin);
+    if (x > 0) way.x = (at.x > 0 ? -1.0 : 1.0) * (x / margin) * 1.8;
+    if (y > 0) way.y = (at.y > 0 ? -1.0 : 1.0) * (y / margin) * 1.8;
+    return way;
+}
+
+// A bot that's it goes for whoever's nearest, a little ahead of them. One that
+// isn't runs from whoever is, and round them rather than straight back. It
+// looks a few times a second, and not too carefully.
+system Think(Kid me, mut Drive drive, mut Brain brain, Recess recess, Time time, query (Kid body) others)
+{
+    drive.dash = false;
+    var amIt = this == recess.it;
+    var noBack = (time.tick - recess.since) * time.dt < NO_BACK;
+    mut var seen = false;
+    mut var itAt = float2(0);
+    mut var any = false;
+    mut var prey = float2(0);
+    mut var near = 1000.0;
+    foreach (var other in others)
+    {
+        if (other.entity == this) continue;
+        if (other.entity == recess.it)
+        {
+            seen = true;
+            itAt = other.body.position;
+        }
+        if (!amIt || other.body.safe > 0) continue;
+        if (noBack && other.entity == recess.tagger) continue;
+        var gap = Math.Distance(other.body.position, me.position);
+        if (gap >= near) continue;
+        near = gap;
+        any = true;
+        prey = other.body.position + other.body.velocity * Math.Min(gap * 0.12, 0.4);
+    }
+
+    var from = me.position - itAt;
+    var far = Math.Length(from);
+    var chased = !amIt && seen && far < 5;
+    brain.think -= time.dt;
+    if (brain.think <= 0)
+    {
+        brain.think = brain.random.NextFloat(0.1, 0.3);
+        if (brain.random.NextInt(14) == 0) brain.veer = -brain.veer;
+        mut var way = float2(0);
+        mut var pace = 1.0;
+        if (amIt)
+        {
+            way = any ? Math.Normalize(prey - me.position) : Math.Normalize(float2(0) - me.position) * 0.5;
+            way += brain.random.NextFloat2Direction() * 0.3;
+        }
+        else if (chased)
+        {
+            var away = far > 0.001 ? from / far : float2(1, 0);
+            way = away + float2(-away.y, away.x) * (brain.veer * 0.7) + OffTheFence(me.position);
+            way += brain.random.NextFloat2Direction() * 0.25;
+        }
+        else
+        {
+            // Nobody's after it: a stroll, back towards the middle of the yard
+            way = brain.heading + brain.random.NextFloat2Direction() * 0.8 - me.position * 0.06 + OffTheFence(me.position);
+            pace = 0.45;
+        }
+        brain.heading = Math.Normalize(way) * pace;
+    }
+    drive.move = brain.heading;
+
+    if (me.cooldown > 0) return;
+    if (amIt && any && near < 2.4 && Math.Dot(Math.Normalize(prey - me.position), me.facing) > 0.85)
+    {
+        drive.dash = brain.random.NextInt(10) == 0;
+    }
+    else if (chased && far < 1.7)
+    {
+        drive.dash = brain.random.NextInt(14) == 0;
+    }
+}
+
+// The fence, the oak and the boulder: nobody walks through them.
+void KeepOut(mut Kid kid, float2 center, float radius)
+{
+    var apart = kid.position - center;
+    var gap = Math.Length(apart);
+    var room = radius + BODY;
+    if (gap >= room || gap < 0.0001) return;
+    var away = apart / gap;
+    kid.position = center + away * room;
+    var into = Math.Dot(kid.velocity, away);
+    if (into < 0) kid.velocity -= away * into;
+}
+
+void KeepIn(mut Kid kid)
+{
+    KeepOut(kid, Oak(), TREE_RADIUS);
+    KeepOut(kid, Rock(), TREE_RADIUS);
+    var edge = YARD - BODY;
+    if (kid.position.x > edge) { kid.position.x = edge; kid.velocity.x = Math.Min(kid.velocity.x, 0); }
+    if (kid.position.x < -edge) { kid.position.x = -edge; kid.velocity.x = Math.Max(kid.velocity.x, 0); }
+    if (kid.position.y > edge) { kid.position.y = edge; kid.velocity.y = Math.Min(kid.velocity.y, 0); }
+    if (kid.position.y < -edge) { kid.position.y = -edge; kid.velocity.y = Math.Max(kid.velocity.y, 0); }
+}
+
+system Move(mut Kid kid, Drive drive, Recess recess, Time time)
+{
+    var dt = time.dt;
+    kid.cooldown = Math.Max(0, kid.cooldown - dt);
+    kid.burst = Math.Max(0, kid.burst - dt);
+    kid.safe = Math.Max(0, kid.safe - dt);
+    kid.wish = drive.dash ? 0.25 : Math.Max(0, kid.wish - dt);
+
+    // Whoever was just caught stands and counts, so the others get away.
+    var it = this == recess.it;
+    var counting = it && (time.tick - recess.since) * time.dt < COUNT;
+    mut var want = counting ? float2(0) : drive.move;
+    var push = Math.Length(want);
+    if (push > 1) want = want / push;
+    if (push > 0.05) kid.facing = Math.Normalize(want);
+
+    // Sand is slow going. The puddle is fast, and there's no turning on it.
+    mut var accel = it ? ACCEL * IT_BOOST : ACCEL;
+    mut var drag = DRAG;
+    if (Math.Distance(kid.position, Sand()) < SAND_RADIUS) accel *= 0.6;
+    if (Math.Distance(kid.position, Puddle()) < PUDDLE_RADIUS)
+    {
+        accel *= 0.3;
+        drag *= 0.22;
+    }
+    kid.velocity += want * (accel * dt);
+    if (kid.wish > 0 && kid.cooldown <= 0 && !counting)
+    {
+        kid.velocity += kid.facing * DASH;
+        kid.cooldown = COOLDOWN;
+        kid.burst = 0.25;
+        kid.wish = 0;
+        Send(Dashed { at = kid.position, way = kid.facing });
+    }
+    kid.velocity = kid.velocity * Math.Max(0, 1 - drag * dt);
+
+    // The roundabout takes whoever's on it round with it.
+    if (Math.LengthSq(kid.position) < SPIN_RADIUS * SPIN_RADIUS)
+    {
+        var c = Math.Cos(SPIN * dt);
+        var s = Math.Sin(SPIN * dt);
+        kid.position = float2(kid.position.x * c - kid.position.y * s, kid.position.x * s + kid.position.y * c);
+    }
+    kid.position += kid.velocity * dt;
+    KeepIn(kid);
+}
+
+// Whoever's it catches the nearest kid they touch, who's it from then on. With
+// nobody it (a round just started, or they left), someone is picked, and so is
+// someone else when one kid has been it too long.
+system Chase(mut Recess recess, Time time, query (Kid kid) all)
+{
+    mut var count = 0;
+    mut var total = 0.0;
+    mut var found = false;
+    mut var at = float2(0);
+    foreach (var row in all)
+    {
+        count += 1;
+        total += row.kid.itTime;
+        if (row.entity != recess.it) continue;
+        found = true;
+        at = row.kid.position;
+    }
+    recess.fair = count > 0 ? total / count : 0;
+    if (count == 0)
+    {
+        recess.it = default;
+        return;
+    }
+    var waited = (time.tick - recess.since) * time.dt;
+    var stuck = found && !recess.cheering && waited >= TOO_LONG && count > 1;
+    if (!found || stuck)
+    {
+        mut var choice = recess.random.NextInt(stuck ? count - 1 : count);
+        mut var next = recess.it;
+        foreach (var row in all)
+        {
+            if (stuck && row.entity == recess.it) continue;
+            if (choice == 0) next = row.entity;
+            choice -= 1;
+        }
+        recess.tagger = stuck ? recess.it : default;
+        recess.it = next;
+        recess.since = time.tick;
+        return;
+    }
+    if (recess.cheering || waited < COUNT) return;
+
+    mut var caught = false;
+    mut var who = recess.it;
+    mut var color = 0;
+    mut var where = at;
+    mut var near = BODY * 2 + REACH;
+    foreach (var row in all)
+    {
+        if (row.entity == recess.it || row.kid.safe > 0) continue;
+        if (waited < NO_BACK && row.entity == recess.tagger) continue;
+        var gap = Math.Distance(row.kid.position, at);
+        if (gap >= near) continue;
+        near = gap;
+        caught = true;
+        who = row.entity;
+        color = row.kid.color;
+        where = (row.kid.position + at) * 0.5;
+    }
+    if (!caught) return;
+    recess.tagger = recess.it;
+    recess.it = who;
+    recess.since = time.tick;
+    Send(Tagged { at = where, caught = color });
+}
+
+// Every kid looks at every other, as they all are now: each takes its own half
+// of the way apart, so nobody's turn comes first.
+system Crowd(Kid me, mut Nudge nudge, query (Kid body) others)
+{
+    nudge.slide = float2(0);
+    foreach (var other in others)
+    {
+        if (other.entity == this) continue;
+        var apart = me.position - other.body.position;
+        var gap = Math.Length(apart);
+        if (gap >= BODY * 2 || gap < 0.0001) continue;
+        nudge.slide += apart / gap * ((BODY * 2 - gap) * 0.5);
+    }
+}
+
+system Settle(mut Kid kid, Nudge nudge)
+{
+    kid.position += nudge.slide;
+    KeepIn(kid);
+}
+
+system Count(mut Kid kid, Recess recess, Time time)
+{
+    if (kid.round != recess.round)
+    {
+        kid.round = recess.round;
+        kid.itTime = 0;
+    }
+    if (this == recess.it && !recess.cheering) kid.itTime += time.dt;
+}

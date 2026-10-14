@@ -66,8 +66,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its resident stamp and digest, and the netcode.
 // Once in the middle of a round, and once after a new game was asked for.
-#define BRAWL_HASH UINT64_C(0xca47def5177fd07e)
-#define MATCH_HASH UINT64_C(0xcfa8f9a0e94757ef)
+#define BRAWL_HASH UINT64_C(0x7c68e09b680a3949)
+#define MATCH_HASH UINT64_C(0x1d1fbad6f1d618bc)
 
 // Timings of a build that isn't optimized say nothing, so there the test that
 // measures does a tenth of it: enough to show that it runs.
@@ -763,7 +763,7 @@ static void frame(const tide_world *w)
     tide_local_frame_time(&local, 1.0f / 60.0f);
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
-    tide_frame(w, NULL, 1.0f, w, &local, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, w, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

@@ -8,17 +8,20 @@
 
 #include "asset_files.h"
 
+#include "fbx_files.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "assets.h"
+#include "audio_files.h"
 #include "folders.h"
+#include "image_files.h"
 #include "sha256.h"
-#include "tide/vorbis.h"
-#include "tide/wav.h"
 #include "tide/sha256.h"
+#include "tide/skinned_data.h"
 
 #ifdef _WIN32
 #define popen _popen
@@ -32,15 +35,38 @@
 typedef struct read_file {
     char *path;
     unsigned long long size, modified;
+    bool changed; // A file notification overrides matching size/time metadata
     uint8_t *data;
     size_t len;
     uint8_t hash[32];
-    bool decoded;          // Tried as a PNG...
-    tide_png_image image;  // ...and what it gave (pixels NULL when it isn't one)
+    bool decoded;          // Tried as an image...
+    tide_png_image image;  // ...and what it gave (pixels NULL when neither decodes)
+    char image_why[256];
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
-    bool sound_tried, sound; // Whether it's a WAV or an Ogg Vorbis file that decodes
-    const char *vorbis_why;  // What's wrong with it as Ogg Vorbis, for a file that starts as one
+    bool sound_tried, sound;
+    char sound_why[256];
+    uint8_t *sound_data; // MP3/FLAC imported as float PCM WAV; raw file bytes remain available separately
+    size_t sound_size;
+    // Tried as a mesh, and what it gave: the mesh, or why not. A .gltf's buffers can be files beside it, so
+    // what was read holds while those are as they were (`sides`)
+    bool mesh_tried, mesh_ok;
+    mesh_file mesh;
+    char mesh_why[256], mesh_note[256];
+    struct mesh_side *sides;
+    int side_count;
+    bool skin_tried, skin_ok;
+    uint8_t *skin;
+    uint32_t skin_size;
+    mesh_file skin_mesh;
+    char skin_why[256], skin_note[256];
+    struct mesh_side *skin_sides;
+    int skin_side_count;
 } read_file;
+
+typedef struct mesh_side {
+    char *path;
+    unsigned long long size, modified;
+} mesh_side;
 
 static struct {
     read_file *items;
@@ -55,10 +81,35 @@ static char *copy_cstr(const char *s)
     return out;
 }
 
+static void forget_mesh(read_file *f)
+{
+    if (f->mesh_ok) mesh_file_free(&f->mesh);
+    for (int i = 0; i < f->side_count; i++) free(f->sides[i].path);
+    free(f->sides);
+    f->sides = NULL;
+    f->side_count = 0;
+    f->mesh_tried = f->mesh_ok = false;
+}
+
+static void forget_skin(read_file *f)
+{
+    if (f->skin_ok) mesh_file_free(&f->skin_mesh);
+    tide_skinned_data_free(f->skin);
+    for (int i = 0; i < f->skin_side_count; i++) free(f->skin_sides[i].path);
+    free(f->skin_sides);
+    f->skin = NULL;
+    f->skin_sides = NULL;
+    f->skin_side_count = 0;
+    f->skin_tried = f->skin_ok = false;
+}
+
 static void forget_file(read_file *f)
 {
+    forget_mesh(f);
+    forget_skin(f);
     free(f->path);
     free(f->data);
+    free(f->sound_data);
     free(f->image.pixels);
     memset(f, 0, sizeof *f);
 }
@@ -71,6 +122,20 @@ void asset_files_forget(void)
     files.count = files.cap = 0;
 }
 
+void asset_files_changed(const char *path)
+{
+    for (int i = 0; i < files.count; i++) {
+        read_file *f = &files.items[i];
+        if (asset_path_same(f->path, path) || asset_path_under(f->path, path)) f->changed = true;
+        for (int k = 0; k < f->side_count && !f->changed; k++) {
+            if (asset_path_same(f->sides[k].path, path) || asset_path_under(f->sides[k].path, path)) f->changed = true;
+        }
+        for (int k = 0; k < f->skin_side_count && !f->changed; k++) {
+            if (asset_path_same(f->skin_sides[k].path, path) || asset_path_under(f->skin_sides[k].path, path)) f->changed = true;
+        }
+    }
+}
+
 // The file at `path`, read: NULL when there's none. Its bytes stay until the
 // file changes or asset_files_forget.
 static read_file *read_at(const char *path)
@@ -81,7 +146,7 @@ static read_file *read_at(const char *path)
     for (int i = 0; i < files.count && !f; i++) {
         if (asset_path_same(files.items[i].path, path)) f = &files.items[i];
     }
-    if (f && f->size == size && f->modified == modified) return f;
+    if (f && !f->changed && f->size == size && f->modified == modified) return f;
     if (!f) {
         if (files.count == files.cap) {
             files.cap = files.cap ? files.cap * 2 : 16;
@@ -489,7 +554,7 @@ static int key_order(const void *a, const void *b)
 
 // The path as written, with its escapes undone and backslashes as forward
 // slashes. Arena.
-static char *written_path(const str text)
+const char *asset_written_path(const str text)
 {
     char *out = arena_alloc((size_t)text.len + 1);
     int n = 0;
@@ -508,7 +573,120 @@ static char *written_path(const str text)
 static const char *kind_name(const asset_kind kind)
 {
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
-         : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : "Grid2<Color>";
+         : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
+         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "AnimationCatalog"
+         : kind == ASSET_ANIMATION ? "Animation" : "Grid2<Color>";
+}
+
+static bool source_extension(const char *path, const char *extension)
+{
+    size_t end = strlen(path);
+    if (asset_path_is_url(path, end)) {
+        const char *authority = strstr(path, "://") + 3;
+        const char *part = authority + strcspn(authority, "/?#");
+        if (*part != '/') return false;
+        end = (size_t)(part - path) + strcspn(part, "?#");
+    }
+    const size_t length = strlen(extension);
+    if (end < length) return false;
+    for (size_t i = 0; i < length; i++) {
+        const char ch = path[end - length + i];
+        if ((ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch) != extension[i]) return false;
+    }
+    return true;
+}
+
+static bool asset_model_format_diagnostic(const char *path, const char *why, const loc at, const bool animations)
+{
+    // Called only after content inspection failed. A renamed glTF is still accepted.
+    // Preserve errors from recognized model content, including unsupported features.
+    if (!why || !strstr(why, "JSON") || strstr(why, "GLB") || strstr(why, "FBX")) return false;
+    if (source_extension(path, ".gltf") || source_extension(path, ".glb") || source_extension(path, ".fbx")) return false;
+    if (source_extension(path, ".obj")) {
+        diag_error(at, "%s asset requires glTF 2.0 (.gltf or .glb) or FBX (.fbx), not OBJ", animations ? "an AnimationCatalog" : "a SkinnedMesh");
+        if (animations) diag_note("export the model's animations as glTF 2.0 or FBX; OBJ contains no animation data");
+        else diag_note("use Mesh<V> and Draw.Mesh for a static OBJ, or export a rigged model as glTF 2.0 or FBX");
+    } else {
+        diag_error(at, "'%s' isn't a supported %s format", path, animations ? "AnimationCatalog" : "SkinnedMesh");
+        diag_note("export %s as glTF 2.0 (.gltf or .glb) or FBX (.fbx); scene files such as .blend, .dae and .usd aren't imported directly",
+                  animations ? "the model's animations" : "the rigged model");
+    }
+    return true;
+}
+
+bool asset_skinned_format_diagnostic(const char *path, const char *why, const loc at)
+{
+    return asset_model_format_diagnostic(path, why, at, false);
+}
+
+bool asset_animations_format_diagnostic(const char *path, const char *why, const loc at)
+{
+    return asset_model_format_diagnostic(path, why, at, true);
+}
+
+// A file a .gltf names beside it: read like any, and noted, so the mesh is
+// read again when it changes. The files' list can move as one is read, so the
+// .gltf's own entry is found again by its path afterwards.
+typedef struct side_reader {
+    const char *folder; // The .gltf's
+    mesh_side *sides;
+    int count;
+} side_reader;
+
+static const uint8_t *read_side(void *user, const char *path, size_t *size)
+{
+    side_reader *s = user;
+    char *abs = asset_path_join(s->folder, path, strlen(path));
+    const read_file *f = read_at(abs);
+    s->sides = realloc(s->sides, sizeof *s->sides * (size_t)(s->count + 1));
+    if (!s->sides) abort();
+    s->sides[s->count++] = (mesh_side){abs, f ? f->size : 0, f ? f->modified : 0}; // One that's missing is noted too: it may come
+    if (!f) return NULL;
+    *size = f->len;
+    return f->data;
+}
+
+// Whether the files a mesh was read with are as they were then.
+static bool sides_same(const read_file *f)
+{
+    for (int i = 0; i < f->side_count; i++) {
+        unsigned long long size = 0, modified = 0;
+        if (!folder_file_info(f->sides[i].path, &size, &modified)) size = modified = 0;
+        if (size != f->sides[i].size || modified != f->sides[i].modified) return false;
+    }
+    return true;
+}
+
+// The portable model's geometry, in the same column layout the ordinary mesh
+// pack writer takes. Skinning keeps these vertices in geometry-local space.
+static mesh_file skin_geometry(const uint8_t *bytes, const uint32_t size)
+{
+    tide_skinned_data_view view;
+    if (!tide_skinned_data_open(bytes, size, &view)) abort();
+    mesh_file m = {0};
+    m.vertices = view.vertices;
+    m.indices = view.indices;
+    m.position = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
+    m.normal = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
+    m.uv = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
+    m.uv2 = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
+    m.color = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
+    m.tangent = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
+    m.index = malloc(sizeof(uint32_t) * (m.indices ? m.indices : 1u));
+    if (!m.position || !m.normal || !m.uv || !m.uv2 || !m.color || !m.tangent || !m.index) abort();
+    for (uint32_t i = 0; i < m.vertices; i++) {
+        tide_skinned_vertex_data v;
+        if (!tide_skinned_data_vertex(&view, i, &v)) abort();
+        memcpy(m.position + 3u * i, v.position, sizeof v.position);
+        memcpy(m.normal + 3u * i, v.normal, sizeof v.normal);
+        memcpy(m.uv + 2u * i, v.uv, sizeof v.uv);
+        memcpy(m.uv2 + 2u * i, v.uv2, sizeof v.uv2);
+        memcpy(m.color + 4u * i, v.color, sizeof v.color);
+        memcpy(m.tangent + 4u * i, v.tangent, sizeof v.tangent);
+    }
+    for (uint32_t i = 0; i < m.indices; i++) if (!tide_skinned_data_index(&view, i, m.index + i)) abort();
+    tide_sha256_of(bytes, size, m.hash);
+    return m;
 }
 
 // Where a missing file might be: one with the same bytes, by the hashes the
@@ -599,36 +777,117 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     if (kind == ASSET_GRID || kind == ASSET_TEXTURE || kind == ASSET_CUBEMAP) {
         if (!f->decoded) {
             f->decoded = true;
-            if (!tide_png_decode(f->data, f->len, &f->image)) f->image = (tide_png_image){0};
+            image_file_read(f->data, f->len, key, &f->image, f->image_why);
         }
         if (!f->image.pixels) {
-            diag_error(at, "'%s' isn't a PNG that decodes", key);
-            diag_note("a %s asset is a PNG; for the file's bytes as they are, read it as a List<byte>", kind_name(kind));
+            diag_error(at, "'%s' can't be imported as an image: %s", key, f->image_why);
+            diag_note("a %s asset accepts PNG, RGB PSD composites, JPEG, TGA or BMP; for the file's bytes as they are, "
+                      "read it as a List<byte>", kind_name(kind));
             return false;
         }
         item->image = f->image;
     } else if (kind == ASSET_CLIP) {
         if (!f->sound_tried) {
             f->sound_tried = true;
-            tide_sound sound;
-            f->sound = tide_wav_decode(f->data, f->len, &sound);
-            if (f->sound) {
-                tide_sound_free(&sound);
-            } else {
-                const char *why = NULL;
-                tide_vorbis *v = tide_vorbis_open(f->data, f->len, &why); // Its headers and pages: no audio is decoded
-                f->sound = v != NULL;
-                tide_vorbis_close(v);
-                if (!f->sound && f->len >= 4 && memcmp(f->data, "OggS", 4) == 0) f->vorbis_why = why;
-            }
+            f->sound = audio_file_read(f->data, f->len, &f->sound_data, &f->sound_size, f->sound_why);
         }
         if (!f->sound) {
-            diag_error(at, "'%s' isn't a WAV or an Ogg Vorbis file that decodes", key);
-            diag_note("a Clip asset is a WAV of PCM or floats, or Ogg Vorbis, of one or two channels; for the file's bytes as "
+            diag_error(at, "'%s' can't be imported as audio: %s", key, f->sound_why);
+            diag_note("a Clip asset accepts PCM or float WAV, Ogg Vorbis, MP3 or FLAC, of one or two channels; for the file's bytes as "
                       "they are, read it as a List<byte>");
-            if (f->vorbis_why) diag_note("as Ogg Vorbis, %s", f->vorbis_why);
             return false;
         }
+        if (f->sound_data) {
+            item->data = f->sound_data;
+            item->size = f->sound_size;
+        }
+    } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION) {
+        const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
+        if (f->skin_tried && !sides_same(&sides_check)) forget_skin(f);
+        if (!f->skin_tried) {
+            char *folder = asset_path_folder(path);
+            side_reader sides = {folder, NULL, 0};
+            uint8_t *bytes = NULL;
+            uint32_t size = 0;
+            char why[256], note[256];
+            uint8_t *fbx_glb = NULL;
+            size_t fbx_glb_size = 0;
+            const bool is_fbx = fbx_file_is(f->data, f->len, key);
+            bool ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
+            if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
+                false, read_side, &sides, &bytes, &size, why, note);
+            if (!ok && !is_fbx && source_extension(key, ".glb") &&
+                (f->len < 4 || memcmp(f->data, "glTF", 4) != 0) &&
+                strstr(why, "JSON")) {
+                snprintf(why, sizeof why, "has an invalid GLB header (expected glTF 2.0)");
+                snprintf(note, sizeof note, "re-export as glTF 2.0 binary (.glb), glTF JSON (.gltf) or FBX (.fbx)");
+            }
+            free(fbx_glb);
+            free(folder);
+            f = read_at(path);
+            if (!f) {
+                tide_skinned_data_free(bytes);
+                for (int i = 0; i < sides.count; i++) free(sides.sides[i].path);
+                free(sides.sides);
+                diag_error(at, "'%s' can't be read (%s)", written, path);
+                return false;
+            }
+            f->skin_tried = true;
+            f->skin_ok = ok;
+            f->skin = bytes;
+            f->skin_size = size;
+            f->skin_sides = sides.sides;
+            f->skin_side_count = sides.count;
+            memcpy(f->skin_why, why, sizeof why);
+            memcpy(f->skin_note, note, sizeof note);
+            if (ok) f->skin_mesh = skin_geometry(bytes, size);
+        }
+        if (!f->skin_ok) {
+            if (!(kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION ? asset_animations_format_diagnostic(key, f->skin_why, at)
+                                          : asset_skinned_format_diagnostic(key, f->skin_why, at))) {
+                diag_error(at, "'%s' %s", key, f->skin_why);
+                if (f->skin_note[0]) diag_note("%s", f->skin_note);
+            }
+            return false;
+        }
+        item->mesh = f->skin_mesh;
+        item->skinned = f->skin;
+        item->skinned_size = f->skin_size;
+        item->side_count = f->skin_side_count;
+        item->sides = arena_alloc(sizeof(char *) * (size_t)(f->skin_side_count ? f->skin_side_count : 1));
+        for (int i = 0; i < f->skin_side_count; i++) item->sides[i] = str_to_cstr(str_from(f->skin_sides[i].path));
+    } else if (kind == ASSET_MESH) {
+        if (f->mesh_tried && !sides_same(f)) forget_mesh(f);
+        if (!f->mesh_tried) {
+            char *folder = asset_path_folder(path);
+            side_reader sides = {folder, NULL, 0};
+            mesh_file mesh = {0};
+            char why[256], note[256];
+            // What it is where its first bytes don't say is its name's to say: as written, as a fetched URL's file has another
+            const bool ok = mesh_file_read(f->data, f->len, key, read_side, &sides, &mesh, why, note);
+            free(folder);
+            f = read_at(path); // Where it is now: reading a file beside it may have moved the list
+            if (!f) {
+                diag_error(at, "'%s' can't be read (%s)", written, path);
+                return false;
+            }
+            f->mesh_tried = true;
+            f->mesh_ok = ok;
+            f->mesh = mesh;
+            f->sides = sides.sides;
+            f->side_count = sides.count;
+            memcpy(f->mesh_why, why, sizeof why);
+            memcpy(f->mesh_note, note, sizeof note);
+        }
+        if (!f->mesh_ok) {
+            diag_error(at, "'%s' %s", key, f->mesh_why);
+            if (f->mesh_note[0]) diag_note("%s", f->mesh_note);
+            return false;
+        }
+        item->mesh = f->mesh;
+        item->side_count = f->side_count;
+        item->sides = arena_alloc(sizeof(char *) * (size_t)(f->side_count ? f->side_count : 1));
+        for (int i = 0; i < f->side_count; i++) item->sides[i] = str_to_cstr(str_from(f->sides[i].path));
     } else if (kind == ASSET_TEXT) {
         if (!f->utf8_known) {
             f->utf8_known = true;
@@ -723,11 +982,21 @@ static bool order_cube(asset_value *v, const char *written, const loc at)
     return true;
 }
 
-asset_value *asset_resolve(const char *declaring_as_given, const str path, const asset_kind kind, const bool many, const bool is_map,
-                           const loc at, const char *game_folder)
+static bool resolve_item(asset_match *item, const char *key, const char *absolute, const asset_kind kind,
+                         const char *written, const loc at, const bool paths_only)
+{
+    if (!paths_only) return read_item(item, key, absolute, kind, written, at);
+    item->key = str_to_cstr(str_from(key));
+    item->abs = absolute ? str_to_cstr(str_from(absolute)) : NULL;
+    return true;
+}
+
+static asset_value *asset_resolve_impl(const char *declaring_as_given, const str path, const asset_kind kind,
+                                      const bool many, const bool is_map, const loc at, const char *game_folder,
+                                      const bool paths_only)
 {
     char *declaring = declaring_abs(declaring_as_given);
-    const char *written = written_path(path);
+    const char *written = asset_written_path(path);
     if (!*written) {
         diag_error(at, "an asset's path can't be empty: write where the file is from this one, like \"art/hero.png\"");
         free(declaring);
@@ -739,17 +1008,13 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
     v->kind = kind;
     v->many = many;
     v->is_map = is_map;
+    v->paths_only = paths_only;
     const bool url = asset_path_is_url(written, strlen(written));
     const bool glob = !url && asset_path_is_glob(written, strlen(written));
     if (kind == ASSET_CUBEMAP && !glob) {
         diag_error(at, "a Cubemap is six files, its faces, and '%s' names one: write a glob that matches the six", written);
         diag_note("like \"art/sky_??.png\", for files named for their faces by how their names end: sky_px.png, sky_nx.png, "
                   "sky_py.png, sky_ny.png, sky_pz.png and sky_nz.png");
-        free(folder);
-        return NULL;
-    }
-    if (url && many) {
-        diag_error(at, "a URL is one file, and the type holds many: write the type as '%s'", kind_name(kind));
         free(folder);
         return NULL;
     }
@@ -760,15 +1025,14 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
         free(folder);
         return NULL;
     }
-    if (!glob && many) {
-        diag_error(at, "the type holds many files, and '%s' names one", written);
-        diag_note("write a glob, like \"art/*.png\" ('*' within a name, '**' across folders, '?' a character), or the type as '%s'",
-                  kind_name(kind));
-        free(folder);
-        return NULL;
-    }
+    // One file, or a URL, where the type holds many is a list or a map of that one, its key the path as written: a
+    // declaration's path can go from a file to a glob and back with its type, and the code that reads it, as they are
     bool ok = true;
-    if (url) {
+    if (url && paths_only) {
+        v->items = arena_alloc(sizeof(asset_match));
+        v->count = 1;
+        resolve_item(&v->items[0], written, NULL, kind, written, at, true);
+    } else if (url) {
         const fetched *f = fetch_url(written, game_folder);
         if (!f->path) {
             diag_error(at, "'%s' can't be fetched: %s", written, f->failed);
@@ -804,7 +1068,8 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
             qsort(pairs, (size_t)w.keys.count, sizeof(char *) * 2u, key_order);
             v->items = arena_alloc(sizeof(asset_match) * (size_t)w.keys.count);
             v->count = w.keys.count;
-            for (int i = 0; i < w.keys.count && ok; i++) ok = read_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at);
+            for (int i = 0; i < w.keys.count && ok; i++)
+                ok = resolve_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at, paths_only);
             free(pairs);
             if (ok && kind == ASSET_CUBEMAP) ok = order_cube(v, written, at);
         }
@@ -818,7 +1083,7 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
         } else {
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
-            ok = read_item(&v->items[0], written, abs, kind, written, at);
+            ok = resolve_item(&v->items[0], written, abs, kind, written, at, paths_only);
         }
         free(abs);
     }
@@ -826,9 +1091,21 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
     return ok ? v : NULL;
 }
 
+asset_value *asset_resolve(const char *declaring, const str path, const asset_kind kind, const bool many,
+                           const bool is_map, const loc at, const char *game_folder)
+{
+    return asset_resolve_impl(declaring, path, kind, many, is_map, at, game_folder, false);
+}
+
+asset_value *asset_resolve_paths(const char *declaring, const str path, const asset_kind kind, const bool many,
+                                 const bool is_map, const loc at, const char *game_folder)
+{
+    return asset_resolve_impl(declaring, path, kind, many, is_map, at, game_folder, true);
+}
+
 void asset_watched(const char *declaring_as_given, const str path, asset_path_fn found, void *user)
 {
-    const char *written = written_path(path);
+    const char *written = asset_written_path(path);
     if (!*written || asset_path_is_url(written, strlen(written))) return;
     char *declaring = declaring_abs(declaring_as_given);
     char *folder = asset_path_folder(declaring);
@@ -856,7 +1133,7 @@ void asset_files_save_hashes(const char *game_folder, const asset_named *named, 
     asset_hashes_load(&known, game_folder);
     for (int i = 0; i < count; i++) {
         const asset_named *n = &named[i];
-        const char *written = written_path(n->path);
+        const char *written = asset_written_path(n->path);
         if (!*written || asset_path_is_url(written, strlen(written))) continue;
         if (n->value) {
             for (int k = 0; k < n->value->count; k++) {

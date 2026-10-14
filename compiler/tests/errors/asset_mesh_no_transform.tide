@@ -1,0 +1,17 @@
+// expect: a 3D mesh takes the transform that places it in the world, a float4x4, after its indices
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> quad = "../e2e/assets/meshes/quad.glb";
+
+view Show()
+{
+    Draw.Mesh(quad);
+}
+
+scene Main
+{
+}

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "builtins.h"
 #include "lexer.h"
 
 static char *read_file(const char *path, size_t *len)
@@ -48,24 +49,62 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     for (int i = 0; i < count; i++) {
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
+    bool web = false, overlay_found = false; // A file names Web.Request's types, which are Tide's own code
     for (int i = 0; i < count; i++) {
         source *src = NEW(source);
         src->path = inputs[i].path;
         src->package = inputs[i].package;
-        char *text = read_file(inputs[i].path, &src->len);
+        char *text;
+        const bool overlay = opts->editor_source && opts->editor_text &&
+#ifdef _WIN32
+            _stricmp(inputs[i].path, opts->editor_source) == 0;
+#else
+            strcmp(inputs[i].path, opts->editor_source) == 0;
+#endif
+        if (overlay) {
+            overlay_found = true;
+            src->len = strlen(opts->editor_text);
+            text = arena_alloc(src->len + 1);
+            memcpy(text, opts->editor_text, src->len + 1);
+        } else text = read_file(inputs[i].path, &src->len);
         if (!text) {
             fprintf(stderr, "tidec: can't read %s\n", inputs[i].path);
             return false;
         }
         src->text = text;
         diag_add_source(src);
+        web |= web_prelude_wanted(text, src->len);
 
         token *toks = lex(src);
         if (!toks) return false;
         if (!parse_file(prog, src, toks, false)) return false;
     }
+    if (opts->editor_source && !overlay_found) {
+        fprintf(stderr, "tide: preview source is not in the selected project: %s\n", opts->editor_source);
+        return false;
+    }
+    if (web) {
+        source *src = NEW(source);
+        src->path = WEB_PRELUDE_PATH;
+        src->text = web_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+    }
 
     diag_phase("lexing and parsing");
+    if (opts->editor_prefab) {
+        source *src = NEW(source);
+        src->path = "<tide-editor-preview>";
+        sb factory = {0};
+        sb_printf(&factory, "%s TideEditorPreviewCreate() { return %sSpawn(%s); }", opts->editor_local ? "LocalEntity" : "Entity", opts->editor_local ? "local " : "", opts->editor_prefab);
+        src->text = factory.data; src->len = factory.len;
+        diag_add_source(src);
+        const int before = prog->decls.count;
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+        prog->editor_create = prog->decls.items[before];
+    }
     prog->game_folder = opts->game_folder;
     if (!check(prog)) return false;
 

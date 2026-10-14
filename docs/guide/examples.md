@@ -30,35 +30,39 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [Rooms that load and unload](../game/scenes.md#loading-and-unloading): scenes, and the entities that go with them.
 - [A countdown, and a dash](../game/tasks.md): async handlers that wait.
 - [An input, sampled and read](../game/input.md): the devices, the input and the system that reads it.
+- [The pointer and individual fingers](../game/input.md#touch): held buttons, press edges, touch slots and screen coordinates.
 - [Heat that spreads](../language/grids.md#going-through-every-cell): a grid, and a parallel loop over its cells.
 
 ## Physics
 
-- [Crates, balls and a floor](../physics/box2d.md#a-first-world): Box2D's bodies as components, with crates to kick and balls to drop.
-- [A wall of crates, and balls to throw](../physics/box3d.md#a-first-world): the same with Box3D, through a 3D camera.
+- [Crates, balls and a floor](../packages/box2d.md#a-first-world): Box2D's bodies as components, with crates to kick and balls to drop.
+- [A wall of crates, and balls to throw](../packages/box3d.md#a-first-world): the same with Box3D, through a 3D camera.
 - [Towers walkthrough](./towers.md): steering kinematic bricks, landing them as dynamic bodies, and building the input, lobby and views around a Box2D match.
 - [Sumo walkthrough](./sumo.md): driving balls with impulses, replacing floor bodies as tiles fall, and drawing a large Box3D arena with instancing and shadows.
 
 ## What a machine shows
 
 - [A view draws the world](../game/views.md): cameras, and screen and world coordinates.
-- [Opacity in 2D and 3D](../game/views.md#transparency): a shape and two translucent panes, with solid objects behind and in front.
+- [Opacity in 2D and 3D](../game/draw-settings.md#transparency): a shape and two translucent panes, with solid objects behind and in front.
 - [Five ticks a second, drawn every frame](../game/views.md#smooth-at-any-tick-rate): what views see between ticks.
 - [Smooth shapes](../game/views.md#smooth-shapes): round rects, ellipses, arcs, outlines and soft edges.
 - [A sprite from a file](../game/assets.md#declaring-an-asset): a PNG packed with the game, drawn as a texture and read by the match.
+- [A model from a file](../game/assets.md#meshes): a glTF as one mesh of a vertex struct, lit by a frag.
 - [Anchors, sizes and weights](../game/views.md#measuring-text): text, where it's placed and how big it is.
-- [A grid, drawn as a texture](../game/views.md#textures): a `Grid2<Color>` to paint on.
-- [A texture, past its edges](../game/views.md#past-the-edges): clamped, repeated and mirrored.
-- [A lens, cut out of a wall](../game/views.md#stencil): a shape stored in stencil, and what's drawn inside it and outside it.
-- [Primitives through a 3D camera](../game/views.md#primitives): cubes, a sphere, a cylinder and a plane.
-- [A scene through a frag](../game/views.md#targets-and-post-processing): a render target, blitted to the window.
+- [A grid, drawn as a texture](../game/meshes-and-textures.md#textures): a `Grid2<Color>` to paint on.
+- [A texture, past its edges](../game/meshes-and-textures.md#past-the-edges): clamped, repeated and mirrored.
+- [A lens, cut out of a wall](../game/draw-settings.md#stencil): a shape stored in stencil, and what's drawn inside it and outside it.
+- [Primitives through a 3D camera](../game/3d.md#primitives): cubes, a sphere, a cylinder and a plane.
+- [A scene through a frag](../game/render-targets.md#post-processing): a render target, blitted to the window.
 - [A frag and a vert](../game/shaders.md): code of the game's on the GPU.
 - [Lighting, in a frag](../game/shaders.md#where-the-pixel-is): a vertex with a normal, lit pixel by pixel.
 - [A shadow map](../game/shaders.md#a-shadow-map): what casts drawn into a target of depth alone, and a frag that compares.
 - [A sky, and a ball that reflects what's around it](../game/shaders.md#skybox-and-reflections): a `Cubemap` of six files, and one drawn into a face at a time.
 - [Three images from one frag](../game/shaders.md#several-outputs): a target of several colors, filled in one pass and lit in a second.
 - [A list of motes, in one draw](../game/shaders.md#instances-from-a-list): thousands of instances from a list.
+- [Grain and sparks, rolled by the GPU](../game/shaders.md#random-numbers): a frag that rolls for each pixel, and a hash that holds still.
 - [Local entities, and no match](../game/local-state.md#views-change-local-state): particles that are one machine's own.
+- [A small synthesizer](../game/audio.md#making-a-sound): an audio source with frequency and volume knobs, and a waveform preview.
 
 ## The GUI
 
@@ -73,5 +77,6 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [Noise, drawn by the GPU](../language/math.md#noise): Perlin, simplex and cellular noise, with octaves and a seed.
 - [The same seed, the same numbers](../language/math.md#seeds): a `Random` and its seed.
 - [A list, changed and sorted](../language/text-and-lists.md#sorting): a list's members, a button each.
+- [Scores by name, and tags each once](../language/text-and-lists.md#maps-and-sets): map insertion and lookup, set deduplication, removal and insertion order.
 
 [Samples](./samples.md) collects full games to play. The [Duel code tour](./duel.md), [Towers walkthrough](./towers.md) and [Sumo walkthrough](./sumo.md) explain how three of them are built.

@@ -14,14 +14,18 @@ typedef struct build_options {
     bool stats_open;    // ...which starts open: tide run's, for whoever typed --stats to read them
     bool debug_views;   // The debug views are on, whatever the game's debugViews setting says: F7 shows the profiler
     // The symbols every file's #if conditions read as defined: --define's, and DEBUG without --release
-    const char *defines[64];
+    const char *const *defines; // Kept by the caller for the build and every watched rebuild
     int define_count;
+    const char *editor_prefab, *editor_source, *editor_draft;
+    bool editor_local;
 } build_options;
 
 // Builds a game with the engine files installed in `root` (see AGENTS.md,
 // Packaging). Returns the program's path (malloc'd), or NULL after reporting
 // what went wrong.
 char *tide_build(const char *root, const build_options *opts);
+// Internal authoring module build; output is a private directory owned by the editor.
+char *tide_build_editor(const char *root, const build_options *opts);
 
 // Builds a standalone program and runs it once (a run with no window). `args` go to the
 // game (--host, --join, --connect, --size, and a run with no window's), ending

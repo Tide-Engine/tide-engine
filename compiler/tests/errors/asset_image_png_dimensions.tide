@@ -1,0 +1,3 @@
+// expect: PNG image is 20000 by 6 pixels; images can be at most 16384 pixels each way
+asset Texture image = "../e2e/assets/images/bad/large.png";
+scene Main { }

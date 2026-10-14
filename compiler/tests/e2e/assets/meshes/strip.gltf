@@ -1,0 +1,98 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "scale": [
+        -1,
+        1,
+        1
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1
+          },
+          "indices": 2,
+          "mode": 5
+        }
+      ]
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 12,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5125,
+      "count": 4,
+      "type": "SCALAR",
+      "sparse": {
+        "count": 2,
+        "indices": {
+          "bufferView": 2,
+          "componentType": 5123
+        },
+        "values": {
+          "bufferView": 3
+        }
+      }
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 96,
+      "byteStride": 24
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 16
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 112,
+      "byteLength": 4
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 116,
+      "byteLength": 8
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "strip.bin",
+      "byteLength": 124
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+// The rest of the game's settings: a block in another file, which reads its
+// own file's names.
+
+namespace Tools;
+
+const bool PROFILED = true;
+const int SEATS = 4;
+
+settings
+{
+    debugViews = PROFILED;
+    maxPlayers = SEATS;
+}

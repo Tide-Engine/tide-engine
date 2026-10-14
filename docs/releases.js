@@ -23,8 +23,9 @@ const filePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const listAge = 60_000;
 const linkAge = 180_000;
 const tagsKept = 256;
+const movesFollowed = 3;
 
-export function createReleases({ token, repo, fetch = globalThis.fetch, now = Date.now } = {}) {
+export function createReleases({ token, repo, fetch = globalThis.fetch, now = Date.now, onDownload } = {}) {
     const headers = { authorization: `Bearer ${token}`, 'user-agent': 'tide-releases', 'x-github-api-version': '2022-11-28' };
     let list = null; // { at, releases }
     let asking = null;
@@ -80,11 +81,21 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
         return found;
     };
 
+    // A repository that was renamed or moved answers under its old name with
+    // where it is now, on GitHub's API, before the redirect to the file. That
+    // one is followed, as the token is GitHub's API's alone to see; the file's
+    // is handed on.
     const link = async (id) => {
         const had = links.get(id);
         if (had && now() - had.at < linkAge) return had.location;
-        const response = await fetch(`${api}/repos/${repo}/releases/assets/${id}`,
-            { headers: { ...headers, accept: 'application/octet-stream' }, redirect: 'manual' });
+        let url = `${api}/repos/${repo}/releases/assets/${id}`;
+        let response;
+        for (let moves = 0; ; moves++) {
+            response = await fetch(url, { headers: { ...headers, accept: 'application/octet-stream' }, redirect: 'manual' });
+            const moved = response.headers.get('location');
+            if (moves === movesFollowed || ![301, 307, 308].includes(response.status) || !moved?.startsWith(`${api}/`)) break;
+            url = moved;
+        }
         const location = response.headers.get('location');
         if (response.status !== 302 || !location) throw new Error(`GitHub answered ${response.status} for a download`);
         for (const [key, value] of links) if (now() - value.at >= linkAge) links.delete(key);
@@ -129,6 +140,16 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
             const asset = found?.assets.find((a) => a.name === file);
             if (!asset) { text(res, 404, 'There is no such file.\n'); return true; }
             res.writeHead(302, { location: await link(asset.id), 'cache-control': 'no-store' }).end();
+            // This counts archive redirect requests, including installers and
+            // `tide upgrade`. A redirect does not prove a completed download.
+            const archive = /^tide-((?:windows|linux|macos)-(?:x64|arm64))\.(?:zip|tar\.gz)$/.exec(file);
+            if (req.method === 'GET' && archive && onDownload) {
+                const event = { version: found.tag, platform: archive[1],
+                    channel: found.tag.includes('-nightly.') ? 'nightly' : found.prerelease ? 'prerelease' : 'stable' };
+                Promise.resolve().then(() => onDownload(event)).catch(() => {
+                    console.error('analytics: a download request could not be recorded');
+                });
+            }
         } catch (error) {
             console.error(`releases: ${error.message}`);
             text(res, 502, 'The releases could not be reached. Try again in a moment.\n');

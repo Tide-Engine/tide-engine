@@ -1,0 +1,3 @@
+// expect: '../e2e/assets/psds/bad/large.psb' can't be imported as an image: PSD image isn't PSD version 1; export PSB as a PSD or PNG
+asset Texture image = "../e2e/assets/psds/bad/large.psb";
+scene Main { }

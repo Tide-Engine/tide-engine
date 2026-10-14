@@ -37,7 +37,7 @@ static void show(const int op, const int count, const int seed)
     local.Shown.count = count;
     local.Shown.seed = seed;
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
 // Whether a list is the `count` bytes C makes from `seed`, but the one at `poked` (-1: none), which is another.

@@ -1,3 +1,4 @@
+#include <float.h>
 #include <string.h>
 
 #include "tide/gui.h"
@@ -152,6 +153,152 @@ TIDE_TEST(gui_toggle_and_slider_change_values)
         end();
     }
     TIDE_CHECK(volume == 0.25f);
+}
+
+static bool int_slider_frame(int32_t *value, const int32_t min, const int32_t max)
+{
+    begin();
+    const bool changed = tide_gui_int_slider(&gui, 10, (tide_rect){0, 0, 300, 28}, "", value, min, max);
+    end();
+    return changed;
+}
+
+TIDE_TEST(gui_int_sliders_step_by_one_across_the_int_range)
+{
+    static const struct {
+        int32_t min, max, initial, right, left;
+    } cases[] = {
+        {2000000000, 2000000010, 2000000005, 2000000006, 2000000005},
+        {-2000000010, -2000000000, -2000000005, -2000000004, -2000000005},
+        {INT32_MIN, INT32_MAX, 0, 1, 0},
+        {0, INT32_MAX, 1073741823, 1073741824, 1073741823},
+        {INT32_MIN, INT32_MAX, INT32_MAX, INT32_MAX, INT32_MAX - 1},
+        {INT32_MIN, INT32_MAX, INT32_MIN, INT32_MIN + 1, INT32_MIN},
+        {INT32_MAX, INT32_MIN, 0, -1, 0},
+        {2000000010, 2000000000, 2000000005, 2000000004, 2000000005},
+        {7, 7, 7, 7, 7},
+        {7, 7, 0, 7, 7},
+        {10, 20, 0, 11, 10},
+        {10, 20, 30, 20, 19},
+    };
+    for (int pad = 0; pad < 2; pad++) {
+        for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+            start();
+            gui.focus = 10;
+            devices.gamepad.connected = pad != 0;
+            int32_t value = cases[i].initial;
+            TIDE_CHECK(!int_slider_frame(&value, cases[i].min, cases[i].max));
+            TIDE_CHECK(value == cases[i].initial); // An interaction is what clamps it.
+            tide_button *right = pad ? &devices.gamepad.dpad.right : &devices.keyboard.rightArrow;
+            tide_button *left = pad ? &devices.gamepad.dpad.left : &devices.keyboard.leftArrow;
+            key(right, true);
+            TIDE_CHECK(int_slider_frame(&value, cases[i].min, cases[i].max) == (cases[i].right != cases[i].initial));
+            TIDE_CHECK(value == cases[i].right);
+            key(right, false);
+            int_slider_frame(&value, cases[i].min, cases[i].max);
+            key(left, true);
+            TIDE_CHECK(int_slider_frame(&value, cases[i].min, cases[i].max) == (cases[i].left != cases[i].right));
+            TIDE_CHECK(value == cases[i].left);
+            TIDE_CHECK(gui.focus == 10);
+        }
+    }
+}
+
+TIDE_TEST(gui_int_sliders_place_large_values_on_the_track)
+{
+    for (int reversed = 0; reversed < 2; reversed++) {
+        start();
+        const int32_t min = reversed ? 2000000010 : 2000000000;
+        const int32_t max = reversed ? 2000000000 : 2000000010;
+        int32_t value = 2000000005;
+        TIDE_CHECK(!int_slider_frame(&value, min, max));
+        TIDE_REQUIRE(draw.count > 0);
+        TIDE_CHECK(draw.commands[draw.count - 1u].a.x == 122.0f); // The thumb is halfway along the track.
+        mouse(6.0f, 14.0f, true);
+        TIDE_CHECK(int_slider_frame(&value, min, max));
+        TIDE_CHECK(value == min);
+        mouse(238.0f, 14.0f, true);
+        TIDE_CHECK(int_slider_frame(&value, min, max));
+        TIDE_CHECK(value == max);
+        mouse(122.0f, 14.0f, true);
+        TIDE_CHECK(int_slider_frame(&value, min, max));
+        TIDE_CHECK(value == 2000000005);
+    }
+}
+
+static bool float_slider_frame(float *value, const float min, const float max)
+{
+    begin();
+    const bool changed = tide_gui_slider(&gui, 10, (tide_rect){0, 0, 300, 28}, "", value, min, max);
+    end();
+    return changed;
+}
+
+TIDE_TEST(gui_float_sliders_keep_finite_ranges_finite)
+{
+    for (int reversed = 0; reversed < 2; reversed++) {
+        start();
+        const float min = reversed ? FLT_MAX : -FLT_MAX;
+        const float max = -min;
+        float value = 0.0f;
+        TIDE_CHECK(!float_slider_frame(&value, min, max));
+        TIDE_REQUIRE(draw.count > 0);
+        TIDE_CHECK(draw.commands[draw.count - 1u].a.x == 122.0f);
+        mouse(6.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == min);
+        mouse(238.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == max);
+        mouse(122.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == 0.0f);
+        mouse(64.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == min * 0.5f);
+        mouse(180.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == max * 0.5f);
+    }
+}
+
+TIDE_TEST(gui_float_sliders_step_with_extreme_finite_bounds)
+{
+    for (int reversed = 0; reversed < 2; reversed++) {
+        start();
+        gui.focus = 10;
+        const float min = reversed ? FLT_MAX : -FLT_MAX;
+        const float max = -min;
+        float value = 0.0f;
+        TIDE_CHECK(!float_slider_frame(&value, min, max));
+        key(&devices.keyboard.rightArrow, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value >= -FLT_MAX && value <= FLT_MAX);
+        TIDE_CHECK(reversed ? value < 0.0f : value > 0.0f);
+        key(&devices.keyboard.rightArrow, false);
+        float_slider_frame(&value, min, max);
+        key(&devices.keyboard.leftArrow, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value >= -FLT_MAX && value <= FLT_MAX);
+        TIDE_CHECK(value > -FLT_MAX * 0.000001f && value < FLT_MAX * 0.000001f);
+    }
+}
+
+TIDE_TEST(gui_int_slider_steps_keep_their_input_precedence)
+{
+    start();
+    int32_t value = 2000000005;
+    gui.focus = 10;
+    int_slider_frame(&value, 2000000000, 2000000010);
+    // A pointer already held before the keys go down; their step wins over its position.
+    mouse(6.0f, 14.0f, true);
+    int_slider_frame(&value, 2000000000, 2000000010);
+    value = 2000000005;
+    gui.focus = 10;
+    key(&devices.keyboard.leftArrow, true);
+    key(&devices.keyboard.rightArrow, true);
+    TIDE_CHECK(int_slider_frame(&value, 2000000000, 2000000010));
+    TIDE_CHECK(value == 2000000006); // Right wins when both keys went down.
 }
 
 TIDE_TEST(gui_ids_tell_loops_apart)
@@ -526,6 +673,112 @@ TIDE_TEST(gui_a_finger_on_an_area_or_a_disabled_widget_is_never_the_games)
     TIDE_CHECK(!area_frame(true));
 }
 
+// A frame's GUI after a sample: a menu in the middle of the screen, a title
+// over two buttons. Returns which were pressed (bits 0 and 1).
+static int titled_frame(void)
+{
+    tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
+    const int area = tide_gui_begin_area_at(&gui, 99, TIDE_ANCHOR_MIDDLE_CENTER);
+    tide_gui_layout_label(&gui, "Tag");
+    const bool a = tide_gui_layout_button(&gui, 10, "Play");
+    const bool b = tide_gui_layout_button(&gui, 20, "Quit");
+    tide_gui_close(&gui, area);
+    end();
+    return (a ? 1 : 0) | (b ? 2 : 0);
+}
+
+// A finger presses the button it touches, whatever the mouse rests on: a
+// laptop with a touchscreen has both. Here the mouse is on the menu's own
+// panel, over its title, so the panel was on top where the last frame saw the
+// pointer, and the button is where the pointer is now.
+TIDE_TEST(gui_a_finger_presses_a_button_of_the_menu_the_mouse_rests_on)
+{
+    start();
+    // The menu is 118 tall, around the screen's middle: the title's middle is
+    // at 507, Play's at 540 and Quit's at 573.
+    for (int frame = 0; frame < 3; frame++) {
+        TIDE_CHECK(!mouse_sample(960.0f, 507.0f, false));
+        TIDE_CHECK(titled_frame() == 0);
+    }
+    TIDE_CHECK(gui.hot == 99); // The panel: the title is no widget
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 960.0f, 540.0f));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.active == 10);
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_ENDED, NONE, 960.0f, 540.0f));
+    TIDE_CHECK(titled_frame() == 1);
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(titled_frame() == 0);
+
+    // A tap between two frames, too, once the mouse has moved, and is the pointer again.
+    TIDE_CHECK(!mouse_sample(960.0f, 510.0f, false));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.hot == 99);
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, TIDE_TOUCH_ENDED, 960.0f, 573.0f));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.active == 20);
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(titled_frame() == 2);
+
+    // And the mouse itself, which goes from the title to Quit and presses
+    // between two frames: the GUI never saw it on Quit.
+    TIDE_CHECK(!mouse_sample(960.0f, 507.0f, false));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.hot == 99);
+    TIDE_CHECK(!mouse_sample(960.0f, 573.0f, true));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.active == 20);
+    TIDE_CHECK(!mouse_sample(960.0f, 573.0f, false));
+    TIDE_CHECK(titled_frame() == 2);
+}
+
+// A frame's GUI after a sample, with widgets over one another: a view's
+// control with a button on it, and a button with an area's panel over it,
+// which has a button of its own.
+static void stacked_frame(void)
+{
+    tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
+    tide_gui_control(&gui, 1, (tide_rect){0.0f, 0.0f, 400.0f, 400.0f});
+    tide_gui_button(&gui, 2, (tide_rect){100.0f, 100.0f, 200.0f, 40.0f}, "On the control");
+    tide_gui_button(&gui, 3, (tide_rect){900.0f, 600.0f, 200.0f, 40.0f}, "Under the panel");
+    const int area = tide_gui_begin_area(&gui, 99, (tide_rect){800.0f, 400.0f, 400.0f, 300.0f});
+    tide_gui_layout_button(&gui, 4, "On the panel");
+    tide_gui_close(&gui, area);
+    end();
+}
+
+// Where widgets are over one another, a press is the one's on top from the
+// frame it lands in, with nothing before it: a finger hovers nothing first.
+TIDE_TEST(gui_a_finger_presses_the_widget_on_top)
+{
+    start();
+    for (int frame = 0; frame < 2; frame++) {
+        finger_sample(NONE, NONE, 0.0f, 0.0f);
+        stacked_frame();
+    }
+    // The button on the control, not the control under it.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 150.0f, 120.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 2);
+    finger_sample(TIDE_TOUCH_ENDED, NONE, 150.0f, 120.0f);
+    stacked_frame();
+    // The control, beside its button.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 50.0f, 50.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 1);
+    finger_sample(TIDE_TOUCH_ENDED, NONE, 50.0f, 50.0f);
+    stacked_frame();
+    // The panel hides the button under it: nothing is pressed, and it's still the GUI's.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 950.0f, 620.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 0);
+    finger_sample(TIDE_TOUCH_ENDED, NONE, 950.0f, 620.0f);
+    stacked_frame();
+    // The panel's own button is over the panel.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 820.0f, 420.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 4);
+}
+
 // A frame's GUI after a sample: the Play button, and two views, the first with
 // a widget of its own at `rect`, which it says each frame. Returns whether the
 // first view read a press (bit 0), and the second (bit 1).
@@ -630,6 +883,33 @@ TIDE_TEST(gui_widgets_past_those_remembered_hide_a_frame_late)
     many_buttons();
     TIDE_CHECK(gui.over && gui.active == 0);
     TIDE_CHECK(!mouse_sample(x, y, true));
+}
+
+// A frame of a big button, as many small ones as a frame remembers the places
+// of, and one more on the big one, whose place isn't remembered.
+static void button_past_those_remembered(void)
+{
+    tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
+    tide_gui_button(&gui, 5000, (tide_rect){0.0f, 600.0f, 400.0f, 300.0f}, "");
+    for (uint32_t i = 0; i + 1 < TIDE_GUI_MAX_RECTS; i++) {
+        tide_gui_button(&gui, i + 1, (tide_rect){(float)(i % 64) * 30.0f, (float)(i / 64) * 30.0f, 28.0f, 28.0f}, "");
+    }
+    tide_gui_button(&gui, 6000, (tide_rect){100.0f, 700.0f, 100.0f, 40.0f}, "");
+    end();
+}
+
+// Which widget is on top goes by the places a frame remembers. Past those,
+// it's as the last frame saw the pointer, as it was for every widget before:
+// one that's over a widget whose place is remembered still takes the press.
+TIDE_TEST(gui_a_widget_past_those_remembered_is_on_top_a_frame_late)
+{
+    start();
+    mouse_sample(150.0f, 720.0f, false);
+    button_past_those_remembered();
+    TIDE_CHECK(gui.rects_full && gui.hot == 6000);
+    TIDE_CHECK(!mouse_sample(150.0f, 720.0f, true));
+    button_past_those_remembered();
+    TIDE_CHECK(gui.active == 6000);
 }
 
 TIDE_TEST(gui_mouse_over_the_gui_is_hidden)
@@ -775,6 +1055,59 @@ TIDE_TEST(gui_horizontal_groups_sit_side_by_side)
     const tide_draw_command *c = &draw.commands[5];
     TIDE_CHECK(a->a.y == b->a.y && b->a.x > a->a.x);
     TIDE_CHECK(c->a.y == a->a.y + 28.0f + 5.0f);
+}
+
+TIDE_TEST(gui_colliding_containers_keep_their_layout_sizes)
+{
+    start();
+    const uint32_t first = 17, second = first + TIDE_GUI_MAX_SIZES;
+    const float first_width = tide_draw_guess_text("XXXXXXXXXX", 16.0f, NULL, TIDE_FONT_REGULAR).x + 20.0f;
+    const float second_width = tide_draw_guess_text("YYYYYYYYYYYYYYYY", 16.0f, NULL, TIDE_FONT_REGULAR).x + 20.0f;
+    for (int frame = 0; frame < 4; frame++) {
+        begin();
+        int depth = tide_gui_begin_vertical(&gui, first);
+        if (frame) TIDE_CHECK(gui.groups[gui.depth].stretch == first_width);
+        tide_gui_layout_button(&gui, 10, "A");
+        tide_gui_layout_button(&gui, 20, "XXXXXXXXXX");
+        tide_gui_close(&gui, depth);
+        depth = tide_gui_begin_vertical(&gui, second);
+        if (frame) TIDE_CHECK(gui.groups[gui.depth].stretch == second_width);
+        tide_gui_layout_button(&gui, 30, "B");
+        tide_gui_layout_button(&gui, 40, "YYYYYYYYYYYYYYYY");
+        tide_gui_close(&gui, depth);
+        end();
+        if (frame) {
+            float left, right;
+            rect_edges(0, &left, &right);
+            TIDE_CHECK(right - left == first_width);
+            rect_edges(2, &left, &right);
+            TIDE_CHECK(right - left == second_width);
+        }
+    }
+}
+
+TIDE_TEST(gui_size_cache_reuses_old_containers_when_full)
+{
+    start();
+    begin();
+    for (uint32_t i = 0; i < TIDE_GUI_MAX_SIZES - 1; i++) {
+        const int depth = tide_gui_begin_vertical(&gui, 2 + i);
+        tide_gui_layout_button(&gui, 1000 + i, "Old");
+        tide_gui_close(&gui, depth);
+    }
+    end(); // These groups and the root fill the cache.
+    for (int frame = 0; frame < 3; frame++) {
+        begin();
+        const int depth = tide_gui_begin_vertical(&gui, 1 + TIDE_GUI_MAX_SIZES);
+        if (frame) TIDE_CHECK(gui.groups[gui.depth].stretch > 0.0f);
+        tide_gui_layout_button(&gui, 10, "New");
+        tide_gui_close(&gui, depth);
+        end();
+    }
+    // The root remains in use, and no longer shares one overwrite slot with a group.
+    begin();
+    TIDE_CHECK(gui.groups[0].stretch > 0.0f);
+    end();
 }
 
 // A frame with Play, Quit in a Disabled block, then Back; returns which were
@@ -2187,6 +2520,63 @@ static bool name_is(const char *text)
     return entry_name.bytes == (int32_t)strlen(text) && memcmp(entry_name.ptr, text, strlen(text)) == 0;
 }
 
+TIDE_TEST(gui_float_fields_keep_untouched_values)
+{
+    static const float values[] = {
+        1.23456776f, -1.23456776f, 0.123456791f, 1.0f + FLT_EPSILON,
+        FLT_MAX, -FLT_MAX, FLT_MIN, FLT_TRUE_MIN, 0.0f, -0.0f,
+    };
+    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) {
+        for (int leave = 0; leave < 3; leave++) {
+            entry_start();
+            entry_ratio = values[i];
+            mouse(ENTRY_X, RATIO_Y, false);
+            TIDE_CHECK(entries() == 0);
+            TIDE_CHECK(entry_click(ENTRY_X, RATIO_Y) == 0);
+            TIDE_REQUIRE(gui.editing == RATIO_ID);
+            if (leave == 0) TIDE_CHECK(entry_tap(&devices.keyboard.enter) == ENTRY_RATIO);
+            if (leave == 1) TIDE_CHECK(entry_tap(&devices.keyboard.tab) == 0);
+            if (leave == 2) TIDE_CHECK(entry_click(ENTRY_X, NAME_Y) == 0); // This field takes the buffer first.
+            TIDE_CHECK(memcmp(&entry_ratio, &values[i], sizeof entry_ratio) == 0);
+        }
+    }
+}
+
+TIDE_TEST(gui_float_fields_accept_full_precision_numbers)
+{
+    static const struct {
+        const char *text;
+        float value;
+    } cases[] = {
+        {"1.23456776", 1.23456776f},
+        {"3.40282347e+38", FLT_MAX},
+        {"-3.40282347e+38", -FLT_MAX},
+        {"1.40129846e-45", FLT_TRUE_MIN},
+        {"-1.40129846e-45", -FLT_TRUE_MIN},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        entry_start();
+        mouse(ENTRY_X, RATIO_Y, false);
+        entries();
+        entry_click(ENTRY_X, RATIO_Y);
+        type(cases[i].text);
+        TIDE_CHECK(entries() == 0 && entry_ratio == 0.5f);
+        TIDE_CHECK(entry_tap(&devices.keyboard.enter) == (ENTRY_RATIO | ENTRY_RATIO * ENTRY_CHANGED));
+        TIDE_CHECK(memcmp(&entry_ratio, &cases[i].value, sizeof entry_ratio) == 0);
+    }
+    static const char *const invalid[] = {"3.5e38", "-3.5e38", "1e999"};
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        entry_start();
+        mouse(ENTRY_X, RATIO_Y, false);
+        entries();
+        entry_click(ENTRY_X, RATIO_Y);
+        type(invalid[i]);
+        entries();
+        TIDE_CHECK(entry_tap(&devices.keyboard.enter) == ENTRY_RATIO);
+        TIDE_CHECK(entry_ratio == 0.5f); // Float overflow still rejects the edit.
+    }
+}
+
 TIDE_TEST(gui_a_field_says_when_its_typing_is_entered)
 {
     entry_start();
@@ -2632,6 +3022,29 @@ static int form_tap(tide_button *b)
 static bool form_name_is(const char *text)
 {
     return form_name.bytes == (int32_t)strlen(text) && memcmp(form_name.ptr, text, strlen(text)) == 0;
+}
+
+TIDE_TEST(gui_vector_and_color_fields_keep_untouched_values)
+{
+    const float original = 0.123456791f;
+    for (int field = FORM_SIZE; field <= FORM_TINT; field++) {
+        for (int earlier = 0; earlier < 2; earlier++) {
+            for (int enter = 0; enter < 2; enter++) {
+                if (earlier) FORM(FORM_NAME, field);
+                else FORM(field, FORM_NAME);
+                float *value = field == FORM_SIZE ? &form_size.y : &form_tint.b;
+                *value = original;
+                const float x = field == FORM_SIZE ? SIZE_X(1) : TINT_X(2);
+                mouse(x, FORM_Y(field), false);
+                form();
+                TIDE_CHECK(form_click(x, FORM_Y(field)) == 0);
+                TIDE_REQUIRE(gui.editing == (field == FORM_SIZE ? SIZE_ID(1) : TINT_ID(2)));
+                if (enter) TIDE_CHECK(form_tap(&devices.keyboard.enter) == 0);
+                else TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_NAME)) == 0);
+                TIDE_CHECK(memcmp(value, &original, sizeof original) == 0);
+            }
+        }
+    }
 }
 
 // The player types a number and clicks a text field: one the frame calls

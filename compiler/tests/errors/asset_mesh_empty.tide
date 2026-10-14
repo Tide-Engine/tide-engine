@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/meshes/bad/empty.gltf' has no triangles: there's nothing in it to draw
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> tree = "../e2e/assets/meshes/bad/empty.gltf";
+
+scene Main
+{
+}

@@ -113,7 +113,7 @@ TIDE_TEST(box2d_views_see_a_body_turn_the_short_way)
         // view halfway between the two ticks sees it half a turn round, not facing the other way
         wrapped = true;
         tide_draw_reset(&draw);
-        tide_frame(&a, &previous, 0.5f, NULL, &local, &draw, &gui);
+        tide_frame(&a, &previous, 0.5f, NULL, NULL, 1.0f, &local, &draw, &gui);
         printf("    between a tick at %g and the next at %g, a view sees the body at %g\n", (double)was, (double)is,
                (double)local.Seen.angle);
         TIDE_CHECK(tide_abs_f(local.Seen.angle) > 3.0f);
@@ -138,7 +138,7 @@ TIDE_TEST(box2d_views_glide_through_a_correction)
     tide_world_tick(&a);
     const Box2D_Body drawn = body_of(&a, tide_has_Spinner);
     tide_draw_reset(&draw);
-    tide_frame(&a, &previous, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&a, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Seen.position.x == drawn.position.x && local.Seen.angle == drawn.angle);
 
     // The same tick as the server had it: a meter to the side, and turned half a radian more
@@ -151,14 +151,14 @@ TIDE_TEST(box2d_views_glide_through_a_correction)
     const tide_view_correction correction = {&a, &previous, &b, &previous, 0, 1.0f, false};
     tide_local_correct(&local, &correction);
     tide_draw_reset(&draw);
-    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&b, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     printf("    drawn at %g and turned %g, and said to be at %g and %g: a view sees it at %g and %g", (double)drawn.position.x,
            (double)drawn.angle, (double)said.position.x, (double)said.angle, (double)local.Seen.position.x, (double)local.Seen.angle);
     TIDE_CHECK(near(local.Seen.position.x, drawn.position.x) && near(local.Seen.angle, drawn.angle));
     // ...and halfway there 75 ms later
     tide_local_frame_time(&local, 0.075f);
     tide_draw_reset(&draw);
-    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&b, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     printf(", then at %g and %g\n", (double)local.Seen.position.x, (double)local.Seen.angle);
     TIDE_CHECK(near(local.Seen.position.x, drawn.position.x + 0.5f) && near(local.Seen.angle, drawn.angle + 0.25f));
     // None of it is the match's: the world is as the server said
@@ -291,8 +291,8 @@ TIDE_TEST(box2d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box2D's image.
-#define SENSORS_HASH UINT64_C(0xa815af9a032885e4)
-#define SENSORS_IMAGES_HASH UINT64_C(0x15b910ec4ec269e5)
+#define SENSORS_HASH UINT64_C(0x99a2e4f44af57066)
+#define SENSORS_IMAGES_HASH UINT64_C(0x498eb3af5fb302c0)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 

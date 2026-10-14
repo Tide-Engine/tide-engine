@@ -1,0 +1,95 @@
+// instance.Normal(normal): a normal of the mesh as it is in the world, of
+// length 1. The vertex stage works out what normals go through from the
+// instance's transform (tide_normals: cross products of its columns, turned
+// round where it mirrors). A vert that calls it multiplies there; a frag that
+// calls it gets the three columns as values that don't blend, and nothing of
+// the transform unless it reads that too. A 2D mesh's is only normalized.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+struct Flat
+{
+    float2 position;
+    float2 uv;
+}
+
+struct Rock
+{
+    float4x4 transform;
+    Color paint;
+}
+
+singleton Sun
+{
+    float3 toward = float3(0, 1, 0);
+}
+
+local singleton Models
+{
+    List<Corner> ball;
+    List<int> faces;
+    List<Flat> card;
+    List<Rock> rocks;
+}
+
+// In the frag alone: three values from the vertex stage, and none of the transform
+frag Lit(Corner corner, out Color color, Instance instance, Sun sun)
+{
+    float3 normal = instance.Normal(corner.normal);
+    color = Color.white * Math.Max(Math.Dot(normal, sun.toward), 0.1);
+    color.a = 1;
+}
+
+// In the vert alone: nothing more goes to the pixels
+vert Turn(mut Corner corner, Instance instance)
+{
+    corner.normal = instance.Normal(corner.normal);
+}
+
+frag Shown(Corner corner, out Color color)
+{
+    color = Color(corner.normal.x, corner.normal.y, corner.normal.z, 1);
+}
+
+// In both, of more than a name, with its argument named, beside the transform itself
+vert Lean(mut Corner corner, Instance instance, Sun sun)
+{
+    corner.normal = instance.Normal(corner.normal + sun.toward * 0.1);
+}
+
+frag Both(Corner corner, out Color color, Instance instance)
+{
+    float3 normal = instance.Normal(normal: -corner.normal);
+    float3 along = Math.Rotate(instance.transform, corner.normal);
+    color = Color(normal.x, along.y, normal.z, 1);
+}
+
+// An item of a list's own transform
+frag Stone(Corner corner, out Color color, Instance instance, Rock rock)
+{
+    color = rock.paint * Math.Max(instance.Normal(corner.normal).y, 0.2);
+    color.a = 1;
+}
+
+// A 2D mesh has no transform
+frag Card(Flat flat, out Color color, Instance instance)
+{
+    float3 normal = instance.Normal(float3(flat.uv, 1));
+    color = Color(normal.x, normal.y, normal.z, 1);
+}
+
+view Everything(Models models)
+{
+    var squashed = float4x4.TRS(float3(0), quaternion.identity, float3(2, 0.5, 1));
+    Draw.Mesh(models.ball, models.faces, squashed, Lit);
+    Draw.Mesh(models.ball, models.faces, squashed, Turn, Shown);
+    Draw.Mesh(models.ball, models.faces, squashed, Lean, Both);
+    Draw.Instanced(models.ball, models.faces, models.rocks, Stone);
+    Draw.Mesh(models.card, models.faces, Card);
+}

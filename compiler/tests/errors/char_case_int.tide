@@ -1,0 +1,13 @@
+// expect: the switch is on char, so its cases are too, not int
+// expect: write the character, like 'case 'a':', or 'case char(65):'
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen)
+{
+    switch (seen.mark)
+    {
+        case 65:
+            seen.n = 1;
+            break;
+    }
+}

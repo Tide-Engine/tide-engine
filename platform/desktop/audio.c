@@ -115,9 +115,17 @@ bool tide_audio_out_open(void)
     atomic_store(&wasapi.ok, false);
     wasapi.event = CreateEventW(NULL, FALSE, FALSE, NULL);
     wasapi.opened = CreateEventW(NULL, TRUE, FALSE, NULL);
-    wasapi.thread = CreateThread(NULL, 0, wasapi_thread, NULL, 0, NULL);
-    if (!wasapi.thread || !wasapi.event || !wasapi.opened) {
+    // The mixer is made, and told a thread renders, before there's a thread:
+    // the device asks for its first block as soon as it's started, which is
+    // before this function knows it was
+    tide_mixer_rendered_elsewhere(true);
+    if (wasapi.event && wasapi.opened) wasapi.thread = CreateThread(NULL, 0, wasapi_thread, NULL, 0, NULL);
+    if (!wasapi.thread) {
         fprintf(stderr, "tide: no audio: the device's thread couldn't start\n");
+        if (wasapi.event) CloseHandle(wasapi.event);
+        if (wasapi.opened) CloseHandle(wasapi.opened);
+        memset(&wasapi, 0, sizeof wasapi);
+        tide_mixer_rendered_elsewhere(false);
         return false;
     }
     WaitForSingleObject(wasapi.opened, 5000);
@@ -126,7 +134,6 @@ bool tide_audio_out_open(void)
         tide_audio_out_close();
         return false;
     }
-    tide_mixer_rendered_elsewhere(true);
     return true;
 }
 
@@ -150,12 +157,25 @@ void tide_audio_out_close(void)
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <AudioUnit/AudioUnit.h>
+#include <CoreAudio/CoreAudio.h>
 
 static struct {
     AudioUnit unit;
     bool open;
     double rate;
 } core;
+
+// Whether the system has a device to play through, which the unit doesn't
+// say: with none it opens and starts all the same, and waits for one, so its
+// callback never runs, and a forget would wait for a thread that never comes.
+static bool core_has_output(void)
+{
+    // Element 0 is the main one, whose name changed with macOS 12
+    const AudioObjectPropertyAddress address = {kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, 0};
+    AudioDeviceID device = kAudioObjectUnknown;
+    UInt32 size = sizeof device;
+    return AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL, &size, &device) == noErr && device != kAudioObjectUnknown;
+}
 
 static OSStatus core_render(void *in, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *when, UInt32 bus,
                             UInt32 frames, AudioBufferList *data)
@@ -174,6 +194,7 @@ static OSStatus core_render(void *in, AudioUnitRenderActionFlags *flags, const A
 bool tide_audio_out_open(void)
 {
     if (core.open) return true;
+    if (!core_has_output()) goto failed;
     AudioComponentDescription want = {.componentType = kAudioUnitType_Output, .componentSubType = kAudioUnitSubType_DefaultOutput,
                                       .componentManufacturer = kAudioUnitManufacturer_Apple};
     AudioComponent component = AudioComponentFindNext(NULL, &want);

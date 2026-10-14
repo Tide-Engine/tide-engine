@@ -1,0 +1,12 @@
+// expect: Interpolate can't roll random numbers
+// expect: it blends two values the same way each time it's asked: a view rolls, and keeps what it rolled in a local field
+struct Angle
+{
+    float turns;
+
+    Angle Interpolate(Angle from, Angle to, float t)
+    {
+        return Angle { turns = from.turns + (to.turns - from.turns) * t + Random.NextFloat() };
+    }
+}
+scene Main { }

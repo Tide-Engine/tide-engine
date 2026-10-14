@@ -36,8 +36,9 @@
     said = true;
     console.log(text); log.textContent += text + '\n'; post('log', String(text));
   };
-  // ?bench is --bench; backend= isn't the program's, but the page's: what draws (see tide.js)
-  const words = location.search ? location.search.slice(1).split('&').filter(word => !word.startsWith('backend=')) : [];
+  // ?bench is --bench; renderer options belong to the page (see tide.js).
+  const words = location.search ? location.search.slice(1).split('&')
+    .filter(word => !word.startsWith('backend=') && !word.startsWith('texture-compression=')) : [];
   var Tide = {
     canvas: document.getElementById('canvas'),
     checkGL: !words.includes('bench'), // Timings can't: each check waits for the GPU

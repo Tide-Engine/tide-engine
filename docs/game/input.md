@@ -4,7 +4,7 @@ description: "Sample keyboard, mouse, touch and gamepad devices into Tide player
 
 # Input
 
-A player's **input** is what they do in one tick, and it's what the network sends. Each game declares one `input`, and systems read it.
+A player's **input** is what they do in one tick, and it's what the network sends. A game can declare one `input`, whose fields systems read, or read [devices directly in the match](#devices-in-the-match).
 
 ```csharp
 input PlayerInput
@@ -63,7 +63,7 @@ Below are two machines in one match. Move the pointer over a frame to steer that
 
 :::
 
-A view picks the entities this machine's player owns with `with ownership`, and every other one with `without ownership` (see [Your own entities](./views.md#your-own-entities)). That's for views: the match runs the same on every machine, so a system has no player of its own to ask about.
+A view picks the entities this machine's player owns with `with ownership`, and every other one with `without ownership` (see [Your own entities](./views-and-the-match.md#your-own-entities)). That's for views: the match runs the same on every machine, so a system has no player of its own to ask about.
 
 Players are `PlayerID`s, not ints or connections. Like `Entity`, a `PlayerID` is opaque, compared with `==`, and has a null value. A player who reconnects gets their `PlayerID` back, and keeps everything they owned. `PlayerID(0)` names a player by number, for local play and tests.
 
@@ -92,9 +92,47 @@ input Controls
 - **Letting go presses nothing.** No field's `.up` is true for it, so a shot that fires when a button is let go doesn't fire on a guess.
 - **The devices match code reads** (see [Devices in the match](#devices-in-the-match)) are let go the same way: keys up, sticks centered.
 - **Only guesses change.** What the server runs, and what it confirms, is the input each player sent. A player whose input arrives late still keeps their last one for that tick, on every machine.
-- **What it costs.** A player who keeps going is shown a little behind where they'll turn out to be, and each tick the server confirms, the machine runs the ticks past its guess again. Both only happen on a machine further ahead than 0.15 seconds, and only while someone is doing something.
+- **What it costs.** A player who keeps going is shown a little behind where they'll turn out to be, and each tick the server confirms, the machine runs the ticks past its guess again. For the default guess, both happen only on a machine further ahead than 0.15 seconds, and only while someone is doing something. Custom guesses can require replay sooner.
 
 `[Absolute]` takes no arguments, and goes on the input's own fields, not on the fields of a struct it holds.
+
+## Choosing a guess
+
+Use `[DontPredict]` for actions that should occur only when a real input sample says so. On every guessed tick, the field starts at its declared default:
+
+```csharp
+input Controls
+{
+    float2 move;
+    [DontPredict] bool jump;
+    [DontPredict] bool dash;
+    [Absolute] float2 aim;
+}
+```
+
+Movement continues from the previous input; jump and dash become false immediately. Real input from this machine still acts immediately, and received input keeps its actions. The attribute takes no arguments and goes on the input's own fields. A marked struct or array resets as a whole. It cannot combine with `[Absolute]` on the same field.
+
+For a computed guess, add `Predict()`:
+
+```csharp
+input Controls
+{
+    float2 move;
+    bool dash;
+
+    Predict()
+    {
+        dash = false;
+        move *= 0.9;
+    }
+}
+```
+
+It runs once per guessed tick, starting from the previous input, after `[DontPredict]` resets. Fields it leaves untouched continue; computations such as the movement fade accumulate across guessed ticks. It can also explicitly replace a marked field's default. Repair, bounds and `Sanitize()` apply afterward. The existing 0.15-second limit still resets non-absolute fields after `Predict()` runs.
+
+`Predict()` takes no parameters and reads only the input's fields. It can call pure helpers, as `Sanitize()` does. It cannot read devices, match or local state, frame time or randomness, or send events, spawn entities or start tasks. The engine's `viewTime` remains read-only.
+
+These changes apply to client guesses of other players and a remote server. Actual samples, authoritative server ticks and confirmed replay keep their existing behavior. Changing a guess creates no `.down` or `.up` edges, so clearing an action does not invent a release. Normal `.down` already avoids repeated presses when a held bool is repeated; use these hooks when the held value itself or another action field should not continue into guessed ticks.
 
 ## Devices
 
@@ -110,7 +148,7 @@ input Controls
   - `minus`, `equals`, `leftBracket`, `rightBracket`, `backslash`, `semicolon`, `quote`, `comma`, `period`, `slash`, `backquote`
   - `numpad0` to `numpad9`, `numpadEnter`, `numpadPlus`, `numpadMinus`, `numpadMultiply`, `numpadDivide`, `numpadPeriod`
   - `text`, a `string`: what was typed since the last frame, which views read (see [Typed text](#typed-text))
-- **Mouse:** `position`, `delta` and `scroll` (`float2`), and the buttons `left`, `right`, `middle`, `back` and `forward`. `position` is in window pixels from the bottom left, with `y` up, as a touch's and the pointer's are; in a view, `Screen.Flip(position)` gives it from the top left, as the screen and the GUI count (see [Screen and world coordinates](./views.md#screen-and-world-coordinates)). While the cursor is [locked](#locking-the-cursor), `position` stays where it was and `delta` is the mouse's own movement.
+- **Mouse:** `position`, `delta` and `scroll` (`float2`), and the buttons `left`, `right`, `middle`, `back` and `forward`. `position` is in window pixels from the bottom left, with `y` up, as a touch's and the pointer's are; in a view, `Screen.Flip(position)` gives it from the top left, as the screen and the GUI count (see [Screen and world coordinates](./cameras.md#screen-and-world-coordinates)). While the cursor is [locked](#locking-the-cursor), `position` stays where it was and `delta` is the mouse's own movement.
 - **Gamepad:** `connected`, `leftStick` and `rightStick` (`float2`), `leftTrigger` and `rightTrigger` (0 to 1), the face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`, which is A, B, X and Y on Xbox), `dpad.up` and the other directions, `leftShoulder`, `rightShoulder`, `leftStickButton`, `rightStickButton`, `start` and `select`.
 - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers. Each `Touch` has:
   - `press`, a button: `.down` when the finger touched, and `.up` when it lifted
@@ -148,8 +186,8 @@ A finger is never the mouse, as in Unity's Input System: the mouse only sees mic
 ```csharp
 input Brush
 {
-    int x;
-    int y;
+    [Absolute] int x;
+    [Absolute] int y;
     bool paint;
 
     // Cells of 16 pixels, under the mouse or a finger
@@ -163,11 +201,21 @@ input Brush
 }
 ```
 
-Touches come from the web, on phones and desktops alike, and from touchscreens on Windows. Android and iOS come next. Elsewhere, `connected` is false and no finger ever touches.
+Touches come from Android, the web on phones and desktops, and touchscreens on Windows. Native iOS support isn't built yet; other native desktops have no touch support yet. A browser on those desktops can still report touches. Where no touchscreen is available, `connected` is false and no finger ever touches.
+
+The cell coordinates above are `[Absolute]` because a prediction should keep the last cell the player pointed at, even after it guesses they stopped painting.
+
+Try a mouse, then a finger in the example below. The amber ring is the pointer; teal circles are individual touches, with lines back to where each started. A touch leaves the mouse where it was, and lifting it leaves the pointer where it ended. The ten slots show which fingers are still held. Click or tap the frame first so swipes go to the example.
+
+::: tide-example pointer The pointer and individual fingers
+
+<<< @/examples/pointer.tide
+
+:::
 
 ### Locking the cursor
 
-A camera that turns with the mouse locks the cursor: a view calls `Cursor.Lock()` every frame the game wants the mouse (see [Looking around](./views.md#looking-around)). `Cursor.locked` is whether the window holds it right now, which the system decides, not the game: the cursor goes back to the player when they press Escape, and a window that loses the focus lets it go.
+A camera that turns with the mouse locks the cursor: a view calls `Cursor.Lock()` every frame the game wants the mouse (see [Looking around](./cameras.md#looking-around)). `Cursor.locked` is whether the window holds it right now, which the system decides, not the game: the cursor goes back to the player when they press Escape, and a window that loses the focus lets it go.
 
 `Sample` reads `Cursor.locked`, so the mouse only turns the camera while the cursor is locked, and moving it over a menu doesn't:
 
@@ -249,4 +297,8 @@ input PlayerInput
 
 Every input goes through these steps before the match reads it, including this machine's, so systems can rely on them without checking again. Devices are repaired the same way, since the engine knows their ranges.
 
-An input holds numbers, bools, enums, vectors and structs of those; not text or lists. A match takes as many players as the game's `maxPlayers` setting says, 16 without one (see [Matches](../multiplayer/matches.md#how-many-players)).
+An input holds numbers, bools, chars, enums, vectors and structs of those; not text or lists. A match takes as many players as the game's `maxPlayers` setting says, 16 without one (see [Matches](../multiplayer/matches.md#how-many-players)).
+
+## Presented view time
+
+With `settings { maxRewind = 0.25; }`, your input gains `ViewTime viewTime`; do not declare this field yourself. It is read-only and stamped by the engine after `Sample`, from the last actually presented confirmed frame. `tick` names the upper endpoint, `alpha` its interpolation fraction, and `valid` is false before a frame is presented. Use it with [collider rewind](../multiplayer/networking.md#collider-rewind); the server validates the wire value as an untrusted claim.

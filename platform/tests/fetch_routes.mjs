@@ -6,12 +6,56 @@
 
 const hello = 'hello, tide';
 
+// /echo answers any request with what it was: three bytes (how long its
+// method is, how long its X-Tide header is, and whether it has an X-Evil
+// header), then its own body. `?status=409` answers with that status.
+function echo(request, response) {
+    const parts = [];
+    request.on('data', part => parts.push(part));
+    request.on('end', () => {
+        const status = Number(new URL(request.url, 'http://x').searchParams.get('status')) || 200;
+        const said = Buffer.from([request.method.length, (request.headers['x-tide'] || '').length,
+            request.headers['x-evil'] === undefined ? 0 : 1]);
+        const body = Buffer.concat([said, ...parts]);
+        response.writeHead(status, { 'content-type': 'application/octet-stream', 'content-length': body.length });
+        response.end(request.method === 'HEAD' ? undefined : body);
+    });
+}
+
 export default function routes(request, response) {
     const path = request.url.split('?')[0];
     switch (path) {
+    case '/echo':
+        echo(request, response);
+        return true;
+    case '/see-other': // A POST that's answered elsewhere: fetched from there with a GET
+        request.resume();
+        response.writeHead(303, { location: '/echo' });
+        response.end();
+        return true;
+    case '/again': // The same request, somewhere else
+        request.resume();
+        response.writeHead(307, { location: '/echo' });
+        response.end();
+        return true;
     case '/hello':
         response.writeHead(200, { 'content-type': 'text/plain', 'content-length': hello.length });
         response.end(hello);
+        return true;
+    case '/silent': // Takes the request and never answers: the client's time limit ends it
+        request.resume();
+        return true;
+    case '/stall': // Says how long its body is, sends less, and stops there
+        request.resume();
+        response.writeHead(200, { 'content-type': 'text/plain', 'content-length': hello.length });
+        response.write(hello.slice(0, 5));
+        return true;
+    case '/slow': // Answers a moment later, well within any limit that's meant to pass
+        request.resume();
+        setTimeout(() => {
+            response.writeHead(200, { 'content-type': 'text/plain', 'content-length': hello.length });
+            response.end(hello);
+        }, 100);
         return true;
     case '/error':
         response.writeHead(500, { 'content-length': 4 });

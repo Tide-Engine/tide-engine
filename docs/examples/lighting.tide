@@ -15,19 +15,21 @@ local singleton Globe
     List<int> faces;
     float turn;
     float lightAngle = 0.8;
-    float shine = 40;
+    float squash = 1;
     bool bands;
 }
 
 // Once for each pixel: its normal, blended across the triangle, against a light.
+// instance.Normal gives the normal as it is in the world, however the draw's
+// transform scales the mesh: squash the globe, and its light stays right.
 frag Lit(Corner corner, out Color color, Instance instance, Globe globe)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float3 toLight = Math.Normalize(float3(Math.Cos(globe.lightAngle), 0.6, -Math.Sin(globe.lightAngle)));
     mut float diffuse = Math.Max(Math.Dot(normal, toLight), 0);
     if (globe.bands) diffuse = Math.Floor(diffuse * 4) / 4; // Steps, as a cartoon's
     float3 halfway = Math.Normalize(toLight + float3(0, 0, -1));
-    float glint = Math.Pow(Math.Max(Math.Dot(normal, halfway), 0), globe.shine);
+    float glint = Math.Pow(Math.Max(Math.Dot(normal, halfway), 0), 40);
     // A checker from where the pixel is on the mesh, so its turning shows.
     float tile = Math.Floor(corner.position.y * 3) + Math.Floor(Math.Atan2(corner.position.z, corner.position.x) * 6 / Math.PI);
     Color paint = Math.Frac(tile * 0.5) < 0.25 ? Color(0.98, 0.75, 0.14) : Color(0.8, 0.52, 0.08);
@@ -71,13 +73,13 @@ view Show(mut Globe globe)
     Draw.Clear(Color(0.086, 0.086, 0.094));
     Draw.SetCamera(float3(0, -0.32, -4.4), quaternion.identity, 45);
     var spin = quaternion.AxisAngle(float3(0, 1, 0), globe.turn);
-    Draw.Mesh(globe.corners, globe.faces, float4x4.TRS(float3(0), spin, float3(1)), Lit);
+    Draw.Mesh(globe.corners, globe.faces, float4x4.TRS(float3(0), spin, float3(1, globe.squash, 1)), Lit);
 
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 124, Screen.width - 24, 112))
     {
         GUILayout.Slider("Light", globe.lightAngle, 0, Math.TAU);
-        GUILayout.Slider("Shine", globe.shine, 2, 80);
+        GUILayout.Slider("Squash", globe.squash, 0.25, 1);
         GUILayout.Toggle("Bands", globe.bands);
     }
 }

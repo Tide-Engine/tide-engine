@@ -1,0 +1,49 @@
+// The four regions, played straight through one kitchen at a time.
+
+const int KITCHENS_PER_REGION = 6;
+
+int Region(int level)
+{
+    if (level < 3 || level >= 11 && level <= 13) return 0;
+    if (level == 3 || level == 4 || level == 8 || level >= 14 && level <= 16) return 1;
+    if (level == 5 || level == 6 || level == 9 || level >= 17 && level <= 19) return 2;
+    return 3;
+}
+
+int RegionLevel(int region, int index)
+{
+    if (region < 0 || region > 3 || index < 0 || index >= KITCHENS_PER_REGION) return -1;
+    int[24] levels = [0, 1, 2, 11, 12, 13, 3, 4, 8, 14, 15, 16,
+                      5, 6, 9, 17, 18, 19, 7, 10, 20, 21, 22, 23];
+    return levels[region * KITCHENS_PER_REGION + index];
+}
+
+int RegionIndex(int level)
+{
+    for (var i = 0; i < KITCHENS_PER_REGION; i++)
+    {
+        if (RegionLevel(Region(level), i) == level) return i;
+    }
+    return -1;
+}
+
+
+string RegionName(int region)
+{
+    switch (region)
+    {
+        case 0: return "Saltwater Coast";
+        case 1: return "Golden Fields";
+        case 2: return "Highland Pass";
+    }
+    return "Ember Crater";
+}
+
+// Keep each region's six kitchens together without changing their stable ids.
+int NextKitchen(int level)
+{
+    var region = Region(level);
+    var next = RegionIndex(level) + 1;
+    if (next < KITCHENS_PER_REGION) return RegionLevel(region, next);
+    return RegionLevel((region + 1) % 4, 0);
+}

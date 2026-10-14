@@ -26,8 +26,9 @@ typedef struct tide_textref tide_textref;
 // A frame of a host:
 //
 //     tide_draw_reset(&draw);
+//     tide_draw_screen_size(&draw, tide_platform_screen_size()); // What meshes' levels of detail are picked by
 //     tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
-//     tide_frame(match, previous, alpha, verified, &local, &draw, &gui);
+//     tide_frame(match, previous, alpha, verified, NULL, 1.0f, &local, &draw, &gui);
 //     tide_gui_end(&gui, &draw); // The GUI's commands go last, over the world
 //     tide_platform_draw(&draw);
 //
@@ -187,6 +188,15 @@ typedef struct tide_gui_claim_rect {
     uint32_t view;
 } tide_gui_claim_rect;
 
+// Where a frame drew a widget or an area, and which one.
+typedef struct tide_gui_rect {
+    tide_rect rect;
+    uint32_t id;
+    // An area: how many places the frame had before its content's, which come
+    // before its own. A widget: UINT32_MAX.
+    uint32_t content;
+} tide_gui_rect;
+
 // A key or a gamepad's button that went down while the keyboard and the
 // gamepad were the GUI's: it's the GUI's until it's let go, whatever became of
 // the widget meanwhile. From views until a frame has seen it up, and from the
@@ -240,7 +250,9 @@ typedef struct tide_gui {
 
     // Kept between frames
     uint32_t frame;
-    uint32_t hot, hot_next;           // The widget under the mouse, drawn last of those there
+    // The widget under the mouse, drawn last of those there: where the mouse
+    // is now, as the last frame drew them (see rects), and so far this frame
+    uint32_t hot, hot_next;
     tide_rect hot_rect, hot_rect_next; // ...and where it is
     uint32_t active;                  // The widget the mouse is pressing
     bool active_seen, claimed;
@@ -276,11 +288,13 @@ typedef struct tide_gui {
     bool over, over_next;             // The mouse was over the GUI as the frame drew it
     // Where the last frame drew its widgets and areas, and this frame so far.
     // The game and views read the devices before a frame's GUI does, so the
-    // pointer is the GUI's where it's on one of these now.
-    tide_rect rects[TIDE_GUI_MAX_RECTS];
-    tide_rect rects_next[TIDE_GUI_MAX_RECTS];
+    // pointer is the GUI's where it's on one of these now. A frame's own
+    // widgets go by them too: the one the pointer is on is the last of these
+    // it's on now, wherever the last frame saw it.
+    tide_gui_rect rects[TIDE_GUI_MAX_RECTS];
+    tide_gui_rect rects_next[TIDE_GUI_MAX_RECTS];
     uint32_t rect_count, rect_count_next;
-    bool rects_full, rects_full_next; // More than fit: past them, `over` says, a frame late
+    bool rects_full, rects_full_next; // More than fit: past them, `over` and `hot` say, a frame late
     uint32_t modal, modal_next;       // The modal on top, last frame's and this frame's
     uint32_t in_modal;                // The modal whose content is being drawn
     uint32_t grab;                    // A modal just came on top: its first widget takes the focus

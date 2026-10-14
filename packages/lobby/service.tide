@@ -1,0 +1,178 @@
+// Tide's own lobby service, as the slots in lobby.tide ask it: plain HTTP
+// with JSON to the relay (relay/lobbies.mjs has each request), which a game
+// sends from a desktop and from a page alike. A player is a secret the
+// service made, sent with every request; nothing else is kept between them.
+namespace Lobbies;
+
+// What the service said to a request, or that nothing came back.
+struct ServiceAnswer
+{
+    bool reached;
+    int status;
+    List<byte> body;
+}
+
+// What a request says, as the JSON it's written to.
+
+struct KeptIdentity
+{
+    string id;
+    string secret;
+}
+
+struct MemberSaid
+{
+    string name;
+    Map<string, string> data;
+}
+
+struct CreateSaid
+{
+    string game;
+    string name;
+    int max;
+    [Json("public")] bool listed;
+    Map<string, string> data;
+    MemberSaid member;
+}
+
+struct MakeSaid
+{
+    string name;
+    int max;
+    [Json("public")] bool listed;
+    Map<string, string> data;
+}
+
+struct QuickSaid
+{
+    string game;
+    int seats;
+    Map<string, string> filter;
+    MakeSaid create;
+    MemberSaid member;
+}
+
+struct JoinSaid
+{
+    MemberSaid member;
+}
+
+struct MemberChangeSaid
+{
+    string name;
+    Map<string, string> data;
+    List<string> remove;
+}
+
+struct PlayerSaid
+{
+    string player;
+}
+
+// A lobby's change: what isn't changed has no value, so it isn't said, and a
+// key that's left out stays as it is.
+struct ChangeSaid
+{
+    Map<string, string> data;
+    List<string> remove;
+    string? name;
+    int? max;
+    [Json("public")] bool? listed;
+    bool? open;
+    string? match;
+}
+
+// What an answer says beside the lobby.
+
+struct ListSaid
+{
+    List<LobbyEntry> lobbies;
+}
+
+struct ErrorSaid
+{
+    string error;
+}
+
+struct AlreadySaid
+{
+    bool already;
+}
+
+// Where this client's service is.
+string ServiceOf(LobbyClient client)
+{
+    return client.service != "" ? client.service : ServiceUrl();
+}
+
+// A request to the service, as the player whose `secret` this is, with a
+// JSON `body` or none. One that isn't answered within `limit` seconds wasn't
+// reached, as one that couldn't connect.
+async ServiceAnswer Call(string method, string url, string secret, string body, float limit)
+{
+    mut var request = Web.Request(url).SetMethod(method).SetTimeout(limit);
+    if (secret != "") request = request.SetHeader("Authorization", $"Bearer {secret}");
+    if (body != "") request = request.SetHeader("Content-Type", "application/json").SetBody(body.ToBytes());
+    var sent = await request.Send();
+    if (sent is WebResponse answer) return ServiceAnswer { reached = true, status = answer.status, body = answer.body };
+    return ServiceAnswer { };
+}
+
+// Why the service refused: its status, and the line it says.
+LobbyFailure Refused(ServiceAnswer http)
+{
+    var said = Json.Read<ErrorSaid>(http.body) ?? ErrorSaid { };
+    switch (http.status)
+    {
+        case 401: return LobbyFailure.SignedOut;
+        case 403: return said.error == "kicked" ? LobbyFailure.Kicked
+                       : said.error == "not a member" ? LobbyFailure.NotMember : LobbyFailure.NotOwner;
+        case 404: return LobbyFailure.NotFound;
+        case 409: return said.error == "full" ? LobbyFailure.Full
+                       : said.error == "closed" ? LobbyFailure.Closed : LobbyFailure.TooMany;
+        case 429: return LobbyFailure.Busy;
+    }
+    return LobbyFailure.Failed;
+}
+
+// An answer that's a lobby.
+LobbyAnswer ReadLobby(ServiceAnswer http)
+{
+    if (!http.reached) return LobbyAnswer { failure = LobbyFailure.Unreachable };
+    if (http.status != 200) return LobbyAnswer { failure = Refused(http) };
+    var lobby = Json.Read<LobbyInfo>(http.body) ?? LobbyInfo { };
+    if (lobby.id == "") return LobbyAnswer { failure = LobbyFailure.Failed };
+    var more = Json.Read<AlreadySaid>(http.body) ?? AlreadySaid { };
+    return LobbyAnswer { ok = true, lobby = lobby, already = more.already };
+}
+
+// An answer that only says it was done.
+LobbyAnswer ReadDone(ServiceAnswer http)
+{
+    if (!http.reached) return LobbyAnswer { failure = LobbyFailure.Unreachable };
+    if (http.status != 200) return LobbyAnswer { failure = Refused(http) };
+    return LobbyAnswer { ok = true };
+}
+
+// Text as part of a URL: everything but letters, digits, `-`, `_`, `.` and
+// `~` as `%` and its byte in hex.
+string Escape(string text)
+{
+    mut List<byte> out = [];
+    foreach (var b in text.ToBytes())
+    {
+        var plain = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 45 || b == 95 || b == 46 || b == 126;
+        if (plain)
+        {
+            out.Add(b);
+            continue;
+        }
+        var high = b >> 4;
+        var low = b & 15;
+        out.Add(37);
+        out.Add(byte(high < 10 ? 48 + high : 55 + high));
+        out.Add(byte(low < 10 ? 48 + low : 55 + low));
+    }
+    return string.FromBytes(out) ?? "";
+}

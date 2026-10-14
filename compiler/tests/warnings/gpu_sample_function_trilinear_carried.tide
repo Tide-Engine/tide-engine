@@ -1,0 +1,35 @@
+// warnings: 1
+// expect: 'look.atlas' may say Filter.Trilinear, which a function's Sample can't read: it reads the texture's own pixels
+// expect: write the filter here, 'Sample(uv, Filter.Bilinear)', which is what's read anyway
+// expect: frag 'Shade' samples it through 'Tile', here
+// A Texture field is whichever texture a view put there, which may say
+// Filter.Trilinear. A function's Sample reads the texture's own pixels
+// whatever it says, as its uv is its call's: that's said once, as a warning,
+// however many frags and textures reach it.
+scene Main { }
+
+local singleton Look
+{
+    [Filter(Filter.Trilinear)]
+    Grid2<Color> tiles = Grid2(4, 4);
+    Texture atlas;
+    Texture other;
+    List<Vertex3> mesh;
+}
+
+Color Tile(Texture atlas, float2 uv) { return atlas.Sample(uv); }
+
+frag Shade(Vertex3 vertex, out Color color, Look look)
+{
+    color = Tile(look.atlas, vertex.uv) + Tile(look.other, vertex.uv) + look.tiles.Sample(vertex.uv);
+}
+
+frag Other(Vertex3 vertex, out Color color, Look look) { color = Tile(look.other, vertex.uv); }
+
+view Show(mut Look look)
+{
+    look.atlas = look.tiles;
+    look.other = look.tiles;
+    Draw.Mesh(look.mesh, [0, 1, 2], float4x4.identity, Shade);
+    Draw.Mesh(look.mesh, [0, 1, 2], float4x4.identity, Other);
+}

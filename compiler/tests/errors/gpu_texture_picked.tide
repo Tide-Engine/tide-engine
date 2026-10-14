@@ -1,0 +1,12 @@
+// expect: a texture a function samples is one the frag or vert was given, by a name: it can't be made, returned, picked between or kept in a struct in code the GPU runs
+// expect: pass a field of a component or a singleton the frag or vert takes, its own Texture, or an asset: 'Lit(lamp.shadow, at)'; a function passes on a parameter of its own
+// Which texture a function reads is settled as the shader is written
+scene Main { }
+local singleton Lamp { RenderTarget map; DepthTexture near; DepthTexture far; List<Vertex3> mesh; }
+float Lit(DepthTexture shadow, float2 uv) { return shadow.Compare(uv, 0.5); }
+frag Shade(Vertex3 vertex, out Color color, Lamp lamp)
+{
+    float lit = Lit(vertex.uv.x < 0.5 ? lamp.near : lamp.far, vertex.uv);
+    color = Color(lit, lit, lit);
+}
+view Show(Lamp lamp) { Draw.Mesh(lamp.mesh, [0, 1, 2], float4x4.identity, Shade); }
