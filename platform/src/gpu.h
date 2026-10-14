@@ -277,6 +277,12 @@ typedef struct tide_gpu {
     // nothing below is called while there's none.
     uint32_t (*epoch)(void);
 
+    // Optional, for a backend that compiles pipelines itself (Vulkan): the
+    // file it keeps them in across runs, so a game's next run makes them from
+    // what this one compiled. Read now, as far as it's whole and for this
+    // device, and written as the backend closes. NULL for none.
+    void (*pipeline_cache)(const char *file);
+
     // Optional timing of a game's drawing, outside passes. Read returns a
     // newly completed sample in milliseconds, or -1 for none (including an
     // unsupported device). It never waits for the GPU. Reset discards pending

@@ -10,6 +10,8 @@ description: "Read and write local files in Tide, use persistent save and tempor
 
 `Application.persistentDataPath` is the game's save directory. Its contents survive normal restarts and application updates. `Application.temporaryCachePath` is for disposable files; code must tolerate their disappearance. Both are read-only runtime properties.
 
+The engine keeps a file of its own in the temporary cache folder, `pipelines.vulkan`: the GPU programs it compiled with Vulkan, so the game's next run starts drawing sooner. It's there for every game that draws with Vulkan, whether or not the game uses files. Deleting it is harmless; the next run compiles them again.
+
 Save locations use the game's stable `appId` setting, independently of its window title:
 
 ```csharp

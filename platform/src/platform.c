@@ -11,6 +11,7 @@
 #include "tide/page.h"
 #include "tide/time.h"
 #include "tide/wav.h"
+#include "files.h"
 #include "font.h"
 #include "audio_in.h"
 #include "audio_out.h"
@@ -79,6 +80,10 @@ static int pixel_width = 1, pixel_height = 1;
 
 // What draws in the window (see gpu.h), which it says once it's open.
 static const tide_gpu *gpu;
+// The game's cache folder, where the backend keeps the pipelines it compiled
+// across runs (tide_gpu.pipeline_cache): known once the host named the game,
+// and another for another game, as the backend was last told.
+static char *gpu_cache_folder;
 static bool gpu_timing;
 
 // The last frames' lengths, for tide_platform_fps.
@@ -153,6 +158,8 @@ void tide_platform_open(const tide_window_desc *desc)
 #endif
     if (!tide_window_open(desc)) exit(1); // It said why
     gpu = tide_window_gpu();
+    free(gpu_cache_folder); // Which this backend hasn't been told
+    gpu_cache_folder = NULL;
     opened = tide_time_now_ns();
     follow_window();
 #ifdef __wasm__
@@ -220,6 +227,8 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
     }
     headless = true;
     gpu = tide_window_gpu();
+    free(gpu_cache_folder);
+    gpu_cache_folder = NULL;
     opened = tide_time_now_ns();
     follow_window();
 #endif
@@ -1845,8 +1854,29 @@ static uint32_t gpu_epoch; // The device all of the above was made on (tide_gpu.
 // what the renderer had on the last one went with it: it forgets it, and
 // makes it again as lists draw. It can: the lists keep their textures' and
 // meshes' copies and their runs' shaders, and the font its atlas.
+// The backend is told of the game's cache folder as it changes.
+static void follow_cache_folder(void)
+{
+    if (!gpu->pipeline_cache) return;
+    const char *folder = tide_platform_cache_folder();
+    if (folder == gpu_cache_folder || (folder && gpu_cache_folder && strcmp(folder, gpu_cache_folder) == 0)) return;
+    free(gpu_cache_folder);
+    gpu_cache_folder = NULL;
+    if (!folder) {
+        gpu->pipeline_cache(NULL);
+        return;
+    }
+    const size_t length = strlen(folder) + 1u;
+    gpu_cache_folder = memcpy(tide_alloc(length), folder, length);
+    char *file = tide_alloc(length + 32u);
+    snprintf(file, length + 32u, "%s/pipelines.vulkan", folder);
+    gpu->pipeline_cache(file);
+    free(file);
+}
+
 static bool gpu_ready(void)
 {
+    follow_cache_folder();
     const uint32_t epoch = gpu->epoch();
     if (epoch == 0 || epoch == gpu_epoch) return epoch != 0;
     if (gpu->time_reset) gpu->time_reset();

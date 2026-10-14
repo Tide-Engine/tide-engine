@@ -7,12 +7,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 Native GPU tests are registered through `tide_gpu_test(<test>... [OPENGL])` (`cmake/VulkanTests.cmake`), which gives them the `gpu` label as `set_tests_properties(... LABELS gpu)` did, and an environment:
 
 - `VK_LOADER_LAYERS_DISABLE=~implicit~`, so overlays and capture tools a machine has installed (Steam's, OBS's, Epic's are on this one) stay out of a test's Vulkan.
-- `TIDE_VULKAN_VALIDATION=1` and `VK_ADD_LAYER_PATH`, where CMake found the Khronos validation layer: in `TIDE_VULKAN_SDK`, `VULKAN_SDK`'s `Bin`/`share`/`etc`, or the system's explicit layer folders. Its errors and warnings then stop the test (`notes/rendering.md`, Vulkan). With no layer, configure says so, and the tests draw with Vulkan unchecked.
+- `TIDE_VULKAN_VALIDATION=1` and `VK_ADD_LAYER_PATH`, where CMake found the Khronos validation layer: in `TIDE_VULKAN_SDK`, `VULKAN_SDK`'s `Bin`/`share`/`etc`, or the system's explicit layer folders. Its errors and warnings then stop the test (`notes/rendering.md`, Vulkan). Synchronization validation is on with it, so a missing barrier stops a test too. With no layer, configure says so, and the tests draw with Vulkan unchecked.
 - `OPENGL` adds `TIDE_BACKEND=opengl`. `tide_platform_draw`, `_targets`, `_shaders`, `_skinned` and `_gpu_time` have such a twin, `*_opengl`, so OpenGL keeps its coverage now that Vulkan is the default.
 
 Where CMake finds `spirv-val`, `tidec_spirv_<name>` and `tide_spirv_shaders_valid` check tidec's and the renderer's SPIR-V (`notes/shaders.md`, SPIR-V).
 
 This machine has no SDK installed. The Windows SDK 1.4.350.0 installer (`vulkansdk-windows-X64-1.4.350.0.exe`, SHA-256 `855b27ba05d2d8119c5114c5d4ff870ca38f2c632b11e1bb9923b9b7e6ecfe7b`, as Scoop's manifest pins it) was unpacked with 7-Zip into `%LOCALAPPDATA%/TideDev/VulkanSDK/1.4.350.0` (its `Bin` alone comes out, which holds both tools). The debug preset was configured with `-DTIDE_VULKAN_SDK=C:/Users/blenm/AppData/Local/TideDev/VulkanSDK/1.4.350.0`. Nothing was registered with the system, so a run outside CTest has no layer unless it sets those variables itself.
+
+`tide_platform_swapchain` and `tide_platform_pipeline_cache` are Vulkan's alone, and set `TIDE_BACKEND=vulkan`: on a machine without it they fail, where the others would draw with OpenGL.
 
 CI runs no `gpu` test (its runners have no GPU), so Vulkan's coverage is this machine's.
 
