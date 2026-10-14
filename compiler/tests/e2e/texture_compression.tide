@@ -1,0 +1,25 @@
+asset Texture opaque = "texture_compression_assets/opaque.png";
+asset Texture alpha = "texture_compression_assets/alpha.png";
+[Raw]
+asset Texture numbers = "texture_compression_assets/alpha.png";
+asset Texture small = "texture_compression_assets/small.png";
+scene Main { }
+
+local singleton Art
+{
+    List<Vertex> vertices;
+    List<int> indices;
+}
+
+frag Numbers(Vertex vertex, out Color color)
+{
+    color = numbers.Sample(vertex.uv);
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.vertices, art.indices, opaque);
+    Draw.Mesh(art.vertices, art.indices, alpha);
+    Draw.Mesh(art.vertices, art.indices, small);
+    Draw.Mesh(art.vertices, art.indices, Numbers);
+}

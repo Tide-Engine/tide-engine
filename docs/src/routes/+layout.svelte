@@ -4,12 +4,33 @@
     import Header from '#lib/components/Header.svelte';
     import Search from '#lib/components/Search.svelte';
     import { watchTheme } from '#lib/theme.svelte.ts';
+    import { afterNavigate } from '$app/navigation';
+    import { pages } from '#lib/nav.ts';
 
     let { children } = $props();
 
     let searching = $state(false);
 
     $effect(watchTheme);
+
+    let firstPage = true;
+    afterNavigate(() => {
+        const path = window.location.pathname.replace(/\/$/, '') || '/';
+        if (import.meta.env.DEV || window.top !== window || (path !== '/' && !pages.some((page) => page.link === path))) return;
+        // Send only the referring hostname, and only for the first page.
+        let referrer = '';
+        if (firstPage && document.referrer) {
+            try {
+                const from = new URL(document.referrer);
+                if (from.hostname !== window.location.hostname) referrer = `${from.protocol}//${from.hostname}`;
+            } catch { /* Invalid referrers are direct traffic. */ }
+        }
+        firstPage = false;
+        void fetch('/analytics/pageview', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path, referrer }), keepalive: true, credentials: 'omit',
+        }).catch(() => {});
+    });
 </script>
 
 <svelte:head>

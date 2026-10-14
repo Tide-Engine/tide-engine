@@ -1,0 +1,20 @@
+// expect: in code the GPU runs, a statement with '++' on 'i' reads it nowhere else
+// expect: write the '++' as a statement of its own, before or after this one
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    mut var i = 0;
+    float shade = ++i * 0.5 + i;
+    color = Color(shade, shade, shade);
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.corners, [0, 1, 2], Shade);
+}

@@ -7,7 +7,7 @@ local scene Menu
     int page;
 }
 
-local component Button
+component Button
 {
     int id;
 }
@@ -26,8 +26,8 @@ local event(Spawned) Open(with Main, mut Frames frames)
 
 local event(Spawned) Buttons(with Menu)
 {
-    Spawn(Button { id = 1 });
-    Spawn(Button { id = 2 });
+    local Spawn(Button { id = 1 });
+    local Spawn(Button { id = 2 });
 }
 
 view Count(mut Frames frames)

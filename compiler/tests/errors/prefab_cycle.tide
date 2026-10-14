@@ -1,0 +1,4 @@
+// expect: recursive prefab inclusion of 'A'; a prefab cannot contain itself
+scene Main { }
+prefab A { entity B : B { } }
+prefab B { entity A : A { } }

@@ -1,0 +1,719 @@
+using Rooms;
+
+// CRACKED, the Unity game, in Tide: two teams of glass-headed mages, rounds
+// on maps that change, and cards for whoever lost. This file is the match:
+// seats and teams, the round's states (the Unity game's TeamCreation, Warmup,
+// RoundRunning, RoundEnd, UpgradeSelection and GameOver), the maps' turns and
+// what moves in them. The players are player.tide's, their bullets
+// bullets.tide's, the cards upgrades.tide's and the maps maps.tide's.
+settings
+{
+    title = "CRACKED";
+    appId = "dev.tide.private.cracked";
+    tickRate = 30;
+    maxPlayers = 8;
+    hostMigration = true;
+}
+
+// The scene's state nodes' numbers.
+const float WARMUP_SECONDS = 6;
+const float ROUND_END_SECONDS = 4;
+const float MAP_STEP_SECONDS = 2;        // DestroyOldMap's and CreateNewMap's
+const int SCORE_PER_ROUND = 2;
+const int ROUNDS_TO_WIN = 5;
+const float SELECTION_TIMEOUT = 60;
+const float BOT_SELECTION_DELAY = 4;
+const float GAME_OVER_SECONDS = 12;      // Then a new game: the Unity game goes back to its menu
+
+enum Phase { Teams, Warmup, Running, RoundEnd, Upgrade, GameOver }
+enum MapPhase { Idle, DestroyOld, CreateNew }
+enum Steps { Inputs, Simulation }
+
+// What draws over what, whichever file a view is in: render.tide has the
+// first five, and hud.tide the last.
+enum Layers { Prepare, Camera, Shadow, World, Effects, Hud }
+
+singleton Arena
+{
+    Seat[SEATS] seats;
+    List<Bullet> bullets;
+    List<Cloud> clouds;
+    List<Piece> pieces;
+    List<Mover> movers;
+    List<Block> blocks;
+    List<SpawnLine> spawns;
+    List<BulletMod> bulletMods;
+    List<ShootMod> shootMods;
+    List<Trait> traits;
+    List<int> picks;             // Every card taken: its seat times 64, plus the card
+    int nextBullet;
+
+    Phase phase;
+    float phaseTime;             // Warmup: seconds left. RoundEnd, GameOver: seconds in
+
+    // TeamManager
+    int[TEAMS] score;
+    int[TEAMS] rounds;
+    int lastWinningTeam = -1;
+    List<int> needsUpgrades;     // Seats that pick a card before the next round
+
+    // UpgradeSelectionState
+    int upgrading = -1;          // The seat that's picking
+    int[CARDS] cards;
+    int revision;
+    float selectionAge;
+    Random cardDice;
+    int hover = -1;              // The card the picker's pointer is on, for everyone who watches
+
+    // MapManager
+    MapPhase mapPhase;
+    float mapTimer;
+    int map = -1;
+    int futureMap = -1;
+    bool hasMap;
+    Random mapDice;
+    List<int> shuffleBag;
+
+    int floorDamage = FLOOR_DAMAGE;
+    Map<PlayerID, int> players;  // Each player's seat
+    Map<PlayerID, Entity> participants;
+}
+
+component Participant { int seat; }
+
+// Where a seat's avatar is, for what draws it. The seats are an array, which
+// a view sees as the last tick left it: these fields a view sees blended
+// between ticks, and gliding to where the server says when this machine
+// guessed otherwise. Nothing of the match reads them.
+component Avatar
+{
+    int seat;
+    int life;
+    [Position] float3 position;
+    [Rotation] quaternion rotation = quaternion.identity;
+}
+scene Main { }
+
+command Restart { }
+command PickCard { int card; int revision; }
+
+// What the match says of its rounds, for a machine to show and sound.
+event RoundStarted { int map; }
+event RoundWon { int team; bool scored; }
+event CardPicked { int seat; int upgrade; }
+event GameWon { int team; }
+event MapChanging { int map; }
+
+// What a view works out of this machine's camera and fingers, for the input.
+local singleton Hand
+{
+    float yaw;
+    float pitch = 17.5;
+    float3 aim = float3(0, 0, 1);
+    float2 stick;        // A touch stick's, as the screen has it: x right, y up
+    float2 look;         // Degrees a touch turned the camera by this frame, which the camera takes
+    bool jump;
+    bool fire;
+    bool shield;
+    bool reload;
+    int hover = -1;      // The card the pointer is on, while this machine's player picks
+}
+
+// Each seat's avatar as this frame draws it: Avatar's blended place and turn,
+// which a view copies here for every other view (render.tide).
+local singleton Shown
+{
+    float3[SEATS] position;
+    quaternion[SEATS] rotation;
+}
+
+// Where this machine's player's next bullet would first land, as
+// PlayerCrosshair has it from ShooterBase.PredictHit: the crosshair is there,
+// not at the screen's middle (render.tide works it out, hud.tide draws it).
+local singleton Sight
+{
+    bool found;          // There's an avatar to aim for
+    float3 at;
+    float3 normal = float3(0, 1, 0);
+    bool player;         // It would land on a player
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;     // In the world: x and z
+    bool jump;
+    bool fire;
+    bool shield;
+    bool reload;
+    [Absolute] float3 aim = float3(0, 0, 1);
+    [Absolute] float yaw;
+    [Absolute] float pitch = 17.5;
+    [Absolute, Clamp(-1, 4)] int hover = -1;
+
+    Sample(Devices devices, Lobby lobby, Hand hand)
+    {
+        hover = hand.hover;
+        yaw = hand.yaw;
+        pitch = hand.pitch;
+        aim = hand.aim;
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        var pad = devices.gamepad;
+        mut var raw = hand.stick + pad.leftStick;
+        if (keys.d.pressed || keys.rightArrow.pressed) raw.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) raw.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) raw.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) raw.y -= 1;
+        if (Math.Length(raw) > 1) raw = Math.Normalize(raw);
+        // Along the camera's own forward and right, on the ground
+        var forward = Forward(hand.yaw);
+        move = float2(forward.x * raw.y + forward.z * raw.x, forward.z * raw.y - forward.x * raw.x);
+        jump = hand.jump || keys.space.pressed || pad.buttonSouth.pressed;
+        fire = hand.fire || devices.mouse.left.pressed || pad.rightTrigger > 0.5;
+        shield = hand.shield || devices.mouse.right.pressed || pad.leftTrigger > 0.5;
+        reload = hand.reload || keys.r.pressed || pad.buttonWest.pressed;
+    }
+
+    Sanitize()
+    {
+        // No part of a way is over 1: a huge one has no length to be brought to 1 by
+        aim = Math.Clamp(aim, float3(-1), float3(1));
+        if (Math.LengthSq(aim) < 0.01) aim = float3(0, 0, 1);
+        pitch = Math.Clamp(pitch, -10, 45);
+    }
+}
+
+int TeamOf(int seat) { return seat % TEAMS; }
+
+int Humans(Arena arena, int team)
+{
+    mut var count = 0;
+    for (var s = 0; s < SEATS; s++)
+        if (arena.seats[s].taken && !arena.seats[s].bot && TeamOf(s) == team) count += 1;
+    return count;
+}
+
+void ClearSeat(mut Arena arena, int s)
+{
+    arena.seats[s] = Seat { };
+    mut var i = 0;
+    while (i < arena.picks.count)
+    {
+        if (arena.picks[i] / 64 == s) arena.picks.RemoveAt(i);
+        else i++;
+    }
+    arena.needsUpgrades.Remove(s);
+}
+
+void ClearLoadout(mut Arena arena, int s)
+{
+    mut var i = 0;
+    while (i < arena.bulletMods.count)
+    {
+        if (arena.bulletMods[i].seat == s) arena.bulletMods.RemoveAt(i);
+        else i++;
+    }
+    i = 0;
+    while (i < arena.shootMods.count)
+    {
+        if (arena.shootMods[i].seat == s) arena.shootMods.RemoveAt(i);
+        else i++;
+    }
+    i = 0;
+    while (i < arena.traits.count)
+    {
+        if (arena.traits[i].seat == s) arena.traits.RemoveAt(i);
+        else i++;
+    }
+}
+
+// A team nobody plays for has a bot, so a player alone has someone to fight,
+// as the Unity game's bot mode gives them.
+void KeepTeams(mut Arena arena)
+{
+    for (var team = 0; team < TEAMS; team++)
+    {
+        var humans = Humans(arena, team);
+        mut var bots = 0;
+        for (var s = team; s < SEATS; s += TEAMS)
+        {
+            if (!arena.seats[s].taken || !arena.seats[s].bot) continue;
+            bots += 1;
+            if (humans == 0 && bots == 1) continue;
+            ClearLoadout(arena, s);
+            ClearSeat(arena, s);
+        }
+        if (humans > 0 || bots > 0) continue;
+        arena.seats[team].taken = true;
+        arena.seats[team].bot = true;
+        arena.seats[team].team = team;
+    }
+}
+
+event(Spawned) Begin(mut Arena arena, with Main)
+{
+    // The match's own dice, from its seed: what the engine would seed them
+    // with goes by where the singleton is among the program's, which another
+    // file can change
+    arena.mapDice = Random(Random.seed * 2 + 1);
+    arena.cardDice = Random(Random.seed * 2 + 2);
+    for (var s = 0; s < SEATS; s++) Spawn(Avatar { seat = s });
+    KeepTeams(arena);
+}
+
+// A player has a seat in the team with fewer players: a bot's, as it is, when
+// that team has one.
+event(PlayerJoined joined) Enter(mut Arena arena)
+{
+    if (arena.players.Has(joined.player)) return;
+    var team = Humans(arena, 1) < Humans(arena, 0) ? 1 : 0;
+    mut var seat = -1;
+    for (var s = team; s < SEATS; s += TEAMS)
+        if (arena.seats[s].taken && arena.seats[s].bot && seat < 0) seat = s;
+    for (var s = team; s < SEATS; s += TEAMS)
+        if (!arena.seats[s].taken && seat < 0) seat = s;
+    for (var s = 0; s < SEATS; s++)
+        if (!arena.seats[s].taken && seat < 0) seat = s;
+    if (seat < 0) return;
+    arena.seats[seat].taken = true;
+    arena.seats[seat].bot = false;
+    arena.seats[seat].player = joined.player;
+    arena.seats[seat].team = TeamOf(seat);
+    arena.players[joined.player] = seat;
+    arena.participants[joined.player] = Spawn(Participant { seat = seat }, Owner { player = joined.player });
+    KeepTeams(arena);
+}
+
+event(PlayerLeft left) Leave(mut Arena arena)
+{
+    if (!arena.players.TryGet(left.player, out var seat)) return;
+    if (arena.participants.TryGet(left.player, out var entity)) entity.Destroy();
+    arena.participants.Remove(left.player);
+    arena.players.Remove(left.player);
+    ClearLoadout(arena, seat);
+    ClearSeat(arena, seat);
+    if (arena.upgrading == seat) arena.upgrading = -1;
+    KeepTeams(arena);
+}
+
+void NewGame(mut Arena arena)
+{
+    arena.picks.Clear();
+    arena.needsUpgrades.Clear();
+    arena.score = [0, 0];
+    arena.rounds = [0, 0];
+    arena.lastWinningTeam = -1;
+    arena.upgrading = -1;
+    arena.phase = Phase.Teams;
+    arena.phaseTime = 0;
+}
+
+command(Restart restart, PlayerID sender) StartAgain(mut Arena arena)
+{
+    if (!arena.players.Has(sender)) return;
+    NewGame(arena);
+}
+
+void TakeCard(mut Arena arena, int upgrade)
+{
+    var seat = arena.upgrading;
+    arena.picks.Add(seat * 64 + upgrade);
+    Send(CardPicked { seat = seat, upgrade = upgrade });
+    arena.upgrading = -1;
+    NextPicker(arena);
+}
+
+command(PickCard pick, PlayerID sender) Pick(mut Arena arena)
+{
+    if (arena.phase != Phase.Upgrade || arena.upgrading < 0 || pick.revision != arena.revision) return;
+    if (!arena.players.TryGet(sender, out var seat) || seat != arena.upgrading) return;
+    if (pick.card < 0 || pick.card >= CARDS) return;
+    TakeCard(arena, arena.cards[pick.card]);
+}
+
+[Stage(Steps.Inputs)]
+system ReadControls(Controls input, Participant participant, mut Arena arena, with Owner)
+{
+    var s = participant.seat;
+    if (s < 0 || s >= SEATS) return;
+    arena.seats[s].pad = Pad { move = input.move, jump = input.jump, jumpDown = input.jump.down, fire = input.fire, shield = input.shield,
+                               reload = input.reload, aim = input.aim, yaw = input.yaw, pitch = input.pitch, hover = input.hover };
+}
+
+// The seats' avatars for a round, on their teams' lines: LineSpawnPoint's
+// outward formation, shuffled, as WarmupState.SpawnAllPlayers does.
+void SpawnPlayers(mut Arena arena)
+{
+    mut var dice = arena.mapDice;
+    for (var team = 0; team < TEAMS; team++)
+    {
+        mut var line = SpawnLine { };
+        foreach (var candidate in arena.spawns)
+            if (candidate.team == team) line = candidate;
+        mut var count = 0;
+        for (var s = team; s < SEATS; s += TEAMS)
+            if (arena.seats[s].taken) count += 1;
+        if (count == 0) continue;
+        var right = Math.Rotate(line.rotation, float3(1, 0, 0));
+        var start = line.position - right * (line.width * 0.5);
+        var end = line.position + right * (line.width * 0.5);
+        mut List<float3> points = [];
+        if (count == 1) points.Add(start);
+        else
+        {
+            for (var i = 0; i < count / 2; i++)
+            {
+                var t = float(i) / (count - 1);
+                points.Add(start + (end - start) * t);
+                points.Add(start + (end - start) * (1 - t));
+            }
+            if (count % 2 == 1) points.Add((start + end) * 0.5);
+        }
+        for (var i = points.count - 1; i > 0; i--)
+        {
+            var j = dice.NextInt(i + 1);
+            var swapped = points[i];
+            points[i] = points[j];
+            points[j] = swapped;
+        }
+        mut var member = 0;
+        var forward = Math.Rotate(line.rotation, float3(0, 0, 1));
+        for (var s = team; s < SEATS; s += TEAMS)
+        {
+            if (!arena.seats[s].taken) continue;
+            SpawnPlayer(arena, s, points[member], line.rotation, Math.Degrees(Math.Atan2(forward.x, forward.z)), dice.NextInt());
+            member += 1;
+        }
+    }
+    arena.mapDice = dice;
+}
+
+void SpawnPlayer(mut Arena arena, int s, float3 at, quaternion rotation, float yaw, int seed)
+{
+    var was = arena.seats[s];
+    mut var seat = Seat { taken = true, bot = was.bot, player = was.player, team = TeamOf(s), alive = true, life = was.life + 1, position = at, rotation = rotation,
+                          yaw = yaw, pitch = 23.2, random = Random(seed), stagger = Random(seed + 1) };
+    seat.pad = Pad { yaw = yaw, pitch = 23.2, aim = Math.Rotate(rotation, float3(0, 0, 1)) };
+    arena.seats[s] = seat;
+    ClearLoadout(arena, s);
+    arena.shootMods.Add(ShootMod { seat = s, kind = ShootModKind.Single });
+    foreach (var pick in arena.picks)
+        if (pick / 64 == s) ApplyUpgrade(arena, s, pick % 64);
+    // ShooterBase.OnAppliedOldUpgrades
+    arena.seats[s].baseSettings = arena.seats[s].settings;
+    arena.seats[s].health = int(arena.seats[s].settings.health);
+    arena.seats[s].maxHealth = arena.seats[s].health;
+    arena.seats[s].magazine = arena.seats[s].settings.magazineSize;
+}
+
+// Where a mover has its pieces this tick.
+void PlaceMover(mut Arena arena, int m, float dt)
+{
+    var mover = arena.movers[m];
+    mut var position = mover.origin;
+    mut var rotation = quaternion.identity;
+    mut var turning = float3(0);
+    var hinge = mover.link >= 0 ? arena.movers[mover.link] : mover;
+    var rate = Math.Radians(hinge.angleSpeed) * (hinge.pong ? 1 : -1);
+    switch (mover.kind)
+    {
+        case MoverKind.Slide:
+            position = mover.origin + mover.travel * Math.Saturate(mover.progress);
+            break;
+        case MoverKind.HingeA:
+            rotation = quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(hinge.angle));
+            turning = float3(rate, 0, 0);
+            break;
+        case MoverKind.HingeB:
+            rotation = Math.Mul(quaternion.AxisAngle(float3(1, 0, 0), -Math.Radians(hinge.angle)), quaternion.AxisAngle(float3(0, 1, 0), Math.PI));
+            turning = float3(-rate, 0, 0);
+            break;
+        case MoverKind.Lift:
+            var share = Math.Saturate((hinge.angle - hinge.angleMax) / (hinge.angleMin - hinge.angleMax));
+            position = mover.origin + float3(0, mover.heightMin + (mover.heightMax - mover.heightMin) * share, 0);
+            break;
+    }
+    arena.movers[m].velocity = dt > 0 ? (position - mover.position) / dt : float3(0);
+    arena.movers[m].turning = dt > 0 ? turning : float3(0);
+    arena.movers[m].position = position;
+    arena.movers[m].rotation = rotation;
+}
+
+// EnvironmentMoving and MovingBridge, a tick, and their pieces with them.
+void Movers(mut Arena arena, float dt)
+{
+    for (var m = 0; m < arena.movers.count; m++)
+    {
+        var mover = arena.movers[m];
+        if (mover.kind == MoverKind.Slide)
+        {
+            if (mover.back)
+            {
+                arena.movers[m].progress -= dt / 5 * mover.speed;
+                if (arena.movers[m].progress <= 0) arena.movers[m].back = false;
+            }
+            else
+            {
+                arena.movers[m].progress += dt / 5 * mover.speed;
+                if (arena.movers[m].progress >= 1) arena.movers[m].back = true;
+            }
+        }
+        if (mover.kind == MoverKind.HingeA)
+        {
+            arena.movers[m].angle += mover.angleSpeed * (mover.pong ? dt : -dt);
+            if (arena.movers[m].angle > mover.angleMax)
+            {
+                arena.movers[m].angle = mover.angleMax;
+                arena.movers[m].pong = false;
+            }
+            else if (arena.movers[m].angle < mover.angleMin)
+            {
+                arena.movers[m].angle = mover.angleMin;
+                arena.movers[m].pong = true;
+            }
+        }
+    }
+    for (var m = 0; m < arena.movers.count; m++) PlaceMover(arena, m, dt);
+    PlacePieces(arena);
+}
+
+void PlacePieces(mut Arena arena)
+{
+    for (var i = 0; i < arena.pieces.count; i++)
+    {
+        var m = arena.pieces[i].mover;
+        if (m < 0) continue;
+        arena.pieces[i].position = arena.movers[m].position + Math.Rotate(arena.movers[m].rotation, arena.pieces[i].local);
+        arena.pieces[i].rotation = Math.Mul(arena.movers[m].rotation, arena.pieces[i].localRotation);
+    }
+}
+
+// A bullet's knock on a block that can be pushed. The blocks stand where the
+// map has them for now: see DESIGN.md.
+void KnockBlock(mut Arena arena, int block, float3 knock, float3 at)
+{
+}
+
+// MapManager.CreateNewMap: the map's pieces, what moves in it as it starts,
+// and the players on their lines.
+void CreateMap(mut Arena arena)
+{
+    arena.pieces.Clear();
+    arena.movers.Clear();
+    arena.blocks.Clear();
+    arena.spawns.Clear();
+    arena.clouds.Clear();
+    arena.map = arena.futureMap;
+    arena.futureMap = -1;
+    arena.hasMap = true;
+    BuildMap(arena.map, arena.pieces, arena.movers, arena.blocks, arena.spawns);
+    mut var dice = arena.mapDice;
+    for (var m = 0; m < arena.movers.count; m++)
+    {
+        arena.movers[m].speed = dice.NextFloat(arena.movers[m].speedMin, arena.movers[m].speedMax);
+        if (arena.movers[m].randomStart)
+        {
+            arena.movers[m].progress = dice.NextFloat();
+            arena.movers[m].back = dice.NextFloat() > 0.5;
+        }
+        arena.movers[m].angle = arena.movers[m].angleStart;
+        arena.movers[m].position = arena.movers[m].origin;
+    }
+    for (var b = 0; b < arena.blocks.count; b++)
+    {
+        arena.blocks[b].position = arena.blocks[b].origin;
+        arena.blocks[b].rotation = arena.blocks[b].originRotation;
+    }
+    arena.mapDice = dice;
+    for (var m = 0; m < arena.movers.count; m++) PlaceMover(arena, m, 0);
+    PlacePieces(arena);
+    SpawnPlayers(arena);
+    Send(RoundStarted { map = arena.map });
+}
+
+// MapManager.ChangeRandomMap: the next of a shuffled bag of every map, never
+// the same map twice in a row.
+void ChangeRandomMap(mut Arena arena)
+{
+    mut var dice = arena.mapDice;
+    if (arena.shuffleBag.count == 0)
+    {
+        for (var i = 0; i < MAPS; i++) arena.shuffleBag.Add(i);
+        for (var i = MAPS - 1; i > 0; i--)
+        {
+            var j = dice.NextInt(i + 1);
+            var swapped = arena.shuffleBag[i];
+            arena.shuffleBag[i] = arena.shuffleBag[j];
+            arena.shuffleBag[j] = swapped;
+        }
+        if (arena.shuffleBag[MAPS - 1] == arena.map)
+        {
+            var other = dice.NextInt(MAPS - 1);
+            var swapped = arena.shuffleBag[MAPS - 1];
+            arena.shuffleBag[MAPS - 1] = arena.shuffleBag[other];
+            arena.shuffleBag[other] = swapped;
+        }
+    }
+    arena.mapDice = dice;
+    arena.futureMap = arena.shuffleBag[arena.shuffleBag.count - 1];
+    arena.shuffleBag.RemoveAt(arena.shuffleBag.count - 1);
+}
+
+// WarmupState.Enter: the avatars go, and the map changes when a round of
+// points is over, or is set up again.
+void EnterWarmup(mut Arena arena)
+{
+    arena.phase = Phase.Warmup;
+    arena.phaseTime = WARMUP_SECONDS;
+    for (var s = 0; s < SEATS; s++) arena.seats[s].alive = false;
+    arena.bullets.Clear();
+    if (arena.score[0] == 0 && arena.score[1] == 0 || arena.map < 0) ChangeRandomMap(arena);
+    else arena.futureMap = arena.map;
+    arena.mapPhase = MapPhase.DestroyOld;
+    arena.mapTimer = MAP_STEP_SECONDS;
+    Send(MapChanging { map = arena.futureMap });
+}
+
+void NextPicker(mut Arena arena)
+{
+    while (arena.needsUpgrades.count > 0)
+    {
+        var seat = arena.needsUpgrades[0];
+        arena.needsUpgrades.RemoveAt(0);
+        if (!arena.seats[seat].taken) continue;
+        arena.upgrading = seat;
+        arena.phase = Phase.Upgrade;
+        DealCards(arena);
+        return;
+    }
+    EnterWarmup(arena);
+}
+
+// TeamManager.AddScore: a point for the team left standing, and with enough
+// points a round, which the other teams' players pick a card for.
+void AddScore(mut Arena arena, int team)
+{
+    arena.score[team] += 1;
+    arena.lastWinningTeam = team;
+    var round = arena.score[team] >= SCORE_PER_ROUND;
+    if (round)
+    {
+        arena.score = [0, 0];
+        arena.rounds[team] += 1;
+        for (var s = 0; s < SEATS; s++)
+            if (arena.seats[s].taken && TeamOf(s) != team) arena.needsUpgrades.Add(s);
+    }
+    Send(RoundWon { team = team, scored = round });
+}
+
+void Rounds(mut Arena arena, float dt)
+{
+    // The map's own states, whatever the round's is
+    if (arena.mapPhase == MapPhase.DestroyOld)
+    {
+        arena.mapTimer -= dt;
+        if (!arena.hasMap || arena.mapTimer <= 0)
+        {
+            CreateMap(arena);
+            arena.mapPhase = MapPhase.CreateNew;
+            arena.mapTimer = MAP_STEP_SECONDS;
+        }
+    }
+    else if (arena.mapPhase == MapPhase.CreateNew)
+    {
+        arena.mapTimer -= dt;
+        if (arena.mapTimer <= 0) arena.mapPhase = MapPhase.Idle;
+    }
+
+    switch (arena.phase)
+    {
+        case Phase.Teams:
+            if (Humans(arena, 0) + Humans(arena, 1) > 0) EnterWarmup(arena);
+            break;
+        case Phase.Warmup:
+            arena.phaseTime -= dt;
+            if (arena.phaseTime <= 0) arena.phase = Phase.Running;
+            break;
+        case Phase.Running:
+            mut var standing = 0;       // A bit for each team with someone alive
+            for (var s = 0; s < SEATS; s++)
+                if (arena.seats[s].alive && !arena.seats[s].dead) standing |= 1 << TeamOf(s);
+            if (standing == 3) break;
+            if (standing != 0) AddScore(arena, standing == 1 ? 0 : 1);
+            arena.phase = Phase.RoundEnd;
+            arena.phaseTime = 0;
+            if (arena.lastWinningTeam >= 0 && arena.rounds[arena.lastWinningTeam] >= ROUNDS_TO_WIN)
+            {
+                arena.phase = Phase.GameOver;
+                Send(GameWon { team = arena.lastWinningTeam });
+            }
+            break;
+        case Phase.RoundEnd:
+            arena.phaseTime += dt;
+            if (arena.phaseTime >= ROUND_END_SECONDS) NextPicker(arena);
+            break;
+        case Phase.Upgrade:
+            if (arena.upgrading < 0 || !arena.seats[arena.upgrading].taken)
+            {
+                arena.upgrading = -1;
+                NextPicker(arena);
+                break;
+            }
+            arena.selectionAge += dt;
+            arena.hover = arena.seats[arena.upgrading].bot ? -1 : arena.seats[arena.upgrading].pad.hover;
+            // Whoever takes too long, and a bot, has the first card
+            if (arena.selectionAge >= SELECTION_TIMEOUT || (arena.seats[arena.upgrading].bot && arena.selectionAge >= BOT_SELECTION_DELAY))
+                TakeCard(arena, arena.cards[0]);
+            break;
+        case Phase.GameOver:
+            arena.phaseTime += dt;
+            if (arena.phaseTime >= GAME_OVER_SECONDS) NewGame(arena);
+            break;
+    }
+}
+
+// A tick of the match, in the order the Unity game's predicted hierarchy
+// simulates: what moves in the map, each player, the bullets and clouds,
+// then the bodies' step, and the round's state last.
+[Stage(Steps.Simulation)]
+system Tick(mut Arena arena, Time time)
+{
+    var dt = time.dt;
+    Movers(arena, dt);
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (!arena.seats[s].alive) continue;
+        if (arena.seats[s].bot) arena.seats[s].pad = BotPad(arena, s, time.t);
+        Shooter(arena, s, dt, time.tick, time.tickRate);
+        Movement(arena, s, dt);
+        Shield(arena, s, dt);
+        Health(arena, s, dt);
+    }
+    Bullets(arena, dt);
+    Clouds(arena, dt);
+    for (var s = 0; s < SEATS; s++)
+        if (arena.seats[s].alive) Integrate(arena, s, dt);
+    var held = GravityLocked(arena);
+    if (!held)
+    {
+        for (var a = 0; a < SEATS; a++)
+            for (var b = a + 1; b < SEATS; b++)
+                if (arena.seats[a].alive && arena.seats[b].alive) Apart(arena, a, b);
+    }
+    for (var s = 0; s < SEATS; s++)
+        if (arena.seats[s].alive) Pads(arena, s, held);
+    Rounds(arena, dt);
+    if (arena.phase != Phase.Upgrade) arena.hover = -1;
+}
+
+// Each seat's avatar, where the tick left it. A new avatar is where it is at
+// once: it doesn't slide there from where the last one fell.
+[Stage(Steps.Simulation, 1)]
+system Mirror(mut Avatar avatar, Arena arena)
+{
+    avatar.position = arena.seats[avatar.seat].position;
+    avatar.rotation = arena.seats[avatar.seat].rotation;
+    if (avatar.life == arena.seats[avatar.seat].life) return;
+    avatar.life = arena.seats[avatar.seat].life;
+    this.Snap();
+}

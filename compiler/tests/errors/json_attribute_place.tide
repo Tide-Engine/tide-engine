@@ -1,0 +1,5 @@
+// expect: [Json] goes on a struct's field: Json reads and writes structs, and 'Lobby' is a component
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+component Lobby { [Json("max_players")] int maxPlayers; }

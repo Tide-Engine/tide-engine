@@ -1,0 +1,3 @@
+// expect: JPEG image is truncated or has invalid segment lengths; save the complete image again
+asset Grid2<Color> image = "../e2e/assets/images/bad/cut.jpg";
+scene Main { }

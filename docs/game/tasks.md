@@ -1,5 +1,5 @@
 ---
-description: "Write Tide async functions and tasks that wait for time, ticks or events, and learn how they run in the match or local presentation."
+description: "Write Tide async functions and tasks that wait for time, ticks, frames or other async calls, in the match or local presentation."
 ---
 
 # Async and tasks
@@ -88,13 +88,14 @@ For now:
 - Methods, extern functions and functions that take an `Action` can't be async.
 - `await` can't go in a block written after a call (an `Action`), and `Wait` only goes after `await`.
 - Tasks can't draw, or read this frame's `Devices`: that's what views do, every frame.
-- Only systems, views, handlers and async code start tasks. A plain function or method can't, as a task belongs to a world.
+- The input's `Sample`, `Sanitize` and `Predict`, frags and verts, operators and `Interpolate` start no tasks. A plain function or method does, as the code that calls it could: see [Starting a task](../language/functions.md#starting-a-task).
+- Awaiting an event and cancelling a task through a handle aren't supported yet. An event can start an async handler, which then waits for time or other async calls.
 
 ## Where tasks run
 
 A task belongs to a world, like the code that starts it. A system's or a match handler's tasks are the match's: they're part of it, in snapshots, state hashes and rollback, they go to players who join, and they carry on when the match changes hands. A view's or a local handler's tasks are this machine's, in its local state.
 
-An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, or reading [`Frame.dt`](./local-state.md#time), makes it local. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
+An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, or reading [`Frame.dt`](./local-state.md#time), makes it local. A [function it calls](../language/functions.md#sending-and-spawning) that sends or spawns counts as its own doing. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
 
 ## What a task keeps
 
@@ -120,7 +121,7 @@ An async function's `mut` parameters are its components and singletons; it can't
 
 Tasks whose time has come go on at the end of the tick (or frame), after its changes and events, in the order they started; what they change, spawn and send then applies too. A task ends when its code does, and:
 
-- **with what started it**: a task started by code that runs for an entity belongs to that entity, and ends when the entity is destroyed. A task started by a task belongs to the same entity. Code that runs for no entity starts tasks that belong to the world, which last as long as it does.
+- **with what started it**: a task started by code that runs for an entity belongs to that entity, and ends when the entity is destroyed. A task started by a task belongs to the same entity, and one a function starts belongs to what the code that called the function runs for. Code that runs for no entity starts tasks that belong to the world, which last as long as it does.
 - **without its components**: a task whose entity no longer has the components it takes ends.
 
 A task waiting for an async call waits in the same place: the call is part of the task, and ends with it. An async function can't await itself, as its task would hold itself; it can start itself again instead, as a task of its own.

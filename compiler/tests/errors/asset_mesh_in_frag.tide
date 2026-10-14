@@ -1,0 +1,22 @@
+// expect: a Mesh's vertices and indices aren't read as lists in code the GPU runs: the draw sends them, as the mesh they are
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> quad = "../e2e/assets/meshes/quad.glb";
+
+frag Paint(Corner corner, out Color color)
+{
+    color = Color.white * quad.vertices.count;
+}
+
+view Show()
+{
+    Draw.Mesh(quad, float4x4.identity, Paint);
+}
+
+scene Main
+{
+}

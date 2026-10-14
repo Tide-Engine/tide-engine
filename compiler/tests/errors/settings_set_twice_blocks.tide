@@ -1,0 +1,5 @@
+// expect: 'tickRate' is set twice
+// expect: the other one is on line 3
+settings { tickRate = 30; }
+settings { title = "Again"; tickRate = 20; }
+scene Main { }

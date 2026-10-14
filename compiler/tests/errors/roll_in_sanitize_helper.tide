@@ -1,0 +1,18 @@
+// expect: 'Die' rolls with Random, which this code can't
+// expect: it does on line 3, and Sanitize repairs an input the same way on every machine, from the input alone
+int Die() { return Random.NextInt(6); }
+input Keys
+{
+    int luck;
+
+    Sample(Devices devices)
+    {
+        luck = devices.keyboard.space.pressed ? 1 : 0;
+    }
+
+    Sanitize()
+    {
+        luck = Die();
+    }
+}
+scene Main { }

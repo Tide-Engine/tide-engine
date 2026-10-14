@@ -5,12 +5,19 @@
 typedef struct world { uint32_t ticks; } world;
 typedef struct local { uint32_t frames; } local;
 static uint32_t starts;
+static bool packed; // The host handed this build the run's pack
+#ifndef RELOAD_GAME_HASH
+#define RELOAD_GAME_HASH 4242 // Another for a build of another layout
+#endif
 #ifdef _WIN32
 #define NUMBERED_LIBRARY "game-1.dll"
+#define NEXT_LIBRARY "game-2.dll"
 #elif defined(__APPLE__)
 #define NUMBERED_LIBRARY "game-1.dylib"
+#define NEXT_LIBRARY "game-2.dylib"
 #else
 #define NUMBERED_LIBRARY "game-1.so"
+#define NEXT_LIBRARY "game-2.so"
 #endif
 
 static void start(void *w, float dt, const void *scene, uint32_t seed)
@@ -32,11 +39,12 @@ static void copy(void *to, const void *from) { memcpy(to, from, sizeof(world)); 
 static uint64_t hash(const void *w) { return ((const world *)w)->ticks; }
 static void player(void *w, tide_player_id id) { (void)w; (void)id; }
 
-static uint8_t *pack(const void *w, const void *base, const uint8_t *need, uint32_t need_size, uint32_t *size)
+static uint8_t *pack(const void *w, const void *base, const uint8_t *need, uint32_t need_size, bool assets, uint32_t *size)
 {
     (void)base;
     (void)need;
     (void)need_size;
+    (void)assets;
     uint8_t *bytes = malloc(sizeof(world));
     if (!bytes) abort();
     memcpy(bytes, w, sizeof(world));
@@ -52,10 +60,32 @@ static bool unpack(void *w, const void *base, const uint8_t *bytes, uint32_t siz
     return true;
 }
 
+// A build's defaults can name its assets, so it has the pack before its local
+// state is made: a build swapped in while the game runs too.
+static bool assets(const uint8_t *bytes, size_t size)
+{
+    (void)bytes;
+    packed = size > 0;
+    return true;
+}
+
 static void local_init(void *l)
 {
     ((local *)l)->frames = 0;
-    printf("reload-test: local started static=%u\n", (unsigned)++starts);
+    printf("reload-test: local started static=%u packed=%u\n", (unsigned)++starts, (unsigned)packed);
+}
+
+// The next build, as tide publishes one beside the build that runs: whole
+// under another name, then renamed into place.
+static void publish(const char *from)
+{
+    FILE *in = fopen(from, "rb");
+    FILE *out = in ? fopen("game-2.part", "wb") : NULL;
+    char bytes[65536];
+    size_t count;
+    while (out && (count = fread(bytes, 1, sizeof bytes, in)) > 0) fwrite(bytes, 1, count, out);
+    if (in) fclose(in);
+    if (out && fclose(out) == 0 && rename("game-2.part", NEXT_LIBRARY) == 0) printf("reload-test: next build published\n");
 }
 
 static void local_free(void *l)
@@ -64,11 +94,13 @@ static void local_free(void *l)
 }
 
 static void frame(const void *w, const void *previous, float alpha, const void *verified,
-                  void *l, tide_draw_list *draw, tide_gui *gui)
+                  const void *verified_previous, float verified_alpha, void *l, tide_draw_list *draw, tide_gui *gui)
 {
     (void)previous;
     (void)alpha;
     (void)verified;
+    (void)verified_previous;
+    (void)verified_alpha;
     (void)draw;
     printf("reload-test: frame=%u tick=%u r=%u\n", (unsigned)++((local *)l)->frames,
            w ? (unsigned)((const world *)w)->ticks : 0u, (unsigned)gui->devices.keyboard.r.pressed);
@@ -76,6 +108,7 @@ static void frame(const void *w, const void *previous, float alpha, const void *
     // copy so a restart remains possible after the original file disappears.
     if (((local *)l)->frames == 5 && getenv("TIDE_RELOAD_REMOVE_NUMBERED") && remove(NUMBERED_LIBRARY) == 0)
         printf("reload-test: numbered library removed\n");
+    if (((local *)l)->frames == 5 && RELOAD_GAME_HASH == 4242 && getenv("TIDE_RELOAD_PUBLISH")) publish(getenv("TIDE_RELOAD_PUBLISH"));
     fflush(stdout);
 }
 
@@ -91,7 +124,7 @@ static int32_t current_tick(const void *w) { return (int32_t)((const world *)w)-
 static void unload(void) { printf("reload-test: unloaded static=%u\n", (unsigned)starts); }
 
 static const tide_game game = {
-    .hash = 4242,
+    .hash = RELOAD_GAME_HASH,
     .world_size = sizeof(world),
     .start_size = 1,
     .start = start,
@@ -118,6 +151,7 @@ TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)
         .connected = connected,
         .disconnected = disconnected,
         .tick = current_tick,
+        .assets = assets,
         .unload = unload,
     };
     return &host;

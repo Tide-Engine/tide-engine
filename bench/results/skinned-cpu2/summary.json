@@ -1,0 +1,2480 @@
+{
+  "aggregation": "Median of three per-round medians. Paired ratios divide before by after within each round; ratio of aggregated medians is reported separately.",
+  "timing_interpretation": "CPU view/recording, CPU submission, GPU queries and full-frame readback are distinct intervals. GPU queries exclude upfront renderer preparation and geometry/instance uploads, but include on-demand palette texture creation/update inside draw_shaded; they are not pure shader time. Do not sum CPU and GPU or infer pipelined FPS. Retained process/GPU memory includes caches. Clocks are observed without power-setting changes; shared desktop applications remain running.",
+  "gpu_query_boundary": "Excludes upfront renderer preparation and geometry/instance uploads. Includes on-demand palette texture creation/update inside draw_shaded, plus shader drawing; excludes framebuffer readback. GPU query is not pure shader execution time.",
+  "rows": 96,
+  "cases": [
+    {
+      "characters": 1,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0007,
+          "after_median_of_round_medians": 0.00115,
+          "before_round_medians": [
+            0.0007,
+            0.0005,
+            0.0007
+          ],
+          "after_round_medians": [
+            0.00115,
+            0.0012,
+            0.0005
+          ],
+          "paired_before_over_after": [
+            0.6086956521739131,
+            0.4166666666666667,
+            1.4
+          ],
+          "median_paired_before_over_after": 0.6086956521739131,
+          "ratio_of_aggregated_medians": 0.6086956521739131
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0021,
+          "after_median_of_round_medians": 0.004,
+          "before_round_medians": [
+            0.0021,
+            0.0019,
+            0.0023
+          ],
+          "after_round_medians": [
+            0.004,
+            0.0041,
+            0.00175
+          ],
+          "paired_before_over_after": [
+            0.5249999999999999,
+            0.46341463414634143,
+            1.3142857142857143
+          ],
+          "median_paired_before_over_after": 0.5249999999999999,
+          "ratio_of_aggregated_medians": 0.5249999999999999
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.008192,
+          "after_median_of_round_medians": 0.008192,
+          "before_round_medians": [
+            0.009216,
+            0.008192,
+            0.008192
+          ],
+          "after_round_medians": [
+            0.008192,
+            0.008192,
+            0.008192
+          ],
+          "paired_before_over_after": [
+            1.125,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.36545,
+          "after_median_of_round_medians": 0.3537,
+          "before_round_medians": [
+            0.3416,
+            0.38015,
+            0.36545
+          ],
+          "after_round_medians": [
+            0.38575,
+            0.3537,
+            0.3287
+          ],
+          "paired_before_over_after": [
+            0.8855476344782891,
+            1.074780887757987,
+            1.1118040766656525
+          ],
+          "median_paired_before_over_after": 1.074780887757987,
+          "ratio_of_aggregated_medians": 1.0332202431439073
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.37135,
+          "after_median_of_round_medians": 0.36,
+          "before_round_medians": [
+            0.34715,
+            0.3825,
+            0.37135
+          ],
+          "after_round_medians": [
+            0.3927,
+            0.36,
+            0.33365
+          ],
+          "paired_before_over_after": [
+            0.8840081487140311,
+            1.0625,
+            1.112992656975873
+          ],
+          "median_paired_before_over_after": 1.0625,
+          "ratio_of_aggregated_medians": 1.0315277777777778
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 1,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.00475,
+          "after_median_of_round_medians": 0.0032,
+          "before_round_medians": [
+            0.0054,
+            0.0046,
+            0.00475
+          ],
+          "after_round_medians": [
+            0.0032,
+            0.00705,
+            0.0029
+          ],
+          "paired_before_over_after": [
+            1.6875,
+            0.6524822695035462,
+            1.6379310344827587
+          ],
+          "median_paired_before_over_after": 1.6379310344827587,
+          "ratio_of_aggregated_medians": 1.484375
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.00415,
+          "after_median_of_round_medians": 0.00285,
+          "before_round_medians": [
+            0.00415,
+            0.00275,
+            0.00435
+          ],
+          "after_round_medians": [
+            0.0024,
+            0.0059,
+            0.00285
+          ],
+          "paired_before_over_after": [
+            1.7291666666666667,
+            0.4661016949152542,
+            1.526315789473684
+          ],
+          "median_paired_before_over_after": 1.526315789473684,
+          "ratio_of_aggregated_medians": 1.4561403508771928
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.01024,
+          "after_median_of_round_medians": 0.01024,
+          "before_round_medians": [
+            0.011264,
+            0.01024,
+            0.01024
+          ],
+          "after_round_medians": [
+            0.01024,
+            0.01024,
+            0.01024
+          ],
+          "paired_before_over_after": [
+            1.0999999999999999,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.35615,
+          "after_median_of_round_medians": 0.37545,
+          "before_round_medians": [
+            0.38515,
+            0.3379,
+            0.35615
+          ],
+          "after_round_medians": [
+            0.37545,
+            0.6187,
+            0.328
+          ],
+          "paired_before_over_after": [
+            1.0258356638700226,
+            0.5461451430418619,
+            1.0858231707317074
+          ],
+          "median_paired_before_over_after": 1.0258356638700226,
+          "ratio_of_aggregated_medians": 0.9485950193101612
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.3659,
+          "after_median_of_round_medians": 0.3831,
+          "before_round_medians": [
+            0.3979,
+            0.348,
+            0.3659
+          ],
+          "after_round_medians": [
+            0.3831,
+            0.6557,
+            0.3369
+          ],
+          "paired_before_over_after": [
+            1.0386322109109893,
+            0.5307305170047277,
+            1.0860789551795786
+          ],
+          "median_paired_before_over_after": 1.0386322109109893,
+          "ratio_of_aggregated_medians": 0.95510310623858
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 1,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0248,
+          "after_median_of_round_medians": 0.02225,
+          "before_round_medians": [
+            0.0248,
+            0.0241,
+            0.02625
+          ],
+          "after_round_medians": [
+            0.02225,
+            0.0219,
+            0.02365
+          ],
+          "paired_before_over_after": [
+            1.1146067415730336,
+            1.1004566210045663,
+            1.109936575052854
+          ],
+          "median_paired_before_over_after": 1.109936575052854,
+          "ratio_of_aggregated_medians": 1.1146067415730336
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.10645,
+          "after_median_of_round_medians": 0.0056,
+          "before_round_medians": [
+            0.10645,
+            0.11545,
+            0.09755
+          ],
+          "after_round_medians": [
+            0.0056,
+            0.00595,
+            0.0054
+          ],
+          "paired_before_over_after": [
+            19.008928571428573,
+            19.403361344537814,
+            18.064814814814813
+          ],
+          "median_paired_before_over_after": 19.008928571428573,
+          "ratio_of_aggregated_medians": 19.008928571428573
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.01536,
+          "after_median_of_round_medians": 0.014336,
+          "before_round_medians": [
+            0.017408,
+            0.01536,
+            0.01536
+          ],
+          "after_round_medians": [
+            0.013312,
+            0.014336,
+            0.014336
+          ],
+          "paired_before_over_after": [
+            1.3076923076923077,
+            1.0714285714285714,
+            1.0714285714285714
+          ],
+          "median_paired_before_over_after": 1.0714285714285714,
+          "ratio_of_aggregated_medians": 1.0714285714285714
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.2688,
+          "after_median_of_round_medians": 0.33815,
+          "before_round_medians": [
+            0.2649,
+            0.2688,
+            0.28505
+          ],
+          "after_round_medians": [
+            0.3789,
+            0.33815,
+            0.32265
+          ],
+          "paired_before_over_after": [
+            0.6991290577988916,
+            0.7949134999260683,
+            0.8834650550131723
+          ],
+          "median_paired_before_over_after": 0.7949134999260683,
+          "ratio_of_aggregated_medians": 0.7949134999260683
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.40975,
+          "after_median_of_round_medians": 0.3688,
+          "before_round_medians": [
+            0.3963,
+            0.40975,
+            0.4111
+          ],
+          "after_round_medians": [
+            0.41135,
+            0.3688,
+            0.35475
+          ],
+          "paired_before_over_after": [
+            0.9634131518171873,
+            1.11103579175705,
+            1.1588442565186752
+          ],
+          "median_paired_before_over_after": 1.11103579175705,
+          "ratio_of_aggregated_medians": 1.11103579175705
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    },
+    {
+      "characters": 1,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.01085,
+          "after_median_of_round_medians": 0.0066,
+          "before_round_medians": [
+            0.01085,
+            0.01025,
+            0.011
+          ],
+          "after_round_medians": [
+            0.00625,
+            0.0066,
+            0.00695
+          ],
+          "paired_before_over_after": [
+            1.736,
+            1.5530303030303032,
+            1.5827338129496402
+          ],
+          "median_paired_before_over_after": 1.5827338129496402,
+          "ratio_of_aggregated_medians": 1.643939393939394
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.1108,
+          "after_median_of_round_medians": 0.0034,
+          "before_round_medians": [
+            0.13115,
+            0.1108,
+            0.11055
+          ],
+          "after_round_medians": [
+            0.00315,
+            0.0034,
+            0.00375
+          ],
+          "paired_before_over_after": [
+            41.63492063492063,
+            32.588235294117645,
+            29.48
+          ],
+          "median_paired_before_over_after": 32.588235294117645,
+          "ratio_of_aggregated_medians": 32.588235294117645
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.01536,
+          "after_median_of_round_medians": 0.014336,
+          "before_round_medians": [
+            0.017408,
+            0.01536,
+            0.01536
+          ],
+          "after_round_medians": [
+            0.014336,
+            0.014336,
+            0.013312
+          ],
+          "paired_before_over_after": [
+            1.2142857142857142,
+            1.0714285714285714,
+            1.153846153846154
+          ],
+          "median_paired_before_over_after": 1.153846153846154,
+          "ratio_of_aggregated_medians": 1.0714285714285714
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.282,
+          "after_median_of_round_medians": 0.34165,
+          "before_round_medians": [
+            0.282,
+            0.26235,
+            0.28385
+          ],
+          "after_round_medians": [
+            0.38315,
+            0.33925,
+            0.34165
+          ],
+          "paired_before_over_after": [
+            0.7360041759102178,
+            0.7733235077376567,
+            0.8308210156593004
+          ],
+          "median_paired_before_over_after": 0.7733235077376567,
+          "ratio_of_aggregated_medians": 0.825406117371579
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.4106,
+          "after_median_of_round_medians": 0.3541,
+          "before_round_medians": [
+            0.4254,
+            0.3859,
+            0.4106
+          ],
+          "after_round_medians": [
+            0.39485,
+            0.3537,
+            0.3541
+          ],
+          "paired_before_over_after": [
+            1.077371153602634,
+            1.0910376024879842,
+            1.159559446484044
+          ],
+          "median_paired_before_over_after": 1.0910376024879842,
+          "ratio_of_aggregated_medians": 1.159559446484044
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0012,
+          "after_median_of_round_medians": 0.0016,
+          "before_round_medians": [
+            0.0012,
+            0.0011,
+            0.0015
+          ],
+          "after_round_medians": [
+            0.0016,
+            0.0016,
+            0.0011
+          ],
+          "paired_before_over_after": [
+            0.7499999999999999,
+            0.6875,
+            1.3636363636363635
+          ],
+          "median_paired_before_over_after": 0.7499999999999999,
+          "ratio_of_aggregated_medians": 0.7499999999999999
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0021,
+          "after_median_of_round_medians": 0.0285,
+          "before_round_medians": [
+            0.002,
+            0.0021,
+            0.00285
+          ],
+          "after_round_medians": [
+            0.0288,
+            0.0285,
+            0.0027
+          ],
+          "paired_before_over_after": [
+            0.06944444444444445,
+            0.07368421052631578,
+            1.0555555555555556
+          ],
+          "median_paired_before_over_after": 0.07368421052631578,
+          "ratio_of_aggregated_medians": 0.07368421052631578
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.013312,
+          "after_median_of_round_medians": 0.013312,
+          "before_round_medians": [
+            0.014336,
+            0.013312,
+            0.013312
+          ],
+          "after_round_medians": [
+            0.013312,
+            0.013312,
+            0.013312
+          ],
+          "paired_before_over_after": [
+            1.0769230769230769,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.3466,
+          "after_median_of_round_medians": 0.2994,
+          "before_round_medians": [
+            0.344,
+            0.3466,
+            0.35725
+          ],
+          "after_round_medians": [
+            0.2994,
+            0.22105,
+            0.3319
+          ],
+          "paired_before_over_after": [
+            1.1489645958583834,
+            1.5679710472743724,
+            1.0763784272371197
+          ],
+          "median_paired_before_over_after": 1.1489645958583834,
+          "ratio_of_aggregated_medians": 1.1576486305945224
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.3517,
+          "after_median_of_round_medians": 0.33805,
+          "before_round_medians": [
+            0.3491,
+            0.3517,
+            0.36365
+          ],
+          "after_round_medians": [
+            0.3461,
+            0.2525,
+            0.33805
+          ],
+          "paired_before_over_after": [
+            1.0086680150245593,
+            1.392871287128713,
+            1.075728442538086
+          ],
+          "median_paired_before_over_after": 1.075728442538086,
+          "ratio_of_aggregated_medians": 1.0403786422126904
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.03555,
+          "after_median_of_round_medians": 0.00975,
+          "before_round_medians": [
+            0.0358,
+            0.0355,
+            0.03555
+          ],
+          "after_round_medians": [
+            0.0099,
+            0.0096,
+            0.00975
+          ],
+          "paired_before_over_after": [
+            3.616161616161616,
+            3.6979166666666665,
+            3.646153846153846
+          ],
+          "median_paired_before_over_after": 3.646153846153846,
+          "ratio_of_aggregated_medians": 3.646153846153846
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0025,
+          "after_median_of_round_medians": 0.0308,
+          "before_round_medians": [
+            0.0024,
+            0.0025,
+            0.00395
+          ],
+          "after_round_medians": [
+            0.0308,
+            0.0308,
+            0.0029
+          ],
+          "paired_before_over_after": [
+            0.0779220779220779,
+            0.08116883116883117,
+            1.3620689655172415
+          ],
+          "median_paired_before_over_after": 0.08116883116883117,
+          "ratio_of_aggregated_medians": 0.08116883116883117
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.017408,
+          "after_median_of_round_medians": 0.017408,
+          "before_round_medians": [
+            0.018432,
+            0.017408,
+            0.017408
+          ],
+          "after_round_medians": [
+            0.017408,
+            0.017408,
+            0.017408
+          ],
+          "paired_before_over_after": [
+            1.0588235294117647,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.31655,
+          "after_median_of_round_medians": 0.2625,
+          "before_round_medians": [
+            0.31655,
+            0.3103,
+            0.3269
+          ],
+          "after_round_medians": [
+            0.2625,
+            0.2266,
+            0.32945
+          ],
+          "paired_before_over_after": [
+            1.2059047619047618,
+            1.3693733451015007,
+            0.9922598269843679
+          ],
+          "median_paired_before_over_after": 1.2059047619047618,
+          "ratio_of_aggregated_medians": 1.2059047619047618
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.3582,
+          "after_median_of_round_medians": 0.3047,
+          "before_round_medians": [
+            0.3582,
+            0.3518,
+            0.368
+          ],
+          "after_round_medians": [
+            0.3047,
+            0.26905,
+            0.3443
+          ],
+          "paired_before_over_after": [
+            1.1755825402034787,
+            1.3075636498792045,
+            1.068835318036596
+          ],
+          "median_paired_before_over_after": 1.1755825402034787,
+          "ratio_of_aggregated_medians": 1.1755825402034787
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.06405,
+          "after_median_of_round_medians": 0.0263,
+          "before_round_medians": [
+            0.06405,
+            0.0644,
+            0.0542
+          ],
+          "after_round_medians": [
+            0.0261,
+            0.0263,
+            0.02995
+          ],
+          "paired_before_over_after": [
+            2.4540229885057467,
+            2.4486692015209126,
+            1.8096828046744573
+          ],
+          "median_paired_before_over_after": 2.4486692015209126,
+          "ratio_of_aggregated_medians": 2.435361216730038
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0675,
+          "after_median_of_round_medians": 0.0348,
+          "before_round_medians": [
+            0.0704,
+            0.062,
+            0.0675
+          ],
+          "after_round_medians": [
+            0.0348,
+            0.0348,
+            0.0049
+          ],
+          "paired_before_over_after": [
+            2.0229885057471266,
+            1.781609195402299,
+            13.775510204081634
+          ],
+          "median_paired_before_over_after": 2.0229885057471266,
+          "ratio_of_aggregated_medians": 1.9396551724137934
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.023552,
+          "after_median_of_round_medians": 0.021504,
+          "before_round_medians": [
+            0.0256,
+            0.023552,
+            0.023552
+          ],
+          "after_round_medians": [
+            0.021504,
+            0.021504,
+            0.021504
+          ],
+          "paired_before_over_after": [
+            1.1904761904761907,
+            1.0952380952380953,
+            1.0952380952380953
+          ],
+          "median_paired_before_over_after": 1.0952380952380953,
+          "ratio_of_aggregated_medians": 1.0952380952380953
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.2639,
+          "after_median_of_round_medians": 0.2683,
+          "before_round_medians": [
+            0.2639,
+            0.25805,
+            0.2798
+          ],
+          "after_round_medians": [
+            0.2683,
+            0.2331,
+            0.32745
+          ],
+          "paired_before_over_after": [
+            0.9836004472605294,
+            1.107035607035607,
+            0.8544816002443121
+          ],
+          "median_paired_before_over_after": 0.9836004472605294,
+          "ratio_of_aggregated_medians": 0.9836004472605294
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.3992,
+          "after_median_of_round_medians": 0.33215,
+          "before_round_medians": [
+            0.3992,
+            0.38585,
+            0.4064
+          ],
+          "after_round_medians": [
+            0.33215,
+            0.2968,
+            0.36615
+          ],
+          "paired_before_over_after": [
+            1.2018666265241609,
+            1.3000336927223721,
+            1.1099276252901817
+          ],
+          "median_paired_before_over_after": 1.2018666265241609,
+          "ratio_of_aggregated_medians": 1.2018666265241609
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.1055,
+          "after_median_of_round_medians": 0.04665,
+          "before_round_medians": [
+            0.1061,
+            0.1055,
+            0.1054
+          ],
+          "after_round_medians": [
+            0.0468,
+            0.0461,
+            0.04665
+          ],
+          "paired_before_over_after": [
+            2.267094017094017,
+            2.288503253796095,
+            2.259378349410504
+          ],
+          "median_paired_before_over_after": 2.267094017094017,
+          "ratio_of_aggregated_medians": 2.2615219721329045
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.14685,
+          "after_median_of_round_medians": 0.0614,
+          "before_round_medians": [
+            0.14025,
+            0.1577,
+            0.14685
+          ],
+          "after_round_medians": [
+            0.0618,
+            0.0614,
+            0.01005
+          ],
+          "paired_before_over_after": [
+            2.2694174757281553,
+            2.5684039087947883,
+            14.611940298507463
+          ],
+          "median_paired_before_over_after": 2.5684039087947883,
+          "ratio_of_aggregated_medians": 2.3916938110749184
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.095232,
+          "after_median_of_round_medians": 0.072704,
+          "before_round_medians": [
+            0.103424,
+            0.095232,
+            0.095232
+          ],
+          "after_round_medians": [
+            0.072704,
+            0.072704,
+            0.072704
+          ],
+          "paired_before_over_after": [
+            1.4225352112676055,
+            1.3098591549295773,
+            1.3098591549295773
+          ],
+          "median_paired_before_over_after": 1.3098591549295773,
+          "ratio_of_aggregated_medians": 1.3098591549295773
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.3377,
+          "after_median_of_round_medians": 0.32255,
+          "before_round_medians": [
+            0.3355,
+            0.3377,
+            0.35325
+          ],
+          "after_round_medians": [
+            0.32255,
+            0.2842,
+            0.38015
+          ],
+          "paired_before_over_after": [
+            1.0401488141373432,
+            1.1882477128782547,
+            0.9292384585032225
+          ],
+          "median_paired_before_over_after": 1.0401488141373432,
+          "ratio_of_aggregated_medians": 1.0469694620988994
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.59925,
+          "after_median_of_round_medians": 0.4338,
+          "before_round_medians": [
+            0.5881,
+            0.59925,
+            0.606
+          ],
+          "after_round_medians": [
+            0.4338,
+            0.395,
+            0.44645
+          ],
+          "paired_before_over_after": [
+            1.3556938681420008,
+            1.5170886075949366,
+            1.3573748460073916
+          ],
+          "median_paired_before_over_after": 1.3573748460073916,
+          "ratio_of_aggregated_medians": 1.381396957123098
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 11,
+          "after_median_of_round_medians": 11,
+          "before_round_medians": [
+            11,
+            11,
+            11
+          ],
+          "after_round_medians": [
+            11,
+            11,
+            11
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 40960,
+          "after_median_of_round_medians": 40960,
+          "before_round_medians": [
+            40960,
+            40960,
+            40960
+          ],
+          "after_round_medians": [
+            40960,
+            40960,
+            40960
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0063,
+          "after_median_of_round_medians": 0.0068,
+          "before_round_medians": [
+            0.0063,
+            0.0063,
+            0.0062
+          ],
+          "after_round_medians": [
+            0.0069,
+            0.0066,
+            0.0068
+          ],
+          "paired_before_over_after": [
+            0.9130434782608696,
+            0.9545454545454546,
+            0.9117647058823529
+          ],
+          "median_paired_before_over_after": 0.9130434782608696,
+          "ratio_of_aggregated_medians": 0.9264705882352942
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0023,
+          "after_median_of_round_medians": 0.0288,
+          "before_round_medians": [
+            0.00205,
+            0.0024,
+            0.0023
+          ],
+          "after_round_medians": [
+            0.0288,
+            0.0293,
+            0.0039
+          ],
+          "paired_before_over_after": [
+            0.07118055555555557,
+            0.08191126279863481,
+            0.5897435897435898
+          ],
+          "median_paired_before_over_after": 0.08191126279863481,
+          "ratio_of_aggregated_medians": 0.07986111111111112
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.059392,
+          "after_median_of_round_medians": 0.059392,
+          "before_round_medians": [
+            0.065536,
+            0.059392,
+            0.059392
+          ],
+          "after_round_medians": [
+            0.059392,
+            0.059392,
+            0.059392
+          ],
+          "paired_before_over_after": [
+            1.103448275862069,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.3984,
+          "after_median_of_round_medians": 0.3032,
+          "before_round_medians": [
+            0.3984,
+            0.3849,
+            0.4009
+          ],
+          "after_round_medians": [
+            0.3032,
+            0.2702,
+            0.38125
+          ],
+          "paired_before_over_after": [
+            1.3139841688654352,
+            1.424500370096225,
+            1.0515409836065575
+          ],
+          "median_paired_before_over_after": 1.3139841688654352,
+          "ratio_of_aggregated_medians": 1.3139841688654352
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.4092,
+          "after_median_of_round_medians": 0.34045,
+          "before_round_medians": [
+            0.4092,
+            0.395,
+            0.41135
+          ],
+          "after_round_medians": [
+            0.34045,
+            0.308,
+            0.3945
+          ],
+          "paired_before_over_after": [
+            1.2019386106623589,
+            1.2824675324675325,
+            1.0427122940430924
+          ],
+          "median_paired_before_over_after": 1.2019386106623589,
+          "ratio_of_aggregated_medians": 1.2019386106623589
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.3517,
+          "after_median_of_round_medians": 0.0675,
+          "before_round_medians": [
+            0.3587,
+            0.3517,
+            0.3456
+          ],
+          "after_round_medians": [
+            0.0675,
+            0.0666,
+            0.06975
+          ],
+          "paired_before_over_after": [
+            5.314074074074074,
+            5.2807807807807805,
+            4.95483870967742
+          ],
+          "median_paired_before_over_after": 5.2807807807807805,
+          "ratio_of_aggregated_medians": 5.21037037037037
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0032,
+          "after_median_of_round_medians": 0.0308,
+          "before_round_medians": [
+            0.0032,
+            0.0047,
+            0.0026
+          ],
+          "after_round_medians": [
+            0.0308,
+            0.0308,
+            0.0045
+          ],
+          "paired_before_over_after": [
+            0.1038961038961039,
+            0.1525974025974026,
+            0.5777777777777778
+          ],
+          "median_paired_before_over_after": 0.1525974025974026,
+          "ratio_of_aggregated_medians": 0.1038961038961039
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.08704,
+          "after_median_of_round_medians": 0.08704,
+          "before_round_medians": [
+            0.095232,
+            0.08704,
+            0.08704
+          ],
+          "after_round_medians": [
+            0.08704,
+            0.08704,
+            0.08704
+          ],
+          "paired_before_over_after": [
+            1.0941176470588234,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.3577,
+          "after_median_of_round_medians": 0.33355,
+          "before_round_medians": [
+            0.35065,
+            0.3636,
+            0.3577
+          ],
+          "after_round_medians": [
+            0.33355,
+            0.29495,
+            0.34845
+          ],
+          "paired_before_over_after": [
+            1.0512666766601708,
+            1.232751313781997,
+            1.0265461328741572
+          ],
+          "median_paired_before_over_after": 1.0512666766601708,
+          "ratio_of_aggregated_medians": 1.0724029380902413
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.71895,
+          "after_median_of_round_medians": 0.43495,
+          "before_round_medians": [
+            0.71895,
+            0.723,
+            0.71345
+          ],
+          "after_round_medians": [
+            0.4352,
+            0.3942,
+            0.43495
+          ],
+          "paired_before_over_after": [
+            1.651999080882353,
+            1.8340943683409436,
+            1.6403034831589838
+          ],
+          "median_paired_before_over_after": 1.651999080882353,
+          "ratio_of_aggregated_medians": 1.6529486147833083
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.2864,
+          "after_median_of_round_medians": 0.0849,
+          "before_round_medians": [
+            0.2864,
+            0.2822,
+            0.28725
+          ],
+          "after_round_medians": [
+            0.084,
+            0.0849,
+            0.10435
+          ],
+          "paired_before_over_after": [
+            3.409523809523809,
+            3.3239104829210837,
+            2.7527551509343557
+          ],
+          "median_paired_before_over_after": 3.3239104829210837,
+          "ratio_of_aggregated_medians": 3.373380447585394
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0399,
+          "after_median_of_round_medians": 0.0348,
+          "before_round_medians": [
+            0.04045,
+            0.03855,
+            0.0399
+          ],
+          "after_round_medians": [
+            0.0348,
+            0.03495,
+            0.0039
+          ],
+          "paired_before_over_after": [
+            1.1623563218390804,
+            1.1030042918454934,
+            10.23076923076923
+          ],
+          "median_paired_before_over_after": 1.1623563218390804,
+          "ratio_of_aggregated_medians": 1.146551724137931
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.094208,
+          "after_median_of_round_medians": 0.09216,
+          "before_round_medians": [
+            0.103424,
+            0.094208,
+            0.094208
+          ],
+          "after_round_medians": [
+            0.09216,
+            0.09216,
+            0.09216
+          ],
+          "paired_before_over_after": [
+            1.1222222222222222,
+            1.0222222222222221,
+            1.0222222222222221
+          ],
+          "median_paired_before_over_after": 1.0222222222222221,
+          "ratio_of_aggregated_medians": 1.0222222222222221
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.34505,
+          "after_median_of_round_medians": 0.33925,
+          "before_round_medians": [
+            0.34505,
+            0.3305,
+            0.35515
+          ],
+          "after_round_medians": [
+            0.33925,
+            0.30365,
+            0.3513
+          ],
+          "paired_before_over_after": [
+            1.017096536477524,
+            1.0884241725671004,
+            1.010959294050669
+          ],
+          "median_paired_before_over_after": 1.017096536477524,
+          "ratio_of_aggregated_medians": 1.017096536477524
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.67635,
+          "after_median_of_round_medians": 0.46035,
+          "before_round_medians": [
+            0.67635,
+            0.655,
+            0.69225
+          ],
+          "after_round_medians": [
+            0.46035,
+            0.4257,
+            0.4614
+          ],
+          "paired_before_over_after": [
+            1.469208211143695,
+            1.538642236316655,
+            1.500325097529259
+          ],
+          "median_paired_before_over_after": 1.500325097529259,
+          "ratio_of_aggregated_medians": 1.469208211143695
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.8496,
+          "after_median_of_round_medians": 0.44545,
+          "before_round_medians": [
+            0.84995,
+            0.849,
+            0.8496
+          ],
+          "after_round_medians": [
+            0.44545,
+            0.44275,
+            0.46505
+          ],
+          "paired_before_over_after": [
+            1.9080704905152093,
+            1.917560700169396,
+            1.826900333297495
+          ],
+          "median_paired_before_over_after": 1.9080704905152093,
+          "ratio_of_aggregated_medians": 1.9072847682119205
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.576,
+          "after_median_of_round_medians": 0.32375,
+          "before_round_medians": [
+            0.56735,
+            0.61175,
+            0.576
+          ],
+          "after_round_medians": [
+            0.32375,
+            0.3254,
+            0.0585
+          ],
+          "paired_before_over_after": [
+            1.7524324324324325,
+            1.8799938537185001,
+            9.846153846153845
+          ],
+          "median_paired_before_over_after": 1.8799938537185001,
+          "ratio_of_aggregated_medians": 1.779150579150579
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.918528,
+          "after_median_of_round_medians": 0.6656,
+          "before_round_medians": [
+            0.987136,
+            0.918528,
+            0.918016
+          ],
+          "after_round_medians": [
+            0.6656,
+            0.663552,
+            0.668672
+          ],
+          "paired_before_over_after": [
+            1.4830769230769232,
+            1.3842592592592593,
+            1.3728943338437978
+          ],
+          "median_paired_before_over_after": 1.3842592592592593,
+          "ratio_of_aggregated_medians": 1.3800000000000001
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 1.19125,
+          "after_median_of_round_medians": 0.9272,
+          "before_round_medians": [
+            1.22695,
+            1.1757,
+            1.19125
+          ],
+          "after_round_medians": [
+            0.9272,
+            0.8862,
+            1.17705
+          ],
+          "paired_before_over_after": [
+            1.3232851596203623,
+            1.326675693974272,
+            1.0120640584512128
+          ],
+          "median_paired_before_over_after": 1.3232851596203623,
+          "ratio_of_aggregated_medians": 1.2847821397756685
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 2.65815,
+          "after_median_of_round_medians": 1.70585,
+          "before_round_medians": [
+            2.65815,
+            2.6967,
+            2.63515
+          ],
+          "after_round_medians": [
+            1.70585,
+            1.66085,
+            1.76
+          ],
+          "paired_before_over_after": [
+            1.5582554151889088,
+            1.6236866664659662,
+            1.497244318181818
+          ],
+          "median_paired_before_over_after": 1.5582554151889088,
+          "ratio_of_aggregated_medians": 1.5582554151889088
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 101,
+          "after_median_of_round_medians": 101,
+          "before_round_medians": [
+            101,
+            101,
+            101
+          ],
+          "after_round_medians": [
+            101,
+            101,
+            101
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 409600,
+          "after_median_of_round_medians": 409600,
+          "before_round_medians": [
+            409600,
+            409600,
+            409600
+          ],
+          "after_round_medians": [
+            409600,
+            409600,
+            409600
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.05655,
+          "after_median_of_round_medians": 0.0594,
+          "before_round_medians": [
+            0.0566,
+            0.0564,
+            0.05655
+          ],
+          "after_round_medians": [
+            0.0594,
+            0.0563,
+            0.07555
+          ],
+          "paired_before_over_after": [
+            0.9528619528619527,
+            1.0017761989342806,
+            0.7485109199205824
+          ],
+          "median_paired_before_over_after": 0.9528619528619527,
+          "ratio_of_aggregated_medians": 0.9520202020202021
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0327,
+          "after_median_of_round_medians": 0.0318,
+          "before_round_medians": [
+            0.0321,
+            0.0327,
+            0.0327
+          ],
+          "after_round_medians": [
+            0.0318,
+            0.0325,
+            0.0062
+          ],
+          "paired_before_over_after": [
+            1.0094339622641508,
+            1.0061538461538462,
+            5.274193548387097
+          ],
+          "median_paired_before_over_after": 1.0094339622641508,
+          "ratio_of_aggregated_medians": 1.0283018867924527
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.45568,
+          "after_median_of_round_medians": 0.45568,
+          "before_round_medians": [
+            0.493568,
+            0.45568,
+            0.45568
+          ],
+          "after_round_medians": [
+            0.45568,
+            0.45568,
+            0.45568
+          ],
+          "paired_before_over_after": [
+            1.0831460674157305,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.6926,
+          "after_median_of_round_medians": 0.70805,
+          "before_round_medians": [
+            0.7091,
+            0.67295,
+            0.6926
+          ],
+          "after_round_medians": [
+            0.70805,
+            0.6698,
+            0.72575
+          ],
+          "paired_before_over_after": [
+            1.0014829461196244,
+            1.0047028963869813,
+            0.9543231140199793
+          ],
+          "median_paired_before_over_after": 1.0014829461196244,
+          "ratio_of_aggregated_medians": 0.9781795070969564
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.7846,
+          "after_median_of_round_medians": 0.80155,
+          "before_round_medians": [
+            0.79975,
+            0.7637,
+            0.7846
+          ],
+          "after_round_medians": [
+            0.80155,
+            0.7603,
+            0.8158
+          ],
+          "paired_before_over_after": [
+            0.9977543509450439,
+            1.0044719189793503,
+            0.961755332189262
+          ],
+          "median_paired_before_over_after": 0.9977543509450439,
+          "ratio_of_aggregated_medians": 0.9788534713991641
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 3.45065,
+          "after_median_of_round_medians": 0.64655,
+          "before_round_medians": [
+            3.48815,
+            3.45065,
+            3.44915
+          ],
+          "after_round_medians": [
+            0.64655,
+            0.64365,
+            0.67815
+          ],
+          "paired_before_over_after": [
+            5.395019720052587,
+            5.361065796628602,
+            5.086116640861166
+          ],
+          "median_paired_before_over_after": 5.361065796628602,
+          "ratio_of_aggregated_medians": 5.337019565385508
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0361,
+          "after_median_of_round_medians": 0.0347,
+          "before_round_medians": [
+            0.0359,
+            0.0361,
+            0.0375
+          ],
+          "after_round_medians": [
+            0.0347,
+            0.03475,
+            0.0068
+          ],
+          "paired_before_over_after": [
+            1.0345821325648414,
+            1.0388489208633092,
+            5.514705882352941
+          ],
+          "median_paired_before_over_after": 1.0388489208633092,
+          "ratio_of_aggregated_medians": 1.0403458213256485
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.717824,
+          "after_median_of_round_medians": 0.717824,
+          "before_round_medians": [
+            0.7168,
+            0.718848,
+            0.717824
+          ],
+          "after_round_medians": [
+            0.717824,
+            0.717824,
+            0.717824
+          ],
+          "paired_before_over_after": [
+            0.9985734664764622,
+            1.001426533523538,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.9478,
+          "after_median_of_round_medians": 0.97735,
+          "before_round_medians": [
+            0.9457,
+            0.9478,
+            0.9698
+          ],
+          "after_round_medians": [
+            0.97735,
+            0.9416,
+            0.9868
+          ],
+          "paired_before_over_after": [
+            0.9676165140430756,
+            1.0065845369583688,
+            0.9827725982975274
+          ],
+          "median_paired_before_over_after": 0.9827725982975274,
+          "ratio_of_aggregated_medians": 0.969765181357753
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 4.4625,
+          "after_median_of_round_medians": 1.66185,
+          "before_round_medians": [
+            4.47385,
+            4.43745,
+            4.4625
+          ],
+          "after_round_medians": [
+            1.66185,
+            1.6226,
+            1.695
+          ],
+          "paired_before_over_after": [
+            2.692090140506062,
+            2.7347775175644027,
+            2.6327433628318584
+          ],
+          "median_paired_before_over_after": 2.692090140506062,
+          "ratio_of_aggregated_medians": 2.6852604025634084
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 2.65005,
+          "after_median_of_round_medians": 0.671,
+          "before_round_medians": [
+            2.64925,
+            2.65005,
+            2.6625
+          ],
+          "after_round_medians": [
+            0.6652,
+            0.671,
+            0.6861
+          ],
+          "paired_before_over_after": [
+            3.9826368009621165,
+            3.94940387481371,
+            3.8806296458242238
+          ],
+          "median_paired_before_over_after": 3.94940387481371,
+          "ratio_of_aggregated_medians": 3.94940387481371
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0503,
+          "after_median_of_round_medians": 0.0372,
+          "before_round_medians": [
+            0.04935,
+            0.0503,
+            0.05135
+          ],
+          "after_round_medians": [
+            0.0372,
+            0.03845,
+            0.00795
+          ],
+          "paired_before_over_after": [
+            1.3266129032258065,
+            1.3081924577373212,
+            6.459119496855346
+          ],
+          "median_paired_before_over_after": 1.3266129032258065,
+          "ratio_of_aggregated_medians": 1.3521505376344087
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.72704,
+          "after_median_of_round_medians": 0.724992,
+          "before_round_medians": [
+            0.72704,
+            0.72704,
+            0.728064
+          ],
+          "after_round_medians": [
+            0.724992,
+            0.724992,
+            0.724992
+          ],
+          "paired_before_over_after": [
+            1.0028248587570623,
+            1.0028248587570623,
+            1.0042372881355934
+          ],
+          "median_paired_before_over_after": 1.0028248587570623,
+          "ratio_of_aggregated_medians": 1.0028248587570623
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.95685,
+          "after_median_of_round_medians": 0.9823,
+          "before_round_medians": [
+            0.95505,
+            0.95685,
+            0.98165
+          ],
+          "after_round_medians": [
+            0.9823,
+            0.9476,
+            0.99965
+          ],
+          "paired_before_over_after": [
+            0.9722589840171028,
+            1.0097615027437736,
+            0.981993697794228
+          ],
+          "median_paired_before_over_after": 0.981993697794228,
+          "ratio_of_aggregated_medians": 0.9740914181003767
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 3.6622,
+          "after_median_of_round_medians": 1.6872,
+          "before_round_medians": [
+            3.6564,
+            3.6622,
+            3.69755
+          ],
+          "after_round_medians": [
+            1.6872,
+            1.66045,
+            1.71445
+          ],
+          "paired_before_over_after": [
+            2.167140825035562,
+            2.2055466891505313,
+            2.1566974831578642
+          ],
+          "median_paired_before_over_after": 2.167140825035562,
+          "ratio_of_aggregated_medians": 2.170578473210052
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 8.7493,
+          "after_median_of_round_medians": 4.8238,
+          "before_round_medians": [
+            8.93845,
+            8.7493,
+            8.72305
+          ],
+          "after_round_medians": [
+            4.8238,
+            4.7771,
+            5.04495
+          ],
+          "paired_before_over_after": [
+            1.8529893445001864,
+            1.8315086558790898,
+            1.7290656993627291
+          ],
+          "median_paired_before_over_after": 1.8315086558790898,
+          "ratio_of_aggregated_medians": 1.8137775197976698
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 6.22325,
+          "after_median_of_round_medians": 3.2632,
+          "before_round_medians": [
+            6.217,
+            6.22325,
+            6.23725
+          ],
+          "after_round_medians": [
+            3.2632,
+            3.2746,
+            0.62095
+          ],
+          "paired_before_over_after": [
+            1.9051850943858788,
+            1.9004611250229035,
+            10.044689588533698
+          ],
+          "median_paired_before_over_after": 1.9051850943858788,
+          "ratio_of_aggregated_medians": 1.9071003922530032
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 8.72909,
+          "after_median_of_round_medians": 6.39539,
+          "before_round_medians": [
+            8.71936,
+            8.7552,
+            8.72909
+          ],
+          "after_round_medians": [
+            6.40307,
+            6.3872,
+            6.39539
+          ],
+          "paired_before_over_after": [
+            1.3617467870880688,
+            1.370741482965932,
+            1.364903469530396
+          ],
+          "median_paired_before_over_after": 1.364903469530396,
+          "ratio_of_aggregated_medians": 1.364903469530396
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 4.26135,
+          "after_median_of_round_medians": 5.12175,
+          "before_round_medians": [
+            4.28295,
+            4.26135,
+            4.2492
+          ],
+          "after_round_medians": [
+            5.12175,
+            5.0782,
+            7.8645
+          ],
+          "paired_before_over_after": [
+            0.8362278518084639,
+            0.8391457603087709,
+            0.5403013541865345
+          ],
+          "median_paired_before_over_after": 0.8362278518084639,
+          "ratio_of_aggregated_medians": 0.8320105432713429
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 19.4346,
+          "after_median_of_round_medians": 13.449,
+          "before_round_medians": [
+            19.6421,
+            19.4346,
+            19.4125
+          ],
+          "after_round_medians": [
+            13.449,
+            13.3183,
+            13.8029
+          ],
+          "paired_before_over_after": [
+            1.4604877686073314,
+            1.4592402934308433,
+            1.406407349180245
+          ],
+          "median_paired_before_over_after": 1.4592402934308433,
+          "ratio_of_aggregated_medians": 1.4450591122016507
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 1001,
+          "after_median_of_round_medians": 1001,
+          "before_round_medians": [
+            1001,
+            1001,
+            1001
+          ],
+          "after_round_medians": [
+            1001,
+            1001,
+            1001
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096000,
+          "after_median_of_round_medians": 4096000,
+          "before_round_medians": [
+            4096000,
+            4096000,
+            4096000
+          ],
+          "after_round_medians": [
+            4096000,
+            4096000,
+            4096000
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      }
+    }
+  ],
+  "rounds": 3,
+  "cpu_frames": 9600,
+  "gpu_samples": 9600,
+  "per_side_cpu_frames": 4800,
+  "per_side_gpu_samples": 4800,
+  "source_before": "77be2f2441a2e91c9dc4c08a4b8ed2163dab32fd",
+  "source_after": "625596e82d87de6ae6d3d2edd791ca4674ac4dd5",
+  "fixture_sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3",
+  "before_executable_sha256": "478eb7ac6d09cb2d053b90de25a8ea6ab4166fda16557b28c87d42f8fd4d85df",
+  "after_executable_sha256": "b991fab358fa02047e3af8f270a4d8b559668230f13930c11b55c3bb7970df86",
+  "capture": {
+    "width": 1024,
+    "height": 576,
+    "frame_at": 119,
+    "final_characters": 1000,
+    "final_mode": "independent_poses",
+    "before_png_sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a",
+    "after_png_sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a",
+    "png_bytes_equal": true,
+    "before_rgb_sha256": "0001dc9794973d60b1e7560f62a18d3a9ea40c796ce8c022d6ade7e078bd0324",
+    "after_rgb_sha256": "0001dc9794973d60b1e7560f62a18d3a9ea40c796ce8c022d6ade7e078bd0324",
+    "differing_pixels": 0,
+    "maximum_channel_difference": 0
+  }
+}

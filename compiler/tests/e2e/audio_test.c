@@ -28,7 +28,7 @@ static void frame(tide_audio_frame *into)
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), NULL);
     tide_local_audio(&local, into);
     tide_local_events(&local, &events);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 
@@ -53,6 +53,24 @@ static void finish(void)
 
 static bool near(const float a, const float b) { return a - b < 1e-6f && b - a < 1e-6f; }
 
+TIDE_TEST(audio_sound_defaults_set_master_volume_without_sound_fields)
+{
+    start();
+    TIDE_CHECK(local.Sfx.volume == 1.0f);
+    frame(&audio);
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 1.0f);
+    local.Sfx.volume = 0.25f;
+    frame(&audio);
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 0.25f);
+    frame(&audio); // The setting is applied after every audio reset
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 0.25f);
+    local.Sfx.volume = 0.0f;
+    frame(&audio);
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 0.0f);
+    frame(NULL); // The setting needs no audio list from a host
+    finish();
+}
+
 TIDE_TEST(audio_clip_assets_name_sounds_of_the_pack_and_decode_once)
 {
     start();
@@ -69,6 +87,12 @@ TIDE_TEST(audio_clip_assets_name_sounds_of_the_pack_and_decode_once)
     TIDE_REQUIRE(list != NULL);
     TIDE_CHECK(list->extra == TIDE_PACK_CLIP && list->size == 2);
     TIDE_CHECK(tide_pack_find("named", TIDE_PACK_CLIPS) != NULL);
+    // One file where the type holds many: a list of one, and a map of one
+    const tide_pack_entry *shot = tide_pack_find("shot", TIDE_PACK_LIST);
+    TIDE_REQUIRE(shot != NULL);
+    TIDE_CHECK(shot->extra == TIDE_PACK_CLIP && shot->size == 1);
+    const tide_pack_entry *by_name = tide_pack_find("shotByName", TIDE_PACK_CLIPS);
+    TIDE_CHECK(by_name != NULL && by_name->extra == 1);
     // A name the pack hasn't got, and none at all
     TIDE_CHECK(tide_clip_of((tide_clip_ref){.name = 12345}).samples == NULL);
     TIDE_CHECK(tide_clip_of((tide_clip_ref){0}).samples == NULL && tide_clip_of((tide_clip_ref){0}).id == 0);
@@ -117,6 +141,15 @@ TIDE_TEST(audio_views_and_the_functions_they_call_play)
     TIDE_CHECK(at->clip.frames == 3 && at->clip.channels == 1 && at->clip.rate == 48000 && at->clip.samples[1] == -0.5f); // b.wav
     TIDE_CHECK(!plain->spatial && plain->volume == 1.0f && plain->pitch == 1.0f && plain->clip.id == at->clip.id);
     TIDE_CHECK(at->clip.name == local.Sfx.kept.name);
+    // A list and a map of one file each: the list's one is a.wav, as hits[0] is, and the map's is b.wav by its path
+    local.Sfx.plays = 3;
+    frame(&audio);
+    TIDE_CHECK(local.Sfx.shots == 1 && local.Sfx.keyed);
+    TIDE_REQUIRE(audio.voice_count == 3);
+    const tide_voice *first = &audio.voices[0], *second = &audio.voices[1];
+    TIDE_CHECK(first->clip.frames == 4 && first->clip.channels == 2 && first->clip.rate == 22050 && first->clip.samples != NULL);
+    TIDE_CHECK(second->clip.frames == 3 && second->clip.channels == 1 && second->clip.rate == 48000 && second->clip.samples != NULL);
+    TIDE_CHECK(audio.voices[2].clip.samples == NULL && audio.voices[2].clip.id == 0); // Past the list's one: no clip
     // A host that gives no audio list: nothing is recorded, and nothing breaks
     local.Sfx.plays = 1;
     frame(NULL);

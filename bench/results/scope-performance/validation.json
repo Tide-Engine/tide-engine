@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-11",
+  "native": {
+    "configure": "cmake --preset debug -DTIDE_NODE=C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe",
+    "build": "cmake --build --preset debug -j 8",
+    "test": "ctest --preset debug -j 8 --output-on-failure",
+    "passed": 2078,
+    "failed": 0,
+    "seconds": 63.60
+  },
+  "web": {
+    "configure": "cmake --preset web-debug -DTIDE_NODE=C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe",
+    "build": "cmake --build --preset web-debug -j 8",
+    "test": "ctest --preset web-debug -j 8 --output-on-failure",
+    "passed": 2048,
+    "failed": 0,
+    "seconds": 136.18
+  },
+  "environment": "TIDE_HIDDEN=1; Node 24.19.0; Clang 23.1.2; pinned WASI SDK 24",
+  "coverage": "Full suites include runtime safety, snapshots, map fixtures, pinned cross-platform math/pose results, generated C, OpenGL, WebGL and WebGPU pixel/palette tests.",
+  "unavailable": "Linux, macOS, MinGW, Android and sanitizers were not run on this Windows machine. CI was not requested."
+}

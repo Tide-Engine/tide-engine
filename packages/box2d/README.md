@@ -4,7 +4,7 @@
 
 An experiment: what's here works and is tested, and what it costs is below. Its names and its shape are not settled.
 
-The docs have a page for it, with an example to play: https://tide-engine.dev/physics/box2d
+The docs have a page for it, with an example to play: https://tide-engine.dev/packages/box2d
 
 ## Using it
 
@@ -62,7 +62,7 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 - **`Part`** is a shape on another entity's body: `Spawn(Box { offset = float2(1, 1) }, Part { of = brick });`. The entity has a `Box` or a `Circle` and no `Body`; its shape is on the body of the entity it names from the next step. Destroying the part takes that one shape off, destroying the body's entity takes its parts with it, and a part that names no entity with a body is destroyed. A part can be a sensor.
 - **`Touched`** and **`Parted`** are sent to both entities when their bodies start and stop touching, each with the `other`, once for each pair of shapes, and with which shapes they were: `part` and `otherPart`, the body's own entity for a shape on it and the part's entity for a part. A shape with `sensor` stops nothing, and sends them for the shapes that come into it and leave it, static bodies' too; two sensors say nothing of each other. When the other entity was destroyed while they touched, `Parted` comes with `default` for it; when only a part was, with the right `other` and `default` for the part.
 - **`Hit`** is sent to both entities when their bodies meet faster than `Physics.hitSpeed`: the `other`, the parts, the `point`, the `normal` (from this body into the other) and the `speed` they closed at.
-- **Asking the world**: `Raycast(physics, from, to, out hit)`, `Cast(physics, shape, from, angle, to, out hit)` for a `Box` or a `Circle` moved along a way, `Overlap(physics, shape, at, angle, out found)`, and `Inside(physics, sensor, out found)` for who's in an entity's sensors, a body's or a part's. They return whether they found anything; `RayHit` is the `entity`, its `part`, the `point`, the `normal` and the `fraction` of the way. `Raycast` and `Cast` take one `Body` to leave out, last (`ignore: body`). They work from the match anywhere in a tick, and from views.
+- **Asking the world**: `physics.Raycast(from, to, out hit)`, `physics.Cast(shape, from, angle, to, out hit)` for a `Box` or a `Circle` moved along a way, `physics.Overlap(shape, at, angle, out found)`, and `physics.Inside(sensor, out found)` for who's in an entity's sensors, a body's or a part's. They return whether they found anything; `RayHit` is the `entity`, its `part`, the `point`, the `normal` and the `fraction` of the way. `Raycast` and `Cast` take one `Body` to leave out, last (`ignore: body`). They work from the match anywhere in a tick, and from views.
 - **`Physics`** is the world: `gravity`, `substeps`, and how it's tuned: `contactStiffness`, `contactDamping` and `contactSpeed`, `bounceSpeed`, `hitSpeed` and `sleeping`. Each is Box2D's own default, and a change is the next step's. A gravity that changes wakes every body.
 - An entity that's destroyed takes its body with it.
 
@@ -165,3 +165,34 @@ So a tick takes 0.51 ms with everything moving, 0.06 with one crate pushed and 0
 - `Touched` and `Parted` don't say which of an entity's own `Box` and `Circle` it was, and a parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
 - The fields of a body that are read when it's made don't follow later changes, and a shape's don't either.
 - Removing `Body` from an entity that stays leaves its body in the world, and removing `Box` or `Circle` leaves its shape on.
+
+## Rewinding queries
+
+`physics.Raycast(...)`, `physics.Cast(...)`, `physics.Overlap(...)` and `physics.Inside(...)` query current geometry. To validate a shot against confirmed presentation, prepare a separate context once:
+
+```csharp
+settings { maxRewind = 0.25; } // Seconds; 0 (the default) disables history
+
+// On players or moving geometry that should rewind:
+// Spawn(Body { rewind = true }, ...);
+
+system Fire(Controls controls, Body body, Physics physics)
+{
+    if (!controls.fire.down) return;
+    // Validate weapon, origin, aim and firing cadence from match state first.
+    if (!physics.Rewind(controls.viewTime, out var query)) return;
+    if (query.Raycast(body.position, controls.aim, out var hit, body))
+    {
+        // Validate the hit entity is still alive, then apply the game's damage.
+        ...
+    }
+}
+```
+
+The context has every current query form, including all shape casts, overlaps, sensor `Inside` queries and existing ignore-body overloads. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
+
+`Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
+
+`Rewind` returns false for disabled history, invalid, stale or future times, or an unavailable endpoint. The output then contains no queryable geometry. No time is clamped and no current-world fallback is substituted. History begins after the first completed physics step and follows the same snapshot, rollback and serialization path as the match. Geometry is that of the physics step, as with current queries; write movement before `PhysicsStages.Step` when presentation and collider poses should agree.
+
+The server validates the input timestamp, but the game remains responsible for authoritative shot validation. It must never accept a client-supplied collider pose, origin or hit just because the timestamp passed validation.

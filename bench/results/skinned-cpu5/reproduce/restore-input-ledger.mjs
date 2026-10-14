@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+const [input,output]=process.argv.slice(2);
+if(!input||!output)throw Error('Usage: node restore-input-ledger.mjs <committed-ledger> <new-output-or---check>');
+const hash=b=>createHash('sha256').update(b).digest('hex');
+const lines=fs.readFileSync(input,'utf8').trim().split(/\r?\n/);
+if(lines.length<456)throw Error('Expected the historical 408 and superseded 48 rows');
+const first=Buffer.from(lines.slice(0,408).join('\n')+'\n');
+if(hash(first)!=='0cdfc8ed2fe4cdc99ec2d6602870483dffe5c507630960e3338e829d3090ad1b')throw Error('Historical 408-row prefix differs');
+const superseded=lines.slice(408,456);
+if(!superseded.every(line=>/^skinned-cpu5-(before|after)-r[123]$/.test(JSON.parse(line).label)))throw Error('Superseded 48-row label set differs');
+const restored=Buffer.concat([first,Buffer.from(superseded.join('\n')+'\n')]);
+if(hash(restored)!=='e60cf4d74b6256fc4a8a02ea44ba9936dbef00f02e1e96946d3290c1203bea44')throw Error('Raw 456-row measured input cannot be reconstructed exactly');
+if(output!=='--check')fs.writeFileSync(output,restored,{flag:'wx'});
+console.log(JSON.stringify({rows:456,bytes:restored.length,sha256:hash(restored),output,meaning:'Exact 456-row measured input prefix, including all 48 superseded rows, uses LF. The final comparison appends 48 distinct rows; no historical result is deleted.'},null,2));

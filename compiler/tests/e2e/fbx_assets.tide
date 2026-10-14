@@ -1,0 +1,106 @@
+struct FbxContract
+{
+    [Name("Move")] Animation move;
+    [Name("Bone0")] Bone hand;
+}
+
+asset Mesh<Vertex3> triangle = "fbx/static/triangle_ascii.fbx";
+asset List<Mesh<Vertex3>> triangles = "fbx/static/*.fbx";
+asset Map<string, Mesh<Vertex3>> trianglesByName = "fbx/static/*.fbx";
+asset SkinnedMesh<Vertex3> inferred = "fbx/models/rig_ascii.fbx";
+asset SkinnedMesh<Vertex3, FbxContract> rig = "fbx/models/rig_binary.fbx";
+asset List<SkinnedMesh<Vertex3, FbxContract>> rigs = "fbx/models/*.fbx";
+asset Map<string, SkinnedMesh<Vertex3, FbxContract>> rigsByName = "fbx/models/*.fbx";
+asset List<byte> sourceFbx = "fbx/models/rig_binary.fbx";
+asset SkinnedMesh<Vertex3, FbxContract> stepped = "fbx/animation/stepped_binary.fbx";
+asset SkinnedMesh<Vertex3, FbxContract> negative = "fbx/animation/negative_ascii.fbx";
+
+singleton FbxProbe
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    int ticks;
+    float clock;
+    float position;
+    float modelPosition;
+    SkinnedMesh<Vertex3, FbxContract> model;
+    Animation clip;
+    Bone hand;
+    Pose pose;
+    Pose rest;
+    List<Vertex3> geometry;
+    List<int> indices;
+}
+
+void Expect(mut FbxProbe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+
+system CheckAndAnimate(mut FbxProbe p)
+{
+    if (p.ticks == 0)
+    {
+        Expect(p, triangle.vertices.count == 3 && triangle.indices.count == 3);
+        Expect(p, triangles.count == 2 && triangles[0].vertices.count == 3 && triangles[1].vertices.count == 3);
+        Expect(p, trianglesByName.count == 2 && trianglesByName.Has("fbx/static/triangle_binary.fbx"));
+        Expect(p, trianglesByName["fbx/static/triangle_ascii.fbx"].indices.count == 3);
+        Expect(p, inferred.animations.move.name == "Move" && inferred.animations.move.duration == 1);
+        Expect(p, inferred.skeleton.TryGetByName("Bone0", out _));
+        Expect(p, inferred.skeleton.TryGetByName("Root", out _));
+        Expect(p, rig.animations.move.name == "Move" && rig.skeleton.TryGetByName("Bone0", out _));
+        Expect(p, rigs.count == 2 && rigs[1].animations.move.duration == 1);
+        Expect(p, rigsByName.count == 2 && rigsByName.Has("fbx/models/rig_ascii.fbx"));
+        Expect(p, rigsByName["fbx/models/rig_binary.fbx"].skeleton.TryGetByName("Bone0", out _));
+        Expect(p, rig.vertices.count == 3 && rig.indices.count == 3);
+        var rest = rig.skeleton.RestPose();
+        Expect(p, rest[rig.skeleton.bones.hand].position.x == -1);
+        Expect(p, Math.Transform(rest.Model(rig.skeleton.bones.hand), float3(0)).x == -3);
+        var middle = rig.animations.move.Sample(0.5);
+        Expect(p, middle[rig.skeleton.bones.hand].position.x == -3);
+        Expect(p, Math.Transform(middle.Model(rig.skeleton.bones.hand), float3(0)).x == -5);
+        var ascii = rigsByName["fbx/models/rig_ascii.fbx"];
+        var asciiPose = ascii.animations.move.Sample(0.5);
+        Expect(p, asciiPose[ascii.skeleton.bones.hand].position.x == -3);
+        var end = rig.animations.move.Sample(5, Playback.Clamp);
+        Expect(p, end[rig.skeleton.bones.hand].position.x == -5);
+        var looped = rig.animations.move.Sample(1, Playback.Loop);
+        Expect(p, looped[rig.skeleton.bones.hand].position.x == -1);
+        // Source files belong to compiler import. Runtime decoding continues
+        // to accept only self-contained GLB content.
+        Expect(p, SkinnedMesh<Vertex3>.Decode(sourceFbx) is IOError.InvalidData);
+        var beforeStep = stepped.animations.move.Sample(0.499);
+        Expect(p, beforeStep[stepped.skeleton.bones.hand].position.x == -1);
+        var atStep = stepped.animations.move.Sample(0.5);
+        Expect(p, atStep[stepped.skeleton.bones.hand].position.x == -3);
+        var afterStep = stepped.animations.move.Sample(0.501);
+        Expect(p, afterStep[stepped.skeleton.bones.hand].position.x == -3);
+        var stepEnd = stepped.animations.move.Sample(1);
+        Expect(p, stepEnd[stepped.skeleton.bones.hand].position.x == -5);
+        var negativeMiddle = negative.animations.move.Sample(0.5);
+        Expect(p, negative.animations.move.duration == 1 && negativeMiddle[negative.skeleton.bones.hand].position.x == -3);
+        p.model = rig;
+        p.clip = rig.animations.move;
+        p.hand = rig.skeleton.bones.hand;
+        p.pose = rest;
+        p.rest = rest;
+        p.geometry = triangle.vertices;
+        p.indices = triangle.indices;
+    }
+    p.clock += 0.25;
+    p.pose.Sample(p.clip, p.clock, Playback.Loop);
+    p.position = p.pose[p.hand].position.x;
+    p.modelPosition = Math.Transform(p.pose.Model(p.hand), float3(0)).x;
+    p.ticks++;
+}
+
+view Show(FbxProbe p)
+{
+    Draw.Mesh(triangle, float4x4.identity);
+    Draw.SkinnedMesh(rig, float4x4.identity, p.pose);
+}
+
+scene Main { }

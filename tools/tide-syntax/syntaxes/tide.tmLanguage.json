@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Tide",
   "scopeName": "source.tide",
-  "fileTypes": ["tide"],
+  "fileTypes": ["tide", "tprefab"],
   "patterns": [
     { "include": "#comments" },
     { "include": "#directives" },
@@ -189,7 +189,7 @@
         },
         {
           "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, command Rename, scene Arena, enum Voxel : byte",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(component|singleton|struct|input|event|command|enum|scene)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(component|singleton|struct|input|event|command|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -376,7 +376,7 @@
         },
         {
           "comment": "Methods and functions: [virtual] [async] [mut] Type Name(, where Type can be List<T> or T?, at the start of a line. An override's name is written with what it's in: override float Combat.Damage(, override bool Stats.IsDead(",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -505,8 +505,8 @@
           "match": "\\bis\\b"
         },
         {
-          "comment": "An input's Sample() and Sanitize()",
-          "match": "^\\s*(Sample|Sanitize)(?=\\s*\\()",
+          "comment": "An input's Sample(), Sanitize() and Predict()",
+          "match": "^\\s*(Sample|Sanitize|Predict)(?=\\s*\\()",
           "captures": {
             "1": { "name": "keyword.other.tide" }
           }
@@ -550,6 +550,15 @@
           }
         },
         {
+          "comment": "Local entity placement and component access",
+          "match": "(?:(?<=[(,])|^)\\s*(?:(mut|with|without|verified)\\s+)?(local)(?=\\s+(?:mut\\s+)?[A-Za-z_])|\\b(local)(?=\\s+Spawn\\s*\\()",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "storage.modifier.local.tide" },
+            "3": { "name": "storage.modifier.local.tide" }
+          }
+        },
+        {
           "comment": "Parameter and local modifiers",
           "name": "storage.modifier.tide",
           "match": "\\b(mut|with|without)\\b"
@@ -585,6 +594,15 @@
           ]
         },
         {
+          "comment": "'a': one character, or one of the escapes \\' \\\" \\\\ \\n \\r \\t and \\0",
+          "name": "string.quoted.single.tide",
+          "match": "'(?:(\\\\['\"\\\\nrt0])|(\\\\.)|[^'\\\\])'",
+          "captures": {
+            "1": { "name": "constant.character.escape.tide" },
+            "2": { "name": "invalid.illegal.unknown-escape.tide" }
+          }
+        },
+        {
           "name": "constant.numeric.integer.hexadecimal.tide",
           "match": "\\b0[xX][0-9A-Fa-f_]*[0-9A-Fa-f]\\b"
         },
@@ -593,8 +611,13 @@
           "match": "\\b0[bB][01_]*[01]\\b"
         },
         {
+          "comment": "A degree literal is an ordinary float in radians; the suffix is lowercase.",
           "name": "constant.numeric.float.tide",
-          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9][0-9_]*)?[fF]\\b|\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?\\b|\\b[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*\\b"
+          "match": "(?<![\\w.])[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9][0-9_]*)?deg\\b|(?<![\\w.)\\]])\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?deg\\b"
+        },
+        {
+          "name": "constant.numeric.float.tide",
+          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9][0-9_]*)?[fF]\\b|\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?\\b|\\b[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*\\b|(?<![\\w.)\\]])\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[fF]?\\b"
         },
         {
           "name": "constant.numeric.integer.tide",
@@ -663,8 +686,8 @@
           }
         },
         {
-          "comment": "List<int>, Map<int, Cell>, Set<int>, Grid2<Cell>: the built-in types that hold another",
-          "match": "(?<!\\.)\\b(List|Map|Set|Grid2|Grid3)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
+          "comment": "List<int>, Map<int, Cell>, Set<int>, Grid2<Cell>, Mesh<Corner>, SkinnedMesh<Corner, Rig>: the built-in types that hold another",
+          "match": "(?<!\\.)\\b(List|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh|Asset)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
           "captures": {
             "1": { "name": "support.class.tide" },
             "2": { "name": "punctuation.definition.typeparameters.begin.tide" },
@@ -679,12 +702,12 @@
         {
           "comment": "Built-in value types, void for what a method or function returns, text, Actions and the draw list C takes, and what an enum is stored as (enum Voxel : byte). Not after a '.': Draw.Rect is a function",
           "name": "storage.type.primitive.tide",
-          "match": "(?<!\\.)\\b(void|bool|int[234]?|long|float(?:2x2|3x3|4x4|[234])?|quaternion|Entity|LocalEntity|PlayerID|Color|Rect|Texture|RenderTarget|string|Action|DrawList|byte|ushort)\\b"
+          "match": "(?<!\\.)\\b(void|bool|int[234]?|long|float(?:2x2|3x3|4x4|[234])?|quaternion|Entity|LocalEntity|PlayerID|Color|Rect|Texture|RenderTarget|string|Action|DrawList|byte|ushort|char)\\b"
         },
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",
           "name": "support.class.tide",
-          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|PlayerJoined|PlayerLeft|Scene|SceneVisibility|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|List|Map|Set|Grid2|Grid3)\\b"
+          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|PlayerJoined|PlayerLeft|Scene|SceneVisibility|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|Map|Set|Grid2|Grid3)\\b"
         },
         {
           "comment": "Spawn(...), Send(...)",
@@ -721,6 +744,14 @@
     },
     "members": {
       "patterns": [
+          {
+            "comment": "Contextual enum shorthand: state = .Idle, return .Idle, case .Idle",
+            "match": "(?:^|(?<=[=(:,?\\[{};!+\\-*/%<>|&])|(?<=\\breturn\\s)|(?<=\\bcase\\s))\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+            "captures": {
+              "1": { "name": "punctuation.accessor.tide" },
+              "2": { "name": "constant.other.enum.tide" }
+            }
+          },
         {
           "comment": "trs.position",
           "match": "(\\.)\\s*([a-z_][A-Za-z0-9_]*)",
@@ -742,6 +773,10 @@
     },
     "operators": {
       "patterns": [
+        {
+          "name": "keyword.operator.switch-arm.tide",
+          "match": "=>"
+        },
         {
           "name": "keyword.operator.assignment.compound.tide",
           "match": "<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^="

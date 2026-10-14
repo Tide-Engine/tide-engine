@@ -1,0 +1,23 @@
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+const [snapshot,dir]=process.argv.slice(2);
+function section(file,name){const b=fs.readFileSync(file),pe=b.readUInt32LE(0x3c);if(b.toString('ascii',pe,pe+4)!=='PE\0\0')throw Error('Not PE');const coff=pe+4,start=coff+20+b.readUInt16LE(coff+16);for(let i=0;i<b.readUInt16LE(coff+2);i++){const at=start+i*40;if(b.toString('ascii',at,at+8).replaceAll('\0','')===name)return b.subarray(b.readUInt32LE(at+20),b.readUInt32LE(at+20)+b.readUInt32LE(at+16));}throw Error('Missing section');}
+const original=section(snapshot+'/bench_skinned.exe','.text'),control=section(dir+'/control/bench_skinned_diagnostic.exe','.text');
+if(!original.equals(control))throw Error('Control relink .text differs from immutable candidate');
+function symbols(file){const s=fs.readFileSync(file,'utf8'),out={};for(const name of ['tide_skinned_sample','sampled_value','fill_rest','require_clip','tide_run_view_Show','tide_shade_1']){const re=new RegExp('\\s'+name+'\\s+([0-9a-f]{16})\\s','i'),m=s.match(re);if(!m)throw Error('Missing map symbol '+name);out[name]={hex:'0x'+m[1],address:Number.parseInt(m[1],16),mod64:Number.parseInt(m[1],16)%64};}return out;}
+const a=symbols(dir+'/control/bench_skinned_diagnostic.map'),b=symbols(dir+'/prefix48/bench_skinned_diagnostic.map');
+for(const name of ['tide_skinned_sample','sampled_value','fill_rest','require_clip'])if(b[name].address-a[name].address!==48)throw Error('Unexpected layout displacement: '+name);
+for(const name of ['tide_run_view_Show','tide_shade_1'])if(b[name].address!==a[name].address)throw Error('Generated caller moved: '+name);
+const obj=fs.readFileSync(dir+'/original-object/skinned.c.obj'),symAt=obj.readUInt32LE(8),symCount=obj.readUInt32LE(12),strAt=symAt+symCount*18,coffSymbols=[];
+function coffName(at){if(obj.readUInt32LE(at))return obj.toString('ascii',at,at+8).replace(/\0.*$/s,'');const start=strAt+obj.readUInt32LE(at+4);return obj.toString('utf8',start,obj.indexOf(0,start));}
+for(let i=0;i<symCount;){const at=symAt+i*18;coffSymbols[i]={name:coffName(at),section:obj.readInt16LE(at+12),type:obj.readUInt16LE(at+14)};i+=1+obj[at+17];}
+function mapAll(file){const result={};for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s+[0-9a-f]{4}:[0-9a-f]{8}\s+(\S+)\s+([0-9a-f]{16})\s/i);if(m)result[m[1]]=Number.parseInt(m[2],16);}return result;}
+const maps=[mapAll(dir+'/control/bench_skinned_diagnostic.map'),mapAll(dir+'/prefix48/bench_skinned_diagnostic.map')],texts=[control,section(dir+'/prefix48/bench_skinned_diagnostic.exe','.text')],codeChecks=[];
+for(const name of ['tide_skinned_sample','sampled_value','fill_rest','require_clip']){
+ const sym=coffSymbols.find(x=>x?.name===name&&x.section>1&&x.type===0x20),header=20+(sym.section-1)*40,size=obj.readUInt32LE(header+16),raw=obj.readUInt32LE(header+20),relAt=obj.readUInt32LE(header+24),relCount=obj.readUInt16LE(header+32),mask=new Uint8Array(size),calls=[];
+ for(let i=0;i<relCount;i++){const r=relAt+i*10,offset=obj.readUInt32LE(r),type=obj.readUInt16LE(r+8);if((type<4||type>9)&&type!==11)throw Error('Unexpected code relocation type: '+name+'/'+type+'/'+offset);mask.fill(1,offset,offset+4);if(type===11){const p=a[name].address-0x140001000+offset,q=b[name].address-0x140001000+offset;if(texts[0].readUInt32LE(p)!==texts[1].readUInt32LE(q))throw Error('TLS section-relative operand changed');}if(offset&&obj[raw+offset-1]===0xe8)calls.push({offset,type,target:coffSymbols[obj.readUInt32LE(r+4)].name});}
+ for(let variant=0;variant<2;variant++){const va=[a,b][variant][name].address,start=va-0x140001000;for(let i=0;i<size;i++)if(!mask[i]&&texts[variant][start+i]!==obj[raw+i])throw Error('Linked nonrelocated instruction byte differs: '+name);for(const call of calls){const target=va+call.offset+4+(call.type-4)+texts[variant].readInt32LE(start+call.offset);if(maps[variant][call.target]!==target)throw Error('Linked call target differs: '+name+'→'+call.target);}}
+ codeChecks.push({function:name,bytes:size,nonrelocated_instruction_bytes_match_coff:true,direct_call_targets_verified:calls.length});
+}
+const result={control_text_exact:true,control_text_sha256:crypto.createHash('sha256').update(control).digest('hex'),control:a,prefix48:b,linked_code_checks:codeChecks,interpretation:'Only an unreachable48-byte prefix is added to the private skinned object. Existing sampler/helper instructions, relocations and unwind input sections pass the separate COFF patch verification. Several skinned functions shift together, so this tests group code layout rather than one hot loop.'};
+fs.writeFileSync(dir+'/layout-check.json',JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result,null,2));

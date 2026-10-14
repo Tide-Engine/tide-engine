@@ -21,7 +21,7 @@
         '@graph': [
             ...(path === '/' ? [{
                 '@type': 'WebSite', '@id': `${SITE_ORIGIN}/#website`,
-                url: siteUrl('/'), name: SITE_NAME, description, inLanguage: 'en',
+                url: siteUrl('/'), name: SITE_NAME, alternateName: 'Tide', description, inLanguage: 'en',
             }] : []),
             {
                 '@type': 'WebPage', '@id': `${url}#webpage`, url, name: title, description,

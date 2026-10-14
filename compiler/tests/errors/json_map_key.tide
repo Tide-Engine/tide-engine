@@ -1,0 +1,7 @@
+// expect: JSON has nothing for Map<int, string>, which 'Names.byId' holds
+// expect: an object's keys are text: a map JSON holds is a Map<string, T>
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+struct Names { Map<int, string> byId; }
+system Run(mut Seen seen) { seen.text = Json.Write(Names { }); }

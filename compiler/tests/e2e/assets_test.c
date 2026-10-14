@@ -58,11 +58,31 @@ TIDE_TEST(assets_read_as_values_of_their_types)
     TIDE_CHECK(text_is(&world, p->noteA, "alpha"));
     TIDE_CHECK(p->noteCount == 2 && p->noteListCount == 2); // The list's glob has a '*' for the folder, which is one folder deep
     TIDE_CHECK(text_is(&world, p->noteFirst, "alpha")); // a.txt before b.txt: by their paths' bytes
-    TIDE_CHECK(p->pngCount == 5); // bad.png, hero.png, run/0.png, run/1.png, run/2.png
+    TIDE_CHECK(p->pngCount == 8); // Original five plus images/reference.png and two malformed-image fixtures
     TIDE_CHECK(p->pngFirstByte == 'o'); // bad.png's second byte
     TIDE_CHECK(text_is(&world, p->nested, "alpha"));
     TIDE_CHECK(text_is(&world, p->copied, "R\xc3\xa8gles: be kind.\nLine two."));
     TIDE_CHECK(tide_list_read_count(&world.heap, p->kept) == 300);
+    // One file where the type holds many: a list of that one, and a map of it under its path as written
+    TIDE_CHECK(p->oneNoteCount == 1 && text_is(&world, p->oneNote, "beta\n"));
+    TIDE_CHECK(p->oneRunCount == 1 && p->oneRunKeyed && color_is(p->oneRunPixel, 100, 0, 100, 255)); // run[2]'s, by its own name
+    TIDE_CHECK(p->oneTableCount == 1 && p->oneTableBytes == 300);
+    TIDE_CHECK(text_is(&world, p->oneRules, "R\xc3\xa8gles: be kind.\nLine two.")); // Keyed by the path a constant says
+    TIDE_CHECK(p->noteLength == 5);
+    // Text of a list and of a map says its characters, as the text alone does: 26, where the file has 27 bytes
+    TIDE_CHECK(p->textsCount == 1 && p->textsLength == 26 && p->oneRulesLength == 26 && p->sameRules);
+    TIDE_CHECK(p->rulesBytes == 27);
+    const tide_pack_entry *one = tide_pack_find("oneNote", TIDE_PACK_LIST);
+    TIDE_CHECK(one != NULL && one->size == 1 && one->extra == TIDE_PACK_TEXT);
+    // So such a file is in the pack as its text and as its bytes; one of a byte a character is there once
+    const tide_pack_entry *text = tide_pack_find("rules", TIDE_PACK_TEXT), *raw = tide_pack_find("rulesBytes", TIDE_PACK_BYTES);
+    TIDE_CHECK(text != NULL && raw != NULL && text->offset != raw->offset && text->extra == 26 && raw->size == 27);
+    const tide_text *listed = tide_list_at((tide_list){tide_pack_handle(tide_pack_find("texts", TIDE_PACK_LIST))}, 0, sizeof(tide_text));
+    TIDE_CHECK(listed != NULL && listed->at == tide_pack_handle(text)); // The list's is the text's own block
+    const tide_text *noted = tide_list_at((tide_list){tide_pack_handle(one)}, 0, sizeof(tide_text));
+    TIDE_CHECK(noted != NULL && tide_text_view(*noted).chars == 5 && tide_text_view(*noted).bytes == 5); // "beta\n"
+    const tide_list *tabled = tide_list_at((tide_list){tide_pack_handle(tide_pack_find("oneTable", TIDE_PACK_LIST))}, 0, sizeof(tide_list));
+    TIDE_CHECK(tabled != NULL && tabled->at == tide_pack_handle(tide_pack_find("table", TIDE_PACK_BYTES))); // Bytes: one block for every name
 
     // What was copied into the world is the world's own: it comes back from its bytes
     const uint32_t size = tide_world_pack(&world, NULL, 0);
@@ -97,7 +117,7 @@ TIDE_TEST(assets_draw_and_are_sampled)
     for (int frame = 0; frame < 2; frame++) {
         tide_draw_reset(&draw);
         tide_gui_begin(&gui, &devices, (tide_float2){640, 360}, NULL);
-        tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
         tide_gui_end(&gui, &draw);
     }
     // hero (8 by 6) for the plain draw and the frag, and run[1] (2 by 2) for the frag
@@ -134,6 +154,8 @@ TIDE_TEST(assets_missing_from_the_pack_read_as_empty)
     tide_world_tick(&world);
     TIDE_CHECK(world.Probe.heroWidth == 0 && world.Probe.heroCells == 0 && world.Probe.rulesLength == 0 && world.Probe.tableCount == 0);
     TIDE_CHECK(world.Probe.runCount == 0 && !world.Probe.hasRunOne && world.Probe.noteCount == 0);
+    TIDE_CHECK(world.Probe.oneNoteCount == 0 && world.Probe.oneRunCount == 0 && !world.Probe.oneRunKeyed && world.Probe.oneTableCount == 0);
+    TIDE_CHECK(world.Probe.textsCount == 0 && world.Probe.textsLength == 0 && world.Probe.oneRulesLength == 0 && world.Probe.rulesBytes == 0);
     TIDE_CHECK(!tide_assets_load((const uint8_t *)"nonsense", 8));
     tide_world_free(&world);
     tide_pack_unload();

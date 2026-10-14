@@ -1,0 +1,110 @@
+// The game the package's tests run against a relay on this machine
+// (relay.mjs natively, relay_routes.mjs in a page): every slot is Tide's own.
+// Each player is a local state of its own in one program, which the host
+// tells what to ask (Remote), and which says what it sees of its lobby in
+// fields a host reads (relay_check.h).
+using Lobbies;
+
+settings { title = "Lobby relay test"; appId = "tests.tide.lobby"; maxPlayers = 4; }
+
+scene Main { }
+
+enum Order
+{
+    None,
+    Forget,   // The identity this machine keeps: the next to ask is a new player
+    Create,   // A lobby named `text`, of the mode `value`
+    List,     // The lobbies of the mode `text`, or all of them with none
+    Join,     // The lobby `text`
+    Ready,
+    Unready,
+    Data,     // This member's key `text`, to `value`
+    Undata,   // ...and without it
+    Rename,   // The lobby, to `text`
+    Mode,     // The lobby's mode, to `text`
+    Close,
+    Open,
+    Start,
+    End,
+    Kick,     // The member `text`
+    Transfer, // To the member `text`
+    Leave,
+    Quick     // A match of the mode `text`
+}
+
+local singleton Remote
+{
+    Order order;
+    string text;
+    string value;
+
+    // What this player sees
+    bool listing;   // As the client had it last frame
+    int lists;      // Lists answered
+    int listed;     // Lobbies in the last
+    string first;   // ...and the first one's ID
+    int members;
+    int ready;      // Members who are ready
+    string names;   // Their names, in the order they joined: "Ann,Bob"
+    string colors;  // ...and the `color` each one's data has
+    string mode;    // The lobby's
+}
+
+view Obey(mut Remote remote, mut LobbyClient client)
+{
+    var order = remote.order;
+    remote.order = Order.None;
+    switch (order)
+    {
+        case Order.Forget: File.Delete(IdentityFile())!; break;
+        case Order.Create:
+            mut var options = LobbyOptions { name = remote.text, max = 4 };
+            options.data["mode"] = remote.value;
+            CreateLobby(client, options);
+            break;
+        case Order.List:
+            client.query = LobbyQuery { };
+            if (remote.text != "") client.query.filter["mode"] = remote.text;
+            RefreshLobbies(client);
+            break;
+        case Order.Join: JoinLobby(client, remote.text); break;
+        case Order.Ready: SetReady(client, true); break;
+        case Order.Unready: SetReady(client, false); break;
+        case Order.Data: SetMemberData(client, remote.text, remote.value); break;
+        case Order.Undata: RemoveMemberData(client, remote.text); break;
+        case Order.Rename: SetLobbyName(client, remote.text); break;
+        case Order.Mode: SetLobbyData(client, "mode", remote.text); break;
+        case Order.Close: SetLobbyOpen(client, false); break;
+        case Order.Open: SetLobbyOpen(client, true); break;
+        case Order.Start: StartMatch(client); break;
+        case Order.End: EndMatch(client); break;
+        case Order.Kick: Kick(client, remote.text); break;
+        case Order.Transfer: TransferLobby(client, remote.text); break;
+        case Order.Leave: LeaveLobby(client); break;
+        case Order.Quick: QuickMatch(client, MatchRequest { mode = remote.text, name = "Quick", max = 2 }); break;
+    }
+}
+
+[After(Obey)]
+view Look(mut Remote remote, LobbyClient client)
+{
+    if (remote.listing && !client.listing) remote.lists += 1;
+    remote.listing = client.listing;
+    remote.listed = client.lobbies.count;
+    remote.first = client.lobbies.count > 0 ? client.lobbies[0].id : "";
+    remote.members = client.lobby.members.count;
+    remote.ready = 0;
+    mut var names = "";
+    mut var colors = "";
+    foreach (var member in client.lobby.members)
+    {
+        if (IsReady(member)) remote.ready += 1;
+        if (names != "") names += ",";
+        names += member.name;
+        if (colors != "") colors += ",";
+        colors += member.data["color"] != "" ? member.data["color"] : "-";
+    }
+    remote.names = names;
+    remote.colors = colors;
+    remote.mode = client.lobby.data["mode"];
+}

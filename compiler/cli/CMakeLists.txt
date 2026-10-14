@@ -1,6 +1,6 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang (see AGENTS.md, Packaging and releases).
-add_executable(tide_cli main.c android.c build.c editors.c fetch.c install.c libraries.c line.c packages_cmd.c publish.c release.c
+add_executable(tide_cli main.c android.c build.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
     serve.c sys.c toolchain.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
@@ -21,10 +21,10 @@ install(TARGETS tide_cli RUNTIME DESTINATION bin COMPONENT tide)
 
 # Versions and picking releases, a package put over an installation, which
 # platform libraries are for, what tide.packages and git's lists of branches
-# and tags say, without the network, Android apps as Android checks them, and
-# zips.
+# and tags say, without the network, Android apps as Android checks them,
+# zips, and the path of a file that isn't there yet.
 add_executable(tide_cli_tests tests/release_test.c tests/install_test.c tests/libraries_test.c tests/packages_test.c tests/apk_test.c
-    tests/unzip_test.c tests/rsa_test.c release.c install.c libraries.c fetch.c sys.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
+    tests/unzip_test.c tests/rsa_test.c tests/sys_test.c release.c install.c libraries.c fetch.c sys.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_cli_tests PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/platform/src/rtc")
 target_link_libraries(tide_cli_tests PRIVATE tide tidec_core)

@@ -1,0 +1,4 @@
+renderer: OpenGL 3.3; 2 warmup, 10 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+10000 characters, independent_poses, repeat 1 (median / p95 ms): view 28.511 / 29.591, submit 4.942 / 5.647, completion + readback 28.701 / 29.590, total 62.341 / 63.741, GPU 29.500 / 30.457 (10 samples); draw calls 11, texture uploads 40960000 bytes/frame
+tide: captured C:\Users\blenm\.codex\worktrees\1315\PurrEngine\build\release\skinned-cpu5\causal-review\layout48-v4\prefix48\capture.png, 1024 by 576 pixels

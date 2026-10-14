@@ -322,6 +322,267 @@ TIDE_TEST(audio_effects_run_on_voices_and_buses_with_state_and_knobs)
     tide_audio_free(&f);
 }
 
+// An echo: what its voice played ECHO_FRAMES frames ago, added at half. Its
+// delay line is a second of stereo, 384 KB, far more than a voice holds itself,
+// so it's memory the mixer makes for the voice. `blocks` counts, and the last
+// float of the line is written every block: all of it is the effect's.
+#define ECHO_FRAMES (4u * BLOCK)
+#define ECHO_LINE 48000u
+typedef struct echo_state {
+    uint32_t blocks;
+    uint32_t at;
+    float line[2 * ECHO_LINE];
+} echo_state;
+static uint32_t echo_blocks_seen;
+static void echo(float *samples, void *state, const void *knobs)
+{
+    (void)knobs;
+    echo_state *s = state;
+    for (uint32_t i = 0; i < BLOCK; i++) {
+        const uint32_t from = (s->at + ECHO_LINE - ECHO_FRAMES) % ECHO_LINE;
+        for (uint32_t c = 0; c < 2; c++) {
+            s->line[2 * s->at + c] = samples[2 * i + c];
+            samples[2 * i + c] += s->line[2 * from + c] * 0.5f;
+        }
+        s->at = (s->at + 1) % ECHO_LINE;
+    }
+    s->line[2 * ECHO_LINE - 1] += 0.0f;
+    echo_blocks_seen = ++s->blocks;
+}
+
+// One block of 1s, then silence
+static float burst_samples[2 * BLOCK];
+static tide_clip burst(void)
+{
+    for (uint32_t i = 0; i < 2 * BLOCK; i++) burst_samples[i] = 1.0f;
+    return (tide_clip){.samples = burst_samples, .frames = BLOCK, .channels = 2, .rate = TIDE_AUDIO_RATE, .id = 5};
+}
+
+static void play(tide_audio_frame *f, const tide_voice *v, float *out)
+{
+    tide_audio_reset(f);
+    if (v) tide_audio_voice(f, v);
+    tide_mixer_submit(f);
+    tide_mixer_render(out, BLOCK);
+}
+
+TIDE_TEST(audio_a_big_state_is_memory_of_the_voices_own)
+{
+    fresh();
+    TIDE_REQUIRE(sizeof(echo_state) > TIDE_AUDIO_STATE_SMALL && sizeof(echo_state) <= TIDE_AUDIO_STATE_BYTES);
+    TIDE_CHECK(tide_mixer_states() == 0);
+    tide_audio_frame f = {0};
+    float out[SAMPLES];
+    tide_voice v = {.id = 21, .clip = burst(), .playing = true, .volume = 1.0f, .pitch = 1.0f,
+                    .effect = {.fn = echo, .id = 200, .state_size = sizeof(echo_state)}};
+    // The burst, three blocks of nothing, and then its echo: the line is kept between blocks
+    play(&f, &v, out);
+    TIDE_CHECK(near(out[0], 1.0f) && near(out[SAMPLES - 1], 1.0f) && echo_blocks_seen == 1);
+    TIDE_CHECK(tide_mixer_states() == 1);
+    for (int block = 1; block < 4; block++) {
+        play(&f, &v, out);
+        TIDE_CHECK(silent(out, SAMPLES));
+    }
+    play(&f, &v, out);
+    TIDE_CHECK(near(out[0], 0.5f) && near(out[SAMPLES - 1], 0.5f) && echo_blocks_seen == 5);
+    TIDE_CHECK(tide_mixer_states() == 1);
+    // A second voice with the same effect has a line of its own, and the first one's goes on
+    tide_voice other = v;
+    other.id = 22;
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &v);
+    tide_audio_voice(&f, &other);
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(near(out[0], 1.0f) && tide_mixer_states() == 2); // The second one's burst, with no echo of the first's in it
+    for (int block = 1; block < 5; block++) {
+        tide_audio_reset(&f);
+        tide_audio_voice(&f, &v);
+        tide_audio_voice(&f, &other);
+        tide_mixer_submit(&f);
+        tide_mixer_render(out, BLOCK);
+        TIDE_CHECK(block == 4 ? near(out[0], 0.5f) : silent(out, SAMPLES)); // Its echo, four blocks after its own burst
+    }
+    tide_audio_free(&f);
+}
+
+TIDE_TEST(audio_a_big_state_starts_over_and_is_freed_when_its_voice_stops)
+{
+    fresh();
+    tide_audio_frame f = {0};
+    float out[SAMPLES];
+    tide_voice v = {.id = 23, .clip = burst(), .loop = true, .playing = true, .volume = 1.0f, .pitch = 1.0f,
+                    .effect = {.fn = echo, .id = 200, .state_size = sizeof(echo_state)}};
+    play(&f, &v, out);
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 2 && tide_mixer_states() == 1);
+    // A frame that doesn't name it: it fades out through its effect, with the state it had, and is gone
+    play(&f, NULL, out);
+    TIDE_CHECK(echo_blocks_seen == 3);
+    TIDE_CHECK(tide_mixer_states() == 1); // The renderer had it until that block was done
+    play(&f, NULL, out);
+    TIDE_CHECK(echo_blocks_seen == 3 && tide_mixer_states() == 0); // ...which the next frame knows
+    // Named again: another state, from zeros
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 1 && tide_mixer_states() == 1);
+    // Stopped and started: the same
+    v.playing = false;
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 2); // Its fade
+    v.playing = true;
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 1);
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 2 && tide_mixer_states() == 1); // The one before it has been freed
+    // Other code starts it over, a small state in the voice itself, and back
+    half_knobs k = {.add = 0.0f};
+    tide_voice small = v;
+    small.effect = (tide_audio_effect){.fn = half_tell, .id = 100, .state_size = sizeof(half_state), .knobs_size = sizeof k, .knobs = &k};
+    play(&f, &small, out);
+    TIDE_CHECK(half_blocks_seen == 1);
+    play(&f, &small, out);
+    TIDE_CHECK(half_blocks_seen == 2 && tide_mixer_states() == 0);
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 1 && tide_mixer_states() == 1);
+    v.effect.id = 201; // The same code under another name
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 1);
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 2 && tide_mixer_states() == 1);
+    // A forget frees everything at once
+    tide_mixer_forget();
+    TIDE_CHECK(tide_mixer_states() == 0);
+    tide_audio_free(&f);
+}
+
+TIDE_TEST(audio_a_bus_has_a_big_state_too)
+{
+    fresh();
+    tide_audio_frame f = {0};
+    float out[SAMPLES];
+    const tide_voice v = {.id = 24, .clip = burst(), .playing = true, .volume = 1.0f, .pitch = 1.0f, .bus = 3};
+    const tide_audio_effect e = {.fn = echo, .id = 200, .state_size = sizeof(echo_state)};
+    for (int block = 0; block < 5; block++) {
+        tide_audio_reset(&f);
+        tide_audio_voice(&f, &v);
+        tide_audio_set_bus_effect(&f, 3, &e);
+        tide_mixer_submit(&f);
+        tide_mixer_render(out, BLOCK);
+        TIDE_CHECK(block == 0 ? near(out[0], 1.0f) : block == 4 ? near(out[0], 0.5f) : silent(out, SAMPLES));
+        TIDE_CHECK(echo_blocks_seen == (uint32_t)block + 1 && tide_mixer_states() == 1);
+    }
+    // A frame that doesn't set it lets the state go, and the next that does starts from zeros
+    play(&f, &v, out);
+    play(&f, &v, out);
+    TIDE_CHECK(tide_mixer_states() == 0);
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &v);
+    tide_audio_set_bus_effect(&f, 3, &e);
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(echo_blocks_seen == 1 && tide_mixer_states() == 1);
+    tide_audio_free(&f);
+}
+
+TIDE_TEST(audio_big_states_nobody_renders_are_freed_as_their_voices_stop)
+{
+    fresh();
+    tide_audio_frame f = {0};
+    float out[SAMPLES];
+    tide_voice v = {.id = 25, .clip = burst(), .loop = true, .playing = true, .volume = 1.0f, .pitch = 1.0f,
+                    .effect = {.fn = echo, .id = 200, .state_size = sizeof(echo_state)}};
+    // Frames with no block rendered between them: a machine with no device, or one that stalled
+    for (int frame = 0; frame < 4; frame++) {
+        tide_audio_reset(&f);
+        tide_audio_voice(&f, &v);
+        tide_mixer_submit(&f);
+        TIDE_CHECK(tide_mixer_states() == 1);
+    }
+    tide_audio_reset(&f);
+    tide_mixer_submit(&f);
+    TIDE_CHECK(tide_mixer_states() == 0); // The renderer never had it, so nothing waits for it
+    // Voices that come and go with nothing rendered hold nothing
+    for (uint64_t id = 100; id < 140; id++) {
+        v.id = id;
+        tide_audio_reset(&f);
+        tide_audio_voice(&f, &v);
+        tide_mixer_submit(&f);
+        TIDE_CHECK(tide_mixer_states() == 1);
+    }
+    // Once a block is rendered, the renderer has the last one, and it's kept until a block after a frame without it
+    tide_mixer_render(out, BLOCK);
+    tide_audio_reset(&f);
+    tide_mixer_submit(&f);
+    TIDE_CHECK(tide_mixer_states() == 1);
+    tide_audio_reset(&f);
+    tide_mixer_submit(&f);
+    TIDE_CHECK(tide_mixer_states() == 1); // Still no block since
+    tide_mixer_render(out, BLOCK);
+    tide_audio_reset(&f);
+    tide_mixer_submit(&f);
+    TIDE_CHECK(tide_mixer_states() == 0);
+    // Two frames between two blocks, the first without the voice: the renderer never saw it stop, and the state is another all the same
+    v.id = 26;
+    play(&f, &v, out);
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 2);
+    tide_audio_reset(&f);
+    tide_mixer_submit(&f);
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 1);
+    play(&f, &v, out);
+    TIDE_CHECK(echo_blocks_seen == 2 && tide_mixer_states() == 1);
+    tide_audio_free(&f);
+}
+
+TIDE_TEST(audio_states_have_their_sizes)
+{
+    fresh();
+    tide_audio_frame f = {0};
+    float out[SAMPLES];
+    half_knobs k = {.add = 0.25f};
+    // All a voice holds itself, and a byte more
+    tide_voice v = {.id = 27, .clip = burst(), .loop = true, .playing = true, .volume = 1.0f, .pitch = 1.0f,
+                    .effect = {.fn = half_tell, .id = 300, .state_size = TIDE_AUDIO_STATE_SMALL, .knobs_size = sizeof k, .knobs = &k}};
+    play(&f, &v, out);
+    play(&f, &v, out);
+    TIDE_CHECK(half_blocks_seen == 2 && tide_mixer_states() == 0);
+    v.effect.id = 301;
+    v.effect.state_size = TIDE_AUDIO_STATE_SMALL + 1;
+    play(&f, &v, out);
+    play(&f, &v, out);
+    TIDE_CHECK(half_blocks_seen == 2 && tide_mixer_states() == 1 && near(out[0], 0.75f));
+    // The most there is
+    v.effect.id = 302;
+    v.effect.state_size = TIDE_AUDIO_STATE_BYTES;
+    play(&f, &v, out);
+    TIDE_CHECK(half_blocks_seen == 1 && near(out[0], 0.75f));
+    // More than that is no effect: its code would write past what it's given
+    v.effect.id = 303;
+    v.effect.state_size = TIDE_AUDIO_STATE_BYTES + 1;
+    half_blocks_seen = 0;
+    play(&f, &v, out);
+    TIDE_CHECK(half_blocks_seen == 0 && near(out[0], 1.0f));
+    play(&f, &v, out);
+    TIDE_CHECK(tide_mixer_states() == 0);
+    // A one-shot has no big state, so it plays without such an effect; with a small one, it has it
+    fresh();
+    tide_audio_reset(&f);
+    tide_voice shot = {.clip = burst(), .playing = true, .volume = 1.0f, .pitch = 1.0f,
+                       .effect = {.fn = half_tell, .id = 304, .state_size = TIDE_AUDIO_STATE_SMALL + 1, .knobs_size = sizeof k, .knobs = &k}};
+    tide_audio_voice(&f, &shot);
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(half_blocks_seen == 0 && near(out[0], 1.0f) && tide_mixer_states() == 0);
+    shot.effect.state_size = sizeof(half_state);
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &shot);
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(half_blocks_seen == 1 && near(out[0], 0.75f));
+    tide_audio_free(&f);
+}
+
 TIDE_TEST(audio_one_shots_from_frames_between_blocks_are_all_played)
 {
     fresh();
@@ -350,6 +611,115 @@ TIDE_TEST(audio_one_shots_from_frames_between_blocks_are_all_played)
     TIDE_CHECK(tide_mixer_dropped() == 5);
     tide_mixer_render(out, BLOCK);
     TIDE_CHECK(tide_mixer_voices() == TIDE_MIXER_VOICES); // As many as there are slots: the rest took the quietest's
+    tide_audio_free(&f);
+}
+
+typedef struct forget_state {
+    uint32_t blocks;
+    uint8_t room[TIDE_AUDIO_STATE_SMALL];
+} forget_state;
+static uint32_t forgotten_calls, forgotten_bus_calls, replaced_calls, replacement_blocks, replacement_shot_calls;
+
+static void forgotten_effect(float *samples, void *state, const void *knobs)
+{
+    (void)knobs;
+    forgotten_calls++;
+    ((uint8_t *)state)[0]++;
+    for (uint32_t i = 0; i < SAMPLES; i++) samples[i] = 0.5f;
+}
+
+static void forgotten_bus(float *samples, void *state, const void *knobs)
+{
+    (void)samples;
+    (void)state;
+    (void)knobs;
+    forgotten_bus_calls++;
+}
+
+static void replaced_effect(float *samples, void *state, const void *knobs)
+{
+    (void)samples;
+    (void)state;
+    (void)knobs;
+    replaced_calls++;
+}
+
+static void replacement_effect(float *samples, void *state, const void *knobs)
+{
+    (void)knobs;
+    forget_state *s = state;
+    replacement_blocks = ++s->blocks;
+    for (uint32_t i = 0; i < SAMPLES; i++) samples[i] = 0.25f;
+}
+
+static void replacement_shot(float *samples, void *state, const void *knobs)
+{
+    (void)state;
+    (void)knobs;
+    replacement_shot_calls++;
+    for (uint32_t i = 0; i < SAMPLES; i++) samples[i] = 0.25f;
+}
+
+TIDE_TEST(audio_a_timed_out_forget_survives_replaced_frames)
+{
+    fresh();
+    forgotten_calls = forgotten_bus_calls = replaced_calls = replacement_blocks = replacement_shot_calls = 0;
+    tide_audio_frame f = {0};
+    tide_audio_reset(&f);
+    tide_voice old = {.id = 81, .playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                      .effect = {.fn = forgotten_effect, .id = 81, .state_size = sizeof(forget_state)}};
+    tide_audio_voice(&f, &old);
+    tide_audio_set_bus_effect(&f, 0, &(tide_audio_effect){.fn = forgotten_bus, .id = 82, .state_size = 1});
+    tide_mixer_submit(&f);
+    float out[SAMPLES];
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(forgotten_calls == 1 && forgotten_bus_calls == 1 && tide_mixer_states() == 1);
+    // An old one-shot has not reached the renderer when the host requests the forget.
+    tide_audio_reset(&f);
+    old.id = 0;
+    old.effect.state_size = 1;
+    tide_audio_voice(&f, &old);
+    tide_mixer_submit(&f);
+    forgotten_calls = forgotten_bus_calls = 0;
+    // Fake a stalled callback: no device is opened, and the documented wait times out.
+    tide_mixer_rendered_elsewhere(true);
+    tide_mixer_forget();
+    // The next game can replace the pending frame more than once before the callback resumes.
+    tide_audio_reset(&f);
+    tide_voice next = {.id = 83, .playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                       .effect = {.fn = replaced_effect, .id = 83, .state_size = sizeof(forget_state)}};
+    tide_audio_voice(&f, &next);
+    tide_audio_voice(&f, &(tide_voice){.playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                                     .effect = {.fn = replaced_effect, .id = 83, .state_size = 1}});
+    tide_mixer_submit(&f);
+    tide_mixer_forget(); // A second timeout also retires sounds queued after the first request.
+    tide_audio_reset(&f);
+    // Reusing both ids still starts a fresh big state, independent of the old voice's.
+    next.id = 81;
+    next.effect = (tide_audio_effect){.fn = replacement_effect, .id = 81, .state_size = sizeof(forget_state)};
+    tide_audio_voice(&f, &next);
+    tide_audio_voice(&f, &(tide_voice){.playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                                     .effect = {.fn = replacement_shot, .id = 85, .state_size = 1}});
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(forgotten_calls == 0 && forgotten_bus_calls == 0 && replaced_calls == 0);
+    TIDE_CHECK(replacement_blocks == 1 && replacement_shot_calls == 1 && tide_mixer_voices() == 2);
+    bool all_match = true;
+    for (uint32_t i = 0; i < SAMPLES; i++) all_match &= near(out[i], 0.5f);
+    TIDE_CHECK(all_match);
+    // After acknowledgement the next frame retains the new state and must not replay the one-shot.
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &next);
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(replacement_blocks == 2 && replacement_shot_calls == 2 && tide_mixer_voices() == 2);
+    TIDE_CHECK(forgotten_calls == 0 && tide_mixer_states() == 1);
+    all_match = true;
+    for (uint32_t i = 0; i < SAMPLES; i++) all_match &= near(out[i], 0.5f);
+    TIDE_CHECK(all_match);
+    tide_mixer_rendered_elsewhere(false);
+    tide_mixer_forget();
+    TIDE_CHECK(tide_mixer_states() == 0);
     tide_audio_free(&f);
 }
 

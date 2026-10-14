@@ -11,7 +11,7 @@ local singleton Account
     string token;
 }
 
-local component Toast
+component Toast
 {
     string text;
     bool shown;
@@ -50,7 +50,7 @@ async void SignIn(mut Account account)
     {
         account.token = token;
         account.state = 2;
-        Spawn(Toast { text = $"welcome, {account.name}" });
+        local Spawn(Toast { text = $"welcome, {account.name}" });
     }
     else
     {
@@ -84,14 +84,14 @@ view Balls(Ball ball, mut Account account)
 // A local handler that waits, for the toasts it's sent to.
 local event Shown { }
 
-async local event(Shown) Fade(mut Toast toast)
+async local event(Shown) Fade(mut local Toast toast)
 {
     await Wait.Frames(1);
     toast.text = "";
     this.Destroy();
 }
 
-view Toasts(mut Toast toast)
+view Toasts(mut local Toast toast)
 {
     if (toast.shown) return;
     toast.shown = true;

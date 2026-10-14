@@ -1,0 +1,45 @@
+asset Clip nightMusic = "sfx/night.wav";
+asset Clip stoneStep = "sfx/step.wav";
+asset Clip stoneStop = "sfx/stop.wav";
+asset Clip stoneLift = "sfx/lift.wav";
+asset Clip stoneLay = "sfx/lay.wav";
+asset Clip cratePush = "sfx/push.wav";
+asset Clip crateSink = "sfx/sink.wav";
+asset Clip iceSlide = "sfx/slide.wav";
+asset Clip portalJump = "sfx/portal.wav";
+asset Clip gateTurn = "sfx/gate.wav";
+asset Clip stepBack = "sfx/undo.wav";
+asset Clip startOver = "sfx/reset.wav";
+asset Clip lanternsLit = "sfx/solve.wav";
+
+local singleton Hearing { Sound music; }
+
+[Stage(ArtStage.Sound)]
+view YardSound(Hands hands, mut Hearing hearing)
+{
+    hearing.music.clip = nightMusic;
+    hearing.music.loop = true;
+    hearing.music.playing = hands.music && !hands.quiet;
+    hearing.music.volume = 0.42;
+}
+
+local event(PuzzleCue cue) HearPuzzle(Hands hands)
+{
+    if (hands.quiet) return;
+    var pitch = cue.paver == 0 ? 0.94 : 1.08;
+    switch (cue.kind)
+    {
+        case Cue.Step: Audio.Play(stoneStep, 0.26, pitch); break;
+        case Cue.Push: Audio.Play(cratePush, 0.42, pitch); break;
+        case Cue.Lift: Audio.Play(stoneLift, 0.34, pitch); break;
+        case Cue.Lay: Audio.Play(stoneLay, 0.46, pitch); break;
+        case Cue.Blocked: Audio.Play(stoneStop, 0.20); break;
+        case Cue.Slide: Audio.Play(iceSlide, 0.46, pitch); break;
+        case Cue.Portal: Audio.Play(portalJump, 0.40); break;
+        case Cue.Sink: Audio.Play(crateSink, 0.50); break;
+        case Cue.Gate: Audio.Play(gateTurn, 0.30); break;
+        case Cue.Undo: Audio.Play(stepBack, 0.24); break;
+        case Cue.Reset: Audio.Play(startOver, 0.26); break;
+        case Cue.Solve: Audio.Play(lanternsLit, 0.52); break;
+    }
+}

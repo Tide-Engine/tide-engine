@@ -1,11 +1,17 @@
-// expect: can't call Session.Start yet; views and local handlers do
+// expect: 'Menu' calls Session.Start, and the match runs the same on every machine
+// expect: call it from a view or a local handler, like a menu's button
 local scene Main { }
 scene Arena { }
+component Enemy { int hp; }
 void Menu()
 {
-    if (GUILayout.Button("Play")) Session.Start(Arena);
+    Session.Start(Arena);
 }
 view Start()
+{
+    Menu();
+}
+system Fight(Enemy enemy)
 {
     Menu();
 }

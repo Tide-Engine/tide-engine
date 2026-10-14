@@ -6,7 +6,7 @@ description: "Explore a deterministic 3D multiplayer physics game in Tide with B
 
 This walkthrough explains how a Box3D match drives balls with impulses, replaces floor bodies when tiles fall and keeps a large arena deterministic. It also covers [the lobby](#the-lobby), [instanced rendering](#what-a-machine-shows), [the shadow map](#the-shadows), and [the cost of simulation and rollback](#what-it-costs).
 
-You are a heavy ball, in a ring in the sky that's stacked with two thousand crates, and so are up to seven others. Plough through what's in your way, ram the others over the edge, and stay on yourself while the floor falls away under everyone. A game made with Tide to push its 3D physics in a match: every crate is in the same place on every machine, whatever their pings, with [Box3D](../physics/box3d.md) under all of it. Play it alone against bots, or with friends in a room.
+You are a heavy ball, in a ring in the sky that's stacked with two thousand crates, and so are up to seven others. Plough through what's in your way, ram the others over the edge, and stay on yourself while the floor falls away under everyone. A game made with Tide to push its 3D physics in a match: every crate is in the same place on every machine, whatever their pings, with [Box3D](../packages/box3d.md) under all of it. Play it alone against bots, or with friends in a room.
 
 <iframe class="demo-frame roomy" src="/sumo/?embedded" title="Sumo" allow="fullscreen"></iframe>
 
@@ -71,13 +71,13 @@ Sumo has seven files of Tide, and a `tide.packages` that says `box3d`.
 - `game.tide` is the match, which every machine runs the same way, and `arena.tide` what a round's ring is built of. Both are on this page, [whole](#the-match-whole).
 - `play.tide` is what one machine shows of it: the camera, and the ring and what's on it.
 - `light.tide` has the meshes, the frags that light them and what the shadows are made of, `effects.tide` the sparks and the words that float up, and `hud.tide` the scores, the clock and the controls.
-- The lobby and the menu are the `rooms` package's, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide): which match this machine is in is its to say.
+- The lobby and the menu are the `rooms` package's, [the menu that comes with tide](../packages/rooms.md): which match this machine is in is its to say.
 
 ### The physics
 
-Nothing in the game moves a body. It spawns them, pushes them and reads where they are, all through components, as the [physics page](../physics/box3d.md) says.
+Nothing in the game moves a body. It spawns them, pushes them and reads where they are, all through components, as the [physics page](../packages/box3d.md) says.
 
-**A ball is driven by pushes.** Its player's stick is an impulse every tick, which is a force, less what the floor takes of its speed, so it gathers speed, coasts and turns as something heavy does. The system that gives it is [`Before` the package's stage](../physics/box3d.md#before-the-step), so the step that uses the push is the tick's own, and a ball answers in the tick its player pressed:
+**A ball is driven by pushes.** Its player's stick is an impulse every tick, which is a force, less what the floor takes of its speed, so it gathers speed, coasts and turns as something heavy does. The system that gives it is [`Before` the package's stage](../packages/box3d.md#before-the-step), so the step that uses the push is the tick's own, and a ball answers in the tick its player pressed:
 
 ```csharp
 [Before(PhysicsStages.Step)]
@@ -93,7 +93,7 @@ system Drive(Controls controls, mut Body body, mut Ball ball, Brain brain, Ring 
 
 A charge is one more impulse, given when the button is let go. The [input](../game/input.md)'s `charge.up` says so, and it's only ever true for a button a player let go of: a machine that's [guessing](../game/input.md#what-other-machines-guess) what another player does never guesses a burst.
 
-**Two balls that meet are thrown apart.** The package sends `Touched` to a body's entity when it starts [touching](../physics/box3d.md#touching) another. Each ball's handler gives its own ball an impulse away from the other, on top of what Box3D made of the hit, and remembers who it was, for when the ball goes over the edge:
+**Two balls that meet are thrown apart.** The package sends `Touched` to a body's entity when it starts [touching](../packages/box3d.md#touching) another. Each ball's handler gives its own ball an impulse away from the other, on top of what Box3D made of the hit, and remembers who it was, for when the ball goes over the edge:
 
 ```csharp
 event(Touched touched) Bump(mut Ball ball, mut Body body, World world, Time time)
@@ -109,7 +109,7 @@ event(Touched touched) Bump(mut Ball ball, mut Body body, World world, Time time
 }
 ```
 
-**A tile that falls is another body.** The floor is 113 [static](../physics/box3d.md#bodies) bodies, which never move, and a body's type is read once, when it's made. So a tile that's due to fall is destroyed, and a loose one is spawned in its place, a little smaller so that it clears its neighbors. What stood on the tile wakes, and goes down with it:
+**A tile that falls is another body.** The floor is 113 [static](../packages/box3d.md#bodies) bodies, which never move, and a body's type is read once, when it's made. So a tile that's due to fall is destroyed, and a loose one is spawned in its place, a little smaller so that it clears its neighbors. What stood on the tile wakes, and goes down with it:
 
 ```csharp
 this.Destroy();
@@ -134,13 +134,13 @@ foreach (var thing in things)
 }
 ```
 
-**Two sensors.** The pit under the ring is a [sensor](../physics/box3d.md#sensors) the size of the sky: what falls into it is destroyed, which takes its body with it. A pickup is one too, floating over the floor: the first ball that comes into it has it.
+**Two sensors.** The pit under the ring is a [sensor](../packages/box3d.md#sensors) the size of the sky: what falls into it is destroyed, which takes its body with it. A pickup is one too, floating over the floor: the first ball that comes into it has it.
 
 ### Two thousand crates
 
-A ring is raised in one tick: `arena.tide` plans it, one of three arrangements, an eighth of the ring mirrored seven times so that every seat starts with the same ring around it, as high as the round's own [dice](../language/math.md#random-numbers) say. The dice are seeded from the match's seed and the round, so every machine builds the same ring. A function can't spawn, so the plan is a list of where each crate goes, and a system spawns what's on it.
+A ring is raised in one tick: `arena.tide` plans it, one of three arrangements, an eighth of the ring mirrored seven times so that every seat starts with the same ring around it, as high as the round's own [dice](../language/math.md#random-numbers) say. The dice are seeded from the match's seed and the round, so every machine builds the same ring. The plan is a list of where each crate goes, and a system spawns what's on it.
 
-- **Everything stacked is asleep until something hits it.** A body at rest is [asleep](../physics/box3d.md#bodies-at-rest), and a world where everything sleeps isn't stepped at all. A ring with nobody moving costs a tick 0.03 milliseconds, with 2,400 bodies standing in it.
+- **Everything stacked is asleep until something hits it.** A body at rest is [asleep](../packages/box3d.md#bodies-at-rest), and a world where everything sleeps isn't stepped at all. A ring with nobody moving costs a tick 0.03 milliseconds, with 2,400 bodies standing in it.
 - **A ring is put to sleep as soon as it's stacked.** It's stacked where it rests, and left to itself Box3D stepped all of it for a second before it let it sleep. So each crate is spawned with a tag, and a system writes `asleep = true` into the ones that have it, a tick later, and takes the tag off. The one step in between is for Box3D to find what rests on what: a stack then sleeps as one, and wakes as one when a ball gets to it. Spawned asleep, each crate would sleep by itself, and a stack that's hit would wake a crate a tick, which costs more in the ticks where a lot wakes at once.
 - **A column stands a hand's width from the next.** Box3D keeps a contact for every two bodies whose boxes are within 14 centimeters of each other, touching or not, and every contact is in its state, which the match holds, hashes and sends to a player who joins. A crate in a column has one contact, with the crate under it. Packed closer than that, each crate had seven, and the state of the same ring was three times the size.
 - **What's knocked about breaks up.** A crate that's hit hard enough has a few seconds left. Without that, the rubble of every tower lay in a heap in the middle of a floor that's getting smaller, most of it awake, and a tick took 2 milliseconds by the end of a round, where it takes 0.1.
@@ -155,23 +155,23 @@ That field is marked [`[Absolute]`](../game/input.md#what-other-machines-guess):
 
 ### The lobby
 
-The lobby isn't the game's: it's the `rooms` package, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide), which the game lists in its `tide.packages`. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the menu is drawn over it: **Play** closes it, **Host a room** opens that match to others, and **Join a room** leaves it for someone else's. A machine that was told which match to be in, with `--host` or `--join` on its command line or `?host` or `?join=` in its page's address, has no menu in its way.
+The lobby isn't the game's: it's the `rooms` package, [the menu that comes with tide](../packages/rooms.md), which the game lists in its `tide.packages`. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the menu is drawn over it: **Play** closes it, **Host a room** opens that match to others, and **Join a room** leaves it for someone else's. A machine that was told which match to be in, with `--host` or `--join` on its command line or `?host` or `?join=` in its page's address, has no menu in its way.
 
 What the game adds is in `hud.tide`: the input reads the menu's `Lobby.playing`, and says the player is away while a page is up, so their ball plays by itself; and a view tells the room's page who has each seat and whether bots play the rest, and sends `Rebuild` and `Bots` when the page's **New game** and **Bots** buttons say so. [Towers](./towers.md#the-lobby) does the same.
 
 ### What a machine shows
 
 - **The crates are one draw.** A view runs for every crate and adds a box to a list, where the body is between its last two ticks. One [`Draw.Instanced`](../game/shaders.md#instances-from-a-list) draws the list, through a [frag](../game/shaders.md) that paints a frame around each face and lights it. A frame of a full ring is under thirty draw calls.
-- **The floor is a texture of 15 cells by 15.** A view writes each tile into a local grid, there or about to go, and the frags [sample it](../game/shaders.md#textures): the floor's paint has a line of light along an edge with no tile past it, and the rings under the balls stop where the floor does. Those rings are drawn inside [`Draw.Depth(Depth.Read)`](../game/views.md#depth): what stands in front hides them, and they hide nothing.
+- **The floor is a texture of 15 cells by 15.** A view writes each tile into a local grid, there or about to go, and the frags [sample it](../game/shaders.md#textures): the floor's paint has a line of light along an edge with no tile past it, and the rings under the balls stop where the floor does. Those rings are drawn inside [`Draw.Depth(Depth.Read)`](../game/3d.md#depth): what stands in front hides them, and they hide nothing.
 - **There's no lighting built in,** so everything is a mesh whose corners have a normal, made once in a local singleton, and lit by one function that every frag calls. A ball's frag gives it a white band and a dark cap, so that its roll shows.
 - **The camera shows the whole ring when a ball is still big enough to find at that size,** and as much of it as that takes otherwise, around your ball and towards the middle, where the others are. It always looks from the same side, so up on the screen is the same way in the ring for every player, and for the stick.
-- **The scores are read [`verified`](../game/views.md#confirmed-state):** what the server has confirmed, never a fall this machine only predicted. They're on the seats, so the view goes through them with a [query](../game/views.md#other-entities).
+- **The scores are read [`verified`](../game/views-and-the-match.md#confirmed-state):** what the server has confirmed, never a fall this machine only predicted. They're on the seats, so the view goes through them with a [query](../game/views-and-the-match.md#other-entities).
 - **The sparks, the blasts' rings and the camera's shake come from events.** The match says what happens in it: two balls met, a ball went through crates, a charge was let go, a keg went off, a tile dropped, a ball fell. Nothing in the match handles those, so they [cost it nothing](../game/events.md#events-only-local-code-handles), and each machine's [local handlers](../game/events.md#local-handlers) make an effect of them, once, however often it runs the tick again. The point that floats up from where a ball fell and a round's winner wait for the server, with [`verified` handlers](../game/events.md#verified-handlers).
 - **Views see every body between its last two ticks,** and gliding through a correction, because the package tags a `Body`'s `position` and `rotation` for it (see [correction smoothing](../game/views.md#provisional-correction-smoothing)).
 
 ### The shadows
 
-The engine has no shadows either. It has the pieces of a [shadow map](../game/shaders.md#a-shadow-map): a [render target that holds depth alone](../game/views.md#what-a-target-holds), and a frag that [reads a target's depth](../game/shaders.md#a-target-s-depth). So a tower's shadow falls across the tiles behind it, and across the crates, the balls and the towers that stand there.
+The engine has no shadows either. It has the pieces of a [shadow map](../game/shaders.md#a-shadow-map): a [render target that holds depth alone](../game/render-targets.md#what-a-target-holds), and a frag that [reads a target's depth](../game/shaders.md#a-target-s-depth). So a tower's shadow falls across the tiles behind it, and across the crates, the balls and the towers that stand there.
 
 **What casts is drawn once more, through a camera where the lamp is.** The lists the window's frame is drawn from go into a target of depth alone first, with no frag, as no color goes anywhere there: the tiles, the crates and the pickups that are boxes in one draw, and the balls in another. What's left in the target is how far the lamp sees along each of its pixels:
 
@@ -200,16 +200,21 @@ view Cast(Fx fx, Models models, mut Shadow shadow)
 
 That view comes before anything is drawn to the window, the window's own clear too: everything drawn there asks the lamp's image, so the image is whole first.
 
-**Every frag that lights a pixel asks the lamp's image.** It works out where its pixel is in that image, and compares how far the pixel is from the lamp with what's stored there. Only a frag reads a target's depth, so each of the four that light something asks for itself, four times around its pixel, which blends a shadow's edge, and hands the one function that does the lighting how much of the lamp's light arrives:
+**Every frag that lights a pixel asks the lamp's image.** One function does the asking: it works out where a place is in that image, and compares how far the place is from the lamp with what's stored there, four times around it, which blends a shadow's edge. It [takes the depth to read](../game/shaders.md#in-a-function), which each of the four frags that light something names as it calls, and gives how much of the lamp's light arrives, which the frag hands the one function that does the lighting:
 
 ```csharp
+float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp)
+{
+    float3 seen = FromLamp(world, normal, toLamp);
+    return (depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+          + depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+}
+
 frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     ...
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    float3 normal = instance.Normal(corner.normal);
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(paint, normal, this.world, room, 0.25, sun);
 }
 ```

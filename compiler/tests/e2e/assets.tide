@@ -1,7 +1,7 @@
 // Assets: files a game is built with, read by name wherever a value of their
-// type is read (docs/spec.md, Assets). Each type, lists and maps of globs, two
-// declarations of one file, a path through a constant, a grid drawn and
-// sampled in a frag, and match code that reads them.
+// type is read (docs/spec.md, Assets). Each type, lists and maps of globs and
+// of one file, two declarations of one file, a path through a constant, a grid
+// drawn and sampled in a frag, and match code that reads them.
 
 asset Grid2<Color> hero = "assets/hero.png";
 asset Grid2<Color> heroAgain = "assets/hero.png";
@@ -15,6 +15,14 @@ asset Map<string, Grid2<Color>> runByName = "assets/run/*.png";
 asset Map<string, string> notes = "assets/notes/*.txt";
 asset List<string> noteList = "assets/*/*.txt"; // A '*' for a folder: the notes, and not rules.txt beside their folder
 asset List<List<byte>> everyPng = "assets/**/*.png";
+// One file where the type holds many: a list or a map of that one, so a path can become a glob with nothing else changed
+asset List<string> oneNote = "assets/notes/b.txt";
+asset Map<string, Grid2<Color>> oneRun = "assets/run/2.png";
+asset List<List<byte>> oneTable = "assets/table.bin";
+asset Map<string, string> oneRules = RULES;
+// Text whose characters aren't a byte each ('è' takes two): a glob's list of it, and the file's bytes beside its text
+asset List<string> texts = "assets/*.txt"; // rules.txt, the one text beside the folders
+asset List<byte> rulesBytes = RULES;
 
 asset string nested = "assets/notes/a.txt";
 
@@ -47,6 +55,20 @@ singleton Probe
     string nested;
     string copied;
     List<byte> kept;
+    int oneNoteCount;
+    string oneNote;
+    int oneRunCount;
+    bool oneRunKeyed;
+    Color oneRunPixel;
+    int oneTableCount;
+    int oneTableBytes;
+    string oneRules;
+    int noteLength;
+    int textsCount;
+    int textsLength;
+    int oneRulesLength;
+    bool sameRules;
+    int rulesBytes;
 }
 
 // Match code reads assets like any value: every machine has the same pack.
@@ -82,6 +104,21 @@ system Read(mut Probe probe)
     probe.nested = nested;
     probe.copied = rules;
     probe.kept = table;
+    probe.oneNoteCount = oneNote.count;
+    probe.oneNote = oneNote[0];
+    probe.oneRunCount = oneRun.count;
+    probe.oneRunKeyed = oneRun.Has("assets/run/2.png") && !oneRun.Has("assets/run/1.png");
+    probe.oneRunPixel = oneRun["assets/run/2.png"][1, 0];
+    probe.oneTableCount = oneTable.count;
+    probe.oneTableBytes = oneTable[0].count;
+    probe.oneRules = oneRules[RULES];
+    probe.noteLength = notes["assets/notes/a.txt"].length; // A member of a map's text, read where the map has it
+    // A list's and a map's text says its characters, as the text alone does, not the bytes the file has
+    probe.textsCount = texts.count;
+    probe.textsLength = texts[0].length;
+    probe.oneRulesLength = oneRules[RULES].length;
+    probe.sameRules = texts[0] == rules && oneRules[RULES] == rules;
+    probe.rulesBytes = rulesBytes.count;
 }
 
 scene Main

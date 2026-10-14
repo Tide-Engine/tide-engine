@@ -33,11 +33,18 @@ function github() {
         latest: release('v0.2.0', false, [asset(6, 'tide-linux-x64.tar.gz')]),
         old: release('v0.1.0', false, [asset(7, 'tide-macos-arm64.tar.gz')]),
     };
+    const named = `https://api.github.com/repos/${repo}`;
+    const moved = 'https://api.github.com/repositories/42';
     state.fetch = async (url, options) => {
         asked.push(url);
+        assert.ok(url.startsWith('https://api.github.com/'), 'the token goes to GitHub\'s API alone');
         assert.equal(options.headers.authorization, 'Bearer the-token');
         if (state.down) return new Response('no', { status: 500 });
-        const path = url.slice(`https://api.github.com/repos/${repo}`.length);
+        // A repository that moved says where it is now, which a fetch that
+        // follows redirects never sees.
+        if (state.moved && url.startsWith(named) && options.redirect === 'manual')
+            return new Response(null, { status: 301, headers: { location: state.moved + url.slice(named.length) } });
+        const path = url.slice((url.startsWith(moved) ? moved : named).length);
         if (path === '/releases?per_page=100') return Response.json(state.list);
         if (path === '/releases/latest') return state.latest ? Response.json(state.latest) : new Response('', { status: 404 });
         if (path === '/releases/tags/v0.1.0') return Response.json(state.old);
@@ -96,6 +103,23 @@ test('a download is GitHub\'s link, asked for once while it lasts', async () => 
     assert.notEqual((await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip')).headers.location, first.headers.location);
 });
 
+test('a repository that moved is followed to where it is, on GitHub\'s API alone', async () => {
+    const hub = github();
+    hub.moved = 'https://api.github.com/repositories/42';
+    const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch });
+    const answer = await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip');
+    assert.equal(answer.status, 302);
+    assert.match(answer.headers.location, /^https:\/\/storage\.example\/1\?/);
+    assert.deepEqual(hub.asked.filter((url) => url.includes('/assets/')), [
+        `https://api.github.com/repos/${repo}/releases/assets/1`, 'https://api.github.com/repositories/42/releases/assets/1']);
+
+    // Anywhere else isn't asked, with the token or without.
+    hub.moved = 'https://elsewhere.example/repositories/42';
+    const astray = await get(handle, '/releases/v0.3.0-nightly.2/SHA256SUMS');
+    assert.equal(astray.status, 502);
+    assert.doesNotMatch(astray.body, /someone|secret-repo|github|elsewhere/i);
+});
+
 test('the list is asked for once a minute, and kept while GitHub is away', async () => {
     const hub = github();
     let time = 0;
@@ -141,4 +165,40 @@ test('a site with no token gives none, and GitHub away at first says so', async 
     const answer = await get(handle, '/releases.json');
     assert.equal(answer.status, 502);
     assert.doesNotMatch(answer.body, /someone|secret-repo|github/i);
+});
+
+test('analytics counts only successful GET archive redirects, including cached links', async () => {
+    const hub = github();
+    const events = [];
+    const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch,
+        onDownload: (event) => { events.push(event); } });
+    await get(handle, '/releases.json');
+    await get(handle, '/releases/v0.3.0-nightly.2.json');
+    await get(handle, '/releases/v0.3.0-nightly.2/SHA256SUMS');
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip', 'HEAD');
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-linux-x64.tar.gz');
+    assert.equal(events.length, 0);
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip');
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip');
+    await get(handle, '/releases/v0.2.0/tide-linux-x64.tar.gz');
+    assert.deepEqual(events, [
+        { version: 'v0.3.0-nightly.2', platform: 'windows-x64', channel: 'nightly' },
+        { version: 'v0.3.0-nightly.2', platform: 'windows-x64', channel: 'nightly' },
+        { version: 'v0.2.0', platform: 'linux-x64', channel: 'stable' },
+    ]);
+    hub.down = true;
+    assert.equal((await get(handle, '/releases/v0.1.0/tide-macos-arm64.tar.gz')).status, 502);
+    assert.equal(events.length, 3);
+});
+
+test('a slow or failing analytics callback cannot delay or break a download redirect', async () => {
+    const hub = github();
+    let finish;
+    const slow = new Promise((resolve) => { finish = resolve; });
+    const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch, onDownload: () => slow });
+    assert.equal((await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip')).status, 302);
+    finish();
+    const failure = createReleases({ token: 'the-token', repo, fetch: hub.fetch,
+        onDownload: () => { throw new Error('analytics disk is away'); } });
+    assert.equal((await get(failure, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip')).status, 302);
 });

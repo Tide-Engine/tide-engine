@@ -1,0 +1,188 @@
+// Mesh assets: glTF and OBJ files, each as one mesh of a vertex struct of the
+// game's, whose fields a file fills by their names. The files are made by
+// asset_meshes_make.mjs, which says what each has.
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    Color color = Color.white;
+    float4 tangent;
+    float glow = 0.5; // No file has one: its default
+    int kind = 7;     // ...nor one of these
+    float spare;      // ...and one with no default is zero
+}
+
+// Only where it is
+struct Point
+{
+    float3 position;
+}
+
+// Every default reads an asset declared after these meshes. The single mesh,
+// list and map must all see the current pack, including on their first load.
+struct DefaultCorner
+{
+    float3 position;
+    int textLength = laterRules.length;
+    int byteCount = laterTable.count;
+    int listCount = laterList.count;
+    int mapCount = laterMap.count;
+    int meshVertices = points.vertices.count;
+    float glow = laterRules.length;
+}
+
+asset Mesh<DefaultCorner> defaultOne = "assets/meshes/quad.glb";
+asset List<Mesh<DefaultCorner>> defaultMany = "assets/meshes/*.glb";
+asset Map<string, Mesh<DefaultCorner>> defaultNamed = "assets/meshes/*.gl*";
+
+asset Mesh<Corner> quad = "assets/meshes/quad.glb";
+asset Mesh<Corner> pair = "assets/meshes/pair.glb";
+asset Mesh<Corner> strip = "assets/meshes/strip.gltf";    // With a buffer in a file beside it
+asset Mesh<Corner> inside = "assets/meshes/inline.gltf";  // ...and one with its buffer inside it
+asset Mesh<Corner> box = "assets/meshes/box.obj";
+asset Mesh<Vertex3> plain = "assets/meshes/quad.glb";     // The same file, as the built-in vertex
+asset Mesh<Point> points = "assets/meshes/quad.glb";      // ...and as positions alone
+asset Mesh<Corner> again = "assets/meshes/quad.glb";      // Two names of one file and one vertex: one mesh
+asset List<Mesh<Corner>> all = "assets/meshes/*.glb";            // pair.glb, quad.glb
+asset Map<string, Mesh<Corner>> named = "assets/meshes/*.gl*";   // inline.gltf, pair.glb, quad.glb, strip.gltf
+asset List<Mesh<Corner>> one = "assets/meshes/box.obj";          // One file where the type holds many
+
+asset string laterRules = "assets/rules.txt";
+asset List<byte> laterTable = "assets/table.bin";
+asset List<string> laterList = "assets/notes/*.txt";
+asset Map<string, string> laterMap = "assets/notes/*.txt";
+
+// What the match read of them: a mesh's lists are plain lists, which a field copies
+singleton Seen
+{
+    List<Corner> quad;
+    List<int> quadFaces;
+    List<Corner> pair;
+    List<int> pairFaces;
+    List<Corner> strip;
+    List<int> stripFaces;
+    List<Corner> inside;
+    List<int> insideFaces;
+    List<Corner> box;
+    List<int> boxFaces;
+    List<Vertex3> plain;
+    List<Point> points;
+    int all;
+    int allCorners;
+    int named;
+    int namedCorners;
+    int defaultCorners;
+    string keys;
+    int picked;
+    int missing;
+    int one;
+    bool has;
+    float3 second;
+    int mine;
+    bool done;
+}
+
+// A function gives one back, and another takes one
+Mesh<Corner> Pick(int which)
+{
+    return which == 0 ? quad : all[0];
+}
+
+int Corners(Mesh<Corner> mesh)
+{
+    return mesh.vertices.count;
+}
+
+system Read(mut Seen seen)
+{
+    if (seen.done) return;
+    seen.done = true;
+    seen.quad = quad.vertices;
+    seen.quadFaces = quad.indices;
+    seen.pair = pair.vertices;
+    seen.pairFaces = pair.indices;
+    seen.strip = strip.vertices;
+    seen.stripFaces = strip.indices;
+    seen.inside = inside.vertices;
+    seen.insideFaces = inside.indices;
+    seen.box = box.vertices;
+    seen.boxFaces = box.indices;
+    seen.plain = plain.vertices;
+    seen.points = points.vertices;
+    seen.all = all.count;
+    foreach (var mesh in all) seen.allCorners += mesh.vertices.count;
+    seen.named = named.count;
+    foreach (var entry in named)
+    {
+        seen.keys += entry.key + ";";
+        seen.namedCorners += entry.value.vertices.count;
+    }
+    seen.defaultCorners = defaultOne.vertices.count;
+    foreach (var mesh in defaultMany) seen.defaultCorners += mesh.vertices.count;
+    foreach (var entry in defaultNamed) seen.defaultCorners += entry.value.vertices.count;
+    var held = all[1];
+    Mesh<Corner> typed = held;
+    seen.picked = Corners(Pick(1)) * 10 + Corners(typed);
+    seen.missing = named["assets/meshes/nope.glb"].vertices.count;
+    seen.has = named.Has("assets/meshes/quad.glb");
+    seen.one = one.count * 100 + one[0].indices.count;
+    seen.second = quad.vertices[1].position;
+    // A copy is the code's own to change: the mesh is as it was
+    mut var mine = quad.vertices;
+    mine.Add(Corner { position = float3(9, 9, 9) });
+    seen.mine = mine.count * 10 + quad.vertices.count;
+}
+
+local singleton Art
+{
+    RenderTarget target;
+    List<float4x4> places;
+    int turn;
+    bool showDefaults;
+}
+
+frag Paint(Corner corner, out Color color)
+{
+    color = corner.color * corner.glow;
+    color.a = 1;
+}
+
+frag PaintDefault(DefaultCorner corner, out Color color)
+{
+    color = Color(corner.glow, 0, 0);
+}
+
+view Show(mut Art art)
+{
+    if (art.places.count == 0)
+    {
+        art.places.Add(float4x4.identity);
+        art.places.Add(float4x4.Translate(float3(2, 0, 0)));
+    }
+    Draw.Mesh(quad, float4x4.identity, Paint);
+    Draw.Mesh(again, float4x4.identity, Paint);                        // The same mesh: the same run
+    Draw.Mesh(quad.vertices, quad.indices, float4x4.identity, Paint);  // ...and by its two lists
+    Draw.Mesh(pair, float4x4.identity, Paint);
+    Draw.Mesh(plain, float4x4.identity);                               // The built-in vertex: a plain 3D mesh
+    Draw.Mesh(box, float4x4.identity);                                 // A vertex of the game's, with no frag
+    Draw.Instanced(quad, art.places, Paint);
+    Draw.Instanced(plain, art.places);
+    Draw.Mesh(all[art.turn++ % 2], float4x4.identity, Paint);          // What the Mesh's expression runs, runs once
+    Draw.Mesh(named["assets/meshes/strip.gltf"], float4x4.identity, Paint);
+    Draw.Mesh(Pick(0), float4x4.identity, Paint);
+    Draw.Mesh(named["assets/meshes/nope.glb"], float4x4.identity, Paint); // No such key: an empty mesh, which draws nothing
+    art.target.Mesh(inside, float4x4.identity, Paint);
+    foreach (var mesh in one) Draw.Mesh(mesh, float4x4.identity, Paint);
+    if (art.showDefaults)
+    {
+        Draw.Mesh(defaultOne, float4x4.identity, PaintDefault);
+        foreach (var mesh in defaultMany) Draw.Mesh(mesh, float4x4.identity, PaintDefault);
+        foreach (var entry in defaultNamed) Draw.Mesh(entry.value, float4x4.identity, PaintDefault);
+    }
+}
+
+scene Main
+{
+}

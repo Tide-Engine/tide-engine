@@ -1,0 +1,7 @@
+scene Main { }
+component Health { int value = 100; }
+component LevelSettings { float roundSeconds = 60; int enemies = 3; }
+component Target { [SceneRequired] Entity entity; }
+asset Mesh<Vertex3> pyramid = "art/pyramid.obj";
+component Model { Asset<Mesh<Vertex3>> model; }
+asset List<Mesh<Vertex3>> models = "art/*.obj";

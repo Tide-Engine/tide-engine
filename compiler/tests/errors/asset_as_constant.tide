@@ -1,0 +1,12 @@
+// expect: 'Art.rules' is an asset, not a constant: its value is the pack's, read as the game runs
+// expect: a field's default can name an asset, like 'string value = Art.rules;'; nothing else that takes a constant can
+namespace Art
+{
+    asset string rules = "../e2e/assets/rules.txt";
+}
+
+const string NAME = Art.rules;
+
+scene Main
+{
+}

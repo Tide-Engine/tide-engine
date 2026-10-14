@@ -1,0 +1,48 @@
+// Change the color or speed below. The ball keeps its position on reload.
+const float SPEED = 1;
+const float RADIUS = 18;
+const Color INK = Color(0.98, 0.75, 0.14);
+
+component Ball
+{
+    [Position] float2 position;
+    float2 velocity = float2(130, 95);
+    int bounces;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Ball);
+}
+
+system Move(mut Ball ball, Time time)
+{
+    ball.position += ball.velocity * time.dt * SPEED;
+    if (Math.Abs(ball.position.x) > 145)
+    {
+        ball.position.x = Math.Sign(ball.position.x) * 145;
+        ball.velocity.x = -ball.velocity.x;
+        ball.bounces += 1;
+    }
+    if (Math.Abs(ball.position.y) > 105)
+    {
+        ball.position.y = Math.Sign(ball.position.y) * 105;
+        ball.velocity.y = -ball.velocity.y;
+        ball.bounces += 1;
+    }
+}
+
+view Backdrop()
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0), Math.Max(185, 185 * Screen.height / Screen.width));
+    Draw.Rect(float2(0), float2(330, 250), Color(0.15, 0.15, 0.17));
+}
+
+view Show(Ball ball)
+{
+    Draw.Circle(ball.position, RADIUS, INK);
+    Draw.Text($"{ball.bounces} bounces", float2(-145, -155), 15, Color(0.64, 0.64, 0.68));
+}

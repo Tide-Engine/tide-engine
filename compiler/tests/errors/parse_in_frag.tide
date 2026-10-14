@@ -1,0 +1,9 @@
+// expect: so it can't work with text
+// expect: text is the CPU's
+scene Main { }
+struct Corner { float2 position; }
+frag Told(Corner corner, out Color color)
+{
+    int.TryParse("3", out var n);
+    color = Color(n, 0, 0);
+}

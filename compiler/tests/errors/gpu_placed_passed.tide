@@ -1,0 +1,25 @@
+// expect: where the engine would put a vert's vertex is read through 'this.clip': 'this' is not a value to keep or pass on
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+}
+
+vert Raise(mut V vertex)
+{
+    var p = this;
+    vertex.position.y += 1;
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Raise);
+}

@@ -91,7 +91,7 @@ local singleton Stats
     Entity last;
 }
 
-local component Spark
+component Spark
 {
     int of;
 }
@@ -156,7 +156,7 @@ view Mark(mut Label label, Stats stats)
     if (!stats.pulsing) return;
     label.marks.Add(label.number);
     label.text = $"label {label.number}";
-    if (label.spark == default) label.spark = Spawn(Spark { of = label.number });
+    if (label.spark == default) label.spark = local Spawn(Spark { of = label.number });
 }
 
 // A singleton's local fields: a texture painted from the match's state

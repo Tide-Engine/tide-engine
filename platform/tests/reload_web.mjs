@@ -181,4 +181,38 @@ async function runtime(watch = true) {
     assert.equal(test.requests.length, 0, 'plain pages do not poll builds');
     assert.equal(test.programs.length, 0);
 }
+
+{
+    const test = await runtime('manual');
+    assert.equal(test.requests.length, 0, 'manual builds never ask a compilation server');
+    const bytes = Uint8Array.of(1), pack = Uint8Array.of(7);
+    const pending = test.context.config.replace(bytes, pack);
+    bytes[0] = 99; pack[0] = 99;
+    await pending;
+    assert.equal(test.programs.at(-1).build, 1, 'replacement owns the submitted bytes');
+    assert.equal(test.context.packBytes[0], 7, 'replacement owns its assets');
+    assert.equal(test.programs.at(-1).resumed, 0, 'the initial manual build starts fresh');
+    const gate = test.holdInstantiate();
+    const next = test.context.config.replace(Uint8Array.of(2));
+    const restart = test.context.config.restart();
+    await settle();
+    gate.resolve();
+    await Promise.all([next, restart]);
+    assert.equal(test.programs.at(-2).resumed, 8, 'manual code edits carry over game state');
+    assert.equal(test.programs.at(-1).resumed, 0, 'manual Restart carries no state');
+    assert.equal(test.programs.at(-1).build, 2, 'Restart uses the last successfully installed build');
+    assert.equal(test.maximum, 1, 'manual builds and restarts are serialized');
+    const instantiate = test.context.instantiate;
+    test.context.instantiate = async () => { throw new Error('invalid wasm'); };
+    const before = test.programs.length, rooms = test.rooms;
+    await assert.rejects(test.context.config.replace(Uint8Array.of(3)), /invalid wasm/);
+    assert.equal(test.programs.length, before, 'a bad module leaves the previous game running');
+    assert.equal(test.rooms, rooms, 'a bad module leaves its room intact');
+    test.context.instantiate = instantiate;
+    await test.context.config.restart();
+    assert.equal(test.programs.at(-1).build, 2, 'failed compilation does not replace the restart cache');
+    await test.context.config.replace(Uint8Array.of(4), Uint8Array.of(8), true);
+    assert.equal(test.programs.at(-1).resumed, 0, 'Reset code can install a build fresh');
+    assert.equal(test.requests.length, 0);
+}
 console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watched builds; plain pages keep browser reload');

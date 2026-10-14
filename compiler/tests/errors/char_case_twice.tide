@@ -1,0 +1,15 @@
+// expect: this case is already handled above
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen)
+{
+    switch (seen.n)
+    {
+        case 'a':
+            seen.n = 1;
+            break;
+        case 97:
+            seen.n = 2;
+            break;
+    }
+}

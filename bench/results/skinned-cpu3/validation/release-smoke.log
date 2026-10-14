@@ -1,0 +1,6 @@
+renderer: OpenGL 3.3; 2 warmup, 3 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+1000 characters, static, repeat 1 (median / p95 ms): view 0.059 / 0.070, submit 0.093 / 0.177, completion + readback 0.796 / 0.895, total 0.961 / 1.136, GPU 0.499 / 0.500 (3 samples); draw calls 2, texture uploads 0 bytes/frame
+1000 characters, omitted_rest, repeat 1 (median / p95 ms): view 0.640 / 0.642, submit 0.035 / 0.036, completion + readback 1.121 / 1.136, total 1.801 / 1.807, GPU 0.834 / 0.834 (3 samples); draw calls 2, texture uploads 0 bytes/frame
+1000 characters, shared_pose, repeat 1 (median / p95 ms): view 0.694 / 0.827, submit 0.034 / 0.038, completion + readback 1.170 / 1.176, total 1.899 / 2.009, GPU 0.842 / 0.845 (3 samples); draw calls 2, texture uploads 4096 bytes/frame
+1000 characters, independent_poses, repeat 1 (median / p95 ms): view 2.914 / 2.919, submit 0.496 / 0.504, completion + readback 1.498 / 1.509, total 4.910 / 4.926, GPU 1.170 / 1.197 (3 samples); draw calls 2, texture uploads 4096000 bytes/frame

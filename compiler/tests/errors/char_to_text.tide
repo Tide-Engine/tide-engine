@@ -1,0 +1,5 @@
+// expect: can't assign char to string
+// expect: text is written in double quotes, and a char joins it with '+'
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.name = 'a'; }

@@ -26,6 +26,17 @@ Tide's repo, the game `build/tools/games.txt` lists it in. For a file
 of a package no game here lists), running says why. Errors and warnings in the Run console link to their
 place in the file.
 
+An existing `.tprefab` offers **Open Tide Prefab Editor** in the project/editor
+context menu. It requires project trust, saves that prefab and launches installed
+Tide's native app in the file's game context. The app is a separate window; save
+script changes in the IDE to refresh its compiled preview.
+
+**Edit Tide Prefab in IDE** hosts the same hidden native app in the **Tide Prefab**
+tool window. Its Swing canvas scales the fixed 1440×900 native image; no JCEF or
+browser server is needed. Mesh picking, Move/Rotate/Scale, validation, save/undo
+and recovery stay in the native backend. Closing a content tab/project closes
+its process. The standalone app remains available for a resizable window.
+
 ## Colors
 
 JetBrains' dark schemes draw type names like plain text, as in Java, so
@@ -49,10 +60,31 @@ with, and the IntelliJ Platform it compiles against, the first time.
 
 ```sh
 ./gradlew buildPlugin                  # build/distributions/tide-<version>.zip
+./gradlew test                         # adapter and isolated IntelliJ platform regressions
 ./gradlew runIde --args="<game folder>"  # an IDE with the plugin, for trying it
 ./gradlew verifyPlugin                 # against IntelliJ 2024.2 and the newest CLion
 ./gradlew verifyPlugin -PverifyIde="C:/Program Files/JetBrains/CLion 2026.2.3"
 ```
 
-CI builds and verifies it on every push, and publishes it to Marketplace with
+The ordinary tests check settings, console hyperlinks, run configurations,
+context-menu targets and game-folder selection in a headless test application.
+Plugin verification also rejects internal and override-only API calls, including
+tool-window registration, on the minimum IntelliJ platform and newest CLion.
+To exercise the real LSP4IJ client, a three-level child-process tree and JCEF,
+pass this checkout's built server, Node 24.16 or newer on Windows, and opt in
+to the muted embedded-browser test:
+
+```sh
+./gradlew --no-configuration-cache test -PtideTestServer="<built tidels>" -PtideTestNode="<Node executable>" -PtideTestJcef=true
+```
+
+These checks use the Gradle test sandbox and its JBR; they do not install a
+plugin in, restart, or change settings in an existing IDE. The JCEF check uses
+offscreen rendering, executes page JavaScript and reloads the same browser.
+
+Add `-PtideTestEditor="<built tide-editor>"` to check actual native PNG rendering
+in the Swing prefab canvas and graceful backend shutdown. That check needs the
+native headless OpenGL context; it uses private temporary project files.
+
+The manually requested Build workflow builds and verifies it, and publishes it to Marketplace with
 each stable release (see `.github/workflows/build.yml`).

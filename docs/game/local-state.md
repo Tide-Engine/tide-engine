@@ -6,7 +6,7 @@ description: "Keep Tide menus, settings, particles and connection status in loca
 
 The **match** is what every machine simulates the same way. **Local state** belongs to one machine, and lives outside the match: menus, settings, connection status, animation timers, particles. It's never sent, rolled back or checked against other machines.
 
-`local` in front of a declaration makes it local:
+`local` in front of a singleton, scene or event declaration makes it local. Components define a value shape used in either world:
 
 ```csharp
 local singleton Settings
@@ -15,16 +15,16 @@ local singleton Settings
     bool showFps;
 }
 
-local component Spark
+component Spark
 {
     float2 position;
     float age;
 }
 ```
 
-`local singleton`, `local component`, `local scene` and `local event` are the local kinds. Everything else belongs to the match. Structs and functions belong to neither, and both sides use them.
+`local singleton`, `local scene` and `local event` belong to this machine. A component's placement and access choose its world: `Spawn(Spark)` creates a match entity; `local Spawn(Spark)` creates a local entity. Both use the same `Spark` definition. Structs and ordinary functions also work with values from either side.
 
-A local singleton exists once per machine, for the whole program. Local components make local entities.
+A local singleton exists once per machine, for the whole program. Local entities hold components in local storage.
 
 ## Views change local state
 
@@ -34,10 +34,10 @@ Views run every frame, in a match or not. They read the match, and read and writ
 // Reads the match and leaves a trail of local sparks behind every ball.
 view Trail(Body body, with Ball)
 {
-    Spawn(Spark { position = body.position });
+    local Spawn(Spark { position = body.position });
 }
 
-view DrawSparks(mut Spark spark)
+view DrawSparks(mut local Spark spark)
 {
     Draw.Circle(spark.position, 0.1, Color.yellow);
     spark.age += Frame.dt;
@@ -118,7 +118,7 @@ async void Reveal(mut Banner banner)
 
 - **The match can't.** A frame's length is another on every machine, so a system or a match handler that reads it is an error, which says to take `Time time` and read `time.dt`, a tick's length. A function that reads it is local code, and the match can't call it.
 - **It needs no match.** It's there in a local scene and while connecting, and it's 0 only before the first frame, in a handler that runs as the program starts.
-- **It's the frame's real length**, never negative, and long after a stall, so clamp it where that would show. There's no clock of seconds beside it: a float of seconds gets coarser the longer a program runs, so add `Frame.dt` up into a field of your own and wrap it where it repeats (see [A frame's length](./views.md#a-frame-s-length)).
+- **It's the frame's real length**, never negative, and long after a stall, so clamp it where that would show. There's no clock of seconds beside it, no `Frame.time`: a float of seconds gets coarser the longer a program runs, so add `Frame.dt` up into a field of your own and wrap it where it repeats (see [A frame's length](./views.md#a-frame-s-length)). The match's seconds are `time.t`.
 
 ## Local fields
 
@@ -150,6 +150,7 @@ A local field lives outside the match. It's never sent, hashed, snapshotted or r
 - **Every entity with the component has them**, on every machine, however that machine learned of the entity: it ran the spawn, joined later, took over as host, or hot reloaded. Nothing attaches or removes them. Each starts at its default, and takes memory only once a view writes it.
 - **Views read and write them through their parameter.** `Box box` reads them, and `mut Box box` writes them, and only them: the match's fields stay a blended copy the view can't change. A function that takes the component gets them with it, like `Bake` above, and then only views, local handlers and functions like it can call it.
 - **A local handler of one of the match's events writes them too**, through `mut`, for the entity the event was sent to: a hit's handler sets the flash the entity's view then fades (see [Events](./events.md#local-handlers)).
+- **A local handler of `Spawned` sets them up.** A machine hears `Spawned` once for every entity it comes to have, those that were in the match when it joined too, so `local event(Spawned) Dress(mut Box box)` is where a `Box` gets what this machine keeps for it (see [The engine's events](./events.md#the-engine-s-events)).
 - **The match can't see them.** Reading or writing one in a system, a match handler or a task is an error, and so is naming one in a `Spawn` or a component value. A component's value is the match's part: a copy, `var b = box;`, has no local fields.
 - **They go with the entity**, once it's in neither the world views draw nor the last one the server confirmed. So a destroy this machine predicted wrong, which the server undoes, takes nothing with it, and a spawn it predicted that never happened leaves nothing behind. Losing the component loses them, and a match that's over takes them all.
 
@@ -203,14 +204,14 @@ It takes the one component or singleton whose local fields are going, and local 
 No mistake here can reach a running game, because the compiler enforces the boundary:
 
 - **Match code** (systems, match event handlers, match scenes) can't read or write anything local, a component's [local fields](#local-fields) included, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends.
-- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events. Views read the match as it's drawn, or as the server [confirmed](./views.md#confirmed-state) it, and a local handler [hears its events](./events.md#local-handlers).
+- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events. Views read the match as it's drawn, or as the server [confirmed](./views-and-the-match.md#confirmed-state) it, and a local handler [hears its events](./events.md#local-handlers).
 - The input's `Sample` reads this machine's devices and local singletons, and writes only the input.
 
 Input and commands carry local actions into the match. Starting, joining and leaving a match are session calls, which never touch a running match (see [Matches](../multiplayer/matches.md)). The errors say where to go instead:
 
 ```csharp
 // Error: match code can't read local state.
-system Count(Spark spark) { }
+system Count(local Spark spark) { }
 ```
 
 ## Local scenes and events
@@ -229,7 +230,7 @@ local scene Main { }
 
 ### A frame, in order
 
-1. The local handlers of the match's events run, for each tick this machine simulated since the last frame.
+1. The local handlers of the match's events run, for each tick this machine simulated since the last frame, and for the entities of a world that arrived since.
 2. The local fields of entities that are gone go, with [`Forgotten`](#letting-go) first where a handler asked for it.
 3. The views run.
 4. What handlers and views spawned, changed and sent locally is handled.

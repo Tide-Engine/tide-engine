@@ -1,0 +1,11 @@
+// expect: can't call Session.Open; views, local handlers and the functions they call do
+struct Money
+{
+    int cents;
+    Money operator +(Money a, Money b)
+    {
+        Session.Open();
+        return Money { cents = a.cents + b.cents };
+    }
+}
+scene Main { }

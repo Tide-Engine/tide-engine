@@ -1,0 +1,3 @@
+// expect: an AnimationCatalog file list can't be empty
+asset AnimationCatalog run = [];
+scene Main { }

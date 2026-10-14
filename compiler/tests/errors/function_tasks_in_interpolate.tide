@@ -1,0 +1,15 @@
+// expect: Interpolate blends a value between ticks, for views, so it can't start a task, and calling 'Later', which is async, would
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+component Body
+{
+    float2 position;
+    Body Interpolate(Body from, Body to, float t)
+    {
+        Later();
+        return t < 0.5 ? from : to;
+    }
+}
+scene Main { }

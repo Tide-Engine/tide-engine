@@ -1,0 +1,113 @@
+{
+  "completedAtUtc": "2026-10-10T18:14:55.3516887Z",
+  "head": "77be2f2441a2e91c9dc4c08a4b8ed2163dab32fd",
+  "sourceManifest": "source-hashes.json",
+  "frozenProductionAndTestSourcesUnchanged": true,
+  "node": {
+    "version": "v24.19.0",
+    "path": "C:/Users/blenm/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe"
+  },
+  "checks": [
+    {
+      "command": "cmake --build --preset debug",
+      "exitCode": 0,
+      "log": "debug-build.log"
+    },
+    {
+      "command": "build/debug/bin/tide_tests skinned",
+      "exitCode": 0,
+      "passed": 36,
+      "log": "skinned-tests.log"
+    },
+    {
+      "command": "ctest --preset debug --output-on-failure",
+      "exitCode": 0,
+      "passed": 2061,
+      "failed": 0,
+      "elapsedSeconds": 249.76,
+      "log": "native-ctest.log"
+    },
+    {
+      "command": "cmake --build --preset web-debug",
+      "exitCode": 0,
+      "log": "web-build.log"
+    },
+    {
+      "command": "ctest --preset web-debug --output-on-failure",
+      "exitCode": 0,
+      "passed": 2032,
+      "failed": 0,
+      "elapsedSeconds": 316.2,
+      "log": "web-ctest.log"
+    },
+    {
+      "command": "cmake --build --preset release --target bench_skinned",
+      "exitCode": 0,
+      "includesFinalRestOptimization": true,
+      "log": "release-bench-build.log"
+    }
+  ],
+  "sourceChecks": [
+    {
+      "path": "engine/include/tide/draw.h",
+      "expectedSha256": "f9c5aedac6173d076a75a3303ba92fd579222c7a4b01d6d67442905146e0c81c",
+      "actualSha256": "f9c5aedac6173d076a75a3303ba92fd579222c7a4b01d6d67442905146e0c81c",
+      "unchanged": true
+    },
+    {
+      "path": "engine/src/draw.c",
+      "expectedSha256": "f8a3a349a9045e3958840f821c3e371ed8cd44ab38482b2dfcf4fba260151a6d",
+      "actualSha256": "f8a3a349a9045e3958840f821c3e371ed8cd44ab38482b2dfcf4fba260151a6d",
+      "unchanged": true
+    },
+    {
+      "path": "engine/src/skinned.c",
+      "expectedSha256": "8d7d107ff4991da91521a0af4712fdf831180d12658072003ef8d164654752d2",
+      "actualSha256": "8d7d107ff4991da91521a0af4712fdf831180d12658072003ef8d164654752d2",
+      "unchanged": true
+    },
+    {
+      "path": "engine/src/skinned_cache.h",
+      "expectedSha256": "50a0ea50d6cc25892ed255b5d657d67dd2e4c73feb24e9be29694a6e93185af7",
+      "actualSha256": "50a0ea50d6cc25892ed255b5d657d67dd2e4c73feb24e9be29694a6e93185af7",
+      "unchanged": true
+    },
+    {
+      "path": "platform/src/platform.c",
+      "expectedSha256": "779c8be56675056cacb2f56e5a22d6408f877f6a67340c8eb4c5877bbbf302c4",
+      "actualSha256": "779c8be56675056cacb2f56e5a22d6408f877f6a67340c8eb4c5877bbbf302c4",
+      "unchanged": true
+    },
+    {
+      "path": "platform/tests/draw.c",
+      "expectedSha256": "6bbf9a05544557a2302ec5684ea7bac5a3733a7e3fbbd2721845b2db7545f03f",
+      "actualSha256": "6bbf9a05544557a2302ec5684ea7bac5a3733a7e3fbbd2721845b2db7545f03f",
+      "unchanged": true
+    },
+    {
+      "path": "tests/test_skinned.c",
+      "expectedSha256": "4acf190637828ff64314fc6ae8764c0753610d7dba18aeca3f8a4f9fcc9ecb65",
+      "actualSha256": "4acf190637828ff64314fc6ae8764c0753610d7dba18aeca3f8a4f9fcc9ecb65",
+      "unchanged": true
+    },
+    {
+      "path": "tests/test_skinned_cache.c",
+      "expectedSha256": "b823cbdc6d62ac378d20f41708b7bf59486846a4d05a20e2c8071799412b7742",
+      "actualSha256": "b823cbdc6d62ac378d20f41708b7bf59486846a4d05a20e2c8071799412b7742",
+      "unchanged": true
+    },
+    {
+      "path": "bench/skinned/main.c",
+      "expectedSha256": "2f729935753e470ab7eb6154c1aebc64905b9e84f5eacdb2fcc0943025001662",
+      "actualSha256": "2f729935753e470ab7eb6154c1aebc64905b9e84f5eacdb2fcc0943025001662",
+      "unchanged": true
+    },
+    {
+      "path": "bench/skinned/game.tide",
+      "expectedSha256": "5c03927f454d74b0835b69c7ee2de4e2d50a02da9af988105e5dbd90293b7f49",
+      "actualSha256": "5c03927f454d74b0835b69c7ee2de4e2d50a02da9af988105e5dbd90293b7f49",
+      "unchanged": true
+    }
+  ],
+  "benchmarkRunsPerformed": 0
+}

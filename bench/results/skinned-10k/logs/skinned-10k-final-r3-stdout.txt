@@ -1,0 +1,11 @@
+renderer: OpenGL 3.3; 20 warmup, 100 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+1000 characters, static, repeat 1 (median / p95 ms): view 0.060 / 0.113, submit 0.007 / 0.017, completion + readback 0.892 / 1.470, total 0.972 / 1.559, GPU 0.500 / 0.827 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+1000 characters, omitted_rest, repeat 1 (median / p95 ms): view 0.666 / 0.748, submit 0.010 / 0.018, completion + readback 1.068 / 1.452, total 1.759 / 2.167, GPU 0.757 / 1.070 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+1000 characters, shared_pose, repeat 1 (median / p95 ms): view 0.684 / 0.964, submit 0.010 / 0.022, completion + readback 1.068 / 1.438, total 1.785 / 2.153, GPU 0.767 / 1.089 (100 samples); draw calls 2, texture uploads 4096 bytes/frame
+1000 characters, independent_poses, repeat 1 (median / p95 ms): view 2.928 / 3.254, submit 0.454 / 0.591, completion + readback 1.433 / 1.873, total 4.835 / 5.466, GPU 1.077 / 1.536 (100 samples); draw calls 2, texture uploads 4096000 bytes/frame
+10000 characters, static, repeat 1 (median / p95 ms): view 0.655 / 1.088, submit 0.030 / 0.039, completion + readback 5.146 / 5.787, total 5.940 / 6.626, GPU 4.750 / 5.377 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+10000 characters, omitted_rest, repeat 1 (median / p95 ms): view 6.659 / 7.194, submit 0.043 / 0.054, completion + readback 8.648 / 9.178, total 15.373 / 16.293, GPU 8.198 / 8.711 (100 samples); draw calls 2, texture uploads 0 bytes/frame
+10000 characters, shared_pose, repeat 1 (median / p95 ms): view 6.668 / 7.049, submit 0.044 / 0.057, completion + readback 8.649 / 9.257, total 15.367 / 16.042, GPU 8.192 / 8.767 (100 samples); draw calls 2, texture uploads 4096 bytes/frame
+10000 characters, independent_poses, repeat 1 (median / p95 ms): view 29.984 / 30.501, submit 5.090 / 5.657, completion + readback 12.156 / 13.728, total 47.233 / 48.923, GPU 13.698 / 15.216 (100 samples); draw calls 11, texture uploads 40960000 bytes/frame
+tide: captured C:\Users\blenm\.codex\worktrees\1315\PurrEngine\build\release\skinned-10k\final\10000-independent.png, 1024 by 576 pixels

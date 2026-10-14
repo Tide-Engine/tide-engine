@@ -31,7 +31,7 @@ add_custom_command(TARGET tidels POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:tidels>" "${TIDELS_EDITOR_COPY}"
     VERBATIM)
 
-add_executable(tidels_tests tests/lsp_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+add_executable(tidels_tests tests/lsp_test.c tests/json_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tidels_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tidels_tests PRIVATE tidels_core tide)
 add_test(NAME tidels_tests COMMAND tidels_tests)

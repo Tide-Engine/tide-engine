@@ -146,7 +146,7 @@ view DrawPlayers(Body body, Owner owner, Session session)
 }
 ```
 
-A view that's only for your own player, like a camera that follows them, picks them with a filter instead: `with ownership` (see [Your own entities](../game/views.md#your-own-entities)).
+A view that's only for your own player, like a camera that follows them, picks them with a filter instead: `with ownership` (see [Your own entities](../game/views-and-the-match.md#your-own-entities)).
 
 Save, then type `r` and press Enter in `tide`'s terminal, and steer with `WASD`. The game carried over to the new code when you saved, but your player had joined before `AddPlayer` existed, so they had no body yet. Starting over makes them join again.
 
@@ -165,6 +165,8 @@ tide run --connect localhost
 ```
 
 Use the host's address instead of `localhost` from another machine, like `tide run --connect 192.168.1.5`. The host takes players on UDP port 7777; `--host 8000` picks another. Each player steers their own yellow body, with no input delay.
+
+Where nobody is there to steer (a test, a build server, an agent), `tide run --players 2 --frames 300 --capture match.png` plays both at once with no window, and writes a picture from each machine: `match-1.png` and `match-2.png` (see [Several players](../tools/cli.md#several-players)).
 
 No input delay means a machine doesn't wait to hear what the other players did: it guesses, by repeating their last input for a moment, and puts the match right when the server's answer arrives. That moves their body in one frame, each time they start or stop, by up to what they move in 0.15 seconds (see [What other machines guess](../game/input.md#what-other-machines-guess)). Mark the position, and views draw the correction over a few frames instead:
 

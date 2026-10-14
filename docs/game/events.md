@@ -36,6 +36,19 @@ The sender isn't recorded. When handlers need it, put it in a field: the entity 
 
 An event is a value, so a local can hold one, and a handler can send its event on: `other.Send(hit)`. Fields and parameters can't hold events. The engine's own events, below, are only the engine's to send.
 
+A [function](../language/functions.md#sending-and-spawning) can send too, for the code that calls it:
+
+```csharp
+// Called from a system or a handler, which could send Hit themselves
+void Splash(Entity target, int damage)
+{
+    target.Send(Hit { damage = damage });
+    Send(Splashed { });
+}
+```
+
+A view that calls it gets an error, as a view can't send the match's events.
+
 ## Handling
 
 A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's. A match handler takes no [query](./systems.md#another-set-of-entities) yet; a [local handler](#other-entities) does.
@@ -187,7 +200,7 @@ An event sent to an entity that's gone by its turn isn't heard, as it isn't hand
 
 ### Other entities
 
-A local handler takes `query` parameters, as a [view](./views.md#other-entities) does, to go through entities other than the one its event was sent to:
+A local handler takes `query` parameters, as a [view](./views-and-the-match.md#other-entities) does, to go through entities other than the one its event was sent to:
 
 ```csharp
 event Blast
@@ -252,7 +265,7 @@ local event(verified Died) ShowDeath(Body body, mut Fx fx)
 - **What it takes of the match is that confirmed tick's**, as the event's turn left it, so nothing else in it is marked `verified`.
 - **Both kinds can hear one event**: a handler of `Hit` for the spark, at once, and one of `verified Hit` for the damage number, once it's certain.
 
-`verified` is local code's word. On a match handler it's an error, as the match is the same on every machine and has no "confirmed". Views take it on what they read: see [Confirmed state](./views.md#confirmed-state).
+`verified` is local code's word. On a match handler it's an error, as the match is the same on every machine and has no "confirmed". Views take it on what they read: see [Confirmed state](./views-and-the-match.md#confirmed-state).
 
 ### Events only local code handles
 
@@ -302,9 +315,29 @@ local event(Spawned) CrateLanded(Body body, with Crate)
 ```
 
 - **`Spawned` and `Destroyed` are sent in both worlds.** A local handler of one hears the match's when it takes something of the match, a component, a filter or a singleton, or when it's `verified`. One that takes only local state hears this machine's local entities'. One that takes a local component and something of the match is an error.
-- **A machine hears what's sent from the tick it joins in**: its own `PlayerJoined`, and every later one. The entities that were in the world by then, those the match was set up with as it started among them, have no `Spawned` for it. What every entity needs, however this machine learned of it, goes in a view and the entity's [local fields](./local-state.md#local-fields) instead.
-- **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there.
-- **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them.
+- **A machine hears what's sent from the tick it joins in**: its own `PlayerJoined`, and every later one. Nothing is made up for what happened before: the hits, the joins and the entities that came and went.
+- **`Spawned` is the exception: a machine hears it once for every entity it comes to have.** The entities that are in the world a machine is sent, those the match was set up with as it started among them, are new to that machine, so their `Spawned` is heard as the world arrives, with their components as they are by then. That makes it the place to set up what a machine keeps for an entity, like its [local fields](./local-state.md#local-fields):
+
+  ```csharp
+  asset Texture crate = "art/crate.png";
+
+  component Box
+  {
+      float3 position;
+      local Texture skin; // This machine's
+  }
+
+  // For every Box this machine comes to have: spawned in a tick, there as
+  // the match started, or already in the match it joined
+  local event(Spawned) Dress(mut Box box)
+  {
+      box.skin = crate;
+  }
+  ```
+
+  A handler that shows something happening, a puff where a crate lands, runs for the crates that were there when a player joins too.
+- **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there. What was spawned meanwhile and is still there is heard as that world arrives, and nothing a machine had is heard again.
+- **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them. The entities it had before aren't new to it, and aren't heard again.
 
 ### What isn't there yet
 

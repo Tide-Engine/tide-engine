@@ -83,6 +83,21 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('authored prefab and child declarations', () => {
+    const lines = tokenize('prefab Enemy\n{\n    entity Weapon : Pistol\n    {\n        Transform;\n    }\n}');
+    check(lines[0], ['prefab', 'storage.type']);
+    check(lines[0], ['Enemy', 'entity.name.type']);
+    check(lines[2], ['entity', 'storage.type']);
+    check(lines[2], ['Weapon', 'entity.name.type']);
+});
+
+test('switch expression arm arrows', () => {
+    const lines = tokenize('int result;\nresult = mode switch { 0 => 1, _ => 2 };');
+    check(lines[1], ['switch', 'keyword.control']);
+    check(lines[1], ['=>', 'keyword.operator.switch-arm', 1]);
+    check(lines[1], ['=>', 'keyword.operator.switch-arm', 2]);
+});
+
 // The probe's line that starts with `start`, after its indentation.
 function probeLine(start) {
     const found = probe.filter(l => l.text.trimStart().startsWith(start));
@@ -127,6 +142,8 @@ const cases = {
         ['asset Map<string, Texture> frames', [['asset', 'storage.modifier'], ['Map', 'support.class'], ['frames', 'variable.other'], ['frames', '!variable.other.constant']]],
         ['audio Echo(', [['audio', 'storage.type'], ['Echo', 'entity.name.function'], ['mut', 'storage.modifier']]],
         ['Grid2<int> cells;', [['Grid2', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['>', 'punctuation.definition.typeparameters.end']]],
+        ['asset Mesh<Corner> tree = "art/tree.glb";', [['asset', 'storage.modifier'], ['Mesh', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['tree', 'variable.other']]],
+        ['asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";', [['asset', 'storage.modifier'], ['SkinnedMesh', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['Locomotion', 'entity.name.type'], ['hero', 'variable.other']]],
         ['List<float> Weights()', [['Weights', 'entity.name.function'], ['Weights', '!entity.name.function.call']]],
         ['mut void Heal(', [['mut', 'storage.modifier'], ['Heal', 'entity.name.function']]],
         ['Stats operator +(', [['operator', 'keyword.other.operator'], ['+', 'keyword.operator']]],
@@ -148,7 +165,7 @@ const cases = {
     ],
     'local and async, in either order': [
         ['local event Shown', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type']]],
-        ['local component Toast', [['local', 'storage.modifier'], ['component', 'storage.type'], ['Toast', 'entity.name.type']]],
+        ['component Toast', [['component', 'storage.type'], ['Toast', 'entity.name.type']]],
         ['async local event(Shown) Fade(', [
             ['async', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type'],
             ['Fade', 'entity.name.function'], ['Fade', '!entity.name.function.call'],
@@ -215,6 +232,8 @@ const cases = {
             ['Clamp', 'entity.name.function.attribute'], ['float2', 'storage.type.primitive'], ['float2', 'storage.type.primitive', 2],
             ['-', 'keyword.operator.arithmetic'], ['float2', 'storage.type.primitive', 3], ['aim', '!entity'],
         ]],
+        ['[DontPredict] bool jump;', [['DontPredict', 'entity.name.function.attribute'], ['bool', 'storage.type.primitive']]],
+        ['Predict() { jump = false; }', [['Predict', 'keyword.other']]],
         ['[Min(1)] [Max(3)] int gear', [['Min', 'entity.name.function.attribute'], ['Max', 'entity.name.function.attribute'], ['int', 'storage.type.primitive']]],
     ],
     'built-in types and groups': [
@@ -265,6 +284,15 @@ const cases = {
         ['try File.WriteAllBytes(Path.Combine(root,', [['File', 'support.class'], ['WriteAllBytes', 'entity.name.function.call'], ['Path', 'support.class'], ['Combine', 'entity.name.function.call']]],
         ['try await Storage.Flush();', [['Storage', 'support.class'], ['Flush', 'entity.name.function.call']]],
         ['fail IOError.OutOfSpace;', [['IOError', 'support.class'], ['OutOfSpace', '!support.class']]],
+        ['[Json("max_players")] int maxPlayers;', [['Json', 'entity.name.function.attribute'], ['int', 'storage.type.primitive']]],
+        ['var info = Json.Read<LobbyInfo>(text) ?? LobbyInfo { };', [['Json', 'support.class'], ['Read', '!support.class']]],
+        ['var all = Json.Read<List<LobbyInfo>>(text.ToBytes()) ?? [];', [['Json', 'support.class'], ['List', 'support.class'],
+                                                                         ['ToBytes', 'entity.name.function.call']]],
+        ['if (int.TryParse(text.Split(",")[0], out var count)) return Json.Write(all);', [
+            ['int', 'storage.type.primitive'], ['TryParse', 'entity.name.function.call'], ['Split', 'entity.name.function.call'],
+            ['Write', 'entity.name.function.call']]],
+        ['return string.FromBytes(text.ToBytes()) ?? Json.Write(info);', [['string', 'storage.type.primitive'],
+                                                                          ['FromBytes', 'entity.name.function.call']]],
     ],
     "operators that aren't what they look like": [
         ['int value = Parse(text)!;', [['!', 'keyword.operator.or-default'], ['!', '!keyword.operator.logical']]],
@@ -279,6 +307,14 @@ const cases = {
         ['string braces =', [['{{', 'constant.character.escape'], ['}}', 'constant.character.escape'], [':F2', 'constant.other.format'], ['value', 'meta.interpolation']]],
         ['string lone =', [['}', 'invalid.illegal']]],
         ['string badValue =', [['\\t', 'invalid.illegal'], ['value', 'meta.interpolation']]],
+    ],
+    'characters': [
+        ['char letter =', [['char', 'storage.type.primitive'], ["'a'", 'string.quoted.single'], ['letter', '!string']]],
+        ['char quote =', [["'\\''", 'string.quoted.single'], ["\\'", 'constant.character.escape'], [';', '!string']]],
+        ['char tab =', [['\\t', 'constant.character.escape'], ['\\t', '!invalid']]],
+        ['char wrong =', [['\\q', 'invalid.illegal']]],
+        ['bool same =', [["'é'", 'string.quoted.single'], ["'\"'", 'string.quoted.single'], ['quote', '!string'], ['&&', '!string']]],
+        ['char brace =', [["'{'", 'string.quoted.single']]],
     ],
     'directives': [
         ['#if TIDE_0_3_OR_NEWER', [
@@ -388,6 +424,13 @@ const cases = {
         ['mut verified tally', [['mut', 'storage.modifier'], ['verified', '!storage.modifier']]],
         ['verified = tally;', [['verified', '!storage.modifier']]],
     ],
+    'a field that is a T?': [
+        ['string? wished;', [['string', 'storage.type.primitive'], ['?', 'keyword.operator.optional'], ['?', '!keyword.operator.ternary']]],
+        ['List<int>? wishes = null;', [['List', 'support.class'], ['int', 'storage.type.primitive'], ['?', 'keyword.operator.optional'], ['null', 'constant.language']]],
+        ['Combat.Stats? granted;', [['Stats', 'entity.name.type'], ['?', 'keyword.operator.optional']]],
+        ['float3? toward = float3(0, 1, 0);', [['float3', 'storage.type.primitive'], ['?', 'keyword.operator.optional'], ['1', 'constant.numeric']]],
+        ['void Grant(', [['null', 'constant.language'], ['??', 'keyword.operator'], ['is', 'keyword']]],
+    ],
     'local before a field is a modifier, and a name anywhere else': [
         ['local List<Vertex3> verts;', [['local', 'storage.modifier'], ['Vertex3', '!storage.modifier']]],
         ['local float fade = 1;', [['local', 'storage.modifier'], ['float', 'storage.type'], ['1', 'constant.numeric']]],
@@ -488,6 +531,33 @@ for (const [name, lines] of Object.entries(cases)) {
 
 test('no text in probe.tide runs past its line', () => checkLinesEndText('probe.tide', probe));
 
+test('degree literals are whole float tokens with a lowercase suffix', () => {
+    const lines = tokenize('float degrees = 180deg + .5deg + 1e2deg + 1_8_0deg + 1.2_5e+1deg - 90deg;\n'
+        + 'quaternion turn = quaternion.Euler(0, 180deg, 0);\n'
+        + 'float ordinary = .5f + 1.5 + 1e2;\n'
+        + 'float names = turn180deg + deg + 180DEG + 180Deg + 180degExtra;\n'
+        + 'string text = "180deg .5deg"; // 90deg\n'
+        + 'float field = value.5deg;');
+    for (const text of ['180deg', '.5deg', '1e2deg', '1_8_0deg', '1.2_5e+1deg', '90deg']) {
+        check(lines[0], [text, 'constant.numeric.float']);
+        assert.equal(piecesOf(lines[0], text, 1).map(p => p.text).join(''), text, `${text} is one whole numeric token`);
+    }
+    check(lines[0], ['-', 'keyword.operator.arithmetic']);
+    check(lines[1], ['180deg', 'constant.numeric.float']);
+    for (const text of ['.5f', '1.5', '1e2']) check(lines[2], [text, 'constant.numeric.float']);
+    for (const text of ['turn180deg', 'deg', '180DEG', '180Deg', '180degExtra']) check(lines[3], [text, '!constant.numeric.float']);
+    check(lines[4], ['180deg', 'string.quoted.double']);
+    check(lines[4], ['90deg', 'comment.line']);
+    check(lines[5], ['.5deg', '!constant.numeric.float']);
+});
+
+test('leading-dot enum members retain their value scope', () => {
+    const lines = tokenize('state = .Idle;\nreturn .Run;\ncase .idle:\nPick(.Jump);\nstate == .Run;\nvar n = .5;\nstate.idle;');
+    for (const [i, name] of ['Idle', 'Run', 'idle', 'Jump', 'Run'].entries()) check(lines[i], [name, 'constant.other.enum']);
+    check(lines[5], ['.5', 'constant.numeric.float']);
+    check(lines[6], ['idle', 'variable.other.member']);
+});
+
 // The editors indent after a line that opens a brace, but not one in text or a comment.
 test('indenting ignores braces in text and comments', () => {
     const configuration = JSON.parse(fs.readFileSync(path.join(here, '..', 'language-configuration.json'), 'utf8'));
@@ -502,6 +572,8 @@ test('indenting ignores braces in text and comments', () => {
         ['system Foo()', false],
         ['component A { int x; }', false],
         ['    Foo("{");', false],
+        ["    char open = '{';", false],
+        ["    if (c == '{') {", true],
         ['    string s = $"{x}";', false],
         ['    string s = $"{{";', false],
         ['    // see {', false],
@@ -518,7 +590,8 @@ test('indenting ignores braces in text and comments', () => {
 // can be written with what it's in (Combat.Move, Stats.Hurt): its last part
 // is the name.
 const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
-const programs = fs.readdirSync(e2e, { recursive: true }).filter(f => f.endsWith('.tide')).sort();
+const programs = fs.readdirSync(e2e, { recursive: true })
+    .filter(f => f.endsWith('.tide') && fs.statSync(path.join(e2e, f)).isFile()).sort();
 
 const modifiers = String.raw`(?:(?:local|async|virtual|override)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;

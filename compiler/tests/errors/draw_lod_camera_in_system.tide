@@ -1,0 +1,10 @@
+// expect: Draw can only be used in views, and in functions they call
+singleton Seen { int count; }
+
+system Step(mut Seen seen)
+{
+    Draw.SetLODCamera(float3(0, 0, 0), quaternion.identity, 60);
+    seen.count++;
+}
+
+scene Main { }

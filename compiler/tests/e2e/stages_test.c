@@ -26,9 +26,9 @@ TIDE_TEST(stages_after_a_view_phase_follows_every_entity_and_offset)
 {
     tide_world_init(&world, 1.0f);
     tide_local_init(&local);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Scheduling_FrameTrace.order == 12234);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Scheduling_FrameTrace.order == 12234);
     tide_local_free(&local);
     tide_draw_free(&draw);

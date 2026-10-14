@@ -23,18 +23,21 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
     local.Buffers.image = (tide_texture_ref){.image = {.pixels = pixels, .width = 1, .height = 1, .version = 1}};
     tide_devices devices = {0};
     tide_gui_begin(&gui, &devices, tide_f2(200, 100), NULL);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Buffers.targetThenWindow.x == 200 && local.Buffers.targetThenWindow.y == -25);
     TIDE_CHECK(local.Buffers.windowThenTarget.x == 158 && local.Buffers.windowThenTarget.y == -69);
     TIDE_CHECK(local.Buffers.projected3.x == 8 && local.Buffers.projected3.y == 6);
     TIDE_CHECK(local.Buffers.projected3.z > 0 && local.Buffers.projected3.z < 1);
 
-    uint32_t destination = 0, objects = 0, blits = 0, cubes = 0, marked = 0;
+    uint32_t destination = 0, objects = 0, blits = 0, cubes = 0, marked = 0, depths = 0;
     bool prepared = false;
     for (uint32_t i = 0; i < draw.count; i++) {
         const tide_draw_command *c = &draw.commands[i];
         if (c->kind == TIDE_DRAW_TARGET) {
             destination = c->target ? (uint32_t)draw.targets[c->target - 1u].id : 0;
+        } else if (c->kind == TIDE_DRAW_CLEAR && c->a.x == 1) { // ClearDepth: the scratch target's, then the window's
+            TIDE_CHECK(destination == (depths == 0 ? 12u : 0u));
+            depths++;
         } else if (c->kind == TIDE_DRAW_CLEAR && destination == 11) {
             prepared = true;
         } else if (c->kind == TIDE_DRAW_CLEAR && c->color.g == 1 && c->color.r == 0) {
@@ -59,7 +62,7 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
         }
     }
     TIDE_CHECK(blits == 4 && objects == 2 && destination == 0);
-    TIDE_CHECK(cubes == 1 && marked == 1);
+    TIDE_CHECK(cubes == 1 && marked == 1 && depths == 2);
     TIDE_CHECK(draw.commands[draw.count - 1u].kind == TIDE_DRAW_CLEAR);
     tide_local_free(&local);
     tide_draw_free(&draw);
@@ -80,9 +83,9 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     local.Buffers.windowAlias = (tide_render_target){.id = TIDE_RENDER_WINDOW};
     local.Buffers.borrowed = (tide_render_target){.id = 99, .size = {.width = 1, .height = 1}};
     local.Buffers.beginTask = 1;
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
-    TIDE_REQUIRE(local.arch0_Graphic.count == 1 && local.tide_tasks_function_Keep.count == 1);
-    const tide_entity graphic = *(const tide_entity *)tide_table_get(&local.arch0_Graphic, &tide_columns_arch0_Graphic, 0, 0);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    TIDE_REQUIRE(local.arch0_tide_local_component_Graphic.count == 1 && local.tide_tasks_function_Keep.count == 1);
+    const tide_entity graphic = *(const tide_entity *)tide_table_get(&local.arch0_tide_local_component_Graphic, &tide_columns_arch0_tide_local_component_Graphic, 0, 0);
     tide_entity object = {0};
     for (uint32_t i = 0; i < world.entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&world.entities, i);
@@ -96,24 +99,24 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     tide_command *queued = tide_queue_push(&local.commands, TIDE_COMMAND_SIZE(spawn0));
     queued->kind = 0;
     queued->id = 0;
-    queued->data.spawn0.values.Graphic.resources = local.Buffers.nested;
+    queued->data.spawn0.values.tide_local_component_Graphic.resources = local.Buffers.nested;
     tide_local_rebind_resources(&local, true);
     TIDE_CHECK(local.Buffers.scene.id == target.id && local.Buffers.nested.target.id == target.id);
     TIDE_CHECK(local.Buffers.nested.image.image.pixels == NULL && local.Buffers.nested.retained == 77);
     TIDE_CHECK(local.Buffers.windowAlias.id == TIDE_RENDER_WINDOW && local.Buffers.borrowed.id == 0);
-    TIDE_CHECK(tide_get_Graphic(&local, graphic).resources.target.id == target.id);
-    TIDE_CHECK(tide_get_Graphic(&local, graphic).resources.image.image.pixels == NULL);
+    TIDE_CHECK(tide_get_tide_local_component_Graphic(&local, graphic).resources.target.id == target.id);
+    TIDE_CHECK(tide_get_tide_local_component_Graphic(&local, graphic).resources.image.image.pixels == NULL);
     TIDE_CHECK(tide_get_Object_local(&local, object).resources.target.id == target.id);
     TIDE_CHECK(tide_get_Object_local(&local, object).resources.image.image.pixels == NULL);
-    TIDE_CHECK(queued->data.spawn0.values.Graphic.resources.target.id == target.id);
-    TIDE_CHECK(queued->data.spawn0.values.Graphic.resources.image.image.pixels == NULL);
-    TIDE_CHECK(queued->data.spawn0.values.Graphic.resources.retained == 77);
+    TIDE_CHECK(queued->data.spawn0.values.tide_local_component_Graphic.resources.target.id == target.id);
+    TIDE_CHECK(queued->data.spawn0.values.tide_local_component_Graphic.resources.image.image.pixels == NULL);
+    TIDE_CHECK(queued->data.spawn0.values.tide_local_component_Graphic.resources.retained == 77);
     tide_queue_clear(&local.commands);
 
     // The retained async frame also loses CPU pointers while keeping its target.
     local.Buffers.image = cpu;
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Buffers.resumed.target.id == target.id);
     TIDE_CHECK(local.Buffers.resumed.image.image.pixels == NULL && local.Buffers.resumed.retained == 77);
 
@@ -144,7 +147,7 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     TIDE_CHECK(tide_render_target_live(following.id) && following.size.window == 0.5f);
     TIDE_CHECK(restored.Buffers.nested.target.id == recreated.id && restored.Buffers.resumed.target.id == recreated.id);
     TIDE_CHECK(restored.Buffers.resumed.image.target.id == recreated.id);
-    TIDE_CHECK(tide_get_Graphic(&restored, graphic).resources.target.id == recreated.id);
+    TIDE_CHECK(tide_get_tide_local_component_Graphic(&restored, graphic).resources.target.id == recreated.id);
     TIDE_CHECK(tide_get_Object_local(&restored, object).resources.target.id == recreated.id);
     TIDE_CHECK(restored.Buffers.nested.retained == 77 && restored.Buffers.beginTask == 2);
     TIDE_CHECK(restored.Buffers.windowAlias.id == TIDE_RENDER_WINDOW);

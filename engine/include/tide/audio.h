@@ -34,7 +34,8 @@
 #define TIDE_AUDIO_BLOCK 256u                        // Frames a block
 #define TIDE_AUDIO_SAMPLES (2u * TIDE_AUDIO_BLOCK)  // Floats a block: interleaved stereo
 #define TIDE_AUDIO_BUSES 16u                         // Bus 0 is the master, which every other goes through
-#define TIDE_AUDIO_STATE_BYTES 4096u                 // The most an effect's state takes
+#define TIDE_AUDIO_STATE_BYTES 1048576u              // The most an effect's state takes: a megabyte, 2.7 seconds of stereo
+#define TIDE_AUDIO_STATE_SMALL 4096u                 // A state up to this is in its voice; a bigger one is memory of its own
 #define TIDE_AUDIO_KNOBS_BYTES 256u                  // The most an effect's knobs take: what Tide's Effect holds
 
 // Sound to play: interleaved samples of `channels` (1 or 2) at `rate` frames
@@ -97,12 +98,19 @@ extern uint32_t tide_clips_whole_seconds; // 10
 // nothing else reads or writes; `knobs` is a copy of the `knobs_size` bytes the
 // frame last gave, read-only. It allocates nothing, blocks on nothing and
 // reaches nothing outside its arguments.
+//
+// A state of more than TIDE_AUDIO_STATE_SMALL bytes (a delay line: an echo, a
+// reverb) is memory the mixer makes for the voice or the bus while frames play
+// it, and frees after: a frame that doesn't play the voice lets it go, and the
+// next that does starts the effect over. A one-shot has none, so it plays
+// without such an effect. An effect that says more than TIDE_AUDIO_STATE_BYTES
+// isn't run at all.
 typedef void (*tide_audio_effect_fn)(float *samples, void *state, const void *knobs);
 
 typedef struct tide_audio_effect {
     tide_audio_effect_fn fn; // NULL for no effect
     uint64_t id;             // Names the code: another id starts the state over (0 with no fn)
-    uint32_t state_size;     // At most TIDE_AUDIO_STATE_BYTES
+    uint32_t state_size;     // At most TIDE_AUDIO_STATE_BYTES: past it, the frame records no effect
     uint32_t knobs_size;     // At most TIDE_AUDIO_KNOBS_BYTES
     const void *knobs; // Copied as the frame records it; NULL with none
 } tide_audio_effect;

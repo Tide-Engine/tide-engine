@@ -1,0 +1,555 @@
+{
+  "state": "complete",
+  "utc": "2026-10-12T09:44:18.1822926Z",
+  "revision": "83ccb2195398ed676fff81c158876e8b381eda93",
+  "machine": {
+    "Name": "AMD Ryzen 9 7900X 12-Core Processor            ",
+    "NumberOfCores": 12,
+    "NumberOfLogicalProcessors": 24
+  },
+  "compiler": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)\r\nTarget: x86_64-pc-windows-msvc\r\nThread model: posix\r\nInstalledDir: C:\\Program Files\\LLVM\\bin\r\nBuild config: +alloc:rpmalloc",
+  "node": "v24.16.0",
+  "rounds": 5,
+  "frames": 330,
+  "warmup": 30,
+  "characters": 2500,
+  "engine_flags": [
+    "-O2/-O3",
+    "-g",
+    "-fno-fast-math",
+    "-ffp-contract=off"
+  ],
+  "caller_flags": [
+    "-O0",
+    "-g",
+    "-fno-fast-math",
+    "-ffp-contract=off"
+  ],
+  "assertions": true,
+  "parallel_engine_compiles": 12,
+  "inputs": [
+    {
+      "path": "D:\\Projects\\Test\\Game.tide",
+      "bytes": 1814,
+      "sha256": "9346fa5b76b1e0e925a2ef1fd546e1772ffeebf87b40abe59b738ec7a0e1f2b3"
+    },
+    {
+      "path": "D:\\Projects\\Test\\Player.tide",
+      "bytes": 1690,
+      "sha256": "ae0baf4813cc34a5d76ade9db9b1d0cd10db0a343ba5b1690897ab20e71d44fa"
+    },
+    {
+      "path": "D:\\Projects\\Test\\assets\\logo.png",
+      "bytes": 2017,
+      "sha256": "4e2511977233a19cb3fd6b10bfaa0aba7a91a24074afe09469bfaa9ceffb1686"
+    },
+    {
+      "path": "D:\\Projects\\Test\\kenney\\survivors\\skins\\zombieA.png",
+      "bytes": 72088,
+      "sha256": "99d7c2a0e96327c8a1aa68b2990100208dab6ff84a439ff694f8fb65ad195ad1"
+    },
+    {
+      "path": "D:\\Projects\\Test\\kenney\\survivors\\character.fbx",
+      "bytes": 167212,
+      "sha256": "18835fef534eede635b081ee7fe647d01a885550a591d2e6bf071010906167d8"
+    },
+    {
+      "path": "D:\\Projects\\Test\\kenney\\survivors\\idle.fbx",
+      "bytes": 608188,
+      "sha256": "c8a24e0294376ee5a195c56752a13310e1c0b5f8588a4db50e094120e3e4cc74"
+    },
+    {
+      "path": "D:\\Projects\\Test\\kenney\\survivors\\run.fbx",
+      "bytes": 572732,
+      "sha256": "e635461fc8dace85ec67a7f7941e949a7c3f108b51ae4d2da1557e6e01749df8"
+    },
+    {
+      "path": "D:\\Projects\\Test\\kenney\\survivors\\jump.fbx",
+      "bytes": 562796,
+      "sha256": "b88429077a7a1af5d3f55f43cfd8ce0f7441b4f6f7bb15a8070d7ed15d275f74"
+    }
+  ],
+  "generated": [
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\gen\\game.c",
+      "bytes": 215245,
+      "sha256": "1ca90e7d76c2b09d3f41198522227e3c5ecd8b2e25cf5975e2e43c5c28d236a5"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\gen\\game.h",
+      "bytes": 26493,
+      "sha256": "0870207d60a3f73c6d3cdced4d73f62e37f10895d9a1200c9f0b3d5995a83cdc"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\gen\\game.pack",
+      "bytes": 5689760,
+      "sha256": "31f9bbab5442e3de29d40aaddd9f4a72107f4573e9d5e276b9845f4c21ad7b4b"
+    }
+  ],
+  "caller_objects": [
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\harness-native.obj",
+      "bytes": 356949,
+      "sha256": "8273159e1d29e59e508333e0137fe6e371674d4aa97e74cea1a94b58097a2dd3"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\harness-web.obj",
+      "bytes": 258977,
+      "sha256": "c9bba4d3e299fb388d22e9ecb629ccaf3e32f1b203c4710d06352064b7684a1e"
+    }
+  ],
+  "binaries": [
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\stress-O3.exe",
+      "bytes": 6222848,
+      "sha256": "dd40172841fd50ae68ecedee262ac3132701062d0e40b1c3f0bf31914eddf69e"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\stress-O3.wasm",
+      "bytes": 7342611,
+      "sha256": "db2b7b1f455b7c27bc1d2d9f98580e2ca93c833f85de05049736f11e0488361b"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\stress-O2.exe",
+      "bytes": 6193152,
+      "sha256": "a90c63b5459ebc064319d27ad73bdda231b33f0423760c1ac0456ccab451465b"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\stress-O2.wasm",
+      "bytes": 7324664,
+      "sha256": "c96faa06770c3cc7d0c631d09a64ba0b8ab58d97ad9735573222dce730f5fdf7"
+    }
+  ],
+  "libraries": [
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\native-O3\\engine\\tide.lib",
+      "bytes": 3514038,
+      "sha256": "21e206f9d8a9b014ccedd776cdedfabcd1d9d65c3c03f305cfa06d007dd281b9"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\web-O3\\engine\\libtide.a",
+      "bytes": 3301236,
+      "sha256": "4e0b7640849ee677ed698307fb40b08dda3c94d18f8619286af8e2fb4a7b2416"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\native-O2\\engine\\tide.lib",
+      "bytes": 3427190,
+      "sha256": "9289fec1a232656623d7aae117ef8c014b69a751fd97dd394f77b81754da1763"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3code-abcc6b9b\\build\\optimization-levels\\web-O2\\engine\\libtide.a",
+      "bytes": 3247224,
+      "sha256": "f980969e63f6b3bc798eaa93eaad79568d55c4e0cbe874bb9c7fd467df4cb082"
+    }
+  ],
+  "gate": "Local\\TideClaudeContinuationBenchmark",
+  "quiet_seconds": 90,
+  "guard_resets": 8,
+  "limitations": "CPU-only single-world 60 Hz ticks/hash/views and serial palette preparation; no GPU, interpolation snapshots, rollback, networking or Rooms UI. Native uses Windows debug CRT; web uses Node WASI. Untimed texture hashing perturbs caches equally. Other desktop activity and clocks remain uncontrolled. Cold engine builds have empty engine-object caches, warm tools/filesystem, and exclude configuration, caller compilation and linking.",
+  "reference": "818c38d6c6daad37 aef3539b6e00d762 2500 330 1 2",
+  "completed_utc": "2026-10-12T09:49:49.6444371Z",
+  "source_files": [
+    {
+      "path": "engine/include/tide/attached.h",
+      "sha256": "f2dccd73fac9471c28beb239a8c181af97f972b9829d2b4fcf56f2e5acf48174"
+    },
+    {
+      "path": "engine/include/tide/audio.h",
+      "sha256": "c2370268696e0257e782b80af62071e2ead7ce06b90c8938c9da126aba57cb43"
+    },
+    {
+      "path": "engine/include/tide/color.h",
+      "sha256": "d8f826dc7097b7de34681f162c33bf9f6fd00f0d76afb91c3eff6a955b2e9ffb"
+    },
+    {
+      "path": "engine/include/tide/debug.h",
+      "sha256": "6a22ad3873fa7ab15b72cd67a3dabd87e97e37052baf9f8718abeeea201e8411"
+    },
+    {
+      "path": "engine/include/tide/delta.h",
+      "sha256": "08c230543559eaa6ab863b4209c2574d42d903c87ed3861a8b9e9cdde3c67ec2"
+    },
+    {
+      "path": "engine/include/tide/devices.h",
+      "sha256": "16656815e524a69d676a51d313d5a86836f2bd6a80f1d148ace2a54975b428a5"
+    },
+    {
+      "path": "engine/include/tide/draw.h",
+      "sha256": "3802ebe56533d9359edb2a4d91dd58599183c7cb559a9f102560c5a8315c4372"
+    },
+    {
+      "path": "engine/include/tide/entity.h",
+      "sha256": "12e02c42a2527a29a4ecac4c336ed72c84509d72667d40c98e8a79916abbb424"
+    },
+    {
+      "path": "engine/include/tide/events.h",
+      "sha256": "a4badc1b88ff30d78f63ec00faac512ee28f9fa061af6441da1da823c7f88a48"
+    },
+    {
+      "path": "engine/include/tide/grid.h",
+      "sha256": "29eb3fdda5d0cc85b583bd481a2b35ba0842507c3205b0d12efb245f1b12bd47"
+    },
+    {
+      "path": "engine/include/tide/gui.h",
+      "sha256": "c0de00e83f8339c0ce416d7824535a5aa3209fcc9fbd35d3060d6435382fd726"
+    },
+    {
+      "path": "engine/include/tide/heap.h",
+      "sha256": "372cdd21b806cf2fe5edc4c3c87e9ad76518e35602950d05d129aae6c2cc76c8"
+    },
+    {
+      "path": "engine/include/tide/internal/gltf_extensions.h",
+      "sha256": "9c9fc21ebc667dcdf472d35b52918e069e3ad861001256403fd69a4c8eaa06ff"
+    },
+    {
+      "path": "engine/include/tide/internal/gltf_json.h",
+      "sha256": "a3db33e7d8ef26674150f5a0074a6ea56343d95f6e06dd91a011916c435768b2"
+    },
+    {
+      "path": "engine/include/tide/internal/gltf_read.h",
+      "sha256": "dfde7546b5e622ece0e4f0382f0dca59895186eb356df254c62aa6dfbedcad62"
+    },
+    {
+      "path": "engine/include/tide/io.h",
+      "sha256": "d09b63bf2153cf6018c692ab76b2385b2ec46b8b54f0dcdb0b200299ade0ea69"
+    },
+    {
+      "path": "engine/include/tide/jobs.h",
+      "sha256": "5baddaf43f3942e977f3221739f7f27d4b3674589a7a8425310f0d1e3314c266"
+    },
+    {
+      "path": "engine/include/tide/json.h",
+      "sha256": "97c376a473e0d055b93e27a5f7dea900aa58070a325525b9c4ff120eb6569623"
+    },
+    {
+      "path": "engine/include/tide/layout.h",
+      "sha256": "2644f5220e7cd5c39a68905637a9172dceffcb4ee65d45be472c64c1c2d57bc9"
+    },
+    {
+      "path": "engine/include/tide/list.h",
+      "sha256": "cce4cc5fdbfa89f9752fd1f4a75eaec3d95bd5e7ed929ee5c37938f13916dd7c"
+    },
+    {
+      "path": "engine/include/tide/map.h",
+      "sha256": "d7c65b75086e81d11099db635bfb636667ebcb842b8a53c364b25a29f7316b8e"
+    },
+    {
+      "path": "engine/include/tide/math.h",
+      "sha256": "3f47c2ed6e5ddc9a7e2cef2c1b75d0297bb123503ec58e0c385418ea6e6b7298"
+    },
+    {
+      "path": "engine/include/tide/mesh.h",
+      "sha256": "0ec2e985f242d49c6e46cdfce1202847bb1cb908859a097edd9b08d805b3e463"
+    },
+    {
+      "path": "engine/include/tide/net.h",
+      "sha256": "4235359401f94c368b5d379daac624f78377bcbfecfb2aa0a9b6716bedc63314"
+    },
+    {
+      "path": "engine/include/tide/network.h",
+      "sha256": "8f94db4df6bcf13ee419ecc12a56e61f386452245026a3f26397360097dd7c15"
+    },
+    {
+      "path": "engine/include/tide/pack.h",
+      "sha256": "a2f4f3011b24c0eab9d172180b6140babc5523a00db76b8a91ed3bf8e0cd2cd2"
+    },
+    {
+      "path": "engine/include/tide/page.h",
+      "sha256": "52efd58b060fef111f168e6b2eca9a27a968a3987111fc3784c543eba00d64a7"
+    },
+    {
+      "path": "engine/include/tide/player.h",
+      "sha256": "484fb8d5dcdad7e8fb7385e6c4d1abae631c25575b4130bb1cd91eb57a9e1c6c"
+    },
+    {
+      "path": "engine/include/tide/png.h",
+      "sha256": "bc5ec74d88d90a499b589e9001daf13f6e5b7d84d174c2a7d898cfb4d198ab9f"
+    },
+    {
+      "path": "engine/include/tide/profile.h",
+      "sha256": "ee379331bb172db149b3eb5a00478d65200228dcddfe27c8d361ae940554fdd2"
+    },
+    {
+      "path": "engine/include/tide/profiler.h",
+      "sha256": "d4c71f85f5935576eec51472a31db52809f36d1af511936847c4e52b86361a67"
+    },
+    {
+      "path": "engine/include/tide/random.h",
+      "sha256": "d5488721359c9accdc66ad1b30ed299df10ad58eff06e690f51e2ab819efcbfc"
+    },
+    {
+      "path": "engine/include/tide/resident.h",
+      "sha256": "14564cf7f0651831b1628e25b96131c5c3ca6c5dbe7b37596acd210ce1f30a6d"
+    },
+    {
+      "path": "engine/include/tide/rows.h",
+      "sha256": "b8d9331e7616e114707beef8efec8d1f2a97152f9ffe00083355c670c5eef801"
+    },
+    {
+      "path": "engine/include/tide/session.h",
+      "sha256": "6b424423d517276a7e3a9a0d672de99fd28ec9b059cab1f6523d2728103892e5"
+    },
+    {
+      "path": "engine/include/tide/sha256.h",
+      "sha256": "40d56b46ba57d9442e3be6652b2c3d694c1fa1119feabfd85e6fc2571ca7f7c1"
+    },
+    {
+      "path": "engine/include/tide/skinned_data.h",
+      "sha256": "e7a558b637dec54200371391240f5b5c73592e4074a86d24ea2547c2e5b278a2"
+    },
+    {
+      "path": "engine/include/tide/skinned.h",
+      "sha256": "9cc086f8f1d1ea57b348807f7d88ad80944cc057f09ddf9da39c66c260d6121b"
+    },
+    {
+      "path": "engine/include/tide/stats.h",
+      "sha256": "05e356c2ecc8a3180338e1c551f96aae4c37ecec7e06df4b5e320178b5a616c1"
+    },
+    {
+      "path": "engine/include/tide/table.h",
+      "sha256": "2406d170a902990313da7e0a41475abd5551ffc23c1074d83faab292b9e24412"
+    },
+    {
+      "path": "engine/include/tide/text.h",
+      "sha256": "7d41c34c3477351163cd71020d35d8889656b008e8dfee7a6924a08646021374"
+    },
+    {
+      "path": "engine/include/tide/texture_blocks.h",
+      "sha256": "d114d2de9396e1fd2be13f70699012756f3250d8bf7e56857fd20ab6059155dc"
+    },
+    {
+      "path": "engine/include/tide/time.h",
+      "sha256": "32779f67592ee9eb1604610f04a019dfa09a1f265db0ca526d19bfadf5eda4a3"
+    },
+    {
+      "path": "engine/include/tide/vorbis.h",
+      "sha256": "377c1a21ed000e5b1702a1a816ef470c503200a9b9b89a1f2d8a0bb467132266"
+    },
+    {
+      "path": "engine/include/tide/wav.h",
+      "sha256": "0937b0530f1bbe13b0584793d955dff0bcb7f4a0ba4add8554cf916c588b90e6"
+    },
+    {
+      "path": "engine/src/asset_store.c",
+      "sha256": "b4649d6da233e5aba832bb0de2cae85ddcb7b83652365237cdeb70bee2c6000f"
+    },
+    {
+      "path": "engine/src/asset_store.h",
+      "sha256": "e6b55cae8a32a2b9f097c8256ffd04d75784f91e391bbba8119398c2ac31e798"
+    },
+    {
+      "path": "engine/src/attached.c",
+      "sha256": "5b2951b4419a9abbfc0027f353b55d343086ae80c2a65c7bd7e4508814c3007a"
+    },
+    {
+      "path": "engine/src/audio.c",
+      "sha256": "62ecf9a7faf0f682109ccd46b91ecffd6cdc1c028954b4b150b7ba0eac5dc1ce"
+    },
+    {
+      "path": "engine/src/debug.c",
+      "sha256": "926b242745fb01fa9720eb26ed5cddd51e84f57c0f89717d2ed985f44f06890c"
+    },
+    {
+      "path": "engine/src/delta_asset.h",
+      "sha256": "9cd18025271b35662d0ba345d7f81c6c5f69497283a9e08782616a7c7e731af7"
+    },
+    {
+      "path": "engine/src/delta.c",
+      "sha256": "e9ab53badb57f3b544e8252e78f6f81ff6d0ffda0a125f017028235754f5ffc8"
+    },
+    {
+      "path": "engine/src/devices.c",
+      "sha256": "89c269ac083bf82de2b37cda89b8aaf62f8bd5f252e71e7d14465b5abfef91a6"
+    },
+    {
+      "path": "engine/src/draw_coordinates.c",
+      "sha256": "ae3cd4a423ee5947dd954bfe888651f5437a9955002e8b9d1a1d3fae54f14bd3"
+    },
+    {
+      "path": "engine/src/draw.c",
+      "sha256": "67bf3803bb4f0b1d5836741d3602b91df70e872e4b80f20e674fe0946c3c13e4"
+    },
+    {
+      "path": "engine/src/entity.c",
+      "sha256": "9224b496cd28ca4f6cf1983986dfc1702c0cddf0800e13ea3a26532efb0f181a"
+    },
+    {
+      "path": "engine/src/events.c",
+      "sha256": "d5f5c76121dc5c4bdbe60e42f88d3926fd61775ac29a5bcf36be65496a6b2786"
+    },
+    {
+      "path": "engine/src/grid.c",
+      "sha256": "792fef037b696cc87d20b72c5fbe36f7d1b2692e825a17e792fbb4f5aaaa25a7"
+    },
+    {
+      "path": "engine/src/gui.c",
+      "sha256": "f7545f2e76dd1def6d941b4f9f03e0d59b8ae0903034b997f5f32610383abce3"
+    },
+    {
+      "path": "engine/src/heap.c",
+      "sha256": "240cc7b157b5b34da26533adabb0572e30ae7c5e196637bbd0841ea3baefb277"
+    },
+    {
+      "path": "engine/src/io.c",
+      "sha256": "3513295a4cdd6e57791aa933e5a77c6c1ea25c2b3c63f50197c58151787badd1"
+    },
+    {
+      "path": "engine/src/jobs.c",
+      "sha256": "0aaab12383cd2a113c9d2c7442e8bfb681bb9fbf8cf7ecfabdd206b8772c1b40"
+    },
+    {
+      "path": "engine/src/json.c",
+      "sha256": "04864a2b5d8a6b2bb58158d6b9c9d4b2d7eff9967f8b11bb3baeb96eca3605a6"
+    },
+    {
+      "path": "engine/src/list.c",
+      "sha256": "f2440c686121f053d2843dddaafec3cf8f7e3f9de0bab1c8c3bce788ec853eea"
+    },
+    {
+      "path": "engine/src/map.c",
+      "sha256": "52c68232c8a9ed7ac6a518827f2ff8db02f77059e5d69a0538d663c56a2728fc"
+    },
+    {
+      "path": "engine/src/math.c",
+      "sha256": "c98198a899da258df8b4a854e7905f59850cb9431d532a618167d1540c8b82db"
+    },
+    {
+      "path": "engine/src/mesh.c",
+      "sha256": "72de51a2202f54213bac31441a596162c1110330e1b90b73a483c8e334ab07cd"
+    },
+    {
+      "path": "engine/src/net.c",
+      "sha256": "7227b12f7cb2302fb680f833ec22b8804238258b7144070cbebee4f42676f1a4"
+    },
+    {
+      "path": "engine/src/network.c",
+      "sha256": "36c1d739fbc13db06a8f0a3850b80f3144394201a0ac743125a366ad465952db"
+    },
+    {
+      "path": "engine/src/noise.c",
+      "sha256": "387844567f5c13ed5bde91d2f805e27a0d66f6c7662870e3390fa92591bf74f1"
+    },
+    {
+      "path": "engine/src/pack_load.c",
+      "sha256": "b25b04d053fdb78504b61b86a3d516d76ddf855e170d12b655d860bc2df64d8a"
+    },
+    {
+      "path": "engine/src/pack.c",
+      "sha256": "88c11ca03226da1e96e0bc3afcc0eddad544e1c2cbea42876143a59263ad3995"
+    },
+    {
+      "path": "engine/src/page.c",
+      "sha256": "19bdb7794a874a9e93aacb98dc16888c1fbfbca8471fea9f5336ca6085f51140"
+    },
+    {
+      "path": "engine/src/png_grid.c",
+      "sha256": "e9b03e324ac07722ccd5b8aff2c24af5e4f14409e625815295afae22dbe38ad9"
+    },
+    {
+      "path": "engine/src/png_read.c",
+      "sha256": "a58713d46341948b4651477e1794f621e56cc6b96fefaf5c7eca0ebf7832957c"
+    },
+    {
+      "path": "engine/src/primitives.c",
+      "sha256": "809b5a07f3419d4664aac760a667f0a6151dcc502a560c5035181e56e1c4a03d"
+    },
+    {
+      "path": "engine/src/profile.c",
+      "sha256": "628ad1f65d58318c482a6ecb54d85885b4ee88c735057475e85e507edf4ffa1d"
+    },
+    {
+      "path": "engine/src/profiler.c",
+      "sha256": "42a794260dfb8d5cb17aa5481e867e4e5921aea8b16469f9a60333b8cddc41b6"
+    },
+    {
+      "path": "engine/src/resident.c",
+      "sha256": "7634f4d02364d4b850f11bdc13231340e686778db56a520643131777f1cf33e3"
+    },
+    {
+      "path": "engine/src/rows.c",
+      "sha256": "d01e7f8e91c0690156403d7c30a178c8ac19bd8dc5fa72c770abd237a0b6e9ef"
+    },
+    {
+      "path": "engine/src/session.c",
+      "sha256": "896232d7f5597acf2c7ef023ec3a7052f36c3ec36a001b27ddc65d6662f71a89"
+    },
+    {
+      "path": "engine/src/sha256.c",
+      "sha256": "73b0228e1b684af99a1927d2ec3284dab06b3ebef3a015f984552160d1b92c1b"
+    },
+    {
+      "path": "engine/src/skinned_cache.h",
+      "sha256": "5b001902bb67b660dc24d7f2f4d351beb215dfe4428c1f69321624d776b8a865"
+    },
+    {
+      "path": "engine/src/skinned_data.c",
+      "sha256": "fa1b2b853ec3c1ad64ac295b9de11090bb4dfaa4f9492b360707f162f4e347e6"
+    },
+    {
+      "path": "engine/src/skinned_decode.c",
+      "sha256": "52aeeb09a8017134a2b91c014d83386f63537f0ac39a464c57e8e35d71c49957"
+    },
+    {
+      "path": "engine/src/skinned.c",
+      "sha256": "b96131d31d615263f22114e69d698e9d54e323f3745aa4726e616c4a10f670c6"
+    },
+    {
+      "path": "engine/src/stats.c",
+      "sha256": "d76132da0b73e7f1107ff91fc4ff5da97d9dd34232744d09f21fcd8fb79b3764"
+    },
+    {
+      "path": "engine/src/table.c",
+      "sha256": "963da37f1949ad1b07055672ed91babc7bbc563765d94611bc0076cd7eef74ef"
+    },
+    {
+      "path": "engine/src/text.c",
+      "sha256": "afeb3bfe88d4b29ff204889393099164618f2347adf9dd0feb8fb710ee7cbfc0"
+    },
+    {
+      "path": "engine/src/time.c",
+      "sha256": "9e1dbd3eb83b67c710a10c661be7e7080b96c350aaeb838eb2ac33475a71794c"
+    },
+    {
+      "path": "engine/src/vorbis.c",
+      "sha256": "07d2feec81dc0e2f25d2625366207403dfd49a08e1b2c10c9819b82675333cb2"
+    },
+    {
+      "path": "engine/src/wav.c",
+      "sha256": "3ef2f023837c16e02f99cce461db0c456897b6d61fb59752e92a0dba58ee0862"
+    }
+  ],
+  "benchmark_sources": [
+    {
+      "path": "harness.c",
+      "sha256": "f3dd6e1ffc1c9329325a9e1312806c8101b10c1e8553fd8a249b709fa4571930",
+      "measured_sha256": "29a848e1d5b7621d9959e20a177c948736241c72bbf26bad061af8d362bbcb6c"
+    },
+    {
+      "path": "measure.ps1",
+      "sha256": "1743f5e37a314a05b70aaddcff371744da92ebbae6006bd0c3c3c9f6e92d141b",
+      "measured_sha256": "fbe722a35821ec4ea3976141f361f04a7e56bcc697f863ef72a0ab9f514eaf32"
+    },
+    {
+      "path": "measure-compiles.ps1",
+      "sha256": "80a170f50947aa12b8fd3fd787df51b2a45333e094b24b26752a480f32c9d798",
+      "measured_sha256": "690b3f64645039030384187be6b3a07800e46f27c3114852ca50f841c2000cdc"
+    },
+    {
+      "path": "analyze.mjs",
+      "sha256": "98bab563b92aa375ae5cf185299bcae789bb5d138586cb34073fb693d4cedc6a",
+      "measured_sha256": "1326e0c477c26590d36cf8706dae7b9ecc261b728b1318d320101eb4f5050584"
+    }
+  ],
+  "compile_measurement": {
+    "file": "compile-paired-rows.json",
+    "rounds": 5,
+    "gate": "Local\\TideClaudeContinuationBenchmark",
+    "guards": "Before/after each compile; immediately after the complete runtime batch and its continuous quiet interval",
+    "excluded": "The earlier build-rows.json setup timings precede the quiet guard, which subsequently detected another test run; they are retained as preliminary-setup-build-rows.json and excluded from compilation comparisons."
+  },
+  "setup_corrections": [
+    "Native linker argument list changed from scalar string to typed array before runtime measurement.",
+    "WASI system libraries placed after the engine archive to allow its sbrk override, before runtime measurement."
+  ],
+  "text_normalization": "Benchmark source SHA-256 records include both measured bytes and LF-normalized committed bytes; source normalization changes line endings only."
+}

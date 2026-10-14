@@ -130,7 +130,8 @@ static void lex_digits(lexer *lx, const int base, const bool leading)
     }
 }
 
-// Numbers: 12, 1.5, 1e3, 2.5e-3, with an optional f suffix meaning float.
+// Numbers: 12, 1.5, .5, 1e3, 2.5e-3, with an optional f suffix meaning float,
+// or deg for a float in radians, converted from degrees by the parser.
 // Integers can also be hex (0x1F) or binary (0b1010). `_` separates digits.
 static tok_kind lex_number(lexer *lx)
 {
@@ -164,7 +165,10 @@ static tok_kind lex_number(lexer *lx)
             lx->p = save;
         }
     }
-    if (lx->p < lx->end && (*lx->p == 'f' || *lx->p == 'F')) {
+    if (lx->end - lx->p >= 3 && memcmp(lx->p, "deg", 3) == 0) {
+        is_float = true;
+        lx->p += 3;
+    } else if (lx->p < lx->end && (*lx->p == 'f' || *lx->p == 'F')) {
         is_float = true;
         lx->p++;
     } else if (!is_float && lx->p < lx->end && (*lx->p == 'L' || *lx->p == 'l')) {
@@ -331,6 +335,19 @@ void lex_symbols_reset(void)
 static bool reserved_symbol(const str name)
 {
     return (name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0) || (name.len >= 8 && memcmp(name.ptr, "PACKAGE_", 8) == 0);
+}
+
+bool lex_identifier_ok(const str name)
+{
+    if (!name.len || str_starts_with_c(name, "tide_")) return false;
+    for (int i = 0; i < name.len; i++) {
+        const unsigned char ch = (unsigned char)name.ptr[i];
+        if (!(ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (i && ch >= '0' && ch <= '9'))) return false;
+    }
+    for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) {
+        if (str_eq_c(name, keywords[i].text)) return false;
+    }
+    return true;
 }
 
 bool lex_symbol_ok(const char *name)
@@ -675,6 +692,78 @@ static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans, file_symbo
     return ok && c.ok;
 }
 
+// Reads a character literal at lx->p (its opening quote) and stands after it:
+// 'a', one character of UTF-8, or one of the escapes \' \" \\ \n \r \t and \0.
+// False after reporting an error, standing where the line's lexing goes on.
+static bool lex_char(lexer *lx, const loc start)
+{
+    const char *p = lx->p + 1;
+    const char *line_end = p;
+    while (line_end < lx->end && !is_line_end(line_end, lx->end)) line_end++;
+    if (p < line_end && *p == '\'') {
+        diag_error(start, "a char is one character, and there's none between these quotes");
+        diag_note("no character is '\\0', and empty text is \"\"");
+        lx->p = p + 1;
+        return false;
+    }
+    // The quote that would close it, for what's said of one that isn't one character: the next on the line
+    const char *close = p + (p < line_end && *p == '\\' ? 2 : 1);
+    while (close < line_end && *close != '\'') close++;
+    int len = 0; // The character's bytes
+    if (p < line_end && *p == '\\') {
+        const char esc = p + 1 < line_end ? p[1] : '\0';
+        if (esc && !strchr("'\"\\nrt0", esc)) {
+            diag_error(start, "unknown escape '\\%c'; a char can use \\', \\\", \\\\, \\n, \\r, \\t and \\0", esc);
+            lx->p = close < line_end ? close + 1 : p + 2;
+            return false;
+        }
+        len = esc ? 2 : 0;
+    } else if (p < line_end) {
+        const unsigned char ch = (unsigned char)*p;
+        if (ch < ' ' || ch == 0x7F) {
+            diag_error(start, "a char can't be a control character written as it is; a new line is '\\n' and a tab '\\t'");
+            lx->p = p + 1;
+            return false;
+        }
+        len = 1;
+        if (ch >= 0x80) { // UTF-8: a lead byte and its continuation bytes
+            const int more = ch >= 0xF0 && ch < 0xF5 ? 3 : ch >= 0xE0 ? 2 : ch >= 0xC2 && ch < 0xE0 ? 1 : -1;
+            bool valid = more > 0;
+            uint32_t code = more == 3 ? ch & 0x07u : more == 2 ? ch & 0x0Fu : ch & 0x1Fu;
+            for (int i = 1; valid && i <= more; i++) {
+                valid = p + i < line_end && ((unsigned char)p[i] & 0xC0u) == 0x80u;
+                if (valid) code = code << 6 | ((unsigned char)p[i] & 0x3Fu);
+            }
+            // A char is a character or none: not a longer form than the shortest, half of a UTF-16 pair, or a
+            // number past the last one, which text's bytes can be but no char is
+            if (valid && ((more == 2 && code < 0x800u) || (more == 3 && code < 0x10000u) || code > 0x10FFFFu
+                          || (code >= 0xD800u && code < 0xE000u))) {
+                valid = false;
+            }
+            if (!valid) {
+                diag_error(start, "a char must be UTF-8, and this isn't");
+                lx->p = p + 1;
+                return false;
+            }
+            len = 1 + more;
+        }
+    }
+    if (len == 0 || p + len >= line_end || p[len] != '\'') {
+        if (len > 0 && close < line_end) { // 'ab': more than a character between the quotes
+            diag_error(start, "a char is one character, and this is more");
+            diag_note("text goes in double quotes: \"%.*s\"", (int)(close - p), p);
+            lx->p = close + 1;
+        } else {
+            diag_error(start, "this character is missing its closing quote");
+            diag_note("a char is one character in single quotes, like 'a'");
+            lx->p = p + len;
+        }
+        return false;
+    }
+    lx->p = p + len + 1;
+    return true;
+}
+
 static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
 {
     lexer lx = {src->text, src->text + src->len, 1, src->text, src->file};
@@ -735,7 +824,8 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
             continue;
         }
 
-        if (isdigit((unsigned char)c)) {
+        // A number can start at its point, as in C#: .5f
+        if (isdigit((unsigned char)c) || (c == '.' && lx.p + 1 < lx.end && isdigit((unsigned char)lx.p[1]))) {
             t.kind = lex_number(&lx);
             t.text = (str){start, (int)(lx.p - start)};
             // "0x" or "0b" with no digits after it.
@@ -763,6 +853,18 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
             }
             t.kind = T_STRING;
             t.text = (str){start + 1, (int)(lx.p - start) - 2};
+            vec_push(toks, t);
+            continue;
+        }
+
+        // 'a': one character.
+        if (c == '\'') {
+            if (!lex_char(&lx, t.at)) {
+                ok = false;
+                continue;
+            }
+            t.kind = T_CHAR;
+            t.text = (str){start, (int)(lx.p - start)};
             vec_push(toks, t);
             continue;
         }
@@ -828,7 +930,7 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
         case '.': t.kind = T_DOT; break;
         case '?': t.kind = n == '?' ? (len = 2, T_COALESCE) : T_QUESTION; break;
         case ':': t.kind = T_COLON; break;
-        case '=': t.kind = n == '=' ? (len = 2, T_EQ) : T_ASSIGN; break;
+        case '=': t.kind = n == '=' ? (len = 2, T_EQ) : n == '>' ? (len = 2, T_ARROW) : T_ASSIGN; break;
         case '!': t.kind = n == '=' ? (len = 2, T_NE) : T_NOT; break;
         case '<':
         case '>': {
@@ -920,6 +1022,7 @@ const char *tok_kind_name(const tok_kind kind)
     case T_INT: return "integer";
     case T_FLOAT: return "number";
     case T_STRING: return "text";
+    case T_CHAR: return "character";
     case T_COMPONENT: return "'component'";
     case T_SINGLETON: return "'singleton'";
     case T_SYSTEM: return "'system'";
@@ -965,6 +1068,7 @@ const char *tok_kind_name(const tok_kind kind)
     case T_QUESTION: return "'?'";
     case T_COLON: return "':'";
     case T_ASSIGN: return "'='";
+    case T_ARROW: return "'=>'";
     case T_PLUS_ASSIGN: return "'+='";
     case T_MINUS_ASSIGN: return "'-='";
     case T_STAR_ASSIGN: return "'*='";

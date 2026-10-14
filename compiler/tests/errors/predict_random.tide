@@ -1,0 +1,3 @@
+// expect: Predict can't roll random numbers
+input I { int luck; Predict() { luck = Random.NextInt(6); } }
+scene Main { }

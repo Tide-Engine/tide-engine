@@ -27,6 +27,11 @@ typedef ptrdiff_t GLsizeiptr;
 typedef ptrdiff_t GLintptr;
 
 enum {
+    GL_NUM_COMPRESSED_TEXTURE_FORMATS = 0x86A2,
+    GL_COMPRESSED_TEXTURE_FORMATS = 0x86A3,
+    GL_COMPRESSED_RGB_S3TC_DXT1 = 0x83F0,
+    GL_COMPRESSED_RGBA_S3TC_DXT5 = 0x83F3,
+    GL_TEXTURE_MAX_LEVEL = 0x813D,
     GL_FALSE = 0,
     GL_TRUE = 1,
     GL_NONE = 0,
@@ -58,6 +63,7 @@ enum {
     GL_BLEND = 0x0BE2,
     GL_SCISSOR_TEST = 0x0C11,
     GL_MAX_TEXTURE_SIZE = 0x0D33,
+    GL_UNPACK_ROW_LENGTH = 0x0CF2,
     GL_UNPACK_ALIGNMENT = 0x0CF5,
     GL_PACK_ALIGNMENT = 0x0D05,
     GL_TEXTURE_2D = 0x0DE1,
@@ -88,6 +94,8 @@ enum {
     GL_REPEAT = 0x2901,
     GL_SAMPLES = 0x80A9,
     GL_RGBA8 = 0x8058,
+    GL_RGBA32I = 0x8D82,
+    GL_RGBA_INTEGER = 0x8D99,
     GL_CLAMP_TO_EDGE = 0x812F,
     GL_DEPTH_STENCIL_ATTACHMENT = 0x821A,
     GL_MIRRORED_REPEAT = 0x8370,
@@ -203,6 +211,8 @@ enum {
       (GLenum target, GLint level, GLint internal, GLsizei width, GLsizei height, GLint border, GLenum format,         \
        GLenum type, const void *pixels),                                                                               \
       (target, level, internal, width, height, border, format, type, pixels))                                          \
+    V(CompressedTexImage2D, (GLenum target, GLint level, GLenum format, GLsizei width, GLsizei height, GLint border,   \
+        GLsizei size, const void *pixels), (target, level, format, width, height, border, size, pixels))              \
     V(TexParameteri, (GLenum target, GLenum name, GLint value), (target, name, value))                                 \
     V(TexSubImage2D,                                                                                                   \
       (GLenum target, GLint level, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type,        \

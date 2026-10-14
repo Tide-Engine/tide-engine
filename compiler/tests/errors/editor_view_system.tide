@@ -1,0 +1,3 @@
+// expect: RunInEditor applies to views only
+[RunInEditor] system Update() { }
+scene Main { }

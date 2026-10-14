@@ -1,0 +1,11 @@
+{
+  "event": "pre-measurement quiet guard timeout",
+  "measurement_started": false,
+  "rows_appended": 0,
+  "quiet_seconds_at_timeout": 75,
+  "reason": "External worktree 5875 native/web/package validation occupied host during initial guard; five-minute deadline arrived before full90-second quiet period",
+  "disposition": "Retry same protocol with fresh90-second guard after external suites finished",
+  "source_after": "625596e82d87de6ae6d3d2edd791ca4674ac4dd5",
+  "ledger_sha256": "9bf5f1f22f39ac9b9adb94a4b4322f96fc5d625cc0b738c1009413374be6de01",
+  "recorded_at": "2026-10-10T18:23:47.1639993Z"
+}

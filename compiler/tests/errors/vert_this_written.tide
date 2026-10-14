@@ -1,0 +1,8 @@
+// expect: where the engine would put a vert's vertex can only be read
+// expect: a vert that puts its vertex somewhere else takes that as a parameter, 'out float4 clip', and writes it: 'clip = this.clip;' leaves it where it was
+scene Main { }
+
+vert Raise(mut Vertex3 vertex)
+{
+    this.clip.xy = float2(0, 0);
+}

@@ -1,0 +1,4 @@
+// expect: AnimationCatalog has no checked member 'missing'
+asset AnimationCatalog movement = "../e2e/animations/clips/a.gltf";
+scene Main { }
+system Check() { var clip = movement.missing; }

@@ -1,0 +1,4 @@
+// expect: ViewTime is engine-stamped and read-only
+settings { maxRewind = 1; }
+input I { bool jump; Predict() { viewTime.valid = true; } }
+scene Main { }

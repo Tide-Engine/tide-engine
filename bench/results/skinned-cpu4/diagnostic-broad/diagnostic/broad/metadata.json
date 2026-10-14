@@ -1,0 +1,114 @@
+{
+  "source_revision": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+  "checkout_head": "398f3a49cf1e256c8b5c7489adb14890ef02d55e",
+  "baseline": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\bench_skinned.exe",
+    "bytes": 1878016,
+    "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575"
+  },
+  "diagnostic": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\bench_skinned_diagnostic.exe",
+    "bytes": 1879552,
+    "sha256": "e196a81cc2a43c7519503a205989228103f5fd1a1f372e13af190d33bb14b488"
+  },
+  "snapshot": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\metadata.json",
+    "bytes": 11161,
+    "sha256": "eed9d63fceb2fe0d678c8ee44939ac7fa970506c7bff7f878e13ea5d7c9044b2"
+  },
+  "arguments": [
+    "--counts",
+    "1000,10000",
+    "--modes",
+    "rest,shared,independent",
+    "--frames",
+    "10",
+    "--warmup",
+    "2",
+    "--repeat",
+    "1"
+  ],
+  "state": "measured",
+  "started_at": "2026-10-10T21:17:51.4254752Z",
+  "gate": "Local\\TideClaudeContinuationBenchmark",
+  "post_build_quiet_seconds": 15,
+  "ledger_before_sha256": "104ea191b82556bda4e8b26a8f544e293cc5bf243c0c354fc4d852d209a8a4d1",
+  "interpretation": "Exploratory instrumented phase wall-clock means across10frames; nested totals overlap and timer overhead is included. Private skinned.obj override linked before immutable a10 engine archive; platform/game/pack objects unchanged. Palette preparation timing includes worker join and is separate from view sampling. No saved ledger rows.",
+  "exit_code": 0,
+  "wall_seconds": 1.7102691,
+  "ended_at": "2026-10-10T21:17:53.2394489Z",
+  "files": [
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\bench_skinned_diagnostic.exe",
+      "bytes": 1879552,
+      "sha256": "e196a81cc2a43c7519503a205989228103f5fd1a1f372e13af190d33bb14b488"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\bench_skinned_diagnostic.map",
+      "bytes": 444492,
+      "sha256": "6952f85b29d71e80931ce605b22fc298adc7b53cfbc70943deb2ad4e813630a6"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\bench_skinned_diagnostic.pdb",
+      "bytes": 2965504,
+      "sha256": "e2ccaa1387a11c1d63baa4075f0be2edb4c92d5fee4d193412c1f0fcdc99f596"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\main.c",
+      "bytes": 17661,
+      "sha256": "6710f22c3ec3ab68aa3ffa6cf1df5e3bbf7b542e6ac430a846e82e3e10bd49a6"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\main.obj",
+      "bytes": 76764,
+      "sha256": "bd2aaaf1d8a6731019efa0ef9419499d4e2e18c66147b6fde63bde852f9ceec9"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\skinned.c",
+      "bytes": 63538,
+      "sha256": "9327eaa50346c74240e9e7cebdd07109a0421627f956daf0fd6cf7c45eb2a4d2"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\skinned.obj",
+      "bytes": 159913,
+      "sha256": "bcef4a58e30131555690fcdd85a3eb07470c57ea4355438412c2f73ff3af7468"
+    }
+  ],
+  "logs": [
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\compile-main.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\compile-skinned.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\gpu.csv",
+      "bytes": 829,
+      "sha256": "d8eb6c06aff79a6f9a20918be521b6a3836346bed1e5d9f7ca8ebc1df169da32"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\link.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\stdout.txt",
+      "bytes": 6463,
+      "sha256": "a18227972fb3913f29e1c24402e0f2058b5098584c8cfc49847bc29fb60fba53"
+    }
+  ]
+}

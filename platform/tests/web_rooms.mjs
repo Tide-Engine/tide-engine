@@ -168,6 +168,7 @@ const child = spawn(browser, [
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-extensions',
+    '--mute-audio', // Headless, it still plays through the machine's device
     `--user-data-dir=${profileDir}`,
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',

@@ -1,0 +1,6 @@
+// expect: a Mesh says what its vertices are: 'Mesh<Vertex3>', or 'Mesh<...>' of a struct of the game's with a 'float3 position'
+asset Mesh quad = "../e2e/assets/meshes/quad.glb";
+
+scene Main
+{
+}

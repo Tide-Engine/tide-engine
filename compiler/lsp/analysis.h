@@ -43,8 +43,10 @@ void analysis_prepare_call_hierarchy(int line, int character, jbuf *out);    // 
 void analysis_incoming_calls(int line, int character, jbuf *out);            // CallHierarchyIncomingCall[]
 void analysis_outgoing_calls(int line, int character, jbuf *out);            // CallHierarchyOutgoingCall[]
 void analysis_symbols(jbuf *out);                                            // DocumentSymbol[]
-// SymbolInformation items of the whole game, comma-separated after `written` others.
-void analysis_workspace_symbols(const char *query, jbuf *out, int *written);
+// Each SymbolInformation item of the whole game. Its JSON is valid only
+// during the callback; the server copies it when combining game contexts.
+typedef void (*workspace_symbol_fn)(void *user, const jbuf *symbol);
+void analysis_workspace_symbols(const char *query, workspace_symbol_fn symbol, void *user);
 void analysis_inlay_hints(int start_line, int end_line, jbuf *out);          // InlayHint[]
 void analysis_folding_ranges(jbuf *out);                                     // FoldingRange[]
 void analysis_selection_ranges(const json *positions, jbuf *out);            // SelectionRange[], one per Position
@@ -81,6 +83,10 @@ void analysis_set_related_information(bool shows);
 // packages'. Copied; kept until set again.
 void analysis_set_game_folders(const char *game_folder, const char *const *roots, int root_count);
 
+// A file or folder changed on disk: invalidate its asset reads and candidate
+// hashes before the next analysis, including meshes read with its buffers.
+void analysis_file_changed(const char *path);
+
 // The game's asset sites: each one's file as an absolute path with forward
 // slashes (a glob where the declaration's is; NULL for a URL), and the folder
 // of the file that names it. For the server's registrations.
@@ -96,4 +102,8 @@ typedef struct asset_rename {
     const char *old_path;
     const char *new_path;
 } asset_rename;
-void analysis_rename_files(const asset_rename *renames, int count, jbuf *out); // WorkspaceEdit
+// Each TextEdit is serialized before calling `edit`; its URI, path and JSON
+// are valid only during the callback. The server copies them to combine
+// games' edits, including shared files with different active #if branches.
+typedef void (*asset_rename_edit_fn)(void *user, const char *uri, const char *path, const jbuf *edit);
+void analysis_rename_files(const asset_rename *renames, int count, asset_rename_edit_fn edit, void *user);

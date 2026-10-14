@@ -1,0 +1,8 @@
+// expect: 'table' is an asset, not a constant: its value is the pack's, read as the game runs
+asset List<byte> table = "../e2e/assets/table.bin";
+
+const int SIZE = table.count;
+
+scene Main
+{
+}

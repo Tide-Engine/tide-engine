@@ -1,0 +1,6 @@
+// expect: a Mesh's vertices are a struct with a 'float3 position', like 'Mesh<Vertex3>', not int
+asset Mesh<int> quad = "../e2e/assets/meshes/quad.glb";
+
+scene Main
+{
+}

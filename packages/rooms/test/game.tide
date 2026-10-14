@@ -5,6 +5,13 @@ using Rooms;
 
 settings { title = "Rooms test"; maxPlayers = 4; }
 
+// The package's master volume works with a game's own bus type and namespace.
+namespace GameAudio
+{
+    [Bus]
+    enum Channels { Master, Music, Sfx }
+}
+
 scene Main { }
 
 singleton Tally

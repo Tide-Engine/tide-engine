@@ -1,0 +1,4 @@
+// expect: can't be placed in the match
+component Link { LocalEntity? target; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Link); }

@@ -1,0 +1,736 @@
+// What a machine shows of a kitchen, and hears: the camera, the chefs and the
+// sausages, which follow where the match has them, the frame's passes, the
+// sounds, and what's written over it all.
+using Rooms;
+
+asset Clip stepClip = "sfx/step.wav";
+asset Clip pushClip = "sfx/push.wav";
+asset Clip bumpClip = "sfx/bump.wav";
+asset Clip sizzleClip = "sfx/sizzle.wav";
+asset Clip burnClip = "sfx/burn.wav";
+asset Clip splashClip = "sfx/splash.wav";
+asset Clip lightClip = "sfx/light.wav";
+asset Clip cutClip = "sfx/cut.wav";
+asset Clip undoClip = "sfx/undo.wav";
+asset Clip servedClip = "sfx/served.wav";
+asset Clip seaClip = "sfx/sea.wav";
+
+const float CHEF = 0.86;     // How big a chef is drawn
+const int SMOKE = 1;         // What a spark is, when it's no spark
+const int PAPER = 2;
+
+struct Spark
+{
+    float3 position;
+    float3 velocity;
+    float age;
+    float life = 0.4;
+    float size = 0.1;
+    float weight = 1;
+    int kind;             // A spark that glows, smoke, or a piece of paper
+    Color tone = Color.white;
+}
+
+// What moves, each mesh's in a list that's made again every frame, where each
+// piece is shown, which follows where the match has it, and this machine's
+// own effects.
+local singleton Fx
+{
+    List<Solid> boxes;
+    List<Solid> balls;
+    List<Solid> rods;
+    List<Solid> chefs;
+    List<Solid> forks;
+    List<Solid> pedals;
+    List<Solid> clouds;
+    List<Solid> gulls;
+    List<Banger> bangers;
+    List<Decal> decals;
+    List<Mote> motes;
+    List<Mote> puffs;
+    List<Spark> sparks;
+    float dt;
+    float beat;       // Radians, wrapped, for what pulses
+    float time;       // Seconds, wrapped once an hour, for what drifts
+    float shake;
+    Random random;
+
+    int level = -1;               // The level the places below are of
+    bool jump;                    // The board was laid again: nothing glides to its place
+    float3[2] chefAt;
+    float[2] chefTurn;
+    float[2] lunge;               // A chef that met what it can't move leans into it, and back
+    int[2] lungeWay;
+    float3[SAUSAGES] bangerAt;
+    float[SAUSAGES] bangerRoll;
+    float4[SAUSAGES] done;
+    float[SAUSAGES] sink;
+    float gas = 1;
+    float heat = 1;
+    float back;                   // How far the camera is
+    float cheer;                  // Seconds since the level was cooked
+    float undoHeld;               // Seconds the undo key has been down
+    float hint;                   // Seconds the level has been up
+    Sound sea;
+}
+
+local singleton Layout
+{
+    float2 pad;        // The arrows' middle, in the screen's pixels
+    float reach = 34;  // How far from it an arrow is
+    float top = 24;    // A little breathing room; play itself has no panels
+    float bottom = 18;
+}
+
+// Which player this machine's is.
+local singleton Me
+{
+    int seat = -1;
+}
+
+Color Tone(int who)
+{
+    return who == 0 ? Color(0.94, 0.33, 0.3) : Color(0.26, 0.56, 0.98);
+}
+
+string ChefName(int who)
+{
+    return who == 0 ? "RED" : "BLUE";
+}
+
+// A mark painted on the ground: a disc, a ring, part of one, or with a ring
+// under 0 a soft blot.
+void Mark(mut Fx fx, float3 at, float size, Color tint, float ring, float arc)
+{
+    fx.decals.Add(Decal { transform = float4x4.TRS(at, quaternion.identity, float3(size, 1, size)), tint = tint, ring = ring, arc = arc });
+}
+
+void Smoke(mut Fx fx, float3 at, int count, Color tone, float rise)
+{
+    for (var i = 0; i < count; i++)
+    {
+        var way = fx.random.NextFloat2Direction() * fx.random.NextFloat(0.05, 0.4);
+        fx.sparks.Add(Spark { position = at + float3(way.x * 0.6, 0, way.y * 0.6), velocity = float3(way.x, rise * fx.random.NextFloat(0.6, 1.3), way.y),
+                              life = fx.random.NextFloat(0.7, 1.4), size = fx.random.NextFloat(0.1, 0.2), weight = -0.02, kind = SMOKE, tone = tone });
+    }
+}
+
+local event(Stepped step) HearStep(mut Fx fx)
+{
+    if (step.pushed) Audio.Play(pushClip, 0.5, fx.random.NextFloat(0.9, 1.12));
+    else Audio.Play(stepClip, 0.35, fx.random.NextFloat(0.85, 1.2));
+}
+
+local event(Bumped bump) ShowBump(mut Fx fx)
+{
+    fx.lunge[bump.who] = 1;
+    fx.lungeWay[bump.who] = bump.way;
+    Audio.Play(bumpClip, 0.4, fx.random.NextFloat(0.9, 1.1));
+}
+
+// A side lands on a grill: smoke, fat spitting, and the coals flare. Twice,
+// and it's black smoke and sparks.
+local event(Sizzled sizzle) ShowSizzle(mut Fx fx, Kitchen kitchen)
+{
+    var at = Spot(kitchen.board.size, float2(sizzle.at.x, sizzle.at.y), 0.2);
+    fx.heat = 1.9;
+    if (sizzle.burnt)
+    {
+        Smoke(fx, at, 12, Color(0.12, 0.11, 0.11, 0.75), 1.5);
+        for (var i = 0; i < 18; i++)
+        {
+            var way = fx.random.NextFloat3Direction() * fx.random.NextFloat(1, 3.4);
+            fx.sparks.Add(Spark { position = at, velocity = float3(way.x, Math.Abs(way.y) + 1.4, way.z), life = fx.random.NextFloat(0.35, 0.8),
+                                  size = fx.random.NextFloat(0.04, 0.09), tone = Color(1, 0.55, 0.15) });
+        }
+        fx.shake = Math.Max(fx.shake, 0.3);
+        Audio.Play(burnClip, 0.7);
+        return;
+    }
+    Smoke(fx, at, 7, Color(0.95, 0.95, 0.93, 0.5), 1.1);
+    for (var i = 0; i < 6; i++)
+    {
+        var way = fx.random.NextFloat3Direction() * fx.random.NextFloat(0.6, 2);
+        fx.sparks.Add(Spark { position = at, velocity = float3(way.x, Math.Abs(way.y) + 1, way.z), life = fx.random.NextFloat(0.25, 0.5),
+                              size = fx.random.NextFloat(0.03, 0.06), tone = Color(1, 0.8, 0.4) });
+    }
+    Audio.Play(sizzleClip, 0.5, fx.random.NextFloat(0.94, 1.08));
+}
+
+local event(Sank sank) ShowSplash(mut Fx fx, Kitchen kitchen)
+{
+    var at = Spot(kitchen.board.size, float2(sank.at.x, sank.at.y), SEA);
+    for (var i = 0; i < 26; i++)
+    {
+        var way = fx.random.NextFloat2Direction() * fx.random.NextFloat(0.3, 1.5);
+        fx.sparks.Add(Spark { position = at, velocity = float3(way.x, fx.random.NextFloat(2, 4.6), way.y), life = 0.7,
+                              size = fx.random.NextFloat(0.05, 0.11), weight = 0.8, tone = Color(0.8, 0.93, 1) });
+    }
+    fx.shake = Math.Max(fx.shake, 0.2);
+    Audio.Play(splashClip, 0.6);
+}
+
+local event(Flared flare) HearGas()
+{
+    if (flare.lit) Audio.Play(lightClip, 0.5);
+    else Audio.Play(cutClip, 0.45);
+}
+
+local event(Rewound) HearUndo()
+{
+    Audio.Play(undoClip, 0.35);
+}
+
+local event(Laid) ShowLaid(mut Fx fx)
+{
+    fx.jump = true;
+}
+
+// Cooked: paper comes down over the kitchen, in the two chefs' colors.
+local event(Served served) ShowServed(mut Fx fx)
+{
+    for (var i = 0; i < 90; i++)
+    {
+        var from = float3(fx.random.NextFloat(-5, 5), fx.random.NextFloat(3, 7), fx.random.NextFloat(-3.5, 3.5));
+        var way = float3(fx.random.NextFloat(-1, 1), fx.random.NextFloat(-1, 0), fx.random.NextFloat(-1, 1));
+        fx.sparks.Add(Spark { position = from, velocity = way, life = fx.random.NextFloat(2.6, 4), size = fx.random.NextFloat(0.1, 0.17), weight = 0.16,
+                              kind = PAPER, tone = i % 3 == 0 ? Color(0.99, 0.82, 0.3) : Tone(i % 2) });
+    }
+    Audio.Play(servedClip, 0.6);
+}
+
+// A frame starts: the meshes and the targets are made, once, and what the
+// views after this one fill is emptied.
+[Stage(Layers.Camera, -1)]
+view Begin(mut Fx fx, mut Models models, mut Lens lens, mut Room room, mut Me me)
+{
+    if (!models.made) MakeModels(models);
+    // The frame is drawn in about LINES lines, in pixels of its own, each a
+    // whole number of the window's across
+    var each = Math.Max(2.0, Math.Round(Screen.height / LINES));
+    var size = float2(Math.Ceil(Screen.width / each), Math.Ceil(Screen.height / each));
+    if (!lens.made)
+    {
+        lens.made = true;
+        lens.scene = RenderTarget(int(size.x), int(size.y), 1);
+    }
+    else if (size.x != lens.size.x || size.y != lens.size.y)
+    {
+        lens.scene.Resize(int(size.x), int(size.y));
+    }
+    lens.size = size;
+    lens.scale = float2(Screen.width / size.x, Screen.height / size.y);
+    fx.dt = Math.Min(Frame.dt, 0.05);
+    fx.beat += fx.dt * 3;
+    if (fx.beat > Math.TAU) fx.beat -= Math.TAU;
+    fx.time += fx.dt;
+    if (fx.time > 3600) fx.time -= 3600;
+    room.time = fx.time;
+    fx.shake = Math.Max(0, fx.shake - fx.dt);
+    fx.heat += (1 - fx.heat) * (1 - Math.Exp(-fx.dt * 3));
+    room.heat = fx.heat;
+    me.seat = -1;
+    fx.boxes.Clear();
+    fx.balls.Clear();
+    fx.rods.Clear();
+    fx.chefs.Clear();
+    fx.forks.Clear();
+    fx.pedals.Clear();
+    fx.clouds.Clear();
+    fx.gulls.Clear();
+    fx.bangers.Clear();
+    fx.decals.Clear();
+
+    fx.sea.clip = seaClip;
+    fx.sea.loop = true;
+    fx.sea.volume = 0.22;
+    fx.sea.playing = true;
+}
+
+[Stage(Layers.Camera, -1)]
+view Mine(Hand hand, mut Me me, with ownership)
+{
+    me.seat = hand.seat;
+}
+
+// The chef this machine's player has in hand: their own, or when they're
+// alone, whichever they changed to.
+int InHand(Kitchen kitchen, Me me)
+{
+    if (me.seat < 0) return -1;
+    return kitchen.hands.count < 2 ? kitchen.lead : me.seat;
+}
+
+// The camera, over the kitchen and tilted down at it, always from the south,
+// so that up on the screen is north for both players. It shows the whole
+// board, between what's written above it and below, in a window of any shape,
+// and holds still, but for a jolt when something burns. Then the pointer, for a
+// screen with no keys: the arrows, and the button that changes chefs.
+[Stage(Layers.Camera)]
+view Look(Kitchen kitchen, Devices devices, mut Fx fx, mut Room room, mut Layout layout, mut Pad pad, mut Scenery scenery, mut Shore shore, Lens lens, Lobby lobby)
+{
+    var shown = kitchen.level;
+    room.region = Region(kitchen.level);
+    room.bellows = BellowsOn(kitchen.board) ? 1 : 0;
+    if (kitchen.laid && (scenery.level != shown || scenery.layout != kitchen.layout))
+    {
+        MakeScenery(scenery, shore, kitchen.board, shown, room.region);
+        scenery.layout = kitchen.layout;
+    }
+    fx.sea.volume = room.region == 0 ? 0.22 : room.region == 1 ? 0.12 : room.region == 2 ? 0.04 : 0;
+
+    var screen = float2(Screen.width, Screen.height);
+    layout.top = 24;
+    layout.bottom = pad.touched ? 156 : 18;
+    var tall = Math.Max(screen.y - layout.top - layout.bottom, 80);
+    layout.reach = Math.Clamp(Math.Min(screen.x, screen.y) * 0.075, 26, 36);
+    layout.pad = float2(screen.x - layout.reach * 2.2 - 10, screen.y - layout.reach * 2.2 - 14);
+
+    var size = kitchen.board.size;
+    var pitch = 0.98;
+    var fov = 30.0;
+    var half = Math.Tan(Math.Radians(fov) * 0.5);
+    // A small kitchen isn't looked at from right on top of it
+    var wide = Math.Max(size.x * 0.5 + 0.8, 3.4);
+    var deep = Math.Max(size.y * 0.5 + 1.0, 2.9);
+    var back = Math.Max(wide / (half * screen.x / screen.y), deep * Math.Sin(pitch) * 1.1 / half * (screen.y / tall));
+    if (fx.back <= 0 || fx.level != shown) fx.back = back;
+    fx.back += (back - fx.back) * (1 - Math.Exp(-fx.dt * 4));
+    // The board's middle is between what's written above it and below, not the window's
+    var lift = (layout.top - layout.bottom) * 0.5 * (2 * half * fx.back / screen.y) / Math.Sin(pitch);
+    var focus = float3(0, 0, lift + 0.25);
+    var from = float3(0, Math.Sin(pitch), -Math.Cos(pitch));
+    var eye = focus + from * fx.back;
+    var turned = quaternion.LookRotation(Math.Normalize(focus - eye), float3(0, 1, 0));
+    var wobble = fx.beat * 23;
+    var jolt = float3(Math.Sin(wobble) + Math.Sin(wobble * 0.62 + 1.3) * 0.6, Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6, 0)
+             * (fx.shake * fx.shake * 0.02 * fx.back);
+    room.eye = eye + jolt;
+    lens.scene.SetCamera(room.eye, turned, fov);
+    // What the verts move corners onto the frame's pixels by
+    room.grid = lens.size * 0.5;
+    Audio.SetListener(float3(0, 6, -6), quaternion.identity);
+
+    // A finger on an arrow holds that way, and one on the middle changes chefs
+    pad.way = 0;
+    pad.swap = Math.Max(0, pad.swap - fx.dt);
+    if (!lobby.playing) return;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        pad.touched = true;
+        var at = Screen.Flip(touch.position) - layout.pad;
+        var far = Math.Length(at);
+        if (far > layout.reach * 2.4) continue;
+        if (far < layout.reach * 0.55)
+        {
+            if (touch.press.down) pad.swap = 0.1;
+            continue;
+        }
+        if (Math.Abs(at.x) > Math.Abs(at.y)) pad.way = at.x > 0 ? EAST + 1 : WEST + 1;
+        else pad.way = at.y > 0 ? SOUTH + 1 : NORTH + 1;
+    }
+}
+
+// A chef: its body is one mesh, drawn in its color and turned the way it
+// faces, with the fork out in front of it and an arm to each of its hands.
+void AddChef(mut Fx fx, int who, float3 at, float turn, float moving, bool mine, bool onPedal)
+{
+    var up = float3(0, 1, 0);
+    var front = float3(Math.Sin(turn), 0, Math.Cos(turn));
+    var right = float3(front.z, 0, -front.x);
+    var turned = quaternion.LookRotation(front, up);
+    var push = Toward(fx.lungeWay[who]) * (Math.Sin(fx.lunge[who] * Math.PI) * 0.13);
+    var hop = Math.Sin(Math.Saturate(moving * 1.2) * Math.PI) * 0.07;
+    var root = at + push + up * (hop - (onPedal ? 0.035 : 0.0));
+    var tone = Tone(who);
+    var skin = Color(0.99, 0.8, 0.66);
+    Mark(fx, float3(at.x, ON_FLOOR, at.z), 1.0, Color(0, 0, 0, 0.4), -1, 1);
+    if (mine)
+    {
+        var pulse = 0.8 + Math.Sin(fx.beat * 2) * 0.2;
+        Mark(fx, float3(at.x, ON_FLOOR, at.z), 1.12, Color(1, 1, 1, 0.95 * pulse), 0.17, 1);
+    }
+    fx.chefs.Add(Piece(root, turned, float3(CHEF), tone, 0));
+
+    // The fork dips towards its tines, which are over the next tile
+    var dip = Math.Normalize(front + up * -0.21);
+    var grip = root + (up * 0.56 + front * 0.26) * CHEF + front * (fx.lunge[who] > 0 ? Math.Sin(fx.lunge[who] * Math.PI) * 0.05 : 0.0);
+    fx.forks.Add(Piece(grip, quaternion.LookRotation(dip, up), float3(1), Color.white, 0));
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var shoulder = root + (right * (0.25 * side) + up * 0.63) * CHEF;
+        var hand = grip + dip * (side < 0 ? -0.07 : 0.2) + right * (0.02 * side);
+        fx.rods.Add(Rod(shoulder, hand, 0.052, Color(0.97, 0.96, 0.93), 0.25));
+        fx.balls.Add(Piece(hand, turned, float3(0.07), skin, 0.3));
+    }
+}
+
+// Everything that moves is put where it's shown: a little behind where the
+// match has it, on its way there, so that a move is a step, a turn or a roll,
+// and a move taken back is one too.
+[Stage(Layers.Gather)]
+view Gather(Kitchen kitchen, mut Fx fx, mut Room room, Me me)
+{
+    var size = kitchen.board.size;
+    var up = float3(0, 1, 0);
+    var shown = kitchen.level;
+    var jump = fx.jump || fx.level != shown;
+    if (fx.level != shown) fx.hint = 0;
+    fx.level = shown;
+    fx.jump = false;
+    fx.hint += fx.dt;
+    fx.cheer = kitchen.cleared != 0 ? fx.cheer + fx.dt : 0;
+    var glide = jump ? 1.0 : 1 - Math.Exp(-fx.dt * 20);
+    var slow = jump ? 1.0 : 1 - Math.Exp(-fx.dt * 6);
+    var lit = GasOn(kitchen.board);
+    fx.gas += ((lit ? 1.0 : 0.0) - fx.gas) * (jump ? 1.0 : 1 - Math.Exp(-fx.dt * 12));
+    room.gas = fx.gas;
+    var inHand = InHand(kitchen, me);
+
+    for (var who = 0; who < 2; who++)
+    {
+        var chef = kitchen.board.chefs[who];
+        var target = Spot(size, float2(chef.at.x, chef.at.y), 0);
+        var left = Math.Distance(fx.chefAt[who], target);
+        fx.chefAt[who] = fx.chefAt[who] + (target - fx.chefAt[who]) * glide;
+        fx.chefTurn[who] += (chef.spin * Math.PI * 0.5 - fx.chefTurn[who]) * glide;
+        fx.lunge[who] = Math.Max(0, fx.lunge[who] - fx.dt * 5);
+        AddChef(fx, who, fx.chefAt[who], fx.chefTurn[who], left, who == inHand, TileAt(kitchen.board, chef.at) == Tile.Pedal);
+    }
+
+    for (var i = 0; i < kitchen.board.count; i++)
+    {
+        var sausage = kitchen.board.sausages[i];
+        var tail = Tail(sausage);
+        var target = (Spot(size, float2(sausage.at.x, sausage.at.y), 0) + Spot(size, float2(tail.x, tail.y), 0)) * 0.5;
+        fx.bangerAt[i] = fx.bangerAt[i] + (target - fx.bangerAt[i]) * glide;
+        fx.bangerRoll[i] += (sausage.rolled * Math.PI - fx.bangerRoll[i]) * glide;
+        var cooked = float4(sausage.cooked[0], sausage.cooked[1], sausage.cooked[2], sausage.cooked[3]);
+        fx.done[i] = fx.done[i] + (cooked - fx.done[i]) * slow;
+        fx.sink[i] = sausage.sunk ? fx.sink[i] + fx.dt : 0;
+        if (fx.sink[i] > 2.2) continue;
+
+        // It lies along its length, and rolls about it, the way it was pushed
+        var along = sausage.upright ? float3(0, 0, -1) : float3(1, 0, 0);
+        var roll = fx.bangerRoll[i] * (sausage.upright ? -1.0 : 1.0);
+        var turned = Math.Mul(quaternion.LookRotation(along, up), quaternion.AxisAngle(float3(0, 0, 1), roll));
+        mut var lift = BANGER * FLAT + Math.Abs(Math.Sin(fx.bangerRoll[i])) * BANGER * (1 - FLAT) + 0.012;
+        mut var tilt = quaternion.identity;
+        if (sausage.sunk)
+        {
+            // Into the sea: it goes under, comes back up, and lies there, bobbing
+            var under = fx.sink[i];
+            lift = SEA + 0.02 + Math.Max(0.5 - under * 2.4, 0) + Math.Sin(under * 3.2) * 0.035 * Math.Min(under, 1) - Math.Saturate(under - 1.4) * 0.6;
+            tilt = quaternion.AxisAngle(float3(1, 0, 0), Math.Sin(under * 2.1) * 0.12);
+        }
+        else
+        {
+            Mark(fx, float3(fx.bangerAt[i].x, ON_FLOOR, fx.bangerAt[i].z), sausage.upright ? 0.95 : 1.9, Color(0, 0, 0, 0.0), -1, 1);
+        }
+        fx.bangers.Add(Banger { transform = float4x4.TRS(fx.bangerAt[i] + up * lift, Math.Mul(tilt, turned), float3(1, FLAT, 1)), done = fx.done[i] });
+    }
+
+    // The pedal's plate goes down under a chef
+    for (var y = 0; y < size.y; y++)
+    {
+        for (var x = 0; x < size.x; x++)
+        {
+            if (TileAt(kitchen.board, int2(x, y)) != Tile.Pedal) continue;
+            var down = Same(kitchen.board.chefs[0].at, int2(x, y)) || Same(kitchen.board.chefs[1].at, int2(x, y));
+            fx.pedals.Add(Piece(Spot(size, float2(x, y), down ? -0.045 : 0.0), quaternion.identity, float3(1), Color.white, 0));
+        }
+    }
+
+    // Clouds go round, far off, and two gulls circle over the kitchen
+    for (var i = 0; i < 7; i++)
+    {
+        var around = 0.6 + i * 0.4 + fx.time * 0.004 + Math.Sin(i * 1.7) * 0.1;
+        var far = 21 + Math.Frac(i * 0.37) * 9;
+        var at = float3(Math.Cos(around) * far, 1.5 + Math.Frac(i * 0.61) * 3, Math.Abs(Math.Sin(around)) * far + 6);
+        var big = 1.3 + Math.Frac(i * 0.83) * 1.2;
+        fx.clouds.Add(Solid { transform = float4x4.TRS(at, quaternion.AxisAngle(up, i * 1.3), float3(big)), kind = CLOUD });
+    }
+    for (var i = 0; i < 2; i++)
+    {
+        var around = fx.time * (0.33 + i * 0.07) + i * 2.6;
+        var far = 6 + i * 2.2;
+        var at = float3(Math.Cos(around) * far, 2.2 + i * 0.5 + Math.Sin(fx.time * 0.7 + i) * 0.2, Math.Sin(around) * far * 0.7 + 1.5);
+        var heading = float3(-Math.Sin(around), 0, Math.Cos(around) * 0.7);
+        var bank = quaternion.AxisAngle(float3(0, 0, 1), -0.35);
+        fx.gulls.Add(Piece(at, Math.Mul(quaternion.LookRotation(Math.Normalize(heading), up), bank), float3(0.6), Color.white, 0));
+    }
+}
+
+// Smoke rises and thins, and paper falls, tumbling, and lies where it lands:
+// both are lit, so they're drawn with everything else.
+[Stage(Layers.Gather, 1)]
+view Drift(mut Fx fx)
+{
+    fx.puffs.Clear();
+    mut var i = 0;
+    while (i < fx.sparks.count)
+    {
+        mut var spark = fx.sparks[i];
+        if (spark.kind == 0)
+        {
+            i++;
+            continue;
+        }
+        spark.age += fx.dt;
+        if (spark.age >= spark.life)
+        {
+            fx.sparks.RemoveAt(i);
+            continue;
+        }
+        var left = 1 - spark.age / spark.life;
+        if (spark.kind == SMOKE)
+        {
+            spark.velocity = spark.velocity * Math.Max(0, 1 - 1.4 * fx.dt) + float3(0.25, 0.5, 0.1) * fx.dt;
+            spark.position += spark.velocity * fx.dt;
+            fx.sparks[i] = spark;
+            var grown = spark.size * (1 + spark.age * 1.8);
+            fx.puffs.Add(Mote { transform = float4x4.TRS(spark.position, quaternion.identity, float3(grown)),
+                                tint = Color(spark.tone.r, spark.tone.g, spark.tone.b, spark.tone.a * Math.Min(left * 1.5, 1) * Math.Saturate(spark.age * 12)) });
+            i++;
+            continue;
+        }
+        if (spark.position.y > 0.03)
+        {
+            spark.velocity.y -= 18 * spark.weight * fx.dt;
+            spark.velocity.x += Math.Sin(spark.age * 5 + spark.size * 60) * fx.dt * 2;
+            spark.position += spark.velocity * fx.dt;
+        }
+        fx.sparks[i] = spark;
+        var lying = spark.position.y <= 0.03;
+        var tumble = lying ? quaternion.identity : quaternion.Euler(float3(spark.age * 7, spark.age * 5 + spark.size * 40, spark.age * 3));
+        fx.boxes.Add(Piece(float3(spark.position.x, Math.Max(spark.position.y, 0.02), spark.position.z), tumble,
+                           float3(spark.size, 0.015, spark.size * 0.7) * Math.Saturate(left * 2), spark.tone, 0.3));
+        i++;
+    }
+}
+
+// The sun's image: everything that casts a shadow, drawn through a camera
+// where the sun is, into a target that keeps how far the sun sees along each
+// of its pixels, and nothing else.
+[Stage(Layers.Lamp)]
+view Cast(Fx fx, Scenery scenery, Models models, mut Shadow shadow)
+{
+    if (!shadow.made)
+    {
+        shadow.made = true;
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
+        shadow.depth = shadow.map.depth;
+    }
+    // The sun looks along its light from far off, and sees a box with no perspective
+    var turned = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));
+    var lamp = float4x4.TRS(Math.Mul(turned, float3(0, 0.5, -LAMP_AWAY)), turned, float3(1));
+    var sees = float4x4.Ortho(LAMP_SPAN, LAMP_SPAN, 0, LAMP_FAR);
+    shadow.map.Clear(Color.white);
+    shadow.map.SetCamera(lamp, sees);
+    shadow.toLamp = shadow.map.WorldToClip();
+    shadow.map.Mesh(scenery.mesh, scenery.faces, float4x4.identity);
+    shadow.map.Instanced(models.chef, models.chefFaces, fx.chefs);
+    shadow.map.Instanced(models.fork, models.forkFaces, fx.forks);
+    shadow.map.Instanced(models.banger, models.bangerFaces, fx.bangers);
+    shadow.map.Instanced(models.pedal, models.pedalFaces, fx.pedals);
+    shadow.map.Instanced(models.cube, models.cubeFaces, fx.boxes);
+    shadow.map.Instanced(models.ball, models.ballFaces, fx.balls);
+    shadow.map.Instanced(models.rod, models.rodFaces, fx.rods);
+    shadow.map.Cull(Cull.None)
+    {
+        shadow.map.Instanced(models.gull, models.gullFaces, fx.gulls);
+    }
+}
+
+// The frame starts here: the sky, the clouds, and the sea.
+[Stage(Layers.Scene)]
+view Sky(Fx fx, Models models, Scenery scenery, Lens lens, Room room)
+{
+    lens.scene.Clear(RegionSky(room.region));
+    lens.scene.Screen()
+    {
+        // An overcast sky, paler towards the sea
+        lens.scene.Shape(Shape { center = lens.size * 0.5, size = lens.size, color = RegionSkyTop(room.region), color2 = RegionSky(room.region) });
+    }
+    lens.scene.Mesh(scenery.sea, scenery.seaFaces, float4x4.identity, SeaLook);
+    lens.scene.Instanced(models.cloud, models.cloudFaces, fx.clouds, Snap, Plain);
+}
+
+// Everything on the islands: what stands still is one draw, and each mesh of
+// what moves is another. Every corner is moved onto a pixel of the frame.
+[Stage(Layers.Pieces)]
+view Pieces(Fx fx, Models models, Scenery scenery, Lens lens)
+{
+    lens.scene.Mesh(scenery.mesh, scenery.faces, float4x4.identity, Snap, Baked);
+    lens.scene.Instanced(models.chef, models.chefFaces, fx.chefs, Snap, Plain);
+    lens.scene.Instanced(models.fork, models.forkFaces, fx.forks, Snap, Plain);
+    lens.scene.Instanced(models.banger, models.bangerFaces, fx.bangers, Snap, BangerLook);
+    lens.scene.Instanced(models.pedal, models.pedalFaces, fx.pedals, Snap, Plain);
+    lens.scene.Instanced(models.cube, models.cubeFaces, fx.boxes, Snap, Plain);
+    lens.scene.Instanced(models.ball, models.ballFaces, fx.balls, Snap, Plain);
+    lens.scene.Instanced(models.rod, models.rodFaces, fx.rods, Snap, Plain);
+    lens.scene.Cull(Cull.None)
+    {
+        lens.scene.Instanced(models.gull, models.gullFaces, fx.gulls, Snap, Plain);
+    }
+}
+
+// What's flat on the ground, over it. It reads depth and writes none: what's
+// in front hides it, and it hides nothing.
+[Stage(Layers.Marks)]
+view Marks(Fx fx, Models models, Lens lens)
+{
+    lens.scene.Depth(Depth.Read)
+    {
+        lens.scene.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
+        lens.scene.Instanced(models.ball, models.ballFaces, fx.puffs, PuffLook);
+    }
+}
+
+// The sparks, each a small cube that glows: they fly, fall and fade. All of
+// them are one draw, added to what's behind them.
+[Stage(Layers.Air)]
+view Glow(mut Fx fx, Models models, Lens lens)
+{
+    fx.motes.Clear();
+    mut var i = 0;
+    while (i < fx.sparks.count)
+    {
+        mut var spark = fx.sparks[i];
+        if (spark.kind != 0)
+        {
+            i++;
+            continue;
+        }
+        spark.age += fx.dt;
+        if (spark.age >= spark.life)
+        {
+            fx.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.velocity.y -= 14 * spark.weight * fx.dt;
+        spark.velocity = spark.velocity * Math.Max(0, 1 - 2 * fx.dt);
+        spark.position += spark.velocity * fx.dt;
+        fx.sparks[i] = spark;
+        var left = 1 - spark.age / spark.life;
+        fx.motes.Add(Mote { transform = float4x4.TRS(spark.position, quaternion.identity, float3(spark.size * (0.4 + 0.6 * left))),
+                            tint = Color(spark.tone.r, spark.tone.g, spark.tone.b, Math.Min(left * 1.6, 1)) });
+        i++;
+    }
+    lens.scene.Blend(Blend.Add),
+    lens.scene.Depth(Depth.Read),
+    lens.scene.Cull(Cull.None)
+    {
+        lens.scene.Instanced(models.cube, models.cubeFaces, fx.motes, MoteLook);
+    }
+}
+
+// The frame, to the window: one frag makes each of its pixels a square of the
+// window's, in the few shades there are.
+[Stage(Layers.Show)]
+view Show(Lens lens)
+{
+    Draw.Blit(lens.scene.color, Draw.window, Present);
+}
+
+Color DoneTone(int cooked)
+{
+    if (cooked <= 0) return Color(0.98, 0.66, 0.64);
+    if (cooked == 1) return Color(0.6, 0.33, 0.16);
+    return Color(0.08, 0.07, 0.07);
+}
+
+// A pip for a side of a sausage: pink while it's raw, brown once it's cooked,
+// with a tick, and black with a red rim when it's burnt.
+void Pip(float2 at, float size, int cooked)
+{
+    Draw.Rect(at, float2(size * 2 + 3), cooked > 1 ? Color(1, 0.3, 0.25) : Color(0.08, 0.1, 0.16, 0.9));
+    Draw.Rect(at, float2(size * 2 - 1), DoneTone(cooked));
+    if (cooked != 1) return;
+    Draw.Line(at + float2(-size * 0.5, 0), at + float2(-size * 0.1, size * 0.4), 1.6, Color.white);
+    Draw.Line(at + float2(-size * 0.1, size * 0.4), at + float2(size * 0.5, -size * 0.4), 1.6, Color.white);
+}
+
+// Over each half of each sausage, how done its two sides are: the side that's
+// up above, and the side that's down, which nobody can see, below it.
+[Stage(Layers.Hud)]
+view Pips(Kitchen kitchen, Fx fx, Lens lens, Lobby lobby, Guide guide)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing) return;
+    // Cooking marks are a guide overlay only. In play the meat's own faces,
+    // smoke and coals say what happened; the active chef has a ground ring.
+    if (!guide.open) return;
+    var pip = Math.Clamp(Screen.width / 110, 4.5, 7);
+    for (var i = 0; i < kitchen.board.count; i++)
+    {
+        var sausage = kitchen.board.sausages[i];
+        if (sausage.sunk) continue;
+        var down = sausage.rolled & 1;
+        var middle = fx.bangerAt[i];
+        var along = sausage.upright ? float3(0, 0, -0.5) : float3(0.5, 0, 0);
+        for (var half = 0; half < 2; half++)
+        {
+            var place = lens.scene.WorldToScreen(middle + along * (half == 0 ? -1.0 : 1.0) + float3(0, 0.75, 0));
+            var at = float2(Math.Floor(place.x * lens.scale.x), Math.Floor(place.y * lens.scale.y));
+            Draw.Rect(at, float2(pip * 2 + 6, pip * 4 + 9), Color(0.08, 0.1, 0.16, 0.6));
+            Pip(at - float2(0, pip + 1.5), pip, sausage.cooked[half * 2 + 1 - down]);
+            Pip(at + float2(0, pip + 1.5), pip, sausage.cooked[half * 2 + down]);
+        }
+    }
+}
+
+// Keys act on the shared board, without a permanent toolbar. A guide keeps
+// the same actions available to touch and controller players.
+[Stage(Layers.Hud, 1)]
+view Hud(Kitchen kitchen, Devices devices, Me me, Layout layout, mut Fx fx, Pad pad, Lobby lobby, Guide guide)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || guide.open) return;
+    var undoKey = devices.keyboard.z.pressed || devices.keyboard.backspace.pressed || devices.gamepad.buttonEast.pressed;
+    mut var undo = devices.keyboard.z.down || devices.keyboard.backspace.down || devices.gamepad.buttonEast.down;
+    fx.undoHeld = undoKey ? fx.undoHeld + fx.dt : 0;
+    if (fx.undoHeld > 0.4)
+    {
+        fx.undoHeld -= 0.09;
+        undo = true;
+    }
+    if (undo) Send(Undo { level = kitchen.level });
+    if (devices.keyboard.r.down || devices.gamepad.select.down) Send(Restart { level = kitchen.level });
+    // A development shortcut, deliberately absent from normal play's UI.
+    if (devices.keyboard.n.down) Send(Goto { level = NextKitchen(kitchen.level) });
+    if (!pad.touched) return;
+    var reach = layout.reach;
+    for (var way = 0; way < 4; way++)
+    {
+        var step = Way(way);
+        var at = layout.pad + float2(step.x, step.y) * (reach * 1.35);
+        var held = pad.way == way + 1;
+        Draw.Rect(at, float2(reach * 1.35), Color(0.04, 0.07, 0.08, held ? 0.5 : 0.18));
+        var tip = at + float2(step.x, step.y) * (reach * 0.28);
+        var side = float2(-step.y, step.x) * (reach * 0.28);
+        Draw.Line(tip, at - float2(step.x, step.y) * (reach * 0.15) + side, 3, UI_PAPER);
+        Draw.Line(tip, at - float2(step.x, step.y) * (reach * 0.15) - side, 3, UI_PAPER);
+    }
+    if (kitchen.hands.count < 2)
+    {
+        var who = Math.Max(InHand(kitchen, me), 0);
+        Draw.Rect(layout.pad, float2(reach * 0.7), Color(0.04, 0.07, 0.08, 0.25));
+        Draw.Rect(layout.pad, float2(10), Tone(who));
+        Draw.Line(layout.pad + float2(-8, -9), layout.pad + float2(8, -9), 2, UI_PAPER);
+        Draw.Line(layout.pad + float2(8, 9), layout.pad + float2(-8, 9), 2, UI_PAPER);
+    }
+}
+
+// Connection and pause controls stay reachable; they take a small corner,
+// with no game title or status panel behind them.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 68, 10, 58, 34);
+}
+
+override string Rooms.Tagline()
+{
+    return "";
+}

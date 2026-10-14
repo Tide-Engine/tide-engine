@@ -19,7 +19,7 @@
 //
 //   TIDE_BUILDS_URL  the service, like https://builds.tide-engine.dev
 //   TIDE_GAME_KEY    the key of a game there
-//   TIDE_BUILDS_MOD  the mod's line, like "github.com/BlenMiner/tide-engine//builds/example/mod <commit>"
+//   TIDE_BUILDS_MOD  the mod's line, like "github.com/Tide-Engine/tide-engine//builds/example/mod <commit>"
 //
 // Nothing is timed: the test waits for the build's builder to say how it
 // went, for the page's own promise of its first frame, and for the line the
@@ -65,6 +65,7 @@ function run(program, args, options = {}) {
 // and expressions to evaluate in it.
 async function openBrowser(profile) {
     const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
+        '--mute-audio', // Headless, it still plays through the machine's device
         '--remote-debugging-pipe', `--user-data-dir=${profile}`,
         // WebGL in software: no GPU needed
         '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank'],

@@ -1,0 +1,14 @@
+// expect: 'Later' uses local state here, and changes the match on line 11, but a task runs in one world
+scene Main { }
+async void Flow()
+{
+    await Wait.Frames(1);
+}
+void Ask() { Flow(); }
+void Through() { Ask(); }
+async void Later()
+{
+    await Wait.Ticks(1);
+    Through();
+}
+event(Spawned) Setup(with Main) { Later(); }

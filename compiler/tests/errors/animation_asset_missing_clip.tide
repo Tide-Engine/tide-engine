@@ -1,0 +1,3 @@
+// expect: animation 'Run' is missing
+[Name("Run")] asset Animation run = "../e2e/animation_imports/single.gltf";
+scene Main { }

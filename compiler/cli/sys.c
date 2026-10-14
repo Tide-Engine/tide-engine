@@ -18,6 +18,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -72,6 +73,40 @@ const char *path_base(const char *path)
     return base;
 }
 
+#ifndef _WIN32
+// The whole path of what isn't there, as a file a run is about to write isn't:
+// realpath answers only for what exists. So it's asked for as much of the path
+// as is there, a name less at a time from the end, down to the current folder
+// for a path that isn't from the root, and the names left follow as they were
+// typed: a file has the path it will have once it's written. NULL for no path
+// at all, and when nothing answers (the current folder is gone).
+static char *absolute_missing(const char *path)
+{
+    size_t end = strlen(path);
+    while (end > 1 && path[end - 1] == '/') end--;
+    if (end == 0) return NULL;
+    char *typed = copy(path); // Without the slashes at its end
+    typed[end] = '\0';
+    char *head = copy(typed); // Room for "." too, which a path of one character has
+    char *out = NULL;
+    for (size_t at = end; !out;) {
+        while (at > 0 && typed[at - 1] != '/') at--; // Before a name that isn't there
+        const size_t rest = at;
+        while (at > 1 && typed[at - 1] == '/') at--;
+        const size_t n = at > 0 ? at : 1; // With nothing before the name, the current folder
+        memcpy(head, at > 0 ? typed : ".", n);
+        head[n] = '\0';
+        char *resolved = realpath(head, NULL);
+        if (resolved) out = path_join(resolved, typed + rest);
+        free(resolved);
+        if (at == 0 || (at == 1 && typed[0] == '/')) break; // The current folder was the last to ask, or the root
+    }
+    free(head);
+    free(typed);
+    return out;
+}
+#endif
+
 char *path_absolute(const char *path)
 {
 #ifdef _WIN32
@@ -80,6 +115,7 @@ char *path_absolute(const char *path)
     char *out = copy(n > 0 && n < sizeof buffer ? buffer : path);
 #else
     char *resolved = realpath(path, NULL);
+    if (!resolved) resolved = absolute_missing(path);
     char *out = resolved ? resolved : copy(path);
 #endif
     to_forward_slashes(out);
@@ -410,8 +446,9 @@ static bool ends_with(const char *s, const char *suffix)
 }
 
 // What the program prints and its errors go to the file `log`, nowhere with
-// `quiet`, and otherwise where tide's own do.
-static bool start_process(const char *const *argv, const char *cwd, const bool quiet, const char *log,
+// `quiet`, into a pipe whose other end `kept` is given when that's asked for,
+// and otherwise where tide's own do.
+static bool start_process(const char *const *argv, const char *cwd, const bool quiet, const char *log, HANDLE *kept,
                           PROCESS_INFORMATION *process)
 {
     char *line = NULL;
@@ -431,27 +468,48 @@ static bool start_process(const char *const *argv, const char *cwd, const bool q
     memset(&startup, 0, sizeof startup);
     startup.cb = sizeof startup;
     HANDLE output = INVALID_HANDLE_VALUE;
-    const bool redirected = quiet || log;
+    const bool redirected = quiet || log || kept;
     if (redirected) {
         SECURITY_ATTRIBUTES inherit = {sizeof inherit, NULL, TRUE};
-        output = log ? CreateFileA(log, GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
-                     : CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, NULL);
+        if (kept) {
+            // The program gets the end to write, which tide lets go of once
+            // it has started, so no program started later has it too: the end
+            // to read then ends when this program does.
+            if (!CreatePipe(kept, &output, &inherit, 0)) {
+                if (command != line) free(command);
+                free(line);
+                return false;
+            }
+            SetHandleInformation(*kept, HANDLE_FLAG_INHERIT, 0);
+        } else {
+            output = log ? CreateFileA(log, GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
+                         : CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, NULL);
+        }
         startup.dwFlags = STARTF_USESTDHANDLES;
         startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
         startup.hStdOutput = output;
         startup.hStdError = output;
     }
-    const BOOL started = CreateProcessA(NULL, command, NULL, NULL, redirected, 0, NULL, cwd, &startup, process);
+    if (!redirected) {
+        // GUI-subsystem programs (the native editor) also need the caller's
+        // pipe handles for --check and bounded-run diagnostics.
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    }
+    const BOOL started = CreateProcessA(NULL, command, NULL, NULL, TRUE, redirected ? CREATE_NO_WINDOW : 0, NULL, cwd, &startup, process);
     if (command != line) free(command);
     free(line);
     if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
+    if (!started && kept) CloseHandle(*kept);
     return started != 0;
 }
 
 int sys_run(const char *const *argv, const char *cwd, const bool quiet)
 {
     PROCESS_INFORMATION process;
-    if (!start_process(argv, cwd, quiet, NULL, &process)) return -1;
+    if (!start_process(argv, cwd, quiet, NULL, NULL, &process)) return -1;
     WaitForSingleObject(process.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(process.hProcess, &code);
@@ -462,17 +520,93 @@ int sys_run(const char *const *argv, const char *cwd, const bool quiet)
 
 struct sys_process {
     PROCESS_INFORMATION info;
+    // For a program whose words are kept (sys_start_kept): the pipe's end to
+    // read, the thread that reads it, and what it has read, which is that
+    // thread's until it ends
+    HANDLE said;
+    HANDLE reader;
+    char *text;
+    size_t len;
 };
 
 sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log)
 {
-    sys_process *p = malloc(sizeof *p);
+    sys_process *p = calloc(1, sizeof *p);
     if (!p) abort();
-    if (!start_process(argv, cwd, false, log, &p->info)) {
+    if (!start_process(argv, cwd, false, log, NULL, &p->info)) {
         free(p);
         return NULL;
     }
     return p;
+}
+
+// Reads what a program says until it lets go of its end of the pipe, which is
+// when it ends. Read as it's said: a pipe only holds so much, and a program
+// that has filled one waits for it to be read.
+static DWORD WINAPI read_said(void *user)
+{
+    sys_process *p = user;
+    size_t cap = 0;
+    for (;;) {
+        if (p->len + 4096 + 1 > cap) {
+            cap = cap * 2 + 8192;
+            p->text = realloc(p->text, cap);
+            if (!p->text) abort();
+        }
+        DWORD got = 0;
+        if (!ReadFile(p->said, p->text + p->len, 4096, &got, NULL) || got == 0) break;
+        p->len += got;
+    }
+    p->text[p->len] = 0;
+    return 0;
+}
+
+// What a kept program said, once its reader has all of it. To free().
+static char *take_said(sys_process *p)
+{
+    WaitForSingleObject(p->reader, INFINITE);
+    CloseHandle(p->reader);
+    CloseHandle(p->said);
+    return p->text;
+}
+
+sys_process *sys_start_kept(const char *const *argv)
+{
+    sys_process *p = calloc(1, sizeof *p);
+    if (!p) abort();
+    if (!start_process(argv, NULL, false, NULL, &p->said, &p->info)) {
+        free(p);
+        return NULL;
+    }
+    p->reader = CreateThread(NULL, 0, read_said, p, 0, NULL);
+    if (!p->reader) abort();
+    return p;
+}
+
+int sys_wait_any(sys_process *const *processes, const int count, int *code, char **said)
+{
+    HANDLE handles[SYS_AT_ONCE];
+    if (count < 1 || count > SYS_AT_ONCE) return -1;
+    for (int i = 0; i < count; i++) handles[i] = processes[i]->info.hProcess;
+    const DWORD ended = WaitForMultipleObjects((DWORD)count, handles, FALSE, INFINITE);
+    if (ended >= WAIT_OBJECT_0 + (DWORD)count) return -1;
+    const int which = (int)(ended - WAIT_OBJECT_0);
+    sys_process *p = processes[which];
+    DWORD exit_code = 1;
+    GetExitCodeProcess(p->info.hProcess, &exit_code);
+    CloseHandle(p->info.hProcess);
+    CloseHandle(p->info.hThread);
+    *code = (int)exit_code;
+    *said = take_said(p);
+    free(p);
+    return which;
+}
+
+int sys_processors(void)
+{
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwNumberOfProcessors > 0 ? (int)info.dwNumberOfProcessors : 1;
 }
 
 sys_process *sys_start(const char *const *argv, const char *cwd)
@@ -498,6 +632,7 @@ void sys_kill(sys_process *p)
     WaitForSingleObject(p->info.hProcess, INFINITE);
     CloseHandle(p->info.hProcess);
     CloseHandle(p->info.hThread);
+    if (p->reader) free(take_said(p));
     free(p);
 }
 
@@ -602,6 +737,12 @@ int sys_run(const char *const *argv, const char *cwd, const bool quiet)
 
 struct sys_process {
     pid_t pid;
+    // For a program whose words are kept (sys_start_kept): the pipe's end to
+    // read, and what was read of it so far
+    int said;
+    char *text;
+    size_t len;
+    size_t cap;
 };
 
 sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log)
@@ -620,10 +761,86 @@ sys_process *sys_start_logged(const char *const *argv, const char *cwd, const ch
         execvp(argv[0], (char *const *)argv);
         _exit(127);
     }
-    sys_process *p = malloc(sizeof *p);
+    sys_process *p = calloc(1, sizeof *p);
     if (!p) abort();
     p->pid = pid;
+    p->said = -1;
     return p;
+}
+
+sys_process *sys_start_kept(const char *const *argv)
+{
+    int fds[2];
+    if (pipe(fds) != 0) return NULL;
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return NULL;
+    }
+    if (pid == 0) {
+        dup2(fds[1], 1);
+        dup2(fds[1], 2);
+        close(fds[0]);
+        close(fds[1]);
+        execvp(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+    // Only the program has the end to write, so the end to read ends when the
+    // program does, and no program started later holds either end.
+    close(fds[1]);
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    sys_process *p = calloc(1, sizeof *p);
+    if (!p) abort();
+    p->pid = pid;
+    p->said = fds[0];
+    return p;
+}
+
+int sys_wait_any(sys_process *const *processes, const int count, int *code, char **said)
+{
+    struct pollfd fds[SYS_AT_ONCE];
+    if (count < 1 || count > SYS_AT_ONCE) return -1;
+    for (;;) {
+        for (int i = 0; i < count; i++) fds[i] = (struct pollfd){.fd = processes[i]->said, .events = POLLIN};
+        if (poll(fds, (nfds_t)count, -1) < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        for (int i = 0; i < count; i++) {
+            if (!fds[i].revents) continue;
+            sys_process *p = processes[i];
+            if (p->len + 4096 + 1 > p->cap) {
+                p->cap = p->cap * 2 + 8192;
+                p->text = realloc(p->text, p->cap);
+                if (!p->text) abort();
+            }
+            const ssize_t got = read(p->said, p->text + p->len, 4096);
+            if (got > 0) {
+                p->len += (size_t)got;
+                continue;
+            }
+            if (got < 0 && errno == EINTR) continue;
+            // It let go of where it prints: it has ended, or is about to.
+            close(p->said);
+            int status = 0;
+            pid_t done;
+            do {
+                done = waitpid(p->pid, &status, 0);
+            } while (done < 0 && errno == EINTR);
+            *code = done == p->pid && WIFEXITED(status) ? (WEXITSTATUS(status) == 127 ? -1 : WEXITSTATUS(status)) : 1;
+            p->text[p->len] = 0;
+            *said = p->text;
+            free(p);
+            return i;
+        }
+    }
+}
+
+int sys_processors(void)
+{
+    const long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (int)n : 1;
 }
 
 sys_process *sys_start(const char *const *argv, const char *cwd)
@@ -652,6 +869,8 @@ void sys_kill(sys_process *p)
     kill(p->pid, SIGTERM);
     int status = 0;
     waitpid(p->pid, &status, 0);
+    if (p->said >= 0) close(p->said);
+    free(p->text);
     free(p);
 }
 

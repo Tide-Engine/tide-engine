@@ -1,0 +1,741 @@
+using Rooms;
+
+// CRACKED: what's over the world, in the screen's pixels, as the Unity game
+// has it: both teams' rounds in the top left corner (RoundsHUD), this
+// machine's player's bullets, shield and jetpack in the bottom right one
+// (PlayerHUD), the dot where their next bullet lands (PlayerCrosshair), the
+// count before a round (CountdownText), who to watch once they're out
+// (SpectatorHud) and the end of a game (GameOverView). The Unity game shows a
+// player's health in their head's glass and nowhere on the screen, and so
+// does this. The controls a phone's fingers get and what the rooms' menu is
+// told of the match are the port's own. The cards are cards.tide's, and
+// what's heard sound.tide's. None of it shows while a page of the menu is up.
+//
+// The Unity HUDs' canvases are 800 units across the window, and its views'
+// (the count, the cards, game over) 1920: sizes here are in those units.
+
+// TeamManager's colors: the ones its UI has, and the teams' own.
+const Color UI_BLUE = Color(0.58, 1, 0.99);
+const Color UI_RED = Color(1, 0.54, 0.54);
+const Color UI_BLUE_DEEP = Color(0.212, 0.299, 1);
+const Color UI_RED_DEEP = Color(1, 0.297, 0.297);
+// The menu's and the touch controls', which are the port's
+const Color UI_INK = Color(0.96, 0.95, 0.92);
+const Color UI_QUIET = Color(0.68, 0.7, 0.78);
+const Color UI_BACK = Color(0.05, 0.055, 0.09);
+const Color UI_PANEL = Color(0.07, 0.08, 0.13, 0.86);
+const Color UI_LINE = Color(1, 1, 1, 0.16);
+const Color UI_GOLD = Color(1, 0.84, 0.42);
+const Color UI_SHIELD = Color(0.55, 0.85, 1);
+
+// PlayerHud.prefab's colors, and Pellet.prefab's and Round.prefab's shadow.
+const Color HUD_PELLET = Color(1, 0.712, 0);
+const Color HUD_SHIELD = Color(0, 0.988, 1);
+const Color HUD_JETPACK_BACK = Color(0.604, 0.542, 0.436);
+const Color HUD_JETPACK = Color(1, 0.914, 0);
+const Color HUD_JETPACK_FULL = Color(1, 0.767, 0);
+const Color HUD_SHADOW = Color(0, 0, 0, 0.482);
+const Color HUD_BUTTON = Color(0.377, 0.377, 0.377);    // SpectatorHud's Prev and Next
+
+// The menu's look: the game's night blue, with the blue team's light for
+// what's chosen.
+const GUITheme UI_THEME = GUITheme {
+    text = UI_INK,
+    panel = Color(0.06, 0.07, 0.12, 0.95),
+    control = Color(0.16, 0.18, 0.3, 0.95),
+    hot = Color(0.25, 0.29, 0.5),
+    pressed = Color(0.1, 0.12, 0.2),
+    field = Color(0.03, 0.035, 0.06),
+    fieldHot = Color(0.09, 0.1, 0.17),
+    accent = UI_BLUE,
+    radius = 10
+};
+
+// What the views here keep between frames, and say to each other.
+local singleton Overlay
+{
+    int seat = -1;           // This machine's player's, or -1
+    float unit = 1;          // Pixels for a unit of the Unity HUDs' canvases: 800 across the window
+    float view = 1;          // ...and of its views' canvas: 1920 across
+    float beat;              // Seconds, under a minute, for what shakes
+    float top;               // Where the next thing under the screen's top goes
+    bool fingers;            // A touchscreen was the last thing used
+
+    // How much each HUD shows, from 0 to 1: they fade as the Unity game's canvas groups do
+    float rounds;
+    float own;
+    float watching;
+
+    // The player's own
+    int magazine;
+    float shot;              // Since the magazine last changed
+    bool shieldReady = true;
+    float shieldPop = 1;     // Since the shield was ready again
+    bool jetpackReady = true;
+    float jetpackPop = 1;
+
+    // The count before a round
+    bool counting;           // A round has been counted in since this machine joined
+    int count = -1;          // The number that's shown,
+    float counted;           // ...and since when
+
+    int champion = -1;
+    float over;              // Since the game ended
+}
+
+// Whom this machine's player watches once they're out: Prev and Next count
+// here, and the camera takes the seat that many on from its own choice.
+local singleton Spectator
+{
+    int turn;
+}
+
+// A stick and four buttons, for fingers.
+local singleton Thumbs
+{
+    bool steering;
+    float2 from;             // Where the stick's finger went down, from the top left
+    float2 pull;             // The stick, as the screen has it: y down
+}
+
+Color UiFade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * Math.Saturate(alpha));
+}
+
+Color UiTeam(int team)
+{
+    return team == 0 ? UI_BLUE : UI_RED;
+}
+
+Color UiTeamDeep(int team)
+{
+    return team == 0 ? UI_BLUE_DEEP : UI_RED_DEEP;
+}
+
+float UiEaseOut(float t)
+{
+    var u = 1 - Math.Saturate(t);
+    return 1 - u * u * u;
+}
+
+// Past its end and back, as the Unity game's cards land (DOTween's OutBack).
+float UiEaseBack(float t)
+{
+    var u = Math.Saturate(t) - 1;
+    return 1 + 2.70158 * u * u * u + 1.70158 * u * u;
+}
+
+// Past its end and back a few times, each less (DOTween's OutElastic over
+// 2.5 seconds with a period of 1.85, as GameOverView asks for).
+float UiEaseElastic(float t)
+{
+    var x = Math.Saturate(t);
+    if (x >= 1) return 1;
+    return Math.Pow(2, -10 * x) * Math.Sin((x * 2.5 - 0.4625) * Math.TAU / 1.85) + 1;
+}
+
+// Whole pixels, and never too small to read.
+float UiSize(float size, float unit)
+{
+    return Math.Max(10, Math.Round(size * unit));
+}
+
+// How much of a HUD shows, a frame on: Unity's MoveTowards.
+float UiToward(float shown, bool wanted, float rate)
+{
+    return Math.Saturate(shown + (wanted ? rate : -rate));
+}
+
+// A dark pill with a line of words in it.
+void UiPill(float2 at, string words, float size, Color ink, Color edge)
+{
+    var wide = Draw.MeasureText(words, size, Font.Bold).x + size * 1.8;
+    Draw.Shape(Shape { center = at, size = float2(wide, size * 2.1), radius = size * 1.05, color = UI_PANEL, outline = 1.5, outlineColor = edge });
+    Draw.Text(words, at, size, ink, Anchor.MiddleCenter, Font.Bold);
+}
+
+override string Rooms.Title()
+{
+    return "CRACKED";
+}
+
+override string Rooms.Tagline()
+{
+    return "Physics-based wizard brawling!";
+}
+
+// The top right corner: the top left one is the rounds', and the bottom the
+// player's own HUD and a phone's thumbs.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 84, 8, 76, 36);
+}
+
+// Where the title page's buttons start, under the game's name.
+float UiTitleButtons(float2 screen)
+{
+    return Math.Round(Math.Min(screen.y * 0.56, screen.y - 230));
+}
+
+// The title: the game's name over the match that runs behind it, cracked
+// down its middle. It's a view of the HUD's, as the package's pages run
+// before the world is drawn and the world would be over it; the page's
+// buttons are the GUI's, which is drawn last (Rooms.TitlePage, below).
+[Stage(Layers.Hud, 70)]
+view HudTitle(Lobby lobby)
+{
+    if (lobby.page != Page.Title) return;
+    var screen = float2(Screen.width, Screen.height);
+    var k = Math.Clamp(Math.Min(screen.x, screen.y) / 720.0, 0.75, 1.6);
+    var name = float2(screen.x * 0.5, Math.Round(UiTitleButtons(screen) * 0.5));
+    Draw.Screen()
+    {
+        Draw.Shape(Shape { center = screen * 0.5, size = screen, color = UiFade(UI_BACK, 0.55), color2 = UiFade(UI_BACK, 0.9) });
+        Draw.Blend(Blend.Add)
+        {
+            Draw.Shape(Shape { center = name - float2(screen.x * 0.12, 0), size = float2(screen.x * 0.6, 200 * k), ellipse = true, color = UiFade(UI_BLUE_DEEP, 0.3), soft = 150 * k });
+            Draw.Shape(Shape { center = name + float2(screen.x * 0.12, 0), size = float2(screen.x * 0.6, 200 * k), ellipse = true, color = UiFade(UI_RED_DEEP, 0.3), soft = 150 * k });
+        }
+        var words = Rooms.Title();
+        mut var size = Math.Round(132 * k);
+        size = Math.Floor(size * Math.Min(1, (screen.x - 40) / Math.Max(1, Draw.MeasureText(words, size, Font.Bold).x)));
+        var off = Math.Max(2, Math.Round(size * 0.035));
+        // The two teams' colors behind the name, a little apart
+        Draw.Text(words, name + float2(0, off * 2), size, UiFade(UI_BACK, 0.9), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, name - float2(off, 0), size, UI_BLUE_DEEP, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, name + float2(off, 0), size, UI_RED_DEEP, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, name, size, Color.white, Anchor.MiddleCenter, Font.Bold);
+        // The crack: a line that goes down through it, in the page's dark
+        var across = Draw.MeasureText(words, size, Font.Bold).x;
+        mut var from = name + float2(across * 0.08, -size * 0.4);
+        for (var i = 1; i <= 6; i++)
+        {
+            var to = name + float2(across * (0.08 + (i % 2 == 0 ? 0.035 : -0.03) - i * 0.012), -size * 0.4 + size * 0.8 * i / 6.0);
+            Draw.Line(from, to, Math.Max(2, size * 0.028), UI_BACK);
+            if (i == 2 || i == 4) Draw.Line(to, to + float2((i == 2 ? 1 : -1) * size * 0.16, size * 0.07), Math.Max(1.5, size * 0.018), UI_BACK);
+            from = to;
+        }
+        Draw.Text(Rooms.Tagline(), name + float2(0, size * 0.5 + Math.Round(22 * k)), UiSize(18, k), UI_INK, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("Two teams. Rounds on maps that change. The losers pick a card.", name + float2(0, size * 0.5 + Math.Round(48 * k)),
+                  UiFit("Two teams. Rounds on maps that change. The losers pick a card.", UiSize(13, k), screen.x - 24), UI_QUIET, Anchor.MiddleCenter);
+    }
+}
+
+// The title page's buttons, each at its place under the name: no modal, whose
+// dim would be over the name, so the page keeps the pointer itself.
+override void Rooms.TitlePage(Session session, mut Lobby lobby)
+{
+    var screen = float2(Screen.width, Screen.height);
+    var wide = Math.Min(screen.x - 48, 300);
+    var left = Math.Round((screen.x - wide) * 0.5);
+    var top = UiTitleButtons(screen);
+    GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
+    var connected = session.state == SessionState.Connected;
+    mut var play = false;
+    mut var host = false;
+    GUI.Disabled(!connected)
+    {
+        play = GUI.Button(Rect(left, top, wide, 44), "Play");
+        host = GUI.Button(Rect(left, top + 52, wide, 44), "Host a room");
+    }
+    var join = GUI.Button(Rect(left, top + 104, wide, 44), "Join a room");
+    var settings = GUI.Button(Rect(left, top + 156, wide, 44), "Settings");
+    if (lobby.message != "") GUI.Label(Rect(left, top + 204, wide, 24), lobby.message);
+    if (play) Rooms.Play(lobby);
+    if (host) Rooms.Host(lobby);
+    if (join) Rooms.ShowJoin(lobby);
+    if (settings) Rooms.ShowSettings(lobby);
+}
+
+[Before(Rooms.Begin, Rooms.Pages)]
+view HudTheme()
+{
+    GUI.SetTheme(UI_THEME);
+}
+
+// What the menu's room page shows of the match: who has each seat. And its
+// New game button, which is the match's Restart.
+[After(Rooms.Pages)]
+view HudRoster(Arena arena, Session session, mut Lobby lobby)
+{
+    mut var manned = 0;
+    mut var seats = 0;
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (!arena.seats[s].taken) continue;
+        seats = s + 1;
+        if (!arena.seats[s].bot) manned |= 1 << s;
+    }
+    lobby.seats = seats;
+    lobby.manned = manned;
+    lobby.mine = arena.players.TryGet(session.player, out var seat) ? seat : -1;
+    lobby.bots = true;
+    lobby.offersNewGame = true;
+    if (lobby.newGame) Send(Restart { });
+}
+
+// First of the HUD's views: whose seat this machine has, how big things are,
+// which HUDs show, and the clocks the others read.
+[Stage(Layers.Hud)]
+view HudState(Arena arena, Session session, Devices devices, mut Overlay hud)
+{
+    var dt = Math.Min(Frame.dt, 0.1);
+    hud.seat = arena.players.TryGet(session.player, out var seat) ? seat : -1;
+    // The Unity canvases match the window's width. A phone held upright would
+    // have a HUD too small for a finger or an eye, so a unit is never under a pixel
+    hud.unit = Math.Max(1, Screen.width / 800);
+    hud.view = Math.Min(Screen.width / 1920, Screen.height / 800);
+    hud.beat += dt;
+    if (hud.beat > 60) hud.beat -= 60;
+    // Under the Menu button, for what a narrow screen puts at its top
+    hud.top = 52;
+
+    // Fingers, until a mouse or a key says otherwise
+    foreach (var touch in devices.touchscreen.touches)
+        if (touch.press.pressed) hud.fingers = true;
+    var keys = devices.keyboard;
+    if (devices.mouse.left.down || devices.mouse.right.down || Math.LengthSq(devices.mouse.delta) > 0
+        || keys.w.down || keys.a.down || keys.s.down || keys.d.down || keys.space.down) hud.fingers = false;
+
+    hud.shot += dt;
+    hud.shieldPop += dt;
+    hud.jetpackPop += dt;
+    hud.over = arena.phase == Phase.GameOver ? hud.over + dt : 0;
+
+    // RoundsHUD.ShowThisFrame: from the warmup to the cards. PlayerHUD: while
+    // the player isn't locked or dead. SpectatorHud: out, while the round runs
+    var mine = hud.seat >= 0 && arena.seats[hud.seat].alive;
+    var fallen = mine && arena.seats[hud.seat].dead;
+    hud.rounds = UiToward(hud.rounds, arena.phase != Phase.Teams && arena.phase != Phase.GameOver, dt * 5);
+    hud.own = UiToward(hud.own, mine && !Locked(arena, hud.seat), dt * 10);
+    hud.watching = UiToward(hud.watching, fallen && arena.phase == Phase.Running, dt * 5);
+    if (!mine) return;
+
+    var me = arena.seats[hud.seat];
+    if (me.magazine != hud.magazine)
+    {
+        hud.magazine = me.magazine;
+        hud.shot = 0;
+    }
+    var ready = me.shieldCooldown <= 0;
+    if (ready && !hud.shieldReady) hud.shieldPop = 0;
+    hud.shieldReady = ready;
+    var fueled = me.jetpackFuel >= me.settings.jetpackCapacity;
+    if (fueled && !hud.jetpackReady) hud.jetpackPop = 0;
+    hud.jetpackReady = fueled;
+}
+
+local event(verified GameWon won) HudGameWon(mut Overlay hud)
+{
+    hud.champion = won.team;
+}
+
+// Both teams' rounds, in the top left corner (RoundsHud.prefab): a row a
+// team, of as many circles as win the game, each full for a round won, half
+// for the one the team has a point of, and empty. They're read `verified`:
+// what the server has confirmed, never a point this machine only predicted.
+[Stage(Layers.Hud, 10)]
+view HudRounds(verified Arena sure, Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || hud.rounds <= 0) return;
+    var u = hud.unit;
+    var size = Math.Round(16 * u);
+    var step = size + Math.Round(5 * u);
+    var corner = Math.Round(10 * u) + size * 0.5;
+    Draw.Tint(Color(1, 1, 1, hud.rounds))
+    {
+        for (var team = 0; team < TEAMS; team++)
+        {
+            for (var i = 0; i < ROUNDS_TO_WIN; i++)
+            {
+                var at = float2(corner + i * step, corner + team * step);
+                var sprite = sure.rounds[team] > i ? Kit.RoundDepthGradient
+                           : sure.rounds[team] == i && sure.score[team] > 0 ? Kit.RoundDepthHalfBorder : Kit.RoundDepthBorder;
+                UiSprite(sprite, at + float2(2 * u), float2(size), HUD_SHADOW);
+                UiSprite(sprite, at, float2(size), UiTeam(team));
+            }
+        }
+    }
+}
+
+// A bar of PlayerHud.prefab's: its back, what fills it from the left while
+// it isn't full (the prefab's mask), and the look it has once it is. `pop`
+// is how long ago it filled: it jumps as it does (DOShakeScale).
+void UiBar(float2 center, float2 size, float u, float full, Color back, Color fill, Color done, float pop)
+{
+    var grown = size * (1 + 0.2 * Math.Max(0, 1 - pop * 10));
+    UiSliced(Kit.RectangleFlat, center, grown, float4(10), u * 0.5, back);
+    if (full >= 0.999)
+    {
+        UiSliced(Kit.RectangleGradient, center, grown, float4(10), u * 0.5, done);
+        return;
+    }
+    if (full <= 0) return;
+    Draw.Clip(Rect(center.x - size.x * 0.5, center.y - size.y * 0.5, size.x * full, size.y))
+    {
+        UiSliced(Kit.RectangleFlat, center, size, float4(10), u * 0.5, fill);
+    }
+}
+
+// This machine's player's own, in the bottom right corner
+// (PlayerHud.prefab): a jetpack's fuel for who has the card, the shield as
+// it comes back, and the magazine under them, a circle a bullet with the
+// fired ones first. Where thumbs have that corner it's under the Menu button.
+[Stage(Layers.Hud, 20)]
+view HudPlayer(Arena arena, mut Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || hud.seat < 0 || hud.own <= 0) return;
+    var mine = arena.seats[hud.seat];
+    if (!mine.alive) return;
+    var u = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var pad = Math.Round(10 * u);
+    var bar = float2(Math.Round(150 * u), Math.Round(16 * u));
+    var rows = mine.settings.hasJetpack ? 3 : 2;
+    var top = hud.fingers ? hud.top : screen.y - pad - rows * bar.y - (rows - 1) * pad;
+    var right = screen.x - pad;
+    if (hud.fingers) hud.top = top + rows * (bar.y + pad);
+    Draw.Tint(Color(1, 1, 1, hud.own))
+    {
+        mut var y = top + bar.y * 0.5;
+        if (mine.settings.hasJetpack)
+        {
+            var fuel = Math.Saturate(mine.jetpackFuel / Math.Max(0.01, mine.settings.jetpackCapacity));
+            UiBar(float2(right - bar.x * 0.5, y), bar, u, fuel, HUD_JETPACK_BACK, HUD_JETPACK, HUD_JETPACK_FULL, hud.jetpackPop);
+            y += bar.y + pad;
+        }
+        var cooled = 1 - Math.Saturate(mine.shieldCooldown / Math.Max(0.01, mine.settings.shieldCooldown));
+        UiBar(float2(right - bar.x * 0.5, y), bar, u, cooled, Color.white, HUD_SHIELD, HUD_SHIELD, hud.shieldPop);
+        y += bar.y + pad;
+
+        // The magazine: as many as it holds, however long that makes the
+        // row, up to the screen's width. The whole row shakes while it's
+        // filled again (DOShakeRotation, 10 degrees)
+        var size = Math.Max(1, mine.settings.magazineSize);
+        var step = Math.Min(bar.y + Math.Round(u), (screen.x - pad * 2 - bar.y) / Math.Max(1, size - 1));
+        var across = step * (size - 1) + bar.y;
+        var fired = size - mine.magazine;
+        var shake = mine.reloading ? Math.Radians(10) * Math.Sin(hud.beat * 61) * Math.Sin(hud.beat * 23.7) : 0.0;
+        Draw.Transform(float2(right - across * 0.5, y), shake)
+        {
+            for (var i = 0; i < size; i++)
+            {
+                var at = float2(-across * 0.5 + bar.y * 0.5 + i * step, 0);
+                // The one that was just fired jumps (PlayerUIBullet's DOShakeScale)
+                var pop = i == fired - 1 ? Math.Max(0, 1 - hud.shot * 10) : 0.0;
+                var sprite = i < fired ? Kit.RoundBorder : Kit.RoundDepthGradient;
+                UiSprite(sprite, at + float2(2 * u), float2(bar.y), HUD_SHADOW);
+                UiSprite(sprite, at, float2(bar.y * (1 + 0.35 * pop)), HUD_PELLET);
+            }
+        }
+    }
+}
+
+// A dot of the crosshair's. The Unity game's is the screen's own color
+// turned inside out, which no blend here does: it's white with a dark rim,
+// so it shows on anything.
+void UiDot(float2 at, float radius)
+{
+    Draw.Circle(at, radius + 1, Color(0, 0, 0, 0.55));
+    Draw.Circle(at, radius, Color.white);
+}
+
+// Where the shots go (PlayerCrosshair, CrosshairCanvas.prefab): a dot at the
+// screen's middle, and a smaller one where the next bullet would land, which
+// the camera's view works out (`Sight`) and the window's 3D camera puts on
+// the screen.
+[Stage(Layers.Hud, 22)]
+view HudCrosshair(Arena arena, Overlay hud, Sight sight, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || hud.seat < 0) return;
+    var mine = arena.seats[hud.seat];
+    if (!mine.alive || mine.dead || arena.phase == Phase.Upgrade || arena.phase == Phase.GameOver) return;
+    var u = hud.unit;
+    var middle = float2(Math.Round(Screen.width * 0.5), Math.Round(Screen.height * 0.5));
+    UiDot(middle, Math.Max(1.5, 1.5 * u));
+    mut var at = middle;
+    if (sight.found)
+    {
+        var on = Draw.WorldToScreen(sight.at);
+        // Behind the eye there's no place on the screen for it
+        if (on.z <= 0 || on.z >= 1) return;
+        at = float2(on.x, on.y);
+    }
+    UiDot(at, Math.Max(1, 0.75 * u));
+}
+
+// The count before a round (CountdownText): the seconds left, each landing
+// with a bounce, then a 0 that stays a second and shrinks away. The server's
+// own count, as the Unity game shows its verified one.
+[Stage(Layers.Hud, 30)]
+view HudCountdown(verified Arena sure, Session session, mut Overlay hud, Lobby lobby)
+{
+    Draw.SetScreen();
+    var dt = Math.Min(Frame.dt, 0.1);
+    var number = sure.phase == Phase.Warmup ? int(Math.Ceil(sure.phaseTime)) : 0;
+    if (sure.phase == Phase.Warmup) hud.counting = true;
+    if (sure.phase != Phase.Warmup && sure.phase != Phase.Running) hud.counting = false;
+    if (number != hud.count)
+    {
+        hud.count = number;
+        hud.counted = 0;
+    }
+    hud.counted += dt;
+    if (lobby.page != Page.Playing) return;
+    var screen = float2(Screen.width, Screen.height);
+
+    // The match's host left, and another machine is taking it over
+    if (session.state == SessionState.Connecting)
+        UiPill(float2(screen.x * 0.5, hud.top + 18), "The host left. Finding the match again...", 12, UI_INK, UI_LINE);
+
+    if (!hud.counting || hud.count == 0 && hud.counted > 1.5) return;
+    // DOPunchScale: a fifth bigger, and back and forth for half a second
+    var landed = Math.Saturate(hud.counted / 0.5);
+    mut var scale = 1 + 0.2 * (1 - landed) * (1 - landed) * Math.Cos(landed * Math.PI * 5);
+    if (hud.count == 0)
+    {
+        // InBack, after a second
+        var away = Math.Saturate((hud.counted - 1) / 0.5);
+        scale *= 1 - (2.70158 * away * away * away - 1.70158 * away * away);
+    }
+    // 200 units, in the engine's bold where the Unity game has Liberation Sans's
+    var size = Math.Round(200 * Math.Max(hud.view, 0.45) * scale * 0.5) * 2;
+    if (size > 0) Draw.Text($"{hud.count}", screen * 0.5, size, Color.white, Anchor.MiddleCenter, Font.Bold);
+}
+
+// A button of SpectatorHud's: the depth button in gray, lighter under the
+// pointer and darker held, with its words in white.
+bool UiSpectatorButton(float2 center, float2 size, float u, string words, bool enabled)
+{
+    // The button's own tints: Unity's highlighted and pressed colors
+    mut var lit = 1.0;
+    mut var clicked = false;
+    GUI.Disabled(!enabled)
+    {
+        var card = GUI.Control(Rect(center.x - size.x * 0.5, center.y - size.y * 0.5, size.x, size.y));
+        lit = card.pressed && card.hovered ? 0.784 : card.hovered || card.focused ? 0.961 : 1.0;
+        clicked = card.clicked;
+    }
+    UiSliced(Kit.RectangleDepthGradient, center, size, float4(10, 10, 10, 18), u * 0.5, Color(HUD_BUTTON.r * lit, HUD_BUTTON.g * lit, HUD_BUTTON.b * lit));
+    Draw.Text(words, center - float2(0, 1.5 * u), UiSize(10, u), Color.white, Anchor.MiddleCenter);
+    return clicked;
+}
+
+// Out, and watching the others until the round is over (SpectatorHud.prefab):
+// Prev and Next at the screen's bottom, which the arrows press too. They
+// count in `Spectator`, for the camera.
+[Stage(Layers.Hud, 32)]
+view HudSpectator(Devices devices, Overlay hud, Lobby lobby, mut Spectator spectator)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || hud.watching <= 0) return;
+    var u = hud.unit;
+    var screen = float2(Screen.width, Screen.height);
+    var words = UiSize(10, u);
+    // The words, with 7 units around them and 10 under
+    var size = float2(Math.Round(Math.Max(Draw.MeasureText("<- Prev", words).x, Draw.MeasureText("Next ->", words).x) + 14 * u), Math.Round(words * 1.2 + 17 * u));
+    var y = screen.y - Math.Round(15 * u) - size.y * 0.5;
+    var apart = size.x * 0.5 + Math.Round(2.5 * u);
+    var live = hud.watching >= 1;
+    Draw.Tint(Color(1, 1, 1, hud.watching))
+    {
+        var keys = devices.keyboard;
+        if (UiSpectatorButton(float2(screen.x * 0.5 - apart, y), size, u, "<- Prev", live) || live && keys.leftArrow.down) spectator.turn -= 1;
+        if (UiSpectatorButton(float2(screen.x * 0.5 + apart, y), size, u, "Next ->", live) || live && keys.rightArrow.down) spectator.turn += 1;
+    }
+}
+
+// Words in lines no wider than `width`, centered on `middle`, each line
+// `size` high: TextMesh Pro's wrapping, by measuring. It returns how many
+// lines they came to, and draws nothing when asked only that.
+int UiWrapped(string text, float2 middle, float width, float size, bool draw)
+{
+    mut List<string> rows = [];
+    mut var words = text;
+    mut var row = "";
+    while (words.length > 0)
+    {
+        var space = words.IndexOf(' ');
+        var word = space < 0 ? words : words.Substring(0, space);
+        words = space < 0 ? "" : words.Substring(space + 1);
+        var next = row == "" ? word : $"{row} {word}";
+        if (row != "" && Draw.MeasureText(next, size, Font.Bold).x > width)
+        {
+            rows.Add(row);
+            row = word;
+        }
+        else row = next;
+    }
+    if (row != "") rows.Add(row);
+    if (!draw) return rows.count;
+    var line = Math.Round(size * 1.1);
+    for (var i = 0; i < rows.count; i++)
+        UiWords(rows[i], float2(middle.x, middle.y + (i - (rows.count - 1) * 0.5) * line), size, Color.white, Anchor.MiddleCenter);
+    return rows.count;
+}
+
+// A button of GameOverView's: only its words, bigger under the pointer.
+// It's drawn around `center`, inside whatever moves the view's words, and
+// `origin` is where that puts (0, 0) on the screen, for the pointer.
+bool UiWordButton(float2 origin, float2 center, float2 size, string words, float text, bool enabled)
+{
+    mut var grown = 1.0;
+    mut var clicked = false;
+    GUI.Disabled(!enabled)
+    {
+        var card = GUI.Control(Rect(origin.x + center.x - size.x * 0.5, origin.y + center.y - size.y * 0.5, size.x, size.y));
+        var lit = card.hovered || card.focused;
+        grown = card.pressed && lit ? 0.95 : lit ? 1.1 : 1.0;
+        clicked = card.clicked;
+    }
+    UiWords(words, center, Math.Round(text * grown), Color.white, Anchor.MiddleCenter);
+    return clicked;
+}
+
+// The game is over (GameOverView): the world goes dark, and who won comes up
+// from under the screen, settles, and rocks and bobs there, over Restart and
+// Main menu. The Unity game names the winners; a player here has no name,
+// so it's their team and their place in it. The next game starts by itself,
+// which the Unity game's doesn't: a line says when.
+[Stage(Layers.Hud, 50)]
+view HudGameOver(Arena arena, Session session, Overlay hud, mut Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || arena.phase != Phase.GameOver) return;
+    var screen = float2(Screen.width, Screen.height);
+    // The words keep a size a phone can read
+    var k = Math.Max(hud.view, 0.42);
+    var team = arena.lastWinningTeam >= 0 ? arena.lastWinningTeam : Math.Max(0, hud.champion);
+    Draw.Rect(screen * 0.5, screen, Color(0, 0, 0, 0.682 * Math.Saturate(hud.over / 0.5)));
+
+    mut var winners = "";
+    for (var s = 0; s < SEATS; s++)
+    {
+        if (!arena.seats[s].taken || TeamOf(s) != team) continue;
+        var name = s == hud.seat ? "You" : UiSeatName(arena, s);
+        winners = winners == "" ? name : $"{winners} and {name}";
+    }
+    var sentence = $"{winners} won the game!";
+    var words = winners == "" ? "SOMEONE WON THE GAME!" : sentence.ToUpper();
+
+    var arrived = UiEaseElastic((hud.over - 0.3) / 2.5);
+    var rock = -Math.Radians(1.5) * Math.Cos(hud.over * Math.PI / 1.5);
+    var bob = hud.over > 2.8 ? 10 * k * (0.5 - 0.5 * Math.Cos((hud.over - 2.8) * Math.PI)) : 0.0;
+    var live = hud.over > 1.5;
+    mut var restart = false;
+    mut var menu = false;
+    var origin = float2(screen.x * 0.5, screen.y * 0.5 + (1 - arrived) * screen.y - bob);
+    Draw.Transform(origin, rock)
+    {
+        // The words: 130 units at the most, in the upper two thirds, 216 in from each side
+        var wide = screen.x - Math.Max(24, 432 * hud.view);
+        var room = screen.y * 0.5;
+        mut var size = Math.Round(130 * k);
+        while (size > 18 && (UiWrapped(words, float2(0), wide, size, false) * size * 1.1 > room || Draw.MeasureText("GAME!", size, Font.Bold).x > wide)) size -= 4;
+        UiWrapped(words, float2(0, -screen.y * 0.162), wide, size, true);
+        // Restart, 243 units over the screen's bottom, and Main menu, 145
+        var button = float2(Math.Min(screen.x - 24, 454.5 * k), 79 * k);
+        if (hud.seat >= 0) restart = UiWordButton(origin, float2(0, screen.y * 0.5 - 243 * k), button, "RESTART", 62 * k, live);
+        menu = UiWordButton(origin, float2(0, screen.y * 0.5 - 145 * k), button, "MAIN MENU", 62 * k, live);
+        var left = Math.Max(0, int(Math.Ceil(GAME_OVER_SECONDS - arena.phaseTime)));
+        Draw.Text($"Next game in {left}", float2(0, screen.y * 0.5 - 70 * k), UiSize(26, k), Color(1, 1, 1, 0.75), Anchor.MiddleCenter);
+    }
+    if (restart) Send(Restart { });
+    if (menu) Rooms.Leave(session, lobby);
+}
+
+// A round button for a thumb: lit while it's held.
+void UiThumbButton(float2 at, float radius, string words, bool held, Color color)
+{
+    Draw.Circle(at + float2(0, 3), radius, Color(0, 0, 0, 0.35));
+    Draw.Circle(at, radius, held ? UiFade(color, 0.85) : Color(0.09, 0.1, 0.16, 0.6));
+    Draw.WireCircle(at, radius, 2, UiFade(color, held ? 1 : 0.7));
+    Draw.Text(words, at, Math.Max(10, Math.Round(radius * 0.34)), held ? UI_BACK : UiFade(Color.white, 0.92), Anchor.MiddleCenter, Font.Bold);
+}
+
+// A phone's controls, once a finger has touched the screen: a stick under
+// the left thumb, where it's put down, four buttons under the right one, and
+// a drag anywhere else on the right turns the camera, as a mouse does. A
+// finger on FIRE turns it too, so aiming goes on while shooting. They're read
+// here from the devices as they are this frame, and left in `Hand`, which the
+// input's Sample and the camera read. The screen's bottom right corner is the
+// engine's stats', so the buttons are over it.
+[Stage(Layers.Hud, 60)]
+view HudThumbs(Arena arena, Devices devices, Overlay hud, Lobby lobby, mut Hand hand, mut Thumbs thumbs)
+{
+    Draw.SetScreen();
+    hand.stick = float2(0);
+    hand.look = float2(0);
+    hand.jump = false;
+    hand.fire = false;
+    hand.shield = false;
+    hand.reload = false;
+    thumbs.steering = false;
+    if (!hud.fingers || lobby.page != Page.Playing || hud.seat < 0) return;
+    if (arena.phase == Phase.Upgrade || arena.phase == Phase.GameOver) return;
+    var mine = arena.seats[hud.seat];
+    var screen = float2(Screen.width, Screen.height);
+    // A thumb's size is the same on every screen
+    var fire = float2(screen.x - 74, screen.y - 150);
+    var jump = float2(screen.x - 168, screen.y - 104);
+    var shield = float2(screen.x - 160, screen.y - 204);
+    var reload = float2(screen.x - 62, screen.y - 248);
+    var reach = 56.0;
+
+    mut var look = float2(0);
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        var start = Screen.Flip(touch.startPosition);
+        if (Math.Distance(start, fire) < 52)
+        {
+            hand.fire = true;
+            look += touch.delta;
+            continue;
+        }
+        if (Math.Distance(start, jump) < 42) { hand.jump = true; continue; }
+        if (Math.Distance(start, shield) < 40) { hand.shield = true; continue; }
+        if (Math.Distance(start, reload) < 34) { hand.reload = true; continue; }
+        if (start.x < screen.x * 0.5 && start.y > screen.y * 0.3)
+        {
+            // The first finger on the left is the stick, from where it went down
+            if (thumbs.steering) continue;
+            thumbs.steering = true;
+            thumbs.from = start;
+            thumbs.pull = (Screen.Flip(touch.position) - start) / reach;
+            continue;
+        }
+        if (start.y > hud.top) look += touch.delta;
+    }
+    // A quarter of a degree a pixel, with y up, as the mouse's delta has it
+    hand.look = look * 0.25;
+    if (thumbs.steering)
+    {
+        var hard = Math.Length(thumbs.pull);
+        if (hard > 1) thumbs.pull = thumbs.pull / hard;
+        hand.stick = float2(thumbs.pull.x, -thumbs.pull.y);
+    }
+
+    var playing = mine.alive && !mine.dead;
+    Draw.Tint(UiFade(Color.white, playing ? 1 : 0.35))
+    {
+        var base = thumbs.steering ? thumbs.from : float2(96, screen.y - 132);
+        Draw.Circle(base, reach, Color(0.09, 0.1, 0.16, thumbs.steering ? 0.45 : 0.3));
+        Draw.WireCircle(base, reach, 2, UiFade(Color.white, thumbs.steering ? 0.5 : 0.28));
+        Draw.Circle(base + (thumbs.steering ? thumbs.pull * reach : float2(0)), 24, UiFade(Color.white, thumbs.steering ? 0.6 : 0.3));
+
+        var color = UiTeam(TeamOf(hud.seat));
+        UiThumbButton(fire, 44, "FIRE", hand.fire, mine.reloading || mine.magazine <= 0 ? UI_GOLD : color);
+        UiThumbButton(jump, 34, "JUMP", hand.jump, Color.white);
+        UiThumbButton(shield, 32, "SHIELD", hand.shield || mine.shieldActive, hud.shieldReady ? UI_SHIELD : UiFade(UI_SHIELD, 0.4));
+        UiThumbButton(reload, 27, "RELOAD", hand.reload || mine.reloading, UI_GOLD);
+        if (mine.reloading)
+            Draw.Arc(reload, 27, -Math.PI * 0.5, Math.TAU * (1 - Math.Saturate(mine.reloadLeft / Math.Max(0.01, mine.settings.reloadTime))), 3, Color.white);
+        if (!hud.shieldReady && !mine.shieldActive)
+            Draw.Arc(shield, 32, -Math.PI * 0.5, Math.TAU * (1 - Math.Saturate(mine.shieldCooldown / Math.Max(0.01, mine.settings.shieldCooldown))), 3, UI_SHIELD);
+    }
+}

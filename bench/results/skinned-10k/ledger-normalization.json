@@ -1,0 +1,21 @@
+{
+  "path": "bench/results/skinned.jsonl",
+  "previous_rows": 336,
+  "appended_rows": 24,
+  "final_rows": 360,
+  "raw": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k\\final\\raw-ledger.jsonl",
+    "bytes": 400256,
+    "sha256": "104ea191b82556bda4e8b26a8f544e293cc5bf243c0c354fc4d852d209a8a4d1",
+    "category": "excluded-raw-ledger"
+  },
+  "committed_lf": {
+    "bytes": 400256,
+    "sha256": "104ea191b82556bda4e8b26a8f544e293cc5bf243c0c354fc4d852d209a8a4d1"
+  },
+  "previous_prefix": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\bench\\results\\skinned.jsonl",
+    "bytes": 373543,
+    "sha256": "70a0899a6bcbc93923fa4dbc7b0a60b701a321ba0d2078b4e19b89965f1250e5"
+  }
+}

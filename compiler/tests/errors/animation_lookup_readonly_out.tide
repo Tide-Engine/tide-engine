@@ -1,0 +1,2 @@
+// expect: 'result' is read-only
+bool Read(AnimationCatalog clips, Animation result) { return clips.TryGetAt(0, out result); }

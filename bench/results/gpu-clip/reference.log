@@ -1,0 +1,4 @@
+renderer: OpenGL 3.3; 1 warmup, 2 measured frames, 1 repeats
+CPU and GPU times overlap; desktop readback waits for GPU completion. Web readback is unavailable.
+GPU clip reference: 240 phases, 3072 vertices each; max position error 0.001320204, unit-normal error 0.00160562643
+10 characters, gpu_clip, repeat 1 (median / p95 ms): view 0.006 / 0.009, submit 0.226 / 0.399, completion + readback 0.414 / 0.515, total 0.649 / 0.716, GPU 0.018 / 0.018 (2 samples); draw calls 2, texture uploads 0 bytes/frame

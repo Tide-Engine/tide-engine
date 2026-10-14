@@ -53,7 +53,7 @@ endif()
 if(WIN32)
     target_link_libraries(tide_platform PUBLIC ws2_32 secur32 ole32) # UDP, for sessions; TLS, for the relay; COM, for WASAPI
 elseif(APPLE)
-    target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework AudioToolbox") # TLS, for the relay; the audio device
+    target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework AudioToolbox" "-framework CoreAudio") # TLS, for the relay; the audio device, and whether there's one
 endif()
 if(NOT WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID) # Android's are in its C library
     # Threads for ticks (src/jobs.c)
@@ -119,9 +119,13 @@ endfunction()
 # (cmake/GLFW.cmake).
 install(DIRECTORY include/tide DESTINATION include COMPONENT tide)
 install(FILES web/shell.html DESTINATION web COMPONENT tide)
+if(TIDE_NODE)
+    add_test(NAME tide_web_runtime COMMAND "${TIDE_NODE}" --test "${PROJECT_SOURCE_DIR}/cmake/web_runtime.test.mjs")
+endif()
 if(TIDE_WEB)
     set(TIDE_PACKAGE_LIBS lib/web)
-    install(FILES web/tide.js DESTINATION web COMPONENT tide)
+    install(FILES web/tide.js web/tide.release.js DESTINATION web COMPONENT tide)
+    install(FILES third_party/fflate/LICENSE DESTINATION licenses/fflate COMPONENT tide)
     # The C library tide links web games with, from cmake/wasi-toolchain.cmake:
     # only what its target's C programs use (threads are in libc.a). Games are
     # C, so not the C++ headers.
@@ -337,6 +341,8 @@ target_compile_definitions(tide_platform_draw PRIVATE TIDE_BENCH_RESULTS="${PROJ
 if(TIDE_WEB)
     tide_web_page(tide_platform_draw SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_draw TARGET tide_platform_draw WEBGPU EXPECT "renderer: WebGPU")
+    tide_add_web_test(tide_platform_draw_rgba_fallback TARGET tide_platform_draw QUERY "texture-compression=off"
+        WEBGPU EXPECT "BC3 fixture: 65536 upload bytes")
 elseif(NOT TIDE_ANDROID)
     # A hidden window, so it needs a desktop session with working OpenGL.
     add_test(NAME tide_platform_draw COMMAND tide_platform_draw)
@@ -396,12 +402,30 @@ else()
     target_include_directories(tide_platform_shaders_app PRIVATE src)
 endif()
 
+if(NOT TIDE_ANDROID)
+    # Variable influence streams, deterministic pose samples, generated skin stage and matching shadow draws.
+    tide_add_game(tide_platform_skinned SOURCES tests/skinned.tide NAME game HOST tests/skinned.c)
+    target_link_libraries(tide_platform_skinned PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_skinned SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_skinned TARGET tide_platform_skinned WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        add_test(NAME tide_platform_skinned COMMAND tide_platform_skinned)
+        set_tests_properties(tide_platform_skinned PROPERTIES LABELS gpu)
+    endif()
+endif()
+
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # The watching host's Ctrl+R: a library is reopened so C statics reset
     # along with its local state and match. Scripted headless input, no visible window.
     add_library(tide_platform_reload_game SHARED tests/reload_game.c)
     target_include_directories(tide_platform_reload_game PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
     target_link_libraries(tide_platform_reload_game PRIVATE tide_flags)
+    # ...and a build of another layout, which the host swaps in while the game runs
+    add_library(tide_platform_reload_game_next SHARED tests/reload_game.c)
+    target_compile_definitions(tide_platform_reload_game_next PRIVATE RELOAD_GAME_HASH=4343)
+    target_include_directories(tide_platform_reload_game_next PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
+    target_link_libraries(tide_platform_reload_game_next PRIVATE tide_flags)
     add_executable(tide_platform_reload tests/reload_host.c)
     target_link_libraries(tide_platform_reload PRIVATE tide_platform)
     add_executable(tide_platform_reload_plain tests/reload_host.c tests/reload_game.c)
@@ -411,7 +435,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_reload
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload.mjs" $<TARGET_FILE:tide_platform_reload>
                 $<TARGET_FILE:tide_platform_reload_plain> $<TARGET_FILE:tide_platform_reload_game>
-                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run")
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run" $<TARGET_FILE:tide_platform_reload_game_next>)
         set_tests_properties(tide_platform_reload PROPERTIES LABELS gpu TIMEOUT 120)
     endif()
 
@@ -452,12 +476,43 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         set_tests_properties(tide_platform_first_tick PROPERTIES LABELS gpu TIMEOUT 120)
     endif()
 
+    # Such a run of several players (tide/run.h's --players): each a process of
+    # its own, a frame at a time together on a made-up network. A game whose
+    # Main is the match's, where the first player opens it and the others join,
+    # and one that starts in a menu, where the script has them open and join by
+    # the rooms' codes: every player's pictures are read, and a run repeats byte
+    # for byte. What such a run refuses before it opens anything needs no GPU.
+    # Its network alone, with no window at all (tests/players_net.c): three
+    # processes that send text through it and check what arrives, frame by
+    # frame, and one that ends before the run does. It starts processes and
+    # listens on this machine, with no GPU, so every desktop's tests run it.
+    add_executable(tide_platform_players_net tests/players_net.c)
+    target_include_directories(tide_platform_players_net PRIVATE src)
+    target_link_libraries(tide_platform_players_net PRIVATE tide_platform)
+    add_test(NAME tide_platform_players_net COMMAND tide_platform_players_net)
+    add_test(NAME tide_platform_players_net_ended COMMAND tide_platform_players_net die)
+    set_tests_properties(tide_platform_players_net tide_platform_players_net_ended PROPERTIES TIMEOUT 60)
+
+    tide_add_game(tide_platform_players SOURCES tests/players.tide)
+    tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_players
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
+                $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-run")
+        set_tests_properties(tide_platform_players PROPERTIES LABELS gpu TIMEOUT 180)
+        add_test(NAME tide_platform_players_refused
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
+                $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-refused" refused)
+    endif()
+
     # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
     # shell and a build server have it): no window shows, a game or a host
     # that only its window's closing would end doesn't start, and a stop shows
     # no dialog. None of that needs a window. That a run with no window and a
-    # test's hidden window go as they do without the variable does, as
-    # tide_platform_draw does.
+    # test's hidden window go as they do without the variable, but that the
+    # window opens no audio device, does, as tide_platform_draw does. The
+    # program's audio devices are its own (tests/hidden.c), in the place of
+    # desktop/audio.c's.
     add_executable(tide_platform_hidden tests/hidden.c)
     target_include_directories(tide_platform_hidden PRIVATE src)
     target_link_libraries(tide_platform_hidden PRIVATE tide_platform)

@@ -8,7 +8,13 @@ settings
 
 component Mover
 {
-    int sum; // Its player's inputs, added up
+    int sum;         // Its player's inputs, added up
+    local int heard; // The times this machine heard it spawn: once, whoever runs the match
+}
+
+local event(Spawned) Hear(mut Mover mover)
+{
+    mover.heard += 1;
 }
 
 input Controls

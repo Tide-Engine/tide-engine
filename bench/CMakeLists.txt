@@ -24,6 +24,32 @@ add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xaa539cfdc19
 # timed on the same work (see versus/versus.h).
 add_subdirectory(versus)
 
+# A generated Tide view exercising CPU pose preparation and GPU deformation.
+# Timings are measured explicitly; CTest checks that the workloads draw.
+if(NOT TIDE_ANDROID)
+    tide_add_game(bench_skinned SOURCES skinned/game.tide NAME game HOST skinned/main.c)
+    target_link_libraries(bench_skinned PRIVATE tide_platform)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/skinned/model.gltf")
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/skinned/model.gltf" skinned_model_sha256)
+    target_compile_definitions(bench_skinned PRIVATE
+        TIDE_BENCH_RESULTS="${CMAKE_CURRENT_SOURCE_DIR}/results"
+        TIDE_SKINNED_VERTICES=3072 TIDE_SKINNED_TRIANGLES=6048
+        TIDE_SKINNED_BONES=64 TIDE_SKINNED_INFLUENCES=4
+        TIDE_SKINNED_MODEL_SHA256="${skinned_model_sha256}")
+    if(TIDE_WEB)
+        tide_web_page(bench_skinned SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(bench_skinned TARGET bench_skinned
+            QUERY "counts=1,10&frames=2&warmup=1&repeat=1" WEBGPU EXPECT "renderer: WebGPU")
+        tide_add_web_test(bench_skinned_gpu_clip TARGET bench_skinned
+            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=gpu&verify-gpu&subframe=0.5" WEBGPU EXPECT "GPU clip reference:")
+    else()
+        add_test(NAME bench_skinned COMMAND bench_skinned --counts 1,10 --frames 2 --warmup 1 --repeat 1)
+        set_tests_properties(bench_skinned PROPERTIES LABELS gpu)
+        add_test(NAME bench_skinned_gpu_clip COMMAND bench_skinned --counts 10 --modes gpu --frames 2 --warmup 1 --repeat 1 --verify-gpu --subframe 0.5)
+        set_tests_properties(bench_skinned_gpu_clip PROPERTIES LABELS gpu)
+    endif()
+endif()
+
 # Sumo's real-time native delay measurement; invoked explicitly, never a
 # timing assertion in CTest. Its machines share a pool capped at four threads.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)

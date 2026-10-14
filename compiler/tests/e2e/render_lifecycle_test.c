@@ -11,7 +11,7 @@ TIDE_TEST(render_lifecycle_copies_resize_and_local_handler_disposal)
     tide_world_init(&world, 1.0f);
     tide_local_init(&local);
     gui.width = 1280.0f, gui.height = 720.0f; // Screen.width and Screen.height
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 
     const tide_render_target original = local.Buffers.surface.target;
     const tide_render_target alias = local.Buffers.alias;
@@ -33,7 +33,7 @@ TIDE_TEST(render_lifecycle_copies_resize_and_local_handler_disposal)
     TIDE_CHECK(tide_render_target_live(screen.id) && screen.size.window == 1.0f && screen.size.width == 0.0f);
     TIDE_CHECK(tide_render_target_live(half.id) && half.size.window == 0.5f && half.id != screen.id);
 
-    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Buffers.frames == 2);
     TIDE_CHECK(!tide_render_target_live(original.id) && !tide_render_target_live(alias.id));
     const tide_render_target disposed = tide_render_target_resolve(alias);

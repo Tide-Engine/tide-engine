@@ -1,0 +1,12 @@
+[
+  {
+    "path": "notes/assets-and-files.md",
+    "bytes": 88488,
+    "sha256": "5a0d551dc62845bbbc2699f143769f01607c6db36e5245d68ed53af2772fb1ae"
+  },
+  {
+    "path": "notes/runtime-ownership.md",
+    "bytes": 29115,
+    "sha256": "ea81d9750888354f4434805a3629d7af51603518c36a76f3db896aca4a397238"
+  }
+]

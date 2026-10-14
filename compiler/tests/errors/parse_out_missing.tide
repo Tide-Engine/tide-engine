@@ -1,0 +1,5 @@
+// expect: 'int.TryParse' makes its 'value', so the argument says 'out'
+scene Main { }
+struct Info { string id; int players; }
+singleton Seen { string text; int count; }
+system Run(mut Seen seen) { if (int.TryParse(seen.text, seen.count)) seen.text = ""; }

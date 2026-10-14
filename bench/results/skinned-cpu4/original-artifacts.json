@@ -1,0 +1,1699 @@
+{
+  "meaning": "Original measured/source artifact identities before UTF-8/BOM/LF normalization. Artifacts without an exported path are intentionally excluded.",
+  "source_before": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+  "source_after": "711af03879d9bd687edc4f977ec92f80544e0c22",
+  "artifacts": [
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\bench\\results\\skinned.jsonl",
+      "bytes": 453760,
+      "sha256": "0cdfc8ed2fe4cdc99ec2d6602870483dffe5c507630960e3338e829d3090ad1b",
+      "category": "raw-result-ledger"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\analyze.mjs",
+      "bytes": 1286,
+      "sha256": "4b63aedd5401c07e6d618f04b8eef4a500605bcc74a99674f5159ca8deebbaad",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\bench_skinned.exe",
+      "bytes": 1878016,
+      "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\bench_skinned.pdb",
+      "bytes": 2957312,
+      "sha256": "9c156cc2cb994c0f8b0c245a9549b414b039918d32e891e6105519754baed846",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\build-run.ps1",
+      "bytes": 7471,
+      "sha256": "b9548c2e26ac3e47e9fc191b0e74222ea96049cfbb60e9141a269b8dbcdf8a06",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic-manifest.json",
+      "bytes": 17120,
+      "sha256": "c6faa4cae8f4c8ff98494f50c3d6c8f8ebd2e4a22cba9329f796051e27fba496",
+      "category": "broad-diagnostic-manifest"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\bench_skinned_diagnostic.exe",
+      "bytes": 1879552,
+      "sha256": "e196a81cc2a43c7519503a205989228103f5fd1a1f372e13af190d33bb14b488",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\bench_skinned_diagnostic.map",
+      "bytes": 444492,
+      "sha256": "6952f85b29d71e80931ce605b22fc298adc7b53cfbc70943deb2ad4e813630a6",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\bench_skinned_diagnostic.pdb",
+      "bytes": 2965504,
+      "sha256": "e2ccaa1387a11c1d63baa4075f0be2edb4c92d5fee4d193412c1f0fcdc99f596",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\compile-main.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\compile-skinned.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\gpu.csv",
+      "bytes": 829,
+      "sha256": "d8eb6c06aff79a6f9a20918be521b6a3836346bed1e5d9f7ca8ebc1df169da32",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\link.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\metadata.json",
+      "bytes": 5535,
+      "sha256": "887eae126e49a85490b927110cbaa1011d31aca046552309de1d6d996b021d03",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\stdout.txt",
+      "bytes": 6463,
+      "sha256": "a18227972fb3913f29e1c24402e0f2058b5098584c8cfc49847bc29fb60fba53",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\broad\\summary.json",
+      "bytes": 7436,
+      "sha256": "bed5564f3501e823187793cd309da631fd072169d6c9f6dc342df4b886add420",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\main.c",
+      "bytes": 17661,
+      "sha256": "6710f22c3ec3ab68aa3ffa6cf1df5e3bbf7b542e6ac430a846e82e3e10bd49a6",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\main.obj",
+      "bytes": 76764,
+      "sha256": "bd2aaaf1d8a6731019efa0ef9419499d4e2e18c66147b6fde63bde852f9ceec9",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\skinned.c",
+      "bytes": 63538,
+      "sha256": "9327eaa50346c74240e9e7cebdd07109a0421627f956daf0fd6cf7c45eb2a4d2",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\diagnostic\\skinned.obj",
+      "bytes": 159913,
+      "sha256": "bcef4a58e30131555690fcdd85a3eb07470c57ea4355438412c2f73ff3af7468",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\fixture\\game.tide",
+      "bytes": 2416,
+      "sha256": "5c03927f454d74b0835b69c7ee2de4e2d50a02da9af988105e5dbd90293b7f49",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\fixture\\generate.mjs",
+      "bytes": 6178,
+      "sha256": "a2d53f2585b54aff4811cbc8f56783aa959a2cf7e641fe6db66f6ea7158d103a",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\fixture\\main.c",
+      "bytes": 17096,
+      "sha256": "2f729935753e470ab7eb6154c1aebc64905b9e84f5eacdb2fcc0943025001662",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\fixture\\model.gltf",
+      "bytes": 364131,
+      "sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\game_pack.c.obj",
+      "bytes": 844206,
+      "sha256": "223cb95c280df92b1119643a07788cf2dc5c7fa1388b928c9be16f40a5f78589",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\game.c.obj",
+      "bytes": 208625,
+      "sha256": "664984c887db7df7555be0ac37e87df8b14c8a6899eecaf0ccfa9fe1655fc2fe",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\generated\\game_pack.c",
+      "bytes": 2481119,
+      "sha256": "6d681bc5dc8b98a21628862a6811a936237019b81c8935fc597fb954f31e49af",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\generated\\game.c",
+      "bytes": 167556,
+      "sha256": "f636d3aff20bbe1edc0a1da89dac79d52b31f7277e4e371f3ede4c79e9be7591",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\generated\\game.h",
+      "bytes": 23431,
+      "sha256": "2e562055931a97f98ffa1ed2217e99d4b6deeaa16d2214bad67446ffeb12a301",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\attached.h",
+      "bytes": 4126,
+      "sha256": "f2dccd73fac9471c28beb239a8c181af97f972b9829d2b4fcf56f2e5acf48174",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\audio.h",
+      "bytes": 11037,
+      "sha256": "c2370268696e0257e782b80af62071e2ead7ce06b90c8938c9da126aba57cb43",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\color.h",
+      "bytes": 4539,
+      "sha256": "d8f826dc7097b7de34681f162c33bf9f6fd00f0d76afb91c3eff6a955b2e9ffb",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\debug.h",
+      "bytes": 794,
+      "sha256": "6a22ad3873fa7ab15b72cd67a3dabd87e97e37052baf9f8718abeeea201e8411",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\delta.h",
+      "bytes": 5940,
+      "sha256": "d9cafe55dae932b310151d8b2b37ed0a95bf78f0813dabf84c78c61aaea78f21",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\devices.h",
+      "bytes": 11728,
+      "sha256": "16656815e524a69d676a51d313d5a86836f2bd6a80f1d148ace2a54975b428a5",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\draw.h",
+      "bytes": 102938,
+      "sha256": "e851e88c1337d43ee85f852ac5abf655591ba276f4cb627e9d3aad2df111b61c",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\entity.h",
+      "bytes": 8184,
+      "sha256": "12e02c42a2527a29a4ecac4c336ed72c84509d72667d40c98e8a79916abbb424",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\events.h",
+      "bytes": 8107,
+      "sha256": "a4badc1b88ff30d78f63ec00faac512ee28f9fa061af6441da1da823c7f88a48",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\grid.h",
+      "bytes": 19983,
+      "sha256": "29eb3fdda5d0cc85b583bd481a2b35ba0842507c3205b0d12efb245f1b12bd47",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\gui.h",
+      "bytes": 26429,
+      "sha256": "bb7aaf82ec25f552104991e08bbe2e2a0afabd690228aa05b9b6a0c079cff214",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\heap.h",
+      "bytes": 7008,
+      "sha256": "ac3f9fc2ac16ca16d95270dde4f44e4b53744aa2497c37f2d613fb6d93db65b0",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\host.h",
+      "bytes": 50089,
+      "sha256": "0647309fb12823a36b456eea19c5eadb36c148748ae48d4c284c151ac85c24b6",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\io.h",
+      "bytes": 6079,
+      "sha256": "6af1cf774885478785fd14cb571465e2ae2f16159e0b982591fc4d5571fbbebd",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\jobs.h",
+      "bytes": 10467,
+      "sha256": "5baddaf43f3942e977f3221739f7f27d4b3674589a7a8425310f0d1e3314c266",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\layout.h",
+      "bytes": 5077,
+      "sha256": "2644f5220e7cd5c39a68905637a9172dceffcb4ee65d45be472c64c1c2d57bc9",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\list.h",
+      "bytes": 17172,
+      "sha256": "5d0b911105aa7910a8a03ee02024e9db7758bdbc49918dcb33b9bcf829483211",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\map.h",
+      "bytes": 5503,
+      "sha256": "9528ecbe9e7a3f37ba93c93994ebfa45902dbb5bc591d47f70b4962fa12e973c",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\math.h",
+      "bytes": 43933,
+      "sha256": "3f47c2ed6e5ddc9a7e2cef2c1b75d0297bb123503ec58e0c385418ea6e6b7298",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\mesh.h",
+      "bytes": 11435,
+      "sha256": "0ec2e985f242d49c6e46cdfce1202847bb1cb908859a097edd9b08d805b3e463",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\migrate.h",
+      "bytes": 3062,
+      "sha256": "3214100092ecba58b74d05670a2b033dccbb580ab2376ae00db4df04f8a716e5",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\net.h",
+      "bytes": 10800,
+      "sha256": "0f1c5036057b741c369beec423d482adda364c65e0004d3f3d2f771adbe1b658",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\pack.h",
+      "bytes": 20361,
+      "sha256": "a0340e5220ee2fcb452ea59e9a3edc0655288a0b4d36b167cda1fa080e01050b",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\page.h",
+      "bytes": 7838,
+      "sha256": "52efd58b060fef111f168e6b2eca9a27a968a3987111fc3784c543eba00d64a7",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\platform.h",
+      "bytes": 24499,
+      "sha256": "032a901e11e3a3c0c3394b5b284e0f7f9afb142cca2b82608de7dd7432277022",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\player.h",
+      "bytes": 2381,
+      "sha256": "484fb8d5dcdad7e8fb7385e6c4d1abae631c25575b4130bb1cd91eb57a9e1c6c",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\png.h",
+      "bytes": 3511,
+      "sha256": "bc5ec74d88d90a499b589e9001daf13f6e5b7d84d174c2a7d898cfb4d198ab9f",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\profile.h",
+      "bytes": 3395,
+      "sha256": "ee379331bb172db149b3eb5a00478d65200228dcddfe27c8d361ae940554fdd2",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\profiler.h",
+      "bytes": 4363,
+      "sha256": "d4c71f85f5935576eec51472a31db52809f36d1af511936847c4e52b86361a67",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\random.h",
+      "bytes": 8929,
+      "sha256": "d5488721359c9accdc66ad1b30ed299df10ad58eff06e690f51e2ab819efcbfc",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\resident.h",
+      "bytes": 8335,
+      "sha256": "14564cf7f0651831b1628e25b96131c5c3ca6c5dbe7b37596acd210ce1f30a6d",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\rows.h",
+      "bytes": 6178,
+      "sha256": "4dce1af12a6951f9540781e97d805a43a0682198154b0d7947440914aac6bcee",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\run.h",
+      "bytes": 8682,
+      "sha256": "eaac230ee6abdee9319e66d184469afdd6ac9e912175630016392fe0c75d3a1e",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\session.h",
+      "bytes": 37443,
+      "sha256": "7a1bd1cb4b419d557d7713b13c573b4015b28b0cef0b4a1aafde355f253f8cdd",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\sha256.h",
+      "bytes": 604,
+      "sha256": "40d56b46ba57d9442e3be6652b2c3d694c1fa1119feabfd85e6fc2571ca7f7c1",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\skinned_data.h",
+      "bytes": 5363,
+      "sha256": "e7a558b637dec54200371391240f5b5c73592e4074a86d24ea2547c2e5b278a2",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\skinned.h",
+      "bytes": 4804,
+      "sha256": "947b799dda2f453d8714a1ff35b25f8e1e10bf2247a959f717704fd6107be790",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\stats.h",
+      "bytes": 8733,
+      "sha256": "05e356c2ecc8a3180338e1c551f96aae4c37ecec7e06df4b5e320178b5a616c1",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\table.h",
+      "bytes": 14862,
+      "sha256": "2406d170a902990313da7e0a41475abd5551ffc23c1074d83faab292b9e24412",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\text.h",
+      "bytes": 15160,
+      "sha256": "9651d91a701a99cd80b757038a0fc88802eaf94d96e26d095d6cf7f453a4d08c",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\time.h",
+      "bytes": 308,
+      "sha256": "32779f67592ee9eb1604610f04a019dfa09a1f265db0ca526d19bfadf5eda4a3",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\vorbis.h",
+      "bytes": 2724,
+      "sha256": "377c1a21ed000e5b1702a1a816ef470c503200a9b9b89a1f2d8a0bb467132266",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\include\\tide\\wav.h",
+      "bytes": 1327,
+      "sha256": "0937b0530f1bbe13b0584793d955dff0bcb7f4a0ba4add8554cf916c588b90e6",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\instrument.mjs",
+      "bytes": 7869,
+      "sha256": "4567d13a648ca36112dcf8296dd47251395f90257119a7c3f3c47316a01f740a",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\main.c.obj",
+      "bytes": 81336,
+      "sha256": "ff3c5c4998659f9aee693f15050e359de8d9a38086dfea0d7470f8376b6cb590",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\metadata.json",
+      "bytes": 11161,
+      "sha256": "eed9d63fceb2fe0d678c8ee44939ac7fa970506c7bff7f878e13ea5d7c9044b2",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\preserve-after.ps1",
+      "bytes": 4101,
+      "sha256": "6874901ef409916db8212d3930b59c0fa58e104ff0aeacb87046abc1d9ffff95",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\source-hashes.json",
+      "bytes": 484296,
+      "sha256": "873317e0b2148cfe23be614f590342e3de886c2e4c69860273c7e5f16c610583",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\sources\\build.ninja",
+      "bytes": 3165916,
+      "sha256": "3a0e93c4f7a245dc7f5f4dd6f3e46b4e3b376fa263bf858943c68aeaeeab3fe3",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\sources\\CMakeCache.txt",
+      "bytes": 21982,
+      "sha256": "d4ba218871e8960d3082283bad49e04da4c4c2657fa03d951e3b68573ad73df1",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\sources\\gpu_gl.c",
+      "bytes": 44792,
+      "sha256": "ffbfb42e086c34bc928fb62593c379a61dff02304c05f0688ebee98c538143cb",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\sources\\mesh.c",
+      "bytes": 45077,
+      "sha256": "1e51169046cb79ca279a7637245f07a7709dea9f3e06f69fdbe9f9cc40669412",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\sources\\platform.c",
+      "bytes": 161279,
+      "sha256": "2acdda486660d10dc2241cfb246c6aa56b30ebbe4f5ecdba0fb72519c35c58b0",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\sources\\skinned_cache.h",
+      "bytes": 288,
+      "sha256": "5b001902bb67b660dc24d7f2f4d351beb215dfe4428c1f69321624d776b8a865",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\sources\\skinned.c",
+      "bytes": 56458,
+      "sha256": "041f1e7e5cf2759d9db736773a539e9709fea03eff4a49f24b0bfc18b9e74236",
+      "category": "broad-diagnostic-text"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\tide_font_bold.lib",
+      "bytes": 98596,
+      "sha256": "ca5d3f1e08b9307ced9774344cc1ea804f5c1d9e232dce0ac951549df58267f5",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\tide_platform.lib",
+      "bytes": 3588050,
+      "sha256": "4e17999927e6eec57364a4cb67235cb56bf476a42b678bce98ead0a091c76f2f",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-10k-profile\\tide.lib",
+      "bytes": 3389572,
+      "sha256": "2f63aaeaa8c9954fca4cab67da811ca8acb2cb1b073d1201aaebca8c33d2582c",
+      "category": "broad-diagnostic-original"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\bench_skinned.exe",
+      "bytes": 1878016,
+      "sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575",
+      "category": "excluded-executable"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\bench_skinned.pdb",
+      "bytes": 2957312,
+      "sha256": "9c156cc2cb994c0f8b0c245a9549b414b039918d32e891e6105519754baed846",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\fixture\\game.tide",
+      "bytes": 2416,
+      "sha256": "5c03927f454d74b0835b69c7ee2de4e2d50a02da9af988105e5dbd90293b7f49",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\fixture\\generate.mjs",
+      "bytes": 6178,
+      "sha256": "a2d53f2585b54aff4811cbc8f56783aa959a2cf7e641fe6db66f6ea7158d103a",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\fixture\\main.c",
+      "bytes": 17096,
+      "sha256": "2f729935753e470ab7eb6154c1aebc64905b9e84f5eacdb2fcc0943025001662",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\fixture\\model.gltf",
+      "bytes": 364131,
+      "sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\game_pack.c.obj",
+      "bytes": 844206,
+      "sha256": "223cb95c280df92b1119643a07788cf2dc5c7fa1388b928c9be16f40a5f78589",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\game.c.obj",
+      "bytes": 208625,
+      "sha256": "664984c887db7df7555be0ac37e87df8b14c8a6899eecaf0ccfa9fe1655fc2fe",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\generated\\game_pack.c",
+      "bytes": 2481119,
+      "sha256": "6d681bc5dc8b98a21628862a6811a936237019b81c8935fc597fb954f31e49af",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\generated\\game.c",
+      "bytes": 167556,
+      "sha256": "f636d3aff20bbe1edc0a1da89dac79d52b31f7277e4e371f3ede4c79e9be7591",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\generated\\game.h",
+      "bytes": 23431,
+      "sha256": "2e562055931a97f98ffa1ed2217e99d4b6deeaa16d2214bad67446ffeb12a301",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\attached.h",
+      "bytes": 4126,
+      "sha256": "f2dccd73fac9471c28beb239a8c181af97f972b9829d2b4fcf56f2e5acf48174",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\audio.h",
+      "bytes": 11037,
+      "sha256": "c2370268696e0257e782b80af62071e2ead7ce06b90c8938c9da126aba57cb43",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\color.h",
+      "bytes": 4539,
+      "sha256": "d8f826dc7097b7de34681f162c33bf9f6fd00f0d76afb91c3eff6a955b2e9ffb",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\debug.h",
+      "bytes": 794,
+      "sha256": "6a22ad3873fa7ab15b72cd67a3dabd87e97e37052baf9f8718abeeea201e8411",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\delta.h",
+      "bytes": 5940,
+      "sha256": "d9cafe55dae932b310151d8b2b37ed0a95bf78f0813dabf84c78c61aaea78f21",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\devices.h",
+      "bytes": 11728,
+      "sha256": "16656815e524a69d676a51d313d5a86836f2bd6a80f1d148ace2a54975b428a5",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\draw.h",
+      "bytes": 102938,
+      "sha256": "e851e88c1337d43ee85f852ac5abf655591ba276f4cb627e9d3aad2df111b61c",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\entity.h",
+      "bytes": 8184,
+      "sha256": "12e02c42a2527a29a4ecac4c336ed72c84509d72667d40c98e8a79916abbb424",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\events.h",
+      "bytes": 8107,
+      "sha256": "a4badc1b88ff30d78f63ec00faac512ee28f9fa061af6441da1da823c7f88a48",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\grid.h",
+      "bytes": 19983,
+      "sha256": "29eb3fdda5d0cc85b583bd481a2b35ba0842507c3205b0d12efb245f1b12bd47",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\gui.h",
+      "bytes": 26429,
+      "sha256": "bb7aaf82ec25f552104991e08bbe2e2a0afabd690228aa05b9b6a0c079cff214",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\heap.h",
+      "bytes": 7008,
+      "sha256": "ac3f9fc2ac16ca16d95270dde4f44e4b53744aa2497c37f2d613fb6d93db65b0",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\host.h",
+      "bytes": 50089,
+      "sha256": "0647309fb12823a36b456eea19c5eadb36c148748ae48d4c284c151ac85c24b6",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\io.h",
+      "bytes": 6079,
+      "sha256": "6af1cf774885478785fd14cb571465e2ae2f16159e0b982591fc4d5571fbbebd",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\jobs.h",
+      "bytes": 10467,
+      "sha256": "5baddaf43f3942e977f3221739f7f27d4b3674589a7a8425310f0d1e3314c266",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\layout.h",
+      "bytes": 5077,
+      "sha256": "2644f5220e7cd5c39a68905637a9172dceffcb4ee65d45be472c64c1c2d57bc9",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\list.h",
+      "bytes": 17172,
+      "sha256": "5d0b911105aa7910a8a03ee02024e9db7758bdbc49918dcb33b9bcf829483211",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\map.h",
+      "bytes": 5503,
+      "sha256": "9528ecbe9e7a3f37ba93c93994ebfa45902dbb5bc591d47f70b4962fa12e973c",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\math.h",
+      "bytes": 43933,
+      "sha256": "3f47c2ed6e5ddc9a7e2cef2c1b75d0297bb123503ec58e0c385418ea6e6b7298",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\mesh.h",
+      "bytes": 11435,
+      "sha256": "0ec2e985f242d49c6e46cdfce1202847bb1cb908859a097edd9b08d805b3e463",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\migrate.h",
+      "bytes": 3062,
+      "sha256": "3214100092ecba58b74d05670a2b033dccbb580ab2376ae00db4df04f8a716e5",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\net.h",
+      "bytes": 10800,
+      "sha256": "0f1c5036057b741c369beec423d482adda364c65e0004d3f3d2f771adbe1b658",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\pack.h",
+      "bytes": 20361,
+      "sha256": "a0340e5220ee2fcb452ea59e9a3edc0655288a0b4d36b167cda1fa080e01050b",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\page.h",
+      "bytes": 7838,
+      "sha256": "52efd58b060fef111f168e6b2eca9a27a968a3987111fc3784c543eba00d64a7",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\platform.h",
+      "bytes": 24499,
+      "sha256": "032a901e11e3a3c0c3394b5b284e0f7f9afb142cca2b82608de7dd7432277022",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\player.h",
+      "bytes": 2381,
+      "sha256": "484fb8d5dcdad7e8fb7385e6c4d1abae631c25575b4130bb1cd91eb57a9e1c6c",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\png.h",
+      "bytes": 3511,
+      "sha256": "bc5ec74d88d90a499b589e9001daf13f6e5b7d84d174c2a7d898cfb4d198ab9f",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\profile.h",
+      "bytes": 3395,
+      "sha256": "ee379331bb172db149b3eb5a00478d65200228dcddfe27c8d361ae940554fdd2",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\profiler.h",
+      "bytes": 4363,
+      "sha256": "d4c71f85f5935576eec51472a31db52809f36d1af511936847c4e52b86361a67",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\random.h",
+      "bytes": 8929,
+      "sha256": "d5488721359c9accdc66ad1b30ed299df10ad58eff06e690f51e2ab819efcbfc",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\resident.h",
+      "bytes": 8335,
+      "sha256": "14564cf7f0651831b1628e25b96131c5c3ca6c5dbe7b37596acd210ce1f30a6d",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\rows.h",
+      "bytes": 6178,
+      "sha256": "4dce1af12a6951f9540781e97d805a43a0682198154b0d7947440914aac6bcee",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\run.h",
+      "bytes": 8682,
+      "sha256": "eaac230ee6abdee9319e66d184469afdd6ac9e912175630016392fe0c75d3a1e",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\session.h",
+      "bytes": 37443,
+      "sha256": "7a1bd1cb4b419d557d7713b13c573b4015b28b0cef0b4a1aafde355f253f8cdd",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\sha256.h",
+      "bytes": 604,
+      "sha256": "40d56b46ba57d9442e3be6652b2c3d694c1fa1119feabfd85e6fc2571ca7f7c1",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\skinned_data.h",
+      "bytes": 5363,
+      "sha256": "e7a558b637dec54200371391240f5b5c73592e4074a86d24ea2547c2e5b278a2",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\skinned.h",
+      "bytes": 4804,
+      "sha256": "947b799dda2f453d8714a1ff35b25f8e1e10bf2247a959f717704fd6107be790",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\stats.h",
+      "bytes": 8733,
+      "sha256": "05e356c2ecc8a3180338e1c551f96aae4c37ecec7e06df4b5e320178b5a616c1",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\table.h",
+      "bytes": 14862,
+      "sha256": "2406d170a902990313da7e0a41475abd5551ffc23c1074d83faab292b9e24412",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\text.h",
+      "bytes": 15160,
+      "sha256": "9651d91a701a99cd80b757038a0fc88802eaf94d96e26d095d6cf7f453a4d08c",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\time.h",
+      "bytes": 308,
+      "sha256": "32779f67592ee9eb1604610f04a019dfa09a1f265db0ca526d19bfadf5eda4a3",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\vorbis.h",
+      "bytes": 2724,
+      "sha256": "377c1a21ed000e5b1702a1a816ef470c503200a9b9b89a1f2d8a0bb467132266",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\include\\tide\\wav.h",
+      "bytes": 1327,
+      "sha256": "0937b0530f1bbe13b0584793d955dff0bcb7f4a0ba4add8554cf916c588b90e6",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\main.c.obj",
+      "bytes": 81336,
+      "sha256": "ff3c5c4998659f9aee693f15050e359de8d9a38086dfea0d7470f8376b6cb590",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\metadata.json",
+      "bytes": 11161,
+      "sha256": "eed9d63fceb2fe0d678c8ee44939ac7fa970506c7bff7f878e13ea5d7c9044b2",
+      "category": "baseline-snapshot"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\preserve-after.ps1",
+      "bytes": 4101,
+      "sha256": "6874901ef409916db8212d3930b59c0fa58e104ff0aeacb87046abc1d9ffff95",
+      "category": "baseline-snapshot-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\source-hashes.json",
+      "bytes": 484296,
+      "sha256": "873317e0b2148cfe23be614f590342e3de886c2e4c69860273c7e5f16c610583",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\sources\\build.ninja",
+      "bytes": 3165916,
+      "sha256": "3a0e93c4f7a245dc7f5f4dd6f3e46b4e3b376fa263bf858943c68aeaeeab3fe3",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\sources\\CMakeCache.txt",
+      "bytes": 21982,
+      "sha256": "d4ba218871e8960d3082283bad49e04da4c4c2657fa03d951e3b68573ad73df1",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\sources\\gpu_gl.c",
+      "bytes": 44792,
+      "sha256": "ffbfb42e086c34bc928fb62593c379a61dff02304c05f0688ebee98c538143cb",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\sources\\mesh.c",
+      "bytes": 45077,
+      "sha256": "1e51169046cb79ca279a7637245f07a7709dea9f3e06f69fdbe9f9cc40669412",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\sources\\platform.c",
+      "bytes": 161279,
+      "sha256": "2acdda486660d10dc2241cfb246c6aa56b30ebbe4f5ecdba0fb72519c35c58b0",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\sources\\skinned_cache.h",
+      "bytes": 288,
+      "sha256": "5b001902bb67b660dc24d7f2f4d351beb215dfe4428c1f69321624d776b8a865",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\sources\\skinned.c",
+      "bytes": 56458,
+      "sha256": "041f1e7e5cf2759d9db736773a539e9709fea03eff4a49f24b0bfc18b9e74236",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\tide_font_bold.lib",
+      "bytes": 98596,
+      "sha256": "ca5d3f1e08b9307ced9774344cc1ea804f5c1d9e232dce0ac951549df58267f5",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\tide_platform.lib",
+      "bytes": 3588050,
+      "sha256": "4e17999927e6eec57364a4cb67235cb56bf476a42b678bce98ead0a091c76f2f",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu3\\after-snapshot\\tide.lib",
+      "bytes": 3389572,
+      "sha256": "2f63aaeaa8c9954fca4cab67da811ca8acb2cb1b073d1201aaebca8c33d2582c",
+      "category": "preserved-baseline"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\bench_skinned.exe",
+      "bytes": 1878016,
+      "sha256": "786d7c0a0f19d036d11240e0917223bcf8d383de299f8822a9f55307a0c514c1",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\bench_skinned.pdb",
+      "bytes": 2990080,
+      "sha256": "1e7e633f4177039759b76b2b4ca8f3dca252ebcb28d159aed75377d272c42080",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\fixture\\game.tide",
+      "bytes": 2416,
+      "sha256": "5c03927f454d74b0835b69c7ee2de4e2d50a02da9af988105e5dbd90293b7f49",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\fixture\\generate.mjs",
+      "bytes": 6178,
+      "sha256": "a2d53f2585b54aff4811cbc8f56783aa959a2cf7e641fe6db66f6ea7158d103a",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\fixture\\main.c",
+      "bytes": 17096,
+      "sha256": "2f729935753e470ab7eb6154c1aebc64905b9e84f5eacdb2fcc0943025001662",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\fixture\\model.gltf",
+      "bytes": 364131,
+      "sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\game_pack.c.obj",
+      "bytes": 844286,
+      "sha256": "ed1b685ac141a90774f9eacdba1f596492cc71053a60bde4767f8c30568b926b",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\game.c.obj",
+      "bytes": 208741,
+      "sha256": "36116bd070f3a388c7b79a486e9b53c9940be85829629d9d70ac5ff843b93d7a",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\generated-source-comparison.json",
+      "bytes": 897,
+      "sha256": "12b711bec757f03e2ed8c73b41e06a87afa107f0124bed3a4c2be174139ffeb6",
+      "category": "generated-source-equivalence"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\generated\\game_pack.c",
+      "bytes": 2481119,
+      "sha256": "6d681bc5dc8b98a21628862a6811a936237019b81c8935fc597fb954f31e49af",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\generated\\game.c",
+      "bytes": 167582,
+      "sha256": "74f8f346a5d46a05aa5baf647a09ceac3f8767a21d54fcaf7396defc624bb302",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\generated\\game.h",
+      "bytes": 23431,
+      "sha256": "2e562055931a97f98ffa1ed2217e99d4b6deeaa16d2214bad67446ffeb12a301",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\attached.h",
+      "bytes": 4126,
+      "sha256": "f2dccd73fac9471c28beb239a8c181af97f972b9829d2b4fcf56f2e5acf48174",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\audio.h",
+      "bytes": 11037,
+      "sha256": "c2370268696e0257e782b80af62071e2ead7ce06b90c8938c9da126aba57cb43",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\color.h",
+      "bytes": 4539,
+      "sha256": "d8f826dc7097b7de34681f162c33bf9f6fd00f0d76afb91c3eff6a955b2e9ffb",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\debug.h",
+      "bytes": 794,
+      "sha256": "6a22ad3873fa7ab15b72cd67a3dabd87e97e37052baf9f8718abeeea201e8411",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\delta.h",
+      "bytes": 5940,
+      "sha256": "d9cafe55dae932b310151d8b2b37ed0a95bf78f0813dabf84c78c61aaea78f21",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\devices.h",
+      "bytes": 11728,
+      "sha256": "16656815e524a69d676a51d313d5a86836f2bd6a80f1d148ace2a54975b428a5",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\draw.h",
+      "bytes": 102938,
+      "sha256": "e851e88c1337d43ee85f852ac5abf655591ba276f4cb627e9d3aad2df111b61c",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\entity.h",
+      "bytes": 8184,
+      "sha256": "12e02c42a2527a29a4ecac4c336ed72c84509d72667d40c98e8a79916abbb424",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\events.h",
+      "bytes": 8107,
+      "sha256": "a4badc1b88ff30d78f63ec00faac512ee28f9fa061af6441da1da823c7f88a48",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\grid.h",
+      "bytes": 19983,
+      "sha256": "29eb3fdda5d0cc85b583bd481a2b35ba0842507c3205b0d12efb245f1b12bd47",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\gui.h",
+      "bytes": 26429,
+      "sha256": "bb7aaf82ec25f552104991e08bbe2e2a0afabd690228aa05b9b6a0c079cff214",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\heap.h",
+      "bytes": 7008,
+      "sha256": "ac3f9fc2ac16ca16d95270dde4f44e4b53744aa2497c37f2d613fb6d93db65b0",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\host.h",
+      "bytes": 50089,
+      "sha256": "0647309fb12823a36b456eea19c5eadb36c148748ae48d4c284c151ac85c24b6",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\io.h",
+      "bytes": 6079,
+      "sha256": "6af1cf774885478785fd14cb571465e2ae2f16159e0b982591fc4d5571fbbebd",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\jobs.h",
+      "bytes": 10467,
+      "sha256": "5baddaf43f3942e977f3221739f7f27d4b3674589a7a8425310f0d1e3314c266",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\layout.h",
+      "bytes": 5077,
+      "sha256": "2644f5220e7cd5c39a68905637a9172dceffcb4ee65d45be472c64c1c2d57bc9",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\list.h",
+      "bytes": 17172,
+      "sha256": "5d0b911105aa7910a8a03ee02024e9db7758bdbc49918dcb33b9bcf829483211",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\map.h",
+      "bytes": 5503,
+      "sha256": "9528ecbe9e7a3f37ba93c93994ebfa45902dbb5bc591d47f70b4962fa12e973c",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\math.h",
+      "bytes": 43933,
+      "sha256": "3f47c2ed6e5ddc9a7e2cef2c1b75d0297bb123503ec58e0c385418ea6e6b7298",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\mesh.h",
+      "bytes": 11435,
+      "sha256": "0ec2e985f242d49c6e46cdfce1202847bb1cb908859a097edd9b08d805b3e463",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\migrate.h",
+      "bytes": 3062,
+      "sha256": "3214100092ecba58b74d05670a2b033dccbb580ab2376ae00db4df04f8a716e5",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\net.h",
+      "bytes": 10800,
+      "sha256": "0f1c5036057b741c369beec423d482adda364c65e0004d3f3d2f771adbe1b658",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\pack.h",
+      "bytes": 20361,
+      "sha256": "a0340e5220ee2fcb452ea59e9a3edc0655288a0b4d36b167cda1fa080e01050b",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\page.h",
+      "bytes": 7838,
+      "sha256": "52efd58b060fef111f168e6b2eca9a27a968a3987111fc3784c543eba00d64a7",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\platform.h",
+      "bytes": 24499,
+      "sha256": "032a901e11e3a3c0c3394b5b284e0f7f9afb142cca2b82608de7dd7432277022",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\player.h",
+      "bytes": 2381,
+      "sha256": "484fb8d5dcdad7e8fb7385e6c4d1abae631c25575b4130bb1cd91eb57a9e1c6c",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\png.h",
+      "bytes": 3511,
+      "sha256": "bc5ec74d88d90a499b589e9001daf13f6e5b7d84d174c2a7d898cfb4d198ab9f",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\profile.h",
+      "bytes": 3395,
+      "sha256": "ee379331bb172db149b3eb5a00478d65200228dcddfe27c8d361ae940554fdd2",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\profiler.h",
+      "bytes": 4363,
+      "sha256": "d4c71f85f5935576eec51472a31db52809f36d1af511936847c4e52b86361a67",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\random.h",
+      "bytes": 8929,
+      "sha256": "d5488721359c9accdc66ad1b30ed299df10ad58eff06e690f51e2ab819efcbfc",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\resident.h",
+      "bytes": 8335,
+      "sha256": "14564cf7f0651831b1628e25b96131c5c3ca6c5dbe7b37596acd210ce1f30a6d",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\rows.h",
+      "bytes": 6178,
+      "sha256": "4dce1af12a6951f9540781e97d805a43a0682198154b0d7947440914aac6bcee",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\run.h",
+      "bytes": 8682,
+      "sha256": "eaac230ee6abdee9319e66d184469afdd6ac9e912175630016392fe0c75d3a1e",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\session.h",
+      "bytes": 37443,
+      "sha256": "7a1bd1cb4b419d557d7713b13c573b4015b28b0cef0b4a1aafde355f253f8cdd",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\sha256.h",
+      "bytes": 604,
+      "sha256": "40d56b46ba57d9442e3be6652b2c3d694c1fa1119feabfd85e6fc2571ca7f7c1",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\skinned_data.h",
+      "bytes": 5363,
+      "sha256": "e7a558b637dec54200371391240f5b5c73592e4074a86d24ea2547c2e5b278a2",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\skinned.h",
+      "bytes": 4804,
+      "sha256": "947b799dda2f453d8714a1ff35b25f8e1e10bf2247a959f717704fd6107be790",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\stats.h",
+      "bytes": 8733,
+      "sha256": "05e356c2ecc8a3180338e1c551f96aae4c37ecec7e06df4b5e320178b5a616c1",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\table.h",
+      "bytes": 14862,
+      "sha256": "2406d170a902990313da7e0a41475abd5551ffc23c1074d83faab292b9e24412",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\text.h",
+      "bytes": 15160,
+      "sha256": "9651d91a701a99cd80b757038a0fc88802eaf94d96e26d095d6cf7f453a4d08c",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\time.h",
+      "bytes": 308,
+      "sha256": "32779f67592ee9eb1604610f04a019dfa09a1f265db0ca526d19bfadf5eda4a3",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\vorbis.h",
+      "bytes": 2724,
+      "sha256": "377c1a21ed000e5b1702a1a816ef470c503200a9b9b89a1f2d8a0bb467132266",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\include\\tide\\wav.h",
+      "bytes": 1327,
+      "sha256": "0937b0530f1bbe13b0584793d955dff0bcb7f4a0ba4add8554cf916c588b90e6",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\main.c.obj",
+      "bytes": 81416,
+      "sha256": "23510070a73aeaffda61239d1cf3b9476544fbc5f27640eaa415dd7146de8e4b",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\metadata.json",
+      "bytes": 11332,
+      "sha256": "9034c5cd9cbae68bcd18862d4acfb5039684e81d64775b656d29e11c18bc3f2f",
+      "category": "optimized-snapshot"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\preserve-after.ps1",
+      "bytes": 6540,
+      "sha256": "dec136df4eff9ddaf7e8b6edb58339f46fca1b6e66426a30b7d84a6a161669fb",
+      "category": "optimized-snapshot-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\source-hashes.json",
+      "bytes": 493098,
+      "sha256": "0ee06ddc54795715e351df4bf9ee7cf3f2eb945086bcb433d22d0c32f3b464d2",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\sources\\build.ninja",
+      "bytes": 3233010,
+      "sha256": "ae2f8a7cd535c2b575abebeb76c6bf897ecefea24d7c12f33c96b8982672941b",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\sources\\CMakeCache.txt",
+      "bytes": 22128,
+      "sha256": "6358ac20fdbeb5e8b3e4af00416dfd52caaca40b73e7f0016f5fbbcb368a1d87",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\sources\\gpu_gl.c",
+      "bytes": 44792,
+      "sha256": "ffbfb42e086c34bc928fb62593c379a61dff02304c05f0688ebee98c538143cb",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\sources\\mesh.c",
+      "bytes": 45077,
+      "sha256": "1e51169046cb79ca279a7637245f07a7709dea9f3e06f69fdbe9f9cc40669412",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\sources\\platform.c",
+      "bytes": 161279,
+      "sha256": "2acdda486660d10dc2241cfb246c6aa56b30ebbe4f5ecdba0fb72519c35c58b0",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\sources\\skinned_cache.h",
+      "bytes": 288,
+      "sha256": "5b001902bb67b660dc24d7f2f4d351beb215dfe4428c1f69321624d776b8a865",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\sources\\skinned.c",
+      "bytes": 58315,
+      "sha256": "f1c45139d6d41f2c7503326e7e479b9394e2dd61d6f6debc90339903c3ae83e5",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\tide_font_bold.lib",
+      "bytes": 98664,
+      "sha256": "ea21eefec6be8753f947d9083f813419280ee26f3cbdef621437691931d94f90",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\tide_platform.lib",
+      "bytes": 3696792,
+      "sha256": "56cbc6ad398a142bc18130cb57c99576804457501d8b17289d157fded979363b",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\after-snapshot\\tide.lib",
+      "bytes": 3393904,
+      "sha256": "ef7b2bd05a3c5830173865b4462ab814957bba809bfecee8228066a3ac1fba14",
+      "category": "preserved-optimized"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\analyze.mjs",
+      "bytes": 12920,
+      "sha256": "cdfdd5df09ec52ccc340bb97f64a0121b552b2624439fc1027165ad3c85df46b",
+      "category": "measurement-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\build-release.ps1",
+      "bytes": 4975,
+      "sha256": "dc26a8b1f8caea0df46f813f8dfb3049cea47ca9fe79e146451529e4a80fcfc6",
+      "category": "orchestration-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\export.mjs",
+      "bytes": 25061,
+      "sha256": "627d783d1988274c10e4eda15b3d4b81a695e9199942697444f01f6079f6c498",
+      "category": "export-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\after-1000-capture-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "capture-only-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\after-1000-capture-stdout.txt",
+      "bytes": 550,
+      "sha256": "b2ddbb2f07fcb7b0324026adea04bee508bae30a556d9d61db801769d325caf0",
+      "category": "capture-only-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\after-1000.png",
+      "bytes": 69482,
+      "sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a",
+      "category": "excluded-1000-capture"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\after.png",
+      "bytes": 157376,
+      "sha256": "4aa62dba5dfff5876cf37b728414e4daf1ef0d47760a1cb7cf916387defd77ab",
+      "category": "excluded-capture"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\after\\bench_skinned.exe",
+      "bytes": 1878016,
+      "sha256": "786d7c0a0f19d036d11240e0917223bcf8d383de299f8822a9f55307a0c514c1",
+      "category": "excluded-executable"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\before-1000-capture-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "capture-only-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\before-1000-capture-stdout.txt",
+      "bytes": 551,
+      "sha256": "075e06861fcf7346e351ae01c7a90fd6ec2a0f824334df58f8ea8c3b388da328",
+      "category": "capture-only-log"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\before-1000.png",
+      "bytes": 69482,
+      "sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a",
+      "category": "excluded-1000-capture"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\before.png",
+      "bytes": 157376,
+      "sha256": "4aa62dba5dfff5876cf37b728414e4daf1ef0d47760a1cb7cf916387defd77ab",
+      "category": "excluded-capture"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\metadata.json",
+      "bytes": 22368,
+      "sha256": "b567a754d441f499547f404e009ebbd6173a593f3b03e7ce6dadfd51103e459b",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\paired-rows.jsonl",
+      "bytes": 53468,
+      "sha256": "a6692919ea69efce31ca49a96ab054481bea9caa8970b3449ba9389c2ff4ae2b",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\raw-ledger.jsonl",
+      "bytes": 453760,
+      "sha256": "0cdfc8ed2fe4cdc99ec2d6602870483dffe5c507630960e3338e829d3090ad1b",
+      "category": "excluded-raw-ledger"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r1-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r1-gpu.csv",
+      "bytes": 5741,
+      "sha256": "29f3ba30edaf9cb94fe9e1308394785415fcf38092a53737d383f8a5154fdbc3",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r1-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r1-stdout.txt",
+      "bytes": 2093,
+      "sha256": "d6ae0f5a6386f5a87b39ee65209960045ff8d2519928ee9afe2b6f5b2ad7e77f",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r2-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r2-gpu.csv",
+      "bytes": 5604,
+      "sha256": "909c17dd1e688f5319823da36a9039062d23c30bd98eee2bdad101146b6ce015",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r2-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r2-stdout.txt",
+      "bytes": 2093,
+      "sha256": "b235c7c60c7c4f2a156eb25ecb95af8bad33470c4b24ac8529e3ccc091aab9a5",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r3-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r3-gpu.csv",
+      "bytes": 5737,
+      "sha256": "d4740aa9004b57f3111b2a4ecdbdcee2a966dc7201dc0f8190da74b50bcb579f",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r3-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-after-r3-stdout.txt",
+      "bytes": 2225,
+      "sha256": "4b33cce031dca2dfb669db94cdeeb2338c0a6c2fe2ea39d6fc7cb6a4790898cb",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r1-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r1-gpu.csv",
+      "bytes": 6134,
+      "sha256": "d0b8e3a7e7db3c5642d0155c717733ecfb3733a3fab3744683a0c63174054d84",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r1-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r1-stdout.txt",
+      "bytes": 2093,
+      "sha256": "bd22047bdb568e73b06cbd84e4e8e193dec44bcee5e53b171a2b99f0b788f42b",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r2-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r2-gpu.csv",
+      "bytes": 6133,
+      "sha256": "c1262ad8ea8304b50aad7f7d5bd2ca9033172c3e984399361907722fdadce65f",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r2-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r2-stdout.txt",
+      "bytes": 2093,
+      "sha256": "5238dc6f004cdd23c3914068516c92c31c9b2938f7001c9629122de68cf88877",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r3-gpu-errors.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r3-gpu.csv",
+      "bytes": 6146,
+      "sha256": "34f318948cb1271913d300dc694bfd618a26581e430898a3c2fc51b67b74a070",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r3-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\skinned-cpu4-before-r3-stdout.txt",
+      "bytes": 2226,
+      "sha256": "028413563b6220b7e69b4c6e260492f69d3a7ddeb2435aed078748896a1ec1d4",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\final-cpu4\\summary.json",
+      "bytes": 63787,
+      "sha256": "b5b362fa0af82e803a7f3136bf3845171877e27cc9512f6f5eb8a601d437501e",
+      "category": "measured"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\release-build\\build.log",
+      "bytes": 12359,
+      "sha256": "22bc1f5f27e210194df00717163c6e83578c7eecdef687ea3e0843a5a4a6010d",
+      "category": "postcommit-release-build"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\release-build\\configure.log",
+      "bytes": 965,
+      "sha256": "c973a21305b5d44c79c4e8262cecdd1b255cd00748d3bdd098d9a97a653dad19",
+      "category": "postcommit-release-build"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\release-build\\metadata.json",
+      "bytes": 1037,
+      "sha256": "87ebf75dfcc924cfeee4aed642c62b0a1fab0d5e4998102df94462366e900531",
+      "category": "postcommit-release-build"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\run_pairs.ps1",
+      "bytes": 20850,
+      "sha256": "9c48b873036ce0ddad5183fec2b6934f59ab84fc9ca56db5bd07897d21417b10",
+      "category": "measurement-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\run-final.ps1",
+      "bytes": 2326,
+      "sha256": "1e3600b4c0d7229caa239a1f8647dd3715dbe9ee7370fe541705131d86f5d80d",
+      "category": "orchestration-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu4\\smoke.ps1",
+      "bytes": 4126,
+      "sha256": "b6bcea9a7e8e64764613c258007b0088bda65d87284c07cc5cee6b6a77633431",
+      "category": "orchestration-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\final\\native-focused-ctest.log",
+      "bytes": 5399,
+      "sha256": "4c8ec05fd7f8c2bfda87e7da2f55cb5ecfd97b5fbbbf3727eaa8a16223d4acbc",
+      "category": "focused-runtime-platform-validation"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\final\\release-smoke-stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "unsaved-rendering-correctness-smoke"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\final\\release-smoke.json",
+      "bytes": 2865,
+      "sha256": "5a3141c3985eb3f1bc8d20f80642339a6949516a4b50ece2824776a6ab931bd0",
+      "category": "unsaved-rendering-correctness-smoke"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\final\\release-smoke.log",
+      "bytes": 2072,
+      "sha256": "c632494020c7c73a090095d4952fb6f07324a9c9e8fb6be31e2fa8b0c005b6dd",
+      "category": "unsaved-rendering-correctness-smoke"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\final\\skinned-tests.log",
+      "bytes": 3250,
+      "sha256": "19cd50c7f142dccea3b5a6351077fd339165fc6772572ebdb75421da68db5128",
+      "category": "focused-runtime-platform-validation"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\final\\web-focused-ctest.log",
+      "bytes": 37120,
+      "sha256": "8249741c337b69287d89d7a3b96fa87ecae7cb53a0de8ea102fc02724747d8f9",
+      "category": "focused-runtime-platform-validation"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\run-validation.ps1",
+      "bytes": 8098,
+      "sha256": "57bc8214ce3a32a4ffb4a6fe9f7daf75b839efa95725d62a46a12da8a9265e9e",
+      "category": "validation-script"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\source-hashes.json",
+      "bytes": 493098,
+      "sha256": "0ee06ddc54795715e351df4bf9ee7cf3f2eb945086bcb433d22d0c32f3b464d2",
+      "category": "validation-summary"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\summary.json",
+      "bytes": 4249,
+      "sha256": "b4942d66cee51201c88c20d076a7f55da235d2bfdf7e39a553476b5ffc633e6a",
+      "category": "validation-summary"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\skinned-cpu4-validation\\summary.md",
+      "bytes": 1292,
+      "sha256": "cf23e8e54c99bed47ae5575091970a85f0e2536475c0e089805f2e13fbf7fa3c",
+      "category": "validation-summary"
+    }
+  ]
+}

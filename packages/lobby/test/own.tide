@@ -1,0 +1,279 @@
+// A game that brings a service and a network of its own, with nothing of the
+// engine or of the package changed for it: all four of the package's slots
+// are overridden here, over the game's own C (own.c). The identity is
+// whoever the C says plays; the lobbies and the quick match are the ones it
+// keeps; and a lobby's match is opened and joined on its network
+// (tide/network.h), whose host migration goes by the lobby's owner.
+//
+// It's what a store's package does, as packages/steam does for Steam.
+using Lobbies;
+
+settings { title = "Own service"; maxPlayers = 4; hostMigration = true; }
+
+scene Main { }
+
+// own.c. Each answers at once: what a real service answers later, its
+// package's functions wait for (`await Wait.Frames(1)` until it has).
+extern string OwnWho();
+extern int OwnWhy();
+extern string OwnLobby(string id);
+extern int OwnVersion(string id);
+extern string OwnCreate(string name, int max, bool listed, string mode, string member);
+extern string OwnJoin(string id, string member);
+extern string OwnQuick(string mode, string name, int max, string member);
+extern string OwnList(string mode);
+extern void OwnLeave(string id);
+extern bool OwnSet(string id, int what, string value);
+extern bool OwnSetData(string id, bool own, string key, string value, bool remove);
+extern bool OwnSetName(string id, string name);
+extern bool UseOwnNetwork();
+
+component Runner
+{
+    float x;
+}
+
+input Controls
+{
+    float run;
+
+    Sample(Devices devices)
+    {
+        run = (devices.keyboard.d.pressed ? 1 : 0) - (devices.keyboard.a.pressed ? 1 : 0);
+    }
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> runners;
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    roster.runners[joined.player] = Spawn(Runner { }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.runners[left.player].Destroy();
+    roster.runners.Remove(left.player);
+}
+
+system Run(Controls controls, mut Runner runner, Time time)
+{
+    runner.x += controls.run * time.dt;
+}
+
+// What the test has this player ask, and what it reads
+enum Order
+{
+    None,
+    Quick,    // A match of the mode `text`
+    Join,     // The first lobby the last list had
+    List,
+    Ready,
+    Start,
+    Leave,
+    Kick,     // The member `text`
+    Stray,    // Into a match at an ID that's nobody's, with no lobby
+    End       // The match this machine runs, for everyone
+}
+
+local singleton Remote
+{
+    Order order;
+    string text;
+
+    int listed;   // Lobbies the last list had
+    int members;
+    int ready;    // Members who are ready
+    int runners;
+    float mine;
+    float theirs; // The furthest of the others'
+}
+
+view Obey(mut Remote remote, mut LobbyClient client)
+{
+    remote.runners = 0;
+    remote.theirs = 0;
+    remote.listed = client.lobbies.count;
+    remote.members = client.lobby.members.count;
+    remote.ready = 0;
+    foreach (var member in client.lobby.members)
+    {
+        if (IsReady(member)) remote.ready += 1;
+    }
+    var order = remote.order;
+    remote.order = Order.None;
+    switch (order)
+    {
+        case Order.Quick: QuickMatch(client, MatchRequest { mode = remote.text, name = "Quick", max = 4 }); break;
+        case Order.Join:
+            if (client.lobbies.count > 0) JoinLobby(client, client.lobbies[0].id);
+            break;
+        case Order.List: RefreshLobbies(client); break;
+        case Order.Ready: SetReady(client, true); break;
+        case Order.Start: StartMatch(client); break;
+        case Order.Leave: LeaveLobby(client); break;
+        case Order.Kick: Kick(client, remote.text); break;
+        case Order.Stray: MatchJoin("p9"); break;
+        case Order.End: Session.End(); break;
+    }
+}
+
+[After(Obey)]
+view Mine(verified Runner runner, mut Remote remote, with ownership)
+{
+    remote.runners += 1;
+    remote.mine = runner.x;
+}
+
+[After(Obey)]
+view Theirs(verified Runner runner, mut Remote remote, without ownership)
+{
+    remote.runners += 1;
+    if (Math.Abs(runner.x) > Math.Abs(remote.theirs)) remote.theirs = runner.x;
+}
+
+// Why the service gave nothing, as the package says it.
+LobbyFailure Why()
+{
+    switch (OwnWhy())
+    {
+        case 1: return LobbyFailure.NotFound;
+        case 2: return LobbyFailure.Full;
+        case 3: return LobbyFailure.Kicked;
+        case 4: return LobbyFailure.NotMember;
+        case 5: return LobbyFailure.NotOwner;
+        case 6: return LobbyFailure.Closed;
+    }
+    return LobbyFailure.Failed;
+}
+
+// The service's answer that's a lobby, written as the relay writes one, or "".
+LobbyAnswer Said(string lobby)
+{
+    if (lobby == "") return LobbyAnswer { failure = Why() };
+    var read = Json.Read<LobbyInfo>(lobby) ?? LobbyInfo { };
+    if (read.id == "") return LobbyAnswer { failure = LobbyFailure.Failed };
+    return LobbyAnswer { ok = true, lobby = read };
+}
+
+struct Listed
+{
+    List<LobbyEntry> lobbies;
+}
+
+// The identity slot: who the game's own service says plays.
+override async LobbyIdentity IdentitySignIn(LobbyClient client, bool fresh)
+{
+    await Wait.Frames(1);
+    return LobbyIdentity { id = OwnWho() };
+}
+
+// The lobby slot, every function of it: the lobbies are the game's own.
+override async LobbyIdentity LobbySignIn(LobbyClient client, LobbyIdentity who)
+{
+    return who;
+}
+
+override async LobbyAnswer LobbyCreate(LobbyClient client, LobbyOptions options)
+{
+    await Wait.Frames(1);
+    return Said(OwnCreate(options.name, options.max, options.listed, options.data["mode"], client.name));
+}
+
+override async LobbyListing LobbyList(LobbyClient client, LobbyQuery query)
+{
+    await Wait.Frames(1);
+    var listed = Json.Read<Listed>(OwnList(query.filter["mode"])) ?? Listed { };
+    return LobbyListing { ok = true, lobbies = listed.lobbies };
+}
+
+override async LobbyAnswer LobbyJoin(LobbyClient client, string id)
+{
+    await Wait.Frames(1);
+    return Said(OwnJoin(id, client.name));
+}
+
+override async LobbyAnswer LobbyQuickJoin(LobbyClient client, Map<string, string> filter, int seats, LobbyOptions options)
+{
+    await Wait.Frames(1);
+    return Said(OwnQuick(filter["mode"], options.name, options.max, client.name));
+}
+
+override async LobbyAnswer LobbyLeave(LobbyClient client, string id)
+{
+    OwnLeave(id);
+    return LobbyAnswer { ok = true };
+}
+
+override async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChange change)
+{
+    await Wait.Frames(1);
+    mut var ok = true;
+    if (change.name is string name) ok = OwnSet(id, 0, name) && ok;
+    if (change.match is string match) ok = OwnSet(id, 1, match) && ok;
+    if (change.open is bool open) ok = OwnSet(id, 4, open ? "1" : "0") && ok;
+    foreach (var e in change.data) ok = OwnSetData(id, false, e.key, e.value, false) && ok;
+    foreach (var key in change.remove) ok = OwnSetData(id, false, key, "", true) && ok;
+    if (!ok) return LobbyAnswer { failure = Why() };
+    return Said(OwnLobby(id));
+}
+
+override async LobbyAnswer LobbySetMember(LobbyClient client, string id, string name, Map<string, string> data, List<string> remove)
+{
+    await Wait.Frames(1);
+    mut var ok = OwnSetName(id, name);
+    foreach (var e in data) ok = OwnSetData(id, true, e.key, e.value, false) && ok;
+    foreach (var key in remove) ok = OwnSetData(id, true, key, "", true) && ok;
+    if (!ok) return LobbyAnswer { failure = Why() };
+    return Said(OwnLobby(id));
+}
+
+override async LobbyAnswer LobbyKick(LobbyClient client, string id, string player)
+{
+    await Wait.Frames(1);
+    if (!OwnSet(id, 3, player)) return LobbyAnswer { failure = Why() };
+    return Said(OwnLobby(id));
+}
+
+override async LobbyAnswer LobbyTransfer(LobbyClient client, string id, string player)
+{
+    await Wait.Frames(1);
+    if (!OwnSet(id, 2, player)) return LobbyAnswer { failure = Why() };
+    return Said(OwnLobby(id));
+}
+
+// Until the lobby changes, a frame at a time: the service is asked, and
+// nothing is timed.
+override async LobbyAnswer LobbyWatch(LobbyClient client, string id, int version)
+{
+    await Wait.Frames(1);
+    while (OwnVersion(id) == version) await Wait.Frames(1);
+    return Said(OwnLobby(id));
+}
+
+// The matchmaking slot: the service finds or makes a lobby at once.
+override async MatchTicket TicketStart(LobbyClient client, MatchRequest request)
+{
+    await Wait.Frames(1);
+    var answer = Said(OwnQuick(request.mode, request.name, request.max, client.name));
+    if (!answer.ok) return MatchTicket { status = TicketStatus.Failed, failure = answer.failure };
+    return MatchTicket { id = answer.lobby.id, status = TicketStatus.Found, lobby = answer.lobby };
+}
+
+// The transport slot: a lobby's match is on the game's own network. What a
+// match is reached by is still what Session.room says, so MatchAddress and
+// MatchLeave stay the package's.
+override void MatchOpen()
+{
+    _ = UseOwnNetwork();
+    Session.Open();
+}
+
+override void MatchJoin(string address)
+{
+    _ = UseOwnNetwork();
+    Session.Join(address);
+}

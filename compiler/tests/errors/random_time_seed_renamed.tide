@@ -1,0 +1,7 @@
+// expect: the match's seed is 'Random.seed' now
+scene Main { }
+system Reseed(Time time, mut Rules rules)
+{
+    rules.seed = time.seed;
+}
+singleton Rules { int seed; }

@@ -1,10 +1,10 @@
 ---
-description: "Learn how Tide Engine combines deterministic multiplayer, an ECS and its own language to build games for desktop and the web."
+description: "Learn how Tide Engine combines deterministic multiplayer, an ECS and its own language to build games for desktop, Android and the web."
 ---
 
 # Introduction
 
-Tide is a game engine built for multiplayer first. Its simulation is deterministic: given the same inputs, it gives the same results on every machine, down to the last bit of every float. So players only send each other their inputs, and players on different machines, the web included, share one world.
+Tide is a game engine built for multiplayer first. Its simulation is deterministic: given the same inputs and commands, it gives the same results on every machine, down to the last bit of every float. Players on desktop, Android and the web share one world, with their inputs and commands driving it.
 
 Games are written in **Tide**, a language of its own, built around an ECS. It compiles to C, and the C to native code or WebAssembly, together with the engine, so calls between your code and the engine's cost nothing.
 
@@ -22,19 +22,21 @@ component Health
     int value = 100;
 }
 
+component Poisoned { }
+
 system Poison(mut Health health, with Poisoned)
 {
     health.value -= 1;
 }
 ```
 
-**Systems say what they touch.** `mut` means a system writes a component, and a plain parameter that it only reads it. `with` and `without` pick entities without reading anything. From that, the compiler plans which systems can run at the same time and which have to wait, and shows you why (see [the schedule](../game/schedule.md)).
+**Systems say what they touch.** `mut` means a system writes a component, and a plain parameter means it only reads it. `with` and `without` pick entities without reading anything. From that, the compiler plans which systems can run at the same time and which have to wait, and shows you why (see [the schedule](../game/schedule.md)).
 
-**Everything is a match.** The simulation, called the match, is what every machine runs the same way. It runs on a server, and even single-player is a match on a server this machine runs itself. The engine has rollback netcode built in: clients predict ahead with no input delay, and correct themselves when the server disagrees. See [Matches](../multiplayer/matches.md).
+**Everything is a match.** The simulation, called the match, is what every machine runs the same way. It runs on a server, and even single-player is a match on a server this machine runs itself. The engine has rollback netcode built in: clients predict ahead and correct themselves when the server disagrees. See [Matches](../multiplayer/matches.md).
 
 **Local state is everything else.** Menus, settings, particles and the camera belong to one machine and are never sent. **Views** read the match and draw it once per frame, and they can change local state but never the match. The compiler enforces that boundary, so a view can't break the simulation by accident.
 
-**Input is the only way in.** What a player does reaches the match as their input, sampled once per tick and sent over the network. Everything else follows from the simulation.
+**Players act through inputs and commands.** Movement and held buttons reach the match as [input](../game/input.md), sampled once per tick and sent over the network. One-off actions, like choosing a team or sending a chat message, use [commands](../game/commands.md), which the server puts into a tick. Both enter the simulation through match code; views draw the result.
 
 ## A tick and a frame
 
@@ -51,8 +53,9 @@ The screen updates every **frame**, as fast as the display allows:
 ## Where to go next
 
 - [Install tide](./install.md), then make [your first game](./first-game.md).
-- Try the [live examples](./examples.md): small games that run in these pages, beside their code.
+- Edit and hot reload a running game in the [Playground](./playground.md), or try the [live examples](./examples.md) alongside their code.
 - Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md).
 - See how machines share a match, and how the engine keeps them in step: [matches](../multiplayer/matches.md), [networking](../multiplayer/networking.md) and [determinism](../multiplayer/determinism.md).
+- Find optional physics, menus and Steam integration in [Packages](../packages/index.md), with setup and API docs for each bundled package.
 - Look things up in [the language](../language/basics.md) and the [tide command](../tools/cli.md).
 - Browse the [samples](./samples.md) to play complete games in your browser, alone or with friends.

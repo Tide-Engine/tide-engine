@@ -18,6 +18,8 @@ tide run --join K7QF2M          # join the room with this code
 tide run --web --host           # on the web, in a room only
 ```
 
+To check a match with several players without opening a window for each, `tide run --players 2 --script play.txt` plays them all at once with no window, and takes a picture from each machine (see [Several players](../tools/cli.md#several-players)).
+
 ## Starting a match from code
 
 A game that starts in a menu has a local `Main`, and its local code decides which match this machine is in:
@@ -31,7 +33,7 @@ A game that starts in a menu has a local `Main`, and its local code decides whic
 | `Session.Close()` | Lets no one else join; the players in the match stay |
 | `Session.Kick(player, message)` | Sends a player out of the match this machine runs, telling them why (the message is optional) |
 | `Session.KickAll(message)` | The same for every player on another machine |
-| `Session.Join(code)` | Joins the match in the room with this code, like `"K7QF2M"` |
+| `Session.Join(code)` | Joins the match in the room with this code, like `"K7QF2M"`, or on [a network of the game's own](./own-network.md), by the text that network takes |
 | `Session.Connect(address)` | Joins another machine's match by its address: `"192.168.1.5"`, `"192.168.1.5:7777"` or a name like `"localhost"` |
 | `Session.Connect(address, port)` | The same, on another port than 7777 |
 | `Session.Leave()` | Leaves the match. With [host migration](#host-migration), a match this machine runs goes on without it |
@@ -73,44 +75,21 @@ view Menu(Session session)
 }
 ```
 
-Session calls are statements, in views and local event handlers. Match code can't make them: it runs the same on every machine.
+Session calls are statements, in views and local event handlers, and in the functions they call:
+
+```csharp
+void Host(mut Menu menu)
+{
+    Session.Open();
+    menu.page = Page.Room;
+}
+```
+
+Match code can't make them, as it runs the same on every machine: calling such a function from a system is an error at that call.
 
 ## A menu that comes with tide
 
-A game needs all of the above before two people can play it, and a menu to reach them from. The `rooms` package is that menu, so a game has one from its first day and writes its own when it's ready. List it in the game's `tide.packages`:
-
-```
-rooms
-```
-
-The game then opens on a title page, with its name over **Play**, **Host a room** and **Join a room**; a page to type a friend's code into, which Enter joins from; and the room's page, with the code to copy, who's in it, **Resume** and **Leave the room**. In the match, **Menu** in the bottom left corner, or Escape, brings the room's page back. It's drawn over a live match: `Main` stays the match's, so the game runs behind the title, and **Play** closes the menu. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. A match that ends, or a room that can't be joined, puts the machine back on the title with a line that says why.
-
-The pages are the GUI's own widgets, in whatever [theme](../game/gui.md#themes) the game sets, and the devices are theirs while a page is up. What the game reads of it is one local singleton, `Lobby`, through `using Rooms;`:
-
-```csharp
-using Rooms;
-
-input Controls
-{
-    bool jump;
-
-    Sample(Devices devices, Lobby lobby)
-    {
-        // Nothing is sent while a page is up, or until the press that closed it is let go
-        jump = lobby.playing && devices.keyboard.space.down;
-    }
-}
-
-view Hud(Lobby lobby)
-{
-    if (lobby.page != Page.Playing) return;
-    ...
-}
-```
-
-A game can tell the room's page about its match, each frame, from a view that writes `Lobby`: `seats`, `manned` (a bit per seat a player has), `mine` and `bots` list who has each seat, and `offersNewGame` and `offersBots` put **New game** and **Bots: on/off** on the page, which set `newGame` and `toggleBots` for the frame they're pressed in, for the game to send its commands from. **Play** on the title sets `newGame` too. The title is the game's `title` setting (`Application.title`), and three functions are the game's to [override](../language/overrides.md): `Rooms.Title()`, `Rooms.Tagline()` (the line under it) and `Rooms.MenuButton(screen)` (where the button goes).
-
-When the game outgrows it, copy `rooms.tide` out of the installation's `src/packages/rooms` into the game, drop the line, and change what you like: it's a page of Tide, written with nothing a game can't use.
+The bundled [Rooms package](../packages/rooms.md) adds Play, Host and Join menus, room-code sharing and volume settings. List `rooms` in the game's `tide.packages` to use it. For pre-match groups, ready flags, lobby browsing and quick match, use the [Lobby package](../packages/lobby.md). Both menus are optional; sessions and room codes are built into the engine.
 
 ## Rooms
 
@@ -153,7 +132,7 @@ The relay, a server of ours, only introduces players to each other. Their packet
 | `ping` | The network's round trip to the server, in milliseconds: what the machines wait for their next frame to read a packet isn't in it |
 | `server` | Whether this machine runs the server |
 | `open` | Whether others can join it (only the server's machine knows) |
-| `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed |
+| `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed. On [a network of the game's own](./own-network.md), what that network says the match is joined by |
 
 A single-player match is a match too, so `state` is `Connected` there as well: this machine runs the server, and its player connects to it without going through the network. That's `server` true and `open` false. `$"{session}"` shows all of it at once.
 
@@ -195,9 +174,9 @@ Then, when the machine running a room's match leaves or stops answering, another
 - A player who doesn't come back to the new host within 20 seconds leaves the match.
 - A host that leaves says so, and the match changes hands at once. One that stops answering is noticed after a few seconds.
 - `Session.End()` ends the match for everyone instead: every player gets `Disconnected` with `Ended`, even one who missed the goodbye, as the relay keeps the room as ended for a while. So does a match whose last scene unloads.
-- Only matches in a room change hands, as the room is where the players meet again. A closed match stays closed: its players come back, but no one new joins.
+- Only matches in a room change hands, as the room is where the players meet again, or on [a network of the game's own](./own-network.md) that says where its players meet. A closed match stays closed: its players come back, but no one new joins.
 
-The new host only has what its machine could see: [private scenes](../game/scenes.md#private-scenes) it wasn't in are lost. A game that uses host migration shouldn't keep secrets. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
+The new host takes over the world its machine received. Every player currently receives the whole world, including [private scenes](../game/scenes.md#private-scenes); selective state visibility is not built yet. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 
 ## Players in the match
 

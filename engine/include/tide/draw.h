@@ -1,4 +1,5 @@
 #pragma once
+#include "tide/texture_blocks.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -34,7 +35,7 @@
 // back.
 
 typedef enum tide_draw_kind {
-    TIDE_DRAW_CLEAR,       // color
+    TIDE_DRAW_CLEAR,       // color; a.x: 1 for depth alone, which leaves colors and stencil
     TIDE_DRAW_CAMERA,      // a = center, b.x = size
     TIDE_DRAW_CIRCLE,      // a = center, b.x = radius, color
     TIDE_DRAW_WIRE_CIRCLE, // a = center, b.x = radius, color
@@ -703,9 +704,9 @@ tide_render_target tide_render_target_window_of(const tide_target_format *format
 // triangles drawn into it: 1, 2, 4 or 8 (TIDE_TARGET_SAMPLES at the most).
 // Each pixel keeps that many colors and depths while it's drawn into, and its
 // color images are what those come to, one color a pixel, each time a pass on
-// it ends: they're sampled like any target's. Its depth isn't a shader's to
-// read (a draw that reads tide_render_target_depth of one is passed by), so a
-// target of depth alone has one sample, having said so. Another number is the
+// it ends: they're sampled like any target's. Its depth is read like any
+// target's too, one of each pixel's samples, as a renderer makes it when a
+// draw reads it. A target of depth alone has one sample, having said so. Another number is the
 // one of those under it, having said so; a device with fewer has what it has
 // (the renderer says so once), and 1 is the functions above. NULL and 0 for
 // the formats is one image of TIDE_TARGET_RGBA8.
@@ -805,6 +806,31 @@ void tide_cubemap_resize(tide_cubemap_ref cube, float size); // Another size, an
 void tide_cubemap_dispose(tide_cubemap_ref cube);
 tide_cubemap_ref tide_cubemap_recreate(tide_cubemap_ref previous); // Web reload: as tide_render_target_recreate
 
+// Some of a texture's pixels: `width` by `height` of them, from (x, y).
+typedef struct tide_draw_area {
+    int32_t x, y, width, height;
+} tide_draw_area;
+
+enum { TIDE_DRAW_TEXTURE_AREAS = 32 }; // The most areas a texture is said to have changed in: past them, it's one around them all
+
+// What the list knows of a texture whose writer only writes the pixels that
+// changed (tide_draw_texture_edit): where its pixels differ from what they
+// were as the frame started, so a renderer that has those sends the GPU the
+// rest and nothing more (tide_draw_texture_since).
+typedef struct tide_draw_texture_changes {
+    uint64_t was;   // Its version as the frame it last changed in started
+    uint32_t frame; // ...which is this one
+    bool known;     // `areas` are all that differs from `was`: false once anything rewrote it whole
+    uint32_t count; // 0: only its version differs, and not a pixel
+    tide_draw_area areas[TIDE_DRAW_TEXTURE_AREAS];
+    uint64_t kind;  // Which writer wrote its pixels, and as what: 0 for one that says nothing of them
+    // The writer's own, for pixels it copies part by part: a number for each part, what the part was when it
+    // was last copied (a chunk's hash), and one for the whole. Zeros once another writer wrote the texture.
+    uint64_t *parts;
+    uint32_t part_count;
+    uint64_t used;
+} tide_draw_texture_changes;
+
 // A texture the list has, for the commands that draw with it: a copy of the
 // pixels as they were when a mesh last named them. One no command of a frame
 // named is let go when the next frame starts.
@@ -821,6 +847,8 @@ typedef struct tide_draw_texture {
     // or for TIDE_PIXELS_PACK the pack's, where the pack has them, noted again by each frame that draws with them
     uint8_t *pixels;
     tide_target_size target; // A target's: the rendered image's size, where the others have a width and a height
+    tide_draw_texture_changes *changes; // What changed of its pixels, where its writer says: NULL for the others
+    tide_texture_blocks compressed; // Optional immutable pack mip chain; RGBA remains the fallback.
 } tide_draw_texture;
 
 // TIDE_PIXELS_TARGET is one of a render target's color images, the one its id
@@ -841,16 +869,20 @@ enum {
     TIDE_PIXELS_PACK,
     TIDE_PIXELS_TARGET_CUBE,
     TIDE_PIXELS_PACK_CUBE,
+    TIDE_PIXELS_LIST, // A list's elements as numbers (TIDE_TEXELS_INTS), which only a TIDE_SHADER_READ_DATA read is given
 };
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a
 // byte each, or one float of 16 bits (IEEE 754's half), which a shader reads
 // as red, with green and blue 0 and alpha 1: a Grid2<float>'s cells.
-enum { TIDE_TEXELS_BYTES, TIDE_TEXELS_HALF };
+// TIDE_TEXELS_INTS is four ints of 32 bits, which a shader reads as they are,
+// by a pixel's place and never between two: a list's elements, as numbers
+// (tide_draw_list_data).
+enum { TIDE_TEXELS_BYTES, TIDE_TEXELS_HALF, TIDE_TEXELS_INTS };
 
 static inline uint32_t tide_texels_bytes(const uint32_t format)
 {
-    return format == TIDE_TEXELS_HALF ? 2u : 4u;
+    return format == TIDE_TEXELS_HALF ? 2u : format == TIDE_TEXELS_INTS ? 16u : 4u;
 }
 
 // A 2D transform: where it puts the point (x, y) is `offset` + x * `x` + y * `y`.
@@ -903,6 +935,8 @@ typedef struct tide_draw_place {
     uint32_t cull;  // tide_cull: which side of their triangles isn't drawn
     uint32_t stencil; // A tide_stencil, packed: what the commands to come do with stencil
     uint32_t blend;   // tide_blend: how the commands to come go over what's there
+    uint32_t lod;        // 0: a mesh with levels of detail has one picked. Else 1 + the level every one draws at
+    uint32_t lod_camera; // 0: the pick is through `camera_3d`. Else 1 + the place in cameras_3d of the camera it's through
     uint32_t tinted;  // Whether `tint` is anything but white: it's unset otherwise
     tide_color tint;  // What the commands to come have their colors multiplied by
     // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
@@ -986,6 +1020,8 @@ enum {
     TIDE_DRAW_SAVED_DEPTH,
     TIDE_DRAW_SAVED_CULL,
     TIDE_DRAW_SAVED_STENCIL,
+    TIDE_DRAW_SAVED_LOD,
+    TIDE_DRAW_SAVED_LOD_CAMERA,
 };
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
@@ -1006,6 +1042,25 @@ typedef struct tide_mesh {
     uint32_t index_count;
     uint64_t version; // Any number that's another whenever these are (see tide_mesh_version)
 } tide_mesh;
+
+// A mesh's levels of detail (docs/spec.md, Levels of detail): simpler lists
+// of triangles over its own vertices, each about half the one before, which
+// a draw picks from by how big the mesh is on screen. `error` is how far a
+// level's surface is from the full mesh's, in the mesh's units, never less
+// than the level before's. `center` and `radius` are a ball all of the mesh
+// is in. A mesh marked [LOD] in Tide has them made as the game is built
+// (tide/pack.h); a mesh of C's is given them with tide_draw_mesh_levels.
+enum { TIDE_MESH_LEVELS = 7 }; // After the full mesh, at the most
+typedef struct tide_mesh_levels {
+    float center[3];
+    float radius;
+    uint32_t count;
+    float error[TIDE_MESH_LEVELS];
+    uint32_t first[TIDE_MESH_LEVELS];   // Each level's triangles in `index`...
+    uint32_t indices[TIDE_MESH_LEVELS]; // ...three indices each
+    const uint32_t *index;
+    uint32_t index_count;
+} tide_mesh_levels;
 
 // A 3D mesh the list has, for the commands that draw it: a copy of its
 // vertices and triangles at a version. It never changes while it has its
@@ -1030,6 +1085,20 @@ typedef struct tide_draw_mesh_data {
     uint32_t *indices; // Three a triangle, each a place in `vertices`: what's past them is left out
     uint32_t index_count;
     uint32_t index_capacity;
+    // Its levels of detail (tide_draw_mesh_levels), each a mesh of its own in the list while a frame draws it,
+    // with these vertices: `levels` of them after the full mesh, which is this one
+    uint32_t levels;
+    float center[3], radius;                   // A ball the mesh is in, in its own units
+    float level_error[TIDE_MESH_LEVELS];       // How far each is off, never less than the one before
+    uint32_t level_first[TIDE_MESH_LEVELS];    // Its triangles in `level_indices`...
+    uint32_t level_count[TIDE_MESH_LEVELS];    // ...three indices each
+    uint32_t level_mesh[TIDE_MESH_LEVELS];     // 1 + the place it last had, or 0
+    uint32_t *level_indices;
+    uint32_t level_index_count, level_index_capacity;
+    // A level's own: 1 + the place of the mesh whose vertices it draws with (it has none: `vertices` is NULL,
+    // and its `vertex_count` and `vertex_size` are that mesh's), and which of its levels it is, from 1. 0 for
+    // every other mesh
+    uint32_t base, level;
 } tide_draw_mesh_data;
 
 // TIDE_MESH_BYTES: Tide's lists, their vertices as their struct has them (see
@@ -1068,6 +1137,9 @@ typedef enum tide_shader_read {
     TIDE_SHADER_READ_DEPTH,
     TIDE_SHADER_READ_COMPARE,
     TIDE_SHADER_READ_CUBE, // A cube's color, by a direction: a `samplerCube`, and a `texture_cube<f32>` with a `sampler`
+    // A list's elements, four ints a pixel, each pixel by its place: an `isampler2D` read with texelFetch, and a
+    // `texture_2d<i32>` read with textureLoad
+    TIDE_SHADER_READ_DATA,
 } tide_shader_read;
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's
@@ -1179,6 +1251,8 @@ typedef struct tide_draw_list {
     tide_draw_texture *textures; // What the meshes draw with, kept from frame to frame while they do
     uint32_t texture_count;
     uint32_t texture_capacity;
+    uint32_t *texture_index;         // Textures by space and id: 1 + a place, or 0 for none
+    uint32_t texture_index_capacity; // A power of two, or 0
     tide_draw_target_data *targets;
     uint32_t target_count, target_capacity;
     uint32_t target; // Current destination, 1 + its place above; 0 is the window
@@ -1222,11 +1296,29 @@ typedef struct tide_draw_list {
     const unsigned char *bold; // The bold weight's file, once a command of the frame draws with it: its renderer's
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t epoch;   // Counts tide_draw_forget
+    struct tide_skinned_draw_cache *skinned; // Private frame-local palette captures
+    // Levels of detail (tide_draw_mesh_levels). The window's size in logical pixels, which a host says
+    // (tide_draw_screen_size): with none, nothing is picked, and every mesh draws whole
+    tide_float2 screen;
+    float lod_pixels;  // How many pixels a level may be off by to be picked; 0 is 1
+    uint32_t leveled;  // Whether the frame drew a level: its runs may want gathering (tide_draw_gather_levels)
+    uint8_t *level_room; // Where the instances of a draw are sorted by their levels
+    uint32_t level_room_capacity;
+    // What the last pick went by, kept for the draws after it through the same camera into as many pixels: a
+    // view that runs for each entity asks once a draw. `frame` + 1, the camera's place, and the pixels as bits
+    uint32_t lod_seen[4];
+    float lod_view[6]; // How many times a pixel a unit of the world is, its camera's w row, and that row's length
 } tide_draw_list;
 
 // Empties the list for a new frame. It keeps its memory for the next, and the
 // textures the frame drew with.
 void tide_draw_reset(tide_draw_list *d);
+
+// Completes captured CPU drawing work before a renderer reads the list's
+// pixels. A pool can prepare independent palettes together; NULL runs the
+// same work on this thread. Recording and GPU calls remain ordered.
+struct tide_jobs;
+void tide_draw_prepare(const tide_draw_list *d, const struct tide_jobs *jobs);
 
 // Lets the list's memory go: it's empty, and ready to use again.
 void tide_draw_free(tide_draw_list *d);
@@ -1286,6 +1378,10 @@ uint32_t tide_draw_cube_source(tide_draw_list *d, tide_cubemap_ref cube);
 // Fills the whole screen, or what the clip leaves of it, with `color` as it
 // is: no blend, tint or transform changes a clear.
 void tide_draw_clear(tide_draw_list *d, tide_color color);
+// Sets depth back alone, over the whole screen or what the clip leaves of it:
+// colors and stencil stay as they are, and what's drawn after is in front of
+// everything drawn before. It's a TIDE_DRAW_CLEAR command whose `a.x` is 1.
+void tide_draw_clear_depth(tide_draw_list *d);
 
 // ---------------------------------------------------------------------------
 // Settings: what the commands recorded after them are drawn with. Each frame
@@ -1391,6 +1487,49 @@ uint32_t tide_draw_push_cull(tide_draw_list *d, tide_cull cull);
 void tide_draw_set_stencil(tide_draw_list *d, tide_stencil stencil);
 void tide_draw_unset_stencil(tide_draw_list *d);
 uint32_t tide_draw_push_stencil(tide_draw_list *d, tide_stencil stencil);
+
+// Levels of detail: Tide's Draw.LOD, Draw.SetLOD, Draw.LODCamera and
+// Draw.SetLODCamera (docs/spec.md, Levels of detail), the selected
+// destination's own, as its cull is.
+//
+// A mesh that has levels (tide_draw_mesh_levels) draws the simplest whose
+// error covers less than a pixel of the destination (tide_draw_lod_pixels),
+// each instance its own, by its transform, the ball the mesh is in and the
+// destination's 3D camera. A mesh with none, and a draw into a list nobody
+// told the window's size (tide_draw_screen_size), draws whole.
+//
+// `set_lod` has every mesh drawn after it at `level` instead: 0 is the full
+// mesh, 1 its first level, a number past a mesh's last its last, and one
+// under 0 is 0. `unset_lod` goes back to picking. `push_lod` and
+// `push_no_lod` are the two around a block (tide_draw_pop).
+void tide_draw_set_lod(tide_draw_list *d, int32_t level);
+void tide_draw_unset_lod(tide_draw_list *d);
+uint32_t tide_draw_push_lod(tide_draw_list *d, int32_t level);
+uint32_t tide_draw_push_no_lod(tide_draw_list *d);
+
+// The camera the pick is made through, in place of the one the destination
+// draws with: the draws go where they went. It's taken as the window's, so
+// the pixels it counts are the window's. `unset` is the destination's own
+// camera again.
+void tide_draw_set_lod_camera_3d(tide_draw_list *d, tide_float3 position, tide_quaternion rotation, float field_of_view);
+void tide_draw_set_lod_camera_matrices(tide_draw_list *d, tide_float4x4 transform, tide_float4x4 projection);
+void tide_draw_unset_lod_camera(tide_draw_list *d);
+uint32_t tide_draw_push_lod_camera_3d(tide_draw_list *d, tide_float3 position, tide_quaternion rotation, float field_of_view);
+uint32_t tide_draw_push_lod_camera_matrices(tide_draw_list *d, tide_float4x4 transform, tide_float4x4 projection);
+uint32_t tide_draw_push_no_lod_camera(tide_draw_list *d);
+
+// The window's size in logical pixels, for the pick: a host says it before
+// the frame's views draw, and it stays until it's said again.
+void tide_draw_screen_size(tide_draw_list *d, tide_float2 size);
+
+// How many pixels a level may be off by and still be picked, for every
+// destination: 1 until it's said, and for a number that isn't above 0.
+void tide_draw_lod_pixels(tide_draw_list *d, float pixels);
+
+// Which level of `mesh` (what tide_draw_mesh_slot gave) an instance at
+// `transform` draws at through the selected destination's settings, as the
+// draws themselves pick: 0 for the full mesh.
+uint32_t tide_draw_mesh_level(const tide_draw_list *d, uint32_t mesh, tide_float4x4 transform);
 
 // Both of the selected destination's transforms, and both of its cameras, as each frame starts.
 void tide_draw_unset_transforms(tide_draw_list *d);
@@ -1563,6 +1702,38 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, uint32_t space, uint64_t id, 
 uint32_t tide_draw_texture_slot_as(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version, int32_t width,
                                    int32_t height, uint32_t format, uint8_t **pixels);
 
+// The same, for a writer that can tell what changed, so that a big texture a
+// frame changes a little of costs what changed: a few pixels written here,
+// and those alone sent to the GPU. `kind` is the writer's own number, never
+// 0, for what it writes and how. Where the list has the texture at another
+// version, with the same size and format, last written by a writer of that
+// kind, *kept is true and *pixels are the ones it had: the writer changes
+// those that differ and says where (tide_draw_texture_changed). Otherwise
+// *kept is false and all of them are to write, as tide_draw_texture_slot_as's
+// are, whatever is in them.
+uint32_t tide_draw_texture_edit(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version, int32_t width,
+                                int32_t height, uint32_t format, uint64_t kind, uint8_t **pixels, bool *kept);
+
+// The pixels of the texture tide_draw_texture_edit gave from (x, y), `width`
+// by `height` of them, aren't what they were. What's outside the texture is
+// left out.
+void tide_draw_texture_changed(tide_draw_list *d, uint32_t texture, int32_t x, int32_t y, int32_t width, int32_t height);
+
+// `count` numbers the writer keeps with that texture, one for each part it
+// copies (a chunk's hash, to tell the chunks that changed without reading
+// them), as it left them: zeros for a texture whose pixels weren't kept, and
+// for the numbers past those it had.
+uint64_t *tide_draw_texture_parts(tide_draw_list *d, uint32_t texture, uint32_t count);
+
+// ...and one number more, the same way (how much of the texture is in use).
+uint64_t *tide_draw_texture_used(tide_draw_list *d, uint32_t texture);
+
+// For a renderer that has the texture's pixels as they were at version `had`:
+// whether the list knows all that differs since, and if so, where, in
+// *areas, *count of them (none, where only the version differs). False: the
+// renderer takes all of the pixels.
+bool tide_draw_texture_since(const tide_draw_texture *texture, uint64_t had, const tide_draw_area **areas, uint32_t *count);
+
 // tide_draw_triangles_wrapped, with what tide_draw_texture_slot gave as the
 // texture. Triangles after others with the same texture, filter and wrap are
 // one command.
@@ -1626,6 +1797,23 @@ uint32_t tide_draw_mesh_slot(tide_draw_list *d, uint32_t space, uint64_t id, uin
                              bool *fill);
 void tide_draw_mesh_fill(tide_draw_list *d, uint32_t mesh, const tide_vertex3 *vertices, uint32_t vertex_count,
                          const uint32_t *indices, uint32_t index_count);
+
+// Gives the mesh tide_draw_mesh_slot gave, once it's filled, its levels of
+// detail, which the list copies: each is triangles of the mesh's own
+// vertices, and one with an index past them is left out, as in the mesh's
+// own. The instances drawn after it pick among them (tide_draw_set_lod).
+// NULL, or a count of 0, is none. A level is a mesh of the list's while a
+// frame draws it, with the full mesh's vertices and no copy of them, so a
+// renderer has each vertex once however many levels show.
+void tide_draw_mesh_levels(tide_draw_list *d, uint32_t mesh, const tide_mesh_levels *levels);
+
+// Puts the runs of one mesh's levels that were recorded one after the other
+// together, a run a level, the finest first, each with its instances in the
+// order they were drawn: a view that runs for each entity draws its mesh at
+// whatever level each entity picks, which would otherwise be a run for every
+// change of level. tide_draw_prepare does it; a renderer that never calls
+// that one draws the same picture in more runs.
+void tide_draw_gather_levels(const tide_draw_list *d);
 
 // An instance of what tide_draw_mesh_slot gave, with what
 // tide_draw_texture_slot gave as the texture, and how it's sampled.

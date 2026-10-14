@@ -1,0 +1,146 @@
+// Compile-time bool conditions have the same reachable paths wherever checked.
+scene Main { }
+
+const bool YES = 2 + 2 == 4;
+const bool NO = !YES;
+
+int LiteralReturn()
+{
+    if (true) return 1;
+}
+
+int KnownReturn()
+{
+    if (YES) return 2;
+}
+
+int ElseReturn()
+{
+    if (NO) { }
+    else return 3;
+}
+
+int ComparisonReturn()
+{
+    if ((YES ? Math.Clamp(7, 1, 4) : 0) == 4) return 4;
+}
+
+int WhileReturn()
+{
+    while (YES)
+    {
+        if (NO) break;
+        return 5;
+    }
+}
+
+int ForReturn()
+{
+    for (var i = 0; YES; i++)
+    {
+        if (i == 3) return 6;
+    }
+}
+
+int SwitchReturn(int value)
+{
+    switch (value)
+    {
+        case 0:
+            if (YES) return 7;
+        default:
+            if (NO) { }
+            else return 8;
+    }
+}
+
+int SwitchBreak(int value)
+{
+    mut var result = 0;
+    switch (value)
+    {
+        case 0:
+            result = 9;
+            if (YES) break;
+        default:
+            result = 10;
+            if (NO) { }
+            else break;
+    }
+    return result;
+}
+
+void Fill(out int value)
+{
+    if (YES) value = 11;
+}
+
+void FillElse(out int value)
+{
+    if (NO) { }
+    else value = 12;
+}
+
+void FillLoop(out int value)
+{
+    while (YES)
+    {
+        if (NO) break;
+        value = 13;
+        break;
+    }
+}
+
+bool Give(out int value)
+{
+    value = 14;
+    return true;
+}
+
+singleton Seen
+{
+    int returns;
+    int switches;
+    int filled;
+    int fillElse;
+    int fillLoop;
+    int fromAnd;
+    int afterAnd;
+    int fromOr;
+    int afterOr;
+    int skippedCalls;
+    int skippedSum;
+}
+
+bool Touch(mut Seen seen, out int value)
+{
+    seen.skippedCalls += 1;
+    value = 15;
+    return true;
+}
+
+system Run(mut Seen seen)
+{
+    seen.returns = LiteralReturn() + KnownReturn() + ElseReturn() + ComparisonReturn() + WhileReturn() + ForReturn();
+    seen.switches = SwitchReturn(0) + SwitchReturn(1) + SwitchBreak(0) + SwitchBreak(1);
+    Fill(out seen.filled);
+    FillElse(out seen.fillElse);
+    FillLoop(out seen.fillLoop);
+    if (YES && Give(out var fromAnd)) seen.fromAnd = fromAnd;
+    seen.afterAnd = fromAnd;
+    if (NO || Give(out var fromOr)) seen.fromOr = fromOr;
+    seen.afterOr = fromOr;
+    // Declarations in skipped operands still exist, but their calls don't run.
+    if (NO && Touch(seen, out var neverAnd)) seen.skippedSum += neverAnd;
+    if (YES || Touch(seen, out var neverOr))
+    {
+        if (NO) seen.skippedSum += neverOr;
+    }
+    seen.skippedSum += YES ? 16 : Touch(seen, out _) ? 17 : 18;
+    // The skipped side has enough calls to need hoisting when it can run.
+    if (YES ? true : Touch(seen, out _) == Touch(seen, out _)) seen.skippedSum += 19;
+    while (NO ? Touch(seen, out _) == Touch(seen, out _) : false)
+    {
+        seen.skippedSum += 20;
+    }
+}

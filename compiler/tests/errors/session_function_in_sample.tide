@@ -1,0 +1,11 @@
+// expect: Sample runs outside the simulation, and 'Host' calls Session.Open
+void Host() { Session.Open(); }
+input PlayerInput
+{
+    bool jump;
+    Sample()
+    {
+        Host();
+    }
+}
+scene Main { }

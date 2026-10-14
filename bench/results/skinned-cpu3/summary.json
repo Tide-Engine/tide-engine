@@ -1,0 +1,2930 @@
+{
+  "aggregation": "Median of three per-round medians. Paired ratios divide before by after within each round; ratio of aggregated medians is reported separately.",
+  "timing_interpretation": "CPU view/recording, CPU submission, GPU queries and full-frame readback are distinct intervals. GPU queries exclude upfront renderer preparation and geometry/instance uploads, but include on-demand palette texture creation/update inside draw_shaded; they are not pure shader time. Do not sum CPU and GPU or infer pipelined FPS. Retained process/GPU memory includes caches. Clocks are observed without power-setting changes; shared desktop applications remain running.",
+  "gpu_query_boundary": "Excludes upfront renderer preparation and geometry/instance uploads. Includes on-demand palette texture creation/update inside draw_shaded, plus shader drawing; excludes framebuffer readback. GPU query is not pure shader execution time.",
+  "rendering_work": "Identical fixture, character counts and sampled times. Palette atlas batching intentionally changes draw counts; upload bytes and draws are compared and recorded, rather than required equal. Final PNG/RGB equality remains mandatory.",
+  "cpu_comparison": "Palette computation moves from generated views into renderer preparation inside CPU submission, before the GPU query. Compare both CPU intervals and full-frame readback. The sum of separate view/submission round medians is a derived estimate, not the median of combined per-frame samples.",
+  "rows": 96,
+  "cases": [
+    {
+      "characters": 1,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0008,
+          "after_median_of_round_medians": 0.0006,
+          "before_round_medians": [
+            0.001,
+            0.0008,
+            0.0007
+          ],
+          "after_round_medians": [
+            0.0006,
+            0.0005,
+            0.0007
+          ],
+          "paired_before_over_after": [
+            1.6666666666666667,
+            1.6,
+            1
+          ],
+          "median_paired_before_over_after": 1.6,
+          "ratio_of_aggregated_medians": 1.3333333333333335
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0031,
+          "after_median_of_round_medians": 0.00285,
+          "before_round_medians": [
+            0.0042,
+            0.0031,
+            0.00235
+          ],
+          "after_round_medians": [
+            0.0028,
+            0.00385,
+            0.00285
+          ],
+          "paired_before_over_after": [
+            1.5,
+            0.8051948051948051,
+            0.8245614035087719
+          ],
+          "median_paired_before_over_after": 0.8245614035087719,
+          "ratio_of_aggregated_medians": 1.0877192982456139
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.008192,
+          "after_median_of_round_medians": 0.008192,
+          "before_round_medians": [
+            0.009216,
+            0.008192,
+            0.008192
+          ],
+          "after_round_medians": [
+            0.008192,
+            0.008192,
+            0.008192
+          ],
+          "paired_before_over_after": [
+            1.125,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.34185,
+          "after_median_of_round_medians": 0.36255,
+          "before_round_medians": [
+            0.3806,
+            0.34185,
+            0.34055
+          ],
+          "after_round_medians": [
+            0.36255,
+            0.35595,
+            0.3671
+          ],
+          "paired_before_over_after": [
+            1.0497862363811887,
+            0.9603876949009692,
+            0.9276763824570963
+          ],
+          "median_paired_before_over_after": 0.9603876949009692,
+          "ratio_of_aggregated_medians": 0.9429044269755896
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.3483,
+          "after_median_of_round_medians": 0.37005,
+          "before_round_medians": [
+            0.3858,
+            0.3483,
+            0.3459
+          ],
+          "after_round_medians": [
+            0.37005,
+            0.35965,
+            0.37405
+          ],
+          "paired_before_over_after": [
+            1.0425618159708148,
+            0.9684415403864868,
+            0.9247426814596978
+          ],
+          "median_paired_before_over_after": 0.9684415403864868,
+          "ratio_of_aggregated_medians": 0.9412241588974463
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.0052,
+          0.0039,
+          0.00305
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.0034,
+          0.00435,
+          0.00355
+        ],
+        "before_median_of_round_sums": 0.0039,
+        "after_median_of_round_sums": 0.00355,
+        "paired_before_over_after": [
+          1.5294117647058825,
+          0.896551724137931,
+          0.8591549295774648
+        ],
+        "median_paired_before_over_after": 0.896551724137931,
+        "ratio_of_aggregated_round_sums": 1.0985915492957745
+      }
+    },
+    {
+      "characters": 1,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0037,
+          "after_median_of_round_medians": 0.0023,
+          "before_round_medians": [
+            0.0039,
+            0.0029,
+            0.0037
+          ],
+          "after_round_medians": [
+            0.0026,
+            0.0023,
+            0.0018
+          ],
+          "paired_before_over_after": [
+            1.5,
+            1.2608695652173911,
+            2.055555555555556
+          ],
+          "median_paired_before_over_after": 1.5,
+          "ratio_of_aggregated_medians": 1.608695652173913
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0294,
+          "after_median_of_round_medians": 0.0056,
+          "before_round_medians": [
+            0.0308,
+            0.0024,
+            0.0294
+          ],
+          "after_round_medians": [
+            0.0056,
+            0.0308,
+            0.0043
+          ],
+          "paired_before_over_after": [
+            5.5,
+            0.0779220779220779,
+            6.837209302325581
+          ],
+          "median_paired_before_over_after": 5.5,
+          "ratio_of_aggregated_medians": 5.25
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.01024,
+          "after_median_of_round_medians": 0.01024,
+          "before_round_medians": [
+            0.011264,
+            0.01024,
+            0.01024
+          ],
+          "after_round_medians": [
+            0.01024,
+            0.01024,
+            0.01024
+          ],
+          "paired_before_over_after": [
+            1.0999999999999999,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.25955,
+          "after_median_of_round_medians": 0.343,
+          "before_round_medians": [
+            0.25955,
+            0.33165,
+            0.2155
+          ],
+          "after_round_medians": [
+            0.38005,
+            0.227,
+            0.343
+          ],
+          "paired_before_over_after": [
+            0.6829364557295093,
+            1.4610132158590308,
+            0.6282798833819241
+          ],
+          "median_paired_before_over_after": 0.6829364557295093,
+          "ratio_of_aggregated_medians": 0.7567055393586005
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.2964,
+          "after_median_of_round_medians": 0.3526,
+          "before_round_medians": [
+            0.2964,
+            0.3385,
+            0.2498
+          ],
+          "after_round_medians": [
+            0.3927,
+            0.26165,
+            0.3526
+          ],
+          "paired_before_over_after": [
+            0.7547746371275783,
+            1.2937129753487484,
+            0.7084515031196823
+          ],
+          "median_paired_before_over_after": 0.7547746371275783,
+          "ratio_of_aggregated_medians": 0.8406125921724333
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.0347,
+          0.005299999999999999,
+          0.0331
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.008199999999999999,
+          0.033100000000000004,
+          0.0060999999999999995
+        ],
+        "before_median_of_round_sums": 0.0331,
+        "after_median_of_round_sums": 0.008199999999999999,
+        "paired_before_over_after": [
+          4.231707317073171,
+          0.1601208459214501,
+          5.426229508196721
+        ],
+        "median_paired_before_over_after": 4.231707317073171,
+        "ratio_of_aggregated_round_sums": 4.036585365853659
+      }
+    },
+    {
+      "characters": 1,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0211,
+          "after_median_of_round_medians": 0.01875,
+          "before_round_medians": [
+            0.0211,
+            0.0226,
+            0.0203
+          ],
+          "after_round_medians": [
+            0.022,
+            0.0177,
+            0.01875
+          ],
+          "paired_before_over_after": [
+            0.9590909090909092,
+            1.2768361581920902,
+            1.0826666666666667
+          ],
+          "median_paired_before_over_after": 1.0826666666666667,
+          "ratio_of_aggregated_medians": 1.1253333333333335
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0344,
+          "after_median_of_round_medians": 0.00675,
+          "before_round_medians": [
+            0.0353,
+            0.0045,
+            0.0344
+          ],
+          "after_round_medians": [
+            0.00675,
+            0.0346,
+            0.00545
+          ],
+          "paired_before_over_after": [
+            5.229629629629629,
+            0.13005780346820808,
+            6.3119266055045875
+          ],
+          "median_paired_before_over_after": 5.229629629629629,
+          "ratio_of_aggregated_medians": 5.0962962962962965
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.014336,
+          "after_median_of_round_medians": 0.014336,
+          "before_round_medians": [
+            0.01536,
+            0.013312,
+            0.014336
+          ],
+          "after_round_medians": [
+            0.014336,
+            0.014336,
+            0.014336
+          ],
+          "paired_before_over_after": [
+            1.0714285714285714,
+            0.9285714285714285,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.2709,
+          "after_median_of_round_medians": 0.32665,
+          "before_round_medians": [
+            0.2709,
+            0.32085,
+            0.2309
+          ],
+          "after_round_medians": [
+            0.3461,
+            0.23575,
+            0.32665
+          ],
+          "paired_before_over_after": [
+            0.7827217567177115,
+            1.3609756097560977,
+            0.7068727996326343
+          ],
+          "median_paired_before_over_after": 0.7827217567177115,
+          "ratio_of_aggregated_medians": 0.82932802694015
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.33105,
+          "after_median_of_round_medians": 0.35205,
+          "before_round_medians": [
+            0.33105,
+            0.3497,
+            0.28855
+          ],
+          "after_round_medians": [
+            0.3767,
+            0.2899,
+            0.35205
+          ],
+          "paired_before_over_after": [
+            0.878816033979294,
+            1.2062780269058297,
+            0.8196278937650902
+          ],
+          "median_paired_before_over_after": 0.878816033979294,
+          "ratio_of_aggregated_medians": 0.94034938219003
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.0564,
+          0.0271,
+          0.0547
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.028749999999999998,
+          0.0523,
+          0.0242
+        ],
+        "before_median_of_round_sums": 0.0547,
+        "after_median_of_round_sums": 0.028749999999999998,
+        "paired_before_over_after": [
+          1.9617391304347827,
+          0.5181644359464627,
+          2.260330578512397
+        ],
+        "median_paired_before_over_after": 1.9617391304347827,
+        "ratio_of_aggregated_round_sums": 1.902608695652174
+      }
+    },
+    {
+      "characters": 1,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0069,
+          "after_median_of_round_medians": 0.0048,
+          "before_round_medians": [
+            0.0073,
+            0.0055,
+            0.0069
+          ],
+          "after_round_medians": [
+            0.00495,
+            0.0048,
+            0.0044
+          ],
+          "paired_before_over_after": [
+            1.4747474747474747,
+            1.1458333333333333,
+            1.5681818181818181
+          ],
+          "median_paired_before_over_after": 1.4747474747474747,
+          "ratio_of_aggregated_medians": 1.4375
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0332,
+          "after_median_of_round_medians": 0.00525,
+          "before_round_medians": [
+            0.0356,
+            0.00305,
+            0.0332
+          ],
+          "after_round_medians": [
+            0.00495,
+            0.0342,
+            0.00525
+          ],
+          "paired_before_over_after": [
+            7.191919191919191,
+            0.08918128654970761,
+            6.3238095238095235
+          ],
+          "median_paired_before_over_after": 6.3238095238095235,
+          "ratio_of_aggregated_medians": 6.3238095238095235
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.014336,
+          "after_median_of_round_medians": 0.014336,
+          "before_round_medians": [
+            0.01536,
+            0.013312,
+            0.014336
+          ],
+          "after_round_medians": [
+            0.013312,
+            0.014336,
+            0.014336
+          ],
+          "paired_before_over_after": [
+            1.153846153846154,
+            0.9285714285714285,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.2711,
+          "after_median_of_round_medians": 0.35115,
+          "before_round_medians": [
+            0.2711,
+            0.3324,
+            0.2253
+          ],
+          "after_round_medians": [
+            0.35275,
+            0.23525,
+            0.35115
+          ],
+          "paired_before_over_after": [
+            0.768532955350815,
+            1.4129649309245482,
+            0.6416061512174284
+          ],
+          "median_paired_before_over_after": 0.768532955350815,
+          "ratio_of_aggregated_medians": 0.7720347429873273
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.3187,
+          "after_median_of_round_medians": 0.36255,
+          "before_round_medians": [
+            0.3187,
+            0.34245,
+            0.2682
+          ],
+          "after_round_medians": [
+            0.3639,
+            0.2763,
+            0.36255
+          ],
+          "paired_before_over_after": [
+            0.8757900522121461,
+            1.2394136807817588,
+            0.7397600330988829
+          ],
+          "median_paired_before_over_after": 0.8757900522121461,
+          "ratio_of_aggregated_medians": 0.8790511653565025
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.0429,
+          0.00855,
+          0.0401
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.0099,
+          0.039,
+          0.00965
+        ],
+        "before_median_of_round_sums": 0.0401,
+        "after_median_of_round_sums": 0.0099,
+        "paired_before_over_after": [
+          4.333333333333333,
+          0.21923076923076923,
+          4.155440414507772
+        ],
+        "median_paired_before_over_after": 4.155440414507772,
+        "ratio_of_aggregated_round_sums": 4.05050505050505
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0016,
+          "after_median_of_round_medians": 0.0014,
+          "before_round_medians": [
+            0.0016,
+            0.001,
+            0.0016
+          ],
+          "after_round_medians": [
+            0.00135,
+            0.0016,
+            0.0014
+          ],
+          "paired_before_over_after": [
+            1.1851851851851851,
+            0.625,
+            1.142857142857143
+          ],
+          "median_paired_before_over_after": 1.142857142857143,
+          "ratio_of_aggregated_medians": 1.142857142857143
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0277,
+          "after_median_of_round_medians": 0.00365,
+          "before_round_medians": [
+            0.0291,
+            0.00195,
+            0.0277
+          ],
+          "after_round_medians": [
+            0.0034,
+            0.0281,
+            0.00365
+          ],
+          "paired_before_over_after": [
+            8.558823529411766,
+            0.0693950177935943,
+            7.58904109589041
+          ],
+          "median_paired_before_over_after": 7.58904109589041,
+          "ratio_of_aggregated_medians": 7.58904109589041
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.013312,
+          "after_median_of_round_medians": 0.013312,
+          "before_round_medians": [
+            0.014336,
+            0.013312,
+            0.013312
+          ],
+          "after_round_medians": [
+            0.013312,
+            0.013312,
+            0.013312
+          ],
+          "paired_before_over_after": [
+            1.0769230769230769,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.26165,
+          "after_median_of_round_medians": 0.34335,
+          "before_round_medians": [
+            0.26165,
+            0.32865,
+            0.21975
+          ],
+          "after_round_medians": [
+            0.34335,
+            0.23085,
+            0.3471
+          ],
+          "paired_before_over_after": [
+            0.762050385903597,
+            1.423651721897336,
+            0.6331028522039758
+          ],
+          "median_paired_before_over_after": 0.762050385903597,
+          "ratio_of_aggregated_medians": 0.762050385903597
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.2942,
+          "after_median_of_round_medians": 0.34975,
+          "before_round_medians": [
+            0.2942,
+            0.3355,
+            0.2504
+          ],
+          "after_round_medians": [
+            0.34975,
+            0.26185,
+            0.35405
+          ],
+          "paired_before_over_after": [
+            0.8411722659042173,
+            1.2812679014703074,
+            0.7072447394435815
+          ],
+          "median_paired_before_over_after": 0.8411722659042173,
+          "ratio_of_aggregated_medians": 0.8411722659042173
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.0307,
+          0.00295,
+          0.0293
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.00475,
+          0.0297,
+          0.00505
+        ],
+        "before_median_of_round_sums": 0.0293,
+        "after_median_of_round_sums": 0.00505,
+        "paired_before_over_after": [
+          6.463157894736843,
+          0.09932659932659932,
+          5.801980198019802
+        ],
+        "median_paired_before_over_after": 5.801980198019802,
+        "ratio_of_aggregated_round_sums": 5.801980198019802
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0097,
+          "after_median_of_round_medians": 0.0085,
+          "before_round_medians": [
+            0.0098,
+            0.0097,
+            0.0097
+          ],
+          "after_round_medians": [
+            0.0085,
+            0.0082,
+            0.0085
+          ],
+          "paired_before_over_after": [
+            1.1529411764705881,
+            1.1829268292682926,
+            1.1411764705882352
+          ],
+          "median_paired_before_over_after": 1.1529411764705881,
+          "ratio_of_aggregated_medians": 1.1411764705882352
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0301,
+          "after_median_of_round_medians": 0.0055,
+          "before_round_medians": [
+            0.031,
+            0.0034,
+            0.0301
+          ],
+          "after_round_medians": [
+            0.0055,
+            0.0315,
+            0.0043
+          ],
+          "paired_before_over_after": [
+            5.636363636363637,
+            0.10793650793650793,
+            7
+          ],
+          "median_paired_before_over_after": 5.636363636363637,
+          "ratio_of_aggregated_medians": 5.472727272727273
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.017408,
+          "after_median_of_round_medians": 0.01792,
+          "before_round_medians": [
+            0.018432,
+            0.017408,
+            0.017408
+          ],
+          "after_round_medians": [
+            0.018432,
+            0.017408,
+            0.01792
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            0.9714285714285715
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 0.9714285714285715
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.2661,
+          "after_median_of_round_medians": 0.3379,
+          "before_round_medians": [
+            0.2661,
+            0.3439,
+            0.22675
+          ],
+          "after_round_medians": [
+            0.3396,
+            0.23825,
+            0.3379
+          ],
+          "paired_before_over_after": [
+            0.7835689045936396,
+            1.4434417628541447,
+            0.6710565255992897
+          ],
+          "median_paired_before_over_after": 0.7835689045936396,
+          "ratio_of_aggregated_medians": 0.7875110979579758
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.30885,
+          "after_median_of_round_medians": 0.35625,
+          "before_round_medians": [
+            0.30885,
+            0.35845,
+            0.2679
+          ],
+          "after_round_medians": [
+            0.3578,
+            0.27925,
+            0.35625
+          ],
+          "paired_before_over_after": [
+            0.8631917272219117,
+            1.283616830796777,
+            0.752
+          ],
+          "median_paired_before_over_after": 0.8631917272219117,
+          "ratio_of_aggregated_medians": 0.8669473684210527
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.0408,
+          0.0131,
+          0.0398
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.014,
+          0.0397,
+          0.0128
+        ],
+        "before_median_of_round_sums": 0.0398,
+        "after_median_of_round_sums": 0.014,
+        "paired_before_over_after": [
+          2.9142857142857146,
+          0.32997481108312343,
+          3.109375
+        ],
+        "median_paired_before_over_after": 2.9142857142857146,
+        "ratio_of_aggregated_round_sums": 2.842857142857143
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.02675,
+          "after_median_of_round_medians": 0.0252,
+          "before_round_medians": [
+            0.02675,
+            0.0282,
+            0.0259
+          ],
+          "after_round_medians": [
+            0.0259,
+            0.0236,
+            0.0252
+          ],
+          "paired_before_over_after": [
+            1.0328185328185329,
+            1.194915254237288,
+            1.0277777777777777
+          ],
+          "median_paired_before_over_after": 1.0328185328185329,
+          "ratio_of_aggregated_medians": 1.0615079365079365
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0343,
+          "after_median_of_round_medians": 0.00585,
+          "before_round_medians": [
+            0.0354,
+            0.0043,
+            0.0343
+          ],
+          "after_round_medians": [
+            0.00585,
+            0.0353,
+            0.0048
+          ],
+          "paired_before_over_after": [
+            6.051282051282051,
+            0.1218130311614731,
+            7.145833333333333
+          ],
+          "median_paired_before_over_after": 6.051282051282051,
+          "ratio_of_aggregated_medians": 5.863247863247863
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.021504,
+          "after_median_of_round_medians": 0.022528,
+          "before_round_medians": [
+            0.023552,
+            0.021504,
+            0.021504
+          ],
+          "after_round_medians": [
+            0.022528,
+            0.022528,
+            0.022528
+          ],
+          "paired_before_over_after": [
+            1.0454545454545454,
+            0.9545454545454545,
+            0.9545454545454545
+          ],
+          "median_paired_before_over_after": 0.9545454545454545,
+          "ratio_of_aggregated_medians": 0.9545454545454545
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.27525,
+          "after_median_of_round_medians": 0.3371,
+          "before_round_medians": [
+            0.27525,
+            0.33465,
+            0.23225
+          ],
+          "after_round_medians": [
+            0.33785,
+            0.24385,
+            0.3371
+          ],
+          "paired_before_over_after": [
+            0.8147106704158651,
+            1.3723600574123436,
+            0.6889646989024029
+          ],
+          "median_paired_before_over_after": 0.8147106704158651,
+          "ratio_of_aggregated_medians": 0.816523286858499
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.34105,
+          "after_median_of_round_medians": 0.3694,
+          "before_round_medians": [
+            0.34105,
+            0.3684,
+            0.29495
+          ],
+          "after_round_medians": [
+            0.3694,
+            0.30425,
+            0.37075
+          ],
+          "paired_before_over_after": [
+            0.9232539252842448,
+            1.2108463434675432,
+            0.7955495616992582
+          ],
+          "median_paired_before_over_after": 0.9232539252842448,
+          "ratio_of_aggregated_medians": 0.9232539252842448
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.06215,
+          0.0325,
+          0.0602
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.03175,
+          0.058899999999999994,
+          0.03
+        ],
+        "before_median_of_round_sums": 0.0602,
+        "after_median_of_round_sums": 0.03175,
+        "paired_before_over_after": [
+          1.9574803149606297,
+          0.5517826825127335,
+          2.006666666666667
+        ],
+        "median_paired_before_over_after": 1.9574803149606297,
+        "ratio_of_aggregated_round_sums": 1.8960629921259842
+      }
+    },
+    {
+      "characters": 10,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0463,
+          "after_median_of_round_medians": 0.0306,
+          "before_round_medians": [
+            0.0463,
+            0.0478,
+            0.046
+          ],
+          "after_round_medians": [
+            0.0304,
+            0.0308,
+            0.0306
+          ],
+          "paired_before_over_after": [
+            1.5230263157894737,
+            1.551948051948052,
+            1.5032679738562091
+          ],
+          "median_paired_before_over_after": 1.5230263157894737,
+          "ratio_of_aggregated_medians": 1.5130718954248368
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0601,
+          "after_median_of_round_medians": 0.01465,
+          "before_round_medians": [
+            0.0614,
+            0.0104,
+            0.0601
+          ],
+          "after_round_medians": [
+            0.01435,
+            0.0448,
+            0.01465
+          ],
+          "paired_before_over_after": [
+            4.2787456445993035,
+            0.23214285714285712,
+            4.102389078498294
+          ],
+          "median_paired_before_over_after": 4.102389078498294,
+          "ratio_of_aggregated_medians": 4.102389078498294
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.072704,
+          "after_median_of_round_medians": 0.031744,
+          "before_round_medians": [
+            0.078848,
+            0.072704,
+            0.072704
+          ],
+          "after_round_medians": [
+            0.031744,
+            0.0256,
+            0.031744
+          ],
+          "paired_before_over_after": [
+            2.4838709677419355,
+            2.84,
+            2.2903225806451615
+          ],
+          "median_paired_before_over_after": 2.4838709677419355,
+          "ratio_of_aggregated_medians": 2.2903225806451615
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.33345,
+          "after_median_of_round_medians": 0.33365,
+          "before_round_medians": [
+            0.33345,
+            0.3991,
+            0.2849
+          ],
+          "after_round_medians": [
+            0.33365,
+            0.2506,
+            0.33605
+          ],
+          "paired_before_over_after": [
+            0.999400569459014,
+            1.5925778132482045,
+            0.8477905073649754
+          ],
+          "median_paired_before_over_after": 0.999400569459014,
+          "ratio_of_aggregated_medians": 0.999400569459014
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.44385,
+          "after_median_of_round_medians": 0.38225,
+          "before_round_medians": [
+            0.44385,
+            0.4642,
+            0.3939
+          ],
+          "after_round_medians": [
+            0.38225,
+            0.33025,
+            0.3864
+          ],
+          "paired_before_over_after": [
+            1.1611510791366908,
+            1.4056018168054505,
+            1.0194099378881987
+          ],
+          "median_paired_before_over_after": 1.1611510791366908,
+          "ratio_of_aggregated_medians": 1.1611510791366908
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 11,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            11,
+            11,
+            11
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            5.5,
+            5.5,
+            5.5
+          ],
+          "median_paired_before_over_after": 5.5,
+          "ratio_of_aggregated_medians": 5.5
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 40960,
+          "after_median_of_round_medians": 49152,
+          "before_round_medians": [
+            40960,
+            40960,
+            40960
+          ],
+          "after_round_medians": [
+            49152,
+            49152,
+            49152
+          ],
+          "paired_before_over_after": [
+            0.8333333333333334,
+            0.8333333333333334,
+            0.8333333333333334
+          ],
+          "median_paired_before_over_after": 0.8333333333333334,
+          "ratio_of_aggregated_medians": 0.8333333333333334
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": false,
+        "upload_bytes_equal": false,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.1077,
+          0.0582,
+          0.1061
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.04475,
+          0.0756,
+          0.04525
+        ],
+        "before_median_of_round_sums": 0.1061,
+        "after_median_of_round_sums": 0.04525,
+        "paired_before_over_after": [
+          2.4067039106145254,
+          0.7698412698412699,
+          2.34475138121547
+        ],
+        "median_paired_before_over_after": 2.34475138121547,
+        "ratio_of_aggregated_round_sums": 2.34475138121547
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0065,
+          "after_median_of_round_medians": 0.0066,
+          "before_round_medians": [
+            0.0066,
+            0.0061,
+            0.0065
+          ],
+          "after_round_medians": [
+            0.0066,
+            0.0065,
+            0.0067
+          ],
+          "paired_before_over_after": [
+            1,
+            0.9384615384615386,
+            0.9701492537313432
+          ],
+          "median_paired_before_over_after": 0.9701492537313432,
+          "ratio_of_aggregated_medians": 0.9848484848484849
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0286,
+          "after_median_of_round_medians": 0.0034,
+          "before_round_medians": [
+            0.02905,
+            0.00285,
+            0.0286
+          ],
+          "after_round_medians": [
+            0.0034,
+            0.0285,
+            0.00335
+          ],
+          "paired_before_over_after": [
+            8.544117647058824,
+            0.1,
+            8.537313432835822
+          ],
+          "median_paired_before_over_after": 8.537313432835822,
+          "ratio_of_aggregated_medians": 8.411764705882353
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.059392,
+          "after_median_of_round_medians": 0.059392,
+          "before_round_medians": [
+            0.065536,
+            0.059392,
+            0.059392
+          ],
+          "after_round_medians": [
+            0.059392,
+            0.059392,
+            0.059392
+          ],
+          "paired_before_over_after": [
+            1.103448275862069,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.31175,
+          "after_median_of_round_medians": 0.38485,
+          "before_round_medians": [
+            0.31175,
+            0.3768,
+            0.26975
+          ],
+          "after_round_medians": [
+            0.38485,
+            0.27735,
+            0.39165
+          ],
+          "paired_before_over_after": [
+            0.8100558659217877,
+            1.3585722011898325,
+            0.6887527128813992
+          ],
+          "median_paired_before_over_after": 0.8100558659217877,
+          "ratio_of_aggregated_medians": 0.8100558659217877
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.3489,
+          "after_median_of_round_medians": 0.3961,
+          "before_round_medians": [
+            0.3489,
+            0.38845,
+            0.3066
+          ],
+          "after_round_medians": [
+            0.3961,
+            0.3136,
+            0.40665
+          ],
+          "paired_before_over_after": [
+            0.8808381721787427,
+            1.2386798469387756,
+            0.7539653264478052
+          ],
+          "median_paired_before_over_after": 0.8808381721787427,
+          "ratio_of_aggregated_medians": 0.8808381721787427
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.03565,
+          0.00895,
+          0.0351
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.01,
+          0.035,
+          0.01005
+        ],
+        "before_median_of_round_sums": 0.0351,
+        "after_median_of_round_sums": 0.01005,
+        "paired_before_over_after": [
+          3.565,
+          0.25571428571428567,
+          3.4925373134328357
+        ],
+        "median_paired_before_over_after": 3.4925373134328357,
+        "ratio_of_aggregated_round_sums": 3.4925373134328357
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0672,
+          "after_median_of_round_medians": 0.0663,
+          "before_round_medians": [
+            0.0672,
+            0.08535,
+            0.0666
+          ],
+          "after_round_medians": [
+            0.0676,
+            0.0652,
+            0.0663
+          ],
+          "paired_before_over_after": [
+            0.9940828402366865,
+            1.3090490797546013,
+            1.0045248868778283
+          ],
+          "median_paired_before_over_after": 1.0045248868778283,
+          "ratio_of_aggregated_medians": 1.0135746606334841
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0306,
+          "after_median_of_round_medians": 0.006,
+          "before_round_medians": [
+            0.0309,
+            0.0048,
+            0.0306
+          ],
+          "after_round_medians": [
+            0.006,
+            0.0317,
+            0.00555
+          ],
+          "paired_before_over_after": [
+            5.15,
+            0.15141955835962145,
+            5.513513513513513
+          ],
+          "median_paired_before_over_after": 5.15,
+          "ratio_of_aggregated_medians": 5.1
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.08704,
+          "after_median_of_round_medians": 0.090112,
+          "before_round_medians": [
+            0.095232,
+            0.08704,
+            0.08704
+          ],
+          "after_round_medians": [
+            0.090112,
+            0.0896,
+            0.090112
+          ],
+          "paired_before_over_after": [
+            1.0568181818181819,
+            0.9714285714285715,
+            0.965909090909091
+          ],
+          "median_paired_before_over_after": 0.9714285714285715,
+          "ratio_of_aggregated_medians": 0.965909090909091
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.34275,
+          "after_median_of_round_medians": 0.35415,
+          "before_round_medians": [
+            0.34275,
+            0.36265,
+            0.2965
+          ],
+          "after_round_medians": [
+            0.36835,
+            0.3104,
+            0.35415
+          ],
+          "paired_before_over_after": [
+            0.9305008823130175,
+            1.1683311855670102,
+            0.8372158689820697
+          ],
+          "median_paired_before_over_after": 0.9305008823130175,
+          "ratio_of_aggregated_medians": 0.9678102498941126
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.4426,
+          "after_median_of_round_medians": 0.43625,
+          "before_round_medians": [
+            0.4426,
+            0.45195,
+            0.39605
+          ],
+          "after_round_medians": [
+            0.45125,
+            0.40975,
+            0.43625
+          ],
+          "paired_before_over_after": [
+            0.9808310249307479,
+            1.1029896278218427,
+            0.9078510028653295
+          ],
+          "median_paired_before_over_after": 0.9808310249307479,
+          "ratio_of_aggregated_medians": 1.0145558739255014
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.09809999999999999,
+          0.09015,
+          0.09720000000000001
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.0736,
+          0.09689999999999999,
+          0.07185
+        ],
+        "before_median_of_round_sums": 0.09720000000000001,
+        "after_median_of_round_sums": 0.0736,
+        "paired_before_over_after": [
+          1.3328804347826086,
+          0.9303405572755419,
+          1.3528183716075157
+        ],
+        "median_paired_before_over_after": 1.3328804347826086,
+        "ratio_of_aggregated_round_sums": 1.3206521739130437
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0842,
+          "after_median_of_round_medians": 0.0967,
+          "before_round_medians": [
+            0.0827,
+            0.0958,
+            0.0842
+          ],
+          "after_round_medians": [
+            0.0967,
+            0.0803,
+            0.10205
+          ],
+          "paired_before_over_after": [
+            0.8552223371251293,
+            1.1930261519302616,
+            0.8250857422831944
+          ],
+          "median_paired_before_over_after": 0.8552223371251293,
+          "ratio_of_aggregated_medians": 0.8707342295760083
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0343,
+          "after_median_of_round_medians": 0.0061,
+          "before_round_medians": [
+            0.0349,
+            0.0037,
+            0.0343
+          ],
+          "after_round_medians": [
+            0.00525,
+            0.0352,
+            0.0061
+          ],
+          "paired_before_over_after": [
+            6.647619047619047,
+            0.10511363636363637,
+            5.6229508196721305
+          ],
+          "median_paired_before_over_after": 5.6229508196721305,
+          "ratio_of_aggregated_medians": 5.6229508196721305
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.09216,
+          "after_median_of_round_medians": 0.095232,
+          "before_round_medians": [
+            0.100352,
+            0.09216,
+            0.09216
+          ],
+          "after_round_medians": [
+            0.095232,
+            0.095232,
+            0.095232
+          ],
+          "paired_before_over_after": [
+            1.053763440860215,
+            0.9677419354838711,
+            0.9677419354838711
+          ],
+          "median_paired_before_over_after": 0.9677419354838711,
+          "ratio_of_aggregated_medians": 0.9677419354838711
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.3502,
+          "after_median_of_round_medians": 0.35525,
+          "before_round_medians": [
+            0.35155,
+            0.3502,
+            0.3049
+          ],
+          "after_round_medians": [
+            0.35525,
+            0.3151,
+            0.3561
+          ],
+          "paired_before_over_after": [
+            0.989584799437016,
+            1.1113932085052365,
+            0.8562201628755967
+          ],
+          "median_paired_before_over_after": 0.989584799437016,
+          "ratio_of_aggregated_medians": 0.9857846586910627
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.4647,
+          "after_median_of_round_medians": 0.4653,
+          "before_round_medians": [
+            0.4715,
+            0.4647,
+            0.42645
+          ],
+          "after_round_medians": [
+            0.4699,
+            0.433,
+            0.4653
+          ],
+          "paired_before_over_after": [
+            1.0034049797829325,
+            1.0732101616628176,
+            0.9165054803352676
+          ],
+          "median_paired_before_over_after": 1.0034049797829325,
+          "ratio_of_aggregated_medians": 0.9987105093488072
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.1176,
+          0.09949999999999999,
+          0.1185
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.10195,
+          0.11549999999999999,
+          0.10815
+        ],
+        "before_median_of_round_sums": 0.1176,
+        "after_median_of_round_sums": 0.10815,
+        "paired_before_over_after": [
+          1.1535066208925944,
+          0.8614718614718615,
+          1.0957004160887656
+        ],
+        "median_paired_before_over_after": 1.0957004160887656,
+        "ratio_of_aggregated_round_sums": 1.087378640776699
+      }
+    },
+    {
+      "characters": 100,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.4451,
+          "after_median_of_round_medians": 0.2921,
+          "before_round_medians": [
+            0.4398,
+            0.4873,
+            0.4451
+          ],
+          "after_round_medians": [
+            0.2921,
+            0.28835,
+            0.306
+          ],
+          "paired_before_over_after": [
+            1.5056487504279357,
+            1.6899601179122594,
+            1.4545751633986927
+          ],
+          "median_paired_before_over_after": 1.5056487504279357,
+          "ratio_of_aggregated_medians": 1.5237932214994863
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.32095,
+          "after_median_of_round_medians": 0.04475,
+          "before_round_medians": [
+            0.32095,
+            0.06135,
+            0.3242
+          ],
+          "after_round_medians": [
+            0.04475,
+            0.08185,
+            0.04415
+          ],
+          "paired_before_over_after": [
+            7.172067039106146,
+            0.7495418448381185,
+            7.343148357870894
+          ],
+          "median_paired_before_over_after": 7.172067039106146,
+          "ratio_of_aggregated_medians": 7.172067039106146
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.669696,
+          "after_median_of_round_medians": 0.13312,
+          "before_round_medians": [
+            0.697344,
+            0.667136,
+            0.669696
+          ],
+          "after_round_medians": [
+            0.13312,
+            0.125952,
+            0.13312
+          ],
+          "paired_before_over_after": [
+            5.2384615384615385,
+            5.296747967479674,
+            5.030769230769231
+          ],
+          "median_paired_before_over_after": 5.2384615384615385,
+          "ratio_of_aggregated_medians": 5.030769230769231
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.95635,
+          "after_median_of_round_medians": 0.39835,
+          "before_round_medians": [
+            0.95635,
+            1.19135,
+            0.8955
+          ],
+          "after_round_medians": [
+            0.4048,
+            0.3501,
+            0.39835
+          ],
+          "paired_before_over_after": [
+            2.3625247035573125,
+            3.402884890031419,
+            2.2480230952679805
+          ],
+          "median_paired_before_over_after": 2.3625247035573125,
+          "ratio_of_aggregated_medians": 2.400778210116732
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 1.72355,
+          "after_median_of_round_medians": 0.75215,
+          "before_round_medians": [
+            1.72355,
+            1.78175,
+            1.6739
+          ],
+          "after_round_medians": [
+            0.75215,
+            0.72495,
+            0.754
+          ],
+          "paired_before_over_after": [
+            2.2914977065744866,
+            2.457755707290158,
+            2.220026525198939
+          ],
+          "median_paired_before_over_after": 2.2914977065744866,
+          "ratio_of_aggregated_medians": 2.2914977065744866
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 101,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            101,
+            101,
+            101
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            50.5,
+            50.5,
+            50.5
+          ],
+          "median_paired_before_over_after": 50.5,
+          "ratio_of_aggregated_medians": 50.5
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 409600,
+          "after_median_of_round_medians": 409600,
+          "before_round_medians": [
+            409600,
+            409600,
+            409600
+          ],
+          "after_round_medians": [
+            409600,
+            409600,
+            409600
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": false,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.76075,
+          0.54865,
+          0.7693
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.33685000000000004,
+          0.3702,
+          0.35015
+        ],
+        "before_median_of_round_sums": 0.76075,
+        "after_median_of_round_sums": 0.35015,
+        "paired_before_over_after": [
+          2.2584236306961554,
+          1.4820367368989735,
+          2.197058403541339
+        ],
+        "median_paired_before_over_after": 2.197058403541339,
+        "ratio_of_aggregated_round_sums": 2.172640297015565
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "static",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.0569,
+          "after_median_of_round_medians": 0.05655,
+          "before_round_medians": [
+            0.0576,
+            0.0569,
+            0.0563
+          ],
+          "after_round_medians": [
+            0.07055,
+            0.0561,
+            0.05655
+          ],
+          "paired_before_over_after": [
+            0.8164422395464209,
+            1.0142602495543673,
+            0.995579133510168
+          ],
+          "median_paired_before_over_after": 0.995579133510168,
+          "ratio_of_aggregated_medians": 1.0061892130857648
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.03175,
+          "after_median_of_round_medians": 0.0064,
+          "before_round_medians": [
+            0.0326,
+            0.0063,
+            0.03175
+          ],
+          "after_round_medians": [
+            0.0064,
+            0.0335,
+            0.0063
+          ],
+          "paired_before_over_after": [
+            5.093749999999999,
+            0.1880597014925373,
+            5.0396825396825395
+          ],
+          "median_paired_before_over_after": 5.0396825396825395,
+          "ratio_of_aggregated_medians": 4.9609375
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.45568,
+          "after_median_of_round_medians": 0.45568,
+          "before_round_medians": [
+            0.454656,
+            0.45568,
+            0.45568
+          ],
+          "after_round_medians": [
+            0.45568,
+            0.45568,
+            0.45568
+          ],
+          "paired_before_over_after": [
+            0.9977528089887641,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.7109,
+          "after_median_of_round_medians": 0.7303,
+          "before_round_medians": [
+            0.7109,
+            0.73705,
+            0.6705
+          ],
+          "after_round_medians": [
+            0.7303,
+            0.67985,
+            0.73755
+          ],
+          "paired_before_over_after": [
+            0.9734355744214707,
+            1.0841362065161433,
+            0.9090909090909091
+          ],
+          "median_paired_before_over_after": 0.9734355744214707,
+          "ratio_of_aggregated_medians": 0.9734355744214707
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 0.80365,
+          "after_median_of_round_medians": 0.81605,
+          "before_round_medians": [
+            0.80365,
+            0.81615,
+            0.7622
+          ],
+          "after_round_medians": [
+            0.81795,
+            0.7715,
+            0.81605
+          ],
+          "paired_before_over_after": [
+            0.9825172687817104,
+            1.0578742709008426,
+            0.934011396360517
+          ],
+          "median_paired_before_over_after": 0.9825172687817104,
+          "ratio_of_aggregated_medians": 0.984804852643833
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.0902,
+          0.0632,
+          0.08805
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.07695,
+          0.0896,
+          0.06285
+        ],
+        "before_median_of_round_sums": 0.08805,
+        "after_median_of_round_sums": 0.07695,
+        "paired_before_over_after": [
+          1.1721897335932423,
+          0.7053571428571429,
+          1.4009546539379474
+        ],
+        "median_paired_before_over_after": 1.1721897335932423,
+        "ratio_of_aggregated_round_sums": 1.1442495126705652
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "omitted_rest",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.6458,
+          "after_median_of_round_medians": 0.67145,
+          "before_round_medians": [
+            0.64385,
+            0.70165,
+            0.6458
+          ],
+          "after_round_medians": [
+            0.67145,
+            0.64495,
+            0.68775
+          ],
+          "paired_before_over_after": [
+            0.9588949288852484,
+            1.0879137917668036,
+            0.9390039985459834
+          ],
+          "median_paired_before_over_after": 0.9588949288852484,
+          "ratio_of_aggregated_medians": 0.9617990915183559
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.034,
+          "after_median_of_round_medians": 0.0086,
+          "before_round_medians": [
+            0.034,
+            0.0068,
+            0.0343
+          ],
+          "after_round_medians": [
+            0.0085,
+            0.0375,
+            0.0086
+          ],
+          "paired_before_over_after": [
+            4,
+            0.18133333333333332,
+            3.9883720930232553
+          ],
+          "median_paired_before_over_after": 3.9883720930232553,
+          "ratio_of_aggregated_medians": 3.9534883720930236
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.718848,
+          "after_median_of_round_medians": 0.751616,
+          "before_round_medians": [
+            0.718848,
+            0.717824,
+            0.718848
+          ],
+          "after_round_medians": [
+            0.751616,
+            0.751616,
+            0.750592
+          ],
+          "paired_before_over_after": [
+            0.9564032697547685,
+            0.955040871934605,
+            0.9577080491132333
+          ],
+          "median_paired_before_over_after": 0.9564032697547685,
+          "ratio_of_aggregated_medians": 0.9564032697547685
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.9753,
+          "after_median_of_round_medians": 1.02175,
+          "before_round_medians": [
+            0.9753,
+            0.98655,
+            0.94135
+          ],
+          "after_round_medians": [
+            1.0244,
+            0.9871,
+            1.02175
+          ],
+          "paired_before_over_after": [
+            0.9520695040999609,
+            0.9994428122783913,
+            0.9213114754098362
+          ],
+          "median_paired_before_over_after": 0.9520695040999609,
+          "ratio_of_aggregated_medians": 0.9545387815023244
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 1.6555,
+          "after_median_of_round_medians": 1.72705,
+          "before_round_medians": [
+            1.6555,
+            1.7159,
+            1.62935
+          ],
+          "after_round_medians": [
+            1.72705,
+            1.67225,
+            1.7424
+          ],
+          "paired_before_over_after": [
+            0.9585709736255464,
+            1.0261025564359396,
+            0.9351182277318641
+          ],
+          "median_paired_before_over_after": 0.9585709736255464,
+          "ratio_of_aggregated_medians": 0.9585709736255464
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 0,
+          "after_median_of_round_medians": 0,
+          "before_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "after_round_medians": [
+            0,
+            0,
+            0
+          ],
+          "paired_before_over_after": [
+            null,
+            null,
+            null
+          ],
+          "median_paired_before_over_after": null,
+          "ratio_of_aggregated_medians": null
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.6778500000000001,
+          0.70845,
+          0.6801
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.6799499999999999,
+          0.68245,
+          0.69635
+        ],
+        "before_median_of_round_sums": 0.6801,
+        "after_median_of_round_sums": 0.68245,
+        "paired_before_over_after": [
+          0.99691153761306,
+          1.0380980291596453,
+          0.9766640338910031
+        ],
+        "median_paired_before_over_after": 0.99691153761306,
+        "ratio_of_aggregated_round_sums": 0.9965565242874936
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "shared_pose",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 0.67275,
+          "after_median_of_round_medians": 0.70185,
+          "before_round_medians": [
+            0.65735,
+            0.72095,
+            0.67275
+          ],
+          "after_round_medians": [
+            0.70185,
+            0.66135,
+            0.7109
+          ],
+          "paired_before_over_after": [
+            0.9365961387760918,
+            1.0901186966054284,
+            0.9463356308904206
+          ],
+          "median_paired_before_over_after": 0.9463356308904206,
+          "ratio_of_aggregated_medians": 0.9585381491771746
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 0.0373,
+          "after_median_of_round_medians": 0.0096,
+          "before_round_medians": [
+            0.03785,
+            0.0081,
+            0.0373
+          ],
+          "after_round_medians": [
+            0.0096,
+            0.0396,
+            0.0095
+          ],
+          "paired_before_over_after": [
+            3.942708333333334,
+            0.20454545454545453,
+            3.9263157894736844
+          ],
+          "median_paired_before_over_after": 3.9263157894736844,
+          "ratio_of_aggregated_medians": 3.885416666666667
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 0.724992,
+          "after_median_of_round_medians": 0.758784,
+          "before_round_medians": [
+            0.724992,
+            0.724992,
+            0.726016
+          ],
+          "after_round_medians": [
+            0.758784,
+            0.75776,
+            0.758784
+          ],
+          "paired_before_over_after": [
+            0.9554655870445343,
+            0.9567567567567568,
+            0.9568151147098515
+          ],
+          "median_paired_before_over_after": 0.9567567567567568,
+          "ratio_of_aggregated_medians": 0.9554655870445343
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 0.9836,
+          "after_median_of_round_medians": 1.0327,
+          "before_round_medians": [
+            0.9836,
+            0.9978,
+            0.94895
+          ],
+          "after_round_medians": [
+            1.03735,
+            0.99245,
+            1.0327
+          ],
+          "paired_before_over_after": [
+            0.9481852797994891,
+            1.0053906997833644,
+            0.9189019076207998
+          ],
+          "median_paired_before_over_after": 0.9481852797994891,
+          "ratio_of_aggregated_medians": 0.9524547303185824
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 1.68215,
+          "after_median_of_round_medians": 1.7562,
+          "before_round_medians": [
+            1.68215,
+            1.741,
+            1.6625
+          ],
+          "after_round_medians": [
+            1.7562,
+            1.6995,
+            1.76415
+          ],
+          "paired_before_over_after": [
+            0.9578350985081426,
+            1.0244189467490439,
+            0.942380183091007
+          ],
+          "median_paired_before_over_after": 0.9578350985081426,
+          "ratio_of_aggregated_medians": 0.9578350985081426
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 2,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096,
+          "after_median_of_round_medians": 4096,
+          "before_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "after_round_medians": [
+            4096,
+            4096,
+            4096
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": true,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          0.6952,
+          0.72905,
+          0.71005
+        ],
+        "after_round_sums_of_interval_medians": [
+          0.71145,
+          0.70095,
+          0.7203999999999999
+        ],
+        "before_median_of_round_sums": 0.71005,
+        "after_median_of_round_sums": 0.71145,
+        "paired_before_over_after": [
+          0.9771593225103662,
+          1.040088451387403,
+          0.9856329816768462
+        ],
+        "median_paired_before_over_after": 0.9856329816768462,
+        "ratio_of_aggregated_round_sums": 0.9980321877855084
+      }
+    },
+    {
+      "characters": 1000,
+      "mode": "independent_poses",
+      "metrics": {
+        "view_record_ms": {
+          "before_median_of_round_medians": 4.9202,
+          "after_median_of_round_medians": 2.9606,
+          "before_round_medians": [
+            4.9202,
+            5.1256,
+            4.8472
+          ],
+          "after_round_medians": [
+            2.9606,
+            2.9241,
+            3.04335
+          ],
+          "paired_before_over_after": [
+            1.6618928595554956,
+            1.752881228412161,
+            1.5927185502817618
+          ],
+          "median_paired_before_over_after": 1.6618928595554956,
+          "ratio_of_aggregated_medians": 1.6618928595554956
+        },
+        "cpu_submit_ms": {
+          "before_median_of_round_medians": 3.33085,
+          "after_median_of_round_medians": 0.4648,
+          "before_round_medians": [
+            3.4968,
+            0.64595,
+            3.33085
+          ],
+          "after_round_medians": [
+            0.4648,
+            0.4264,
+            0.65005
+          ],
+          "paired_before_over_after": [
+            7.523235800344234,
+            1.514892120075047,
+            5.123990462272133
+          ],
+          "median_paired_before_over_after": 5.123990462272133,
+          "ratio_of_aggregated_medians": 7.166200516351118
+        },
+        "gpu_ms": {
+          "before_median_of_round_medians": 6.37491,
+          "after_median_of_round_medians": 1.0711,
+          "before_round_medians": [
+            6.35034,
+            6.37491,
+            6.38976
+          ],
+          "after_round_medians": [
+            1.07213,
+            1.06598,
+            1.0711
+          ],
+          "paired_before_over_after": [
+            5.9231063397162655,
+            5.980327961124974,
+            5.965605452338718
+          ],
+          "median_paired_before_over_after": 5.965605452338718,
+          "ratio_of_aggregated_medians": 5.951741200634862
+        },
+        "completion_readback_ms": {
+          "before_median_of_round_medians": 5.03725,
+          "after_median_of_round_medians": 1.3438,
+          "before_round_medians": [
+            4.9973,
+            7.8906,
+            5.03725
+          ],
+          "after_round_medians": [
+            1.3438,
+            1.31495,
+            1.3461
+          ],
+          "paired_before_over_after": [
+            3.718782556928114,
+            6.000684436670595,
+            3.742106827130228
+          ],
+          "median_paired_before_over_after": 3.742106827130228,
+          "ratio_of_aggregated_medians": 3.7485116832862033
+        },
+        "total_readback_ms": {
+          "before_median_of_round_medians": 13.588,
+          "after_median_of_round_medians": 4.7883,
+          "before_round_medians": [
+            13.588,
+            13.912,
+            13.3879
+          ],
+          "after_round_medians": [
+            4.7883,
+            4.68705,
+            5.05305
+          ],
+          "paired_before_over_after": [
+            2.8377503498109977,
+            2.9681782784480646,
+            2.649469132504131
+          ],
+          "median_paired_before_over_after": 2.8377503498109977,
+          "ratio_of_aggregated_medians": 2.8377503498109977
+        },
+        "draw_calls": {
+          "before_median_of_round_medians": 1001,
+          "after_median_of_round_medians": 2,
+          "before_round_medians": [
+            1001,
+            1001,
+            1001
+          ],
+          "after_round_medians": [
+            2,
+            2,
+            2
+          ],
+          "paired_before_over_after": [
+            500.5,
+            500.5,
+            500.5
+          ],
+          "median_paired_before_over_after": 500.5,
+          "ratio_of_aggregated_medians": 500.5
+        },
+        "texture_upload_bytes": {
+          "before_median_of_round_medians": 4096000,
+          "after_median_of_round_medians": 4096000,
+          "before_round_medians": [
+            4096000,
+            4096000,
+            4096000
+          ],
+          "after_round_medians": [
+            4096000,
+            4096000,
+            4096000
+          ],
+          "paired_before_over_after": [
+            1,
+            1,
+            1
+          ],
+          "median_paired_before_over_after": 1,
+          "ratio_of_aggregated_medians": 1
+        }
+      },
+      "rendering_work": {
+        "fixture_and_character_counts_unchanged": true,
+        "draw_counts_equal": false,
+        "upload_bytes_equal": true,
+        "note": "Palette atlas batching intentionally changes draw counts. Exact final sampled-frame PNG and RGB equality are checked separately."
+      },
+      "derived_cpu_view_plus_submit_ms": {
+        "interpretation": "Sum of separate view/recording and CPU-submission per-round medians. This is a derived estimate, not the median of combined per-frame samples. GPU time is not included.",
+        "before_round_sums_of_interval_medians": [
+          8.417,
+          5.77155,
+          8.178049999999999
+        ],
+        "after_round_sums_of_interval_medians": [
+          3.4254,
+          3.3505000000000003,
+          3.6934000000000005
+        ],
+        "before_median_of_round_sums": 8.178049999999999,
+        "after_median_of_round_sums": 3.4254,
+        "paired_before_over_after": [
+          2.457231272260174,
+          1.7225936427398896,
+          2.2142334975902958
+        ],
+        "median_paired_before_over_after": 2.2142334975902958,
+        "ratio_of_aggregated_round_sums": 2.3874729958544987
+      }
+    }
+  ],
+  "rounds": 3,
+  "cpu_frames": 9600,
+  "gpu_samples": 9600,
+  "per_side_cpu_frames": 4800,
+  "per_side_gpu_samples": 4800,
+  "source_before": "874422c0becc35116c94e31e4d92bbe074dde6b3",
+  "source_after": "a10d2f4b02c38b3bbb9eee51a00faef6dab0f3f6",
+  "fixture_sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3",
+  "before_executable_sha256": "d3bf476296d7a7ba5ce814b9e7eb51bc6b35ae889fd5d9800fe3e6f403231ea4",
+  "after_executable_sha256": "46abd8b50fb5abb0ed240ee6dca5ee5b6e5b9c51fbc78e4d65245a7ab08bf575",
+  "capture": {
+    "width": 1024,
+    "height": 576,
+    "frame_at": 119,
+    "final_characters": 1000,
+    "final_mode": "independent_poses",
+    "before_png_sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a",
+    "after_png_sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a",
+    "png_bytes_equal": true,
+    "before_rgb_sha256": "0001dc9794973d60b1e7560f62a18d3a9ea40c796ce8c022d6ade7e078bd0324",
+    "after_rgb_sha256": "0001dc9794973d60b1e7560f62a18d3a9ea40c796ce8c022d6ade7e078bd0324",
+    "differing_pixels": 0,
+    "maximum_channel_difference": 0
+  }
+}

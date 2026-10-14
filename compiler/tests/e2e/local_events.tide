@@ -119,6 +119,8 @@ local singleton Heard
     int sureRang;
     int notes;          // Local events its handlers sent on
     int looked;
+    int company;        // A bit for each target there as target 1's spawn was heard
+    int sureCompany;
 }
 
 local event Note { }
@@ -159,6 +161,20 @@ local event(Destroyed) HearDestroyed(Target target, mut Heard heard)
 {
     heard.destroyed |= 1 << target.id;
     heard.destroyedHealth = target.health;
+}
+
+// What a spawn's handler goes through of the match: the targets as the tick
+// that spawned it left them, or as the world it came with has them
+local event(Spawned) Company(Target target, query (Target other) others, mut Heard heard)
+{
+    if (target.id != 1) return;
+    foreach (var row in others) heard.company |= 1 << row.other.id;
+}
+
+local event(verified Spawned) SureCompany(Target target, query (Target other) others, mut Heard heard)
+{
+    if (target.id != 1) return;
+    foreach (var row in others) heard.sureCompany |= 1 << row.other.id;
 }
 
 // It takes nothing of the entity, so it runs for every one of the match's

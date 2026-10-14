@@ -1,5 +1,6 @@
 ---
-description: "Tide Engine is a networking-first game engine for deterministic multiplayer, with its own Tide language and games on desktop and in the browser."
+title: "Tide Engine | Deterministic Multiplayer Game Engine"
+description: "Build multiplayer games with Tide Engine: deterministic simulation, rollback netcode and an ECS language that compiles to native code or WebAssembly."
 layout: home
 
 hero:

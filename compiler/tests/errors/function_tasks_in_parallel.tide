@@ -1,0 +1,16 @@
+// expect: a parallel loop's steps run at once, and 'Soon' starts 'Later'
+// expect: call it before or after the loop, or in a 'for' loop, which goes in order
+singleton Tally { List<int> scores; }
+scene Main { }
+async void Later()
+{
+    await Wait.Seconds(1);
+}
+void Soon() { Later(); }
+system Rank(mut Tally tally)
+{
+    parallel (var i in tally.scores)
+    {
+        Soon();
+    }
+}

@@ -1,0 +1,11 @@
+// expect: field 'face' is Texture, not string
+asset string rules = "../e2e/assets/rules.txt";
+
+local singleton Look
+{
+    Texture face = rules;
+}
+
+scene Main
+{
+}

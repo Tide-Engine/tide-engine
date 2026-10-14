@@ -64,6 +64,13 @@ typedef struct tide_rows_component {
     int32_t held;    // `mut`: where its lanes start in tide_rows.held; -1 for one the system only reads
 } tide_rows_component;
 
+// Internal tick completion, one slot per once-per-tick C system. Slots run in
+// declaration order after all queued changes, on the tick's calling thread.
+typedef struct tide_tick_completion {
+    void (*finish)(void *context, const tide_entities *entities);
+    void *context;
+} tide_tick_completion;
+
 // A run of rows. C reads it through the functions below.
 typedef struct tide_rows {
     tide_table *table;
@@ -79,7 +86,15 @@ typedef struct tide_rows {
     uint32_t first; // Its first row in the chunk
     uint32_t count;
     bool whole;     // It has the chunk to itself: no other thread has a piece of it
+    const tide_entities *entities; // Read-only identity and Snap metadata, for this call only
+    tide_tick_completion *completion; // Internal; NULL for entity runs
 } tide_rows;
+
+// Internal physics-history hook. The context must remain valid through tick
+// completion; retained row/lane pointers are never valid. C may only finalize
+// state covered by its system's declared mutable singleton access.
+void tide_rows_after_tick(tide_rows *rows, void (*finish)(void *, const tide_entities *), void *context);
+void tide_rows_finish_tick(tide_tick_completion *completions, uint32_t count, const tide_entities *entities);
 
 // How many rows the run has: every array has that many values. 0 for a system
 // that runs once a tick.

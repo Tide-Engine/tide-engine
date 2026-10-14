@@ -1,0 +1,44 @@
+timestamp, uuid, pstate, clocks.current.graphics [MHz], clocks.current.memory [MHz], utilization.gpu [%], power.draw [W], temperature.gpu, clocks_event_reasons.gpu_idle, clocks_event_reasons.sw_power_cap, clocks_event_reasons.hw_thermal_slowdown
+2026/10/11 01:03:22.726, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 1725, 11501, 36, 54.01, 43, Active, Not Active, Not Active
+2026/10/11 01:03:22.987, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2550, 11501, 6, 49.30, 41, Active, Not Active, Not Active
+2026/10/11 01:03:23.251, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2550, 11501, 6, 49.30, 41, Active, Not Active, Not Active
+2026/10/11 01:03:23.512, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 60, 60.07, 49, Not Active, Not Active, Not Active
+2026/10/11 01:03:23.772, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 60, 60.07, 49, Not Active, Not Active, Not Active
+2026/10/11 01:03:24.036, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 29, 91.40, 47, Not Active, Not Active, Not Active
+2026/10/11 01:03:24.296, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 29, 91.40, 47, Not Active, Not Active, Not Active
+2026/10/11 01:03:24.557, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 85, 117.51, 52, Not Active, Not Active, Not Active
+2026/10/11 01:03:24.816, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 85, 117.51, 52, Not Active, Not Active, Not Active
+2026/10/11 01:03:25.075, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 84, 137.07, 54, Not Active, Not Active, Not Active
+2026/10/11 01:03:25.339, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 84, 137.07, 54, Not Active, Not Active, Not Active
+2026/10/11 01:03:25.600, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 63, 168.73, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:25.866, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 58, 164.49, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:26.129, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 58, 164.49, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:26.393, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 61, 163.56, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:26.657, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 61, 163.56, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:26.919, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 58, 163.48, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:27.183, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 58, 163.48, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:27.448, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 63, 163.02, 56, Not Active, Not Active, Not Active
+2026/10/11 01:03:27.712, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 63, 163.02, 56, Not Active, Not Active, Not Active
+2026/10/11 01:03:27.963, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 57, 161.75, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:28.227, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 57, 161.75, 55, Not Active, Not Active, Not Active
+2026/10/11 01:03:28.488, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 30, 149.73, 49, Not Active, Not Active, Not Active
+2026/10/11 01:03:28.749, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2805, 11501, 30, 149.73, 49, Not Active, Not Active, Not Active
+2026/10/11 01:03:29.011, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 26, 117.76, 48, Not Active, Not Active, Not Active
+2026/10/11 01:03:29.270, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 26, 117.76, 48, Not Active, Not Active, Not Active
+2026/10/11 01:03:29.533, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 26, 91.80, 48, Not Active, Not Active, Not Active
+2026/10/11 01:03:29.794, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 26, 91.80, 48, Not Active, Not Active, Not Active
+2026/10/11 01:03:30.056, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 25, 91.25, 48, Not Active, Not Active, Not Active
+2026/10/11 01:03:30.318, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 25, 91.25, 48, Not Active, Not Active, Not Active
+2026/10/11 01:03:30.578, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2235, 11501, 31, 82.94, 45, Active, Not Active, Not Active
+2026/10/11 01:03:30.841, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2235, 11501, 31, 82.94, 45, Active, Not Active, Not Active
+2026/10/11 01:03:31.101, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2100, 11501, 30, 67.25, 44, Active, Not Active, Not Active
+2026/10/11 01:03:31.364, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2070, 11501, 36, 57.66, 43, Active, Not Active, Not Active
+2026/10/11 01:03:31.627, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2070, 11501, 36, 57.66, 43, Active, Not Active, Not Active
+2026/10/11 01:03:31.891, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2040, 11501, 39, 57.44, 43, Active, Not Active, Not Active
+2026/10/11 01:03:32.155, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2040, 11501, 39, 57.44, 43, Active, Not Active, Not Active
+2026/10/11 01:03:32.422, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2010, 11501, 38, 57.15, 44, Active, Not Active, Not Active
+2026/10/11 01:03:32.685, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2010, 11501, 38, 57.15, 44, Active, Not Active, Not Active
+2026/10/11 01:03:32.948, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 1935, 11501, 31, 55.96, 44, Active, Not Active, Not Active
+2026/10/11 01:03:33.212, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 1935, 11501, 31, 55.96, 44, Active, Not Active, Not Active
+2026/10/11 01:03:33.473, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 1860, 11501, 32, 55.31, 43, Active, Not Active, Not Active
+2026/10/11 01:03:33.732, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 1860, 11501, 32, 55.31, 43, Active, Not Active, Not Active

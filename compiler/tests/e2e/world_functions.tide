@@ -71,7 +71,7 @@ singleton Board
     Entity watched;
 }
 
-local component Spark
+component Spark
 {
     int life = 3;
 }
@@ -314,7 +314,7 @@ view Sparks(mut Seen seen, mut World world)
 {
     if (seen.frames == 0)
     {
-        seen.spark = Spawn(Spark { });
+        seen.spark = local Spawn(Spark { });
     }
     else
     {

@@ -1,0 +1,8 @@
+// expect: a frag's pixel has no 'clip': it has 'position', 'depth' and 'world'
+// expect: 'this.clip' is a vert's, where the engine would put its vertex; a frag's pixel is where it landed, 'this.position'
+scene Main { }
+
+frag Shade(Vertex3 vertex, out Color color)
+{
+    color = Color(this.clip.x, 0, 0);
+}

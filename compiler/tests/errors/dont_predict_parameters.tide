@@ -1,0 +1,3 @@
+// expect: [DontPredict] takes nothing
+input I { [DontPredict(1)] bool jump; }
+scene Main { }

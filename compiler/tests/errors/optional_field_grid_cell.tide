@@ -1,0 +1,3 @@
+// expect: what a Grid2 holds is always there, so it can't be a T?
+component Board { Grid2<int?> cells; }
+scene Main { }

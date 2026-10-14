@@ -1,0 +1,16 @@
+// expect: 'tail' holds an array of more than 4096 elements, so a parameter of it is 'mut': 'mut Tail tail'
+// expect: any other would be a copy of it: it stays in its audio declaration's state, and is read and written there
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+float First(Tail tail)
+{
+    return tail.line[0];
+}
+
+scene Main
+{
+}

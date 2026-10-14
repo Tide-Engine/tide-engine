@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/meshes/bad/draco.gltf' has its geometry compressed with Draco, which Tide doesn't read
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> tree = "../e2e/assets/meshes/bad/draco.gltf";
+
+scene Main
+{
+}

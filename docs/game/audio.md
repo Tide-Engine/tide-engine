@@ -1,5 +1,5 @@
 ---
-description: "Play WAV and Ogg Vorbis assets in Tide, control spatial sound and buses, and create audio filters while keeping sound local to each machine."
+description: "Import WAV, Ogg Vorbis, MP3 and FLAC audio in Tide, control spatial sound and buses, and create audio filters while keeping sound local to each machine."
 ---
 
 # Audio
@@ -7,7 +7,7 @@ description: "Play WAV and Ogg Vorbis assets in Tide, control spatial sound and 
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
 
 ::: info
-What's here: clips as assets (WAV and Ogg Vorbis), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, the device on every platform, and the microphone. See the [spec](../spec.md#audio) for the whole design and what's still open.
+What's here: clips as assets (WAV, Ogg Vorbis, MP3 and FLAC), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, the device on every platform, and the microphone. See the [spec](../spec.md#audio) for the whole design and what's still open.
 :::
 
 ## Clips
@@ -21,9 +21,20 @@ asset List<Clip> hits = "sfx/hit_*.wav";
 asset Map<string, Clip> voices = "voice/*.ogg";
 ```
 
-A `Clip` is a WAV (PCM of 8, 16, 24 or 32 bits, or floats) or an Ogg Vorbis file, of one or two channels, at any rate. The build checks the file decodes, and the pack keeps it as it is, so a Vorbis clip stays about a tenth the size of its PCM. As the game loads its pack, every clip is decoded, on the pool's threads, so the first play of one costs nothing: a WAV whole, and Vorbis up to ten seconds long whole too. A longer Vorbis clip (music, a long ambience) is kept as its file and decoded as it plays, a block at a time on the audio thread, which takes a few hundred kilobytes for each voice playing it and nothing for the clip itself. Which way a clip goes changes nothing a game sees: it plays, loops and pitches the same.
+A `Clip` accepts these source formats, with one or two channels and their source sample rate preserved:
 
-Both decoders are the engine's own, written from the formats' specifications, so a game carries no license terms for them; a file that isn't one is an error at the path, and for an Ogg file the error says what's wrong with it. A clip has one or two channels: a surround file is refused.
+| Source | Supported variants | Packed representation |
+| --- | --- | --- |
+| WAV | Little-endian RIFF/WAVE, integer PCM 8/16/24/32-bit or IEEE float 32/64-bit | Original WAV |
+| Ogg Vorbis | Vorbis I, mono/stereo | Original compressed Ogg Vorbis |
+| MP3 | MPEG Layer III, CBR or VBR | Float32 PCM WAV, converted at build time |
+| FLAC | Native FLAC, mono/stereo, with a declared STREAMINFO sample count | Float32 PCM WAV, converted at build time |
+
+The build identifies the file from its contents and reports unsupported formats, codecs, channels and damaged data at the asset's path. Ogg is a container: an `.ogg` holding Opus is not Vorbis. AIFF, AAC/M4A, Opus, ADPCM WAV and surround audio aren't imported yet; export PCM WAV, FLAC or Ogg Vorbis instead.
+
+MP3 and FLAC conversion adds no decoder to the game, but PCM takes more pack space and memory than compressed audio. Use Ogg Vorbis for long music or ambience that should stay compressed. MP3/FLAC imports are bounded to 128 MiB of source data, 256 MiB of decoded samples and 30 minutes of audio.
+
+As the game loads its pack, clips are prepared on the pool's threads: WAV and converted MP3/FLAC are fully decoded, as is Vorbis up to ten seconds long. A longer Vorbis clip is kept compressed and decoded as it plays, a block at a time on the audio thread. Playing, looping and pitch use the same API for every imported source format. Runtime playback uses Tide's WAV and Vorbis decoders; MP3/FLAC decoders are build tools only.
 
 A `Clip` is a value: keep it in a local field, pass it to a function, pick one from the glob's list or map. It names the declaration's file, so under `tide run` a saved file plays through every copy the game kept. The match can't use one: a `Clip` is this machine's, as a `Texture` is.
 
@@ -76,7 +87,7 @@ view Engines(Body body, mut Engine engine)
 }
 ```
 
-A `Sound` has `clip`, `position` and `spatial` (placed in the world, or plain stereo), `volume` and `pitch` (1 each unless set), `loop` and `playing`. The frame reads every `Sound` in local state once the views ran, and names each that's `playing` to the mixer: the mixer keeps a voice for it from frame to frame, by the field it's in and the entity it's on, and moves the voice to whatever the fields say. A sound stops when `playing` goes false, or when its field goes (a destroyed entity's, say): the mixer fades the voice out over a few milliseconds. `playing` false and then true starts the clip over, and so does another clip. A looping sound goes on; one that doesn't loop plays to its end and stays silent until it's started over. Changes to the volume and the pan ramp over a few milliseconds, so a value written every frame doesn't click.
+A `Sound` has `clip`, `position` and `spatial` (placed in the world, or plain stereo), `volume` and `pitch` (1 each unless set), `loop` and `playing`. The frame reads every `Sound` in local state once the views ran, and names each that's `playing` to the mixer: the mixer keeps a voice for it from frame to frame, by the field it's in and the entity it's on, and moves the voice to whatever the fields say. A sound stops when `playing` goes false, or when its field goes (a destroyed entity's, say): the mixer fades the voice out over a few milliseconds. Stop it in one frame and start it in a later frame to play the clip over; assigning another clip starts it over too. Setting `playing` false and true within one view leaves it playing, because the mixer receives the final value. A looping sound goes on; one that doesn't loop plays to its end and stays silent until it's started over. Changes to the volume and the pan ramp over a few milliseconds, so a value written every frame doesn't click.
 
 A `Sound` lives in local singletons, local components, a match component's `local` fields and structs inside those. The match can't hold one, nor can a list.
 
@@ -115,7 +126,7 @@ view Levels(Settings settings, mut Music music)
 }
 ```
 
-A `Sound`'s `bus` is one of them (the master unless set). `Audio.SetVolume(bus, volume)` sets a bus's volume for the frames after, as a draw setting does; every frame starts with every bus at 1. A game has 16 buses at most. A game with no `[Bus]` enum has the master alone, and a bus is then a number from 0 to 15.
+A `Sound`'s `bus` is one of them (the master unless set). `Audio.SetVolume(bus, volume)` sets a bus's volume for the current frame; every frame starts with every bus at 1, so apply saved volume settings each frame. A game has 16 buses at most. Without a `[Bus]` enum, bus numbers from 0 to 15 are available and 0 is the master.
 
 ## Effects
 
@@ -129,15 +140,18 @@ struct Knobs
 
 struct LowpassState
 {
-    float last;
+    float left;
+    float right;
 }
 
 audio Lowpass(mut Samples samples, mut LowpassState state, Knobs knobs)
 {
-    for (var i = 0; i < samples.values.count; i++)
+    for (var i = 0; i < samples.values.count; i += 2)
     {
-        state.last += (samples.values[i] - state.last) * knobs.cutoff;
-        samples.values[i] = state.last;
+        state.left += (samples.values[i] - state.left) * knobs.cutoff;
+        state.right += (samples.values[i + 1] - state.right) * knobs.cutoff;
+        samples.values[i] = state.left;
+        samples.values[i + 1] = state.right;
     }
 }
 
@@ -152,8 +166,82 @@ view Engines(mut Engine engine, Throttle throttle)
 - **Its knobs** are a read-only struct of plain fields, one at most: a copy of what the frame last gave, `Lowpass(Knobs { ... })`. The value that call makes is an `Effect`, which a `Sound`'s `effect` takes, and a bus through `Audio.SetEffect(Bus.Master, Compress(knobs))`. An `audio` declaration with no knobs is `Square()`.
 - **A source** is an effect on a `Sound` with no clip: its block starts as silence, and what it leaves is what plays. That's a synth.
 - **It runs between nothing**: no world, no frame, no files, no C, no text, lists, maps, sets or grids, and no sounds or drawing of its own, itself or through the functions it calls. `Math` is all there, and ordinary functions of plain values are fine. The compiler says what's not.
+- **It rolls**, for noise: `samples.values[i] = Random.NextFloat(-1, 1);`. Each voice has a [sequence of its own](../language/math.md#where-rolls-work), which goes on from block to block.
 
 An effect's state starts over when a `Sound` is given another effect. Changing the knobs each frame is the way to move a filter: the state carries on.
+
+Keep a filter's left and right history separate, as above: consecutive array elements are different channels, not consecutive moments in one channel.
+
+### Making a sound
+
+A source uses the same declaration shape as a filter. Keep its phase in the state, advance it once per stereo frame, and write both channels. The frequency is a knob: changing it keeps the phase, while stopping the `Sound` and starting it again resets the state.
+
+Click or tap **Play sound** below, then change the frequency or volume. It starts silent and uses a quiet volume. The graph previews ten milliseconds of the generated wave; the view calculates it separately, because audio state belongs to the audio thread. On the web, the button press also lets the browser start audio.
+
+::: tide-example audio A small synthesizer
+
+<<< @/examples/audio.tide
+
+:::
+
+### Echoes and reverbs
+
+An echo or a reverb remembers what played a while ago, in a delay line: an array of samples. An ordinary array holds at most 4,096 elements, about 43 ms of stereo at 48 kHz, so in an `audio` declaration's state it can be far longer, as long as the state has bytes:
+
+```csharp
+struct Tail
+{
+    int at;
+    float[96000] line; // A second of stereo
+}
+
+struct Delay
+{
+    int frames;
+    float wet;
+}
+
+audio Echo(mut Samples samples, mut Tail tail, Delay delay)
+{
+    var frames = Math.Clamp(delay.frames, 1, 48000);
+    for (var i = 0; i < samples.values.count; i += 2)
+    {
+        var from = (tail.at + 48000 - frames) % 48000;
+        var left = samples.values[i];
+        var right = samples.values[i + 1];
+        samples.values[i] += tail.line[2 * from] * delay.wet;
+        samples.values[i + 1] += tail.line[2 * from + 1] * delay.wet;
+        tail.line[2 * tail.at] = left;
+        tail.line[2 * tail.at + 1] = right;
+        tail.at = (tail.at + 1) % 48000;
+    }
+}
+
+view Caves(mut Cave cave)
+{
+    cave.drip.effect = Echo(Delay { frames = 14400, wet = 0.4 });
+}
+```
+
+This example clamps the delay to one through 48,000 stereo frames, up to one second. It reads the delayed samples before replacing them, so a full second's delay works when the read and write positions coincide.
+
+The mixer makes that memory for a sound while it plays through the effect, so only the sounds that echo pay for it, 384 KB each here. When the sound stops, its line goes with it, and the next time it plays the line starts from silence. A bus's is the same: `Audio.SetEffect(Bus.Music, Echo(delay))`, said each frame, keeps one line for everything on the bus, which is how a reverb is usually used.
+
+A struct with such an array is never copied, as a copy would be hundreds of kilobytes on the audio thread. It's only ever an `audio` declaration's state, and code reads and writes it where it is:
+
+- An element at a time, `tail.line[i]`, with `tail.line.count` for how many there are. A `foreach` goes through a copy of its array, so a long one is gone through by index.
+- Passed on to a function as a `mut` parameter: `void Push(mut Tail tail, float sample)`.
+- No local holds one (`var copy = tail;`), no function takes one by value or returns one, and it has no methods. The compiler says which of these a line is.
+
+### How big
+
+A state struct is 1,048,576 bytes at the most, a megabyte: 2.7 seconds of stereo. A knobs struct is 256, which is what an `Effect` carries. A `float` or an `int` is 4 bytes, a `long` 8, a `bool` or a `byte` 1, and an array as many as its elements. A struct that's bigger is a compile error at the parameter:
+
+```
+error: an audio declaration's state is 1048576 bytes at the most, and 'Tail' is 1048580
+```
+
+Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps what it rolls with after its state, so its state is 8 bytes less at the most.
 
 ## Hearing a run with no window
 
@@ -169,7 +257,7 @@ tide run --frames 300 --capture-audio run.wav
 
 A game with a window plays through the system's default output: WASAPI on Windows, CoreAudio on macOS, ALSA on Linux (loaded at run time, so games link nothing), AAudio on Android, and the browser's audio on the web. Whatever rate and channels the device has, the mixer's stereo at 48 kHz is resampled and mapped to it. A machine with no device, or none the game can open, says so once on stderr and plays nothing; nothing else differs.
 
-On the web, and on phones, a browser only plays once the player has touched the page: the page starts its audio at the first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. A page that goes to the background keeps the match running (see [web builds](../tools/cli.md)) and its sound with it.
+In a browser, sound starts after the player's first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. Tide continues a hidden tab's match with worker timers while the browser lets the page run (see [web builds](../tools/cli.md)). A suspended or closed page cannot keep simulating or playing sound; background execution is not guaranteed on phones.
 
 ## The microphone
 

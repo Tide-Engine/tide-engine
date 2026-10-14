@@ -18,8 +18,8 @@ export const docs: Link = { text: 'Docs', link: '/guide' };
 
 // A group is one subject, and its pages are in a folder of that subject:
 // `game/` is what a game is made of, the match (Simulation) and what one
-// machine shows of it (Presentation), `physics/` is the physics packages that
-// come with tide, and `language/` is the language those are written in.
+// machine shows of it (Presentation), `packages/` collects optional packages
+// and how to use them, and `language/` is the language those are written in.
 export const sidebar: Group[] = [
     {
         text: 'Get started',
@@ -27,6 +27,7 @@ export const sidebar: Group[] = [
             { text: 'Introduction', link: '/guide' },
             { text: 'Install', link: '/guide/install' },
             { text: 'Your first game', link: '/guide/first-game' },
+            { text: 'Playground', link: '/guide/playground' },
             { text: 'Live examples', link: '/guide/examples' },
             { text: 'Samples', link: '/guide/samples' },
             { text: 'Duel code tour', link: '/guide/duel' },
@@ -52,6 +53,13 @@ export const sidebar: Group[] = [
         text: 'Presentation',
         items: [
             { text: 'Views and drawing', link: '/game/views' },
+            { text: 'Views and the match', link: '/game/views-and-the-match' },
+            { text: 'Draw settings', link: '/game/draw-settings' },
+            { text: 'Meshes and textures', link: '/game/meshes-and-textures' },
+            { text: 'Drawing in 3D', link: '/game/3d' },
+            { text: 'Skinned meshes and animation', link: '/game/animation' },
+            { text: 'Cameras and coordinates', link: '/game/cameras' },
+            { text: 'Render targets', link: '/game/render-targets' },
             { text: 'Frags and verts', link: '/game/shaders' },
             { text: 'Audio', link: '/game/audio' },
             { text: 'Local state', link: '/game/local-state' },
@@ -60,16 +68,22 @@ export const sidebar: Group[] = [
         ],
     },
     {
-        text: 'Physics',
+        text: 'Packages',
         items: [
-            { text: '2D physics (Box2D)', link: '/physics/box2d' },
-            { text: '3D physics (Box3D)', link: '/physics/box3d' },
+            { text: 'Overview', link: '/packages' },
+            { text: 'Using and writing packages', link: '/packages/using-and-writing' },
+            { text: 'Box2D — 2D physics', link: '/packages/box2d' },
+            { text: 'Box3D — 3D physics', link: '/packages/box3d' },
+            { text: 'Rooms — Play, Host and Join', link: '/packages/rooms' },
+            { text: 'Lobby — lobbies and matchmaking', link: '/packages/lobby' },
+            { text: 'Steam', link: '/packages/steam' },
         ],
     },
     {
         text: 'Multiplayer',
         items: [
             { text: 'Matches', link: '/multiplayer/matches' },
+            { text: 'Your own network and service', link: '/multiplayer/own-network' },
             { text: 'Networking', link: '/multiplayer/networking' },
             { text: 'Determinism', link: '/multiplayer/determinism' },
         ],
@@ -82,6 +96,7 @@ export const sidebar: Group[] = [
             { text: 'Errors', link: '/language/errors' },
             { text: 'Math', link: '/language/math' },
             { text: 'Text and lists', link: '/language/text-and-lists' },
+            { text: 'JSON', link: '/language/json' },
             { text: 'Grids', link: '/language/grids' },
             { text: 'Namespaces and files', link: '/language/namespaces' },
             { text: 'Virtual and override', link: '/language/overrides' },
@@ -93,7 +108,6 @@ export const sidebar: Group[] = [
             { text: 'The tide command', link: '/tools/cli' },
             { text: 'Editors', link: '/tools/editors' },
             { text: 'Debug views', link: '/tools/debug-views' },
-            { text: 'Packages', link: '/tools/packages' },
         ],
     },
     {
@@ -101,6 +115,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Calling C', link: '/c/functions' },
             { text: 'C hosts', link: '/c/hosts' },
+            { text: "A game's own network", link: '/c/network' },
         ],
     },
     {

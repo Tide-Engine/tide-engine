@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-11",
+  "environment": "Windows; TIDE_HIDDEN=1; Clang 23.1.2; Node 24.19.0; pinned WASI SDK 24",
+  "native": {
+    "build": "cmake --build --preset debug -j 8",
+    "test": "ctest --preset debug -j 8 --output-on-failure",
+    "passed": 2079,
+    "failed": 0,
+    "seconds": 84.13
+  },
+  "web": {
+    "build": "cmake --build --preset web-debug -j 8",
+    "test": "ctest --preset web-debug -j 8 --output-on-failure",
+    "passed": 2050,
+    "failed": 0,
+    "seconds": 173.01
+  },
+  "gpu_clip_tests": "bench_skinned_gpu_clip, bench_skinned_gpu_clip_webgpu: bounded OpenGL/WebGL/WebGPU draws, half-tick playback, zero warmed uploads, two calls including clear, CPU reference at 240 phases over 3072 vertices",
+  "reference_max_position_error": 0.001320204,
+  "reference_max_unit_normal_error": 0.00160562643,
+  "position_and_normal_bounds": 0.01,
+  "unavailable": "Linux, macOS, MinGW, Android, sanitizers. No CI dispatch. Browser software rendering is correctness coverage, not hardware web performance."
+}

@@ -1,0 +1,5 @@
+// expect: prefab values must be constant expressions, assets or named entity references
+scene Main { }
+component Value { int x; }
+int Pick() { return 1; }
+prefab Broken { Value { x = Pick() }; }

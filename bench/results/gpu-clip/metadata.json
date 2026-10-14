@@ -1,0 +1,231 @@
+{
+  "state": "passed",
+  "revision": "ad41c3b7c6e776714b549767f7b1187f93097817+gpu-clip-experiment",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-11T11:15:39.5467380Z",
+  "binarySha256": "c3b59aab039ad805d6a3ad50122e096c0faba6cf7e980dc9f795b84fe341161e",
+  "sources": [
+    {
+      "path": "bench/skinned/game.tide",
+      "sha256": "87ded18a5b5b624540fa325e00328b69559548e798a05f48cbf0d4925afda35f"
+    },
+    {
+      "path": "bench/skinned/main.c",
+      "sha256": "983f76e98b4a155b03b56033e3aab280546fcbc8fdc8277660843e31da6cc95a"
+    },
+    {
+      "path": "bench/skinned/model.gltf",
+      "sha256": "409c8cd43fd512e8d9f2469573f70133560025c41250cab1a581f0d3b84bfad3"
+    }
+  ],
+  "runs": [
+    {
+      "startedUtc": "2026-10-11T11:18:20.0903812Z",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--save",
+        "gpu-clip-independent-r1"
+      ],
+      "finishedUtc": "2026-10-11T11:18:26.2886744Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-independent-r1"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:26.3133001Z",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--modes",
+        "gpu",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--save",
+        "gpu-clip-gpu-r1"
+      ],
+      "finishedUtc": "2026-10-11T11:18:28.0581551Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-gpu-r1"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:28.0710876Z",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--modes",
+        "gpu",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--save",
+        "gpu-clip-gpu-r2"
+      ],
+      "finishedUtc": "2026-10-11T11:18:29.7971457Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-gpu-r2"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:29.8084579Z",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--save",
+        "gpu-clip-independent-r2"
+      ],
+      "finishedUtc": "2026-10-11T11:18:35.9156995Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-independent-r2"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:35.9266729Z",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--save",
+        "gpu-clip-independent-r3"
+      ],
+      "finishedUtc": "2026-10-11T11:18:41.9793295Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-independent-r3"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:41.9914612Z",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--modes",
+        "gpu",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--save",
+        "gpu-clip-gpu-r3"
+      ],
+      "finishedUtc": "2026-10-11T11:18:43.7280877Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-gpu-r3"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:43.7433417Z",
+      "arguments": [
+        "--counts",
+        "1",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--capture",
+        "build/gpu-clip/gpu-clip-capture-independent.png"
+      ],
+      "finishedUtc": "2026-10-11T11:18:44.1731718Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-capture-independent"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:44.1857544Z",
+      "arguments": [
+        "--counts",
+        "1",
+        "--modes",
+        "gpu",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--capture",
+        "build/gpu-clip/gpu-clip-capture-gpu.png"
+      ],
+      "finishedUtc": "2026-10-11T11:18:44.6239012Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-capture-gpu"
+    },
+    {
+      "startedUtc": "2026-10-11T11:18:44.6359358Z",
+      "arguments": [
+        "--counts",
+        "10",
+        "--modes",
+        "gpu",
+        "--frames",
+        "2",
+        "--warmup",
+        "1",
+        "--repeat",
+        "1",
+        "--subframe",
+        "0.5",
+        "--verify-gpu"
+      ],
+      "finishedUtc": "2026-10-11T11:18:45.0788268Z",
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "label": "gpu-clip-reference"
+    }
+  ],
+  "gpu": "NVIDIA GeForce RTX 4080 SUPER, 595.79",
+  "finishedUtc": "2026-10-11T11:18:45.0815930Z"
+}

@@ -2,5 +2,7 @@
 !package.json
 !headers.js
 !releases.js
+!analytics.js
+!admin.js
 !server.js
 !build/

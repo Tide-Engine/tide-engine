@@ -2,7 +2,7 @@ settings { title = "Local state"; }
 
 local scene Main { } // No match at all: everything here is this machine's own
 
-local component Spark
+component Spark
 {
     float2 position;
     float2 velocity;
@@ -26,14 +26,14 @@ view Emit(Devices devices, mut Trail trail)
     if (Math.Distance(at, trail.last) > 6)
     {
         var push = (at - trail.last) * 2 + trail.random.NextFloat2Direction() * 40;
-        Spawn(Spark { position = at, velocity = push });
+        local Spawn(Spark { position = at, velocity = push });
         trail.last = at;
     }
     trail.sparks = 0;
 }
 
 // Once for each local entity, every frame: `this` is a LocalEntity.
-view Sparks(mut Spark spark, mut Trail trail)
+view Sparks(mut local Spark spark, mut Trail trail)
 {
     var dt = Math.Min(Frame.dt, 0.05); // A frame's length, never a tick's
     spark.age += dt;

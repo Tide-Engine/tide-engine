@@ -1,0 +1,26 @@
+// expect: a set keyed by long can't be read on the GPU: the GPU's ints are 32 bits
+// expect: the GPU reads a set whose keys are ints, bytes or enums
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Set<long> seen;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    color = models.seen.Has(3) ? Color.white : Color.black;
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

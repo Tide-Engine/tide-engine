@@ -62,6 +62,7 @@ find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it any
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
+option(TIDE_PRIVATE_PROTOTYPES "Build opt-in prototypes (shareable browser staging; no package install)" OFF)
 
 # What the tide command says it is, and where it looks for updates. Release
 # builds get the version semantic-release picked (.github/workflows/build.yml);
@@ -115,7 +116,11 @@ add_subdirectory(compiler)
 
 # The relay (relay/), on Node's own test runner, wherever there's Node.
 if(TIDE_NODE)
-    add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs")
+    # Adapter tests use editor/process doubles and run without VS Code on any host.
+    add_test(NAME tide_vscode_adapter COMMAND "${TIDE_NODE}" --test
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs")
+    add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/relay/lobbies.test.mjs")
     # The build service (builds/), the same way, with a tide that stands in for one.
     add_test(NAME builds COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/builds/builds.test.mjs")
     # The Android wrapper's file transfers, with adb mocked and no device.
@@ -124,6 +129,9 @@ endif()
 
 if(TIDE_PLATFORM)
     add_subdirectory(platform)
+    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        add_subdirectory(tools/tide-editor)
+    endif()
     add_subdirectory(demo)
     add_subdirectory(sandbox) # Opens a window, so it needs the platform layer
     add_subdirectory(examples/duel)
@@ -136,6 +144,8 @@ add_subdirectory(packages) # The packages that come with tide, and their tests
 add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
+add_subdirectory(examples/network) # A game on a network of its own, and its test
+add_subdirectory(prototypes) # Private games; catalog staging is explicit
 
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.
@@ -143,5 +153,12 @@ if(TIDE_PLATFORM)
     option(TIDE_DOC_EXAMPLES "Build the interactive examples in the documentation" OFF)
     if(TIDE_DOC_EXAMPLES)
         add_subdirectory(docs/examples)
+    endif()
+    option(TIDE_DOC_PLAYGROUND "Build the browser compiler and runtime bundle for the docs playground" ${TIDE_DOC_EXAMPLES})
+    if(TIDE_DOC_PLAYGROUND)
+        add_subdirectory(docs/playground)
+        if(TARGET docs_examples AND TARGET docs_playground)
+            add_dependencies(docs_examples docs_playground)
+        endif()
     endif()
 endif()

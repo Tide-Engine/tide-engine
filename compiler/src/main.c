@@ -26,6 +26,7 @@ static void usage(void)
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
+            "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
             "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
             "  --pack-c       also write the assets' pack as C (<name>_pack.c: tide_game_pack), for a host that embeds it\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
@@ -147,6 +148,8 @@ int main(const int argc, char **argv)
             opts.out_dir = argv[++i];
         } else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
             opts.name = argv[++i];
+        } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
+            opts.strip_unused_assets = true;
         } else if (strcmp(argv[i], "--no-line") == 0) {
             opts.line_directives = false;
         } else if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
@@ -155,6 +158,10 @@ int main(const int argc, char **argv)
             pack_c = true;
         } else if (strcmp(argv[i], "--layout") == 0) {
             opts.layout = true;
+        } else if (strcmp(argv[i], "--editor-prefab") == 0 && i + 1 < argc) {
+            opts.editor_prefab = argv[++i];
+        } else if (strcmp(argv[i], "--editor-local") == 0) {
+            opts.editor_local = true;
         } else if (strcmp(argv[i], "--schedule") == 0) {
             schedule = true;
         } else if (strcmp(argv[i], "--shaders") == 0) {

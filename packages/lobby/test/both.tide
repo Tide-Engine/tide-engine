@@ -1,0 +1,29 @@
+// A game that lists `rooms` and `lobby` both, and imports both namespaces:
+// neither package's names are in the other's way, and each one's singleton
+// is read by its own name.
+using Rooms;
+using Lobbies;
+
+settings { title = "Both menus"; maxPlayers = 4; }
+
+scene Main { }
+
+local singleton Hands
+{
+    bool free; // No page of either menu is up
+}
+
+view Watch(Lobby lobby, LobbyClient client, mut Hands hands)
+{
+    hands.free = lobby.playing && client.playing;
+}
+
+override string Rooms.Tagline()
+{
+    return "The rooms' line.";
+}
+
+override string Lobbies.Tagline()
+{
+    return "The lobbies' line.";
+}

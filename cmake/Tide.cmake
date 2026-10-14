@@ -92,6 +92,8 @@ set(TIDE_CPP_FLAGS -x c++ -std=c++20 -nostdinc++ -fno-exceptions -fno-rtti -fno-
 # can page a host of its own.
 set(TIDE_WEB_SHELL "${PROJECT_SOURCE_DIR}/platform/web/shell.html" CACHE INTERNAL "")
 set(TIDE_WEB_SCRIPT "${PROJECT_SOURCE_DIR}/platform/web/tide.js" CACHE INTERNAL "")
+set(TIDE_WEB_RELEASE_SCRIPT "${PROJECT_SOURCE_DIR}/platform/web/tide.release.js" CACHE INTERNAL "")
+include("${PROJECT_SOURCE_DIR}/cmake/WebRuntime.cmake")
 function(tide_web_page target)
     if(NOT TIDE_WEB)
         return()
@@ -102,13 +104,16 @@ function(tide_web_page target)
     else()
         set(shell "${TIDE_WEB_SHELL}")
     endif()
+    set(release "$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>")
+    set(script "$<IF:${release},${TIDE_WEB_RELEASE_SCRIPT},${TIDE_WEB_SCRIPT}>")
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/web_page.mjs"
-            "$<TARGET_FILE:${target}>" "${shell}" "${TIDE_WEB_SCRIPT}"
-            "$<TARGET_FILE_DIR:${target}>/${target}.html" ${ARG_PACK}
+            "$<TARGET_FILE:${target}>" "${shell}" "${script}"
+            "$<TARGET_FILE_DIR:${target}>/${target}.html" ${ARG_PACK} "$<${release}:--release>"
         COMMENT "Web page for ${target}"
         VERBATIM)
-    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}" "${TIDE_WEB_SCRIPT}")
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}" "${TIDE_WEB_SCRIPT}"
+        "${TIDE_WEB_RELEASE_SCRIPT}" "${PROJECT_SOURCE_DIR}/cmake/web_page.mjs")
 endfunction()
 
 function(tide_add_game target)
@@ -143,7 +148,7 @@ function(tide_add_game target)
         set(manifest_paths ${sources})
     else()
         # CONFIGURE_DEPENDS: every build checks for new or deleted files first.
-        file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide")
+        file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide" "${CMAKE_CURRENT_SOURCE_DIR}/*.tprefab")
         if(NOT sources)
             message(FATAL_ERROR "tide_add_game(${target}): there are no .tide files in ${CMAKE_CURRENT_SOURCE_DIR} "
                                 "or its subfolders. Add one, or list the game's files after SOURCES")
@@ -172,7 +177,7 @@ function(tide_add_game target)
     set(manifest_packages "")
     set(package "")
     foreach(item IN LISTS ARG_PACKAGES)
-        if(item MATCHES "\\.tide$")
+        if(item MATCHES "\\.(tide|tprefab)$")
             if(package STREQUAL "")
                 message(FATAL_ERROR "tide_add_game(${target}): name the package before its files, after PACKAGES")
             endif()
@@ -268,10 +273,17 @@ function(tide_add_game target)
     if(NOT written STREQUAL source_lines)
         file(WRITE "${listed}" "${source_lines}")
     endif()
+    # Custom C and hosts may find assets by name through the C API, which
+    # Tide expressions cannot describe. Keep their declarations, and layouts
+    # used for reloading; prune only ordinary standalone optimized games.
+    set(strip_assets OFF)
+    if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT)
+        set(strip_assets "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
+    endif()
     add_custom_command(
         OUTPUT "${out_c}" "${out_h}" ${pack_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
-        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" -P "${TIDE_RUN_TIDEC}"
+        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
@@ -317,6 +329,21 @@ int main(int argc, char **argv)
                     -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/copy_pack.cmake"
                 VERBATIM)
             tide_web_page(${target} PACK "${out_pack}")
+        endif()
+    endif()
+    if(NOT ARG_HOST)
+        # Keep profiling information in RelWithDebInfo. Shipped Release and
+        # MinSizeRel executables also omit linker symbol/debug tables.
+        if(TIDE_WEB)
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,MinSizeRel>:LINKER:-s>")
+        elseif(APPLE)
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:-dead_strip>"
+                "$<$<CONFIG:Release,MinSizeRel>:LINKER:-S,-x>")
+        elseif(WIN32 AND NOT MINGW)
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:/OPT:REF>")
+        else()
+            target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:--gc-sections>"
+                "$<$<CONFIG:Release,MinSizeRel>:LINKER:-s>")
         endif()
     endif()
     target_include_directories(${target} PRIVATE "${out_dir}")

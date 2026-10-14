@@ -1,0 +1,5 @@
+// expect: Predict runs outside the simulation, and 'Make' spawns entities
+component Coin { }
+void Make() { Spawn(Coin); }
+input I { bool jump; Predict() { Make(); } }
+scene Main { }

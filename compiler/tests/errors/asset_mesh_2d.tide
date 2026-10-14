@@ -1,0 +1,6 @@
+// expect: a Mesh asset is a 3D mesh, and 'Vertex' is a 2D mesh's vertex: its 'position' is a float2
+asset Mesh<Vertex> quad = "../e2e/assets/meshes/quad.glb";
+
+scene Main
+{
+}

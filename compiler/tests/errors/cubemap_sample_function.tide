@@ -1,5 +1,5 @@
-// expect: Sample reads a Cubemap on the GPU: in a frag or a vert
-// ...nor in a function a frag calls
+// expect: a function samples a Cubemap it takes as a parameter of its own, or a Cubemap asset by its name
+// A function reads the cube it's passed, not one it finds in a singleton it takes
 scene Main { }
 local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
 Color Read(Room room, float3 way) { return room.reflection.Sample(way); }

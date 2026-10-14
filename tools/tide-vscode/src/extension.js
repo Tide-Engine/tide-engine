@@ -7,11 +7,24 @@
 // runs: the server is the one that comes with tide, and games don't run.
 
 const { spawn } = require('child_process');
+const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { LanguageClient } = require('vscode-languageclient/node');
+const { editorPage } = require('./prefab-client.js');
+
+// Pinned client 10.1.2 cancels watched-file delivery on disposal, but leaves
+// full-document delivery scheduled. After a restart that timer tries to reuse
+// a disposed connection and fails in Delayer. The next client opens the latest
+// document text, so pending delivery belongs only to the client being stopped.
+class TideLanguageClient extends LanguageClient {
+    dispose(timeout) {
+        this._pendingChangeDelayer.cancel();
+        return super.dispose(timeout);
+    }
+}
 
 const suffix = process.platform === 'win32' ? '.exe' : '';
 let client = null;
@@ -34,6 +47,16 @@ function openFolders() {
 function inFolder(file, folder) {
     const relative = path.relative(folder, file);
     return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+}
+
+// Check both spellings: a PATH entry or a user setting may point through a
+// symlink/junction, and an open workspace folder may itself be one.
+function inWorkspace(file) {
+    const real = p => {
+        try { return fs.realpathSync(p); } catch { return p; }
+    };
+    const resolved = real(file);
+    return openFolders().some(folder => inFolder(file, folder) || inFolder(resolved, real(folder)));
 }
 
 // The setting tide.<key> for `resource` (a game's folder, or none for the
@@ -88,11 +111,11 @@ function settingProgram(key, what, resource) {
     const named = `tide.${key} is set to ${value}`;
     const file = settingPath(value, folder);
     if (!file) return { error: `${named}, which is in a folder that isn't open.` };
-    if (!vscode.workspace.isTrusted && openFolders().some(f => inFolder(file, f))) {
+    const executable = process.platform === 'win32' && !isFile(file) && isFile(file + '.exe') ? file + '.exe' : file;
+    if (!vscode.workspace.isTrusted && inWorkspace(executable)) {
         return { error: `${named}, which is in this workspace: it runs once you trust the workspace.`, untrusted: true };
     }
-    if (process.platform === 'win32' && !isFile(file) && isFile(file + '.exe')) return { file: file + '.exe' };
-    return isFile(file) ? { file } : { error: `${named}, and there's no ${what} there.` };
+    return isFile(executable) ? { file: executable } : { error: `${named}, and there's no ${what} there.` };
 }
 
 // A program that comes with tide: on PATH, else where the installers put
@@ -101,20 +124,22 @@ function settingProgram(key, what, resource) {
 // the editor runs.
 function installedProgram(name) {
     const exe = name + suffix;
+    const allowed = file => isFile(file) && (vscode.workspace.isTrusted || !inWorkspace(file));
     for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-        if (dir && path.isAbsolute(dir) && isFile(path.join(dir, exe))) return path.join(dir, exe);
+        if (dir && path.isAbsolute(dir) && allowed(path.join(dir, exe))) return path.join(dir, exe);
     }
+    if (process.platform === 'win32' && !path.isAbsolute(process.env.LOCALAPPDATA ?? '')) return null;
     const installed = process.platform === 'win32'
-        ? path.join(process.env.LOCALAPPDATA ?? '', 'Tide', 'bin', exe)
+        ? path.join(process.env.LOCALAPPDATA, 'Tide', 'bin', exe)
         : path.join(os.homedir(), '.tide', 'bin', exe);
-    return isFile(installed) ? installed : null;
+    return allowed(installed) ? installed : null;
 }
 
 // Says a program is missing, offering to install tide or to change `setting`.
 async function missing(message, setting) {
     const choice = await vscode.window.showErrorMessage(message, 'Install tide', 'Settings');
     if (choice === 'Install tide') {
-        vscode.env.openExternal(vscode.Uri.parse('https://github.com/BlenMiner/tide-engine#install'));
+        vscode.env.openExternal(vscode.Uri.parse('https://tide-engine.dev/guide/install'));
     } else if (choice === 'Settings') {
         vscode.commands.executeCommand('workbench.action.openSettings', setting);
     }
@@ -198,7 +223,7 @@ async function start() {
         missing(`Tide: ${server.error}`, 'tide.server.path'); // Not awaited: the editor goes on meanwhile
         return;
     }
-    const next = new LanguageClient('tide', 'Tide', { command: server.file }, {
+    const next = new TideLanguageClient('tide', 'Tide', { command: server.file }, {
         documentSelector: [
             { scheme: 'file', language: 'tide' },
             { scheme: 'untitled', language: 'tide' },
@@ -362,10 +387,10 @@ async function pickGame(last) {
     }
     if (last) return last;
     const games = manifestGames();
-    const folders = [
+    const folders = [...new Set([
         ...games.filter(g => g.path.endsWith('/')).map(g => path.resolve(g.path)),
         ...openFolders().filter(f => !games.some(g => inFolder(g.path, f))),
-    ];
+    ])];
     if (folders.length <= 1) {
         if (!folders.length) vscode.window.showErrorMessage('Tide: open a .tide file of the game to run.');
         return folders[0];
@@ -395,6 +420,9 @@ class Run {
         this.process = null;
         this.line = ''; // Typed, not sent yet
         this.ended = false;
+        this.disposed = false;
+        this.stopping = false;
+        this.stopped = null;
         const args = KINDS[kind].args;
         this.terminal = vscode.window.createTerminal({
             name: `${path.basename(folder)} (tide ${args.slice(0, 2).join(' ')})`,
@@ -415,6 +443,7 @@ class Run {
     }
 
     start(tide, folder, args, onPage) {
+        if (this.disposed || this.stopping) return;
         this.print(`${folder}> tide ${args.join(' ')}\n`);
         // Outside Windows, tide and the game it starts get a process group of
         // their own, which stop() ends. TIDE_INTERACTIVE: someone can answer
@@ -429,12 +458,15 @@ class Run {
         let seen = ''; // tide's output until it says where the page is
         child.stdout.setEncoding('utf8');
         child.stdout.on('data', text => {
-            if (onPage && seen !== null) {
+            if (!this.disposed && onPage && seen !== null) {
                 seen += text;
-                const page = /tide: the game is at (http:\/\/\S+)/.exec(seen); // See tide_run_web in compiler/cli/build.c
+                const page = /tide: the game is at (http:\/\/\S+)\s/.exec(seen); // Wait for the address's delimiter, even across chunks
                 if (page) {
                     seen = null;
-                    onPage(page[1]);
+                    const failed = error => {
+                        if (!this.disposed) vscode.window.showErrorMessage(`Tide: couldn't open the game's page: ${error.message}`);
+                    };
+                    try { Promise.resolve(onPage(page[1])).catch(failed); } catch (error) { failed(error); }
                 }
             }
             this.print(text);
@@ -478,31 +510,72 @@ class Run {
 
     // Stops tide, and the game it started, which would keep running without it.
     stop() {
-        const pid = this.process?.pid;
-        if (!pid) return;
+        if (this.stopped) return this.stopped;
+        this.stopping = true;
+        const child = this.process;
+        const pid = child?.pid;
+        if (!pid) return this.stopped = Promise.resolve();
+        const ended = child.exitCode !== null || child.signalCode !== null
+            ? Promise.resolve() : new Promise(resolve => child.once('close', resolve));
+        let requested = Promise.resolve(true);
         if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true }).on('error', () => this.process?.kill());
+            let attempted = false;
+            const fallback = () => {
+                if (attempted || child.exitCode !== null || child.signalCode !== null) return;
+                attempted = true;
+                try { child.kill(); } catch {} // The deadline reports an unconfirmed exit
+            };
+            requested = new Promise(resolve => {
+                spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true })
+                    .on('error', () => { fallback(); resolve(false); })
+                    .on('close', code => { if (code !== 0) fallback(); resolve(code === 0); });
+            });
         } else {
             try {
-                process.kill(-pid, 'SIGTERM');
+                process.kill(-pid, 'SIGKILL'); // Stop ends the whole group, including a child that ignores SIGTERM
             } catch {
-                this.process?.kill();
+                requested = Promise.resolve(false);
+                try { child.kill('SIGKILL'); } catch {} // The deadline reports an unconfirmed exit
             }
         }
+        // A successful taskkill closes the whole tree. Wait for it as well as
+        // tide's pipes before allowing a replacement to bind the same resources.
+        const problem = () => new Error(`Couldn't confirm cleanup of the game process tree (tide PID ${pid}). Stop the remaining game processes and reload the editor window before running again.`);
+        let timer;
+        const deadline = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(problem()), 5000);
+            timer.unref();
+        });
+        this.stopped = Promise.race([Promise.all([requested, ended]), deadline]).then(([treeStopped]) => {
+            if (!treeStopped) throw problem();
+        }).finally(() => clearTimeout(timer));
+        // Terminal close and subscription disposal cannot await promises. Keep
+        // their failure visible and handled; replacement still awaits rejection.
+        this.stopped.catch(error => {
+            this.print(`Tide: ${error.message}\n`);
+            vscode.window.showErrorMessage(`Tide: ${error.message}`);
+        });
+        return this.stopped;
     }
 
     dispose() {
-        this.stop();
+        this.disposed = true;
+        const stopped = this.stop();
         this.terminal.dispose();
+        this.output.dispose();
+        this.closed.dispose();
+        return stopped;
     }
 }
 
 // Shows the page beside the code: in VS Code's integrated browser, in the tab
 // of the last run's page if it's still open; else in the Simple Browser, which
 // other editors built on VS Code have; else in the system's browser.
-async function showPage(address, lastAddress) {
+async function showPage(address, lastAddress, current) {
     const url = (await vscode.env.asExternalUri(vscode.Uri.parse(address))).toString(true);
-    if ((await vscode.commands.getCommands(true)).includes('workbench.action.browser.open')) {
+    const commands = await vscode.commands.getCommands(true);
+    if (!current()) return null;
+    if (commands.includes('workbench.action.browser.open')) {
         await vscode.commands.executeCommand('workbench.action.browser.open',
             { url, openToSide: true, reuseUrlFilter: lastAddress ?? undefined });
         return url;
@@ -511,19 +584,30 @@ async function showPage(address, lastAddress) {
         await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url),
             { viewColumn: vscode.ViewColumn.Beside });
     } catch {
+        if (!current()) return null;
         await vscode.env.openExternal(vscode.Uri.parse(url));
     }
     return url;
 }
 
 const runs = { desktop: null, web: null, android: null }; // Running, or that ran last
+const runQueues = { desktop: Promise.resolve(), web: Promise.resolve(), android: Promise.resolve() };
+let deactivating = false;
 let lastGame = null;
 let lastPage = null; // The web run's address in the editor
 
 // Runs the game, starting it over if it's running: in a window of its own, on
 // the web, in the editor, or on Android. Running a game runs its code, so not
 // in an untrusted workspace.
-async function run(kind) {
+function run(kind) {
+    runQueues[kind] = runQueues[kind].then(() => beginRun(kind)).catch(error => {
+        output?.error(error);
+    });
+    return runQueues[kind];
+}
+
+async function beginRun(kind) {
+    if (deactivating) return;
     if (!vscode.workspace.isTrusted) {
         const choice = await vscode.window.showErrorMessage(
             "Tide: running a game runs its code, so it only runs once you trust this workspace.", 'Manage Workspace Trust');
@@ -531,7 +615,7 @@ async function run(kind) {
         return;
     }
     const game = await pickGame(lastGame);
-    if (!game) return;
+    if (!game || deactivating) return;
     const configured = settingProgram('path', 'tide', vscode.Uri.file(game));
     const tide = configured ? configured.file : installedProgram('tide');
     if (!tide) {
@@ -539,11 +623,17 @@ async function run(kind) {
         return;
     }
     lastGame = game;
-    runs[kind]?.dispose();
-    runs[kind] = new Run(tide, game, kind, kind === 'web' ? async address => {
-        lastPage = await showPage(address, lastPage);
-        vscode.commands.executeCommand('setContext', 'tide.gamePage', true);
+    await runs[kind]?.dispose();
+    if (deactivating) return;
+    const next = new Run(tide, game, kind, kind === 'web' ? async address => {
+        const current = () => runs[kind] === next && !next.disposed && !deactivating;
+        const page = await showPage(address, lastPage, current);
+        if (page && current()) {
+            lastPage = page;
+            vscode.commands.executeCommand('setContext', 'tide.gamePage', true);
+        }
     } : null);
+    runs[kind] = next;
 }
 
 // The developer tools of the game's page, whose console shows what each
@@ -564,6 +654,165 @@ async function openDevTools() {
     await vscode.commands.executeCommand('workbench.action.webview.openDeveloperTools');
 }
 
+// The native authoring app remains open independently of this IDE window.
+async function openPrefab(resource) {
+    if (!vscode.workspace.isTrusted) {
+        vscode.window.showErrorMessage('Tide: prefab preview can run project code; trust this workspace before opening the editor.');
+        return;
+    }
+    const document = vscode.window.activeTextEditor?.document;
+    const uri = resource ?? document?.uri;
+    if (uri?.scheme !== 'file' || path.extname(uri.fsPath).toLowerCase() !== '.tprefab') {
+        vscode.window.showErrorMessage('Tide: select or open a .tprefab file.'); return;
+    }
+    const found = gameFolder(uri.fsPath);
+    if (found.error) { vscode.window.showErrorMessage(`Tide: ${found.error}`); return; }
+    const configured = settingProgram('path', 'tide', vscode.Uri.file(found.folder));
+    const tide = configured ? configured.file : installedProgram('tide');
+    if (!tide) {
+        await missing(configured ? `Tide: ${configured.error}` : "Tide: couldn't find tide. Install it, or set tide.path.", 'tide.path'); return;
+    }
+    if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
+    const child = spawn(tide, ['open', uri.fsPath, '--project', found.folder],
+        { cwd: found.folder, windowsHide: true, detached: true, stdio: 'ignore' });
+    child.on('error', error => vscode.window.showErrorMessage(`Tide: couldn't open the prefab editor: ${error.message}`));
+    child.unref();
+}
+
+const prefabPanels = new Map();
+const prefabProcesses = new Set();
+class PrefabPanel {
+    constructor(executable, uri, folder) {
+        this.uri = uri;
+        this.panel = vscode.window.createWebviewPanel('tide.prefabEditor', path.basename(uri.fsPath), vscode.ViewColumn.Active,
+            { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
+        this.buffer = Buffer.alloc(0); this.size = 0; this.busy = false; this.disposed = false;
+        const nonce = require('crypto').randomBytes(16).toString('hex');
+        prefabProcesses.add(this);
+        this.finished = new Promise(resolve => { this.finish = () => { prefabProcesses.delete(this); resolve(); }; });
+        this.connections = new Set();
+        this.server = net.createServer(socket => {
+            if (this.disposed || this.transport || this.connections.size >= 4) { socket.destroy(); return; }
+            this.connections.add(socket); socket.on('close', () => this.connections.delete(socket));
+            socket.on('error', () => {}); socket.setTimeout(5000, () => socket.destroy());
+            let hello = Buffer.alloc(0);
+            const authenticate = data => {
+                hello = Buffer.concat([hello,data]); const end = hello.indexOf(10);
+                if (end < 0) { if (hello.length > 256) socket.destroy(); return; }
+                if (hello.subarray(0,end).toString('ascii') !== `TIDEHELLO 1 ${nonce}` || this.disposed) { socket.destroy(); return; }
+                this.transport = socket; socket.setTimeout(0); this.server.close();
+                for (const other of this.connections) if (other !== socket) other.destroy();
+                socket.removeListener('data',authenticate); socket.on('data',bytes => this.read(bytes));
+                if (hello.length > end+1) this.read(hello.subarray(end+1));
+                socket.on('close', () => { if (!this.disposed && !this.ended) this.fail('Native prefab frame connection closed. See Tide output.'); });
+            };
+            socket.on('data',authenticate);
+        });
+        this.panel.onDidDispose(() => this.dispose());
+        this.ready = new Promise(resolve => {
+            this.server.on('error', error => { this.fail(`Couldn't open the native frame connection: ${error.message}`); resolve(); });
+            this.server.listen({host:'127.0.0.1',port:0}, () => {
+                if (this.disposed) { this.server.close(); this.finish(); resolve(); return; }
+                this.start(executable,uri,folder,this.server.address().port,nonce); resolve();
+            });
+        });
+    }
+    start(executable,uri,folder,port,nonce) {
+        this.child = spawn(executable, [uri.fsPath, '--project', folder, '--embed',String(port),nonce],
+            { cwd: folder, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
+        const child = this.child;
+        prefabProcesses.add(this);
+        child.once('close', () => { this.ended = true; this.transport?.destroy(); prefabProcesses.delete(this); clearTimeout(this.deadline); this.finish(); });
+        child.stdout.on('data', bytes => output?.appendLine(bytes.toString()));
+        child.stderr.on('data', bytes => output?.appendLine(bytes.toString()));
+        child.stdin.on('error', () => {});
+        child.on('error', error => this.fail(`Couldn't start the native prefab editor: ${error.message}`));
+        child.on('close', code => { if (!this.disposed) this.fail(`Native prefab editor stopped (${code ?? 'signal'}). See Tide output.`); });
+        this.panel.webview.onDidReceiveMessage(message => {
+            if (!this.disposed && message?.type === 'presented' && this.received && !this.presented) {
+                this.presented = true; output?.info(`Prefab editor displayed: ${uri.fsPath} (PID ${child.pid})`); return;
+            }
+            if (this.disposed || this.busy || message?.type !== 'frame' || !Array.isArray(message.events) || message.events.length > 200) return;
+            if (message.events.some(event => typeof event !== 'string' || Buffer.byteLength(event) > 4000 || /[\r\n\0]/.test(event) || !/^(mouse|button|key|text|scroll) /.test(event))) {
+                this.fail('Invalid prefab editor input.'); return;
+            }
+            this.busy = true;
+            child.stdin.write(message.events.map(event => `INPUT ${event}\n`).join('') + 'FRAME 1\n');
+        });
+        this.panel.webview.html = editorPage('const ide=acquireVsCodeApi();const send=message=>ide.postMessage(message);', nonce);
+    }
+    read(bytes) {
+        if (this.disposed) return;
+        if (this.buffer.length + bytes.length > 32*1024*1024+256) { this.fail('Prefab frame exceeded the transport limit.'); return; }
+        this.buffer = Buffer.concat([this.buffer, bytes]);
+        if (!this.size) {
+            const end = this.buffer.indexOf(10);
+            if (end < 0) { if (this.buffer.length > 256) this.fail('Invalid prefab frame header.'); return; }
+            const header = /^TIDEFRAME 1 (\d+) ([01]) (\d+) (\d+) (\d+)$/.exec(this.buffer.subarray(0,end).toString('ascii'));
+            if (!header || !this.busy || +header[1] <= 0 || +header[1] > 32*1024*1024) { this.fail('Incompatible prefab editor protocol. Rebuild or upgrade Tide and its extension together.'); return; }
+            this.size = +header[1]; this.dirty = header[2] === '1';
+            this.buffer = this.buffer.subarray(end+1);
+        }
+        if (this.buffer.length < this.size) return;
+        if (this.buffer.length !== this.size) { this.fail('Unexpected data after the prefab frame.'); return; }
+        const png = this.buffer.toString('base64');
+        this.buffer = Buffer.alloc(0); this.size = 0; this.busy = false;
+        this.received = true;
+        this.panel.title = path.basename(this.uri.fsPath) + (this.dirty ? ' *' : '');
+        this.panel.webview.postMessage({ type: 'frame', png });
+    }
+    fail(message) {
+        if (this.disposed) return;
+        this.panel.webview.postMessage({ type: 'error', message: `Tide: ${message}` });
+        this.dispose();
+    }
+    dispose() {
+        if (this.disposed) return this.finished;
+        this.disposed = true;
+        prefabPanels.delete(this.uri.fsPath);
+        try { this.server.close(); } catch {}
+        for (const socket of this.connections) if (socket !== this.transport) socket.destroy();
+        if (!this.child) { this.finish(); return this.finished; }
+        // EOF lets the native editor save recovery and join any compiler worker.
+        this.child.stdin.end();
+        if (!this.ended) this.deadline = setTimeout(() => {
+            if (this.ended) return;
+            if (process.platform === 'win32') {
+                const killer = spawn('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], { windowsHide: true });
+                killer.on('error', error => output?.appendLine(`Prefab cleanup failed: ${error.message}`));
+                killer.on('close', code => { if (code) output?.appendLine(`Prefab cleanup failed (${code}).`); });
+            } else { try { process.kill(-this.child.pid, 'SIGKILL'); } catch (error) { output?.appendLine(`Prefab cleanup failed: ${error.message}`); } }
+        }, 2000);
+        return this.finished;
+    }
+}
+
+async function editPrefab(resource) {
+    if (deactivating) return;
+    if (!vscode.workspace.isTrusted) { vscode.window.showErrorMessage('Tide: trust this workspace before opening the prefab editor.'); return; }
+    const document = vscode.window.activeTextEditor?.document, uri = resource ?? document?.uri;
+    if (uri?.scheme !== 'file' || path.extname(uri.fsPath).toLowerCase() !== '.tprefab') { vscode.window.showErrorMessage('Tide: select or open a .tprefab file.'); return; }
+    const previous = prefabPanels.get(uri.fsPath);
+    if (previous && !previous.disposed) { previous.panel.reveal(); return; }
+    const found = gameFolder(uri.fsPath);
+    if (found.error) { vscode.window.showErrorMessage(`Tide: ${found.error}`); return; }
+    const configured = settingProgram('path', 'tide', vscode.Uri.file(found.folder));
+    const tide = configured ? configured.file : installedProgram('tide');
+    if (!tide) { await missing(configured ? `Tide: ${configured.error}` : "Tide: couldn't find tide. Install it, or set tide.path.", 'tide.path'); return; }
+    const executable = path.join(path.dirname(tide),'tide-editor'+suffix);
+    if (!isFile(executable)) { vscode.window.showErrorMessage('Tide: tide-editor is missing beside tide. Install a desktop Tide package.'); return; }
+    if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
+    if (deactivating) return;
+    const opened = prefabPanels.get(uri.fsPath); // Another command may have awaited the same Save.
+    if (opened && !opened.disposed) { opened.panel.reveal(); return; }
+    const editor = new PrefabPanel(executable,uri,found.folder);
+    prefabPanels.set(uri.fsPath, editor); await editor.ready;
+}
+
+function prefabAction(action) {
+    for (const editor of prefabPanels.values()) if (editor.panel.active && !editor.disposed) editor.panel.webview.postMessage({type:'action',action});
+}
+
 function activate(context) {
     output = vscode.window.createOutputChannel('Tide', { log: true });
     trace = traceChannel();
@@ -575,18 +824,27 @@ function activate(context) {
         vscode.commands.registerCommand('tide.runWeb', () => run('web')),
         vscode.commands.registerCommand('tide.runAndroid', () => run('android')),
         vscode.commands.registerCommand('tide.openDevTools', openDevTools),
+        vscode.commands.registerCommand('tide.openPrefab', openPrefab),
+        vscode.commands.registerCommand('tide.editPrefab', editPrefab),
+        vscode.commands.registerCommand('tide.prefabSave', () => prefabAction('save')),
+        vscode.commands.registerCommand('tide.prefabUndo', () => prefabAction('undo')),
+        vscode.commands.registerCommand('tide.prefabRedo', () => prefabAction('redo')),
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('tide.server.path')) restart();
         }),
         // Trusted now: the workspace's own server and settings can run.
         vscode.workspace.onDidGrantWorkspaceTrust(restart),
         { dispose: () => Object.values(runs).forEach(r => r?.dispose()) },
+        { dispose: () => [...prefabProcesses].forEach(editor => editor.dispose()) },
     );
     serially(start);
 }
 
-function deactivate() {
-    return serially(stop);
+async function deactivate() {
+    deactivating = true;
+    await Promise.allSettled(Object.values(runs).map(r => r?.dispose()));
+    await Promise.allSettled([...prefabProcesses].map(editor => editor.dispose()));
+    await serially(stop);
 }
 
 module.exports = { activate, deactivate };

@@ -1,0 +1,4 @@
+// expect: no entity has both
+component Enemy { int hp; }
+scene Main { }
+view Both(Enemy enemy, local Enemy localEnemy) { Debug.Log($"{enemy.hp} {localEnemy.hp}"); }

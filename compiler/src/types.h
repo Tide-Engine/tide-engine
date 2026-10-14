@@ -10,14 +10,16 @@ bool builtin_type_named(str name, type *out);
 // What a built-in type that takes types accepts for each: the one table the
 // parser (what's in the <>, and what a syntax error says of it) and the
 // checker (what may go there, and where one can be inside another:
-// resolve_generic in check.c) read. List<T>, Map<K, V>, Set<K>, Grid2<T> and
-// Grid3<T> take theirs in <>; `T?` and `fails E` take theirs around them.
+// resolve_generic in check.c) read. List<T>, Map<K, V>, Set<K>, Grid2<T>,
+// Grid3<T> and Mesh<V> take theirs in <>; `T?` and `fails E` take theirs
+// around them.
 typedef enum generic_arg {
     GENERIC_ELEMENT, // A list's element or a map's value: any value, containers among them, but a grid (which is never copied)
     GENERIC_KEY,     // A map's or set's key: a value with a hash and ==, of a fixed size (no containers, no text in structs)
     GENERIC_CELL,    // A grid's cell: a plain value, side by side with the others in its chunk (no containers, no text)
     GENERIC_VALUE,   // What a T? holds: any value a function can return
     GENERIC_ERROR,   // What a function fails with: a value, never a T?
+    GENERIC_VERTEX,  // A mesh's vertex: a struct of the game's with a float3 position, or Vertex3 (resolve_mesh in check.c)
 } generic_arg;
 
 typedef struct generic_form {
@@ -29,7 +31,7 @@ typedef struct generic_form {
     const char *close;    // ...and what closes it
 } generic_form;
 
-// The form a name takes types in <> with, or NULL: List, Map, Set, Grid2, Grid3.
+// The form a name takes types in <> with, or NULL: List, Map, Set, Grid2, Grid3, Mesh.
 const generic_form *generic_form_named(str name);
 
 // The forms around a type: T? and `fails E`.
@@ -54,6 +56,39 @@ bool type_is_integer(type t);
 
 // 2, 3 or 4 for float2x2, float3x3, float4x4; 0 otherwise.
 int matrix_dim(type t);
+
+// A type's bytes and alignment in generated C. Generated types have no padding
+// the compiler adds: tidec writes it out as members, so a struct's layout is
+// its fields' in order, each on its own alignment, and the checker knows a
+// value's size as the C compiler will have it. Every built-in type is 4-byte
+// aligned with a size that's a multiple of 4, except bool and byte; long is
+// 8-byte aligned.
+typedef struct layout {
+    int size; // LAYOUT_MOST for anything bigger
+    int align;
+} layout;
+
+#define LAYOUT_MOST 2147483647
+
+layout type_layout(type t);
+
+// The layout of a declaration's fields together: a struct's, a component's.
+// With `pad`, room for an int a field and one more, it's also given the
+// padding before each field (pad[i] before field i) and after the last.
+layout decl_layout_padded(const decl *d, int *pad);
+layout decl_layout(const decl *d);
+
+// Elements an array holds at the most, all of its lengths together...
+#define TIDE_ARRAY_MOST 4096
+
+// ...but for a long array: one of more than that, which only an audio
+// declaration's state holds (a delay line: an echo's, a reverb's). Whether a
+// value of type `t` is one, or has one in it through arrays and structs. Such
+// a value is never copied, as a copy would be hundreds of kilobytes on the
+// audio thread's stack: it's read and written where it is, an element at a
+// time, or passed on by its address. Asked once every struct's fields are
+// resolved, with no struct that holds itself: a struct remembers its answer.
+bool type_holds_long_array(type t);
 
 // Whether views see values of type `t` blended between the last two ticks:
 // floats, and what's made of them. A struct blends if any of its fields do.

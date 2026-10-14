@@ -1,0 +1,10 @@
+// expect: 'Flash' sends the local event 'Blink', and the match can't use local state
+// expect: it does on line 6
+local event Blink { int n; }
+component Enemy { int hp; }
+scene Main { }
+void Flash(int n) { Send(Blink { n = n }); }
+event(Spawned) Setup(with Main) { Spawn(Enemy); }
+local event(Blink blink) Seen() { }
+view Show(Enemy enemy) { Flash(enemy.hp); }
+system Fight(Enemy enemy) { Flash(enemy.hp); }

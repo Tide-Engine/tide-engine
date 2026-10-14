@@ -1,0 +1,240 @@
+// The game the package's tests run with no service: the identity, lobby and
+// matchmaking slots are the game's own, as another service's package would
+// have them, each answering from what it's asked, a frame or a few later.
+// The transport stays Tide's rooms, so the test reads what the session is
+// asked. One page is the game's own too.
+using Lobbies;
+
+settings { title = "Lobby test"; maxPlayers = 4; }
+
+scene Main { }
+
+input Controls
+{
+    bool playing;
+
+    Sample(Devices devices, LobbyClient client)
+    {
+        playing = client.playing;
+    }
+}
+
+// What the game saw of the menu, and what the test reads of the lobby
+local singleton Seen
+{
+    int newGames;
+    int members;
+    int ready;    // Members who are ready
+    bool mine;    // This player is
+    int listed;   // Lobbies the last list had
+    bool owned;
+    bool allReady;
+}
+
+view Look(mut Seen seen, LobbyClient client)
+{
+    if (client.newGame) seen.newGames += 1;
+    seen.members = client.lobby.members.count;
+    seen.ready = 0;
+    foreach (var member in client.lobby.members)
+    {
+        if (IsReady(member)) seen.ready += 1;
+    }
+    seen.mine = IsReady(Mine(client));
+    seen.listed = client.lobbies.count;
+    seen.owned = client.owned;
+    seen.allReady = AllReady(client.lobby);
+}
+
+// What the test has this player ask, where no button of a page is pressed for it
+enum Order
+{
+    None,
+    Join,     // The lobby `text` names
+    Quick,    // A match of the mode `text`
+    Leave,
+    Kick,     // The member `text`
+    Transfer, // To the member `text`
+    Rename,   // The lobby, to `text`
+    Cancel,
+    Rejoin,
+    Create,
+    Empty     // A list of lobbies that finds none
+}
+
+local singleton Remote
+{
+    Order order;
+    string text;
+}
+
+view Obey(mut Remote remote, mut LobbyClient client)
+{
+    var order = remote.order;
+    remote.order = Order.None;
+    switch (order)
+    {
+        case Order.Join: JoinLobby(client, remote.text); break;
+        case Order.Quick: QuickMatch(client, MatchRequest { mode = remote.text }); break;
+        case Order.Leave: LeaveLobby(client); break;
+        case Order.Kick: Kick(client, remote.text); break;
+        case Order.Transfer: TransferLobby(client, remote.text); break;
+        case Order.Rename: SetLobbyName(client, remote.text); break;
+        case Order.Cancel: CancelLobby(client); break;
+        case Order.Rejoin: RejoinMatch(client); break;
+        case Order.Create: CreateLobby(client, LobbyOptions { name = remote.text }); break;
+        case Order.Empty:
+            client.query.filter["mode"] = "none";
+            RefreshLobbies(client);
+            break;
+    }
+}
+
+// A lobby of the service's that isn't: its host, and this player.
+LobbyInfo Made(string id, string me, string name)
+{
+    mut var lobby = LobbyInfo { id = id, game = "test", name = name, owner = "host", you = me, version = 1 };
+    lobby.members.Add(LobbyMember { id = "host", name = "Host" });
+    lobby.members.Add(LobbyMember { id = me, name = "Tester" });
+    return lobby;
+}
+
+override async LobbyIdentity IdentitySignIn(LobbyClient client, bool fresh)
+{
+    await Wait.Frames(1);
+    return LobbyIdentity { id = fresh ? "guest" : "me", name = "Tester" };
+}
+
+// The lobbies are the game's own, which know a player by its identity alone
+override async LobbyIdentity LobbySignIn(LobbyClient client, LobbyIdentity who)
+{
+    return who;
+}
+
+override async LobbyAnswer LobbyCreate(LobbyClient client, LobbyOptions options)
+{
+    await Wait.Frames(2);
+    mut var lobby = LobbyInfo { id = "MADE0000", game = "test", name = options.name, owner = client.me.id, you = client.me.id, max = options.max, version = 1 };
+    lobby.members.Add(LobbyMember { id = client.me.id, name = client.name });
+    return LobbyAnswer { ok = true, lobby = lobby };
+}
+
+override async LobbyListing LobbyList(LobbyClient client, LobbyQuery query)
+{
+    await Wait.Frames(2);
+    mut var listing = LobbyListing { ok = true };
+    if (query.filter["mode"] == "none") return listing;
+    for (var i = 1; i <= 8; i++) listing.lobbies.Add(LobbyEntry { id = $"LIST000{i}", name = $"Lobby {i}", players = 1, max = 4 });
+    return listing;
+}
+
+// By the ID: a full lobby, one this player is in already from another
+// program, one whose match is on, and any other.
+override async LobbyAnswer LobbyJoin(LobbyClient client, string id)
+{
+    await Wait.Frames(2);
+    if (id == "FULL0000") return LobbyAnswer { failure = LobbyFailure.Full };
+    mut var lobby = Made(id, client.me.id, "Friday");
+    if (id == "MATCH000") lobby.match = "K7QF2M";
+    return LobbyAnswer { ok = true, lobby = lobby, already = id == "SAME0000" && client.me.id == "me" };
+}
+
+override async LobbyAnswer LobbyLeave(LobbyClient client, string id)
+{
+    await Wait.Frames(1);
+    return LobbyAnswer { ok = true };
+}
+
+override async LobbyAnswer LobbyUpdate(LobbyClient client, string id, LobbyChange change)
+{
+    await Wait.Frames(2);
+    mut var lobby = client.lobby;
+    lobby.version += 1;
+    lobby.name = change.name ?? lobby.name;
+    lobby.open = change.open ?? lobby.open;
+    lobby.match = change.match ?? lobby.match;
+    return LobbyAnswer { ok = true, lobby = lobby };
+}
+
+override async LobbyAnswer LobbySetMember(LobbyClient client, string id, string name, Map<string, string> data, List<string> remove)
+{
+    await Wait.Frames(2);
+    mut var lobby = client.lobby;
+    lobby.version += 1;
+    for (var i = 0; i < lobby.members.count; i++)
+    {
+        if (lobby.members[i].id != lobby.you) continue;
+        mut var member = lobby.members[i];
+        member.name = name;
+        foreach (var e in data) member.data[e.key] = e.value;
+        foreach (var key in remove) member.data.Remove(key);
+        lobby.members[i] = member;
+    }
+    return LobbyAnswer { ok = true, lobby = lobby };
+}
+
+override async LobbyAnswer LobbyKick(LobbyClient client, string id, string player)
+{
+    await Wait.Frames(2);
+    mut var lobby = client.lobby;
+    lobby.version += 1;
+    for (var i = 0; i < lobby.members.count; i++)
+    {
+        if (lobby.members[i].id != player) continue;
+        lobby.members.RemoveAt(i);
+        break;
+    }
+    return LobbyAnswer { ok = true, lobby = lobby };
+}
+
+override async LobbyAnswer LobbyTransfer(LobbyClient client, string id, string player)
+{
+    await Wait.Frames(2);
+    mut var lobby = client.lobby;
+    lobby.version += 1;
+    lobby.owner = player;
+    return LobbyAnswer { ok = true, lobby = lobby };
+}
+
+// Nothing changes by itself, but in two lobbies: one whose owner sends this
+// player out, and one the service stops answering for.
+override async LobbyAnswer LobbyWatch(LobbyClient client, string id, int version)
+{
+    await Wait.Frames(3);
+    if (id == "KICK0000") return LobbyAnswer { failure = LobbyFailure.Kicked };
+    if (id == "LOST0000") return LobbyAnswer { failure = LobbyFailure.Unreachable };
+    return LobbyAnswer { ok = true, lobby = client.lobby };
+}
+
+// A queue, which Tide's own service has none of: the ticket is searching
+// until it's asked about a third time.
+override async MatchTicket TicketStart(LobbyClient client, MatchRequest request)
+{
+    await Wait.Frames(1);
+    if (request.mode == "nobody") return MatchTicket { status = TicketStatus.Failed, failure = LobbyFailure.NotFound };
+    return MatchTicket { id = "0", status = TicketStatus.Searching };
+}
+
+override async MatchTicket TicketCheck(LobbyClient client, MatchTicket ticket)
+{
+    await Wait.Frames(2);
+    if (ticket.id == "0") return MatchTicket { id = "1", status = TicketStatus.Searching };
+    if (ticket.id == "1") return MatchTicket { id = "2", status = TicketStatus.Searching };
+    return MatchTicket { id = "3", status = TicketStatus.Found, lobby = Made("QUICK000", client.me.id, "Quick") };
+}
+
+override string Tagline()
+{
+    return "A test.";
+}
+
+override LobbyOptions NewLobby(string player)
+{
+    return LobbyOptions { name = $"{player}'s table", max = 4 };
+}
+
+// A page of the game's own: one button, at a place of its own.
+override void SearchPage(mut LobbyClient client)
+{
+    if (GUI.Button(Rect(10, 10, 100, 40), "Stop")) ShowTitle(client);
+}

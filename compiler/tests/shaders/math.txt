@@ -349,13 +349,18 @@ mat4 tide_inverse4(mat4 m) {
 void ts_Blow(inout tt_SkyVertex t_vertex) {
     vec4 t_spin = tide_mul_q(tide_u0, tide_axisangle_q(vec3(tide_f(0.0), tide_f(0.0), tide_f(1.0)), tide_u5.w));
     vec4 t_eased = tide_slerp_q(tide_euler_q(tide_u1.xyz), tide_inverse_q(t_spin), tide_f(0.5));
+    vec4 t_scalar = tide_euler_q(vec3(tide_u1.xyz.x, tide_u1.xyz.y, tide_u1.xyz.z));
+    vec4 t_named = tide_euler_q(vec3(tide_u1.xyz.x, tide_u1.xyz.y, tide_u1.xyz.z));
+    vec4 t_whole = tide_euler_q(vec3(1.0, 2.0, 3.0));
+    vec4 t_degrees = tide_euler_q(vec3(3.14159274, (-0.794124782), 1.57079637));
+    float t_angle = ((tide_f(0.00872664619) + tide_f(0.314159274)) - tide_f(0.0));
     vec4 t_aimed = tide_nlerp_q(tide_lookrotation_q(tide_rotate_q(t_eased, vec3(0.0, 0.0, 1.0)), tide_rotate_q(t_spin, vec3(0.0, 1.0, 0.0))), tide_conjugate_q(tide_normalize_q(t_spin)), tide_f(0.5));
     vec3 t_pushed = (tide_rotate_q(t_aimed, vec3(t_vertex.m_position, tide_f(0.0))) + (tide_rotate_q(t_spin, vec3(1.0, 0.0, 0.0)) * tide_angle_q(t_spin, t_eased)));
     mat4 t_placed = (tide_trs(tide_u1.xyz, tide_q_from_m3(tide_m3_from_q(t_aimed)), vec3(tide_f(1.0))) * tide_inverse4(mat4(vec4(tide_u1.w, tide_u2.x, tide_u2.y, tide_u2.z), vec4(tide_u2.w, tide_u3.x, tide_u3.y, tide_u3.z), vec4(tide_u3.w, tide_u4.x, tide_u4.y, tide_u4.z), vec4(tide_u4.w, tide_u5.x, tide_u5.y, tide_u5.z))));
     mat4 t_seen = (tide_perspective(tide_f(1.0), tide_f(1.5), tide_f(0.1), tide_f(100.0)) * tide_ortho(tide_f(4.0), tide_f(3.0), tide_f(0.1), tide_f(100.0)));
     mat4 t_moved = (mat4(vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(0.0, 0.0, 1.0, 0.0), vec4(t_pushed, 1.0)) * tide_m4_from_m3(tide_inverse3(tide_m3_from_q(t_spin)), tide_u1.xyz));
     mat2 t_flat = tide_inverse2(mat2(tide_f(2.0), float((-tide_i(1))), tide_f(1.0), tide_f(3.0)));
-    t_vertex.m_position = (t_flat * ((t_placed * (t_seen * t_moved)) * vec4(t_pushed, 1.0)).xyz.xy);
+    t_vertex.m_position = ((((t_flat * ((t_placed * (t_seen * t_moved)) * vec4(t_pushed, 1.0)).xyz.xy) + tide_rotate_q(t_scalar, tide_rotate_q(t_named, vec3(0.0, 0.0, 1.0))).xy) + tide_rotate_q(t_whole, vec3(1.0, 0.0, 0.0)).xy) + (tide_rotate_q(t_degrees, vec3(0.0, 1.0, 0.0)).xy * t_angle));
 }
 
 void main() {
@@ -437,6 +442,18 @@ float tide_atan2_1(float a, float b) {
     if (a == 0.0 && b == 0.0) { return 0.0; }
     return atan(a, b);
 }
+vec4 tide_mul_q(vec4 a, vec4 b) {
+    return vec4(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y + a.y * b.w + a.z * b.x - a.x * b.z, a.w * b.z + a.z * b.w + a.x * b.y - a.y * b.x, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
+}
+vec3 tide_rotate_q(vec4 q, vec3 v) {
+    vec3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+vec4 tide_euler_q(vec3 v) {
+    vec3 s = sin(0.5 * v);
+    vec3 c = cos(0.5 * v);
+    return tide_mul_q(tide_mul_q(vec4(0.0, s.y, 0.0, c.y), vec4(s.x, 0.0, 0.0, c.x)), vec4(0.0, 0.0, s.z, c.z));
+}
 void ts_Calm(tt_SkyVertex t_vertex, inout vec4 t_color) {
     float t_least = tide_min1(tide_u5.w, tide_f(2.0));
     vec2 t_most = tide_max2(t_vertex.m_uv, vec2(tide_f(0.5)));
@@ -445,7 +462,10 @@ void ts_Calm(tt_SkyVertex t_vertex, inout vec4 t_color) {
     float t_raised = tide_pow1((tide_u5.w - tide_f(2.0)), tide_f(2.0));
     float t_turned = tide_atan2_1((t_vertex.m_uv.y - tide_f(0.5)), (t_vertex.m_uv.x - tide_f(0.5)));
     int t_capped = max(tide_i(0), min(tide_i(9), tide_v0.x));
-    t_color = (vec4((t_most.x * t_eased), (t_held.y * t_raised), (tide_min1(tide_min1(t_held.x, t_held.y), t_held.z) + t_turned), 1.0) * (float(t_capped) / tide_f(9.0)));
+    vec4 t_scalar = tide_euler_q(vec3(tide_u1.xyz.x, tide_u1.xyz.y, tide_u1.xyz.z));
+    vec4 t_named = tide_euler_q(vec3(1.0, 2.0, 3.0));
+    vec4 t_degrees = tide_euler_q(vec3(0.00872664619, (-0.794124782), 3.14159274));
+    t_color = ((vec4((t_most.x * t_eased), (t_held.y * t_raised), (tide_min1(tide_min1(t_held.x, t_held.y), t_held.z) + t_turned), 1.0) * (float(t_capped) / tide_f(9.0))) + vec4(((tide_rotate_q(t_scalar, vec3(0.0, 0.0, 1.0)) + tide_rotate_q(t_named, vec3(0.0, 1.0, 0.0))) + tide_rotate_q(t_degrees, vec3(1.0, 0.0, 0.0))), 0.0));
 }
 
 void main() {
@@ -688,13 +708,18 @@ fn tide_inverse4(m: mat4x4f) -> mat4x4f {
 fn ts_Blow(t_vertex: ptr<function, tt_SkyVertex>) {
     var t_spin: vec4f = tide_mul_q(tide_block.tide_u0, tide_axisangle_q(vec3f(tide_f(0.0), tide_f(0.0), tide_f(1.0)), tide_block.tide_u5.w));
     var t_eased: vec4f = tide_slerp_q(tide_euler_q(tide_block.tide_u1.xyz), tide_inverse_q(t_spin), tide_f(0.5));
+    var t_scalar: vec4f = tide_euler_q(vec3f(tide_block.tide_u1.xyz.x, tide_block.tide_u1.xyz.y, tide_block.tide_u1.xyz.z));
+    var t_named: vec4f = tide_euler_q(vec3f(tide_block.tide_u1.xyz.x, tide_block.tide_u1.xyz.y, tide_block.tide_u1.xyz.z));
+    var t_whole: vec4f = tide_euler_q(vec3f(1.0, 2.0, 3.0));
+    var t_degrees: vec4f = tide_euler_q(vec3f(3.14159274, (-0.794124782), 1.57079637));
+    var t_angle: f32 = ((tide_f(0.00872664619) + tide_f(0.314159274)) - tide_f(0.0));
     var t_aimed: vec4f = tide_nlerp_q(tide_lookrotation_q(tide_rotate_q(t_eased, vec3f(0.0, 0.0, 1.0)), tide_rotate_q(t_spin, vec3f(0.0, 1.0, 0.0))), tide_conjugate_q(tide_normalize_q(t_spin)), tide_f(0.5));
     var t_pushed: vec3f = (tide_rotate_q(t_aimed, vec3f((*t_vertex).m_position, tide_f(0.0))) + (tide_rotate_q(t_spin, vec3f(1.0, 0.0, 0.0)) * tide_angle_q(t_spin, t_eased)));
     var t_placed: mat4x4f = (tide_trs(tide_block.tide_u1.xyz, tide_q_from_m3(tide_m3_from_q(t_aimed)), vec3f(tide_f(1.0))) * tide_inverse4(mat4x4f(vec4f(tide_block.tide_u1.w, tide_block.tide_u2.x, tide_block.tide_u2.y, tide_block.tide_u2.z), vec4f(tide_block.tide_u2.w, tide_block.tide_u3.x, tide_block.tide_u3.y, tide_block.tide_u3.z), vec4f(tide_block.tide_u3.w, tide_block.tide_u4.x, tide_block.tide_u4.y, tide_block.tide_u4.z), vec4f(tide_block.tide_u4.w, tide_block.tide_u5.x, tide_block.tide_u5.y, tide_block.tide_u5.z))));
     var t_seen: mat4x4f = (tide_perspective(tide_f(1.0), tide_f(1.5), tide_f(0.1), tide_f(100.0)) * tide_ortho(tide_f(4.0), tide_f(3.0), tide_f(0.1), tide_f(100.0)));
     var t_moved: mat4x4f = (mat4x4f(vec4f(1.0, 0.0, 0.0, 0.0), vec4f(0.0, 1.0, 0.0, 0.0), vec4f(0.0, 0.0, 1.0, 0.0), vec4f(t_pushed, 1.0)) * tide_m4_from_m3(tide_inverse3(tide_m3_from_q(t_spin)), tide_block.tide_u1.xyz));
     var t_flat: mat2x2f = tide_inverse2(mat2x2f(tide_f(2.0), f32((-tide_i(1))), tide_f(1.0), tide_f(3.0)));
-    (*t_vertex).m_position = (t_flat * ((t_placed * (t_seen * t_moved)) * vec4f(t_pushed, 1.0)).xyz.xy);
+    (*t_vertex).m_position = ((((t_flat * ((t_placed * (t_seen * t_moved)) * vec4f(t_pushed, 1.0)).xyz.xy) + tide_rotate_q(t_scalar, tide_rotate_q(t_named, vec3f(0.0, 0.0, 1.0))).xy) + tide_rotate_q(t_whole, vec3f(1.0, 0.0, 0.0)).xy) + (tide_rotate_q(t_degrees, vec3f(0.0, 1.0, 0.0)).xy * t_angle));
 }
 
 fn ts_Calm(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
@@ -705,7 +730,10 @@ fn ts_Calm(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     var t_raised: f32 = tide_pow1((tide_block.tide_u5.w - tide_f(2.0)), tide_f(2.0));
     var t_turned: f32 = tide_atan2_1((t_vertex.m_uv.y - tide_f(0.5)), (t_vertex.m_uv.x - tide_f(0.5)));
     var t_capped: i32 = max(tide_i(0), min(tide_i(9), tide_block.tide_v0.x));
-    (*t_color) = (vec4f((t_most.x * t_eased), (t_held.y * t_raised), (tide_min1(tide_min1(t_held.x, t_held.y), t_held.z) + t_turned), 1.0) * (f32(t_capped) / tide_f(9.0)));
+    var t_scalar: vec4f = tide_euler_q(vec3f(tide_block.tide_u1.xyz.x, tide_block.tide_u1.xyz.y, tide_block.tide_u1.xyz.z));
+    var t_named: vec4f = tide_euler_q(vec3f(1.0, 2.0, 3.0));
+    var t_degrees: vec4f = tide_euler_q(vec3f(0.00872664619, (-0.794124782), 3.14159274));
+    (*t_color) = ((vec4f((t_most.x * t_eased), (t_held.y * t_raised), (tide_min1(tide_min1(t_held.x, t_held.y), t_held.z) + t_turned), 1.0) * (f32(t_capped) / tide_f(9.0))) + vec4f(((tide_rotate_q(t_scalar, vec3f(0.0, 0.0, 1.0)) + tide_rotate_q(t_named, vec3f(0.0, 1.0, 0.0))) + tide_rotate_q(t_degrees, vec3f(1.0, 0.0, 0.0))), 0.0));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {

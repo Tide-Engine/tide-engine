@@ -1,0 +1,14 @@
+{
+  "note": "The original 408-row raw history plus 48 superseded adverse rows form the exact 456-row input; 48 distinct final rows bring the ledger to 504. Raw original hashes are separate from normalized committed bytes.",
+  "path": "bench/results/skinned.jsonl",
+  "raw": {
+    "path": "C:\\Users\\blenm\\.codex\\worktrees\\1315\\PurrEngine\\build\\release\\skinned-cpu5-final\\final-cpu5-final\\raw-ledger.jsonl",
+    "bytes": 561064,
+    "sha256": "e71be9dc93deb3f4640b190dace98b0390e6a178a02c7e7fb9179d3755560c33",
+    "category": "final-504-row-raw-ledger"
+  },
+  "committed_lf": {
+    "bytes": 561064,
+    "sha256": "e71be9dc93deb3f4640b190dace98b0390e6a178a02c7e7fb9179d3755560c33"
+  }
+}

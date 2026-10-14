@@ -35,7 +35,7 @@ local singleton Stage
 // Once for each pixel: its own light, and whether the lamp sees it.
 frag Lit(Corner corner, out Color color, Instance instance, Block block, Stage stage)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float facing = Math.Max(Math.Dot(normal, -stage.lampDirection), 0);
 
     // Where this pixel is in the lamp's image, and how far from the lamp

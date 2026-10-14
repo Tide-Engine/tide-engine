@@ -111,6 +111,7 @@
     // arguments go first, and win.
     const words = [...(config.arguments || [])];
     const address = new URLSearchParams(location.search);
+    if (address.get('texture-compression') === 'off') config.textureCompression = false;
     if (address.has('debug-views') && !words.includes('--debug-views')) {
         words.push('--debug-views');
     }
@@ -1281,6 +1282,7 @@
         case 0x1406: return [f32(), ptr >> 2]; // FLOAT
         case 0x1403: // UNSIGNED_SHORT
         case 0x140B: return [new Uint16Array(memory.buffer), ptr >> 1]; // HALF_FLOAT
+        case 0x1404: return [new Int32Array(memory.buffer), ptr >> 2]; // INT
         case 0x1405: return [new Uint32Array(memory.buffer), ptr >> 2]; // UNSIGNED_INT
         default: return [u8(), ptr];
         }
@@ -1388,7 +1390,14 @@
         glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
         glGenTextures: (n, ptr) => generate('texture', () => gl.createTexture(), n, ptr),
         glGenVertexArrays: (n, ptr) => generate('vertexArray', () => gl.createVertexArray(), n, ptr),
-        glGetIntegerv: (pname, ptr) => writeParameter(gl.getParameter(pname), ptr),
+        glGetIntegerv(pname, ptr) {
+            if (pname === 0x86A2 || pname === 0x86A3) {
+                if (config.textureCompression !== false) gl.getExtension('WEBGL_compressed_texture_s3tc');
+                const formats = config.textureCompression === false ? [] : gl.getParameter(gl.COMPRESSED_TEXTURE_FORMATS);
+                if (pname === 0x86A2) writeParameter(formats.length, ptr);
+                else i32().set(formats, ptr >> 2);
+            } else writeParameter(gl.getParameter(pname), ptr);
+        },
         // A format's sample counts (GL_SAMPLES), the most first: as many as there's room for, and none written
         // where the format has none
         glGetInternalformativ(target, format, pname, count, ptr) {
@@ -1437,6 +1446,8 @@
             const [array, offset] = pixels(type, ptr);
             gl.texImage2D(target, level, internal, w, h, border, format, type, array, offset);
         },
+        glCompressedTexImage2D: (target, level, format, w, h, border, size, ptr) =>
+            gl.compressedTexImage2D(target, level, format, w, h, border, u8(), ptr, size),
         glTexParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
         glTexSubImage2D(target, level, x, y, w, h, format, type, ptr) {
             const [array, offset] = pixels(type, ptr);
@@ -1503,9 +1514,12 @@
                 : adapter.isFallbackAdapter;
             if (software && wantedBackend !== 'webgpu' && !again) return;
             let found;
+            const requiredFeatures = [];
+            if (config.textureCompression !== false && adapter.features.has('texture-compression-bc'))
+                requiredFeatures.push('texture-compression-bc');
             if (adapter.features.has('timestamp-query')) {
                 try {
-                    found = await adapter.requestDevice({ requiredFeatures: ['timestamp-query'] });
+                    found = await adapter.requestDevice({ requiredFeatures: [...requiredFeatures, 'timestamp-query'] });
                 } catch {
                     // Timing is optional. Ask anew: a request can consume its adapter.
                     adapter = await navigator.gpu.requestAdapter();
@@ -1513,9 +1527,11 @@
                     const fallback = adapter.info && 'isFallbackAdapter' in adapter.info ? adapter.info.isFallbackAdapter
                         : adapter.isFallbackAdapter;
                     if (fallback && wantedBackend !== 'webgpu' && !again) return;
-                    found = await adapter.requestDevice();
+                    const features = config.textureCompression !== false
+                        && adapter.features.has('texture-compression-bc') ? ['texture-compression-bc'] : [];
+                    found = await adapter.requestDevice(features.length ? { requiredFeatures: features } : undefined);
                 }
-            } else found = await adapter.requestDevice();
+            } else found = await adapter.requestDevice(requiredFeatures.length ? { requiredFeatures } : undefined);
             // A mistake in how the program uses it: test pages stop at one, as for GL's
             found.onuncapturederror = event => {
                 if (config.checkGL) fail(new Error('WebGPU: ' + event.error.message));
@@ -1597,13 +1613,15 @@
     const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
     const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
+    const READ_DATA = 4;        // TIDE_GPU_READ_DATA: ints, each pixel by its place
     const readsDepth = read => read === 1 || read === READ_COMPARE;
     // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
-    let layouts = null, samplers = null, mipPipelines = null;
+    let layouts = null, samplers = null, mipPipelines = null, depthResolver = null;
     function gpuStart() {
         layouts = new Map();
         mipPipelines = new Map();
+        depthResolver = null;
         // By how it's read past its edges, then between pixels: 3 * tide_gpu_wrap's number + tide_gpu_filter's.
         // Only the last filter reads a texture's smaller images (gpu_mipmaps): the others keep to its own
         // pixels whatever it has and however a shader asks (lodMaxClamp). A change to either enum goes here.
@@ -1628,10 +1646,12 @@
             const entries = [{ binding: 0, visibility: stages, buffer: { type: 'uniform', hasDynamicOffset: true } }];
             reads.forEach((read, i) => {
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
-                    ? { sampleType: 'float', viewDimension: 'cube' } : { sampleType: readsDepth(read) ? 'depth' : 'float' } });
-                // A depth is whole only at its nearest pixel, which a sampler that blends none reads
-                entries.push({ binding: 2 + 2 * i, visibility: stages,
-                    sampler: { type: read === READ_COMPARE ? 'comparison' : readsDepth(read) ? 'non-filtering' : 'filtering' } });
+                    ? { sampleType: 'float', viewDimension: 'cube' }
+                    : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float' } });
+                // A depth is whole only at its nearest pixel, which a sampler that blends none reads. Ints are
+                // loaded, through no sampler: theirs is there so every texture's bindings are two
+                entries.push({ binding: 2 + 2 * i, visibility: stages, sampler: { type: read === READ_COMPARE ? 'comparison'
+                    : readsDepth(read) || read === READ_DATA ? 'non-filtering' : 'filtering' } });
             });
             const group = device.createBindGroupLayout({ entries });
             layout = { key, group, pipeline: device.createPipelineLayout({ bindGroupLayouts: [group] }) };
@@ -1885,8 +1905,8 @@
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-            const row = width * [4, 1, 2][format];
-            format = ['rgba8unorm', 'r8unorm', 'r16float'][format];
+            const row = width * [4, 1, 2, 16][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint'][format];
             const texture = device.createTexture({ size: [width, height], format, usage });
             const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
@@ -1898,6 +1918,34 @@
             const [data, offset] = memoryBytes(ptr, t.row * t.height);
             device.queue.writeTexture({ texture: t.texture }, data, { offset, bytesPerRow: t.row, rowsPerImage: t.height },
                 [t.width, t.height]);
+        },
+        gpu_texture_blocks(width, height, format, levels, ptr) {
+            if (config.textureCompression === false || !device.features.has('texture-compression-bc')) return 0;
+            const block = format === 1 ? 8 : 16;
+            format = format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
+            const texture = device.createTexture({ size: [width, height], format, mipLevelCount: levels, usage });
+            let w = width, h = height, offset = ptr;
+            for (let level = 0; level < levels; level++) {
+                const blocksWide = Math.ceil(w / 4), blocksHigh = Math.ceil(h / 4);
+                const bytes = blocksWide * blocksHigh * block;
+                const [data, dataOffset] = memoryBytes(offset, bytes);
+                device.queue.writeTexture({ texture, mipLevel: level }, data,
+                    { offset: dataOffset, bytesPerRow: blocksWide * block, rowsPerImage: blocksHigh * 4 },
+                    [blocksWide * 4, blocksHigh * 4]);
+                offset += bytes;
+                w = Math.max(1, w >> 1); h = Math.max(1, h >> 1);
+            }
+            return gpuAdd('texture', { texture, view: texture.createView(), width, height, format, usage,
+                mipped: true, groups: new Set() });
+        },
+        // Some of its pixels, read where they are among all of them: rows the texture's own width apart
+        gpu_texture_write_part(id, ptr, x, y, width, height) {
+            const t = gpuTables.texture[id];
+            const pixel = t.row / t.width;
+            const [data, offset] = memoryBytes(ptr + y * t.row + x * pixel, t.row * (height - 1) + width * pixel);
+            device.queue.writeTexture({ texture: t.texture, origin: [x, y] }, data,
+                { offset, bytesPerRow: t.row, rowsPerImage: height }, [width, height]);
         },
         gpu_cube(color, size, facesPtr) {
             // Six layers, with a view of them as a cube, which is what's sampled, and one of each layer's every
@@ -2007,7 +2055,7 @@
             stencilOp) {
             building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [], attributes: [],
                 stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
-                reads: Array.from({ length: textures }, (unused, i) => reads >> 2 * i & 3), // 2 bits each: tide_gpu_read
+                reads: Array.from({ length: textures }, (unused, i) => reads >> 3 * i & 7), // 3 bits each: tide_gpu_read
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
                 into: colorFormats(into), outputs, samples: samplesOf(into) };
         },
@@ -2051,7 +2099,8 @@
             if (samples > 1) {
                 // Multisampled: what's drawn into is textures of that many samples a pixel, its colors' and its
                 // depth's, kept from pass to pass, and each color image is what a pass's end resolves its samples
-                // into, a texture as any target's. Its depth is no texture of the program's
+                // into, a texture as any target's. Its depth is a texture of the program's once it's resolved
+                // (gpu_resolve_depth)
                 const colors = [], sampled = [];
                 for (const format of formats) {
                     const many = device.createTexture({ size: [width, height], format, sampleCount: samples,
@@ -2063,9 +2112,10 @@
                         groups: new Set() }));
                 }
                 const many = device.createTexture({ size: [width, height], format: depthFormat, sampleCount: samples,
-                    usage: GPUTextureUsage.RENDER_ATTACHMENT });
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
                 return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth: 0, width, height, canvas: null,
-                    context: null, sampled, sampledDepth: { texture: many, view: many.createView() } });
+                    context: null, sampled, sampledDepth: { texture: many, view: many.createView(),
+                        only: many.createView({ aspect: 'depth-only' }) } });
             }
             const colors = formats.map(format => {
                 const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
@@ -2083,6 +2133,43 @@
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
         gpu_target_texture: (id, color) => gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
         gpu_target_depth: id => gpuTables.target[id].depth,
+        // A multisampled target's depth as a texture: WebGPU resolves none, so a pass over a texture of one
+        // depth a pixel writes each pixel's first sample there
+        gpu_resolve_depth(id) {
+            const t = gpuTables.target[id];
+            if (!t.sampled) return;
+            if (!t.depth) {
+                const texture = depthFor(t.width, t.height, true);
+                t.depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+                    whole: texture.createView(), width: t.width, height: t.height, row: 0, groups: new Set() });
+            }
+            if (!depthResolver) {
+                const module = device.createShaderModule({ code: `
+                    @vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+                        return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0.0, 1.0);
+                    }
+                    @group(0) @binding(0) var samples: texture_depth_multisampled_2d;
+                    @fragment fn fragment(@builtin(position) at: vec4f) -> @builtin(frag_depth) f32 {
+                        return textureLoad(samples, vec2i(at.xy), 0);
+                    }` });
+                const layout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'depth', multisampled: true } }] });
+                depthResolver = { layout, pipeline: device.createRenderPipeline({
+                    layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+                    vertex: { module, entryPoint: 'vertex' }, fragment: { module, entryPoint: 'fragment', targets: [] },
+                    depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'always' } }) };
+            }
+            const encoder = device.createCommandEncoder();
+            const resolve = encoder.beginRenderPass({ colorAttachments: [], depthStencilAttachment: {
+                view: gpuTables.texture[t.depth].whole, depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: 1,
+                stencilLoadOp: 'clear', stencilStoreOp: 'store', stencilClearValue: 0 } });
+            resolve.setPipeline(depthResolver.pipeline);
+            resolve.setBindGroup(0, device.createBindGroup({ layout: depthResolver.layout,
+                entries: [{ binding: 0, resource: t.sampledDepth.only }] }));
+            resolve.draw(3);
+            resolve.end();
+            device.queue.submit([encoder.finish()]);
+        },
         gpu_target_free(id) {
             const t = gpuTables.target[id];
             for (const color of t.colors) {
@@ -2092,6 +2179,7 @@
             if (t.sampled) {
                 for (const many of t.sampled) many.texture.destroy();
                 t.sampledDepth.texture.destroy();
+                if (t.depth) platform.gpu_texture_free(t.depth);
             } else {
                 platform.gpu_texture_free(t.depth);
             }
@@ -2365,7 +2453,7 @@
     // Load them before main: IndexedDB is asynchronous, whereas a game's
     // whole-file reads and directory queries operate on this memory tree.
     const ioError = { notFound: 1, exists: 2, denied: 3, path: 4, notDirectory: 5,
-        notEmpty: 6, space: 7, unavailable: 8, data: 9, failed: 10 };
+        notEmpty: 6, space: 7, unavailable: 8, data: 9, failed: 10, timedOut: 11 };
     const fileTrees = new Map();
     const flushTickets = new Map();
     let filesDB = null, filesError = 0, files = null, nextFlush = 0;
@@ -2374,6 +2462,69 @@
     const fetchTickets = new Map();
     const fetchLimit = 64 * 1024 * 1024;
     let nextFetch = 0;
+    // Starts a fetch of `url` and gives its ticket. With no `init` it's
+    // Web.Fetch's GET, which only a 2xx answer ends well; with one, a request
+    // whose answer is its result whatever its status. `timeout` is the seconds
+    // a request may take, to its answer's last byte: a timer aborts it then,
+    // and it ends as timed out. 0 is no limit.
+    function startFetch(url, init, timeout) {
+        do { nextFetch = (nextFetch + 1) >>> 0; } while (!nextFetch || nextFetch >= 0xFFFFFFFE || fetchTickets.has(nextFetch));
+        const ticket = nextFetch, control = new AbortController();
+        const entry = { done: false, error: 0, status: 0, bytes: null, control, late: false, timer: 0 };
+        fetchTickets.set(ticket, entry);
+        if (timeout > 0) {
+            entry.timer = setTimeout(() => {
+                entry.timer = 0;
+                if (entry.done) return;
+                entry.late = true;
+                control.abort();
+            }, timeout * 1000);
+        }
+        (async () => {
+            try {
+                const response = await fetch(url, { ...(init || {}), signal: control.signal });
+                entry.status = response.status;
+                if (!init && response.status === 404) { entry.error = ioError.notFound; return; }
+                if (!init && !response.ok) { entry.error = ioError.failed; return; }
+                if (Number(response.headers.get('content-length')) > fetchLimit) {
+                    control.abort();
+                    entry.error = ioError.failed;
+                    return;
+                }
+                const parts = [];
+                let total = 0;
+                if (response.body) {
+                    const reader = response.body.getReader();
+                    for (;;) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        total += value.length;
+                        if (total > fetchLimit) {
+                            control.abort();
+                            entry.error = ioError.failed;
+                            return;
+                        }
+                        parts.push(value);
+                    }
+                }
+                const bytes = new Uint8Array(total);
+                let at = 0;
+                for (const part of parts) { bytes.set(part, at); at += part.length; }
+                entry.bytes = bytes;
+            } catch (error) {
+                entry.error = ioError.failed; // No connection, CORS, or aborted
+            } finally {
+                if (entry.late) { // Its time limit aborted it, wherever it had got to
+                    entry.error = ioError.timedOut;
+                    entry.bytes = null;
+                }
+                if (entry.timer) clearTimeout(entry.timer);
+                entry.timer = 0;
+                entry.done = true;
+            }
+        })();
+        return ticket;
+    }
     function storageError(error) {
         return error && error.name === 'QuotaExceededError' ? ioError.space
             : error && error.name === 'SecurityError' ? ioError.denied : ioError.unavailable;
@@ -2651,49 +2802,23 @@
             return true;
         },
         io_flush_forget(ticket) { flushTickets.delete(ticket); },
-        io_fetch_begin(ptr) {
-            do { nextFetch = (nextFetch + 1) >>> 0; } while (!nextFetch || nextFetch === 0xFFFFFFFF || fetchTickets.has(nextFetch));
-            const ticket = nextFetch, control = new AbortController();
-            const entry = { done: false, error: 0, bytes: null, control };
-            fetchTickets.set(ticket, entry);
-            const url = string(ptr);
-            (async () => {
-                try {
-                    const response = await fetch(url, { signal: control.signal });
-                    if (response.status === 404) { entry.error = ioError.notFound; return; }
-                    if (!response.ok) { entry.error = ioError.failed; return; }
-                    if (Number(response.headers.get('content-length')) > fetchLimit) {
-                        control.abort();
-                        entry.error = ioError.failed;
-                        return;
-                    }
-                    const parts = [];
-                    let total = 0;
-                    if (response.body) {
-                        const reader = response.body.getReader();
-                        for (;;) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-                            total += value.length;
-                            if (total > fetchLimit) {
-                                control.abort();
-                                entry.error = ioError.failed;
-                                return;
-                            }
-                            parts.push(value);
-                        }
-                    }
-                    const bytes = new Uint8Array(total);
-                    let at = 0;
-                    for (const part of parts) { bytes.set(part, at); at += part.length; }
-                    entry.bytes = bytes;
-                } catch (error) {
-                    entry.error = ioError.failed; // No connection, CORS, or aborted
-                } finally {
-                    entry.done = true;
-                }
-            })();
-            return ticket;
+        io_fetch_begin(ptr) { return startFetch(string(ptr), null, 0); },
+        // Web.Request's Send: the same fetch, with a method, headers (a line each,
+        // "Name: value\r\n") and a body, and an answer of any status is its
+        // result, which io_request_status gives once it's done. `timeout` is
+        // its time limit in seconds, 0 for none
+        io_request_begin(method, url, headers, body, size, timeout) {
+            const init = { method: string(method), headers: [] };
+            for (const line of string(headers).split('\r\n')) {
+                const colon = line.indexOf(':');
+                if (colon > 0) init.headers.push([line.slice(0, colon), line.slice(colon + 1).trim()]);
+            }
+            if (size) init.body = u8().slice(body, body + size);
+            return startFetch(string(url), init, timeout);
+        },
+        io_request_status(ticket) {
+            const entry = fetchTickets.get(ticket);
+            return entry && entry.done ? entry.status : 0;
         },
         io_fetch_poll(ticket, size) {
             const entry = fetchTickets.get(ticket);
@@ -2711,6 +2836,8 @@
         io_fetch_forget(ticket) {
             const entry = fetchTickets.get(ticket);
             if (entry && !entry.done) entry.control.abort();
+            if (entry && entry.timer) clearTimeout(entry.timer);
+            if (entry) entry.timer = 0;
             fetchTickets.delete(ticket);
         },
     });
@@ -2793,24 +2920,37 @@
 
     // The program's bytes, from the base64 the page holds them as.
     function programBytes(text) {
-        if (Uint8Array.fromBase64) return Uint8Array.fromBase64(text);
-        const binary = atob(text);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        let bytes;
+        if (Uint8Array.fromBase64) bytes = Uint8Array.fromBase64(text);
+        else {
+            const binary = atob(text);
+            bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        }
+        // Only the generated release runtime includes this synchronous
+        // decoder. Debug and hot-reload pages keep their original raw bytes.
+        if (bytes[0] === 31 && bytes[1] === 139) {
+            if (typeof TideInflate === 'undefined') throw new Error('tide: gzip decoder is missing');
+            return TideInflate.gunzip(bytes);
+        }
         return bytes;
     }
 
     // The game's pack of assets (tide/pack.h): the page's own, which a page
     // that ships holds as base64 beside the program, or under tide run the one
     // tide serves, which the program asks for as it starts and when it changes.
-    let packBytes = typeof TIDE_PACK === 'string' ? programBytes(TIDE_PACK) : null;
+    let packBytes = null;
     platform.pack_size = () => packBytes ? packBytes.length : 0;
     platform.pack_copy = ptr => { if (packBytes) u8().set(packBytes, ptr); };
 
     // The program loads while the page waits to hear about its GPU, and starts
     // once it knows; instantiate loads its saved files too when the program
     // uses them.
-    const load = async () => instantiate(programBytes(TIDE_PROGRAM));
+    const load = async () => {
+        // Decode errors use the same fail/onAbort path as invalid WASM.
+        packBytes = typeof TIDE_PACK === 'string' ? programBytes(TIDE_PACK) : null;
+        return instantiate(programBytes(TIDE_PROGRAM));
+    };
     const loaded = typeof TIDE_PROGRAM === 'string' && !config.reload
         ? load().then(program => ({ program }), error => ({ error })) : null;
     await deviceAsked;
@@ -2857,7 +2997,7 @@
 
     // Starts `bytes` in the running program's place: fresh, or going on from
     // where it is.
-    async function replace(bytes, fresh) {
+    async function replace(bytes, fresh, nextPack) {
         const program = await instantiate(bytes);
         resumeWith = null;
         if (!fresh && exports && exports.tide_reload_save && !stopped) {
@@ -2871,9 +3011,36 @@
         if (gl) forgetGL();
         if (device) forgetGPU();
         closeRoom(); // The new build plays on alone, like any web game for now
+        if (nextPack !== undefined) packBytes = nextPack;
         stopped = failed = false;
         begin(program);
         resumeWith = null;
+    }
+
+    // The docs playground supplies locally compiled builds rather than a
+    // watching server. The same replacement/state migration runs here. Each
+    // call owns its bytes, and failed instantiation leaves the current build.
+    if (config.reload === 'manual') {
+        let queue = Promise.resolve(), latest = null, latestPack = null;
+        const enqueue = action => {
+            const result = queue.then(action);
+            queue = result.catch(() => {});
+            return result;
+        };
+        config.replace = (bytes, pack = new Uint8Array(), fresh = false) => {
+            const next = new Uint8Array(bytes).slice();
+            const assets = new Uint8Array(pack).slice();
+            return enqueue(async () => {
+                await replace(next, fresh || !latest, assets);
+                latest = next;
+                latestPack = assets;
+            });
+        };
+        config.restart = () => enqueue(async () => {
+            if (latest) await replace(latest, true, latestPack);
+        });
+        config.ready?.();
+        return;
     }
 
     // Asks tide for the newest build, and whether to start over, 4 times a

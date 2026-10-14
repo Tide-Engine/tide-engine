@@ -1,0 +1,5 @@
+// expect: the text holds char, not int
+// expect: write 'foreach (var c in ...)' to take the elements as they are
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { foreach (int c in seen.name) seen.n += c; }

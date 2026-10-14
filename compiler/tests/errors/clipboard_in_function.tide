@@ -1,10 +1,15 @@
-// expect: can't call Clipboard.Copy yet; views and local handlers do
-local scene Main { }
+// expect: 'Share' calls Clipboard.Copy, and the match runs the same on every machine
+scene Main { }
+component Enemy { int hp; }
 void Share()
 {
-    if (GUILayout.Button("Copy")) Clipboard.Copy("hello");
+    Clipboard.Copy("hello");
 }
 view Menu()
+{
+    Share();
+}
+system Fight(Enemy enemy)
 {
     Share();
 }

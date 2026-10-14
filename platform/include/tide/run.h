@@ -50,6 +50,17 @@
 // 1 when a picture can't be written, and with 2, having started nothing,
 // when a flag or a line of the script is wrong. Desktop only.
 //
+// ...and with several players, each a copy of the program with no window,
+// which the first starts (with --player after its own command line). They go
+// a frame at a time together, on a network that's made up as time and input
+// are (tide_platform_players), so the run repeats exactly as a run of one
+// does. If Main is the match's, the first opens it and the others join it;
+// if it's local, the game's own code does, at the script's keys and clicks:
+//
+//     game --players 2 --script play.txt      the script's lines say whose they are
+//                                             (`120 player 2 key d down`), and a picture
+//                                             has its player's number (fight-2.png)
+//
 // Where nobody watches (TIDE_HIDDEN in the environment: tide/page.h), a game
 // shows no window, so a run with one is refused the same way, with exit code
 // 2 and what to give it instead.
@@ -78,9 +89,10 @@ static inline void tide_run_sample_input(const tide_devices *devices, const void
 #endif
 
 static inline void tide_run_views(const void *world, const void *previous, const float alpha, const void *verified,
+                                  const void *verified_previous, const float verified_alpha,
                                   void *local, tide_draw_list *draw, tide_gui *gui)
 {
-    tide_frame(world, previous, alpha, verified, local, draw, gui);
+    tide_frame(world, previous, alpha, verified, verified_previous, verified_alpha, local, draw, gui);
 }
 
 #ifdef TIDE_HAS_AUDIO
@@ -231,6 +243,7 @@ static const tide_host_game tide_host_game_api = {
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
     .correct_views = tide_run_local_correct,
 #endif
+    .network = tide_network_get,
 };
 
 _Noreturn static inline void tide_run(const tide_run_desc *desc)

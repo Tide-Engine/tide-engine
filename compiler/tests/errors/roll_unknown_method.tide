@@ -1,0 +1,7 @@
+// expect: Random has no method 'Roll'
+singleton Deck { int top; }
+scene Main { }
+system Shuffle(mut Deck deck)
+{
+    deck.top = Random.Roll(6);
+}

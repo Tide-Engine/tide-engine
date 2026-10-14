@@ -1,0 +1,659 @@
+using Rooms;
+
+// CRACKED: the cards, as the Unity game's UpgradeView and UpgradeCard show
+// them. Whoever lost a round picks one of five: a panel comes in from the
+// left with whose turn it is over it, the cards open one after another, the
+// one the picker's pointer is on is raised on every machine, and the one
+// they take comes to the middle of the screen while the others close. The
+// cards the picker already has are a row under the panel
+// (PreviousUpgradesUI). The picker's cards are theirs to click, to tap, or to
+// choose with the keys and a gamepad.
+//
+// The sizes here are the Unity scene's, in its canvas's units: 1920 across
+// the window. The Unity fonts (Super Malibu) aren't Tide's, so the words are
+// the engine's bold with the font material's shadow.
+
+// The cards' pictures, the Unity game's sprites: one image of 8 by 5 cells of
+// 192 pixels, a card's at its number in the database, and the same at half
+// the size, for where a picture is drawn small. tools/make_ui.py makes them,
+// and the sheet under them.
+asset Texture upgradeIcons = "art/ui/upgrades.png";
+asset Texture upgradeIconsSmall = "art/ui/upgrades-small.png";
+
+// What the Unity HUD and cards are made of: Kenney's UI sprites, which the
+// Unity game tints. The round ones are in it twice, at 128 pixels and at 40,
+// as the HUD draws them at a quarter of their size.
+asset Texture kitSheet = "art/ui/kit.png";
+
+const int ICON_COLUMNS = 8;
+const int ICON_ROWS = 5;
+const float ICON_CELL = 192;
+const float2 KIT_SIZE = float2(544, 720);
+
+enum Kit
+{
+    SquareGloss,                // A card
+    SquareDepthBorder,          // The panel the cards are on
+    SquareDepthGradient,        // A card the picker already has
+    RoundDepthGradient,         // A round won, and a bullet
+    RoundBorder,                // A bullet that was fired
+    RoundDepthBorder,           // A round nobody has
+    RoundDepthHalfBorder,       // ...and one a team has a point of
+    RectangleFlat,              // A bar, and what fills it
+    RectangleGradient,          // ...once it's full
+    RectangleDepthGradient      // A button
+}
+
+// Where a sprite is in the sheet, in its pixels: make_ui.py's KIT.
+Rect UiKitCell(Kit sprite)
+{
+    switch (sprite)
+    {
+        case Kit.SquareGloss: return Rect(8, 8, 128, 128);
+        case Kit.SquareDepthBorder: return Rect(152, 8, 128, 128);
+        case Kit.SquareDepthGradient: return Rect(296, 8, 128, 128);
+        case Kit.RoundDepthGradient: return Rect(8, 152, 128, 128);
+        case Kit.RoundBorder: return Rect(152, 152, 128, 128);
+        case Kit.RoundDepthBorder: return Rect(296, 152, 128, 128);
+        case Kit.RoundDepthHalfBorder: return Rect(8, 296, 128, 128);
+        case Kit.RectangleFlat: return Rect(8, 440, 384, 128);
+        case Kit.RectangleGradient: return Rect(8, 584, 384, 128);
+    }
+    return Rect(152, 296, 384, 128);
+}
+
+// The round sprites' small copies. Any other sprite has none: its own cell.
+Rect UiKitSmall(Kit sprite)
+{
+    switch (sprite)
+    {
+        case Kit.RoundDepthGradient: return Rect(408, 448, 40, 40);
+        case Kit.RoundBorder: return Rect(408, 504, 40, 40);
+        case Kit.RoundDepthBorder: return Rect(408, 560, 40, 40);
+        case Kit.RoundDepthHalfBorder: return Rect(408, 616, 40, 40);
+    }
+    return UiKitCell(sprite);
+}
+
+// UpgradeCard's colors: the paper, each rarity's, and each kind of card's.
+const Color CARD_PAPER = Color(0.851, 0.702, 0.541);
+const Color CARD_UNCOMMON = Color(0, 0.639, 1);
+const Color CARD_RARE = Color(1, 0, 0.859);
+const Color CARD_LEGENDARY = Color(1, 0.114, 0);
+const float CARD_RARITY_LERP = 0.5;
+const float CARD_TYPE_LERP = 0.25;
+const Color PANEL_COLOR = Color(1, 0.831, 0.647);   // The scene's UpgradesScreen/Background
+
+// UpgradeCard and UpgradeView's times.
+const float CARD_HOVER_SCALE = 1.1;
+const float CARD_HOVER_SECONDS = 0.35;
+const float CARD_OPEN_SECONDS = 0.5;     // A card opens from its middle,
+const float CARD_OPEN_APART = 0.25;      // ...each this long after the one before
+const float CARD_CLOSE_SECONDS = 0.5;    // The cards that weren't taken close
+const float PANEL_SECONDS = 1;           // The panel's way in, and out
+
+// Where the cards' screen has its things in a window.
+struct Table
+{
+    bool rows;               // The cards lie one under another: a screen too narrow for five side by side
+    float unit;              // Pixels for one of the Unity canvas's units
+    float2 panel;            // The panel's middle,
+    float2 panelSize;
+    float edge;              // ...and pixels for a pixel of its sprite's border
+    float2 card;             // A card's size,
+    float2 first;            // the first one's middle,
+    float2 step;             // and from one's to the next's
+    float title;             // The middle of whose turn it is, down the screen
+    float titleSize;
+    float previous;          // ...and of the cards they have
+    float chip;              // How big each of those is
+}
+
+local singleton Deck
+{
+    int revision = -1;       // The deal that's shown, or -1
+    int picker = -1;         // ...whose it is,
+    int[CARDS] cards;        // its cards,
+    int had;                 // and how many cards its picker had before it
+    float age;               // Since it was dealt
+    float opens;             // When its cards start to open: once the panel is in
+    int sent = -1;           // The deal this machine's player has picked from
+    float panel;             // How far the panel is in: 0 off the screen's left, 1 in its place
+
+    // Each card's size as it's drawn: 1, and more while it's raised
+    int raised = -1;
+    float[CARDS] scale;
+    float[CARDS] from;       // What it was when the raised card last changed,
+    float[CARDS] turned;     // ...and how long ago that was
+
+    // The deal before, while its cards leave
+    bool leaving;
+    int leftSeat = -1;
+    int[CARDS] left;
+    float[CARDS] leftScale;
+    int taken = -1;          // Which of them was taken, or -1
+    float gone;              // Since it ended
+
+    // What the server said was taken last
+    bool heard;
+    int heardSeat = -1;
+    int heardUpgrade;
+}
+
+Color UiRarityColor(Rarity rarity)
+{
+    switch (rarity)
+    {
+        case Rarity.Uncommon: return CARD_UNCOMMON;
+        case Rarity.Rare: return CARD_RARE;
+        case Rarity.Legendary: return CARD_LEGENDARY;
+    }
+    return CARD_PAPER;
+}
+
+// UpgradeScriptable.upgradeType, which only the cards' color reads: what a
+// card is about.
+Color UiTypeColor(int upgrade)
+{
+    switch (upgrade)
+    {
+        // Damaging
+        case 3: case 8: case 10: case 12: case 19: case 22: case 24: case 27: case 31: case 34: case 35:
+            return Color(0.851, 0.541, 0.58);
+        // Blocking
+        case 0: case 5: case 6: case 9:
+            return Color(0.804, 0.847, 0.851);
+        // Defense
+        case 4: case 7: case 14: case 32: case 33: case 36:
+            return Color(0.541, 0.78, 0.851);
+        // Movement
+        case 25: case 28: case 30:
+            return Color(0.898, 0.643, 0.486);
+        // Effects
+        case 1: case 11: case 21: case 26:
+            return Color(0.686, 0.541, 0.851);
+    }
+    return CARD_PAPER;
+}
+
+// UpgradeCard.Init's color: the paper, towards the rarity's, then towards the kind's.
+Color UiCardColor(int upgrade)
+{
+    var rarity = Math.Lerp(CARD_PAPER, UiRarityColor(UpgradeRarity(upgrade)), CARD_RARITY_LERP);
+    return Math.Lerp(rarity, UiTypeColor(upgrade), CARD_TYPE_LERP);
+}
+
+// One of the sheet's sprites, `size` big around `center`.
+void UiSprite(Kit sprite, float2 center, float2 size, Color color)
+{
+    if (size.x <= 0 || size.y <= 0) return;
+    // Drawn at under half its size, a sprite would lose pixels: the small copy is for that
+    var cell = size.x <= 64 ? UiKitSmall(sprite) : UiKitCell(sprite);
+    // Half a pixel in from the sprite's edges, so the clear pixels around it never blend in
+    var from = float2(cell.x + 0.5, cell.y + 0.5) / KIT_SIZE;
+    var to = float2(cell.x + cell.width - 0.5, cell.y + cell.height - 0.5) / KIT_SIZE;
+    var half = size * 0.5;
+    List<Vertex> corners = [
+        Vertex { position = center + float2(-half.x, -half.y), uv = from, color = color },
+        Vertex { position = center + float2(half.x, -half.y), uv = float2(to.x, from.y), color = color },
+        Vertex { position = center + float2(half.x, half.y), uv = to, color = color },
+        Vertex { position = center + float2(-half.x, half.y), uv = float2(from.x, to.y), color = color },
+    ];
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], kitSheet);
+}
+
+// A sprite stretched as Unity's sliced Image stretches it: its border keeps
+// its size and its middle fills the rest. `edges` is the border in the
+// sprite's pixels (left, top, right, bottom: the sprite's .meta has them),
+// and `scale` how many of the screen's pixels one of those is.
+void UiSliced(Kit sprite, float2 center, float2 size, float4 edges, float scale, Color color)
+{
+    if (size.x <= 0 || size.y <= 0) return;
+    var cell = UiKitCell(sprite);
+    // A border that doesn't fit is made smaller, as Unity makes it
+    var fit = Math.Min(1, Math.Min(size.x / Math.Max((edges.x + edges.z) * scale, 0.001), size.y / Math.Max((edges.y + edges.w) * scale, 0.001)));
+    var border = edges * (scale * fit);
+    var a = center - size * 0.5;
+    var b = center + size * 0.5;
+    List<float> xs = [a.x, a.x + border.x, b.x - border.z, b.x];
+    List<float> ys = [a.y, a.y + border.y, b.y - border.w, b.y];
+    List<float> us = [cell.x + 0.5, cell.x + edges.x, cell.x + cell.width - edges.z, cell.x + cell.width - 0.5];
+    List<float> vs = [cell.y + 0.5, cell.y + edges.y, cell.y + cell.height - edges.w, cell.y + cell.height - 0.5];
+    mut List<Vertex> corners = [];
+    mut List<int> faces = [];
+    for (var j = 0; j < 4; j++)
+        for (var i = 0; i < 4; i++)
+            corners.Add(Vertex { position = float2(xs[i], ys[j]), uv = float2(us[i], vs[j]) / KIT_SIZE, color = color });
+    for (var j = 0; j < 3; j++)
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            var corner = j * 4 + i;
+            faces.Add(corner);
+            faces.Add(corner + 1);
+            faces.Add(corner + 5);
+            faces.Add(corner);
+            faces.Add(corner + 5);
+            faces.Add(corner + 4);
+        }
+    }
+    Draw.Mesh(corners, faces, kitSheet);
+}
+
+// A card's picture: its cell of the image, `size` across, around `center`.
+// The Unity cards show them as they are, white.
+void UiIcon(int upgrade, float2 center, float size, Color color)
+{
+    if (upgrade < 0 || upgrade >= UPGRADES || size <= 0) return;
+    // Half a pixel in from the cell's edges, so its neighbors never bleed in
+    var cell = float2(1.0 / ICON_COLUMNS, 1.0 / ICON_ROWS);
+    var inset = float2(0.5 / (ICON_COLUMNS * ICON_CELL), 0.5 / (ICON_ROWS * ICON_CELL));
+    var from = float2(upgrade % ICON_COLUMNS, upgrade / ICON_COLUMNS) * cell + inset;
+    var to = from + cell - inset * 2;
+    var half = size * 0.5;
+    List<Vertex> corners = [
+        Vertex { position = center + float2(-half, -half), uv = from, color = color },
+        Vertex { position = center + float2(half, -half), uv = float2(to.x, from.y), color = color },
+        Vertex { position = center + float2(half, half), uv = to, color = color },
+        Vertex { position = center + float2(-half, half), uv = float2(from.x, to.y), color = color },
+    ];
+    if (size <= ICON_CELL * 0.5) Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], upgradeIconsSmall);
+    else Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], upgradeIcons);
+}
+
+// Words as the Unity game's font has them: white, with its material's dark
+// shadow under them, a little to the left (Super Malibu SDF's underlay).
+void UiWords(string words, float2 at, float size, Color color, Anchor anchor)
+{
+    var drop = Math.Max(1, Math.Round(size * 0.08));
+    Draw.Text(words, at + float2(-drop * 0.28, drop), size, Color(0, 0, 0, 0.6 * color.a), anchor, Font.Bold);
+    Draw.Text(words, at, size, color, anchor, Font.Bold);
+}
+
+// As big as `size`, or as much smaller as fits `width`.
+float UiFit(string words, float size, float width)
+{
+    var wide = Draw.MeasureText(words, size, Font.Bold).x;
+    return wide <= width ? size : Math.Max(9, Math.Floor(size * width / wide));
+}
+
+// A card's lines from `top` down, each broken where it's wider than `width`,
+// centered on `top.x` or starting there. It returns where the next line
+// would go, and draws nothing when asked only that.
+float UiCardLines(string text, float2 top, float width, float size, bool centered, bool draw)
+{
+    mut var rest = text;
+    mut var y = top.y;
+    var anchor = centered ? Anchor.UpperCenter : Anchor.UpperLeft;
+    var line = Math.Round(size * 1.2);
+    while (rest.length > 0)
+    {
+        var cut = rest.IndexOf('\n');
+        mut var words = cut < 0 ? rest : rest.Substring(0, cut);
+        rest = cut < 0 ? "" : rest.Substring(cut + 1);
+        mut var row = "";
+        while (words.length > 0)
+        {
+            var space = words.IndexOf(' ');
+            var word = space < 0 ? words : words.Substring(0, space);
+            words = space < 0 ? "" : words.Substring(space + 1);
+            var next = row == "" ? word : $"{row} {word}";
+            if (row != "" && Draw.MeasureText(next, size, Font.Bold).x > width)
+            {
+                if (draw) UiWords(row, float2(top.x, y), size, Color.white, anchor);
+                y += line;
+                row = word;
+            }
+            else row = next;
+        }
+        if (row == "") continue;
+        if (draw) UiWords(row, float2(top.x, y), size, Color.white, anchor);
+        y += line;
+    }
+    return y;
+}
+
+// A card, standing, around (0, 0): UpgradeCard.prefab as the scene's
+// CardHolder lays it out, 269.6 by 389.2 units. Its back is the gloss button
+// in the card's color, with its picture, its name and its lines in white.
+void UiCard(float2 size, int upgrade)
+{
+    var k = size.y / 389.19;
+    UiSliced(Kit.SquareGloss, float2(0), size, float4(10), k, UiCardColor(upgrade));
+    UiIcon(upgrade, float2(0, -115.4 * k), 128.76 * k, Color.white);
+    var name = UpgradeName(upgrade);
+    // Title: at most 30 units, and as much smaller as its box asks (TMP's auto size)
+    UiWords(name, float2(0, -27.4 * k), UiFit(name, Math.Max(11, Math.Round(30 * k)), size.x * 0.9 - 6 * k), Color.white, Anchor.MiddleCenter);
+    // Description: 20 units, around the middle of its box, which is 199 high
+    var wide = size.x * 0.9 - 20 * k;
+    mut var lines = Math.Max(10, Math.Round(20 * k));
+    while (lines > 9 && UiCardLines(UpgradeText(upgrade), float2(0), wide, lines, true, false) > 190 * k) lines -= 1;
+    var tall = UiCardLines(UpgradeText(upgrade), float2(0), wide, lines, true, false);
+    UiCardLines(UpgradeText(upgrade), float2(0, Math.Round(78.6 * k - tall * 0.5)), wide, lines, true, true);
+}
+
+// A card, lying down, around (0, 0), for a screen too narrow for five side
+// by side: the same back, its picture at the left, and its name and lines
+// beside it.
+void UiCardRow(float2 size, int upgrade)
+{
+    UiSliced(Kit.SquareGloss, float2(0), size, float4(10), 0.7, UiCardColor(upgrade));
+    var picture = size.y - 10;
+    UiIcon(upgrade, float2(-size.x * 0.5 + 6 + picture * 0.5, 0), picture, Color.white);
+    var left = -size.x * 0.5 + picture + 14;
+    var wide = size.x * 0.5 - 10 - left;
+    var name = UpgradeName(upgrade);
+    var title = UiFit(name, Math.Min(18, Math.Round(size.y * 0.22)), wide);
+    mut var lines = 13.0;
+    while (lines > 9 && UiCardLines(UpgradeText(upgrade), float2(0), wide, lines, false, false) > size.y - title - 16) lines -= 1;
+    var tall = title + 4 + UiCardLines(UpgradeText(upgrade), float2(0), wide, lines, false, false);
+    var top = Math.Round(-tall * 0.5);
+    UiWords(name, float2(left, top), title, Color.white, Anchor.UpperLeft);
+    UiCardLines(UpgradeText(upgrade), float2(left, top + title + 4), wide, lines, false, true);
+}
+
+int UiTakenCount(Arena arena, int seat)
+{
+    mut var count = 0;
+    foreach (var pick in arena.picks)
+        if (pick / 64 == seat) count += 1;
+    return count;
+}
+
+// Who a seat is, as the others see them: their team, and their place in it.
+// The Unity game has its players' names here, which the port's players don't have.
+string UiSeatName(Arena arena, int seat)
+{
+    var team = TeamOf(seat) == 0 ? "Blue" : "Red";
+    var kind = arena.seats[seat].bot ? "bot" : "player";
+    return $"{team} {kind} {seat / TEAMS + 1}";
+}
+
+// Where things are: the Unity scene's rects, in pixels.
+Table UiTable(float2 screen, float unit)
+{
+    mut var table = Table { unit = unit };
+    table.rows = screen.x < screen.y * 0.9 || screen.x < 620;
+    if (table.rows)
+    {
+        // The panel has the screen between the title and the cards they have
+        var top = 96.0;
+        var bottom = screen.y - 64;
+        var gap = 6.0;
+        table.edge = 0.45;
+        table.card = float2(Math.Min(screen.x - 40, 460), Math.Floor(Math.Min(112, (bottom - top - 34 - gap * (CARDS - 1)) / CARDS)));
+        table.panelSize = float2(table.card.x + 24, table.card.y * CARDS + gap * (CARDS - 1) + 30);
+        table.panel = float2(screen.x * 0.5, Math.Round((top + bottom) * 0.5));
+        table.first = float2(screen.x * 0.5, table.panel.y - table.panelSize.y * 0.5 + 12 + table.card.y * 0.5);
+        table.step = float2(0, table.card.y + gap);
+        table.title = table.panel.y - table.panelSize.y * 0.5 - 20;
+        table.titleSize = 22;
+        table.previous = table.panel.y + table.panelSize.y * 0.5 + 30;
+        table.chip = 38;
+        return table;
+    }
+    // CardHolder: the window's width less 472, 389 high, five cards 25 apart.
+    // A window wider than the Unity canvas's shape keeps the cards' shape
+    var gap = Math.Round(25 * unit);
+    table.card = float2(Math.Floor(Math.Min((screen.x - 472 * unit - gap * (CARDS - 1)) / CARDS, 285 * unit)), Math.Round(389.19 * unit));
+    var span = table.card.x * CARDS + gap * (CARDS - 1);
+    // Background: 88.5 wider than the cards, 486 high, 14 under the middle
+    table.edge = unit / 0.6;
+    table.panelSize = float2(span + 88.5 * unit, Math.Round(485.86 * unit));
+    table.panel = float2(screen.x * 0.5, Math.Round(screen.y * 0.5 + 14 * unit));
+    table.first = float2((screen.x - span) * 0.5 + table.card.x * 0.5, Math.Round(screen.y * 0.5 + 7.4 * unit));
+    table.step = float2(table.card.x + gap, 0);
+    // TitleHolder: 77 over the panel's top. CurrentPlayerUpgrades: 100 high, 18 under its bottom
+    table.title = table.panel.y - table.panelSize.y * 0.5 - 77 * unit;
+    table.titleSize = Math.Max(16, Math.Round(72 * unit));
+    table.previous = table.panel.y + table.panelSize.y * 0.5 + 68 * unit;
+    table.chip = Math.Round(100 * unit);
+    return table;
+}
+
+Rect UiCardRect(Table table, int card)
+{
+    var middle = table.first + table.step * card;
+    return Rect(Math.Round(middle.x - table.card.x * 0.5), Math.Round(middle.y - table.card.y * 0.5), table.card.x, table.card.y);
+}
+
+// The cards a seat has, small, in a row around `middle`
+// (CompactUpgradeCard: the depth button in the card's color, with its
+// picture), after the word the Unity game has before them.
+void UiPrevious(Arena arena, int seat, float2 middle, float chip, float width)
+{
+    var count = UiTakenCount(arena, seat);
+    if (count == 0) return;
+    var k = chip / 100;
+    var words = Math.Max(11, Math.Round(40 * k));
+    var label = Draw.MeasureText("Previous", words, Font.Bold).x + Math.Round(15 * k);
+    // As many as fit: the row gets smaller rather than leaving the screen
+    var step = Math.Min(chip + Math.Round(5 * k), (width - label - chip) / Math.Max(1, count - 1));
+    var across = label + step * (count - 1) + chip;
+    mut var x = middle.x - across * 0.5;
+    UiWords("Previous", float2(x, middle.y), words, Color.white, Anchor.MiddleLeft);
+    x += label + chip * 0.5;
+    foreach (var pick in arena.picks)
+    {
+        if (pick / 64 != seat) continue;
+        var upgrade = pick % 64;
+        UiSliced(Kit.SquareDepthGradient, float2(x, middle.y), float2(chip), float4(10, 9, 10, 18), k, UiCardColor(upgrade));
+        UiIcon(upgrade, float2(x, middle.y - 5.5 * k), 79 * k, Color.white);
+        x += step;
+    }
+}
+
+// A card was taken, which the server says: the card that's shown leaving is
+// that one, whatever this machine guessed.
+local event(verified CardPicked picked) DeckCardPicked(mut Deck deck)
+{
+    deck.heard = true;
+    deck.heardSeat = picked.seat;
+    deck.heardUpgrade = picked.upgrade;
+}
+
+// The cards' screen. The picker's machine makes the cards controls: a click
+// or a tap picks one, the arrows, Tab, a d-pad or a stick go from one to the
+// next and Enter or the south button takes it, and the keys 1 to 5 take
+// theirs at once. The pick is a command, sent once for a deal: the match
+// checks who sent it and for which deal. The card the picker's pointer or
+// focus is on goes into the input (`Hand.hover`), and every machine raises
+// the card the match says they're on (`Arena.hover`), the picker's too: what
+// the Unity game's UpgradeScreenNetworking sends, as state.
+[Stage(Layers.Hud, 40)]
+view DeckCards(Arena arena, Devices devices, Overlay hud, Lobby lobby, mut Deck deck, mut Hand hand)
+{
+    Draw.SetScreen();
+    hand.hover = -1;
+    var dt = Math.Min(Frame.dt, 0.1);
+    var dealing = arena.phase == Phase.Upgrade && arena.upgrading >= 0;
+
+    // The deal that was shown is over: its cards leave, and the one its
+    // picker has now that they hadn't is the one that was taken
+    if (deck.revision >= 0 && (!dealing || arena.revision != deck.revision))
+    {
+        mut var last = -1;
+        mut var has = 0;
+        foreach (var pick in arena.picks)
+        {
+            if (pick / 64 != deck.picker) continue;
+            has += 1;
+            last = pick % 64;
+        }
+        deck.leaving = true;
+        deck.gone = 0;
+        deck.taken = -1;
+        deck.leftSeat = deck.picker;
+        for (var i = 0; i < CARDS; i++)
+        {
+            deck.left[i] = deck.cards[i];
+            deck.leftScale[i] = deck.scale[i];
+            if (has > deck.had && deck.cards[i] == last) deck.taken = i;
+        }
+        deck.revision = -1;
+    }
+    if (dealing && deck.revision != arena.revision)
+    {
+        deck.revision = arena.revision;
+        deck.picker = arena.upgrading;
+        deck.had = UiTakenCount(arena, arena.upgrading);
+        deck.age = 0;
+        // After the panel is in, or once the last deal's cards have closed where it stayed
+        deck.opens = deck.panel > 0.5 ? CARD_CLOSE_SECONDS : PANEL_SECONDS + 0.1;
+        deck.raised = -1;
+        for (var i = 0; i < CARDS; i++)
+        {
+            deck.cards[i] = arena.cards[i];
+            deck.scale[i] = 1;
+            deck.from[i] = 1;
+            deck.turned[i] = CARD_HOVER_SECONDS;
+        }
+    }
+    if (deck.heard)
+    {
+        deck.heard = false;
+        for (var i = 0; i < CARDS; i++)
+            if (deck.leaving && deck.heardSeat == deck.leftSeat && deck.left[i] == deck.heardUpgrade) deck.taken = i;
+    }
+    deck.age += dt;
+    deck.gone += dt;
+    // The panel stays for the next picker, and goes once the cards have closed
+    var wanted = dealing || deck.leaving && deck.gone < CARD_CLOSE_SECONDS;
+    deck.panel = Math.Saturate(deck.panel + (wanted ? dt : -dt) / PANEL_SECONDS);
+
+    // The card the picker is on, as the match has it, grows; the one they left shrinks back (UpgradeCard.Hover)
+    var hover = dealing ? arena.hover : -1;
+    if (hover != deck.raised)
+    {
+        for (var i = 0; i < CARDS; i++)
+        {
+            if (i != hover && i != deck.raised) continue;
+            deck.from[i] = deck.scale[i];
+            deck.turned[i] = 0;
+        }
+        deck.raised = hover;
+    }
+    for (var i = 0; i < CARDS; i++)
+    {
+        deck.turned[i] += dt;
+        var target = i == deck.raised ? CARD_HOVER_SCALE : 1.0;
+        deck.scale[i] = deck.from[i] + (target - deck.from[i]) * UiEaseBack(deck.turned[i] / CARD_HOVER_SECONDS);
+    }
+
+    var hold = dealing ? 0.9 : 2.0;
+    if (deck.leaving && deck.gone > (deck.taken < 0 ? CARD_CLOSE_SECONDS : 1.3 + hold + 0.6)) deck.leaving = false;
+    if (lobby.page != Page.Playing || deck.panel <= 0 && !deck.leaving) return;
+
+    var screen = float2(Screen.width, Screen.height);
+    var table = UiTable(screen, hud.view);
+    var picker = dealing ? arena.upgrading : deck.leftSeat;
+    var mine = picker >= 0 && picker == hud.seat;
+
+    // The Unity game blurs the world behind the cards; here it's dimmed
+    Draw.Rect(screen * 0.5, screen, Color(0, 0, 0, 0.4 * deck.panel));
+
+    // The panel, with whose turn it is over it and what they have under it,
+    // in from the left and out again (UpgradeView's slide element)
+    Draw.Transform(float2(-(1 - UiEaseBack(deck.panel)) * (screen.x * 0.5 + table.panelSize.x * 0.5 + 20), 0))
+    {
+        UiSliced(Kit.SquareDepthBorder, table.panel, table.panelSize, float4(18, 18, 18, 26), table.edge, PANEL_COLOR);
+        if (picker >= 0 && arena.seats[picker].taken)
+        {
+            var who = mine ? "You" : UiSeatName(arena, picker);
+            var rest = mine ? " are picking an upgrade" : " is picking an upgrade";
+            var size = UiFit($"{who}{rest}", table.titleSize, screen.x - 24);
+            var across = Draw.MeasureText($"{who}{rest}", size, Font.Bold).x;
+            var start = float2(Math.Round(screen.x * 0.5 - across * 0.5), table.title);
+            UiWords(who, start, size, UiTeamDeep(TeamOf(picker)), Anchor.MiddleLeft);
+            UiWords(rest, start + float2(Draw.MeasureText(who, size, Font.Bold).x, 0), size, Color.white, Anchor.MiddleLeft);
+            UiPrevious(arena, picker, float2(screen.x * 0.5, table.previous), table.chip, screen.x - 24);
+        }
+    }
+
+    // The picker's controls, in the cards' order, which keeps each one's hover
+    // and focus its own. Everyone else has them disabled: nothing of them is
+    // true, and the focus skips them.
+    if (dealing)
+    {
+        var open = mine && deck.sent != arena.revision && deck.age > deck.opens;
+        if (open) GUI.Navigate();
+        mut var chosen = -1;
+        mut var pointed = -1;
+        GUI.Disabled(!open)
+        {
+            for (var i = 0; i < CARDS; i++)
+            {
+                var card = GUI.Control(UiCardRect(table, i));
+                if (card.hovered || card.focused) pointed = i;
+                if (card.clicked) chosen = i;
+            }
+        }
+        if (open)
+        {
+            var keys = devices.keyboard;
+            if (keys.digit1.down) chosen = 0;
+            if (keys.digit2.down) chosen = 1;
+            if (keys.digit3.down) chosen = 2;
+            if (keys.digit4.down) chosen = 3;
+            if (keys.digit5.down) chosen = 4;
+            hand.hover = pointed;
+        }
+        if (open && chosen >= 0)
+        {
+            deck.sent = arena.revision;
+            Send(PickCard { card = chosen, revision = arena.revision });
+        }
+
+        // The cards, each a moment after the one before (UpgradeCard's intro),
+        // and the raised one last, over its neighbors
+        for (var pass = 0; pass < 2; pass++)
+        {
+            for (var i = 0; i < CARDS; i++)
+            {
+                if ((i == deck.raised) != (pass == 1)) continue;
+                var born = deck.age - deck.opens - i * CARD_OPEN_APART;
+                if (born <= 0) continue;
+                Draw.Transform(table.first + table.step * i, 0, float2(UiEaseBack(born / CARD_OPEN_SECONDS), 1) * deck.scale[i])
+                {
+                    if (table.rows) UiCardRow(table.card, deck.cards[i]);
+                    else UiCard(table.card, deck.cards[i]);
+                }
+            }
+        }
+    }
+    if (!deck.leaving) return;
+
+    // The deal before: its cards close, but the one that was taken, which
+    // grows, comes to the middle of the screen, stays, and is gone
+    // (UpgradeCard.AnimateOut). It stays a shorter while when another
+    // player's cards are waiting under it.
+    for (var i = 0; i < CARDS; i++)
+    {
+        var place = table.first + table.step * i;
+        if (i != deck.taken)
+        {
+            var closed = UiEaseOut(deck.gone / CARD_CLOSE_SECONDS);
+            if (closed >= 1) continue;
+            Draw.Transform(place, 0, float2(1 - closed, 1) * deck.leftScale[i])
+            {
+                if (table.rows) UiCardRow(table.card, deck.left[i]);
+                else UiCard(table.card, deck.left[i]);
+            }
+        }
+    }
+    if (deck.taken < 0) return;
+    var from = table.first + table.step * deck.taken;
+    var flown = UiEaseOut((deck.gone - 0.3) / 1.0);
+    var away = Math.Saturate((deck.gone - 1.3 - hold) / 0.6);
+    // InBack: a little bigger before it's gone
+    var left = 1 - (2.70158 * away * away * away - 1.70158 * away * away);
+    // ...and never wider than the screen, which a card lying down nearly is already
+    var most = (screen.x - 12) / table.card.x;
+    var grown = Math.Min(most, deck.leftScale[deck.taken] * (1 + 0.1 * UiEaseBack(deck.gone / 0.3)) * (1 + 0.4 * flown)) * left;
+    if (grown <= 0) return;
+    Draw.Transform(Math.Lerp(from, screen * 0.5, flown), 0, grown)
+    {
+        if (table.rows) UiCardRow(table.card, deck.left[deck.taken]);
+        else UiCard(table.card, deck.left[deck.taken]);
+    }
+}

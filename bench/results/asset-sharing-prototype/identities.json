@@ -1,0 +1,227 @@
+{
+  "date": "2026-10-11",
+  "head": "90ef9c74751fe882cde2a3d213caf38a237289d9",
+  "cpu": "AMD Ryzen 9 7900X 12-Core Processor            ",
+  "clang": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "native": "C17 -O2 -fno-fast-math -ffp-contract=off; shared checkout release runtime",
+  "wasi": "C17 -O2 -pthread -msimd128 -fno-fast-math -ffp-contract=off; checkout web-debug runtime; correctness only",
+  "identities": [
+    {
+      "path": "engine/src/list.c",
+      "bytes": 30075,
+      "sha256": "45ca2b618fa1be58277d83713ee6688325579e29e49247c49fdba67f2ba19b72"
+    },
+    {
+      "path": "engine/include/tide/list.h",
+      "bytes": 17172,
+      "sha256": "5d0b911105aa7910a8a03ee02024e9db7758bdbc49918dcb33b9bcf829483211"
+    },
+    {
+      "path": "engine/src/pack_load.c",
+      "bytes": 52745,
+      "sha256": "1c56a09efcf164a4293566d9925dc634eb169bd27247f6669388531a90227973"
+    },
+    {
+      "path": "build/release/engine/tide.lib",
+      "bytes": 3497560,
+      "sha256": "cf697ed24d41648be3de9dcc6c6ea08f9926847ec2c63f24a6879e6ea8997269"
+    },
+    {
+      "path": "build/web-debug/engine/libtide.a",
+      "bytes": 2226634,
+      "sha256": "a33b1b17c7d21d62b8be4cb3d1ce8192e4902232a4d2bf0869e472f96b6941e7"
+    },
+    {
+      "path": "build/owned-animation/gen/game.pack",
+      "bytes": 5689760,
+      "sha256": "31f9bbab5442e3de29d40aaddd9f4a72107f4573e9d5e276b9845f4c21ad7b4b"
+    },
+    {
+      "path": "build/owned-animation/gen/game_pack.c",
+      "bytes": 21987201,
+      "sha256": "17f347b21f1d8d2047a720df75bde229ce6fd59b4d65d8459f21766d88b2b617"
+    },
+    {
+      "path": "build/asset-reference-prototype/base/game.c",
+      "bytes": 213248,
+      "sha256": "7aa8faeaf4a164d8e473c86ce7d9079eef2eb58408e4559593b056c17506d00b"
+    },
+    {
+      "path": "build/asset-reference-prototype/base/game.h",
+      "bytes": 26336,
+      "sha256": "bb11cdba21bde70a2f6843bfc5ea6ea615512c7dd1d5b1ba78a8ae101da0ed49"
+    },
+    {
+      "path": "build/asset-reference-prototype/shared/game.c",
+      "bytes": 213433,
+      "sha256": "31e0aeb13369f97000ca8aaa88943e49ff953b0486c6f9720737e9d01c11991a"
+    },
+    {
+      "path": "build/asset-reference-prototype/shared/game.h",
+      "bytes": 26336,
+      "sha256": "bb11cdba21bde70a2f6843bfc5ea6ea615512c7dd1d5b1ba78a8ae101da0ed49"
+    },
+    {
+      "path": "build/asset-reference-prototype/harness.c",
+      "bytes": 3408,
+      "sha256": "8ebf2689b997fc68e5eba929715ae8596bbe058409c67679af7d26eb329bd22c"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers.c",
+      "bytes": 6169,
+      "sha256": "d620ed0b99c6829345810bfb610e311c8309a8f4167d105905ffa4412438a5dc"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers-simple.c",
+      "bytes": 5229,
+      "sha256": "5b25487019070d20649d2247ad54dc07627e9f733f62ee220e9bf9c3edefb1f4"
+    },
+    {
+      "path": "build/asset-reference-prototype/initial-containers.c",
+      "bytes": 4780,
+      "sha256": "1d959f78dbcb08237dd7ba2bed47182c7a4ef54d4971d316f123f7c0d6645f89"
+    },
+    {
+      "path": "build/asset-reference-prototype/grid-base.exe",
+      "bytes": 5925376,
+      "sha256": "dd716d2627731142c152bf8364fb81e3ff850ea691f36f54546d162a26ada0a1"
+    },
+    {
+      "path": "build/asset-reference-prototype/grid-shared.exe",
+      "bytes": 5925888,
+      "sha256": "00e8cd3efcae878be72ae3e295f287bba8107a6d56e06dbc14fd687f655a9acd"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers-base.exe",
+      "bytes": 82432,
+      "sha256": "b3a0fda048961e4746fb22e5e5f84ffd72901334296941970695e8d8e4aaff4e"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers-shared.exe",
+      "bytes": 82944,
+      "sha256": "25f6ffc7a2c2e2f05354aa084dff300d8a06e0c9f1027fb8616372a474c1daf4"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers-simple-base.exe",
+      "bytes": 81920,
+      "sha256": "1dfe2061ab35f510eb3cfd06715bc296621cfc2410b86e207ef2f3d4b190075d"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers-simple-shared.exe",
+      "bytes": 82432,
+      "sha256": "3deb42d8d6f670164ddf4234431596db7ef0d78acabc92597766fd2b06d7dd80"
+    },
+    {
+      "path": "build/asset-reference-prototype/initial-containers-base.exe",
+      "bytes": 81920,
+      "sha256": "2fc0f236ea34c75ae462a7b1fe52b6083289814b21ae9d8e9beb935fe56d9b2b"
+    },
+    {
+      "path": "build/asset-reference-prototype/initial-containers-shared.exe",
+      "bytes": 82432,
+      "sha256": "d86f6b21b3775d9db78113718132239af0a0065702d1c510a915abc5255f3e0b"
+    },
+    {
+      "path": "build/asset-reference-prototype/grid-base.wasm",
+      "bytes": 6662162,
+      "sha256": "7aa807c73c47c0932169c17c8a0497608f7097457f2eb5fb84b5cf2ea951be27"
+    },
+    {
+      "path": "build/asset-reference-prototype/grid-shared.wasm",
+      "bytes": 6662671,
+      "sha256": "bd623aaaa0b6b4b00e49bf31eb90ab38ea24c0e03a9bdfbf7fe140d5297c3a07"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers-base.wasm",
+      "bytes": 411007,
+      "sha256": "97b99b2b0251ec517edc5cb5c50f13573de1ae6cc0ae2c241408c1440bdc1e5b"
+    },
+    {
+      "path": "build/asset-reference-prototype/containers-shared.wasm",
+      "bytes": 411322,
+      "sha256": "e405f0e3f9d59aa1d5e06f0d5273af5617b933bada2414b388d033384fb3de36"
+    }
+  ],
+  "exports": [
+    {
+      "path": "analyze.mjs",
+      "bytes": 4875,
+      "sha256": "8b30cb5e1ed6f6e2784ccc7048d3d6105f23e5213c697b602cc88c9f14d3f4cd"
+    },
+    {
+      "path": "check-web.ps1",
+      "bytes": 2020,
+      "sha256": "6ade01d6183e9055727b18f948bb5952baa81a73857af69e946528e08489da65"
+    },
+    {
+      "path": "containers-simple.c",
+      "bytes": 5229,
+      "sha256": "5b25487019070d20649d2247ad54dc07627e9f733f62ee220e9bf9c3edefb1f4"
+    },
+    {
+      "path": "containers.c",
+      "bytes": 6169,
+      "sha256": "d620ed0b99c6829345810bfb610e311c8309a8f4167d105905ffa4412438a5dc"
+    },
+    {
+      "path": "harness.c",
+      "bytes": 3404,
+      "sha256": "878304bacfd86897f234d5cde87187d9f406d5e69a8aa79ab5c9ae8831b51561"
+    },
+    {
+      "path": "initial-containers.c",
+      "bytes": 4780,
+      "sha256": "1d959f78dbcb08237dd7ba2bed47182c7a4ef54d4971d316f123f7c0d6645f89"
+    },
+    {
+      "path": "initial-rows.json",
+      "bytes": 9096,
+      "sha256": "ed1abff610fe03dbd89646aa564fa40f313d6eb93bdd3db8ef91eabc736d3f98"
+    },
+    {
+      "path": "measure-simple.ps1",
+      "bytes": 2945,
+      "sha256": "824cd8ad6f74746235ba02a592b73ac1d085e0fb63f573bfc1967a25a614267e"
+    },
+    {
+      "path": "measure.ps1",
+      "bytes": 2957,
+      "sha256": "89de5d7c7c71a0214673f58bef0cfeb1d08f26b0f97a08522a283eeb77475f8b"
+    },
+    {
+      "path": "native-checks.json",
+      "bytes": 2487,
+      "sha256": "f402e7aba137bbebc94c844b8c721b71ee5bfa1551489f809459363bb1364d49"
+    },
+    {
+      "path": "paired-rows-simple.json",
+      "bytes": 9090,
+      "sha256": "0499f066110a99c0d1e69a5f8345984f82f0bec3b0f2f1f15c67d942d1a876fc"
+    },
+    {
+      "path": "paired-rows.json",
+      "bytes": 11421,
+      "sha256": "febfd3965409194d80d25ec40b235c11abbe502112b6d54a951059b076cb8dcc"
+    },
+    {
+      "path": "prototype.ps1",
+      "bytes": 2748,
+      "sha256": "385523e4fe20cb870f8f02b2fcf4d40ece2340bcfbc7ff5e65c06025a0a16846"
+    },
+    {
+      "path": "README.md",
+      "bytes": 11394,
+      "sha256": "e9fe7c670bbd587dc6b13b9a6185242ab531ce62dd29b2d7102d0c1c0264fb96"
+    },
+    {
+      "path": "summary.json",
+      "bytes": 27079,
+      "sha256": "e2441f9b20da61189cfcaf24cd7d8fecff9dae3dd93bead2703b7303985691f5"
+    },
+    {
+      "path": "wasi-checks.json",
+      "bytes": 3095,
+      "sha256": "dedd3dcbadd220bd15ae295030f6b63c64c5aa80bd6a0a1152709309713f2875"
+    }
+  ]
+}

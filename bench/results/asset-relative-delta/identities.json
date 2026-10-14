@@ -1,0 +1,114 @@
+{
+  "date": "2026-10-11",
+  "head": "92a554b67bec8e67e8f49f327473cc6033d4aeea",
+  "clang": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "node": "v24.16.0",
+  "timing": "deferred by owner; no timing mode or guard was run",
+  "native_library": "previously frozen release library in this checkout",
+  "wasi_library": "previously frozen web-debug library in this checkout",
+  "private_asset": {
+    "entry": "movementAnims",
+    "element": 0,
+    "kind": "List<byte> model blob",
+    "payload_distributed": false
+  },
+  "identities": [
+    {
+      "path": "bench/results/asset-relative-delta/experiment.c",
+      "bytes": 15953,
+      "sha256": "5e00a05e99a5dcc7156f4d22c6cec9b159ddc9ef4378db0be150ca8e4a4aea41"
+    },
+    {
+      "path": "engine/src/delta.c",
+      "bytes": 13369,
+      "sha256": "5647c8655e95bdf5e3b5d77cd022e49d61049ec57dcd71e1b4be079c17507053"
+    },
+    {
+      "path": "engine/include/tide/delta.h",
+      "bytes": 5940,
+      "sha256": "d9cafe55dae932b310151d8b2b37ed0a95bf78f0813dabf84c78c61aaea78f21"
+    },
+    {
+      "path": "engine/src/net.c",
+      "bytes": 18674,
+      "sha256": "71b7f3f525bb4fce39c2caf9dc322c7c6390142cd1ac37833e8d84157000ac8e"
+    },
+    {
+      "path": "engine/include/tide/net.h",
+      "bytes": 10800,
+      "sha256": "0f1c5036057b741c369beec423d482adda364c65e0004d3f3d2f771adbe1b658"
+    },
+    {
+      "path": "build/release/engine/tide.lib",
+      "bytes": 3497560,
+      "sha256": "cf697ed24d41648be3de9dcc6c6ea08f9926847ec2c63f24a6879e6ea8997269"
+    },
+    {
+      "path": "build/web-debug/engine/libtide.a",
+      "bytes": 2226634,
+      "sha256": "a33b1b17c7d21d62b8be4cb3d1ce8192e4902232a4d2bf0869e472f96b6941e7"
+    },
+    {
+      "path": "build/asset-relative-delta/experiment.exe",
+      "bytes": 53760,
+      "sha256": "0902b9482b46ebecea0b8e0c1f553c74456a87bbce1a3291e0c29acee4eb0fdf"
+    },
+    {
+      "path": "build/asset-relative-delta/experiment.wasm",
+      "bytes": 455106,
+      "sha256": "e0bb6b073f148b1411a3dcbfdba399a5b35bed546a3ecddbb3138edae5271ba4"
+    },
+    {
+      "path": "build/node/node.exe",
+      "bytes": 92279112,
+      "sha256": "b3094d0b49f9ad602262a9921551737bb97637c05dd357a06ae98188d7290aa3"
+    },
+    {
+      "path": "build/wasi-sdk-24/libclang_rt.builtins-wasm32-wasi-24.0/libclang_rt.builtins-wasm32.a",
+      "bytes": 437242,
+      "sha256": "e2490185af44680dc371c9b60873e60229ccdfb81df4325edf7ed7657c635489"
+    },
+    {
+      "path": "build/owned-animation/gen/game.pack",
+      "bytes": 5689760,
+      "sha256": "31f9bbab5442e3de29d40aaddd9f4a72107f4573e9d5e276b9845f4c21ad7b4b"
+    }
+  ],
+  "exports": [
+    {
+      "path": "check.ps1",
+      "bytes": 1918,
+      "sha256": "8a576439e15898025c0d32b4381e29d6ca13ced9cb7d8c17f89e6f6603d3aba9"
+    },
+    {
+      "path": "experiment.c",
+      "bytes": 15953,
+      "sha256": "5e00a05e99a5dcc7156f4d22c6cec9b159ddc9ef4378db0be150ca8e4a4aea41"
+    },
+    {
+      "path": "measure.ps1",
+      "bytes": 2646,
+      "sha256": "83c92747d2a888061d8e0a335a91be69eaa08ad0c0cb1360558aa97fa74dc01e"
+    },
+    {
+      "path": "native.jsonl",
+      "bytes": 16613,
+      "sha256": "bf16a0775b6547fde17c14b71a9068c8d74eb714915ead0385153a365d29647f"
+    },
+    {
+      "path": "README.md",
+      "bytes": 7522,
+      "sha256": "c22f8ea536727f6b40a077577619afd6806c9dc0a99454f6939e39367fcb67f6"
+    },
+    {
+      "path": "verify.mjs",
+      "bytes": 4358,
+      "sha256": "c3de1d5eaa79a16e00b6b3a6d788323fd5e5a14ae3449e0728ad76a3991548c0"
+    },
+    {
+      "path": "wasi.jsonl",
+      "bytes": 16613,
+      "sha256": "bf16a0775b6547fde17c14b71a9068c8d74eb714915ead0385153a365d29647f"
+    }
+  ]
+}

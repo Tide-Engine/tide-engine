@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-11",
+  "branch": "t3code/fix-missing-animations",
+  "base": "2b0b1803df335ded43b5c92f74625856b3f88299",
+  "compiler": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "warmup": 10,
+  "measured_frames": 20,
+  "rows": [
+    {
+      "round": 1,
+      "variant": "before",
+      "output": "characters=100 pack=4968800 world=13117656 tick_ms=1.569440 hash_ms=0.728925 draw_ms=7.085040 draw_commands=1 hash=13602177110211490499"
+    },
+    {
+      "round": 1,
+      "variant": "after",
+      "output": "characters=100 pack=4968800 world=13117656 tick_ms=1.402515 hash_ms=0.657865 draw_ms=3.463030 draw_commands=1 hash=13602177110211490499"
+    },
+    {
+      "round": 2,
+      "variant": "before",
+      "output": "characters=100 pack=4968800 world=13117656 tick_ms=1.306930 hash_ms=0.667270 draw_ms=6.711750 draw_commands=1 hash=13602177110211490499"
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "output": "characters=100 pack=4968800 world=13117656 tick_ms=1.405580 hash_ms=0.698015 draw_ms=3.619675 draw_commands=1 hash=13602177110211490499"
+    },
+    {
+      "round": 3,
+      "variant": "before",
+      "output": "characters=100 pack=4968800 world=13117656 tick_ms=1.428385 hash_ms=0.670145 draw_ms=6.219630 draw_commands=1 hash=13602177110211490499"
+    },
+    {
+      "round": 3,
+      "variant": "after",
+      "output": "characters=100 pack=4968800 world=13117656 tick_ms=1.395275 hash_ms=0.693830 draw_ms=3.433880 draw_commands=1 hash=13602177110211490499"
+    }
+  ],
+  "identities": [
+    {
+      "path": "engine/src/skinned.c",
+      "bytes": 67249,
+      "sha256": "00995abe5ba54e299eb9c483c5d61d08a05b7ea179c7b322bc3777076f9bdef6"
+    },
+    {
+      "path": "build/animation-check/skinned-before-opt.c",
+      "bytes": 66590,
+      "sha256": "3c70c5ea7ca556be8db3e83d1ff40463a590293545e29373d353401f7b5aeb9b"
+    },
+    {
+      "path": "build/animation-check/grid/gen/game.c",
+      "bytes": 210593,
+      "sha256": "b7ce192be2964af7bfb7ad79eb068474664bbcc1af2aaf9e5e19d2b36ddea881"
+    },
+    {
+      "path": "build/animation-check/grid/gen/game.h",
+      "bytes": 26320,
+      "sha256": "facd6a9ca140d16d66b3122288dd25cf4fa9edd87e077edfb1580d323011ac15"
+    },
+    {
+      "path": "build/animation-check/grid/gen/game_pack.c",
+      "bytes": 19168319,
+      "sha256": "a3ba8562878e3f2bc9a2fce3c147e96efcd6ee55b2311c6d65596d42f48c56cb"
+    },
+    {
+      "path": "build/animation-check/grid.pack",
+      "bytes": 4968800,
+      "sha256": "a57696f65e98cf8af53081ea501406bb8e53c0ef5838e3959ce45c714265dfa4"
+    },
+    {
+      "path": "build/release/engine/tide.lib",
+      "bytes": 3410414,
+      "sha256": "0455b12d25e0ad9c51f4da086c9f7213529b7854f40d4b66aae117ebc26152ab"
+    },
+    {
+      "path": "build/animation-check/perf-release-before.exe",
+      "bytes": 5200896,
+      "sha256": "da719f229c0a089d44c40878e34fbf1d6df1329792dabeb59e74df6fec46c297"
+    },
+    {
+      "path": "build/animation-check/perf-release-after.exe",
+      "bytes": 5192192,
+      "sha256": "d1f1f4d4d8e890147efa0baa6b508f920bd8fe609e91b9c4a38d36f43bfa31e9"
+    },
+    {
+      "path": "bench/results/separate-animation-grid/harness.c",
+      "bytes": 1468,
+      "sha256": "312bd957c994271ff2abb10289ae7ba4b6170f123e2bd2ec36e68431dc276cb4"
+    }
+  ]
+}

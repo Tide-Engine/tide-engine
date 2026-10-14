@@ -1,0 +1,620 @@
+// T? fields: a value or nothing, in structs, components, singletons, scenes,
+// events, commands and the input, kept in the world as any field is.
+
+enum Rank
+{
+    Bronze,
+    Silver,
+    Gold,
+}
+
+struct Limits
+{
+    int min = 1;
+    int max = 8;
+}
+
+struct Slot
+{
+    int? item;
+    string? label;
+    float amount = 1;
+
+    int Count()
+    {
+        return item ?? 0;
+    }
+
+    bool Empty()
+    {
+        return item == null && label == null;
+    }
+
+    mut void Clear()
+    {
+        item = null;
+        label = null;
+    }
+
+    mut void Fill(int value, string name)
+    {
+        item = value;
+        label = name;
+    }
+}
+
+struct Plain
+{
+    int? item;
+    Rank? rank;
+}
+
+struct Kinds
+{
+    bool? flag;
+    byte? small;
+    long? big;
+    char? letter;
+    float? ratio;
+    float3? aim;
+    Rank? rank;
+    Entity? other;
+    PlayerID? owner;
+    Limits? limits;
+    Slot? inner;
+    List<int>? picks;
+    Map<string, int>? counts;
+    int[3]? cells;
+}
+
+struct Defaults
+{
+    int? level = 3;
+    string? title = "none";
+    float? ratio = 0.5;
+    Rank? rank = Rank.Gold;
+    int? nothing = null;
+}
+
+struct Wire
+{
+    string? name;
+    [Json("max_players")] int? maxPlayers;
+    bool? open;
+    Limits? limits;
+    List<string>? tags;
+    int? level = 3;
+    int kept;
+}
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure; // 1-based; 0 if every check passed
+}
+
+component Holder
+{
+    int? target;
+    string? name;
+    Slot slot;
+    Kinds kinds;
+    Defaults defaults;
+    List<Slot> slots;
+    Map<int, Slot> named;
+    Plain[2] pair;
+    List<int>? picks;
+    local int? seen;
+    local string? note;
+}
+
+// What one tick sets and the next takes away: its bytes are then what they were.
+component Cleared
+{
+    int? number;
+    float3? aim;
+    Limits? limits;
+    string? text;
+    List<int>? list;
+    Slot slot;
+}
+
+singleton Game
+{
+    int? winner;
+    float? best = 2.5;
+    string? motto;
+    int tick;
+    int hits;
+    int renamed;
+    string? renamedTo;
+    int? renamedLevel;
+    float? aim;
+    bool? fire;
+    int? choice;
+    int round;
+    bool titled;
+    bool quiet; // Nothing sets the Cleared's fields that keep nothing in the heap
+    int fast;
+    int got;
+    int? waited;
+    string? said;
+}
+
+local singleton Seen
+{
+    int? winner;
+    string? motto;
+    float best;
+    float bodyX;
+    float bodySpeed;
+    bool hasSpeed;
+    string? heard;
+    int? damage;
+    int? localSeen;
+    string shown;
+    bool send;
+}
+
+component Body
+{
+    float x;
+    float? speed;
+}
+
+component Spark
+{
+    int? life;
+    string? tag;
+}
+
+scene Main
+{
+    int? round;
+    string? title;
+}
+
+event Hit
+{
+    int? damage;
+    string? from;
+}
+
+local event Heard
+{
+    string? what;
+}
+
+command Rename
+{
+    string? name;
+    int? level;
+    Limits? limits;
+    int plain;
+}
+
+input Controls
+{
+    float? aim;
+    bool? fire;
+    int? choice;
+    [Clamp(0, 4)] int slot;
+
+    Sample(Devices devices)
+    {
+        if (devices.keyboard.space.pressed) fire = true;
+        if (devices.keyboard.a.pressed) aim = 0.25;
+        if (devices.keyboard.d.pressed) choice = 7;
+    }
+}
+
+// C takes a struct with T? fields as it's kept: the value, then whether there is one
+extern int PickItem(Plain value);
+extern void FillItem(mut Plain value);
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Results, Holder { target = 1 });
+    Spawn(Cleared);
+    Spawn(Body { x = 0 });
+    Spawn(Owner { player = PlayerID(0) }, Holder);
+}
+
+void Expect(mut Results r, bool ok)
+{
+    r.checks++;
+    if (ok) r.passed++;
+    else if (r.firstFailure == 0) r.firstFailure = r.checks;
+}
+
+int? Half(int? value)
+{
+    if (value is int v) return v / 2;
+    return null;
+}
+
+string Shown(Slot slot)
+{
+    return $"{slot}";
+}
+
+void Fields(mut Results r, mut Holder holder)
+{
+    // What a literal gave, and the fields it left out
+    Expect(r, holder.target == null ? false : true);
+    Expect(r, (holder.target ?? -1) == 1);
+    Expect(r, holder.name == null);
+    Expect(r, holder.slot.item == null && holder.slot.label == null && holder.slot.amount == 1);
+    // A value, nothing, and a T? from a call
+    holder.target = 3;
+    Expect(r, holder.target! == 3);
+    holder.target = null;
+    Expect(r, holder.target == null && holder.target! == 0);
+    holder.target = Half(10);
+    Expect(r, (holder.target ?? 0) == 5);
+    holder.target = Half(holder.target);
+    Expect(r, (holder.target ?? 0) == 2);
+    holder.target = Half(null);
+    Expect(r, holder.target == null);
+    holder.target = default;
+    Expect(r, holder.target == null);
+    // is, with a name and without
+    holder.target = 9;
+    if (holder.target is int found) Expect(r, found == 9);
+    else Expect(r, false);
+    Expect(r, holder.target is int);
+    Expect(r, holder.target != null);
+    // A local holds it as it is
+    var kept = holder.target;
+    holder.target = null;
+    Expect(r, (kept ?? 0) == 9 && holder.target == null);
+    holder.target = kept;
+    Expect(r, holder.target! == 9);
+    // An int where a float? goes
+    holder.kinds.ratio = 2;
+    Expect(r, holder.kinds.ratio! == 2.0);
+}
+
+void Text(mut Results r, mut Holder holder)
+{
+    holder.name = "first";
+    Expect(r, (holder.name ?? "") == "first");
+    var before = holder.name ?? "none";
+    holder.name = before + " again";
+    Expect(r, holder.name! == "first again" && before == "first");
+    holder.name = "";
+    Expect(r, holder.name != null && holder.name! == "");
+    holder.name = null;
+    Expect(r, holder.name == null && (holder.name ?? "none") == "none");
+    // Through a struct, whole and a field at a time
+    holder.slot = Slot { item = 4, label = "four" };
+    Expect(r, holder.slot.item! == 4 && holder.slot.label! == "four");
+    var copy = holder.slot;
+    holder.slot.label = "changed";
+    Expect(r, copy.label! == "four" && holder.slot.label! == "changed");
+    holder.slot = copy;
+    Expect(r, holder.slot.label! == "four");
+    holder.slot.label = null;
+    Expect(r, holder.slot.label == null && holder.slot.item! == 4);
+    // Methods read and change their own
+    Expect(r, holder.slot.Count() == 4 && !holder.slot.Empty());
+    holder.slot.Clear();
+    Expect(r, holder.slot.Empty() && holder.slot.Count() == 0);
+    holder.slot.Fill(6, "six");
+    Expect(r, holder.slot.Count() == 6 && holder.slot.label! == "six");
+    mut var mine = Slot { };
+    Expect(r, mine.Empty());
+    mine.Fill(2, "two");
+    mine.item = Half(mine.item);
+    Expect(r, mine.Count() == 1 && (mine.label ?? "") == "two");
+    // As text shows them
+    Expect(r, Shown(Slot { item = 4, label = "four" }) == "Slot { item = 4, label = \"four\", amount = 1 }");
+    Expect(r, Shown(Slot { }) == "Slot { item = null, label = null, amount = 1 }");
+    var defaults = Defaults { };
+    Expect(r, $"{defaults}" == "Defaults { level = 3, title = \"none\", ratio = 0.5, rank = Gold, nothing = null }");
+}
+
+void EveryKind(mut Results r, mut Holder holder, Entity self)
+{
+    Expect(r, holder.kinds.flag == null && holder.kinds.small == null && holder.kinds.big == null && holder.kinds.letter == null);
+    Expect(r, holder.kinds.aim == null && holder.kinds.rank == null && holder.kinds.other == null && holder.kinds.owner == null);
+    Expect(r, holder.kinds.limits == null && holder.kinds.inner == null && holder.kinds.picks == null && holder.kinds.counts == null);
+    Expect(r, holder.kinds.cells == null);
+    holder.kinds.flag = false;
+    holder.kinds.small = 200;
+    holder.kinds.big = 5000000000L;
+    holder.kinds.letter = 'q';
+    holder.kinds.aim = float3(1, 2, 3);
+    holder.kinds.rank = Rank.Silver;
+    holder.kinds.rank = .Gold;
+    holder.kinds.other = self;
+    holder.kinds.owner = PlayerID(2);
+    Expect(r, holder.kinds.flag != null && !(holder.kinds.flag ?? true));
+    Expect(r, holder.kinds.small! == 200 && holder.kinds.big! == 5000000000L && holder.kinds.letter! == 'q');
+    Expect(r, (holder.kinds.aim ?? float3(0)).z == 3 && holder.kinds.rank! == Rank.Gold);
+    Expect(r, holder.kinds.other! == self && holder.kinds.owner! == PlayerID(2));
+    // A struct's value is its defaults where nothing was written, and nothing is none of it
+    holder.kinds.limits = Limits { max = 3 };
+    Expect(r, holder.kinds.limits!.min == 1 && holder.kinds.limits!.max == 3);
+    holder.kinds.limits = null;
+    Expect(r, holder.kinds.limits == null && holder.kinds.limits!.max == 8);
+    // A struct with T? fields of its own
+    holder.kinds.inner = Slot { item = 1, label = "in" };
+    if (holder.kinds.inner is Slot inner) Expect(r, inner.item! == 1 && inner.label! == "in" && inner.amount == 1);
+    else Expect(r, false);
+    // Lists and maps: the field's own, and what's read is a copy
+    holder.kinds.picks = [1, 2, 3];
+    mut var picks = holder.kinds.picks ?? [];
+    picks.Add(4);
+    Expect(r, picks.count == 4 && (holder.kinds.picks ?? []).count == 3);
+    holder.kinds.picks = picks;
+    Expect(r, (holder.kinds.picks ?? []).count == 4 && (holder.kinds.picks ?? [])[3] == 4);
+    holder.kinds.picks = [];
+    Expect(r, holder.kinds.picks != null && holder.kinds.picks!.count == 0);
+    mut Map<string, int> counts = default;
+    counts["a"] = 1;
+    holder.kinds.counts = counts;
+    counts["b"] = 2;
+    Expect(r, (holder.kinds.counts ?? counts).count == 1 && counts.count == 2);
+    holder.picks = [7];
+    Expect(r, holder.picks!.count == 1 && holder.picks![0] == 7);
+    holder.picks = null;
+    Expect(r, holder.picks == null);
+    mut int[3] cells = default;
+    cells[1] = 5;
+    holder.kinds.cells = cells;
+    Expect(r, holder.kinds.cells![1] == 5);
+    // Defaults a declaration writes, and `default` of the whole
+    Expect(r, holder.defaults.level! == 3 && holder.defaults.title! == "none" && holder.defaults.ratio! == 0.5);
+    Expect(r, holder.defaults.rank! == Rank.Gold && holder.defaults.nothing == null);
+    holder.defaults.level = null;
+    holder.defaults = default;
+    Expect(r, holder.defaults.level! == 3 && holder.defaults.title! == "none");
+    Kinds none = default;
+    Expect(r, none.flag == null && none.limits == null && none.picks == null);
+    // Through C
+    mut Plain plain = Plain { rank = Rank.Gold };
+    Expect(r, PickItem(plain) == -1);
+    plain.item = 6;
+    Expect(r, PickItem(plain) == 6);
+    FillItem(plain);
+    Expect(r, plain.item! == 41 && plain.rank == null);
+}
+
+void Containers(mut Results r, mut Holder holder)
+{
+    holder.slots.Add(Slot { item = 1 });
+    holder.slots.Add(Slot { label = "b" });
+    holder.slots.Add(Slot { });
+    Expect(r, holder.slots[0].item! == 1 && holder.slots[0].label == null);
+    Expect(r, holder.slots[1].item == null && holder.slots[1].label! == "b");
+    holder.slots[0].item = 5;
+    holder.slots[1].item = Half(8);
+    holder.slots[2].item = holder.slots[0].item;
+    Expect(r, holder.slots[0].item! == 5 && holder.slots[1].item! == 4 && holder.slots[2].item! == 5);
+    holder.slots[0].item = null;
+    Expect(r, holder.slots[0].item == null);
+    mut var total = 0;
+    foreach (var slot in holder.slots) total += slot.item ?? 100;
+    Expect(r, total == 109);
+    holder.named[3] = Slot { item = 30, label = "thirty" };
+    Expect(r, holder.named[3].item! == 30 && holder.named[3].label! == "thirty");
+    Expect(r, holder.named[4].item == null);
+    if (holder.named.Get(3) is Slot three) Expect(r, three.label! == "thirty");
+    else Expect(r, false);
+    holder.pair[1].item = 2;
+    Expect(r, holder.pair[0].item == null && holder.pair[1].item! == 2);
+    // Past the end: nothing is written, and what's read is nothing
+    holder.slots[9].item = 1;
+    Expect(r, holder.slots[9].item == null && holder.slots.count == 3);
+}
+
+void Wired(mut Results r, mut Holder holder)
+{
+    // A key that's there, one that's null and one that's left out
+    var read = Json.Read<Wire>("{\"name\":\"Den\",\"max_players\":4,\"open\":null,\"kept\":2}") ?? Wire { kept = -1 };
+    Expect(r, read.kept == 2 && read.name! == "Den" && read.maxPlayers! == 4);
+    Expect(r, read.open == null && read.limits == null && read.tags == null);
+    // A field's own default stands for a key left out, and null is nothing
+    Expect(r, read.level! == 3);
+    var none = Json.Read<Wire>("{\"level\":null,\"name\":null}") ?? Wire { kept = -1 };
+    Expect(r, none.kept == 0 && none.level == null && none.name == null);
+    var full = Json.Read<Wire>("{\"open\":false,\"limits\":{\"max\":3},\"tags\":[\"a\",\"b\"],\"level\":9,\"name\":\"\"}") ?? Wire { kept = -1 };
+    Expect(r, full.open != null && !(full.open ?? true) && full.limits!.max == 3 && full.limits!.min == 1);
+    Expect(r, full.tags!.count == 2 && full.tags![1] == "b" && full.level! == 9 && full.name != null && full.name! == "");
+    // A key twice: the last one, a null among them
+    var twice = Json.Read<Wire>("{\"name\":\"a\",\"name\":null,\"level\":null,\"level\":2}") ?? Wire { kept = -1 };
+    Expect(r, twice.name == null && twice.level! == 2);
+    // The wrong kind of value still fails the read
+    Expect(r, Json.Read<Wire>("{\"max_players\":\"four\"}") == null);
+    Expect(r, Json.Read<Wire>("{\"limits\":3}") == null);
+    // Written: a field with no value has no key
+    Expect(r, Json.Write(Wire { level = null }) == "{\"kept\":0}");
+    Expect(r, Json.Write(Wire { }) == "{\"level\":3,\"kept\":0}");
+    Expect(r, Json.Write(Wire { name = "Den", open = true, kept = 1 }) == "{\"name\":\"Den\",\"open\":true,\"level\":3,\"kept\":1}");
+    Expect(r, Json.Write(Wire { maxPlayers = 2, limits = Limits { }, tags = ["x"], level = null })
+              == "{\"max_players\":2,\"limits\":{\"min\":1,\"max\":8},\"tags\":[\"x\"],\"kept\":0}");
+    Expect(r, Json.Write(Slot { }) == "{\"amount\":1}");
+    Expect(r, Json.Write(Slot { item = 0, label = "" }) == "{\"item\":0,\"label\":\"\",\"amount\":1}");
+    // There and back
+    var back = Json.Read<Wire>(Json.Write(full)) ?? Wire { kept = -1 };
+    Expect(r, back.kept == 0 && back.tags!.count == 2 && back.limits!.max == 3 && back.maxPlayers == null && back.name! == "");
+    // In the world, its text and lists the world's own
+    holder.kinds.inner = Json.Read<Slot>("{\"item\":12,\"label\":\"read\"}");
+    Expect(r, holder.kinds.inner!.item! == 12 && holder.kinds.inner!.label! == "read");
+}
+
+system Check(mut Results r, mut Holder holder, mut Game game)
+{
+    if (game.tick > 0) return;
+    Fields(r, holder);
+    Text(r, holder);
+    EveryKind(r, holder, this);
+    Containers(r, holder);
+    Wired(r, holder);
+    // Singletons and the scene
+    Expect(r, game.winner == null && game.best! == 2.5 && game.motto == null);
+    game.winner = 2;
+    game.motto = "onward";
+    Expect(r, game.winner! == 2 && game.motto! == "onward");
+    Send(Hit { damage = 2, from = "check" });
+    Send(Hit { });
+}
+
+event(Hit hit) Count(mut Game game)
+{
+    game.hits += hit.damage ?? 100;
+    if (hit.from is string from) game.motto = from + "!";
+}
+
+// Set on the first tick and taken away on the second
+system SetAndClear(mut Cleared cleared, Game game)
+{
+    if (game.tick == 0)
+    {
+        cleared.text = "some text";
+        cleared.list = [1, 2, 3];
+        cleared.slot = Slot { label = "one", amount = 1 };
+        if (game.quiet) return;
+        cleared.number = 7;
+        cleared.aim = float3(1, 2, 3);
+        cleared.limits = Limits { min = 4, max = 5 };
+        cleared.slot.item = 1;
+    }
+    else if (game.tick == 1)
+    {
+        cleared.number = null;
+        cleared.aim = null;
+        cleared.limits = null;
+        cleared.text = null;
+        cleared.list = null;
+        cleared.slot.item = Half(null);
+        cleared.slot.label = null;
+    }
+}
+
+system Move(mut Body body, Game game)
+{
+    body.x += 10;
+    if (game.tick % 2 == 0) body.speed = 4.0;
+    else body.speed = null;
+}
+
+// Through a query's rows and the World
+system Scan(mut Game game, World world, query (Body body) bodies)
+{
+    mut var fast = 0;
+    mut var got = 0;
+    foreach (var row in bodies)
+    {
+        if (row.body.speed is float speed) fast += int(speed);
+        if (world.Get<Body>(row.entity).speed != null) got++;
+    }
+    game.fast = fast;
+    game.got = got;
+}
+
+// A task keeps a T? across its waits, and reads the singleton's again after them
+async void Later(mut Game game)
+{
+    var before = game.winner;
+    game.winner = null;
+    await Wait.Ticks(2);
+    game.waited = (before ?? 0) + (game.winner ?? 10);
+    game.winner = before;
+    game.said = game.motto;
+    await Wait.Ticks(1);
+    if (game.said is string said) game.said = said + " waited";
+}
+
+system StartLater(mut Game game)
+{
+    if (game.tick == 1) Later(game);
+}
+
+system Players(with Owner, Controls input, mut Game game)
+{
+    game.aim = input.aim;
+    game.fire = input.fire;
+    game.choice = input.choice;
+}
+
+// A scene's own: nothing at first, a value, and nothing again
+system Rounds(mut Main main, mut Game game)
+{
+    if (main.round is int round)
+    {
+        main.round = round + 1;
+        main.title = null;
+    }
+    else
+    {
+        main.round = 1;
+        main.title = "start";
+    }
+    game.round = main.round ?? -1;
+    game.titled = main.title != null;
+}
+
+system Advance(mut Game game)
+{
+    game.tick++;
+}
+
+command(Rename rename, PlayerID sender) Renamed(mut Game game)
+{
+    game.renamed += rename.plain;
+    game.renamedTo = rename.name;
+    game.renamedLevel = rename.level;
+    if (rename.limits is Limits limits) game.renamed += limits.max;
+}
+
+// Views read the match's, and keep their own in local fields and the local world
+view Watch(Game game, mut Seen seen)
+{
+    seen.winner = game.winner;
+    seen.motto = game.motto;
+    seen.best = game.best ?? -1;
+    if (seen.send)
+    {
+        seen.send = false;
+        Send(Rename { name = "Ada", limits = Limits { max = 20 }, plain = 1 });
+        Send(Rename { level = 5, plain = 100 });
+        Send(Heard { what = "a sound" });
+        Send(Heard { });
+        local Spawn(Spark { life = 3 });
+    }
+}
+
+view Blend(Body body, mut Seen seen)
+{
+    seen.bodyX = body.x;
+    seen.hasSpeed = body.speed != null;
+    seen.bodySpeed = body.speed ?? -1;
+}
+
+view Note(mut Holder holder, with Owner, mut Seen seen)
+{
+    seen.localSeen = holder.seen;
+    holder.seen = (holder.seen ?? 0) + 1;
+    holder.note = $"seen {holder.seen ?? 0}";
+    seen.shown = holder.note ?? "";
+}
+
+local event(Heard heard) Listen(mut Seen seen)
+{
+    seen.heard = heard.what;
+}
+
+local event(Hit hit) HitHeard(mut Seen seen)
+{
+    if (hit.damage is int damage) seen.damage = damage;
+}
+
+view Sparks(mut local Spark spark)
+{
+    spark.life = (spark.life ?? 0) - 1;
+    if ((spark.life ?? 0) < 0) spark.tag = null;
+    else spark.tag = "lit";
+}

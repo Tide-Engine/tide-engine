@@ -1,0 +1,16 @@
+// expect: an audio declaration's knobs are 256 bytes at the most, and 'Curve' is 260
+// expect: an Effect carries a copy of them, which a frame gives the mixer: make 'Curve' smaller
+struct Curve
+{
+    float gain;
+    float[64] bands;
+}
+
+audio Tone(mut Samples samples, Curve curve)
+{
+    samples.values[0] = samples.values[0] * curve.gain * curve.bands[0];
+}
+
+scene Main
+{
+}

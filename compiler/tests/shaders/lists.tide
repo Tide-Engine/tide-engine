@@ -1,0 +1,115 @@
+// Lists the GPU reads: fields of a singleton, a component and a draw's
+// values, by an element, by how many there are and with foreach. Each is a
+// texture of numbers, an element taking the pixels its words need, floats
+// then ints, and its count a word of the draw's ints. And a switch.
+//
+// A list or a grid under another name is still one of those textures: a
+// local writes nothing, and a function that takes one is written once for
+// each texture it's called with, with no parameter for it.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+enum Kind { Point, Spot, Sun }
+struct Light
+{
+    float3 position;
+    Color color;
+    float reach;
+    Kind kind;
+    bool on;
+}
+struct Palette
+{
+    List<Color> colors;
+    int pick;
+}
+singleton Lights
+{
+    List<Light> items;
+    List<float> weights;
+    List<float> gains;
+    Grid2<int> cells = Grid2(4, 4);
+}
+component Body
+{
+    float3 position;
+    local List<int2> marks;
+}
+local singleton Stage
+{
+    List<Corner> corners;
+    List<int> faces;
+}
+
+float Falloff(Light light, float3 at)
+{
+    switch (light.kind) {
+        case Kind.Sun:
+            return 1;
+        case Kind.Point:
+        case Kind.Spot: {
+            var far = Math.Length(light.position - at);
+            if (far > light.reach) return 0;
+            break;
+        }
+    }
+    return 1 - Math.Length(light.position - at) / light.reach;
+}
+
+float Total(List<float> numbers)
+{
+    mut var sum = 0.0;
+    foreach (var number in numbers) sum += number;
+    return sum;
+}
+
+float Mean(List<float> numbers, float least)
+{
+    var mine = numbers;
+    return Math.Max(Total(mine) / mine.count, least);
+}
+
+int Cell(Grid2<int> cells, int2 at)
+{
+    return cells[at.x, at.y] + cells.size.x;
+}
+
+vert Raise(mut Corner corner, Lights lights)
+{
+    for (var i = 0; i < lights.weights.count; i++) corner.position.y += lights.weights[i];
+}
+
+frag Lit(Corner corner, out Color color, Lights lights, Body body, Palette palette)
+{
+    mut var sum = palette.colors[palette.pick];
+    foreach (var light in lights.items) {
+        if (!light.on) continue;
+        sum += light.color * Falloff(light, this.world);
+    }
+    foreach (var mark in body.marks) sum.r += mark.x * 0.1 + mark.y;
+    switch (lights.items.count) {
+        case 0:
+            sum = Color.black;
+            break;
+        default:
+            break;
+    }
+    var weights = lights.weights;
+    var cells = lights.cells;
+    sum.g += Mean(weights, 0.5) + Mean(lights.gains, 0) + Total(weights) + Cell(cells, int2(1, 2)) + cells[0, 0];
+    color = sum + lights.items[1].color * weights[lights.items.count];
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body);
+}
+
+view Show(Stage scene, with Body)
+{
+    Draw.Mesh(scene.corners, scene.faces, float4x4.identity, Raise, Lit, Palette { colors = [Color.red, Color.blue], pick = 1 });
+}

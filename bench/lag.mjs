@@ -144,8 +144,9 @@ process.on('SIGTERM', () => end(143));
 // A browser of a player's own, at the game's page with `query`.
 async function open(who, query) {
     const profile = mkdtempSync(join(tmpdir(), 'tide-lag-'));
+    // --mute-audio: headless, it still plays through the machine's device, and these pages are sent keys
     const child = spawn(found, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
-        '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--window-size=960,600', ...gpuFlags,
+        '--mute-audio', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--window-size=960,600', ...gpuFlags,
         '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
         ...(process.env.TIDE_RELAY ? [] : ['--disable-features=WebRtcHideLocalIpsWithMdns', '--allow-loopback-in-peer-connection']),
         'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });

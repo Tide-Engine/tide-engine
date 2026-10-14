@@ -1,0 +1,3 @@
+// expect: field 'item' is int?, not string
+struct Slot { int? item = "x"; }
+scene Main { }

@@ -1,0 +1,5 @@
+// expect: field 'child' is Entity, not LocalEntity
+scene Main { }
+component Target { Entity child; }
+prefab Tree { Target { child = Child }; entity Child { } }
+view Setup() { local Spawn(Tree); }

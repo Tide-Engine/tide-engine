@@ -45,6 +45,13 @@ typedef struct lsp_server {
     bool rename_dynamic;
     char *rename_filters;       // The filters registered, as JSON, to register again only when they change
     char *asset_watchers;       // The watchers registered for the assets' files, the same way
+    struct lsp_asset_registration *asset_registrations; // Heap-owned snapshots of open games' asset paths
+    int asset_registration_count;
+    struct lsp_asset_context *asset_contexts; // Active keys/paths, reused until the documents or workspace change
+    int asset_context_count;
+    int *asset_context_documents; // Each open document's selected context, in docs order
+    unsigned asset_context_changes;
+    struct lsp_asset_context *analyzed_context; // Heap-owned key of the retained analysis
     bool shutdown;
     bool exited;
     int exit_code;

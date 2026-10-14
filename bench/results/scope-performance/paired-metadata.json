@@ -1,0 +1,793 @@
+{
+  "state": "passed",
+  "baselineRevision": "969e1406bbcee1e9c8c64fd0812d418b1bb42967",
+  "startedUtc": "2026-10-11T10:35:11.6278533Z",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "runs": [
+    {
+      "label": "scope-pair-before-lookup-16384-0-r1",
+      "wallSeconds": 1.0054567,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-before-lookup-16384-0-r1"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-16384-1024-r1",
+      "wallSeconds": 1.0252977,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-before-lookup-16384-1024-r1"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-65536-0-r1",
+      "wallSeconds": 4.501305,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-before-lookup-65536-0-r1"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-65536-1024-r1",
+      "wallSeconds": 3.7481095,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-before-lookup-65536-1024-r1"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-skinned-r1",
+      "wallSeconds": 9.7692475,
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-pair-before-skinned-r1"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-pair-after-lookup-16384-0-r1",
+      "wallSeconds": 0.8723006,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-after-lookup-16384-0-r1"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-16384-1024-r1",
+      "wallSeconds": 0.9423762,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-after-lookup-16384-1024-r1"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-65536-0-r1",
+      "wallSeconds": 3.9750924,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-after-lookup-65536-0-r1"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-65536-1024-r1",
+      "wallSeconds": 3.3990316,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-after-lookup-65536-1024-r1"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-skinned-r1",
+      "wallSeconds": 9.4359102,
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-pair-after-skinned-r1"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-pair-after-lookup-16384-0-r2",
+      "wallSeconds": 0.8497357,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-after-lookup-16384-0-r2"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-16384-1024-r2",
+      "wallSeconds": 0.9344208,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-after-lookup-16384-1024-r2"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-65536-0-r2",
+      "wallSeconds": 3.9878181,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-after-lookup-65536-0-r2"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-65536-1024-r2",
+      "wallSeconds": 3.4084526,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-after-lookup-65536-1024-r2"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-skinned-r2",
+      "wallSeconds": 9.4134458,
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-pair-after-skinned-r2"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-pair-before-lookup-16384-0-r2",
+      "wallSeconds": 0.9594843,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-before-lookup-16384-0-r2"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-16384-1024-r2",
+      "wallSeconds": 1.0261936,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-before-lookup-16384-1024-r2"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-65536-0-r2",
+      "wallSeconds": 4.5702062,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-before-lookup-65536-0-r2"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-65536-1024-r2",
+      "wallSeconds": 3.7885436,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-before-lookup-65536-1024-r2"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-skinned-r2",
+      "wallSeconds": 9.7700442,
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-pair-before-skinned-r2"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-pair-before-lookup-16384-0-r3",
+      "wallSeconds": 0.9636592,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-before-lookup-16384-0-r3"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-16384-1024-r3",
+      "wallSeconds": 1.0508361,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-before-lookup-16384-1024-r3"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-65536-0-r3",
+      "wallSeconds": 4.4685362,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-before-lookup-65536-0-r3"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-lookup-65536-1024-r3",
+      "wallSeconds": 3.7735547,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-before-lookup-65536-1024-r3"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-before-skinned-r3",
+      "wallSeconds": 9.8519834,
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-pair-before-skinned-r3"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-pair-after-lookup-16384-0-r3",
+      "wallSeconds": 0.8506424,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-after-lookup-16384-0-r3"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-16384-1024-r3",
+      "wallSeconds": 0.9345922,
+      "arguments": [
+        "--count",
+        "16384",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-after-lookup-16384-1024-r3"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-65536-0-r3",
+      "wallSeconds": 4.0074311,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "0",
+        "--save",
+        "scope-pair-after-lookup-65536-0-r3"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-lookup-65536-1024-r3",
+      "wallSeconds": 3.4263877,
+      "arguments": [
+        "--count",
+        "65536",
+        "--changes",
+        "1024",
+        "--save",
+        "scope-pair-after-lookup-65536-1024-r3"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "versus_lookup"
+    },
+    {
+      "label": "scope-pair-after-skinned-r3",
+      "wallSeconds": 9.4449537,
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "scope-pair-after-skinned-r3"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-before-1000-static",
+      "wallSeconds": 0.523005,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "static",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-before-1000-static.png"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-after-1000-static",
+      "wallSeconds": 0.5010189,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "static",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-after-1000-static.png"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-before-1000-rest",
+      "wallSeconds": 0.5108628,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "rest",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-before-1000-rest.png"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-after-1000-rest",
+      "wallSeconds": 0.5064459,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "rest",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-after-1000-rest.png"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-before-1000-shared",
+      "wallSeconds": 0.8181403,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "shared",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-before-1000-shared.png"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-after-1000-shared",
+      "wallSeconds": 0.5345362,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "shared",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-after-1000-shared.png"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-before-1000-independent",
+      "wallSeconds": 0.864458,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-before-1000-independent.png"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-after-1000-independent",
+      "wallSeconds": 0.8639827,
+      "arguments": [
+        "--counts",
+        "1000",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-after-1000-independent.png"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-before-10000-independent",
+      "wallSeconds": 5.3150851,
+      "arguments": [
+        "--counts",
+        "10000",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-before-10000-independent.png"
+      ],
+      "exitCode": 0,
+      "side": "before",
+      "name": "bench_skinned"
+    },
+    {
+      "label": "scope-capture-after-10000-independent",
+      "wallSeconds": 5.1255374,
+      "arguments": [
+        "--counts",
+        "10000",
+        "--modes",
+        "independent",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--capture",
+        "build/performance-pairs/scope-capture-after-10000-independent.png"
+      ],
+      "exitCode": 0,
+      "side": "after",
+      "name": "bench_skinned"
+    }
+  ],
+  "captures": [
+    {
+      "count": 1000,
+      "side": "before",
+      "mode": "static",
+      "sha256": "3e1fbaf289a178ad1ccf5a99ec6f328f83f0145a5a14d43081088c696a3c1d5c"
+    },
+    {
+      "count": 1000,
+      "side": "after",
+      "mode": "static",
+      "sha256": "3e1fbaf289a178ad1ccf5a99ec6f328f83f0145a5a14d43081088c696a3c1d5c"
+    },
+    {
+      "count": 1000,
+      "side": "before",
+      "mode": "rest",
+      "sha256": "3e1fbaf289a178ad1ccf5a99ec6f328f83f0145a5a14d43081088c696a3c1d5c"
+    },
+    {
+      "count": 1000,
+      "side": "after",
+      "mode": "rest",
+      "sha256": "3e1fbaf289a178ad1ccf5a99ec6f328f83f0145a5a14d43081088c696a3c1d5c"
+    },
+    {
+      "count": 1000,
+      "side": "before",
+      "mode": "shared",
+      "sha256": "707b2cfd8835429de607745aff78b62fc267da4066013e6514b1da10ab28e61c"
+    },
+    {
+      "count": 1000,
+      "side": "after",
+      "mode": "shared",
+      "sha256": "707b2cfd8835429de607745aff78b62fc267da4066013e6514b1da10ab28e61c"
+    },
+    {
+      "count": 1000,
+      "side": "before",
+      "mode": "independent",
+      "sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a"
+    },
+    {
+      "count": 1000,
+      "side": "after",
+      "mode": "independent",
+      "sha256": "5604268dd7960c0f5ddf39321b7c4903e1387564c8b4bf6600ab11e3ffb4862a"
+    },
+    {
+      "count": 10000,
+      "side": "before",
+      "mode": "independent",
+      "sha256": "4aa62dba5dfff5876cf37b728414e4daf1ef0d47760a1cb7cf916387defd77ab"
+    },
+    {
+      "count": 10000,
+      "side": "after",
+      "mode": "independent",
+      "sha256": "4aa62dba5dfff5876cf37b728414e4daf1ef0d47760a1cb7cf916387defd77ab"
+    }
+  ],
+  "sourceHashes": [
+    {
+      "path": "engine/include/tide/map.h",
+      "sha256": "d7c65b75086e81d11099db635bfb636667ebcb842b8a53c364b25a29f7316b8e"
+    },
+    {
+      "path": "engine/src/map.c",
+      "sha256": "78acc0e9dced74192fa5ebd067af0c2754128227a54ee01ed1202aba67269987"
+    },
+    {
+      "path": "engine/src/skinned.c",
+      "sha256": "47547aded9292098da0e5e502e8b7f5755a6d877aa9bf13a27ffd123cd6b52a6"
+    }
+  ],
+  "binaries": [
+    {
+      "name": "versus_lookup",
+      "side": "before",
+      "sha256": "6456db8403cd6500f4e3c82c9a624800f5cf857f85a48354369ce2487a4cacef"
+    },
+    {
+      "name": "bench_skinned",
+      "side": "before",
+      "sha256": "de1b7ac11ac82c677ad01d5f9d11391eaf5ff7007fdb8ab84a518c2e7dc6c8ce"
+    },
+    {
+      "name": "versus_lookup",
+      "side": "after",
+      "sha256": "8152ae7bcae566b024d39caf5ee65b7ddd502940d5d51bfe7600599461aaeb93"
+    },
+    {
+      "name": "bench_skinned",
+      "side": "after",
+      "sha256": "539290eb5e50e519ffb86d0dfff2e4693cd50afc950a60e4e67490eaa21b3f69"
+    }
+  ],
+  "interpretation": "Three alternating before/after pairs. Release -O2 deterministic flags. Readback is synchronized; CPU/GPU intervals overlap and are not pipelined FPS.",
+  "gpu": "NVIDIA GeForce RTX 4080 SUPER, 595.79",
+  "finishedUtc": "2026-10-11T10:39:34.2867252Z"
+}

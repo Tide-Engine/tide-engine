@@ -1,0 +1,757 @@
+// CRACKED: a player. PlayerMovement, ShooterBase, PlayerShield and
+// PlayerHealth of the Unity game, a tick at a time, in the order their
+// Simulate methods read: what's a force there is a push here, given to the
+// body when every seat has had its turn (Integrate), as PhysX steps after
+// every Simulate.
+
+// The Magician prefab's.
+const float BODY_MASS = 10;
+const float GROUND_DAMPING = 5;
+const float AIR_DAMPING = 0.5;
+const float ANGULAR_DAMPING = 0.5;
+const float GRAVITY = 9.81;
+const float COLLIDER_RADIUS = 0.25;
+const float COLLIDER_HEIGHT = 1.4;
+const float COLLIDER_CENTER = 1.04;
+const float HITBOX_RADIUS = 0.5;
+const float HITBOX_HEIGHT = 2;
+const float HITBOX_CENTER = 1;
+const float SHIELD_CENTER = 0.9;
+const float SHIELD_RADIUS = 1.1;
+const float3 FIRE_POINT = float3(0.683, 1.407, 0.177);
+
+const float GROUND_CHECK_RADIUS = 0.2;
+const float JUMP_COOLDOWN = 0.2;
+const float JUMP_COYOTE = 0.5;
+const float FLOAT_STRENGTH = 500;
+const float FLOAT_HEIGHT = 0.35;
+const float ANGULAR_STRENGTH = 20;
+const float ANGLE_FOR_MAX = 40;
+const float UPRIGHT_DAMPING = 5;
+const float WALL_ANGLE = 55;
+const float RAGDOLL_TIME = 1;
+const float RAGDOLL_RADIUS = 0.13;
+const float RAGDOLL_ANGULAR_DAMPING = 2;
+const float MAX_ANGULAR_SPEED = 50;
+
+const float POISON_INTERVAL = 0.5;
+const float POISON_PER_SECOND = 6;
+const float FALL_DEATH = -32;
+
+// The floor under every map (GroundDamage.prefab).
+const int FLOOR_DAMAGE = 35;
+const float FLOOR_KNOCK = 33;
+
+// What the match says happened to a player, for a machine to show and sound.
+event Fired { int seat; }
+event Hurt { int seat; int damage; }
+event Died { int seat; }
+event Shielded { int seat; }
+event Jumped { int seat; bool again; }
+event PadUsed { int piece; }
+event FreezeBurst { int seat; }
+event Zapped { int seat; int other; }
+
+bool Locked(Arena arena, int s)
+{
+    return (arena.phase != Phase.Running && arena.phase != Phase.RoundEnd) || arena.seats[s].dead;
+}
+
+bool GravityLocked(Arena arena)
+{
+    return arena.mapPhase != MapPhase.Idle;
+}
+
+float3 Forward(float yaw)
+{
+    var turn = Math.Radians(yaw);
+    return float3(Math.Sin(turn), 0, Math.Cos(turn));
+}
+
+// Where a seat's bullets leave from: _firePoint, under _fireParent, which is
+// turned to the camera's yaw.
+float3 FirePoint(Arena arena, int s)
+{
+    var forward = Forward(arena.seats[s].yaw);
+    var right = float3(forward.z, 0, -forward.x);
+    var size = arena.seats[s].settings.size;
+    return arena.seats[s].position + (right * FIRE_POINT.x + float3(0, FIRE_POINT.y, 0) + forward * FIRE_POINT.z) * size;
+}
+
+float3 BodyUp(Arena arena, int s)
+{
+    return Math.Rotate(arena.seats[s].rotation, float3(0, 1, 0));
+}
+
+// The middle of a capsule that stands on a seat's feet.
+float3 CapsuleEnd(Arena arena, int s, float center, float height, float radius, float side)
+{
+    var size = arena.seats[s].settings.size;
+    return arena.seats[s].position + BodyUp(arena, s) * ((center + side * (height * 0.5 - radius)) * size);
+}
+
+// Whether a ball is in a seat's trigger: the hitbox every overlap in the
+// Unity game finds a player by.
+bool InHitbox(Arena arena, int s, float3 at, float radius)
+{
+    var size = arena.seats[s].settings.size;
+    var near = NearCapsule(at, CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, -1),
+                           CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, 1), HITBOX_RADIUS * size);
+    return near.distance <= radius;
+}
+
+void AddTrait(mut Arena arena, Trait trait)
+{
+    mut var added = trait;
+    // OnEnable
+    if (added.kind == TraitKind.Freeze)
+    {
+        arena.seats[added.seat].movementMultiplier *= added.b;
+        added.timer = added.a;
+    }
+    if (added.kind == TraitKind.Daze) added.timer = added.a;
+    arena.traits.Add(added);
+}
+
+void ChangeHealthDirectly(mut Arena arena, int s, int change)
+{
+    var before = arena.seats[s].health;
+    arena.seats[s].health = Math.Clamp(before + change, 0, arena.seats[s].maxHealth);
+    if (arena.seats[s].health < before) Send(Hurt { seat = s, damage = before - arena.seats[s].health });
+}
+
+void ResetShieldTimer(mut Arena arena, int s)
+{
+    if (arena.seats[s].shieldActual / arena.seats[s].settings.shieldDuration > 3) return;
+    arena.seats[s].shieldTimer = arena.seats[s].settings.shieldDuration;
+    arena.seats[s].shieldCooldown = arena.seats[s].settings.shieldCooldown;
+}
+
+void ChangeHealth(mut Arena arena, int s, int change)
+{
+    if (change == 0) return;
+    if (change < 0 && arena.seats[s].shieldActive)
+    {
+        ResetShieldTimer(arena, s);
+        return;
+    }
+    if (change < 0) arena.seats[s].timeSinceWasShot = 0;
+    mut var amount = change;
+    for (var i = 0; i < arena.traits.count; i++)
+    {
+        if (arena.traits[i].seat != s || arena.traits[i].kind != TraitKind.LingeringPain) continue;
+        arena.traits[i].damage += amount;
+        amount = 0;
+    }
+    ChangeHealthDirectly(arena, s, amount);
+}
+
+// A push at a place on the body: an impulse there, which also turns it.
+void PushAt(mut Arena arena, int s, float3 impulse, float3 at)
+{
+    arena.seats[s].push += impulse / BODY_MASS;
+    var size = arena.seats[s].settings.size;
+    var middle = arena.seats[s].position + BodyUp(arena, s) * (COLLIDER_CENTER * size);
+    var torque = Math.Cross(at - middle, impulse);
+    // The capsule's inertia, about its own axes: a solid cylinder's
+    var inverse = Math.Conjugate(arena.seats[s].rotation);
+    var local = Math.Rotate(inverse, torque);
+    var across = BODY_MASS * (3 * COLLIDER_RADIUS * COLLIDER_RADIUS + COLLIDER_HEIGHT * COLLIDER_HEIGHT) / 12;
+    var along = BODY_MASS * COLLIDER_RADIUS * COLLIDER_RADIUS * 0.5;
+    arena.seats[s].twist += Math.Rotate(arena.seats[s].rotation, float3(local.x / across, local.y / along, local.z / across));
+}
+
+// PlayerMovement.Knockback: what the floor and a jump pad do.
+void Knockback(mut Arena arena, int s, float3 knock, float3 relative, bool setY, bool velocityChange)
+{
+    if (arena.seats[s].dead) return;
+    if (setY) arena.seats[s].velocity = float3(arena.seats[s].velocity.x, 0, arena.seats[s].velocity.z);
+    var size = arena.seats[s].settings.size;
+    var at = arena.seats[s].position + Math.Rotate(arena.seats[s].rotation, relative * size);
+    PushAt(arena, s, velocityChange ? knock * BODY_MASS : knock, at);
+    mut var dice = arena.seats[s].stagger;
+    var x = dice.NextFloat(-1, 1);
+    var z = dice.NextFloat(-1, 1);
+    arena.seats[s].stagger = dice;
+    // The Unity game gives this one at a place in the world, not on the body
+    PushAt(arena, s, float3(x, 0, z), float3(0, 1.5, 0));
+}
+
+// PlayerMovement.KnockbackAtWorldPos: what a bullet does.
+void KnockbackAt(mut Arena arena, int s, float3 knock, float3 at)
+{
+    PushAt(arena, s, Math.Normalize(knock) * 0.15, at);
+    arena.seats[s].push += knock / BODY_MASS;
+}
+
+void Shielding(mut Arena arena, int s, bool user, bool forced)
+{
+    Send(Shielded { seat = s });
+    var count = arena.traits.count;
+    for (var i = 0; i < count; i++)
+    {
+        if (arena.traits[i].seat != s) continue;
+        var kind = arena.traits[i].kind;
+        if (kind == TraitKind.DashOnBlock && user)
+        {
+            arena.seats[s].uncapVelocity += 1;
+            mut var way = Math.Rotate(quaternion.Euler(Math.Radians(arena.seats[s].pitch), Math.Radians(arena.seats[s].yaw), 0), float3(0, 0, 1));
+            if (Math.LengthSq(way) < 0.5) way = Math.Rotate(arena.seats[s].rotation, float3(0, 0, 1));
+            arena.traits[i].direction = way;
+            arena.traits[i].timer = arena.traits[i].a;
+        }
+        if (kind == TraitKind.DelayedBlock && user && !forced) arena.traits[i].timer = arena.traits[i].a;
+        if (kind == TraitKind.HealOnBlock)
+            arena.clouds.Add(Cloud { kind = CloudKind.Heal, position = arena.seats[s].position, radius = 2.5, perSecond = 10 });
+        if (kind == TraitKind.FreezeOnBlock)
+        {
+            Send(FreezeBurst { seat = s });
+            for (var other = 0; other < SEATS; other++)
+            {
+                if (other == s || !arena.seats[other].alive || !InHitbox(arena, other, arena.seats[s].position, arena.traits[i].a)) continue;
+                AddTrait(arena, Trait { seat = other, kind = TraitKind.Freeze, a = arena.traits[i].b, b = arena.traits[i].c });
+                ChangeHealth(arena, other, -arena.traits[i].n);
+            }
+        }
+    }
+}
+
+void ActivateShield(mut Arena arena, int s, bool user)
+{
+    if (user && Locked(arena, s)) return;
+    if (arena.seats[s].shieldCooldown > 0 || arena.seats[s].shieldActive) return;
+    arena.seats[s].shieldActive = true;
+    arena.seats[s].shieldTimer = arena.seats[s].settings.shieldDuration;
+    arena.seats[s].shieldCooldown = arena.seats[s].settings.shieldCooldown;
+    Shielding(arena, s, user, false);
+}
+
+void ForceShield(mut Arena arena, int s, bool user)
+{
+    if (user && Locked(arena, s)) return;
+    arena.seats[s].shieldActive = true;
+    arena.seats[s].shieldTimer = arena.seats[s].settings.shieldDuration;
+    arena.seats[s].shieldCooldown = arena.seats[s].settings.shieldCooldown;
+    Shielding(arena, s, user, true);
+}
+
+// The effects' OnModify, each tick. One that ends is taken out.
+void RunTraits(mut Arena arena, int s, float dt, int tickRate)
+{
+    mut var i = 0;
+    while (i < arena.traits.count)
+    {
+        if (arena.traits[i].seat != s)
+        {
+            i++;
+            continue;
+        }
+        var kind = arena.traits[i].kind;
+        mut var ended = false;
+        if (kind == TraitKind.DashOnBlock && arena.traits[i].timer > 0)
+        {
+            arena.traits[i].timer -= dt;
+            arena.seats[s].push += arena.traits[i].direction * arena.traits[i].b;
+            if (arena.traits[i].timer <= 0)
+            {
+                arena.seats[s].velocity = float3(arena.seats[s].velocity.x, 0, arena.seats[s].velocity.z);
+                arena.traits[i].timer = 0;
+                ForceShield(arena, s, false);
+                arena.seats[s].uncapVelocity -= 1;
+            }
+        }
+        if (kind == TraitKind.DelayedBlock && arena.traits[i].timer > 0)
+        {
+            if (arena.seats[s].shieldActive) arena.traits[i].timer = arena.traits[i].a;
+            else
+            {
+                arena.traits[i].timer -= dt;
+                if (arena.traits[i].timer <= 0)
+                {
+                    arena.traits[i].timer = 0;
+                    ForceShield(arena, s, true);
+                }
+            }
+        }
+        if (kind == TraitKind.Freeze)
+        {
+            if (arena.traits[i].timer <= 0)
+            {
+                arena.seats[s].movementMultiplier /= arena.traits[i].b;
+                ended = true;
+            }
+            else arena.traits[i].timer -= dt;
+        }
+        if (kind == TraitKind.Daze)
+        {
+            if (arena.traits[i].timer <= 0) ended = true;
+            else
+            {
+                arena.traits[i].timer -= dt;
+                arena.seats[s].velocity = float3(0);
+            }
+        }
+        if (kind == TraitKind.LingeringPain && arena.traits[i].damage != 0)
+        {
+            mut var same = 0;
+            for (var k = 0; k < arena.traits.count; k++)
+                if (arena.traits[k].seat == s && arena.traits[k].kind == TraitKind.LingeringPain) same += 1;
+            arena.traits[i].accumulate += arena.traits[i].a / tickRate / same;
+            var now = -int(Math.Floor(-arena.traits[i].accumulate));
+            if (now < 0)
+            {
+                var dealt = Math.Max(now, arena.traits[i].damage);
+                arena.traits[i].damage -= dealt;
+                arena.traits[i].accumulate -= now;
+                ChangeHealthDirectly(arena, s, dealt);
+            }
+        }
+        if (kind == TraitKind.Electrify)
+        {
+            if (arena.traits[i].timer > arena.traits[i].b)
+            {
+                for (var other = 0; other < SEATS; other++)
+                {
+                    if (other == s || !arena.seats[other].alive || !InHitbox(arena, other, arena.seats[s].position, arena.traits[i].a)) continue;
+                    Send(Zapped { seat = s, other = other });
+                    ChangeHealth(arena, other, -arena.traits[i].n);
+                }
+                arena.traits[i].timer = 0;
+            }
+            else arena.traits[i].timer += dt;
+        }
+        if (ended) arena.traits.RemoveAt(i);
+        else i++;
+    }
+}
+
+// ShooterBase.Fire: the shoot modifiers say which bullets leave, and the
+// bullet modifiers what each is.
+void Fire(mut Arena arena, int s, int tick)
+{
+    if (Locked(arena, s)) return;
+    arena.seats[s].lastShootTick = tick;
+    arena.seats[s].magazine -= 1;
+    Send(Fired { seat = s });
+
+    var up = float3(0, 1, 0);
+    var forward = arena.seats[s].aim;
+    var right = Math.Cross(forward, up);
+    var spread = arena.seats[s].settings.spread;
+    var force = arena.seats[s].settings.fireForce;
+    var origin = FirePoint(arena, s);
+    mut var dice = arena.seats[s].random;
+    var rX = (dice.NextFloat() - 0.5) * spread;
+    var rY = (dice.NextFloat() - 0.5) * spread;
+    var aimed = Turn(Turn(forward, up, rX), right, rY);
+    mut var shot = 0;
+    for (var i = 0; i < arena.shootMods.count; i++)
+    {
+        if (arena.shootMods[i].seat != s) continue;
+        if (arena.shootMods[i].kind == ShootModKind.Single)
+        {
+            SpawnBullet(arena, s, true, tick + shot, origin + aimed * 0.01, aimed, force, BulletProps { }, true);
+            shot += 1;
+            continue;
+        }
+        var side = Math.Cross(aimed, up);
+        var wide = arena.shootMods[i].a + spread;
+        for (var k = 0; k < arena.shootMods[i].n; k++)
+        {
+            var x = (dice.NextFloat() - 0.5) * wide;
+            var y = (dice.NextFloat() - 0.5) * wide;
+            var way = Turn(Turn(aimed, up, x), side, y);
+            SpawnBullet(arena, s, true, tick + shot, origin + way * 0.01, way, force, BulletProps { }, true);
+            shot += 1;
+        }
+    }
+    arena.seats[s].random = dice;
+    if (arena.seats[s].magazine <= 0)
+    {
+        arena.seats[s].reloading = true;
+        arena.seats[s].reloadLeft = arena.seats[s].settings.reloadTime;
+    }
+}
+
+// A direction turned about an axis by degrees: Quaternion.AngleAxis.
+float3 Turn(float3 way, float3 axis, float degrees)
+{
+    return Math.Rotate(quaternion.AxisAngle(Math.Normalize(axis), Math.Radians(degrees)), way);
+}
+
+// ShooterBase.Simulate, then PlayerShield's and PlayerHealth's.
+void Shooter(mut Arena arena, int s, float dt, int tick, int tickRate)
+{
+    arena.seats[s].timeSinceWasShot += dt;
+    if (arena.seats[s].baseSettings.health > 0) arena.seats[s].settings = arena.seats[s].baseSettings;
+    RunTraits(arena, s, dt, tickRate);
+
+    var pad = arena.seats[s].pad;
+    arena.seats[s].yaw = pad.yaw;
+    arena.seats[s].pitch = pad.pitch;
+    arena.seats[s].aim = Math.LengthSq(pad.aim) > 0.01 ? Math.Normalize(pad.aim) : Forward(pad.yaw);
+    if (pad.shield) ActivateShield(arena, s, true);
+
+    var rate = int(1.0 / arena.seats[s].settings.fireRate * tickRate);
+    var ready = tick - arena.seats[s].lastShootTick >= rate && arena.seats[s].magazine > 0 && !arena.seats[s].reloading;
+    if (pad.fire && ready) Fire(arena, s, tick);
+    if (pad.reload && !arena.seats[s].reloading && arena.seats[s].magazine < arena.seats[s].settings.magazineSize)
+    {
+        arena.seats[s].reloading = true;
+        arena.seats[s].reloadLeft = arena.seats[s].settings.reloadTime;
+    }
+    if (arena.seats[s].reloading)
+    {
+        arena.seats[s].reloadLeft -= dt;
+        if (arena.seats[s].reloadLeft <= 0)
+        {
+            arena.seats[s].reloading = false;
+            arena.seats[s].magazine = arena.seats[s].settings.magazineSize;
+        }
+    }
+}
+
+void Shield(mut Arena arena, int s, float dt)
+{
+    if (arena.seats[s].shieldActive)
+    {
+        arena.seats[s].shieldTimer -= dt;
+        arena.seats[s].shieldActual += dt;
+        if (arena.seats[s].shieldTimer <= 0)
+        {
+            arena.seats[s].shieldActive = false;
+            arena.seats[s].shieldCooldown = arena.seats[s].settings.shieldCooldown;
+        }
+    }
+    else arena.seats[s].shieldCooldown = Math.Max(arena.seats[s].shieldCooldown - dt, 0);
+}
+
+void Die(mut Arena arena, int s)
+{
+    arena.seats[s].dead = true;
+    arena.seats[s].ragdollTimer = 0;
+    // It falls over, the way it was going: what a ragdoll does of itself there
+    var flat = float3(arena.seats[s].velocity.x, 0, arena.seats[s].velocity.z);
+    var way = Math.LengthSq(flat) > 0.01 ? Math.Normalize(flat) : -Math.Rotate(arena.seats[s].rotation, float3(0, 0, 1));
+    arena.seats[s].spin += Math.Cross(float3(0, 1, 0), way) * 4;
+    Send(Died { seat = s });
+}
+
+void Health(mut Arena arena, int s, float dt)
+{
+    if (!arena.seats[s].dead && arena.seats[s].position.y < FALL_DEATH)
+    {
+        arena.seats[s].health = 0;
+        Die(arena, s);
+        return;
+    }
+    if (arena.seats[s].health <= 0 && !arena.seats[s].dead)
+    {
+        arena.seats[s].health = 0;
+        Die(arena, s);
+    }
+    var poison = Math.Saturate(arena.seats[s].poisonLevel);
+    if (poison > 0 && arena.seats[s].timeSinceLastPoison > POISON_INTERVAL)
+    {
+        ChangeHealthDirectly(arena, s, -int(Math.Ceil(POISON_PER_SECOND * POISON_INTERVAL * poison)));
+        arena.seats[s].timeSinceLastPoison = 0;
+    }
+    arena.seats[s].timeSinceLastPoison += dt;
+    arena.seats[s].poisonLevel = Math.Max(arena.seats[s].poisonLevel - dt, 0);
+}
+
+// PlayerMovement.IsGrounded: a ball cast down from over the feet, which
+// finds the nearest ground under them and the steepest wall beside them.
+struct Footing
+{
+    bool grounded;
+    float distance;
+    float3 point;
+    float3 normal = float3(0, 1, 0);
+    int piece = -1;
+    bool wall;
+    float3 wallNormal;
+}
+
+Footing FindFooting(Arena arena, int s)
+{
+    mut var footing = Footing { };
+    var at = arena.seats[s].position;
+    var size = arena.seats[s].settings.size;
+    var radius = GROUND_CHECK_RADIUS * size;
+    var reach = FLOAT_HEIGHT * size;
+    var from = at + float3(0, reach + radius, 0);
+    var down = float3(0, -1, 0);
+    mut var best = 1000000.0;
+    mut var steepest = 0.0;
+    for (var i = 0; i < arena.pieces.count; i++)
+    {
+        if (!arena.pieces[i].solid || !Reaches(arena.pieces[i], from, down, reach, radius)) continue;
+        if (!SweepBox(from, down, reach, radius, arena.pieces[i].position, arena.pieces[i].rotation, arena.pieces[i].half, out var hit)) continue;
+        var angle = Math.Degrees(Math.Acos(Math.Clamp(hit.normal.y, -1, 1)));
+        if (angle > WALL_ANGLE)
+        {
+            if (!footing.wall || angle > steepest)
+            {
+                steepest = angle;
+                footing.wall = true;
+                footing.wallNormal = hit.normal;
+            }
+            continue;
+        }
+        var far = Math.Distance(hit.point, at);
+        if (far >= best) continue;
+        best = far;
+        footing.grounded = true;
+        footing.distance = far;
+        footing.point = hit.point;
+        footing.normal = hit.normal;
+        footing.piece = i;
+    }
+    return footing;
+}
+
+// PlayerMovement.Simulate.
+void Movement(mut Arena arena, int s, float dt)
+{
+    var wasGrounded = arena.seats[s].grounded;
+    var footing = FindFooting(arena, s);
+    arena.seats[s].grounded = footing.grounded;
+    if (footing.wall)
+    {
+        var normal = footing.wallNormal;
+        var velocity = arena.seats[s].velocity;
+        var slide = float3(0, -1, 0) - normal * Math.Dot(float3(0, -1, 0), normal);
+        var into = Math.Dot(velocity, -normal);
+        if (into > 0) arena.seats[s].velocity = velocity + normal * into;
+        arena.seats[s].push += slide * (GRAVITY * dt);
+    }
+    if (footing.grounded && !wasGrounded) arena.seats[s].jumpCount = 0;
+
+    mut var ground = float3(0);     // How fast what's stood on goes, at the feet
+    if (footing.grounded)
+    {
+        arena.seats[s].timeSinceGrounded = 0;
+        ground = PieceVelocity(arena.pieces[footing.piece], arena.movers, arena.blocks, footing.point);
+        // The floor under the map hurts whoever stands on it, and throws them up
+        if (arena.pieces[footing.piece].damageFloor)
+        {
+            ChangeHealth(arena, s, -arena.floorDamage);
+            Knockback(arena, s, float3(0, FLOOR_KNOCK, 0), float3(0, 1.5, 0), false, true);
+        }
+    }
+    else arena.seats[s].timeSinceGrounded += dt;
+
+    if (GravityLocked(arena)) return;
+    if (arena.seats[s].dead) arena.seats[s].ragdollTimer = 0;
+    if (arena.seats[s].ragdollTimer < RAGDOLL_TIME)
+    {
+        arena.seats[s].ragdollTimer += dt;
+        return;
+    }
+
+    var pad = arena.seats[s].pad;
+    mut var move = pad.move;
+    if (Math.Length(move) > 1) move = Math.Normalize(move);
+
+    // The body floats on a spring over the ground, and another holds it upright
+    if (footing.grounded)
+        arena.seats[s].push += float3(0, FLOAT_STRENGTH * Math.Saturate(footing.distance / FLOAT_HEIGHT) / BODY_MASS * dt, 0);
+    var up = BodyUp(arena, s);
+    var tilt = Math.Degrees(Math.Acos(Math.Clamp(up.y, -1, 1)));
+    var upright = Math.Normalize(Math.Cross(up, float3(0, 1, 0))) * (Math.Saturate(tilt / ANGLE_FOR_MAX) * ANGULAR_STRENGTH);
+    arena.seats[s].twist += (upright - arena.seats[s].spin * UPRIGHT_DAMPING) * dt;
+
+    var locked = Locked(arena, s);
+    var settings = arena.seats[s].settings;
+    var force = settings.speed * arena.seats[s].movementMultiplier * (footing.grounded ? 1 : 0.25);
+    if (!locked) arena.seats[s].push += float3(move.x, 0, move.y) * (force / BODY_MASS * dt);
+    mut var flat = float2(arena.seats[s].velocity.x, arena.seats[s].velocity.z);
+    if (arena.seats[s].uncapVelocity == 0)
+    {
+        var most = settings.maxVelocity * arena.seats[s].movementMultiplier;
+        if (Math.Length(flat) > most) flat = Math.Normalize(flat) * most;
+    }
+    arena.seats[s].velocity = float3(flat.x, arena.seats[s].velocity.y, flat.y);
+    if (Math.LengthSq(flat) > 0.01 && Math.LengthSq(pad.move) > 0)
+    {
+        var facing = quaternion.LookRotation(Math.Normalize(float3(pad.move.x, 0, pad.move.y)), float3(0, 1, 0));
+        arena.seats[s].rotation = Math.Slerp(arena.seats[s].rotation, facing, Math.Saturate(dt * 5));
+    }
+    // What it stands on carries it
+    if (footing.grounded)
+    {
+        var carried = ground - footing.normal * Math.Dot(ground, footing.normal);
+        arena.seats[s].position += carried * dt;
+    }
+
+    if (settings.hasJetpack && !locked)
+    {
+        if (!footing.grounded)
+        {
+            if (pad.jump && arena.seats[s].jetpackFuel > 0 && arena.seats[s].timeSinceJump > 0.2)
+            {
+                if (arena.seats[s].velocity.y < settings.maxVelocity) arena.seats[s].push += float3(0, settings.jetpackForce / BODY_MASS, 0);
+                arena.seats[s].jetpackFuel = Math.Max(arena.seats[s].jetpackFuel - dt, 0);
+            }
+        }
+        else if (arena.seats[s].jetpackFuel < settings.jetpackCapacity)
+            arena.seats[s].jetpackFuel = Math.Min(arena.seats[s].jetpackFuel + dt, settings.jetpackCapacity);
+    }
+
+    if (!locked && pad.jump && arena.seats[s].timeSinceJump > JUMP_COOLDOWN)
+    {
+        var coyote = arena.seats[s].jumpCount == 0 && arena.seats[s].timeSinceGrounded < JUMP_COYOTE;
+        var can = footing.grounded || (pad.jumpDown && settings.extraJumps > 0 && arena.seats[s].jumpCount < settings.extraJumps + 1);
+        if (can || coyote)
+        {
+            arena.seats[s].push += float3(0, settings.jumpForce, 0);
+            if (footing.grounded) arena.seats[s].push += ground;
+            arena.seats[s].timeSinceGrounded = JUMP_COYOTE;
+            arena.seats[s].timeSinceJump = 0;
+            arena.seats[s].jumpCount += 1;
+            Send(Jumped { seat = s, again = arena.seats[s].jumpCount > 1 });
+        }
+    }
+    arena.seats[s].timeSinceJump += dt;
+    var local = Math.Rotate(Math.Conjugate(arena.seats[s].rotation), arena.seats[s].velocity);
+    arena.seats[s].localVelocity = float2(local.x, local.z);
+}
+
+// A seat's body out of the map's boxes, and off them: where the capsule is in
+// one, it's put outside it and keeps none of its speed into it.
+void OutOfMap(mut Arena arena, int s, float radius)
+{
+    for (var round = 0; round < 3; round++)
+    {
+        mut var touched = false;
+        var low = CapsuleEnd(arena, s, COLLIDER_CENTER, COLLIDER_HEIGHT, COLLIDER_RADIUS, -1);
+        var high = CapsuleEnd(arena, s, COLLIDER_CENTER, COLLIDER_HEIGHT, COLLIDER_RADIUS, 1);
+        var started = arena.seats[s].position;
+        var reach = Math.Distance(low, high) * 0.5 + radius;
+        for (var i = 0; i < arena.pieces.count; i++)
+        {
+            if (!arena.pieces[i].solid) continue;
+            // Where the capsule is by now, after the boxes before this one
+            var moved = arena.seats[s].position - started;
+            var most = arena.pieces[i].radius + reach;
+            if (Math.DistanceSq((low + high) * 0.5 + moved, arena.pieces[i].position) > most * most) continue;
+            // The capsule's nearest point to the box: back and forth between the two
+            mut var on = (low + high) * 0.5 + moved;
+            mut var near = NearBox(on, arena.pieces[i].position, arena.pieces[i].rotation, arena.pieces[i].half);
+            for (var pass = 0; pass < 4; pass++)
+            {
+                on = NearOnSegment(near.point, low + moved, high + moved);
+                near = NearBox(on, arena.pieces[i].position, arena.pieces[i].rotation, arena.pieces[i].half);
+            }
+            var deep = radius - near.distance;
+            if (deep <= 0) continue;
+            touched = true;
+            arena.seats[s].position += near.normal * deep;
+            var relative = arena.seats[s].velocity - PieceVelocity(arena.pieces[i], arena.movers, arena.blocks, near.point);
+            var into = Math.Dot(relative, near.normal);
+            if (into < 0) arena.seats[s].velocity -= near.normal * into;
+        }
+        if (!touched) return;
+    }
+}
+
+// The body's step, once every seat has had its tick: PhysX's, for a capsule
+// with no friction and no bounce. Its pushes become speed, gravity and
+// damping are taken, and it moves, in steps no longer than half its radius,
+// out of whatever it meets.
+void Integrate(mut Arena arena, int s, float dt)
+{
+    if (GravityLocked(arena))
+    {
+        arena.seats[s].push = float3(0);
+        arena.seats[s].twist = float3(0);
+        return;
+    }
+    var size = arena.seats[s].settings.size;
+    var ragdoll = arena.seats[s].ragdollTimer < RAGDOLL_TIME;
+    var radius = (ragdoll ? RAGDOLL_RADIUS : COLLIDER_RADIUS) * size;
+    var damping = arena.seats[s].grounded ? GROUND_DAMPING : AIR_DAMPING;
+    mut var velocity = arena.seats[s].velocity + arena.seats[s].push + float3(0, -GRAVITY * dt, 0);
+    velocity = velocity * Math.Max(0, 1 - damping * dt);
+    arena.seats[s].velocity = velocity;
+    arena.seats[s].push = float3(0);
+
+    mut var spin = arena.seats[s].spin + arena.seats[s].twist;
+    spin = spin * Math.Max(0, 1 - (ragdoll ? RAGDOLL_ANGULAR_DAMPING : ANGULAR_DAMPING) * dt);
+    var fast = Math.Length(spin);
+    if (fast > MAX_ANGULAR_SPEED) spin = spin * (MAX_ANGULAR_SPEED / fast);
+    // A body that's down stays down: it turns no further than flat
+    if (ragdoll && BodyUp(arena, s).y < 0.05) spin = float3(0);
+    arena.seats[s].spin = spin;
+    arena.seats[s].twist = float3(0);
+    if (fast > 0.0001)
+        arena.seats[s].rotation = Math.Normalize(Math.Mul(quaternion.AxisAngle(spin / fast, Math.Min(fast, MAX_ANGULAR_SPEED) * dt), arena.seats[s].rotation));
+
+    var far = Math.Length(velocity) * dt;
+    var steps = Math.Clamp(int(Math.Ceil(far / (radius * 0.5))), 1, 24);
+    for (var step = 0; step < steps; step++)
+    {
+        arena.seats[s].position += arena.seats[s].velocity * (dt / steps);
+        OutOfMap(arena, s, radius);
+    }
+}
+
+// Two players' capsules are in each other's way: each is put half out of the
+// other, and they keep none of their speed into each other.
+void Apart(mut Arena arena, int a, int b)
+{
+    var sizeA = arena.seats[a].settings.size;
+    var sizeB = arena.seats[b].settings.size;
+    var radiusA = (arena.seats[a].ragdollTimer < RAGDOLL_TIME ? RAGDOLL_RADIUS : COLLIDER_RADIUS) * sizeA;
+    var radiusB = (arena.seats[b].ragdollTimer < RAGDOLL_TIME ? RAGDOLL_RADIUS : COLLIDER_RADIUS) * sizeB;
+    if (Math.DistanceSq(arena.seats[a].position, arena.seats[b].position) > 16 * (sizeA + sizeB) * (sizeA + sizeB)) return;
+    NearSegments(CapsuleEnd(arena, a, COLLIDER_CENTER, COLLIDER_HEIGHT, COLLIDER_RADIUS, -1),
+                 CapsuleEnd(arena, a, COLLIDER_CENTER, COLLIDER_HEIGHT, COLLIDER_RADIUS, 1),
+                 CapsuleEnd(arena, b, COLLIDER_CENTER, COLLIDER_HEIGHT, COLLIDER_RADIUS, -1),
+                 CapsuleEnd(arena, b, COLLIDER_CENTER, COLLIDER_HEIGHT, COLLIDER_RADIUS, 1), out var onA, out var onB);
+    var between = onA - onB;
+    var gap = Math.Length(between);
+    var deep = radiusA + radiusB - gap;
+    if (deep <= 0) return;
+    var normal = gap > 0.0001 ? between / gap : float3(1, 0, 0);
+    arena.seats[a].position += normal * (deep * 0.5);
+    arena.seats[b].position -= normal * (deep * 0.5);
+    var closing = Math.Dot(arena.seats[a].velocity - arena.seats[b].velocity, normal);
+    if (closing >= 0) return;
+    arena.seats[a].velocity -= normal * (closing * 0.5);
+    arena.seats[b].velocity += normal * (closing * 0.5);
+}
+
+// A jump pad throws a player the tick they come into it. One they're in as
+// the map comes up throws nobody: the body is held then, as a kinematic one
+// takes no force, and they're in it already once it's let go.
+void Pads(mut Arena arena, int s, bool held)
+{
+    mut var inside = 0;
+    mut var pad = 0;
+    for (var i = 0; i < arena.pieces.count; i++)
+    {
+        if (!arena.pieces[i].jumpPad) continue;
+        var bit = 1 << (pad & 31);
+        pad += 1;
+        var size = arena.seats[s].settings.size;
+        var reach = arena.pieces[i].radius + (HITBOX_HEIGHT + HITBOX_RADIUS) * size;
+        if (Math.DistanceSq(arena.seats[s].position, arena.pieces[i].position) > reach * reach) continue;
+        var low = CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, -1);
+        var high = CapsuleEnd(arena, s, HITBOX_CENTER, HITBOX_HEIGHT, HITBOX_RADIUS, 1);
+        mut var on = (low + high) * 0.5;
+        mut var near = NearBox(on, arena.pieces[i].position, arena.pieces[i].rotation, arena.pieces[i].half);
+        for (var pass = 0; pass < 4; pass++)
+        {
+            on = NearOnSegment(near.point, low, high);
+            near = NearBox(on, arena.pieces[i].position, arena.pieces[i].rotation, arena.pieces[i].half);
+        }
+        if (near.distance > HITBOX_RADIUS * size) continue;
+        inside |= bit;
+        if ((arena.seats[s].inPads & bit) != 0 || held) continue;
+        Knockback(arena, s, arena.pieces[i].force, float3(0, 1, 0), true, false);
+        Send(PadUsed { piece = i });
+    }
+    arena.seats[s].inPads = inside;
+}

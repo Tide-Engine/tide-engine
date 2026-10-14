@@ -29,6 +29,7 @@ component Unit
 ```
 
 - A value is written like a component's: `Stats { health = 50 }`. Fields left out take their defaults.
+- A field that may be missing is a `T?`, like `int? target;`. It starts with nothing (see [Errors](./errors.md#fields-that-may-be-missing)).
 - Components, singletons, inputs and other structs can hold structs, and so can locals. System parameters stay components, singletons, the input and `Devices`.
 - A struct can't contain itself, even through other structs.
 
@@ -36,7 +37,7 @@ A struct's fields change through whatever holds it, so the signature still says 
 
 ## Methods
 
-Structs and components can have methods. Their fields are in scope by name, and so are their other methods. A method only reads the fields, unless it's `mut`:
+Structs, components and singletons can have methods. Their fields are in scope by name, and so are their other methods. A method only reads the fields, unless it's `mut`:
 
 ```csharp
 struct Stats
@@ -60,7 +61,7 @@ system Burn(mut Unit unit)
 
 Calling a `mut` method changes what it's called on, so it needs write access, like an assignment: `unit.stats.Hurt(1)` needs `mut Unit unit`. A read-only method can't call a `mut` one.
 
-Singletons and inputs have no methods of their own: keep the data and its methods in a struct, and the struct in them.
+Singleton methods use their explicit receiver and have no entity `this`, implicit world access or local sidecar fields. Inputs have only `Sample`, `Sanitize` and `Predict`.
 
 A method marked `virtual` can be replaced by another package, and so can a function: see [Virtual and override](overrides.md).
 
@@ -83,13 +84,13 @@ system Regenerate(mut Unit unit)
 
 - A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
 - Parameters are built-in types, structs, components and singletons, and an argument's type matches exactly. Return values are built-in types, structs and components; singleton return values aren't supported.
-- A function returns a value on every path, unless it returns `void`.
+- A function returns a value on every path, unless it returns `void`. The check follows conditions known while compiling, including named bool constants and comparisons of constant integers: `if (true) return 1;` covers its only path. A loop whose condition is always true and has no reachable `break` can't end without returning.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
 - A parameter can have a default value, a call can pass arguments by name, and functions can share a name: see [Default values, names and overloads](#default-values-names-and-overloads).
 - A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
-Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. To read another entity's component, a function takes the [`World`](../game/systems.md#other-entities-the-world), which the system that calls it passes its own. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
+Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, and start tasks, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
@@ -110,13 +111,124 @@ system AdvanceRound(mut Round round)
 }
 ```
 
-Methods take explicit singleton parameters by the same value and `mut` rules. Singletons still have no methods of their own.
+Methods take explicit singleton parameters and receivers by the same value and `mut` rules.
 
 A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
 
-Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
+Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
+
+### A value nobody takes
+
+A call written as a statement, whose function gives a value and does nothing else, is a warning: the value is lost, and the call with it. It's usually a method that gives a changed copy, taken for one that changes its value:
+
+```csharp
+request.SetHeader("Accept", "text/plain");            // Warning: 'SetHeader' gives a value that nothing takes
+request = request.SetHeader("Accept", "text/plain");  // Keeps it
+_ = request.SetHeader("Accept", "text/plain");        // Drops it, on purpose
+```
+
+`_ = value;` works anything out and drops it. A call that does something besides giving its value (it sends, spawns, draws, calls C, or changes a `mut` argument or its own value) is a statement as it always was, and so is one that can fail, which has a warning of its own.
+
+## Sending and spawning
+
+A function or a method can `Send`, `Spawn`, `Add`, `Remove` and `Destroy`, written as a system writes them. It does it as the code that calls it: what a system could do itself, a function it calls can do for it.
+
+```csharp
+event Sank { int2 at; }
+event Hit { int damage; }
+
+component Crate { int from; }
+
+// Says what happened as it happens
+bool Step(mut Board board)
+{
+    board.at += int2(1, 0);
+    if (board.at.x < board.width) return true;
+    Send(Sank { at = board.at });
+    return false;
+}
+
+Entity Drop(int from)
+{
+    return Spawn(Crate { from = from });
+}
+
+void Hurt(Entity target, int damage)
+{
+    target.Send(Hit { damage = damage });
+}
+
+system Play(mut Kitchen kitchen)
+{
+    if (!Step(kitchen.board)) kitchen.last = Drop(kitchen.round);
+}
+```
+
+Nothing is wrong with such a function by itself. A call is an error only from a place that couldn't do the same thing itself, and the error names the line in the function that does it:
+
+| The function | Who can call it |
+| --- | --- |
+| Sends a match event, or spawns or changes the match's entities | Match systems, event handlers, command handlers and the match's tasks |
+| Sends a local event or a [command](../game/commands.md), or spawns or changes local entities | Views, local handlers and this machine's tasks |
+| Does neither | Anything, as before |
+
+```csharp
+view Hud(Kitchen kitchen)
+{
+    Drop(1); // Error: a view can't change the match, and 'Drop' spawns entities
+}
+```
+
+- **It follows calls.** A function that calls one that sends counts as sending too, through however many.
+- **Which world** is told by what's written: a match event or a local one, an `Entity` or a `LocalEntity`, the match's components or local ones. A `Spawn` with no components is the match's.
+- **A function has no `this`.** It takes the entity as a parameter, `Entity target`, and writes `target.Send(...)`. A component's method has `this`, the entity it's called for.
+- **What it spawns joins the scene of the entity its caller runs for**, as the caller's own spawns do.
+- **Its calls keep their order.** What a function sends is recorded where it's called, among what the caller sends itself, and `Total(First(), Second())` runs `First` first.
+- **What was sent stays sent.** A function that tries a move and takes it back should send once the move is certain.
+- **Threads change nothing.** A system that splits its entities across threads calls such functions as it sends and spawns itself (see [The schedule](../game/schedule.md#splitting-across-threads)).
+
+Some code never sends or spawns, whoever calls it: a `Sort`'s comparison and a `parallel` loop's step, the input's `Sample`, `Sanitize` and `Predict`, frags and verts, a struct's operators and a component's `Interpolate`. A call there of a function that does is the error.
+
+### Starting a task
+
+A function or a method starts a [task](../game/tasks.md) the same way, by calling an async function as a statement, and the same rule holds: it starts it as the code that calls it could.
+
+```csharp
+singleton Round
+{
+    int left;
+}
+
+async void Countdown(mut Round round, int from)
+{
+    for (var i = from; i > 0; i--)
+    {
+        round.left = i;
+        await Wait.Seconds(1);
+    }
+    round.left = 0;
+}
+
+// Any system or handler of the match can call this
+void Restart(mut Round round)
+{
+    Countdown(round, 3); // Starts a task; Restart doesn't wait for it
+}
+
+system Rounds(mut Round round, Controls controls)
+{
+    if (controls.restart && round.left == 0) Restart(round);
+}
+```
+
+- **Which world** is the task's own: a function that starts a task that changes the match is the match's to call, and one whose task uses local state is a view's, a local handler's or a local task's. A call from the other side is the error, and it names the task and the line that starts it. A task that does neither starts in the world of whatever calls the function, so one function serves both.
+- **Whom the task belongs to** is the entity the calling code runs for, through however many functions: it ends when that entity is destroyed, and what it spawns joins that entity's scene.
+- **A task's singleton is the caller's own.** A task gets its singletons again each time it goes on, so `Restart` hands on the `Round` it was handed, and every call of `Restart` passes a parameter of its own, never a copy. A component isn't handed on this way: start a task that takes one from the system, view or handler that has it.
+- **Its calls keep their order,** and a system that calls such a function starts its tasks in order, on one thread, as one that starts them itself.
+
+The code that never sends never starts a task either.
 
 ## Default values, names and overloads
 
@@ -194,7 +306,7 @@ system Halve(mut Pile pile, mut Tally tally)
 **In the function**, an `out` parameter starts with no value: what the caller's variable held isn't passed in.
 
 - The code assigns it before it reads it, and on every path that returns. A path that has nothing to give assigns `default`.
-- An `if` assigns it when both sides do. The right of `&&` and `||` only runs sometimes, and a loop may run no rounds, so what only they assign doesn't count after them.
+- An `if` assigns it when both sides do, or when the only side a constant condition can reach does. The right of `&&` and `||` only runs sometimes, and a loop may run no rounds, so what only they assign doesn't count after them unless its constant condition guarantees that path runs.
 - Passing it on as another call's `out` argument assigns it: `return scores.TryGet(key, out score);`.
 - A struct can be assigned a field at a time: it has a value once each of its fields does, and a field is read once it's assigned. `pair.a = 1; pair.b = 2;` fills a `Pair`, and reading `pair.b` between the two is an error. A vector or a color is assigned whole: `v.x = 1` before `v = ...` reads a `v` that has no value yet.
 - In a function that [fails](./errors.md), `fail` doesn't have to assign it. After a call that failed, the caller's variable is what the function assigned before it failed, or its type's default.
@@ -210,6 +322,7 @@ system Halve(mut Pile pile, mut Tally tally)
 
 - A local declared this way is read-only, like a `var`. `out mut var half` declares one the code changes later.
 - It belongs to the block the call's statement is in. Declared in an `if`'s condition, it's still there in the `else` and after the `if`. Declared in a `while`'s or a `for`'s condition, it's the loop's own.
+- Later elements and arguments can read what an earlier nested call made, including a call inside a list argument. Their order is the order written, even when arguments are named or the outer function has overloads.
 - It's only read where its call has run. In `if (ready && TryHalf(8, out var half))`, `half` has a value inside the `if`, and reading it after the `if` is an error, since `ready` may have been false.
 - The type matches exactly, as for `mut`, and by name the name comes first: `TryHalf(value: 8, half: out var h)`.
 - A list's element and a swizzle of several components (`v.xy`) are copies, so neither can be an `out` argument: declare a variable, and put it in.
@@ -243,6 +356,7 @@ system Count(mut Counter counter, mut Log log)
 - Arguments passed by name go in the order written too, whatever order the parameters are in: in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`.
 - A value is read where it's written. A read-only argument is a copy made then, a list too.
 - A method reads the value it's called on as it runs, once its arguments are worked out: `stats.Plus(stats.Bump())` sees what `Bump` left. An element is read once its index is worked out.
+- A read-only method's receiver follows the same copy rules as a read-only argument: if a `mut` or `out` argument changes its lists or maps during the call, the method still reads its original copy.
 - The right of `&&` and `||` and the sides of `?:` still only run when they would.
 - A list's, map's or set's change that gives a value (`items.Remove(x)`, `seen.Add(key)`) counts as a call that changes it.
 
@@ -289,7 +403,7 @@ view Options(mut Menu menu, mut Settings settings, Session session)
 }
 ```
 
-Anything that takes a block can be in the list: the GUI's containers, [draw settings](../game/views.md#draw-settings) like `Draw.Blend(Blend.Add)`, and functions of your own. The first call is set up first and finished last. A call that takes no block doesn't belong in one, and the compiler says so; and since it's the comma that makes a list, a call that's only missing its `;` is still reported as that.
+Anything that takes a block can be in the list: the GUI's containers, [draw settings](../game/draw-settings.md) like `Draw.Blend(Blend.Add)`, and functions of your own. The first call is set up first and finished last. A call that takes no block doesn't belong in one, and the compiler says so; and since it's the comma that makes a list, a call that's only missing its `;` is still reported as that.
 
 ## Operators
 

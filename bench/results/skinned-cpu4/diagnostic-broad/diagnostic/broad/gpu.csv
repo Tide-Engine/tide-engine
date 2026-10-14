@@ -1,0 +1,8 @@
+timestamp, uuid, pstate, clocks.current.graphics [MHz], clocks.current.memory [MHz], utilization.gpu [%], power.draw [W], temperature.gpu
+2026/10/10 23:17:51.510, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P8, 210, 405, 20, 12.75, 35
+2026/10/10 23:17:51.768, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2550, 11501, 21, 12.76, 35
+2026/10/10 23:17:52.032, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2550, 11501, 21, 12.76, 35
+2026/10/10 23:17:52.297, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2550, 11501, 45, 31.42, 40
+2026/10/10 23:17:52.563, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2550, 11501, 45, 31.42, 40
+2026/10/10 23:17:52.827, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 26, 74.35, 42
+2026/10/10 23:17:53.093, GPU-5a5bb4d7-5d0c-aa4c-d6ff-ff6b959af97f, P0, 2820, 11501, 26, 74.35, 42

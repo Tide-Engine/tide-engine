@@ -16,7 +16,7 @@ static void frame(void)
     tide_draw_reset(&draw);
     tide_pointer_poll(&devices, true); // As the platform polls it: the pointer follows the mouse
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     devices.keyboard.text.count = 0;
 }
@@ -127,9 +127,9 @@ TIDE_TEST(gui_entities_have_their_own_widgets)
 {
     start();
     TIDE_REQUIRE(click("Tag", 1));
-    const Tag first = tide_get_Tag(&local, (tide_entity){1, 1});
-    const Tag second = tide_get_Tag(&local, (tide_entity){2, 1});
-    TIDE_REQUIRE(tide_has_Tag(&local, (tide_entity){1, 1}) && tide_has_Tag(&local, (tide_entity){2, 1}));
+    const Tag first = tide_get_tide_local_component_Tag(&local, (tide_entity){1, 1});
+    const Tag second = tide_get_tide_local_component_Tag(&local, (tide_entity){2, 1});
+    TIDE_REQUIRE(tide_has_tide_local_component_Tag(&local, (tide_entity){1, 1}) && tide_has_tide_local_component_Tag(&local, (tide_entity){2, 1}));
     TIDE_CHECK(first.clicks == 0);
     TIDE_CHECK(second.clicks == 1);
 }

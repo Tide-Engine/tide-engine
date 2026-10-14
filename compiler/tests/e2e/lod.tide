@@ -1,0 +1,136 @@
+// Levels of detail: mesh assets marked [LOD], drawn near and far, through
+// the settings that name a level or a camera to pick by, into a target, as
+// instances and through a frag. What each draw has to record is in
+// lod_test.c.
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+[LOD] asset Mesh<Vertex3> ball = "assets/lod/ball.glb";
+asset Mesh<Vertex3> whole = "assets/lod/ball.glb";              // The same file with no levels: another mesh
+[LOD] asset Mesh<Corner> lit = "assets/lod/ball.glb";
+[LOD] asset Mesh<Vertex3> simple = "assets/meshes/quad.glb";    // Two triangles: there's nothing to take
+[LOD] asset Mesh<Vertex3> light = "assets/lod/light.glb";       // 960 triangles: too few for a level to pay
+[LOD] asset List<Mesh<Vertex3>> many = "assets/lod/ball.glb";
+[LOD] asset Map<string, Mesh<Vertex3>> named = "assets/lod/b*.glb";
+[LOD] asset SkinnedMesh<Corner> arm = "assets/lod/arm.glb";
+
+singleton Seen
+{
+    int corners;
+    int indices;
+    int wholeIndices;
+    int armIndices;
+}
+
+// Code reads the full mesh, whatever its draws pick
+system Count(mut Seen seen)
+{
+    seen.corners = ball.vertices.count;
+    seen.indices = ball.indices.count;
+    seen.wholeIndices = whole.indices.count;
+    seen.armIndices = arm.indices.count;
+}
+
+local singleton Art
+{
+    RenderTarget shadow;
+    List<float4x4> places;
+    int mode;
+}
+
+frag Shade(Corner corner, out Color color)
+{
+    color = Color(corner.normal.x, corner.normal.y, corner.normal.z);
+}
+
+float4x4 At(float z)
+{
+    return float4x4.Translate(float3(0, 0, z));
+}
+
+view Show(mut Art art)
+{
+    Draw.SetCamera(float3(0, 0, 0), quaternion.identity, 60);
+    if (art.places.count == 0)
+    {
+        art.places.Add(At(900));
+        art.places.Add(At(2));
+        art.places.Add(At(6));
+        art.places.Add(At(950));
+        art.places.Add(At(2.5));
+    }
+    switch (art.mode)
+    {
+        case 0: // Each draw picks, by how far it is
+            Draw.Mesh(ball, At(2));
+            Draw.Mesh(ball, At(6));
+            Draw.Mesh(ball, At(900));
+            Draw.Mesh(whole, At(900));
+            Draw.Mesh(simple, At(900));
+            Draw.Mesh(light, At(900));
+            Draw.Mesh(ball.vertices, ball.indices, At(900)); // The same draw as the Mesh's
+            Draw.Mesh(many[0], At(900));
+            Draw.Mesh(named["assets/lod/ball.glb"], At(900));
+            break;
+        case 1: // The instances of a draw, each its own
+            Draw.Instanced(ball, art.places);
+            break;
+        case 2: // Through a frag, alone and as instances
+            Draw.Mesh(lit, At(2), Shade);
+            Draw.Mesh(lit, At(900), Shade);
+            Draw.Instanced(lit, art.places, Shade);
+            break;
+        case 3: // A level by its number
+            Draw.LOD(0)
+            {
+                Draw.Mesh(ball, At(900));
+            }
+            Draw.SetLOD(1);
+            Draw.Mesh(ball, At(2));
+            Draw.LOD(99)
+            {
+                Draw.Mesh(ball, At(2));
+                Draw.LOD()
+                {
+                    Draw.Mesh(ball, At(2));
+                }
+            }
+            Draw.Instanced(ball, art.places);
+            Draw.SetLOD();
+            Draw.Mesh(ball, At(2));
+            break;
+        case 4: // A target picks by its own camera and pixels, or by the camera it's told
+            art.shadow.SetCamera(float3(0, 0, 0), quaternion.identity, 60);
+            art.shadow.Mesh(ball, At(2));
+            art.shadow.SetLODCamera(float3(0, 0, 0), quaternion.identity, 60);
+            art.shadow.Mesh(ball, At(2));
+            art.shadow.LODCamera(Draw.CameraTransform(), Draw.CameraProjection())
+            {
+                art.shadow.Mesh(ball, At(6));
+                art.shadow.LODCamera()
+                {
+                    art.shadow.Mesh(ball, At(6));
+                }
+            }
+            art.shadow.SetLODCamera();
+            art.shadow.LOD(2)
+            {
+                art.shadow.Mesh(ball, At(2));
+            }
+            art.shadow.Mesh(ball, At(2));
+            break;
+        case 5: // A skinned mesh, at rest
+            Draw.SkinnedMesh(arm, At(2.2));
+            Draw.SkinnedMesh(arm, At(900));
+            break;
+    }
+}
+
+scene Main
+{
+}

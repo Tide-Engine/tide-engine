@@ -48,6 +48,8 @@ const int MAX_HEALTH = 100;
 asset Texture logo = "logo.png";
 [Filter(Filter.Point)] asset Grid2<Color> tiles = "tiles.png";
 asset Map<string, Texture> frames = "run/*.png";
+asset Mesh<Corner> tree = "art/tree.glb";
+asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";
 audio Echo(mut Samples samples, mut Counter counter) { }
 
 struct Stats
@@ -74,9 +76,9 @@ system Steer(PlayerInput input, List<int> events)
 
 // Both orders of local and async.
 local event Shown { }
-local component Toast { float alpha; }
+component Toast { float alpha; }
 async local event(Shown) Fade(mut Toast toast) { }
-local async event(Shown) Glow(mut Toast toast) { }
+local async event(Shown) Glow(mut local Toast toast) { }
 async void Countdown() { await Wait.Seconds(1); }
 
 // fails after the parameters, or on a line of its own.
@@ -174,6 +176,12 @@ void Escapes()
     string braces = $"{{ {value:F2} }}";
     string lone = $"a } b";
     string badValue = $"tab \t {value}";
+    char letter = 'a';
+    char quote = '\'';
+    char tab = '\t';
+    char wrong = '\q';
+    bool same = letter == 'é' && quote != '"';
+    char brace = '{';
 }
 
 // Directives.
@@ -216,6 +224,16 @@ component Mesh
 }
 view Bake(mut Mesh mesh) { var local = mesh.local; }
 
+// Fields that are a T?: a value or nothing.
+struct Wish
+{
+    string? wished;
+    List<int>? wishes = null;
+    Combat.Stats? granted;
+    float3? toward = float3(0, 1, 0);
+}
+void Grant(mut Wish wish) { wish.wished = null; var count = wish.wishes ?? []; if (wish.granted is Combat.Stats stats) { } }
+
 // Frags and verts: their words start a declaration, and are names anywhere else.
 frag Shade(BoxVertex vertex, out Color color, Box box)
 {
@@ -245,6 +263,20 @@ async void SaveBytes(List<byte> bytes) fails IOError
     fail IOError.OutOfSpace;
 }
 
+// JSON as a struct, and text as bytes, pieces and numbers.
+struct LobbyInfo
+{
+    [Json("max_players")] int maxPlayers;
+}
+
+string Answer(string text)
+{
+    var info = Json.Read<LobbyInfo>(text) ?? LobbyInfo { };
+    var all = Json.Read<List<LobbyInfo>>(text.ToBytes()) ?? [];
+    if (int.TryParse(text.Split(",")[0], out var count)) return Json.Write(all);
+    return string.FromBytes(text.ToBytes()) ?? Json.Write(info);
+}
+
 // A query is a second entity set in a system header, and a normal name elsewhere.
 system BulletHits(Body shot, query (Body body, with Fighter, without Ghost) fighters, Time time)
 {
@@ -265,7 +297,7 @@ system QueriesAcrossLines(
 view ShadowsOfFighters(Body body, query (Platform box, without Ghost) platforms) { }
 view SureOfFighters(query (Body mine, verified Health sure, with verified Fighter) both) { }
 local event(Hit hit) ShowHitNear(Body body, query (Body other, with Fighter) fighters) { }
-local event(verified Died) ShowDeathNear(mut Toast toast, query (Spark spark) sparks) { }
+local event(verified Died) ShowDeathNear(mut local Toast toast, query (Spark spark) sparks) { }
 int query(int value) { return value; }
 int QueryName(int query) { return query; }
 void CallQuery() { var answer = query(1); }
@@ -298,9 +330,9 @@ view ConfirmedAcrossLines(
     without verified Dead)
 {
 }
-local event(verified Died died) ShowDeath(Body body, mut Toast toast) { }
-local event(verified Combat.Died) CountDeath(mut Toast toast) { }
-local event(verified) HearVerified(mut Toast toast) { }
+local event(verified Died died) ShowDeath(Body body, mut local Toast toast) { }
+local event(verified Combat.Died) CountDeath(mut local Toast toast) { }
+local event(verified) HearVerified(mut local Toast toast) { }
 view Trusted(verified trust, with verified) { }
 int Checked(Stats? verified) { if (verified is Stats checked) return Twice(verified, verified); }
 struct Proof
@@ -347,8 +379,8 @@ void Halving(
 
 // virtual and override, with local and async, and the name an override is
 // written with: a namespace's, or a method's type.
-virtual system Drift(mut Toast toast) { }
-virtual local async event(Shown) Blink(mut Toast toast) { }
+virtual system Drift(mut local Toast toast) { }
+virtual local async event(Shown) Blink(mut local Toast toast) { }
 override system Combat.Drive(mut Toast toast) { }
 override view Combat.Hud.Bar(Toast toast) { }
 override local event(Shown) Combat.Flash(mut Toast toast) { }
@@ -364,7 +396,7 @@ struct Probed
     virtual bool IsGone() { return health <= 0; }
     virtual mut void Drain(float amount) { health -= amount; }
 }
-system Words(mut Toast toast)
+system Words(mut local Toast toast)
 {
     var virtual = 1;
     var override = virtual + 1;
@@ -382,4 +414,14 @@ namespace ProbeBlocks.Inner
     {
         system InDeeper(mut InBlock body) { }
     }
+}
+
+// Shared components select local storage at placement and access.
+view LocalPlacement(local mut Toast toast, World world) { local Spawn(Toast); }
+view LocalQuery(query (local Toast toast) toasts) { }
+
+input PredictedControls
+{
+    [DontPredict] bool jump;
+    Predict() { jump = false; }
 }
