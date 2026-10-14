@@ -37,6 +37,9 @@ elseif(TIDE_ANDROID)
     list(APPEND TIDE_PLATFORM_SOURCES android/activity.c android/audio.c)
 else()
     include("${PROJECT_SOURCE_DIR}/cmake/GLFW.cmake")
+    if(APPLE)
+        include("${PROJECT_SOURCE_DIR}/cmake/MoltenVK.cmake") # Vulkan on Metal, beside the programs
+    endif()
     list(APPEND TIDE_PLATFORM_SOURCES desktop/glfw.c desktop/gl.c desktop/audio.c)
 endif()
 
@@ -607,6 +610,14 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     set_tests_properties(tide_platform_pipeline_cache PROPERTIES TIMEOUT 300)
     tide_gpu_test(tide_platform_pipeline_cache)
     set_property(TEST tide_platform_pipeline_cache APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan)
+
+    if(APPLE)
+        # MoltenVK beside the programs loads and makes a Vulkan instance with the
+        # window's extensions: no window or GPU, so CI's Macs run it
+        add_executable(tide_platform_moltenvk tests/moltenvk.c)
+        target_include_directories(tide_platform_moltenvk PRIVATE third_party)
+        add_test(NAME tide_platform_moltenvk COMMAND tide_platform_moltenvk)
+    endif()
 
     # The cursor's lock on desktop: only a window with the focus holds it, and
     # a test's window, hidden, never has it. It needs a desktop session, as

@@ -92,6 +92,8 @@ A web page draws with WebGPU where the browser has it on a GPU, and with WebGL 2
 
 A desktop game draws with Vulkan where the machine has a Vulkan 1.3 driver, and with OpenGL 3.3 where it doesn't; games draw the same with either, and nothing in a game says which. The `TIDE_BACKEND` environment variable picks one for a run: `TIDE_BACKEND=opengl`, or `TIDE_BACKEND=vulkan`, which ends the program with a message where there's no Vulkan rather than falling back.
 
+On a Mac, Vulkan is MoltenVK, Vulkan on Metal: `tide build` puts `libMoltenVK.dylib` beside the game, which uses it where the Mac has no Vulkan loader of its own. Ship it with the game; its license is in the tide package's `licenses/moltenvk`.
+
 An Android game draws with Vulkan where the device has Vulkan 1.3, and with OpenGL ES 3 where it doesn't. An app started with `adb shell am start` takes the same choice as an extra of its intent: `--es tide.backend opengl` or `--es tide.backend vulkan`.
 
 ### Stats
