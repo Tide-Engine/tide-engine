@@ -1,8 +1,10 @@
 // MoltenVK beside this build's programs (cmake/MoltenVK.cmake), as a macOS
 // game has it beside itself: it loads, has what a window draws with
-// (VK_KHR_surface and VK_EXT_metal_surface), and makes an instance that lists
-// its devices (VK_KHR_portability_enumeration). That needs no window and no
-// GPU, so it runs where the GPU tests can't (CI's Macs). The devices it finds
+// (VK_KHR_surface and VK_EXT_metal_surface), and makes an instance with them.
+// VK_KHR_portability_enumeration is the Vulkan loader's: MoltenVK used
+// directly, as here, has none, and lists its devices without it; gpu_vk.c
+// asks for it only where it's listed. That needs no window and no GPU, so it
+// runs where the GPU tests can't (CI's Macs). The devices it finds
 // it describes, as the renderer would weigh them (gpu_vk.c), without needing
 // any.
 
@@ -54,13 +56,17 @@ int main(void)
     VkExtensionProperties extensions[128];
     uint32_t count = 128;
     if (extensions_of(NULL, &count, extensions) < 0) count = 0;
-    static const char *const needed[] = {VK_KHR_SURFACE_EXTENSION_NAME, "VK_EXT_metal_surface", "VK_KHR_portability_enumeration"};
+    static const char *needed[3] = {VK_KHR_SURFACE_EXTENSION_NAME, "VK_EXT_metal_surface"};
+    uint32_t needed_count = 2;
     int failed = 0;
-    for (size_t i = 0; i < sizeof needed / sizeof needed[0]; i++) {
+    for (size_t i = 0; i < 2; i++) {
         const bool has = listed(extensions, count, needed[i]);
         printf("%s: the instance has %s\n", has ? "ok" : "FAIL", needed[i]);
         failed += !has;
     }
+    const bool portability = listed(extensions, count, "VK_KHR_portability_enumeration");
+    printf("portability enumeration: %s\n", portability ? "the instance has it, as through a loader" : "none, as MoltenVK alone has");
+    if (portability) needed[needed_count++] = "VK_KHR_portability_enumeration";
     if (version < VK_API_VERSION_1_3) {
         printf("FAIL: the renderer needs Vulkan 1.3\n");
         failed++;
@@ -68,8 +74,9 @@ int main(void)
     if (failed) return 1;
 
     const VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, NULL, "Tide", 1, "Tide", 1, VK_API_VERSION_1_3};
-    const VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, NULL, 0x00000001, // ENUMERATE_PORTABILITY
-                                       &app, 0, NULL, 3, needed};
+    const VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, NULL,
+                                       portability ? 0x00000001u : 0u, // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
+                                       &app, 0, NULL, needed_count, needed};
     VkInstance instance = VK_NULL_HANDLE;
     const VkResult made = create(&info, NULL, &instance);
     printf("%s: MoltenVK makes an instance with the window's extensions (%d)\n", made == VK_SUCCESS ? "ok" : "FAIL", (int)made);
