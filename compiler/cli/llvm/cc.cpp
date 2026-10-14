@@ -3,7 +3,8 @@
 //
 // `tide cc <clang arguments>` works like clang: its driver runs in this
 // process, compiles in it (as clang does by default), and links with lld in it
-// too, instead of running a linker program. clang's own main isn't in a
+// too, instead of running a linker program, but for a Mac's own programs,
+// which Apple's linker links (link_apple). clang's own main isn't in a
 // library, so this is a small version of it (clang/tools/driver in LLVM).
 
 #include "cc.h"
@@ -34,6 +35,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Process.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
@@ -167,8 +169,36 @@ static int cc1(llvm::ArrayRef<const char *> args, const char *self)
 // ---------------------------------------------------------------------------
 // Linking: the driver's link command, run by lld in this process
 
+#ifdef __APPLE__
+// A Mac's program is linked by Apple's own linker, from the command line tools
+// tide already needs for the SDK: /usr/bin/ld runs the one of the developer
+// folder xcode-select names. It reads the SDK's stubs (.tbd) whatever
+// targets they list, where lld rejects a stub that lists one it doesn't know,
+// and with it everything that stub defines: Apple's SDKs from October 2026
+// list arm64e.x1, which LLVM 23's lld doesn't, so every game failed to link.
+// clang's driver writes ld64's arguments for it, as it does for lld.
+static const char apple_ld[] = "/usr/bin/ld";
+
+static int link_apple(const llvm::opt::ArgStringList &args)
+{
+    std::vector<llvm::StringRef> argv{"ld"};
+    for (const char *arg : args) argv.push_back(arg);
+    std::string error;
+    bool failed = false;
+    const int code = llvm::sys::ExecuteAndWait(apple_ld, argv, std::nullopt, {}, 0, 0, &error, &failed);
+    if (failed) {
+        llvm::errs() << "tide: error: Apple's linker (" << apple_ld << ") didn't run: " << error << "\n";
+        return 1;
+    }
+    return code;
+}
+#endif
+
 static int link(const llvm::Triple &triple, const llvm::opt::ArgStringList &args)
 {
+#ifdef __APPLE__
+    if (triple.isOSDarwin() && llvm::sys::fs::can_execute(apple_ld)) return link_apple(args);
+#endif
     // lld picks its flavor from the program's name, as the driver would have
     // run it; ld.lld also links MinGW, which the driver asks for with -m.
     const char *name = triple.isWasm()                        ? "wasm-ld"
