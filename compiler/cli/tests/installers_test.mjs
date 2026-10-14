@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
+import test, { before } from 'node:test';
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const payload = 'installer regression package';
@@ -189,6 +189,44 @@ else
     printf '{"op":"editors"}\n' >> "$TEST_LOG"
 fi
 `;
+
+// Windows PowerShell's first start on a machine loads and checks the
+// assemblies its module imports, its JSON cmdlets (System.Web.Extensions)
+// and its file and hash cmdlets use, which a fresh hosted runner, with 2 CPUs
+// and other tests beside it, did in 20 seconds and more, its process all but
+// idle: waiting on the disk and the machine's scanner, not running. Later
+// processes take a second. That's the runner's, not the installer's, and the
+// cases' 30-second guard measured it in whichever case came first (Build runs
+// 38623397915, 38637433618). So one process does all of it first, with a guard
+// of its own for a real hang, and the cases' guard measures the installer.
+if (shells.includes('powershell')) before(() => {
+    const work = mkdtempSync(join(tmpdir(), 'tide-installers-warm-'));
+    try {
+        const warm = String.raw`
+$ErrorActionPreference = 'Stop'
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
+Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'))
+Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'))
+$file = Join-Path $env:TEST_WORK 'warm.json'
+@{ warm = @(1, 'two') } | ConvertTo-Json -Compress -Depth 8 | Add-Content $file
+$null = Get-Content $file -Raw | ConvertFrom-Json
+$null = Get-FileHash $file -Algorithm SHA256
+'warm'
+`;
+        const script = join(work, 'warm.ps1');
+        writeFileSync(script, warm);
+        const env = { ...process.env, TEST_WORK: work, PSModuleAnalysisCachePath: join(work, 'ModuleAnalysisCache') };
+        for (const key of Object.keys(env)) if (key.toUpperCase() === 'PSMODULEPATH') delete env[key];
+        env.PSModulePath = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
+        const started = Date.now();
+        const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+            { env, encoding: 'utf8', windowsHide: true, timeout: 300_000 });
+        const said = `${result.stdout}\n${result.stderr}`;
+        assert.ok(!result.error, `PowerShell's first start: ${result.error}\n${said}`);
+        assert.equal(result.status, 0, `PowerShell's first start failed:\n${said}`);
+        console.log(`Windows PowerShell's first start took ${((Date.now() - started) / 1000).toFixed(1)} s`);
+    } finally { rmSync(work, { recursive: true, force: true }); }
+});
 
 for (const runtime of shells) for (const c of cases) {
     if (c.associate && runtime !== 'powershell') continue;
