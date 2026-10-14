@@ -68,6 +68,8 @@ with, and the IntelliJ Platform it compiles against, the first time.
 
 The ordinary tests check settings, console hyperlinks, run configurations,
 context-menu targets and game-folder selection in a headless test application.
+Plugin verification also rejects internal and override-only API calls, including
+tool-window registration, on the minimum IntelliJ platform and newest CLion.
 To exercise the real LSP4IJ client, a three-level child-process tree and JCEF,
 pass this checkout's built server, Node 24.16 or newer on Windows, and opt in
 to the muted embedded-browser test:

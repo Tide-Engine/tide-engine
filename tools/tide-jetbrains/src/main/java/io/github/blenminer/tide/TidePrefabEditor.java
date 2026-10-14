@@ -13,7 +13,6 @@ import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.wm.ToolWindowAnchor;
 import com.intellij.openapi.wm.ToolWindowManager;
-import com.intellij.openapi.wm.RegisterToolWindowTask;
 import com.intellij.ui.content.ContentFactory;
 import org.jetbrains.annotations.NotNull;
 
@@ -212,7 +211,12 @@ public final class TidePrefabEditor extends JPanel implements Disposable {
             if (doc!=null) FileDocumentManager.getInstance().saveDocument(doc);
             final var manager=ToolWindowManager.getInstance(project);
             var window=manager.getToolWindow("Tide Prefab");
-            if (window==null) window=manager.registerToolWindow(RegisterToolWindowTask.closable("Tide Prefab",null,ToolWindowAnchor.RIGHT));
+            if (window==null) window=manager.registerToolWindow("Tide Prefab",task -> {
+                task.anchor=ToolWindowAnchor.RIGHT;
+                task.canCloseContent=true;
+                task.hideOnEmptyContent=false;
+                return kotlin.Unit.INSTANCE;
+            });
             for (final var content:window.getContentManager().getContents()) if (file.getPath().equals(content.getDescription())) {
                 window.getContentManager().setSelectedContent(content); window.activate(null); return;
             }
