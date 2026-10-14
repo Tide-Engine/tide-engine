@@ -464,6 +464,21 @@ foreach(source IN LISTS TIDE_SHADER_TESTS)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
 endforeach()
 
+# ...and their SPIR-V, Vulkan's, which spirv-val takes, where there's one
+# (cmake/VulkanTests.cmake).
+if(TIDE_SPIRV_VAL)
+    foreach(source IN LISTS TIDE_SHADER_TESTS)
+        get_filename_component(name "${source}" NAME_WE)
+        add_test(NAME tidec_spirv_${name}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DTIDEC=${TIDEC_PATH}"
+                "-DSOURCE=${source}"
+                "-DSPIRV_VAL=${TIDE_SPIRV_VAL}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/spirv/${name}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_spirv.cmake")
+    endforeach()
+endif()
+
 # The mesh files' reader on its own (src/mesh_files.c): the numbers it reads,
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.

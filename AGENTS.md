@@ -103,7 +103,7 @@ Do not depend on C's unspecified argument evaluation order. Draw random inputs i
 
 Simulation never includes platform headers. Views read the world and draw without modifying simulation state. Device input enters through `Devices`. Keep generated game headers separate from system/GLFW headers because type names collide; hosts use `tide/platform.h`.
 
-`frag` and `vert` compile to GLSL for OpenGL/OpenGL ES/WebGL and WGSL for WebGPU. GPU results are visual only, never match state. Vulkan is the agreed next backend; read `notes/rendering.md` before changing backend design.
+`frag` and `vert` compile to GLSL for OpenGL/OpenGL ES/WebGL, WGSL for WebGPU, and SPIR-V for Vulkan, which tidec translates from the WGSL. Desktop draws with Vulkan where the machine has 1.3, OpenGL 3.3 being the fallback; Android's Vulkan and shipping MoltenVK on Apple aren't done yet. GPU results are visual only, never match state. Read `notes/rendering.md` before changing backend design.
 
 ## Networking
 

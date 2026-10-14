@@ -12,6 +12,7 @@ static void usage(void)
             "             [--define <SYMBOL>]...\n"
             "       tidec <file.tide>... --schedule [--name <name>]\n"
             "       tidec <file.tide>... --shaders\n"
+            "       tidec <file.tide>... --spirv <dir>\n"
             "\n"
             "Transpiles a Tide program, made of one or more files, to\n"
             "<output-dir>/<name>.h and <name>.c.\n"
@@ -32,7 +33,9 @@ static void usage(void)
             "  --schedule     print which systems can run at the same time and why the others\n"
             "                 wait, instead of generating code\n"
             "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
-            "                 GLSL and WGSL, instead of generating code\n");
+            "                 GLSL and WGSL, instead of generating code\n"
+            "  --spirv <dir>  write each of those shaders as SPIR-V, Vulkan's, into <dir>\n"
+            "                 as <n>.spv in --shaders' order, instead of generating code\n");
 }
 
 // A game's files as they're named, each with the package it's in.
@@ -167,6 +170,10 @@ int main(const int argc, char **argv)
         } else if (strcmp(argv[i], "--shaders") == 0) {
             schedule = true;
             opts.shaders = true;
+        } else if (strcmp(argv[i], "--spirv") == 0 && i + 1 < argc) {
+            schedule = true;
+            opts.shaders = true;
+            opts.spirv_dir = argv[++i];
         } else if (strcmp(argv[i], "--package") == 0 && i + 1 < argc) {
             inputs.package = argv[++i];
         } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {

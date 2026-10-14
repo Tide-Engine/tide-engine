@@ -58,6 +58,7 @@ if(TIDE_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 include(cmake/WebTest.cmake)
+include(cmake/VulkanTests.cmake)
 find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it anyway
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
@@ -81,6 +82,8 @@ else()
     set(TIDEC_COMMAND tidec)
     set(TIDEC_DEPENDS tidec)
     set(TIDEC_PATH "$<TARGET_FILE:tidec>")
+    set(TIDE_SPIRV_SHADERS_PATH "$<TARGET_FILE:tide_spirv_shaders>")
+    set(TIDE_SPIRV_SHADERS_DEPENDS tide_spirv_shaders)
 endif()
 
 if(TIDE_TOOLS_ONLY)

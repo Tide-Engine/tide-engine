@@ -1,5 +1,9 @@
 # Runtime written by Claude for now
 
+## Vulkan's SPIR-V in tide_shader (2026-10-14)
+
+`tide_shader` (`tide/draw.h`, agent-maintained) has two more fields, `spirv` and `spirv_words`. Generated code fills them under `TIDE_SPIRV`, which the header defines off the web and Android, with the words tidec translated from the shader's WGSL. No runtime function is new, and generated code calls nothing it didn't. The struct's layout changed, so hosts, game libraries and generated games rebuild together, as with every `tide/draw.h` layout change. The platform's `tide_gpu_pipeline_desc` (`platform/src/gpu.h`) carries the same two fields. Contracts and tests are in `notes/rendering.md` and `notes/shaders.md`, both under Vulkan / SPIR-V.
+
 ## Input prediction callback (2026-10-13)
 
 The owner approved input Predict() and [DontPredict]. Their generated adapter

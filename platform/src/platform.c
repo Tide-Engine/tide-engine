@@ -24,6 +24,16 @@
 #include "texture_residency.h"
 #include "window.h"
 
+// The renderer's shaders as SPIR-V, for Vulkan, where a build draws with it
+#ifdef TIDE_SPIRV
+#include "shaders_spirv.h"
+#define SPIRV_OF(name) tide_spirv_##name
+#define SPIRV_WORDS(name) tide_spirv_##name##_words
+#else
+#define SPIRV_OF(name) NULL
+#define SPIRV_WORDS(name) 0u
+#endif
+
 uint8_t *tide_platform_pack(size_t *size)
 {
     return tide_window_pack(size);
@@ -1881,6 +1891,8 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
             .glsl_vertex = shape_glsl_vertex,
             .glsl_fragment = shape_glsl_fragment,
             .wgsl = shape_wgsl,
+            .spirv = SPIRV_OF(shape),
+            .spirv_words = SPIRV_WORDS(shape),
             .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}}, // The quad's corners, and an instance a shape
             .slot_count = 2,
             .attributes = {{0, TIDE_GPU_FLOAT2, 0},
@@ -1897,6 +1909,8 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
             .glsl_vertex = smooth_shape_glsl_vertex,
             .glsl_fragment = smooth_shape_glsl_fragment,
             .wgsl = joined(smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
+            .spirv = SPIRV_OF(smooth_shape),
+            .spirv_words = SPIRV_WORDS(smooth_shape),
             // The quad's corners, an instance a shape, and an extra for each
             .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}, {sizeof(shape_extra), true}},
             .slot_count = 3,
@@ -1919,6 +1933,8 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
             .glsl_vertex = mesh_glsl_vertex,
             .glsl_fragment = kind == PIPELINE_TEXT ? text_glsl_fragment : mesh_glsl_fragment,
             .wgsl = kind == PIPELINE_TEXT ? text_wgsl : mesh_wgsl,
+            .spirv = kind == PIPELINE_TEXT ? SPIRV_OF(text) : SPIRV_OF(mesh),
+            .spirv_words = kind == PIPELINE_TEXT ? SPIRV_WORDS(text) : SPIRV_WORDS(mesh),
             .slots = {{sizeof(mesh_vertex), false}},
             .slot_count = 1,
             .attributes = {{0, TIDE_GPU_FLOAT2, offsetof(mesh_vertex, position)},
@@ -1935,6 +1951,8 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
             .glsl_vertex = mesh_3d_glsl_vertex,
             .glsl_fragment = mesh_glsl_fragment,
             .wgsl = mesh_3d_wgsl,
+            .spirv = SPIRV_OF(mesh_3d),
+            .spirv_words = SPIRV_WORDS(mesh_3d),
             .slots = {{sizeof(mesh_3d_vertex), false}, {sizeof(tide_float4x4), true}}, // Its corners, and an instance a transform
             .slot_count = 2,
             .attributes = {{0, TIDE_GPU_FLOAT3, offsetof(mesh_3d_vertex, position)},
@@ -1974,6 +1992,8 @@ static tide_gpu_id clear_pipeline(const tide_gpu_target_format into)
         .glsl_vertex = clear_glsl_vertex,
         .glsl_fragment = several ? clear_all_glsl_fragment : clear_glsl_fragment,
         .wgsl = several ? clear_all_wgsl : clear_wgsl,
+        .spirv = several ? SPIRV_OF(clear_all) : SPIRV_OF(clear),
+        .spirv_words = several ? SPIRV_WORDS(clear_all) : SPIRV_WORDS(clear),
         .uniform_size = 4 * sizeof(float),
         .blend = TIDE_GPU_BLEND_REPLACE,
         .depth = TIDE_GPU_DEPTH_RESET,
@@ -1995,6 +2015,8 @@ static tide_gpu_id depth_clear_pipeline(const tide_gpu_target_format into)
         .glsl_vertex = clear_glsl_vertex,
         .glsl_fragment = several ? clear_all_glsl_fragment : clear_glsl_fragment,
         .wgsl = several ? clear_all_wgsl : clear_wgsl,
+        .spirv = several ? SPIRV_OF(clear_all) : SPIRV_OF(clear),
+        .spirv_words = several ? SPIRV_WORDS(clear_all) : SPIRV_WORDS(clear),
         .uniform_size = 4 * sizeof(float),
         .blend = TIDE_GPU_BLEND_ALPHA,
         .depth = TIDE_GPU_DEPTH_RESET,
@@ -2263,6 +2285,8 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         .glsl_vertex = shader->glsl_vertex,
         .glsl_fragment = shader->glsl_fragment,
         .wgsl = shader->wgsl,
+        .spirv = shader->spirv,
+        .spirv_words = shader->spirv_words,
         .slots = {{shader->vertex_size, false}, {instance_size, true}},
         .slot_count = instance_size ? 2u : 1u,
         .uniform_size = (uint32_t)sizeof(shaded_uniforms) + tide_shader_uniform_size(shader),

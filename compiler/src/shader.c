@@ -4,14 +4,16 @@
 #include <string.h>
 
 #include "ast.h"
+#include "spirv.h"
 #include "types.h"
 
 // Tide code the GPU runs: a `frag` for each pixel of a mesh, a `vert` for
 // each of its vertices, and the functions they call. For every combination a
 // mesh draw uses (a vertex struct, with a vert, a frag, both or neither) this
 // writes a shader in each language a renderer takes: GLSL, for OpenGL 3.3,
-// OpenGL ES 3 and WebGL 2, and WGSL, for WebGPU. Codegen puts them in the
-// generated C as tide_shaders (tide/draw.h).
+// OpenGL ES 3 and WebGL 2, and WGSL, for WebGPU, which spirv.c translates
+// into SPIR-V for Vulkan. Codegen puts them in the generated C as
+// tide_shaders (tide/draw.h).
 //
 // The GPU runs less than the CPU does: bools, ints, floats, vectors,
 // quaternions, matrices, colors and structs of those, locals, `if`, loops
@@ -6377,4 +6379,34 @@ void print_shaders(const program *prog, sb *out)
                   sh->name, sh->glsl_fragment, sh->name, sh->wgsl);
     }
     if (prog->shaders.count == 0) sb_put(out, "// No mesh draw draws through a shader of the game's.\n");
+}
+
+bool write_spirv(const program *prog, const char *dir, sb *out)
+{
+    for (int i = 0; i < prog->shaders.count; i++) {
+        const shader *sh = prog->shaders.items[i];
+        char error[256];
+        size_t count = 0;
+        uint32_t *words = tide_wgsl_to_spirv(sh->wgsl, &count, error, sizeof error);
+        if (!words) {
+            diag_error((loc){0}, "the WGSL tidec wrote for %s didn't become SPIR-V (%s): this is a bug in tidec", sh->name, error);
+            return false;
+        }
+        sb path = {0};
+        sb_printf(&path, "%s/%d.spv", dir, i);
+        FILE *file = fopen(path.data, "wb");
+        const bool written = file && fwrite(words, sizeof(uint32_t), count, file) == count;
+        if (file && fclose(file) != 0) {
+            free(words);
+            diag_error((loc){0}, "can't write %s", path.data);
+            return false;
+        }
+        free(words);
+        if (!written) {
+            diag_error((loc){0}, "can't write %s", path.data);
+            return false;
+        }
+        sb_printf(out, "%d.spv: %s\n", i, sh->name);
+    }
+    return true;
 }

@@ -1,5 +1,40 @@
 # Code the GPU runs: frags and verts
 
+## SPIR-V, for Vulkan (2026-10-14)
+
+tidec writes SPIR-V by translating the WGSL it already writes, rather than with a third emitter over the tree. The WGSL has WebGPU's bindings and its depth conversion already. The same translator takes the renderer's hand-written WGSL too (`notes/rendering.md`, Vulkan). The translator is `compiler/src/spirv.c` (`spirv.h`: `tide_wgsl_to_spirv`), about 3,700 lines of C with no dependency.
+
+- **What it does:** it reads WGSL into a tree and writes SPIR-V 1.3 (Vulkan 1.1 rules) as it works the types out, in one module whose entry points are `vertex` and `fragment`.
+  - It writes no `OpName`s.
+  - It takes what tidec and the renderer write, and WGSL generally as far as frags and verts go:
+    - structs, uniform blocks laid out by WGSL's rules, `var<private>`, textures and samplers;
+    - functions with `ptr<function, T>` parameters;
+    - abstract numbers, folded where both sides are;
+    - constructors, conversions and `bitcast`;
+    - every built-in tidec and the renderer call, and more of GLSL.std.450's;
+    - `textureSample`, `...Level`, `...Grad`, `...Bias`, `...Compare(Level)`, `textureLoad`, `textureDimensions`, levels and samples;
+    - `if`, `for`, `while`, `loop`/`continuing`/`break if`, `switch` with several selectors and `default` among them, `break`, `continue`, `discard` (`OpKill`) and `return`.
+  - It doesn't take storage buffers, atomics, workgroups or compute, `alias`, `override`, or f16.
+- **What's out of range is made safe the way WebGPU (Tint) makes it, so a shader reads the same on both:**
+  - integer `/` and `%` by zero, or the least i32 by -1, go by 1;
+  - shift counts are masked to 5 bits;
+  - float to int saturates (`FClamp` before `OpConvertFToS`/`U`);
+  - an index into a vector, matrix or array that isn't a constant is clamped to the last element (`UMin`), and a constant one is clamped as it's written.
+  - Reads past a buffer's or image's end are the device's robustness features' job (`robustImageAccess`, `robustBufferAccess`, enabled where present).
+- **Structured control flow:** the patterns are glslang's.
+  - A loop is its header (`OpLoopMerge`), a block for its condition (`OpBranchConditional` to the body or the merge), the body, and its continue block, which does a `for`'s step or a `continuing` and branches back.
+  - `&&` and `||` whose right side calls a function of the module's become a selection with an `OpPhi`; otherwise they're `OpLogicalAnd`/`Or`.
+  - Code after a `return`, `break`, `continue` or `discard` is dropped as dead.
+  - A construct whose merge nothing reaches ends in `OpUnreachable`. A `switch`'s merge is reached by any case that falls off its end and by any `break` to it. A first version missed the `break`s; that dropped the code after such a switch, and the `Rest` and `ListSum` probes of `tide_platform_shaders` caught it on Vulkan.
+- **Codegen:**
+  - Each shader's words go in the generated C as `tide_shader_<n>_spirv`, with `.spirv` and `.spirv_words` set in its `tide_shader`, all under `#ifdef TIDE_SPIRV` (`tide/draw.h`: defined off the web and Android).
+  - The shader's id is still the hash of its GLSL and WGSL, which the SPIR-V is made of.
+  - A translation that fails is tidec's bug. It's an error naming the shader, and the build stops: codegen returns false after `gen_shaders`.
+  - `tide_shader` grew two fields, so hosts, libraries and generated games rebuild together.
+- **`tidec --spirv <dir>`** writes each shader's module as `<n>.spv`, in `--shaders`' order. `tidec_spirv_<name>` (`compiler/tests/expect_spirv.cmake`) runs it on every `compiler/tests/shaders/*.tide` and has the SDK's `spirv-val --target-env vulkan1.1` check each module. `tide_spirv_shaders_valid` (`platform/tests/spirv_shaders.cmake`) does the same for the renderer's seven. Both exist where CMake finds `spirv-val` (`cmake/VulkanTests.cmake`).
+- **Tested:** all 81 golden shaders and the 7 built-ins pass `spirv-val`. Every game in the repo builds, so tidec translated every shader it has. The validation layer checks each module again as the GPU tests make their pipelines. `tide_platform_shaders` compares the CPU's and the GPU's results through the SPIR-V on this machine's NVIDIA driver.
+- **Not done:** `OpName`s for debuggers (RenderDoc shows ids); `OpDemoteToHelperInvocation` for `discard`. That would matter only for derivatives taken after a discard in the same quad, which tidec's frags don't do: they ask for theirs as they start.
+
 ## Delayed locals and switch values, 2026-10-11
 
 The CPU's definite-assignment rules also check delayed locals in frags, verts

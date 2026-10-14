@@ -4,6 +4,7 @@
 #include "asset_usage.h"
 #include "mesh_lod.h"
 #include "pack_fingerprint.h"
+#include "spirv.h"
 #include "texture_compress.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
@@ -18485,6 +18486,26 @@ static void gen_shader_text(sb *o, const char *name, const char *text)
     sb_put(o, "0};\n");
 }
 
+// The shader's WGSL as SPIR-V, for Vulkan: its words, as an array named
+// `name`, and how many there are; 0 for WGSL the translator didn't take, which
+// tidec wrote, so it's a bug of tidec's, said as an error.
+static size_t gen_shader_spirv(sb *o, const char *name, const shader *sh)
+{
+    char error[256];
+    size_t count = 0;
+    uint32_t *words = tide_wgsl_to_spirv(sh->wgsl, &count, error, sizeof error);
+    if (!words) {
+        diag_error((loc){0}, "the WGSL tidec wrote for %s didn't become SPIR-V (%s): this is a bug in tidec, worth "
+                             "reporting with the frag and vert", sh->name, error);
+        return 0;
+    }
+    sb_printf(o, "static const uint32_t %s[%d] = {", name, (int)count);
+    for (size_t i = 0; i < count; i++) sb_printf(o, "%s0x%08x,", i % 10 == 0 ? "\n    " : "", words[i]);
+    sb_put(o, "\n};\n");
+    free(words);
+    return count;
+}
+
 static uint64_t hash_more(uint64_t h, const void *data, const size_t size)
 {
     for (size_t i = 0; i < size; i++) h = (h ^ ((const uint8_t *)data)[i]) * 0x100000001B3ull;
@@ -18592,6 +18613,9 @@ static void gen_shaders(gen *g)
         sb_put(o, "#ifdef __wasm__\n");
         snprintf(name, sizeof name, "tide_shader_%d_wgsl", s);
         gen_shader_text(o, name, sh->wgsl);
+        sb_put(o, "#endif\n#ifdef TIDE_SPIRV\n");
+        snprintf(name, sizeof name, "tide_shader_%d_spirv", s);
+        const size_t spirv_words = gen_shader_spirv(o, name, sh);
         sb_put(o, "#endif\n");
 
         const int numbers[] = {sh->dims, sh->vertex->fields.count, sh->instance_floats, sh->instance_ints,
@@ -18605,6 +18629,8 @@ static void gen_shaders(gen *g)
         gen_c_raw_literal(o, str_from(sh->name));
         sb_printf(o, ",\n    .glsl_vertex = tide_shader_%d_vertex,\n    .glsl_fragment = tide_shader_%d_fragment,\n", s, s);
         sb_printf(o, "#ifdef __wasm__\n    .wgsl = tide_shader_%d_wgsl,\n#endif\n", s);
+        sb_printf(o, "#ifdef TIDE_SPIRV\n    .spirv = tide_shader_%d_spirv,\n    .spirv_words = %d,\n#endif\n", s,
+                  (int)spirv_words);
         sb_printf(o, "    .id = 0x%llxull,\n    .dims = %d,\n    .vertex_size = sizeof(%s),\n    .attribute_count = %d,\n"
                      "    .attributes = {",
                   (unsigned long long)id, sh->dims, vertex, sh->vertex->fields.count);
@@ -19086,6 +19112,10 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_apply(&g, true);
     gen_hear(&g);
     gen_shaders(&g);
+    if (diag_error_count()) { // A shader that didn't become SPIR-V
+        free(g.pack_bytes);
+        return false;
+    }
     gen_routines(&g);
     gen_correction_math(&g);
     gen_blend_helpers(&g); // After the routines: a type's Interpolate is one

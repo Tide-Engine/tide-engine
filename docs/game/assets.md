@@ -120,7 +120,7 @@ view Show(mut Player player)
 
 Ordinary color `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled colors can differ slightly from the source, especially around sharp color changes or faint transparency.
 
-On supported GPUs, a full mip chain takes roughly one eighth of RGBA memory for BC1, or one quarter for BC3. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. OpenGL and WebGL use S3TC when available; WebGPU uses its optional BC feature. Unsupported devices use the exact RGBA fallback.
+On supported GPUs, a full mip chain takes roughly one eighth of RGBA memory for BC1, or one quarter for BC3. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. Unsupported devices use the exact RGBA fallback.
 
 The pack currently includes both representations, so this reduces GPU memory and upload bytes while increasing pack size. Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
 

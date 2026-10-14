@@ -28,6 +28,10 @@
 #include "tide/text.h"
 #include "tide/time.h"
 #include "../src/texture_residency.h"
+#ifdef TIDE_SPIRV
+#include "../src/gpu.h" // tide_gpu_spirv_of
+#include "spirv.h"      // compiler/src's translator, which the test's build adds
+#endif
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
@@ -803,10 +807,10 @@ static void primitives(void)
 // Shaders of the game's: meshes of any vertices, drawn through GLSL and WGSL
 // as tidec writes them from Tide's (see tide_shader), here written by hand
 
-#ifdef __wasm__
-#define WGSL(source) source
+#if defined(__wasm__) || defined(TIDE_SPIRV)
+#define WGSL(source) source // The web's, and Vulkan's, which translates it (main)
 #else
-#define WGSL(source) NULL // Only the web's
+#define WGSL(source) NULL
 #endif
 
 // What every shader's uniforms start with, before its own.
@@ -3977,6 +3981,9 @@ int main(const int argc, char **argv)
             if (!bench_output) printf("couldn't save to " TIDE_BENCH_RESULTS "/draw.jsonl; printing JSONL instead\n");
         }
     }
+#ifdef TIDE_SPIRV
+    tide_gpu_spirv_of = tide_wgsl_to_spirv; // The shaders here have WGSL alone: Vulkan's SPIR-V is made of it
+#endif
     tide_platform_open(&(tide_window_desc){.title = "draw", .width = WIDTH, .height = HEIGHT, .hidden = true});
     tide_platform_run(frame, NULL);
 }

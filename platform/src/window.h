@@ -1,8 +1,8 @@
 #pragma once
 
 // What the platform layer (platform.c) gets from the system it runs on: a
-// window with an OpenGL context that's current, and what its input devices
-// say. Each build has one of them: desktop/glfw.c (GLFW), web/canvas.c (the
+// window with what draws in it (Vulkan, or an OpenGL context that's current),
+// and what its input devices say. Each build has one of them: desktop/glfw.c (GLFW), web/canvas.c (the
 // page, through tide.js) or android/activity.c (NativeActivity and EGL).
 //
 // Pixels are the display's logical ones (see tide/platform.h), from the
@@ -15,9 +15,11 @@
 #include "tide/platform.h"
 #include "gpu.h"
 
-// Opens the window, with what draws in it: an OpenGL 3.3, OpenGL ES 3 or
-// WebGL 2 context that's current or, on the web, WebGPU where the browser has
-// it. False, having said why, if there's none to be had.
+// Opens the window, with what draws in it: on desktop Vulkan where the
+// machine has it (TIDE_BACKEND in the environment, `vulkan` or `opengl`,
+// picks one), else an OpenGL 3.3 context that's current; OpenGL ES 3 on
+// Android; and on the web WebGPU where the browser has it, else WebGL 2.
+// False, having said why, if there's none to be had.
 bool tide_window_open(const tide_window_desc *desc);
 void tide_window_close(void);
 
@@ -37,9 +39,9 @@ bool tide_window_unseen(void);
 void tide_window_size(int *width, int *height);
 void tide_window_pixel_size(int *width, int *height);
 
-// Shows what the frame drew, at the display's pace where the window is seen,
-// then takes what the system says happened since the last call: the calls
-// below read the devices as of then.
+// Shows what the frame drew, at the display's pace where the window is seen
+// (Vulkan's frame goes to the GPU here), then takes what the system says
+// happened since the last call: the calls below read the devices as of then.
 void tide_window_present(void);
 
 // Waits up to `seconds` for the system to say something, while the window is
