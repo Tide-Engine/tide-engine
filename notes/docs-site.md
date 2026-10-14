@@ -1,5 +1,37 @@
 # The docs site
 
+## Playground startup test guard (2026-10-14)
+
+Run 38552733008 built the site and passed its SEO/HTTP and preceding game
+checks, but the first playground edit hit the browser smoke's generic 20-second
+guard. The log omitted the page's status and handled compiler diagnostics, so
+it does not establish whether startup was slow or a compile/load error occurred.
+
+The playground smoke now gives the initial compiler-tool download,
+decompression and Wasm-module compilation a separate 120-second readiness
+guard. Once the worker reports checking/compiling/linking, the existing
+20-second build/apply guard starts. Later builds keep their original bounds.
+Unexpected compiler/preview failures end successful-build waits immediately
+with the page's status and diagnostics; timeout reports include those too.
+Repair waits ignore the old error still visible during the input debounce.
+Expected syntax errors still exercise diagnostics and last-good rendering.
+Startup elapsed time is logged. No assertions, game/runtime behavior, workflow
+gates or automatic retries changed. The guide explains first-build startup.
+
+Validation: this checkout's release playground is staged with Clang 23.1.2;
+Node 24.19.0 passes all four real compiler integration tests. The focused
+production browser smoke passes on WebGL and WebGPU, including state migration,
+syntax errors/recovery, focus, reset and phone layout. An isolated server probe
+delaying compiler payloads by 21 seconds reproduces the old 20-second timeout
+with status Loading compiler; the revised smoke passes with tools ready after
+22.7 seconds and the unchanged build guard. An injected clang.bin HTTP 404
+fails immediately with its diagnostic instead of timing out. Probe files are
+removed. Svelte check has zero errors/warnings; the production build and
+`git diff --check` pass, with existing allowed unstaged-example placeholders.
+The whole examples/gallery smoke and other host platforms were not rerun;
+the original hosted failure's cause still requires its next diagnostic log.
+No CI was dispatched or site deployed.
+
 ## Browser playground (2026-10-14)
 
 The owner requested a docs page for editing a running game and hot reloading
