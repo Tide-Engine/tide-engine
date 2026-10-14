@@ -242,11 +242,15 @@ static struct {
     vk_target *targets;
     uint32_t target_count;
 
-    // Recording: the command buffer outside passes, and the pass's
+    // Recording: the command buffer outside passes, the pass's, and one for
+    // what's uploaded during the pass, which goes before it. After a pass,
+    // its command buffer goes on as the one outside passes.
     VkCommandBuffer outside;
-    bool outside_queued; // ...which is in `pending` already, before the pass it uploads for
+    bool outside_after_pass; // ...and nothing waits for the pass in it yet
     VkCommandBuffer pass;
-    VkCommandBuffer *pending; // To be submitted, in order
+    uint32_t pass_pending; // Where the pass's is in `pending`
+    VkCommandBuffer before;
+    VkCommandBuffer *pending; // To be submitted, in order: all are in it as they begin
     uint32_t pending_count, pending_capacity;
 
     // The pass
@@ -587,7 +591,23 @@ static void queue_up(const VkCommandBuffer cb)
 // for the pass that's on: it runs before that pass.
 static VkCommandBuffer outside(void)
 {
-    if (!vk.outside) vk.outside = command_buffer(), vk.outside_queued = false;
+    if (vk.pass) {
+        if (!vk.before) { // In `pending` just before the pass
+            vk.before = command_buffer();
+            queue_up(vk.before);
+            memmove(vk.pending + vk.pass_pending + 1u, vk.pending + vk.pass_pending,
+                    (vk.pending_count - 1u - vk.pass_pending) * sizeof(VkCommandBuffer));
+            vk.pending[vk.pass_pending++] = vk.before;
+        }
+        return vk.before;
+    }
+    if (!vk.outside) {
+        vk.outside = command_buffer();
+        queue_up(vk.outside);
+    } else if (vk.outside_after_pass) {
+        barrier_all(vk.outside); // As a command buffer of its own would begin
+        vk.outside_after_pass = false;
+    }
     return vk.outside;
 }
 
@@ -595,8 +615,8 @@ static void close_outside(void)
 {
     if (!vk.outside) return;
     check(vkEndCommandBuffer(vk.outside), "vkEndCommandBuffer");
-    if (!vk.outside_queued) queue_up(vk.outside);
     vk.outside = VK_NULL_HANDLE;
+    vk.outside_after_pass = false;
 }
 
 static VkImageAspectFlags aspects_of(const VkFormat format)
@@ -859,7 +879,8 @@ void tide_gpu_vk_present(void)
     if (!vk.open || !vk.device) return;
     if (vk.lost) {
         vk.pending_count = 0;
-        vk.outside = VK_NULL_HANDLE;
+        vk.outside = vk.pass = vk.before = VK_NULL_HANDLE;
+        vk.outside_after_pass = false;
         vk.acquired = false;
         return;
     }
@@ -1698,11 +1719,12 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     if (!target && !acquire()) return; // A window with nothing to draw in (minimized): its draws go nowhere
     if (vk.lost) return;
     flush_if_full();
-    // What's uploaded for the pass goes before it, from what's recorded outside passes since the last one on
-    const VkCommandBuffer before = outside();
-    if (!vk.outside_queued) queue_up(before), vk.outside_queued = true;
+    // What's recorded outside passes since the last one goes before it, and what's uploaded during it, after that
+    close_outside();
     vk.pass = command_buffer();
+    vk.pass_pending = vk.pending_count;
     queue_up(vk.pass);
+    vk.before = VK_NULL_HANDLE;
     vk.skip_pass = false;
     vk.pass_target = target;
     const VkAttachmentLoadOp load = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -1774,7 +1796,11 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
 static void vk_end(void)
 {
     vk.in_pass = false;
-    if (vk.skip_pass || vk.lost) return;
+    if (vk.skip_pass) return;
+    if (vk.lost) { // Nothing recorded goes
+        vk.pass = vk.before = VK_NULL_HANDLE;
+        return;
+    }
     vkCmdEndRendering(vk.pass);
     for (uint32_t i = 0; i < turned_count; i++) {
         turn(vk.pass, turned[i].image, turned[i].format, 0, 1, turned[i].layer, 1, turned[i].drawn, turned[i].rest);
@@ -1784,11 +1810,12 @@ static void vk_end(void)
         turn(vk.pass, vk.images[vk.image], vk.window_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
              VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
-    check(vkEndCommandBuffer(vk.pass), "vkEndCommandBuffer");
+    // What's recorded outside passes next goes on after it, in the same command buffer
+    vk.outside = vk.pass;
+    vk.outside_after_pass = true;
     vk.pass = VK_NULL_HANDLE;
-    // What uploaded for it is done too: what's recorded next goes after it
-    check(vkEndCommandBuffer(vk.outside), "vkEndCommandBuffer");
-    vk.outside = VK_NULL_HANDLE;
+    if (vk.before) check(vkEndCommandBuffer(vk.before), "vkEndCommandBuffer");
+    vk.before = VK_NULL_HANDLE;
 }
 
 static void vk_scissor(const int x, const int y, const int width, const int height)
@@ -2070,8 +2097,8 @@ static void destroy_device(void)
     vkDestroyDevice(vk.device, NULL);
     vk.device = VK_NULL_HANDLE;
     vk.pending_count = 0;
-    vk.outside = vk.pass = VK_NULL_HANDLE;
-    vk.acquired = vk.in_pass = false;
+    vk.outside = vk.pass = vk.before = VK_NULL_HANDLE;
+    vk.acquired = vk.in_pass = vk.outside_after_pass = false;
     uniform_buffer = VK_NULL_HANDLE;
 }
 

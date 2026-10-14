@@ -1434,6 +1434,57 @@ static void free_buffer(const tide_gpu_id id)
     gpu->buffer_free(id);
 }
 
+// Mesh buffers the frame's list has no use for: those of meshes it doesn't
+// draw, and those too small for what's in their place now, for the meshes it
+// draws that need some. Making a buffer costs OpenGL (and WebGL) a tenth of a
+// millisecond or more, and a game that fills a list in a view each frame has
+// its meshes made again each frame. What's left as the frame ends goes, so
+// none is counted after it.
+typedef struct spare_buffer {
+    tide_gpu_id id;
+    tide_gpu_buffer_kind kind;
+    uint32_t capacity;
+} spare_buffer;
+
+enum { SPARE_BUFFERS = 256 };
+static spare_buffer spare_buffers[SPARE_BUFFERS];
+static uint32_t spare_buffer_count;
+
+static void spare_buffer_of(const tide_gpu_id id, const tide_gpu_buffer_kind kind, const uint32_t capacity)
+{
+    if (!id) return;
+    if (spare_buffer_count == SPARE_BUFFERS) free_buffer(id);
+    else spare_buffers[spare_buffer_count++] = (spare_buffer){id, kind, capacity};
+}
+
+// A buffer of `kind` for `size` bytes, holding `data`: the smallest spare
+// with room that isn't four times as big, or a new one. *capacity is its size.
+static tide_gpu_id taken_buffer(const tide_gpu_buffer_kind kind, const size_t size, const void *data, uint32_t *capacity)
+{
+    uint32_t best = UINT32_MAX;
+    for (uint32_t i = 0; i < spare_buffer_count; i++) {
+        const spare_buffer *b = &spare_buffers[i];
+        if (b->kind != kind || b->capacity < size || (size_t)b->capacity > size * 4u + 4096u) continue;
+        if (best == UINT32_MAX || b->capacity < spare_buffers[best].capacity) best = i;
+    }
+    if (best == UINT32_MAX) {
+        *capacity = (uint32_t)size;
+        return made_buffer(kind, size, data);
+    }
+    const spare_buffer b = spare_buffers[best];
+    memmove(spare_buffers + best, spare_buffers + best + 1, (spare_buffer_count - best - 1u) * sizeof(spare_buffer));
+    spare_buffer_count--;
+    if (size) gpu->buffer_write(b.id, 0, data, size);
+    *capacity = b.capacity;
+    return b.id;
+}
+
+static void free_spare_buffers(void)
+{
+    for (uint32_t i = 0; i < spare_buffer_count; i++) free_buffer(spare_buffers[i].id);
+    spare_buffer_count = 0;
+}
+
 static tide_gpu_id made_texture(const tide_gpu_format format, const int width, const int height, const void *pixels)
 {
     const tide_gpu_id id = gpu->texture(format, width, height, pixels);
@@ -1520,6 +1571,7 @@ typedef struct gpu_mesh {
     uint32_t index_count;          // Three a triangle...
     bool wide;                     // ...of 16 bits where they fit, or 32
     uint32_t frame;                // The frame that last drew it
+    uint32_t wanted;               // 1 + the frame whose list draws it
     uint32_t base;                 // A level of detail's: 1 + the place of the mesh whose `vertices` it draws with, having none
 } gpu_mesh;
 
@@ -1803,6 +1855,7 @@ static bool gpu_ready(void)
     memset(&gpu_state, 0, sizeof gpu_state);
     target_most = gpu->target_limit();
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
+    spare_buffer_count = 0; // The device they were on went with them
     gpu_texture_count = 0;
     if (gpu_texture_index) memset(gpu_texture_index, 0, (size_t)gpu_texture_index_capacity * sizeof(uint32_t));
     spare_data_count = 0; // A lost device took these objects too.
@@ -2103,7 +2156,7 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
         return g;
     }
     if (level && g->vertices) { // The place was a whole mesh's
-        free_buffer(g->vertices);
+        spare_buffer_of(g->vertices, TIDE_GPU_VERTICES, g->vertex_capacity);
         g->vertices = 0;
         g->vertex_capacity = 0;
     }
@@ -2129,9 +2182,8 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     } else if (g->vertices && vertex_bytes <= g->vertex_capacity) {
         gpu->buffer_write(g->vertices, 0, corners, vertex_bytes);
     } else {
-        if (g->vertices) free_buffer(g->vertices);
-        g->vertices = made_buffer(TIDE_GPU_VERTICES, vertex_bytes, corners);
-        g->vertex_capacity = (uint32_t)vertex_bytes;
+        spare_buffer_of(g->vertices, TIDE_GPU_VERTICES, g->vertex_capacity);
+        g->vertices = taken_buffer(TIDE_GPU_VERTICES, vertex_bytes, corners, &g->vertex_capacity);
     }
     // ...and its triangles, in 16 bits where they fit, to a multiple of 4 bytes, as buffers take them
     const bool wide = m->vertex_count > 65536u;
@@ -2146,9 +2198,8 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     if (g->indices && index_bytes <= g->index_capacity) {
         gpu->buffer_write(g->indices, 0, indices, index_bytes);
     } else {
-        if (g->indices) free_buffer(g->indices);
-        g->indices = made_buffer(TIDE_GPU_INDICES, index_bytes, indices);
-        g->index_capacity = (uint32_t)index_bytes;
+        spare_buffer_of(g->indices, TIDE_GPU_INDICES, g->index_capacity);
+        g->indices = taken_buffer(TIDE_GPU_INDICES, index_bytes, indices, &g->index_capacity);
     }
     g->id = m->id;
     g->other = m->other;
@@ -2194,7 +2245,34 @@ static void upload_meshes_3d(const tide_draw_list *list)
     gpu->buffer_write(gpu_state.matrices, 0, list->matrices, (size_t)list->matrix_count * sizeof(tide_float4x4));
 }
 
-// Lets go of the 3D meshes the frame didn't draw.
+// A place of a mesh the list draws, and of the mesh its corners are in.
+static void mark_mesh(const tide_draw_list *list, const uint32_t mesh)
+{
+    if (!mesh || mesh > list->mesh_count || mesh > gpu_mesh_count) return;
+    gpu_meshes[mesh - 1u].wanted = gpu_frame + 1u;
+    const uint32_t base = list->meshes[mesh - 1u].base;
+    if (base && base <= gpu_mesh_count) gpu_meshes[base - 1u].wanted = gpu_frame + 1u;
+}
+
+// The buffers of the places of meshes the list doesn't draw are spares for
+// those it draws that need some, before any is uploaded.
+static void spare_unused_meshes(const tide_draw_list *list)
+{
+    for (uint32_t i = 0; i < step_count; i++) {
+        const draw_step *s = &steps[i];
+        if (s->kind == STEP_MESH_3D) mark_mesh(list, s->mesh);
+        else if (s->kind == STEP_SHADED || s->kind == STEP_BLIT) mark_mesh(list, list->runs[s->first].mesh);
+    }
+    for (uint32_t i = 0; i < gpu_mesh_count; i++) {
+        gpu_mesh *g = &gpu_meshes[i];
+        if (g->wanted == gpu_frame + 1u || (!g->vertices && !g->indices)) continue;
+        spare_buffer_of(g->vertices, TIDE_GPU_VERTICES, g->vertex_capacity);
+        spare_buffer_of(g->indices, TIDE_GPU_INDICES, g->index_capacity);
+        *g = (gpu_mesh){0};
+    }
+}
+
+// Lets go of the 3D meshes the frame didn't draw, and the spares no mesh took.
 static void forget_meshes_3d(void)
 {
     for (uint32_t i = 0; i < gpu_mesh_count; i++) {
@@ -2204,6 +2282,7 @@ static void forget_meshes_3d(void)
             gpu_meshes[i] = (gpu_mesh){0};
         }
     }
+    free_spare_buffers();
 }
 
 // Where the pipeline of the shader `id`, blending as `blend`, doing `depth` with depth and `state`
@@ -2432,8 +2511,10 @@ static void upload_atlas(void)
     uint32_t version = 0;
     const uint8_t *pixels = tide_font_atlas(&width, &height, &version);
     if (!pixels || (gpu_state.atlas && gpu_state.atlas_version == version)) return;
+    int first, rows; // What new glyphs changed: a whole atlas is megabytes, a glyph's rows a few kilobytes
+    tide_font_atlas_changed(&first, &rows);
     if (gpu_state.atlas && width == gpu_state.atlas_width && height == gpu_state.atlas_height) {
-        gpu->texture_write(gpu_state.atlas, pixels);
+        if (rows > 0) gpu->texture_write_part(gpu_state.atlas, pixels, 0, first, width, rows);
     } else {
         if (gpu_state.atlas) free_texture(gpu_state.atlas);
         gpu_state.atlas = made_texture(TIDE_GPU_R8, width, height, pixels);
@@ -3015,6 +3096,24 @@ static int clamp_pixel(const float v, const int most)
     return !(nearest > 0.0f) ? 0 : nearest < (float)most ? (int)nearest : most;
 }
 
+// Whether a step draws: a pass begins for one that does, and only then.
+static bool step_draws(const draw_step *s)
+{
+    switch (s->kind) {
+    case STEP_TARGET:
+    case STEP_STENCIL:
+    case STEP_CLIP:
+    case STEP_NO_CLIP:
+        return false;
+    case STEP_MESH:
+        return s->count != 0;
+    case STEP_TEXT:
+        return s->count != 0 && gpu_state.atlas;
+    default:
+        return true;
+    }
+}
+
 // Only what's inside the step's rect draws from here on, or everything again.
 static void clip(const draw_step *s)
 {
@@ -3303,6 +3402,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // What the steps draw from goes to the GPU first
     renderer_start();
     if (!over) prepare_data_textures(list);
+    if (!over) spare_unused_meshes(list);
     find_pipelines(list);
     upload_shapes_and_meshes();
     upload_meshes_3d(list);
@@ -3314,8 +3414,13 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // Otherwise a desktop GPU waiting for that work would time the CPU too.
     // Texture uploads requested by shaded draws still occur inside the query.
     if (timed && gpu->time_begin) gpu->time_begin();
-    begin_pass(target, !over); // Every frame starts black; Draw.Clear picks another color
-    bool pass_active = true;
+    // A pass begins at the first step that draws in it, so steps that only
+    // move to another target cost none: a pass costs the backends that have
+    // them (Vulkan, WebGPU) command buffers or encoders, and barriers. The
+    // frame's target starts black in its first (Draw.Clear picks another
+    // color), or in one of its own if nothing draws in it.
+    bool pass_active = false;
+    bool cleared = over;
     uint32_t calls = 0; // The steps that draw, a draw call each
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
@@ -3335,10 +3440,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
                 gpu_cube *of = g && tide_render_target_cubic(f->id) ? find_cube(tide_render_target_cube_of(f->id)) : NULL;
                 if (of) of->drawn++; // A cube's are all its faces'
             }
-            begin_pass(f->gpu, false);
-            pass_active = true;
             uniforms = target_uniforms();
-            clip(&frame_targets[draw_target].clipping);
         }
         if (!frame_targets[draw_target].valid) continue;
         if (leaves_nothing(list, s)) continue; // A color, into a target of depth alone
@@ -3353,15 +3455,19 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             continue;
         }
         if (prepare_source_targets(list, s, true)) {
-            gpu->end();
+            if (pass_active) gpu->end();
+            pass_active = false;
             prepare_source_targets(list, s, false);
-            begin_pass(frame_targets[draw_target].gpu, false);
-            clip(&frame_targets[draw_target].clipping);
         }
         if (prepare_step_mipmaps(list, s, true)) { // Made outside a pass, as a backend draws them
-            gpu->end();
+            if (pass_active) gpu->end();
+            pass_active = false;
             prepare_step_mipmaps(list, s, false);
-            begin_pass(frame_targets[draw_target].gpu, false);
+        }
+        if (!pass_active && step_draws(s)) {
+            begin_pass(frame_targets[draw_target].gpu, !draw_target && !cleared);
+            if (!draw_target) cleared = true;
+            pass_active = true;
             clip(&frame_targets[draw_target].clipping);
         }
         switch (s->kind) {
@@ -3418,7 +3524,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case STEP_CLIP:
         case STEP_NO_CLIP:
             frame_targets[draw_target].clipping = *s;
-            clip(s);
+            if (pass_active) clip(s);
             break;
         default: // Text
             if (s->count == 0 || !gpu_state.atlas) break;
@@ -3433,6 +3539,10 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
     }
     if (pass_active) gpu->end();
+    if (!cleared) { // Nothing drew in the frame's target
+        begin_pass(target, true);
+        gpu->end();
+    }
     if (timed && gpu->time_end) gpu->time_end();
     draw_width = draw_height = 0.0f;
     draw_pixel_width = draw_pixel_height = 0;
@@ -3448,6 +3558,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
         forget_meshes_3d();
         forget_textures(list->epoch);
+    } else {
+        free_spare_buffers(); // Those its meshes had no use for
     }
 }
 
