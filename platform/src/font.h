@@ -79,6 +79,10 @@ bool tide_font_glyph_for(const unsigned char *font, uint32_t codepoint, int pixe
 // `*version` changes whenever its pixels or its size do.
 const uint8_t *tide_font_atlas(int *width, int *height, uint32_t *version);
 
+// The rows of the atlas whose pixels changed since the last call: from
+// `*first`, `*count` of them, none when *count is 0.
+void tide_font_atlas_changed(int *first, int *count);
+
 // Before a frame's text: lets every glyph go, if the last frame needed one
 // the atlas had no room for. No glyph a frame asked for goes before it ends.
 void tide_font_frame(void);
