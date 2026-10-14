@@ -23,6 +23,8 @@
 
 #include "gpu_vk.h"
 
+#include "files.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,7 +68,8 @@
     X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage)   \
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBindPipeline) X(vkCmdSetViewport) X(vkCmdSetScissor)           \
     X(vkCmdSetStencilReference) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw)                        \
-    X(vkCmdDrawIndexed) X(vkCmdPushDescriptorSetKHR)
+    X(vkCmdDrawIndexed) X(vkCmdPushDescriptorSetKHR) X(vkCreatePipelineCache) X(vkDestroyPipelineCache)           \
+    X(vkGetPipelineCacheData) X(vkMergePipelineCaches)
 
 #define VK_DECLARE(name) static PFN_##name name;
 VK_GLOBAL(VK_DECLARE)
@@ -246,7 +249,7 @@ static struct {
     // what's uploaded during the pass, which goes before it. After a pass,
     // its command buffer goes on as the one outside passes.
     VkCommandBuffer outside;
-    bool outside_after_pass; // ...and nothing waits for the pass in it yet
+    bool drawn; // A pass was recorded since the last barrier that has transfers wait for draws
     VkCommandBuffer pass;
     uint32_t pass_pending; // Where the pass's is in `pending`
     VkCommandBuffer before;
@@ -272,6 +275,14 @@ static struct {
     bool query_active;
     uint64_t submitted, completed;     // Submissions made, and how many of them the GPU is done with
     int made_width, made_height;       // The window's pixels as the swapchain was made for them
+    uint32_t swapchains_made;          // For tests (tide_gpu_vk_swapchain)
+
+    // What the driver compiled, kept across runs (tide_gpu.pipeline_cache)
+    VkPipelineCache pipeline_cache;
+    char *cache_file;   // Where: NULL for nowhere
+    size_t cache_read;  // The bytes of it this device took from the file (tide_gpu_vk_pipeline_cache_read)
+    uint64_t cache_hash; // ...and their hash: what's written as the backend closes, unless it's that again
+    bool lose_asked;                   // For tests (tide_gpu_vk_lose): lost as the frame is shown
 } vk;
 
 
@@ -550,14 +561,55 @@ static VkDeviceSize ring_take(const VkDeviceSize size, const VkDeviceSize align,
 // ---------------------------------------------------------------------------
 // Commands
 
-static void barrier_all(const VkCommandBuffer cb)
+// Barriers order what one command writes before what another reads or
+// writes, by the stages that do it, as everything recorded before a barrier
+// (in the order command buffers are submitted) and everything after it. A pass
+// waits for transfers, and its attachments for those of the passes before
+// it, but its vertices don't wait for their fragments; transfers wait for the
+// draws before them, whose buffers they may overwrite. Images have barriers of
+// their own as they turn from one layout to another (turn).
+
+enum {
+    DRAW_STAGES = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+    ATTACHMENT_STAGES = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
+                      | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    ATTACHMENT_WRITES = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    ATTACHMENT_ACCESS = ATTACHMENT_WRITES | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+    DRAW_READS = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT
+               | VK_ACCESS_SHADER_READ_BIT,
+};
+
+static void barrier(const VkCommandBuffer cb, const VkPipelineStageFlags from, const VkAccessFlags written,
+                    const VkPipelineStageFlags to, const VkAccessFlags then)
 {
-    const VkMemoryBarrier all = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, NULL,
-                                 VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &all, 0, NULL, 0, NULL);
+    const VkMemoryBarrier b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, NULL, written, then};
+    vkCmdPipelineBarrier(cb, from, to, 0, 1, &b, 0, NULL, 0, NULL);
 }
 
-// A command buffer of the frame's, recording: after everything before it.
+// Attachments drawn in before (a window's depth, a multisampled target's
+// images, which stay attachments) are drawn in, or resolved, after.
+static void barrier_attachments(const VkCommandBuffer cb)
+{
+    barrier(cb, ATTACHMENT_STAGES, ATTACHMENT_WRITES, ATTACHMENT_STAGES, ATTACHMENT_ACCESS);
+}
+
+// What a pass draws with was uploaded before it, and what it draws in was drawn in before it.
+static void barrier_pass(const VkCommandBuffer cb)
+{
+    barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, DRAW_STAGES | ATTACHMENT_STAGES,
+            DRAW_READS | ATTACHMENT_ACCESS);
+    barrier_attachments(cb);
+}
+
+// Transfers after the draws before them, which may have read what they write
+// (a buffer written again), or written what they read.
+static void barrier_transfers(const VkCommandBuffer cb)
+{
+    barrier(cb, DRAW_STAGES | ATTACHMENT_STAGES, ATTACHMENT_WRITES, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+}
+
+// A command buffer of the frame's, recording.
 static VkCommandBuffer command_buffer(void)
 {
     vk_frame *f = &vk.frames[vk.frame];
@@ -573,7 +625,6 @@ static VkCommandBuffer command_buffer(void)
     const VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
                                             VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, NULL};
     check(vkBeginCommandBuffer(cb, &begin), "vkBeginCommandBuffer");
-    barrier_all(cb);
     return cb;
 }
 
@@ -591,6 +642,7 @@ static void queue_up(const VkCommandBuffer cb)
 // for the pass that's on: it runs before that pass.
 static VkCommandBuffer outside(void)
 {
+    VkCommandBuffer cb;
     if (vk.pass) {
         if (!vk.before) { // In `pending` just before the pass
             vk.before = command_buffer();
@@ -599,16 +651,21 @@ static VkCommandBuffer outside(void)
                     (vk.pending_count - 1u - vk.pass_pending) * sizeof(VkCommandBuffer));
             vk.pending[vk.pass_pending++] = vk.before;
         }
-        return vk.before;
+        cb = vk.before;
+    } else {
+        if (!vk.outside) {
+            vk.outside = command_buffer();
+            queue_up(vk.outside);
+        }
+        cb = vk.outside;
     }
-    if (!vk.outside) {
-        vk.outside = command_buffer();
-        queue_up(vk.outside);
-    } else if (vk.outside_after_pass) {
-        barrier_all(vk.outside); // As a command buffer of its own would begin
-        vk.outside_after_pass = false;
+    // The passes before it are done with what it's about to write (vk.drawn counts the pass that's on as
+    // being after, as a `before` command buffer is)
+    if (vk.drawn) {
+        barrier_transfers(cb);
+        vk.drawn = false;
     }
-    return vk.outside;
+    return cb;
 }
 
 static void close_outside(void)
@@ -616,7 +673,6 @@ static void close_outside(void)
     if (!vk.outside) return;
     check(vkEndCommandBuffer(vk.outside), "vkEndCommandBuffer");
     vk.outside = VK_NULL_HANDLE;
-    vk.outside_after_pass = false;
 }
 
 static VkImageAspectFlags aspects_of(const VkFormat format)
@@ -625,17 +681,56 @@ static VkImageAspectFlags aspects_of(const VkFormat format)
          ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
+// The stages that use an image in a layout, and how. An image is only ever
+// undefined before the window's is acquired, which a submission waits for at
+// color output, or before it was first written: it waits for nothing else. A
+// shown one's, for its next pass that frame, is the color output it was left at.
+static void layout_use(const VkImageLayout layout, VkPipelineStageFlags *stages, VkAccessFlags *access)
+{
+    switch (layout) {
+    case VK_IMAGE_LAYOUT_UNDEFINED:
+    case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+        *stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, *access = 0;
+        break;
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        *stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        *access = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        break;
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL: // Its resolve is at color output
+        *stages = ATTACHMENT_STAGES, *access = ATTACHMENT_ACCESS;
+        break;
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+        *stages = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, *access = VK_ACCESS_SHADER_READ_BIT;
+        break;
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+        *stages = VK_PIPELINE_STAGE_TRANSFER_BIT, *access = VK_ACCESS_TRANSFER_READ_BIT;
+        break;
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+        *stages = VK_PIPELINE_STAGE_TRANSFER_BIT, *access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        break;
+    default:
+        *stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, *access = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        break;
+    }
+}
+
 // An image's images from `level` and `layer` on, `levels` and `layers` of
-// them, from one layout to another, after whatever came before.
+// them, from one layout to another, after what used them in the first.
 static void turn(const VkCommandBuffer cb, const VkImage image, const VkFormat format, const uint32_t level, const uint32_t levels,
                  const uint32_t layer, const uint32_t layers, const VkImageLayout from, const VkImageLayout to)
 {
     if (from == to) return;
-    const VkImageMemoryBarrier b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, NULL,
-                                    VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+    VkPipelineStageFlags before, after;
+    VkAccessFlags used, then;
+    layout_use(from, &before, &used);
+    layout_use(to, &after, &then);
+    const VkAccessFlags writes = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                               | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    const VkImageMemoryBarrier b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, NULL, used & writes, then,
                                     from, to, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, image,
                                     {aspects_of(format), level, levels, layer, layers}};
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &b);
+    vkCmdPipelineBarrier(cb, before, after, 0, 0, NULL, 0, NULL, 1, &b);
 }
 
 static void turn_texture(const VkCommandBuffer cb, const vk_texture *t, const VkImageLayout from, const VkImageLayout to)
@@ -823,6 +918,7 @@ static bool make_swapchain(void)
     }
     vk.extent = extent;
     vk.made_width = width, vk.made_height = height; // What it's made again for: another size than this
+    vk.swapchains_made++;
     // Its depth and stencil, which every target has: the window's are drawn into and never read
     if (vk.window_depth_view) vkDestroyImageView(vk.device, vk.window_depth_view, NULL);
     if (vk.window_depth) vkDestroyImage(vk.device, vk.window_depth, NULL);
@@ -880,7 +976,6 @@ void tide_gpu_vk_present(void)
     if (vk.lost) {
         vk.pending_count = 0;
         vk.outside = vk.pass = vk.before = VK_NULL_HANDLE;
-        vk.outside_after_pass = false;
         vk.acquired = false;
         return;
     }
@@ -936,6 +1031,22 @@ void tide_gpu_vk_present(void)
     vkResetCommandPool(vk.device, f->pool, 0);
     f->used = 0;
     f->ring.used = 0;
+    if (vk.lose_asked) {
+        vk.lose_asked = false;
+        lose(VK_ERROR_DEVICE_LOST);
+    }
+}
+
+void tide_gpu_vk_lose(void)
+{
+    vk.lose_asked = vk.open && vk.device;
+}
+
+void tide_gpu_vk_swapchain(int *width, int *height, uint32_t *made)
+{
+    *width = vk.swapchain ? (int)vk.extent.width : 0;
+    *height = vk.swapchain ? (int)vk.extent.height : 0;
+    *made = vk.swapchains_made;
 }
 
 // ---------------------------------------------------------------------------
@@ -1465,6 +1576,7 @@ static void vk_resolve_depth(const tide_gpu_id id)
     }
     vk_texture *d = &vk.textures[t->depth - 1u];
     const VkCommandBuffer cb = outside();
+    barrier_attachments(cb); // The passes that drew its samples
     turn(cb, d->image, d->format, 0, 1, 0, 1, d->rest, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     const VkRenderingAttachmentInfo depth = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = t->many_depth_view,
@@ -1660,7 +1772,7 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         .pColorBlendState = &blend, .pDynamicState = &dynamics, .layout = vk.layout,
     };
     VkPipeline pipeline;
-    const VkResult result = vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &info, NULL, &pipeline);
+    const VkResult result = vkCreateGraphicsPipelines(vk.device, vk.pipeline_cache, 1, &info, NULL, &pipeline);
     vkDestroyShaderModule(vk.device, module, NULL);
     if (result != VK_SUCCESS) {
         if (result == VK_ERROR_DEVICE_LOST) {
@@ -1722,6 +1834,7 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     // What's recorded outside passes since the last one goes before it, and what's uploaded during it, after that
     close_outside();
     vk.pass = command_buffer();
+    barrier_pass(vk.pass);
     vk.pass_pending = vk.pending_count;
     queue_up(vk.pass);
     vk.before = VK_NULL_HANDLE;
@@ -1812,7 +1925,7 @@ static void vk_end(void)
     }
     // What's recorded outside passes next goes on after it, in the same command buffer
     vk.outside = vk.pass;
-    vk.outside_after_pass = true;
+    vk.drawn = true;
     vk.pass = VK_NULL_HANDLE;
     if (vk.before) check(vkEndCommandBuffer(vk.before), "vkEndCommandBuffer");
     vk.before = VK_NULL_HANDLE;
@@ -2046,6 +2159,101 @@ static VkFormat pick_window_format(void)
     return found;
 }
 
+// ---------------------------------------------------------------------------
+// The pipeline cache: what the driver compiled, kept in a file across runs
+// (tide_gpu.pipeline_cache), as the driver's data after a header of Tide's,
+// which says what it is, how long and its hash. A file cut short or changed
+// on the disk never reaches the driver, which needn't check that. Nor does one
+// for another device or driver, as its own header says: this device's is
+// written over it.
+
+enum { CACHE_HEADER = 24, CACHE_MOST = 256u << 20 };
+static const char cache_magic[8] = {'T', 'I', 'D', 'E', 'P', 'S', 'O', '1'};
+
+static uint64_t cache_hash(const uint8_t *data, const size_t size)
+{
+    uint64_t h = UINT64_C(0xcbf29ce484222325); // FNV-1a
+    for (size_t i = 0; i < size; i++) h = (h ^ data[i]) * UINT64_C(0x100000001b3);
+    return h;
+}
+
+// Whether the driver's data is for this device and driver: its header, of
+// least significant bytes first, as the specification has it.
+static bool cache_for_device(const uint8_t *data, const size_t size)
+{
+    if (size < 16u + VK_UUID_SIZE) return false;
+    uint32_t length, version, vendor, device;
+    memcpy(&length, data, 4);
+    memcpy(&version, data + 4, 4);
+    memcpy(&vendor, data + 8, 4);
+    memcpy(&device, data + 12, 4);
+    return length >= 16u + VK_UUID_SIZE && length <= size && version == VK_PIPELINE_CACHE_HEADER_VERSION_ONE
+        && vendor == vk.properties.vendorID && device == vk.properties.deviceID
+        && memcmp(data + 16, vk.properties.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+}
+
+static void read_pipeline_cache(void)
+{
+    vk.cache_read = 0;
+    vk.cache_hash = 0;
+    if (!vk.cache_file || !vk.pipeline_cache) return;
+    size_t size = 0;
+    uint8_t *file = tide_file_read_whole(vk.cache_file, CACHE_HEADER + CACHE_MOST, &size);
+    if (!file) return;
+    uint64_t length = 0, hash = 0;
+    if (size >= CACHE_HEADER) memcpy(&length, file + 8, 8), memcpy(&hash, file + 16, 8);
+    const uint8_t *data = file + CACHE_HEADER;
+    if (size >= CACHE_HEADER && memcmp(file, cache_magic, sizeof cache_magic) == 0 && length == size - CACHE_HEADER
+        && hash == cache_hash(data, (size_t)length) && cache_for_device(data, (size_t)length)) {
+        const VkPipelineCacheCreateInfo info = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, NULL, 0, (size_t)length, data};
+        VkPipelineCache read;
+        if (vkCreatePipelineCache(vk.device, &info, NULL, &read) == VK_SUCCESS) {
+            if (vkMergePipelineCaches(vk.device, vk.pipeline_cache, 1, &read) == VK_SUCCESS) {
+                vk.cache_read = (size_t)length;
+                vk.cache_hash = hash;
+            }
+            vkDestroyPipelineCache(vk.device, read, NULL);
+        }
+    }
+    free(file);
+}
+
+// What the driver has now goes to the file, unless it's what was read.
+static void write_pipeline_cache(void)
+{
+    if (!vk.cache_file || !vk.pipeline_cache || vk.lost) return;
+    size_t size = 0;
+    if (vkGetPipelineCacheData(vk.device, vk.pipeline_cache, &size, NULL) != VK_SUCCESS || !size || size > CACHE_MOST) return;
+    uint8_t *file = tide_alloc(CACHE_HEADER + size);
+    if (vkGetPipelineCacheData(vk.device, vk.pipeline_cache, &size, file + CACHE_HEADER) == VK_SUCCESS) {
+        const uint64_t length = size, hash = cache_hash(file + CACHE_HEADER, size);
+        memcpy(file, cache_magic, sizeof cache_magic);
+        memcpy(file + 8, &length, 8);
+        memcpy(file + 16, &hash, 8);
+        if ((size != vk.cache_read || hash != vk.cache_hash) && tide_file_write_whole(vk.cache_file, file, CACHE_HEADER + size)) {
+            vk.cache_read = size, vk.cache_hash = hash;
+        }
+    }
+    free(file);
+}
+
+static void vk_pipeline_cache(const char *file)
+{
+    write_pipeline_cache(); // What was compiled goes where it was to go
+    free(vk.cache_file);
+    vk.cache_file = NULL;
+    if (file) {
+        const size_t length = strlen(file) + 1u;
+        vk.cache_file = memcpy(tide_alloc(length), file, length);
+    }
+    read_pipeline_cache();
+}
+
+size_t tide_gpu_vk_pipeline_cache_read(void)
+{
+    return vk.cache_read;
+}
+
 static void destroy_device(void)
 {
     if (!vk.device) return;
@@ -2086,6 +2294,8 @@ static void destroy_device(void)
     vk.made_width = vk.made_height = 0;
     forget_swapchain();
     for (uint32_t i = 0; i < SAMPLER_COUNT; i++) vkDestroySampler(vk.device, vk.samplers[i], NULL);
+    vkDestroyPipelineCache(vk.device, vk.pipeline_cache, NULL);
+    vk.pipeline_cache = VK_NULL_HANDLE;
     vkDestroyPipelineLayout(vk.device, vk.layout, NULL);
     vkDestroyDescriptorSetLayout(vk.device, vk.set_layout, NULL);
     for (uint32_t i = 0; i < vk.block_count; i++) {
@@ -2098,7 +2308,7 @@ static void destroy_device(void)
     vk.device = VK_NULL_HANDLE;
     vk.pending_count = 0;
     vk.outside = vk.pass = vk.before = VK_NULL_HANDLE;
-    vk.acquired = vk.in_pass = vk.outside_after_pass = false;
+    vk.acquired = vk.in_pass = vk.drawn = false;
     uniform_buffer = VK_NULL_HANDLE;
 }
 
@@ -2274,6 +2484,9 @@ static bool create_device(const bool say)
         const VkSemaphoreCreateInfo semaphore = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, NULL, 0};
         check(vkCreateSemaphore(vk.device, &semaphore, NULL, &f->acquired), "vkCreateSemaphore");
     }
+    const VkPipelineCacheCreateInfo cache = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, NULL, 0, 0, NULL};
+    check(vkCreatePipelineCache(vk.device, &cache, NULL, &vk.pipeline_cache), "vkCreatePipelineCache");
+    read_pipeline_cache();
     vk.frame = 0;
     vk.stale = true;
     vk.epoch++;
@@ -2323,6 +2536,18 @@ bool tide_gpu_vk_open(const tide_vk_window *window, const bool say)
     uint32_t extension_count = 0;
     for (uint32_t i = 0; i < window->extension_count && extension_count < 28; i++) extensions[extension_count++] = window->extensions[i];
     if (validate) extensions[extension_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    // ...which checks synchronization too, where the layer can: what one command writes and another reads
+    // with no barrier between them, which no driver's own checks see
+    const VkValidationFeatureEnableEXT sync = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+    const VkValidationFeaturesEXT features = {VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT, NULL, 1, &sync, 0, NULL};
+    bool sync_checked = false;
+    if (validate) {
+        VkExtensionProperties layer[64];
+        uint32_t layer_count = 64;
+        if (vkEnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation", &layer_count, layer) < 0) layer_count = 0;
+        sync_checked = listed(layer, layer_count, VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+        if (sync_checked) extensions[extension_count++] = VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME;
+    }
     VkInstanceCreateFlags flags = 0;
     if (listed(available, available_count, "VK_KHR_portability_enumeration")) { // MoltenVK's devices are listed only so
         extensions[extension_count++] = "VK_KHR_portability_enumeration";
@@ -2330,7 +2555,8 @@ bool tide_gpu_vk_open(const tide_vk_window *window, const bool say)
     }
     const VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, NULL, "Tide", 1, "Tide", 1, VK_API_VERSION_1_3};
     const char *const validation_layer = "VK_LAYER_KHRONOS_validation";
-    const VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, NULL, flags, &app, validate ? 1u : 0u,
+    const VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, sync_checked ? &features : NULL, flags, &app,
+                                       validate ? 1u : 0u,
                                        &validation_layer, extension_count, extensions};
     const VkResult made = vkCreateInstance(&info, NULL, &vk.instance);
     if (made != VK_SUCCESS) {
@@ -2378,7 +2604,12 @@ bool tide_gpu_vk_open(const tide_vk_window *window, const bool say)
 void tide_gpu_vk_close(void)
 {
     if (!vk.open) return;
+    if (vk.device) {
+        vkDeviceWaitIdle(vk.device);
+        write_pipeline_cache();
+    }
     destroy_device();
+    free(vk.cache_file);
     close_instance();
     free(vk.buffers);
     free(vk.textures);
@@ -2411,6 +2642,7 @@ static uint32_t vk_epoch(void)
 const tide_gpu tide_gpu_vulkan = {
     .name = "Vulkan",
     .epoch = vk_epoch,
+    .pipeline_cache = vk_pipeline_cache,
     .time_begin = vk_time_begin,
     .time_end = vk_time_end,
     .time_read = vk_time_read,

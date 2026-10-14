@@ -35,6 +35,9 @@
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
+#elif !defined(__ANDROID__)
+#define DRAW_VULKAN // Desktop draws with Vulkan where it can, whose device a test loses
+#include "../src/gpu_vk.h"
 #endif
 
 #define WIDTH 256
@@ -3923,6 +3926,9 @@ static int frames_bench(void)
 }
 
 static bool benching, frames_benching;
+#ifdef DRAW_VULKAN
+static uint32_t lost_epoch; // The device's before Vulkan's was lost on purpose
+#endif
 static const char *dump_path;
 
 static int frame(void *user, const float seconds)
@@ -3935,15 +3941,18 @@ static int frame(void *user, const float seconds)
     if (benching) return bench();
     if (frames_benching) return frames_bench();
     if (dump_path) return dump(dump_path);
-#ifdef __wasm__
-    // WebGPU's device can go away (a driver that starts over), taking what the
-    // renderer made on it. Once everything checked out, the page loses it as
-    // that would, and when it says it found another, everything has to draw
-    // again from what the list and the font keep.
+#if defined(__wasm__) || defined(DRAW_VULKAN)
+    // WebGPU's and Vulkan's devices can go away (a driver that starts over),
+    // taking what the renderer made on them. Once everything checked out, the
+    // page loses WebGPU's as that would, and Vulkan loses its own as the frame
+    // is shown; once there's another, everything has to draw again from what
+    // the list and the font keep.
     static int lost; // 1: lost, and waiting for another; 2: checking again
     if (lost == 1) {
+#ifdef __wasm__
         if (!tide_web_eval("Tide.gpuDevices() > 1")) return TIDE_KEEP_RUNNING;
         printf("the device was lost, and the page found another\n");
+#endif
         lost = 2;
     }
     if (lost == 2) {
@@ -3965,6 +3974,11 @@ static int frame(void *user, const float seconds)
         depth_settings();
         cull_settings();
         levels_of_detail();
+#ifdef DRAW_VULKAN
+        // The renderer asked for the device as the checks drew: another was made, which they drew with
+        expect(tide_gpu_vulkan.epoch() != lost_epoch, "Vulkan's lost device was made again, and drew everything again");
+        printf("the device was lost, and another was made\n");
+#endif
         return run_checks();
     }
 #endif
@@ -3991,6 +4005,14 @@ static int frame(void *user, const float seconds)
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
+        lost = 1;
+        return TIDE_KEEP_RUNNING;
+    }
+#endif
+#ifdef DRAW_VULKAN
+    if (code == 0 && strcmp(tide_platform_renderer(), "Vulkan") == 0) {
+        lost_epoch = tide_gpu_vulkan.epoch();
+        tide_gpu_vk_lose();
         lost = 1;
         return TIDE_KEEP_RUNNING;
     }

@@ -251,6 +251,11 @@ double tide_platform_gpu_ms(void);
 // Relative paths are under persistent_data_path; native absolute paths use
 // the operating system's permissions. Browser paths stay in its app's roots.
 const tide_io *tide_platform_io_init(const char *app_id);
+// The game this program runs, by the same app ID, for a game that never uses
+// files too: what names the folder the renderer keeps what it compiled in
+// across runs (Vulkan's pipelines), the game's temporary cache folder, which
+// is only made once something's kept there. tide_platform_io_init names it too.
+void tide_platform_name_game(const char *app_id);
 
 // How many draw calls the last list drawn took (tide_platform_draw), aside
 // from what was drawn over it (tide_platform_draw_overlay,

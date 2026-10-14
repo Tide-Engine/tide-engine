@@ -380,6 +380,7 @@ if(TIDE_WEB)
 elseif(NOT TIDE_ANDROID)
     # A hidden window, so it needs a desktop session with a GPU: drawn with
     # Vulkan where there's one, and with OpenGL again
+    target_include_directories(tide_platform_draw PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
     add_test(NAME tide_platform_draw COMMAND tide_platform_draw)
     add_test(NAME tide_platform_draw_opengl COMMAND tide_platform_draw)
     tide_gpu_test(tide_platform_draw)
@@ -575,6 +576,30 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         set_tests_properties(tide_platform_hidden_runs PROPERTIES TIMEOUT 120)
         tide_gpu_test(tide_platform_hidden_runs)
     endif()
+
+    # The window's images on Vulkan: made again when the window is resized and
+    # when the device is lost, in a hidden window, so it needs a desktop
+    # session with a GPU. It's Vulkan's alone, so it refuses to draw with
+    # anything else.
+    add_executable(tide_platform_swapchain tests/swapchain.c)
+    target_include_directories(tide_platform_swapchain PRIVATE src third_party)
+    target_link_libraries(tide_platform_swapchain PRIVATE tide_platform)
+    add_test(NAME tide_platform_swapchain COMMAND tide_platform_swapchain)
+    set_tests_properties(tide_platform_swapchain PROPERTIES TIMEOUT 120)
+    tide_gpu_test(tide_platform_swapchain)
+    set_property(TEST tide_platform_swapchain APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan)
+
+    # Vulkan's pipelines kept across runs, in the game's temporary cache folder,
+    # and every way the file it reads can be wrong (tests/pipeline_cache.c)
+    add_executable(tide_platform_pipeline_cache tests/pipeline_cache.c)
+    target_include_directories(tide_platform_pipeline_cache PRIVATE src third_party)
+    target_link_libraries(tide_platform_pipeline_cache PRIVATE tide_platform)
+    add_test(NAME tide_platform_pipeline_cache
+        COMMAND "${CMAKE_COMMAND}" -DPROGRAM=$<TARGET_FILE:tide_platform_pipeline_cache>
+            "-DDIR=${CMAKE_CURRENT_BINARY_DIR}/tide_platform_pipeline_cache" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/pipeline_cache.cmake")
+    set_tests_properties(tide_platform_pipeline_cache PROPERTIES TIMEOUT 300)
+    tide_gpu_test(tide_platform_pipeline_cache)
+    set_property(TEST tide_platform_pipeline_cache APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan)
 
     # The cursor's lock on desktop: only a window with the focus holds it, and
     # a test's window, hidden, never has it. It needs a desktop session, as

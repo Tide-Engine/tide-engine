@@ -307,6 +307,13 @@ bool tide_window_open(const tide_window_desc *desc)
     return true;
 }
 
+// The window, for a test that resizes it as a player would (tests/swapchain.c).
+GLFWwindow *tide_glfw_window(void);
+GLFWwindow *tide_glfw_window(void)
+{
+    return window;
+}
+
 const tide_gpu *tide_window_gpu(void)
 {
     return vulkan ? &tide_gpu_vulkan : &tide_gpu_gl;

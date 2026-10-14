@@ -42,5 +42,16 @@ void tide_gpu_vk_close(void);
 // Whether the device times what it draws (timestamps on its queue): a test's
 // question, as tide_platform_gpu_ms says nothing of whether one can come.
 bool tide_gpu_vk_timestamps(void);
+// For tests: the device is lost once the frame being drawn is shown, as it is
+// when a driver starts over. Everything made on it goes, and the next epoch
+// makes the device again (tide_gpu.epoch, which the renderer asks each frame).
+void tide_gpu_vk_lose(void);
+// For tests: the size of the window's images, as the swapchain was last
+// made, and how many times it has been made; 0 by 0 with none.
+void tide_gpu_vk_swapchain(int *width, int *height, uint32_t *made);
+// For tests: the bytes of compiled pipelines the device took from the cache
+// file it was given (tide_gpu.pipeline_cache), 0 for none: no file, one that
+// isn't whole, or one for another device or driver.
+size_t tide_gpu_vk_pipeline_cache_read(void);
 
 extern const tide_gpu tide_gpu_vulkan;

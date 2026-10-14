@@ -683,7 +683,6 @@ static inline tide_session *tide_run_new_session(void)
 // Bind local files before startup handlers or restored tasks can use them.
 static inline void tide_run_bind_io(const tide_host_game *game, void *local)
 {
-    if (!game->set_io) return;
     char fallback[512];
     const char *id = game->game->app_id;
     if (!id) {
@@ -694,6 +693,8 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
                 *p = '_';
         id = fallback;
     }
+    tide_platform_name_game(id); // Its folders: the renderer's cache too, whether the game uses files or not
+    if (!game->set_io) return;
     game->set_io(local, tide_platform_io_init(id));
 }
 

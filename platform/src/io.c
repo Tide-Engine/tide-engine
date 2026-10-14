@@ -15,6 +15,7 @@
 #ifndef __wasm__
 #include "fetch.h" // Web.Fetch, on a thread of its own
 #endif
+#include "files.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -574,6 +575,82 @@ static FILE *open_file(const char *path, const bool append)
 #endif
 }
 
+uint8_t *tide_file_read_whole(const char *path, const size_t limit, size_t *size)
+{
+    *size = 0;
+#ifdef _WIN32
+    wchar_t *wide = wide_path(path);
+    FILE *file = wide ? _wfopen(wide, L"rb") : NULL;
+    free(wide);
+#else
+    FILE *file = fopen(path, "rb");
+#endif
+    if (!file) return NULL;
+    size_t count = 0, capacity = 4096;
+    uint8_t *bytes = tide_alloc(capacity);
+    for (;;) {
+        count += fread(bytes + count, 1, capacity - count, file);
+        if (ferror(file) || count > limit) break;
+        if (feof(file)) {
+            fclose(file);
+            *size = count;
+            return bytes;
+        }
+        if (count == capacity) {
+            bytes = tide_realloc(bytes, capacity, capacity * 2u);
+            capacity *= 2u;
+        }
+    }
+    fclose(file);
+    free(bytes);
+    return NULL;
+}
+
+bool tide_file_write_whole(const char *path, const void *data, const size_t size)
+{
+    // Its folder, made if it isn't there (a temporary cache folder, which nothing else made)
+    const char *slash = strrchr(path, '/');
+    if (slash && slash != path) {
+        char *folder = duplicate(path);
+        folder[slash - path] = 0;
+        bool made;
+        const tide_io_error error = mkdir_one(folder, &made);
+        free(folder);
+        if (error) return false;
+    }
+    // Beside it first, under a name of this process's own
+    char *temporary = tide_alloc(strlen(path) + 32u);
+#ifdef _WIN32
+    snprintf(temporary, strlen(path) + 32u, "%s.%lu.new", path, (unsigned long)GetCurrentProcessId());
+#else
+    snprintf(temporary, strlen(path) + 32u, "%s.%ld.new", path, (long)getpid());
+#endif
+    FILE *file = open_file(temporary, false);
+    bool written = file && (!size || fwrite(data, 1, size, file) == size);
+    if (file && fclose(file) != 0) written = false;
+    if (written) {
+#ifdef _WIN32
+        wchar_t *from = wide_path(temporary), *to = wide_path(path);
+        written = from && to && MoveFileExW(from, to, MOVEFILE_REPLACE_EXISTING);
+        free(from);
+        free(to);
+#else
+        written = rename(temporary, path) == 0;
+#endif
+    }
+    if (!written && file) {
+#ifdef _WIN32
+        wchar_t *wide = wide_path(temporary);
+        if (wide) _wremove(wide);
+        free(wide);
+#else
+        remove(temporary);
+#endif
+    }
+    free(temporary);
+    return written;
+}
+
 static tide_io_error backend_write(void *user, const char *path, const uint8_t *data, const uint32_t size, const bool append)
 {
     io_state *io = user;
@@ -1076,6 +1153,32 @@ const char *tide_android_internal_data_path(void);
 const char *tide_android_cache_path(void);
 #endif
 
+// An app's temporary cache folder, as the system has one for it: nothing's made.
+static char *temporary_path(const char *app_id)
+{
+#ifdef _WIN32
+    const DWORD size = GetTempPathW(0, NULL);
+    wchar_t *wide = size ? tide_alloc(((size_t)size + 1u) * sizeof(wchar_t)) : NULL;
+    char *base = wide && GetTempPathW(size + 1u, wide) ? from_wide(wide) : NULL;
+    free(wide);
+    char *path = base ? join(base, app_id) : duplicate("");
+    free(base);
+    return path;
+#elif defined(__ANDROID__)
+    const char *cache = tide_android_cache_path();
+    if (cache) return duplicate(cache);
+    char *cwd = getcwd(NULL, 0);
+    char *persistent = cwd ? join(cwd, app_id) : duplicate("");
+    free(cwd);
+    char *path = join(persistent, "cache");
+    free(persistent);
+    return path;
+#else
+    const char *temp = getenv("TMPDIR");
+    return join(temp && absolute(temp) ? temp : "/tmp", app_id);
+#endif
+}
+
 static void native_paths(io_state *io)
 {
 #ifdef _WIN32
@@ -1084,22 +1187,14 @@ static void native_paths(io_state *io)
     io->persistent = base ? join(base, io->app_id) : duplicate("");
     free(base);
     free(profile);
-    const DWORD size = GetTempPathW(0, NULL);
-    wchar_t *wide = size ? tide_alloc(((size_t)size + 1u) * sizeof(wchar_t)) : NULL;
-    if (wide && GetTempPathW(size + 1u, wide)) base = from_wide(wide);
-    else base = NULL;
-    io->temporary = base ? join(base, io->app_id) : duplicate("");
-    free(wide);
-    free(base);
 #elif defined(__ANDROID__)
-    const char *data = tide_android_internal_data_path(), *cache = tide_android_cache_path();
+    const char *data = tide_android_internal_data_path();
     if (data) io->persistent = duplicate(data);
     else {
         char *cwd = getcwd(NULL, 0);
         io->persistent = cwd ? join(cwd, io->app_id) : duplicate("");
         free(cwd);
     }
-    io->temporary = cache ? duplicate(cache) : join(io->persistent, "cache");
 #else
     const char *home = getenv("HOME");
 #ifdef __APPLE__
@@ -1110,9 +1205,8 @@ static void native_paths(io_state *io)
 #endif
     io->persistent = base ? join(base, io->app_id) : duplicate("");
     free(base);
-    const char *temp = getenv("TMPDIR");
-    io->temporary = join(temp && absolute(temp) ? temp : "/tmp", io->app_id);
 #endif
+    io->temporary = temporary_path(io->app_id);
     io->persistent_error = io->persistent[0] ? mkdir_parents(io, io->persistent) : TIDE_IO_STORAGE_UNAVAILABLE;
     io->temporary_error = io->temporary[0] ? mkdir_parents(io, io->temporary) : TIDE_IO_STORAGE_UNAVAILABLE;
 }
@@ -1141,9 +1235,32 @@ static bool backend_request_poll(void *user, const uint32_t ticket, tide_io_erro
 }
 #endif
 
+// The game named for its cache folder (tide_platform_name_game), and that folder.
+static char *named_app, *named_cache;
+
+void tide_platform_name_game(const char *app_id)
+{
+    if (!app_id || !*app_id) app_id = "dev.tide.game";
+    if (named_app && strcmp(named_app, app_id) == 0) return;
+    free(named_app);
+    free(named_cache);
+    named_app = duplicate(app_id);
+#ifdef __wasm__
+    named_cache = duplicate("");
+#else
+    named_cache = temporary_path(app_id);
+#endif
+}
+
+const char *tide_platform_cache_folder(void)
+{
+    return named_cache && named_cache[0] ? named_cache : NULL;
+}
+
 const tide_io *tide_platform_io_init(const char *app_id)
 {
     if (!app_id || !*app_id) app_id = "dev.tide.game";
+    tide_platform_name_game(app_id);
     if (state.app_id && strcmp(state.app_id, app_id) == 0) return &state.provider;
     // A host has one app at a time. Same-app hot reload never enters here.
     free(state.app_id);
