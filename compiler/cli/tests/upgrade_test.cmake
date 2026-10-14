@@ -1,4 +1,4 @@
-# tide upgrade, from a release in a folder that stands in for GitHub
+# tide upgrade, from a release in a folder that stands in for the site
 # (TIDE_RELEASES_URL): an upgrade to a newer version, and an installation an
 # upgrade left partway, which tide builds nothing with and `tide upgrade`
 # installs again, though its tide is the newest version already. The tide that
@@ -97,7 +97,7 @@ function(make_release dir version)
     file(SIZE "${dir}/${package}" size)
     file_url(package_url "${dir}/${package}")
     file_url(sums_url "${dir}/SHA256SUMS")
-    file(WRITE "${dir}/releases.json" "[{\"tag_name\": \"v${version}\", \"prerelease\": true, \"draft\": false, \"assets\": ["
+    file(WRITE "${dir}/releases.json" "[{\"tag_name\": \"v${version}\", \"prerelease\": ${prerelease}, \"draft\": false, \"assets\": ["
         "{\"name\": \"${package}\", \"size\": ${size}, \"browser_download_url\": \"${package_url}\"}, "
         "{\"name\": \"SHA256SUMS\", \"size\": 1, \"browser_download_url\": \"${sums_url}\"}]}]")
     file_url(releases_url "${dir}/releases.json")
@@ -111,7 +111,7 @@ function(check_installed install version)
     check_file("${install}/web/tide.js" "new tide.js")
     check_file("${install}/VERSION" "${version}\n")
     check_file("${install}/packages/dice/dice.tide" "a game's package")
-    check_file("${install}/channel" "nightly")
+    check_file("${install}/channel" "${channel}")
     if(EXISTS "${install}/include/tide/gone.h")
         message(FATAL_ERROR "The upgrade left a header the release has none of")
     endif()
@@ -120,12 +120,18 @@ function(check_installed install version)
     endif()
 endfunction()
 
-# This tide's version: "tide 0.3.0-dev (nightly)".
+# This tide's version and default channel: "tide 0.3.0-dev (nightly)"
+# in development, or "tide 0.3.0 (stable)" in a stable release build.
 execute_process(COMMAND "${TIDE}" version OUTPUT_VARIABLE said RESULT_VARIABLE result)
-if(NOT result EQUAL 0 OR NOT said MATCHES "^tide ([^ ]+) ")
+if(NOT result EQUAL 0 OR NOT said MATCHES "^tide ([^ ]+) [(](stable|nightly)[)]")
     message(FATAL_ERROR "tide version failed (${result}):\n${said}")
 endif()
 set(version "${CMAKE_MATCH_1}")
+set(channel "${CMAKE_MATCH_2}")
+set(prerelease true)
+if(channel STREQUAL "stable")
+    set(prerelease false)
+endif()
 
 # --- An upgrade to a newer version.
 set(install "${WORK}/newer/Tide")
@@ -137,8 +143,8 @@ if(NOT result EQUAL 0)
 endif()
 # Its one line is all an upgrade says, where there's no terminal for its bars.
 string(REPLACE "\r" "" output "${output}")
-if(NOT output STREQUAL "Upgraded tide ${version} -> 99.0.0 (nightly).\n")
-    message(FATAL_ERROR "tide upgrade didn't say just \"Upgraded tide ${version} -> 99.0.0 (nightly).\":\n${output}")
+if(NOT output STREQUAL "Upgraded tide ${version} -> 99.0.0 (${channel}).\n")
+    message(FATAL_ERROR "tide upgrade didn't say just \"Upgraded tide ${version} -> 99.0.0 (${channel}).\":\n${output}")
 endif()
 check_installed("${install}" "99.0.0")
 
@@ -150,7 +156,7 @@ run_tide("${install}" result output upgrade)
 if(NOT result EQUAL 0)
     message(FATAL_ERROR "tide upgrade failed (${result}):\n${output}")
 endif()
-check_output("${output}" "tide ${version} is the newest nightly version.")
+check_output("${output}" "tide ${version} is the newest ${channel} version.")
 check_file("${install}/include/tide/run.h" "old run.h")
 
 # --- The same, after an upgrade that stopped partway: the new tide is in, and
@@ -170,7 +176,7 @@ run_tide("${install}" result output upgrade)
 if(NOT result EQUAL 0)
     message(FATAL_ERROR "tide upgrade didn't finish an upgrade that stopped (${result}):\n${output}")
 endif()
-check_output("${output}" "isn't whole" "Installed tide ${version} again (nightly).")
+check_output("${output}" "isn't whole" "Installed tide ${version} again (${channel}).")
 check_installed("${install}" "${version}")
 run_tide("${install}" result output version)
 string(FIND "${output}" "isn't whole" at)
