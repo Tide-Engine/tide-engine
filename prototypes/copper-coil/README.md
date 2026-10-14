@@ -74,8 +74,9 @@ Enable `TIDE_PRIVATE_PROTOTYPES=ON`. Native targets are `copper_coil` and
 `copper_coil_tests`; web staging is `copper_coil_page`. Every game build has
 STATS. The C tests solve all six chambers through player commands and cover
 authority, bad/stale commands, gate restrictions, charge, undo and snapshots.
-`copper_coil_play_webgl` and `copper_coil_play_webgpu` run actual solo and
-two-browser WebRTC play with a local relay and muted audio. Test code is
+`copper_coil_play_webgl` and `copper_coil_play_webgpu` complete all six chambers
+in order through solo keyboard/mouse input, then check shared-keyboard controls
+and two-browser WebRTC play with a local relay and muted audio. Test code is
 isolated under `test/tide.packages`, outside CLI game discovery.
 
 The PDF is reproducible with `test/make_pitch.py` (ReportLab, Segoe fonts on

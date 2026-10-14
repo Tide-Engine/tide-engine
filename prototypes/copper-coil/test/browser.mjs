@@ -336,11 +336,68 @@ try {
     await host.screenshot('solo-complete');
     const firstTitle = await host.crop({x:990,y:120,width:240,height:32});
     const completed = await host.crop({x:260,y:280,width:440,height:170});
+    const completionHeading = await host.crop({x:270,y:286,width:420,height:26});
     await host.click(478, 399); await advance();
     assertImagesDiffer(await host.crop({x:990,y:120,width:240,height:32}), firstTitle, 'completion permits advancing to a different chamber');
     assertImagesDiffer(await host.crop({x:260,y:280,width:440,height:170}), completed, 'Next chamber dismisses the completion card');
 
-    console.log('Solo walkthrough passed; testing shared keyboard');
+    // Continue from the completion button, without visiting arbitrary levels or
+    // writing game state. Every edit, robot swap and move uses ordinary input.
+    const mixUses = [2, 2, 2, 2, 1, 2];
+    const liveRows = [3, 1, 1, 0, 0, 5];
+    for (let level = 1; level < 6; level++) {
+        stage = `solo campaign chamber ${level + 1}`;
+        const title = await host.crop({x:990,y:120,width:240,height:32});
+        const beforeCompletion = await host.crop({x:260,y:280,width:440,height:170});
+        await host.tapKey('KeyQ','q',3); await advance(); // Copper, after Coil's exit
+        await steps(host,'ddww');
+        for (let use = 0; use < mixUses[level]; use++) {
+            await host.tapKey('KeyE','e',3); await advance();
+        }
+        await steps(host,'ssa');
+        await host.tapKey('KeyQ','q',3); await advance();
+        if (level === 1) {
+            await steps(host,'www');
+            await host.tapKey('KeyE','e',3); await advance(); // B: NOT
+            await steps(host,'sssa');
+        } else if (level === 3 || level === 4) {
+            await steps(host,'aaww');
+            await host.tapKey('KeyE','e',3); await advance(); // OUT: NOT
+            await steps(host,'ssd');
+        } else if (level === 5) {
+            await steps(host,'aww');
+            await host.tapKey('KeyE','e',3); await advance();
+            await host.tapKey('KeyE','e',3); await advance(); // + C: AND
+            await steps(host,'ss');
+        } else await steps(host,'a');
+        await host.click(1100,294 + liveRows[level] * (level === 5 ? 25 : 32));
+        await advance(42);
+        await host.screenshot(`campaign-${level + 1}-bridge`);
+        await host.tapKey('KeyQ','q',3); await advance();
+        await steps(host,'dwwd');
+        await host.tapKey('KeyQ','q',3); await advance();
+        await steps(host,'wawa'); await advance();
+        const card = await host.crop({x:260,y:280,width:440,height:170});
+        assertImagesDiffer(card, beforeCompletion, `Chamber ${level + 1}: exits change the completion area`);
+        if (level < 5) assertImagesEqual(await host.crop({x:270,y:286,width:420,height:26}), completionHeading,
+            `Chamber ${level + 1}: rendered completion heading matches chamber one`);
+        await host.screenshot(`campaign-${level + 1}-complete`);
+        console.log(`Chamber ${level + 1} input-only walkthrough completed`);
+        if (level < 5) {
+            await host.click(478,399); await advance();
+            assertImagesDiffer(await host.crop({x:990,y:120,width:240,height:32}), title,
+                `Chamber ${level + 1}: completion button advances the campaign`);
+        }
+    }
+    // The final button opens the chamber list only after the final win. Its
+    // rendered list is retained for review of all six completion markers.
+    const finalCard = await host.crop({x:260,y:280,width:440,height:170});
+    await host.click(478,399); await advance();
+    assertImagesDiffer(await host.crop({x:260,y:280,width:440,height:170}), finalCard,
+        'Final completion button opens the chamber review list');
+    await host.screenshot('campaign-all-six-completed');
+
+    console.log('All six solo chambers passed; testing shared keyboard');
     stage = 'shared-keyboard arrows after a probe click';
     await navigate(host, '&review=couch');
     await host.click(460,565);
@@ -396,7 +453,7 @@ try {
     await host.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
     await advance();
     assert.deepEqual(errors,[],'No runtime, browser or GPU errors');
-    console.log(`Copper & Coil (${backend}): solo circuit editing and undo, bridge and exit, shared-keyboard arrow controls after clicking a probe, two real WebRTC players, shared signals and progression, touch rendering passed.`);
+    console.log(`Copper & Coil (${backend}): all six solo chambers through keyboard/mouse input, circuit undo, shared-keyboard arrow controls after clicking a probe, two real WebRTC players, shared signals and progression, touch rendering passed.`);
 } catch (error) {
     process.exitCode = 1;
     console.error(`Copper & Coil failed during ${stage}: ${error.stack ?? error}`);
