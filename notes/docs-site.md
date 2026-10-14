@@ -35,6 +35,15 @@ syntax checks, the production docs build and `git diff --check` pass. The build
 retains its existing allowed unstaged-example placeholders. The owner requested a new Docs
 workflow after merge to validate Linux setup, all staged examples and deployment.
 
+Hosted confirmation: requested [Docs run 38557265795](https://github.com/Tide-Engine/tide-engine/actions/runs/38557265795)
+on 9b81435d passed and deployed successfully. Both web and native-host CMake
+configuration select Clang 23.1.2. The full grammar/access/release/analytics,
+SEO/HTTP and examples/gallery checks pass, including the playground's complete
+WebGL smoke and all five compiler/staging tests. Compiler tools were ready in
+3.3 seconds; compilation, preserved state/new defaults, syntax recovery, reset
+and phone layout all pass. Fly deployment completed successfully. This confirms
+the Linux toolchain correction; no failed-job retry or extra workflow was needed.
+
 ## Playground startup test guard (2026-10-14)
 
 Run 38552733008 built the site and passed its SEO/HTTP and preceding game
