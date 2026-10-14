@@ -124,14 +124,19 @@ try {
         if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
         return result.result.value;
     }
-    async function until(expression, label) {
-        const deadline = Date.now() + 20000;
+    async function until(expression, label, { timeout = 20000, failure, details } = {}) {
+        const deadline = Date.now() + timeout;
         while (Date.now() < deadline) {
             if (await evaluate(expression)) return;
             assert.deepEqual(errors, [], 'Browser errors');
+            if (failure) {
+                const message = await evaluate(failure);
+                if (message) throw new Error(`${label}: ${message}`);
+            }
             await new Promise((done) => setTimeout(done, 100));
         }
-        throw new Error(`Timed out: ${label}`);
+        const state = details ? `\n${JSON.stringify(await evaluate(details))}` : '';
+        throw new Error(`Timed out after ${timeout / 1000}s: ${label}${state}`);
     }
     await command('Page.enable');
     await command('Runtime.enable');
@@ -244,25 +249,42 @@ try {
             await evaluate(`(() => { const editor = document.querySelector('#playground-source'); editor.focus(); editor.value = ${JSON.stringify(text)}; editor.dispatchEvent(new Event('input', {bubbles:true})); })()`);
         };
         const running = `document.querySelector('.status').textContent.includes('your changes are live')`;
+        const details = `({status: document.querySelector('.playground .status')?.textContent,
+            diagnostics: document.querySelector('.playground .diagnostics')?.textContent})`;
+        // A repair keeps the previous error visible during the input debounce.
+        // Fail on the new build's result, not those still-visible diagnostics.
+        const failure = `document.querySelector('.playground .status.error') &&
+            !document.querySelector('.playground .status').textContent.includes('Code changed') &&
+            [document.querySelector('.playground .status').textContent,
+                document.querySelector('.playground .diagnostics')?.textContent].filter(Boolean).join('\\n')`;
+        const compiled = label => until(running, label, { failure, details });
+        const loadingStarted = Date.now();
         await edit(frozen);
-        await until(running, 'playground compiles and applies source locally');
+        // The first edit also downloads/decompresses 25 MiB and compiles the
+        // tool modules. Give startup its own bound; actual builds keep 20s.
+        await until(`/Checking Tide|Compiling|Linking|applying changes|your changes are live/.test(
+            document.querySelector('.playground .status').textContent)`, 'playground loads compiler tools',
+            { timeout: 120000, failure, details });
+        console.log(`playground: compiler tools ready after ${((Date.now() - loadingStarted) / 1000).toFixed(1)}s`);
+        await compiled('playground compiles and applies source locally');
         await evaluate(`Array.from(document.querySelectorAll('.actions button')).find(button => button.textContent === 'Restart').click()`);
         await until(`document.querySelector('.console pre')?.textContent.includes('state 37')`, 'playground restarts the successful build');
         const changed = frozen.replace('int bounces;', 'int bounces;\n    float added = 7;')
             .replace('Color(0.98, 0.75, 0.14)', 'Color(0.18, 0.83, 0.75)')
             .replace('Debug.Log($"state {ball.bounces}");', 'Debug.Log($"state {ball.bounces} added {ball.added}");');
         await edit(changed);
-        await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`, 'playground preserves state and migrates new defaults');
+        await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`,
+            'playground preserves state and migrates new defaults', { failure, details });
         assert.equal(await evaluate('document.activeElement.id'), 'playground-source', 'reload retains editor focus');
         await edit(changed.replace('Spawn(Ball { bounces = 37 });', 'Spawn(Ball { bounces = 37 })'));
         await until(`document.querySelector('.diagnostics.error')?.textContent.includes("expected ';'")`, 'playground reports a source diagnostic');
         const draws = await evaluate(`document.querySelector('iframe').contentWindow.__draws`);
         await until(`document.querySelector('iframe').contentWindow.__draws > ${draws + 5}`, 'last good game keeps drawing after a compile error');
         await edit(changed);
-        await until(running, 'playground recovers after fixing the error');
+        await compiled('playground recovers after fixing the error');
         await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`, 'playground still has the preserved state');
         await evaluate(`Array.from(document.querySelectorAll('.actions button')).find(button => button.textContent === 'Reset code').click()`);
-        await until(running, 'playground resets its source');
+        await compiled('playground resets its source');
         assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
         await shoot('playground');
         await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });

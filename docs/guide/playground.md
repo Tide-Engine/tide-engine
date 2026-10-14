@@ -30,8 +30,9 @@ running. Try removing a semicolon, then putting it back.
 This is the real Tide compiler and engine: Tide is transpiled to C, compiled
 to WebAssembly and loaded into the running preview. The first compilation
 downloads about 25 MiB of compiler tools, which your browser can cache. Later
-edits reuse them. The compiler runs in a worker so you can keep editing while
-it builds.
+edits reuse them. The first build also initializes the tools and can take longer
+than later edits; progress appears below the editor. The compiler runs in a
+worker so you can keep editing while it builds.
 
 This demo edits one `.tide` file with no external assets or packages. The
 engine's normal component, system and view features work here, including
