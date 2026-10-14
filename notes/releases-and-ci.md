@@ -1,5 +1,17 @@
 # Releases, installing and CI
 
+## Docs LLVM alignment (2026-10-14)
+
+The Docs workflow now installs the LLVM major selected by cmake/LLVM.cmake
+through the same apt.llvm.org setup as the main Linux Build job and exports
+LLVM_ROOT. Its former Ubuntu Clang 18.1.3 built a playground compiler importing
+env.saveSetjmp, which the WASI browser host cannot provide (run 38555232799).
+Version parsing, repository selection and environment setup match Build;
+installation has Bash pipefail and prints clang's version. The staging ABI
+guard, reproducer and local full-suite validation are in notes/docs-site.md.
+No triggers, suites, deployment/publishing gates or retry policy changed.
+The owner explicitly requested a new workflow run and following it to completion.
+
 ## Optional Windows prefab registration (2026-10-13)
 
 With TIDE_ASSOCIATE_PREFABS=1, install.ps1 registers this user's Tide.Prefab
