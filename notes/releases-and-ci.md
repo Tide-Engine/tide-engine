@@ -1,5 +1,43 @@
 # Releases, installing and CI
 
+## Stable upgrade fixture failure (2026-10-14)
+
+Build run 38577620235 builds release commit b23c42ff as 0.3.0 on the stable
+channel. All five failed suites in attempt 1 failed only `tide_cli_upgrade`;
+All five repeated that single failure in attempt 2. Packages, web
+suites, Docs and JetBrains verification passed. The test's local release list
+hardcoded `prerelease: true` and nightly output, so the stable CLI correctly
+reported no stable package. This does not query published releases and is
+unrelated to the age of the previous stable release.
+
+The fixture now follows the built CLI's default channel; implementation and
+local reproduction are in notes/cli-and-packages.md, Upgrade fixture channels.
+An old-run retry still checks out b23c42ff. The owner approved merging the
+locally tested fix 5cfe6312 into `release` and starting a fresh stable Build.
+Run 38584459544 checks release merge 73bcb33e. No suite or publication gate
+was removed. All native platform and MinGW suites passed 2,263 tests each,
+including `tide_cli_upgrade`; sanitizers passed 2,261. All web suites, Android,
+three package jobs, Docs and JetBrains build/verification passed too.
+
+The Release job published stable v0.3.0 at 15:17:36 UTC with the three platform
+packages, JetBrains ZIP and SHA256SUMS, and committed VERSION on `release`
+(a29162e2). The public `/releases/v0.3.0.json` endpoint confirms all five assets
+and `prerelease: false`.
+
+The overall run completed with failure only in the subsequent JetBrains
+Marketplace job (115935242705). Its plugin build/tests passed; upload of
+`io.github.blenminer.tide` was rejected with "Cannot find plugin" and the
+requirement for a first manual upload. JetBrains' publishing documentation
+requires that initial upload before Gradle publishing. The Tide rename commit
+2a394822 explicitly called for a new Marketplace listing; the previous stable
+run 36837849506 skipped the Marketplace job. The current public plugin-ID lookup
+returns 404. These observations establish a Marketplace setup/access blocker,
+not a compiler failure; do not claim the overall workflow passed or rename the
+plugin ID to work around it. The published engine release remains available.
+The v0.3.0 `tide-jetbrains.zip` release asset is ready for initial manual upload
+under the intended publisher account; account/listing setup remains with the
+owner. No additional workflow or failed-job retry was dispatched.
+
 ## Docs LLVM alignment (2026-10-14)
 
 The Docs workflow now installs the LLVM major selected by cmake/LLVM.cmake

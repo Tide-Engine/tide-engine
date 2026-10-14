@@ -1,5 +1,27 @@
 # `tide`, packages and the package
 
+## Upgrade fixture channels (2026-10-14)
+
+`tide_cli_upgrade` reads both the version and default channel from the built
+CLI's `version` output. Its local release JSON uses `prerelease: false` for
+stable builds and `true` for nightly builds; output and saved-channel checks
+expect that same channel. It still exercises upgrading a running executable,
+an already-current installation and recovery after an interrupted upgrade,
+including checksums, replaced/removed files and preservation of game packages.
+No CLI behavior or public contract changed.
+
+Stable Build run 38577620235 at b23c42ff failed only this test in all five
+native/MinGW/sanitizer suites: the fixture had always advertised a nightly
+release, which a stable CLI correctly refused. The original fixture reproduces
+that error locally with a 0.3.0 stable CLI; the corrected fixture passes all
+three cases. The full nightly-default native debug suite passes 2,286 tests
+with Clang 23.1.2 and Node 24.16.0 (43.35 s). Full web debug passes 2,249 tests
+(171.75 s), including WebGL/WebGPU. `git diff --check` passes. Owner-requested
+stable Build run 38584459544 confirms the fixture passes on Windows, macOS,
+Linux, MinGW and sanitizers. All platform tests/package checks passed and
+v0.3.0 published; the separate Marketplace upload failure and remaining setup
+are recorded in notes/releases-and-ci.md.
+
 ## Native editor preview builds (2026-10-13)
 
 The native editor's private _editor-preview command takes project, original
