@@ -1,10 +1,10 @@
 # The platform layer: a window, the frame loop, input devices and the renderer,
-# written against src/gpu.h, with Vulkan (src/gpu_vk.c, on desktop), OpenGL
+# written against src/gpu.h, with Vulkan (src/gpu_vk.c, on desktop and Android), OpenGL
 # (src/gpu_gl.c) and WebGPU (web/gpu_web.c) under it. Hosts and views link it;
 # the simulation never does (see AGENTS.md).
 file(GLOB TIDE_PLATFORM_SOURCES CONFIGURE_DEPENDS src/*.c)
-if(TIDE_WEB OR TIDE_ANDROID)
-    list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c") # Desktop's alone, so far
+if(TIDE_WEB)
+    list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c") # The web has WebGPU
 else()
     # Vulkan's SPIR-V of the renderer's own shaders, from their WGSL (tools/spirv_shaders.c)
     set(TIDE_SPIRV_C "${CMAKE_CURRENT_BINARY_DIR}/shaders_spirv.c")
@@ -360,7 +360,7 @@ endif()
 # A test whose shaders are written by hand, in WGSL alone: on desktop it
 # brings tidec's translator, for Vulkan's SPIR-V (tide_gpu_spirv_of).
 function(tide_platform_spirv_of target)
-    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    if(NOT TIDE_WEB)
         target_sources(${target} PRIVATE "${PROJECT_SOURCE_DIR}/compiler/src/spirv.c")
         target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/compiler/src")
     endif()
@@ -385,12 +385,18 @@ elseif(NOT TIDE_ANDROID)
     add_test(NAME tide_platform_draw_opengl COMMAND tide_platform_draw)
     tide_gpu_test(tide_platform_draw)
     tide_gpu_test(tide_platform_draw_opengl OPENGL)
+    # ...and with Vulkan's descriptor sets, as devices without push descriptors draw (Android's emulator, some phones)
+    add_test(NAME tide_platform_draw_vulkan_sets COMMAND tide_platform_draw)
+    tide_gpu_test(tide_platform_draw_vulkan_sets)
+    set_property(TEST tide_platform_draw_vulkan_sets APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan TIDE_VULKAN_DESCRIPTOR_SETS=1)
 else()
     # On Android a renderer needs an app's window: install
     # tide_platform_draw_app.apk, start it, and read what it prints
     # (`adb logcat -s tide`).
     add_library(tide_platform_draw_app SHARED tests/draw.c)
     target_link_libraries(tide_platform_draw_app PRIVATE tide_platform)
+    target_include_directories(tide_platform_draw_app PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
+    tide_platform_spirv_of(tide_platform_draw_app)
     target_compile_definitions(tide_platform_draw_app PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
 endif()
@@ -417,6 +423,7 @@ else()
     add_library(tide_platform_targets_app SHARED tests/targets.c)
     target_include_directories(tide_platform_targets_app PRIVATE src)
     target_link_libraries(tide_platform_targets_app PRIVATE tide_platform)
+    tide_platform_spirv_of(tide_platform_targets_app)
     tide_android_app(tide_platform_targets_app LABEL "Tide targets")
 endif()
 

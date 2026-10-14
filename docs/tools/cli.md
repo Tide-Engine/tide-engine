@@ -92,6 +92,8 @@ A web page draws with WebGPU where the browser has it on a GPU, and with WebGL 2
 
 A desktop game draws with Vulkan where the machine has a Vulkan 1.3 driver, and with OpenGL 3.3 where it doesn't; games draw the same with either, and nothing in a game says which. The `TIDE_BACKEND` environment variable picks one for a run: `TIDE_BACKEND=opengl`, or `TIDE_BACKEND=vulkan`, which ends the program with a message where there's no Vulkan rather than falling back.
 
+An Android game draws with Vulkan where the device has Vulkan 1.3, and with OpenGL ES 3 where it doesn't. An app started with `adb shell am start` takes the same choice as an extra of its intent: `--es tide.backend opengl` or `--es tide.backend vulkan`.
+
 ### Stats
 
 `--stats` shows what the game is doing in the window's bottom right corner. So does `stats = true;` in the game's [settings](../language/basics.md#settings), with no option to remember:
@@ -117,14 +119,14 @@ The list is two columns, a label on the left and its value on the right, in four
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu` | What a frame's work takes on its thread, all of it: the ticks it runs, the views and the drawing, without the wait for the display |
 | `render` | Listed under `cpu` as the part of it that prepares and submits the frame's draw list, including its render targets |
-| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan, desktop OpenGL and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the backend has no GPU timer (WebGL 2, OpenGL ES 3), the draw calls have a line of their own, `draw calls` |
+| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android), desktop OpenGL and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the backend has no GPU timer (WebGL 2, OpenGL ES 3), the draw calls have a line of their own, `draw calls` |
 | `ping (delay 3 ticks)` | The network's round trip to the machine running the match, in the list when it's this machine, and in its label the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `network` | What goes over the network each second, up and down: `↑2.0  ↓0.5 KB/s` |
 | `entities` | How many entities the match has |
 | `threads` | The threads ticks run on |
 | `memory` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
 | `vram` | What the game's drawing has on the GPU, by the engine's own count: every texture, mesh and render target it made, by what each holds. Not the window's own framebuffer, nor what the driver keeps beside them, so it's the same number on every backend |
-| `renderer` | What draws: Vulkan, OpenGL 3.3, WebGPU or WebGL 2 |
+| `renderer` | What draws: Vulkan, OpenGL 3.3, OpenGL ES 3, WebGPU or WebGL 2 |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
 Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.

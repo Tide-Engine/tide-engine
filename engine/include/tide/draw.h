@@ -1186,7 +1186,7 @@ typedef enum tide_shader_read {
 // translates it): its entry points `vertex` and `fragment`, its bindings
 // those of descriptor set 0; it's NULL where no build draws with Vulkan
 // (where TIDE_SPIRV isn't defined).
-#if !defined(__wasm__) && !defined(__ANDROID__)
+#if !defined(__wasm__)
 #define TIDE_SPIRV 1
 #endif
 typedef struct tide_shader {

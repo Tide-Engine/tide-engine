@@ -68,14 +68,18 @@
     X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage)   \
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBindPipeline) X(vkCmdSetViewport) X(vkCmdSetScissor)           \
     X(vkCmdSetStencilReference) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw)                        \
-    X(vkCmdDrawIndexed) X(vkCmdPushDescriptorSetKHR) X(vkCreatePipelineCache) X(vkDestroyPipelineCache)           \
-    X(vkGetPipelineCacheData) X(vkMergePipelineCaches)
+    X(vkCmdDrawIndexed) X(vkCreatePipelineCache) X(vkDestroyPipelineCache) X(vkGetPipelineCacheData)               \
+    X(vkMergePipelineCaches) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool)          \
+    X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCmdBindDescriptorSets)
+
+#define VK_DEVICE_OPTIONAL(X) X(vkCmdPushDescriptorSetKHR)
 
 #define VK_DECLARE(name) static PFN_##name name;
 VK_GLOBAL(VK_DECLARE)
 VK_INSTANCE(VK_DECLARE)
 VK_INSTANCE_OPTIONAL(VK_DECLARE)
 VK_DEVICE(VK_DECLARE)
+VK_DEVICE_OPTIONAL(VK_DECLARE)
 #undef VK_DECLARE
 
 static PFN_vkGetInstanceProcAddr get_instance_proc;
@@ -186,6 +190,10 @@ typedef struct vk_frame {
     vk_ring ring;
     vk_garbage *garbage;
     uint32_t garbage_count, garbage_capacity;
+    // Where there are no push descriptors: the sets the frame's draws read, from pools it resets with its room
+    VkDescriptorPool *pools;
+    uint32_t pool_count, pool_used; // ...of which those before `pool_used` are full
+    bool pool_used_any;             // ...and the one at `pool_used` has sets taken
 } vk_frame;
 
 // Samplers: by tide_gpu_wrap, then tide_gpu_filter; then the one that compares, and the nearest one that clamps.
@@ -210,6 +218,7 @@ static struct {
     VkFormat depth_format;
     uint32_t epoch;
     bool lost;
+    bool push; // Draws push what they read (VK_KHR_push_descriptor), else write sets of the frame's
     double timestamp_ns; // A timestamp's tick, in nanoseconds: 0 for none
 
     // The window's images
@@ -219,6 +228,7 @@ static struct {
     uint32_t image_count;
     VkExtent2D extent;
     bool stale;                  // To be made again before the next frame draws in it
+    bool turned;                 // Made upright for a screen that's turned, which the system turns as it shows it
     VkImage window_depth;
     VkImageView window_depth_view;
     vk_alloc window_depth_memory;
@@ -738,6 +748,53 @@ static void turn_texture(const VkCommandBuffer cb, const vk_texture *t, const Vk
     turn(cb, t->image, t->format, 0, t->levels, 0, t->layers, from, to);
 }
 
+// A frame's descriptor sets, where there are no push descriptors: from pools
+// of 256 sets each, as many as its draws use, which it resets with its room
+// once the GPU is done with it.
+enum { POOL_SETS = 256 };
+
+static void reset_pools(vk_frame *f)
+{
+    const uint32_t used = f->pool_used + (f->pool_used_any ? 1u : 0u);
+    for (uint32_t i = 0; i < used && i < f->pool_count; i++) vkResetDescriptorPool(vk.device, f->pools[i], 0);
+    f->pool_used = 0;
+    f->pool_used_any = false;
+}
+
+// A set of the frame's, for a draw: VK_NULL_HANDLE where there's no memory for one.
+static VkDescriptorSet frame_set(void)
+{
+    vk_frame *f = &vk.frames[vk.frame];
+    for (;;) {
+        if (f->pool_used == f->pool_count) {
+            const VkDescriptorPoolSize sizes[] = {
+                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, POOL_SETS},
+                {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, POOL_SETS * TIDE_GPU_MAX_TEXTURES},
+                {VK_DESCRIPTOR_TYPE_SAMPLER, POOL_SETS * TIDE_GPU_MAX_TEXTURES},
+            };
+            const VkDescriptorPoolCreateInfo info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, NULL, 0, POOL_SETS, 3, sizes};
+            VkDescriptorPool pool;
+            if (!check(vkCreateDescriptorPool(vk.device, &info, NULL, &pool), "vkCreateDescriptorPool")) return VK_NULL_HANDLE;
+            f->pools = tide_realloc(f->pools, f->pool_count * sizeof(VkDescriptorPool), (f->pool_count + 1u) * sizeof(VkDescriptorPool));
+            f->pools[f->pool_count++] = pool;
+        }
+        const VkDescriptorSetAllocateInfo info = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, NULL, f->pools[f->pool_used], 1,
+                                                  &vk.set_layout};
+        VkDescriptorSet set;
+        const VkResult result = vkAllocateDescriptorSets(vk.device, &info, &set);
+        if (result == VK_SUCCESS) {
+            f->pool_used_any = true;
+            return set;
+        }
+        if (result != VK_ERROR_OUT_OF_POOL_MEMORY && result != VK_ERROR_FRAGMENTED_POOL) {
+            check(result, "vkAllocateDescriptorSets");
+            return VK_NULL_HANDLE;
+        }
+        f->pool_used++; // That one's full: the next
+        f->pool_used_any = false;
+    }
+}
+
 // Everything recorded goes to the GPU, and is waited for: for what's read
 // back, and frames that never show (a test's draws). The frame starts again,
 // with all its room.
@@ -777,6 +834,7 @@ static void flush(void)
         vkResetCommandPool(vk.device, f->pool, 0);
         f->used = 0;
         f->ring.used = 0;
+        reset_pools(f);
     }
 }
 
@@ -846,6 +904,16 @@ static bool make_swapchain(void)
     VkSurfaceCapabilitiesKHR caps;
     if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physical, vk.surface, &caps) != VK_SUCCESS) return false;
     VkExtent2D extent = caps.currentExtent;
+    // A screen that's turned from how it's made (a phone on its side) says so in its transform, and its extent
+    // is as it's made. Drawn as the window is, upright at its own size, the system turns it as it shows it:
+    // it then says the swapchain is less than it could be, which is so, and that's all it means
+    VkSurfaceTransformFlagBitsKHR transform = caps.currentTransform;
+    vk.turned = transform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+             && (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR);
+    if (vk.turned) {
+        transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        extent.width = UINT32_MAX; // The window's, below
+    }
     if (extent.width == UINT32_MAX) {
         extent.width = (uint32_t)width < caps.minImageExtent.width ? caps.minImageExtent.width
                      : (uint32_t)width > caps.maxImageExtent.width ? caps.maxImageExtent.width : (uint32_t)width;
@@ -883,7 +951,7 @@ static bool make_swapchain(void)
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                     | (caps.supportedUsageFlags & (VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)),
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        .preTransform = caps.currentTransform,
+        .preTransform = transform,
         .compositeAlpha = alpha,
         .presentMode = mode,
         .clipped = VK_TRUE,
@@ -943,6 +1011,7 @@ static bool make_swapchain(void)
 static bool acquire(void)
 {
     if (vk.acquired) return true;
+    if (!vk.surface) return false; // The window went (an Android app in the background), and none came back yet
     int width = 0, height = 0;
     vk.window.pixel_size(&width, &height);
     if (width <= 0 || height <= 0) return false;
@@ -954,7 +1023,7 @@ static bool acquire(void)
         const VkResult result = vkAcquireNextImageKHR(vk.device, vk.swapchain, UINT64_MAX, vk.frames[vk.frame].acquired,
                                                       VK_NULL_HANDLE, &vk.image);
         if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
-            if (result == VK_SUBOPTIMAL_KHR) vk.stale = true; // Shown this frame, made again for the next
+            if (result == VK_SUBOPTIMAL_KHR && !vk.turned) vk.stale = true; // Shown this frame, made again for the next
             vk.acquired = true;
             vk.acquire_waited = false;
             vk.image_drawn = false;
@@ -1010,8 +1079,8 @@ void tide_gpu_vk_present(void)
         const VkPresentInfoKHR present = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, NULL, 1, &rendered[vk.image], 1, &vk.swapchain,
                                           &vk.image, NULL};
         const VkResult result = vkQueuePresentKHR(vk.queue, &present);
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) vk.stale = true;
-        else if (result != VK_SUCCESS) lose(result);
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || (result == VK_SUBOPTIMAL_KHR && !vk.turned)) vk.stale = true;
+        else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) lose(result); // Shown, as it is when turned
         vk.acquired = false;
     }
     // The next frame: its room and command buffers are free once the GPU is done with the one before it there
@@ -1031,10 +1100,33 @@ void tide_gpu_vk_present(void)
     vkResetCommandPool(vk.device, f->pool, 0);
     f->used = 0;
     f->ring.used = 0;
+    reset_pools(f);
     if (vk.lose_asked) {
         vk.lose_asked = false;
         lose(VK_ERROR_DEVICE_LOST);
     }
+}
+
+void tide_gpu_vk_surface_changed(void)
+{
+    if (!vk.open) return;
+    if (vk.device) {
+        flush(); // What's recorded goes, and nothing draws in or shows the old surface's images any more
+        forget_swapchain();
+    }
+    if (vk.surface) vkDestroySurfaceKHR(vk.instance, vk.surface, NULL);
+    vk.surface = VK_NULL_HANDLE;
+    vk.made_width = vk.made_height = 0;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    if (vk.window.surface(vk.instance, &surface) != VK_SUCCESS) return; // None: the window's away
+    VkBool32 shows = VK_FALSE;
+    if (vk.device) vkGetPhysicalDeviceSurfaceSupportKHR(vk.physical, vk.family, surface, &shows);
+    if (vk.device && !shows) {
+        fprintf(stderr, "tide: Vulkan: the window that came back can't be shown by the device it drew with\n");
+        vkDestroySurfaceKHR(vk.instance, surface, NULL);
+        return;
+    }
+    vk.surface = surface;
 }
 
 void tide_gpu_vk_lose(void)
@@ -2027,7 +2119,16 @@ static bool bind(void)
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 2u + 2u * i, 0, 1,
                                                  VK_DESCRIPTOR_TYPE_SAMPLER, &samplers[i], NULL, NULL};
     }
-    if (count) vkCmdPushDescriptorSetKHR(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.layout, 0, count, writes);
+    if (count && vk.push) {
+        vkCmdPushDescriptorSetKHR(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.layout, 0, count, writes);
+    } else if (count) {
+        // A set of the frame's, with what the draw reads, bound for it: the GPU reads it as the frame runs
+        const VkDescriptorSet set = frame_set();
+        if (!set) return false;
+        for (uint32_t i = 0; i < count; i++) writes[i].dstSet = set;
+        vkUpdateDescriptorSets(vk.device, count, writes, 0, NULL);
+        vkCmdBindDescriptorSets(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.layout, 0, 1, &set, 0, NULL);
+    }
     vk.bound = true;
     return true;
 }
@@ -2139,6 +2240,9 @@ static bool load_device_functions(void)
     name = (PFN_##name)vkGetDeviceProcAddr(vk.device, #name);                                                         \
     if (!name) found = false;
     VK_DEVICE(VK_LOAD)
+#undef VK_LOAD
+#define VK_LOAD(name) name = (PFN_##name)vkGetDeviceProcAddr(vk.device, #name);
+    VK_DEVICE_OPTIONAL(VK_LOAD)
 #undef VK_LOAD
     return found;
 }
@@ -2278,6 +2382,8 @@ static void destroy_device(void)
         vkDestroyCommandPool(vk.device, f->pool, NULL);
         vkDestroyFence(vk.device, f->fence, NULL);
         vkDestroySemaphore(vk.device, f->acquired, NULL);
+        for (uint32_t p = 0; p < f->pool_count; p++) vkDestroyDescriptorPool(vk.device, f->pools[p], NULL);
+        free(f->pools);
         free(f->buffers);
         free(f->garbage);
         *f = (vk_frame){0};
@@ -2322,17 +2428,18 @@ static bool create_device(const bool say)
     }
     int best = -1, best_score = 0;
     uint32_t best_family = 0;
-    const char *why = "no device has Vulkan 1.3";
+    const char *why = NULL;
+    uint32_t newest = 0; // Of the devices' Vulkan, for saying so when none is 1.3
     for (uint32_t d = 0; d < count; d++) {
         VkPhysicalDeviceProperties properties;
         vkGetPhysicalDeviceProperties(devices[d], &properties);
+        if (properties.apiVersion > newest) newest = properties.apiVersion;
         if (properties.apiVersion < VK_API_VERSION_1_3) continue;
         VkExtensionProperties extensions[512];
         uint32_t extension_count = 512;
         vkEnumerateDeviceExtensionProperties(devices[d], NULL, &extension_count, extensions);
-        if (!listed(extensions, extension_count, VK_KHR_SWAPCHAIN_EXTENSION_NAME)
-            || !listed(extensions, extension_count, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) {
-            why = "no device has push descriptors and a swapchain";
+        if (!listed(extensions, extension_count, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
+            why = "no device has a swapchain";
             continue;
         }
         VkPhysicalDeviceVulkan13Features v13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -2361,7 +2468,11 @@ static bool create_device(const bool say)
         if (score > best_score) best = (int)d, best_score = score, best_family = (uint32_t)family;
     }
     if (best < 0) {
-        if (say) fprintf(stderr, "tide: Vulkan: %s\n", why);
+        if (say && why) fprintf(stderr, "tide: Vulkan: %s\n", why);
+        if (say && !why) {
+            fprintf(stderr, "tide: Vulkan: no device has Vulkan 1.3, the newest being %u.%u\n", VK_API_VERSION_MAJOR(newest),
+                    VK_API_VERSION_MINOR(newest));
+        }
         return false;
     }
     vk.physical = devices[best];
@@ -2377,8 +2488,12 @@ static bool create_device(const bool say)
     VkExtensionProperties extensions[512];
     uint32_t extension_count = 512;
     vkEnumerateDeviceExtensionProperties(vk.physical, NULL, &extension_count, extensions);
-    const char *enabled[3] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
-    uint32_t enabled_count = 2;
+    const char *enabled[3] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    uint32_t enabled_count = 1;
+    // Push descriptors where there are some; TIDE_VULKAN_DESCRIPTOR_SETS has a test write sets where there are too
+    const char *sets = getenv("TIDE_VULKAN_DESCRIPTOR_SETS");
+    vk.push = listed(extensions, extension_count, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) && !(sets && *sets && strcmp(sets, "0") != 0);
+    if (vk.push) enabled[enabled_count++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
     if (listed(extensions, extension_count, "VK_KHR_portability_subset")) enabled[enabled_count++] = "VK_KHR_portability_subset";
     VkPhysicalDeviceVulkan13Features has13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     VkPhysicalDeviceFeatures2 has = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &has13};
@@ -2400,7 +2515,7 @@ static bool create_device(const bool say)
         vk.device = VK_NULL_HANDLE;
         return false;
     }
-    if (!load_device_functions()) {
+    if (!load_device_functions() || (vk.push && !vkCmdPushDescriptorSetKHR)) {
         if (say) fprintf(stderr, "tide: Vulkan's device lacks a function this needs\n");
         vkDestroyDevice(vk.device, NULL);
         vk.device = VK_NULL_HANDLE;
@@ -2442,7 +2557,7 @@ static bool create_device(const bool say)
         bindings[2 + 2 * i] = (VkDescriptorSetLayoutBinding){2 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLER, 1, stages, NULL};
     }
     const VkDescriptorSetLayoutCreateInfo set = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL,
-                                                 VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+                                                 vk.push ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0,
                                                  1 + 2 * TIDE_GPU_MAX_TEXTURES, bindings};
     check(vkCreateDescriptorSetLayout(vk.device, &set, NULL, &vk.set_layout), "vkCreateDescriptorSetLayout");
     const VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, NULL, 0, 1, &vk.set_layout, 0, NULL};
