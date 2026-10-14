@@ -35,8 +35,8 @@
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
-#elif !defined(__ANDROID__)
-#define DRAW_VULKAN // Desktop draws with Vulkan where it can, whose device a test loses
+#else
+#define DRAW_VULKAN // Desktop and Android draw with Vulkan where they can, whose device a test loses
 #include "../src/gpu_vk.h"
 #endif
 
