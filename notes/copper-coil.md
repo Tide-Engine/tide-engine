@@ -133,3 +133,46 @@ Its renamed Windows executable requires the identically named
 The actual packaged executable completes the scripted chamber and produces
 nonzero audio with peak 5,962. The staged browser bytes equal the optimized
 page; the PDF contains four readable, visually checked pages.
+
+## Input-only solvability verification (2026-10-14)
+
+The owner requested verification of every level through player input. Native
+debug was rebuilt in this checkout, and two hidden standard-host scripts
+completed the campaign from the title screen: solo with WASD/E/Q, and shared
+keyboard with WASD/E plus arrows/Enter. Mouse input selects live probe rows
+and clicks the completion button between chambers. Neither script writes
+match state, sends commands directly, teleports robots or uses the Chambers
+selector to skip progression. Each chamber's bridge and completion card were
+captured; both final review lists show all six completion markers. The native
+completion cards were visually checked together. Input scripts and captures
+remain ignored build artifacts in `build/copper-coil-input-verification/`.
+
+The working configurations are:
+
+| Chamber | A | B | MIX | OUT | + C | Live row (A, B, C) |
+|---|---|---|---|---|---|---|
+| 1: It takes two | WIRE | WIRE | AND | WIRE | unused | 1, 1 |
+| 2: A little resistance | WIRE | NOT | AND | WIRE | unused | 1, 0 |
+| 3: One or the other | WIRE | WIRE | XOR | WIRE | unused | 1, 0 |
+| 4: The quiet hours | WIRE | WIRE | OR | NOT | unused | 0, 0 |
+| 5: On the same wavelength | WIRE | WIRE | XOR | NOT | unused | 0, 0 |
+| 6: The last light | WIRE | WIRE | XOR | WIRE | AND | 1, 0, 1 |
+
+The browser fixture previously completed only chamber one through platform
+input; its six-chamber coverage was the separate C command-level fixture.
+`test/browser.mjs` now continues through all six in order using keyboard/mouse
+events and the real completion buttons, retaining bridge/completion captures
+and the final marked chamber list on both backends. It checks the repeated
+completion heading for chambers two through five and shared progression,
+then keeps the existing undo, shared-keyboard/menu, two-player WebRTC and
+narrow-touch checks. No gameplay, engine or language behavior changed.
+
+Validation: native debug's six C cases pass, as do all three Copper & Coil
+web debug CTest targets (the same six C cases, the expanded WebGL playthrough
+in 342.54 seconds and WebGPU in 47.92 seconds). Both browser final review
+captures were visually checked and show six completed chambers. Fresh builds
+use this checkout's compiler/runtime and Node 24.19.0 for web tests; the
+machine's Node 24.15.0 was replaced for this run by an ignored build-local
+download, without changing the owner's installation. No gameplay fixes were
+needed. Real phones, other operating systems and an all-six WAN playthrough
+were not tested; no CI was dispatched.
