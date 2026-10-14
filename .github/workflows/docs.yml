@@ -54,10 +54,24 @@ jobs:
           npm run test:access
           npm run test:releases
           npm run test:analytics
-      - name: Install tools
+      # Match the main Build workflow's LLVM. The runner's Clang 18 emits
+      # Emscripten setjmp helpers that the browser's WASI host does not supply.
+      - name: LLVM version
         run: |
+          version=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9.]+)\).*/\1/p' cmake/LLVM.cmake)
+          test -n "$version"
+          echo "LLVM_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Install tools
+        shell: bash
+        run: |
+          major=${LLVM_VERSION%%.*}
+          codename=$(lsb_release -cs)
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y clang lld ninja-build ccache
+          sudo apt-get install -y clang-$major lld-$major llvm-$major ninja-build ccache
+          echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
+          /usr/lib/llvm-$major/bin/clang --version
       - uses: actions/cache@v4
         with:
           path: build/wasi-sdk-*

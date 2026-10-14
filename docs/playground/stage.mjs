@@ -5,12 +5,28 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
+import { WASI } from '@bjorn3/browser_wasi_shim';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, arg, i, all) => {
     if (i % 2 === 0) pairs.push([arg.slice(2), all[i + 1]]);
     return pairs;
 }, []));
+const wasiImports = new WASI([], [], [], { debug: false }).wasiImport;
+async function checkImports(name, bytes) {
+    const module = await WebAssembly.compile(bytes);
+    for (const item of WebAssembly.Module.imports(module)) {
+        if (item.module === 'wasi_snapshot_preview1' && item.kind === 'function' &&
+            typeof wasiImports[item.name] === 'function') continue;
+        if (name === 'tidec' && item.module === 'env' && item.name === 'memory' && item.kind === 'memory') continue;
+        throw new Error(`${name} imports unsupported ${item.module}.${item.name} (${item.kind}). ` +
+            'Build the docs with the LLVM version in cmake/LLVM.cmake; these tools run in a WASI browser host.');
+    }
+}
+// Check the locally built compiler before downloading or staging anything.
+// Older LLVM emits Emscripten setjmp helpers that this WASI host cannot call.
+const tidec = await readFile(args.compiler);
+await checkImports('tidec', tidec);
 const cache = path.join(root, 'build/playground-tools');
 const output = path.join(root, 'docs/static/playground/generated');
 await mkdir(cache, { recursive: true });
@@ -41,6 +57,8 @@ async function dependency(name) {
     return bytes;
 }
 const [clang, linker, tar] = await Promise.all(['clang22-noeh', 'lld22-noeh', 'sysroot22.tar'].map(dependency));
+await checkImports('clang', clang);
+await checkImports('lld', linker);
 const files = {};
 async function tree(directory, prefix, skip = () => false) {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -78,7 +96,7 @@ files['main.c'] = (await readFile(new URL('main.c', import.meta.url))).toString(
 const bundle = Buffer.from(JSON.stringify(files));
 const assets = {
     'clang.bin': clang, 'lld.bin': linker,
-    'tidec.bin': await readFile(args.compiler), 'files.bin': bundle,
+    'tidec.bin': tidec, 'files.bin': bundle,
 };
 const manifest = { toolchain: 'clang/LLD 22.1.8', assets: {} };
 for (const [name, bytes] of Object.entries(assets)) {

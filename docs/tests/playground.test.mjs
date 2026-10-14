@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 import { BrowserCompiler } from '../playground/compiler.mjs';
 
@@ -11,6 +16,29 @@ const files = Object.fromEntries(Object.entries(JSON.parse(gunzipSync(await read
     .map(([name, encoded]) => [name, new Uint8Array(Buffer.from(encoded, 'base64'))]));
 const compiler = new BrowserCompiler(modules, files);
 const source = await readFile(new URL('../playground/demo.tide', import.meta.url), 'utf8');
+
+test('staging rejects unsupported browser imports before packaging compiler tools', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-playground-imports-'));
+    const file = join(folder, 'unsupported.wasm');
+    // A valid module requiring the same missing helper as Clang 18's output.
+    const imports = Buffer.from([1, 3, ...Buffer.from('env'), 10, ...Buffer.from('saveSetjmp'), 0, 0]);
+    await writeFile(file, Buffer.concat([
+        Buffer.from([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 2, imports.length]), imports,
+    ]));
+    try {
+        await assert.rejects(promisify(execFile)(process.execPath, [
+            fileURLToPath(new URL('../playground/stage.mjs', import.meta.url)), '--compiler', file,
+        ]), error => {
+            assert.match(error.stderr, /tidec imports unsupported env\.saveSetjmp \(function\)/);
+            assert.match(error.stderr, /LLVM version in cmake\/LLVM\.cmake/);
+            return true;
+        });
+    } finally {
+        assert.equal(dirname(folder), resolve(tmpdir()));
+        assert.ok(folder.startsWith(join(resolve(tmpdir()), 'tide-playground-imports-')));
+        await rm(folder, { recursive: true, force: true });
+    }
+});
 
 test('browser tools compile real Tide and retain the engine reload entry point', async () => {
     const result = await compiler.compile(source);

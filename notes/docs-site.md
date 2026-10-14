@@ -1,5 +1,40 @@
 # The docs site
 
+## Playground compiler ABI and Docs toolchain (2026-10-14)
+
+Run 38555232799 exposed the cause hidden by the earlier generic timeout:
+`WebAssembly.instantiate` rejects the compiler's env.saveSetjmp function import.
+Docs installed Ubuntu's Clang 18.1.3, whose Wasm setjmp lowering still requires
+Emscripten helpers. The local Clang 23.1.2 build used WASI libsetjmp without
+those imports. Startup time was not the demonstrated cause of either hosted
+failure; the preceding readiness/diagnostic change made this error visible.
+
+Docs now reads TIDE_LLVM_VERSION from cmake/LLVM.cmake and installs the same
+LLVM major through apt.llvm.org as the main Build job, setting LLVM_ROOT for
+both the web build and its native tidec host. Installation uses Bash pipefail
+and logs the selected compiler version. Triggers, suite/deploy gates and
+publication behavior are unchanged.
+
+Staging compiles and inspects each tool's actual Wasm imports against the
+pinned browser WASI shim: callable wasi_snapshot_preview1 functions, plus only
+env.memory for tidec. Unsupported imports fail with the tool/name/kind and
+the LLVM setup fix. The locally built tidec is checked before downloads or
+asset writes; downloaded Clang/LLD are checked before packaging. No guessed
+JavaScript setjmp implementation or new runtime function is supplied.
+
+The new integration regression submits a valid module importing env.saveSetjmp
+to the real staging process and pins its early rejection. A separate two-file
+setjmp/longjmp program compiled with installed Clang 18.1.8 reproduces that
+actual unsupported import and is rejected too. LLVM 23's release compiler,
+Clang and LLD pass staging; all five compiler/staging tests pass.
+
+Validation: Windows Clang 23.1.2 and Node 24.19.0; all 2,286 native debug tests
+and 2,249 web debug tests pass, including native GPU and WebGL/WebGPU. Actionlint
+1.7.12, exact LLVM setup comparison with the main workflow, extracted Bash
+syntax checks, the production docs build and `git diff --check` pass. The build
+retains its existing allowed unstaged-example placeholders. The owner requested a new Docs
+workflow after merge to validate Linux setup, all staged examples and deployment.
+
 ## Playground startup test guard (2026-10-14)
 
 Run 38552733008 built the site and passed its SEO/HTTP and preceding game
