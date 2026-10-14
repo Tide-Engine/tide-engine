@@ -314,7 +314,7 @@ typedef struct fn_state {
     int output_types[16];
     int output_count;
     bool whole_output; // A single value, not a struct's members
-    uint32_t inputs[32];
+    uint32_t inputs[64];
     int input_count;
     bool uses_frag_depth;
 } fn_state;
@@ -359,7 +359,7 @@ struct translation {
         uint32_t id;
     } *functypes;
     int nfunctypes, cap_functypes;
-    uint32_t sampled_images[8][2]; // By the image type: the sampled image type
+    uint32_t sampled_images[32][2]; // By the image type: the sampled image type
     int nsampled;
 
     binding *globals_scope;
@@ -813,7 +813,6 @@ static int builtin_named(translation *x, const token *t)
         int builtin;
     } builtins[] = {
         {"position", 0}, {"vertex_index", 42}, {"instance_index", 43}, {"front_facing", 17}, {"frag_depth", 22},
-        {"sample_index", 18}, {"sample_mask", 20},
     };
     for (size_t i = 0; i < sizeof builtins / sizeof builtins[0]; i++) {
         if (same(t->at, t->len, builtins[i].name)) return builtins[i].builtin;
@@ -857,13 +856,19 @@ static attrs parse_attrs(translation *x)
             else if (!same(how->at, how->len, "perspective")) {
                 fail(x, how->line, how->col, "@interpolate(%.*s) isn't one this takes", how->len, how->at);
             }
-            while (accept(x, P_COMMA) && !is_punct(x, P_RPAREN)) expect_name(x, "how it's sampled");
+            if (accept(x, P_COMMA) && !is_punct(x, P_RPAREN)) {
+                token *sampling = expect_name(x, "how it's sampled");
+                if (!same(sampling->at, sampling->len, "center")) {
+                    fail(x, sampling->line, sampling->col, "@interpolate(..., %.*s) isn't taken here", sampling->len, sampling->at);
+                }
+                accept(x, P_COMMA);
+            }
             expect(x, P_RPAREN, "')'");
         } else if (same(name->at, name->len, "vertex")) {
             at.stage = 1;
         } else if (same(name->at, name->len, "fragment")) {
             at.stage = 2;
-        } else if (same(name->at, name->len, "must_use") || same(name->at, name->len, "invariant")) {
+        } else if (same(name->at, name->len, "must_use")) {
             // Nothing to do here
         } else {
             fail(x, name->line, name->col, "@%.*s isn't an attribute this takes", name->len, name->at);
@@ -1294,6 +1299,7 @@ enum {
     GLSL_UNPACK_UNORM2X16 = 61, GLSL_UNPACK_HALF2X16 = 62, GLSL_UNPACK_SNORM4X8 = 63, GLSL_UNPACK_UNORM4X8 = 64,
     GLSL_LENGTH = 66, GLSL_DISTANCE = 67, GLSL_CROSS = 68, GLSL_NORMALIZE = 69, GLSL_FACE_FORWARD = 70,
     GLSL_REFLECT = 71, GLSL_REFRACT = 72, GLSL_FIND_I_LSB = 73, GLSL_FIND_S_MSB = 74, GLSL_FIND_U_MSB = 75,
+    GLSL_N_CLAMP = 81,
 };
 
 // ---------------------------------------------------------------------------
@@ -1639,13 +1645,12 @@ static uint32_t sampled_image_type(translation *x, const uint32_t image)
     for (int i = 0; i < x->nsampled; i++) {
         if (x->sampled_images[i][0] == image) return x->sampled_images[i][1];
     }
+    if (x->nsampled == 32) fail(x, 0, 0, "more than 32 kinds of texture");
     const uint32_t id = new_id(x);
     INS(&x->globals_words, OP_TYPE_SAMPLED_IMAGE, id, image);
-    if (x->nsampled < 8) {
-        x->sampled_images[x->nsampled][0] = image;
-        x->sampled_images[x->nsampled][1] = id;
-        x->nsampled++;
-    }
+    x->sampled_images[x->nsampled][0] = image;
+    x->sampled_images[x->nsampled][1] = id;
+    x->nsampled++;
     return id;
 }
 
@@ -2128,7 +2133,7 @@ static val convert(translation *x, val v, const int scalar, const int line, cons
                 if (v.negated) f = -f;
             }
             const double low = T(x, scalar)->kind == K_I32 ? -2147483648.0 : 0.0;
-            const double high = T(x, scalar)->kind == K_I32 ? 2147483520.0 : 4294967040.0;
+            const double high = T(x, scalar)->kind == K_I32 ? 2147483647.0 : 4294967295.0;
             f = f < low ? low : f > high ? high : trunc(f);
             return concrete(x, abstract_int(x, (int64_t)f), scalar);
         }
@@ -2159,7 +2164,7 @@ static val convert(translation *x, val v, const int scalar, const int line, cons
         const uint32_t low = const_of(x, v.t, sign ? -2147483648.0 : 0.0);
         const uint32_t high = const_of(x, v.t, sign ? 2147483520.0 : 4294967040.0);
         const uint32_t args[3] = {v.id, low, high};
-        const uint32_t clamped = glsl(x, v.t, GLSL_F_CLAMP, args, 3);
+        const uint32_t clamped = glsl(x, v.t, GLSL_N_CLAMP, args, 3); // NaN is the lower bound: FClamp gives anything
         return (val){.t = to, .id = EMIT(x, sign ? OP_CONVERT_F_TO_S : OP_CONVERT_F_TO_U, to, clamped)};
     }
     if (tk == K_F32) return (val){.t = to, .id = EMIT(x, fk == K_I32 ? OP_CONVERT_S_TO_F : OP_CONVERT_U_TO_F, to, v.id)};
@@ -2335,9 +2340,15 @@ static val fold(translation *x, const punct op, const val a, const val b, const 
     }
     const int64_t l = a.i, r = b.i;
     switch (op) {
-    case P_PLUS: return abstract_int(x, l + r);
-    case P_MINUS: return abstract_int(x, l - r);
-    case P_STAR: return abstract_int(x, l * r);
+    case P_PLUS:
+    case P_MINUS:
+    case P_STAR: {
+        int64_t out;
+        const bool over = op == P_PLUS ? __builtin_add_overflow(l, r, &out) : op == P_MINUS ? __builtin_sub_overflow(l, r, &out)
+                                                                                         : __builtin_mul_overflow(l, r, &out);
+        if (over) fail(x, line, col, "a constant past what an int holds");
+        return abstract_int(x, out);
+    }
     case P_SLASH:
         if (!r) fail(x, line, col, "a division by zero");
         return abstract_int(x, l / r);
@@ -2394,13 +2405,16 @@ static val binop(translation *x, const punct op, val a, val b, const int line, c
     if (ka == K_MAT || kb == K_MAT) {
         if (op == P_STAR) {
             if (ka == K_MAT && kb == K_VEC) {
+                if (T(x, a.t)->n != T(x, b.t)->n) fail(x, line, col, "%s times %s: the sizes don't agree", la, lb);
                 return (val){.t = T(x, a.t)->elem, .id = EMIT(x, OP_MATRIX_TIMES_VECTOR, T(x, a.t)->elem, a.id, b.id)};
             }
             if (ka == K_VEC && kb == K_MAT) {
+                if (T(x, T(x, b.t)->elem)->n != T(x, a.t)->n) fail(x, line, col, "%s times %s: the sizes don't agree", la, lb);
                 const int t = t_vec(x, t_simple(x, K_F32), T(x, b.t)->n);
                 return (val){.t = t, .id = EMIT(x, OP_VECTOR_TIMES_MATRIX, t, a.id, b.id)};
             }
             if (ka == K_MAT && kb == K_MAT) {
+                if (T(x, a.t)->n != T(x, T(x, b.t)->elem)->n) fail(x, line, col, "%s times %s: the sizes don't agree", la, lb);
                 const int t = t_mat(x, T(x, b.t)->n, T(x, T(x, a.t)->elem)->n);
                 return (val){.t = t, .id = EMIT(x, OP_MATRIX_TIMES_MATRIX, t, a.id, b.id)};
             }
@@ -3056,8 +3070,14 @@ static val builtin(translation *x, const expr *e)
         const int values = insert ? 2 : 1;
         const int t = unify(x, args, values, common_scalar(x, args, values, false), line, col);
         if (!is_int(x, t)) fail(x, line, col, "%.*s takes ints", len, n);
-        const val offset = coerce(x, args[values], u32, line, col);
-        const val bits = coerce(x, args[values + 1], u32, line, col);
+        const val given_offset = coerce(x, args[values], u32, line, col);
+        const val given_bits = coerce(x, args[values + 1], u32, line, col);
+        const uint32_t thirty_two = const_u32(x, 32);
+        const uint32_t first[2] = {given_offset.id, thirty_two};
+        const val offset = {.t = u32, .id = glsl(x, u32, GLSL_U_MIN, first, 2)};
+        const uint32_t room = EMIT(x, OP_I_SUB, u32, thirty_two, offset.id);
+        const uint32_t second[2] = {given_bits.id, room};
+        const val bits = {.t = u32, .id = glsl(x, u32, GLSL_U_MIN, second, 2)};
         if (insert) {
             return (val){.t = t, .id = EMIT(x, OP_BIT_FIELD_INSERT, t, args[0].id, args[1].id, offset.id, bits.id)};
         }
@@ -3538,14 +3558,17 @@ static uint32_t interface_var(translation *x, const int sc, const int t, const a
     } else {
         fail(x, 0, 0, "an entry point's input or output says where it is: @location or @builtin");
     }
-    if (x->fn->input_count < 32) x->fn->inputs[x->fn->input_count++] = id;
+    if (x->fn->input_count == 64) fail(x, 0, 0, "an entry point with more than 64 inputs and outputs");
+    x->fn->inputs[x->fn->input_count++] = id;
     return id;
 }
 
 static void emit_function(translation *x, fdecl *f)
 {
-    fn_state state = {.f = f};
-    x->fn = &state;
+    // The arena's, not the stack's: a failure inside the body jumps out of this frame, and the cleanup reads it
+    fn_state *const st = grab(&x->a, sizeof(fn_state));
+    st->f = f;
+    x->fn = st;
     signature(x, f);
     words *out = &x->functions;
     const bool entry = f->at.stage != 0, fragment = f->at.stage == 2;
@@ -3560,7 +3583,7 @@ static void emit_function(translation *x, fdecl *f)
     }
     const uint32_t first = new_id(x);
     INS(out, OP_LABEL, first);
-    state.label = first;
+    st->label = first;
     if (entry) {
         // Its parameters are its inputs, a struct's members each one of them
         for (int i = 0; i < f->count; i++) {
@@ -3585,39 +3608,39 @@ static void emit_function(translation *x, fdecl *f)
             const sdecl *sd = T(x, r)->s;
             if (sd->count > 16) fail(x, f->line, f->col, "too many outputs");
             for (int m = 0; m < sd->count; m++) {
-                state.outputs[m] = interface_var(x, SC_OUTPUT, sd->member_types[m], sd->members[m].at, fragment);
-                state.output_types[m] = sd->member_types[m];
+                st->outputs[m] = interface_var(x, SC_OUTPUT, sd->member_types[m], sd->members[m].at, fragment);
+                st->output_types[m] = sd->member_types[m];
             }
-            state.output_count = sd->count;
+            st->output_count = sd->count;
         } else if (T(x, r)->kind != K_VOID) {
-            state.outputs[0] = interface_var(x, SC_OUTPUT, r, f->result_at, fragment);
-            state.output_types[0] = r;
-            state.output_count = 1;
-            state.whole_output = true;
+            st->outputs[0] = interface_var(x, SC_OUTPUT, r, f->result_at, fragment);
+            st->output_types[0] = r;
+            st->output_count = 1;
+            st->whole_output = true;
         }
     }
     statements(x, f->body);
-    if (!state.ended) {
-        if (entry || T(x, f->result_type)->kind == K_VOID) ins(&state.body, OP_RETURN, NULL, 0);
-        else ins(&state.body, OP_UNREACHABLE, NULL, 0);
+    if (!st->ended) {
+        if (entry || T(x, f->result_type)->kind == K_VOID) ins(&st->body, OP_RETURN, NULL, 0);
+        else ins(&st->body, OP_UNREACHABLE, NULL, 0);
     }
-    put_all(out, &state.vars);
-    put_all(out, &state.body);
+    put_all(out, &st->vars);
+    put_all(out, &st->body);
     ins(out, OP_FUNCTION_END, NULL, 0);
     if (entry) {
-        put(&x->entries, OP_ENTRY_POINT | (uint32_t)(3 + string_words(f->len) + state.input_count) << 16);
+        put(&x->entries, OP_ENTRY_POINT | (uint32_t)(3 + string_words(f->len) + st->input_count) << 16);
         put(&x->entries, fragment ? 4u : 0u);
         put(&x->entries, f->id);
         put_string(&x->entries, f->name, f->len);
-        for (int i = 0; i < state.input_count; i++) put(&x->entries, state.inputs[i]);
+        for (int i = 0; i < st->input_count; i++) put(&x->entries, st->inputs[i]);
         if (fragment) {
             INS(&x->modes, OP_EXECUTION_MODE, f->id, 7); // OriginUpperLeft
-            if (state.uses_frag_depth) INS(&x->modes, OP_EXECUTION_MODE, f->id, 12); // DepthReplacing
+            if (st->uses_frag_depth) INS(&x->modes, OP_EXECUTION_MODE, f->id, 12); // DepthReplacing
         }
     }
-    free(state.vars.w);
-    free(state.body.w);
-    free(state.scope);
+    free(st->vars.w);
+    free(st->body.w);
+    free(st->scope);
     x->fn = NULL;
 }
 

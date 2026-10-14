@@ -3874,7 +3874,55 @@ static int bench(void)
     return 0;
 }
 
-static bool benching;
+// --frames-bench: the same scenes, as a game draws them: into the window,
+// shown each frame, nothing read back, so frames overlap with the GPU as a
+// game's do. Per frame: recording, the renderer's CPU time (submission), the
+// time from one frame's start to the next (everything, the display's wait
+// included: a hidden window doesn't wait for one), and the GPU's own time
+// where the backend times it.
+static bench_samples frame_times; // record, render (submission), total (frame to frame)
+static double frame_gpu[BENCH_FRAMES * 4];
+static int frame_gpu_count;
+static uint64_t frame_last;
+
+static int frames_bench(void)
+{
+    const uint64_t start = tide_time_now_ns();
+    if (bench_frame == 0) {
+        tide_platform_gpu_timing(true);
+        frame_gpu_count = 0;
+    }
+    bench_scene();
+    const uint64_t recorded = tide_time_now_ns();
+    tide_platform_draw(&list);
+    const uint64_t submitted = tide_time_now_ns();
+    const double gpu = tide_platform_gpu_ms();
+    if (bench_frame > BENCH_WARMUP) {
+        const int at = bench_frame - BENCH_WARMUP - 1;
+        frame_times.record[at] = (double)(recorded - start) / 1e6;
+        frame_times.render_readback[at] = (double)(submitted - recorded) / 1e6;
+        frame_times.total[at] = (double)(start - frame_last) / 1e6;
+        if (gpu >= 0.0 && frame_gpu_count < (int)(sizeof frame_gpu / sizeof frame_gpu[0])) frame_gpu[frame_gpu_count++] = gpu;
+    }
+    frame_last = start;
+    if (++bench_frame <= BENCH_WARMUP + BENCH_FRAMES) return TIDE_KEEP_RUNNING;
+    const bench_timing recording = bench_summarize(frame_times.record);
+    const bench_timing submitting = bench_summarize(frame_times.render_readback);
+    const bench_timing whole = bench_summarize(frame_times.total);
+    double gpu_median = -1.0;
+    if (frame_gpu_count) {
+        qsort(frame_gpu, (size_t)frame_gpu_count, sizeof frame_gpu[0], bench_compare);
+        gpu_median = frame_gpu[frame_gpu_count / 2];
+    }
+    printf("%s (ms, median / p95): record %.3f / %.3f, submit %.3f / %.3f, frame %.3f / %.3f, gpu %.3f (%d samples)\n",
+           bench_names[bench_kind], recording.median_ms, recording.p95_ms, submitting.median_ms, submitting.p95_ms,
+           whole.median_ms, whole.p95_ms, gpu_median, frame_gpu_count);
+    tide_platform_gpu_timing(false);
+    bench_frame = 0;
+    return ++bench_kind < BENCH_KINDS ? TIDE_KEEP_RUNNING : 0;
+}
+
+static bool benching, frames_benching;
 static const char *dump_path;
 
 static int frame(void *user, const float seconds)
@@ -3885,6 +3933,7 @@ static int frame(void *user, const float seconds)
     said = true;
     screen = tide_platform_screen_size();
     if (benching) return bench();
+    if (frames_benching) return frames_bench();
     if (dump_path) return dump(dump_path);
 #ifdef __wasm__
     // WebGPU's device can go away (a driver that starts over), taking what the
@@ -3953,12 +4002,14 @@ int main(const int argc, char **argv)
 {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--bench") == 0) benching = true;
+        else if (strcmp(argv[i], "--frames-bench") == 0) frames_benching = true;
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
         else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];
         else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("usage: tide_platform_draw [--bench [--save <label>]] [--dump <file.ppm>]\n"
+            printf("usage: tide_platform_draw [--bench [--save <label>]] [--frames-bench] [--dump <file.ppm>]\n"
                    "  --bench          20 warmup frames, then 100 measured frames per workload\n"
+                   "  --frames-bench   the same, drawn into the window and shown, as a game's frames are\n"
                    "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
                    "  --dump <file>    write the smooth shapes' scene as an image (a PPM), and check nothing\n"
                    "On the web: ?bench&save=<label> prints the records.\n"
