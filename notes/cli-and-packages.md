@@ -16,9 +16,11 @@ release, which a stable CLI correctly refused. The original fixture reproduces
 that error locally with a 0.3.0 stable CLI; the corrected fixture passes all
 three cases. The full nightly-default native debug suite passes 2,286 tests
 with Clang 23.1.2 and Node 24.16.0 (43.35 s). Full web debug passes 2,249 tests
-(171.75 s), including WebGL/WebGPU. `git diff --check` passes. Hosted stable
-confirmation on Linux/macOS/MinGW and sanitizers remains for a new Build run;
-none was dispatched for this fix.
+(171.75 s), including WebGL/WebGPU. `git diff --check` passes. Owner-requested
+stable Build run 38584459544 confirms the fixture passes on Windows, macOS,
+Linux, MinGW and sanitizers. All platform tests/package checks passed and
+v0.3.0 published; the separate Marketplace upload failure and remaining setup
+are recorded in notes/releases-and-ci.md.
 
 ## Native editor preview builds (2026-10-13)
 
