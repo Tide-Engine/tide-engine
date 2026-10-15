@@ -1,31 +1,255 @@
-asset Clip roomAmbience = "sfx/ambience.wav";
-asset Clip woodenStep = "sfx/step.wav";
-asset Clip woodenPush = "sfx/push.wav";
-asset Clip doorwayRustle = "sfx/enter.wav";
+asset Clip puzzleMusic = "sfx/music.ogg";
+asset Clip menuMusic = "sfx/menu.ogg";
+asset List<Clip> robotSteps = "sfx/step*.wav";
+asset List<Clip> boxPushes = "sfx/push_box*.wav";
+asset List<Clip> batteryPushes = "sfx/push_battery*.wav";
+asset Clip robotBump = "sfx/bump.wav";
+asset Clip robotBumpSoft = "sfx/bump_soft.wav";
+asset Clip doorwayEnter = "sfx/enter.wav";
+asset Clip doorwayExit = "sfx/exit.wav";
+asset Clip batterySeat = "sfx/seat.wav";
+asset Clip batteryUnseat = "sfx/unseat.wav";
+asset Clip boxDock = "sfx/dock.wav";
+asset Clip plateDown = "sfx/plate_down.wav";
+asset Clip plateUp = "sfx/plate_up.wav";
+asset Clip shutterOpen = "sfx/shutter_open.wav";
+asset Clip shutterClose = "sfx/shutter_close.wav";
 asset Clip littleUndo = "sfx/undo.wav";
 asset Clip littleReset = "sfx/reset.wav";
-asset Clip littleSolve = "sfx/solve.wav";
-asset Clip woodenStop = "sfx/stop.wav";
+asset Clip puzzleStart = "sfx/start.wav";
+asset Clip puzzleSolve = "sfx/solve.ogg";
+asset Clip partnerJoin = "sfx/join.wav";
+asset Clip partnerLeave = "sfx/leave.wav";
+asset Clip uiHover = "sfx/ui_hover.wav";
+asset Clip uiClick = "sfx/ui_click.wav";
+asset Clip uiBack = "sfx/ui_back.wav";
+asset Clip uiOpen = "sfx/ui_open.wav";
+asset Clip uiToggle = "sfx/ui_toggle.wav";
+asset Clip uiSlide = "sfx/ui_slide.wav";
 
-local singleton Hearing { Sound music; }
+[Bus]
+enum MixBus { Master, Music, Effects, Interface }
 
-[Stage(ArtStage.Sound)]
-view WorkshopSound(Hands hands, mut Hearing hearing)
+local singleton Mixer
 {
-    hearing.music.clip = roomAmbience;
-    hearing.music.loop = true;
-    hearing.music.playing = hands.music && !hands.quiet;
-    hearing.music.volume = 0.27;
+    bool muted;
+    float music = 0.8;
+    float effects = 1;
+    float interface = 0.8;
 }
 
-local event(PuzzleCue cue) HearPuzzle(Hands hands)
+enum UiCue { Hover, Click, Back, Open, Toggle, Slide }
+local event UiNoise { UiCue cue; }
+void UiSound(UiCue cue) { Send(UiNoise { cue = cue }); }
+
+// Transient local entities give overlapping cues their own buses and voices.
+// The extra lifetime leaves each complete clip, including its tail, intact.
+component CueVoice { Sound sound; float remaining; }
+void PlayCue(Clip clip, float seconds, MixBus bus = MixBus.Effects, float volume = 1, float pitch = 1)
 {
-    if (hands.quiet) return;
-    if (cue.kind == 0) Audio.Play(woodenStep, cue.seat == hands.seat ? 0.30 : 0.15, cue.seat == 0 ? 0.95 : 1.10);
-    else if (cue.kind == 1) Audio.Play(woodenPush, 0.37);
-    else if (cue.kind == 2) Audio.Play(doorwayRustle, 0.26);
-    else if (cue.kind == 3) Audio.Play(littleUndo, 0.28);
-    else if (cue.kind == 4) Audio.Play(littleReset, 0.27);
-    else if (cue.kind == 5) Audio.Play(littleSolve, 0.53);
-    else if (cue.kind == 6) Audio.Play(woodenStop, cue.seat == hands.seat ? 0.18 : 0.09);
+    local Spawn(CueVoice { sound = Sound { clip = clip, playing = true, bus = bus,
+        volume = volume, pitch = pitch }, remaining = seconds / pitch + 0.05 });
+}
+view FinishCue(mut local CueVoice cue)
+{
+    cue.remaining -= Frame.dt;
+    if (cue.remaining <= 0) this.Destroy();
+}
+
+local singleton Hearing
+{
+    Sound music;
+    Sound menu;
+    float blend;
+    bool began;
+    bool baseline;
+    bool inGame;
+    Puzzle previous;
+    int level = -1;
+    int serial = -1;
+    bool[2] present;
+    int[2] steps;
+    float[2] bumpWait;
+    int pushes;
+    float hoverWait;
+    float slideWait;
+}
+
+[Stage(ArtStage.Sound, -2)]
+view WorkshopSound(Rooms.Lobby lobby, Mixer mixer, mut Hearing hearing)
+{
+    var inGame = lobby.page == Rooms.Page.Playing || lobby.resume;
+    var dt = Math.Clamp(Frame.dt, 0, 0.1);
+    if (!hearing.began)
+    {
+        hearing.blend = inGame ? 1 : 0;
+        hearing.began = true;
+    }
+    else hearing.blend = Math.Clamp(hearing.blend + (inGame ? dt : -dt), 0, 1);
+    if (!inGame) hearing.baseline = false;
+    hearing.inGame = inGame;
+    hearing.hoverWait = Math.Max(0, hearing.hoverWait - dt);
+    hearing.slideWait = Math.Max(0, hearing.slideWait - dt);
+    for (var seat = 0; seat < 2; seat++) hearing.bumpWait[seat] = Math.Max(0, hearing.bumpWait[seat] - dt);
+
+    // Source levels are balanced. Bus gains retain the quiet mix and leave
+    // headroom for several different state changes sounding together.
+    Audio.SetVolume(MixBus.Master, mixer.muted ? 0 : Math.Clamp(lobby.volume, 0, 1));
+    Audio.SetVolume(MixBus.Music, 0.12 * Math.Clamp(mixer.music, 0, 1));
+    Audio.SetVolume(MixBus.Effects, 0.3 * Math.Clamp(mixer.effects, 0, 1));
+    Audio.SetVolume(MixBus.Interface, 0.3 * Math.Clamp(mixer.interface, 0, 1));
+    hearing.music.clip = puzzleMusic;
+    hearing.music.bus = MixBus.Music;
+    hearing.music.loop = true;
+    hearing.music.playing = hearing.blend > 0;
+    hearing.music.volume = hearing.blend;
+    hearing.menu.clip = menuMusic;
+    hearing.menu.bus = MixBus.Music;
+    hearing.menu.loop = true;
+    hearing.menu.playing = hearing.blend < 1;
+    hearing.menu.volume = 1 - hearing.blend;
+}
+
+local event(UiNoise noise) PlayUiNoise(Mixer mixer, mut Hearing hearing)
+{
+    if (mixer.muted || mixer.interface <= 0) return;
+    if (noise.cue == UiCue.Hover)
+    {
+        if (hearing.hoverWait > 0) return;
+        hearing.hoverWait = 0.08;
+        PlayCue(uiHover, 0.03, MixBus.Interface);
+    }
+    else if (noise.cue == UiCue.Click) PlayCue(uiClick, 0.06, MixBus.Interface);
+    else if (noise.cue == UiCue.Back) PlayCue(uiBack, 0.06, MixBus.Interface);
+    else if (noise.cue == UiCue.Open) PlayCue(uiOpen, 0.2, MixBus.Interface);
+    else if (noise.cue == UiCue.Toggle) PlayCue(uiToggle, 0.085, MixBus.Interface);
+    else if (noise.cue == UiCue.Slide)
+    {
+        if (hearing.slideWait > 0) return;
+        hearing.slideWait = 0.05;
+        PlayCue(uiSlide, 0.022, MixBus.Interface);
+    }
+}
+
+local event(PuzzleCue cue) HearPuzzle(Workshop workshop, Hands hands, Mixer mixer, mut Hearing hearing)
+{
+    if (mixer.muted || mixer.effects <= 0 || !hearing.inGame) return;
+    var seat = Math.Clamp(cue.seat, 0, 1);
+    var near = seat == hands.seat ? 1 : 0.5;
+    if (cue.kind == 0)
+    {
+        var variant = hearing.steps[seat] % robotSteps.count;
+        hearing.steps[seat] = (hearing.steps[seat] + 1) % 3;
+        PlayCue(robotSteps[variant], 0.13, MixBus.Effects, near, seat == 0 ? 0.98 : 1.02);
+    }
+    else if (cue.kind == 1)
+    {
+        var before = workshop.history[Math.Max(0, workshop.historyCount - 1)];
+        mut var box = false;
+        mut var battery = false;
+        for (var room = 0; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
+            if (before.rooms[room].room != workshop.puzzle.rooms[room].room ||
+                !CellEqual(before.rooms[room].position, workshop.puzzle.rooms[room].position)) box = true;
+        for (var crate = 0; crate < Math.Min(MAX_CRATES, workshop.layout.crateCount); crate++)
+            if (before.crates[crate].room != workshop.puzzle.crates[crate].room ||
+                !CellEqual(before.crates[crate].position, workshop.puzzle.crates[crate].position)) battery = true;
+        if (box) PlayCue(boxPushes[hearing.pushes % boxPushes.count], 0.25);
+        if (battery) PlayCue(batteryPushes[hearing.pushes % batteryPushes.count], 0.18);
+        hearing.pushes = (hearing.pushes + 1) % 2;
+    }
+    else if (cue.kind == 2)
+    {
+        var outward = !OnRoomGrid(workshop.layout, cue.source.room, cue.source.position + Direction(cue.direction));
+        PlayCue(outward ? doorwayExit : doorwayEnter, outward ? 0.44 : 0.6);
+    }
+    else if (cue.kind == 3) PlayCue(littleUndo, 0.26);
+    else if (cue.kind == 4) PlayCue(littleReset, 0.62);
+    else if (cue.kind == 5) PlayCue(puzzleSolve, 2.6);
+    else if (cue.kind == 6)
+    {
+        var soft = hearing.bumpWait[seat] > 0;
+        if (!soft) hearing.bumpWait[seat] = 0.5;
+        PlayCue(soft ? robotBumpSoft : robotBump, soft ? 0.085 : 0.18, MixBus.Effects, near);
+    }
+}
+
+bool BatterySeated(LevelLayout layout, Cargo cargo)
+{
+    return cargo.active && TileAt(layout, cargo.room, cargo.position) == Tile.Target;
+}
+bool BoxDocked(LevelLayout layout, Puzzle puzzle, int room)
+{
+    var dock = layout.rooms[room];
+    return dock.dock.x >= 0 && puzzle.rooms[room].room == dock.dockRoom && CellEqual(puzzle.rooms[room].position, dock.dock);
+}
+bool PlateHeld(LevelLayout layout, Puzzle puzzle, int room, int2 at)
+{
+    return ActorAt(puzzle, room, at) >= 0 || BoxAt(layout, puzzle, room, at) >= 0 || CargoAt(layout, puzzle, room, at) >= 0;
+}
+
+[Stage(ArtStage.Sound, -1)]
+view WorkshopChanges(Workshop workshop, Hands hands, Mixer mixer, mut Hearing hearing)
+{
+    if (!hearing.inGame) return;
+    var audible = !mixer.muted && mixer.effects > 0;
+    var fresh = !hearing.baseline || hearing.level != workshop.level;
+    if (fresh && audible && Together(workshop)) PlayCue(puzzleStart, 1.1);
+    if (hearing.baseline && audible)
+    {
+        for (var seat = 0; seat < 2; seat++)
+            if (seat != hands.seat && hearing.present[seat] != workshop.present[seat])
+                PlayCue(workshop.present[seat] ? partnerJoin : partnerLeave, 0.52);
+    }
+    // Serial changes identify undo/reset/selection/admission. Their command
+    // cues stand alone rather than replaying a roomful of state cues.
+    if (!fresh && hearing.serial == workshop.serial && audible && hearing.previous.moves != workshop.puzzle.moves)
+    {
+        mut var seated = false;
+        mut var unseated = false;
+        mut var docked = false;
+        mut var down = false;
+        mut var up = false;
+        for (var crate = 0; crate < Math.Min(MAX_CRATES, workshop.layout.crateCount); crate++)
+        {
+            var was = BatterySeated(workshop.layout, hearing.previous.crates[crate]);
+            var now = BatterySeated(workshop.layout, workshop.puzzle.crates[crate]);
+            if (!was && now) seated = true;
+            if (was && !now) unseated = true;
+        }
+        for (var room = 0; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
+            if (!BoxDocked(workshop.layout, hearing.previous, room) && BoxDocked(workshop.layout, workshop.puzzle, room)) docked = true;
+        mut var shutters = 0;
+        for (var room = -1; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
+        {
+            var width = RoomWidth(workshop.layout, room);
+            for (var cell = 0; cell < width * RoomHeight(workshop.layout, room); cell++)
+            {
+                var at = int2(cell % width, cell / width);
+                var tile = TileAt(workshop.layout, room, at);
+                var channel = ShutterChannel(tile);
+                if (channel >= 0) shutters |= 1 << channel;
+                if (PlateChannel(tile) < 0) continue;
+                var was = PlateHeld(workshop.layout, hearing.previous, room, at);
+                var now = PlateHeld(workshop.layout, workshop.puzzle, room, at);
+                if (!was && now) down = true;
+                if (was && !now) up = true;
+            }
+        }
+        // One cue of each material keeps a row or large shutter network
+        // from stacking many identical samples at once.
+        if (seated) PlayCue(batterySeat, 0.72);
+        if (unseated) PlayCue(batteryUnseat, 0.2);
+        if (docked) PlayCue(boxDock, 0.75);
+        if (down) PlayCue(plateDown, 0.12);
+        if (up) PlayCue(plateUp, 0.09);
+        var beforePower = Power(workshop.layout, hearing.previous) & shutters;
+        var afterPower = Power(workshop.layout, workshop.puzzle) & shutters;
+        if ((afterPower & ~beforePower) != 0) PlayCue(shutterOpen, 0.3);
+        if ((beforePower & ~afterPower) != 0) PlayCue(shutterClose, 0.32);
+    }
+    hearing.baseline = true;
+    hearing.previous = workshop.puzzle;
+    hearing.level = workshop.level;
+    hearing.serial = workshop.serial;
+    hearing.present = workshop.present;
 }

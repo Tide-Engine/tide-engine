@@ -7,9 +7,17 @@ sign-in, Stripe prepaid credit and the existing Fly.io organization/relay are
 selected. `hosting/README.md` is the operator/API/ABI reference;
 `docs/multiplayer/hosting.md` is the developer guide. No new Tide syntax.
 
-The service has not been deployed. No real OAuth/payment credentials, customer
-payments or paid infrastructure were used during implementation validation.
-Allocations in the Fly configuration are disabled and prices default to zero
+The first Fly deployment completed on 2026-10-15 through Hosting run
+38754895170 attempt 2 (341051c4): one 512 MiB shared CPU machine in `fra`, one
+1 GiB `hosting_data` volume, a passing Fly health check and `{"ok":true}` from
+the public Fly hostname with the console Host header. All four provider secrets
+are now deployed. Cloudflare DNS and Fly-managed TLS for console.tide-engine.dev
+and play.tide-engine.dev are configured and verified; both HTTPS health requests
+return 200. The console homepage serves GitHub sign-in. Real provider/payment
+flows remain unvalidated. No customer
+payment was made. Earlier implementation validation used no real provider
+credentials or paid infrastructure. Allocations remain disabled in the Fly
+configuration and prices default to zero
 (which also disables allocation). Public paid launch requires provider setup,
 measured rates and the remote/security/restore checks in the operator guide.
 The inactive remote mod build service remains on hold: this work does not
@@ -48,6 +56,67 @@ restore its source-build, signing or closed-source requirements.
   uploaded code obeys its claimed simulation identity.
 
 ## Service and authentication
+
+Owner access and console appearance (2026-10-15): the owner's live GitHub
+callback reached the invite gate. Resolved the authenticated local GitHub
+identity as BlenMiner (4602596) and ran the operator `admin.mjs invite` on
+tide-hosting's persistent database. This invites that account; a fresh browser
+sign-in is needed because OAuth state is consumed once. No credit or allocation
+enablement was added.
+
+At the owner's request, the dashboard/sign-in UI now matches the website:
+amber light/dark tokens, Inter Variable, the existing wave favicon/logo and
+header typography. The local font and its OFL license ship in hosting/static.
+A small external theme bootstrap selects saved/system appearance before CSS
+paints; Svelte owns the toggle and preference persistence. Website and console
+localStorage remain independent origins.
+
+The owner then reported the initial-view flash and explicitly requested Svelte.
+Replaced hosting/web's static shell and imperative DOM rendering with SvelteKit
+3/Svelte 5 and adapter-node, pinned to the website's installed versions. Browser
+session lookup happens in the existing HTTP service before adapter dispatch.
+The authenticated account view is attached to that IncomingMessage, read by a
+server load through adapter-node's event.platform.req, and shared with the JSON
+account endpoint's existing serializer. This has no global per-user state or
+internal credential-bearing HTTP hop. Svelte renders the chosen sign-in/account
+view, balances, projects, matches and forms before hydration; the client polls
+only for subsequent updates. Signed-in pages contain no welcome section.
+SvelteKit's nonce CSP supports hydration without unsafe-inline; personalized
+HTML/page data are private/no-store with Vary: Cookie. A private protocol header
+is overwritten from the validated configured origin, not trusted from callers.
+The game origin, API routes, session/CSRF checks and WASM workers stay separate.
+
+The service's npm pretest now runs Svelte check (warnings fail) and the production
+frontend build. Docker builds the UI in a separate stage and copies its compiled
+output into the runtime image; no frontend build tools are installed there.
+
+Browser GET failures on `/auth/github` and `/auth/callback` redirect to the
+styled landing page with a fixed restricted/expired/unavailable reason, clearing
+the one-use login cookies. A bounded valid CLI approval code is retained for
+retry; OAuth codes/state and provider messages are not reflected. Svelte
+renders the fixed message on the server and removes the reason after hydration. API
+errors remain JSON and all OAuth/admission checks remain enforced. HTTP
+regressions exercise denial, expired state, cookie clearing, secret omission,
+device retry routing and retained API errors. All 31 hosting tests pass with
+the installed CLI/native/web/managed build and real muted Chrome enabled.
+HTTP checks additionally verify the initial signed-in/signed-out HTML, private
+cache policy, nonce CSP, injection escaping and concurrent account isolation.
+Browser checks disable JavaScript and still see the match/credit dashboard;
+they verify persisted theme selection and styled OAuth recovery after hydration.
+Desktop light/dark and phone dashboard/error captures were inspected with no
+horizontal overflow. The Linux production image builds and renders both guest
+and authenticated pages with private/no-store and nonce CSP, and serves the
+theme script, logo and font with the intended MIME types.
+
+Deployed source 2ee3d6d5 (including e586ff63) directly to tide-hosting as Fly
+release 2, image deployment-01M5030QHVNHBTZJWJJR6TKRS3. The existing fra
+512 MiB machine and 1 GB volume were retained; smoke/health checks passed.
+Live console requests verify SvelteKit-rendered guest HTML, private/no-store
+caching, nonce CSP and styled expired-sign-in recovery. Authenticated first
+paint was verified locally and in the Linux production image, including a
+browser with JavaScript disabled; no owner session cookie was accessed.
+Existing sessions remain valid. Allocations remain disabled, with no payments,
+credit grants or additional hosting resources. No CI run was dispatched.
 
 Node 24.16+, ESM, SQLite WAL/FULL synchronization, node-datachannel 0.33.4. The
 service owns accounting, routing, credentials and lifecycle outside guest state.
@@ -174,6 +243,33 @@ high availability or an independent backup.
 
 ## Validation and remaining launch work
 
+The manually triggered Hosting workflow (`.github/workflows/hosting.yml`) now
+tests the service and, on `dev`, deploys `hosting/` to `tide-hosting`, reusing the
+existing repository `FLY_API_TOKEN` as requested by the owner. Other refs test
+only. Node 24.16.0 matches the service image. Installed-toolchain/browser cases
+skip without staged tools; the ordinary service tests include real WebRTC.
+Provider secrets remain in Fly, and the workflow does not enable allocations
+or configure first-deployment domains, rates, invites or backups. See the
+operator README and notes/releases-and-ci.md for the completed run and token setup.
+Workflow validation passes actionlint 1.7.12, Fly configuration validation and
+the production image build. Node 24.16.0 service tests pass on Windows and in
+the Linux service image (29 passed, two staged-tool cases skipped).
+The first owner-triggered Hosting run passed service tests but Fly configuration
+validation required a token absent from that step. The workflow now supplies
+the existing `FLY_API_TOKEN` to both Fly validation and deployment. The owner
+authorized a fresh run after this correction. Run 38754895170 attempt 2 passes
+tests, validation and deployment. The existing repository token was website-only;
+its replacement combines one-year app-scoped FlyV1 credentials for the website
+and hosting, retaining the same secret name and refusing an unrelated app (403).
+The runtime has no copy of this deployment token. The service is healthy on Fly.
+The owner then authorized Cloudflare OAuth in their own browser. DNS-only
+A/AAAA records for console/play use the hosting app's public addresses, and
+the console ACME CNAME provides DNS validation. Both Fly certificates are
+issued and both custom-domain HTTPS health checks pass. Website release 282
+adds the requested Console menu on desktop/mobile; the apex remains the docs
+site. See notes/docs-site.md. Provider and other launch checks below remain
+outstanding; allocations and rates were not enabled by domain setup.
+
 Validation exercises SQLite/auth/payment mocks, real HTTP, WASM isolation,
 memory growth limits, infinite-loop interruption, returning CPU-heavy guests,
 credit/caps, checkpoint atomicity, retention, bounded recovery, real local relay/
@@ -287,7 +383,26 @@ then validate the actual runtime flows in the sandbox before provisioning the
 live equivalent. Customer/invoice API permissions can follow the implemented
 features. Runtime keys do not need webhook administration rights. Creating the
 runtime key remains an owner Dashboard/2FA step; the MCP API search did not expose
-a restricted-key creation operation. The owner will push secrets to Fly.
+a restricted-key creation operation.
+
+The owner subsequently asked the agent to push the Stripe secrets. Created the
+Fly app namespace `tide-hosting` in the existing personal organization and
+imported `TIDE_STRIPE_WEBHOOK_SECRET` directly from the private local file with
+`fly secrets import --stage`. Fly lists it as staged; no machines, volumes or
+deployment were created. `TIDE_STRIPE_SECRET` is still absent. An existing
+`STRIPE_PRIVATE` environment value was verified through Stripe's account API:
+it belongs to a different sandbox, so it was not uploaded or modified. The
+matching Tide Engine sandbox API key requires Dashboard access; the shared
+browser currently requests sign-in. No secret values were printed or committed.
+
+After the owner's next setup confirmation, `fly secrets list --app tide-hosting`
+shows all four required names staged: `TIDE_GITHUB_CLIENT_ID`,
+`TIDE_GITHUB_CLIENT_SECRET`, `TIDE_STRIPE_SECRET` and
+`TIDE_STRIPE_WEBHOOK_SECRET`. The agent did not create or upload the three
+newly present values and did not retrieve their contents. Thus their presence
+is verified, while the API key's sandbox/account and permissions remain untested.
+Secrets are uploaded but not deployed to a machine; no additional Stripe key
+was created. The shared browser still displays Stripe sign-in.
 
 Validation: 14 existing auth/payment/store tests pass; two isolated mock-provider
 reproductions confirm the key-mode and retry findings. Runtime code is unchanged

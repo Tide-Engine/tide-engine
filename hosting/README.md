@@ -15,11 +15,28 @@ npm test
 npm start
 ```
 
+The console uses SvelteKit 3/Svelte 5 with adapter-node, matching the website's
+stack. `npm test` first checks and builds the console; `npm run build` builds it
+independently. The existing Node service serves the compiled UI, API and match
+runtime together. Page requests authenticate the browser session and render its
+account, projects and matches on the server before hydration. No initial account
+fetch or wrong-view flash is needed. The production Docker build compiles the
+frontend in a separate stage and installs runtime dependencies only in its final
+image.
+
 The dashboard is `http://localhost:8081`; games use `http://127.0.0.1:8081`.
 These must remain different origins. Production requires two HTTPS origins.
 GitHub OAuth is invite-only, with no repository scopes. Configure an OAuth app
 with callback `https://console.tide-engine.dev/auth/callback`, then supply
 `TIDE_GITHUB_CLIENT_ID` and `TIDE_GITHUB_CLIENT_SECRET`.
+
+The console uses the main website's amber palette, wave logo and locally served
+Inter Variable font (license at `/Inter-LICENSE.txt`). Light/dark appearance
+follows the system until changed with the header theme button; the preference
+is stored in this origin's browser storage. Browser sign-in failures return to
+the styled sign-in page with an access/retry message. API errors remain JSON.
+SvelteKit generates the per-response script nonce required by the console CSP;
+personalized HTML and page data are private/no-store and vary by Cookie.
 
 Invite the immutable numeric GitHub account ID, rather than a mutable username:
 
@@ -188,6 +205,24 @@ Create a small volume (at least 1 GiB) and configure DNS/certificates for both
 domains, provider secrets, measured rates, top-up amounts and invites. Deploy
 from this directory with `fly deploy --ha=false`; keep the machine count at one.
 The service has no Fly API token or autoscaling/provisioning capability.
+
+The **Hosting** GitHub Actions workflow (`.github/workflows/hosting.yml`) runs
+independently of engine releases and docs deployments. Start it manually on
+`dev` to test the service and deploy this directory to `tide-hosting`:
+
+```sh
+gh workflow run hosting.yml --ref dev
+```
+
+Other refs run the service tests without deploying. The workflow uses Node
+24.16.0, runs `npm ci` and `npm test`, validates the Fly configuration and deploys
+with `--remote-only --ha=false`. The installed-toolchain/browser integration
+cases skip because this workflow does not stage Tide or a browser. It reuses
+the existing repository `FLY_API_TOKEN`; GitHub OAuth and Stripe credentials
+remain in Fly secrets. It does not configure domains, rates, invites or enable
+allocations. Complete the setup above before the first deployment.
+The shared Fly secret contains app-scoped deployment credentials for both
+`tide-website` and `tide-hosting`, expiring in October 2027; renew both together.
 
 The existing relay must supply working TURN credentials for this NAT-hosted
 service; verify real remote native/browser players through TURN before launch.

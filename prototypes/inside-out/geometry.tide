@@ -111,7 +111,7 @@ void FloorOutline(mut Sculpture sculpture, float2 at, float2 size, float width, 
     FloorLine(sculpture, float2(low.x, high.y), low, width, tone, floor, scale);
 }
 
-void FloorNumber(mut Sculpture sculpture, int number, bool prime, float2 at, float size, Color tone, float floor, float scale)
+void FloorNumber(mut Sculpture sculpture, int number, float2 at, float size, Color tone, float floor, float scale)
 {
     var stroke = Math.Max(.4, size * .10);
     if (number == 1) FloorLine(sculpture, at + float2(0, -size * .45), at + float2(0, size * .45), stroke, tone, floor, scale);
@@ -130,5 +130,4 @@ void FloorNumber(mut Sculpture sculpture, int number, bool prime, float2 at, flo
         FloorLine(sculpture, at + float2(-size * .25, 0), at + float2(size * .25, 0), stroke, tone, floor, scale);
         FloorLine(sculpture, at + float2(size * .25, -size * .45), at + float2(size * .25, size * .45), stroke, tone, floor, scale);
     }
-    if (prime) FloorLine(sculpture, at + float2(size * .52, -size * .47), at + float2(size * .42, -size * .15), stroke, tone, floor, scale);
 }

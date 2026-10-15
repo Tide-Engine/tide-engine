@@ -25,6 +25,7 @@
 
         <nav class="links" aria-label="Main">
             <a href={docs.link} class:active={inDocs} aria-current={inDocs ? 'true' : undefined}>{docs.text}</a>
+            <a href="https://console.tide-engine.dev/">Console</a>
         </nav>
 
         <button class="search" type="button" onclick={onsearch} aria-label="Search">
@@ -53,6 +54,7 @@
     {#if menu}
         <nav id="mobile-nav" class="mobile" aria-label="Main">
             <a href={docs.link} class:active={inDocs}>{docs.text}</a>
+            <a href="https://console.tide-engine.dev/">Console</a>
             <div class="row">
                 <button type="button" onclick={toggleTheme}>{theme.dark ? 'Light theme' : 'Dark theme'}</button>
             </div>

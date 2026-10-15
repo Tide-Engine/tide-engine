@@ -10,6 +10,8 @@ CMakeUserPresets.json
 docs/node_modules/
 hosting/node_modules/
 hosting/data/
+hosting/build/
+hosting/.svelte-kit/
 .github/node_modules/
 docs/.svelte-kit/
 docs/build/
