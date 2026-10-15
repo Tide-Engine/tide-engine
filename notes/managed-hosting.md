@@ -44,7 +44,20 @@ Validation: all 48 hosting tests pass with staged native/web/managed CLI and
 muted Chrome, including the filesystem/environment/ownership and concurrent
 artifact cases above, infinite-loop interruption and sampled CPU enforcement.
 Svelte check/build and the updated docs production build pass. No engine or
-compiler source changes and no CI dispatch. Deployment results follow.
+compiler source changes and no CI dispatch.
+
+Source 0b3ce5cd (including f819180d) deployed as Fly release 8, image
+deployment-01M50AMTHR1J4JRZS5MXHB36FZ. Incoming Foldline-only changes merged
+cleanly and do not affect hosting. Machine checks and public HTTPS health/game
+client requests pass. A bounded probe used the owner's existing deployed game
+through the real authenticated HTTP match API: created running, stayed running
+for 1.5 seconds, then explicitly ended. Its temporary project-scoped runtime
+credential was revoked; no smoke match remains active. The earlier failed probe
+was also explicitly ended. Normal lease debits/refunds apply; no manual balance
+grant or provider payment was made. Operator status confirms accepting=true,
+maximum two matches, 128 MiB guest reservation and zero active matches afterward.
+Existing Fly machine/volume remain unchanged. Helpers/logs are under ignored
+build/ and contain no credential values.
 
 ## Non-expiring CI tokens and game links (2026-10-15)
 
