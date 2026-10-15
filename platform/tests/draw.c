@@ -3092,6 +3092,7 @@ static void frustum_culling(void)
     const uint32_t indices[] = {0, 1, 2, 0, 2, 3};
     const tide_mesh mesh = {vertices, 4, indices, 6, 1};
     uint32_t calls[2];
+    uint64_t submitted[2];
     for (int enabled = 0; enabled < 2; enabled++) {
         tide_draw_reset(&list);
         tide_draw_screen_size(&list, screen);
@@ -3111,10 +3112,12 @@ static void frustum_culling(void)
         tide_draw_mesh_3d(&list, &mesh, outside, NULL, TIDE_FILTER_POINT);
         corner_pixels(enabled ? culled : reference, W, H);
         calls[enabled] = tide_platform_draw_calls();
+        submitted[enabled] = tide_platform_draw_vertices();
     }
     expect(memcmp(reference, culled, sizeof reference) == 0, "frustum culling preserves rendered pixels");
     expect(near(culled[32 * W + 32], rgba(red), 0), "frustum reference contains visible geometry");
     expect(calls[0] == calls[1] + 1u, "frustum culling removes an offscreen GPU draw");
+    expect(submitted[0] == submitted[1] + 6u, "frustum-rejected instances are excluded from submitted vertex totals");
     // Later tests use the host's usual screen size; culling settings reset each frame.
 }
 
