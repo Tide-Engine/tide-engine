@@ -117,7 +117,10 @@ static void place_long_throw_tests(void)
     CHECK(world.Fold.ends.at[2].open && near(world.Fold.ends.at[2].at.x, 12, .02f));
     walk_to(&world, 1, 15.3f, 13.5f);
     walk_to(&world, 1, 15.3f, 10.5f);
+    // Turn on the inside of the L; a diagonal here cuts across its open void.
+    walk_to(&world, 1, 13, 10.5f);
     walk_to(&world, 1, 13, 7);
+    CHECK(near(pilot(&world, 1).position.y, 5.4f, .1f) && pilot(&world, 1).taken == 0);
     aim_at(&world, 1, (tide_float3){0, 9.3f, -12});
     act(&world, 1, (PilotInput){.cyan = true});
     CHECK(world.Fold.ends.at[3].open && near(world.Fold.ends.at[3].at.z, -12, .02f));
@@ -126,7 +129,9 @@ static void place_long_throw_tests(void)
     CHECK(pilot(&world, 0).position.x > 12 && near(pilot(&world, 0).position.y, 5.4f, .15f));
     walk_to(&world, 0, 12.8f, 16.3f);
     walk_to(&world, 0, 11.8f, 18.1f);
+    walk_to(&world, 1, 13, 10.5f);
     walk_to(&world, 1, 15.3f, 10.5f);
+    CHECK(near(pilot(&world, 1).position.y, 5.4f, .1f) && pilot(&world, 1).taken == 0);
     walk_to(&world, 1, 15.3f, 15.2f);
     walk_to(&world, 1, 14.2f, 18.1f);
     const int chamber = world.Arena.chamber;

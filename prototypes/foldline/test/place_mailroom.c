@@ -60,11 +60,14 @@ static void place_mailroom_tests(void)
     walk_to(&world, 0, -12, -5);
     cross_fold(&world, 0, (tide_float3){-14, 1.3f, -5}, 160);
     CHECK(pilot(&world, 0).position.x > 6 && near(pilot(&world, 0).scale, 1, .001f));
-    walk_to(&world, 0, 11, 5.4f);
+    walk_to(&world, 0, 11, 5.7f);
     aim_at(&world, 0, (tide_float3){11, 0, 7});
     ticks(&world, 40);
     act(&world, 0, (PilotInput){.carry = true});
     ticks(&world, 70);
+    if (!((world.Arena.signals & 1) != 0 && world.Arena.gate > .99f))
+        fprintf(stderr, "Mailroom cargo %.4f %.4f %.4f scale%.3f held%d operator %.3f %.3f %.3f signals%d\n", world.Fold.cube.x, world.Fold.cube.y, world.Fold.cube.z,
+                world.Fold.cubeScale, world.Fold.holding.at[0], pilot(&world, 0).position.x, pilot(&world, 0).position.y, pilot(&world, 0).position.z, world.Arena.signals);
     CHECK((world.Arena.signals & 1) != 0 && world.Arena.gate > .99f);
     walk_to(&world, 0, 12.4f, 5.4f);
     walk_to(&world, 0, 12.4f, 10.2f);

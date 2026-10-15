@@ -9,8 +9,6 @@ void BuildTheWard(Arena arena, mut Place place)
     Fill(arena, 2.1, 18, -1, 0, -4, 4, MARBLE);
     Fill(arena, 1.6, 19, -2, 4.4, -5, -4, PLASTER);
     Fill(arena, 1.6, 19, -2, 4.4, 4, 5, PLASTER);
-    Fill(arena, 1.6, 2.6, -2, 4.4, -5, -3, PANELS);
-    Fill(arena, 1.6, 2.6, -2, 4.4, 3, 5, PANELS);
     Fill(arena, 18, 19, -2, 4.4, -5, 5, PLASTER);
     Fill(arena, 1.6, 19, 4.4, 5.4, -5, 5, CEILING_TILE, false, 2);
     Fill(arena, 3.9, 4.1, 0, 4.4, -4, 4, PANELS, false, 4);

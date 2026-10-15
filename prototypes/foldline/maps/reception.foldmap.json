@@ -2,7 +2,10 @@
   "version": 1,
   "name": "reception",
   "function": "BuildMapReception",
-  "place_ids": [2, 15],
+  "place_ids": [
+    2,
+    15
+  ],
   "boxes": [
     {
       "id": "floor",
@@ -71,7 +74,7 @@
         -9
       ],
       "max": [
-        -9,
+        -10,
         4.4,
         -8
       ],
@@ -80,7 +83,7 @@
     {
       "id": "south_east",
       "min": [
-        -3,
+        -2,
         -2,
         -9
       ],
@@ -99,7 +102,7 @@
         8
       ],
       "max": [
-        3,
+        2,
         4.4,
         9
       ],
@@ -108,7 +111,7 @@
     {
       "id": "north_east",
       "min": [
-        9,
+        10,
         -2,
         8
       ],
@@ -471,9 +474,5 @@
       ],
       "size": 1
     }
-  ],
-  "place_ids": [
-    2,
-    15
   ]
 }
