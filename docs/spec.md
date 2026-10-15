@@ -878,7 +878,7 @@ Implemented, awaiting approval:
 - **The match's seed** (`Random.seed`) is an `int` from 0 to 2147483647. The server picks it as it starts a match, from the system's random number generator, which its host gives it (`tide_session_desc.entropy`; the standard host passes `tide_platform_entropy`, but in a run with no window: `--capture`, `--frames`, `--script`). `--seed <n>` on the standard host's command line (`tide run --seed 7`) picks the seed instead, from 0 to 2147483647: every match that machine starts in the run has it (`tide_session_desc.seed`), with a window or without, on every platform. The owner asked for the flag on 2026-10-05; that it's every match of the run, and for runs with a window too, is how it was built. It's kept in the world: a joiner gets it with the world, snapshots, the hash, host migration and hot reload carry it, and clients never send it. A player who starts the match itself to have something to build the server's world from (`tide_game.pure_start`) is told the seed with how the match started. Where no host gives entropy (`tide_world_init`, tests, benchmarks, the standard host's runs with no window) it's 0, so a run repeats exactly.
 - **A game that uses none of it is what it was.** The world only has the seed in a game that reads it, rolls with `Random` in the match's code, or has a `Random` in the match's components or singletons, and only such a game's header has `tide_world_start_seeded(w, dt, start, seed)` and includes `tide/random.h`. Other games' worlds, hashes, headers and traffic don't change. A game that only rolls in local state has no seed in its match either.
 - **Hot reload**: a `Random` field is a struct with a `long`, so its state carries over by name like any field. One a reload adds starts at 0 on the entities that are there already, like any new field at its default: they roll alike until they're spawned again.
-- **Every player can read the seed** until scenes hide state from players (see Scenes): it's in the world, which every machine has whole.
+- **Every player can read Time.seed:** this match singleton remains public even when scenes or entities are hidden (see State visibility). A secret seed belongs in restricted scene or component state.
 
 ### Open
 
@@ -3244,9 +3244,10 @@ component Aim
   scenes do. This requires generated construction support, not a global runtime
   prefab registry.
   Root overrides follow the prefab name: `Scene.Load(Level, LevelSettings {
-  difficulty = 2 }, visibility: SceneVisibility.Private)`. Visibility is optional,
-  named and last, and only match scenes have it. Loading from local code creates
-  local entities; match code creates match entities.
+  difficulty = 2 }, Visibility { group = group })`. Visibility is an ordinary
+  optional root component, using the same shared groups as entities. Only match
+  scenes take Visibility. Loading from local code creates local entities; match
+  code creates match entities.
 - Settings use ordinary root components, such as
   `LevelSettings { difficulty = 2 }`. Code reads them through its usual typed
   component access. Prefab-specific parameter declarations are not part of the
@@ -3562,8 +3563,8 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
 - `Main` is the fallback: when the last scene of `Main`'s world unloads, `Main` loads again, set up by its `Spawned` handlers as at the start. A match `Main` comes back in the match, a local one in the local state.
 - When `Main` is local, a match can't load it, so a match whose last scene unloads ends. Every machine in it goes offline, back to its local `Main`, with `Disconnected` and the reason `Ended` (see Sessions).
 - Loaded scenes share their world: the same systems, singletons and `Time`. Scenes that share nothing are separate worlds, which never communicate. Only the server creates worlds, so match code can't (see Open).
-- **Visibility:** scenes are public by default, seen by every player in the world. `Scene.Load(Hand { ... }, SceneVisibility.Private)` loads a private one, which only the server and the players given it see: `Scene.AddPlayer(scene, player)` and `Scene.RemovePlayer(scene, player)`. Membership is match state, so the server decides it, and a player who's added receives the scene's state.
-- A private scene with no players exists only on the server, which is where secrets like RNG seeds go. Code that reads a private scene only predicts correctly on machines that see it, and the server corrects the others.
+- **Visibility:** scenes, entities and whole components use one audience mechanism at different scopes. A loaded scene root's `Visibility` group limits all entities owned by that scene, including later spawns. Scenes are public by default. `Visibility.Set(group, audience)` changes the shared live audience; a player newly included receives the scene's permitted state. Entity and component restrictions intersect the enclosing scene audience and cannot broaden it. Scene ownership and lifetime remain independent of audience groups.
+- A scene whose group audience is empty exists only on the server, which is where secrets like RNG seeds go. Code that reads a private scene only predicts correctly on machines that see it, and the server corrects the others.
 - A client never loads match scenes on its own: it has the ones the server has it in.
 - A system named `Main` is an ordinary system. Without a `scene Main`, the missing entry point's error says so.
 
@@ -3587,8 +3588,8 @@ event(Spawned) SetupArena(Arena arena)
 // Deals each player a hand only they can see.
 event(PlayerJoined joined) DealIn()
 {
-    var hand = Scene.Load(Hand { player = joined.player }, SceneVisibility.Private);
-    Scene.AddPlayer(hand, joined.player);
+    var group = Visibility.CreateGroup(Audience.Only(joined.player));
+    Scene.Load(Hand { player = joined.player }, Visibility { group = group });
 }
 
 system Collapse(Arena arena)
@@ -3605,8 +3606,8 @@ system Collapse(Arena arena)
 - `Scene.Load` makes its entity right away, like `Spawn`, so it follows the same evaluation order and can't be inside `?:` or on the right of `&&` and `||`.
 - An entity spawned into a scene that's been unloaded by the spawn's turn is never made, like the loot an enemy drops while its arena unloads.
 - Entities unload in archetype order, each archetype's from its last row, and the scene's own entity last. Each gets its `Destroyed` handlers.
-- `SceneVisibility` is a built-in enum, `Public` and `Private`. A local scene has no visibility. Local code can't change who sees a scene.
-- In generated C, a scene's component holds its visibility and players too, as `tide_visibility` and `tide_players`, one bit per player: 32 to a word, with `tide_players1` and on for games that take more. Code can't name them.
+- `Scene.Load(Scene { ... }, Component { ... }, ...)` accepts ordinary root components, including `Visibility { group = group }`, before initialization handlers run. Root components are positional, unique and use the same placement/value rules as Spawn; `Scene.Load(scene: Arena)` remains valid when no root components follow. Authored prefab loads use their ordinary root overrides. Local scenes can take ordinary local root components, but no Visibility.
+- Scene components contain only their declared state; audience policy lives in the root Visibility and shared group directory. There is no separate scene visibility enum or player-membership API.
 - The engine loads `Main` itself: `tide_world_init` loads a match `Main`, and `tide_local_init` a local one, with `TIDE_MAIN_IS_LOCAL` defined. `tide/run.h` starts without a match when `Main` is local.
 - The `Main` scene is the world's first entity.
 - The fallback waits for the end of the tick (the frame, in local state), once every change and handler has applied, so unloading one scene and loading another in the same tick never brings `Main` back. Entities in no scene don't count. `Main` comes back at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
@@ -3622,7 +3623,7 @@ system Collapse(Arena arena)
 ### Decided
 
 - Visibility is server-controlled match state. It applies to entities and whole components; fields do not have independent visibility. A hidden entity or component is absent from the recipient's state and queries, rather than replaced with a fake value.
-- A `Visibility` component assigns an entity to a shared audience group. Groups allow world chunks, sets of entities and distant players to share a live audience without repeating a policy on each object. Component audiences can restrict an otherwise visible entity, so a card's back and secret face can be separate components.
+- A `Visibility` component assigns an entity to a shared audience group; on a scene root it also limits every entity owned by that scene. Groups allow world chunks, sets of entities and distant players to share a live audience without repeating a policy on each object. Component audiences can restrict an otherwise visible entity, so a card's back and secret face can be separate components.
 - Entity policy respects its enclosing scene; component policy respects its entity. A narrower rule cannot broaden the enclosing rule. The server retains and simulates the full match. Clients predict using permitted state and receive authoritative corrections for consequences they cannot reproduce from it.
 - Inputs remain the primary simulation stream. State correction uses a known verified baseline. Hashes verify each tick's permitted state; partition size and the mechanism for locating differences are implementation choices.
 - `Shown` and `Hidden` distinguish local availability changes from genuine `Spawned` and `Destroyed` lifetime events (see Events). Hiding an entity does not announce its later destruction.

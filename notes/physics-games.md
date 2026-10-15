@@ -1,5 +1,12 @@
 # The physics games: Towers and Sumo
 
+Scene visibility unification (2026-10-15): removing the generated scene audience
+fields changes the two network world pins of each game. Native and WASI agree:
+Towers 87e3c4d07d3233f3 at tick 1500 / aab79fc2ab3032d2 at 1800; Sumo
+992012c0dfac1c8f at 640 / 78c067b37a21bc2b at 880. Gameplay, generated RNG salts,
+physics bytes/results and no-resync assertions are unchanged. This is a test
+baseline update only; final validation is in notes/language.md.
+
 Box3D mesh support (2026-10-15) adds two package components, shifting Sumo's
 existing automatic Brain.dice spawn salt from 3072 to 3584 in generated C.
 Its gameplay/RNG algorithms are unchanged, but the new build's bot choices

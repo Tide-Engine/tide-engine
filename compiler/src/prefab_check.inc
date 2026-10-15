@@ -253,11 +253,6 @@ static decl *prefab_scene_marker(program *prog, const bool local)
     d->gen_name = str_to_cstr(d->name);
     d->index = prog->components.count;
     if (d->index >= MAX_COMPONENTS) diag_error((loc){1, 1, 0}, "too many components; the limit is %d for now", MAX_COMPONENTS);
-    static const char *const names[] = {"tide_visibility", "tide_players"};
-    for (int i = 0; i < 2; i++) {
-        field f = {0}; f.name = str_from(names[i]); f.type = T_INT_; f.hidden = true;
-        vec_push(d->fields, f);
-    }
     vec_push(prog->components, d);
     prog->prefab_scene[local] = d;
     return d;
@@ -285,15 +280,6 @@ static type check_prefab_spawn(checker *c, expr *e, decl *d, const bool load)
     for (int i = 1; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         const str named = i < e->arg_names.count ? e->arg_names.items[i] : (str){0};
-        if (load && str_eq_c(named, "visibility")) {
-            if (p->visibility || i != e->args.count - 1 || local) {
-                diag_error(arg->at, "a match prefab's visibility comes once, last: 'Scene.Load(Level, Settings { ... }, visibility: SceneVisibility.Private)'");
-            }
-            p->visibility = arg;
-            const type t = check_expr(c, arg);
-            if (t.kind != TY_ERROR && !(t.kind == TY_ENUM && t.decl == c->prog->scene_visibility)) diag_error(arg->at, "visibility must be SceneVisibility.Public or SceneVisibility.Private");
-            continue;
-        }
         if (named.len) diag_error(arg->at, "prefab root components are positional arguments; remove the argument name");
         decl *comp = check_component_arg(c, arg, load ? "Scene.Load prefab overrides" : "Spawn prefab overrides");
         if (!comp) continue;

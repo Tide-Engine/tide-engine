@@ -27,6 +27,9 @@ component Loot
     int from;
 }
 
+component RootSettings { int value; string text; List<int> values; }
+[Sparse] component RootTag { int value = 5; }
+
 singleton Stats
 {
     int arenasSetUp;
@@ -34,17 +37,32 @@ singleton Stats
     int lootDropped;
     Entity arena;
     Entity hand;
+    int argumentOrder;
 }
 
 scene Main { }
 
+int LoadValue(mut Stats stats, int value)
+{
+    stats.argumentOrder = stats.argumentOrder * 10 + value;
+    return value;
+}
+
 event(Spawned) Setup(with Main, mut Stats stats)
 {
-    stats.arena = Scene.Load(Arena { size = 30 });
-    stats.hand = Scene.Load(Hand { player = PlayerID(1) }, SceneVisibility.Private);
-    Scene.AddPlayer(stats.hand, PlayerID(1));
-    Scene.AddPlayer(stats.hand, PlayerID(3));
-    Scene.RemovePlayer(stats.hand, PlayerID(3));
+    stats.arena = Scene.Load(Arena { size = LoadValue(stats, 3) * 10 },
+                            RootSettings { value = LoadValue(stats, 7), text = "scene-root", values = [4, 5] }, RootTag);
+    mut var audience = Audience.Only(PlayerID(1));
+    audience.Add(PlayerID(3));
+    audience.Remove(PlayerID(3));
+    var group = Visibility.CreateGroup(audience);
+    stats.hand = Scene.Load(Hand { player = PlayerID(1) }, Visibility { group = group });
+}
+
+event(Spawned) RootReady(Arena arena, RootSettings settings, RootTag tag)
+{
+    Debug.Assert(arena.size == 30 && settings.value == 7 && settings.text == "scene-root");
+    Debug.Assert(settings.values.count == 2 && settings.values[1] == 5 && tag.value == 5);
 }
 
 // Runs for each arena as it loads: what it spawns joins that arena.

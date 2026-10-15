@@ -84,7 +84,7 @@ system CreatePrivateVariant(Marker marker, Details details, Actions actions)
     if (actions.next == 15) Spawn(Ghost { id = 43 }, Details { secret = details.secret }, Visibility);
     if (actions.next == 17)
     {
-        Scene.Load(JournalScene { value = 7 });
+        Scene.Load(JournalScene { value = 7 }, Visibility);
     }
 }
 
@@ -226,4 +226,11 @@ local event(Destroyed) DestroyedWithoutDetails(Marker marker, mut Observed obser
 local event(Forgotten) Released(Marker marker, mut Observed observed)
 {
     observed.forgotten += marker.seen;
+}
+
+// Different server policy must not change an allowed recipient's scene payload.
+system JournalPolicy(with JournalScene, mut Visibility visibility, Actions actions)
+{
+    if (actions.next == 21)
+        visibility.group = Visibility.CreateGroup(actions.count == 1 ? Audience.Only(PlayerID(1)) : Audience.All);
 }
