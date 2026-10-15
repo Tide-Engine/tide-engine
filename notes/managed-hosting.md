@@ -299,6 +299,15 @@ it belongs to a different sandbox, so it was not uploaded or modified. The
 matching Tide Engine sandbox API key requires Dashboard access; the shared
 browser currently requests sign-in. No secret values were printed or committed.
 
+After the owner's next setup confirmation, `fly secrets list --app tide-hosting`
+shows all four required names staged: `TIDE_GITHUB_CLIENT_ID`,
+`TIDE_GITHUB_CLIENT_SECRET`, `TIDE_STRIPE_SECRET` and
+`TIDE_STRIPE_WEBHOOK_SECRET`. The agent did not create or upload the three
+newly present values and did not retrieve their contents. Thus their presence
+is verified, while the API key's sandbox/account and permissions remain untested.
+Secrets are uploaded but not deployed to a machine; no additional Stripe key
+was created. The shared browser still displays Stripe sign-in.
+
 Validation: 14 existing auth/payment/store tests pass; two isolated mock-provider
 reproductions confirm the key-mode and retry findings. Runtime code is unchanged
 by this review. Private setup helpers/results are under ignored build/; the
