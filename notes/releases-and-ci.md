@@ -23,6 +23,16 @@ all 2,272 (282.54 seconds), including WebGL/WebGPU. The refreshed installed
 CLI also passes the complete native/web cache, stripping, failure-recovery,
 debug/release web-watch and bounded dedicated-server integration cases.
 
+Fresh requested run `38767273771` at a7aae14c found a separate macOS package
+failure before the cache checks: the newer runner image combines standalone
+CLT 27 with default Xcode 26.6, exposing hardcoded SDK discovery inconsistent
+with Apple's selected linker. The fix, native cross-platform discovery fixture
+and remaining actual-Mac validation are in cli-and-packages.md, Selected Apple
+SDK. This changes the CLI's automatic SDK lookup, not the workflow or its gates.
+Local validation after that correction passes all 2,360 native debug and 2,272
+web debug CTests, plus the discovery regression on Windows/Linux. The old code
+fails that regression. Actual Apple linking remains the next package run's gate.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
