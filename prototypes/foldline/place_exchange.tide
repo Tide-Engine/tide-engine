@@ -1,13 +1,16 @@
 // The last view of the target lies inside a quarter-height cable service duct.
 // A second operator must hold its optical shutter while the scout makes a route.
+// Something lives at the duct's far end, and leaves when a small body crawls in: as shy as the one on Red Stair.
+
 void BuildExchange(mut Arena arena, mut Place place, mut Fold fold)
 {
     BuildMapExchange(arena, place);
     Fill(arena, -16, 8, -1, 0, -12, 12, CARPET);
     Fill(arena, 8, 18, -1, 0, 4, 14, CONCRETE);
-    Fill(arena, -17, 9, 4.4, 5.4, -13, 13, CEILING_TILE, false, 2);
-    Fill(arena, 9, 19, 4.4, 5.4, 3, 15, PANELS, false, 2);
-    Fill(arena, 8, 9, 4.4, 5.4, 13, 15, PANELS, false, 2);
+    // The hall's tiles stop at the partition; the exit bank's roof is bare panels from there.
+    Fill(arena, -17, 8.5, 4.4, 5.4, -13, 13, CEILING_TILE, false, 2);
+    Fill(arena, 8.5, 19, 4.4, 5.4, 3, 15, PANELS, false, 2);
+    Fill(arena, 8, 8.5, 4.4, 5.4, 13, 15, PANELS, false, 2);
     var west = Fill(arena, -17, -16, -2, 4.4, -13, 13, WALLPAPER, true);
     Fill(arena, -17, -14, -2, 4.4, -13, -12, PANELS);
     Fill(arena, -6, 9, -2, 4.4, -13, -12, PANELS);
@@ -17,10 +20,12 @@ void BuildExchange(mut Arena arena, mut Place place, mut Fold fold)
 
     Fill(arena, 7.9, 8.5, 0, 4.4, -12, 6.5, PANELS);
     Fill(arena, 7.9, 8.5, 0, 4.4, 8.5, 14, PANELS);
-    Fill(arena, 7.9, 8.1, 0, 4.4, 6.5, 8.5, PANELS, false, 4);
+    // The slot: bars as high as the duct, under a solid panel, in front of the shutter's channel.
+    Fill(arena, 7.9, 8.1, 0, .55, 6.5, 8.5, PANELS, false, 4);
+    Fill(arena, 7.9, 8.1, .55, 4.4, 6.5, 8.5, PANELS);
     // The duct is a hollow cable cabinet, not an invisible small-body filter.
-    Fill(arena, 4, 8, .55, 4.4, -1.5, 9, PANELS, false, 2);
-    Fill(arena, 4, 8, 0, .55, -1.5, -1, PANELS);
+    Fill(arena, 4, 7.9, .55, 4.4, -1.5, 9, PANELS, false, 2);
+    Fill(arena, 4, 7.9, 0, .55, -1.5, -1, PANELS);
     Fill(arena, 4, 5, 0, .55, 1, 9, PANELS);
     Fill(arena, 7, 7.9, 0, .55, -1, 6.5, PANELS);
     Fill(arena, 5, 7.9, 0, .55, 8.5, 9, PANELS);
@@ -42,14 +47,51 @@ void BuildExchange(mut Arena arena, mut Place place, mut Fold fold)
         SetProp(arena, PropKind.Monitor, float3(2.9, .96, 2 + rack * 2.2), EAST);
         SetProp(arena, PropKind.Cabinet, float3(-.5, 0, 3 + rack * 2.2), EAST);
     }
-    SetProp(arena, PropKind.Switch, float3(7.8725, 3, -5), WEST);
-    SetProp(arena, PropKind.Pipe, float3(5.9, .62, 3), NORTH, float3(.7, 1, 3));
-    SetProp(arena, PropKind.Arrow, float3(3.9805, .75, 0), WEST, float3(.6));
-    LampGrid(place, float2(-16, -12), float2(4, 4), 9, 7);
-    HangLamps(place, 0, 5, 0, 5, 4.4);
-    HangLamps(place, 6, 8, 4, 6, 4.4);
+    // A cable run under the duct's roof along its far wall, clear of the corner a small body turns at.
+    SetProp(arena, PropKind.Pipe, float3(6.92, .47, 3.9), NORTH, float3(.7, 1, 2.4));
+    SetProp(arena, PropKind.ArrowDown, float3(3.9805, .75, 0), WEST, float3(.6));
+    // Lamps clear of every wall, the cabinet and both lintels; the signal lamp over the shutter's plate.
+    LampGrid(place, float2(-15.5, -13), float2(4, 4), 8, 7);
+    OfficeLamps(place, 0, 4, 0, 5, 4.4, 41);
+    HangLamp(place, 5, 0, 4.4);
+    HangLamp(place, 5, 2, 4.4);
     HangLamp(place, 5, 1, 4.4, LampState.Signal, 0, 1);
-    place.light = .78;
+    OfficeLamps(place, 6, 7, 4, 5, 4.4, 43, dead: 3);
+    var dweller = SpawnBeast(arena, BeastKind.Crawler, float3(6.3, 0, 7.6), SOUTH, .3, clip: "Idle");
+    dweller.Add(Shy { });
+    place.light = .64;
+    RaisePillar(arena, -7, 8);
+    RaisePillar(arena, -6, -8.5);
     place.grade = float3(.94, 1.04, 1.1);
     MenuView(place, float3(-13, 2.8, -10), .12, .5);
+}
+
+// It waits in the dark by the slot. A small body crawling near brings it round, through the bars, and off across
+// the bank to its far corner, as quick as a rat.
+system DuctLife(mut Beast beast, mut Shy dweller, Arena arena, Place place, query (Operator pilot) operators, Time time)
+{
+    if (place.id != EXCHANGE || beast.chamber != arena.chamber) return;
+    beast.time += time.dt;
+    if (dweller.fled < 0)
+    {
+        foreach (var row in operators)
+            if (row.pilot.scale < .5 && Math.Distance(row.pilot.position, beast.at) < 2.6) dweller.fled = 0;
+        return;
+    }
+    dweller.fled += time.dt;
+    float3 to = beast.at.x < 7.5 ? float3(7.6, 0, 7.5) : float3(17.6, 0, 4.4);
+    float gap = Math.Distance(beast.at, to);
+    if (gap < .01)
+    {
+        if (beast.clip != "Idle") beast.clip = "Idle";
+        return;
+    }
+    if (beast.clip != "Rush")
+    {
+        beast.clip = "Rush";
+        beast.time = 0;
+    }
+    float3 way = (to - beast.at) / gap;
+    beast.yaw = Math.Atan2(way.x, way.z);
+    beast.at += way * Math.Min(gap, 6 * time.dt);
 }

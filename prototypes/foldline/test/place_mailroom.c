@@ -27,10 +27,32 @@ static void place_mailroom_tests(void)
     walk_to(&world, 1, -12, -5);
     cross_fold(&world, 1, (tide_float3){-14, 1.3f, -5}, 160);
     CHECK(near(pilot(&world, 1).scale, .5f, .001f));
+    CHECK(near(world.Fold.cubeScale, .5f, .001f));
     walk_to(&world, 1, -10, 6);
     walk_to(&world, 1, -10, 2);
     walk_to(&world, 1, -6, 2);
-    walk_to(&world, 1, -6, 1);
+    walk_to(&world, 1, -5.6f, 1.6f);
+    aim_at(&world, 1, world.Fold.cube);
+    act(&world, 1, (PilotInput){.carry = true});
+    CHECK(world.Fold.holding.at[1] == 1);
+    // The half-sized parcel is the scout's to lift, and too light for the office's plate. Pushed back into the
+    // half end it comes out of the whole one whole, held there through the fold, and is let go of.
+    walk_to(&world, 1, -10, 2);
+    walk_to(&world, 1, -10, 6);
+    aim_at(&world, 1, (tide_float3){-14, .65f, 6});
+    input(&world, 0, (PilotInput){.active = 1, .move = {0, .5f}});
+    for (int tick = 0; tick < 240 && world.Fold.cubeScale < .99f; tick++) tide_world_tick(&world);
+    input(&world, 0, (PilotInput){.active = 1});
+    ticks(&world, 10);
+    CHECK(near(world.Fold.cubeScale, 1, .001f) && near(pilot(&world, 1).scale, .5f, .001f));
+    CHECK(world.Fold.holding.at[1] == 1);
+    act(&world, 1, (PilotInput){.carry = true});
+    ticks(&world, 40);
+    CHECK(world.Fold.holding.at[1] == 0 && near(world.Fold.cubeScale, 1, .001f));
+    CHECK(world.Fold.cube.x < -10 && world.Fold.cube.z < -2);
+    // Grown, it's too much for the scout's own hands.
+    walk_to(&world, 1, -10, 2);
+    walk_to(&world, 1, world.Fold.cube.x + 1.1f, world.Fold.cube.z);
     aim_at(&world, 1, world.Fold.cube);
     act(&world, 1, (PilotInput){.carry = true});
     CHECK(world.Fold.holding.at[1] == 0 && world.Fold.strained.at[1] > .1f);
@@ -52,8 +74,9 @@ static void place_mailroom_tests(void)
     walk_to(&world, 1, 8, 6);
 
     walk_to(&world, 0, 2, 0);
-    walk_to(&world, 0, -6.8f, 1);
-    aim_at(&world, 0, (tide_float3){-5, .4f, 1});
+    walk_to(&world, 0, -6, -3);
+    walk_to(&world, 0, world.Fold.cube.x + 1.6f, world.Fold.cube.z);
+    aim_at(&world, 0, world.Fold.cube);
     act(&world, 0, (PilotInput){.carry = true});
     CHECK(world.Fold.holding.at[0] == 1);
     walk_to(&world, 0, -9, -3);

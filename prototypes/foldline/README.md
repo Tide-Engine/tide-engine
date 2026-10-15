@@ -26,9 +26,13 @@ looking in the direction you left it. The puzzles and passages use both bodies.
 
 Wallpaper takes folds. Bare concrete, metal, machinery, floors and ceilings
 refuse them. Shots pass between grille bars; bodies and loose objects do not.
-Closed shutters and moving platforms stop shots. Some pairs are already open
-when you arrive; they still belong to their operator and can be moved normally.
-In certain passages the device cannot place new ends, while existing ends work.
+Closed shutters and moving platforms stop shots. An end opens only where you can
+see the middle of its opening: a shot that grazes the edge of a face cannot put
+one round the far side of it. A shutter, gate or door closed over an open end
+seals that fold; anything entering its other end bumps back until it moves away.
+Some pairs are already open when you arrive; they still belong to their operator
+and can be moved normally. In certain passages the device cannot place new
+ends, while existing ends work; there the reticle shows only its middle dot.
 
 Chairs, cabinets, desks, shelves and other rigid furniture stop bodies and
 objects. Their actual legs, boards and panels provide the collision, so small
@@ -48,11 +52,15 @@ half, quarter, eighth. Crossing in reverse restores size. There is no gameplay
 maximum size; the opening you enter and the space beyond it must fit you.
 A technical lower limit of 1/16 refuses a smaller crossing with a bump.
 Movement, jumping, reach and mass follow size. An object much larger than your
-body cannot be picked up. Try things: R rebuilds the room and restores both bodies.
+body cannot be picked up, and one that grows too large for your hands while you
+carry it through a fold slips out of them. Grown cargo lands heavily rather than
+tumbling. Lost objects return to where they started, at the size they started.
+Try things: R rebuilds the room and restores both bodies.
 
 Pressure plates power their visible wires while enough weight rests on them.
 A lit wire leads to the device it powers; each input has its own red/green lamp.
-Some heavy plates have gauges that show how close the load is. Mass grows with
+A plate's rim lamps fill amber with part of the weight it needs and turn green
+once it has enough, so too light reads as too light. Mass grows with
 the cube of size, so being small can leave you too light. The cube and crates
 can hold a circuit after both operators leave. There are no latched plate
 puzzles, lettered release controls or lift HOLD rituals.
@@ -75,7 +83,8 @@ stops, followed by a conclusion:
 13. Atrium
 14. Reception?
 
-Each place has its own layout and lighting. Watch what happens in the world:
+Each place has its own layout and lighting, and the puzzles get hard quickly
+after the first. Watch what happens in the world, including through the folds:
 the game has no objective text, hint key or monster-rule overlay. The HUD keeps
 the reticle, operator marker and connected room code. Controls and the stop
 selector live in the menu. Opening it stops this machine's controls while the

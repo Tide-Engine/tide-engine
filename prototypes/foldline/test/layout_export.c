@@ -28,7 +28,7 @@ static const char *layout_prop_name(const PropKind kind)
     static const char *const names[] = {
         "Desk", "Chair", "Cabinet", "Partition", "Shelf", "Locker", "Vending", "Cooler", "Clock", "Monitor",
         "Bed", "Curtain", "Lounger", "PlasticChair", "Plant", "CoatRack", "Pipe", "Ladder", "ExitSign",
-        "Arrow", "HandSign", "EyeSign", "FigureSign", "Switch", "Cardboard", "Pallet", "Cone", "Dollhouse", "Web"
+        "Arrow", "HandSign", "EyeSign", "FigureSign", "Switch", "Cardboard", "Pallet", "Cone", "Dollhouse", "Web", "ArrowDown", "Silk"
     };
     const int index = (int)kind;
     return index >= 0 && (size_t)index < sizeof names / sizeof names[0] ? names[index] : "Unknown";
@@ -51,9 +51,9 @@ static void layout_map(FILE *file, const tide_world *world)
     layout_lift(file, world->Place.arrival, world->Place.arrivalYaw);
     fputs(",\"exit\":{\"at\":", file);
     layout_vec3(file, world->Place.exit);
-    CHECK(isfinite(world->Place.exitYaw));
-    fprintf(file, ",\"yaw\":%.9g,\"need\":%d,\"any\":%s},\n\"walls\":[",
-            world->Place.exitYaw, world->Place.exitNeed, world->Place.exitAny ? "true" : "false");
+    CHECK(isfinite(world->Place.exitYaw) && isfinite(world->Place.exitSocket));
+    fprintf(file, ",\"yaw\":%.9g,\"need\":%d,\"any\":%s,\"socket\":%.9g},\n\"walls\":[",
+            world->Place.exitYaw, world->Place.exitNeed, world->Place.exitAny ? "true" : "false", world->Place.exitSocket);
 
     bool first = true;
     for (uint32_t slot = 0; slot < world->entities.next_unused; slot++) {

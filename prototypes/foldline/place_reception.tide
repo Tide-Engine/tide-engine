@@ -1,5 +1,8 @@
 // Two arms of a records office. One operator holds open the view into the
 // cupboard; the other makes the route that brings its weight out for both.
+// Through the fold that's open on arrival someone stands in the records bay,
+// looking back; through the bars, where it stands, there's nobody.
+component Glimpse { }
 void BuildReception(mut Arena arena, mut Place place, mut Fold fold, bool ending = false)
 {
     BuildMapReception(arena, place, fold);
@@ -14,9 +17,27 @@ void BuildReception(mut Arena arena, mut Place place, mut Fold fold, bool ending
     }
     SetProp(arena, PropKind.Clock, float3(-.44, 2.8, 2), WEST);
     SetProp(arena, PropKind.Plant, float3(-2, 0, 6.8));
+    // Pillars along the room, for what peeks from behind one, now and then
+    RaisePillar(arena, -3, -4.5);
+    RaisePillar(arena, 5.5, -5.5);
+    if (!ending)
+    {
+        // A few steps out from the far end, in the way of a look through the near one from the lift, staring back
+        var glimpse = SpawnBeast(arena, BeastKind.Figure, float3(9.5, 0, -.8), Math.Atan2(2.5, -2.2), skin: BeastSkin.Mannequin, clip: "Stand", folded: true);
+        glimpse.Add(Glimpse);
+    }
     LampGrid(place, float2(-12, -8), float2(4, 4), 6, 4);
-    HangLamps(place, 0, 5, 0, 3, 4.4);
+    // The cupboard has no lamp of its own: its two cells are left out, or the fittings would be in its walls.
+    OfficeLamps(place, 0, 4, 0, 3, 4.4, 11);
+    HangLamps(place, 5, 5, 0, 1, 4.4);
     HangLamp(place, 0, 3, 4.4, LampState.Stutter);
-    place.light = .85;
+    place.light = .72;
     MenuView(place, float3(-10, 2.8, -6), .08, .55);
+}
+
+// It stands there from a few seconds after they come until anyone goes through a fold, or it's been a while.
+system ReceptionGlimpse(mut Beast beast, with Glimpse, Arena arena, Place place, Fold fold)
+{
+    if (place.id != RECEPTION || beast.chamber != arena.chamber) return;
+    beast.visible = arena.arrive > 5 && arena.arrive < 150 && fold.traversals == 0;
 }

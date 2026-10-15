@@ -142,8 +142,9 @@ view Sounds(Operator viewer, query (Operator body) operators, query (Plate plate
     float close = mazed ? Math.Saturate(1 - Math.Distance(stalker.at.xz, viewer.position.xz) / 11) : 0.0;
     Looping(ears.pulse, heart, close * close * 1.2, close > 0.02);
     ears.pulse.pitch = 0.85 + close * 0.55;
-    if (stalker.dark && !ears.dark && mazed) Audio.Play(lampBuzz, 0.8);
-    ears.dark = stalker.dark;
+    // The lamps buzz as they start to stutter, before the dark: a warning, not a report
+    if (arena.warning > 0 && !ears.dark) Audio.Play(lampBuzz, 0.8);
+    ears.dark = arena.warning > 0 || arena.blackout;
     // What's in the dark, heard while it moves
     bool prowling = shade.chamber == arena.chamber && Math.DistanceSq(shade.at, ears.shadeAt) > 0.000001;
     LoopingAt(ears.prowl, stalking, shade.at + float3(0, 1, 0), 0.9, prowling);

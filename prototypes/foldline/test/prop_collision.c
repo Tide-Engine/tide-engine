@@ -114,14 +114,14 @@ static void prop_collision_tests(void)
 
     choose(&world, 0, MAILROOM);
     ticks(&world, 100);
-    const tide_entity shelf = prop_fixture(&world, PropKind_Shelf, 2.9f, 2);
+    const tide_entity shelf = prop_fixture(&world, PropKind_Shelf, 3.69f, 2);
     CHECK(prop_contains_local(&world, shelf, (tide_float3){0, .57f, 0}));
     CHECK(!prop_contains_local(&world, shelf, (tide_float3){0, .34f, 0}));
     walk_to(&world, 0, -8, -4);
     walk_to(&world, 0, 1, -4);
     walk_to(&world, 0, 1, 2);
     prop_drive_into(&world, 4, 2);
-    CHECK(pilot(&world, 0).position.x > 2.2f && pilot(&world, 0).position.x < 2.55f);
+    CHECK(pilot(&world, 0).position.x > 3 && pilot(&world, 0).position.x < 3.35f);
 
     // Room replacement retires every compound with its actual owning prop.
     for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {

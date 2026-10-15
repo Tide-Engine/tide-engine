@@ -6,7 +6,7 @@ enum PropKind
 {
     Desk, Chair, Cabinet, Partition, Shelf, Locker, Vending, Cooler, Clock, Monitor,
     Bed, Curtain, Lounger, PlasticChair, Plant, CoatRack, Pipe, Ladder, ExitSign,
-    Arrow, HandSign, EyeSign, FigureSign, Switch, Cardboard, Pallet, Cone, Dollhouse, Web
+    Arrow, HandSign, EyeSign, FigureSign, Switch, Cardboard, Pallet, Cone, Dollhouse, Web, ArrowDown, Silk
 }
 
 component Prop
@@ -161,6 +161,23 @@ void PropBox(mut Optics optics, Prop prop, float3 at, float3 size, Color tint, f
     optics.architecture.Add(part);
 }
 
+// A thread of silk between two points in a prop's own metres, unscaled: a web's spans are worked out across its way.
+void Thread(mut Optics optics, Prop prop, float3 start, float3 stop)
+{
+    var rotation = quaternion.Euler(0, prop.yaw, 0);
+    var way = stop - start;
+    optics.architecture.Add(Turned(prop.at + Math.Rotate(rotation, (start + stop) * .5), Math.Mul(rotation, quaternion.LookRotation(way, float3(0, 1, 0))),
+                                   float3(.013, .013, Math.Length(way) + .012), Color(.6, .62, .56), .4));
+}
+
+// A wad of silk flat on the wall a thread is fixed to, `side` along the prop's own z.
+void Tuft(mut Optics optics, Prop prop, float3 at, int side)
+{
+    var rotation = quaternion.Euler(0, prop.yaw, 0);
+    optics.architecture.Add(Turned(prop.at + Math.Rotate(rotation, at - float3(0, 0, side * .012)), rotation, float3(.13, .1, .022),
+                                   Color(.55, .57, .52), .3));
+}
+
 void DressProp(mut Optics optics, Prop prop)
 {
     Color wood = Color(.42, .28, .15);
@@ -175,8 +192,42 @@ void DressProp(mut Optics optics, Prop prop)
     switch (prop.kind)
     {
         case PropKind.Web:
-            for (int strand = -1; strand <= 1; strand++)
-                PropBox(optics, prop, float3(strand * .06, .12 + Math.Abs(strand) * .03, 0), float3(.013, .013, 1.45), Color(.6, .62, .56), glow: .4);
+            // Strung wall to wall across its way, low: two threads that sag between the walls, spokes from a hub in
+            // the middle out to the walls and down to the floor, rungs between the spokes, and a tuft at each wall
+            float half = .99 * prop.scale.z;
+            float3 hub = float3(0, .26, 0);
+            for (int thread = 0; thread < 2; thread++)
+            {
+                float high = thread == 0 ? .62 : .36;
+                float sag = thread == 0 ? .2 : .14;
+                float across = thread == 0 ? -.04 : .05;
+                for (int piece = 0; piece < 6; piece++)
+                {
+                    float begin = piece / 6.0;
+                    float finish = (piece + 1) / 6.0;
+                    Thread(optics, prop, float3(across, high - sag * 4 * begin * (1 - begin), half * (begin * 2 - 1)),
+                           float3(across, high - sag * 4 * finish * (1 - finish), half * (finish * 2 - 1)));
+                }
+            }
+            for (int side = -1; side <= 1; side += 2)
+            {
+                for (int spoke = 0; spoke < 3; spoke++)
+                {
+                    var wall = float3((spoke - 1) * .12, .66 - spoke * .26, side * half);
+                    Thread(optics, prop, hub, wall);
+                    Tuft(optics, prop, wall, side);
+                    if (spoke == 2) continue;
+                    var next = float3(spoke * .12, .4 - spoke * .26, side * half);
+                    for (int rung = 1; rung < 3; rung++)
+                        Thread(optics, prop, hub + (wall - hub) * (rung * .3), hub + (next - hub) * (rung * .3));
+                }
+                for (int foot = -1; foot <= 1; foot += 2)
+                    Thread(optics, prop, hub, float3(foot * .45, .006, side * half * .4));
+            }
+            return;
+        case PropKind.Silk:
+            // A dull thread along the floor, a metre long before it's scaled: where the spider goes, and nothing else
+            PropBox(optics, prop, float3(0, .012, 0), float3(.012, .006, 1), Color(.42, .43, .4));
             return;
         case PropKind.Desk:
             for (int drawer = 0; drawer < 3; drawer++)
@@ -226,8 +277,13 @@ void DressProp(mut Optics optics, Prop prop)
         case PropKind.Lounger:
             return;
         case PropKind.Curtain:
+            // Deep pleats, the hollows darker than the ridges
             for (int fold = 0; fold < 12; fold++)
-                PropBox(optics, prop, float3(-1.1 + fold * .2, 1.245, (fold & 1) * .07), float3(.21, 1.85, .04), Color(.31, .42, .36));
+                PropBox(optics, prop, float3(-1.1 + fold * .2, 1.245, (fold & 1) * .13), float3(.21, 1.85, .04),
+                        (fold & 1) == 0 ? Color(.22, .3, .26) : Color(.33, .45, .38));
+            // Its rail hangs from a ward's ceiling, 4.4 m up, on a rod at each end
+            for (int end = -1; end <= 1; end += 2)
+                PropBox(optics, prop, float3(end * 1.15, 3.3, 0), float3(.025, 2.2, .025), Color(.29, .34, .32));
             return;
         case PropKind.Plant:
             for (int leaf = 0; leaf < 6; leaf++)
@@ -253,19 +309,24 @@ void DressProp(mut Optics optics, Prop prop)
             return;
         case PropKind.ExitSign:
             PropBox(optics, prop, float3(0, 0, 0), float3(.95, .32, .065), Color(.025, .26, .08), glow: .35);
-            // A three-by-five EXIT face. Local +x is the reader's left when
-            // looking at the prop's +z front, so the word runs towards -x.
+            // EXIT in five rows of pixels: E, I and T three wide, and X five, with true diagonals (a three-wide
+            // X is an H at the picture's resolution). Local +x is the reader's left when looking at the prop's +z
+            // front, so the word runs towards -x: seventeen columns about the middle.
+            mut int start = 0;
             for (int letter = 0; letter < 4; letter++)
             {
-                int face = letter switch { 0 => 29391, 1 => 23213, 2 => 29847, _ => 9367 };
+                int wide = letter == 1 ? 5 : 3;
+                int face = letter switch { 0 => 29391, 1 => 18157905, 2 => 29847, _ => 9367 };
                 for (int row = 0; row < 5; row++)
-                    for (int column = 0; column < 3; column++)
-                        if ((face & (1 << (row * 3 + column))) != 0)
-                            PropBox(optics, prop, float3(.329 - (letter * 4 + column) * .047, .094 - row * .047, .05),
+                    for (int column = 0; column < wide; column++)
+                        if ((face & (1 << (row * wide + column))) != 0)
+                            PropBox(optics, prop, float3(.376 - (start + column) * .047, .094 - row * .047, .05),
                                     float3(.047, .047, .02), Color(.85, .95, .8), glow: .8);
+                start += wide + 1;
             }
             return;
         case PropKind.Arrow:
+        case PropKind.ArrowDown:
         case PropKind.HandSign:
         case PropKind.EyeSign:
         case PropKind.FigureSign:
@@ -281,15 +342,29 @@ void DressProp(mut Optics optics, Prop prop)
                 for (int finger = 0; finger < 4; finger++)
                     PropBox(optics, prop, float3(-.075 + finger * .05, .1, .044), float3(.03, .1, .025), pale, glow: .6);
             }
+            else if (prop.kind == PropKind.ArrowDown)
+            {
+                // Straight down, at what's under the sign: a shaft and a head that narrows a step at a time.
+                PropBox(optics, prop, float3(0, .07, .044), float3(.05, .17, .025), pale, glow: .6);
+                for (int step = 0; step < 4; step++)
+                    PropBox(optics, prop, float3(0, -.0325 - step * .035, .044), float3(.2 - step * .05, .035, .025), pale, glow: .6);
+            }
             else
             {
-                PropBox(optics, prop, float3(-.12, .1, .044), float3(.07, .07, .025), pale, glow: .6);
-                PropBox(optics, prop, float3(-.12, -.01, .044), float3(.07, .15, .025), pale, glow: .6);
-                PropBox(optics, prop, float3(-.18, -.105, .044), float3(.18, .04, .025), pale, glow: .6);
+                // A walker, and for an arrow the way to go, towards the reader's left (+x): a shaft and a head that
+                // narrows a step at a time, so it reads as an arrowhead at a few pixels.
+                float walker = prop.kind == PropKind.FigureSign ? 0.0 : -.17;
+                // A head, a body and two legs in a stride, the front one toward the arrow: a person at a few pixels,
+                // where a single foot reads as a letter
+                PropBox(optics, prop, float3(walker, .115, .044), float3(.065, .065, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(walker, .015, .044), float3(.07, .12, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(walker - .04, -.095, .044), float3(.04, .1, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(walker + .05, -.095, .044), float3(.04, .1, .025), pale, glow: .6);
                 if (prop.kind != PropKind.FigureSign)
                 {
-                    PropBox(optics, prop, float3(.12, 0, .044), float3(.22, .035, .025), pale, glow: .6);
-                    PropBox(optics, prop, float3(.2, .05375, .044), float3(.04, .0725, .025), pale, glow: .6);
+                    PropBox(optics, prop, float3(.03, 0, .044), float3(.18, .04, .025), pale, glow: .6);
+                    for (int step = 0; step < 4; step++)
+                        PropBox(optics, prop, float3(.135 + step * .03, 0, .044), float3(.03, .2 - step * .05, .025), pale, glow: .6);
                 }
             }
             return;

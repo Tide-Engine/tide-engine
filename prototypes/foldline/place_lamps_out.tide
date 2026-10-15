@@ -22,28 +22,34 @@ void BuildLampsOut(Arena arena, mut Place place)
     MenuView(place, float3(0, 1.7, -.8), 0, NORTH);
 }
 
-system LampsOutBeat(mut Beast beast, mut Arena arena, Place place, query (Operator pilot) operators, Time time)
+// Each lamp that fails takes every light with it for a moment, nearest last, and in that dark the figure is nearer:
+// whoever stares sees it stand, and sees it come on in the dark. At the end it reaches for the bars.
+system LampsOutBeat(mut Beast beast, mut Arena arena, Place place, Time time)
 {
     if (place.id != LAMPS_OUT || beast.chamber != arena.chamber) return;
     mut int steps = Math.Clamp(int((arena.arrive - 2) / 1.4) + 1, 0, 6);
     if (arena.arrive < 2) steps = 0;
     for (int step = 0; step < steps; step++) arena.darkGroups |= 1 << (6 - step);
-    mut bool watched = false;
-    foreach (var row in operators)
-    {
-        float3 to = beast.at + float3(0, 1.4, 0) - (row.pilot.position + float3(0, EYE_HIGH * row.pilot.scale, 0));
-        if (Math.Dot(Math.Normalize(to), LookDirection(row.pilot.yaw, row.pilot.pitch)) > .5) watched = true;
-    }
+    // A lamp failing: half a second of nothing, in which it comes on
+    float since = steps > 0 ? arena.arrive - (2 + (steps - 1) * 1.4) : 10.0;
+    arena.blackout = since < .45;
+    // Its last mark leaves its lunge's reach short of the bars: the hands stop in the gaps, never through them
+    float mark = Math.Max(6.1, 24 - steps * 4);
     if (arena.arrive >= 10)
     {
-        if (beast.clip != "Lunge") { beast.clip = "Lunge"; beast.time = 0; }
+        if (beast.clip != "Lunge")
+        {
+            beast.clip = "Lunge";
+            beast.time = 0;
+        }
         beast.loop = false;
         beast.time += time.dt;
+        arena.blackout = false;
     }
-    else if (!watched)
+    else if (beast.at.z > mark)
     {
         float before = beast.at.z;
-        beast.at.z = Math.Max(Math.Max(4.8, 24 - steps * 4), beast.at.z - time.dt * 7);
+        beast.at.z = Math.Max(mark, beast.at.z - time.dt * (arena.blackout ? 20.0 : 0.0));
         beast.time += (before - beast.at.z) * .37;
     }
 }

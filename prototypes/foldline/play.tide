@@ -26,6 +26,8 @@ singleton Arena
     float arrive;        // Seconds since this place was come to: the lift they came by opens after a moment
     int rode = -1;       // The chamber that was come to by lift: operators keep their places in it
     float caught;        // Seconds since what's in a passage got someone: it all starts over at CAUGHT
+    bool blackout;       // Every lamp and torch is out for a moment: what hunts a passage is quick while nobody sees
+    float warning;       // ...and the lamps stutter just before, from 0 to 1, so the dark can be seen coming
     int ticks;
     int joined;
     PlayerID first;
@@ -67,6 +69,7 @@ singleton Place
     bool dead;           // The device does nothing here
     int exitNeed;        // The signals the exit's gate needs: all of them, or any with `exitAny`. None: open once come to
     bool exitAny;
+    float exitSocket = -1; // Where its signal lamps are along its lintel, in the lift's own frame: beside the sign
     float stay = 6;      // A lift that stops on the way: seconds before its door shuts and it goes on
     // Its lamps: a grid of cells from a corner, each as big as `lampStep`; a cell a lamp hangs in, how high and
     // what it does. How much of their light there is at all
@@ -123,6 +126,7 @@ singleton Fold
     int bumped;          // Counts bodies an end was too small to let through, and where the last was
     float3 bumpAt;
     int[2] busy;         // Ticks since something was in each fold's mouth: neither of its ends moves while it is
+    bool[4] shut;        // Machinery shut over an end's mouth: nothing comes out of it, or goes in at its other end
     // A shot that found no place for a fold: where, on what, and for how long it shows
     float3 fizzleAt;
     float3 fizzleFace;
@@ -183,7 +187,8 @@ component Cube
     [Position] float3 at;
     [Rotation] quaternion turn = quaternion.identity;
     float3 last;
-    float3 home;         // Where it's put back, whole, when it's lost
+    float3 home;         // Where it's put back when it's lost, at the size it was put there
+    float homeScale = 1;
     float scale = 1;
     int chamber;
 }
@@ -417,6 +422,7 @@ const float RIDE = 1.3;
 const float CAUGHT = 1.2;
 const float BLACKOUT_EVERY = 6.5;
 const float BLACKOUT_FOR = 0.4;
+const float BLACKOUT_WARNING = 0.8; // The lamps stutter this long before they fail
 // Which way a lift faces, or anything else that turns a quarter at a time: the yaw of what's ahead
 const float NORTH = 0;
 const float EAST = Math.PI * 0.5;
@@ -576,7 +582,8 @@ float3 MoverAt(Mover mover, int ticks)
 bool OnPlate(Plate plate, float3 at)
 {
     var off = at - plate.at;
-    return Math.Abs(off.x) < plate.half.x + 0.1 && Math.Abs(off.z) < plate.half.y + 0.1 && off.y > -0.3 && off.y < 4;
+    // Standing on it, or on what's on it: not on a roof or a gallery over it
+    return Math.Abs(off.x) < plate.half.x + 0.1 && Math.Abs(off.z) < plate.half.y + 0.1 && off.y > -0.3 && off.y < 2.2;
 }
 
 float3 LookDirection(float yaw, float pitch)
@@ -621,8 +628,8 @@ bool InMouth(Portal portal, float3 point, float margin)
 
 // Crossing a fold: a body of a size whose middle went from before a wall's face to past it is as far past the
 // other face, with its speed turned and scaled. Says by how much the body's size changes, 0 for no crossing.
-// One the far end would make smaller than SMALLEST isn't let through: it's put back before the face, its speed
-// into the wall gone, and that's -1.
+// One the far end would make smaller than SMALLEST isn't let through, nor anything at all while machinery is shut
+// over the far end's mouth: it's put back before the face, its speed into the wall gone, and that's -1.
 float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 velocity, mut float yaw, float scale, out int through)
 {
     through = -1;
@@ -635,7 +642,7 @@ float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 veloc
         var now = Math.Dot(center - from.at, from.face);
         if (was < 0 || now >= 0 || !InMouth(from, center, 0.3 * scale)) continue;
         var ratio = to.size / from.size;
-        if (scale * ratio < SMALLEST * 0.999)
+        if (scale * ratio < SMALLEST * 0.999 || fold.shut[end ^ 1])
         {
             center += from.face * (0.02 * scale - now);
             velocity -= from.face * Math.Min(Math.Dot(velocity, from.face), 0);
@@ -688,6 +695,8 @@ void ResetPlace(mut Arena arena, mut Place place, mut Fold fold, int id)
     arena.ride = 0;
     arena.arrive = 0;
     arena.caught = 0;
+    arena.blackout = false;
+    arena.warning = 0;
     arena.ticks = 0;
     arena.cube = default;
     arena.chamber += 1;
@@ -721,6 +730,7 @@ void ResetPlace(mut Arena arena, mut Place place, mut Fold fold, int id)
     place.dead = false;
     place.exitNeed = 0;
     place.exitAny = false;
+    place.exitSocket = -1;
     place.stay = 6;
     place.lampFrom = float2(0);
     place.lampStep = float2(5, 3.25);
@@ -737,10 +747,15 @@ void ResetPlace(mut Arena arena, mut Place place, mut Fold fold, int id)
     BuildPlace(arena, place, fold, id);
 }
 
+// Nothing of a place just built is blended from the last one: the renderer dresses its lifts and lamps from the
+// first frame it sees of it, and keeps that. Every caller of ResetPlace snaps all three.
+
 event(Spawned) BuildAtrium(with Main, mut Arena arena, mut Place place, mut Fold fold, mut Physics physics)
 {
     physics.gravity = float3(0, -18, 0);
     ResetPlace(arena, place, fold, PlaceAt(0));
+    place.Snap();
+    arena.Snap();
     fold.Snap();
     arena.op0 = Spawn(Operator { id = 0, position = OperatorStart(place, 0) }, Owner,
                       Body { position = OperatorStart(place, 0) + float3(0, BODY_HIGH * 0.5, 0) },
@@ -781,6 +796,8 @@ event(PlayerLeft left) ReassignOperator(mut Arena arena, mut World world)
 event(Restart) RestartPlace(mut Arena arena, mut Place place, mut Fold fold)
 {
     ResetPlace(arena, place, fold, place.id);
+    place.Snap();
+    arena.Snap();
     fold.Snap();
 }
 
@@ -790,6 +807,8 @@ command(SelectPlace selection, PlayerID sender) ChoosePlace(mut Arena arena, mut
     if (selection.id < 0 || selection.id >= PLACES) return;
     arena.depth = DepthOf(selection.id);
     ResetPlace(arena, place, fold, selection.id);
+    place.Snap();
+    arena.Snap();
     fold.Snap();
 }
 
@@ -832,6 +851,47 @@ float PastShape(float3 point, float3 way, Body body, float3 half)
     return Math.Max(far, 0) + .002;
 }
 
+// Where a shot stops on its way from `from` to `to`, if it does: it goes on through whoever and whatever stands in
+// the way that's no part of the room, and between a grille's bars. The room, its machinery and its furniture stop it,
+// and so does anything solid that it would only start inside of, past a grille: a ray started inside something sees
+// nothing of it, and a header flush behind a cupboard's bars is still a header.
+bool ShotStops(float3 from, float3 to, Physics physics, World world, out RayHit hit)
+{
+    var way = Math.Normalize(to - from);
+    mut var start = from;
+    hit = default;
+    for (var past = 0; past < 5; past++)
+    {
+        if (!physics.Raycast(start, to, out hit)) return false;
+        if (world.Has<Mover>(hit.entity) || world.Has<Gate>(hit.entity) || world.Has<Door>(hit.entity) || world.Has<Prop>(hit.entity)) return true;
+        if (world.TryGet<Piece>(hit.entity, out var struck) && world.TryGet<Wall>(struck.wall, out var met) && met.kind != 4) return true;
+        if (past == 4) return true;
+        mut float advance = .002;
+        if (world.TryGet<Body>(hit.entity, out var ignored))
+        {
+            if (world.TryGet<Box>(hit.entity, out var box)) advance = PastShape(hit.point, way, ignored, box.size * .5);
+            else if (world.TryGet<Capsule>(hit.entity, out var capsule))
+                advance = PastShape(hit.point, way, ignored, float3(capsule.radius, capsule.height * .5, capsule.radius));
+        }
+        var restart = hit.point + way * advance;
+        if (physics.Overlap(Box { size = float3(.01) }, restart, quaternion.identity, out var inside))
+        {
+            foreach (var entity in inside)
+            {
+                bool bars = world.TryGet<Piece>(entity, out var piece) && world.TryGet<Wall>(piece.wall, out var wall) && wall.kind == 4;
+                if (!bars && (world.Has<Piece>(entity) || world.Has<Mover>(entity) || world.Has<Gate>(entity) || world.Has<Door>(entity) || world.Has<Prop>(entity)))
+                {
+                    hit = RayHit { entity = entity, point = restart, normal = -way };
+                    return true;
+                }
+            }
+        }
+        if (Math.Dot(to - restart, way) <= 0) return false;
+        start = restart;
+    }
+    return true;
+}
+
 // The same decision for the trigger and the aiming reticle. `hit` keeps a
 // complete miss silent; a refused hit carries the exact fizzle point/normal.
 struct FoldShot
@@ -847,24 +907,7 @@ struct FoldShot
 // is nudged to fit the same floor, ceiling, frames and nearby geometry as a shot.
 FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, int count, Physics physics, World world)
 {
-    if (!physics.Raycast(origin, origin + way * 60, out var first)) return FoldShot { };
-    // Through whoever and whatever stands in the way that's no part of the room
-    // ...and through a grille, which stops everything else
-    mut var hit = first;
-    for (var past = 0; past < 4; past++)
-    {
-        // Machinery is part of the room too. Shooting through a shut door would skip its plate relay.
-        if (world.Has<Mover>(hit.entity) || world.Has<Gate>(hit.entity) || world.Has<Door>(hit.entity) || world.Has<Prop>(hit.entity)) break;
-        if (world.TryGet<Piece>(hit.entity, out var struck) && world.TryGet<Wall>(struck.wall, out var met) && met.kind != 4) break;
-        mut float advance = .002;
-        if (world.TryGet<Body>(hit.entity, out var ignored))
-        {
-            if (world.TryGet<Box>(hit.entity, out var box)) advance = PastShape(hit.point, way, ignored, box.size * .5);
-            else if (world.TryGet<Capsule>(hit.entity, out var capsule))
-                advance = PastShape(hit.point, way, ignored, float3(capsule.radius, capsule.height * .5, capsule.radius));
-        }
-        if (!physics.Raycast(hit.point + way * advance, origin + way * 60, out hit)) return FoldShot { };
-    }
+    if (!ShotStops(origin, origin + way * 60, physics, world, out var hit)) return FoldShot { };
     mut var shot = FoldShot { hit = true, point = hit.point, face = hit.normal };
     mut var face = float3(0, 1, 0);
     if (Math.Abs(hit.normal.y) < 0.3)
@@ -919,6 +962,10 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
     if (v - halfHigh - floor < 1.0) v = lowV;
     var at = float3(plane.x + right.x * u, v, plane.z + right.z * u);
     shot.point = at;
+    // ...where its middle is in sight of whoever shoots it: a shot that only grazes the edge of a face can't put a
+    // fold on the part of it they can't see
+    if (ShotStops(origin, at + face * 0.05, physics, world, out _))
+        return shot;
     // ...clear of every other end, whoever's it is
     mut var overlaps = false;
     for (var k = 0; k < 4; k++)
@@ -1312,6 +1359,8 @@ system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query 
         var held = hand + LookDirection(entry.pilot.yaw, entry.pilot.pitch) * (1.25 * entry.pilot.scale);
         mut var target = held;
         mut var nearest = Math.DistanceSq(held, body.position);
+        // How big the hands are where the cube is: through a fold they're that fold's size of the holder
+        mut var hands = entry.pilot.scale;
         for (var end = 0; end < 4; end++)
         {
             if (!Linked(fold, end / 2)) continue;
@@ -1323,6 +1372,7 @@ system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query 
             {
                 nearest = far;
                 target = through;
+                hands = entry.pilot.scale * to.size / from.size;
             }
         }
         if (nearest > 16 * entry.pilot.scale * entry.pilot.scale)
@@ -1333,11 +1383,39 @@ system HoldCube(mut Body body, mut Cube cube, mut Fold fold, Arena arena, query 
             body.gravityScale = 1;
             return;
         }
+        if (cube.scale > hands * 1.6 + .0001)
+        {
+            // Too big for the hands that hold it, where they hold it: it grew through a fold they didn't, or they
+            // shrank through one it didn't. As heavy as it would be to pick up, so it's let go, and the strain shows
+            fold.strained[cube.holder] = 0.6;
+            fold.holding[cube.holder] = 0;
+            cube.holder = -1;
+            body.gravityScale = 1;
+            return;
+        }
         var pull = (target - body.position) * 16;
         var speed = Math.Length(pull);
         body.velocity = speed > 14 ? pull * (14 / speed) : pull;
         body.angularVelocity = body.angularVelocity * 0.8;
         body.gravityScale = 0;
+    }
+}
+
+// A shutter, a gate or a door shut over an end's mouth closes the fold that way: whatever walks or is thrown into
+// its other end is bumped back, as from an end too small for it, until the machinery opens. The same box before the
+// opening as a shot's check that nothing stands in the way.
+[After(PhysicsStages.Step), Before(CrossOperators), Before(CrossCube)]
+system ShutEnds(mut Fold fold, Physics physics, World world)
+{
+    for (var end = 0; end < 4; end++)
+    {
+        fold.shut[end] = false;
+        var portal = fold.ends[end];
+        if (!portal.open) continue;
+        if (!physics.Overlap(Box { size = float3(FOLD_HALF_WIDE * portal.size * 2 - 0.12, FOLD_HALF_HIGH * portal.size * 2 - 0.12, 0.3) },
+                             portal.at + portal.face * 0.3, quaternion.LookRotation(portal.face, float3(0, 1, 0)), out var found)) continue;
+        foreach (var entity in found)
+            if (world.Has<Mover>(entity) || world.Has<Gate>(entity) || world.Has<Door>(entity)) fold.shut[end] = true;
     }
 }
 
@@ -1398,6 +1476,13 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
     pilot.velocity = body.velocity;
 }
 
+// Something grown big is heavy as well as big: it thuds down where it lands and stays, where a box its usual size
+// would tumble on over its edges.
+float GrownDamping(float scale)
+{
+    return scale > 1.5 ? 4.0 : 0.0;
+}
+
 system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena, query (Pit pit) pits)
 {
     mut var center = body.position;
@@ -1427,12 +1512,12 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena, q
     }
     if (center.y < -8)
     {
-        // Lost: put back where it was found, and whole
+        // Lost: put back where it was found, as it was found
         center = cube.home;
         body.position = center;
         body.velocity = float3(0);
         body.angularVelocity = float3(0);
-        scale = 1;
+        scale = cube.homeScale;
         for (var hand = 0; hand < 2; hand++)
             if (fold.holding[hand] == cube.index + 1) fold.holding[hand] = 0;
         this.Snap();
@@ -1463,10 +1548,10 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena, q
     if (Math.Abs(scale / cube.scale - 1) > 0.001)
     {
         // At its new size: another body, with this one's speed and spin
-        var again = Spawn(Cube { chamber = cube.chamber, last = center, home = cube.home, scale = scale, index = cube.index, kind = cube.kind, holder = cube.holder,
+        var again = Spawn(Cube { chamber = cube.chamber, last = center, home = cube.home, homeScale = cube.homeScale, scale = scale, index = cube.index, kind = cube.kind, holder = cube.holder,
                                  at = center, turn = body.rotation },
                           Body { position = center, rotation = body.rotation, velocity = body.velocity, angularVelocity = body.angularVelocity,
-                                 gravityScale = body.gravityScale },
+                                 gravityScale = body.gravityScale, angularDamping = GrownDamping(scale) },
                           Box { size = float3(CUBE_SIDE * scale), density = cube.kind == 0 ? 120.0 : 60.0, friction = 0.7 });
         if (cube.index == 0) arena.cube = again;
         this.Destroy();
@@ -1661,6 +1746,8 @@ system EvaluatePlace(mut Arena arena, mut Place place, mut Fold fold, query (Ope
         arena.depth += 1;
         ResetPlace(arena, place, fold, PlaceAt(arena.depth));
         arena.rode = arena.chamber;
+        place.Snap();
+        arena.Snap();
         fold.Snap();
     }
     // Caught in a passage: it starts over, for both
@@ -1670,6 +1757,8 @@ system EvaluatePlace(mut Arena arena, mut Place place, mut Fold fold, query (Ope
         if (arena.caught >= CAUGHT)
         {
             ResetPlace(arena, place, fold, place.id);
+            place.Snap();
+            arena.Snap();
             fold.Snap();
         }
     }
@@ -1817,7 +1906,10 @@ system Stalk(mut Watcher watcher, mut Stalker stalker, mut Arena arena, query (O
         var chest = stalker.at + float3(0, 1.3, 0);
         var to = chest - eye;
         var away = Math.Length(to);
-        if (away > 40 || Math.Dot(to / Math.Max(away, 0.001), LookDirection(entry.pilot.yaw, entry.pilot.pitch)) < 0.5) continue;
+        // Only from in among the aisles: the landing and the lifts are safe, and no lookout. What's in the middle of
+        // the picture, near enough to make out in this dark: not what's at the edge of one's eye, nor at one's feet.
+        if (!InMaze(maze, entry.pilot.position)) continue;
+        if (away > 20 || Math.Dot(to / Math.Max(away, 0.001), LookDirection(entry.pilot.yaw, entry.pilot.pitch)) < 0.766) continue;
         // A display grille stops bodies, not their sight. Leave precisely its
         // far face so a solid wall immediately behind it still blocks the view.
         mut var clear = false;
@@ -1848,6 +1940,8 @@ system Stalk(mut Watcher watcher, mut Stalker stalker, mut Arena arena, query (O
     stalker.clock += time.dt;
     if (stalker.clock >= BLACKOUT_EVERY) stalker.clock -= BLACKOUT_EVERY;
     stalker.dark = arena.arrive > 6 && stalker.clock < BLACKOUT_FOR;
+    arena.blackout = stalker.dark;
+    arena.warning = arena.arrive > 6 - BLACKOUT_WARNING ? Math.Saturate((stalker.clock - (BLACKOUT_EVERY - BLACKOUT_WARNING)) / BLACKOUT_WARNING) : 0.0;
     if (stalker.dark) seen = false;
     stalker.seen = seen;
     stalker.moved = Math.Max(0, stalker.moved - time.dt * 3);

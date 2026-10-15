@@ -1827,3 +1827,201 @@ subtracting covering solids. This diagnostic supplements the checked-in
 top-face/lift-slot guards; it is not a general proof about arbitrary geometry.
 The local self-contained web page was rebuilt and restaged. No full repository
 suite, other-platform run or CI was needed or run for this prototype-only work.
+
+## Horror, difficulty and detail pass (2026-10-15)
+
+The owner asked for polish, better levels and more horror, then for a review of
+every puzzle: they should start relatively simple and get difficult quickly
+while staying fun. Earlier feedback still applies: teach by interaction, never
+by text; proper creature models; no floating cables, half-blocked doors,
+unreadable signs, portal backs, z-fighting or walk-through furniture. Their last
+screenshot showed a ghost lift frame on Mailroom's first frame.
+
+### Presentation fixes
+
+- The ghost lift: `ResetPlace` rebuilt Place/Arena/Fold, and the renderer
+  blended its first frame from the previous place. A function cannot snap a
+  singleton, so every caller (`BuildAtrium`'s first spawn, `RestartPlace`,
+  `ChoosePlace` and both `EvaluatePlace` paths) snaps all three after it.
+  `render_test.c` draws previous/current pairs at fractional alpha across a
+  ride and requires the dressing set to be unmoved.
+- An exit's signal lamps sit at `Place.exitSocket` along its lintel, beside the
+  EXIT plaque, where its map's `socket_x` puts the wire's end. The plaque's X
+  is five pixels wide so it reads at PSX resolution.
+- Door crops in `DressWall`, pillar straps only on pillars at least 0.5 m,
+  hand roots no longer drawn under a floor covering part of a pit
+  (`Footprint`/`Floored`), lamp rods to the ceiling and deeper fittings, the
+  clear colour is the place's fog, and fold rims/halos/glow scale with the
+  end's size so a quarter end is not all rim. Small movers (under 0.5 m) draw
+  as a dark steel bolt or a flat enamel pan instead of a machine.
+- Arrows gain `ArrowDown`; `Silk` is a strand prop; webs have 1.98 m strands
+  and end posts; curtains hang from rods.
+
+### Folds, shots and carrying
+
+- `ShotStops` is the one shot walk for `PreviewFold`: it passes operators,
+  cargo and grille bars, stops at room, machinery and furniture, and on restart
+  past a grille checks a 1 cm overlap so a solid flush behind the bars (a
+  cupboard header) still stops it. A candidate also needs its middle in sight
+  of the shooter (`ShotStops` from the eye to 5 cm in front of the opening's
+  middle), so grazing the top of a riser cannot slide an end down out of view.
+- `ShutEnds` (after the physics step, before crossings) marks an open end shut
+  while a Mover, Gate or Door overlaps the box in front of its mouth.
+  `Traverse` bumps anything entering the other end, as for an end too small.
+  Long Throw's shutter over the launch end depends on it.
+- A held cube is measured against the hands where it is: through a fold, the
+  holder's scale times that pair's size ratio. Over 1.6 times that it drops and
+  the holder strains. This stops a scout carrying cargo that grows through a
+  fold and keeps the pickup rule consistent.
+- `Cube.homeScale` returns a lost object at the size it was placed (Mailroom's
+  half parcel), and things over 1.5 times whole get angular damping 4
+  (`GrownDamping`) so grown cargo lands rather than tumbling off a plate.
+- `OnPlate` counts bodies up to 2.2 m above the plate, not 4 m, so a gallery or
+  roof over a plate no longer weighs on it.
+- Every plate's rim fills amber with part of its needed load (never all twelve
+  lamps) and turns green when it has enough.
+
+### Puzzle ramp
+
+Reception stays the gentle first lesson. From Mailroom on, each puzzle adds a
+step that has to be understood rather than found:
+
+- Mailroom: the parcel starts half-sized and too light for the office plate.
+  It is grown back through the small end before the scout moves that end to
+  make the whole route; carried through, it grows out of the scout's hands.
+- Weighbridge: the exit's low gatehouse stops the giant, so the end entered
+  from the ground is the way up whole; the service operator returns at half
+  size. Wire 1 is rerouted round the new gatehouse to the exit's socket.
+- Long Throw: the plate that raises the deck also opens the shutter over the
+  launch wall. With nobody on it the pad throws the flyer into the shutter.
+  Whoever holds it cannot follow; the flyer makes the way back from a wall
+  round the landing's corner to one by the near floor.
+- Exchange: the door's heavy plate (75 kg) takes a person, not the cube; the
+  cube holds the hall's plate and so the slot open. The scout shrinks twice,
+  crawls the duct, makes the whole route through the slot, then needs the
+  partner's pair to grow back before it can carry the cube to the exit plate.
+- Atrium: the pipe's door is open only while the cube weighs on its plate.
+  The scout crosses tiny and makes the giant's end; the thrower is left whole
+  with the pipe shut, and the scout's island end moved into the quarter frame
+  makes the thrower's way over.
+
+Each of these is an input-only solve in `test/place_*.c`, with negatives for
+the shortcuts found on the way: the half parcel on the plate, the giant under
+the gatehouse, the unheld launch, the cube on the heavy plate, the pipe with
+nothing on its plate.
+
+### Passages, vignettes and horror
+
+- Red Stair: what fell into the well climbs out once both are over the first
+  gap and follows, moving only while neither sees it. When the lamps stutter
+  and fail it comes on regardless, and where the stairs cross the blood it goes
+  under and surfaces beyond. Both looking away rebuilds the stair. The exit
+  moved north; south stairs and floors start at z -11.8 to clear the approach.
+- Archive: two walls of stacks, each with one gap, and a listener walking its
+  aisle. A step on metal brings it at a run; a parcel's crash on metal holds it
+  for a while. Light 0.14, fog 0.08.
+- Crawlspace: the spider is larger (scale 0.45 to 0.8) with a 1.0 m catch,
+  silk strands at the refuges and fewer, wall-mounted pipes.
+- Showroom: a watcher must be in the aisles, within 20 m and within about 40
+  degrees of looking at it. Lamps stutter for 0.8 s (`Arena.warning`, with a
+  buzz) before each blackout, and torches die with them (`Arena.blackout`).
+- Lamps Out: each lamp failing takes every light for a moment, and the figure
+  advances in it. The Slot: the bolt hangs under a pipe, drops through silk and
+  the spider takes it, then comes to the bars. The Ward: the pan slides off the
+  middle bed and the listener comes from behind the last curtain; `Heard`
+  remembers a noise for 4 s, and the metal grate before the lift brings it to
+  the bars.
+- Puzzle rooms got darker (Reception 0.72, Exchange 0.64, Atrium 0.68, Long
+  Throw 0.76), pillars for the watcher to peek from, stuttering office lamps,
+  and wall/ceiling fills where earlier passes left void.
+- Reception's `Glimpse`: a mannequin figure (`Beast.folded`) stands a few steps
+  out from the east end, staring back. It is drawn only by fold cameras (render
+  passes 0..7), never by the eye's own view or in shadow, from 5 s after
+  arrival until anyone crosses a fold or 150 s pass. Looked at through the bars,
+  nobody is there. `folded_figure_checks` requires it through the west end
+  and zero changed samples looking straight at its place with the pair closed
+  (through either end it is rightly there).
+
+### Tools
+
+`test/tour_render.c` is a review tour for the desktop render fixture:
+`FOLDLINE_TOUR` names a script (place, tick, signals, b, stand, ride, eye,
+look, lift, beasts) and `FOLDLINE_CAPTURES` the output folder. It prints whether
+A's first end could be placed at each eye's aim. The ordinary test run ignores it.
+
+### Capture audit and its fixes
+
+Four read-only audits toured every place from player eyes (roughly 400 views,
+captures under `C:/tmp/foldtour/audit2-*`, not checked in) and reported what
+they saw. Everything below was fixed and re-captured from the same eyes:
+
+- Red Stair's hunter rose through the landing slabs, and hung in the air
+  under them: the landings are slabs over the blood with nothing beneath.
+  It now crosses the first gap under the blood from the start, climbs the
+  outer wall beside the landing's edge belly to the wall (`Beast.pitch`, a
+  quarter turn), and hauls over and out along the floor. Each time it is out,
+  the lamp cycle restarts just past its dark, so a lit stretch always shows
+  that a look holds it. Hands in the blood are no longer drawn under any floor
+  lower than their reach (the last stair), a concrete pier carries the arrival
+  lift, roof conduits run wall to wall, and the walkway's rails meet and close
+  its north edge.
+- Lamps Out's last mark is 6.1, so the lunge stops behind the bars. The Ward's
+  listener comes round the near end of the last curtain and along the aisle to
+  (12.1, 0.45) under the stuttering lamp, where the lift sees it; its charge to
+  the bars follows the aisle instead of passing through beds and curtains. The
+  ward has a marble floor and deep pleated curtains.
+- The web prop (The Slot, Crawlspace) is sagging threads, spokes from a low
+  hub, rungs and tufts on the walls instead of three straight strands on posts;
+  The Slot's lamp stutters. Showroom's panels are landscape black glass boards
+  flat on the walls, so none reads as a door or window, and its frozen stalker
+  stands on its lowest toe (`LowestToe`) rather than hanging mid-stride.
+- Weighbridge's open shutter hung 1.6 m below its beam; the beam is now a
+  housing down to 10.62 with the shutter's lamp and cable end on its face. Door
+  movers draw as ribbed steel shutters rather than one stretched door picture.
+  The riser cable has collars where it passes the upper room's roof, and the
+  arrival crawler runs along the riser's top, where the lift sees it, instead
+  of inside a duct whose floor hid it. Roof lamps are `OfficeLamps` with three
+  of nine dead (`dead` is a new optional argument), light 0.7, and the arrow's
+  walker has two legs, so it reads as a person rather than an L.
+- Reception's dead-end pocket behind the cupboard is filled (`cupboard_rear`),
+  and the glimpse moved onto the sightline through the west end from the lift.
+  Reception? stutters, then has two seconds of total dark (torches too), then
+  only the torches: mean luminance 119 lit, 40 in the dark.
+- Mailroom's shelves hold parcels; Archive's shelves stand against the walls,
+  with five of nine lamps dead; Crawlspace's wall pipe is one flanged run and
+  its first and last rooms hold stored pallets and boxes; Long Throw's deck
+  lamp and riser face its plate and its roof lamps are thinned; Exchange lost
+  a switch that looked wired and a lamp crowding the exit's signal, and its
+  bank lamps are thinned.
+- Exchange had nothing in it. A small crawler waits at the duct's far end by
+  the slot and, when a body under half size comes within 2.6 m, bolts through
+  the bars and across the bank to its far corner. It reuses Red Stair's `Shy`:
+  one more component took tidec past its 1024 component combinations.
+  `place_exchange.c` checks it has fled by the time the scout reaches the slot.
+- Long lamp rods are 0.6% of their drop thick, so Atrium's lamps don't float,
+  and an empty heavy gauge's rings are a dull ember rather than black.
+
+Left as they are: the EXIT plaque is height-limited by the 0.4 m header and
+blurs beyond about 4 m at 300 rows; the lift's back wall is low-resolution up
+close, as the PSX look intends; Reception?'s lit but held exit is the intended
+ending; Atrium's dollhouse shares the wallpaper it stands by; Weighbridge's
+unpowered roof cable reads thin until it lights. The tour cannot force signals
+(plates recompute them every tick), so Atrium's open exit was seen only through
+its input solve.
+
+### Validation
+
+The debug targets build without warnings. All four native Foldline CTests pass
+(Vulkan with validation) and all five web ones (WASI, WebGL 2, WebGPU), using
+Node 24.16. They include every input-driven solve with the harder steps, the
+map validator and its 75 tool regressions, and the render fixture's new checks:
+fractional-alpha place changes, the dead device's reticle, and the fold-only
+figure. Native and WASI agree on replay hash `9583849152621067857` and campaign
+hash `14532430071868514869`, and their built-layout exports are byte-identical.
+The hashes replace the previous section's because places, props, creatures
+and components changed on purpose.
+
+No full repository suite, other platform or CI run was needed for this
+prototype-only work. Sound was not listened to (agent runs are silent), and
+whether the harder puzzles are fun, and how long they take, still needs the
+owner's own play.

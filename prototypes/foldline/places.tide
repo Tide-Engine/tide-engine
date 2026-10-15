@@ -190,8 +190,9 @@ void ArrivalLift(Arena arena, mut Place place, float3 at, float yaw)
 }
 
 // The lift a place is left by, with its gate, which is up while the signals it needs are on: all of them, or
-// any with `any`. Needing none, it's up once the place is come to.
-void ExitLift(Arena arena, mut Place place, float3 at, float yaw, int need = 0, bool any = false)
+// any with `any`. Needing none, it's up once the place is come to. Its signals' lamps are on its lintel `socket`
+// along from the sign, in the lift's own frame, on the side its cable comes up: never over the sign.
+void ExitLift(Arena arena, mut Place place, float3 at, float yaw, int need = 0, bool any = false, float socket = -1)
 {
     LiftShell(arena, at, yaw);
     SetProp(arena, PropKind.ExitSign, LiftPoint(at, yaw, float3(0, 4.2, 2.65)), yaw);
@@ -201,6 +202,7 @@ void ExitLift(Arena arena, mut Place place, float3 at, float yaw, int need = 0, 
     place.exitYaw = yaw;
     place.exitNeed = need;
     place.exitAny = any;
+    place.exitSocket = socket;
 }
 
 // A lift that stops on the way: its door opens on what the place has before it, and `stay` seconds after it
@@ -278,7 +280,8 @@ Entity PutLoose(mut Arena arena, mut Fold fold, float3 at, int kind = 0, float s
 {
     if (fold.count >= 8) return default;
     var index = fold.count;
-    var made = Spawn(Cube { chamber = arena.chamber, last = at, at = at, home = at, index = index, kind = kind, scale = scale }, Body { position = at },
+    var made = Spawn(Cube { chamber = arena.chamber, last = at, at = at, home = at, homeScale = scale, index = index, kind = kind, scale = scale },
+                     Body { position = at, angularDamping = GrownDamping(scale) },
                      Box { size = float3(CUBE_SIDE * scale), density = kind == 0 ? 120.0 : 60.0, friction = 0.7 });
     fold.spots[index] = at;
     fold.sizes[index] = scale;
@@ -404,14 +407,15 @@ void HangLamps(mut Place place, int column0, int column1, int row0, int row1, fl
 
 // An office's lamps over those cells: most burn, about two in nine are dead and one in nine stutters, which
 // ones by the seed, so that no two places have the same.
-void OfficeLamps(mut Place place, int column0, int column1, int row0, int row1, float high, int seed, int group = 0)
+// `dead` of every nine are out and one of the nine stutters.
+void OfficeLamps(mut Place place, int column0, int column1, int row0, int row1, float high, int seed, int group = 0, int dead = 2)
 {
     for (var row = row0; row <= row1; row++)
     {
         for (var column = column0; column <= column1; column++)
         {
             var roll = Math.Abs(Math.Hash(int3(column, row, seed))) % 9;
-            HangLamp(place, column, row, high, roll < 2 ? LampState.Dead : roll == 2 ? LampState.Stutter : LampState.On, group);
+            HangLamp(place, column, row, high, roll < dead ? LampState.Dead : roll == dead ? LampState.Stutter : LampState.On, group);
         }
     }
 }

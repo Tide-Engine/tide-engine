@@ -47,6 +47,10 @@ are JSON booleans. Dimensions and other numeric inputs must be finite.
 - `lifts`: named `id`, `role` (`arrival`, `exit`, `stop`), floor middle `at`
   and quarter-turn `yaw` (`NORTH`, `EAST`, `SOUTH`, `WEST`). An exit has
   `need: [signal numbers]` and optional `any`; a stop has `stay` seconds.
+  An exit that needs signals also has `socket_x`: where its signal lamps sit
+  along the lintel in the lift's own frame (x along the doorway), 0.9 to 2.6 m
+  from the sign at its middle, on the side its cable comes up. Its cable ends
+  at that socket, (socket_x, 4.2, 2.65) in the lift's frame.
   The standard prefab creates its shell, threshold, door and exit sign.
 - `plates`: named `id`, top middle `at`, `signal`, optional `heavy`, `need`
   kilograms, `half` footprint, `linger` seconds and `invert`.
@@ -112,7 +116,8 @@ a one-metre observation apron before its protective grille. A flat floor must
 cover the entire apron: the proof partitions all actual floor edges and tests
 the exact rectangle union, including narrow gaps. Rotated prop/ramps use their
 oriented boxes for obstruction checks. Exit signs must occupy the room-facing
-header socket, face the approach and have a supporting surface. Every actual
+header socket, face the approach and have a supporting surface; the exit's
+signal lamps must not cover it. Every actual
 frame and open preplaced end must fit a receptive backing face at least 0.6 m
 thick.
 
