@@ -81,6 +81,16 @@ and diff checks pass. Native GPU and WebGL/WebGPU coverage ran in the full
 suites. Android, other operating systems and sanitizers were not run; no CI
 workflow was dispatched.
 
+Merged origin/dev's unrelated frustum-culling work cleanly. Rebuilt both
+complete debug targets against the incoming compiler/draw ABI, then passed
+120 native and 121 web dependency/physics tests: runtime tests, changed
+compiler/render fixtures and diagnostics, native GPU/WebGL/WebGPU drawing,
+all Box3D targets and Sumo. The merged production docs build passes; final
+fresh-process native↔WASI network delta reads also pass in both directions.
+The final native attachment counters use Tide's wrapping integer helper;
+the fifth mesh case checks overflow across both attachments and stability
+afterward, passing on native and WASI.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases

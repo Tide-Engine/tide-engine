@@ -181,3 +181,16 @@ TIDE_TEST(box3d_mesh_rejects_nonfinite_geometry_and_materials)
         tide_world_free(&w);
     }
 }
+
+TIDE_TEST(box3d_mesh_shape_counter_wraps_like_tide)
+{
+    tide_world w = {0};
+    tide_world_init(&w, 1.0f / 60.0f);
+    w.Box3D_Physics.shapes = INT32_MAX - 3;
+    tide_world_tick(&w);
+    tide_world_tick(&w);
+    TIDE_CHECK(w.Box3D_Physics.shapes == INT32_MIN);
+    tide_world_tick(&w);
+    TIDE_CHECK(w.Box3D_Physics.shapes == INT32_MIN);
+    tide_world_free(&w);
+}

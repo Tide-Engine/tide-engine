@@ -1247,7 +1247,7 @@ void b3t_attach_meshes(tide_rows *rows, physics *p)
         mesh_collider m;
         tide_rows_get(rows, 0, i, &b);
         tide_rows_get(rows, 1, i, &m);
-        if (attach_mesh_component(b.id, &m)) p->shapes++;
+        if (attach_mesh_component(b.id, &m)) p->shapes = tide_add_i(p->shapes, 1);
     }
 }
 
@@ -1259,7 +1259,7 @@ void b3t_attach_mesh_parts(tide_rows *rows, physics *p)
         tide_rows_get(rows, 0, i, &m);
         tide_rows_get(rows, 1, i, &part);
         part.mesh = attach_mesh_component(part.mesh, &m);
-        if (part.mesh) p->shapes++;
+        if (part.mesh) p->shapes = tide_add_i(p->shapes, 1);
         tide_rows_set(rows, 1, i, &part);
     }
 }
