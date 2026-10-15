@@ -123,6 +123,75 @@ the campaign stage adds chapter 3). `Tile` gains `PlateA`, `ShutterA`,
   fits a 720-high window. Not done: no sound for them (the sound stage's),
   the browser fixture, and no puzzle.
 
+Levels as text, chapters and the mixer (2026-10-15, the polish round's
+decision D3 and the contracts between its parallel stages: the lead agent's
+picks, provisional until the owner confirms; the format is my pick).
+- `levels.tide` draws each puzzle in a function of its own (`ARoomOutside`,
+  `NoHandleInside`, `TheOtherOpening`, `APlaceToStand`, `AllInARow`,
+  `HoldItSteady`, `Posted`) as maps, `Room(draft, room, [rows])`, room -1
+  the table, at the size the match holds: a box 3 to 7 square, the table 1
+  to 7, a table not drawn 7 by 7 and all wall. A row is the tiles, spaces,
+  then what stands on them, the same width. Tiles: `#` wall, `.` floor, `o`
+  socket, `x` goal, `a`/`A` plate and shutter A, `b`/`B` plate and shutter
+  B, a digit floor with that box's outline. Things: `.` nothing, `@` Amber
+  (seat 0), `&` Teal (seat 1), `+` a battery, a digit that box (its room's
+  id; the game names it Box 1 to 4). The two halves are why any thing can
+  stand on any tile, and a box on its own outline (every box of puzzles 1
+  to 7 has an outline, most start on it) is its digit in both. An outline
+  is only on floor. A box stands where its digit is drawn, so a box in its
+  own room's map is inside itself and two in each other's are a cycle.
+  The legend is the comment at the top of the file.
+- Doorways come from the map: a room's edge is wall but for them, and an
+  open cell on a side (anything but `#`, which is wider than the brief's
+  floor or shutter), not at a corner, is that side's doorway; its offset is
+  -1 at the middle of the side and the cell's place otherwise, which is what
+  the old loader stored for every puzzle. Batteries are numbered in the
+  order drawn: maps in the order the puzzle draws them, rows top down.
+- `Debug.Assert` stops the game with what is wrong, naming the puzzle, room
+  and cell, for an unknown mark, a size out of range or rows of the wrong
+  width, an open corner, two doorways on a side, a thing in a wall, a robot
+  or a box drawn twice, a second outline, more than eight batteries, a room
+  drawn twice, rooms not 0 to n-1, or a drawn room whose box stands nowhere
+  (`struct Draft` carries the masks). Every puzzle is loaded by the
+  campaign test, so a bad map fails it; checked by giving puzzle 1's room
+  two east doorways, which stopped the test (exit 3) with "Puzzle 1, room
+  1: 2 doorways on the east side; a side has one at most".
+- Proof the conversion is exact: a temporary test printed every byte of
+  `LevelLayout` and `Puzzle` after `ChooseLevel` for each puzzle; built
+  once with the old `levels.tide` and once with the new, the outputs are
+  byte-identical (20,370 bytes of hex each), as were a text dump of every
+  map and FNV hashes. The temporary test is gone. Kept: the campaign test
+  now checks every room's doorways against its edge (corners wall, one open
+  cell a side at most, a doorway exactly where there is one, at the stored
+  offset), that each box stands on an open cell, and that the table is
+  square. `SquareRoom`, `WidenRooms` and every `Workshop*` builder are
+  removed; `LoadLevel(level, layout, puzzle)` is still the entry point and
+  still rebuilds both robots' trails.
+- Chapters: `CHAPTER_COUNT` 5, `ChapterName` 0 to 4 "Boxes", "Each other",
+  "Power", "Itself", "Everything", and `LevelChapter`: puzzles 1 to 5 are
+  chapter 0, 6 and 7 chapter 1 (and, until more are added, any later one).
+  Nothing shows them yet.
+- `sound.tide`: `local singleton Mixer { bool muted; float music = 0.8;
+  float effects = 1; float interface = 0.8; }`, which the settings write and
+  sound reads; `Hands.quiet` and `Hands.music` are gone into it. Music plays
+  while not muted and `music` is above 0, at 0.3375 times it (0.27, as
+  before, at the default); every puzzle cue is scaled by `effects`. `enum
+  UiCue { Hover, Click, Back, Open, Toggle, Slide }` and `void UiSound(UiCue
+  cue)`. A function sees no singleton it is not passed, so `UiSound` sends a
+  local event, `UiNoise`, which `PlayUiNoise(Mixer)` plays at the end of
+  the frame: any view, local handler or function they call can ask for a
+  sound with nothing to pass. For now Click and Toggle play the step clip at
+  0.12 times `interface`, pitch 1.4, and the rest nothing. The toolbar's
+  sound button toggles `muted` and asks for Toggle (heard on unmuting:
+  a two-player capture with `--capture-audio` is silent from the mute to the
+  unmute and peaks at 839 against the ambience's 265 at the unmute); the
+  guide's Ambience toggle became a Music slider.
+- Tests: 35 pass natively, witnesses (10, 12, 20, 31, 11, 19, 15) and the
+  solo searches (8,043 and 30,455) unchanged. `web-debug` configured here
+  (the first configure failed while it fetched the WASI sysroot; the second
+  succeeded) builds `inside_out_tests` and `inside_out` without warnings,
+  and `ctest --preset web-debug -R inside_out_tests` passes.
+
 The owner, after playing with a partner, sent six points, was shown my
 reading of each with two questions, and answered "once done push and
 deploy", so the two readings are mine: (a) "stop making doors between
@@ -411,7 +480,9 @@ Rules (`game.tide`).
 - Facing doorways (`DoorsMeet`) and the step preview stand as described
   below.
 
-Layouts (`levels.tide`). Every room is a square grid (`SquareRoom`), and
+Layouts (`levels.tide`; since 2026-10-15 text maps authored at this final
+size, with no packing or widening at load: see "Levels as text" above).
+Every room is a square grid (`SquareRoom`), and
 `WidenRooms` then opens cells of the doubled wall that squaring left into
 floor, puzzle by puzzle: the owner would not have the dark strip I first
 drew there ("sounds like the level needs a redesign"). Each cell was opened
@@ -660,7 +731,7 @@ cause was not pinned down beyond removing the snap fixing both).
 WASD/arrows walk/push, Z/Backspace undo, R reset, H hints and Enter continues.
 Touch uses the same directional buttons. Held directions require release
 after serial changes. Hints grow/wrap to fit. Ambience, sound and reduced
-motion are local options; Rooms volume settings remain. Presentation and
+motion are local options (since 2026-10-15 the sound ones are `Mixer`'s); Rooms volume settings remain. Presentation and
 audio never enter the match hash.
 
 `sfx/make_sounds.py` reproduces original assets. The melody is replaced by

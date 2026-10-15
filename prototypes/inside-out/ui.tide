@@ -40,8 +40,6 @@ local singleton Hands
     int hint;
     bool hintOpen;
     bool journal;
-    bool quiet;
-    bool music = true;
     bool guide;
     bool reduceMotion;
     // How much longer each seat's bot shakes after a step that could not be
@@ -248,7 +246,7 @@ void Compass(float2 at, int held)
 
 [Stage(ArtStage.Controls)]
 [Before(Rooms.Pages)]
-view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms.Lobby lobby, mut Hands hands)
+view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
 {
     Draw.SetScreen();
     if (lobby.page != Rooms.Page.Playing) return;
@@ -314,7 +312,11 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
     var toolbarY = compactHeader ? 54.0 : 19.0;
     if (PaperButton("Puzzles", Rect(compactHeader ? left + 82 : width - 244, toolbarY, 78, 34))) hands.journal = !hands.journal;
     if (PaperButton("?", Rect(compactHeader ? left + 171 : width - 155, toolbarY, 28, 34))) hands.guide = !hands.guide;
-    if (PaperButton(hands.quiet ? "Muted" : "Sound", Rect(compactHeader ? left : width - 326, toolbarY, 72, 34))) hands.quiet = !hands.quiet;
+    if (PaperButton(mixer.muted ? "Muted" : "Sound", Rect(compactHeader ? left : width - 326, toolbarY, 72, 34)))
+    {
+        mixer.muted = !mixer.muted;
+        UiSound(UiCue.Toggle);
+    }
 
     if (PaperButton("Undo / Z", Rect(left, bottom, actionWidth, 40), workshop.historyCount > 0 && playing) || playing && (key.z.down || key.backspace.down))
         Send(Undo { serial = workshop.serial });
@@ -433,7 +435,7 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("Both robots must reach a goal.");
             GUILayout.Label("Z: shared undo. R: reset. H: three hints.");
             GUILayout.Label("Talk to each other. There is no time limit.");
-            GUILayout.Toggle("Ambience", hands.music);
+            if (GUILayout.Slider("Music", mixer.music, 0, 1)) UiSound(UiCue.Slide);
             GUILayout.Toggle("Reduced motion", hands.reduceMotion);
             if (GUILayout.Button("Back to exploring")) hands.guide = false;
         }

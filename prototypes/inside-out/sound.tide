@@ -7,25 +7,54 @@ asset Clip littleReset = "sfx/reset.wav";
 asset Clip littleSolve = "sfx/solve.wav";
 asset Clip woodenStop = "sfx/stop.wav";
 
+// This machine's volumes, 0 to 1 each, which the settings write. Muted is
+// silence; music at 0 plays no music.
+local singleton Mixer
+{
+    bool muted;
+    float music = 0.8;
+    float effects = 1;
+    float interface = 0.8;
+}
+
+// The sounds of pages and controls, which the interface asks for by name.
+enum UiCue { Hover, Click, Back, Open, Toggle, Slide }
+local event UiNoise { UiCue cue; }
+// Plays a control's sound at the interface volume. It can be called from any
+// view or local handler, and from functions they call, with nothing to pass:
+// the sound is played at the end of the frame by `PlayUiNoise`, which reads
+// the mixer.
+void UiSound(UiCue cue)
+{
+    Send(UiNoise { cue = cue });
+}
+local event(UiNoise noise) PlayUiNoise(Mixer mixer)
+{
+    if (mixer.muted || mixer.interface <= 0) return;
+    if (noise.cue == UiCue.Click || noise.cue == UiCue.Toggle) Audio.Play(woodenStep, 0.12 * mixer.interface, 1.4);
+}
+
 local singleton Hearing { Sound music; }
 
 [Stage(ArtStage.Sound)]
-view WorkshopSound(Hands hands, mut Hearing hearing)
+view WorkshopSound(Mixer mixer, mut Hearing hearing)
 {
     hearing.music.clip = roomAmbience;
     hearing.music.loop = true;
-    hearing.music.playing = hands.music && !hands.quiet;
-    hearing.music.volume = 0.27;
+    hearing.music.playing = !mixer.muted && mixer.music > 0;
+    // 0.27 at the default music volume.
+    hearing.music.volume = 0.3375 * mixer.music;
 }
 
-local event(PuzzleCue cue) HearPuzzle(Hands hands)
+local event(PuzzleCue cue) HearPuzzle(Hands hands, Mixer mixer)
 {
-    if (hands.quiet) return;
-    if (cue.kind == 0) Audio.Play(woodenStep, cue.seat == hands.seat ? 0.30 : 0.15, cue.seat == 0 ? 0.95 : 1.10);
-    else if (cue.kind == 1) Audio.Play(woodenPush, 0.37);
-    else if (cue.kind == 2) Audio.Play(doorwayRustle, 0.26);
-    else if (cue.kind == 3) Audio.Play(littleUndo, 0.28);
-    else if (cue.kind == 4) Audio.Play(littleReset, 0.27);
-    else if (cue.kind == 5) Audio.Play(littleSolve, 0.53);
-    else if (cue.kind == 6) Audio.Play(woodenStop, cue.seat == hands.seat ? 0.18 : 0.09);
+    if (mixer.muted || mixer.effects <= 0) return;
+    var level = mixer.effects;
+    if (cue.kind == 0) Audio.Play(woodenStep, (cue.seat == hands.seat ? 0.30 : 0.15) * level, cue.seat == 0 ? 0.95 : 1.10);
+    else if (cue.kind == 1) Audio.Play(woodenPush, 0.37 * level);
+    else if (cue.kind == 2) Audio.Play(doorwayRustle, 0.26 * level);
+    else if (cue.kind == 3) Audio.Play(littleUndo, 0.28 * level);
+    else if (cue.kind == 4) Audio.Play(littleReset, 0.27 * level);
+    else if (cue.kind == 5) Audio.Play(littleSolve, 0.53 * level);
+    else if (cue.kind == 6) Audio.Play(woodenStop, (cue.seat == hands.seat ? 0.18 : 0.09) * level);
 }

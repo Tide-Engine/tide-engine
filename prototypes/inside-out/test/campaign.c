@@ -15,6 +15,37 @@
 #define PUZZLES 7
 _Static_assert(sizeof inside_out_solutions / sizeof inside_out_solutions[0] == PUZZLES, "one witness per puzzle");
 static bool same_cell(tide_int2 a, tide_int2 b) { return a.x == b.x && a.y == b.y; }
+static Tile tile_at(const LevelLayout *const layout, const int room, const tide_int2 at)
+{
+    const int size = room < 0 ? layout->width : layout->rooms.at[room].width;
+    if (at.x < 0 || at.y < 0 || at.x >= size || at.y >= size) return Tile_Wall;
+    return room < 0 ? layout->tiles.at[at.y * size + at.x] : layout->rooms.at[room].tiles.at[at.y * size + at.x];
+}
+// What levels.tide's maps promise: a box's edge is wall but for its doorways,
+// one open cell a side at most and none at a corner, and a side has a doorway
+// exactly where it has that cell.
+static void check_doorways(const LevelLayout *const layout, const int room)
+{
+    const int size = layout->rooms.at[room].width, last = size - 1;
+    TIDE_CHECK(tile_at(layout, room, tide_i2(0, 0)) == Tile_Wall && tile_at(layout, room, tide_i2(last, 0)) == Tile_Wall);
+    TIDE_CHECK(tile_at(layout, room, tide_i2(0, last)) == Tile_Wall && tile_at(layout, room, tide_i2(last, last)) == Tile_Wall);
+    const int offsets[4] = {layout->rooms.at[room].north, layout->rooms.at[room].east, layout->rooms.at[room].south,
+        layout->rooms.at[room].west};
+    for (int side = 0; side < 4; side++) {
+        int open = 0, door = -1;
+        for (int along = 1; along < last; along++) {
+            const tide_int2 at = side == 0 ? tide_i2(along, 0) : side == 1 ? tide_i2(last, along)
+                : side == 2 ? tide_i2(along, last) : tide_i2(0, along);
+            if (tile_at(layout, room, at) == Tile_Wall) continue;
+            open++;
+            door = along;
+        }
+        TIDE_CHECK(open <= 1);
+        const bool has = (layout->rooms.at[room].doors & (1 << side)) != 0;
+        TIDE_CHECK(has == (open == 1));
+        if (has) TIDE_CHECK((offsets[side] == -1 ? size / 2 : offsets[side]) == door);
+    }
+}
 static bool play_witness(int level, const char *witness, int *actions)
 {
     int count = 0;
@@ -51,7 +82,12 @@ TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
             // Every box is a square, so it fills the cell it stands in.
             TIDE_CHECK(layout.rooms.at[room].width >= 3 && layout.rooms.at[room].width <= 7);
             TIDE_CHECK(layout.rooms.at[room].height == layout.rooms.at[room].width);
+            check_doorways(&layout, room);
+            // Its box stands on an open cell of a room or of the table.
+            const RoomShell box = initial.rooms.at[room];
+            TIDE_CHECK(box.room >= -1 && box.room < layout.roomCount && tile_at(&layout, box.room, box.position) != Tile_Wall);
         }
+        TIDE_CHECK(layout.width == layout.height && layout.width >= 1 && layout.width <= 7);
         for (int room = layout.roomCount; room < 4; room++) TIDE_CHECK(layout.rooms.at[room].dock.x == -1);
         int actions = 0;
         TIDE_REQUIRE(play_witness(level, inside_out_solutions[level], &actions));
