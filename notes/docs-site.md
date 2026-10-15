@@ -1,5 +1,35 @@
 # The docs site
 
+## Hosting console navigation and DNS (2026-10-15)
+
+The owner requested a Console menu entry on tide-engine.dev, clarifying that
+the homepage itself remains the engine site. Header.svelte links Console to
+https://console.tide-engine.dev/ in both desktop navigation and the mobile menu.
+No homepage redirect or apex DNS change was made. Validation: Node 24.16.0,
+Svelte check with zero errors/warnings, production build and all three SEO tests
+pass. Desktop and 390-pixel mobile browser checks confirm the link target and
+visible menu entry with no horizontal overflow. The collaborative preview
+became unavailable during resizing, so the mobile check used muted headless
+Chrome. No new persistent test was added for the two navigation anchors.
+
+Using the installed synced Cloudflare skill and the owner's browser OAuth,
+registered the official Cloudflare API MCP with DNS read/write and account/zone
+lookup scopes. The active tide-engine.dev zone had no console/play records.
+Created DNS-only A/AAAA records for both subdomains pointing to tide-hosting
+(66.241.125.185 and 2a09:8280:1::1b8:4b3a:0), TTL 300, and registered both Fly
+managed certificates. Added the Fly-provided console ACME CNAME for independent
+DNS validation. Existing apex/www records are unchanged. Play HTTPS is verified;
+console issuance subsequently completed with an active Let's Encrypt certificate.
+Both custom-domain `/health` requests return HTTPS 200 with `{"ok":true}`, and
+the console homepage returns 200 with GitHub sign-in. No provider login/payment
+was performed during these probes.
+
+Source 1f81a312 deployed directly to tide-website as release 282, image
+deployment-01M501F063DS5S441CCCWYX27T, with its existing machine/volume and a
+passing health check. The public homepage now has the Console link; muted
+headless Chrome verifies the live desktop and mobile menu target with no
+horizontal overflow. No CI workflow was dispatched for this navigation change.
+
 Managed hosting guide (2026-10-15): multiplayer/hosting.md and the docs sidebar
 describe login/deploy, server-only bundles, Simulation ID admission and lifetime/
 save controls. The account dashboard is served by hosting/ on a separate origin
@@ -415,7 +445,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `server.js` permanently redirects www and the Fly hostname (`tide-website.fly.dev`), plus HTTP requests for the public apex, to the same HTTPS origin, preserving paths and queries. Case and explicit ports on these hostnames are recognized; local previews stay local. It sends `X-Robots-Tag: noindex` on raw playable HTML (`examples/<id>`, `samples/<id>`, Sand, Duel, Towers and Sumo, with their directory and `index.html` forms). Search results should land on the gallery or explanatory docs rather than a canvas with a generic title. These pages remain crawlable so the header can be read; assets and thumbnails are unaffected. SEO tests require the home `WebSite` node and check redirects and the raw-page headers using tiny deployment fixtures, without compiled games.
   - Validation passed on Windows with Node 24.19: `npm run check` (no errors or warnings), `npm run build`, all three SEO tests, and the production access-form and admin HTTP tests. Host probes use `node:http` to send the desired Host explicitly; static fixtures are registered in the temporary deployment's adapter-node asset table, since it serves the closed set recorded at build time.
 - The site doesn't present Tide as C#-like (the owner, 2026-10-06: "we are our own language"): it's about how people find Tide, who shouldn't expect a C# clone and then see a different language. So nothing that says what Tide is calls it C#-like or measures it against C#: the home page, the introduction, a page's opening, the README, an editor extension's description. Saying what inspired it is fine, and so is a rule that names C# where it follows it, as `docs/spec.md`'s do. The pages for users state such rules themselves (operators' precedence, what a shift does), which reads better to someone who doesn't know C#.
-- The header has one link, Docs (`docs` in `docs/src/lib/nav.ts`), which starts at the guide: the categories are the sidebar's, never the header's.
+- The header links Docs (`docs` in `docs/src/lib/nav.ts`) to the guide and Console to https://console.tide-engine.dev/. Both appear in the desktop and mobile menus; documentation categories belong in the sidebar.
 - A page is in the folder of its subject, and the sidebar's groups follow the folders (`spec.md`, beside them, is its Reference):
   - `guide/` (Get started): what a newcomer reads first, and the demos.
   - `game/`: what a game is made of, in two groups: Simulation, the match (components, systems and their schedule, events, scenes, tasks, input), and Presentation, what one machine shows of it (views and the six other pages about drawing, below, then frags and verts, audio, local state, files, the GUI).
