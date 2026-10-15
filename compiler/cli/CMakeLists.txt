@@ -44,6 +44,16 @@ if(NOT WIN32)
 endif()
 add_test(NAME tide_cli_run_exit COMMAND tide_cli_run_exit_tests)
 
+# Apple SDK discovery must follow the selected linker even when a newer
+# standalone Command Line Tools package is installed. Stub discovery only.
+add_executable(tide_cli_toolchain_tests tests/toolchain_test.c sys.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_cli_toolchain_tests PRIVATE . "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_cli_toolchain_tests PRIVATE tide tidec_core)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_toolchain_tests PRIVATE Threads::Threads)
+endif()
+add_test(NAME tide_cli_toolchain COMMAND tide_cli_toolchain_tests)
+
 # A download tool can report success without writing its output. Fetching
 # must reject that result before it tries to unpack a nonexistent archive.
 add_executable(tide_cli_fetch_tests tests/fetch_download_test.c sys.c)
