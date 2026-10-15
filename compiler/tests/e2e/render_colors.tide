@@ -134,6 +134,7 @@ view Keep(mut Prop prop, Stage stage)
 view Show(Stage stage)
 {
     stage.two.Clear(Color.black);
+    stage.two.SetFrustumCulling(false); // Inspect output bindings on geometry at the camera origin
     stage.two.Mesh(stage.crate, stage.faces, float4x4.identity, Fill);
     stage.two.Rect(float2(4, 4), float2(8), Color.red); // The engine's own, into its first image
     stage.four.Mesh(stage.quad, stage.faces, Split);

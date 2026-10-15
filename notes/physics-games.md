@@ -1,5 +1,13 @@
 # The physics games: Towers and Sumo
 
+Box3D mesh support (2026-10-15) adds two package components, shifting Sumo's
+existing automatic Brain.dice spawn salt from 3072 to 3584 in generated C.
+Its gameplay/RNG algorithms are unchanged, but the new build's bot choices
+and world hashes change. Native and WASI agree on `94146ac68b276d10` at tick
+640 and `7cd1a970663359ea` at tick 880. The two network pins are updated;
+all gameplay, rollback and no-resync assertions remain. Package coverage and
+validation are in notes/box3d.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Building

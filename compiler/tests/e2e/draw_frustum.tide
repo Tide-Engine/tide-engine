@@ -1,0 +1,82 @@
+// Automatic undeformed bounds, explicit deformation bounds, destination settings
+// and early-exit restoration, without changing evaluation of a draw's operands.
+scene Main { }
+
+struct Corner
+{
+    Color color = Color.white;
+    float3 position;
+}
+
+local singleton Probe
+{
+    int mode;
+    int evaluated;
+    RenderTarget target;
+}
+
+float4x4 Placed(mut Probe probe)
+{
+    probe.evaluated++;
+    return float4x4.Translate(float3(10, 0, 0));
+}
+
+void Early()
+{
+    Draw.FrustumCulling(false),
+    Draw.Bounds(float3(100), float3(1))
+    {
+        return;
+    }
+}
+
+frag Flat(Corner vertex, out Color color) { color = vertex.color; }
+vert Shift(mut Corner vertex) { vertex.position.x -= 10; }
+
+view Draws(mut Probe probe)
+{
+    Early();
+    Draw.SetCamera(float4x4.identity, float4x4.identity);
+    List<Corner> vertices = [Corner { position = float3(-0.25, -0.25, 0) },
+                    Corner { position = float3(0, 0.25, 0) },
+                    Corner { position = float3(0.25, -0.25, 0) }];
+    List<int> faces = [0, 1, 2];
+    if (probe.mode == 0)
+    {
+        Draw.Mesh(vertices, faces, Placed(probe), Flat);
+        Draw.Mesh(vertices, faces, float4x4.identity, Flat);
+    }
+    if (probe.mode == 1)
+    {
+        Draw.FrustumCulling(false)
+        {
+            Draw.Mesh(vertices, faces, Placed(probe), Flat);
+        }
+        Draw.Mesh(vertices, faces, Placed(probe), Flat);
+    }
+    if (probe.mode == 2)
+    {
+        Draw.Mesh(vertices, faces, Placed(probe), Shift, Flat);
+        Draw.Bounds(float3(0), float3(0.5))
+        {
+            Draw.Mesh(vertices, faces, Placed(probe), Shift, Flat);
+        }
+        Draw.SetBounds(float3(-10, 0, 0), float3(0.5));
+        Draw.Mesh(vertices, faces, Placed(probe), Shift, Flat);
+        Draw.SetBounds();
+    }
+    if (probe.mode == 3)
+    {
+        Draw.SetFrustumCulling(false);
+        probe.target.SetCamera(float4x4.identity, float4x4.identity);
+        probe.target.Mesh(vertices, faces, Placed(probe), Flat);
+        probe.target.Bounds(float3(-10, 0, 0), float3(0.5))
+        {
+            probe.target.Mesh(vertices, faces, Placed(probe), Flat);
+        }
+        probe.target.SetFrustumCulling(false);
+        probe.target.Mesh(vertices, faces, Placed(probe), Flat);
+        probe.target.SetFrustumCulling();
+        Draw.SetFrustumCulling();
+    }
+}

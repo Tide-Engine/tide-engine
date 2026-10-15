@@ -118,6 +118,19 @@ component Capsule
     bool sensor;
 }
 
+// An indexed triangle surface on a static body. Indices are zero-based triples,
+// counterclockwise from the front. Scale and then offset apply in body space.
+// Geometry and material are read once, when attached, like the other shapes.
+component MeshCollider
+{
+    List<float3> vertices;
+    List<int> indices;
+    float3 scale = float3(1);
+    float3 offset;
+    float friction = 0.6;
+    float bounce;
+}
+
 // The entity's shapes are on another entity's body: `of`'s. An entity has one
 // shape of each kind at most, so a body of several boxes is a body and a part
 // for each box past its first. A part is an entity of its own: destroying it
@@ -130,6 +143,7 @@ component Part
     long box;
     long sphere;
     long capsule;
+    long mesh;
 }
 
 // The package's own: the entity's box, its sphere or its capsule is on its
@@ -142,6 +156,9 @@ component SphereMade { }
 
 [Sparse]
 component CapsuleMade { }
+
+// Dense because native systems filter whole runs of rows by this marker.
+component MeshMade { bool attached = true; }
 
 // Two bodies started touching, or stopped: sent to each, with the other, once
 // for each pair of their shapes. `part` is whose shape of this entity's it
@@ -707,10 +724,43 @@ system AttachCapsuleParts(Capsule capsule, mut Part part, World world, mut Physi
     this.Add(CapsuleMade);
 }
 
-// The step, and Box3D's state after it into the match. It isn't named Step,
-// so that a game's [Before(Step)] is an error and not a place in the middle of
-// these, after what code wrote has gone to Box3D: the stage is what to name.
+// Mesh creation reads list handles through native rows, with no caller-supplied
+// buffer counts. Part.mesh holds the body handle only between Prepare and Attach.
 [Stage(PhysicsStages.Step, 9)]
+[NativeName("b3t_attach_meshes")]
+extern system AttachMeshes(Body body, MeshCollider mesh, mut Physics physics, without MeshMade, without Part);
+
+[Stage(PhysicsStages.Step, 10)]
+system MarkMeshes(with MeshCollider, without MeshMade, without Part)
+{
+    this.Add(MeshMade);
+}
+
+[Stage(PhysicsStages.Step, 10)]
+system PrepareMeshParts(mut Part part, World world, with MeshCollider, without MeshMade)
+{
+    part.mesh = 0;
+    if (world.TryGet<Body>(part.of, out var body)) part.mesh = body.id;
+}
+
+[Stage(PhysicsStages.Step, 11)]
+[NativeName("b3t_attach_mesh_parts")]
+extern system AttachMeshParts(MeshCollider mesh, mut Part part, mut Physics physics, without MeshMade);
+
+[Stage(PhysicsStages.Step, 12)]
+system RegisterMeshParts(Part part, mut Physics physics, with MeshCollider, without MeshMade)
+{
+    if (part.mesh == 0)
+    {
+        this.Destroy();
+        return;
+    }
+    physics.parts[part.mesh] = this;
+    this.Add(MeshMade);
+}
+
+[Stage(PhysicsStages.Step, 13)]
+// The step isn't named Step: games name the phase, PhysicsStages.Step.
 system Simulate(Time time, mut Physics physics)
 {
     long stamp = StepWorld(physics.state, time.dt, physics.substeps, physics.gravity, physics.contactStiffness, physics.contactDamping,
@@ -721,7 +771,7 @@ system Simulate(Time time, mut Physics physics)
 }
 
 // Where the step left each body that it moved, into the fields that say so.
-[Stage(PhysicsStages.Step, 10)]
+[Stage(PhysicsStages.Step, 14)]
 [NativeName("b3t_leave")]
 extern system Leave(mut Body body, Physics physics);
 
@@ -734,7 +784,7 @@ Entity PartOf(Map<long, Entity> parts, long shape, Entity owner)
     return owner;
 }
 
-[Stage(PhysicsStages.Step, 10)]
+[Stage(PhysicsStages.Step, 14)]
 system Report(Physics physics)
 {
     int count = physics.moved ? CountTouches(physics.stamp) : 0;
@@ -785,6 +835,7 @@ event(Destroyed) RemovePart(Part part, mut Physics physics)
     if (part.box != 0 && physics.parts.Remove(part.box)) physics.goneShapes.Add(part.box);
     if (part.sphere != 0 && physics.parts.Remove(part.sphere)) physics.goneShapes.Add(part.sphere);
     if (part.capsule != 0 && physics.parts.Remove(part.capsule)) physics.goneShapes.Add(part.capsule);
+    if (part.mesh != 0 && physics.parts.Remove(part.mesh)) physics.goneShapes.Add(part.mesh);
     if (physics.sensors.count > 0) physics.sensors.Remove(this);
 }
 
@@ -1104,7 +1155,7 @@ extern Found SceneCastCapsule(in Collider collider, in Capsule shape, float3 fro
 [NativeName("b3t_scene_overlap_capsule")]
 extern bool SceneOverlapCapsule(in Collider collider, in Capsule shape, float3 at, quaternion rotation);
 
-[Stage(PhysicsStages.Step, 11)]
+[Stage(PhysicsStages.Step, 15)]
 system BeginHistory(Time time, mut Physics physics)
 {
     if (!(time.maxRewind > 0))
@@ -1131,11 +1182,11 @@ system BeginHistory(Time time, mut Physics physics)
         physics.history.RemoveAt(0);
 }
 
-[Stage(PhysicsStages.Step, 12)]
+[Stage(PhysicsStages.Step, 16)]
 [NativeName("b3t_capture_history")]
 extern system CaptureHistory(Body body, mut Physics physics);
 
-[Stage(PhysicsStages.Step, 13)]
+[Stage(PhysicsStages.Step, 17)]
 system EndHistory(mut Physics physics)
 {
     if (!(physics.historyLimit > 0)) return;
@@ -1149,7 +1200,7 @@ system EndHistory(mut Physics physics)
     physics.history.Add(HistoryFrame { tick = physics.historyTick, colliders = physics.pending });
 }
 
-[Stage(PhysicsStages.Step, 14)]
+[Stage(PhysicsStages.Step, 18)]
 [NativeName("b3t_seal_history")]
 extern system SealHistory(mut Physics physics);
 

@@ -723,6 +723,7 @@ static uint32_t draw_target;
 static uint32_t draw_blend; // How the command being turned into steps blends: tide_blend
 static uint32_t draw_stencil; // What the selected destination's commands do with its stencil, by now: a tide_stencil, packed
 static uint32_t draw_calls; // What the last list drawn took, the overlay's aside (tide_platform_draw_calls)
+static uint64_t draw_vertices; // Submitted vertices, including every index and instance
 
 // A target's cameras and clip belong to it for the whole frame, including
 // passes recorded by different views. The clip is advanced during playback.
@@ -3065,7 +3066,7 @@ static tide_float4x4 camera_to_clip(const camera *cam)
 }
 
 // A run of instances of a mesh through a shader of the game's, at once.
-static void draw_shaded(const tide_draw_list *list, const draw_step *s)
+static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
 {
     static union {
         shaded_uniforms engine; // Then the run's own
@@ -3101,9 +3102,10 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, run->count);
+    return (uint64_t)g->index_count * run->count;
 }
 
-static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
+static uint64_t draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
 {
     const gpu_mesh *g = &gpu_meshes[s->mesh - 1u];
     const mesh_3d_uniforms uniforms = {.camera = camera_3d_to_clip(list, s),
@@ -3116,6 +3118,7 @@ static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
     gpu->vertices(1, gpu_state.matrices, (size_t)s->first * sizeof(tide_float4x4));
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, s->count);
+    return (uint64_t)g->index_count * s->count;
 }
 
 // The pixel nearest `v`, from 0 to `most`: a rect's corner is any float a
@@ -3246,7 +3249,10 @@ static const screen_uniforms *step_uniforms(screen_uniforms *of_target, const dr
 static void draw_list(const tide_draw_list *list, const draw_root to, const bool over, const bool timed)
 {
     if (!gpu_ready()) { // Between a device that was lost and the next
-        if (!over) draw_calls = 0;
+        if (!over) {
+            draw_calls = 0;
+            draw_vertices = 0;
+        }
         return;
     }
     tide_draw_prepare(list, tide_platform_jobs());
@@ -3452,6 +3458,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     bool pass_active = false;
     bool cleared = over;
     uint32_t calls = 0; // The steps that draw, a draw call each
+    uint64_t vertices = 0;
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
         if (s->target != draw_target) {
@@ -3516,6 +3523,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             gpu->vertices(0, gpu_state.corners, 0);
             gpu->vertices(1, gpu_state.shape_instances, (size_t)s->first * sizeof(shape));
             gpu->draw(0, 6, s->count);
+            vertices += UINT64_C(6) * s->count;
             calls++;
             break;
         case STEP_CLEAR: {
@@ -3525,6 +3533,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             use_pipeline(s);
             gpu->uniforms(color, sizeof color);
             gpu->draw(0, 3, 1);
+            vertices += 3;
             calls++;
             break;
         }
@@ -3535,19 +3544,20 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             sample_step_texture(list, s);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
+            vertices += s->count;
             calls++;
             break;
         case STEP_MESH_3D:
-            draw_mesh_3d(list, s);
+            vertices += draw_mesh_3d(list, s);
             calls++;
             break;
         case STEP_SHADED:
-            draw_shaded(list, s);
+            vertices += draw_shaded(list, s);
             calls++;
             break;
         case STEP_BLIT:
             clip(&(draw_step){.kind = STEP_NO_CLIP});
-            draw_shaded(list, s);
+            vertices += draw_shaded(list, s);
             calls++;
             clip(&frame_targets[draw_target].clipping);
             break;
@@ -3564,6 +3574,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             gpu->sample(0, gpu_state.atlas, TIDE_GPU_FILTER_LINEAR, TIDE_GPU_WRAP_CLAMP);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
+            vertices += s->count;
             calls++;
             break;
         }
@@ -3581,6 +3592,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     if (!over) {
         free_spare_data_textures();
         draw_calls = calls;
+        draw_vertices = vertices;
         // The first frame through shaders after the list forgot (a hot reload): what's left of the last build's goes
         if (shaded && list->epoch != shader_epoch) {
             forget_pipelines();
@@ -3673,6 +3685,11 @@ const char *tide_platform_renderer(void)
 uint32_t tide_platform_draw_calls(void)
 {
     return draw_calls;
+}
+
+uint64_t tide_platform_draw_vertices(void)
+{
+    return draw_vertices;
 }
 
 void tide_platform_draw_overlay(const char *text)

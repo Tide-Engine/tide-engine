@@ -920,12 +920,21 @@ static inline tide_draw_transform tide_draw_transform_matrix(const tide_float3x3
     return (tide_draw_transform){{m.c0.x, m.c0.y}, {m.c1.x, m.c1.y}, {m.c2.x, m.c2.y}};
 }
 
-// The settings that say where a destination's commands land, what its 3D
-// meshes do with its depth and which side of their triangles draws, and what
-// its draws do with its stencil, which each destination has its own of (see
-// Settings, below). A zeroed one is a frame's first: the first cameras, no
-// clip, no transform, depth read and written, no triangle drawn from the
-// back, and no stencil test.
+// Conservative local geometry bounds used only for drawing.
+typedef struct tide_draw_bounds {
+    tide_float3 center, extents;
+    uint32_t set; // 0: automatic geometry bounds; 1: explicit; 2: invalid, so keep the draw
+} tide_draw_bounds;
+
+// Cached camera planes and conservative rounding coefficients; no match state.
+typedef struct tide_draw_frustum {
+    double plane[6][4], magnitude[6][4];
+    uint32_t count;
+} tide_draw_frustum;
+
+// The settings of one destination. Zero starts a frame: first cameras, no clip
+// or transform, depth read/written, back faces rejected, no stencil test,
+// automatic geometry bounds and frustum culling enabled.
 typedef struct tide_draw_place {
     // What the commands to come are drawn through: 1 + its place in tide_draw_list.cameras and
     // cameras_3d, or 0 for the camera each frame starts with...
@@ -937,6 +946,8 @@ typedef struct tide_draw_place {
     uint32_t blend;   // tide_blend: how the commands to come go over what's there
     uint32_t lod;        // 0: a mesh with levels of detail has one picked. Else 1 + the level every one draws at
     uint32_t lod_camera; // 0: the pick is through `camera_3d`. Else 1 + the place in cameras_3d of the camera it's through
+    uint32_t no_frustum_culling; // Zero enables rejection against this destination's camera
+    tide_draw_bounds bounds;    // Optional mesh-local bounds, before the instance and Draw.Transform
     uint32_t tinted;  // Whether `tint` is anything but white: it's unset otherwise
     tide_color tint;  // What the commands to come have their colors multiplied by
     // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
@@ -1004,6 +1015,7 @@ typedef struct tide_draw_saved {
             float scale;
         };
         tide_float4x4 transform_3d;
+        tide_draw_bounds bounds;
     };
 } tide_draw_saved;
 
@@ -1022,6 +1034,8 @@ enum {
     TIDE_DRAW_SAVED_STENCIL,
     TIDE_DRAW_SAVED_LOD,
     TIDE_DRAW_SAVED_LOD_CAMERA,
+    TIDE_DRAW_SAVED_FRUSTUM_CULLING,
+    TIDE_DRAW_SAVED_BOUNDS,
 };
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
@@ -1099,6 +1113,8 @@ typedef struct tide_draw_mesh_data {
     // and its `vertex_count` and `vertex_size` are that mesh's), and which of its levels it is, from 1. 0 for
     // every other mesh
     uint32_t base, level;
+    tide_draw_bounds bounds; // Cached geometry AABB; independent of the LOD sphere
+    uint32_t bounds_position; // 1 + byte offset of the float3 used for the cached bounds
 } tide_draw_mesh_data;
 
 // TIDE_MESH_BYTES: Tide's lists, their vertices as their struct has them (see
@@ -1208,6 +1224,7 @@ typedef struct tide_shader {
     uint32_t texture_count;
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
     uint8_t outputs; // The colors its fragment stage writes: 1 for 0, TIDE_TARGET_COLORS at the most
+    uint32_t bounds_position; // 1 + float3 position's byte offset, only for undeformed 3D geometry; 0: unknown
 } tide_shader;
 
 static inline uint32_t tide_shader_outputs(const tide_shader *s)
@@ -1305,8 +1322,8 @@ typedef struct tide_draw_list {
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t epoch;   // Counts tide_draw_forget
     struct tide_skinned_draw_cache *skinned; // Private frame-local palette captures
-    // Levels of detail (tide_draw_mesh_levels). The window's size in logical pixels, which a host says
-    // (tide_draw_screen_size): with none, nothing is picked, and every mesh draws whole
+    // The window's size in logical pixels, supplied before recording (tide_draw_screen_size).
+    // With none, window frustum culling and automatic LOD selection are skipped.
     tide_float2 screen;
     float lod_pixels;  // How many pixels a level may be off by to be picked; 0 is 1
     uint32_t leveled;  // Whether the frame drew a level: its runs may want gathering (tide_draw_gather_levels)
@@ -1315,6 +1332,10 @@ typedef struct tide_draw_list {
     // What the last pick went by, kept for the draws after it through the same camera into as many pixels: a
     // view that runs for each entity asks once a draw. `frame` + 1, the camera's place, and the pixels as bits
     uint32_t lod_seen[4];
+    uint32_t frustum_seen[3]; // Camera, destination and epoch; reset and sizes also invalidate the cached matrix
+    tide_float2 frustum_screen;
+    tide_draw_frustum frustum;
+    bool frustum_ready;
     float lod_view[6]; // How many times a pixel a unit of the world is, its camera's w row, and that row's length
 } tide_draw_list;
 
@@ -1529,6 +1550,17 @@ uint32_t tide_draw_push_no_lod_camera(tide_draw_list *d);
 // The window's size in logical pixels, for the pick: a host says it before
 // the frame's views draw, and it stays until it's said again.
 void tide_draw_screen_size(tide_draw_list *d, tide_float2 size);
+
+// Frustum culling is visual only, per destination, and enabled each frame.
+// Unknown bounds or destination size keep the draw. Custom verts and skinning
+// require explicit conservative mesh-local bounds. Size is the full box size.
+void tide_draw_set_frustum_culling(tide_draw_list *d, bool enabled);
+void tide_draw_unset_frustum_culling(tide_draw_list *d);
+uint32_t tide_draw_push_frustum_culling(tide_draw_list *d, bool enabled);
+void tide_draw_set_bounds(tide_draw_list *d, tide_float3 center, tide_float3 size);
+void tide_draw_unset_bounds(tide_draw_list *d);
+uint32_t tide_draw_push_bounds(tide_draw_list *d, tide_float3 center, tide_float3 size);
+uint32_t tide_draw_push_no_bounds(tide_draw_list *d);
 
 // How many pixels a level may be off by and still be picked, for every
 // destination: 1 until it's said, and for a number that isn't above 0.
