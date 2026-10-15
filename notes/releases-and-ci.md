@@ -33,6 +33,30 @@ Local validation after that correction passes all 2,360 native debug and 2,272
 web debug CTests, plus the discovery regression on Windows/Linux. The old code
 fails that regression. Actual Apple linking remains the next package run's gate.
 
+Run `38768886333` confirms the Apple fix on the same newer macOS image:
+all package smoke/C++/cache/watch checks pass, including both repaired-build
+comparisons. Windows native instead failed only tide_cli_installers: the
+partial PowerShell warm-up took 10.2 seconds, but the first timed case still
+spent 18.5 seconds between its release-list return and first mock download,
+using only 0.125 seconds of CPU in that interval. It hit the unchanged
+30-second guard after both mock downloads. The exact assembly/file wait in
+release selection/scratch setup is not identified; the earlier assertion that
+the cmdlet-only warm-up covered all first-load costs was too broad.
+
+The preflight now executes the actual mocked fresh installer with the same
+release fixture, real checksum and isolated modules/TEMP, stopping before
+unpacking. It keeps its existing 300-second startup guard; all nine cases keep
+their 30-second guards and assertions. No real installation, PATH/profile or
+registry write is performed. A temporary one-time 31-second release-selection
+stall fails the old first case and is absorbed by the full preflight; the new
+nine cases then all pass. Ordinary and poisoned inherited module/cache-path
+runs pass all nine cases locally. A separate 31-second stall injected only
+after preflight still fails the first timed case at 30.02 seconds. Full native
+debug passes 2,360 tests (67.65 seconds), and web debug passes 2,272 (178.91
+seconds), including WebGL/WebGPU. The final preflight's release/request/cleanup
+assertions and all nine ordinary cases pass again; Node syntax and whitespace
+checks pass. No installer or workflow behavior changed.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
