@@ -105,6 +105,18 @@ all 33 hosting tests with native/web/server identity and browser cases enabled;
 all pass. The merged docs production build passes with both guides retained.
 Clarified that committing the target file grants no project access.
 
+Deployed c85179a6 as Fly release 3, image deployment-01M5051CME9PYXNPZV5VNAMYRK,
+on the existing machine/volume; smoke, health and public HTTPS health checks pass.
+A real sandbox Checkout attempt then exposed Stripe rejecting the old
+payment_method_types parameter (HTTP 400), which mocks had accepted. Following
+[Stripe's migration guide](https://docs.stripe.com/payments/payment-methods/dynamic-payment-methods),
+removed that parameter so configured Dashboard payment methods apply, and pinned
+both session creation/retrieval to 2026-09-30.endive, matching the webhook version.
+Regressions assert the omitted parameter/version and provider-state fulfillment.
+All seven affected auth/payment/HTTP tests pass. No payment was completed or
+credit granted by the probe. Sandbox retry and follow-up deployment results
+are recorded after completion.
+
 Owner access and console appearance (2026-10-15): the owner's live GitHub
 callback reached the invite gate. Resolved the authenticated local GitHub
 identity as BlenMiner (4602596) and ran the operator `admin.mjs invite` on
