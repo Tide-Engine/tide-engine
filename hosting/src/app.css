@@ -95,6 +95,8 @@ form p { margin: 0; }
 .project:first-child, .match:first-child, .event:first-child, .entry:first-child { border-top: 0; padding-top: 0; }
 .project-head, .match-head, .entry { display: flex; justify-content: space-between; gap: 15px; align-items: center; }
 .project-head strong, .match-head strong { font-size: 16px; font-weight: 600; }
+.project-play { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 14px 0; }
+.game-url { min-width: 0; color: var(--accent); font: 12px/1.6 ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; }
 .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 3px 7px; }
 .badge.running { color: var(--tip); }
 .badge.failed, .danger { color: var(--danger); }
