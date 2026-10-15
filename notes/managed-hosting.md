@@ -57,8 +57,28 @@ duplicate/out-of-order renewal, expiry, cancellation, source-preserving refunds,
 paid-period lease bounds, shared caps, uncertain retries and authentication
 failure. The real settings API is exercised in the browser, with extra usage
 off initially, then opt-in. Desktop/phone light/dark UI captures were inspected;
-Svelte check has zero errors/warnings and both production builds pass. Final
-provider drills/deployment/integration results follow completion.
+Svelte check has zero errors/warnings and both production builds pass. Incoming
+dev changes included a CLI toolchain fix; rebuilt/refreshed the private CLI and
+all 40 hosting tests pass again, including native/web/server builds and Chrome.
+Source 27d03438 (including d88f32c8) deployed as Fly release 5, image
+deployment-01M508P29EDDHJXEVVCMP8XZ41. Machine/health checks and public HTTPS
+health pass on the existing machine/volume; allocations and zero usage rates
+remain unchanged. No CI was dispatched.
+
+Real Stripe sandbox drills use the deployed modules, an isolated in-memory
+Store and disposable Stripe test-clock customers. Verified a paid initial
+invoice, duplicate grant prevention, a successful saved-method/off-session
+EUR 5 top-up, refusal of another purchase at its cap, paid monthly renewal via
+clock advancement, fresh allowance with no rollover, preserved purchased funds,
+cap reset, cancellation at period end and loss of access after that period.
+A separate hosted subscription Checkout smoke verifies mode/amount/customer,
+reuses the pending session on retry, grants no credit before payment and opens
+the configured Customer Portal. The unpaid checkout was expired; its test
+customer and the test-clock customer/subscription were deleted afterward.
+The owner's persistent account, subscription and balance were not modified.
+Provider setup/drill helpers and logs remain under ignored build/; no API key
+was read into local output or committed. Real-money pricing/tax/launch checks
+remain outstanding, as do independent backup and remote hosting checks below.
 
 Implemented first local-build hosting workflow, at the owner's request. GitHub
 sign-in, Stripe prepaid credit and the existing Fly.io organization/relay are
