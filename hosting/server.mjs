@@ -15,6 +15,7 @@ import { Maintenance } from './maintenance.mjs';
 export async function createService(config, options = {}) {
     await mkdir(config.folder, { recursive: true, mode: 0o700 });
     const store = options.store || new Store(join(config.folder, 'hosting.sqlite'));
+    store.billing.required = config.subscriptionRequired;
     const auth = new Auth(store, { ...config, fetcher: options.fetcher });
     const payments = new Payments(store, { ...config, fetcher: options.fetcher });
     const bundles = new Bundles(join(config.folder, 'bundles'), config);
@@ -37,7 +38,9 @@ export async function createService(config, options = {}) {
         memoryBytes: matches.running.get(match.id)?.worker?.memoryBytes || 0,
         cpuFraction: matches.running.get(match.id)?.worker?.cpuFraction ?? null,
         created: match.created, updated: match.updated, players: matches.running.get(match.id)?.players || 0 });
-    const accountView = account => ({ id: account.id, login: account.login, balance: account.balance,
+    const accountView = account => ({ id: account.id, login: account.login, balance: store.billing.state(account.id).balance,
+        billing: { ...store.billing.state(account.id), monthlyAmount: config.monthlyAmount,
+            available: Boolean(config.stripePrice && config.stripeSecret && config.stripeWebhookSecret), portal: Boolean(config.stripePortal) },
         csrf: account.kind === 'browser' ? account.csrf : undefined, currency: config.currency,
         topups: config.topups, paymentsAvailable: Boolean(config.topups.length && config.stripeSecret && config.stripeWebhookSecret),
         paymentTestMode: /^[sr]k_test_/.test(config.stripeSecret || ''), region: config.region, presets: config.presets,
@@ -45,6 +48,7 @@ export async function createService(config, options = {}) {
         incidents: store.incidents(account.id), projects: store.projects(account.id).map(urls),
         releases: store.db.prepare('SELECT r.project,r.id,r.created,r.bytes FROM releases r JOIN projects p ON p.id=r.project WHERE p.account=? ORDER BY r.created DESC').all(account.id),
         credentials: store.db.prepare('SELECT s.hash,s.project,t.expires FROM service_tokens s JOIN tokens t ON t.hash=s.hash WHERE t.account=? AND t.expires>?').all(account.id, store.now()),
+        deployTokens: store.db.prepare('SELECT d.hash,d.project,d.name,NULLIF(t.expires,0) AS expires FROM deploy_tokens d JOIN tokens t ON t.hash=d.hash WHERE t.account=? AND (t.expires=0 OR t.expires>?)').all(account.id, store.now()),
         matches: store.matches(account.id).map(safeMatch),
         ledger: store.db.prepare('SELECT amount,reference,created FROM ledger WHERE account=? ORDER BY id DESC LIMIT 50').all(account.id) });
     const security = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -75,8 +79,13 @@ export async function createService(config, options = {}) {
                 const charge = config.presets[project.preset].rate * config.leaseSeconds;
                 const paid = store.db.prepare(`SELECT 1 FROM matches WHERE project=? AND paid_until>?
                     AND state IN ('starting','running','recovering') LIMIT 1`).get(project.id, store.now());
-                requireValue(paid || (charge > 0 && store.account(project.account).balance >= charge),
-                    402, 'This game needs prepaid hosting credit before it can be played.');
+                if (!paid) {
+                    const billing = store.billing.state(project.account);
+                    requireValue(billing.active && billing.balance > 0, 402, 'This game needs an active hosting plan with available credit before it can be played.');
+                    requireValue(charge > 0, 503, 'Hosting prices are not configured. Please contact the hosting operator.');
+                    requireValue(billing.balance >= charge, 402, 'This game has insufficient hosting credit to start a match.');
+                    requireValue(config.accepting && store.allocationsEnabled(), 503, 'New match creation is temporarily disabled.');
+                }
                 const bundle = await bundles.get(match?.release || project.release), client = bundle.files.get('client.html');
                 requireValue(client, 404, 'This deployment hosts only the server.');
                 store.reserveTransfer(project.account, client.size, config);
@@ -142,6 +151,16 @@ export async function createService(config, options = {}) {
                 return json(response, 200, result ? { ...result, complete: true } : { complete: false });
             }
             const account = auth.authenticate(request, !['GET', 'HEAD'].includes(method));
+            if (account.kind === 'deploy') {
+                requireValue(account.project && ((method === 'GET' && url.pathname === '/api/account')
+                    || (method === 'POST' && url.pathname === `/api/projects/${account.project}/releases`)
+                    || (method === 'POST' && url.pathname === '/api/logout')),
+                403, 'Deploy tokens may upload releases only for their own project.');
+                if (url.pathname === '/api/account') {
+                    const { id, name } = store.project(account.id, account.project);
+                    return json(response, 200, { region: config.region, projects: [{ id, name }] });
+                }
+            }
             if (account.kind === 'service') {
                 const create = /^\/api\/projects\/([a-f0-9]{32})\/matches$/.exec(url.pathname);
                 const control = /^\/api\/matches\/(\d{1,15})\/(suspend|end|resume|policy|logs|save)$/.exec(url.pathname);
@@ -165,12 +184,32 @@ export async function createService(config, options = {}) {
                 rate.take(`checkout/${account.id}`, 5);
                 return json(response, 200, { url: await payments.checkout(account, (await body(request)).amount) });
             }
+            if (method === 'POST' && url.pathname.startsWith('/api/billing/')) {
+                rate.take(`billing/${account.id}`, 10);
+                if (url.pathname === '/api/billing/subscribe') return json(response, 200, { url: await payments.subscribe(account) });
+                if (url.pathname === '/api/billing/portal') return json(response, 200, { url: await payments.portal(account) });
+                if (url.pathname === '/api/billing/cancel') {
+                    await payments.cancellation(account, (await body(request)).cancel); return json(response, 200, { ok: true });
+                }
+                if (url.pathname === '/api/billing/extra') {
+                    store.billing.settings(account.id, await body(request), config.topups); return json(response, 200, { ok: true });
+                }
+            }
             if (method === 'POST' && url.pathname === '/api/projects') {
                 const project = store.createProject(account.id, await body(request), config);
                 if (rooms) await rooms.ensure(project);
                 return json(response, 201, urls(project));
             }
             const releaseRoute = /^\/api\/projects\/([a-f0-9]{32})\/releases$/.exec(url.pathname);
+            const deployTokenRoute = /^\/api\/projects\/([a-f0-9]{32})\/deploy-tokens(?:\/([a-f0-9]{64}))?$/.exec(url.pathname);
+            if (deployTokenRoute) {
+                const [, project, hash] = deployTokenRoute;
+                store.project(account.id, project);
+                if (method === 'POST' && !hash) return json(response, 201, store.issueDeployToken(account.id, project, await body(request)));
+                requireValue(method === 'DELETE' && hash && store.db.prepare('SELECT 1 FROM deploy_tokens WHERE project=? AND hash=?').get(project, hash),
+                    404, 'Deploy token not found.');
+                store.revokeToken(hash); return json(response, 200, { ok: true });
+            }
             const credentialRoute = /^\/api\/projects\/([a-f0-9]{32})\/credentials(?:\/([a-f0-9]{64}))?$/.exec(url.pathname);
             if (credentialRoute) {
                 const [, project, hash] = credentialRoute;
@@ -295,7 +334,8 @@ export async function createService(config, options = {}) {
                 if (closing) return;
                 try {
                     await matches.tick();
-                    if (store.now() >= cleanupAt) { cleanupAt = store.now() + 60_000; await maintenance.sweep(); }
+                    payments.poll(config);
+                    if (store.now() >= cleanupAt) { cleanupAt = store.now() + 60_000; store.billing.expire(); await maintenance.sweep(); }
                 } catch (error) { console.error('tide: hosting maintenance failed:', error.message); }
                 finally { if (!closing) timer = setTimeout(tick, 5); }
             };
@@ -305,6 +345,7 @@ export async function createService(config, options = {}) {
         },
         async close() {
             closing = true; clearTimeout(timer);
+            await payments.close();
             const httpClosed = new Promise(accept => server.close(accept));
             await matches.close(); await rooms?.close();
             await httpClosed;

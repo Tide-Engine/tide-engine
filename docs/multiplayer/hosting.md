@@ -23,6 +23,10 @@ server from the same resolved game, checks their generated simulation IDs and
 uploads both. It returns a playable URL, server endpoint and dashboard link.
 The service receives built artifacts; it does not compile uploaded source.
 
+The console shows the selectable **Game URL** on each project with a web client,
+and a **Match URL** for joining a specific running match. Click a URL field to
+select it for copying. Server-only deployments have no hosted game URL.
+
 ```sh
 tide deploy --server-only
 tide deploy --bundle-only
@@ -49,6 +53,31 @@ project with custom settings before deploying.
 `TIDE_HOSTING_URL` selects another configured service origin. The operator setup
 is documented in the repository's `hosting/README.md`. A normal developer CLI
 credential expires after 30 days and can be revoked with `tide logout`.
+
+## Deploy from CI
+
+In your console project's **CI deploy tokens**, create a named token and copy it
+when shown. Store it as a CI secret named `TIDE_HOSTING_TOKEN`. Tokens belong to
+one existing project, expire after 90 days by default (30 days, one year or
+**Never expires** are also available), and can be revoked individually. Only their
+hashes are stored by the service. Creating a new token leaves existing tokens
+working so you can rotate your CI secret before revoking the old token.
+
+With Tide installed and your game checked out, a GitHub Actions step can use:
+
+```yaml
+- name: Deploy game
+  env:
+    TIDE_HOSTING_TOKEN: ${{ secrets.TIDE_HOSTING_TOKEN }}
+  run: tide deploy path/to/game
+```
+
+Commit the game's `tide.deploy.json`, or pass `--project <project-id>` to select
+the token's project explicitly. No browser login is needed in CI. These tokens
+can upload releases and discover only their project's name and ID; they cannot
+create projects, change billing, manage credentials or control matches. Use
+runtime credentials separately for trusted match orchestration. Keep tokens out
+of project files, command arguments and logs.
 
 ## Matches and versions
 
@@ -84,14 +113,30 @@ Matches end after all player connections leave and the empty grace passes
 ended. Its owner can change this policy or suspend/end/resume a match through
 the dashboard/API. Admission remains separate from ending a world.
 
-Hosting uses prepaid credit. The dashboard shows configured prices, capacity,
+Hosting uses a monthly subscription with an included usage allowance. The
+allowance resets each paid billing cycle; unused monthly allowance expires.
+Purchased extra credit is separate and carries forward. Monthly allowance is
+used first. Hosting requires an active paid period, including when purchased
+credit remains after a subscription ends. Canceling renewal keeps access until
+the end of the paid period. Deploying artifacts does not start a subscription.
+
+Extra usage starts disabled. In **Plan & extra credit**, you can enable it,
+choose an automatic prepaid top-up amount and set the maximum additional
+purchases per billing cycle. This authorizes payments against your saved Stripe
+payment method when credit runs low. Manual and automatic purchases share the
+same cap, including pending purchases. Payment must succeed before credit is
+available; authentication failures pause automatic purchases and show guidance.
+Purchased credit from earlier cycles does not count as a new purchase.
+
+The dashboard shows configured prices, capacity,
 WASM memory, sampled CPU use, logs, saves, incidents and billing history. At low
 credit it warns; exhaustion saves and suspends even long-lived worlds. Capacity,
 bandwidth, storage and operator limits also apply. Included allowances are hard
 limits, rather than automatic paid overages.
 
-Select **Add credit** beside your balance, choose an amount and continue to
-Stripe Checkout. Credit appears after payment is confirmed. Sandbox payments
+Select **Plan & extra credit** beside your balance to subscribe or manage
+billing. After enabling extra usage, you can also buy credit manually through
+Stripe Checkout, within the same cap. Credit appears after payment is confirmed. Sandbox payments
 are labeled and charge no real money. If payments are unavailable, the panel
 explains this instead of showing an empty amount selector.
 
@@ -104,5 +149,4 @@ is no promised cross-release save migration. Players reconnect after recovery.
 Saves of inactive worlds have finite retention, initially seven days, with a
 final-day dashboard warning. Download or resume a world before its save expires.
 An explicitly ended or payment-suspended world does not restart automatically.
-Email notifications, multiple host machines/regions and automatic top-ups are
-not implemented yet.
+Email notifications and multiple host machines/regions are not implemented yet.
