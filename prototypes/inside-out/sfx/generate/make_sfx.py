@@ -23,7 +23,7 @@ which the music's chords hold either way:
 
   wood     a painted box: damped modes from 140 Hz to 1.1 kHz, struck soft
            (3-5 ms rise)
-  floor    plaster under rubber treads: low damped modes and low-passed noise
+  floor    plaster under rubber treads: short dry broadband scuffs, no motor chirp
   servo    the robots' little motors: a soft harmonic tone with gear ripple
   voice    the robots' hum ("mm"): a rounded harmonic tone through a low-pass
   brass    latches, plate rims, battery tops: damped modes at 1.2-1.9 kHz
@@ -324,9 +324,9 @@ MALLET = (
     # ratio, amplitude, share of the note's T60, scaled by brightness
     (1.0, 1.0, 1.0, False),
     (1.0009, 0.22, 0.85, False),  # a second bar a hair sharp: slow shimmer
-    (2.0, 0.12, 0.32, True),
-    (3.0, 0.04, 0.16, True),
-    (4.16, 0.025, 0.06, True),    # the brief bar 'tink'
+    (2.0, 0.20, 0.32, True),
+    (3.0, 0.07, 0.16, True),
+    (4.16, 0.04, 0.06, True),     # the brief bar 'tink'
 )
 
 
@@ -359,11 +359,12 @@ def pad(freqs, seconds, rng, cutoff):
 # ---------------------------------------------------------------- materials
 
 BOX = ((142, 0.16, 1.0), (231, 0.10, 0.55), (348, 0.075, 0.40),
-       (517, 0.05, 0.25), (766, 0.035, 0.14), (1130, 0.022, 0.06))
+       (517, 0.05, 0.25), (766, 0.035, 0.20), (1130, 0.022, 0.12),
+       (1850, 0.016, 0.06), (2650, 0.010, 0.025))
 FLOOR = ((92, 0.08, 1.0), (158, 0.06, 0.45), (262, 0.04, 0.2))
-# Brass rings mostly at its two low modes; the 2.7 and 3.55 kHz modes are
-# kept at a third of a struck rim's so a latch reads as a tick, not a tink.
-BRASS = ((1240, 0.035, 1.0), (1870, 0.026, 0.6), (2710, 0.018, 0.1), (3550, 0.012, 0.04))
+# Brass keeps a little upper-mode detail, with a rounded onset rather than
+# a hard transient, so a latch reads clearly without a sharp metallic ping.
+BRASS = ((1240, 0.035, 1.0), (1870, 0.026, 0.6), (2710, 0.018, 0.22), (3550, 0.012, 0.10))
 BRASS_RISE = 2.8
 CELL = ((262, 0.06, 1.0), (608, 0.04, 0.5), (1020, 0.034, 0.42), (1650, 0.024, 0.26))
 PLATE = ((165, 0.06, 1.0), (290, 0.045, 0.5), (470, 0.035, 0.3), (720, 0.02, 0.15))
@@ -431,24 +432,17 @@ def room(x, mix, rt60, damp, rise_ms, seed):
 
 # ---------------------------------------------------------------- robots
 
-def step(seed, servo_hz, seconds, lift, links):
-    """One robot rolls one cell: rubber treads purring over plaster (noise
-    with a soft 60-80 Hz tread ripple), a rubbery pat as it sets off, and a
-    tiny servo chirp that rises and settles."""
+def step(seed, seconds, texture):
+    """A brief, dry rubber scuff with a small surface tick. There is no
+    pitched servo, note sweep or periodic tread modulation to repeat with
+    every cell. Seed and broad noise colour distinguish the three takes."""
     rng = np.random.default_rng(seed)
-    t = times(seconds)
-    roll = 0.5 + 0.5 * np.cos(TAU * links * t + rng.uniform(0.0, TAU))
-    treads = 0.3 + 0.7 * roll ** 4
-    grit = lowpass4(bandpass(white(seconds, rng), 420.0, 0.8), 1100.0)
-    rumble = lowpass4(white(seconds, rng), 220.0)
-    tread = ((unit(grit) + 0.7 * unit(rumble)) * treads
-             * shape(seconds, [(0, 0), (0.012, 1), (0.055, 0.8), (seconds - 0.012, 0)]))
-    pat = modes(seconds, FLOOR, 4.0, scale=1.35)
-    arc = np.clip(t / 0.085, 0.0, 1.0)
-    chirp = servo_hz * (1.0 + lift * np.sin(np.pi * arc) - 0.25 * lift * arc)
-    whirr = servo(chirp, 0.3) * shape(seconds, [(0, 0), (0.008, 0), (0.024, 1), (0.07, 0.6), (0.095, 0)])
-    out = 0.8 * unit(tread) + 0.55 * unit(pat) + 0.5 * unit(whirr)
-    return room(out, 0.10, **NEAR)
+    scuff = lowpass4(highpass(white(seconds, rng), 420.0), 3400.0)
+    scuff = peaking(scuff, texture, .65, 2.0)
+    scuff *= shape(seconds, [(0, 0), (0.005, 1), (0.018, .55), (seconds - .012, 0)])
+    tick = contact(seconds, rng, 4400.0, .024, 2.5)
+    pat = modes(seconds, FLOOR, 3.0, scale=1.8, damp=.45)
+    return .65 * unit(scuff) + .28 * unit(tick) + .20 * unit(pat)
 
 
 def nose(seconds, rng):
@@ -459,60 +453,51 @@ def nose(seconds, rng):
 
 
 def bump():
-    """A step that cannot happen: the nose's muted thud, and the robot hums a
-    small falling 'nope', F4 then D4 (a minor third, as 'uh-uh' falls)."""
-    seconds = 0.18
+    """An unobtrusive rubber contact; no voiced 'nope' on failed moves."""
+    seconds = 0.105
     rng = np.random.default_rng(301)
-    thud = nose(seconds, rng)
-    f4, d4 = pitch("F4"), pitch("D4")
-    hum = glide(seconds, [(0.0, f4), (0.094, f4), (0.106, d4), (0.13, d4), (0.17, d4 * 0.97)])
-    nope = voice(hum) * shape(seconds, [(0, 0), (0.03, 0), (0.042, 1), (0.085, 0.8), (0.097, 0.3),
-                                        (0.108, 0.9), (0.14, 0.6), (seconds - 0.008, 0)])
-    out = unit(thud) + 0.45 * unit(nope)
-    return room(out, 0.10, **NEAR)
+    return unit(nose(seconds, rng)) + .16 * unit(contact(seconds, rng, 3000.0, .025, 3.0))
 
 
 def bump_soft():
-    """The bump without the voice, for a held key repeating into a wall:
-    the nose's thud alone, short enough to finish before the next repeat."""
-    seconds = 0.085
+    """An even smaller contact for a held key repeating into a wall."""
+    seconds = 0.065
     rng = np.random.default_rng(302)
     return room(nose(seconds, rng), 0.06, **NEAR)
 
 
 def threshold(entering):
     """A robot steps through a doorway and shrinks into (or grows out of) a
-    room: breathy air through a band-pass sweeping down (or up) between 200
-    and 950 Hz, kept under 1.2 kHz; a hollow wooden body (noise through three
-    of the box's resonances, sliding the same way, kept under 1.5 kHz); and
+    room: a broad surface brush between 700 and 1400 Hz, keeping detail up
+    to 3.4 kHz, with only a little hollow wooden body under it; and
     a soft wooden tap as it lands inside, at the lip (entering, 0.38 s of
-    the 0.55 s passage), or as it pushes off (leaving). Slow swells, no
-    edge: the doorway cue the owner found hard on the ears reached 2.4 kHz."""
+    the 0.55 s passage), or as it pushes off (leaving). Smooth swells and a
+    dry texture replace the strongly resonant, muffled sweep."""
     seconds = 0.6 if entering else 0.44
     rng = np.random.default_rng(401 if entering else 402)
     t = times(seconds)
     if entering:
         u = np.clip(t / 0.46, 0.0, 1.0)
-        air_hz = 950.0 * (200.0 / 950.0) ** u
+        air_hz = 1400.0 * (700.0 / 1400.0) ** u
         bend = 1.25 * (0.8 / 1.25) ** u
         air_env = [(0, 0), (0.19, 1), (0.40, 0.5), (seconds - 0.012, 0)]
         body_env = [(0, 0), (0.14, 0.4), (0.30, 1), (0.42, 0.5), (seconds - 0.012, 0)]
         tap_at, tap_gain = 0.38, 0.55
     else:
         u = t / seconds
-        air_hz = 200.0 * (950.0 / 200.0) ** u
+        air_hz = 700.0 * (1400.0 / 700.0) ** u
         bend = 0.8 * (1.25 / 0.8) ** u
         air_env = [(0, 0), (0.03, 0.15), (0.26, 1), (0.36, 0.5), (seconds - 0.01, 0)]
         body_env = [(0, 0), (0.06, 0.5), (0.2, 1), (0.32, 0.5), (seconds - 0.01, 0)]
         tap_at, tap_gain = 0.012, 0.3
-    air = lowpass4(sweep_band(white(seconds, rng), air_hz, 2.2), 1200.0) * shape(seconds, air_env)
+    air = lowpass4(sweep_band(white(seconds, rng), air_hz, .8), 3400.0) * shape(seconds, air_env)
     hollow = np.zeros(len(t))
     for hz, _, amp in BOX[:3]:
         hollow += amp * sweep_band(white(seconds, rng), hz * bend, 18.0)
     hollow = lowpass4(hollow, 1500.0) * shape(seconds, body_env)
     tap = add(blank(seconds), modes(seconds - tap_at, BOX, 4.5, scale=1.35), tap_at)
-    out = unit(air) + 0.7 * unit(hollow) + tap_gain * unit(tap)
-    return room(out, 0.16, **NEAR)
+    out = unit(air) + 0.2 * unit(hollow) + tap_gain * unit(tap)
+    return room(out, 0.08, **NEAR)
 
 
 # ---------------------------------------------------------------- boxes and batteries
@@ -526,26 +511,26 @@ def push_box(seed, seconds, stop, scale):
     noise = white(seconds, rng)
     scrape = unit(bandpass(noise, 600.0 * scale, 0.7))
     ring = sum(amp * bandpass(noise, hz * scale, 9.0) for hz, _, amp in BOX[:4])
-    scrape = lowpass4(scrape + 0.6 * unit(ring), 1600.0) * wander(seconds, rng, 140.0, 45.0, 0.55)
+    scrape = lowpass4(scrape + 0.6 * unit(ring), 3400.0) * wander(seconds, rng, 140.0, 45.0, 0.55)
     scrape *= shape(seconds, [(0, 0), (0.02, 1), (stop - 0.03, 0.75), (stop + 0.008, 0)])
     rest = seconds - stop
     thunk = blank(seconds)
     add(thunk, modes(rest, BOX, 3.5, scale), stop)
     add(thunk, modes(rest, FLOOR, 4.0), stop, 0.4)
-    add(thunk, contact(rest, rng, 900.0, 0.03, 2.0), stop, 0.15)
+    add(thunk, contact(rest, rng, 3200.0, 0.03, 2.5), stop, 0.35)
     out = 0.42 * unit(scrape) + unit(thunk)
     return room(out, 0.12, **NEAR)
 
 
 def push_battery(seed, seconds, scale):
     """A small heavy battery is nudged: a small clack of its body (2 ms
-    rise) and copper top, a short slide (noise around 850 Hz, kept under
-    1.8 kHz) and a tiny settle."""
+    rise) and copper top, a short slide with detail up to 3.6 kHz, and a
+    tiny settle."""
     rng = np.random.default_rng(seed)
     clack = blank(seconds)
     add(clack, modes(seconds, CELL, 2.0, scale), 0.003)
     add(clack, modes(seconds, BRASS, BRASS_RISE, scale), 0.003, 0.15)
-    slide = lowpass4(bandpass(white(seconds, rng), 850.0 * scale, 0.9), 1800.0)
+    slide = lowpass4(bandpass(white(seconds, rng), 1400.0 * scale, 0.7), 3600.0)
     slide *= wander(seconds, rng, 220.0, 70.0, 0.5)
     slide *= shape(seconds, [(0, 0), (0.012, 0), (0.03, 1), (seconds - 0.05, 0.6), (seconds - 0.03, 0)])
     settle = add(blank(seconds), modes(0.05, CELL, 2.0, scale * 1.06), seconds - 0.05)
@@ -639,7 +624,7 @@ def shutter(opening):
         band, motor_hz, stop_modes, rise = 950.0 * (470.0 / 950.0) ** u, 150.0 * 0.8 ** u, STOP_SOFT, 4.0
     else:
         band, motor_hz, stop_modes, rise = 380.0 * (720.0 / 380.0) ** u, 110.0 * 1.25 ** u, STOP_FIRM, 3.0
-    slide = lowpass4(sweep_band(white(seconds, rng), band, 1.6), 1700.0)
+    slide = lowpass4(sweep_band(white(seconds, rng), band * 1.5, .8), 3600.0)
     slide *= wander(seconds, rng, 160.0, 50.0, 0.45)
     slide *= shape(seconds, [(0, 0), (0.03, 1), (stop - 0.03, 0.85), (stop + 0.006, 0)])
     motor = servo(motor_hz, 0.4 if not opening else 0.35)
@@ -812,20 +797,20 @@ def ui_slide():
 # name, builder, loudness (the loudest 50 ms, K-weighted, dB), peak ceiling
 # dBFS, allowed seconds, fade-out ms, final low-pass Hz, format.
 SOUNDS = (
-    ("step1", lambda: step(101, 540.0, 0.12, 0.20, 70.0), -23.0, -10.0, (0.09, 0.15), 12, 6000.0, "wav"),
-    ("step2", lambda: step(102, 585.0, 0.13, 0.16, 64.0), -23.0, -10.0, (0.09, 0.15), 12, 6000.0, "wav"),
-    ("step3", lambda: step(103, 505.0, 0.11, 0.24, 78.0), -23.0, -10.0, (0.09, 0.15), 12, 6000.0, "wav"),
+    ("step1", lambda: step(101, 0.075, 1500.0), -30.0, -10.0, (0.06, 0.09), 12, 6000.0, "wav"),
+    ("step2", lambda: step(102, 0.080, 1750.0), -30.0, -10.0, (0.06, 0.09), 12, 6000.0, "wav"),
+    ("step3", lambda: step(103, 0.070, 1300.0), -30.0, -10.0, (0.06, 0.09), 12, 6000.0, "wav"),
     ("push_box1", lambda: push_box(201, 0.23, 0.165, 1.0), -19.3, -7.0, (0.18, 0.26), 15, 6000.0, "wav"),
     ("push_box2", lambda: push_box(202, 0.25, 0.18, 0.95), -19.3, -7.0, (0.18, 0.26), 15, 6000.0, "wav"),
     ("push_battery1", lambda: push_battery(211, 0.16, 1.0), -23.7, -7.0, (0.12, 0.20), 12, 6000.0, "wav"),
     ("push_battery2", lambda: push_battery(212, 0.18, 0.94), -23.7, -7.0, (0.12, 0.20), 12, 6000.0, "wav"),
-    ("bump", bump, -28.0, -12.0, (0.14, 0.20), 12, 6000.0, "wav"),
-    ("bump_soft", bump_soft, -31.0, -12.0, (0.07, 0.10), 12, 6000.0, "wav"),
+    ("bump", bump, -31.0, -12.0, (0.09, 0.12), 12, 6000.0, "wav"),
+    ("bump_soft", bump_soft, -34.0, -12.0, (0.05, 0.08), 12, 6000.0, "wav"),
     ("enter", lambda: threshold(True), -29.5, -10.0, (0.55, 0.65), 20, 6000.0, "wav"),
     ("exit", lambda: threshold(False), -29.5, -10.0, (0.38, 0.48), 20, 6000.0, "wav"),
     ("seat", seat, -18.0, -7.0, (0.50, 0.80), 120, 6000.0, "wav"),
     ("unseat", unseat, -19.0, -9.0, (0.15, 0.25), 15, 6000.0, "wav"),
-    ("dock", dock, -17.5, -7.0, (0.50, 0.80), 120, 6000.0, "wav"),
+    ("dock", dock, -17.7, -7.0, (0.50, 0.80), 120, 6000.0, "wav"),
     ("plate_down", plate_down, -22.2, -9.0, (0.08, 0.14), 12, 6000.0, "wav"),
     ("plate_up", plate_up, -27.5, -10.0, (0.06, 0.12), 12, 6000.0, "wav"),
     ("shutter_open", lambda: shutter(True), -20.5, -7.0, (0.25, 0.35), 15, 6000.0, "wav"),
@@ -833,7 +818,7 @@ SOUNDS = (
     ("undo", undo, -20.0, -10.0, (0.20, 0.30), 8, 6000.0, "wav"),
     ("reset", reset, -19.5, -8.0, (0.50, 0.70), 120, 6000.0, "wav"),
     ("start", start, -17.0, -7.0, (0.80, 1.20), 200, 6000.0, "wav"),
-    ("solve", solve, -14.8, -6.0, (2.00, 3.00), 450, 6000.0, "ogg"),
+    ("solve", solve, -14.9, -6.0, (2.00, 3.00), 450, 6000.0, "ogg"),
     ("join", lambda: partner(True), -17.0, -7.0, (0.40, 0.60), 60, 6000.0, "wav"),
     ("leave", lambda: partner(False), -17.5, -8.0, (0.40, 0.60), 60, 6000.0, "wav"),
     ("ui_hover", ui_hover, -40.2, -20.0, (0.02, 0.04), 5, 4500.0, "wav"),
@@ -846,12 +831,16 @@ SOUNDS = (
 
 
 def master(x, target, ceiling, fade_ms, lowpass_hz):
-    """High-pass at 35 Hz, the final fourth-order low-pass, a 2 ms fade in
+    """High-pass at 35 Hz, broad presence EQ and the final fourth-order
+    low-pass, a 2 ms fade in
     and the given fade out, the mean taken out with a clip-long Hann bump
     (a sub-audio offset that keeps both ends at zero), the loudest 50 ms set
     to the target (K-weighted) under the peak ceiling, then 16-bit samples
     with an exact zero at both ends."""
-    y = lowpass4(highpass(x, 35.0), lowpass_hz)
+    # Restore material detail around 2-4 kHz instead of burying every cue
+    # under the same low-mid body. Upper treble still has a gentle ceiling.
+    y = peaking(highpass(x, 35.0), 280.0, .65, -1.5)
+    y = lowpass4(peaking(y, 2400.0, .65, 2.5), lowpass_hz)
     fade_out(fade_in(y, 2.0), fade_ms)
     bump_shape = np.hanning(len(y))
     y -= bump_shape * (float(np.mean(y)) / float(np.mean(bump_shape)))
@@ -1130,6 +1119,8 @@ def main():
         problems.append(f"set is {total} bytes")
     for problem in problems:
         print("PROBLEM", problem)
+    if problems:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

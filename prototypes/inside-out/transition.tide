@@ -1,0 +1,95 @@
+// Both sides of the aperture follow match ticks. A slow or reconnecting
+// screen joins the same passage instead of starting a local countdown.
+void FoldFrame(float2 center, float half, float angle, Color color, float stroke)
+{
+    var across = float2(Math.Cos(angle), Math.Sin(angle));
+    var along = float2(-across.y, across.x);
+    var a = center + (across + along) * half;
+    var b = center + (across - along) * half;
+    var c = center - (across + along) * half;
+    var d = center - (across - along) * half;
+    Draw.Line(a, b, stroke, color);
+    Draw.Line(b, c, stroke, color);
+    Draw.Line(c, d, stroke, color);
+    Draw.Line(d, a, stroke, color);
+}
+
+void RoomAperture(float closed, float turn, bool reduced)
+{
+    var screen = float2(Screen.width, Screen.height);
+    var center = screen * .5;
+    var reach = Math.Max(screen.x, screen.y) * .75;
+    var half = Math.Lerp(reach, 0, Math.SmoothStep(0, 1, closed));
+    var left = Math.Max(0, center.x - half);
+    var top = Math.Max(0, center.y - half);
+    var right = Math.Min(screen.x, center.x + half);
+    var bottom = Math.Min(screen.y, center.y + half);
+    var ink = Color(.075, .055, .035);
+    Draw.Rect(float2(left * .5, center.y), float2(left, screen.y), ink);
+    Draw.Rect(float2((right + screen.x) * .5, center.y), float2(screen.x - right, screen.y), ink);
+    Draw.Rect(float2(center.x, top * .5), float2(Math.Max(0, right - left), top), ink);
+    Draw.Rect(float2(center.x, (bottom + screen.y) * .5), float2(Math.Max(0, right - left), screen.y - bottom), ink);
+    if (reduced) return;
+    for (var frame = 0; frame < 8; frame++)
+    {
+        var scale = half + frame * 34 + 2;
+        var angle = turn * frame * .025;
+        FoldFrame(center, scale, angle, Math.Lerp(RoomColor(frame % 4), ink, frame * .07), Math.Max(1, 4 - frame * .35));
+    }
+}
+
+[Stage(ArtStage.Controls, 2)]
+view PuzzleTransition(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands)
+{
+    if (!workshop.initialized || lobby.page != Rooms.Page.Playing || !Together(workshop)) return;
+    Draw.SetScreen();
+    var center = float2(Screen.width, Screen.height) * .5;
+    if (workshop.puzzle.solved && workshop.solvedTick >= 0)
+    {
+        var phase = Math.Saturate(float(time.tick - workshop.solvedTick) / SOLVE_TICKS);
+        var last = workshop.level == LEVEL_COUNT - 1;
+        var closed = Math.SmoothStep(.22, .88, phase);
+        if (hands.reduceMotion)
+            Draw.Rect(center, float2(Screen.width, Screen.height), Color(PAPER.r, PAPER.g, PAPER.b, closed));
+        else RoomAperture(closed, phase, false);
+        if (phase < .55)
+        {
+            var tone = Color(SAGE.r, SAGE.g, SAGE.b, Math.Saturate((.55 - phase) * 5));
+            var tick = center + float2(0, -10);
+            Draw.Line(tick - float2(24, 0), tick - float2(6, -18), 4, tone);
+            Draw.Line(tick - float2(6, -18), tick + float2(28, -22), 4, tone);
+        }
+        if (phase > .7)
+        {
+            var alpha = Math.Saturate((phase - .7) / .2);
+            var tone = Color(INK.r, INK.g, INK.b, alpha);
+            if (last)
+            {
+                Heading("inside out", center - float2(0, 18), Screen.width < 720 ? 40.0 : 56.0, tone);
+                Label("Made it, together.", center + float2(0, 36), 18, Color(SAGE.r, SAGE.g, SAGE.b, alpha), Anchor.MiddleCenter);
+            }
+            else
+            {
+                Label(ChapterName(LevelChapter(workshop.level + 1)), center - float2(0, 28), 12, Color(BRASS.r, BRASS.g, BRASS.b, alpha), Anchor.MiddleCenter);
+                Heading($"{workshop.level + 2:D2}. {LevelName(workshop.level + 1)}", center + float2(0, 12), Screen.width < 720 ? 24.0 : 32.0, tone);
+            }
+        }
+        return;
+    }
+    var age = time.tick - workshop.openedTick;
+    if (age < 0 || age >= 48) return;
+    if (age < REVEAL_TICKS)
+    {
+        var closed = 1 - Math.Saturate(float(age) / REVEAL_TICKS);
+        if (hands.reduceMotion)
+            Draw.Rect(center, float2(Screen.width, Screen.height), Color(PAPER.r, PAPER.g, PAPER.b, closed));
+        else RoomAperture(closed, closed, false);
+    }
+    var alpha = Math.Saturate(1 - float(age) / 42);
+    if (alpha > 0)
+    {
+        var at = float2(Screen.width * .5, SceneTop(float2(Screen.width, Screen.height)) + 44);
+        Draw.RoundRect(at, float2(Math.Min(Screen.width - 32, 460), 56), 6, Color(PAPER.r, PAPER.g, PAPER.b, alpha * .95));
+        Heading($"{workshop.level + 1:D2}. {LevelName(workshop.level)}", at, Screen.width < 720 ? 21.0 : 27.0, Color(INK.r, INK.g, INK.b, alpha));
+    }
+}

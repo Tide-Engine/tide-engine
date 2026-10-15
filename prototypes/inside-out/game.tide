@@ -14,6 +14,8 @@ const int MAX_CRATES = 8;
 const int MAX_DEPTH = 8;
 const int LEVEL_COUNT = 18;
 const int UNDO_LIMIT = 128;
+const int SOLVE_TICKS = 72;
+const int REVEAL_TICKS = 24;
 
 // A plate and a shutter for each of two channels, A and B.
 enum Tile { Floor, Wall, Target, Exit, PlateA, ShutterA, PlateB, ShutterB }
@@ -72,6 +74,8 @@ singleton Workshop
     int level;
     int serial;
     int completed;
+    int solvedTick = -1;
+    int openedTick;
     bool initialized;
     Map<PlayerID, int> seats;
     PlayerID[2] players;
@@ -83,7 +87,6 @@ event PuzzleCue { int kind; int seat; int direction = -1; Traveler source; }
 command Move { int serial; int direction; }
 command Undo { int serial; }
 command Reset { int serial; }
-command Next { int serial; }
 command ChooseLevel { int serial; int level; }
 
 int SeatOf(Workshop workshop, PlayerID player)
@@ -490,11 +493,13 @@ void Remember(mut Workshop workshop, Puzzle before)
     workshop.history[workshop.historyCount] = before;
     workshop.historyCount += 1;
 }
-void OpenLevel(mut Workshop workshop, int level)
+void OpenLevel(mut Workshop workshop, int level, int tick)
 {
     workshop.level = Math.Clamp(level, 0, LEVEL_COUNT - 1);
     LoadLevel(workshop.level, workshop.layout, workshop.puzzle);
     workshop.historyCount = 0;
+    workshop.solvedTick = -1;
+    workshop.openedTick = tick;
     workshop.serial += 1;
     workshop.initialized = true;
 }
@@ -511,9 +516,23 @@ bool Pushed(Puzzle before, Puzzle after)
     return false;
 }
 
-system BeginWorkshop(mut Workshop workshop)
+system BeginWorkshop(mut Workshop workshop, Time time)
 {
-    if (!workshop.initialized) OpenLevel(workshop, 0);
+    if (!workshop.initialized) OpenLevel(workshop, 0, time.tick);
+}
+
+[After(BeginWorkshop)]
+system ContinueWorkshop(mut Workshop workshop, Time time)
+{
+    if (!workshop.puzzle.solved)
+    {
+        workshop.solvedTick = -1;
+        return;
+    }
+    if (workshop.solvedTick < 0) workshop.solvedTick = time.tick;
+    if (!Together(workshop) || workshop.level >= LEVEL_COUNT - 1 || time.tick - workshop.solvedTick < SOLVE_TICKS) return;
+    OpenLevel(workshop, workshop.level + 1, time.tick);
+    Send(PuzzleCue { kind = 4, seat = -1 });
 }
 event(PlayerJoined joined) JoinWorkshop(mut Workshop workshop)
 {
@@ -540,7 +559,7 @@ event(PlayerLeft left) LeaveWorkshop(mut Workshop workshop)
     workshop.present[seat] = false;
     workshop.serial += 1;
 }
-command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
+command(Move move, PlayerID sender) MoveHand(mut Workshop workshop, Time time)
 {
     if (!Authorized(workshop, sender, move.serial)) return;
     var seat = SeatOf(workshop, sender);
@@ -561,6 +580,7 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
         direction = travel ? move.direction : -1, source = travel ? source : Traveler { } });
     if (workshop.puzzle.solved)
     {
+        workshop.solvedTick = time.tick;
         workshop.completed |= 1 << workshop.level;
         Send(PuzzleCue { kind = 5, seat = seat });
     }
@@ -573,21 +593,15 @@ command(Undo undo, PlayerID sender) UndoMove(mut Workshop workshop)
     workshop.serial += 1;
     Send(PuzzleCue { kind = 3, seat = SeatOf(workshop, sender) });
 }
-command(Reset reset, PlayerID sender) ResetPuzzle(mut Workshop workshop)
+command(Reset reset, PlayerID sender) ResetPuzzle(mut Workshop workshop, Time time)
 {
     if (!Authorized(workshop, sender, reset.serial)) return;
-    OpenLevel(workshop, workshop.level);
+    OpenLevel(workshop, workshop.level, time.tick);
     Send(PuzzleCue { kind = 4, seat = SeatOf(workshop, sender) });
 }
-command(Next next, PlayerID sender) NextPuzzle(mut Workshop workshop)
-{
-    if (!Authorized(workshop, sender, next.serial) || !workshop.puzzle.solved || workshop.level >= LEVEL_COUNT - 1) return;
-    OpenLevel(workshop, workshop.level + 1);
-    Send(PuzzleCue { kind = 4, seat = SeatOf(workshop, sender) });
-}
-command(ChooseLevel choice, PlayerID sender) ExplorePuzzle(mut Workshop workshop)
+command(ChooseLevel choice, PlayerID sender) ExplorePuzzle(mut Workshop workshop, Time time)
 {
     if (!Authorized(workshop, sender, choice.serial) || choice.level < 0 || choice.level >= LEVEL_COUNT) return;
-    OpenLevel(workshop, choice.level);
+    OpenLevel(workshop, choice.level, time.tick);
     Send(PuzzleCue { kind = 4, seat = SeatOf(workshop, sender) });
 }
