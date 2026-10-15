@@ -1136,6 +1136,28 @@ static uint32_t b3SnapGeometryId( b3World* world, int kind, const void* data, in
 	return (uint32_t)id;
 }
 
+// Tide: retain cooked package meshes in the world's canonical geometry store.
+// The input is temporary: never cache its address, which the allocator can reuse.
+const b3MeshData* b3World_InternMesh( b3WorldId worldId, const b3MeshData* mesh )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	b3SnapGeometry* geometry = b3GetSnapGeometry( world );
+	b3SnapTouchAll( world );
+	int i = geometry->bucketCount > 0 ? geometry->buckets[mesh->hash & (uint64_t)( geometry->bucketCount - 1 )] : B3_NULL_INDEX;
+	for ( ; i != B3_NULL_INDEX; i = geometry->entries[i].next )
+	{
+		b3SnapGeometryEntry* entry = geometry->entries + i;
+		if ( entry->kind == b3_geometryMesh && entry->hash == mesh->hash && entry->byteCount == mesh->byteCount &&
+			 memcmp( entry->bytes, mesh, (size_t)mesh->byteCount ) == 0 )
+		{
+			return (const b3MeshData*)entry->bytes;
+		}
+	}
+	int id = b3SnapGeometryAdd( geometry, b3_geometryMesh, mesh, mesh->byteCount, NULL );
+	geometry->entries[id].source = geometry->entries[id].bytes;
+	return (const b3MeshData*)geometry->entries[id].bytes;
+}
+
 void b3DestroySnapshotGeometry( b3World* world )
 {
 	b3SnapGeometry* geometry = world->snapGeometry;

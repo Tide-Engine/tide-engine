@@ -1,5 +1,86 @@
 # The Box3D package
 
+## Static mesh colliders (2026-10-15)
+
+The owner requested mesh collider support. `MeshCollider` now accepts
+`List<float3> vertices`, zero-based triangle `List<int> indices`, `scale`
+(default 1), `offset`, `friction` (0.6) and `bounce` (0). It attaches to a
+static `Body` or its `Part`, preserving concavity. Geometry and material
+are read once, as for other shapes. An unsupported body or invalid mesh
+makes no shape; an unsuccessful mesh part is destroyed. An attachment is
+attempted once. Bodies with attached meshes remain static when another
+type is requested; position/rotation writes still work. Naming, limits and
+these detailed failure policies are implementation picks, provisional with
+the rest of the package API. No language or engine runtime API changed.
+
+Native attachment systems read the actual list handles through rows,
+derive counts and flatten checked source lists internally. There is no
+callable Tide extern taking a caller-supplied buffer length. `MeshMade`
+is a dense one-bool marker because extern systems cannot filter sparse
+components. `PrepareMeshParts` temporarily places the native body handle in
+`Part.mesh`; attachment replaces it with the shape handle and registration
+records its entity. Removal follows the existing part/body lifecycle.
+The step remains one named phase; meshes attach after existing primitives
+and before Simulate. `Part` grows from 32 to 40 bytes.
+
+The cooker validates 3–65,536 vertices, 1–65,536 triangles, complete index
+triples and every index, finite nonzero scale, finite offset and coordinates
+after baking within ±1,000,000 per axis, finite nonnegative friction and
+finite bounce in [0, 1]. These bounds also keep native intermediate area,
+BVH cost and byte/count arithmetic in range on wasm32. Degenerate triangles
+are discarded by Box3D; an entirely degenerate mesh is rejected. Mirroring
+flips input winding when cooking, retaining outward/front orientation.
+There is no sensor/density field, per-triangle material API, mesh query
+probe or automatic rendering-mesh conversion.
+
+`b3World_InternMesh`, a Tide-marked addition to the vendored library, copies
+and deduplicates cooked bytes through the world's existing canonical
+geometry store and hash buckets. It never caches the temporary cooker's
+address, which can be freed and reused. Temporary cooked data is freed;
+retained data belongs to the resident arena and the canonical snapshot.
+Interning/creating meshes conservatively marks all resident pages. Unique
+geometry remains until world destruction, like existing box hulls.
+
+Current queries include meshes through Box3D. Detached query/history scenes
+store one value-only Collider per triangle (`count == 3`), preserving the
+existing 176-byte ABI and BVH. Ray and shape casts use Box3D's mesh narrow
+phase over a stack-owned one-leaf triangle, including front-face rejection;
+overlaps use the existing distance path. No native geometry pointer escapes
+into a scene. Preparation/history memory scales with triangle count;
+disabled history captures none. Expanded counts and output capacity are
+checked before allocation/copy. Existing scene limitations at extreme
+allocation exhaustion remain; the package arena is still 64 MiB.
+
+`tide_box3d_mesh` covers collision versus a gap, all current/rewound primitive
+queries, front/back rays, initial overlap, mirrored/rotated parts and current
+non-opted geometry, historical pose interpolation, retained contexts, source
+edits, type changes, destruction, snapshots, canonical restore, replay,
+chunked vertex/index lists, invalid indices/degenerates and nonfinite data.
+Its simulation sequence is `870764faa96485c3` on Windows and WASI.
+`tide_box3d_mesh_join` reuses the fresh-process full-state/delta host with
+this scene. Network deltas transfer between native and WASI in both
+directions, with initial and ten-ticks-later hashes equal. Full world packs
+remain the existing platform-local raw-header format; the network delta
+format is used for cross-platform transfer.
+
+The course fixture's parts/asking world pins change for the larger Part;
+body, resident-digest and answer pins are unchanged. Sumo's two network pins
+also change: adding the components shifts the compiler's existing automatic
+Brain.dice spawn salt from 3072 to 3584. Generated old/new C confirms that
+cause; native/WASI agree at ticks 640 and 880. Physics rules and RNG algorithms
+are unchanged.
+
+Validation: Windows clang 23.1.2, local Node 24.16.0. The complete debug
+suites ran 2,339 native and 2,252 web tests; their only failures were the two
+explained Sumo hash pins. After updating those pins, all eleven Box3D/Sumo
+targets pass on both platforms, including full-arena checks, original
+determinism/answer pins, fresh-process joins and rewind-network profiles.
+The final four mesh cases additionally pass on both platforms after adding
+chunked/invalid-data and ABI/released-type coverage. Production docs build
+and diff checks pass. Native GPU and WebGL/WebGPU coverage ran in the full
+suites. Android, other operating systems and sanitizers were not run; no CI
+workflow was dispatched.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases
