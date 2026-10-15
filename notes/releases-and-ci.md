@@ -7,7 +7,7 @@ from Build and Docs. It runs only through `workflow_dispatch`: every ref runs
 the service's `npm ci`/`npm test` on Ubuntu 24.04 with Node 24.16.0; only `dev`
 validates `hosting/fly.toml` and deploys `tide-hosting` with the remote builder
 and `--ha=false`. The owner confirmed the existing `FLY_API_TOKEN` repository
-secret is shared across apps. It is supplied only to the deployment step;
+secret is shared across apps. It is supplied to Fly validation and deployment;
 provider credentials remain in Fly. Global hosting concurrency serializes runs
 without cancelling an active deployment. No connection to engine publication,
 automatic push trigger or allocation-enabling step was added.
@@ -21,6 +21,14 @@ and the production Docker image builds. Service tests pass on Windows and in
 the Linux service image with Node 24.16.0: 29 passed, two staged-tool integration
 cases skipped as documented. Dependency installation reports no vulnerabilities;
 the whitespace diff passes. No workflow was dispatched or service deployed.
+
+The owner's first Hosting run, 38754705649 on 4bb7b111, passed dependency
+installation and all ordinary service tests but failed `flyctl config validate`
+with "no access token available". Local validation had inherited CLI login,
+hiding that this command also requires authentication. Supply the same
+`FLY_API_TOKEN` to that step, keeping it outside dependency installation/tests.
+The owner explicitly requested a fresh run after the fix; follow its completed
+result rather than retrying the old commit's unchanged workflow.
 
 ## Stable upgrade fixture failure (2026-10-14)
 

@@ -185,6 +185,10 @@ operator README and notes/releases-and-ci.md. No workflow was dispatched.
 Workflow validation passes actionlint 1.7.12, Fly configuration validation and
 the production image build. Node 24.16.0 service tests pass on Windows and in
 the Linux service image (29 passed, two staged-tool cases skipped).
+The first owner-triggered Hosting run passed service tests but Fly configuration
+validation required a token absent from that step. The workflow now supplies
+the existing `FLY_API_TOKEN` to both Fly validation and deployment. The owner
+authorized a fresh run after this correction; results follow below.
 
 Validation exercises SQLite/auth/payment mocks, real HTTP, WASM isolation,
 memory growth limits, infinite-loop interruption, returning CPU-heavy guests,
