@@ -246,55 +246,19 @@ the phone capture waits for the existing sidebar's closing transition.
 Real phones, Safari/Firefox, other OS builds and Android are not exercised;
 no CI dispatch or site deployment is part of this task.
 
-Elsewhere catalog addition (2026-10-13): `elsewhere` joins the server-only
-prototype catalog and all three public/retired asset gates, with a gameplay
-thumbnail and normal opt-in `elsewhere_page` staging. The prototype id lists
-and stale-alias/discovery checks cover it. Its cozy restoration journey and
-native/web/GPU validation are recorded in `notes/elsewhere.md`. No deployment
-or CI dispatch is requested. The local docs check is clean, production build
-passes and the eighteen analytics/admin unit checks and production prototype
-HTTP check pass with Node 24.21.0.
-
-Copper & Coil catalog addition (2026-10-13): `copper-coil` is registered in
-the server-only prototype catalog, public root, outside-root asset gates and
-admin/HTTP prototype lists. `copper_coil_page` stages its self-contained page
-at `/prototypes/copper-coil/`; checked-in artwork and the publisher PDF live
-beside it. Public discovery and catalog authentication retain their existing
-contracts. Game rules and validation are in `notes/copper-coil.md`. The docs
-production build, zero-error/warning Svelte check, eighteen analytics/admin
-checks and production HTTP test pass. No deployment or CI dispatch.
-
-
-HOT SWAP addition (2026-10-13): the server-only catalog and public-root/
-outside-root asset gates include `hot-swap`, a solo/two-player warehouse
-possession heist. `hot_swap_page` stages its self-contained, STATS-enabled
-page beneath `/prototypes/hot-swap/`; the thumbnail is captured gameplay.
-Admin and production HTTP fixtures cover the new id and its stale aliases.
-The existing catalog/auth/discovery contract is unchanged. Game validation
-and remaining playtest gaps are in `notes/hot-swap.md`. No deployment or CI.
-
-DEADWEIGHT catalog addition (2026-10-13): the approved cooperative salvage
-prototype adds `deadweight` to the server-only catalog, public-root and
-outside-root asset gates, and both prototype test id lists. Its self-contained
-page stages at `/prototypes/deadweight/` with an actual-gameplay thumbnail.
-Discovery and catalog authentication retain their existing contracts. Game
-rules and validation belong in `notes/deadweight.md`; no site deployment or
-CI dispatch was requested.
-Local production build and Svelte check pass with zero errors/warnings. All
-nineteen analytics/admin and production prototype HTTP checks pass on Node
-24.16.0, including the new public id, outside-root aliases and discovery gates.
-After merging the concurrent SWINDLE catalog addition and NIGHT ROUTE removal,
-the live id lists retain both SWINDLE and DEADWEIGHT. Production build,
-zero-warning Svelte check and all nineteen HTTP/admin checks pass again.
-
-SWINDLE catalog addition (2026-10-13): the owner's competitive heist demo adds
-`swindle` to the server-only catalog, public root and outside-root asset gates.
-`swindle_page` stages its self-contained page and gameplay thumbnail under
-`/prototypes/swindle/`, collected by `private_games`. Admin and production HTTP
-tests include the id and retain omission from Samples/search/sitemap. Rules,
-native/web play evidence and packaging are recorded in `notes/swindle.md`.
-Site check has zero errors/warnings; eighteen analytics/admin tests, production
-build and prototype HTTP test pass with Node 24.21.0. No deployment or CI.
+Removal (2026-10-15): the owner deleted Elsewhere, Copper & Coil, HOT SWAP,
+DEADWEIGHT and SWINDLE. Their sources, assets, tests, game notes, build
+targets, catalog cards and public-id registrations are removed. Their
+implementation and validation records remain in git history. Former public
+pages and assets are ordinary unknown paths; no compatibility routes remain.
+Validation: native/web debug configuration with prototypes enabled succeeds;
+the removed games have no targets or registered tests. Node 24.21.0 passes
+the production docs build, zero-warning Svelte check and all nineteen
+analytics/admin/production HTTP checks. Former pages, thumbnails, WASM,
+packs and publisher PDFs return 404, including encoded ids; the five
+remaining catalog cards and their public assets retain their serving tests.
+Source, static and packaged directories are absent; note references and
+`git diff --check` pass. No engine/compiler/runtime changes, CI or deployment.
 
 NIGHT ROUTE removal (2026-10-13): the owner scrapped the delivery prototype
 after playtesting. Its source, tests, build targets, game note, catalog card,

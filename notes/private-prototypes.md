@@ -61,46 +61,19 @@ its `<id>_page` target and its `private_games` block, plus the id in
 
 ## Games
 
-- Elsewhere (`elsewhere`): `prototypes/elsewhere/`, a cozy first-person
-  exploration/restoration demo for one or two, requested on 2026-10-13 for
-  publisher review. Brass windows connect three impossible gardens to a
-  shared conservatory; three grown seeds flower the home. It builds with
-  `STATS`; `elsewhere_page` stages `/prototypes/elsewhere/` and `private_games`
-  collects that page or the native game. Its two C fixtures stay under
-  `test/tide.packages`. Game contracts, limits and validation are in
-  `notes/elsewhere.md`. Source/catalog registration does not deploy the demo.
-
-- Copper & Coil (`copper-coil`): `prototypes/copper-coil/`, a cooperative
-  logic-circuit puzzle requested with a publisher demo on 2026-10-13. Two
-  maintenance robots configure AND/OR/XOR/NOT consoles, test all input rows,
-  commission a bridge and reunite at its exit. Six circuits share one workshop,
-  with online, shared-keyboard and solo play. `copper_coil_page` stages the
-  public page; `private_games` collects it and the game uses STATS. Gameplay,
-  publisher material, tests and limitations are in `notes/copper-coil.md`.
-
-
-- HOT SWAP (`hot-swap`): `prototypes/hot-swap/`, requested on 2026-10-13,
-  a solo/two-player warehouse possession heist. Electrical creatures borrow
-  cleaners, forklifts, cameras and door controllers to free a storm case and
-  escape by ducts, loading shutters or shipping belt. `hot_swap_page` stages
-  its public page; `private_games` collects it or native `hot_swap`, with STATS.
-  Its isolated C test host is `hot_swap_tests`. Rules and validation are in
-  `notes/hot-swap.md`.
-
-- DEADWEIGHT (`deadweight`): `prototypes/deadweight/`, the owner's two-worker
-  cooperative salvage prototype, approved and built on 2026-10-13. Three jobs
-  in one industrial pumping station use Box3D cargo, winches, a bridge and a
-  counterweight. It supports online rooms, shared keyboard and switching alone.
-  `deadweight_page` stages `/prototypes/deadweight/`; `private_games` collects
-  it or the native `deadweight`. Its main target uses STATS. Rules, contracts,
-  tests and coverage are in `notes/deadweight.md`.
-
-- SWINDLE (`swindle`): `prototypes/swindle/`, the competitive publisher-demo
-  prototype requested on 2026-10-13. Ninety-second rooftop heists with a growing
-  prism, dash steals, fake carriers, moving cash-outs, duel/FFA/2v2, bots,
-  friend rooms and same-keyboard play. `swindle` has STATS; `swindle_page`
-  stages `/prototypes/swindle/` with its gameplay thumbnail, collected by
-  `private_games`. Rules, tests and validation are in `notes/swindle.md`.
+Removal (2026-10-15): the owner deleted Elsewhere, Copper & Coil, HOT SWAP,
+DEADWEIGHT and SWINDLE. Their sources, assets, tests, game notes, build
+targets, catalog cards and public-id registrations are removed. Their
+implementation and validation records remain in git history. Former public
+pages and assets are ordinary unknown paths; no compatibility routes remain.
+Validation: native/web debug configuration with prototypes enabled succeeds;
+the removed games have no targets or registered tests. Node 24.21.0 passes
+the production docs build, zero-warning Svelte check and all nineteen
+analytics/admin/production HTTP checks. Former pages, thumbnails, WASM,
+packs and publisher PDFs return 404, including encoded ids; the five
+remaining catalog cards and their public assets retain their serving tests.
+Source, static and packaged directories are absent; note references and
+`git diff --check` pass. No engine/compiler/runtime changes, CI or deployment.
 
 Removal (2026-10-13): the owner scrapped NIGHT ROUTE after finding its delivery
 and parcel-rule loop unfun. Its source, tests, thumbnail, game note, build
