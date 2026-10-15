@@ -1214,6 +1214,10 @@ capture confirms that the green C beacon is readable from the entrance.
 This is mechanical/visual validation; human pacing and audio remain untested.
 No full repository suite, other platforms or CI were run.
 
+2026-10-15 visibility integration: the renderer helper `Shown` is now named
+`Displayed`, because `Shown` names an engine availability event. This changes
+no rendering expression or match state. The visibility integration includes
+the prototype targets/tests in its full native and web validation.
 
 ## Campaign redesign (2026-10-15)
 
@@ -1644,3 +1648,10 @@ No full repository suite or CI workflow was run for this prototype-only work.
 Android, Linux, macOS, MinGW and sanitizer coverage remains unavailable here.
 Human first-time solves, live Internet co-op and sound balance still need
 playtesting; the assembly checks do not establish those properties.
+
+After merging `origin/dev`'s visibility/compiler/runtime integration and the
+`Shown` to `Displayed` renderer-helper rename, rebuilt all Foldline targets
+and repeated the complete scoped suites: four native and five web tests passed
+again, including the 60 validator cases and all three rendering backends.
+Both simulation hashes above remain unchanged, and the native/WASI built-layout
+JSON exports are byte-for-byte identical.

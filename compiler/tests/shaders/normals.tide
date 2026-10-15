@@ -52,7 +52,7 @@ vert Turn(mut Corner corner, Instance instance)
     corner.normal = instance.Normal(corner.normal);
 }
 
-frag Shown(Corner corner, out Color color)
+frag Displayed(Corner corner, out Color color)
 {
     color = Color(corner.normal.x, corner.normal.y, corner.normal.z, 1);
 }
@@ -88,7 +88,7 @@ view Everything(Models models)
 {
     var squashed = float4x4.TRS(float3(0), quaternion.identity, float3(2, 0.5, 1));
     Draw.Mesh(models.ball, models.faces, squashed, Lit);
-    Draw.Mesh(models.ball, models.faces, squashed, Turn, Shown);
+    Draw.Mesh(models.ball, models.faces, squashed, Turn, Displayed);
     Draw.Mesh(models.ball, models.faces, squashed, Lean, Both);
     Draw.Instanced(models.ball, models.faces, models.rocks, Stone);
     Draw.Mesh(models.card, models.faces, Card);

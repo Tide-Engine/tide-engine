@@ -22,8 +22,9 @@ kill_timeout = 45
   TIDE_HOSTING_RETENTION_DAYS = '7'
   TIDE_HOSTING_TRANSFER_BYTES = '1073741824'
   TIDE_RELAY = 'wss://relay.tide-engine.dev'
-  # Prices/top-up amounts intentionally have no launch defaults. Configure
-  # them after measurement, plus GitHub/Stripe credentials through Fly secrets.
+  # Sandbox credit choices. Usage rates still require measurement before launch.
+  # GitHub/Stripe credentials are supplied through Fly secrets.
+  TIDE_HOSTING_TOPUPS = '500,1000,2500'
   TIDE_HOSTING_ACCEPTING = '0'
 
 [[mounts]]

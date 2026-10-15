@@ -1,5 +1,39 @@
 # `tide`, packages and the package
 
+## Failed-build cache comparison (2026-10-15)
+
+Build `38761765659` passed Windows packaging but Linux and macOS packaging
+failed the parallel-compilation fixture's comparison after repairing custom C.
+The managed-hosting identity change intentionally keeps ordinary launcher
+objects through identity-only edits to game.h. A Linux reproduction differs
+only in main.o: its DWARF line table retains the failed build's game.h checksum.
+Recompiling against the restored header changes that checksum; stripping debug
+information leaves byte-identical objects. This is debug metadata, not stale
+gameplay code or a changed Simulation ID in the launcher.
+
+The fixture now requires byte-identical reuse of the failed build's launcher
+and clean-build parity for every other file, including generated game code,
+objects and stamps. Missing/extra files and differing objects are named on
+failure. Its clean builds at different parallelism levels still compare every
+file, including main.o. Compiler/cache behavior and public contracts are unchanged.
+The original comparison fails locally under Linux with only main.o named;
+the corrected fixture passes all parallel-build and failure-recovery checks.
+The staged Windows CLI with an external Clang 23.1.2 also passes the full
+native/web cache, stripping, failure recovery, debug/release watch and dedicated
+server integration script with Node 24.16.0.
+
+Folder deployment link (2026-10-15): `tide deploy` needs no dashboard setup.
+Its existing project auto-creation now normalizes the folder name and saves
+the immutable project ID plus service origin atomically in `tide.deploy.json`.
+The file is portable and contains no credentials. Future deploys use the ID
+after folder renames; `--project <name-or-id>` selects/relinks explicitly.
+Malformed links, service mismatches and inaccessible IDs fail without creating
+another project. Explicit missing names still create a Small/one-match project.
+Bundle-only builds ignore the link. Help, the hosting guide and operator README
+describe this behavior. Installed-CLI coverage exercises first deploy, repeat
+after rename, invalid/mismatched/missing links, name creation and ID selection;
+validation results are recorded in managed-hosting.md.
+
 Managed deployment (2026-10-15): `login`, `logout` and `deploy` are implemented
 in deploy.c, using explicit browser device approval, origin-bound credentials,
 Windows DPAPI/POSIX private files and bounded HTTP responses. Whole-game local

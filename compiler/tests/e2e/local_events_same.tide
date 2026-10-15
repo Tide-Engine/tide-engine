@@ -73,7 +73,7 @@ system Roll(mut Ball ball, mut Field field, Time time)
     }
 }
 
-local singleton Shown
+local singleton Displayed
 {
     int bounces;
     int sure;
@@ -81,18 +81,18 @@ local singleton Shown
     float2 last;
 }
 
-local event(Bounced bounced) Spark(Ball ball, mut Shown shown)
+local event(Bounced bounced) Spark(Ball ball, mut Displayed shown)
 {
     shown.bounces += 1;
     shown.last = bounced.at + bounced.normal * float(ball.bounces);
 }
 
-local event(verified Bounced) Mark(mut Shown shown)
+local event(verified Bounced) Mark(mut Displayed shown)
 {
     shown.sure += 1;
 }
 
-local event(Pushed pushed) Nudge(mut Shown shown)
+local event(Pushed pushed) Nudge(mut Displayed shown)
 {
     if (pushed.by != 0) shown.pushes += 1;
 }

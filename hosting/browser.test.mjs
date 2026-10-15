@@ -53,7 +53,8 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         const port = gateway.address().port, origin = `http://localhost:${port}`, games = `http://127.0.0.1:${port}`;
         const config = configuration({ PORT: '0', TIDE_HOSTING_ORIGIN: origin, TIDE_GAMES_ORIGIN: games,
             TIDE_HOSTING_DATA: join(folder, 'data'), TIDE_HOSTING_SMALL_RATE: '1000', TIDE_RTC_LOCAL: '1',
-            TIDE_RELAY: `ws://127.0.0.1:${relay.address().port}` });
+            TIDE_RELAY: `ws://127.0.0.1:${relay.address().port}`, TIDE_HOSTING_TOPUPS: '500,1000,2500',
+            TIDE_STRIPE_SECRET: 'sk_test_fixture', TIDE_STRIPE_WEBHOOK_SECRET: 'whsec_fixture' });
         config.presets.small.tickMs = 100;
         service = await createService(config); backend = (await service.start()).port;
         t.after(async () => {
@@ -123,6 +124,9 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         await cdp.call('Page.reload');
         await until(() => evaluate('document.readyState === "complete" && !!document.querySelector(".match")'), 'Dashboard did not reload.');
         await evaluate('document.fonts.ready');
+        assert.deepEqual(await evaluate('Array.from(document.querySelector("#topups").options, o => o.value)'), ['500', '1000', '2500']);
+        assert.equal(await evaluate('document.querySelector("#checkout").disabled'), false);
+        assert.equal(await evaluate('document.querySelector("#checkout").textContent.includes("test payment")'), true);
         const beforeTheme = await evaluate('document.documentElement.classList.contains("dark")');
         await until(async () => {
             await evaluate('document.querySelector("#theme-toggle").click()');
@@ -146,6 +150,23 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         if (process.env.TIDE_HOSTING_EVIDENCE) {
             const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
             await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'dashboard-mobile.png'), Buffer.from(shot.data, 'base64'));
+        }
+        store.invite(456);
+        const emptyAccount = store.signIn({ id: 456, login: 'first-deploy' });
+        const emptySession = store.issueToken(emptyAccount.id, 'browser', 120000);
+        await cdp.call('Network.setCookie', { name: 'tide-session', value: emptySession.token, url: origin, httpOnly: true, sameSite: 'Lax' });
+        await cdp.call('Page.navigate', { url: `${origin}/dashboard` });
+        await until(() => evaluate('!!document.querySelector(".deploy-start")'), 'Empty account did not explain deployment from a folder.');
+        assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+        await evaluate('document.querySelector(".summary .credit-link").click()');
+        await until(() => evaluate('location.hash === "#add-credit"'), 'Add credit did not reach the amount selector.');
+        if (process.env.TIDE_HOSTING_EVIDENCE) {
+            const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
+            await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'credit-mobile.png'), Buffer.from(shot.data, 'base64'));
+            await cdp.call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+            await evaluate('scrollTo(0,0)');
+            const empty = await cdp.call('Page.captureScreenshot', { format: 'png' });
+            await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'first-deploy-desktop.png'), Buffer.from(empty.data, 'base64'));
         }
         await cdp.call('Network.deleteCookies', { name: 'tide-session', url: origin });
         await cdp.call('Page.navigate', { url: `${origin}/auth/callback?code=expired-private-code` });

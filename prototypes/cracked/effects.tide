@@ -390,7 +390,7 @@ local event(CloudMade made) Billowed(mut Fx fx, mut Air air)
 // The clocks the mages' looks go by, and the puffs a jetpack and a dash
 // leave: per seat, from what the match has of each.
 [Stage(Layers.Prepare, 1)]
-view Seats(Arena arena, Shown shown, mut Fx fx, mut Air air)
+view Seats(Arena arena, Presentation shown, mut Fx fx, mut Air air)
 {
     var dt = fx.dt;
     for (var s = 0; s < SEATS; s++)
@@ -659,7 +659,7 @@ view Mists(Arena arena, Models models, Light light, Post post, mut Air air)
 // The shields: a bubble around each player who has one up, which pops out
 // and back in.
 [Stage(Layers.Effects, 1)]
-view Shields(Arena arena, Shown shown, Models models, Post post, mut Air air)
+view Shields(Arena arena, Presentation shown, Models models, Post post, mut Air air)
 {
     air.bubbles.Clear();
     for (var s = 0; s < SEATS; s++)
@@ -681,7 +681,7 @@ view Shields(Arena arena, Shown shown, Models models, Post post, mut Air air)
 // Everything that's light: the sparks move on, the rings spread, the
 // lightning jumps, and all of it is added to the picture in a draw each.
 [Stage(Layers.Effects, 2)]
-view Glows(Arena arena, Shown shown, Models models, Post post, mut Fx fx, mut Air air)
+view Glows(Arena arena, Presentation shown, Models models, Post post, mut Fx fx, mut Air air)
 {
     var dt = fx.dt;
     air.shards.Clear();
@@ -837,7 +837,7 @@ view Glows(Arena arena, Shown shown, Models models, Post post, mut Fx fx, mut Ai
 // who was hurt, and over every other player a bar of their health and a pip
 // for each bullet they have left, as the Unity game's world HUD has them.
 [Stage(Layers.Effects, 110)]
-view Overhead(Arena arena, Shown shown, Look look, Fx fx, mut Air air)
+view Overhead(Arena arena, Presentation shown, Look look, Fx fx, mut Air air)
 {
     Draw.Screen()
     {
