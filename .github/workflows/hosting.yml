@@ -42,6 +42,8 @@ jobs:
       - name: Validate Fly configuration
         if: github.ref == 'refs/heads/dev'
         run: flyctl config validate --config fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       # Reuse the existing repository token. OAuth and Stripe credentials stay
       # in Fly secrets; only the app/configuration differ from the docs deploy.
       - name: Deploy hosting
