@@ -26,7 +26,7 @@ export async function createService(config, options = {}) {
     // Use a private, server-controlled protocol header after validating Host.
     process.env.TIDE_CONSOLE_PROTOCOL_HEADER = 'x-tide-console-protocol';
     const { handler: frontend } = await import('./build/handler.js');
-    let uploading = false, timer, closing = false, cleanupAt = 0;
+    let artifactBusy = false, timer, closing = false, cleanupAt = 0;
     const rooms = options.rooms === null ? null : options.rooms || new Rooms(store, matches, config);
     const hasClient = (project, release) => Boolean(release && JSON.parse(store.release(project, release)?.manifest || '{}').files?.some(f => f.name === 'client.html'));
     const urls = project => ({ ...project, hasClient: hasClient(project.id, project.release), clientCreate: store.clientCreate(project.id), playUrl: `${config.gamesOrigin}/g/${project.id}/`,
@@ -236,14 +236,17 @@ export async function createService(config, options = {}) {
             }
             const deleteReleaseRoute = /^\/api\/projects\/([a-f0-9]{32})\/releases\/([a-f0-9]{64})$/.exec(url.pathname);
             if (method === 'DELETE' && deleteReleaseRoute) {
-                await maintenance.deleteRelease(account.id, deleteReleaseRoute[1], deleteReleaseRoute[2]);
+                requireValue(!artifactBusy, 429, 'Another artifact operation is being processed. Try again shortly.');
+                artifactBusy = true;
+                try { await maintenance.deleteRelease(account.id, deleteReleaseRoute[1], deleteReleaseRoute[2]); }
+                finally { artifactBusy = false; }
                 return json(response, 200, { ok: true });
             }
             if (method === 'POST' && releaseRoute) {
                 const project = store.project(account.id, releaseRoute[1]);
                 rate.take(`upload/${account.id}`, 5);
-                requireValue(!uploading, 429, 'Another upload is being processed. Try again shortly.');
-                uploading = true;
+                requireValue(!artifactBusy, 429, 'Another artifact operation is being processed. Try again shortly.');
+                artifactBusy = true;
                 try {
                     const data = await bytes(request, config.bundleBytes), bundle = parseBundle(data, config);
                     const usage = store.db.prepare('SELECT COALESCE(SUM(bytes),0) AS n FROM releases').get().n;
@@ -257,7 +260,7 @@ export async function createService(config, options = {}) {
                     }
                     if (rooms) await rooms.ensure(project);
                     return json(response, 201, { release: bundle.id, simulation: bundle.simulation, ...urls(store.project(account.id, project.id)) });
-                } finally { uploading = false; }
+                } finally { artifactBusy = false; }
             }
             const matchRoute = /^\/api\/projects\/([a-f0-9]{32})\/matches$/.exec(url.pathname);
             if (method === 'POST' && matchRoute) {
@@ -322,6 +325,7 @@ export async function createService(config, options = {}) {
     const service = { server, store, auth, payments, bundles, matches, config,
         async start() {
             await maintenance.sweep();
+            cleanupAt = store.now() + 60_000;
             await matches.recover();
             if (rooms) {
                 const projects = store.db.prepare('SELECT p.* FROM projects p JOIN accounts a ON a.id=p.account WHERE a.disabled=0').all();
@@ -335,7 +339,11 @@ export async function createService(config, options = {}) {
                 try {
                     await matches.tick();
                     payments.poll(config);
-                    if (store.now() >= cleanupAt) { cleanupAt = store.now() + 60_000; store.billing.expire(); await maintenance.sweep(); }
+                    if (store.now() >= cleanupAt && !artifactBusy) {
+                        artifactBusy = true;
+                        try { cleanupAt = store.now() + 60_000; store.billing.expire(); await maintenance.sweep(); }
+                        finally { artifactBusy = false; }
+                    }
                 } catch (error) { console.error('tide: hosting maintenance failed:', error.message); }
                 finally { if (!closing) timer = setTimeout(tick, 5); }
             };

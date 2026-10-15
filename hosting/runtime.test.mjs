@@ -25,6 +25,42 @@ test('module validation rejects oversized or non-host-owned memory before instan
     assert.throws(() => bundle({ importName: 'other' }), /host-owned/);
     assert.throws(() => bundle({ maximum: 100000 }), /too large/);
 });
+test('filesystem, directory, arbitrary network and host-environment imports are rejected before instantiation', () => {
+    for (const name of ['path_open', 'fd_read', 'fd_readdir', 'fd_prestat_get', 'path_unlink_file', 'path_remove_directory', 'path_rename', 'sock_open', 'sock_connect']) {
+        const wasm = wasmFixture({ hostImport: { module: 'wasi_snapshot_preview1', name } });
+        assert.equal(WebAssembly.validate(wasm), true, `The ${name} probe must be valid WASM.`);
+        assert.throws(() => bundle({ hostImport: { module: 'wasi_snapshot_preview1', name } }), /Unsupported server import/);
+    }
+    for (const name of ['readFile', 'writeFile', 'unlink', 'process', 'require']) {
+        assert.throws(() => bundle({ hostImport: { module: 'env', name } }), /Unsupported server import/);
+    }
+});
+
+test('WASI exposes no environment entries and fd_write refuses non-output file descriptors', async t => {
+    const constant = value => [0x41, ...value];
+    // Function import zero has the fixture's six-i32 signature. The host only
+    // consumes the real WASI parameters; unused arguments remain zero.
+    const environment = new MatchWorker(bundle({ hostImport: { module: 'wasi_snapshot_preview1', name: 'environ_sizes_get' },
+        updateCode: [
+            ...constant([0x80, 0x20]), ...constant([0x7f]), 0x36, 2, 0, // count = -1
+            ...constant([0x84, 0x20]), ...constant([0x7f]), 0x36, 2, 0, // bytes = -1
+            ...constant([0x80, 0x20]), ...constant([0x84, 0x20]), ...Array(4).fill([0x41, 0]).flat(), 0x10, 0, 0x1a,
+            ...constant([0x80, 0x20]), ...constant([0x80, 0x20]), 0x28, 2, 0,
+            ...constant([0x84, 0x20]), 0x28, 2, 0, 0x72, 0x36, 2, 0, 0x41, 0,
+        ] }), limits);
+    t.after(() => environment.close());
+    await environment.call('init', {});
+    assert.equal((await environment.call('update', { packets: [] })).value, 0);
+    for (const fd of [0, 3, 42]) {
+        const writer = new MatchWorker(bundle({ hostImport: { module: 'wasi_snapshot_preview1', name: 'fd_write' },
+            updateCode: [...constant([0x80, 0x20]), ...constant([fd]), ...Array(5).fill([0x41, 0]).flat(), 0x10, 0, 0x36, 2, 0, 0x41, 0] }), limits);
+        try {
+            await writer.call('init', {});
+            assert.equal((await writer.call('update', { packets: [] })).value, 8, `Descriptor ${fd} must be rejected.`);
+        } finally { await writer.close(); }
+    }
+});
+
 test('separate WASM instances isolate memory and restore bounded saves', async t => {
     const first = new MatchWorker(bundle(), limits), second = new MatchWorker(bundle(), limits);
     t.after(async () => { await first.close(); await second.close(); });
