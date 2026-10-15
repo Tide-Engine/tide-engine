@@ -2016,10 +2016,12 @@ The debug targets build without warnings. All four native Foldline CTests pass
 Node 24.16. They include every input-driven solve with the harder steps, the
 map validator and its 75 tool regressions, and the render fixture's new checks:
 fractional-alpha place changes, the dead device's reticle, and the fold-only
-figure. Native and WASI agree on replay hash `9583849152621067857` and campaign
+figure. Native and WASI agreed on replay hash `9583849152621067857` and campaign
 hash `14532430071868514869`, and their built-layout exports are byte-identical.
 The hashes replace the previous section's because places, props, creatures
-and components changed on purpose.
+and components changed on purpose. After merging `origin/dev`'s compiler
+changes, both scoped suites passed again and both hosts report replay
+`13338131106421983637` and campaign `1668086212785119386`.
 
 No full repository suite, other platform or CI run was needed for this
 prototype-only work. Sound was not listened to (agent runs are silent), and
