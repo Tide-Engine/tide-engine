@@ -1,5 +1,9 @@
 # Code the GPU runs: frags and verts
 
+## Frustum bounds metadata (2026-10-15)
+
+Generated `tide_shader.bounds_position` is `1 + offsetof(V, position)` only for 3D shaders with neither a user vert nor skinning. Fragment-only custom vertex layouts get automatic culling; a user vert (even one currently leaving position alone), explicit clip output and every skinned shader require explicit conservative `Draw.Bounds` or remain drawn. GLSL/WGSL/SPIR-V are unchanged. The C shader struct grows, so hosts/libraries/games rebuild. `draw_frustum` checks offsets, rejection and opt-in; `skinned_rest` pins zero automatic metadata. Contracts and GPU validation are in `notes/drawing.md`, Frustum culling.
+
 ## SPIR-V, for Vulkan (2026-10-14)
 
 tidec writes SPIR-V by translating the WGSL it already writes, rather than with a third emitter over the tree. The WGSL has WebGPU's bindings and its depth conversion already. The same translator takes the renderer's hand-written WGSL too (`notes/rendering.md`, Vulkan). The translator is `compiler/src/spirv.c` (`spirv.h`: `tide_wgsl_to_spirv`), about 3,700 lines of C with no dependency.
