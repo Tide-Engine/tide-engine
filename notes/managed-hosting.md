@@ -57,6 +57,58 @@ restore its source-build, signing or closed-source requirements.
 
 ## Service and authentication
 
+Owner access and console appearance (2026-10-15): the owner's live GitHub
+callback reached the invite gate. Resolved the authenticated local GitHub
+identity as BlenMiner (4602596) and ran the operator `admin.mjs invite` on
+tide-hosting's persistent database. This invites that account; a fresh browser
+sign-in is needed because OAuth state is consumed once. No credit or allocation
+enablement was added.
+
+At the owner's request, the dashboard/sign-in UI now matches the website:
+amber light/dark tokens, Inter Variable, the existing wave favicon/logo and
+header typography. The local font and its OFL license ship in hosting/static.
+A small external theme bootstrap selects saved/system appearance before CSS
+paints; Svelte owns the toggle and preference persistence. Website and console
+localStorage remain independent origins.
+
+The owner then reported the initial-view flash and explicitly requested Svelte.
+Replaced hosting/web's static shell and imperative DOM rendering with SvelteKit
+3/Svelte 5 and adapter-node, pinned to the website's installed versions. Browser
+session lookup happens in the existing HTTP service before adapter dispatch.
+The authenticated account view is attached to that IncomingMessage, read by a
+server load through adapter-node's event.platform.req, and shared with the JSON
+account endpoint's existing serializer. This has no global per-user state or
+internal credential-bearing HTTP hop. Svelte renders the chosen sign-in/account
+view, balances, projects, matches and forms before hydration; the client polls
+only for subsequent updates. Signed-in pages contain no welcome section.
+SvelteKit's nonce CSP supports hydration without unsafe-inline; personalized
+HTML/page data are private/no-store with Vary: Cookie. A private protocol header
+is overwritten from the validated configured origin, not trusted from callers.
+The game origin, API routes, session/CSRF checks and WASM workers stay separate.
+
+The service's npm pretest now runs Svelte check (warnings fail) and the production
+frontend build. Docker builds the UI in a separate stage and copies its compiled
+output into the runtime image; no frontend build tools are installed there.
+
+Browser GET failures on `/auth/github` and `/auth/callback` redirect to the
+styled landing page with a fixed restricted/expired/unavailable reason, clearing
+the one-use login cookies. A bounded valid CLI approval code is retained for
+retry; OAuth codes/state and provider messages are not reflected. Svelte
+renders the fixed message on the server and removes the reason after hydration. API
+errors remain JSON and all OAuth/admission checks remain enforced. HTTP
+regressions exercise denial, expired state, cookie clearing, secret omission,
+device retry routing and retained API errors. All 31 hosting tests pass with
+the installed CLI/native/web/managed build and real muted Chrome enabled.
+HTTP checks additionally verify the initial signed-in/signed-out HTML, private
+cache policy, nonce CSP, injection escaping and concurrent account isolation.
+Browser checks disable JavaScript and still see the match/credit dashboard;
+they verify persisted theme selection and styled OAuth recovery after hydration.
+Desktop light/dark and phone dashboard/error captures were inspected with no
+horizontal overflow. The Linux production image builds and renders both guest
+and authenticated pages with private/no-store and nonce CSP, and serves the
+theme script, logo and font with the intended MIME types. Deployment results
+are recorded after completion.
+
 Node 24.16+, ESM, SQLite WAL/FULL synchronization, node-datachannel 0.33.4. The
 service owns accounting, routing, credentials and lifecycle outside guest state.
 Developer accounts are invite-only by stable numeric GitHub ID. OAuth uses
