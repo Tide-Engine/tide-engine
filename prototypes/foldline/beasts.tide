@@ -136,7 +136,7 @@ frag BeastSurface(StoneVertex vertex, Texture skin, Instance instance, Sight sig
     mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight));
     if (sight.beastEyes && vertex.uv.x >= 0.875 && vertex.uv.y < 0.125) lit = Rgb(seen) * 4;
     lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-Math.Distance(p, sight.eye) * sight.fog));
-    color = Shown(lit, sight.packed);
+    color = Displayed(lit, sight.packed);
 }
 
 // Two tiny boxes in the flayed skull's socket space. The head matrix comes from
@@ -171,7 +171,7 @@ frag BeastGlint(StoneVertex vertex, Sight sight, out Color color)
     if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < (sight.fold > 0.5 ? 0.0 : 0.025)) this.Discard();
     if (PastItsFold(this.world, sight)) this.Discard();
     float3 light = Math.Lerp(float3(3.4, 2.2, 0.9), sight.fogColor, 1 - Math.Exp(-Math.Distance(this.world, sight.eye) * sight.fog));
-    color = Shown(light, sight.packed);
+    color = Displayed(light, sight.packed);
 }
 
 void DrawBeastShadows(RenderTarget target, List<BeastPicture> creatures)

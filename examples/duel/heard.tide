@@ -82,7 +82,7 @@ local event(Landed landed) Thud(Body body, mut Fighter fighter, mut Fx fx)
 }
 
 // A shot leaves its gun: a flash at the muzzle, sparks, and a shell that drops.
-local event(Spawned) ShotFired(Body body, mut Bullet bullet, mut Fx fx)
+local event(Shown) ShotFired(Body body, mut Bullet bullet, mut Fx fx)
 {
     var speed = Math.Length(body.velocity);
     var direction = speed > 1 ? body.velocity / speed : float2(1, 0);

@@ -121,7 +121,7 @@ local singleton Hand
 
 // Each seat's avatar as this frame draws it: Avatar's blended place and turn,
 // which a view copies here for every other view (render.tide).
-local singleton Shown
+local singleton Presentation
 {
     float3[SEATS] position;
     quaternion[SEATS] rotation;

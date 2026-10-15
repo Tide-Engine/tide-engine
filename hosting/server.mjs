@@ -39,7 +39,8 @@ export async function createService(config, options = {}) {
         created: match.created, updated: match.updated, players: matches.running.get(match.id)?.players || 0 });
     const accountView = account => ({ id: account.id, login: account.login, balance: account.balance,
         csrf: account.kind === 'browser' ? account.csrf : undefined, currency: config.currency,
-        topups: config.topups, region: config.region, presets: config.presets,
+        topups: config.topups, paymentsAvailable: Boolean(config.topups.length && config.stripeSecret && config.stripeWebhookSecret),
+        paymentTestMode: /^[sr]k_test_/.test(config.stripeSecret || ''), region: config.region, presets: config.presets,
         maximum: config.accountMatches, accepting: config.accepting && store.allocationsEnabled(), retentionDays: config.retentionDays,
         incidents: store.incidents(account.id), projects: store.projects(account.id).map(urls),
         releases: store.db.prepare('SELECT r.project,r.id,r.created,r.bytes FROM releases r JOIN projects p ON p.id=r.project WHERE p.account=? ORDER BY r.created DESC').all(account.id),

@@ -169,6 +169,13 @@ void tide_hearing_end(tide_hearing *h, const uint32_t tick)
         tide_heard *heard = (tide_heard *)(h->fresh.bytes + at);
         at += heard->size;
         heard->tick = tick;
+        if (heard->event == TIDE_HEARD_DESTROYED_CAUSE) {
+            // Private presentation metadata, never a handler invocation. The
+            // frame reconciler consumes each endpoint independently.
+            tide_event_log_copy(&t->run, &h->fresh, heard, 0);
+            tide_event_log_copy(h->out, &h->fresh, heard, TIDE_HEARD_PREDICTED);
+            continue;
+        }
         if (heard->wants & TIDE_HEARD_VERIFIED) tide_event_log_copy(&t->run, &h->fresh, heard, 0);
         if (!(heard->wants & TIDE_HEARD_PREDICTED)) continue;
         if (heard->event == TIDE_HEARD_ROWS) { // After the run's events: they go where one that reads them went
@@ -176,20 +183,30 @@ void tide_hearing_end(tide_hearing *h, const uint32_t tick)
             continue;
         }
         tide_heard_mark *mark = NULL;
+        const bool availability = (heard->wants & TIDE_HEARD_AVAILABILITY) != 0u;
         for (uint32_t i = 0; i < t->count && !mark; i++) {
-            if (!t->marks[i].met && same_event(&t->marks[i], heard)) mark = &t->marks[i];
+            if ((!t->marks[i].met || availability) && same_event(&t->marks[i], heard)) mark = &t->marks[i];
         }
+        uint64_t deliver = heard->handlers;
         if (mark) { // The tick delivered it already
             mark->met = true;
-            continue;
+            if (!availability) continue;
+            deliver &= ~mark->handlers;
+            mark->handlers |= heard->handlers;
+            if (!deliver) continue;
+        } else {
+            if (t->count == t->room) {
+                const uint32_t room = t->room ? t->room * 2u : 8u;
+                t->marks = tide_realloc(t->marks, (size_t)t->room * sizeof *t->marks, (size_t)room * sizeof *t->marks);
+                t->room = room;
+            }
+            t->marks[t->count++] = (tide_heard_mark){.same = heard->same, .target = heard->target,
+                .born = heard->born, .event = heard->event, .met = true, .handlers = heard->handlers};
         }
-        if (t->count == t->room) {
-            const uint32_t room = t->room ? t->room * 2u : 8u;
-            t->marks = tide_realloc(t->marks, (size_t)t->room * sizeof *t->marks, (size_t)room * sizeof *t->marks);
-            t->room = room;
-        }
-        t->marks[t->count++] = (tide_heard_mark){heard->same, heard->target, heard->born, heard->event, true};
+        const uint64_t handlers = heard->handlers;
+        heard->handlers = deliver;
         tide_event_log_copy(h->out, &h->fresh, heard, TIDE_HEARD_PREDICTED);
+        heard->handlers = handlers;
         reads |= (heard->wants & TIDE_HEARD_READS_ROWS) != 0u;
     }
     tide_event_log_clear(&h->fresh);

@@ -82,9 +82,9 @@ view Balls(Ball ball, mut Account account)
 }
 
 // A local handler that waits, for the toasts it's sent to.
-local event Shown { }
+local event Displayed { }
 
-async local event(Shown) Fade(mut local Toast toast)
+async local event(Displayed) Fade(mut local Toast toast)
 {
     await Wait.Frames(1);
     toast.text = "";
@@ -95,5 +95,5 @@ view Toasts(mut local Toast toast)
 {
     if (toast.shown) return;
     toast.shown = true;
-    this.Send(Shown { });
+    this.Send(Displayed { });
 }

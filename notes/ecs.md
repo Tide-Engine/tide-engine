@@ -1,5 +1,51 @@
 # ECS and simulation state
 
+## Recipient projections and sparse entity metadata (2026-10-15)
+
+Visibility is physical absence in a recipient world. Components targeted by a
+typed visibility policy become internally sparse before archetype derivation.
+Existing presence columns therefore drive systems, views, tasks, queries,
+Has/Get and extern-system row filtering without deriving every hidden-component
+combination. Archetype identity cannot reveal which optional component is hidden.
+The server retains the complete world; shared audience groups and component
+policies remain ordinary snapshot/hash/reload state there.
+
+Recipient hashes encode permitted values, not heap offsets, allocator free lists
+or private policy maps. Generated codecs recurse through fields, text, Lists,
+Maps, Sets, arrays and Grids. Map insertion order remains observable and is kept;
+grid chunk records are sorted by coordinates, including allocated all-zero
+chunks because their iteration extent is observable. Only visible entities and
+present permitted components are installed. Hierarchy links skip hidden siblings
+and exclude hidden parents; the decoder validates links and cycles before
+publishing a temporary world. A projected world with no visible scenes neither
+reconstructs Main nor declares that the server match ended.
+
+Cut hierarchy links need permitted spatial consequences as well as local field
+values. A private projected boundary anchor retains the exact affine prefix and
+rotation needed by a subtree with a permitted Transform, including shear from
+nonuniform ancestor scales. It does not materialize hidden parent entities or
+their other components. Source local Transform fields remain unchanged. Omit
+anchors for subtrees without a permitted Transform: merely knowing an entity
+handle does not authorize extra hidden ancestor placement. Reparenting and
+destruction release obsolete anchors. This metadata uses the existing generated
+map/snapshot/reload machinery and exists only in visibility-enabled games.
+
+Global entity IDs can be far apart in chunked worlds. `tide_entities.pages` is now
+a pointer-table span, with NULL pages representing never-materialized metadata.
+Reads return an absent zero slot; writes allocate only the addressed page and
+preserve copy-on-write. Snapshot retain/free, born metadata, physical hashes,
+raw packing, deltas and page repair all support holes. Dense formats remain
+unchanged. Sparse raw/delta state names populated page indices in ascending
+order; sparse page-hash lists carry an explicit sentinel and indexed hashes.
+Unknown gaps are reserved rather than recycled for client prediction.
+
+Coverage: `test_entity_sparse.c` checks high IDs, absence, copy-on-write, birth
+metadata, predicted allocation, raw and delta roundtrips, truncated data and
+page-hash repair. `visibility_projection` checks IDs beyond 1<<20 with absent
+intermediate pages, nested container values, private marker omission, canonical
+hash agreement despite different heap/grid allocation histories, real component
+absence, C/Tide query filtering and filtered hierarchy destruction.
+
 ## Immutable asset descriptors (2026-10-11)
 
 `tide_list` remains a four-byte tagged offset. A `TIDE_LIST_ASSET` block holds logical count and a 32-byte content ID in a 64-byte allocation, not a pointer or pack offset. IDs hash `TideListAsset1`, uint32 count/element shape and exact bytes. An outside-state refcounted heap asset pool retains the immutable payload; each live descriptor contributes one lease. Snapshots retain the pool along with pages. Pool replacement retires its old allocation until heap settle, and lookup includes retired pools so a local borrow remains readable when a helper clears its source during the same expression. Publication and reader lookup use release/acquire. Unique pools update existing lease counts without allocating a pool for every field. The current pack has a separate locked immutable cache, cleared on unload/default geometry writes; retained worlds keep their old bytes.

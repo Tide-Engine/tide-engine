@@ -1,0 +1,4 @@
+// expect: read-only
+component Secret { int value; }
+system Change(Visibility visibility) { visibility.Set<Secret>(Audience.None); }
+scene Main { }

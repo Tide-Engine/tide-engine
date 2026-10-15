@@ -37,10 +37,11 @@ static void gen_hierarchy(gen *g)
         "    if (rotation) *rotation = q;",
         "    if (!tide_entity_alive(&w->entities, e)) return result;",
         "    if (tide_entity_is_null(@P@parent_of(w, e))) {",
+        "        @ROOT_ANCHOR@",
         "        @T@ t;",
         "        if (tide_load_@T@(w, e, &t)) {",
-        "            q = tide_normalize_q(t.localRotation);",
-        "            result = tide_trs_f4x4(t.localPosition, q, t.localScale);",
+        "            @ROOT_ROTATION@",
+        "            @ROOT_MATRIX@",
         "        }",
         "        if (rotation) *rotation = q;",
         "        return result;",
@@ -58,6 +59,7 @@ static void gen_hierarchy(gen *g)
         "    tide_entity *chain = tide_scratch_memory((size_t)count * sizeof(*chain));",
         "    tide_entity at = e;",
         "    for (uint32_t i = 0; i < count; i++) { chain[i] = at; at = @P@parent_of(w, at); }",
+        "    @CHAIN_ANCHOR@",
         "    for (uint32_t i = count; i-- > 0;) {",
         "        @T@ t;",
         "        if (!tide_load_@T@(w, chain[i], &t)) continue;",
@@ -105,6 +107,7 @@ static void gen_hierarchy(gen *g)
         "        const tide_entity parent = n.parent;",
         "        const bool last = tide_entity_equal(at, root);",
         "        @P@destroy_leaf(w, at);",
+        "        @REMOVE_ANCHOR@",
         "        @P@hierarchy_unlink(w, at);",
         "        (void)tide_map@M@_remove(&w->@S@.nodes, at, @WHERE@);",
         "        if (last) return;",
@@ -128,7 +131,7 @@ static void gen_hierarchy(gen *g)
         "            fprintf(stderr, \"tide: SetParent rejected: the parent is the child or one of its descendants\\n\"); return;",
         "        }",
         "    }",
-        "    if (tide_entity_equal(@P@parent_of(w, child), parent)) return;",
+        "    @SAME_PARENT@",
         "    @T@ changed = {0};",
         "    if (keep) {",
         "        if (!tide_load_@T@(w, child, &changed)) {",
@@ -151,6 +154,7 @@ static void gen_hierarchy(gen *g)
         "            fprintf(stderr, \"tide: SetParent rejected: the resulting local transform is nonfinite\\n\"); return;",
         "        }",
         "    }",
+        "    @CLEAR_ANCHOR@",
         "    const tide_entity oldScene = @P@scene_of(w, child);",
         "    const tide_entity newScene = tide_entity_is_null(parent) ? oldScene : @P@scene_of(w, parent);",
         "    @P@hierarchy_unlink(w, child);",
@@ -194,15 +198,40 @@ static void gen_hierarchy(gen *g)
         const decl *transform = side ? g->prog->transform->local_placement : g->prog->transform;
         sb map = {0};
         sb_printf(&map, "%d", state->fields.items[0].type.decl->index);
-        const char *const keys[] = {"@P@", "@W@", "@S@", "@M@", "@T@", "@WHERE@"};
+        const bool anchors = side == 0 && g->prog->visibility_state;
+        sb remove_anchor = {0}, clear_anchor = {0}, same_parent = {0};
+        if (!anchors) sb_printf(&same_parent, "if (tide_entity_equal(%sparent_of(w, child), parent)) return;", world_prefix(side != 0));
+        if (anchors) {
+            const int index = g->prog->visibility_state->fields.items[3].type.decl->index;
+            sb_printf(&remove_anchor, "(void)tide_map%d_remove(&w->tide_visibility_state.anchors, at, TIDE_IN_MATCH);", index);
+            sb_printf(&clear_anchor, "(void)tide_map%d_remove(&w->tide_visibility_state.anchors, child, TIDE_IN_MATCH);", index);
+            sb_printf(&same_parent, "if (tide_entity_equal(tide_parent_of(w, child), parent) && !tide_map%d_has(w->tide_visibility_state.anchors, child)) return;", index);
+            sb_printf(&g->c, "TIDE_HELPER bool tide_hierarchy_anchor(const tide_world *w, tide_entity e, tide_float4x4 *matrix, tide_quaternion *rotation)\n{\n"
+                       "    if (!tide_map%d_has(w->tide_visibility_state.anchors, e)) return false;\n"
+                       "    const tide_visibility_anchor anchor = tide_map%d_get(w->tide_visibility_state.anchors, e);\n"
+                       "    *matrix = anchor.matrix;\n    *rotation = anchor.rotation;\n    return true;\n}\n\n",
+                      g->prog->visibility_state->fields.items[3].type.decl->index,
+                      g->prog->visibility_state->fields.items[3].type.decl->index);
+        }
+        const char *const keys[] = {"@P@", "@W@", "@S@", "@M@", "@T@", "@WHERE@",
+                                   "@ROOT_ANCHOR@", "@ROOT_ROTATION@", "@ROOT_MATRIX@", "@CHAIN_ANCHOR@",
+                                   "@REMOVE_ANCHOR@", "@CLEAR_ANCHOR@", "@SAME_PARENT@"};
         const char *const values[] = {world_prefix(side != 0), world_type(side != 0), type_cname(state), map.data,
-                                     type_cname(transform), world_where(side != 0)};
+                                     type_cname(transform), world_where(side != 0),
+            anchors ? "const bool anchored = tide_hierarchy_anchor(w, e, &result, &q);" : "",
+            anchors ? "const tide_quaternion local = tide_normalize_q(t.localRotation); q = anchored ? tide_normalize_q(tide_mul_q(q, local)) : local;"
+                    : "q = tide_normalize_q(t.localRotation);",
+            anchors ? "const tide_float4x4 localMatrix = tide_trs_f4x4(t.localPosition, local, t.localScale); result = anchored ? tide_mul_f4x4(result, localMatrix) : localMatrix;"
+                    : "result = tide_trs_f4x4(t.localPosition, q, t.localScale);",
+            anchors ? "(void)tide_hierarchy_anchor(w, chain[count - 1u], &result, &q);" : "",
+            anchors ? remove_anchor.data : "", anchors ? clear_anchor.data : "",
+            same_parent.data};
         gen_hierarchy_scenes(g, side != 0);
         for (size_t i = 0; i < sizeof lines / sizeof lines[0]; i++) {
             const char *at = lines[i];
             while (*at) {
                 int replacement = -1;
-                for (int k = 0; k < 6; k++) if (strncmp(at, keys[k], strlen(keys[k])) == 0) { replacement = k; break; }
+                for (size_t k = 0; k < sizeof keys / sizeof keys[0]; k++) if (strncmp(at, keys[k], strlen(keys[k])) == 0) { replacement = (int)k; break; }
                 if (replacement < 0) sb_putn(&g->c, at++, 1);
                 else { sb_put(&g->c, values[replacement]); at += strlen(keys[replacement]); }
             }

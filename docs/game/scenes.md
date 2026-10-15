@@ -126,7 +126,7 @@ Loaded scenes share their world: the same systems, singletons and `Time`.
 
 ## Private scenes
 
-Scenes have visibility and membership metadata. They are public by default; `SceneVisibility.Private` and `Scene.AddPlayer` record who a scene is intended for:
+Scenes are public by default. `SceneVisibility.Private` and `Scene.AddPlayer` restrict a scene and its entities to the chosen players:
 
 ```csharp
 scene Hand
@@ -143,6 +143,4 @@ event(PlayerJoined joined) DealIn()
 
 `Scene.AddPlayer(scene, player)` and `Scene.RemovePlayer(scene, player)` change that membership. It is part of the match, so only match code changes it.
 
-::: warning Visibility filtering isn't built yet
-Every player still receives the whole world, including scenes marked private and their entities. These calls record metadata; they do not hide cards, random seeds or other secrets from another player's machine. Selective state delivery is planned (see [Networking](../multiplayer/networking.md#who-sees-what)).
-:::
+A private scene with no members stays on the server. Adding a player supplies its current permitted state; removing one conceals it. Entity and component policies can restrict this audience further, using the [`Visibility` component and shared groups](./visibility.md). The server simulates the complete match and corrects clients where hidden simulation affects their permitted state.

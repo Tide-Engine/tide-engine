@@ -101,7 +101,7 @@
             </section>{/if}
             <section class="intro"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>Hosting</h1><p class="muted">Your games, their worlds, and what they cost.</p></div>{@render action('Refresh', refresh)}</section>
             <section class="summary" aria-label="Hosting overview">
-                <article><span class="muted">Prepaid credit</span><strong id="balance">{money(account.balance)}</strong><span class="small muted">Usage comes out of this balance.</span></article>
+                <article><span class="muted">Prepaid credit</span><strong id="balance">{money(account.balance)}</strong><span class="small muted">Usage comes out of this balance.</span><a class="credit-link" href="#add-credit">Add credit ↗</a></article>
                 <article><span class="muted">Running matches</span><strong id="running">{running} / {account.maximum}</strong><span class="small muted" id="capacity">{account.accepting ? 'On demand, within your limit.' : 'New allocations are temporarily disabled.'}</span></article>
                 <article><span class="muted">Hosting region</span><strong id="region">{account.region.toUpperCase()}</strong><span class="small muted">One region per deployment.</span></article>
             </section>
@@ -128,9 +128,10 @@
                                 {/each}
                             {/if}
                         </article>
-                    {:else}<p class="empty">Create a project, then deploy from your game folder.</p>{/each}
+                    {:else}<div class="deploy-start"><p>Deploy directly from your game folder.</p><pre><code>tide login
+tide deploy</code></pre><p class="small muted">Your first deploy creates a project using the folder name and saves its link for future deploys. No dashboard setup needed.</p><a class="credit-link" href="https://tide-engine.dev/multiplayer/hosting">Deployment guide ↗</a></div>{/each}
                 </div>
-                    <details class="create"><summary>Create a project</summary><form id="project-form" onsubmit={createProject}>
+                    <details class="create"><summary>Create a project with custom settings</summary><form id="project-form" onsubmit={createProject}>
                         <label>Project name<input name="name" placeholder="my-game" required pattern={'[a-z][a-z0-9-]{0,47}'} maxlength="48"></label>
                         <div class="fields"><label>Match size<select name="preset" id="presets">{#each Object.entries(account.presets) as [id,preset]}<option value={id}>{preset.label} · {preset.memoryBytes / 1048576} MiB · {preset.rate ? `${money(preset.rate * 3600)}/hour` : 'Not configured'}</option>{/each}</select></label><label>Maximum matches<input type="number" name="maximum" value="1" min="1" id="maximum" max={account.maximum} required></label></div>
                         <label>World lifetime<select name="lifetime"><option value="occupied">End after players leave</option><option value="explicit">Run until explicitly ended</option></select></label>
@@ -162,7 +163,12 @@
                 </div>{#if logs !== null}<pre id="logs" aria-label="Match logs">{logs}</pre>{/if}</section>
                 <section class="panel"><h2>Activity</h2><div id="activity">{#each account.incidents.slice(0,15) as incident}<article class="event"><p>{incident.message}</p><time>{time(incident.created)}</time></article>{:else}<p class="empty">No hosting incidents or recovery events.</p>{/each}</div></section>
             </div><aside>
-                <section class="panel"><p class="eyebrow">KEEP THINGS RUNNING</p><h2>Add hosting credit</h2><form id="credit-form" onsubmit={checkout}><label>Credit amount<select name="amount" id="topups">{#each account.topups as amount}<option value={amount}>{money(amount * 1000000)}</option>{/each}</select></label><button class="primary" id="checkout" disabled={busy || !account.topups.length}>Continue to payment ↗</button></form><p class="small muted">Checkout is handled by Stripe. Credit is added after payment is confirmed.</p></section>
+                <section class="panel" id="add-credit"><p class="eyebrow">KEEP THINGS RUNNING</p><h2>Add hosting credit</h2>
+                    {#if account.paymentsAvailable}
+                        {#if account.paymentTestMode}<p class="billing-status">Stripe sandbox · No real money is charged.</p>{/if}
+                        <form id="credit-form" onsubmit={checkout}><label>Credit amount<select name="amount" id="topups">{#each account.topups as amount}<option value={amount}>{money(amount * 1000000)}</option>{/each}</select></label><button class="primary" id="checkout" disabled={busy}>{account.paymentTestMode ? 'Continue to test payment ↗' : 'Continue to payment ↗'}</button></form><p class="small muted">Checkout is handled by Stripe. Credit is added after payment is confirmed.</p>
+                    {:else}<p id="credit-unavailable" class="billing-status">Credit purchases are not available yet.</p><p class="small muted">You’ll be able to choose an amount here when payments are enabled.</p>{/if}
+                </section>
                 <section class="panel policy"><h2>You control the limit.</h2><p>Matches grow on demand up to your capacity limit.</p><p>When credit runs low, new matches stop. When it runs out, long-lived worlds save and suspend.</p><p id="retention">Suspended saves are retained for {account.retentionDays} days. Download or resume your world before retention ends.</p></section>
                 <section class="panel"><h2>Recent usage &amp; credit</h2><div id="ledger">{#each account.ledger.slice(0,10) as entry}<div class="entry"><div><span>{entryLabel(entry.reference)}</span><time>{time(entry.created)}</time></div><strong>{entry.amount > 0 ? '+' : ''}{money(entry.amount)}</strong></div>{:else}<p class="empty">No charges yet.</p>{/each}</div></section>
             </aside></section>

@@ -33,9 +33,9 @@ static void run(tide_world *w, const int op, const int count, const int seed, co
 // A frame in which its view does.
 static void show(const int op, const int count, const int seed)
 {
-    local.Shown.op = op;
-    local.Shown.count = count;
-    local.Shown.seed = seed;
+    local.Displayed.op = op;
+    local.Displayed.count = count;
+    local.Displayed.seed = seed;
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
@@ -290,16 +290,16 @@ TIDE_TEST(lists_out_in_the_local_world)
     tide_local_init(&local);
     const uint64_t before = tide_world_hash(&world);
     show(1, 100, 1);
-    TIDE_CHECK(local.Shown.said == 100 && bytes_are(&local.heap, local.Shown.image, 100, 1, -1));
-    TIDE_CHECK(local.Shown.image.at >> 30 == TIDE_IN_LOCAL);
+    TIDE_CHECK(local.Displayed.said == 100 && bytes_are(&local.heap, local.Displayed.image, 100, 1, -1));
+    TIDE_CHECK(local.Displayed.image.at >> 30 == TIDE_IN_LOCAL);
     show(1, BIG, 2);
-    TIDE_CHECK(bytes_are(&local.heap, local.Shown.image, BIG, 2, -1) && chunked(&local.heap, local.Shown.image));
+    TIDE_CHECK(bytes_are(&local.heap, local.Displayed.image, BIG, 2, -1) && chunked(&local.heap, local.Displayed.image));
     show(1, 30, 3);
-    TIDE_CHECK(bytes_are(&local.heap, local.Shown.image, 30, 3, -1));
+    TIDE_CHECK(bytes_are(&local.heap, local.Displayed.image, 30, 3, -1));
     show(7, 0, 0);
-    TIDE_CHECK(tide_list_read_count(&local.heap, local.Shown.image) == 0);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.image) == 0);
     show(1, BIG, 4);
-    TIDE_CHECK(bytes_are(&local.heap, local.Shown.image, BIG, 4, -1));
+    TIDE_CHECK(bytes_are(&local.heap, local.Displayed.image, BIG, 4, -1));
     TIDE_CHECK(tide_world_hash(&world) == before); // Nothing of it is the match's
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_local_free(&local);

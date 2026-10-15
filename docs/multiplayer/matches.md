@@ -216,7 +216,7 @@ Then, when the machine running a room's match leaves or stops answering, another
 - `Session.End()` ends the match for everyone instead: every player gets `Disconnected` with `Ended`, even one who missed the goodbye, as the relay keeps the room as ended for a while. So does a match whose last scene unloads.
 - Only matches in a room change hands, as the room is where the players meet again, or on [a network of the game's own](./own-network.md) that says where its players meet. A closed match stays closed: its players come back, but no one new joins.
 
-The new host takes over the world its machine received. Every player currently receives the whole world, including [private scenes](../game/scenes.md#private-scenes); selective state visibility is not built yet. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
+This migration path requires the full authoritative world. [Visibility-enabled](../game/visibility.md) clients receive partial worlds and cannot currently promote one into a host: Tide refuses that takeover until a trusted complete-state handover exists. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 
 ## Players in the match
 
@@ -263,7 +263,7 @@ settings
 
 `maxPlayers` goes from 1 to 256. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
 
-Pick what the game is built for. Every player's input goes to every other player each tick, so what a match sends grows with the square of its players, and each client runs the whole simulation: 64 players cost sixteen times what 16 do, before the game does anything with them.
+Pick what the game is built for. In a full-world match every player receives every other's input and simulates the whole world, so traffic can grow with the square of its players. [Visibility](../game/visibility.md) restricts state, simulation and owner-input delivery, while the server still simulates the complete match.
 
 ## Limits for now
 

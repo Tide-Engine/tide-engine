@@ -31,6 +31,8 @@ tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
+tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
+tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
 tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
 tide_e2e_test(asset_references SOURCES e2e/asset_references.tide e2e/asset_references.tprefab)
 tide_e2e_test(asset_reference_empty)
@@ -188,6 +190,7 @@ tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
 tide_e2e_test(local_fields_plain) # ...whose match is the same without them
 tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
 tide_e2e_test(local_events) # Local handlers of the match's events: heard once, whatever a client predicted
+tide_e2e_test(visibility_lifecycle) # Local availability differs from genuine match lifecycle
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
 tide_e2e_test(local_events_plain) # ...which is the same without them
 tide_e2e_test(verified_views) # `verified` parameters: what views read of the world the server confirmed
