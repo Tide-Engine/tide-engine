@@ -10,7 +10,10 @@
 #include "test_helpers.h"
 #include "solutions.h"
 #define world inside_out_test_world
-#define PUZZLES 9
+// LEVEL_COUNT in game.tide; inside_out_campaign_has_exactly_the_witnessed_puzzles
+// fails if the two disagree.
+#define PUZZLES 7
+_Static_assert(sizeof inside_out_solutions / sizeof inside_out_solutions[0] == PUZZLES, "one witness per puzzle");
 static bool same_cell(tide_int2 a, tide_int2 b) { return a.x == b.x && a.y == b.y; }
 static bool play_witness(int level, const char *witness, int *actions)
 {
@@ -62,6 +65,17 @@ TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
         printf("  Puzzle %d: %2d moves.\n", level + 1, actions);
         tide_world_free(&world);
     }
+}
+TIDE_TEST(inside_out_campaign_has_exactly_the_witnessed_puzzles)
+{
+    // The game opens the last witnessed puzzle and refuses the one after it.
+    inside_out_test_start(2);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, PUZZLES - 1));
+    TIDE_CHECK(world.Workshop.level == PUZZLES - 1);
+    const int serial = world.Workshop.serial;
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 1, PUZZLES));
+    TIDE_CHECK(world.Workshop.level == PUZZLES - 1 && world.Workshop.serial == serial);
+    tide_world_free(&world);
 }
 TIDE_TEST(inside_out_campaign_players_can_exchange_their_jobs)
 {

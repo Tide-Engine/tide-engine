@@ -17,6 +17,45 @@ This section is the game's rules as they stand. Everything below it about
 movement, trails, copies, facing doorways, echoes and the twelve puzzles is
 history: read it for why, not for what the code does.
 
+No copies (2026-10-15, the polish round's decision D1: the lead agent's
+pick, provisional until the owner confirms). The owner called the copy in
+the last puzzle "fake recursion", "portals": a pale box led into a room
+whose own box stood elsewhere, so what went in could not be pushed back the
+way it came. Reference boxes are gone from the rules, the view and the
+tests. Every room has exactly one box, and a box's id is its room's: `BoxAt`
+returns a room, and `ValidBox`, `BoxDestination`, `BoxPlacement`,
+`EntryDestination`, `ReferenceLayout`, `LevelLayout.references` and
+`referenceCount`, `Puzzle.references`, `MAX_REFERENCES` and `MAX_BOXES` are
+removed. In the view, `BoxPaint`'s wash, `RoomSurround.reference`,
+`FloorNumber`'s prime mark, `SceneLens.box`, `RoomScene`'s instance and
+`PassageMaker`'s viewer-box test went with them, and `AncestorSurround` is
+a room's box and the room it stands in, with no trail lookup. Box-indexed
+arrays in `Picture` are `MAX_ROOMS` long. Recursion is only real: a box
+inside its own room (leaving puts you beside it, in the same room) or two
+boxes inside each other (leaving one puts you beside it, in the other).
+Puzzles 8 "The same corner" and 9 "The other way in" used copies and are
+removed with their lessons, hints and `WidenRooms` case; `LEVEL_COUNT` is 7
+and the title page reads it. Puzzles 1 to 7 load as before, less the
+copies' fields, and their witnesses replay unchanged.
+- Fixtures for real recursion (`test/simulation.c`): a room holding its own
+  box, left beside it by its east and south doors and entered from those
+  sides at the matching door cell, its west exit refused by the wall beside
+  the box; a battery pushed out of such a room lands beside the box, and is
+  refused when that cell is the pusher's own (the row comes round onto
+  itself); the box pushed east within itself, after which the partner and a
+  battery keep their cells (they are inside the box and go with it) and the
+  pusher, inside it too, has taken the one step of any push, then both bots
+  leave beside its new place; a two-room cycle left each way, round the
+  cycle and back, then entered with the partner as backstop, all undone
+  exactly. The two fixtures that built copies were converted: simultaneous
+  entries now race an entry and a walk onto one doorway cell, and the
+  snapshot fixture enters a room's own box standing inside it.
+  `inside_out_campaign_has_exactly_the_witnessed_puzzles` ties the test's
+  puzzle count to `LEVEL_COUNT`. 29 tests pass.
+- Not changed: `test/browser.mjs` still knows the removed puzzles; a later
+  stage of this round rewrites it. `Hands.portalTime` is the flash after any
+  doorway crossing, not a copy's, and stays.
+
 The owner, after playing with a partner, sent six points, was shown my
 reading of each with two questions, and answered "once done push and
 deploy", so the two readings are mine: (a) "stop making doors between
@@ -36,14 +75,14 @@ that is its outside, with no memory of how anything came in.
   it, back to the pusher. All goals are worked out from where things stood,
   then all move at once. `Step` says Walk, Push or Enter for the preview.
 - No ghosts, true recursion: a room is left beside its own box, by a bot or
-  anything pushed, however it was entered. A reference box (a copy) is a way
-  in only. A bot's trail is no longer history: `MovePuzzle` rebuilds it for
-  both bots after every move as the room's box, that box's room's, and so
-  on (`RebaseTrail` with depth 0), which is what the view's ancestry and
-  the status lines read. A bot is drawn solid in every drawing of its room;
-  the echo code is gone. A copy is drawn washed out (`BoxPaint`). A room
+  anything pushed, however it was entered. A bot's trail is no longer
+  history: `MovePuzzle` rebuilds it for both bots after every move as the
+  room's box, that box's room's, and so on (`RebaseTrail` with depth 0),
+  which is what the view's ancestry and the status lines read. A bot is
+  drawn solid in every drawing of its room; the echo code is gone. A room
   whose own box is inside it is left into itself, as before; no infinity
-  room was built.
+  room was built. (Copies, a way in only and drawn washed out, were removed
+  on 2026-10-15; see above.)
 - No doors between worlds: `DoorsMeet`, the drawn passage and the special
   cases for leaving one box into the next are gone. A bot leaving a box
   into a cell with a box in it pushes that box, and goes into it if the
@@ -53,7 +92,8 @@ that is its outside, with no memory of how anything came in.
   "robot" for "dummy". The owner also floated batteries that unlock things.
   That is a new mechanic and is not built.
 
-Campaign: nine puzzles (`LEVEL_COUNT`). Under the new rules the old
+Campaign: nine puzzles (`LEVEL_COUNT`), seven since 2026-10-15, when the
+two that used copies (8 and 9 below) were removed. Under the new rules the old
 witnesses of puzzles 1 to 4 and of "Hold it steady" replay unchanged; "The
 same corner" was re-solved by search (16 moves); the other six old puzzles
 are dropped: one searched to four million positions without a result, the
@@ -73,8 +113,8 @@ its south door leads).
 | 5 All in a row | 11 |
 | 6 Hold it steady | 19 |
 | 7 Posted | 15 |
-| 8 The same corner | 16 |
-| 9 The other way in | 26 |
+| 8 The same corner (removed) | 16 |
+| 9 The other way in (removed) | 26 |
 
 Witnesses 5 to 8 are the shortest (breadth-first through the Move handler);
 9 is my own route, its search having passed four million positions; 1 to 4
@@ -94,11 +134,13 @@ counters and the second puzzle's exhaustive check are gone with the rules
 they measured. Fixtures: a row of two boxes and a battery, then the first
 box into the second when the row meets the edge, then the bot into the
 box; a battery behind a box holds nothing and the partner does; in by a
-copy and out, battery and bot, beside the room's own box; facing and undo.
+copy and out, battery and bot, beside the room's own box (replaced on
+2026-10-15 by the real-recursion fixtures above); facing and undo.
 
 What is drawn: `EnteredBox` (`map.tide`) finds the box a bot went into by
-one step, so going in through a copy closes in on the copy, though the
-surroundings then switch to the room's own box's. Not looked at in motion.
+one step. With copies gone that is always the room the bot is now in; in a
+two-room cycle it tells entering a box from leaving into the same room.
+Not looked at in motion.
 
 ## Shared world and recursive boxes
 

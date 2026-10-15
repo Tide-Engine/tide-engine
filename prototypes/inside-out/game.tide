@@ -8,12 +8,11 @@ settings
     hostMigration = true;
 }
 
+// Every room has exactly one box, and a box's id is its room's.
 const int MAX_ROOMS = 4;
 const int MAX_CRATES = 8;
-const int MAX_REFERENCES = 4;
-const int MAX_BOXES = 8;
 const int MAX_DEPTH = 8;
-const int LEVEL_COUNT = 9;
+const int LEVEL_COUNT = 7;
 const int UNDO_LIMIT = 128;
 
 enum Tile { Floor, Wall, Target, Exit }
@@ -30,20 +29,14 @@ struct RoomLayout
     int2 dock = int2(-1);
     int dockRoom = -1;
 }
-struct ReferenceLayout
-{
-    int destination;
-}
 struct LevelLayout
 {
     Tile[49] tiles;
     int width = 7;
     int height = 7;
-    RoomLayout[4] rooms;
-    ReferenceLayout[4] references;
+    RoomLayout[MAX_ROOMS] rooms;
     int roomCount;
     int crateCount;
-    int referenceCount;
 }
 struct Entry
 {
@@ -58,13 +51,13 @@ struct Traveler
     // The way it last moved, which is the way it faces.
     int facing = 2;
 }
+// Where a room's box stands: the room it is in (-1 is the table) and its cell.
 struct RoomShell { int room = -1; int2 position; }
 struct Cargo { int room = -1; int2 position; bool active; }
 struct Puzzle
 {
     Traveler[2] actors;
-    RoomShell[4] rooms;
-    RoomShell[4] references;
+    RoomShell[MAX_ROOMS] rooms;
     Cargo[8] crates;
     int moves;
     bool solved;
@@ -150,28 +143,11 @@ bool ValidRoom(LevelLayout layout, int room)
 {
     return room >= 0 && room < layout.roomCount && room < MAX_ROOMS;
 }
-bool ValidBox(LevelLayout layout, int box)
-{
-    return box >= 0 && (box < MAX_ROOMS ? ValidRoom(layout, box) : box < MAX_BOXES && box - MAX_ROOMS < layout.referenceCount);
-}
-int BoxDestination(LevelLayout layout, int box)
-{
-    if (!ValidBox(layout, box)) return -2;
-    return box < MAX_ROOMS ? box : layout.references[box - MAX_ROOMS].destination;
-}
-RoomShell BoxPlacement(LevelLayout layout, Puzzle puzzle, int box)
-{
-    if (!ValidBox(layout, box)) return RoomShell { };
-    return box < MAX_ROOMS ? puzzle.rooms[box] : puzzle.references[box - MAX_ROOMS];
-}
+// The box standing at a cell of a room, which is the room it holds; -1 for none.
 int BoxAt(LevelLayout layout, Puzzle puzzle, int parent, int2 at)
 {
-    for (var box = 0; box < MAX_BOXES; box++)
-    {
-        if (!ValidBox(layout, box)) continue;
-        var placement = BoxPlacement(layout, puzzle, box);
-        if (placement.room == parent && CellEqual(placement.position, at)) return box;
-    }
+    for (var box = 0; box < MAX_ROOMS; box++)
+        if (ValidRoom(layout, box) && puzzle.rooms[box].room == parent && CellEqual(puzzle.rooms[box].position, at)) return box;
     return -1;
 }
 int ActorAt(Puzzle puzzle, int room, int2 at)
@@ -194,8 +170,9 @@ Tile TileAt(LevelLayout layout, int room, int2 at)
 }
 // One step from a cell, for a bot, a parcel or a box alike. Inside the room it
 // is the next cell. Outward from a doorway cell it is the cell beyond the
-// room's own box: a room has one box that is its outside, and everything in
-// it leaves beside that box, however it came in. A copy is a way in only.
+// room's box: a room has one box that is its outside, and everything in it
+// leaves beside that box, however it came in. Where the box stands inside its
+// own room, that is the same room again.
 bool StepFrom(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, out int nextRoom, out int2 next)
 {
     nextRoom = room;
@@ -209,16 +186,17 @@ bool StepFrom(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direct
     return TileAt(layout, nextRoom, next) != Tile.Wall;
 }
 
-// The doorway of the box at a cell that faces something coming at it.
+// The doorway of the box at a cell that faces something coming at it, and the
+// cell inside that it leads to: the box's room's door cell on that side.
 bool Gateway(LevelLayout layout, Puzzle puzzle, int room, int2 at, int direction, out int destination, out int2 entry)
 {
     destination = room;
     entry = at;
     var box = BoxAt(layout, puzzle, room, at);
-    if (!ValidBox(layout, box)) return false;
+    if (box < 0) return false;
     var opposite = (direction + 2) % 4;
-    destination = BoxDestination(layout, box);
-    if (!ValidRoom(layout, destination) || (layout.rooms[destination].doors & (1 << opposite)) == 0) return false;
+    destination = box;
+    if ((layout.rooms[destination].doors & (1 << opposite)) == 0) return false;
     entry = DoorCell(layout, destination, opposite);
     return TileAt(layout, destination, entry) != Tile.Wall;
 }
@@ -236,14 +214,10 @@ Thing ThingAt(LevelLayout layout, Puzzle puzzle, int room, int2 at)
     if (crate >= 0) return Thing { kind = 2, index = crate };
     return Thing { };
 }
-Spot SpotOf(LevelLayout layout, Puzzle puzzle, Thing thing)
+Spot SpotOf(Puzzle puzzle, Thing thing)
 {
     if (thing.kind == 0) return Spot { room = puzzle.actors[thing.index].room, cell = puzzle.actors[thing.index].position };
-    if (thing.kind == 1)
-    {
-        var placement = BoxPlacement(layout, puzzle, thing.index);
-        return Spot { room = placement.room, cell = placement.position };
-    }
+    if (thing.kind == 1) return Spot { room = puzzle.rooms[thing.index].room, cell = puzzle.rooms[thing.index].position };
     return Spot { room = puzzle.crates[thing.index].room, cell = puzzle.crates[thing.index].position };
 }
 void PutThing(mut Puzzle puzzle, Thing thing, Spot spot)
@@ -253,15 +227,10 @@ void PutThing(mut Puzzle puzzle, Thing thing, Spot spot)
         puzzle.actors[thing.index].room = spot.room;
         puzzle.actors[thing.index].position = spot.cell;
     }
-    else if (thing.kind == 1 && thing.index < MAX_ROOMS)
+    else if (thing.kind == 1)
     {
         puzzle.rooms[thing.index].room = spot.room;
         puzzle.rooms[thing.index].position = spot.cell;
-    }
-    else if (thing.kind == 1)
-    {
-        puzzle.references[thing.index - MAX_ROOMS].room = spot.room;
-        puzzle.references[thing.index - MAX_ROOMS].position = spot.cell;
     }
     else
     {
@@ -270,19 +239,16 @@ void PutThing(mut Puzzle puzzle, Thing thing, Spot spot)
     }
 }
 
-int EntryDestination(LevelLayout layout, Entry entry)
-{
-    return BoxDestination(layout, entry.box);
-}
 bool RebaseTrail(LevelLayout layout, Puzzle puzzle, mut Traveler actor, int room, int depth)
 {
     actor.depth = depth;
     if (room == -1) actor.depth = 0;
-    else if (depth == 0 || EntryDestination(layout, actor.trail[depth - 1]) != room)
+    else if (depth == 0 || !ValidRoom(layout, room) || actor.trail[depth - 1].box != room)
     {
         // Changed box parentage invalidates an old prefix. Rebuild the
-        // canonical primary ancestry; a genuine cycle contributes each
-        // room once and never invents a containing outer room.
+        // ancestry: the room's box, the room that box is in, and so on. A
+        // cycle (a box inside itself, or two inside each other) contributes
+        // each room once and never invents a containing outer room.
         mut int[4] ancestors = default;
         mut var count = 0;
         mut var parent = room;
@@ -326,7 +292,8 @@ bool IsSolved(LevelLayout layout, Puzzle puzzle)
     return true;
 }
 // What one step does: the move handler applies it, and each screen asks the
-// same question of a copy to show its own dummy what a direction will do.
+// same question of a copy of the puzzle to show its own robot what a
+// direction will do.
 enum Step { Blocked, Walk, Push, Enter }
 // One bot's step, and everything it sets moving. The same rule moves a bot,
 // a parcel and a box:
@@ -356,7 +323,7 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
         mut var free = true;
         if (!decided)
         {
-            var from = SpotOf(layout, puzzle, row[last]);
+            var from = SpotOf(puzzle, row[last]);
             free = StepFrom(layout, puzzle, from.room, from.cell, direction, out var room, out var cell);
             goals[last] = Spot { room = room, cell = cell };
         }
@@ -395,7 +362,7 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             var into = row[count - 1];
             count -= 1;
             if (into.kind != 1) continue;
-            var at = SpotOf(layout, puzzle, into);
+            var at = SpotOf(puzzle, into);
             if (!Gateway(layout, puzzle, at.room, at.cell, direction, out var destination, out var entry)) continue;
             goals[count - 1] = Spot { room = destination, cell = entry };
             decided = true;
@@ -458,8 +425,6 @@ bool Pushed(Puzzle before, Puzzle after)
 {
     for (var room = 0; room < MAX_ROOMS; room++)
         if (before.rooms[room].room != after.rooms[room].room || !CellEqual(before.rooms[room].position, after.rooms[room].position)) return true;
-    for (var reference = 0; reference < MAX_REFERENCES; reference++)
-        if (before.references[reference].room != after.references[reference].room || !CellEqual(before.references[reference].position, after.references[reference].position)) return true;
     for (var crate = 0; crate < MAX_CRATES; crate++)
         if (before.crates[crate].room != after.crates[crate].room || !CellEqual(before.crates[crate].position, after.crates[crate].position)) return true;
     return false;
