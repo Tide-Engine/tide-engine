@@ -1,0 +1,3 @@
+// expect: visibility groups are the match's to change; local code only reads permitted state
+local scene Main { }
+view Show(with Main) { Visibility.Set(default, Audience.All); }

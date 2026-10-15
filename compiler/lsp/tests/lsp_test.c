@@ -3480,6 +3480,8 @@ TIDE_TEST(lsp_scenes)
     const char *calls = complete("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main)\n{\n    Scene.$\n}\n");
     TIDE_CHECK(offers(calls, "Load"));
     TIDE_CHECK(offers(calls, "Unload"));
+    TIDE_CHECK(!offers(calls, "AddPlayer"));
+    TIDE_CHECK(!offers(calls, "RemovePlayer"));
     const char *fields = complete("scene Arena { int size; }\nscene Main { }\nsystem S(Arena arena)\n{\n    var x = arena.$\n}\n");
     TIDE_CHECK(offers(fields, "size"));
     TIDE_CHECK(!offers(fields, "tide_visibility"));
@@ -3488,6 +3490,14 @@ TIDE_TEST(lsp_scenes)
     const char *symbols = request("textDocument/documentSymbol");
     TIDE_CHECK(has(symbols, "\"name\":\"Arena\",\"detail\":\"scene\""));
     TIDE_CHECK(!has(symbols, "tide_players"));
+    open_document("scene Arena { }\nscene Main { }\n"
+                  "event(Spawned) Setup(with Main) { var group = Visibility.CreateGroup(Audience.None); "
+                  "Scene.Lo$ad(Arena, Visibility { group = group }); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *load = request("textDocument/hover");
+    TIDE_CHECK(has(load, "Scene.Load(scene, components...)"));
+    TIDE_CHECK(has(load, "before its `Spawned` handlers"));
+    TIDE_CHECK(!has(load, "SceneVisibility"));
 }
 
 // Snap: on entities and singletons in match code. A type's Interpolate isn't for calling.
@@ -5459,8 +5469,8 @@ TIDE_TEST(lsp_enum_members_and_hovers)
                   "system S(mut Menu menu) { menu.page = Page.Opt$ions; }\n");
     TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":0,\"character\":19}"));
     // The engine's enums have no source to go to, and keep their names.
-    open_document("scene Arena { }\nscene Main { }\n"
-                  "event(Spawned) Setup(with Main) { Scene.Load(Arena, SceneVisibility.Priv$ate); }\n");
+    open_document("scene Arena { Prediction prediction; }\nscene Main { }\n"
+                  "event(Spawned) Setup(with Main) { Scene.Load(Arena { prediction = Prediction.Roll$back }); }\n");
     TIDE_CHECK(has(request("textDocument/definition"), "\"result\":null"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Members of the engine's enums can't be renamed."));
 

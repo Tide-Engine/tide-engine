@@ -1,0 +1,4 @@
+// expect: Scene has no 'RemovePlayer'; it has Load and Unload
+// expect: set the scene root's Visibility group audience with Visibility.Set(group, audience)
+scene Main { }
+event(Spawned) Setup(with Main) { Scene.RemovePlayer(this, PlayerID(0)); }

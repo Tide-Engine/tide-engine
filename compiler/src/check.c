@@ -4832,9 +4832,6 @@ static bool names_builtin_owner(const checker *c, const expr *e)
     return e->kind == E_NAME && builtin_owner(e->name) && !find_local(c, e->name) && !find_param(c, e->name);
 }
 
-// Scene.Load(Arena { ... }), Scene.Load(Hand { ... }, SceneVisibility.Private),
-// Scene.Unload(scene), Scene.AddPlayer(scene, player) and
-// Scene.RemovePlayer(scene, player).
 // The scene Session.Start starts a match in: one of the
 // match's, named with its defaults or written with values.
 static decl *check_start_scene(checker *c, expr *arg, const char *call)
@@ -5081,15 +5078,14 @@ static type check_scene_call(checker *c, expr *e)
 {
     const bool load = str_eq_c(e->name, "Load");
     const bool unload = str_eq_c(e->name, "Unload");
-    const bool players = str_eq_c(e->name, "AddPlayer") || str_eq_c(e->name, "RemovePlayer");
-    if (!load && !unload && !players) {
+    if (!load && !unload) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load, Unload, AddPlayer and RemovePlayer", STR_ARG(e->name));
+        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load and Unload", STR_ARG(e->name));
+        if (str_eq_c(e->name, "AddPlayer") || str_eq_c(e->name, "RemovePlayer"))
+            diag_note("set the scene root's Visibility group audience with Visibility.Set(group, audience)");
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Load");
         suggest_consider_c(&s, "Unload");
-        suggest_consider_c(&s, "AddPlayer");
-        suggest_consider_c(&s, "RemovePlayer");
         suggest_note(&s);
         return T_ERR;
     }
@@ -5110,15 +5106,16 @@ static type check_scene_call(checker *c, expr *e)
             return check_prefab_spawn(c, e, prefab, true);
         }
     }
-    if (!order_named_args(e, load ? "scene, visibility" : unload ? "scene" : "scene, player", load ? 1 : 0)) {
+    if (load && e->args.count > 1) refuse_arg_names(e, T_ENTITY_);
+    else if (!order_named_args(e, "scene", 0)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
 
     if (load) {
-        if (e->args.count < 1 || e->args.count > 2) {
+        if (e->args.count < 1) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            diag_error(e->at, "Scene.Load takes a scene, like 'Scene.Load(Arena { size = 30 })', and maybe its visibility");
+            diag_error(e->at, "Scene.Load takes a scene followed by optional root components, like 'Scene.Load(Arena { size = 30 }, Visibility { group = group })'");
             return T_ERR;
         }
         // Like Spawn, it creates an entity, so it runs first in its statement (see Evaluation order).
@@ -5149,18 +5146,6 @@ static type check_scene_call(checker *c, expr *e)
                 diag_error(arg->at, "Scene.Load takes a scene, like 'Scene.Load(Arena)' or 'Scene.Load(Arena { size = 30 })'");
             }
         }
-        if (e->args.count == 2) {
-            if (!local) ensure_visibility(c->prog);
-            const type t = check_expr(c, e->args.items[1]);
-            if (t.kind != TY_ERROR && !(t.kind == TY_ENUM && t.decl == c->prog->scene_visibility)) {
-                diag_error(e->args.items[1]->at, "a scene's visibility is 'SceneVisibility.Public' or 'SceneVisibility.Private', not %s",
-                           type_name(t));
-            } else if (scene && scene->is_local) {
-                diag_error(e->args.items[1]->at, "'" STR_FMT "' is local, and only the match's scenes have a visibility",
-                           STR_ARG(scene->name));
-                diag_note("local scenes are only on this machine, so no other player sees them anyway");
-            }
-        }
         if (!scene) return T_ERR;
         if (in_async_function(c)) { // An async function's world is the scene's
             if (!note_task_side(c, scene->is_local ? TASK_LOCAL : TASK_MATCH, arg->at)) return T_ERR;
@@ -5180,17 +5165,27 @@ static type check_scene_call(checker *c, expr *e)
         e->type_decl = scene;
         note_text_write(c, decl_holds_text(scene));
         e->spawn_mask = bit(scene);
+        for (int i = 1; i < e->args.count; i++) {
+            expr *value = e->args.items[i];
+            decl *comp = check_component_arg(c, value, "Scene.Load root components");
+            if (!comp) continue;
+            comp = component_placement(c->prog, comp, local, value->at);
+            value->type_decl = comp;
+            value->type = decl_type(comp);
+            if (!check_component_side(c, value, comp)) continue;
+            if (mask_has(e->spawn_mask, comp->index))
+                diag_error(value->at, "'" STR_FMT "' appears twice; an entity has at most one of each component", STR_ARG(comp->name));
+            e->spawn_mask = mask_or(e->spawn_mask, bit(comp));
+            note_text_write(c, decl_holds_text(comp));
+        }
         vec_push(c->spawns, e);
         note_spawn(c);
         return local ? (type){TY_LOCAL_ENTITY, NULL} : T_ENTITY_;
     }
 
-    const int want = unload ? 1 : 2;
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-    if (e->args.count != want) {
-        diag_error(e->at, unload ? "Scene.Unload takes the scene's entity: 'Scene.Unload(scene)'"
-                                 : "Scene.%s takes the scene's entity and a player: 'Scene." STR_FMT "(scene, player)'",
-                   str_to_cstr(e->name), STR_ARG(e->name));
+    if (e->args.count != 1) {
+        diag_error(e->at, "Scene.Unload takes the scene's entity: 'Scene.Unload(scene)'");
         return T_ERR;
     }
     const type scene = e->args.items[0]->type;
@@ -5210,25 +5205,10 @@ static type check_scene_call(checker *c, expr *e)
             // The scene's data, which the code runs for: its entity is `this`.
             if (scene.kind == TY_COMPONENT && scene.decl->is_scene && arg->kind == E_NAME && arg->bind == BIND_PARAM
                 && !arg->param->function_param) {
-                diag_note("'" STR_FMT "' is the scene's data, and its entity is 'this': 'Scene." STR_FMT "(this%s)'",
-                          STR_ARG(arg->name), STR_ARG(e->name), unload ? "" : ", player");
+                diag_note("'" STR_FMT "' is the scene's data, and its entity is 'this': 'Scene.Unload(this)'", STR_ARG(arg->name));
             }
         }
         return T_ERR;
-    }
-    if (players) {
-        ensure_visibility(c->prog);
-        if (local) {
-            diag_error(e->at, "which players see a scene is the match's to decide, so local code can't change it");
-            return T_ERR;
-        }
-        const type player = e->args.items[1]->type;
-        if (player.kind != TY_ERROR && player.kind != TY_PLAYER) {
-            diag_error(e->args.items[1]->at, "Scene." STR_FMT " takes a PlayerID, not %s", STR_ARG(e->name), type_name(player));
-            return T_ERR;
-        }
-        e->call = CALL_SCENE_PLAYER;
-        return T_VOID_;
     }
     e->call = CALL_UNLOAD;
     return T_VOID_;
@@ -8160,8 +8140,6 @@ static type check_member(checker *c, expr *e)
     decl *const enum_decl = named_enum(c, e->object);
     if (enum_decl) {
         const type member = check_enum_member(e, enum_decl);
-        if (enum_decl == c->prog->scene_visibility && e->enum_member && e->enum_member->number == 1)
-            ensure_visibility(c->prog);
         // Font.Bold: the game draws in bold, so it carries the bold's file
         if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
         // Filter.Trilinear: the game's textures can be read between their smaller images
@@ -9091,7 +9069,7 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_SEND: what = "send events"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "change entities"; break;
-    case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load or unload scenes"; break;
+    case CALL_LOAD: case CALL_UNLOAD: what = "load or unload scenes"; break;
     case CALL_SESSION: what = "change the session"; break;
     case CALL_CLIPBOARD: what = "use the clipboard"; break;
     case CALL_AUDIO: what = "play sounds"; break;
@@ -10793,7 +10771,7 @@ static void check_step_expr(checker *c, const expr *e)
     case CALL_AUDIO: what = "play sounds"; break;
     case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SESSION: case CALL_CLIPBOARD: what = "make requests of the host"; break;
-    case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load and unload scenes"; break;
+    case CALL_LOAD: case CALL_UNLOAD: what = "load and unload scenes"; break;
     case CALL_VISIBILITY: if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups"; break;
     case CALL_SNAP: what = "snap"; break;
     default: break;
@@ -11688,7 +11666,7 @@ static bool stands_alone(const expr *e)
                                          // A Draw call that gives a value only measures or converts
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
-        || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
+        || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
         || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
@@ -15392,7 +15370,7 @@ static bool call_acts(const expr *e)
     if (e->kind == E_AWAIT || e->kind == E_TRY) return true; // `try` passes an error on
     if (e->kind != E_CALL && e->kind != E_METHOD) return false;
     switch (e->call) {
-    case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
+    case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
@@ -15701,17 +15679,6 @@ static void add_builtins(program *prog)
     prog->player_left = builtin_event("PlayerLeft", true);
     vec_push(prog->player_joined->fields, player);
     vec_push(prog->player_left->fields, player);
-
-    // enum SceneVisibility { Public, Private }: who sees a scene the match loads.
-    decl *visibility = NEW(decl);
-    visibility->kind = DECL_ENUM;
-    visibility->name = str_from("SceneVisibility");
-    visibility->builtin = true;
-    const enum_member public_member = {str_from("Public"), {0, 0, 0}, NULL, 0};
-    const enum_member private_member = {str_from("Private"), {0, 0, 0}, NULL, 1};
-    vec_push(visibility->members, public_member);
-    vec_push(visibility->members, private_member);
-    prog->scene_visibility = visibility;
 
     // enum Prediction { Rollback, Delay }: how clients keep up with the match,
     // the `prediction` setting. tide/session.h's tide_prediction has the same values.
@@ -16121,7 +16088,6 @@ static void add_builtins(program *prog)
     vec_push(decls, audience);
     vec_push(decls, visibility_group);
     vec_push(decls, visibility_component);
-    vec_push(decls, visibility);
     vec_push(decls, prediction);
     vec_push(decls, io_error);
     vec_push(decls, anchor);
@@ -16532,17 +16498,6 @@ static void collect_decls(program *prog)
 
         switch (d->kind) {
         case DECL_COMPONENT:
-            if (d->is_scene) {
-                // A scene's visibility and the players who see it, in generated C only.
-                field visibility = {0};
-                visibility.name = str_from("tide_visibility");
-                visibility.type_name = str_from("int");
-                visibility.hidden = true;
-                field players = visibility;
-                players.name = str_from("tide_players");
-                vec_push(d->fields, visibility);
-                vec_push(d->fields, players);
-            }
             if (d->is_scene && str_eq_c(d->name, "Main") && !package_of(d)) { // A package's is an error of its own
                 if (prog->main) {
                     diag_error(d->at, "there can only be one 'scene Main'");
@@ -18815,10 +18770,8 @@ static void drop_unused_seed(program *prog)
     }
 }
 
-// The players who see a scene are bits of its hidden tide_players, 32 a word:
-// a game that takes more players than a word has gets the words after it,
-// tide_players1 and on, once its maxPlayers is known.
-static void add_scene_player_words(program *prog)
+// Audience values have one bit per configured player, 32 to a word.
+static void add_audience_words(program *prog)
 {
     const uint32_t players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
     for (uint32_t word = 1; word * 32u < players; word++) {
@@ -18827,20 +18780,6 @@ static void add_scene_player_words(program *prog)
         sb_printf(&name, "players%u", (unsigned)word);
         more.name = (str){name.data, (int)name.len};
         vec_push(prog->audience->fields, more);
-    }
-    for (int i = 0; i < prog->decls.count; i++) {
-        decl *d = prog->decls.items[i];
-        if (d->kind != DECL_COMPONENT || !d->is_scene) continue;
-        for (uint32_t word = 1; word * 32u < players; word++) {
-            char *name = arena_alloc(24);
-            snprintf(name, 24, "tide_players%u", (unsigned)word);
-            field more = {0};
-            more.name = str_from(name);
-            more.type_name = str_from("int");
-            more.type = T_INT_;
-            more.hidden = true;
-            vec_push(d->fields, more);
-        }
     }
 }
 
@@ -19378,7 +19317,7 @@ bool check(program *prog)
             vec_push(prog->input->fields, f);
         }
     }
-    add_scene_player_words(prog);
+    add_audience_words(prog);
     diag_phase("declarations");
     for (int i = 0; i < prog->decls.count; i++) {
         // Random is among the program's structs once something names it (below), or a struct holds one

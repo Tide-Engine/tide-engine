@@ -1,0 +1,4 @@
+// expect: 'Other' is a scene, so Scene.Load root components can't take it
+scene Main { }
+scene Other { }
+event(Spawned) Setup(with Main) { Scene.Load(Other, Other); }

@@ -7,7 +7,6 @@ static void gen_visibility(gen *g)
     sb *o = &g->c;
     const int groups = prog->visibility_state->fields.items[1].type.decl->index;
     const int overrides = prog->visibility->fields.items[1].type.decl->index;
-    const unsigned players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
     sb_put(o, "TIDE_HELPER Audience tide_audience_all(void) { return TIDE_AUDIENCE_ALL; }\n\n");
     sb_put(o, "TIDE_HELPER bool tide_audience_contains(Audience a, tide_player_id player)\n{\n"
               "    const int32_t i = tide_player_index(player);\n"
@@ -87,23 +86,6 @@ static void gen_visibility(gen *g)
         sb_printf(o, "    case %d: return *%s;\n", a, arch_cell(g, "w", a, 1, "tide_entity", "loc.row", false));
     }
     sb_put(o, "    default: return (tide_entity){0};\n    }\n}\n\n"
-              "TIDE_HELPER Audience tide_visibility_scene_audience(const tide_world *w, tide_entity scene)\n{\n"
-              "    if (tide_entity_is_null(scene)) return TIDE_AUDIENCE_ALL;\n"
-              "    const tide_location loc = tide_entity_location(&w->entities, scene);\n    (void)loc;\n    switch (loc.archetype) {\n");
-    for (int a = 0; a < prog->archetypes.count; a++) {
-        const decl *scene = arch_scene(g, a);
-        if (arch_local(g, a) || !scene) continue;
-        sb_printf(o, "    case %d: {\n        %s value;\n        %s;\n"
-                     "        if (value.tide_visibility != 1) return TIDE_AUDIENCE_ALL;\n        Audience result = {0};\n",
-                  a, type_cname(scene), comp_take(g, "w", a, scene->index, "loc.row", "value"));
-        for (unsigned word = 0; word * 32u < players; word++) {
-            const char *field = str_to_cstr(prog->audience->fields.items[word].name);
-            if (word) sb_printf(o, "        result.%s = value.tide_players%u;\n", field, word);
-            else sb_printf(o, "        result.%s = value.tide_players;\n", field);
-        }
-        sb_put(o, "        return result;\n    }\n");
-    }
-    sb_put(o, "    default: return (Audience){0};\n    }\n}\n\n"
               "TIDE_HELPER int64_t tide_visibility_component_key(uint32_t component)\n{\n    switch (component) {\n");
     for (int i = 0; i < prog->components.count; i++) {
         const decl *d = prog->components.items[i];
@@ -125,7 +107,7 @@ static void gen_visibility(gen *g)
               "TIDE_HELPER Audience tide_visibility_audience(const tide_world *w, tide_entity e, int32_t component)\n{\n"
               "    if (!tide_entity_alive(&w->entities, e)) return (Audience){0};\n"
               "    const tide_entity scene = tide_visibility_scene(w, e);\n"
-              "    Audience audience = tide_visibility_scene_audience(w, scene);\n"
+              "    Audience audience = TIDE_AUDIENCE_ALL;\n"
               "    Visibility visibility = {0};\n"
               "    if (!tide_entity_is_null(scene) && !tide_entity_equal(scene, e) && tide_load_Visibility(w, scene, &visibility))\n"
               "        audience = tide_audience_intersect(audience, tide_visibility_group_audience(w, visibility.group));\n"
