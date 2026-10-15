@@ -354,6 +354,31 @@ allow prediction/anchor and three-tick static-frame margin before fade-out.
 WebGL also passed the stronger later sample before that test-only adjustment;
 the native and WASM clock tests pin the entire 90-tick readable hold.
 
+### Integration with current dev
+
+The clean incoming merge included compiler scene/visibility changes as
+well as unrelated hosting and Foldline work. Inside Out sources had no
+overlap. Its native game/tests/solver/bridge and web debug game/tests/bridge
+plus the staged web release page rebuilt warning-free with the new compiler.
+The native aggregate/bridge selection passed all three CTest entries in
+68.82 seconds; WASM passed all thirteen in 76.64 seconds, both including
+the complete 46-test aggregate. Native material coverage passed again in
+2.14 seconds. The final wood, exhibit and Original captures match their
+pre-merge PNGs byte-for-byte.
+
+Preserved generated output under `build/inside-out-captures/pre-dev-merge/`
+was compared for all three presets. Removing only source-line directives,
+all 231 authored function/view/system/handler bodies and all 18 view
+dispatchers are identical. All 40 shader arrays/descriptors and the asset
+packs are byte-identical. Generated differences only remove obsolete scene
+membership plumbing and shrink the empty Main scene from eight bytes to
+one; schema/build IDs change accordingly. This dependency required rebuilds
+and aggregate validation, without repeating the unchanged GPU payloads'
+full browser fixtures. Both players must refresh to use the new build.
+
+The local staged preview was refreshed through the collaborative browser;
+its menu renders and the painted-wood URL argument reaches Tide correctly.
+
 ## Direct playtest feedback (2026-10-15)
 
 This follow-up supersedes the UI, audio and manual progression decisions in
