@@ -1,0 +1,4 @@
+// expect: Visibility controls which clients receive match entities; local entities already belong to this machine
+local scene Menu { }
+local scene Main { }
+view Show() { Scene.Load(Menu, Visibility); }

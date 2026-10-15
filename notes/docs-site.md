@@ -1,5 +1,21 @@
 # The docs site
 
+Scene visibility unification (2026-10-15): Scenes, State visibility, language
+basics and the spec use ordinary root Visibility groups for scene audiences.
+They describe scene/entity/component intersection, live shared updates,
+server-only scenes with Audience.None, local placement and root policy present
+before initialization. Separate SceneVisibility and scene player-membership
+APIs are removed. Spec Decided records the approved scope model; Provisional
+retains the API/loading details. This supersedes older scene-membership API
+descriptions below. Production docs and 244 shared grammar checks pass with
+Node 24.21.0. No deployment or CI was requested.
+
+Subscription hosting guide (2026-10-15): managed hosting now documents the
+approved monthly included allowance, separate purchased credit, opt-in prepaid
+extra usage, shared purchase cap, cancellation and billing controls. Public
+launch pricing remains undecided; the configured EUR 20 plan is sandbox-only.
+The production docs build passes; console/provider checks are in managed-hosting.md.
+
 Folder deployment guide (2026-10-15): the CLI/managed-hosting pages now start
 with `tide deploy`, explain automatic folder-named project creation and the
 portable `tide.deploy.json` target, explicit relinking and failed target checks.

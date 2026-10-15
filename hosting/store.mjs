@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { BillingLedger } from './billing-store.mjs';
 
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export const identifier = () => randomBytes(16).toString('hex');
@@ -93,9 +94,12 @@ export class Store {
                 count INTEGER NOT NULL, PRIMARY KEY(account,day));
             CREATE TABLE IF NOT EXISTS service_tokens (hash TEXT PRIMARY KEY REFERENCES tokens(hash) ON DELETE CASCADE,
                 project TEXT NOT NULL REFERENCES projects(id));
+            CREATE TABLE IF NOT EXISTS deploy_tokens (hash TEXT PRIMARY KEY REFERENCES tokens(hash) ON DELETE CASCADE,
+                project TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS ledger_account_created ON ledger(account,created);
             CREATE INDEX IF NOT EXISTS matches_state_updated ON matches(state,updated);
         `);
+        this.billing = new BillingLedger(this);
     }
     close() { this.db.close(); }
     allocationsEnabled() { return this.db.prepare("SELECT value FROM operator_settings WHERE key='accepting'").get()?.value !== '0'; }
@@ -126,22 +130,23 @@ export class Store {
     }
     account(id) { return this.db.prepare('SELECT * FROM accounts WHERE id=?').get(id); }
     issueToken(account, kind, lifetime) {
-        requireValue(['browser', 'cli', 'service'].includes(kind) && lifetime > 0, 500, 'Invalid token policy.');
-        const token = secret(), csrf = secret(), expires = this.now() + lifetime;
-        this.db.prepare('DELETE FROM tokens WHERE expires<=?').run(this.now());
+        requireValue(['browser', 'cli', 'service', 'deploy'].includes(kind)
+            && ((Number.isSafeInteger(lifetime) && lifetime > 0) || (kind === 'deploy' && lifetime === null)), 500, 'Invalid token policy.');
+        const token = secret(), csrf = secret(), expires = lifetime === null ? 0 : this.now() + lifetime;
+        this.db.prepare('DELETE FROM tokens WHERE expires>0 AND expires<=?').run(this.now());
         // Signing in must never silently revoke a trusted backend's runtime
         // key. Bound those explicitly; browser/CLI sessions rotate separately.
-        if (kind === 'service') requireValue(this.db.prepare("SELECT COUNT(*) AS n FROM tokens WHERE account=? AND kind='service'").get(account).n < 20,
-            409, 'Runtime credential limit reached. Revoke an unused key first.');
+        if (['service', 'deploy'].includes(kind)) requireValue(this.db.prepare('SELECT COUNT(*) AS n FROM tokens WHERE account=? AND kind=?').get(account, kind).n < 20,
+            409, `${kind === 'deploy' ? 'Deploy token' : 'Runtime credential'} limit reached. Revoke an unused key first.`);
         else this.db.prepare(`DELETE FROM tokens WHERE hash IN
             (SELECT hash FROM tokens WHERE account=? AND kind=? ORDER BY expires DESC,rowid DESC LIMIT -1 OFFSET 19)`).run(account, kind);
         this.db.prepare('INSERT INTO tokens VALUES (?,?,?,?,?)').run(digest(token), account, kind, csrf, expires);
-        return { token, csrf, expires };
+        return { token, csrf, expires: expires || null };
     }
     authenticate(token, kind) {
         if (typeof token !== 'string' || token.length > 128) return null;
         return this.db.prepare(`SELECT a.*,t.kind,t.csrf,t.hash AS token_hash FROM tokens t
-            JOIN accounts a ON a.id=t.account WHERE t.hash=? AND t.kind=? AND t.expires>?
+            JOIN accounts a ON a.id=t.account WHERE t.hash=? AND t.kind=? AND (t.expires>? OR (t.kind='deploy' AND t.expires=0))
             AND a.disabled=0`).get(digest(token), kind, this.now()) || null;
     }
     revokeToken(tokenHash) { this.db.prepare('DELETE FROM tokens WHERE hash=?').run(tokenHash); }
@@ -150,6 +155,19 @@ export class Store {
         const credential = this.issueToken(account, 'service', 30 * 86400_000);
         this.db.prepare('INSERT INTO service_tokens VALUES (?,?)').run(digest(credential.token), project);
         return { token: credential.token, expires: credential.expires, project };
+    }
+    issueDeployToken(account, project, options = {}) {
+        this.project(account, project);
+        requireValue(options && typeof options === 'object' && !Array.isArray(options), 400, 'Send a deploy token name and lifetime.');
+        const { name, days = 90 } = options;
+        requireValue(typeof name === 'string' && name.trim().length >= 1 && name.length <= 64 && !/[\x00-\x1f\x7f]/.test(name),
+            400, 'Give this deploy token a name of 1–64 characters.');
+        requireValue([30, 90, 365, null].includes(days), 400, 'Choose 30, 90 or 365 days, or no expiry.');
+        return this.transaction(() => {
+            const credential = this.issueToken(account, 'deploy', days === null ? null : days * 86400_000);
+            this.db.prepare('INSERT INTO deploy_tokens VALUES (?,?,?)').run(digest(credential.token), project, name.trim());
+            return { token: credential.token, expires: credential.expires, project };
+        });
     }
     createDevice() {
         this.db.prepare('DELETE FROM devices WHERE expires<=?').run(this.now());
@@ -318,28 +336,24 @@ export class Store {
             this.resourceCapacity(accountId, project, limits);
             if (project.lifetime === 'explicit') this.savedCapacity(accountId, limits);
             const rate = limits.presets[project.preset].rate;
-            const charge = rate * limits.leaseSeconds;
+            const lease = this.billing.lease(accountId, this.now(), limits.leaseSeconds, rate), charge = lease.charge;
             requireValue(Number.isSafeInteger(charge) && charge > 0, 503, 'Hosting prices are not configured.');
-            requireValue(account.balance >= charge, 402, 'Insufficient prepaid credit to start a match.');
+            requireValue(this.billing.state(accountId).balance >= charge, 402, 'Insufficient hosting credit to start a match.');
             let id;
             do { id = String(randomBytes(6).readUIntBE(0, 6)); }
             while (id === '0' || this.db.prepare('SELECT 1 FROM matches WHERE id=?').get(id));
             const now = this.now();
             this.db.prepare(`INSERT INTO matches(id,project,release,state,desired,reserved,paid_until,created,updated,parameters)
                 VALUES (?,?,?,'starting','running',?,?,?,?,?)`)
-                .run(id, projectId, project.release, charge, now + limits.leaseSeconds * 1000, now, now, parameters);
+                .run(id, projectId, project.release, charge, lease.until, now, now, parameters);
             this.configureMatch(accountId, id, { lifetime: project.lifetime, emptySeconds: project.empty_seconds });
             this.db.prepare('INSERT INTO creations VALUES (?,?,1) ON CONFLICT(account,day) DO UPDATE SET count=count+1').run(accountId, day);
-            this.debit(accountId, charge, `lease/${id}/${now + limits.leaseSeconds * 1000}`);
+            this.debit(accountId, charge, `lease/${id}/${lease.until}`);
             return this.match(id);
         });
     }
-    debit(account, amount, reference) {
-        const result = this.db.prepare('UPDATE accounts SET balance=balance-? WHERE id=? AND disabled=0 AND balance>=?')
-            .run(amount, account, amount);
-        requireValue(result.changes === 1, 402, 'Insufficient prepaid credit.');
-        this.db.prepare('INSERT INTO ledger(account,amount,reference,created) VALUES (?,?,?,?)')
-            .run(account, -amount, reference, this.now());
+    debit(account, amount, reference, at = this.now()) {
+        this.billing.debit(account, amount, reference, at);
     }
     renewMatch(id, limits) {
         return this.transaction(() => {
@@ -347,10 +361,11 @@ export class Store {
             requireValue(match && match.desired === 'running' && ['starting', 'running', 'recovering'].includes(match.state),
                 409, 'Match is not running.');
             const project = this.db.prepare('SELECT * FROM projects WHERE id=?').get(match.project);
-            const charge = limits.presets[project.preset].rate * limits.leaseSeconds;
+            const lease = this.billing.lease(project.account, match.paid_until, limits.leaseSeconds, limits.presets[project.preset].rate);
+            const charge = lease.charge;
             requireValue(match.paid_until > this.now(), 402, 'The prepaid hosting lease expired.');
-            const until = match.paid_until + limits.leaseSeconds * 1000;
-            this.debit(project.account, charge, `lease/${id}/${match.generation}/${until}`);
+            const until = lease.until;
+            this.debit(project.account, charge, `lease/${id}/${match.generation}/${until}`, match.paid_until);
             this.db.prepare('UPDATE matches SET reserved=reserved+?,paid_until=?,updated=? WHERE id=?')
                 .run(charge, until, this.now(), id);
             return this.match(id);
@@ -383,9 +398,10 @@ export class Store {
             requireValue(limits.accepting && this.allocationsEnabled() && active.length < limits.hostMatches && own.length < limits.accountMatches
                 && own.filter(m => m.project === project.id).length < project.maximum, 409, 'Match capacity reached.');
             this.resourceCapacity(accountId, project, limits);
-            const charge = limits.presets[project.preset].rate * limits.leaseSeconds;
+            const lease = this.billing.lease(accountId, this.now(), limits.leaseSeconds, limits.presets[project.preset].rate);
+            const charge = lease.charge;
             requireValue(Number.isSafeInteger(charge) && charge > 0 && !account.disabled, 403, 'Hosting is not available for this account.');
-            const until = this.now() + limits.leaseSeconds * 1000;
+            const until = lease.until;
             this.debit(accountId, charge, `resume/${id}/${match.generation + 1}/${until}`);
             this.db.prepare(`UPDATE matches SET state='starting',desired='running',reserved=?,paid_until=?,
                 attempt=0,incident=NULL,generation=generation+1,updated=? WHERE id=?`).run(charge, until, this.now(), String(id));
@@ -409,10 +425,10 @@ export class Store {
             const match = this.match(id);
             if (!match || ['ended', 'suspended', 'failed'].includes(match.state)) return;
             const project = this.db.prepare('SELECT * FROM projects WHERE id=?').get(match.project);
-            const refund = Math.min(match.reserved,
+            const unused = Math.min(match.reserved,
                 Math.max(0, Math.floor((match.paid_until - this.now()) / 1000)) * limits.presets[project.preset].rate);
+            const refund = unused ? this.billing.refund(project.account, match, unused) : 0;
             if (refund) {
-                this.db.prepare('UPDATE accounts SET balance=balance+? WHERE id=?').run(refund, project.account);
                 this.db.prepare('INSERT INTO ledger(account,amount,reference,created) VALUES (?,?,?,?)')
                     .run(project.account, refund, `settle/${id}/${match.generation}/${match.paid_until}`, this.now());
             }

@@ -7,6 +7,36 @@ import { Store, digest } from './store.mjs';
 import { Maintenance } from './maintenance.mjs';
 import { configuration } from './config.mjs';
 import { atomicFile } from './files.mjs';
+import { Bundles, encodeBundle } from './bundle.mjs';
+import { wasmFixture } from './fixtures.mjs';
+
+test('release and save deletion cannot cross accounts or remove an artifact still owned by another game', async t => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-shared-artifacts-'));
+    const store = new Store(':memory:');
+    t.after(async () => { store.close(); await rm(folder, { recursive: true, force: true }); });
+    const limits = configuration({ TIDE_HOSTING_SMALL_RATE: '1000' });
+    const bundles = new Bundles(join(folder, 'bundles'), limits), saves = join(folder, 'saves');
+    const maintenance = new Maintenance(store, bundles, saves, limits);
+    const accounts = [1, 2].map(id => { store.invite(id); return store.signIn({ id, login: `developer-${id}` }); });
+    const projects = accounts.map((a, i) => store.createProject(a.id, { name: `game-${i}`, preset: 'small', region: 'fra', maximum: 1 }, limits));
+    const raw = encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, { 'server.wasm': wasmFixture() });
+    const shared = await bundles.put(raw);
+    for (let i = 0; i < 2; i++) store.registerRelease(accounts[i].id, projects[i].id, shared, limits);
+    store.db.prepare('UPDATE accounts SET balance=1000000 WHERE id=?').run(accounts[1].id);
+    const match = store.reserveMatch(accounts[1].id, projects[1].id, limits);
+    const data = Buffer.from('private save'), hash = digest(data);
+    await mkdir(saves); const path = join(saves, `${match.id}.${hash}.save`); await writeFile(path, data);
+    store.checkpoint(match.id, hash); store.finishMatch(match.id, 'suspended', limits);
+    await assert.rejects(maintenance.discard(accounts[0].id, match.id), /not found/);
+    assert.deepEqual(await readFile(path), data);
+    await assert.rejects(maintenance.deleteRelease(accounts[0].id, projects[1].id, shared.id), /not found/);
+    const replacement = await bundles.put(encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, { 'server.wasm': wasmFixture({ empty: true }) }));
+    store.registerRelease(accounts[0].id, projects[0].id, replacement, limits);
+    await maintenance.deleteRelease(accounts[0].id, projects[0].id, shared.id);
+    assert.equal((await bundles.get(shared.id)).id, shared.id);
+    assert.ok(store.release(projects[1].id, shared.id));
+    assert.deepEqual(await readFile(path), data);
+});
 
 test('retention warns, deletes only inactive saves, and keeps required releases; daily usage retains exact totals', async t => {
     const folder = await mkdtemp(join(tmpdir(), 'tide-retention-'));

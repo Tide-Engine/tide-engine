@@ -1655,3 +1655,175 @@ and repeated the complete scoped suites: four native and five web tests passed
 again, including the 60 validator cases and all three rendering backends.
 Both simulation hashes above remain unchanged, and the native/WASI built-layout
 JSON exports are byte-for-byte identical.
+
+## Crosshair placement and owned ends (2026-10-15)
+
+The owner requested a crosshair indication of valid placement and which ends
+have already been shot. Each side now corresponds to that operator's first or
+second placement button, retaining amber/cyan for A and rose/violet for B.
+Bright brackets mean that particular end can be placed at the current aim;
+short dim marks mean it cannot. A separate square below each side is hollow
+until that end is open and filled afterwards, independently of aim validity.
+Preplaced ends count as open, and switching solo bodies selects the other
+operator's pair. A single placed end is visible without suggesting a linked pair.
+The controls menu and README explain the two marks.
+
+`PreviewFold` is the read-only extraction of `Shoot`'s existing ray, frame snap,
+fit, floor/ceiling, busy-pair, crossed-wall, overlap and clearance checks.
+`Shoot` consumes its candidate and retains the existing fizzle, wall rebuild
+and placement writes. The HUD uses that same helper for each of the active
+operator's ends, with the displayed operator's eye/aim. It suppresses readiness
+while carrying (click throws), taken, in a dead-device place or at a room
+handoff; menus clear both previews. Placed squares remain independent.
+The two previews are local `Interface` values; no match schema or input field
+was added. This is immediate aim feedback, not a promise against geometry or
+other players moving between the displayed frame and the next shot tick.
+
+The simulation regression reads the actual HUD's two local previews before
+ordinary trigger ticks and compares the resulting portal, wall version or
+precise fizzle against the preview. It covers ordinary floor nudging, corner
+nudging, a half frame, self-replacement versus overlap, a busy pair, bare and
+thin walls, a shutter immediately behind a grille, its opened sightline, and
+a complete miss. Every recorded preview frame preserves the match hash.
+
+Dedicated GPU samples inspect the actual bracket caps, dim bars, square
+centres and outlines. They cover ready/unplaced, invalid/placed, asymmetric
+per-end overlap, A/B ownership and all four colours, carrying, dead devices,
+taken bodies and menus. These checks follow the existing scene fixtures so
+their world-generation-dependent creature samples retain the same setup;
+all prior rendering thresholds are unchanged. Silent 1280 x 720 captures of
+ready, blocked, one-placed and B states were inspected, along with the controls
+legend in the native and collaborative-browser menus at 960 x 540.
+
+Final scoped debug validation passes four native tests (Vulkan with validation)
+and five web tests (WASI, WebGL 2 and WebGPU), including all campaign solves,
+the preview/firing parity cases and 60 map-validator regressions. Native and
+WASI retain replay hash `12725895089924583359` and campaign hash
+`12965826754438740368`. No full repository suite, other-platform run or CI was
+needed or run for this prototype-only change.
+
+## Cargo teleport, physical furniture and depth seams (2026-10-15)
+
+The owner's next play exposed three omissions in the earlier checks: a cube
+briefly sliding between its portal entry and exit, Reception's chairs/cabinets
+allowing a body through them, and large flickering triangular patches at lift
+linings. Alpha-one renderer captures and broad room views had not established
+these properties. The following replaces the earlier visual-only `SetProp`
+description and the padded/overlapping lift/floor assembly details.
+
+### Cargo presentation
+
+`CrossCube` already snapped the `Fold` singleton on a successful crossing,
+keeping its cargo light at the destination. It omitted `this.Snap()` on the
+actual Cube/Body entity drawn by the renderer. Equal-sized cargo therefore
+interpolated through the intervening room; resizing happened to avoid the bug
+by creating a new entity. Successful crossings now snap both the entity and
+the singleton. Ordinary physics movement continues to interpolate.
+
+`test/cube_presentation.c` reproduced an 8.046 m rendering error at alpha 0.1
+before the fix. It now drives real loose, held and crate crossings plus a
+resizing crossing, drawing each previous/current snapshot pair at alpha 0.1,
+0.5, 0.9 and 1. It reads the actual renderer cargo hull transforms, including
+position, rotation and scale. A normal-motion control must still interpolate,
+and recorded frames must not change the simulation hash.
+
+### Rigid furniture
+
+`PropBlockPart` is the shared metric description of each rigid prop's visible
+structural pieces. `SetProp` creates a static Body with the corresponding
+Box3D Part/Box shapes; `DressProp` draws those same pieces. Signs, painted
+glyphs, leaves and soft cloth add no enclosing obstacle. Chair legs, desk
+knees and shelf gaps retain their open spaces for small bodies. The coarse
+`SetSolidProp` helper and its filled desk/shelf boxes are removed.
+
+Ray hits retain the owning Prop entity, so furniture stops aimed shots.
+The final portal-mouth overlap check also includes Prop, Mover, Gate and Door
+bodies rather than only room Pieces. A shot that misses a cabinet with its
+centre ray must still clear that cabinet with the full opening.
+
+The actual-scene exporter includes every attached part in its owning body's
+world transform. The validator checks the expected attached structural parts
+and exported collision shapes, and applies its lift-apron proof to them.
+`test/prop_collision.c` walks from Reception's arrival into the reported chair
+and cabinet, then its desk, and tests a Mailroom shelf. It checks open gaps,
+rejected cabinet shots and part retirement when changing rooms.
+
+All twenty-one rigid prop kinds use this contract. Archive has the largest
+current compound set: 25 static furniture bodies and 102 attached parts.
+Parts are made at place construction; presentation geometry is prepared when
+the architecture batch rebuilds. No new per-tick system or per-frame geometry
+rebuild was added. Physics and packed snapshots now include those static parts.
+
+Physical furniture also exposed unsupported placements: Mailroom and Weighbridge
+monitors now sit on real desks, Exchange monitors sit on shelf boards, and
+Archive parcels rest on a shelf. Mailroom's desk station clears the exit apron;
+Weighbridge's shelving clears its architectural blocks. Reception's reported
+chair and cabinet positions remain intact. Mailroom, Weighbridge and Long Throw
+solve routes use ordinary movement with proper landings, centred cargo drops
+and a turn inside the landing's L-shaped floor; their puzzle goals and existing
+assertions are retained.
+
+### Structural and dressing seams
+
+The lift's inner side face and the end face of a six-metre room-wall gap were
+coplanar. The old jamb covered only part of their shared strip, and pixel
+snapping exposed the competing triangles. Every campaign interface now leaves
+the eight-metre outer shell slot around the six-metre doorway; narrow corridors
+and multi-level outer walls have explicit notches covered by the shell.
+
+The shell's side panels, front posts, rear posts and back now meet at their
+boundaries. Its single floor ends at the room floor's doorway plane; the old
+coplanar floor/threshold duplicate is gone. The cabin's real ceiling lining
+sits 0.1 m below ordinary room ceilings. `Fill` uses its authored exact bounds,
+removing the 0.06 m padding that caused adjoining floor pieces to overlap.
+The source-map geometry mirror and binding comparison follow these bounds.
+
+An actual-scene scan also found exposed overlapping platform, duct-roof,
+panel-cap and ceiling patches in Mailroom, Weighbridge, Long Throw, Exchange,
+Red Stair and Atrium. Their bounds now partition the same volumes. The map
+validator rejects visible overlapping top faces while allowing buried joints,
+and rejects room walls that share the cabin's inner side plane. Regression
+cases cover duplicate floors, narrow exposed strips, adjoining occluders,
+grille envelopes and rotated lift frames.
+
+Lift trim, painted fold-frame corners, heavy-plate cross ridges and deck warning
+strips now meet without coplanar shared patches. `test/zfight_render.c` inspects
+their actual generated fixtures across all fourteen stops. Close lift views
+include oblique angles and small camera translations instead of a single broad
+room view. Shared chair, bed and dollhouse joins are checked alongside the
+furniture's physical geometry.
+
+The dressing audit also separated EXIT glyph pixels and pictogram strokes,
+joined curtain tops to their rail and plant leaves to visible branches, and
+spaced Mailroom parcels without overlapping their tops. Direction plaques now
+face the approach on actual walls instead of floating in a duct mouth or being
+half buried in a floor. Atrium's clock and Exchange's switch sit on their wall
+faces. Red Stair's horizontal conduits attach to the ceiling; Long Throw's
+isolated pipe attaches to the east wall. The map compiler's paint whitelist now
+matches the actual thirteen Tide palette names, with regressions for valid and
+undefined names.
+
+### Final validation
+
+The final debug targets build without warnings. All four scoped native CTests
+pass (15.88 s), including Vulkan rendering with validation enabled; all five
+web CTests pass (118.08 s), including WASI simulation, WebGL 2 and WebGPU. This
+includes the full input-driven campaign solves, cargo presentation at fractional
+alphas, physical furniture contacts, preview/firing parity, both actual-scene
+exports and 73 map-tool regressions. Existing portal, creature, lighting,
+crosshair and lift-transition GPU thresholds are unchanged.
+
+Native and WASI agree on replay hash `8784284059731120875` and campaign hash
+`3593789570792617557`. These replace the preceding section's hashes because
+physical prop entities/parts and authored geometry intentionally changed. Each
+campaign room still replays identically from its snapshot and packed state.
+
+Inspected fresh 1280 x 720 arrival captures for all fourteen stops, the reported
+lift lining at three camera offsets and an oblique exit angle, plus the retained
+EXIT-sign and portal-rear captures. No bright triangular lining fragments or
+exposed floor duplicates remain in those views. A separate actual-scene scan
+found zero exposed, floor-supported same-facing vertical wall overlaps after
+subtracting covering solids. This diagnostic supplements the checked-in
+top-face/lift-slot guards; it is not a general proof about arbitrary geometry.
+The local self-contained web page was rebuilt and restaged. No full repository
+suite, other-platform run or CI was needed or run for this prototype-only work.

@@ -10,7 +10,6 @@ static void gen_prefab_recorders(gen *g)
         const char *prefix = world_prefix(local);
         sb_printf(o, "TIDE_HELPER tide_entity tide_prefab%d(%s *w, tide_entity scene", s, world_type(local));
         for (int j = 0; j < p->overrides.count; j++) sb_printf(o, ", %s override%d", type_cname(p->overrides.items[j]->type_decl), j);
-        if (p->load) sb_put(o, ", int32_t visibility");
         sb_put(o, ")\n{\n    (void)scene;\n");
         for (int j = 0; j < p->overrides.count; j++) sb_printf(o, "    (void)override%d;\n", j);
         sb_printf(o, "    tide_entity tide_nodes[%d];\n", p->entities.count);
@@ -42,7 +41,6 @@ static void gen_prefab_recorders(gen *g)
                     }
                 }
             }
-            if (p->load && n == 0) sb_printf(o, "    values0.%s.tide_visibility = visibility;\n", type_cname(g->prog->prefab_scene[local]));
             sb_printf(o, "    tide_command *c%d = %scmd_push(w, TIDE_CMD_SPAWN, %d, tide_nodes[%d], TIDE_COMMAND_SIZE(spawn%d));\n", n, prefix, a, n, a);
             sb_printf(o, "    c%d->prefab_pending = 1;\n    c%d->data.spawn%d.values = values%d;\n    c%d->data.scene = scene;\n", n, n, a, n, n);
             if (spawn_has_text(g, a)) sb_printf(o, "    tide_own_spawn%d(&c%d->data.spawn%d.values, %s);\n", a, n, a, world_where(local));

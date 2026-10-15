@@ -116,6 +116,22 @@ header socket, face the approach and have a supporting surface. Every actual
 frame and open preplaced end must fit a receptive backing face at least 0.6 m
 thick.
 
+Furniture exports include every attached Box3D compound part, transformed by
+its owning prop's body. The audit requires the structural part count for each
+solid furniture kind and the corresponding actual shapes in the geometry
+export. A visual chair/cabinet with no collider, or an exporter that omits its
+parts, fails. The game uses the same `PropBlockPart` description to draw those
+structural pieces and attach their shapes, keeping leg and shelf gaps open.
+Flat signs, clocks, silk, cloth and foliage details remain dressing; curtain
+rails, plant pots and stems are physical.
+
+Structural top faces may meet at edges but cannot overlap over an exposed
+area. The check subtracts the exact union of covering solids, so buried joints
+remain valid and a narrow visible strip still fails. Grille envelopes cannot
+hide an overlap. Room boundaries also leave the full eight-metre lift shell
+slot around its six-metre doorway; a room wall cannot share the cabin lining's
+inner side plane, including when the lift is rotated.
+
 These are assembly guarantees. They do not infer puzzle solutions, monster
 fairness, every possible movement exploit, sign glyph readability or portal
 shader correctness. Input-driven solves and the real GPU regressions remain

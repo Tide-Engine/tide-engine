@@ -832,12 +832,22 @@ float PastShape(float3 point, float3 way, Body body, float3 half)
     return Math.Max(far, 0) + .002;
 }
 
-// A shot: a fold's end goes where it lands, nudged to fit on that face, or
-// fizzles there. It fits on an upright face of a wall that takes folds, clear
-// of the floor, the ceiling, what stands against the wall and the other end.
-bool Shoot(mut Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, int count, Physics physics, mut World world)
+// The same decision for the trigger and the aiming reticle. `hit` keeps a
+// complete miss silent; a refused hit carries the exact fizzle point/normal.
+struct FoldShot
 {
-    if (!physics.Raycast(origin, origin + way * 60, out var first)) return false;
+    bool hit;
+    bool valid;
+    Portal portal;
+    float3 point;
+    float3 face;
+}
+
+// Find an end's landing without changing the fold or its wall. The candidate
+// is nudged to fit the same floor, ceiling, frames and nearby geometry as a shot.
+FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, int count, Physics physics, World world)
+{
+    if (!physics.Raycast(origin, origin + way * 60, out var first)) return FoldShot { };
     // Through whoever and whatever stands in the way that's no part of the room
     // ...and through a grille, which stops everything else
     mut var hit = first;
@@ -853,18 +863,15 @@ bool Shoot(mut Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, 
             else if (world.TryGet<Capsule>(hit.entity, out var capsule))
                 advance = PastShape(hit.point, way, ignored, float3(capsule.radius, capsule.height * .5, capsule.radius));
         }
-        if (!physics.Raycast(hit.point + way * advance, origin + way * 60, out hit)) return false;
+        if (!physics.Raycast(hit.point + way * advance, origin + way * 60, out hit)) return FoldShot { };
     }
+    mut var shot = FoldShot { hit = true, point = hit.point, face = hit.normal };
     mut var face = float3(0, 1, 0);
     if (Math.Abs(hit.normal.y) < 0.3)
         face = Math.Abs(hit.normal.x) > Math.Abs(hit.normal.z) ? float3(Math.Sign(hit.normal.x), 0, 0) : float3(0, 0, Math.Sign(hit.normal.z));
-    var mine = fold.ends[end];
-    var other = fold.ends[end ^ 1];
     if (fold.busy[end / 2] > 0 || face.y > 0.5 || !world.TryGet<Piece>(hit.entity, out var piece) || !world.TryGet<Wall>(piece.wall, out var wall) || !wall.takes)
-    {
-        Fizzle(fold, end, hit.point, hit.normal);
-        return false;
-    }
+        return shot;
+    shot.face = face;
     var right = FoldRight(face);
     // A shot in a frame, or by it, goes into it at the frame's size
     mut var size = 1.0;
@@ -888,10 +895,7 @@ bool Shoot(mut Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, 
     for (var k = 0; k < 4; k++)
         if (k != end && fold.ends[k].open && fold.ends[k].wall == piece.wall && Math.Abs(Math.Dot(fold.ends[k].face, face)) < 0.5) crossed = true;
     if (thick < 0.6 || wide < halfWide * 2 || crossed)
-    {
-        Fizzle(fold, end, hit.point, face);
-        return false;
-    }
+        return shot;
     var plane = wall.center + face * (thick * 0.5);
     mut var u = Math.Dot(aim - wall.center, right);
     mut var v = aim.y;
@@ -908,15 +912,13 @@ bool Shoot(mut Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, 
     if (physics.Raycast(probe, probe - right * 3, out var before)) lowU = Math.Max(lowU, Math.Dot(before.point - wall.center, right) + halfWide);
     if (physics.Raycast(probe, probe + right * 3, out var after)) highU = Math.Min(highU, Math.Dot(after.point - wall.center, right) - halfWide);
     if (lowU > highU || lowV > highV)
-    {
-        Fizzle(fold, end, hit.point, face);
-        return false;
-    }
+        return shot;
     u = Math.Clamp(u, lowU, highU);
     v = Math.Clamp(v, lowV, highV);
     // Near the floor it stands on it, to be walked into
     if (v - halfHigh - floor < 1.0) v = lowV;
     var at = float3(plane.x + right.x * u, v, plane.z + right.z * u);
+    shot.point = at;
     // ...clear of every other end, whoever's it is
     mut var overlaps = false;
     for (var k = 0; k < 4; k++)
@@ -933,18 +935,32 @@ bool Shoot(mut Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, 
                         quaternion.LookRotation(face, float3(0, 1, 0)), out var found))
     {
         foreach (var entity in found)
-            if (world.Has<Piece>(entity)) blocked = true;
+            if (world.Has<Piece>(entity) || world.Has<Prop>(entity) || world.Has<Mover>(entity)
+                || world.Has<Gate>(entity) || world.Has<Door>(entity)) blocked = true;
     }
     if (overlaps || blocked)
+        return shot;
+    shot.valid = true;
+    shot.portal = Portal { open = true, at = at, face = face, wall = piece.wall, size = size };
+    return shot;
+}
+
+// The trigger alone mutates the fold and rebuilds the affected walls.
+bool Shoot(mut Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, int count, Physics physics, mut World world)
+{
+    var shot = PreviewFold(fold, end, origin, way, mounts, count, physics, world);
+    if (!shot.valid)
     {
-        Fizzle(fold, end, at, face);
+        if (shot.hit) Fizzle(fold, end, shot.point, shot.face);
         return false;
     }
+    var mine = fold.ends[end];
+    var other = fold.ends[end ^ 1];
+    var placed = shot.portal;
     // Every wall an end was or is on: a hole is only there while both ends are
-    if (mine.open && mine.wall != piece.wall) Rework(world, mine.wall);
-    if (other.open && other.wall != piece.wall && !(mine.open && other.wall == mine.wall)) Rework(world, other.wall);
-    Rework(world, piece.wall);
-    var placed = Portal { open = true, at = at, face = face, wall = piece.wall, size = size };
+    if (mine.open && mine.wall != placed.wall) Rework(world, mine.wall);
+    if (other.open && other.wall != placed.wall && !(mine.open && other.wall == mine.wall)) Rework(world, other.wall);
+    Rework(world, placed.wall);
     fold.ends[end] = placed;
     return true;
 }
@@ -1406,6 +1422,7 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena, q
         body.position = center;
         body.velocity = velocity;
         scale = cube.scale * ratio;
+        this.Snap();
         fold.Snap();
     }
     if (center.y < -8)

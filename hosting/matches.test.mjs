@@ -32,6 +32,35 @@ async function setup(t, options = {}) {
         mode: 'payment', payment_status: 'paid', payment_intent: 'pi_test' });
     return { store, matches, account, project, limits, advance: n => { now += n; } };
 }
+test('different accounts and games share one host with isolated workers, state and match controls', async t => {
+    const { store, matches, account, project, limits } = await setup(t);
+    store.invite(2);
+    const other = store.signIn({ id: 2, login: 'another-developer' });
+    const another = store.createProject(other.id, { name: 'another-game', region: 'fra', preset: 'small', maximum: 1 }, limits);
+    const bundle = await matches.bundles.put(encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, { 'server.wasm': wasmFixture({ empty: true }) }));
+    store.registerRelease(other.id, another.id, bundle, limits);
+    store.createPayment('cs_other', other.id, 1, 'eur');
+    store.creditPayment({ id: 'cs_other', client_reference_id: other.id, currency: 'eur', amount_total: 1,
+        mode: 'payment', payment_status: 'paid', payment_intent: 'pi_other' });
+    const first = await matches.create(account.id, project.id), second = await matches.create(other.id, another.id);
+    assert.equal(matches.running.size, 2);
+    assert.notEqual(first.release, second.release);
+    const firstWorker = matches.running.get(first.id).worker, secondWorker = matches.running.get(second.id).worker;
+    assert.notEqual(firstWorker, secondWorker);
+    assert.equal((await firstWorker.call('update', { packets: [] })).value, 1);
+    assert.equal((await firstWorker.call('update', { packets: [] })).value, 2);
+    await secondWorker.call('update', { packets: [] });
+    assert.equal(Buffer.from((await firstWorker.call('save')).value).readUInt32LE(), 2);
+    assert.equal(Buffer.from((await secondWorker.call('save')).value).readUInt32LE(), 1);
+    assert.throws(() => matches.requestStop(account.id, second.id, true), /not found/);
+    matches.requestStop(account.id, first.id, true);
+    await matches.tick();
+    assert.equal(store.match(first.id).state, 'ended');
+    assert.equal(store.match(second.id).state, 'running');
+    assert.equal(matches.running.size, 1);
+    assert.equal(Buffer.from((await secondWorker.call('save')).value).readUInt32LE(), 2);
+});
+
 test('persistent worlds save, suspend without losing the match ID, and resume their completed save', async t => {
     const { store, matches, account, project } = await setup(t);
     const match = await matches.create(account.id, project.id);

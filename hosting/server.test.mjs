@@ -88,9 +88,32 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
         data: { name: 'test', region: 'fra', preset: 'small', maximum: 1, lifetime: 'explicit' } });
     assert.equal(created.status, 201);
     const project = created.data;
+    const deployPath = `/api/projects/${project.id}/deploy-tokens`;
+    assert.equal((await call(deployPath, { method: 'POST', headers: browser, data: { name: 'CI' } })).status, 403);
+    const deployedKey = await call(deployPath, { method: 'POST', headers: authenticated, data: { name: 'GitHub Actions', days: null } });
+    assert.equal(deployedKey.status, 201);
+    assert.equal(deployedKey.data.expires, null);
+    const deployHeaders = { Authorization: `Bearer ${deployedKey.data.token}` };
+    assert.deepEqual((await call('/api/account', { headers: deployHeaders })).data,
+        { region: config.region, projects: [{ id: project.id, name: project.name }] });
+    const tokenList = (await call('/api/account', { headers: browser })).data.deployTokens;
+    assert.equal(tokenList[0].name, 'GitHub Actions');
+    assert.equal(tokenList[0].expires, null);
+    assert.ok(!JSON.stringify(tokenList).includes(deployedKey.data.token));
+    for (const path of ['/api/projects', '/api/billing/subscribe', '/api/billing/extra', '/api/checkout', '/api/device/approve',
+        deployPath, `/api/projects/${project.id}/credentials`, `/api/projects/${project.id}/matches`, `/api/projects/${project.id}/policy`, '/api/matches/1/end']) {
+        assert.equal((await call(path, { method: 'POST', headers: deployHeaders, data: {} })).status, 403, path);
+    }
+    assert.equal((await call(`${deployPath}/${tokenList[0].hash}`, { method: 'DELETE', headers: deployHeaders })).status, 403);
+    const tokenPage = await call('/dashboard', { headers: browser });
+    assert.match(tokenPage.text, /CI deploy tokens/);
+    assert.doesNotMatch(tokenPage.text, new RegExp(deployedKey.data.token));
     const runtime = await call(`/api/projects/${project.id}/credentials`, { method: 'POST', headers: authenticated, data: {} });
     assert.equal(runtime.status, 201);
     const runtimeHeaders = { Authorization: `Bearer ${runtime.data.token}` };
+    assert.equal((await call('/api/billing/subscribe', { method: 'POST', headers: runtimeHeaders, data: {} })).status, 403);
+    assert.equal((await call('/api/billing/extra', { method: 'POST', headers: browser,
+        data: { enabled: true, cap: 2000, amount: 500 } })).status, 403);
     assert.equal((await call('/api/account', { headers: runtimeHeaders })).status, 403);
     assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: runtimeHeaders, data: {} })).status, 403);
     assert.equal((await call(`/api/projects/${project.id}/matches`, { method: 'POST', headers: runtimeHeaders, data: {} })).status, 409);
@@ -102,7 +125,12 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     const bundle = encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, {
         'server.wasm': wasmFixture(), 'client.html': Buffer.from('<!doctype html><script>console.log("game")</script>'),
     });
+    assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: deployHeaders, data: bundle })).status, 201);
     assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: cli, data: bundle })).status, 201);
+    const playablePage = await call('/dashboard', { headers: browser });
+    assert.match(playablePage.text, /class="button primary play-game"/);
+    assert.ok(playablePage.text.indexOf('Play game') < playablePage.text.indexOf('Create runtime credential'));
+    assert.ok(playablePage.text.includes(`>${config.gamesOrigin}/g/${project.id}/</a>`));
     assert.equal((await call(`/g/${project.id}/`, { host: '127.0.0.1:8081' })).status, 402);
     assert.equal((await call(`/api/projects/${project.id}/matches`, { method: 'POST', headers: cli, data: {} })).status, 402);
     service.store.createPayment('cs_local', account.id, 1000, 'eur');
@@ -127,6 +155,10 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     assert.equal((await call(`/api/matches/${original.id}/save`, { headers: runtimeHeaders })).status, 429);
     assert.equal((await call(`/api/matches/${original.id}/logs`, { headers: runtimeHeaders })).status, 429);
     const another = service.store.createProject(account.id, { name: 'another', region: 'fra', preset: 'small', maximum: 1 }, config);
+    assert.equal((await call(`/api/projects/${another.id}/releases`, { method: 'POST', headers: deployHeaders, data: bundle })).status, 403);
+    assert.equal((await call(`/api/projects/${another.id}/deploy-tokens/${tokenList[0].hash}`, { method: 'DELETE', headers: authenticated })).status, 404);
+    assert.equal((await call(`${deployPath}/${tokenList[0].hash}`, { method: 'DELETE', headers: authenticated })).status, 200);
+    assert.equal((await call('/api/account', { headers: deployHeaders })).status, 401);
     assert.equal((await call(`/api/projects/${another.id}/matches`, { method: 'POST', headers: runtimeHeaders, data: {} })).status, 403);
     assert.equal((await call(`/api/projects/${project.id}/credentials/${service.store.authenticate(runtime.data.token, 'service').token_hash}`,
         { method: 'DELETE', headers: authenticated })).status, 200);
@@ -134,6 +166,16 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     service.store.invite(2);
     const other = service.store.signIn({ id: 2, login: 'other' });
     const otherToken = service.store.issueToken(other.id, 'cli', 100000);
+    const otherHeaders = { Authorization: `Bearer ${otherToken.token}` };
+    for (const action of ['save', 'logs']) {
+        assert.equal((await call(`/api/matches/${original.id}/${action}`, { headers: otherHeaders })).status, 404);
+    }
+    for (const action of ['discard', 'end', 'suspend', 'resume']) {
+        assert.equal((await call(`/api/matches/${original.id}/${action}`, { method: 'POST', headers: otherHeaders, data: {} })).status, 404);
+    }
+    assert.equal((await call(`/api/projects/${project.id}/releases/${'a'.repeat(64)}`, { method: 'DELETE', headers: otherHeaders })).status, 404);
+    assert.ok(service.store.match(original.id).checkpoint, 'Foreign requests must not delete the saved world.');
+    assert.equal((await call(deployPath, { method: 'POST', headers: { Authorization: `Bearer ${otherToken.token}` }, data: { name: 'stolen' } })).status, 404);
     const otherSession = service.store.issueToken(other.id, 'browser', 100000);
     const [ownerHtml, otherHtml] = await Promise.all([call('/dashboard', { headers: browser }),
         call('/dashboard', { headers: { Cookie: `tide-session=${otherSession.token}` } })]);
@@ -145,6 +187,82 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
         headers: { Authorization: `Bearer ${otherToken.token}` } })).status, 404);
     assert.equal((await call('/api/logout', { method: 'POST', data: {}, headers: authenticated })).status, 200);
     assert.equal((await call('/api/account', { headers: browser })).status, 401);
+});
+
+test('artifact uploads and deletion are serialized so an unlink cannot race another project publishing the same artifact', async t => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-artifact-lock-'));
+    const config = configuration({ TIDE_HOSTING_DATA: folder, PORT: '0' });
+    const service = await createService(config, { rooms: null });
+    let unblockDelete = () => {}, unblockUpload = () => {};
+    t.after(async () => { unblockDelete(); unblockUpload(); await service.close(); await rm(folder, { recursive: true, force: true }); });
+    const store = service.store; store.invite(1);
+    const account = store.signIn({ id: 1, login: 'artifact-owner' });
+    const project = store.createProject(account.id, { name: 'game', region: config.region, preset: 'small', maximum: 1 }, config);
+    const raw = encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, { 'server.wasm': wasmFixture() });
+    const old = await service.bundles.put(raw); store.registerRelease(account.id, project.id, old, config);
+    const next = await service.bundles.put(encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, { 'server.wasm': wasmFixture({ empty: true }) }));
+    store.registerRelease(account.id, project.id, next, config);
+    const token = store.issueToken(account.id, 'cli', 60000).token;
+    const { port } = await service.start();
+    const call = (path, method, raw) => new Promise((accept, reject) => {
+        const req = request({ hostname: '127.0.0.1', port, path, method,
+            headers: { Host: new URL(config.origin).host, Authorization: `Bearer ${token}`, ...(raw ? { 'Content-Length': raw.length } : {}) } }, res => {
+            res.resume(); res.on('end', () => accept(res.statusCode));
+        }); req.on('error', reject); req.end(raw);
+    });
+    const remove = service.bundles.remove.bind(service.bundles);
+    let deleting; const deleteStarted = new Promise(resolve => deleting = resolve);
+    const deleteHold = new Promise(resolve => unblockDelete = resolve);
+    service.bundles.remove = async id => { deleting(); await deleteHold; await remove(id); };
+    const deletion = call(`/api/projects/${project.id}/releases/${old.id}`, 'DELETE');
+    await deleteStarted;
+    assert.equal(await call(`/api/projects/${project.id}/releases`, 'POST', raw), 429);
+    unblockDelete(); assert.equal(await deletion, 200); service.bundles.remove = remove;
+    const validate = service.matches.validate.bind(service.matches);
+    let uploading; const uploadStarted = new Promise(resolve => uploading = resolve);
+    const uploadHold = new Promise(resolve => unblockUpload = resolve);
+    service.matches.validate = async (...args) => { uploading(); await uploadHold; return validate(...args); };
+    const upload = call(`/api/projects/${project.id}/releases`, 'POST', raw);
+    await uploadStarted;
+    assert.equal(await call(`/api/projects/${project.id}/releases/${next.id}`, 'DELETE'), 429);
+    unblockUpload(); assert.equal(await upload, 201);
+    assert.equal((await service.bundles.get(old.id)).id, old.id);
+});
+
+test('monthly-only hosting credit serves games and configuration failures do not claim credit is missing', async t => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-hosting-monthly-game-'));
+    const config = configuration({ TIDE_HOSTING_DATA: folder, PORT: '0', TIDE_HOSTING_ACCEPTING: '0' });
+    const rooms = { ensure: async () => {}, endpoint: () => 'ABC123/0', close: async () => {} };
+    const service = await createService(config, { rooms });
+    t.after(async () => { await service.close(); await rm(folder, { recursive: true, force: true }); });
+    const store = service.store; store.invite(1);
+    const account = store.signIn({ id: 1, login: 'monthly-player' });
+    const project = store.createProject(account.id, { name: 'game', region: config.region, preset: 'small', maximum: 1 }, config);
+    const raw = encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, {
+        'server.wasm': wasmFixture(), 'client.html': Buffer.from('<script>console.log("game")</script>') });
+    const bundle = await service.bundles.put(raw);
+    store.registerRelease(account.id, project.id, bundle, config);
+    store.billing.required = true;
+    const started = Date.now();
+    store.billing.grant(account.id, 'sub_fixture', 'in_fixture', started, started + 30 * 86400_000, 2_000_000_000);
+    assert.equal(store.account(account.id).balance, 0);
+    const { port } = await service.start();
+    const game = () => new Promise((accept, reject) => {
+        const req = request({ hostname: '127.0.0.1', port, path: `/g/${project.id}/`, headers: { Host: new URL(config.gamesOrigin).host } }, res => {
+            let text = ''; res.on('data', data => text += data); res.on('end', () => accept({ status: res.statusCode, text }));
+        }); req.on('error', reject); req.end();
+    });
+    const unpriced = await game(); assert.equal(unpriced.status, 503); assert.match(unpriced.text, /prices are not configured/);
+    config.presets.small.rate = 1000;
+    const disabled = await game(); assert.equal(disabled.status, 503); assert.match(disabled.text, /creation is temporarily disabled/);
+    config.accepting = true;
+    assert.equal((await game()).status, 200);
+    store.db.prepare('UPDATE allowances SET remaining=0 WHERE account=?').run(account.id);
+    assert.equal((await game()).status, 402);
+    store.db.prepare('UPDATE allowances SET remaining=1 WHERE account=?').run(account.id);
+    assert.equal((await game()).status, 402, 'A positive balance must still fund a lease.');
+    store.now = () => started + 31 * 86400_000;
+    assert.equal((await game()).status, 402, 'Expired monthly allowance cannot serve games.');
 });
 
 test('configured sandbox credit choices render on the server and start Checkout without granting credit', async t => {
