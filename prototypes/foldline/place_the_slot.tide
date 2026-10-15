@@ -3,7 +3,7 @@ using Box3D;
 // A dropped bolt plucks a web. The next place lets players do it themselves.
 void BuildTheSlot(Arena arena, mut Place place)
 {
-    StoppingLift(arena, place, float3(0), NORTH, 8);
+    BuildMapTheSlot(arena, place);
     place.dead = true;
     place.light = .5;
     place.grade = float3(.8, .91, 1);
@@ -19,7 +19,6 @@ void BuildTheSlot(Arena arena, mut Place place)
     // Small white porcelain strips catch the light like taut web strands.
     for (int strand = 0; strand < 3; strand++)
         Raise(arena, float3((strand - 1) * .5, .11, 7), float3(.025, .025, 2.4), MARBLE, false, 3, 0);
-    Machine(arena, float3(0, 2.2, 7), float3(0, 2.2, 7), float3(.15, .15, .15), 0, false, 1, float3(0), float3(0));
     SpawnBeast(arena, BeastKind.Spider, float3(2.3, 0, 9), SOUTH, .8, clip: "Idle", eyes: true);
     SetProp(arena, PropKind.Pipe, float3(-3.8, 1.4, 7), NORTH, float3(1, 1, 2));
     LampGrid(place, float2(-4, 2.5), float2(8, 3.5), 1, 2);

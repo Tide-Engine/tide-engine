@@ -10,9 +10,8 @@ void BuildReceptionAgain(mut Arena arena, mut Place place, mut Fold fold)
     var second = SpawnBeast(arena, BeastKind.Figure, float3(8, 0, -1.5), EAST, skin: BeastSkin.Shadow, clip: "Stand");
     first.Add(LastWitness);
     second.Add(LastWitness);
-    // There is no active exit circuit in the coda. The tableau can be watched
-    // indefinitely; ordinary menu controls are always available.
-    place.exitNeed = 0;
+    // The same cable still feeds its gate. Ending holds it shut and stops
+    // further rides while ordinary menu controls remain available.
 }
 
 system TheOtherPair(mut Beast beast, with LastWitness, Arena arena, Place place)

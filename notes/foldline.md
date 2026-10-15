@@ -1516,3 +1516,142 @@ No CI was dispatched. Human first-time discoverability, live Internet co-op, aud
 balance and solve times remain untested; 45-75 minutes is a design target,
 not a measured playtime. Android, Linux, macOS, MinGW and sanitizers have not
 been run for this redesign on this Windows machine.
+
+## Checked map assemblies and exit repairs (2026-10-15)
+
+The owner's follow-up screenshots exposed defects the broad room captures had
+missed: Reception's records cupboard obscured half of its exit, a circuit cable
+rose unsupported through the doorway, the exit pictogram was unreadable and
+unsupported, and a fold cut through the visible back of its wall. The owner
+requested a custom map format that checks assembly while preserving flexibility.
+This section supersedes the earlier description of all placement living directly
+in the individual Tide builders.
+
+### Authoring and build contract
+
+`maps/*.foldmap.json` is the source for the thirteen distinct campaign assemblies;
+Reception and its ending share one assembly, covering all fourteen stops.
+They own the arrival/exit/observation lifts, weighted controls, moving devices,
+fixed indicator sockets, cable paths and source/target signal connections.
+Reception also owns its structural boxes and pre-opened folds there. Its Tide
+builder retains cargo, furniture, lamps and the ending option. Other builders
+retain their procedural metric architecture and encounter scripts, calling their
+generated `BuildMap...` function for the connection assembly.
+
+The format uses arbitrary metre coordinates rather than a tile grid. Named
+boxes have real bounds and material/receptiveness. Named anchors on a box face
+derive their positions from that face, two world coordinates and an outward
+offset. Named scene anchors attach to custom Tide geometry, which is checked
+against the actual constructed room. Source wire connections identify both a
+plate and a consuming device, including every required input bit.
+
+`tools/foldmap.py` uses Python 3.10+ and the standard library. It generates the
+checked-in `maps_generated.tide`; `--check` rejects stale or hand-edited output.
+`tools/README.md` documents fields, tolerances, commands and limits. The tool
+introduces no Tide syntax, runtime interface or engine/editor feature.
+
+The prototype's CMake builds check source freshness, build the simulation test
+host, export its actual built scene, and validate that export before building
+the game or renderer fixture. This applies to native and WASI builds.
+`tools/check_layout.py` runs the appropriate native executable or Node/WASI host
+and then the full source/built comparison. `foldline_layout` and
+`foldline_map_tools` are additional scoped CTest tests. The ordinary `tide run`
+shortcut consumes checked-in generated Tide; the README requires regenerating
+and running the checked CMake build after map edits before using that shortcut.
+
+`foldline_test --export-layout PATH` builds all fourteen actual places in fresh
+worlds. It exports walls, oriented static solids, lifts, movers, plates, props,
+wires, pads, frames and preplaced ends using public generated accessors.
+It does not replace geometry with authored collision annotations. The check
+compares real generated assemblies against source counts, coordinates, signals,
+mass/footprints, travel, speeds and sockets independently of entity order.
+Removing a builder call, leaving duplicate old wiring or omitting a map fails.
+
+The spatial checks require:
+
+- The complete six-metre by four-metre lift opening and a two-metre approach
+  to clear solid geometry. A stopping vignette has a one-metre observation
+  apron before its intentional protective grille.
+- Flat support under the entire apron. Coverage uses the exact union of floor
+  rectangles partitioned at their edges, including narrow missing strips.
+- Every cable segment to remain continuously 4..90 mm outside solid surfaces,
+  with 40 mm tangential seam tolerance. Grille collider envelopes cannot act as
+  solid mounting faces. Supported endpoints alone do not pass a floating span.
+- Source plate contact, consuming signal agreement and a connected fixed socket.
+- Exactly one room-facing exit sign at its supported header socket.
+- Each preplaced end and frame to fit a receptive backing face at least 0.6 m
+  thick, with its actual orientation and opening dimensions.
+
+Custom Tide geometry receives the same actual-scene checks. These guarantees
+cover the named assemblies; they do not infer arbitrary corridor connectivity,
+puzzle solutions, monster fairness, all movement exploits, sign glyph readability
+or shader correctness. The full input solves and actual GPU checks remain.
+
+### Repairs found by those checks
+
+Reception's records cupboard is now two metres wide at x9.8..11.8, clear of
+the whole exit approach. The cube and shutter are centred at x10.8. The shutter
+has a real lintel and a surface-mounted indicator below the ceiling. Cabinets
+moved out of its interior. The input solve now walks directly across the old
+obstruction from the exit plate to the right-hand lift lane.
+
+Reception's exit cable follows the floor, left jamb and header. Its cupboard
+feed follows the divider and ceiling. The remaining campaign wires now terminate
+at the actual header/device sockets, with supported full paths. Long Throw has
+a small fixed control post clear of its boarding route; Weighbridge feeds a
+fixed beam above the giant's jump apex. Exchange's shutter indicators mount on
+the adjacent wall faces below the ceiling. `Mover.lampDepth` and the optional
+`Machine` argument support an explicitly shallow indicator housing; zero retains
+the existing default for the test bench and other ordinary helper callers.
+
+Every `ExitLift` now supplies its own 0.95 x 0.32 m green EXIT plaque, with
+white pixel lettering, at lift-local (0,4.2,2.65). The seven unsupported per-place
+pictograms are removed. Vignettes keep their single observation lift.
+
+The checks also found undersized lift approaches elsewhere. Showroom's outer
+walls, ceiling and lamp fittings now meet 4.4 m, and its exhibit podium sits
+outside the arrival apron. Red Stair's outer walls and approach floors extend
+half a metre outward on both sides. Long Throw's return wall/covers finish
+before the exit approach, and a real six-metre floor apron supports that exit.
+Its rescue shot, backed reverse faces and cargo flight remain input-tested.
+The ending keeps its physically connected exit circuit declaration; the Ending
+controller still holds that gate and prevents further rides.
+
+### Portal rear face and verification
+
+`InAnyFold` previously cut a fixed 0.9 m volume regardless of the viewing side,
+revealing the back of Reception's 0.8 m wall while physics kept that back solid.
+Hole clipping, portal composition and halo now consider the actual camera of
+each render pass and apply only from the receptive side, with the existing
+0.06 m crossing margin. Physics carving and traversal are unchanged.
+Straight and oblique rear GPU comparisons changed 626/626 samples before the
+fix and 0/626 afterwards. A live front-view cargo comparison still passes.
+The header plaque has a separate visible-pixel regression, preserving all
+previous portal/parallax/clipping, creature, lighting and transition tolerances.
+
+Final prototype-scoped validation passed all four native debug CTest tests and
+all five web debug tests, using Node 24.16.0. These include all campaign input
+solves, actual-scene/source validation, all 60 Python validator regressions,
+native Vulkan with validation, WebGL 2 and WebGPU rendering. Both simulation
+hosts report replay hash `12725895089924583359` and campaign hash
+`12965826754438740368`; their changes reflect the intentional geometry and
+component-layout updates. Rear portal comparisons remain at zero changed
+samples and the EXIT visibility check finds 53 samples on each backend.
+
+Inspected captures show Reception's clear full doorway, jamb/header cable,
+readable sign and opaque portal rear wall. Fresh silent standard-host captures
+also cover the changed Long Throw, Weighbridge and Showroom geometry. The staged
+browser page was rebuilt and refreshed in the collaborative preview; it remains
+a local review build, not a public deployment.
+
+No full repository suite or CI workflow was run for this prototype-only work.
+Android, Linux, macOS, MinGW and sanitizer coverage remains unavailable here.
+Human first-time solves, live Internet co-op and sound balance still need
+playtesting; the assembly checks do not establish those properties.
+
+After merging `origin/dev`'s visibility/compiler/runtime integration and the
+`Shown` to `Displayed` renderer-helper rename, rebuilt all Foldline targets
+and repeated the complete scoped suites: four native and five web tests passed
+again, including the 60 validator cases and all three rendering backends.
+Both simulation hashes above remain unchanged, and the native/WASI built-layout
+JSON exports are byte-for-byte identical.

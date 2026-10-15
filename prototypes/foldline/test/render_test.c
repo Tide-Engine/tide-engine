@@ -379,6 +379,98 @@ static void lamp_and_fog_checks(void)
     select_place(0);
 }
 
+// A fold is one opening in one face, not a hole through the back of the
+// cupboard. The receptive panel is only .8 m thick, within InFold's cut depth.
+static void portal_back_checks(void)
+{
+    select_place(2);
+    world.Arena.arrive = 2;
+    world.Watcher.state = Watching_Away;
+    for (int end = 0; end < 4; end++) world.Fold.ends.at[end] = (Portal){0};
+    operator_at(world.Arena.op1, (tide_float3){-10, 0, -6}, 0);
+    operator_at(world.Arena.op0, (tide_float3){10.8f, 0, 7.6f}, TIDE_PI_F);
+    cube_at((tide_float3){-5, .5f, -6});
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {10.8f, 1.55f, 6}, .face = {0, 0, -1}, .size = 1};
+    world.Fold.ends.at[1] = (Portal){.at = {-12, 1.55f, -3}, .face = {1, 0, 0}, .size = 1};
+    scene_samples = true;
+    image solid, rear, front, cargo;
+    record(&solid);
+    capture_scene("portal-rear-solid");
+    world.Fold.ends.at[1].open = true;
+    record(&rear);
+    capture_scene("portal-rear-linked");
+    printf("Portal rear changed samples: %d\n", changed(&solid, &rear));
+    check(changed(&solid, &rear) <= 4, "a linked fold preserves its thin wall's opaque rear face");
+
+    // Keep these samples inside the reverse of the aperture; the exposed side
+    // of the cupboard outside it may legitimately receive its front-side glow.
+    operator_at(world.Arena.op0, (tide_float3){10, 0, 7.6f}, tide_atan2_f(.8f, -.8f));
+    world.Fold.ends.at[1].open = false;
+    record(&solid);
+    capture_scene("portal-rear-oblique-solid");
+    world.Fold.ends.at[1].open = true;
+    record(&rear);
+    capture_scene("portal-rear-oblique");
+    printf("Oblique portal rear changed samples: %d\n", changed(&solid, &rear));
+    check(changed(&solid, &rear) <= 4, "an oblique rear view keeps the same opaque wall around its fold");
+
+    operator_at(world.Arena.op0, (tide_float3){10.8f, 0, 3.8f}, 0);
+    record(&front);
+    capture_scene("portal-front-empty");
+    cube_at((tide_float3){-9, 1.55f, -2.4f});
+    record(&cargo);
+    capture_scene("portal-front-cargo");
+    check(changed(&front, &cargo) >= 8, "the same fold still shows live geometry from its receptive front");
+    scene_samples = false;
+    select_place(0);
+}
+
+static void exit_sign_checks(void)
+{
+    select_place(2);
+    world.Arena.arrive = 2;
+    for (int end = 0; end < 4; end++) world.Fold.ends.at[end] = (Portal){0};
+    operator_at(world.Arena.op0, (tide_float3){6, 0, 4.2f}, 0);
+    Operator viewer = tide_get_Operator(&world, world.Arena.op0);
+    viewer.pitch = tide_atan2_f(4.2f - 1.55f, 7.45f - 4.2f);
+    check(tide_set_Operator(&world, world.Arena.op0, viewer), "look at the exit header from its approach");
+    scene_samples = true;
+    image sign, header;
+    record(&sign);
+    capture_scene("reception-exit-sign");
+    int signs = 0;
+    for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+        if (!tide_has_Prop(&world, entity)) continue;
+        Prop prop = tide_get_Prop(&world, entity);
+        if (prop.kind != PropKind_ExitSign || prop.chamber != world.Arena.chamber) continue;
+        prop.at.y -= 1000;
+        check(tide_set_Prop(&world, entity, prop), "hide exit plaque to compare its unobstructed header");
+        signs++;
+    }
+    check(signs == 1, "the Reception exit has one mounted sign");
+    local.Optics.dressed = -1;
+    record(&header);
+    printf("Visible exit sign samples: %d\n", changed(&sign, &header));
+    check(changed(&sign, &header) >= 8, "the exit plaque is visible from its room-side approach");
+#ifndef __wasm__
+    if (getenv("FOLDLINE_CAPTURES")) {
+        select_place(2);
+        world.Arena.arrive = 2;
+        world.Arena.signals = 1 << 1;
+        world.Arena.gate = 1;
+        operator_at(world.Arena.op0, (tide_float3){4, 0, 3.8f}, tide_atan2_f(2, 4.2f));
+        viewer = tide_get_Operator(&world, world.Arena.op0);
+        viewer.pitch = .16f;
+        check(tide_set_Operator(&world, world.Arena.op0, viewer), "frame the corrected exit approach for review");
+        record(&sign);
+        capture_scene("reception-exit-approach");
+    }
+#endif
+    scene_samples = false;
+    select_place(0);
+}
+
 static int render_checks(void *user, float seconds)
 {
     (void)user;
@@ -451,6 +543,8 @@ static int render_checks(void *user, float seconds)
     record(&occupied);
     printf("Nested submerged portal interior red samples: %d\n", red_interior(&occupied));
     check(red_interior(&occupied) > 55, "a submerged destination remains red through the other operator's fold");
+    portal_back_checks();
+    exit_sign_checks();
     beast_checks();
     lamp_and_fog_checks();
     transition_checks();

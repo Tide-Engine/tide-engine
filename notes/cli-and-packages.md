@@ -1,5 +1,69 @@
 # `tide`, packages and the package
 
+## Failed-build cache comparison (2026-10-15)
+
+Build `38761765659` passed Windows packaging but Linux and macOS packaging
+failed the parallel-compilation fixture's comparison after repairing custom C.
+The managed-hosting identity change intentionally keeps ordinary launcher
+objects through identity-only edits to game.h. A Linux reproduction differs
+only in main.o: its DWARF line table retains the failed build's game.h checksum.
+Recompiling against the restored header changes that checksum; stripping debug
+information leaves byte-identical objects. This is debug metadata, not stale
+gameplay code or a changed Simulation ID in the launcher.
+
+The fixture now requires byte-identical reuse of the failed build's launcher
+and clean-build parity for every other file, including generated game code,
+objects and stamps. Missing/extra files and differing objects are named on
+failure. Its clean builds at different parallelism levels still compare every
+file, including main.o. Compiler/cache behavior and public contracts are unchanged.
+The original comparison fails locally under Linux with only main.o named;
+the corrected fixture passes all parallel-build and failure-recovery checks.
+The staged Windows CLI with an external Clang 23.1.2 also passes the full
+native/web cache, stripping, failure recovery, debug/release watch and dedicated
+server integration script with Node 24.16.0.
+
+## Selected Apple SDK (2026-10-15)
+
+The next requested Build, `38767273771`, reached macOS package smoke testing
+on image 20261013.0424.1 and failed in Apple's linker with an unknown
+arm64e.x1 architecture in the standalone Command Line Tools 27 SDK. The
+[image manifest](https://raw.githubusercontent.com/actions/runner-images/macos-26-arm64/20261013.0424/images/macos/macos-26-arm64-Readme.md)
+lists Xcode 26.6 as default alongside those newer standalone tools. Unlike
+the previous run's older image, this exposes find_macos_sdk's hardcoded
+preference for the standalone SDK while /usr/bin/ld follows selected Xcode.
+The prior Apple-linker workaround was active; this is a mismatched SDK/toolchain.
+
+Automatic SDK discovery now captures `/usr/bin/xcrun --sdk macosx
+--show-sdk-path`, trims its line ending and requires an existing absolute
+directory before setting SDKROOT. Thus DEVELOPER_DIR/xcode-select govern both
+SDK and linker, as [Apple's developer-tool selection](https://developer.apple.com/library/archive/technotes/tn2339/_index.html)
+intends. Explicit SDKROOT is preserved. Failed/empty/relative/missing discovery
+or an environment-write failure returns failure; no fallback silently mixes
+two developer installations. README documents the selection contract.
+
+The new tide_cli_toolchain CTest compiles the real Apple discovery branch on
+every native platform with process/environment/directory probes stubbed. It
+checks the selected SDK (including spaces), explicit override and those failure
+paths without changing the machine's tools or environment. Actual Apple
+linking still needs the subsequent requested macOS package job.
+The original discovery fails the selection regression locally; the corrected
+fixture passes 3/3 on Windows and in a separate strict C17 Linux build. Full
+Windows native debug passes 2,360 CTests (119.33 seconds), and web debug passes
+2,272 (259.60 seconds), including WebGL/WebGPU. Node 24.16.0/Clang 23.1.2,
+Node syntax checks for the earlier fixture edits and git diff --check pass.
+
+Folder deployment link (2026-10-15): `tide deploy` needs no dashboard setup.
+Its existing project auto-creation now normalizes the folder name and saves
+the immutable project ID plus service origin atomically in `tide.deploy.json`.
+The file is portable and contains no credentials. Future deploys use the ID
+after folder renames; `--project <name-or-id>` selects/relinks explicitly.
+Malformed links, service mismatches and inaccessible IDs fail without creating
+another project. Explicit missing names still create a Small/one-match project.
+Bundle-only builds ignore the link. Help, the hosting guide and operator README
+describe this behavior. Installed-CLI coverage exercises first deploy, repeat
+after rename, invalid/mismatched/missing links, name creation and ID selection;
+validation results are recorded in managed-hosting.md.
+
 Managed deployment (2026-10-15): `login`, `logout` and `deploy` are implemented
 in deploy.c, using explicit browser device approval, origin-bound credentials,
 Windows DPAPI/POSIX private files and bounded HTTP responses. Whole-game local

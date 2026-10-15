@@ -12,9 +12,17 @@
 #include "place_showroom.c"
 #include "place_red_stair.c"
 #include "campaign.c"
+#include "layout_export.c"
 
 int main(int argc, char **argv)
 {
+    if (argc >= 2 && strcmp(argv[1], "--export-layout") == 0) {
+        if (argc != 3) {
+            fputs("Usage: foldline_test --export-layout PATH\n", stderr);
+            return 1;
+        }
+        return export_layout(argv[2]);
+    }
     int ran = 0;
 #define RUN(test) do { if (argc < 2 || strstr(#test, argv[1])) { test(); ran++; } } while (0)
     RUN(ownership_and_movement);

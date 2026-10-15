@@ -191,6 +191,7 @@ void ArrivalLift(Arena arena, mut Place place, float3 at, float yaw)
 void ExitLift(Arena arena, mut Place place, float3 at, float yaw, int need = 0, bool any = false)
 {
     LiftShell(arena, at, yaw);
+    SetProp(arena, PropKind.ExitSign, LiftPoint(at, yaw, float3(0, 4.2, 2.65)), yaw);
     Spawn(Gate { chamber = arena.chamber }, Body { type = BodyType.Kinematic, position = LiftPoint(at, yaw, float3(0, 2, 2.1)) },
           Box { size = TurnSize(float3(6, 4, 0.24), yaw) });
     place.exit = at;
@@ -232,9 +233,9 @@ Entity RunWire(Arena arena, int signal, List<float3> points)
 // A thing the place moves, from `from` to `to`: there while the signals it needs are on and back while they're
 // not, or with none needed, back and forth by itself, waiting a moment at each end. Its lamps, one for each
 // signal it needs, are a row about `lamp` along `along`.
-Entity Machine(Arena arena, float3 from, float3 to, float3 size, int need, bool any, float speed, float3 lamp, float3 along)
+Entity Machine(Arena arena, float3 from, float3 to, float3 size, int need, bool any, float speed, float3 lamp, float3 along, float lampDepth = 0)
 {
-    return Spawn(Mover { chamber = arena.chamber, at = from, from = from, to = to, size = size, need = need, any = any, speed = speed, lamp = lamp, lampAlong = along },
+    return Spawn(Mover { chamber = arena.chamber, at = from, from = from, to = to, size = size, need = need, any = any, speed = speed, lamp = lamp, lampAlong = along, lampDepth = lampDepth },
                  Body { type = BodyType.Kinematic, position = from }, Box { size = size, friction = 0.9 });
 }
 

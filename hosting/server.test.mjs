@@ -63,6 +63,10 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     assert.doesNotMatch(signedInPage.text, /id="welcome"/);
     assert.match(signedInPage.text, /developer/);
     assert.match(signedInPage.text, /€0\.00/);
+    assert.match(signedInPage.text, /Deploy directly from your game folder/);
+    assert.match(signedInPage.text, /href="#add-credit"/);
+    assert.match(signedInPage.text, /Credit purchases are not available yet/);
+    assert.doesNotMatch(signedInPage.text, /id="topups"|id="checkout"/);
     assert.equal(signedInPage.headers['cache-control'], 'private, no-store');
     assert.match(signedInPage.headers['content-security-policy'], /'nonce-/);
     const pageData = await call('/dashboard/__data.json', { headers: browser });
@@ -141,4 +145,47 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
         headers: { Authorization: `Bearer ${otherToken.token}` } })).status, 404);
     assert.equal((await call('/api/logout', { method: 'POST', data: {}, headers: authenticated })).status, 200);
     assert.equal((await call('/api/account', { headers: browser })).status, 401);
+});
+
+test('configured sandbox credit choices render on the server and start Checkout without granting credit', async t => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-hosting-credit-'));
+    const config = configuration({ TIDE_HOSTING_DATA: folder, PORT: '0', TIDE_HOSTING_TOPUPS: '500,1000,2500',
+        TIDE_STRIPE_SECRET: 'rk_test_fixture', TIDE_STRIPE_WEBHOOK_SECRET: 'whsec_fixture' });
+    let checkouts = 0;
+    const service = await createService(config, { rooms: null, fetcher: async (url, options) => {
+        assert.equal(url, 'https://api.stripe.com/v1/checkout/sessions');
+        assert.equal(options.body.get('line_items[0][price_data][unit_amount]'), '1000');
+        assert.equal(options.body.get('payment_method_types[0]'), null);
+        assert.equal(options.headers['Stripe-Version'], '2026-09-30.endive');
+        checkouts++;
+        return { ok: true, json: async () => ({ id: 'cs_test_fixture', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture' }) };
+    } });
+    const { port } = await service.start();
+    t.after(async () => { await service.close(); await rm(folder, { recursive: true, force: true }); });
+    service.store.invite(1);
+    const account = service.store.signIn({ id: 1, login: 'credit-test' });
+    const session = service.store.issueToken(account.id, 'browser', 100000);
+    const headers = { Host: new URL(config.origin).host, Cookie: `tide-session=${session.token}`, Origin: config.origin, 'X-Tide-CSRF': session.csrf,
+        'Content-Type': 'application/json' };
+    const call = (path, method = 'GET', data) => new Promise((accept, reject) => {
+        const req = request({ hostname: '127.0.0.1', port, path, method, headers }, res => {
+            let text = ''; res.on('data', chunk => text += chunk);
+            res.on('end', () => accept({ status: res.statusCode, text }));
+        });
+        req.on('error', reject); req.end(data === undefined ? undefined : JSON.stringify(data));
+    });
+    const page = await call('/'); assert.equal(page.status, 200, page.text);
+    const html = page.text;
+    for (const amount of ['5.00', '10.00', '25.00']) assert.ok(html.includes(`€${amount}`));
+    assert.match(html, /Stripe sandbox/);
+    assert.match(html, /Continue to test payment/);
+    assert.doesNotMatch(html, /Credit purchases are not available|rk_test_fixture|whsec_fixture/);
+    const checkout = await call('/api/checkout', 'POST', { amount: 1000 });
+    assert.equal(checkout.status, 200, checkout.text);
+    assert.equal(JSON.parse(checkout.text).url, 'https://checkout.stripe.com/c/pay/cs_test_fixture');
+    assert.equal(checkouts, 1);
+    assert.equal(service.store.account(account.id).balance, 0);
+    const invalid = await call('/api/checkout', 'POST', { amount: 1 });
+    assert.equal(invalid.status, 400);
+    assert.equal(checkouts, 1);
 });

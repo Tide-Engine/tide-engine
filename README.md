@@ -38,6 +38,10 @@ Native games also need the system's own headers and libraries:
   on Fedora.
 - **macOS** (Apple Silicon): Apple's command-line tools, `xcode-select --install`.
 
+On macOS, Tide uses the SDK of the developer tools selected by `xcode-select`
+or `DEVELOPER_DIR`, so its headers and libraries match Apple's linker.
+An explicit `SDKROOT` takes precedence.
+
 ## Access requests
 
 The website's `/request-access` form collects a GitHub username and an optional
