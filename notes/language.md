@@ -150,6 +150,19 @@ Cracked/Foldline native/web targets and tests also passed after the reserved-nam
 renames; final incoming integration validation follows below. Android, other
 operating systems and sanitizers were not run; no CI was dispatched.
 
+Final integration validation: both complete standard builds remain warning-free
+after the compiler/session/Box3D overlap through a50f7818. All 2,359 native
+CTests pass (69.54 s, 31 GPU tests), as do all 2,272 web CTests (221.93 s,
+including WebGL/WebGPU). All seven simulation-identity cases pass. Cracked and
+Foldline targets/tests pass on native/web. The subsequent hosting-console and
+Foldline redesign merge through 7aff9694 changes no engine/compiler source;
+the renderer overlap preserves the redesign with eleven Shown-to-Displayed
+helper renames. Fresh scoped Foldline checks pass 2/2 native (10.49 s) and 3/3
+web (92.66 s), including both rendering backends. The final production docs
+build and SEO 3/3 pass with Node 24.21. Both presets finish with optional private
+prototypes disabled. Other-platform/sanitizer coverage remains unavailable here;
+no CI was dispatched.
+
 ## Generated simulation identity (2026-10-15)
 
 `asset_usage.c` now also walks an ordered canonical simulation graph for SHA-256

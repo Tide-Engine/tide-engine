@@ -1,0 +1,59 @@
+// A small scout makes a whole-sized way into the sealed sorting office.
+// The two-turn parcel duct stops a normal body and every outside shot.
+void BuildMailroom(mut Arena arena, mut Place place, mut Fold fold)
+{
+    ArrivalLift(arena, place, float3(-8, 0, -12.1), NORTH);
+    ExitLift(arena, place, float3(10, 0, 14.1), SOUTH, 1 << 0);
+    Fill(arena, -14, 4, -1, 0, -10, 12, CARPET);
+    Fill(arena, 4, 10, -1, 0, -4, 4, CONCRETE);
+    Fill(arena, 6, 14, -1, 0, 4, 12, CARPET);
+    Fill(arena, -15, 5, 4.4, 5.4, -11, 13, CEILING_TILE, false, 2);
+    Fill(arena, 5, 15, 4.4, 5.4, 3.5, 13, CEILING_TILE, false, 2);
+    var west = Fill(arena, -15, -14, -2, 4.4, -11, 13, WALLPAPER, true);
+    Fill(arena, -15, -11, -2, 4.4, -11, -10, PANELS);
+    Fill(arena, -5, 5, -2, 4.4, -11, -10, PANELS);
+    Fill(arena, -15, 5, -2, 4.4, 12, 13, PANELS);
+    Fill(arena, 4, 5, 0, 4.4, -10, -4, CONCRETE);
+    Fill(arena, 4, 5, 0, 4.4, -2, 12, CONCRETE);
+    Fill(arena, 4, 5, 1.02, 4.4, -4, -2, PANELS);
+    // Low first leg, then a right-angle northward leg behind this baffle.
+    Fill(arena, 4, 10.6, 0, 1.6, -4.6, -4, PANELS);
+    Fill(arena, 10, 10.6, 0, 4.4, -4.6, 4, PANELS);
+    Fill(arena, 4, 8, 0, 4.4, -2, 4, CONCRETE);
+    Fill(arena, 4, 10.6, 1.02, 1.6, -4, 4, PANELS, false, 2);
+    // The office has no ordinary door back into the sorting hall.
+    Fill(arena, 5.4, 6, 0, 4.4, 4, 12.6, CONCRETE);
+    Fill(arena, 6, 8, 0, 4.4, 3.4, 4, PANELS);
+    Fill(arena, 10, 14, 0, 4.4, 3.4, 4, PANELS);
+    Fill(arena, 14, 15, -2, 4.4, 3.4, 7, PANELS);
+    Fill(arena, 14, 15, -2, 4.4, 7, 11, WALLPAPER, true);
+    Fill(arena, 14, 15, -2, 4.4, 11, 13, PANELS);
+    Fill(arena, 6, 7, -2, 4.4, 12, 13, PANELS);
+    Fill(arena, 13, 15, -2, 4.4, 12, 13, PANELS);
+
+    PaintFrame(arena, float3(-14, 0, 6), float3(1, 0, 0), .5);
+    PlaceEnd(fold, 2, west, float3(-14, 0, -5), float3(1, 0, 0));
+    PlaceEnd(fold, 3, west, float3(-14, 0, 6), float3(1, 0, 0), .5);
+    PutLoose(arena, fold, float3(-5, .4, 1));
+    LayPlate(arena, float3(11, 0, 7), 0);
+    RunWire(arena, 0, [float3(11.6, .025, 7), float3(13.96, .025, 7), float3(13.96, .025, 11.8),
+                       float3(13.96, 4.15, 11.8), float3(10, 4.15, 11.8)]);
+
+    SetSolidProp(arena, PropKind.Desk, float3(-5, 0, 7), float3(1.7, .8, .8), float3(0, .4, 0), EAST, float3(1.6, 1, 1));
+    SetSolidProp(arena, PropKind.Desk, float3(-5, 0, -6), float3(1.7, .8, .8), float3(0, .4, 0), EAST, float3(1.6, 1, 1));
+    for (int shelf = 0; shelf < 4; shelf++)
+    {
+        SetProp(arena, PropKind.Shelf, float3(2.9, 0, 2 + shelf * 2.3), WEST);
+        SetProp(arena, PropKind.Cardboard, float3(-5.3, .8, 6.8 - shelf * .25), EAST, float3(.6));
+    }
+    SetProp(arena, PropKind.Monitor, float3(6.8, .75, 10.5), EAST);
+    SetProp(arena, PropKind.Chair, float3(7.5, 0, 10.5), EAST);
+    SetProp(arena, PropKind.Arrow, float3(3.9, .7, -3), EAST);
+    SetProp(arena, PropKind.ExitSign, float3(10, 3.5, 11.8), SOUTH);
+    LampGrid(place, float2(-14, -10), float2(4, 4), 7, 6);
+    HangLamps(place, 0, 4, 0, 5, 4.4);
+    HangLamps(place, 5, 6, 4, 5, 4.4);
+    HangLamp(place, 3, 4, 4.4, LampState.Stutter);
+    place.light = .9;
+    MenuView(place, float3(-11, 2.5, -7), .1, .45);
+}
