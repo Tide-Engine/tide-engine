@@ -7,9 +7,15 @@ sign-in, Stripe prepaid credit and the existing Fly.io organization/relay are
 selected. `hosting/README.md` is the operator/API/ABI reference;
 `docs/multiplayer/hosting.md` is the developer guide. No new Tide syntax.
 
-The service has not been deployed. No real OAuth/payment credentials, customer
-payments or paid infrastructure were used during implementation validation.
-Allocations in the Fly configuration are disabled and prices default to zero
+The first Fly deployment completed on 2026-10-15 through Hosting run
+38754895170 attempt 2 (341051c4): one 512 MiB shared CPU machine in `fra`, one
+1 GiB `hosting_data` volume, a passing Fly health check and `{"ok":true}` from
+the public Fly hostname with the console Host header. All four provider secrets
+are now deployed. Console DNS/certificates and real provider/payment flows remain
+unvalidated; the console domain did not resolve during this check. No customer
+payment was made. Earlier implementation validation used no real provider
+credentials or paid infrastructure. Allocations remain disabled in the Fly
+configuration and prices default to zero
 (which also disables allocation). Public paid launch requires provider setup,
 measured rates and the remote/security/restore checks in the operator guide.
 The inactive remote mod build service remains on hold: this work does not
@@ -181,14 +187,19 @@ only. Node 24.16.0 matches the service image. Installed-toolchain/browser cases
 skip without staged tools; the ordinary service tests include real WebRTC.
 Provider secrets remain in Fly, and the workflow does not enable allocations
 or configure first-deployment domains, rates, invites or backups. See the
-operator README and notes/releases-and-ci.md. No workflow was dispatched.
+operator README and notes/releases-and-ci.md for the completed run and token setup.
 Workflow validation passes actionlint 1.7.12, Fly configuration validation and
 the production image build. Node 24.16.0 service tests pass on Windows and in
 the Linux service image (29 passed, two staged-tool cases skipped).
 The first owner-triggered Hosting run passed service tests but Fly configuration
 validation required a token absent from that step. The workflow now supplies
 the existing `FLY_API_TOKEN` to both Fly validation and deployment. The owner
-authorized a fresh run after this correction; results follow below.
+authorized a fresh run after this correction. Run 38754895170 attempt 2 passes
+tests, validation and deployment. The existing repository token was website-only;
+its replacement combines one-year app-scoped FlyV1 credentials for the website
+and hosting, retaining the same secret name and refusing an unrelated app (403).
+The runtime has no copy of this deployment token. The service is healthy on Fly;
+public console/game domain setup and the launch checks below remain outstanding.
 
 Validation exercises SQLite/auth/payment mocks, real HTTP, WASM isolation,
 memory growth limits, infinite-loop interruption, returning CPU-heavy guests,
