@@ -1,5 +1,12 @@
 # Assets and local files
 
+Dedicated server packs (2026-10-15): closed server builds keep simulation asset
+dependencies and omit client-only assets after computing the client's unchanged
+compatibility identity. C projects retain all assets unless explicitly opting in.
+Dynamic match Asset<Mesh<V>> types keep every matching declaration and its vertex
+defaults. Different pack digests use self-contained network transfer. Source
+validation still processes all assets. Contracts and tests: dedicated-servers.md.
+
 ## Persistent static model references (2026-10-12)
 
 Approved Asset<Mesh<V>> fields store a checked singular asset declaration's

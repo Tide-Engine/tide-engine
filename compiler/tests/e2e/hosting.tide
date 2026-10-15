@@ -1,0 +1,18 @@
+settings { maxPlayers = 4; }
+
+input Controls { int step; }
+singleton State { int ticks; int total; int joined; int[400] padding; }
+scene Main { }
+component Actor { }
+
+event(PlayerJoined joined) Joined(mut State state)
+{
+    state.joined += 1;
+    Spawn(Actor { }, Owner { player = joined.player });
+}
+system Add(mut State state, Controls input, with Actor) { state.total += input.step; }
+system Tick(mut State state)
+{
+    state.ticks += 1;
+    state.padding[state.ticks % 400] = state.total;
+}

@@ -155,6 +155,46 @@ local event(Disconnected gone) BackToMenu(mut Menu menu)
 }
 ```
 
+## Dedicated servers
+
+`tide run --server --anonymous` starts a native server with no window, graphics
+context, audio device, views or player of its own. One process can run many
+independent matches of the same game. Matches own separate worlds, players,
+inputs, commands and clocks; they share game code, immutable assets and a worker
+pool. Matches currently update in order, with parallel systems within each match.
+Game C must keep match-specific state in its world or an explicit context;
+process-wide C globals are shared. A native C crash still affects the process.
+
+For quick startup, clients request a match with
+`Session.Connect("localhost:7777/0")`, or `Session.Join("K7QF2M/0")` through the
+server's WebRTC room. Replace `0` with an existing match ID to join that match.
+The command line accepts the same address through `--connect` or `--join`.
+`Session.room` reports the endpoint with its assigned match ID once admitted.
+A match ID identifies a match; it grants no permission by itself.
+
+Anonymous creation and joining are explicit testing policies. Without
+`--anonymous`, configure authentication and admission policy through the
+[server entry point](../c/network.md#dedicated-hosting). Creation and joining
+are authorized separately, so a backend can create reserved matches while
+players only receive permission to join them. Verification can complete
+asynchronously without blocking simulation. Accepted identities bind player
+reconnections; credentials and account metadata stay outside replicated worlds.
+
+The built-in client address form is anonymous. Authenticated clients and trusted
+services use `tide/hosting.h` with a game's verifier and credentials. Credentials
+require WebRTC/DTLS or a custom transport that provides equivalent protection;
+the hosting layer refuses credentials over its plain UDP path. Tide supplies
+the admission interface, not an account database or a particular identity provider.
+
+The server starts matches in match `Main` by default. For a local menu `Main`,
+provide a process entry point that selects the match scene and its typed startup
+parameters. See [server options](../tools/cli.md#dedicated-servers).
+
+Server builds can omit assets reached only from client code. Assets used by
+simulation, including helper calls, defaults and dynamic match asset references,
+remain available. Server and client retain the same match compatibility identity;
+different pack bytes use the existing self-contained snapshot transfer path.
+
 ## Host migration
 
 When the machine running a match leaves, the match ends for everyone, unless the game turns on host migration in its [settings](../language/basics.md#settings):

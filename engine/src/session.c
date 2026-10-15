@@ -741,6 +741,7 @@ struct tide_server {
     // Each player's cookie, kept after they leave so they can come back, and
     // since when they're away (0: here, or never was)
     uint64_t *cookies;
+    uint8_t (*identities)[32];
     uint64_t *digests; // ...and each one's digest: all a server it went on from passed on
     double *away_since;
     uint64_t random;
@@ -1063,6 +1064,21 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     const uint8_t flags = tide_read_u8(r);
     const uint8_t *asset_pack = tide_read_bytes(r, 32);
     if (r->failed) return;
+    uint8_t identity[32] = {0};
+    const uint8_t anonymous[32] = {0};
+    const uint64_t digest = cookie_digest(cookie);
+    if (s->desc.identity) {
+        if (!s->desc.identity(s->desc.identity_user, transport, from, identity)) {
+            refuse(s, transport, from, REFUSE_CLOSED);
+            return;
+        }
+        for (uint32_t i = 0; cookie && i < s->players; i++) {
+            if (s->digests[i] == digest && memcmp(identity, s->identities[i], 32) != 0) {
+                refuse(s, transport, from, REFUSE_CLOSED);
+                return;
+            }
+        }
+    }
     for (uint32_t i = 0; i < s->players; i++) {
         kicked *k = &s->kicks[i];
         if (!k->used) continue;
@@ -1090,9 +1106,13 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     }
     // Its cookie's digest: the player's, from this server or the one it went on from
     int32_t player = -1;
-    const uint64_t digest = cookie_digest(cookie);
     for (uint32_t i = 0; cookie && i < s->players; i++) {
         if (s->digests[i] == digest) player = (int32_t)i;
+    }
+    if (s->desc.identity && memcmp(identity, anonymous, 32) != 0) {
+        for (uint32_t i = 0; i < s->players; i++) {
+            if (s->digests[i] && memcmp(identity, s->identities[i], 32) == 0) player = (int32_t)i;
+        }
     }
     if (player >= 0 && !s->cookies[player]) s->cookies[player] = cookie;
     if (c && (int32_t)(c - s->connections) != player) drop_connection(s, c); // The same machine, starting over
@@ -1149,6 +1169,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     }
     const bool new_player = s->cookies[player] == 0;
     if (new_player) {
+        memcpy(s->identities[player], identity, 32);
         s->random ^= (uint64_t)from.host << 16 ^ from.port ^ (uint64_t)nonce << 32;
         do s->cookies[player] = next_random(&s->random);
         while (s->cookies[player] == 0);
@@ -1965,6 +1986,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->connections = calloc(s->players, sizeof *s->connections);
     s->events = calloc((size_t)EVENTS_PER_PLAYER * s->players, sizeof *s->events);
     s->cookies = calloc(s->players, sizeof *s->cookies);
+    s->identities = calloc(s->players, sizeof *s->identities);
     s->digests = calloc(s->players, sizeof *s->digests);
     s->away_since = calloc(s->players, sizeof *s->away_since);
     s->kicks = calloc(s->players, sizeof *s->kicks);
@@ -1978,7 +2000,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->packed = malloc((size_t)g->max_input_bytes + 1u);
     s->server_last = malloc((size_t)g->max_input_bytes + 1u);
     s->scratch = calloc(1, scratch_size(g));
-    if (!s->connections || !s->events || !s->cookies || !s->digests || !s->away_since || !s->kicks || !s->handover
+    if (!s->connections || !s->events || !s->cookies || !s->identities || !s->digests || !s->away_since || !s->kicks || !s->handover
         || !s->frames || !s->published || !s->world || !s->frame || !s->packet || !s->input || !s->packed
         || !s->server_last || !s->scratch) {
         tide_server_destroy(s);
@@ -2054,6 +2076,7 @@ void tide_server_destroy(tide_server *s)
     free(s->connections);
     free(s->events);
     free(s->cookies);
+    free(s->identities);
     free(s->digests);
     free(s->away_since);
     free(s->kicks);
@@ -2176,6 +2199,16 @@ uint32_t tide_server_player_count(const tide_server *s)
     uint32_t n = 0;
     for (uint32_t i = 0; i < s->players; i++) n += s->connections[i].used ? 1u : 0u;
     return n;
+}
+
+bool tide_server_player_identity(const tide_server *s, const tide_player_id player, uint8_t identity[32])
+{
+    if (!identity) return false;
+    memset(identity, 0, 32);
+    if (!s || !s->desc.identity || !player.id || player.id > s->players || !s->digests[player.id - 1u]) return false;
+    memcpy(identity, s->identities[player.id - 1u], 32);
+    const uint8_t zero[32] = {0};
+    return memcmp(identity, zero, 32) != 0;
 }
 
 bool tide_server_kick(tide_server *s, const tide_player_id player, const char *message)

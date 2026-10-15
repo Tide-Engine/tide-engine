@@ -10,6 +10,8 @@ typedef struct usage_node { usage_kind kind; const void *value; } usage_node;
 typedef struct asset_usage {
     pointer_set seen, used;
     VEC(usage_node) pending;
+    bool server;
+    const program *prog;
 } asset_usage;
 
 static uint32_t pointer_place(const void *p, const uint32_t mask)
@@ -84,23 +86,33 @@ static void parameters(asset_usage *w, const param *items, const int count)
 
 static void declaration(asset_usage *w, const decl *d)
 {
+    // A match can receive an opaque asset reference through an input/command.
+    // Its value can select any matching declaration, including one named only
+    // by a client's UI; retain the complete resolver domain for that type.
+    if (w->server && d->asset_ref_of) {
+        for (int i = 0; i < w->prog->assets.count; i++) {
+            const decl *asset = w->prog->assets.items[i];
+            if (asset->return_type.kind == TY_MESH && asset->return_type.decl == d->asset_ref_of) use_asset(w, asset);
+        }
+    }
     queue(w, USAGE_DECL, d->return_type.decl);
     queue(w, USAGE_DECL, d->skin_vertex.decl);
-    queue(w, USAGE_DECL, d->local_part);
-    queue(w, USAGE_DECL, d->interpolate);
+    if (!w->server) queue(w, USAGE_DECL, d->local_part);
+    if (!w->server) queue(w, USAGE_DECL, d->interpolate);
     queue(w, USAGE_EXPR, d->value);
-    queue(w, USAGE_STMT, d->body);
+    if (!w->server || d->kind != DECL_INPUT) queue(w, USAGE_STMT, d->body);
     queue(w, USAGE_STMT, d->sanitize);
-    queue(w, USAGE_STMT, d->predict);
+    if (!w->server) queue(w, USAGE_STMT, d->predict);
     parameters(w, d->params.items, d->params.count);
     attributes(w, d->attributes.items, d->attributes.count);
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
+        if (w->server && f->is_local) continue;
         queue(w, USAGE_DECL, f->type.decl);
         queue(w, USAGE_EXPR, f->default_value);
         attributes(w, f->attributes.items, f->attributes.count);
     }
-    for (int i = 0; i < d->methods.count; i++) queue(w, USAGE_DECL, d->methods.items[i]);
+    if (!w->server) for (int i = 0; i < d->methods.count; i++) queue(w, USAGE_DECL, d->methods.items[i]);
     for (int i = 0; i < d->members.count; i++) queue(w, USAGE_EXPR, d->members.items[i].value);
     for (int i = 0; i < d->samples.count; i++) use_asset(w, d->samples.items[i].asset);
     for (int i = 0; i < d->gpu_data.count; i++) use_asset(w, d->gpu_data.items[i]);
@@ -158,28 +170,34 @@ static void statement(asset_usage *w, const stmt *s)
     }
 }
 
-void program_strip_unused_assets(program *prog)
+static void strip_assets(program *prog, const bool server)
 {
     if (!prog->assets.count) return;
-    asset_usage w = {0};
+    asset_usage w = {.server = server, .prog = prog};
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
-        if (d->kind != DECL_ASSET) queue(&w, USAGE_DECL, d);
+        if (server) {
+            if (!d->is_local && !d->is_view && (d->kind == DECL_SYSTEM || (d->kind == DECL_COMPONENT && d->is_scene)
+                || d->kind == DECL_SINGLETON || d->kind == DECL_INPUT
+                || d->kind == DECL_EVENT)) queue(&w, USAGE_DECL, d);
+        } else if (d->kind != DECL_ASSET) queue(&w, USAGE_DECL, d);
     }
-    for (int i = 0; i < prog->local_parts.count; i++) queue(&w, USAGE_DECL, prog->local_parts.items[i]);
-    // Generated type helpers may evaluate defaults without an explicit
-    // expression at the call site (TryGet, out results and runtime Decode).
-    for (int i = 0; i < prog->structs.count; i++) queue(&w, USAGE_DECL, prog->structs.items[i]);
-    for (int i = 0; i < prog->lists.count; i++) queue(&w, USAGE_DECL, prog->lists.items[i]);
-    for (int i = 0; i < prog->maps.count; i++) queue(&w, USAGE_DECL, prog->maps.items[i]);
-    for (int i = 0; i < prog->arrays.count; i++) queue(&w, USAGE_DECL, prog->arrays.items[i]);
-    for (int i = 0; i < prog->skinned_types.count; i++) queue(&w, USAGE_DECL, prog->skinned_types.items[i]);
-    for (int i = 0; i < prog->shaders.count; i++) {
-        const shader *s = prog->shaders.items[i];
-        queue(&w, USAGE_DECL, s->vertex);
-        queue(&w, USAGE_DECL, s->vert);
-        queue(&w, USAGE_DECL, s->frag);
-        for (int k = 0; k < s->textures.count; k++) use_asset(&w, s->textures.items[k].asset);
+    if (!server) {
+        for (int i = 0; i < prog->local_parts.count; i++) queue(&w, USAGE_DECL, prog->local_parts.items[i]);
+        // Generated type helpers may evaluate defaults without an explicit
+        // expression at the call site (TryGet, out results and runtime Decode).
+        for (int i = 0; i < prog->structs.count; i++) queue(&w, USAGE_DECL, prog->structs.items[i]);
+        for (int i = 0; i < prog->lists.count; i++) queue(&w, USAGE_DECL, prog->lists.items[i]);
+        for (int i = 0; i < prog->maps.count; i++) queue(&w, USAGE_DECL, prog->maps.items[i]);
+        for (int i = 0; i < prog->arrays.count; i++) queue(&w, USAGE_DECL, prog->arrays.items[i]);
+        for (int i = 0; i < prog->skinned_types.count; i++) queue(&w, USAGE_DECL, prog->skinned_types.items[i]);
+        for (int i = 0; i < prog->shaders.count; i++) {
+            const shader *s = prog->shaders.items[i];
+            queue(&w, USAGE_DECL, s->vertex);
+            queue(&w, USAGE_DECL, s->vert);
+            queue(&w, USAGE_DECL, s->frag);
+            for (int k = 0; k < s->textures.count; k++) use_asset(&w, s->textures.items[k].asset);
+        }
     }
     while (w.pending.count) {
         const usage_node n = w.pending.items[--w.pending.count];
@@ -190,7 +208,12 @@ void program_strip_unused_assets(program *prog)
     int count = 0;
     for (int i = 0; i < prog->assets.count; i++) {
         decl *d = prog->assets.items[i];
-        if (contains(&w.used, d)) prog->assets.items[count++] = d;
+        const bool used = contains(&w.used, d);
+        if (server) d->server_asset = used;
+        if (used) prog->assets.items[count++] = d;
     }
     prog->assets.count = count;
 }
+
+void program_strip_unused_assets(program *prog) { strip_assets(prog, false); }
+void program_strip_server_assets(program *prog) { strip_assets(prog, true); }
