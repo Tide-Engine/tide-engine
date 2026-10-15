@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "name": "showroom",
+  "function": "BuildMapShowroom",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -9,
+        0,
+        -17.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        9,
+        0,
+        14.1
+      ],
+      "yaw": "SOUTH",
+      "need": []
+    }
+  ],
+  "plates": [],
+  "machines": [],
+  "anchors": {},
+  "wires": [],
+  "place_ids": [
+    5
+  ],
+  "external_geometry": true
+}

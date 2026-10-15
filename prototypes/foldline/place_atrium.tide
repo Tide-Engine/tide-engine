@@ -2,8 +2,7 @@
 // cube after them. Concrete backs keep the island's receptive faces hidden.
 void BuildCargoAtrium(mut Arena arena, mut Place place, mut Fold fold)
 {
-    ArrivalLift(arena, place, float3(-16, 0, -20.1), NORTH);
-    ExitLift(arena, place, float3(0, 0, 22.1), SOUTH, 1 << 0);
+    BuildMapAtrium(arena, place);
     Fill(arena, -20, -12, -1, 0, -18, 6, CARPET);
     Fill(arena, -8, 8, -1, 0, 0, 20, CONCRETE);
     // This cage wall reaches the room's roof. A whole body cannot jump onto
@@ -48,10 +47,6 @@ void BuildCargoAtrium(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -3.5, -3.2, 0, 6, 8.1, 16.3, PANELS, false, 4);
     Fill(arena, 3.2, 3.5, 0, 6, 8.1, 16.3, PANELS, false, 4);
     Fill(arena, -3.5, 3.5, 0, 6, 16, 16.3, PANELS, false, 4);
-    Spawn(Plate { chamber = arena.chamber, at = float3(0, 0, 13.5), half = float2(2.3), need = 2500, heavy = true, signal = 0 });
-    RunWire(arena, 0, [float3(2.3, .025, 13.5), float3(3.8, .025, 13.5), float3(3.8, .025, 18.8),
-                       float3(3.8, .025, 19.96), float3(3.8, 4.15, 19.96), float3(0, 4.15, 19.96)]);
-    SetProp(arena, PropKind.ExitSign, float3(0, 3.5, 19.8), SOUTH);
     SetProp(arena, PropKind.Arrow, float3(-12.05, .25, 4), EAST, float3(.6));
     SetProp(arena, PropKind.Dollhouse, float3(-18, 0, 3), EAST, float3(1.5));
     SetProp(arena, PropKind.Clock, float3(-19.7, 3, -3), EAST, float3(2));

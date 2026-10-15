@@ -526,7 +526,13 @@ Color FoldTint(int end)
 bool InAnyFold(float3 p, Sight sight)
 {
     for (int end = 0; end < 4; end++)
-        if (sight.foldOn[end] > 0.5 && InFold(p, sight.foldAt[end] - sight.foldFace[end] * 0.55, sight.foldFace[end], sight.foldSize[end])) return true;
+    {
+        float3 wall = sight.foldAt[end] - sight.foldFace[end] * 0.55;
+        // Only the receptive face opens. The fixed cut depth can reach the
+        // reverse of a thin wall, but that face must stay opaque from behind.
+        if (sight.foldOn[end] > 0.5 && Math.Dot(sight.eye - wall, sight.foldFace[end]) >= -0.06
+            && InFold(p, wall, sight.foldFace[end], sight.foldSize[end])) return true;
+    }
     return false;
 }
 
@@ -1912,8 +1918,9 @@ void DrawMover(mut Optics optics, Mover mover, int signals)
             optics.dynamic.Add(Block(at + side * .8 - float3(0, size.y * .5 + .04, 0), float3(.14, .08, .14), Color(.3, 1, .4), 0, Math.Length(mover.velocity) > .05 ? 1.6 : .4));
         }
     }
-    float through = Math.Max(wide ? size.z + .12 : size.x + .12, 1.1);
-    SignalLamps(optics, mover.lamp, mover.lampAlong, door ? through : .16, mover.need, signals);
+    float defaultDepth = door ? Math.Max(wide ? size.z + .12 : size.x + .12, 1.1) : .16;
+    float through = mover.lampDepth > 0 ? mover.lampDepth : defaultDepth;
+    SignalLamps(optics, mover.lamp, mover.lampAlong, through, mover.need, signals);
 }
 
 // A pit and what's in it: the hands in blood, far down until someone falls in, then up and round them; a pool's
@@ -2526,7 +2533,7 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         for (int opening = 0; opening < 4; opening++)
         {
             Portal portal = fold.ends[opening];
-            if (!portal.open) continue;
+            if (!portal.open || Math.Dot(camera - portal.at, portal.face) < -0.06) continue;
             float3 normal = portal.face;
             // What's seen through a fold is drawn on the inside of a box set into its wall behind the hole: a
             // back and four sides, so that a look through the opening from any angle, straight down at its sill
@@ -2607,7 +2614,7 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
             for (int opening = 0; opening < 4; opening++)
             {
                 Portal portal = fold.ends[opening];
-                if (!portal.open) continue;
+                if (!portal.open || Math.Dot(camera - portal.at, portal.face) < -0.06) continue;
                 float3 normal = portal.face;
                 quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
                 Aperture aperture = Aperture { rim = FoldTint(opening), pixels = pixels, eye = camera, clipPoint = sight.clipPoint, clipNormal = sight.clipNormal,

@@ -1,25 +1,22 @@
 // Display aisles with enough straight sight to let an idle partner keep watch.
 void BuildShowroom(Arena arena, mut Place place)
 {
+    BuildMapShowroom(arena, place);
     place.kind = PlaceKind.Passage;
     place.dead = true;
     place.light = .32;
     place.grade = float3(.96, 1, .84);
     // The extra three metres before the maze are a safe, physical observation
     // landing. InMaze excludes it, including both bodies in the arrival lift.
-    ArrivalLift(arena, place, float3(-9, 0, -17.1), NORTH);
-    ExitLift(arena, place, float3(9, 0, 14.1), SOUTH);
     Fill(arena, -12, 12, -1, 0, -12, 12, CARPET);
     Fill(arena, -12, -6, -1, 0, -15.1, -11.9, CARPET);
-    Fill(arena, -13, -12, -2, 3.8, -15.6, 13, PANELS);
-    Fill(arena, 12, 13, -2, 3.8, -13, 13, PANELS);
-    Fill(arena, -6, -5, -2, 3.8, -15.6, -12, PANELS);
-    Fill(arena, -13, -12, -2, 4.4, -15.6, -15, PANELS);
-    Fill(arena, -6, -5, -2, 4.4, -15.6, -15, PANELS);
+    Fill(arena, -13, -12, -2, 4.4, -15.6, 13, PANELS);
+    Fill(arena, 12, 13, -2, 4.4, -13, 13, PANELS);
+    Fill(arena, -6, -5, -2, 4.4, -15.6, -12, PANELS);
     Fill(arena, -9, -6, 0, 3.8, -12.15, -11.95, PANELS, false, 4);
-    Fill(arena, -6, 13, -2, 3.8, -13, -12, PANELS);
-    Fill(arena, -13, 6, -2, 3.8, 12, 13, PANELS);
-    Fill(arena, -13, 13, 3.8, 4.8, -13, 13, CEILING_TILE, false, 2);
+    Fill(arena, -6, 13, -2, 4.4, -13, -12, PANELS);
+    Fill(arena, -13, 6, -2, 4.4, 12, 13, PANELS);
+    Fill(arena, -13, 13, 4.4, 5.4, -13, 13, CEILING_TILE, false, 2);
     Fill(arena, -13, -5, 4.4, 5.4, -15.6, -12, CEILING_TILE, false, 2);
     mut int[16] east = default;
     mut int[16] north = default;
@@ -57,14 +54,14 @@ void BuildShowroom(Arena arena, mut Place place)
     Spawn(Maze { chamber = maze.chamber, origin = maze.origin, cell = maze.cell, wide = maze.wide, long = maze.long,
                  east = east, north = north, start = maze.start });
     // Two harmless exhibits, held clear of the first aisle and its sightline.
-    SpawnBeast(arena, BeastKind.Figure, float3(-8, .3, -13.2), SOUTH, .7, BeastSkin.Mannequin, "Stand");
-    SpawnBeast(arena, BeastKind.Figure, float3(-7, .3, -13.2), SOUTH, .7, BeastSkin.Mannequin, "Stand");
-    Raise(arena, float3(-7.5, .15, -13.2), float3(2.2, .3, .8), MARBLE, false, 3);
+    SpawnBeast(arena, BeastKind.Figure, float3(-8, .3, -12.45), SOUTH, .7, BeastSkin.Mannequin, "Stand");
+    SpawnBeast(arena, BeastKind.Figure, float3(-7, .3, -12.45), SOUTH, .7, BeastSkin.Mannequin, "Stand");
+    Raise(arena, float3(-7.5, .15, -12.45), float3(2.2, .3, .8), MARBLE, false, 3);
     SpawnBeast(arena, BeastKind.Figure, float3(-4.5, 0, -7.5), SOUTH, .85, BeastSkin.Mannequin, "Stand");
     SpawnBeast(arena, BeastKind.Figure, float3(4.5, 0, -1.5), NORTH, .85, BeastSkin.Mannequin, "Stand");
     SpawnBeast(arena, BeastKind.Figure, float3(-4.5, 0, 4.5), SOUTH, .85, BeastSkin.Mannequin, "Stand");
     LampGrid(place, float2(-12, -15), float2(3), 8, 9);
-    for (int row = 1; row < 9; row += 2) HangLamps(place, 0, 7, row, row, 3.8);
+    for (int row = 1; row < 9; row += 2) HangLamps(place, 0, 7, row, row, 4.4);
     HangLamps(place, 0, 1, 0, 0, 4.4);
     // Empty, mirror-like display panels frame the major turns without a new
     // reflection pass or any surface that invites an unusable fold.

@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "name": "atrium",
+  "function": "BuildMapAtrium",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -16,
+        0,
+        -20.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        0,
+        0,
+        22.1
+      ],
+      "yaw": "SOUTH",
+      "need": [
+        0
+      ]
+    }
+  ],
+  "plates": [
+    {
+      "id": "plate_0",
+      "at": [
+        0,
+        0,
+        13.5
+      ],
+      "signal": 0,
+      "half": [
+        2.3,
+        2.3
+      ],
+      "need": 2500,
+      "heavy": true
+    }
+  ],
+  "machines": [],
+  "anchors": {
+    "wire_0_0": {
+      "at": [
+        2.3,
+        0.025,
+        13.5
+      ],
+      "support": "scene"
+    },
+    "wire_0_1": {
+      "at": [
+        3.8,
+        0.025,
+        13.5
+      ],
+      "support": "scene"
+    },
+    "wire_0_2": {
+      "at": [
+        3.8,
+        0.025,
+        19.435
+      ],
+      "support": "scene"
+    },
+    "wire_0_3": {
+      "at": [
+        3.8,
+        4.2,
+        19.435
+      ],
+      "support": "scene"
+    },
+    "wire_0_4": {
+      "at": [
+        0,
+        4.2,
+        19.435
+      ],
+      "support": "scene"
+    },
+    "wire_0_5": {
+      "at": [
+        0,
+        4.2,
+        19.45
+      ],
+      "support": "scene"
+    }
+  },
+  "wires": [
+    {
+      "id": "wire_0",
+      "signal": 0,
+      "from": "plate_0",
+      "to": "exit",
+      "points": [
+        "wire_0_0",
+        "wire_0_1",
+        "wire_0_2",
+        "wire_0_3",
+        "wire_0_4",
+        "wire_0_5"
+      ]
+    }
+  ],
+  "place_ids": [
+    14
+  ],
+  "external_geometry": true
+}
