@@ -2,6 +2,6 @@
 // expect: a view can't change the match: put what it wants in the input, and change it in a system
 extern int Fill(out List<byte> bytes);
 singleton Store { List<byte> image; }
-local singleton Shown { int size; }
+local singleton Displayed { int size; }
 scene Main { }
-view Show(Store store, mut Shown shown) { shown.size = Fill(out store.image); }
+view Show(Store store, mut Displayed shown) { shown.size = Fill(out store.image); }

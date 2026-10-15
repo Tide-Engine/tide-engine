@@ -1,0 +1,8 @@
+// expect: 'Audience' is built into the language
+// expect: 'Visibility' is built into the language
+namespace Game
+{
+    enum Audience { All, None }
+    enum Visibility { Open, Closed }
+}
+scene Main { }

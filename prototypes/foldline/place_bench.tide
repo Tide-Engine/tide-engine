@@ -1,0 +1,92 @@
+// The bench: one plain room with every mechanic in it, for tests and for
+// looking at. It's 20 m by 22, a storey high but for a bay two storeys high in
+// its north-west corner. Its south and west walls take folds, and the west wall
+// has frames of four sizes; its north and east walls are bare, and so is a thin
+// papered partition, which is too thin for one. Three doors in the north wall
+// open on a corridor, each while its plate is weighed down: a standard plate, a
+// heavy one, and one that lingers. A strip of blood runs across the east half,
+// with a pad that throws over it. The lift out is in the east wall, and its gate
+// is a fourth plate's. A cube and two crates.
+void BuildBench(mut Arena arena, mut Place place, mut Fold fold)
+{
+    place.kind = PlaceKind.Bench;
+    // The lifts: come by from the south, and left by through the east wall
+    ArrivalLift(arena, place, float3(5, 0, -12.6), NORTH);
+    ExitLift(arena, place, float3(12.6, 0, 3), WEST, 1 << 3);
+
+    // The floor, which the blood leaves out
+    Fill(arena, -10, 10, -1, 0, -10, -3, CARPET);
+    Fill(arena, -10, 2, -1, 0, -3, -1, CARPET);
+    Fill(arena, -10, 10, -1, 0, -1, 12, CARPET);
+    DigBloodPit(arena, 2, 10, -3, -1);
+    // The ceiling, and the bay's, two storeys up, with what closes the bay over the room's ceiling
+    Fill(arena, -11, 11, 4.4, 5.4, -11, 3.25, CEILING_TILE, false, 2);
+    Fill(arena, -5, 12, 4.4, 5.4, 3.25, 17, CEILING_TILE, false, 2);
+    Fill(arena, -11, -5, 9.4, 10.4, 3.25, 13, CEILING_TILE, false, 2);
+    Fill(arena, -10, -5, 5.4, 9.4, 2.25, 3.25, PANELS);
+    Fill(arena, -5, -4, 5.4, 9.4, 3.25, 12, PANELS);
+
+    // The south wall takes a fold, but where the lift's doorway is
+    Fill(arena, -11, 2, -3, 4.4, -11, -10, WALLPAPER, true);
+    Fill(arena, 8, 11, -3, 4.4, -11, -10, WALLPAPER, true);
+    // The west wall takes one, two storeys high in the bay, and has a frame of each size, each standing on the floor
+    Fill(arena, -11, -10, -3, 4.4, -11, 3.25, WALLPAPER, true);
+    Fill(arena, -11, -10, -3, 9.4, 3.25, 13, WALLPAPER, true);
+    PaintFrame(arena, float3(-10, 0, -8), float3(1, 0, 0), 0.25);
+    PaintFrame(arena, float3(-10, 0, -5), float3(1, 0, 0), 0.5);
+    PaintFrame(arena, float3(-10, 0, 0), float3(1, 0, 0), 1.5);
+    PaintFrame(arena, float3(-10, 0, 8), float3(1, 0, 0), 2);
+    // The east wall is bare, with the lift out in it
+    Fill(arena, 10, 11, -3, 4.4, -11, 0, PANELS);
+    Fill(arena, 10, 11, -3, 4.4, 6, 12, PANELS);
+    // A partition papered as if it took a fold, too thin to
+    Fill(arena, -3, 1, 0, 3, 4.8, 5.2, WALLPAPER, true);
+
+    // The north wall is bare, with three doorways 3 m wide into the corridor behind it
+    Fill(arena, -11, -5, -3, 9.4, 12, 13, PANELS);
+    Fill(arena, -5, -2.5, -3, 4.4, 12, 13, PANELS);
+    Fill(arena, 0.5, 2, -3, 4.4, 12, 13, PANELS);
+    Fill(arena, 5, 6.5, -3, 4.4, 12, 13, PANELS);
+    Fill(arena, 9.5, 11, -3, 4.4, 12, 13, PANELS);
+    for (var doorway = 0; doorway < 3; doorway++)
+    {
+        var middle = doorway == 0 ? -1.0 : doorway == 1 ? 3.5 : 8.0;
+        Fill(arena, middle - 1.5, middle + 1.5, 3, 4.4, 12, 13, PANELS);
+        Fill(arena, middle - 1.5, middle + 1.5, -1, 0, 12, 13, CONCRETE);
+    }
+    Fill(arena, -5, 11, -1, 0, 13, 16, CARPET);
+    Fill(arena, -5, 11, -3, 4.4, 16, 17, PANELS);
+    Fill(arena, -6, -5, -3, 4.4, 12, 17, PANELS);
+    Fill(arena, 11, 12, -3, 4.4, 12, 17, PANELS);
+
+    // The circuits. Signal 0: a standard plate, which a whole operator or a cube presses and a small operator
+    // doesn't, holds its door open. Signal 1: a heavy plate, which takes something grown. Signal 2: a plate that
+    // keeps its door open three seconds after it's let up. Signal 3: the lift's gate.
+    LayPlate(arena, float3(3.5, 0, 9), 0);
+    HangDoor(arena, float3(3.5, 1.5, 12.5), float3(3, 3, 0.3), 1 << 0);
+    RunWire(arena, 0, [float3(4.1, 0.02, 9), float3(5.3, 0.02, 9), float3(5.3, 0.02, 11.98), float3(5.3, 3.3, 11.98), float3(3.7, 3.3, 11.98)]);
+    LayPlate(arena, float3(8, 0, 9), 1, heavy: true);
+    HangDoor(arena, float3(8, 1.5, 12.5), float3(3, 3, 0.3), 1 << 1);
+    RunWire(arena, 1, [float3(8.8, 0.02, 9), float3(9.8, 0.02, 9), float3(9.8, 0.02, 11.98), float3(9.8, 3.3, 11.98), float3(8.2, 3.3, 11.98)]);
+    LayPlate(arena, float3(-1, 0, 9), 2, linger: 3);
+    HangDoor(arena, float3(-1, 1.5, 12.5), float3(3, 3, 0.3), 1 << 2);
+    RunWire(arena, 2, [float3(-1.6, 0.02, 9), float3(-2.8, 0.02, 9), float3(-2.8, 0.02, 11.98), float3(-2.8, 3.3, 11.98), float3(-1.2, 3.3, 11.98)]);
+    LayPlate(arena, float3(6.5, 0, 3), 3);
+    RunWire(arena, 3, [float3(6.5, 0.02, 2.4), float3(6.5, 0.02, -0.6), float3(9.98, 0.02, -0.6), float3(9.98, 4.2, -0.6), float3(9.98, 4.2, 2.8)]);
+
+    // A pad that throws whoever steps on it over the blood
+    SetPad(arena, float3(8.6, 0, -6), float3(0, 8.5, 8));
+    PutLoose(arena, fold, float3(-2, 0.4, -6));
+    PutLoose(arena, fold, float3(0, 0.4, -7.5), 1);
+    PutLoose(arena, fold, float3(0.9, 0.4, -7.5), 1);
+
+    // Office lamps over the room, the bay's under its own roof, the corridor's, and over the door that lingers one
+    // that's lit while it's open. By the lift out, a red one
+    LampGrid(place, float2(-10, -13), float2(5, 3.25), 5, 10);
+    OfficeLamps(place, 0, 3, 1, 7, 4.4, 11);
+    HangLamps(place, 0, 0, 5, 7, 9.4);
+    HangLamps(place, 1, 3, 8, 8, 4.4);
+    HangLamp(place, 1, 7, 4.4, LampState.Signal, 0, 2);
+    HangLamp(place, 3, 4, 4.4, LampState.Red);
+    MenuView(place, float3(-7.5, 3.2, -8.5), 0.14, 0.62);
+}

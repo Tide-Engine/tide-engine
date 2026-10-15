@@ -1,5 +1,10 @@
 # Code the GPU runs: frags and verts
 
+2026-10-15 visibility integration: the `normals` and `place` fixture frags
+formerly named `Shown` are named `Displayed` to avoid the new engine event.
+Their GLSL/WGSL goldens change only that function spelling and its labels;
+no shader expression, binding or expected GPU value changes.
+
 ## Frustum bounds metadata (2026-10-15)
 
 Generated `tide_shader.bounds_position` is `1 + offsetof(V, position)` only for 3D shaders with neither a user vert nor skinning. Fragment-only custom vertex layouts get automatic culling; a user vert (even one currently leaving position alone), explicit clip output and every skinned shader require explicit conservative `Draw.Bounds` or remain drawn. GLSL/WGSL/SPIR-V are unchanged. The C shader struct grows, so hosts/libraries/games rebuild. `draw_frustum` checks offsets, rejection and opt-in; `skinned_rest` pins zero automatic metadata. Contracts and GPU validation are in `notes/drawing.md`, Frustum culling.

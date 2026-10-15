@@ -234,7 +234,7 @@ int? Half(int? value)
     return null;
 }
 
-string Shown(Slot slot)
+string Displayed(Slot slot)
 {
     return $"{slot}";
 }
@@ -309,8 +309,8 @@ void Text(mut Results r, mut Holder holder)
     mine.item = Half(mine.item);
     Expect(r, mine.Count() == 1 && (mine.label ?? "") == "two");
     // As text shows them
-    Expect(r, Shown(Slot { item = 4, label = "four" }) == "Slot { item = 4, label = \"four\", amount = 1 }");
-    Expect(r, Shown(Slot { }) == "Slot { item = null, label = null, amount = 1 }");
+    Expect(r, Displayed(Slot { item = 4, label = "four" }) == "Slot { item = 4, label = \"four\", amount = 1 }");
+    Expect(r, Displayed(Slot { }) == "Slot { item = null, label = null, amount = 1 }");
     var defaults = Defaults { };
     Expect(r, $"{defaults}" == "Defaults { level = 3, title = \"none\", ratio = 0.5, rank = Gold, nothing = null }");
 }

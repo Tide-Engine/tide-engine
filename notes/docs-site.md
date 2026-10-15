@@ -1,5 +1,41 @@
 # The docs site
 
+## Visibility language documentation (2026-10-15)
+
+Added `/game/visibility` to the Simulation sidebar with practical shared-group,
+entity, whole-component and live-audience examples; chunk/player/deck use
+cases, including public Time.seed/default Random versus an authoritative private
+shuffle seed; local availability versus true lifetime; and current custom-event,
+public-singleton, task and Resident limits. Scenes and Networking now describe
+per-recipient projection rather than the previous whole-world-only warning.
+Events, Local state and C hosts document Shown/Hidden, frame endpoint
+reconciliation (including transient add/remove/re-add coalescing and canceled
+prediction restoration), rebuild-safe resource preparation, arrival initialization,
+per-listener transitions and recipient lifecycle journal callbacks. The spec
+keeps owner-agreed scope/lifecycle separate from provisional API names and
+implementation choices. Ordinary Transform parenting does not inherit policy. Scoped derived placement
+anchors preserve permitted Transform subtrees across hidden parents; nonspatial
+subtrees receive no blanket placement disclosure. Networking, Matches and Commands
+qualify full-world page snapshots/host migration/command replay, and document
+recipient logical baselines, server-only commands, normalized remote input history
+and refused partial-world host promotion. The practical FPS guidance explicitly
+identifies Box2D/Box3D public Physics collider/rewind lists as requiring
+visibility-aware package integration; omitting Resident does not protect those
+ordinary public copies.
+
+`npm ci` installed pinned docs dependencies. Node 24.21.0 runs the shared
+grammar tests (244/244), production docs build and SEO checks (3/3)
+successfully, including the new visibility route, sitemap and social image. Prerender
+prints expected 404s for unstaged example pages in this checkout; the build
+still exits successfully. Native/web engine integration validation is tracked
+in the lifecycle/netcode notes. No docs deployment or CI was requested.
+
+Final integration with `origin/dev` `a50f7818` preserves the visibility guide,
+managed-hosting guide, both sidebar entries and their separate spec contracts.
+The merged production docs build and all three SEO checks pass with Node
+24.21.0, including page/link/anchor validation, both routes' metadata, sitemap
+entries and social images. The existing allowed unstaged-example 404s remain.
+
 ## Hosting console navigation and DNS (2026-10-15)
 
 The owner requested a Console menu entry on tide-engine.dev, clarifying that

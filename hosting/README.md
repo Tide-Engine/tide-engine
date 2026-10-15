@@ -15,11 +15,28 @@ npm test
 npm start
 ```
 
+The console uses SvelteKit 3/Svelte 5 with adapter-node, matching the website's
+stack. `npm test` first checks and builds the console; `npm run build` builds it
+independently. The existing Node service serves the compiled UI, API and match
+runtime together. Page requests authenticate the browser session and render its
+account, projects and matches on the server before hydration. No initial account
+fetch or wrong-view flash is needed. The production Docker build compiles the
+frontend in a separate stage and installs runtime dependencies only in its final
+image.
+
 The dashboard is `http://localhost:8081`; games use `http://127.0.0.1:8081`.
 These must remain different origins. Production requires two HTTPS origins.
 GitHub OAuth is invite-only, with no repository scopes. Configure an OAuth app
 with callback `https://console.tide-engine.dev/auth/callback`, then supply
 `TIDE_GITHUB_CLIENT_ID` and `TIDE_GITHUB_CLIENT_SECRET`.
+
+The console uses the main website's amber palette, wave logo and locally served
+Inter Variable font (license at `/Inter-LICENSE.txt`). Light/dark appearance
+follows the system until changed with the header theme button; the preference
+is stored in this origin's browser storage. Browser sign-in failures return to
+the styled sign-in page with an access/retry message. API errors remain JSON.
+SvelteKit generates the per-response script nonce required by the console CSP;
+personalized HTML and page data are private/no-store and vary by Cookie.
 
 Invite the immutable numeric GitHub account ID, rather than a mutable username:
 

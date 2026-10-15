@@ -1,0 +1,4 @@
+// expect: a visibility override names an ordinary component
+singleton Secret { int value; }
+system Change(mut Visibility visibility) { visibility.Set<Secret>(Audience.None); }
+scene Main { }
