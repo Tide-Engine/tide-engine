@@ -1,6 +1,163 @@
 # Managed hosting and deployment
 
+## Non-expiring CI tokens and game links (2026-10-15)
+
+The owner requested optional infinite tokens. CI deploy creation now offers
+Never expires (API days:null), keeping 90 days as the default. The existing
+NOT NULL token expiry column uses zero for non-expiring deploy credentials;
+JSON returns expires:null. Authentication, cleanup and console listings honor
+this value only for deploy tokens. Browser/CLI/runtime sessions retain their
+bounded lifetimes. Project scope, account suspension, twenty-token limit and
+individual revocation continue to apply. Existing credentials are unchanged.
+
+The owner also reported a game refusing credit while the console showed a paid
+EUR 20 monthly allowance. The game gate already uses the billing ledger, but its
+combined credit/price check reported HTTP 402 when rates were unset (charge=0).
+It now distinguishes available plan credit, missing operator prices (503),
+insufficient lease funds (402) and disabled allocations (503). Existing paid
+matches remain accessible when new allocations are disabled. The owner then
+explicitly requested normal hosting operation regardless of Stripe key mode:
+Fly enables allocations with Small/Standard rates 1000/2000 integer units per
+allocated second (EUR 0.036/0.072 per hour), retaining the existing machine,
+volume and two-match cap. Stripe test/live mode does not gate hosting. No
+subscription, balance or provider key is manually changed.
+
+Project cards now expose a selectable Game URL for web-client releases, with
+Match URL on running/starting client matches. Existing buttons remain. Restricted
+client creation explains that a specific running match link should be shared.
+Server-only releases have no game URL. The URL fields select their text on click.
+
+Validation: all 43 hosting tests pass with staged CLI/native/web builds and
+muted Chrome. New store coverage advances a non-expiring token ten years,
+triggers cleanup and verifies suspension/revocation; reopening SQLite retains
+it. HTTP coverage verifies nullable token expiry and monthly-only funds with
+zero purchased credit, missing prices, disabled creation, insufficient and
+expired allowance. Browser coverage creates/revokes a non-expiring token and
+checks visible URL values and click-to-select. Expanded desktop/phone UI captures
+were inspected; Svelte has zero errors/warnings and both production builds pass.
+Deployment results follow after completion.
+
+## CI deploy credentials (2026-10-15)
+
+The owner requested private authentication for CI. Added named, project-scoped
+deploy tokens, issued/revoked in the console (or authenticated developer API).
+They use the CLI's existing TIDE_HOSTING_TOKEN environment variable, so no CLI
+or language change is needed. A committed target link or explicit project ID
+selects the existing project; deploy tokens cannot create projects.
+
+Secrets are random 256-bit base64url values, returned once and SHA-256 hashed at
+rest. Persistent deploy_tokens rows bind the hash to its project and display
+name. Expiry defaults to 90 days, with 30/365-day or no-expiry choices. Twenty/account requires
+explicit revocation, independently of runtime keys; browser/CLI session rotation
+does not revoke them. Existing database startup creates the new table in place.
+Account suspension and token expiry/revocation immediately reject authentication.
+
+The deploy-token request allowlist permits only its project's release upload,
+a minimal account response containing region and that project's ID/name for CLI
+target resolution, and self-logout. It blocks account/billing data, other
+projects, match controls, project creation, deletion and credential management.
+Runtime keys retain their separate match-only authority. Browser issuance and
+revocation use existing CSRF checks; secrets never enter SSR/account responses.
+The UI shows each token's name/expiry and an individual revoke action. Docs
+include a CI secret example. No actual owner token or CI secret was created.
+
+Validation: all 41 hosting tests pass with the installed native/web/managed CLI
+and muted Chrome, including an actual env-token deployment using the committed
+folder link, wrong-target/project-creation refusal and revocation. Store/HTTP
+checks cover hashes, expiry, caps, session rotation, CSRF, account isolation and
+the narrow API allowlist. The browser creates, reveals, hides and revokes a
+token through Svelte and verifies the backend rejects it afterward. Desktop and
+phone captures of the expanded panel were inspected without horizontal overflow.
+The test now reports browser evaluation exceptions and waits for the correct
+document after navigation, rather than accepting a previous page during reload.
+Svelte check reports zero errors/warnings; console/docs production builds pass.
+No engine/runtime/CLI source changes or CI workflow dispatch are involved.
+
+Merged into dev as 00db7583; incoming changes were unrelated notes only. Deployed
+that source directly to tide-hosting as Fly release 6, image
+deployment-01M509J7E4F74GPYE04QDNNTKQ. The production Linux Svelte check/build,
+machine smoke/health checks and public HTTPS health/SSR requests pass. The
+existing machine/volume, allocation switch and pricing configuration are retained.
+
 ## Status and agreed scope (2026-10-15)
+
+The owner approved a monthly minimum with included usage and opt-in prepaid
+extra usage. The configurable sandbox example is EUR 20/month with EUR 20
+included, not approved public pricing. Paid monthly allowance expires at its
+invoice service-period end; purchased credit carries forward. Both manual and
+automatic extra purchases share the customer's cycle spending cap, including
+pending amounts. Extra usage/automatic charging defaults off. Deploying does
+not subscribe. Cancellation retains access through the paid period. No postpaid
+debt or unpaid renewal grace is added.
+
+Implemented in billing-store.mjs and payments.mjs, with persistent Customer
+mapping, hosted subscription Checkout, paid-invoice grants, period-end
+cancellation and a configured Stripe Customer Portal. The server retains its
+immediate transaction/lease enforcement; it does not migrate to Stripe meters
+or Metronome. The previous Stripe planner's one-time-only scope is superseded
+by this approved subscription change. The Stripe skill's Billing/security
+references were read. The current Stripe MCP rejects both planner/docs calls
+with authentication required; used official Stripe docs and the already
+configured runtime sandbox key for setup without exposing it.
+
+SQLite migration keeps existing accounts.balance as purchased credit. A separate
+allowance ledger tracks each invoice/cycle, and reservation source records make
+refunds restore their original bucket. Expired allowance cannot become purchased
+credit. Leases are bounded by confirmed paid periods. A late renewal confirmation
+may suspend worlds at that boundary; credit reconciliation enables manual resume.
+Subscription access is required even with purchased funds after cancellation.
+Without a configured Price, isolated local/prepaid test configurations remain
+usable; the Fly service config enables monthly enforcement for all accounts.
+
+Durable purchase IDs and exact provider request parameters are written before
+external calls. Uncertain retries preserve the original amount, method and
+idempotency key, and reserve cap space. Unknown operations older than 23 hours
+require reconciliation rather than creating another potentially paid operation.
+Off-session payments use the saved method with explicit extra-usage consent;
+authentication-required intents are canceled before releasing their cap hold.
+Definitive failures pause automatic buying until settings are explicitly saved.
+Known pending payments/subscriptions reconcile each minute; billing requests
+run separately from match ticks and abort/drain on shutdown. Existing one-time
+Checkout notifications remain fulfillable; provider redirects never grant funds.
+Refunds/disputes freeze mapped accounts, including subscription payments.
+Restricted live key mode detection now recognizes rk_live_ as well as sk_live_.
+
+Created sandbox Product prod_VRlTIssGVtFmiM, Price
+price_1UQrw7EOEguEtdxR8VTaPR66 (EUR 20/month) and Portal configuration
+bpc_1UQrw7EOEguEtdxRj71OCIMM (payment-method updates, invoice history and
+period-end cancellation). Expanded the existing webhook endpoint's event list
+for subscriptions/invoices/automatic payments without changing its signing
+secret. All requests use the pinned 2026-09-30.endive API. No live resources,
+tax collection, infrastructure scaling or real-money charges were enabled.
+
+Validation so far: all 40 hosting tests pass with installed native/web/managed
+CLI tools and muted Chrome. Seven new billing cases cover paid-only grants,
+duplicate/out-of-order renewal, expiry, cancellation, source-preserving refunds,
+paid-period lease bounds, shared caps, uncertain retries and authentication
+failure. The real settings API is exercised in the browser, with extra usage
+off initially, then opt-in. Desktop/phone light/dark UI captures were inspected;
+Svelte check has zero errors/warnings and both production builds pass. Incoming
+dev changes included a CLI toolchain fix; rebuilt/refreshed the private CLI and
+all 40 hosting tests pass again, including native/web/server builds and Chrome.
+Source 27d03438 (including d88f32c8) deployed as Fly release 5, image
+deployment-01M508P29EDDHJXEVVCMP8XZ41. Machine/health checks and public HTTPS
+health pass on the existing machine/volume; allocations and zero usage rates
+remain unchanged. No CI was dispatched.
+
+Real Stripe sandbox drills use the deployed modules, an isolated in-memory
+Store and disposable Stripe test-clock customers. Verified a paid initial
+invoice, duplicate grant prevention, a successful saved-method/off-session
+EUR 5 top-up, refusal of another purchase at its cap, paid monthly renewal via
+clock advancement, fresh allowance with no rollover, preserved purchased funds,
+cap reset, cancellation at period end and loss of access after that period.
+A separate hosted subscription Checkout smoke verifies mode/amount/customer,
+reuses the pending session on retry, grants no credit before payment and opens
+the configured Customer Portal. The unpaid checkout was expired; its test
+customer and the test-clock customer/subscription were deleted afterward.
+The owner's persistent account, subscription and balance were not modified.
+Provider setup/drill helpers and logs remain under ignored build/; no API key
+was read into local output or committed. Real-money pricing/tax/launch checks
+remain outstanding, as do independent backup and remote hosting checks below.
 
 Implemented first local-build hosting workflow, at the owner's request. GitHub
 sign-in, Stripe prepaid credit and the existing Fly.io organization/relay are
@@ -286,7 +443,8 @@ Balances use integer millionths of minor currency units (100,000,000 = EUR 1).
 Allocated resource seconds consume prepaid credit; unused whole reserved seconds
 are refunded once. Low-credit incidents warn; exhaustion blocks allocation and
 saves/suspends explicit worlds. Resume rechecks credit, capacity and operator
-allocation switch. Frozen accounts stop. No postpaid credit or auto-top-up.
+allocation switch. Frozen accounts stop. Optional prepaid automatic top-ups
+share the monthly extra-purchase cap; no postpaid credit is granted.
 Traffic/storage have hard included allowances, not surprise overage charges.
 Application egress counts are not physical provider traffic or an exact currency
 ceiling. Rates require measurement and explicit operator configuration.
@@ -354,7 +512,7 @@ security review and customer-facing rates/retention. No CI was dispatched.
 
 Unbuilt: multi-host/region scaling, managed player auth, email notifications,
 remote builds, compiled-module caching, automatic native client updates,
-production match hot reload, cross-release save upgrades and auto top-up.
+production match hot reload and cross-release save upgrades.
 
 ## Design references
 

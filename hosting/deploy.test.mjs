@@ -55,5 +55,12 @@ test('deploy creates and links a folder project; renames, explicit targets and i
         const selected = store.projects(account.id).find(p => p.name === 'new-name');
         assert.equal(JSON.parse(await readFile(link, 'utf8')).project, selected.id);
         await assert.rejects(deploy('--project', 'e'.repeat(32)), error => /not available to this account/.test(error.stderr));
+        const ci = store.issueDeployToken(account.id, selected.id, { name: 'CI' });
+        env.TIDE_HOSTING_TOKEN = ci.token;
+        assert.match((await deploy('--server-only')).stdout, /Deployed release [a-f0-9]{64}/);
+        await assert.rejects(deploy('--project', existing.id), error => /not available to this account/.test(error.stderr));
+        await assert.rejects(deploy('--project', 'forbidden-new-project'), error => /Deploy tokens may upload releases only/.test(error.stderr));
+        store.revokeToken(store.authenticate(ci.token, 'deploy').token_hash);
+        await assert.rejects(deploy(), error => /Sign in/.test(error.stderr));
         assert.equal(store.projects(account.id).length, 3);
     });

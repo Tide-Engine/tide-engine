@@ -33,6 +33,46 @@ Local validation after that correction passes all 2,360 native debug and 2,272
 web debug CTests, plus the discovery regression on Windows/Linux. The old code
 fails that regression. Actual Apple linking remains the next package run's gate.
 
+Run `38768886333` confirms the Apple fix on the same newer macOS image:
+all package smoke/C++/cache/watch checks pass, including both repaired-build
+comparisons. Windows native instead failed only tide_cli_installers: the
+partial PowerShell warm-up took 10.2 seconds, but the first timed case still
+spent 18.5 seconds between its release-list return and first mock download,
+using only 0.125 seconds of CPU in that interval. It hit the unchanged
+30-second guard after both mock downloads. The exact assembly/file wait in
+release selection/scratch setup is not identified; the earlier assertion that
+the cmdlet-only warm-up covered all first-load costs was too broad.
+
+The preflight now executes the actual mocked fresh installer with the same
+release fixture, real checksum and isolated modules/TEMP, stopping before
+unpacking. It keeps its existing 300-second startup guard; all nine cases keep
+their 30-second guards and assertions. No real installation, PATH/profile or
+registry write is performed. A temporary one-time 31-second release-selection
+stall fails the old first case and is absorbed by the full preflight; the new
+nine cases then all pass. Ordinary and poisoned inherited module/cache-path
+runs pass all nine cases locally. A separate 31-second stall injected only
+after preflight still fails the first timed case at 30.02 seconds. Full native
+debug passes 2,360 tests (67.65 seconds), and web debug passes 2,272 (178.91
+seconds), including WebGL/WebGPU. The final preflight's release/request/cleanup
+assertions and all nine ordinary cases pass again; Node syntax and whitespace
+checks pass. No installer or workflow behavior changed.
+
+Final requested Build `38772910822`, at 16117bd1, completed successfully and
+published `v0.4.0-nightly.3` at 17:21:26 UTC on 2026-10-15. All native/web,
+MinGW, sanitizer and Android suites, all three packages and their installed
+smoke/C++/incremental checks, Google Play checks, JetBrains verification and
+Docs deployment passed. Windows native passed all 2,292 CTests, including the
+installer fixture in 22.83 seconds. Marketplace was skipped as intended for a
+nightly. The preceding run finished with only that installer fixture failing;
+its other suites and all package integrations passed too.
+
+Verified the published tag names exactly 16117bd1, the release is a nondraft
+prerelease with all five nonempty uploaded assets, and the public release JSON
+reports the same assets. The public SHA256SUMS contains all three platform
+packages, and the deployed docs homepage responds HTTP 200. Both Windows
+(nine cases) and Linux/POSIX (eight cases) installer fixtures pass locally.
+These final notes are unbuilt text; no additional workflow dispatch is needed.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate

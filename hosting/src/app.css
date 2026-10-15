@@ -26,7 +26,7 @@
 body { margin: 0; background: var(--bg); color: var(--text); min-width: 320px; }
 a { color: inherit; text-decoration: none; }
 a:hover { color: var(--accent); }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button, .button {
     display: inline-flex; align-items: center; justify-content: center; gap: 14px;
     border: 1px solid var(--line); background: var(--bg); color: var(--text);
@@ -71,8 +71,13 @@ h2 { font-size: 18px; letter-spacing: -.015em; font-weight: 600; margin-bottom: 
 .deploy-start p { margin-bottom: 12px; }
 .deploy-start pre { margin: 12px 0; }
 .deploy-start pre code { padding: 0; }
-#add-credit { scroll-margin-top: 24px; }
+#add-credit, #subscription { scroll-margin-top: 24px; }
 .billing-status { font-size: 13px; color: var(--muted); }
+.billing-details { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-size: 12px; }
+.billing-details dt { color: var(--muted); }
+.billing-details dd { margin: 0; font-weight: 600; }
+label.checkbox { display: flex; align-items: flex-start; gap: 8px; }
+.checkbox input { width: 16px; height: 16px; min-height: 0; padding: 0; margin: 2px 0 0; flex-shrink: 0; accent-color: var(--brand-fill); }
 .workspace { display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 24px; }
 .workspace > *, .workspace aside { min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
@@ -82,7 +87,7 @@ h2 { font-size: 18px; letter-spacing: -.015em; font-weight: 600; margin-bottom: 
 .create summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 form { display: grid; gap: 16px; margin-top: 16px; }
 label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
-input, select { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); min-height: 42px; }
+input, select, textarea { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); min-height: 42px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 form p { margin: 0; }

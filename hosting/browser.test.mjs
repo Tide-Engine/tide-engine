@@ -102,7 +102,11 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         await cdp.call('Page.addScriptToEvaluateOnNewDocument', { source: `window.__logs=[];
             for(const method of ['log','error','warn']) { const old=console[method]; console[method]=(...a)=>{__logs.push(a.join(' '));old.apply(console,a);}; }
             window.addEventListener('error',e=>__logs.push('ERROR: '+e.message));` });
-        const evaluate = async expression => (await cdp.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result.value;
+        const evaluate = async expression => {
+            const result = await cdp.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+            if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+            return result.result.value;
+        };
         await cdp.call('Page.navigate', { url: `${games}/g/${project.id}/` });
         await until(async () => {
             const logs = await evaluate('globalThis.__logs || []');
@@ -137,6 +141,60 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         await until(() => evaluate('!document.querySelector("#account")?.hidden && !!document.querySelector(".match")'), 'Dashboard did not reload.');
         assert.equal(await evaluate('document.documentElement.classList.contains("dark")'), !beforeTheme);
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+        await until(async () => {
+            await evaluate('document.querySelector("#theme-toggle").click()');
+            return await evaluate('document.documentElement.classList.contains("dark")') === beforeTheme;
+        }, 'The reloaded dashboard did not hydrate.');
+        await evaluate(`document.querySelector('form[aria-label="Create CI deploy token"]').closest('details').open = true`);
+        await until(async () => {
+            await evaluate(`(() => { const f = document.querySelector('form[aria-label="Create CI deploy token"]'); f.elements.name.value = 'Browser CI'; f.elements.days.value = 'never'; f.querySelector('button').click(); })()`);
+            return store.db.prepare('SELECT COUNT(*) AS n FROM deploy_tokens').get().n === 1;
+        }, 'The deploy-token form did not create a credential.');
+        await until(() => evaluate('!!document.querySelector("textarea[readonly]")?.value'), 'The new deploy token was not shown once.');
+        const issued = await evaluate('document.querySelector("textarea[readonly]").value');
+        const identity = store.authenticate(issued, 'deploy');
+        assert.equal(identity.id, account.id);
+        assert.equal(store.db.prepare('SELECT expires FROM tokens WHERE hash=?').get(identity.token_hash).expires, 0);
+        assert.equal(await evaluate(`document.querySelector('form[aria-label="Create CI deploy token"]').closest('details').textContent.includes('Never expires')`), true);
+        assert.equal(await evaluate('document.querySelector(".game-url").value'), `${games}/g/${project.id}/`);
+        assert.match(await evaluate('document.querySelector(".match-url").value'), new RegExp(`/g/${project.id}/\\?match=\\d+$`));
+        await evaluate('document.querySelector(".game-url").click()');
+        assert.equal(await evaluate('document.querySelector(".game-url").selectionEnd'), `${games}/g/${project.id}/`.length);
+        assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+        await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Hide token').click()`);
+        assert.equal(await evaluate('!!document.querySelector("textarea[readonly]")'), false);
+        if (process.env.TIDE_HOSTING_EVIDENCE) {
+            await mkdir(process.env.TIDE_HOSTING_EVIDENCE, { recursive: true });
+            await evaluate(`document.querySelector('form[aria-label="Create CI deploy token"]').closest('details').scrollIntoView()`);
+            const desktop = await cdp.call('Page.captureScreenshot', { format: 'png' });
+            await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'deploy-tokens-desktop.png'), Buffer.from(desktop.data, 'base64'));
+            await cdp.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+            assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+            const mobile = await cdp.call('Page.captureScreenshot', { format: 'png' });
+            await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'deploy-tokens-mobile.png'), Buffer.from(mobile.data, 'base64'));
+            await cdp.call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+        }
+        await until(async () => {
+            await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Revoke deploy token Browser CI')?.click()`);
+            return store.authenticate(issued, 'deploy') === null;
+        }, 'The console did not revoke the deploy token.');
+        // Exercise the real settings API and subscription UI with paid fixture
+        // state, without making any external payment-provider request.
+        service.config.stripePrice = 'price_browser_fixture'; store.billing.required = true;
+        const started = Date.now();
+        store.billing.grant(account.id, 'sub_browser_fixture', 'in_browser_fixture', started, started + 30 * 86400_000, 2_000_000_000);
+        store.billing.ensure(account.id);
+        store.db.prepare("UPDATE billing_accounts SET status='active' WHERE account=?").run(account.id);
+        await cdp.call('Page.navigate', { url: `${origin}/dashboard?billing-fixture=1` });
+        await until(() => evaluate(`location.search === '?billing-fixture=1' && document.readyState === 'complete'
+            && document.querySelector('#included-balance')?.textContent.includes('20.00')
+            && document.querySelector('#purchased-balance')?.textContent.includes('10.00')
+            && document.querySelector('#checkout')?.disabled === true`), 'The paid allowance and purchased credit did not render with extra usage disabled.');
+        await until(async () => {
+            await evaluate('document.querySelector("#extra-form input[name=enabled]").checked = true; document.querySelector("#save-extra").click()');
+            return store.billing.state(account.id).extraEnabled;
+        }, 'The extra-usage settings form did not hydrate/save.');
+        await until(() => evaluate('!document.querySelector("#checkout").disabled'), 'The manual credit button did not reflect enabled extra usage.');
         if (process.env.TIDE_HOSTING_EVIDENCE) {
             await mkdir(process.env.TIDE_HOSTING_EVIDENCE, { recursive: true });
             const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
@@ -159,7 +217,7 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         await until(() => evaluate('!!document.querySelector(".deploy-start")'), 'Empty account did not explain deployment from a folder.');
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         await evaluate('document.querySelector(".summary .credit-link").click()');
-        await until(() => evaluate('location.hash === "#add-credit"'), 'Add credit did not reach the amount selector.');
+        await until(() => evaluate('location.hash === "#subscription"'), 'The balance link did not reach the hosting plan.');
         if (process.env.TIDE_HOSTING_EVIDENCE) {
             const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
             await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'credit-mobile.png'), Buffer.from(shot.data, 'base64'));
