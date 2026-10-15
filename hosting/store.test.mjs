@@ -29,7 +29,7 @@ function pay(store, account, id = 'cs_test') {
     return session;
 }
 test('invites bind numeric identities; credentials are hashed, scoped, revocable and expiring', t => {
-    const { store, account, advance } = setup(t);
+    const { store, account, project, advance } = setup(t);
     assert.throws(() => store.signIn({ id: 456, login: 'developer' }), /invite-only/);
     const token = store.issueToken(account.id, 'browser', 1000);
     assert.equal(store.authenticate(token.token, 'browser').id, account.id);
@@ -40,6 +40,15 @@ test('invites bind numeric identities; credentials are hashed, scoped, revocable
     const next = store.issueToken(account.id, 'cli', 1000);
     store.revokeToken(digest(next.token));
     assert.equal(store.authenticate(next.token, 'cli'), null);
+    const runtime = store.issueServiceToken(account.id, project.id);
+    for (let i = 0; i < 25; i++) {
+        store.issueToken(account.id, 'browser', 1000);
+        store.issueToken(account.id, 'cli', 1000);
+    }
+    assert.equal(store.authenticate(runtime.token, 'service').id, account.id,
+        'Repeated developer sign-ins must not revoke backend runtime keys.');
+    for (let i = 1; i < 20; i++) store.issueServiceToken(account.id, project.id);
+    assert.throws(() => store.issueServiceToken(account.id, project.id), /Revoke an unused key/);
 });
 test('device authorization requires the secret polling token and consumes it once', t => {
     const { store, account, advance } = setup(t);

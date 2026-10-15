@@ -34,8 +34,10 @@ function renderProjects() {
     for (const project of account.projects) {
         const card = element('article', undefined, 'project');
         const head = element('div', undefined, 'project-head');
+        const preset = account.presets[project.preset];
         head.append(element('strong', project.name), element('span', project.release ? 'Deployed' : 'Awaiting deployment', 'badge'));
         card.append(head, element('p', `${project.preset} · ${project.maximum} maximum matches · ${project.lifetime === 'explicit' ? 'Until ended' : 'Ends when empty'}`));
+        card.append(element('p', preset.rate ? `${money(preset.rate * 3600)}/hour per allocated match` : 'Hosting prices are not configured.'));
         card.append(element('code', `tide deploy --project ${project.name}`));
         card.append(action(project.clientCreate ? 'Restrict creation to trusted API' : 'Allow clients to create matches',
             () => api(`/api/projects/${project.id}/policy`, { clientCreate: !project.clientCreate })));

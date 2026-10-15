@@ -30,32 +30,39 @@ export class Router {
         matches.onPacket = (match, peer, data) => {
             const connection = this.peers.get(peer);
             if (!connection || connection.match !== match || connection.result !== Admission.accepted) return;
-            try {
-                if (connection.allowance < data.length + 48) {
-                    this.store.reserveTransfer(connection.account, 65536, this.limits);
-                    connection.allowance += 65536;
-                }
-                connection.allowance -= data.length + 48;
-            } catch {
-                this.store.setMatchState(match, 'suspending', 'suspended');
-                return;
-            }
+            if (!this.charge(connection, data.length + 48)) return;
             for (const packet of dataPackets(connection.route, ++connection.sequence, Buffer.from(data))) connection.send(packet);
         };
     }
     add(project, send) {
         if (this.peers.size >= this.limits.peers || this.next >= 0xffffffff
             || [...this.peers.values()].filter(p => p.project === project).length >= this.limits.peersPerProject) return null;
-        const peer = { id: ++this.next, project, send, route: String(randomBytes(6).readUIntBE(0, 6) || 1),
+        const owner = this.store.db.prepare('SELECT account FROM projects WHERE id=?').get(project);
+        if (!owner) return null;
+        const peer = { id: ++this.next, project, account: owner.account, send, route: String(randomBytes(6).readUIntBE(0, 6) || 1),
             nonce: 0n, match: null, result: Admission.pending, parts: new Map(), sequence: 0, requested: false,
             touched: this.store.now(), created: this.store.now(), allowance: 0 };
         this.peers.set(peer.id, peer); return peer;
     }
     remove(peer) { this.peers.delete(peer.id); this.rate.entries.delete(`packets/${peer.id}`); }
+    charge(peer, bytes) {
+        try {
+            if (peer.allowance < bytes) {
+                this.store.reserveTransfer(peer.account, 65536, this.limits);
+                peer.allowance += 65536;
+            }
+            peer.allowance -= bytes;
+            return true;
+        } catch {
+            if (peer.match) this.store.setMatchState(peer.match, 'suspending', 'suspended');
+            return false;
+        }
+    }
     reply(peer) {
         const data = header(2, peer.nonce, 33);
         data[16] = peer.result; data.writeBigUInt64LE(BigInt(peer.match || '0'), 17);
-        data.writeBigUInt64LE(BigInt(peer.route), 25); peer.send(data);
+        data.writeBigUInt64LE(BigInt(peer.route), 25);
+        if (this.charge(peer, data.length)) peer.send(data);
     }
     receive(peer, data) {
         if (this.peers.get(peer.id) !== peer || !Buffer.isBuffer(data) || data.length < 16 || data.length > MTU
