@@ -30,6 +30,11 @@ Closed shutters and moving platforms stop shots. Some pairs are already open
 when you arrive; they still belong to their operator and can be moved normally.
 In certain passages the device cannot place new ends, while existing ends work.
 
+Chairs, cabinets, desks, shelves and other rigid furniture stop bodies and
+objects. Their actual legs, boards and panels provide the collision, so small
+bodies can still use real gaps underneath or between them. Cloth and painted
+signs remain decoration. Portal openings must clear solid furniture too.
+
 The crosshair's left and right marks match your two placement buttons. Bright
 brackets mean that end can be placed at the current aim; short dim marks mean
 the shot cannot place it. The small squares underneath fill when each end has

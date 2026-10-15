@@ -1270,7 +1270,9 @@ void Dress(mut Optics optics, Place place)
             bool ahead = lift == 0 ? end < 0 : end > 0;
             float inward = end * 2.1 - end * .16;
             for (int side = -1; side <= 1; side += 2)
-                optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(side * 3, 2, inward)), TurnSize(float3(.14, 4.08, .16), yaw), steel));
+                // Meet the threshold top and header bottom without drawing
+                // a second coplanar face over either piece's corners.
+                optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(side * 3, 2.005, inward)), TurnSize(float3(.14, 3.89, .16), yaw), steel));
             optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, 4.02, inward)), TurnSize(float3(6.14, .14, .16), yaw), steel));
             optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, .03, end * 2.1)), TurnSize(float3(6, .06, .6), yaw), steel));
             optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, 4.12, inward)), TurnSize(float3(.5, .12, .06), yaw), ahead ? Color(.2, 1, .45) : Color(1, .2, .12), 0, 1.3));
@@ -1310,7 +1312,7 @@ void DressFrame(mut Optics optics, FoldFrame frame)
     for (int side = -1; side <= 1; side += 2)
     {
         float3 post = off + (along ? float3(0, 0, side * wide) : float3(side * wide, 0, 0));
-        optics.furnishings.Add(Block(post, along ? float3(.03, high * 2 + .07, .07) : float3(.07, high * 2 + .07, .03), paint, 0, .6));
+        optics.furnishings.Add(Block(post, along ? float3(.03, high * 2 - .07, .07) : float3(.07, high * 2 - .07, .03), paint, 0, .6));
     }
     optics.furnishings.Add(Block(off + float3(0, high, 0), along ? float3(.03, .07, wide * 2) : float3(wide * 2, .07, .03), paint, 0, .6));
     optics.furnishings.Add(Block(off + float3(0, high + .22, 0), along ? float3(.03, .14, wide * 1.2) : float3(wide * 1.2, .14, .03), paint, 0, 1.1));
@@ -1815,7 +1817,12 @@ void DrawPlate(mut Optics optics, Plate plate, float3 aside = float3(-1, 0, 0))
         slab.tiles = .5;
         optics.dynamic.Add(slab);
         optics.dynamic.Add(Block(top + float3(0, .056, 0), float3(half.x * 1.8, .014, .1), Color(.2, .21, .21), 0, 0, .5));
-        optics.dynamic.Add(Block(top + float3(0, .056, 0), float3(.1, .014, half.y * 1.8), Color(.2, .21, .21), 0, 0, .5));
+        // The long ridge owns the centre of the cross. The two other arms
+        // meet its edges rather than laying a second top face over it.
+        float ridgeArm = half.y * .9 - .05;
+        if (ridgeArm > 0)
+            for (int side = -1; side <= 1; side += 2)
+                optics.dynamic.Add(Block(top + float3(0, .056, side * (half.y * .9 + .05) * .5), float3(.1, .014, ridgeArm), Color(.2, .21, .21), 0, 0, .5));
         PlateRim(optics, plate, half.x + .1);
         // The gauge: what weighs on it, of what it needs. Never full until it's enough
         float3 post = at + aside * (out + .35);
@@ -1911,10 +1918,15 @@ void DrawMover(mut Optics optics, Mover mover, int signals)
         deck.cell = 4;
         deck.tiles = .5;
         optics.dynamic.Add(deck);
+        float stripe = Math.Min(.12, Math.Min(size.x, size.z) * .25);
         for (int edge = 0; edge < 4; edge++)
         {
             float3 side = edge == 0 ? float3(size.x * .5, 0, 0) : edge == 1 ? float3(-size.x * .5, 0, 0) : edge == 2 ? float3(0, 0, size.z * .5) : float3(0, 0, -size.z * .5);
-            optics.dynamic.Add(Block(at + side * .98 + float3(0, size.y * .5 + .01, 0), edge < 2 ? float3(.12, .03, size.z) : float3(size.x, .03, .12), Color(.95, .72, .08), 0, .3));
+            // The two side strips own the corners. End strips fill only the
+            // space between them, keeping the warning band one surface thick.
+            float3 band = edge < 2 ? float3(Math.Sign(side.x) * (size.x - stripe) * .5, 0, 0)
+                                  : float3(0, 0, Math.Sign(side.z) * (size.z - stripe) * .5);
+            optics.dynamic.Add(Block(at + band + float3(0, size.y * .5 + .01, 0), edge < 2 ? float3(stripe, .03, size.z) : float3(size.x - stripe * 2, .03, stripe), Color(.95, .72, .08), 0, .3));
             optics.dynamic.Add(Block(at + side * .8 - float3(0, size.y * .5 + .04, 0), float3(.14, .08, .14), Color(.3, 1, .4), 0, Math.Length(mover.velocity) > .05 ? 1.6 : .4));
         }
     }

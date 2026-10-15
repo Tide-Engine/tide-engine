@@ -27,8 +27,8 @@ void BuildBench(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -5, -4, 5.4, 9.4, 3.25, 12, PANELS);
 
     // The south wall takes a fold, but where the lift's doorway is
-    Fill(arena, -11, 2, -3, 4.4, -11, -10, WALLPAPER, true);
-    Fill(arena, 8, 11, -3, 4.4, -11, -10, WALLPAPER, true);
+    Fill(arena, -11, 1, -3, 4.4, -11, -10, WALLPAPER, true);
+    Fill(arena, 9, 11, -3, 4.4, -11, -10, WALLPAPER, true);
     // The west wall takes one, two storeys high in the bay, and has a frame of each size, each standing on the floor
     Fill(arena, -11, -10, -3, 4.4, -11, 3.25, WALLPAPER, true);
     Fill(arena, -11, -10, -3, 9.4, 3.25, 13, WALLPAPER, true);
@@ -37,8 +37,8 @@ void BuildBench(mut Arena arena, mut Place place, mut Fold fold)
     PaintFrame(arena, float3(-10, 0, 0), float3(1, 0, 0), 1.5);
     PaintFrame(arena, float3(-10, 0, 8), float3(1, 0, 0), 2);
     // The east wall is bare, with the lift out in it
-    Fill(arena, 10, 11, -3, 4.4, -11, 0, PANELS);
-    Fill(arena, 10, 11, -3, 4.4, 6, 12, PANELS);
+    Fill(arena, 10, 11, -3, 4.4, -11, -1, PANELS);
+    Fill(arena, 10, 11, -3, 4.4, 7, 12, PANELS);
     // A partition papered as if it took a fold, too thin to
     Fill(arena, -3, 1, 0, 3, 4.8, 5.2, WALLPAPER, true);
 

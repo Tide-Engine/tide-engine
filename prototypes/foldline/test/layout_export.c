@@ -74,28 +74,35 @@ static void layout_map(FILE *file, const tide_world *world)
     first = true;
     for (uint32_t slot = 0; slot < world->entities.next_unused; slot++) {
         const tide_entity entity = tide_entity_in_slot(&world->entities, slot);
-        if (!tide_has_Box3D_Body(world, entity) || !tide_has_Box3D_Box(world, entity) ||
-            tide_has_Piece(world, entity) || tide_has_Cube(world, entity) ||
-            tide_has_Operator(world, entity) || tide_has_Mover(world, entity)) continue;
-        const Box3D_Body body = tide_get_Box3D_Body(world, entity);
+        if (!tide_has_Box3D_Box(world, entity)) continue;
+        tide_entity owner = entity;
+        if (tide_has_Box3D_Part(world, entity)) {
+            const Box3D_Part part = tide_get_Box3D_Part(world, entity);
+            if (part.box == 0) continue;
+            owner = part.of;
+        }
+        if (!tide_has_Box3D_Body(world, owner) || tide_has_Piece(world, owner) ||
+            tide_has_Cube(world, owner) || tide_has_Operator(world, owner) ||
+            tide_has_Mover(world, owner)) continue;
+        const Box3D_Body body = tide_get_Box3D_Body(world, owner);
         const Box3D_Box box = tide_get_Box3D_Box(world, entity);
         if (box.sensor) continue;
         const char *kind = "static";
-        if (tide_has_Prop(world, entity)) {
-            if (tide_get_Prop(world, entity).chamber != chamber) continue;
+        if (tide_has_Prop(world, owner)) {
+            if (tide_get_Prop(world, owner).chamber != chamber) continue;
             kind = "prop";
-        } else if (tide_has_Ramp(world, entity)) {
-            if (tide_get_Ramp(world, entity).chamber != chamber) continue;
+        } else if (tide_has_Ramp(world, owner)) {
+            if (tide_get_Ramp(world, owner).chamber != chamber) continue;
             kind = "ramp";
-        } else if (tide_has_Door(world, entity)) {
-            if (tide_get_Door(world, entity).chamber != chamber) continue;
+        } else if (tide_has_Door(world, owner)) {
+            if (tide_get_Door(world, owner).chamber != chamber) continue;
             kind = "door";
-        } else if (tide_has_Gate(world, entity)) {
-            if (tide_get_Gate(world, entity).chamber != chamber) continue;
+        } else if (tide_has_Gate(world, owner)) {
+            if (tide_get_Gate(world, owner).chamber != chamber) continue;
             kind = "gate";
         } else if (body.type != Box3D_BodyType_Static) continue;
         layout_separator(file, &first);
-        fprintf(file, "{\"kind\":\"%s\",\"center\":", kind);
+        fprintf(file, "{\"kind\":\"%s\",\"owner\":%u,\"center\":", kind, owner.index);
         layout_vec3(file, tide_add_f3(body.position, tide_rotate_q(body.rotation, box.offset)));
         fputs(",\"size\":", file);
         layout_vec3(file, box.size);
@@ -162,7 +169,14 @@ static void layout_map(FILE *file, const tide_world *world)
         const Prop prop = tide_get_Prop(world, entity);
         if (prop.chamber != chamber) continue;
         layout_separator(file, &first);
-        fprintf(file, "{\"kind\":%d,\"kind_name\":\"%s\",\"at\":", (int)prop.kind, layout_prop_name(prop.kind));
+        int solids = tide_has_Box3D_Box(world, entity) ? 1 : 0;
+        for (uint32_t shape_slot = 0; shape_slot < world->entities.next_unused; shape_slot++) {
+            const tide_entity shape_entity = tide_entity_in_slot(&world->entities, shape_slot);
+            if (!tide_has_Box3D_Part(world, shape_entity) || !tide_has_Box3D_Box(world, shape_entity)) continue;
+            const Box3D_Part part = tide_get_Box3D_Part(world, shape_entity);
+            if (part.of.index == entity.index && part.of.generation == entity.generation && part.box != 0) solids++;
+        }
+        fprintf(file, "{\"kind\":%d,\"kind_name\":\"%s\",\"entity\":%u,\"solid_parts\":%d,\"at\":", (int)prop.kind, layout_prop_name(prop.kind), entity.index, solids);
         layout_vec3(file, prop.at);
         CHECK(isfinite(prop.yaw));
         fprintf(file, ",\"yaw\":%.9g,\"scale\":", prop.yaw);
