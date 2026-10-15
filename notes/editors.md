@@ -1,5 +1,17 @@
 # The language server and the editors
 
+## Scene visibility uses ordinary groups (2026-10-15)
+
+Scene completion now offers only Load/Unload. Its load signature/hover explains
+ordinary root components and their presence before Spawned; Visibility's hover
+explains scene-wide inheritance and intersecting scopes. SceneVisibility is no
+longer a reserved editor name or a shared TextMate builtin. Compiler occurrences,
+signature/inlay routing and GPU rejection no longer retain CALL_SCENE_PLAYER.
+lsp_scenes checks the new root Visibility call, hover and absent membership
+methods; the builtin-enum navigation regression uses Prediction instead.
+All editor clients consume these shared server/grammar changes; no adapter or
+IDE host behavior changes. Final validation is in notes/language.md.
+
 ## Visibility APIs and availability events (2026-10-15)
 
 `Shown`/`Hidden` complete only in local event triggers (including verified),

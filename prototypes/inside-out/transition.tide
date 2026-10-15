@@ -38,58 +38,102 @@ void RoomAperture(float closed, float turn, bool reduced)
     }
 }
 
+void TransitionCover(float closed, bool reduced)
+{
+    if (reduced)
+        Draw.Rect(float2(Screen.width, Screen.height) * .5, float2(Screen.width, Screen.height),
+            Color(.075, .055, .035, Math.SmoothStep(0, 1, closed)));
+    else RoomAperture(closed, closed, false);
+}
+
+void TransitionName(int level, float alpha, bool ending = false)
+{
+    if (alpha <= 0) return;
+    var center = float2(Screen.width, Screen.height) * .5;
+    var tone = Color(INK.r, INK.g, INK.b, alpha);
+    if (ending)
+    {
+        Heading("inside out", center - float2(0, 18), Screen.width < 720 ? 40.0 : 56.0, tone);
+        Label("Made it, together.", center + float2(0, 36), 18,
+            Color(SAGE.r, SAGE.g, SAGE.b, alpha), Anchor.MiddleCenter);
+        return;
+    }
+    Label(ChapterName(LevelChapter(level)), center - float2(0, 34), 12,
+        Color(BRASS.r, BRASS.g, BRASS.b, alpha), Anchor.MiddleCenter);
+    var title = $"{level + 1:D2}. {LevelName(level)}";
+    var nominal = Screen.width < 720 ? 28.0 : 38.0;
+    var size = Math.Min(nominal, (Screen.width - 48) * nominal / Math.Max(1, Draw.MeasureText(title, nominal, Font.Bold).x));
+    Heading(title, center + float2(0, 12), size, tone);
+}
+
+float TransitionNameAlpha(int age)
+{
+    return Math.Min(Math.Saturate(float(age) / NAME_FADE_TICKS),
+        Math.Saturate(float(INTRO_TICKS - age) / NAME_FADE_TICKS));
+}
+
+local singleton AperturePicture
+{
+    int openedTick = -1;
+    bool solved;
+    float closed;
+    float undoCover;
+}
+
 [Stage(ArtStage.Controls, 2)]
-view PuzzleTransition(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands)
+view PuzzleTransition(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands, mut AperturePicture picture)
 {
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing || !Together(workshop)) return;
     Draw.SetScreen();
     var center = float2(Screen.width, Screen.height) * .5;
-    if (workshop.puzzle.solved && workshop.solvedTick >= 0)
+    var solved = workshop.puzzle.solved && workshop.solvedTick >= 0;
+    if (picture.openedTick != workshop.openedTick) picture.undoCover = 0;
+    else if (picture.solved && !solved) picture.undoCover = picture.closed;
+    picture.openedTick = workshop.openedTick;
+    picture.solved = solved;
+    picture.closed = 0;
+    if (solved)
     {
-        var phase = Math.Saturate(float(time.tick - workshop.solvedTick) / SOLVE_TICKS);
+        var age = Math.Max(0, time.tick - workshop.solvedTick);
         var last = workshop.level == LEVEL_COUNT - 1;
-        var closed = Math.SmoothStep(.22, .88, phase);
-        if (hands.reduceMotion)
-            Draw.Rect(center, float2(Screen.width, Screen.height), Color(PAPER.r, PAPER.g, PAPER.b, closed));
-        else RoomAperture(closed, phase, false);
-        if (phase < .55)
+        var closed = Math.Saturate(float(age) / CLOSE_TICKS);
+        picture.closed = closed;
+        if (age < CLOSE_TICKS) TransitionCover(closed, hands.reduceMotion);
+        else
+            // A quiet, fully opaque hold gives the name room to be read.
+            Draw.Rect(center, float2(Screen.width, Screen.height), Color(.075, .055, .035));
+        if (age < CLOSE_TICKS * .7)
         {
-            var tone = Color(SAGE.r, SAGE.g, SAGE.b, Math.Saturate((.55 - phase) * 5));
+            var tone = Color(SAGE.r, SAGE.g, SAGE.b, 1 - Math.Saturate(float(age) / (CLOSE_TICKS * .7)));
             var tick = center + float2(0, -10);
             Draw.Line(tick - float2(24, 0), tick - float2(6, -18), 4, tone);
             Draw.Line(tick - float2(6, -18), tick + float2(28, -22), 4, tone);
         }
-        if (phase > .7)
-        {
-            var alpha = Math.Saturate((phase - .7) / .2);
-            var tone = Color(INK.r, INK.g, INK.b, alpha);
-            if (last)
-            {
-                Heading("inside out", center - float2(0, 18), Screen.width < 720 ? 40.0 : 56.0, tone);
-                Label("Made it, together.", center + float2(0, 36), 18, Color(SAGE.r, SAGE.g, SAGE.b, alpha), Anchor.MiddleCenter);
-            }
-            else
-            {
-                Label(ChapterName(LevelChapter(workshop.level + 1)), center - float2(0, 28), 12, Color(BRASS.r, BRASS.g, BRASS.b, alpha), Anchor.MiddleCenter);
-                Heading($"{workshop.level + 2:D2}. {LevelName(workshop.level + 1)}", center + float2(0, 12), Screen.width < 720 ? 24.0 : 32.0, tone);
-            }
-        }
+        TransitionName(last ? workshop.level : workshop.level + 1,
+            last ? Math.Saturate(float(age - CLOSE_TICKS) / NAME_FADE_TICKS) : TransitionNameAlpha(age - CLOSE_TICKS), last);
         return;
     }
     var age = time.tick - workshop.openedTick;
-    if (age < 0 || age >= 48) return;
-    if (age < REVEAL_TICKS)
+    if (age >= 0 && age < workshop.introTicks)
     {
-        var closed = 1 - Math.Saturate(float(age) / REVEAL_TICKS);
-        if (hands.reduceMotion)
-            Draw.Rect(center, float2(Screen.width, Screen.height), Color(PAPER.r, PAPER.g, PAPER.b, closed));
-        else RoomAperture(closed, closed, false);
+        picture.closed = 1;
+        Draw.Rect(center, float2(Screen.width, Screen.height), Color(.075, .055, .035));
+        TransitionName(workshop.level, TransitionNameAlpha(age));
+        return;
     }
-    var alpha = Math.Saturate(1 - float(age) / 42);
-    if (alpha > 0)
+    var revealAge = age - workshop.introTicks;
+    if (revealAge >= 0 && revealAge < REVEAL_TICKS)
     {
-        var at = float2(Screen.width * .5, SceneTop(float2(Screen.width, Screen.height)) + 44);
-        Draw.RoundRect(at, float2(Math.Min(Screen.width - 32, 460), 56), 6, Color(PAPER.r, PAPER.g, PAPER.b, alpha * .95));
-        Heading($"{workshop.level + 1:D2}. {LevelName(workshop.level)}", at, Screen.width < 720 ? 21.0 : 27.0, Color(INK.r, INK.g, INK.b, alpha));
+        var closed = 1 - float(revealAge) / REVEAL_TICKS;
+        picture.closed = closed;
+        TransitionCover(closed, hands.reduceMotion);
+        return;
+    }
+    if (picture.undoCover > 0)
+    {
+        // Undo cancels the match deadline immediately. Only the remaining
+        // cover unwinds locally, without retaining the cancelled title.
+        picture.undoCover = Math.Max(0, picture.undoCover - Math.Min(Frame.dt, .1) * 30 / REVEAL_TICKS);
+        TransitionCover(picture.undoCover, hands.reduceMotion);
     }
 }

@@ -71,15 +71,12 @@ static tide_session_status status(const int i)
     return tide_session_status_of(machines[i]);
 }
 
-// How many players a scene says see it: the bits of its words.
-static int seated(const Table t)
+// Count the scene root's effective audience across every configured word.
+static int seated(const tide_world *w)
 {
-    const int32_t words[] = {t.tide_players, t.tide_players1, t.tide_players2, t.tide_players3, t.tide_players4,
-                             t.tide_players5, t.tide_players6};
     int n = 0;
-    for (size_t w = 0; w < sizeof words / sizeof words[0]; w++) {
-        for (int b = 0; b < 32; b++) n += (int)((uint32_t)words[w] >> b & 1u);
-    }
+    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++)
+        n += tide_world_visible(w, w->Match.table, tide_player_from_index(i));
     return n;
 }
 
@@ -108,7 +105,7 @@ TIDE_TEST(players_private_scene_projects_membership_across_all_200_players)
         tide_world_player_joined(&server, tide_player_from_index(player));
     tide_world_tick(&server);
     const tide_entity table = server.Match.table;
-    TIDE_CHECK(server.Match.joined == 200 && seated(tide_get_Table(&server, table)) == 200);
+    TIDE_CHECK(server.Match.joined == 200 && seated(&server) == 200);
     TIDE_REQUIRE(tide_game_api.client_state && tide_game_api.load_client_state);
     const tide_player_id last = tide_player_from_index(199);
     uint32_t size;
@@ -122,7 +119,7 @@ TIDE_TEST(players_private_scene_projects_membership_across_all_200_players)
     // The last configured bit of the seventh word restricts state delivery too.
     tide_world_player_left(&server, last);
     tide_world_tick(&server);
-    TIDE_CHECK(server.Match.left == 1 && seated(tide_get_Table(&server, table)) == 199);
+    TIDE_CHECK(server.Match.left == 1 && seated(&server) == 199);
     bytes = tide_game_api.client_state(&server, last, &size);
     TIDE_REQUIRE(bytes != NULL);
     TIDE_CHECK(tide_game_api.load_client_state(&excluded, bytes, size));
@@ -162,7 +159,7 @@ TIDE_TEST(players_a_match_takes_more_than_a_word_of_them)
     const tide_world *w = tide_session_server_world(machines[0]);
     TIDE_REQUIRE(w);
     TIDE_CHECK(w->Match.joined == MACHINES && w->Match.left == 0);
-    TIDE_CHECK(seated(tide_get_Table(w, w->Match.table)) == MACHINES); // Players past the first word too
+    TIDE_CHECK(seated(w) == MACHINES); // Players past the first word too
 
     // Every player's input reaches the match: a second of ticks adds each one's push 60 times
     const int64_t before = w->Match.pushes;
@@ -198,6 +195,6 @@ TIDE_TEST(players_a_match_takes_more_than_a_word_of_them)
     TIDE_REQUIRE(w);
     TIDE_CHECK(w->Match.joined == MACHINES); // No one joined again
     TIDE_CHECK(w->Match.left == 1);          // The last host's player
-    TIDE_CHECK(seated(tide_get_Table(w, w->Match.table)) == MACHINES - 1);
+    TIDE_CHECK(seated(w) == MACHINES - 1);
     teardown();
 }

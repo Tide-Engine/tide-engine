@@ -21,6 +21,8 @@
     print: text => console.log(text),
     printErr: text => console.error(text),
   };
+  const previewLook = new URLSearchParams(location.search).get('look');
+  if (/^[1-5]$/.test(previewLook || '')) Tide.arguments.push(`--inside-out-look=${Number(previewLook) - 1}`);
 </script>
 {{{ SCRIPT }}}
 </body>

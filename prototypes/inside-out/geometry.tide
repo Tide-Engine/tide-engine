@@ -12,6 +12,10 @@ local singleton Sculpture
     float alpha = 1;
     // 1 while the next surfaces give their own light.
     float glow;
+    SurfaceRole surface = SurfaceRole.Prop;
+    float2 surfaceOrigin;
+    float surfaceTile = 1;
+    int look = -1;
     float4 aperture;
     int apertureSide = -1;
     float tile;
@@ -51,6 +55,10 @@ void BeginSculpture(mut Sculpture sculpture, float tile, Rect bounds)
     sculpture.objects.Clear();
     sculpture.alpha = 1;
     sculpture.glow = 0;
+    sculpture.surface = SurfaceRole.Prop;
+    sculpture.surfaceOrigin = float2(0);
+    sculpture.surfaceTile = 1;
+    sculpture.look = -1;
     sculpture.apertureSide = -1;
     sculpture.tile = tile;
     sculpture.ground = 0;
@@ -105,7 +113,8 @@ void Cuboid(mut Sculpture sculpture, float2 at, float2 footprint, float height, 
         transform = transform, tone = paint,
         aoScale = Math.Max(1, scale), aperture = sculpture.aperture,
         apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground,
-        glow = sculpture.glow });
+        glow = sculpture.glow, surface = sculpture.surface,
+        surfaceOrigin = sculpture.surfaceOrigin, surfaceTile = sculpture.surfaceTile });
 }
 
 float FloorRelief(float scale) { return Math.Max(.08, scale * .007); }
@@ -126,7 +135,8 @@ void FloorLine(mut Sculpture sculpture, float2 from, float2 to, float width, Col
         transform = transform,
         tone = paint, aoScale = Math.Max(1, scale), aperture = sculpture.aperture,
         apertureSide = sculpture.apertureSide, groundHeight = sculpture.ground,
-        glow = sculpture.glow });
+        glow = sculpture.glow, surface = sculpture.surface,
+        surfaceOrigin = sculpture.surfaceOrigin, surfaceTile = sculpture.surfaceTile });
 }
 
 void FloorOutline(mut Sculpture sculpture, float2 at, float2 size, float width, Color tone, float floor, float scale)

@@ -1,0 +1,4 @@
+// expect: 'Visibility' appears twice; an entity has at most one of each component
+scene Main { }
+scene Hand { }
+event(Spawned) Setup(with Main) { Scene.Load(Hand, Visibility, Visibility); }

@@ -73,23 +73,26 @@ static void wait_ticks(const int ticks)
     for (int tick = 0; tick < ticks; tick++) tide_world_tick(&world);
 }
 
-TIDE_TEST(inside_out_solved_puzzle_advances_after_72_simulation_ticks)
+TIDE_TEST(inside_out_solved_puzzle_advances_after_150_simulation_ticks)
 {
     inside_out_test_start(2);
+    TIDE_CHECK(world.Workshop.introTicks == 114);
     TIDE_REQUIRE(play_witness(0, inside_out_solutions[0], NULL));
     const int solved_tick = world.Workshop.solvedTick;
     const int serial = world.Workshop.serial;
     const Puzzle solved = world.Workshop.puzzle;
     TIDE_CHECK(world.Time.tick == solved_tick + 1);
     // A tick's systems read Time.tick before the tick increments it.
-    // All 71 earlier elapsed ticks must retain the solved arrangement.
-    wait_ticks(71);
-    TIDE_CHECK(world.Time.tick == solved_tick + 72);
+    // All 149 earlier elapsed ticks retain the solved arrangement while
+    // the next name fades in, holds for three seconds, then fades out.
+    wait_ticks(149);
+    TIDE_CHECK(world.Time.tick == solved_tick + 150);
     TIDE_CHECK(world.Workshop.level == 0 && world.Workshop.serial == serial);
     TIDE_CHECK(memcmp(&solved, &world.Workshop.puzzle, sizeof solved) == 0);
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.level == 1 && !world.Workshop.puzzle.solved);
-    TIDE_CHECK(world.Workshop.openedTick == solved_tick + 72 && world.Workshop.solvedTick == -1);
+    TIDE_CHECK(world.Workshop.openedTick == solved_tick + 150 && world.Workshop.solvedTick == -1);
+    TIDE_CHECK(world.Workshop.introTicks == 0); // Its name was already shown.
     TIDE_CHECK(world.Workshop.serial == serial + 1 && world.Workshop.historyCount == 0);
     TIDE_CHECK(world.Workshop.puzzle.moves == 0 && (world.Workshop.completed & 1) != 0);
     // A reliable command already in flight belongs to the previous puzzle.
@@ -106,24 +109,27 @@ TIDE_TEST(inside_out_undo_and_reset_cancel_automatic_progression)
         inside_out_test_start(2);
         const Puzzle initial = world.Workshop.puzzle;
         TIDE_REQUIRE(play_witness(0, inside_out_solutions[0], NULL));
-        wait_ticks(36);
+        wait_ticks(90); // Cancel during the opaque name hold.
         TIDE_REQUIRE(inside_out_test_act(reset ? TIDE_COMMAND_ID_Reset : TIDE_COMMAND_ID_Undo, 1, 0));
         TIDE_CHECK(!world.Workshop.puzzle.solved);
-        wait_ticks(80);
+        wait_ticks(160); // Beyond the entire cancelled deadline.
         TIDE_CHECK(world.Workshop.level == 0 && world.Workshop.solvedTick == -1);
         if (reset) {
             TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+            TIDE_CHECK(world.Workshop.introTicks == 0); // A quick same-level retry.
+            TIDE_REQUIRE(play_witness(0, inside_out_solutions[0], NULL));
         } else {
             // Undo removed the witness's final south step. Solving again
             // must start a fresh delay, not reuse the cancelled deadline.
             TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 2));
-            TIDE_REQUIRE(world.Workshop.puzzle.solved);
-            const int again = world.Workshop.solvedTick;
-            wait_ticks(71);
-            TIDE_CHECK(world.Workshop.level == 0);
-            tide_world_tick(&world);
-            TIDE_CHECK(world.Workshop.level == 1 && world.Workshop.openedTick == again + 72);
         }
+        TIDE_REQUIRE(world.Workshop.puzzle.solved);
+        const int again = world.Workshop.solvedTick;
+        wait_ticks(149);
+        TIDE_CHECK(world.Workshop.level == 0);
+        tide_world_tick(&world);
+        TIDE_CHECK(world.Workshop.level == 1 && world.Workshop.openedTick == again + 150);
+        TIDE_CHECK(world.Workshop.introTicks == 0);
         tide_world_free(&world);
     }
 }
@@ -137,15 +143,21 @@ TIDE_TEST(inside_out_automatic_progression_waits_for_the_missing_partner)
     tide_world_player_left(&world, tide_player_from_index(1));
     tide_world_tick(&world);
     TIDE_REQUIRE(!world.Workshop.present.at[1]);
-    wait_ticks(144);
+    wait_ticks(200);
     TIDE_CHECK(world.Workshop.level == 0);
     TIDE_CHECK(memcmp(&solved, &world.Workshop.puzzle, sizeof solved) == 0);
-    // The deadline may have elapsed, but no puzzle opens without both seats.
+    // Both players get a complete readable hold after an overdue rejoin.
+    const int rejoined_at = world.Time.tick;
     tide_world_player_joined(&world, tide_player_from_index(1));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.present.at[1] && world.Workshop.level == 0);
+    TIDE_CHECK(world.Workshop.solvedTick == rejoined_at);
+    wait_ticks(149);
+    TIDE_CHECK(world.Workshop.level == 0 && world.Time.tick == rejoined_at + 150);
+    TIDE_CHECK(memcmp(&solved, &world.Workshop.puzzle, sizeof solved) == 0);
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.level == 1 && !world.Workshop.puzzle.solved);
+    TIDE_CHECK(world.Workshop.openedTick == rejoined_at + 150 && world.Workshop.introTicks == 0);
     tide_world_free(&world);
 }
 
@@ -277,7 +289,7 @@ static void search_state(Puzzle *const puzzle)
 // removed. A limit hit is an unsuccessful test, never an impossibility proof.
 static int alone(int level, int seat, bool *done)
 {
-    enum { LIMIT = 600000, BUCKETS = 1 << 21 };
+    enum { LIMIT = 1000000, BUCKETS = 1 << 22 };
     inside_out_test_start(2);
     if (!inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, level)) return -1;
     Puzzle *const states = malloc((size_t)LIMIT * sizeof *states);
@@ -330,35 +342,38 @@ TIDE_TEST(inside_out_a_box_is_entered_only_with_the_partner_behind_it)
     // Every puzzle about the partner as a backstop, and every power puzzle,
     // requires both robots even with the player goals ignored. The later
     // movement/recursion puzzles retain that stronger dependency too.
-    const int levels[] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17};
+    const int levels[] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
     for (size_t index = 0; index < sizeof levels / sizeof levels[0]; index++)
         for (int seat = 0; seat < 2; seat++) {
             const int level = levels[index];
             bool done = true;
             const int count = alone(level, seat, &done);
-            TIDE_CHECK(count > 0 && count < 600000);
+            TIDE_CHECK(count > 0 && count < 1000000);
             TIDE_CHECK(!done);
             printf("  Puzzle %d, seat %d alone: %d positions, cargo and outlines never all ready.\n", level + 1, seat, count);
         }
 }
 
-TIDE_TEST(inside_out_recursive_lesson_needs_a_partner_body_after_delivery)
+TIDE_TEST(inside_out_recursive_campaign_uses_the_partner_to_enter_its_own_room)
 {
     inside_out_test_start(2);
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, 14));
-    const LevelLayout layout = world.Workshop.layout;
-    TIDE_CHECK(layout.roomCount == 1 && world.Workshop.puzzle.rooms.at[0].room == 0);
-    for (int step = 0; step < 4; step++) TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 0));
+    TIDE_CHECK(world.Workshop.layout.roomCount == 1 && world.Workshop.puzzle.rooms.at[0].room == 0);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 1));
+    for (int step = 0; step < 4; step++) TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 2));
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 0));
     const Puzzle before = world.Workshop.puzzle;
-    TIDE_CHECK(cargo_ready(&layout, &before));
-    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 0));
+    TIDE_CHECK(same_cell(before.actors.at[0].position, tide_i2(2, 1)));
+    TIDE_CHECK(same_cell(before.rooms.at[0].position, tide_i2(2, 2)));
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 2));
     const Puzzle entered = world.Workshop.puzzle;
-    TIDE_CHECK(same_cell(entered.actors.at[0].position, tide_i2(5, 6)));
+    TIDE_CHECK(entered.actors.at[0].room == 0);
+    TIDE_CHECK(same_cell(entered.actors.at[0].position, tide_i2(5, 0)));
     TIDE_CHECK(same_cell(entered.rooms.at[0].position, before.rooms.at[0].position));
     world.Workshop.puzzle = before;
     world.Workshop.puzzle.actors.at[1].room = -1;
     world.Workshop.puzzle.actors.at[1].position = tide_i2(-16, -16);
-    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 0));
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 2));
     TIDE_CHECK(!same_cell(world.Workshop.puzzle.actors.at[0].position, entered.actors.at[0].position));
     TIDE_CHECK(!same_cell(world.Workshop.puzzle.rooms.at[0].position, before.rooms.at[0].position));
     tide_world_free(&world);
@@ -373,6 +388,6 @@ TIDE_TEST(inside_out_campaign_cycle_has_one_box_for_each_canonical_room)
     TIDE_CHECK(initial.rooms.at[0].room == 1 && initial.rooms.at[1].room == 0);
     TIDE_REQUIRE(play_witness(16, inside_out_solutions[16], NULL));
     TIDE_CHECK(world.Workshop.puzzle.crates.at[0].room == 1);
-    TIDE_CHECK(world.Workshop.puzzle.actors.at[0].room == 0 && world.Workshop.puzzle.actors.at[1].room == 1);
+    TIDE_CHECK(world.Workshop.puzzle.crates.at[1].room == 0);
     tide_world_free(&world);
 }

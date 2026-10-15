@@ -40,7 +40,7 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 | `PlayerID` | A player (see [Input](../game/input.md)) |
 | `T?`, like `int?` | A value or nothing (see [Errors](./errors.md)) |
 
-The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI](../game/gui.md)), `Filter` ([Meshes and textures](../game/meshes-and-textures.md#textures)), `SceneVisibility` ([Scenes](../game/scenes.md)), `SessionState`, `DisconnectReason` and `Prediction` ([Matches](../multiplayer/matches.md)).
+The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI](../game/gui.md)), `Filter` ([Meshes and textures](../game/meshes-and-textures.md#textures)), `SessionState`, `DisconnectReason` and `Prediction` ([Matches](../multiplayer/matches.md)).
 
 Everything is a value: assigning copies it, and nothing is shared, text and lists included. That's what keeps the whole world plain data, which the engine copies to take snapshots.
 

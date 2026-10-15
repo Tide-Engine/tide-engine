@@ -1,5 +1,37 @@
 # Managed hosting and deployment
 
+## Play-link discovery correction (2026-10-15)
+
+The owner still could not find the console's play link. Verified the live test
+project's current release includes client.html. Its controls were placed below
+runtime credentials and CI token management. Moved Play game (primary button)
+and the visible clickable URL directly beneath the project name, before policy,
+cost and credential settings. Client-creation restrictions remain enforced and
+explain using a running match link. Server-only releases explicitly explain
+deploying without --server-only instead of silently omitting play controls.
+
+The console's Refresh button now reloads the document/UI; background polling
+still refreshes account data. Previously Refresh could leave an already-open
+tab running the prior deployed UI indefinitely. The local shared preview can
+navigate/evaluate the signed-out console but its snapshot tool repeatedly fails;
+no owner browser cookie was read. Existing muted browser integration verifies
+the authenticated project header/URL and responsive layout.
+
+Validation: all 48 hosting tests pass with staged CLI/native/web and muted
+Chrome. SSR asserts Play game precedes credentials and includes the full URL;
+the browser checks the header placement and actual link targets. Console Svelte
+check/build and docs build pass. Desktop evidence shows the primary play action
+and URL beneath the project name; mobile checks report no horizontal overflow.
+Source 60a8e311 (including 03cedcdb) deployed as Fly release 9, image
+deployment-01M50DX2XHBX229J3QY2ED12ZF. Incoming compiler/docs changes merge
+cleanly without console overlap. Machine checks and public health pass. A
+temporary 60-second browser-kind verification credential checked the owner's
+actual signed-in server-rendered dashboard: HTTP 200, the Play game href matches
+the deployed test project, its full URL is visible, and both precede credential
+settings. The verification credential was revoked immediately; no existing
+browser session was accessed. An already-open old console tab needs one browser
+reload to receive this UI. No new matches, payments or capacity changes.
+
 ## Shared-host isolation audit (2026-10-15)
 
 The owner explicitly requested shared machines for different game projects and

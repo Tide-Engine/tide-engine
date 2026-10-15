@@ -3,7 +3,8 @@
 // desktop/phone captures for visual review. Frames and match time advance
 // together under runner control; browser/GPU waits consume only wall time.
 // Audio never reaches the device.
-// node browser.mjs <inside_out.html> <capture directory> [webgl|webgpu]
+// node browser.mjs <inside_out.html> <capture directory> [webgl|webgpu] [campaign|materials|shutters]
+// materials checks the six local appearances without replaying campaign moves.
 // Set TIDE_INSIDE_OUT_RELAY to probe an existing relay instead of the local one.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -17,10 +18,14 @@ import { createRelay } from '../../../relay/relay.mjs';
 import { stopBrowser } from './browser-process.mjs';
 import { installFrameControl } from './frame-control.mjs';
 import { connectDevTools } from './browser-devtools.mjs';
+import { checkMaterials, materialScene } from './material-pixels.mjs';
+import { MANUAL_SETTLE_TICKS, AUTO_SETTLE_TICKS, CLOSE_TICKS, NAME_FADE_TICKS,
+    NAME_HOLD_TICKS, REVEAL_TICKS, ANIMATED_FRAME_MS, STATIC_FRAME_MS } from './presentation-timing.mjs';
 
-const [gamePage, captureDirectory, backend = 'webgl'] = process.argv.slice(2);
-assert.ok(gamePage && captureDirectory, 'Usage: browser.mjs <inside_out.html> <capture directory> [webgl|webgpu]');
+const [gamePage, captureDirectory, backend = 'webgl', mode = 'campaign'] = process.argv.slice(2);
+assert.ok(gamePage && captureDirectory, 'Usage: browser.mjs <inside_out.html> <capture directory> [webgl|webgpu] [campaign|materials|shutters]');
 assert.ok(['webgl', 'webgpu'].includes(backend), 'Backend must be webgl or webgpu');
+assert.ok(['campaign', 'materials', 'shutters'].includes(mode), 'Mode must be campaign, materials or shutters');
 const browserPath = [process.env.TIDE_BROWSER, '/usr/bin/google-chrome', '/usr/bin/chromium',
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -202,8 +207,8 @@ const amberFootprint = png => {
 let pumping;
 // Concurrent predicates share one round. Neither player gets another frame
 // until both have finished drawing, including their GPU completion fences.
-const pumpFrames = () => pumping ??= Promise.all(clients.map(client => client.command('Runtime.evaluate', {
-    expression: 'globalThis.__lastLightStep?.() ?? false', awaitPromise: true, returnByValue: true,
+const pumpFrames = (milliseconds = ANIMATED_FRAME_MS) => pumping ??= Promise.all(clients.map(client => client.command('Runtime.evaluate', {
+    expression: `globalThis.__lastLightStep?.(${milliseconds}) ?? false`, awaitPromise: true, returnByValue: true,
 }))).then(results => {
     for (const result of results) assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
 }).finally(() => { pumping = undefined; });
@@ -258,12 +263,12 @@ try {
         };
         // State arrives through a DevTools binding from each explicit frame.
         // Wall-clock guards still catch a browser or transport that stops.
-        const until = async (predicate, label, milliseconds = 30_000) => {
+        const until = async (predicate, label, milliseconds = 30_000, frameMilliseconds = ANIMATED_FRAME_MS) => {
             const deadline = performance.now() + milliseconds;
             while (performance.now() < deadline) {
                 assert.deepEqual(errors, [], `${stage}: no browser/runtime/shader errors`);
                 if (state && predicate(state)) return;
-                await pumpFrames();
+                await pumpFrames(frameMilliseconds);
                 await delay(0);
             }
             throw new Error(`${name}: timed out ${label}; ${JSON.stringify(state)}`);
@@ -282,7 +287,7 @@ try {
         const key = async (code, key, down, frameCount = 1) => {
             await command('Input.dispatchKeyEvent', { type: down ? 'keyDown' : 'keyUp', code, key,
                 ...(down && key.length === 1 ? { text: key } : {}),
-                windowsVirtualKeyCode: ({ Escape: 27, ShiftLeft: 16, Enter: 13, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 })[code]
+                windowsVirtualKeyCode: ({ Escape: 27, ShiftLeft: 16, Enter: 13, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, F6: 117 })[code]
                     ?? (key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0) });
             await frames(frameCount);
         };
@@ -416,10 +421,6 @@ try {
         const { width } = client.state.screen;
         return { x: width - (width < 720 ? 116 : 204), y: width < 720 ? 55 : 24, width: 96, height: 25 };
     };
-    const dimensionClip = client => {
-        const { width, height } = client.state.screen;
-        return { x: width / 2 - 36, y: height - 126, width: 72, height: 16 };
-    };
     // The scene fills the window below the heading. The focused room sits
     // in a square clear of the heading and the controls (SceneSide and
     // SceneCenter in map.tide), two of its tiles from each edge; what is in
@@ -438,6 +439,14 @@ try {
         const { side, x, y } = sceneSquare(client);
         return { tile: side / (Math.max(width, height) + 4), x, y };
     };
+    const containedHomeClip = client => {
+        const { tile, x, y } = focusedGeometry(client, 4, 4);
+        const side = Math.ceil(tile) + 20;
+        // Box 0 occupies cell (1,1) of the 4x4 containing room. Include its
+        // complete footprint and a margin, excluding distant ancestor paint.
+        return { x: Math.round(x - tile / 2 - side / 2), y: Math.round(y - tile / 2 - side / 2),
+            width: side, height: side };
+    };
     const parcelClip = client => {
         const { tile, x, y } = focusedGeometry(client);
         const side = Math.floor(tile * 0.65);
@@ -454,15 +463,62 @@ try {
         // doorway. Each straddles geometry, so a uniform/blank crop fails.
         return [parcelClip(client), patch(-0.7, -1.68), patch(0.7, -1.68)];
     };
-    const titleClip = { x: 20, y: 34, width: 470, height: 26 };
+    const titleClip = { x: 20, y: 34, width: 100, height: 26 };
     const moveLabel = client => client.crop(movesClip(client));
-    const dimensionLabel = client => client.crop(dimensionClip(client));
+    const homeWall = async client => featureMask(await client.crop(framingClips(client)[1]), homeMaterials, 'canonical home wall');
     const saveCrop = async (client, label, clip) => {
         const bytes = await client.crop(clip);
         await writeFile(path.join(output, `${backend}-${label}.png`), bytes);
         return bytes;
     };
 
+    if (mode === 'materials') {
+        // Exercise the actual shell -> WASI argument -> local renderer path,
+        // without replaying campaign solutions. Each fresh host starts the
+        // same nested puzzle; its partner uses the original appearance.
+        const small = await player('teal-material-reference');
+        await host.resize(1280, 800);
+        await small.resize(1280, 800);
+        const images = [];
+        let clientOriginal;
+        const connected = value => value.state === 2 && value.peers.includes('connected') && value.messages > 5 && value.sent > 5;
+        for (const look of [-1, 0, 1, 2, 3, 4]) {
+            stage = `material argument ${look}`;
+            await small.command('Page.navigate', { url: 'about:blank' });
+            await navigate(host, `&host${look < 0 ? '' : `&look=${look + 1}`}`);
+            await host.until(value => /^[0-9A-Z]{6}$/.test(value.room ?? '') && value.state === 2 && value.verified >= 4,
+                'material host initializes');
+            await navigate(small, `&join=${host.state.room}`);
+            await host.until(connected, 'material host connected');
+            await small.until(connected, 'material partner connected');
+            const joinedAt = Math.max(host.state.verified, small.state.verified);
+            // The manual name hold and reveal must both finish. Static 10 fps
+            // settling advances actual match ticks with fewer software-GPU
+            // draws; animated transition probes keep their 30 fps clock.
+            await host.until(value => connected(value) && value.verified >= joinedAt + MANUAL_SETTLE_TICKS + 7,
+                'settled material scene', 240_000, STATIC_FRAME_MS);
+            await small.until(value => connected(value) && value.verified >= joinedAt + MANUAL_SETTLE_TICKS + 7,
+                'settled original partner scene', 240_000, STATIC_FRAME_MS);
+            const args = await host.command('Runtime.evaluate', { expression: 'Tide.arguments', returnByValue: true });
+            const expected = look >= 0 ? [`--inside-out-look=${look}`] : [];
+            assert.deepEqual(args.result.value.filter(value => value.startsWith('--inside-out-look=')), expected,
+                'URL look reaches the ordinary WASI argument list');
+            images.push(await host.screenshot(look < 0 ? 'material-original' : `material-look-${look}`));
+            const partner = await small.screenshot(`material-partner-${look}`);
+            if (look < 0) clientOriginal = materialScene(partner);
+            else assertImagesEqual(materialScene(partner), clientOriginal, 'preview remains local to its selecting player');
+        }
+        stage = 'restore original material through public F6 selector';
+        await host.tapKey('F6', 'F6');
+        await host.screenshot('material-selector');
+        await host.click(640, 243);
+        images.push(await host.screenshot('material-original-restored'));
+        await writeFile(path.join(output, `${backend}-material-differences.json`),
+            JSON.stringify(checkMaterials(images, backend), null, 2));
+        // Lightweight WASI cases separately reject malformed arguments.
+        assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors in material previews');
+        console.log(`Inside Out materials (${backend}): WASI looks 0..4 visibly distinct, nested scene rendered, partner unchanged, original restored exactly in ${((performance.now() - began) / 1000).toFixed(1)}s. Captures: ${output}`);
+    } else {
     stage = 'title and exactly-two-player waiting';
     await navigate(host);
     await host.screenshot('desktop-title');
@@ -499,19 +555,24 @@ try {
     for (const client of clients) assert.ok(client.state.channels.some(channel =>
         channel.state === 'open' && !channel.ordered && channel.retransmits === 0),
         `${client.name}: match uses unordered, unreliable WebRTC`);
-    const advanceMatch = async (ticks = 6) => {
+    await host.resize(1280, 800);
+    await small.resize(1280, 800);
+    const advanceMatch = async (ticks = 6, frameMilliseconds = ANIMATED_FRAME_MS) => {
         const before = clients.map(client => client.state);
         await Promise.all(clients.map((client, index) => client.until(value =>
             connected(value) && value.verified >= before[index].verified + ticks && value.frames > before[index].frames &&
             value.messages > before[index].messages && value.sent > before[index].sent, `${ticks} verified ticks and fresh match packets`,
-            Math.max(30_000, ticks * 2500))));
+            Math.max(30_000, ticks * 2500), frameMilliseconds)));
         for (const client of clients) assert.equal(client.state.visibility, 'visible', 'both player screens remain visible');
     };
-    await advanceMatch(10);
+    // Clock-only waits can skip redundant static renders. Spatial/camera
+    // endpoints retain 30fps: Workbench caps its local visual dt at .08s.
+    const settleMatch = ticks => advanceMatch(ticks, STATIC_FRAME_MS);
+    await settleMatch(MANUAL_SETTLE_TICKS + 4);
     const zeroMoves = await moveLabel(host);
     assertImagesEqual(await moveLabel(small), zeroMoves, 'both players start at zero moves');
-    const homeTitle = await dimensionLabel(host);
-    assertImagesEqual(await dimensionLabel(small), homeTitle, 'both makers begin in the same nested home box');
+    const homeCamera = await homeWall(host);
+    assertImagesEqual(await homeWall(small), homeCamera, 'both makers begin with the same canonical home geometry');
     const firstTitle = await host.crop(titleClip);
     await host.screenshot('desktop-nested-start-amber');
     await small.screenshot('desktop-nested-start-teal');
@@ -525,7 +586,7 @@ try {
     const witness = async text => {
         for (const letter of text.replace(/\s/g, '')) await action(letter);
     };
-    const choose = async (level, chapter = 0, row = level) => {
+    const choose = async (level, chapter = 0, row = level, sameLevel = false) => {
         await host.resize(1280, 800);
         await small.resize(1280, 800);
         await advanceMatch();
@@ -537,14 +598,222 @@ try {
         // shared history. Confirm through the public interface.
         await host.click(640, (800 - 300) / 2 + 188);
         // Finish the synchronized reveal before camera/scene crops.
-        await advanceMatch(50);
+        await settleMatch((sameLevel ? REVEAL_TICKS : MANUAL_SETTLE_TICKS) + 4);
     };
     const reset = async client => {
         await client.tapKey('KeyR', 'r');
         await client.click(client.state.screen.width / 2, (client.state.screen.height - 300) / 2 + 188);
-        await advanceMatch(26);
+        await settleMatch(REVEAL_TICKS + 4);
+    };
+    const assertNoRepeatedLabels = async client => {
+        let bright = 0;
+        screenshotPixels(await client.crop({ x: 160, y: 34, width: 430, height: 26 }), (r, g, b) => {
+            if (r > 150 && g > 125 && b > 80) bright++;
+        });
+        assert.equal(bright, 0, 'the persistent header has no repeated puzzle name');
+    };
+    await assertNoRepeatedLabels(host);
+    let oldChipDark = 0;
+    screenshotPixels(await host.crop({ x: 580, y: 675, width: 120, height: 16 }), (r, g, b) => {
+        if (r + g + b < 160) oldChipDark++;
+    });
+    assert.ok(oldChipDark < 100, 'the old bottom location chip no longer covers the initial floor');
+    const atTick = async (target, label, frameMilliseconds = ANIMATED_FRAME_MS) => {
+        await Promise.all(clients.map(client => client.until(value => connected(value) && value.verified >= target,
+            label, Math.max(30_000, (target - client.state.verified) * 2500), frameMilliseconds)));
+    };
+    const transitionFrame = (client, label) => saveCrop(client, label, { x: 0, y: 0, width: 1280, height: 740 });
+    let normalNameHold;
+    let normalClosingLight;
+    const reviewFirstTransition = async (label, reduced = false) => {
+        // The final solving command has already been observed by both peers.
+        // Margins keep visual probes inside phases despite the prediction lead.
+        const anchor = Math.max(host.state.verified, small.state.verified);
+        await atTick(anchor + CLOSE_TICKS / 2, `${label} closing frame`);
+        const closing = await transitionFrame(host, `${label}-closing`);
+        let closingLight = 0;
+        screenshotPixels(closing, (r, g, b, x, y) => {
+            if (x >= 600 && x < 640 && y >= 430 && y < 450) closingLight += r + g + b;
+        });
+        if (reduced) assert.ok(closingLight < normalClosingLight * .8,
+            'reduced motion fades the still-visible center instead of repeating the moving aperture');
+        else normalClosingLight = closingLight;
+        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + 6, `${label} opaque name hold`);
+        const hold = await transitionFrame(host, `${label}-name-hold-start`);
+        assertImagesDiffer(closing, hold, 'closing reaches an opaque title rather than freezing the solved scene');
+        let letters = 0, exposed = 0;
+        screenshotPixels(hold, (r, g, b, x, y) => {
+            if (x > 200 && x < 1080 && y > 330 && y < 460 && r > 150 && g > 125 && b > 80) letters++;
+            // The Menu action remains accessible during a transition.
+            if ((y < 280 || y > 500) && !(x >= 1180 && y <= 70) && (r > 40 || g > 35 || b > 30)) exposed++;
+        });
+        assert.ok(letters > 300, 'the puzzle name is visibly readable during its hold');
+        assert.equal(exposed, 0, 'the name hold completely hides the scene and puzzle labels');
+        // The hold is deliberately static. Check its middle and late frame
+        // while advancing real ticks at 10fps; fades/close/reveal stay 30fps.
+        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + NAME_HOLD_TICKS / 2,
+            `${label} middle quiet name`, STATIC_FRAME_MS);
+        assertImagesEqual(await transitionFrame(host, `${label}-name-hold-middle`), hold,
+            'the readable title remains still in the middle of its hold');
+        // Leave room for the observation anchor, prediction lead and one
+        // three-tick static frame before the title's 12-tick fade-out.
+        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + NAME_HOLD_TICKS - 24,
+            `${label} sustained quiet name`, STATIC_FRAME_MS);
+        assertImagesEqual(await transitionFrame(host, `${label}-name-hold-end`), hold,
+            'the fully readable name stays still for multiple seconds');
+        if (reduced) assertImagesEqual(hold, normalNameHold, 'reduced motion retains the same quiet readable name hold');
+        else normalNameHold = hold;
+        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + NAME_HOLD_TICKS + 5, `${label} name fades away`);
+        assertImagesDiffer(await transitionFrame(host, `${label}-name-fade-out`), hold, 'the held name fades before the level switches');
+        await atTick(anchor + AUTO_SETTLE_TICKS - REVEAL_TICKS + 4, `${label} new-room reveal`);
+        const reveal = await transitionFrame(host, `${label}-reveal`);
+        assertImagesDiffer(reveal, hold, 'the next room begins revealing after the name hold');
+        await atTick(anchor + AUTO_SETTLE_TICKS + 6, `${label} settled next room`, STATIC_FRAME_MS);
+        const settled = await transitionFrame(host, `${label}-settled`);
+        assertImagesDiffer(settled, reveal, 'the reveal reaches the playable next room');
+        const nextTitle = await host.crop(titleClip);
+        assertImagesDiffer(nextTitle, firstTitle, 'the solved puzzle advances through the production timer');
+        assertImagesEqual(await small.crop(titleClip), nextTitle, 'both players reach the same next puzzle');
+        for (const client of clients) await assertNoRepeatedLabels(client);
+        assertImagesEqual(await moveLabel(host), zeroMoves, 'the next puzzle starts with zero moves');
+        await advanceMatch(8);
+        assertImagesEqual(await moveLabel(host), zeroMoves, 'a held valid next-room direction stays suppressed after reveal');
+        return nextTitle;
     };
 
+    if (mode === 'shutters') {
+        stage = 'a powered and occupied shutter is the same lowered slab';
+        await choose(9, 2, 0);
+        const geometry = focusedGeometry(host, 7, 7);
+        const tile = geometry.tile;
+        const cellClip = (x, y, left, top, width, height) => ({
+            x: Math.round(geometry.x + (x - 3 + left) * tile),
+            y: Math.round(geometry.y + (y - 3 + top) * tile),
+            width: Math.round(width * tile), height: Math.round(height * tile),
+        });
+        const slabClip = (x, y) => cellClip(x, y, -.45, -.7, .9, 1.15);
+        const frontClip = (x, y) => cellClip(x, y, -.34, .27, .68, .19);
+        // Native powered/held endpoints retain this hue in lit paint and
+        // cool shaded outline edges; nearby pieces change brightness/tint.
+        const pink = (r, g, b) => r > 35 && r > g * 1.4 && b > g * 1.1 && r > b * 1.05;
+        const stripe = (r, g, b) => pink(r, g, b) && r < 140;
+        const pinkMaterials = [[pink]];
+        const stats = png => {
+            let paint = 0, dark = 0, top = Infinity;
+            screenshotPixels(png, (r, g, b, _x, y) => {
+                if (pink(r, g, b)) { paint++; top = Math.min(top, y); }
+                if (stripe(r, g, b)) dark++;
+            });
+            return { paint, dark, top: paint ? top : null };
+        };
+        const report = { geometry };
+        const sample = async (label, client = host, x = 3, y = 4, covered = false) => {
+            // A room's miniature floor deliberately hides the cap itself.
+            // Observe the outside channel band/mark while that box overlaps.
+            const clip = covered ? cellClip(x, y, -.75, -.8, 1.5, 1.5) : slabClip(x, y);
+            const image = await saveCrop(client, label, clip);
+            report[label] = stats(image);
+            await writeFile(path.join(output, `${backend}-shutter-pixels.json`), JSON.stringify(report, null, 2));
+            assert.ok(report[label].paint > 4 && Number.isFinite(report[label].top),
+                `${label}: the observed shutter paint must be present at a finite location`);
+            return image;
+        };
+        const raised = await sample('shutter-raised');
+        await action('n'); // Teal holds A at (1,1).
+        const lowering = await sample('shutter-lowering');
+        await advanceMatch(24);
+        const low = await sample('shutter-powered-low');
+        const lowFront = await host.crop(frontClip(3, 4));
+        assertImagesDiffer(lowering, raised, 'the physical shutter starts lowering after power arrives');
+        assertImagesDiffer(lowering, low, 'lowering includes an intermediate slab height');
+        assert.ok(stats(low).paint > stats(raised).paint * .4,
+            'the lowered cap retains its solid channel paint instead of becoming an empty slot');
+        assert.ok(stats(low).dark > 12, 'the lowered cap retains visible dark stripes');
+        assert.ok(stats(low).top > stats(raised).top + 1, 'the same painted slab visibly lowers into its groove');
+        await witness('S E'); // Amber loads the lower shutter while A is powered.
+        await advanceMatch(24);
+        const poweredBattery = await sample('shutter-powered-battery');
+        await action('s'); // Teal leaves A; the battery must keep the slab down.
+        await advanceMatch(24);
+        const batteryHeld = await sample('shutter-battery-held-low');
+        assertImagesEqual(batteryHeld, poweredBattery,
+            'removing power cannot raise or replace the slab beneath a stationary battery');
+        assert.ok(stats(batteryHeld).paint > 12, 'exposed painted slab remains visible around the battery');
+        const beforeFollow = amberFootprint(await host.crop(cameraBody(host)));
+        const beforeFollowMoves = await moveLabel(host);
+        await action('E');
+        await advanceMatch(24);
+        await sample('shutter-robot-held-low');
+        const afterFollow = amberFootprint(await host.crop(cameraBody(host)));
+        assertImagesDiffer(await moveLabel(host), beforeFollowMoves, 'push-follow is an accepted production command');
+        assert.ok(Math.abs(afterFollow.x - beforeFollow.x - tile) < tile * .1,
+            'the pusher follows the battery exactly one cell onto the unpowered occupied shutter');
+        assertFeaturesEqual(await host.crop(frontClip(3, 4)), lowFront, pinkMaterials,
+            'the exposed front slab stays fully lowered beneath a robot');
+        const robotScene = await saveCrop(host, 'shutter-robot-baseline', cameraBody(host));
+        await host.tapKey('KeyA', 'a');
+        const departing = await sample('shutter-robot-departing');
+        assertFeaturesEqual(await host.crop(frontClip(3, 4)), lowFront, pinkMaterials,
+            'the slab stays down while the departing robot drawing still overlaps it');
+        await host.frames(4);
+        const clearing = await sample('shutter-robot-clearing');
+        await advanceMatch(24);
+        const emptyRaised = await sample('shutter-empty-raised');
+        assertImagesDiffer(clearing, departing, 'the departing robot and shutter have an intermediate rendered pose');
+        assertImagesDiffer(clearing, emptyRaised, 'departure and slab closing reach their endpoint gradually');
+        assertFeaturesEqual(emptyRaised, raised, pinkMaterials,
+            'an empty unpowered shutter returns to the same raised physical footprint');
+        const beforeBlocked = await moveLabel(host);
+        await action('E');
+        await advanceMatch(24);
+        assertImagesEqual(await moveLabel(host), beforeBlocked, 'the now-empty raised shutter blocks fresh entry');
+        await small.tapKey('KeyZ', 'z');
+        await sample('shutter-undo-lowering');
+        await advanceMatch(24);
+        await sample('shutter-undo-held-low');
+        assertImagesEqual(await host.crop(cameraBody(host)), robotScene,
+            'shared undo restores the robot, battery and lowered shutter exactly');
+        await host.screenshot('shutter-robot-restored');
+
+        stage = 'an occupied room box also holds an unpowered shutter down';
+        await choose(11, 2, 2);
+        const lowBoxGate = await sample('shutter-box-gate-powered-low', small, 4, 3);
+        await witness('ee');
+        await advanceMatch(24);
+        const band = cellClip(4, 3, -.35, .49, .7, .08);
+        const boxPoweredBand = await saveCrop(small, 'shutter-box-powered-band', band);
+        featureMask(boxPoweredBand, pinkMaterials, 'the powered box has an exposed channel band');
+        await sample('shutter-box-powered', small, 4, 3, true);
+        await witness('NN');
+        await advanceMatch(24);
+        await sample('shutter-box-held-low', small, 4, 3, true);
+        assertFeaturesEqual(await saveCrop(small, 'shutter-box-unpowered-band', band), boxPoweredBand, pinkMaterials,
+            'a room box keeps the same low outside signal when its internal battery removes power');
+        await host.screenshot('shutter-box-inside-held-low');
+        await small.screenshot('shutter-box-outside-held-low');
+        await small.tapKey('KeyD', 'd');
+        const boxDeparting = await sample('shutter-box-departing', small, 4, 3, true);
+        await small.frames(4);
+        const boxClearing = await sample('shutter-box-clearing', small, 4, 3, true);
+        await advanceMatch(24);
+        const boxFollow = await sample('shutter-box-pusher-held-low', small, 4, 3, true);
+        assertImagesDiffer(boxClearing, boxDeparting, 'the room box has an intermediate departing pose above the low slab');
+        assertImagesDiffer(boxClearing, boxFollow, 'the following pusher and exposed slab settle progressively');
+        assert.ok(stats(boxFollow).paint > 12, 'the same painted slab appears as the room box clears it');
+        await action('w');
+        await advanceMatch(24);
+        const boxGateRaised = await sample('shutter-box-gate-raised', small, 4, 3);
+        assert.ok(stats(lowBoxGate).top > stats(boxGateRaised).top + 1,
+            'the shutter raises only after both the room box and its following pusher have left');
+        const beforeBoxBlocked = await moveLabel(small);
+        await action('e');
+        await advanceMatch(24);
+        assertImagesEqual(await moveLabel(small), beforeBoxBlocked, 'the cleared room-box shutter also blocks fresh entry');
+        for (const client of clients) assert.equal(client.state.aborted, '');
+        assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors in physical shutters');
+        await writeFile(path.join(output, `${backend}-shutter-pixels.json`), JSON.stringify(report, null, 2));
+        console.log(`Inside Out shutters (${backend}): same painted slab raised/lowered, battery/robot/room-box held low, one-cell push-follow, departure clearance, fresh empty-gate block and exact shared undo passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    } else {
     stage = 'nested outward travel, shared undo and reset';
     await host.tapKey('ArrowRight', 'ArrowRight');
     await advanceMatch();
@@ -552,13 +821,13 @@ try {
     assertImagesDiffer(oneMove, zeroMoves, 'the right arrow moves Amber through the east doorway instead of navigating UI');
     assertImagesEqual(await moveLabel(small), oneMove, 'Teal sees the shared outward move');
     await advanceMatch(24);
-    const containingTitle = await dimensionLabel(host);
-    assertImagesDiffer(containingTitle, homeTitle, 'Amber now views the ordinary containing box');
-    assertImagesEqual(await dimensionLabel(small), homeTitle, 'Teal independently remains in the home box');
+    const containingBefore = await saveCrop(host, 'containing-home-before', containedHomeClip(host));
+    const containingCamera = featureMask(containingBefore, homeMaterials, 'containing home footprint');
+    assertImagesEqual(await homeWall(small), homeCamera, 'Teal independently retains the home camera');
     await small.tapKey('KeyZ', 'z');
-    await advanceMatch(10);
+    await advanceMatch(24);
     assertImagesEqual(await moveLabel(host), zeroMoves, 'partner undo restores the previous nested puzzle');
-    assertImagesEqual(await dimensionLabel(host), homeTitle, 'undo restores the home camera');
+    assertImagesEqual(await homeWall(host), homeCamera, 'undo restores the canonical home camera');
     await action('E');
     await reset(small);
     await advanceMatch(10);
@@ -627,7 +896,7 @@ try {
     assert.ok(travel[3].right - travel[3].left < travel[0].right - travel[0].left, 'the maker silhouette narrows into the actual doorway');
     assert.ok(travel[3].x < travel[0].x, 'the stationary partner observes Amber travelling west toward the doorway');
     assertImagesDiffer(makerMiddle, makerEarly, 'the partner observes an intermediate passage pose');
-    assertImagesEqual(await dimensionLabel(host), homeTitle, 'both makers now view the same canonical home');
+    assertImagesEqual(await homeWall(host), homeCamera, 'both makers now view the same canonical home geometry');
     assertImagesEqual(await host.crop(parcelClip(host)), await small.crop(parcelClip(small)), 'both visits share the same parcel and floor');
     for (let i = 0; i < clips.length; i++) assertFeaturesEqual(await small.crop(clips[i]), fixed[i], framingMaterials[i], 'partner entry never changes Teal camera');
     await host.tapKey('KeyD', 'd');
@@ -641,30 +910,49 @@ try {
     assert.ok(homeWallArea(exitEarly) > homeWallArea(exitSettled) * 2, 'the room shrinks into its actual containing cell on exit');
     assertImagesDiffer(exitMiddle, exitEarly, 'exit has an intermediate spatial pose');
     assertImagesDiffer(exitLate, exitSettled, 'exit reaches its endpoint gradually');
-    assertImagesEqual(await dimensionLabel(host), containingTitle, 'leaving restores the containing room');
+    const restoredContainingCamera = featureMask(await saveCrop(host, 'containing-home-after', containedHomeClip(host)),
+        homeMaterials, 'restored containing home footprint');
+    if (Buffer.compare(restoredContainingCamera, containingCamera)) {
+        const side = containedHomeClip(host).width;
+        const changed = [];
+        for (let i = 0; i < containingCamera.length; i++) {
+            if (restoredContainingCamera[i] !== containingCamera[i]) changed.push({ x: i % side, y: Math.floor(i / side) });
+        }
+        await writeFile(path.join(output, `${backend}-containing-difference.json`), JSON.stringify({
+            beforeArea: containingCamera.reduce((sum, value) => sum + value, 0),
+            afterArea: restoredContainingCamera.reduce((sum, value) => sum + value, 0), changed,
+        }, null, 2));
+    } else await rm(path.join(output, `${backend}-containing-difference.json`), { force: true });
+    assertImagesEqual(restoredContainingCamera, containingCamera,
+        'leaving restores the same canonical miniature and containing camera');
     await reset(small);
     await advanceMatch(24);
 
     stage = 'production tutorial solution and outward progression';
     await witness('EEEN eeeee');
+    const beforeFinalMove = await moveLabel(host);
     await small.key('KeyS', 's', true);
-    await advanceMatch();
+    await advanceMatch(6);
     const completedMoves = await moveLabel(host);
+    assertImagesDiffer(completedMoves, beforeFinalMove, 'the final solving command is visibly accepted');
     assertImagesEqual(await moveLabel(small), completedMoves, 'the tutorial completion agrees on both screens');
-    await host.screenshot('desktop-first-puzzle-complete-amber');
-    await small.screenshot('desktop-first-puzzle-complete-teal');
-    await advanceMatch(96);
-    const secondTitle = await host.crop(titleClip);
-    assertImagesDiffer(secondTitle, firstTitle, 'the solved puzzle automatically advances after its visual transition');
-    assertImagesEqual(await small.crop(titleClip), secondTitle, 'both players enter the next puzzle');
-    assertImagesEqual(await moveLabel(host), zeroMoves, 'the next puzzle starts at zero moves');
-    await advanceMatch(8);
-    assertImagesEqual(await moveLabel(host), zeroMoves, 'a direction held through completion cannot move in the next puzzle');
+    // Amber's north move is valid in the next puzzle. Holding only Teal's
+    // solving south direction would be a false-positive guard test: that
+    // next room has a wall immediately south of Teal's starting cell.
+    await host.key('KeyW', 'w', true);
+    await transitionFrame(host, 'desktop-first-puzzle-complete-amber');
+    await transitionFrame(small, 'desktop-first-puzzle-complete-teal');
+    const secondTitle = await reviewFirstTransition('normal');
+    await host.key('KeyW', 'w', false);
     await small.key('KeyS', 's', false);
+    await action('N');
+    assertImagesDiffer(await moveLabel(host), zeroMoves, 'releasing and pressing the guarded direction allows its valid next-room move');
 
     stage = 'offset doorway and physical occupied-box transport';
-    await choose(1);
-    const beforeCarryTitle = await dimensionLabel(small);
+    await choose(1, 0, 1, true);
+    // Reselecting the current puzzle resumes it. Clear the fresh movement
+    // used to prove release recovery before replaying the authored witness.
+    await reset(host);
     const carryGeometry = focusedGeometry(small, 5, 5);
     const carryPatch = (dx, dy, side = 0.4) => ({
         x: Math.round(carryGeometry.x + dx * carryGeometry.tile),
@@ -678,7 +966,6 @@ try {
     const outsideBefore = await saveCrop(small, 'occupied-box-outside-before', carryPatch(3.4, -4.3));
     await witness('NWSSEN');
     await advanceMatch(24);
-    assertImagesEqual(await dimensionLabel(small), beforeCarryTitle, 'the passenger remains in its canonical interior');
     assertFeaturesEqual(await small.crop(carryPatch(-0.35, -1.52, 0.7)), cargoBefore, parcelMaterials, 'carrying a room preserves its parcel coordinates');
     assertFeaturesEqual(await small.crop(carryPatch(-2.68, -0.4)), wallBefore, homeMaterials, 'carrying a room preserves interior framing');
     assertImagesDiffer(await saveCrop(small, 'occupied-box-outside-after', carryPatch(3.4, -4.3)), outsideBefore,
@@ -692,16 +979,16 @@ try {
     assertImagesEqual(await small.crop(carryPatch(3.4, -4.3)), outsideBefore, 'shared undo restores the physical parent context');
     await action('N');
     await witness('eeee WS');
-    await advanceMatch(96);
+    await settleMatch(AUTO_SETTLE_TICKS + 4);
     assertImagesDiffer(await host.crop(titleClip), secondTitle, 'the occupied-box witness completes through production rules');
 
     stage = 'a room containing its own one real box';
     await choose(14, 3, 0);
     const recursiveTitle = await host.crop(titleClip);
-    await witness('nnnn');
+    await witness('E ssssn');
     await advanceMatch(24);
     const beforeEntry = await saveCrop(host, 'self-entry-before', cameraBody(host));
-    await host.tapKey('KeyW', 'w');
+    await host.tapKey('KeyS', 's');
     const selfEarly = await saveCrop(host, 'self-entry-early', cameraBody(host));
     await host.frames(5);
     const selfMiddle = await saveCrop(host, 'self-entry-middle', cameraBody(host));
@@ -715,14 +1002,11 @@ try {
     assertImagesEqual(await host.crop(cameraBody(host)), beforeEntry, 'partner undo restores exact real-recursion state and facing');
     await host.screenshot('desktop-self-recursion-amber');
     await small.screenshot('desktop-self-recursion-teal');
-    await witness('NN');
-    await advanceMatch(96);
-    // The two pages draw the same title from glyphs they each cached in
-    // their own order, and one pixel of it has differed between them (a
-    // failure kept both screenshots: the same words, one pixel apart at
-    // 469,42). A different title differs in hundreds of pixels, so a few
-    // are allowed here, where two pages are compared; one page against its
-    // own earlier crop stays exact.
+    await witness('SSSSSS e SNN wnnn');
+    await settleMatch(AUTO_SETTLE_TICKS + 4);
+    // Retain the small cross-page glyph-edge allowance from the original
+    // header fixture. A changed puzzle count differs in many more pixels;
+    // each page against its own earlier count remains exact.
     assertImagesDiffer(await host.crop(titleClip), recursiveTitle, 'the witness completes the puzzle through production rules');
     assert.ok(pixelsApart(await host.crop(titleClip), await small.crop(titleClip)) <= 8, 'recursive puzzle progression agrees on both screens');
     await choose(0);
@@ -749,15 +1033,43 @@ try {
     await host.screenshot('phone-touch-big-maker');
     await small.screenshot('phone-touch-little-maker');
     for (const client of clients) {
-        assert.ok(client.state.frames > 10 && client.state.draws > 150, `${client.name}: continuous rendering`);
-        assert.ok(client.state.messages > 20 && client.state.sent > 20, `${client.name}: fresh packets through keyboard and touch play`);
-        assert.equal(client.state.aborted, '');
         const screen = client.state.screen;
         assert.equal(screen.canvasWidth, screen.width, `${client.name}: canvas fits phone width`);
         assert.equal(screen.canvasHeight, screen.height, `${client.name}: canvas fits phone height`);
+        await client.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+    }
+
+    stage = 'reduced-motion solve, quiet name hold and held-input guard';
+    await choose(0, 0, 0, true);
+    await reset(host);
+    for (const client of clients) {
+        await client.tapKey('Escape', 'Escape');
+        await client.click(640, (800 - 590) / 2 + 319);
+        await client.click(640, (800 - 630) / 2 + 433);
+        await client.tapKey('Escape', 'Escape');
+        await client.tapKey('Escape', 'Escape');
+    }
+    await witness('EEEN eeeee');
+    const reducedBeforeFinalMove = await moveLabel(host);
+    await small.key('KeyS', 's', true);
+    await advanceMatch(6);
+    assertImagesDiffer(await moveLabel(host), reducedBeforeFinalMove, 'the reduced-motion solving command is visibly accepted');
+    await host.key('KeyW', 'w', true);
+    await reviewFirstTransition('reduced-motion', true);
+    await host.key('KeyW', 'w', false);
+    await small.key('KeyS', 's', false);
+    await action('N');
+    assertImagesDiffer(await moveLabel(host), zeroMoves, 'reduced-motion reveal also accepts the released fresh direction');
+
+    for (const client of clients) {
+        assert.ok(client.state.frames > 10 && client.state.draws > 150, `${client.name}: continuous rendering`);
+        assert.ok(client.state.messages > 20 && client.state.sent > 20, `${client.name}: fresh packets through keyboard and touch play`);
+        assert.equal(client.state.aborted, '');
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls and held-input recovery, three production solutions/progression and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    }
+    }
 } catch (error) {
     process.exitCode = 1;
     console.error(`Inside Out failed during ${stage}: ${error.stack ?? error}`);

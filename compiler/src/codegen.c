@@ -862,11 +862,10 @@ static const decl *arch_scene(const gen *g, const int a)
     return NULL;
 }
 
-// Whether archetype `a` is made by Scene.Load: the scene's component alone.
+// Scene.Load may give the scene root ordinary components as well.
 static bool is_load_archetype(const gen *g, const int a)
 {
-    const decl *scene = arch_scene(g, a);
-    return scene && mask_eq(g->prog->archetypes.items[a], mask_bit(scene->index));
+    return arch_scene(g, a) != NULL;
 }
 
 // A component's lanes in its archetypes (tide/table.h, tide_lane_width): its
@@ -1770,11 +1769,6 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
             sb_put(o, ", ");
             gen_value(g, o, value->type_decl, value->inits.items, value->inits.count);
         }
-        if (p->load) {
-            sb_put(o, ", ");
-            if (p->visibility) gen_expr(g, o, p->visibility);
-            else sb_put(o, "0");
-        }
         sb_put(o, ")");
         return;
     }
@@ -1800,19 +1794,19 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
     sb_put(o, "})");
 }
 
-// Scene.Load(Arena { ... }, visibility): an entity that's its own scene.
+// Scene.Load(Arena { ... }, components...): an entity that's its own scene.
 static void gen_load(gen *g, sb *o, const expr *e)
 {
     const int a = e->spawn_archetype;
-    const decl *scene = e->type_decl;
-    const expr *arg = e->args.items[0];
-    sb_printf(o, "tide_cmd_load%d(%s, (tide_spawn%d){.%s = ", a, e->local_world ? "tide_l" : "tide_w", a, type_cname(scene));
-    if (arg->kind == E_LITERAL) gen_value(g, o, scene, arg->inits.items, arg->inits.count);
-    else gen_value(g, o, scene, NULL, 0);
-    sb_put(o, "}, ");
-    if (e->args.count == 2) gen_expr(g, o, e->args.items[1]);
-    else sb_put(o, "0");
-    sb_put(o, ")");
+    sb_printf(o, "tide_cmd_load%d(%s, (tide_spawn%d){", a, e->local_world ? "tide_l" : "tide_w", a);
+    for (int i = 0; i < e->args.count; i++) {
+        const expr *arg = e->args.items[i];
+        if (i) sb_put(o, ", ");
+        if (arg->type_decl->is_sparse) sb_printf(o, ".tide_has_%s = 1, ", type_cname(arg->type_decl));
+        sb_printf(o, ".%s = ", type_cname(arg->type_decl));
+        gen_value(g, o, arg->type_decl, arg->inits.items, arg->inits.count);
+    }
+    sb_put(o, "})");
 }
 
 static const char *int_op_helper(const tok_kind op)
@@ -6584,13 +6578,6 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_printf(o, "%scmd_unload(%s, ", s->value->local_world ? "tide_local_" : "tide_", s->value->local_world ? "tide_l" : "tide_w");
             gen_expr(g, o, s->value->args.items[0]);
             sb_put(o, ");\n");
-        } else if (s->value->call == CALL_SCENE_PLAYER) {
-            indent(g, o);
-            sb_put(o, "tide_cmd_scene_player(tide_w, ");
-            gen_expr(g, o, s->value->args.items[0]);
-            sb_put(o, ", ");
-            gen_expr(g, o, s->value->args.items[1]);
-            sb_printf(o, ", %s);\n", str_eq_c(s->value->name, "AddPlayer") ? "true" : "false");
         } else if (s->value->call == CALL_SESSION) {
             gen_session_call(g, s->value);
         } else if (s->value->call == CALL_CLIPBOARD) {
@@ -7231,7 +7218,7 @@ static void gen_header(gen *g)
     if (prog->prefab_sites.count) sb_put(o, "    uint32_t prefab_pending; // Its initialization runs after the whole authored tree is ready\n");
     sb_put(o, "    tide_entity entity; // For sends, the entity it's sent to, or null for the world\n");
     if (prog->command_types.count) sb_put(o, "    tide_player_id sender; // Commands: authenticated by the session, never supplied by the payload\n");
-    sb_put(o, "    union {\n        uint8_t tide_none;\n        tide_player_id player; // Who's added to or removed from a scene\n");
+    sb_put(o, "    union {\n        uint8_t tide_none;\n");
     if (prog->hierarchy[0] || prog->hierarchy[1]) sb_put(o, "        struct { tide_entity parent; bool keep; uint8_t padding[3]; } parent;\n");
     sb_put(o, "        tide_entity scene;     // A spawn's: the scene the entity joins, or null for none (what every spawn below starts with)\n");
     for (int i = 0; i < prog->events.count; i++) {
@@ -9606,7 +9593,6 @@ static void gen_command_fits(gen *g)
         if (is_queued(prog, d)) sb_printf(o, "        case %d: need = TIDE_COMMAND_SIZE(event_%s); break;\n", d->index, type_cname(d));
     }
     sb_put(o, "        default: break;\n        }\n        break;\n"
-              "    case TIDE_CMD_SCENE_PLAYER: need = TIDE_COMMAND_SIZE(player); break;\n"
               "    case TIDE_CMD_REMOVE:\n    case TIDE_CMD_DESTROY:\n    case TIDE_CMD_UNLOAD:\n    case TIDE_CMD_SNAP: break;\n"
               );
     if (prog->hierarchy[0] || prog->hierarchy[1]) sb_put(o, "    case TIDE_CMD_PARENT: need = TIDE_COMMAND_SIZE(parent); break;\n");
@@ -9624,7 +9610,7 @@ static void gen_command_recorders(gen *g)
                                            "    return v < 128u ? 1u : v < 16384u ? 2u : v < 2097152u ? 3u : v < 268435456u ? 4u : 5u;\n}\n\n");
 
     sb_put(o, "enum { TIDE_CMD_SPAWN, TIDE_CMD_ADD, TIDE_CMD_REMOVE, TIDE_CMD_DESTROY, TIDE_CMD_EVENT, TIDE_CMD_UNLOAD,\n"
-              "       TIDE_CMD_SCENE_PLAYER, TIDE_CMD_SNAP");
+              "       TIDE_CMD_SNAP");
     if (prog->hierarchy[0] || prog->hierarchy[1]) sb_put(o, ", TIDE_CMD_PARENT");
     if (prog->prefab_sites.count) sb_put(o, ", TIDE_CMD_PREFAB_READY");
     sb_put(o, " };\n\n");
@@ -9719,13 +9705,6 @@ static void gen_command_recorders(gen *g)
                          "    c->data.parent.parent = parent;\n    c->data.parent.keep = keep;\n}\n\n", p, world_type(local), p);
         }
     }
-    sb_put(o,
-        "// Who sees a scene: `add` or remove a player.\n"
-        "TIDE_HELPER void tide_cmd_scene_player(tide_world *w, tide_entity scene, tide_player_id player, bool add)\n"
-        "{\n"
-        "    tide_cmd_push(w, TIDE_CMD_SCENE_PLAYER, add ? 1u : 0u, scene, TIDE_COMMAND_SIZE(player))->data.player = player;\n"
-        "}\n\n");
-
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!g->prog->spawn_target.items[a]) continue;
         const bool local = arch_local(g, a);
@@ -9733,9 +9712,8 @@ static void gen_command_recorders(gen *g)
         sb_printf(o, "// %s: %s\n", load ? "Load" : "Spawn", arch_label(g, a));
         if (load) {
             // A loaded scene is its own scene.
-            sb_printf(o, "TIDE_HELPER tide_entity tide_cmd_load%d(%s *w, tide_spawn%d values, int32_t visibility)\n{\n", a,
+            sb_printf(o, "TIDE_HELPER tide_entity tide_cmd_load%d(%s *w, tide_spawn%d values)\n{\n", a,
                       world_type(local), a);
-            sb_printf(o, "    values.%s.tide_visibility = visibility;\n", type_cname(arch_scene(g, a)));
         } else {
             sb_printf(o, "TIDE_HELPER tide_entity tide_cmd_spawn%d(%s *w, tide_entity scene, tide_spawn%d values)\n{\n", a,
                       world_type(local), a);
@@ -10157,32 +10135,6 @@ static void gen_apply(gen *g, const bool local)
     }
     sb_put(o, "}\n\n");
 
-    // Who sees a scene, as bits of its tide_players: 32 players a word, as
-    // many words as the game's players take (tide_players, tide_players1, ...).
-    if (!local) {
-        const unsigned players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
-        sb words = {0};
-        for (unsigned word = 0; word * 32u < players; word++) {
-            if (word) sb_printf(&words, ", &s.tide_players%u", word);
-            else sb_put(&words, "&s.tide_players");
-        }
-        sb_put(o, "TIDE_HELPER void tide_apply_scene_player(tide_world *w, tide_command *c)\n{\n");
-        sb_put(o, "    const int32_t index = tide_player_index(c->data.player);\n");
-        sb_put(o, "    if (index < 0 || index >= (int32_t)TIDE_GAME_PLAYERS) return;\n");
-        sb_put(o, "    const int32_t bit = (int32_t)(1u << (index & 31));\n    (void)bit;\n");
-        sb_put(o, "    const tide_location loc = tide_entity_location(&w->entities, c->entity);\n    switch (loc.archetype) {\n");
-        for (int a = 0; a < prog->archetypes.count; a++) {
-            const decl *scene = arch_scene(g, a);
-            if (arch_local(g, a) || !scene) continue;
-            sb_printf(o, "    case %d: {\n        %s s;\n        %s;\n", a, type_cname(scene),
-                      comp_take(g, "w", a, scene->index, "loc.row", "s"));
-            sb_printf(o, "        int32_t *const words[] = {%s};\n", words.data);
-            sb_put(o, "        if (c->id) *words[index >> 5] |= bit;\n        else *words[index >> 5] &= ~bit;\n");
-            sb_printf(o, "        %s;\n        break;\n    }\n", comp_put(g, "w", a, scene->index, "loc.row", "s"));
-        }
-        sb_put(o, "    default: break;\n    }\n}\n\n");
-    }
-
     // Event: its handlers, in order. Events nothing handles do nothing.
     sb_printf(o, "TIDE_HELPER void %sapply_event(%s *w, tide_command *c)\n{\n    (void)w;\n    switch (c->id) {\n", p, world);
     for (int i = 0; i < prog->events.count; i++) {
@@ -10236,14 +10188,12 @@ static void gen_apply(gen *g, const bool local)
         "        case TIDE_CMD_UNLOAD: %sapply_unload(w, c); break;\n"
         "        case TIDE_CMD_SNAP: tide_entity_snap(&w->entities, c->entity); break;\n"
         "%s"
-        "%s"
         "        default: break;\n"
         "        }\n"
         "    }\n"
         "    w->tide_chain = 0;\n"
         "}\n\n",
-        p, world, local ? "frame" : "tick", p, p, p, p, p, p, parent_case.data ? parent_case.data : "",
-        local ? "" : "        case TIDE_CMD_SCENE_PLAYER: tide_apply_scene_player(w, c); break;\n");
+        p, world, local ? "frame" : "tick", p, p, p, p, p, p, parent_case.data ? parent_case.data : "");
     sb_printf(o, "static void %sapply_commands(%s *w)\n{\n    %sapply_from(w, (tide_queue_place){0, 0});\n", p, world, p);
     // The match's tasks go on once the tick's changes are in, and what they do applies after
     if (!local && world_has_tasks(g, false)) {
@@ -10261,7 +10211,7 @@ static void gen_apply(gen *g, const bool local)
         sb_printf(o, ") {\n        const tide_queue_place from = tide_queue_end(&w->commands);\n        tide_cmd_load%d(w, (tide_spawn%d){.%s = ", a, a,
                   type_cname(prog->main));
         gen_value(g, o, prog->main, NULL, 0);
-        sb_printf(o, "}, 0);\n        %sapply_from(w, from);\n    }\n", p);
+        sb_printf(o, "});\n        %sapply_from(w, from);\n    }\n", p);
     }
     sb_printf(o,
         "    tide_queue_clear(&w->commands);\n"
@@ -10402,7 +10352,7 @@ static bool heard_recipient_private(const program *prog, const type t)
     for (int i = 0; i < t.decl->fields.count; i++) {
         const field *f = &t.decl->fields.items[i];
         if (f->typed) continue;
-        if ((f->hidden && (t.decl->is_scene || t.decl == prog->visibility)) || heard_recipient_private(prog, f->type)) return true;
+        if ((f->hidden && t.decl == prog->visibility) || heard_recipient_private(prog, f->type)) return true;
     }
     return false;
 }
@@ -10427,7 +10377,7 @@ static void gen_heard_recipient_value(gen *g, const type t, const char *value, c
             if (f->typed) continue;
             sb place = {0};
             sb_printf(&place, "%s.%s", value, field_cname(f));
-            if (f->hidden && (t.decl->is_scene || t.decl == g->prog->visibility)) {
+            if (f->hidden && t.decl == g->prog->visibility) {
                 sb_printf(o, "        memset(&%s, 0, sizeof %s);\n", place.data, place.data);
             } else gen_heard_recipient_value(g, f->type, place.data, depth);
         }
@@ -16751,14 +16701,14 @@ static void gen_api(gen *g)
         for (int i = 0; i < prog->start_scenes.count; i++) {
             const decl *scene = prog->start_scenes.items[i];
             const int a = lone_archetype(g, scene);
-            sb_printf(o, "    case %d: tide_cmd_load%d(w, (tide_spawn%d){.%s = start->value.%s}, 0); break;\n", i, a, a,
+            sb_printf(o, "    case %d: tide_cmd_load%d(w, (tide_spawn%d){.%s = start->value.%s}); break;\n", i, a, a,
                       type_cname(scene), type_cname(scene));
         }
         sb_put(o, "    default:\n");
         if (!prog->main->is_local) {
             sb_printf(o, "        tide_cmd_load%d(w, (tide_spawn%d){.%s = ", prog->main_archetype, prog->main_archetype, type_cname(prog->main));
             gen_value(g, o, prog->main, NULL, 0);
-            sb_put(o, "}, 0);\n");
+            sb_put(o, "});\n");
         }
         sb_put(o, "        break;\n    }\n");
     } else sb_put(o, "    (void)start; // Authoring starts from the selected prefab, without Main.\n");
@@ -16915,7 +16865,7 @@ static void gen_api(gen *g)
         sb_printf(o, "    tide_cmd_load%d(local, (tide_spawn%d){.%s = ", prog->main_archetype, prog->main_archetype,
                   type_cname(prog->main));
         gen_value(g, o, prog->main, NULL, 0);
-        sb_put(o, "}, 0);\n    tide_local_apply_commands(local);\n");
+        sb_put(o, "});\n    tide_local_apply_commands(local);\n");
     }
     sb_put(o, "}\n\n");
 

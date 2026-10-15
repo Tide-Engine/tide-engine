@@ -2,6 +2,7 @@
 #include <string.h>
 
 const char *InsideOutInviteBase(void);
+int InsideOutPreviewLook(void);
 
 int main(const int argc, char **const argv)
 {
@@ -13,5 +14,15 @@ int main(const int argc, char **const argv)
     }
     // The cached result must remain valid on later clicks.
     if (strcmp(InsideOutInviteBase(), argv[1]) != 0) return 1;
+    for (int i = 2; i < argc; i++) {
+        static const char prefix[] = "--expect-look=";
+        if (strncmp(argv[i], prefix, sizeof prefix - 1) != 0) continue;
+        const char *const expected = argv[i] + sizeof prefix - 1;
+        const int look = strcmp(expected, "-1") == 0 ? -1 : expected[0] - '0';
+        if (InsideOutPreviewLook() != look || InsideOutPreviewLook() != look) {
+            fprintf(stderr, "preview look: expected %d, got %d\n", look, InsideOutPreviewLook());
+            return 1;
+        }
+    }
     return 0;
 }

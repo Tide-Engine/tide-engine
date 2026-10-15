@@ -209,7 +209,7 @@ int KeyDirection(Devices devices, bool edge)
 
 [Stage(ArtStage.Controls)]
 [Before(Rooms.Pages)]
-view WorkshopControls(Workshop workshop, Time time, Session session, Devices devices, mut Rooms.Lobby lobby, mut Hands hands)
+view WorkshopControls(Workshop workshop, Time time, Session session, Devices devices, mut Rooms.Lobby lobby, mut Hands hands, mut ThemePreview preview)
 {
     Draw.SetScreen();
     if (lobby.page != Rooms.Page.Playing) return;
@@ -217,6 +217,11 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
     // Keep gameplay keys here so arrows cannot start navigating HUD widgets.
     GUI.ClaimKeyboard();
     var key = devices.keyboard;
+    if (key.f6.down)
+    {
+        OpenThemePreview(preview, lobby);
+        return;
+    }
     if (key.escape.down || devices.gamepad.start.down)
     {
         lobby.page = Rooms.Page.Room;
@@ -230,7 +235,7 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
     var together = Together(workshop);
     var overlay = hands.journal || hands.pendingReset || hands.pendingLevel >= 0;
     var playing = lobby.playing && together && hands.seat >= 0 && !overlay;
-    var revealing = time.tick - workshop.openedTick < REVEAL_TICKS;
+    var revealing = time.tick - workshop.openedTick < workshop.introTicks + REVEAL_TICKS;
     for (var d = 0; d < 4; d++)
     {
         hands.ahead[d] = Step.Blocked;
@@ -378,7 +383,7 @@ bool MenuBack(Rect card)
 
 struct Preferences
 {
-    int version = 1;
+    int version = 3;
     float master = 1;
     float music = .8;
     float effects = 1;
@@ -418,7 +423,13 @@ view ReadPreferences(mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
             mixer.muted = saved.muted;
             hands.reduceMotion = saved.reducedMotion;
             hands.preview = saved.preview;
-            hands.completed = saved.completed & ((1 << LEVEL_COUNT) - 1);
+            mut var completed = saved.completed & ((1 << LEVEL_COUNT) - 1);
+            // Version 2 replaces puzzles 7–13 and 15–18. Keep old ticks only
+            // for unchanged puzzles, while retaining every personal setting.
+            if (saved.version < 2) completed &= ((1 << 6) - 1) | (1 << 13);
+            // The physical shutter rule changes solutions 10–12 and 18.
+            if (saved.version < 3) completed &= ~((1 << 9) | (1 << 10) | (1 << 11) | (1 << 17));
+            hands.completed = completed;
         }
     }
     hands.savedPreferences = Json.Write(CurrentPreferences(lobby, mixer, hands));
@@ -438,12 +449,33 @@ view SavePreferences(Workshop workshop, Rooms.Lobby lobby, Mixer mixer, mut Hand
 
 [Stage(ArtStage.Controls, 1)]
 [After(Rooms.Pages)]
-view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
+view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer, mut ThemePreview preview)
 {
     Draw.SetScreen();
     mut var escape = devices.keyboard.escape.down || devices.gamepad.buttonEast.down;
     // The Escape that opened Rooms' menu is not also its Back action.
     if (hands.pageAtStart != lobby.page) escape = false;
+    if (devices.keyboard.f6.down && lobby.page != Rooms.Page.Playing && !preview.open) OpenThemePreview(preview, lobby);
+    if (preview.open)
+    {
+        var card = MenuCard(560, 620);
+        PagePanel(card, "Appearance preview", "Try each look on this puzzle. Your selection is not saved.");
+        for (var look = -1; look < 5; look++)
+        {
+            if (PaperButton(PreviewLookName(look), Rect(card.x + 24, card.y + 130 + (look + 1) * 58, card.width - 48, 46), true, preview.look == look))
+            {
+                preview.look = look;
+                CloseThemePreview(preview, lobby);
+                UiSound(UiCue.Toggle);
+            }
+        }
+        if (MenuBack(card) || escape)
+        {
+            CloseThemePreview(preview, lobby);
+            UiSound(UiCue.Back);
+        }
+        return;
+    }
     if (hands.pendingReset || hands.pendingLevel >= 0)
     {
         var card = MenuCard(480, 300);
@@ -561,8 +593,8 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
     }
     if (lobby.page == Rooms.Page.Settings)
     {
-        var card = MenuCard(520, 570);
-        var compact = card.height / 570;
+        var card = MenuCard(520, 630);
+        var compact = card.height / 630;
         PagePanel(card, "Settings", "Make yourself at home. These settings are yours.");
         Label("SOUND", float2(card.x + 24, card.y + 120 * compact), 12, BRASS);
         if (GUI.Slider(Rect(card.x + 24, card.y + 142 * compact, card.width - 48, 36), "Master", lobby.volume, 0, 1)) UiSound(UiCue.Slide);
@@ -573,6 +605,7 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
         Label("GAMEPLAY", float2(card.x + 24, card.y + 393 * compact), 12, BRASS);
         if (GUI.Toggle(Rect(card.x + 24, card.y + 414 * compact, card.width - 48, 38), "Reduced motion", hands.reduceMotion)) UiSound(UiCue.Toggle);
         if (GUI.Toggle(Rect(card.x + 24, card.y + 460 * compact, card.width - 48, 38), "Step preview", hands.preview)) UiSound(UiCue.Toggle);
+        if (PaperButton("Appearance preview", Rect(card.x + 24, card.y + 510 * compact, card.width - 48, 42))) OpenThemePreview(preview, lobby);
         if (MenuBack(card) || escape) { Rooms.LeaveSettings(lobby); UiSound(UiCue.Back); }
         return;
     }

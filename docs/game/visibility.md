@@ -1,10 +1,10 @@
 ---
-description: "Control Tide client state with entity and whole-component visibility, shared audience groups, partial simulation and local availability events."
+description: "Control Tide client state with scene, entity and whole-component visibility, shared audience groups, partial simulation and local availability events."
 ---
 
 # State visibility
 
-Visibility decides which match entities and components a player's machine receives. The server still runs the full match. A client predicts with the state it is allowed to have, and authoritative corrections supply consequences that its partial simulation could not reproduce.
+Visibility decides which match scenes, entities and components a player's machine receives. The server still runs the full match. A client predicts with the state it is allowed to have, and authoritative corrections supply consequences that its partial simulation could not reproduce.
 
 The API names below are provisional. Visibility applies to entities and whole components. To hide a card's face while keeping its back public, put the face in a separate component; individual fields do not have visibility rules.
 
@@ -38,6 +38,21 @@ For a voxel world, use one group per chunk and update its audience as players ap
 
 An entity without `Visibility` is public, subject to its enclosing scene. A default `Visibility` uses an all-player group. `Visibility.DestroyGroup(group)` makes existing references to that group see nobody; a later group does not reuse the stale handle.
 
+## Restrict a scene
+
+Scenes use the same groups. Put `Visibility` on the loaded root:
+
+```csharp
+var group = Visibility.CreateGroup(Audience.Only(player));
+var hand = Scene.Load(Hand { player = player }, Visibility { group = group });
+```
+
+The root's group limits every entity owned by that scene, including entities
+spawned later. `Visibility.Set(group, audience)` updates them together. Use
+`Audience.None` for a server-only scene, or share a group across multiple scenes
+and entities. Scene ownership still controls loading and unloading; destroying
+a group conceals its members without unloading them.
+
 ## Hide a component
 
 Keep public and private data in separate components:
@@ -54,7 +69,7 @@ event(Spawned) ProtectFace(Owner owner, mut Visibility visibility, with CardFace
 
 The entity must carry `Visibility`. Set the restriction during construction, before initial state can be published; waiting for the next system tick can expose the initial component. Update the policy when the holder changes. `visibility.Set<CardFace>(audience)` restricts the whole component. It also accepts a shared group: `visibility.Set<CardFace>(handGroup)`. `visibility.Reset<CardFace>()` removes that override, so the component follows the entity again.
 
-Component rules can only narrow the entity's audience. Entity rules also respect their enclosing scene's membership and `Visibility`: a public component cannot expose an entity inside a private scene. Ordinary transform parenting does not inherit visibility. A component outside a recipient's audience is absent on that client, including from queries and `Has<T>()`; `without CardFace` can therefore match there.
+The effective audience is the intersection of the scene root's group, the entity's group and the component's restriction. An entity or component cannot broaden its enclosing scope. Ordinary transform parenting does not inherit visibility. A component outside a recipient's audience is absent on that client, including from queries and `Has<T>()`; `without CardFace` can therefore match there.
 
 For poker, keep the public card back on the entity and restrict `CardFace` to the holder. Put an undealt deck in an audience of nobody, or a private scene with no members. Membership, group contents and component overrides are server policy; clients receive their permitted state rather than the policy's private membership data.
 
@@ -88,4 +103,4 @@ Match task continuations and opaque `Resident` state stay on the authoritative s
 
 The current physics packages also keep information about their whole world in public `Physics` fields. Box2D's `Physics.image` is a full native snapshot byte list. Box3D's `Physics.stamp` is a hash derived from native world operations. Both packages keep public collider and rewind-history lists. Hiding a `Body`, collider or entity does not restrict those values. Concealing players with these packages needs visibility-aware package integration first; omitting opaque `Resident` state does not hide the other public fields.
 
-See [Scenes](./scenes.md#private-scenes) for scene membership and [Networking](../multiplayer/networking.md#who-sees-what) for verification and corrections.
+See [Scenes](./scenes.md#private-scenes) for scene ownership and audiences and [Networking](../multiplayer/networking.md#who-sees-what) for verification and corrections.

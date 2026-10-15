@@ -156,10 +156,11 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         assert.equal(identity.id, account.id);
         assert.equal(store.db.prepare('SELECT expires FROM tokens WHERE hash=?').get(identity.token_hash).expires, 0);
         assert.equal(await evaluate(`document.querySelector('form[aria-label="Create CI deploy token"]').closest('details').textContent.includes('Never expires')`), true);
-        assert.equal(await evaluate('document.querySelector(".game-url").value'), `${games}/g/${project.id}/`);
+        assert.equal(await evaluate('document.querySelector(".game-url").href'), `${games}/g/${project.id}/`);
+        assert.equal(await evaluate('document.querySelector(".game-url").textContent'), `${games}/g/${project.id}/`);
+        assert.equal(await evaluate('document.querySelector(".play-game").href'), `${games}/g/${project.id}/`);
+        assert.equal(await evaluate('document.querySelector(".project").children[1].contains(document.querySelector(".play-game"))'), true);
         assert.match(await evaluate('document.querySelector(".match-url").value'), new RegExp(`/g/${project.id}/\\?match=\\d+$`));
-        await evaluate('document.querySelector(".game-url").click()');
-        assert.equal(await evaluate('document.querySelector(".game-url").selectionEnd'), `${games}/g/${project.id}/`.length);
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Hide token').click()`);
         assert.equal(await evaluate('!!document.querySelector("textarea[readonly]")'), false);
