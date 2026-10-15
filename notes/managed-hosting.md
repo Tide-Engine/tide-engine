@@ -22,7 +22,15 @@ Chrome. SSR asserts Play game precedes credentials and includes the full URL;
 the browser checks the header placement and actual link targets. Console Svelte
 check/build and docs build pass. Desktop evidence shows the primary play action
 and URL beneath the project name; mobile checks report no horizontal overflow.
-Deployment results follow after completion.
+Source 60a8e311 (including 03cedcdb) deployed as Fly release 9, image
+deployment-01M50DX2XHBX229J3QY2ED12ZF. Incoming compiler/docs changes merge
+cleanly without console overlap. Machine checks and public health pass. A
+temporary 60-second browser-kind verification credential checked the owner's
+actual signed-in server-rendered dashboard: HTTP 200, the Play game href matches
+the deployed test project, its full URL is visible, and both precede credential
+settings. The verification credential was revoked immediately; no existing
+browser session was accessed. An already-open old console tab needs one browser
+reload to receive this UI. No new matches, payments or capacity changes.
 
 ## Shared-host isolation audit (2026-10-15)
 
