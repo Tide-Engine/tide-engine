@@ -1,0 +1,59 @@
+using Box3D;
+
+// A dropped bolt plucks a web. The next place lets players do it themselves.
+void BuildTheSlot(Arena arena, mut Place place)
+{
+    StoppingLift(arena, place, float3(0), NORTH, 8);
+    place.dead = true;
+    place.light = .5;
+    place.grade = float3(.8, .91, 1);
+    Fill(arena, -4, 4, -1, 0, 2.1, 10, CONCRETE);
+    Fill(arena, -5, -4, -2, 2.5, 1.6, 11, PLASTER);
+    Fill(arena, 4, 5, -2, 2.5, 1.6, 11, PLASTER);
+    Fill(arena, -5, -3, -2, 4.4, 1.6, 2.6, PANELS);
+    Fill(arena, 3, 5, -2, 4.4, 1.6, 2.6, PANELS);
+    Fill(arena, -5, 5, -2, 2.5, 10, 11, CONCRETE);
+    Fill(arena, -5, 5, 2.5, 3.5, 4, 11, PLASTER, false, 2);
+    Fill(arena, -5, 5, 4.4, 5.4, 1.6, 4, CEILING_TILE, false, 2);
+    Fill(arena, -4, 4, 0, 4.4, 3.9, 4.1, PANELS, false, 4);
+    // Small white porcelain strips catch the light like taut web strands.
+    for (int strand = 0; strand < 3; strand++)
+        Raise(arena, float3((strand - 1) * .5, .11, 7), float3(.025, .025, 2.4), MARBLE, false, 3, 0);
+    Machine(arena, float3(0, 2.2, 7), float3(0, 2.2, 7), float3(.15, .15, .15), 0, false, 1, float3(0), float3(0));
+    SpawnBeast(arena, BeastKind.Spider, float3(2.3, 0, 9), SOUTH, .8, clip: "Idle", eyes: true);
+    SetProp(arena, PropKind.Pipe, float3(-3.8, 1.4, 7), NORTH, float3(1, 1, 2));
+    LampGrid(place, float2(-4, 2.5), float2(8, 3.5), 1, 2);
+    HangLamps(place, 0, 0, 0, 1, 2.5);
+    MenuView(place, float3(0, 1.7, -.8), .04, NORTH);
+}
+
+[After(MoveMovers)]
+[Before(PhysicsStages.Step)]
+system SlotBolt(mut Mover mover, mut Body body, Arena arena, Place place, Time time)
+{
+    if (place.id != THE_SLOT || mover.chamber != arena.chamber) return;
+    float fallen = Math.Max(arena.arrive - 2.5, 0);
+    float high = Math.Max(.1, 2.2 - 9.8 * fallen * fallen * .5);
+    float3 at = float3(0, high, 7);
+    mover.velocity = (at - mover.at) / time.dt;
+    mover.at = at;
+    body.position = at;
+    body.velocity = float3(0);
+}
+
+system SlotSpider(mut Beast beast, Arena arena, Place place, Time time)
+{
+    if (place.id != THE_SLOT || beast.chamber != arena.chamber) return;
+    if (arena.arrive < 3.16) { beast.time += time.dt; return; }
+    float3 target = float3(0, 0, 7);
+    float gap = Math.Distance(beast.at, target);
+    string clip = gap > .03 ? "Walk" : "Attack";
+    if (beast.clip != clip) { beast.clip = clip; beast.time = 0; }
+    if (gap > .03)
+    {
+        float3 way = (target - beast.at) / gap;
+        beast.yaw = Math.Atan2(way.x, way.z);
+        beast.at += way * Math.Min(gap, 3 * time.dt);
+    }
+    beast.time += time.dt;
+}
