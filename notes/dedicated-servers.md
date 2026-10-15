@@ -1,5 +1,33 @@
 # Dedicated servers
 
+## CI corrections (2026-10-15)
+
+Run `38716371711` found two server-build defects in `bfc10e14`.
+The optional process hook now has a weak no-op definition on Apple targets:
+a standalone Mach-O executable cannot link an absent weak reference with the
+ordinary link flags, even with `weak_import`. A game's strong C definition
+replaces that default. Other targets keep their existing weak reference.
+Server codegen copies the original asset declaration array only when nonempty;
+an asset-free program otherwise passes NULL to zero-length memcpy, which UBSan
+correctly rejects. No host API, asset selection, match identity or state changes.
+
+Existing fixtures cover the failures: `tide_server_entry` uses an asset-free
+local-menu program and custom C callback, while `tide_server_smoke` and
+`tide_server_visual` omit the callback. The installed CLI's server cases in
+`cache_test.mjs` also build without an entry before adding one.
+
+Validation: complete Windows native/web debug builds and all 2,337 native and
+2,250 web CTests pass with Clang 23.1.2/Node 24.16.0, including Vulkan validation,
+OpenGL, WebGL/WebGPU, server startup and custom callback execution. A fresh
+optimized Linux tidec built in this checkout under WSL with
+ASan/UBSan compiles `server_menu`, `server_visual` and `server_build`, each with
+both server asset policies, without sanitizer diagnostics. Standalone header
+probes cross-compiled for macOS arm64/x86_64 at -O0/-O2 reproduce the original
+missing-symbol error and link successfully after the fix, both without a hook
+and with a strong hook replacing the weak default (Clang/ld64.lld 23.1.2,
+dead stripping enabled). These cross-links do not execute macOS binaries or
+replace validation with Apple's linker on a Mac. No CI run was dispatched.
+
 ## Agreed scope (2026-10-15)
 
 The owner requested headless lightweight dedicated servers, simulation-only asset

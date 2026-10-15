@@ -11,6 +11,11 @@ unreachable emitted code; loaders/preflight/packs retain only the selected
 closure. Custom C requires conservative retention or explicit opt-in. Full
 contracts, fixtures and validation are in dedicated-servers.md.
 
+CI correction: server codegen skips the asset-array memcpy when the count is
+zero, preserving the asset-free program's NULL array without passing it to a
+nonnull C library parameter. Run `38716371711` caught this with UBSan while
+compiling `server_menu.tide`; validation is recorded in dedicated-servers.md.
+
 ## View inclusion in authored preview (2026-10-13)
 
 The owner approved views-only preview after discussing initialization and the
