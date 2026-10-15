@@ -15,7 +15,8 @@ const int MAX_DEPTH = 8;
 const int LEVEL_COUNT = 7;
 const int UNDO_LIMIT = 128;
 
-enum Tile { Floor, Wall, Target, Exit }
+// A plate and a shutter for each of two channels, A and B.
+enum Tile { Floor, Wall, Target, Exit, PlateA, ShutterA, PlateB, ShutterB }
 struct RoomLayout
 {
     Tile[49] tiles;
@@ -168,37 +169,92 @@ Tile TileAt(LevelLayout layout, int room, int2 at)
     var index = CellIndex(at, RoomWidth(layout, room));
     return room == -1 ? layout.tiles[index] : layout.rooms[room].tiles[index];
 }
+
+// Plates and shutters belong to channel 0 (A) or 1 (B); -1 is any other tile.
+int PlateChannel(Tile tile)
+{
+    if (tile == Tile.PlateA) return 0;
+    if (tile == Tile.PlateB) return 1;
+    return -1;
+}
+int ShutterChannel(Tile tile)
+{
+    if (tile == Tile.ShutterA) return 0;
+    if (tile == Tile.ShutterB) return 1;
+    return -1;
+}
+// A channel is powered while anything stands on one of its plates, in any
+// room or on the table: a bot, a battery, or a box on a plate of the room it
+// stands in. The wiring is the whole level's.
+bool Powered(LevelLayout layout, Puzzle puzzle, int channel)
+{
+    if (channel < 0 || channel > 1) return false;
+    for (var seat = 0; seat < 2; seat++)
+        if (PlateChannel(TileAt(layout, puzzle.actors[seat].room, puzzle.actors[seat].position)) == channel) return true;
+    for (var box = 0; box < MAX_ROOMS; box++)
+        if (ValidRoom(layout, box) && PlateChannel(TileAt(layout, puzzle.rooms[box].room, puzzle.rooms[box].position)) == channel) return true;
+    for (var crate = 0; crate < Math.Min(MAX_CRATES, layout.crateCount); crate++)
+        if (puzzle.crates[crate].active && PlateChannel(TileAt(layout, puzzle.crates[crate].room, puzzle.crates[crate].position)) == channel) return true;
+    return false;
+}
+// A bit for each powered channel.
+int Power(LevelLayout layout, Puzzle puzzle)
+{
+    return (Powered(layout, puzzle, 0) ? 1 : 0) | (Powered(layout, puzzle, 1) ? 2 : 0);
+}
+bool ShutterOpen(int channel, int power) { return channel >= 0 && channel <= 1 && (power & (1 << channel)) != 0; }
+// Whether anything can step, be pushed or go through a doorway into a cell:
+// never a wall, and a shutter only while its channel is powered. `power` is
+// worked out from where things stood before the move.
+bool Passable(LevelLayout layout, int room, int2 at, int power)
+{
+    var tile = TileAt(layout, room, at);
+    if (tile == Tile.Wall) return false;
+    var channel = ShutterChannel(tile);
+    return channel < 0 || ShutterOpen(channel, power);
+}
+// A closed shutter with something standing in it, which it closed on. Nothing
+// can come into the cell, but what is in it can still be pushed on.
+bool ClosedOnThing(LevelLayout layout, Puzzle puzzle, int room, int2 at, int power)
+{
+    var channel = ShutterChannel(TileAt(layout, room, at));
+    return channel >= 0 && !ShutterOpen(channel, power) && ThingAt(layout, puzzle, room, at).kind >= 0;
+}
+
 // One step from a cell, for a bot, a parcel or a box alike. Inside the room it
 // is the next cell. Outward from a doorway cell it is the cell beyond the
 // room's box: a room has one box that is its outside, and everything in it
 // leaves beside that box, however it came in. Where the box stands inside its
-// own room, that is the same room again.
-bool StepFrom(LevelLayout layout, Puzzle puzzle, int room, int2 from, int direction, out int nextRoom, out int2 next)
+// own room, that is the same room again. The cell is set even when it cannot
+// be entered.
+bool StepFrom(LevelLayout layout, Puzzle puzzle, int power, int room, int2 from, int direction, out int nextRoom, out int2 next)
 {
     nextRoom = room;
     next = from + Direction(direction);
     if (direction < 0 || direction > 3) return false;
-    if (OnRoomGrid(layout, room, next)) return TileAt(layout, room, next) != Tile.Wall;
+    if (OnRoomGrid(layout, room, next)) return Passable(layout, room, next, power);
     if (!ValidRoom(layout, room) || !CellEqual(from, DoorCell(layout, room, direction)) ||
         (layout.rooms[room].doors & (1 << direction)) == 0) return false;
     nextRoom = puzzle.rooms[room].room;
     next = puzzle.rooms[room].position + Direction(direction);
-    return TileAt(layout, nextRoom, next) != Tile.Wall;
+    return Passable(layout, nextRoom, next, power);
 }
 
 // The doorway of the box at a cell that faces something coming at it, and the
-// cell inside that it leads to: the box's room's door cell on that side.
-bool Gateway(LevelLayout layout, Puzzle puzzle, int room, int2 at, int direction, out int destination, out int2 entry)
+// cell inside that it leads to: the box's room's door cell on that side. Where
+// there is such a doorway, `entry` is set even when it cannot be entered; it
+// is off every grid where there is none.
+bool Gateway(LevelLayout layout, Puzzle puzzle, int power, int room, int2 at, int direction, out int destination, out int2 entry)
 {
     destination = room;
-    entry = at;
+    entry = int2(-1);
     var box = BoxAt(layout, puzzle, room, at);
     if (box < 0) return false;
     var opposite = (direction + 2) % 4;
     destination = box;
     if ((layout.rooms[destination].doors & (1 << opposite)) == 0) return false;
     entry = DoorCell(layout, destination, opposite);
-    return TileAt(layout, destination, entry) != Tile.Wall;
+    return Passable(layout, destination, entry, power);
 }
 
 // Whatever stands in a cell: kind 0 is a bot, 1 a box, 2 a parcel, -1 nothing.
@@ -300,19 +356,27 @@ enum Step { Blocked, Walk, Push, Enter }
 // - A thing steps to the next cell. If something stands there, that is
 //   pushed the same way first, and whatever is beyond it, however long the
 //   row: nothing in a row holds it back.
-// - Only a wall or a bot stops a row. The thing against the stop cannot
-//   move; the thing behind it, if the stopped thing is a box with a doorway
-//   facing it, goes into that box instead, pushing on whatever stands in the
-//   doorway. If it cannot, it is stopped too, and the same is asked of the
-//   thing behind it, back to the bot that pushed.
+// - Only a wall (a closed shutter is one) or a bot stops a row. The thing
+//   against the stop cannot move; the thing behind it, if the stopped thing
+//   is a box with a doorway facing it, goes into that box instead, pushing on
+//   whatever stands in the doorway. If it cannot, it is stopped too, and the
+//   same is asked of the thing behind it, back to the bot that pushed.
+// - A closed shutter lets nothing in, but what it closed on is pushed on as
+//   if it were open: the thing that pushes it stays where it is, and so does
+//   everything behind that.
 // So a bot gets into a box only when the box cannot be pushed, and the one
 // thing that can be put in a box's way and taken out again is the other bot.
-// Every step is worked out from where things stood, and then all move at once.
+// Every step is worked out from where things stood, which shutters are open
+// included, and then all move at once.
 bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out Step step)
 {
     step = Step.Blocked;
+    var power = Power(layout, puzzle);
     mut Thing[20] row = default;
     mut Spot[20] goals = default;
+    // Set for a thing pushed out of a closed shutter: what is before it in
+    // the row stays.
+    mut bool[20] through = default;
     row[0] = Thing { kind = 0, index = seat };
     mut var count = 1;
     mut var entered = false;
@@ -324,17 +388,22 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
         if (!decided)
         {
             var from = SpotOf(puzzle, row[last]);
-            free = StepFrom(layout, puzzle, from.room, from.cell, direction, out var room, out var cell);
+            free = StepFrom(layout, puzzle, power, from.room, from.cell, direction, out var room, out var cell);
             goals[last] = Spot { room = room, cell = cell };
         }
+        var shut = ClosedOnThing(layout, puzzle, goals[last].room, goals[last].cell, power);
+        if (decided) free = !shut;
         decided = false;
-        if (free)
+        if (free || shut)
         {
             var ahead = ThingAt(layout, puzzle, goals[last].room, goals[last].cell);
             if (ahead.kind < 0)
             {
-                for (var moved = 0; moved < count; moved++) PutThing(puzzle, row[moved], goals[moved]);
-                step = entered ? Step.Enter : count > 1 ? Step.Push : Step.Walk;
+                mut var stay = 0;
+                for (var earlier = 1; earlier < count; earlier++)
+                    if (through[earlier]) stay = earlier;
+                for (var moved = stay; moved < count; moved++) PutThing(puzzle, row[moved], goals[moved]);
+                step = stay == 0 && entered ? Step.Enter : stay > 0 || count > 1 ? Step.Push : Step.Walk;
                 return true;
             }
             mut var stopped = ahead.kind == 0 || count >= 20;
@@ -343,6 +412,7 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             if (!stopped)
             {
                 row[count] = ahead;
+                through[count] = shut;
                 count += 1;
                 continue;
             }
@@ -351,11 +421,14 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             if (count < 20)
             {
                 row[count] = ahead;
+                through[count] = shut;
                 count += 1;
             }
         }
         // The last of the row cannot move. Whatever is behind it goes into
-        // it, if it is a box with a doorway this way.
+        // it, if it is a box with a doorway this way. A doorway closed by a
+        // shutter is a wall, unless the shutter closed on something, which
+        // is then pushed on into the room.
         mut var found = false;
         while (count >= 2 && !found)
         {
@@ -363,7 +436,8 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             count -= 1;
             if (into.kind != 1) continue;
             var at = SpotOf(puzzle, into);
-            if (!Gateway(layout, puzzle, at.room, at.cell, direction, out var destination, out var entry)) continue;
+            if (!Gateway(layout, puzzle, power, at.room, at.cell, direction, out var destination, out var entry) &&
+                !ClosedOnThing(layout, puzzle, destination, entry, power)) continue;
             goals[count - 1] = Spot { room = destination, cell = entry };
             decided = true;
             found = true;
@@ -471,8 +545,11 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
     }
     Remember(workshop, before);
     var source = before.actors[seat];
-    var travel = source.room != workshop.puzzle.actors[seat].room || source.depth != workshop.puzzle.actors[seat].depth ||
-        !OnRoomGrid(workshop.layout, source.room, source.position + Direction(move.direction));
+    var now = workshop.puzzle.actors[seat];
+    // A bot that pushed something out of a closed shutter stayed where it was.
+    var stepped = source.room != now.room || !CellEqual(source.position, now.position);
+    var travel = stepped && (source.room != now.room || source.depth != now.depth ||
+        !OnRoomGrid(workshop.layout, source.room, source.position + Direction(move.direction)));
     Send(PuzzleCue { kind = travel ? 2 : Pushed(before, workshop.puzzle) ? 1 : 0, seat = seat,
         direction = travel ? move.direction : -1, source = travel ? source : Traveler { } });
     if (workshop.puzzle.solved)

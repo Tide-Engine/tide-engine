@@ -427,6 +427,8 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, Rooms
             GUILayout.Label("You come out beside the room's own box.");
             GUILayout.Label("A box can be inside itself.");
             GUILayout.Label("Leave it, and you come out beside it, in the same room.");
+            GUILayout.Label("A plate opens every shutter of its colour and shape while anything is on it.");
+            GUILayout.Label("A closed shutter is a wall. What it closed on can still leave or be pushed out.");
             GUILayout.Label("Sockets need batteries. Outlines need their boxes.");
             GUILayout.Label("Both robots must reach a goal.");
             GUILayout.Label("Z: shared undo. R: reset. H: three hints.");
