@@ -187,7 +187,7 @@ Bodies still go in and out through two systems written in C (`extern system`, `t
 
 The owner asked for these five things (2026-10-06): shapes on entities of their own, a body's type that can change, queries, what's in a sensor and hits, and tuning as fields of `Physics`. The names and the details are picks they haven't confirmed, made to match what the Box2D package is to get:
 
-- **`Part`**, with `of`; its own handles (`box`, `sphere`, `capsule`) in it. A part with no body to be on, when its shapes would be made or once its body goes, is destroyed: the one way both are handled. An entity with a `Body` and a `Part` has its shapes on the part's body.
+- **`Part`**, with `of`; its own handles (`box`, `sphere`, `capsule`, `mesh`) in it. A part with no body to be on, when its shapes would be made or once its body goes, is destroyed: the one way both are handled. An entity with a `Body` and a `Part` has its shapes on the part's body.
 - **`part` and `otherPart`** in `Touched` and `Parted`, each the entity itself for a shape of its own. The events still go to the bodies' entities, and a part's own entity hears nothing. A part that was destroyed still says its body, with `default` for the part.
 - **A type that changes sends nothing for what still touches**, though Box3D lets go of it and finds it again.
 - **A body's `gravityScale`, `linearDamping`, `angularDamping` and `bullet` follow what's written later too**, with its `type`: they were read when it was made, and silently not after.
