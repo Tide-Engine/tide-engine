@@ -8,7 +8,7 @@ component Target
     int id;
     int health = 5;
     local int struck;  // Hits its local handler heard
-    local int born;    // The id its Spawned handler heard
+    local int born;    // The id its Shown handler heard
 }
 
 component Player { }
@@ -151,7 +151,7 @@ local event(Glanced glanced) HearGlanced(Target target, mut Heard heard, Time ti
     heard.glancedTick = time.tick;
 }
 
-local event(Spawned) HearSpawned(mut Target target, mut Heard heard)
+local event(Shown) HearSpawned(mut Target target, mut Heard heard)
 {
     heard.spawned |= 1 << target.id;
     target.born = target.id;
@@ -165,22 +165,27 @@ local event(Destroyed) HearDestroyed(Target target, mut Heard heard)
 
 // What a spawn's handler goes through of the match: the targets as the tick
 // that spawned it left them, or as the world it came with has them
-local event(Spawned) Company(Target target, query (Target other) others, mut Heard heard)
+local event(Shown) Company(Target target, query (Target other) others, mut Heard heard)
 {
     if (target.id != 1) return;
     foreach (var row in others) heard.company |= 1 << row.other.id;
 }
 
-local event(verified Spawned) SureCompany(Target target, query (Target other) others, mut Heard heard)
+local event(verified Shown) SureCompany(Target target, query (Target other) others, mut Heard heard)
 {
     if (target.id != 1) return;
     foreach (var row in others) heard.sureCompany |= 1 << row.other.id;
 }
 
 // It takes nothing of the entity, so it runs for every one of the match's
-local event(Spawned) CountEntities(Guard guard, mut Heard heard)
+local event(Shown) CountEntities(mut Heard heard)
 {
     heard.entities += 1;
+}
+
+// Genuine event-time state stays separate from presentation availability.
+local event(Spawned) SpawnWhileShielded(Guard guard, mut Heard heard)
+{
     if (guard.up) heard.shielded += 1;
 }
 
@@ -210,7 +215,7 @@ local event(verified Rang) SureRang(mut Heard heard)
     heard.sureRang += 1;
 }
 
-local event(verified Spawned) SureSpawned(Target target, mut Heard heard)
+local event(verified Shown) SureSpawned(Target target, mut Heard heard)
 {
     heard.sureSpawned |= 1 << target.id;
 }

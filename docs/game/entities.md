@@ -134,6 +134,8 @@ After those changes apply, the child's world position is `(12, 0, 0)`. `SetParen
 
 Read `world.LocalToWorld(entity)` for its composed `float4x4`, and `world.Parent(entity)` for its parent's handle. They read the latest stored state, as other `World` methods do. An entity without a Transform contributes identity; a missing entity gives identity or a null parent.
 
+With [state visibility](./visibility.md#spatial-parents), a hidden spatial parent does not hide its public child. The projected hierarchy cuts private links and preserves placement only for subtrees containing permitted `Transform` state; a parent can therefore read as null on a client.
+
 Destroying a parent destroys its descendants, children before their parent. A cycle, a dead handle or a parent from the other world is rejected. Runtime rejections print their reason and leave the hierarchy unchanged. Preserving world placement requires a Transform on the child and an invertible parent transform. Nonuniform scales combined with rotation can create shear; three local TRS values cannot preserve that matrix exactly.
 
 The same `Transform` works on local entities: use `local Spawn(Transform)` and `local Transform transform` in a view's parameters. `Entity` and `LocalEntity` still prevent crossing the match/local boundary. Loaded scene entities remain independent roots. Reparenting ordinary entities into a different scene transfers their descendants into that scene; detaching retains scene ownership.

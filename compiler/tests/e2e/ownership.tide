@@ -11,7 +11,7 @@ component Flag
     int color;
 }
 
-component Hidden { }
+component Concealed { }
 
 singleton Trick
 {
@@ -41,10 +41,10 @@ system Drift(mut Body body)
     body.position.y += 1;
 }
 
-// Hidden is a tag that's added, so it's sparse: a row's filter, like ownership.
+// Concealed is a tag that's added, so it's sparse: a row's filter, like ownership.
 system Hide(Trick trick, Owner owner)
 {
-    if (trick.hide && owner.player == PlayerID(1)) this.Add(Hidden);
+    if (trick.hide && owner.player == PlayerID(1)) this.Add(Concealed);
 }
 
 view Mine(Body body, with ownership)
@@ -71,7 +71,7 @@ view Named(Body body, Owner owner, with ownership)
 }
 
 // Beside a sparse component's filter
-view Shown(Body body, with ownership, without Hidden)
+view DisplayOwned(Body body, with ownership, without Concealed)
 {
     Draw.Line(body.position, body.position + float2(1, 0), Color.green);
 }

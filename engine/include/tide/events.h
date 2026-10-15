@@ -7,9 +7,9 @@
 
 // What happened in a match, for this machine's local handlers to hear
 // (`local event(Hit hit) ShowHit(...)`, docs/spec.md, Events): the events a
-// tick sent, recorded beside the world and never in it. Nothing here is
-// hashed, packed or sent, and a machine with nobody to show a match to keeps
-// none of it.
+// tick sent, recorded beside the world and never hashed or packed with it.
+// Visibility sessions can send validated, recipient-filtered genuine
+// lifecycle records separately. Ordinary custom-event logs stay local.
 //
 // A tick records what local handlers take into a log (tide_event_log), when
 // it's given one: each event as its turn left it, with what its handlers read
@@ -30,6 +30,12 @@
 // In `wants`, beside those: some handler of the event reads rows its tick
 // recorded (TIDE_HEARD_ROWS)
 #define TIDE_HEARD_READS_ROWS 4u
+// Availability has no game-authored payload. Replay may discover additional
+// listeners for the same entity, which must be delivered individually.
+#define TIDE_HEARD_AVAILABILITY 8u
+// Genuine match Spawned/Destroyed, whose authoritative state can be journaled
+// separately from the client's guessed tick.
+#define TIDE_HEARD_LIFECYCLE 16u
 
 // Not an event, in `event`: rows a tick recorded for its events' handlers,
 // like the entities a handler's query goes through (`query (Body body, with
@@ -38,6 +44,10 @@
 // that reads rows goes, they go too. `handlers` says which rows, by the
 // game's numbering, `same` how many, and they follow the tide_heard.
 #define TIDE_HEARD_ROWS 0xFFFFu
+// Private authoritative visibility metadata: an entity was permitted at its
+// genuine destruction. No payload or listener bits. A local delivery log may
+// carry it for generated frame-availability reconciliation, never game handlers.
+#define TIDE_HEARD_DESTROYED_CAUSE 0xFFFEu
 
 // An event in a log. After it come the event's own value and what its handlers
 // read, as the game's generated code lays them out.
@@ -129,6 +139,7 @@ typedef struct tide_heard_mark {
     uint32_t born;
     uint16_t event;
     bool met; // The tick's run so far sent it again
+    uint64_t handlers; // Availability listeners already delivered for this identity
 } tide_heard_mark;
 
 typedef struct tide_heard_tick {

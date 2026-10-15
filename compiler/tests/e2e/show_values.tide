@@ -106,7 +106,7 @@ system ShowCard(Card card, mut Results r)
     Expect(r, $"{card}" == "Card { title = \"Ace\", tags = [\"red\", \"\"] }");
 }
 
-event(Hit hit) Shown(mut Results r)
+event(Hit hit) Displayed(mut Results r)
 {
     Expect(r, $"{hit}" == "Hit { by = Entity(none), damage = 5 }");
 }

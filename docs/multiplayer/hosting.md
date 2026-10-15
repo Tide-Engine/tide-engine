@@ -14,7 +14,7 @@ selected initial providers.
 
 ```sh
 tide login
-tide deploy --project my-game
+tide deploy
 ```
 
 Approve the CLI login in your browser after checking its code. Hosting accounts
@@ -24,16 +24,27 @@ uploads both. It returns a playable URL, server endpoint and dashboard link.
 The service receives built artifacts; it does not compile uploaded source.
 
 ```sh
-tide deploy --project my-game --server-only
+tide deploy --server-only
 tide deploy --bundle-only
 tide logout
 ```
 
 `--server-only` omits the hosted web client. `--bundle-only` creates the local
 deployment bundle without logging in or uploading. The default folder is the
-current one; another folder can follow `deploy`. An existing project can be
-selected by name or ID. A missing name creates a Small project with a maximum
-of one active match; use the dashboard to choose another configuration first.
+current one; another folder can follow `deploy`.
+
+On the first deploy, Tide uses a lowercase, hyphenated version of the folder
+name to create or reuse a Small project with one maximum active match. No
+dashboard setup is needed. It saves the project ID and service origin in
+`tide.deploy.json` in your game folder. Future deploys use this link, even if
+you rename the folder. You can commit it to keep the target with the game;
+it contains no credentials and grants no access to the project.
+
+Use `tide deploy --project <name-or-id>` to select a different project and
+update the link. A missing name creates a project; an unavailable ID fails.
+An invalid link, a link to a different service or a project your account cannot
+access requires an explicit selection. The dashboard still lets you create a
+project with custom settings before deploying.
 
 `TIDE_HOSTING_URL` selects another configured service origin. The operator setup
 is documented in the repository's `hosting/README.md`. A normal developer CLI
@@ -78,6 +89,11 @@ WASM memory, sampled CPU use, logs, saves, incidents and billing history. At low
 credit it warns; exhaustion saves and suspends even long-lived worlds. Capacity,
 bandwidth, storage and operator limits also apply. Included allowances are hard
 limits, rather than automatic paid overages.
+
+Select **Add credit** beside your balance, choose an amount and continue to
+Stripe Checkout. Credit appears after payment is confirmed. Sandbox payments
+are labeled and charge no real money. If payments are unavailable, the panel
+explains this instead of showing an empty amount selector.
 
 Long-lived worlds save periodically and recover on the same release and match
 ID after a worker or host restart. Recovery has bounded retries and reports the

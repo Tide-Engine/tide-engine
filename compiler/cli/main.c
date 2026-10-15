@@ -79,7 +79,8 @@ static void usage(void)
            TIDE_VERSION);
     // In two parts: C promises a string literal of 4095 characters only
     printf("dedicated servers:\n"
-           "  deploy --project <name> selects a hosting project; --bundle-only builds without uploading\n"
+           "  deploy creates or reuses a folder-named project and saves tide.deploy.json\n"
+           "  deploy --project <name-or-id> changes the target; --bundle-only builds without uploading\n"
            "  --server             run/build a native headless server, hosting many matches in one process\n"
            "  --strip-server-assets also select --server; opt custom C into simulation asset pruning\n"
            "  --anonymous          run --server: allow clients to create and join matches without authentication\n"

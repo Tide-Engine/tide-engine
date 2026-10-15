@@ -299,7 +299,7 @@ float3 Unfold3(Color stored)
     return c / (float3(1) - c);
 }
 
-Color Shown(float3 light, bool packed)
+Color Displayed(float3 light, bool packed)
 {
     float3 c = packed ? Fold3(light) : light;
     return Color(c.x, c.y, c.z, 1);
@@ -650,7 +650,7 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
         // A lamp: its tube's light where it burns, red for one that's red, a grey sheet where it's dead or out.
         float3 light = BulbAt(day.bulbs, day.layout, LampCell(p.xz, day.layout)).light * sight.lamps;
         float3 tube = float3(0.05, 0.05, 0.045) * (1 - Math.Saturate(Math.Max(light.x, Math.Max(light.y, light.z)))) + light * 3.4;
-        color = Shown(Math.Lerp(tube, sight.fogColor, 1 - Math.Exp(-far * sight.fog)), sight.packed);
+        color = Displayed(Math.Lerp(tube, sight.fogColor, 1 - Math.Exp(-far * sight.fog)), sight.packed);
         return;
     }
 
@@ -672,7 +672,7 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
         {
             mut float3 roof = red * (0.5 + Math.Saturate(thick + 0.4) * 1.3);
             roof = Math.Lerp(roof, body * 0.24, 1 - Math.Exp(-far * 0.5));
-            color = Shown(roof, sight.packed);
+            color = Displayed(roof, sight.packed);
             return;
         }
         float3 wave = Math.Normalize(float3((b + c * 0.6) * 0.16, 1, (a - c * 0.6) * 0.16));
@@ -690,7 +690,7 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
         graze = 0.05 + graze * graze * graze * 0.85;
         mut float3 wet = red * (float3(0.25) + Lamps(day.bulbs, day.layout, p, float3(0, 1, 0)) * (sight.lamps * 1.4)) + glint * (graze * 2.2);
         wet = Math.Lerp(wet, sight.fogColor, 1 - Math.Exp(-far * sight.fog));
-        color = Shown(wet, sight.packed);
+        color = Displayed(wet, sight.packed);
         return;
     }
     mut float3 n = flat;
@@ -728,7 +728,7 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
     mut float3 lit = Lit(paint, p, n, shade, fixture.gloss, fixture.kind > 0.5, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, reaches);
     lit = Math.Lerp(lit, paint * (0.5 + fixture.luminous * 2.3), Math.Saturate(fixture.luminous));
     lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-far * sight.fog));
-    color = Shown(lit, sight.packed);
+    color = Displayed(lit, sight.packed);
 }
 
 // An operator: the model's skin in the room's light.
@@ -742,7 +742,7 @@ frag Figure(StoneVertex vertex, Texture skin, Instance instance, Sight sight, Da
     float3 n = instance.Normal(vertex.normal);
     mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight));
     lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-Math.Distance(sight.eye, p) * sight.fog));
-    color = Shown(lit, sight.packed);
+    color = Displayed(lit, sight.packed);
 }
 
 // Dust that only shows where a lamp finds it.
@@ -863,7 +863,7 @@ frag ThroughAir(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, 
     else if (aperture.end == 3) depth = lens.depth3.Sample(uv);
     view += Beyond(day.depth, day.toSun, day.bulbs, day.layout, aperture, depth, this.world, uv, this.position);
     if (aperture.submerged) view = float3(0.35, 0.001, 0.002) * (0.75 + Math.Simplex(at * 2 + float2(aperture.phase * .1)) * .1);
-    color = Shown(Rimmed(view, aperture.rim, at, aperture.phase, distance, aperture.size), aperture.packed);
+    color = Displayed(Rimmed(view, aperture.rim, at, aperture.phase, distance, aperture.size), aperture.packed);
 }
 
 // A fold seen by a fold's own camera, with the air beyond that one too. It
@@ -888,7 +888,7 @@ frag ThroughFar(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, 
         view += Beyond(day.depth, day.toSun, day.bulbs, day.layout, aperture, depth, this.world, uv, this.position);
     }
     if (aperture.submerged) view = float3(0.35, 0.001, 0.002) * (0.75 + Math.Simplex(at * 2 + float2(aperture.phase * .1)) * .1);
-    color = Shown(Rimmed(view, aperture.rim, at, aperture.phase, distance, aperture.size), aperture.packed);
+    color = Displayed(Rimmed(view, aperture.rim, at, aperture.phase, distance, aperture.size), aperture.packed);
 }
 
 // The last fold a camera follows: light on a dark sheet.
@@ -905,7 +905,7 @@ frag LastFold(Vertex3 vertex, Aperture aperture, out Color color)
     mut float3 view = float3(0.012, 0.03, 0.04) + rim * (0.06 + 0.05 * flow) * Math.Exp(distance * 3);
     view = Math.Lerp(view, rim * 3.4, band);
     if (aperture.submerged) view = float3(0.27, 0.001, 0.002);
-    color = Shown(view, aperture.packed);
+    color = Displayed(view, aperture.packed);
 }
 
 // A fold's light spilling onto the wall around it.

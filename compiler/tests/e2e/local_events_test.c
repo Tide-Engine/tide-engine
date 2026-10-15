@@ -36,7 +36,7 @@ static void check_rang(const Heard *heard)
 // A host with one world and no server: what it ticks is all there is, so a
 // tick's events are heard by both kinds of handler, at the next frame. The
 // world goes the same with a log as without. What the world started with was
-// spawned in no tick: the host says so itself (tide_game.hear_arrived).
+// available before any tick: the host records Shown itself (tide_game.hear_arrived).
 TIDE_TEST(local_events_plain_host)
 {
     static tide_world world, quiet, before;
@@ -47,7 +47,7 @@ TIDE_TEST(local_events_plain_host)
     tide_local_init(&local);
     TIDE_REQUIRE(tide_game_api.hear_arrived != NULL);
     tide_game_api.hear_arrived(&world, NULL, &events);
-    // The scene and its three targets, each once for all its handlers, then the rows their queries read
+    // The scene and its three targets, Shown once for each handler, then their query rows
     TIDE_CHECK(events.count == 5);
     TIDE_CHECK(tide_world_hash(&world) == tide_world_hash(&quiet));
     tide_local_events(&local, &events);
@@ -265,6 +265,7 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
     TIDE_CHECK(wrong_destroy_frames > 0);
     TIDE_CHECK(heard->destroyed == 1 << 3 && heard->sureDestroyed == 0);
     TIDE_CHECK(!tide_entity_is_null(target(tide_client_world(clients[0]), 3)));
+    TIDE_CHECK(heard->entities == 7); // The corrected predicted removal restores availability once.
 
     // Past tick 151. The shield was up at 150, so only the tick as the server
     // ran it sent Glanced: heard late, once, with what its turn left. The hit
@@ -293,7 +294,7 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
     // ...whose handlers' queries go through that world, for both kinds of handler
     TIDE_CHECK(late.Heard.company == 0xE && late.Heard.sureCompany == 0xE && heard->company == 0xE && heard->sureCompany == 0xE);
     // A machine hears every join from its own on: the world it was sent is from before it
-    TIDE_CHECK(heard->joined == 3 && heard->entities == 7 && late.Heard.joined == 1);
+    TIDE_CHECK(heard->joined == 3 && heard->entities == 8 && late.Heard.joined == 1);
 
     // Past tick 241. Target 2 went at 200, for good. At 241 the first player's
     // machine predicted target 4, and the server had target 5 there, on the
@@ -350,7 +351,7 @@ TIDE_TEST(local_events_a_world_sent_again_says_what_is_new)
     const Heard *heard = &local.Heard;
     const tide_world *match = tide_server_world(server);
     TIDE_REQUIRE(match->Time.tick > 160 && match->Time.tick < 199);
-    TIDE_CHECK(heard->spawned == 0xE && heard->sureSpawned == 0xE && heard->entities == 6);
+    TIDE_CHECK(heard->spawned == 0xE && heard->sureSpawned == 0xE && heard->entities == 7);
     const Heard before = *heard;
 
     // Its machine stops: the server goes past target 2's end, at 200, and target 5's spawn, at 241

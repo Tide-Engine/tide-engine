@@ -1241,7 +1241,7 @@ bool builtin_owner(const str name)
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Audio")
-        || str_eq_c(name, "Json")
+        || str_eq_c(name, "Json") || str_eq_c(name, "Audience")
         || builtin_type_named(name, &ignored);
 }
 

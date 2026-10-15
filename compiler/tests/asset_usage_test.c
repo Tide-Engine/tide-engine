@@ -69,6 +69,125 @@ TIDE_TEST(simulation_identity_tracks_match_helpers_but_not_view_helpers_or_local
     }
 }
 
+TIDE_TEST(simulation_identity_preserves_recipient_listener_wire_contract)
+{
+    static const char prefix[] =
+        "component Marker { int value; local int color = 1; } component Gate { int value; } "
+        "singleton State { int value; } local singleton Fx { int count; } "
+        "local singleton OtherFx { float count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate, Visibility); } ";
+    static const char *const listeners[] = {
+        "int Shade() { return 1; } local event(Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value + Shade(); }",
+        "int Shade() { return 99; } local event(Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value * 2 + Shade(); }",
+        "int Shade() { return 1; } local event(Spawned) Show(Marker m, mut OtherFx fx) { fx.count += m.value + Shade(); }",
+        "int Shade() { return 1; } local event(Spawned) Show(mut Marker m, mut Fx fx) { m.color += 1; fx.count += m.value + Shade(); }",
+        "local event(Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value; } "
+            "local event(Spawned) Extra(Marker m, mut Fx fx) { fx.count += m.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, with Gate) { fx.count += m.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, without Gate) { fx.count += m.value; }",
+        "local event(verified Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value; }",
+        "local event(Spawned) Show(State state, mut Fx fx, with Marker) { fx.count += state.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, query (Marker other) rows) "
+            "{ fx.count += m.value; foreach (var row in rows) fx.count += row.other.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, query (Marker other, without Gate) rows) "
+            "{ fx.count += m.value; foreach (var row in rows) fx.count += row.other.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, query (with Marker, Gate gate) rows) "
+            "{ fx.count += m.value; foreach (var row in rows) fx.count += row.gate.value; }"
+    };
+    uint8_t first[32], with_filter[32], query[32];
+    for (int i = 0; i < (int)(sizeof listeners / sizeof listeners[0]); i++) {
+        char source[4096];
+        snprintf(source, sizeof source, "%s%s", prefix, listeners[i]);
+        program *p = checked(source);
+        TIDE_REQUIRE(p && p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK((memcmp(first, id, sizeof first) == 0) == (i == 1 || i == 2 || i == 3));
+        if (i == 5) memcpy(with_filter, id, sizeof with_filter);
+        if (i == 6) TIDE_CHECK(memcmp(with_filter, id, sizeof with_filter) != 0);
+        if (i == 9) memcpy(query, id, sizeof query);
+        if (i > 9) TIDE_CHECK(memcmp(query, id, sizeof query) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_includes_effective_sparse_wire_storage_from_unused_helpers)
+{
+    static const char prefix[] =
+        "component Marker { int value; } component Unused { List<int> values; } "
+        "component Other { long value; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Unused, Other, Visibility); } ";
+    static const char *const helpers[] = {
+        "void NeverCalled(mut Visibility v) { v.Set<Unused>(Audience.None); }",
+        "",
+        "void NeverCalled(mut Visibility v) { v.Set<Other>(Audience.None); }",
+        "void NeverCalled(mut Visibility v) { v.Reset<Unused>(); }"
+    };
+    uint8_t first[32], dense[32];
+    for (int i = 0; i < 4; i++) {
+        char source[4096];
+        snprintf(source, sizeof source, "%s%s", prefix, helpers[i]);
+        program *p = checked(source);
+        TIDE_REQUIRE(p && p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK((memcmp(first, id, sizeof first) == 0) == (i == 3));
+        if (i == 1) memcpy(dense, id, sizeof dense);
+        if (i == 2) TIDE_CHECK(memcmp(dense, id, sizeof dense) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_preserves_global_listener_query_record_order)
+{
+    static const char prefix[] =
+        "component Marker { int value; } component Gate { int value; } "
+        "local singleton Fx { int count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate, Visibility); } ";
+    static const char appeared[] =
+        "local event(Spawned) Show(mut Fx fx, query (Marker marker) rows) "
+        "{ foreach (var row in rows) fx.count += row.marker.value; } ";
+    static const char destroyed[] =
+        "local event(Destroyed) Hide(mut Fx fx, query (Gate gate) rows) "
+        "{ foreach (var row in rows) fx.count += row.gate.value; } ";
+    uint8_t first[32];
+    for (int reversed = 0; reversed < 2; reversed++) {
+        char source[4096];
+        snprintf(source, sizeof source, "%s%s%s", prefix, reversed ? destroyed : appeared, reversed ? appeared : destroyed);
+        program *p = checked(source);
+        TIDE_REQUIRE(p && p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!reversed) memcpy(first, id, sizeof first);
+        else TIDE_CHECK(memcmp(first, id, sizeof first) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_keeps_local_only_listeners_outside_nonvisibility_wire)
+{
+    static const char *const sources[] = {
+        "component Marker { int value; } component Gate { int value; } local singleton Fx { int count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate); } "
+        "local event(Spawned) Show(Marker marker, mut Fx fx) { fx.count += marker.value; }",
+        "component Marker { int value; } component Gate { int value; } local singleton Fx { int count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate); } "
+        "local event(verified Spawned) Show(Marker marker, mut Fx fx, without Gate) { fx.count += marker.value * 2; }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 2; i++) {
+        program *p = checked(sources[i]);
+        TIDE_REQUIRE(p && !p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK(memcmp(first, id, sizeof first) == 0);
+        done();
+    }
+}
+
 TIDE_TEST(simulation_identity_preserves_ordered_edges_to_shared_expressions)
 {
     static const char *const sources[] = {

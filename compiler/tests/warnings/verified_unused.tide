@@ -2,12 +2,12 @@
 // expect: 'confirmed' is never used
 // expect: to only require the component in the confirmed world, write 'with verified Health'
 component Health { int value; }
-local singleton Shown { int value; }
+local singleton Displayed { int value; }
 scene Main { }
 
 event(Spawned) Setup(with Main) { Spawn(Health); }
 
-view Bar(Health health, verified Health confirmed, mut Shown shown)
+view Bar(Health health, verified Health confirmed, mut Displayed shown)
 {
     shown.value = health.value;
 }
