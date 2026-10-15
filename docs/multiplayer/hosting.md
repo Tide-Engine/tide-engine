@@ -23,6 +23,10 @@ server from the same resolved game, checks their generated simulation IDs and
 uploads both. It returns a playable URL, server endpoint and dashboard link.
 The service receives built artifacts; it does not compile uploaded source.
 
+The console shows the selectable **Game URL** on each project with a web client,
+and a **Match URL** for joining a specific running match. Click a URL field to
+select it for copying. Server-only deployments have no hosted game URL.
+
 ```sh
 tide deploy --server-only
 tide deploy --bundle-only
@@ -54,8 +58,8 @@ credential expires after 30 days and can be revoked with `tide logout`.
 
 In your console project's **CI deploy tokens**, create a named token and copy it
 when shown. Store it as a CI secret named `TIDE_HOSTING_TOKEN`. Tokens belong to
-one existing project, expire after 90 days by default (30 days or one year are
-also available), and can be revoked individually in the console. Only their
+one existing project, expire after 90 days by default (30 days, one year or
+**Never expires** are also available), and can be revoked individually. Only their
 hashes are stored by the service. Creating a new token leaves existing tokens
 working so you can rotate your CI secret before revoking the old token.
 

@@ -48,7 +48,7 @@ export async function createService(config, options = {}) {
         incidents: store.incidents(account.id), projects: store.projects(account.id).map(urls),
         releases: store.db.prepare('SELECT r.project,r.id,r.created,r.bytes FROM releases r JOIN projects p ON p.id=r.project WHERE p.account=? ORDER BY r.created DESC').all(account.id),
         credentials: store.db.prepare('SELECT s.hash,s.project,t.expires FROM service_tokens s JOIN tokens t ON t.hash=s.hash WHERE t.account=? AND t.expires>?').all(account.id, store.now()),
-        deployTokens: store.db.prepare('SELECT d.hash,d.project,d.name,t.expires FROM deploy_tokens d JOIN tokens t ON t.hash=d.hash WHERE t.account=? AND t.expires>?').all(account.id, store.now()),
+        deployTokens: store.db.prepare('SELECT d.hash,d.project,d.name,NULLIF(t.expires,0) AS expires FROM deploy_tokens d JOIN tokens t ON t.hash=d.hash WHERE t.account=? AND (t.expires=0 OR t.expires>?)').all(account.id, store.now()),
         matches: store.matches(account.id).map(safeMatch),
         ledger: store.db.prepare('SELECT amount,reference,created FROM ledger WHERE account=? ORDER BY id DESC LIMIT 50').all(account.id) });
     const security = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -79,8 +79,13 @@ export async function createService(config, options = {}) {
                 const charge = config.presets[project.preset].rate * config.leaseSeconds;
                 const paid = store.db.prepare(`SELECT 1 FROM matches WHERE project=? AND paid_until>?
                     AND state IN ('starting','running','recovering') LIMIT 1`).get(project.id, store.now());
-                requireValue(paid || (charge > 0 && store.billing.state(project.account).balance >= charge),
-                    402, 'This game needs prepaid hosting credit before it can be played.');
+                if (!paid) {
+                    const billing = store.billing.state(project.account);
+                    requireValue(billing.active && billing.balance > 0, 402, 'This game needs an active hosting plan with available credit before it can be played.');
+                    requireValue(charge > 0, 503, 'Hosting prices are not configured. Please contact the hosting operator.');
+                    requireValue(billing.balance >= charge, 402, 'This game has insufficient hosting credit to start a match.');
+                    requireValue(config.accepting && store.allocationsEnabled(), 503, 'New match creation is temporarily disabled.');
+                }
                 const bundle = await bundles.get(match?.release || project.release), client = bundle.files.get('client.html');
                 requireValue(client, 404, 'This deployment hosts only the server.');
                 store.reserveTransfer(project.account, client.size, config);

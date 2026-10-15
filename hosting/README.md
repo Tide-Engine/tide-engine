@@ -98,12 +98,14 @@ Run `tide deploy` with the committed `tide.deploy.json`, or pass
 `--project <project-id>`. Browser login is unnecessary. Deploy tokens can only
 upload releases for that existing project; they cannot create projects, control
 matches, access billing or manage credentials. They expire after 90 days by
-default, with 30/365-day choices, and are individually revocable. Only hashes
+default, with 30/365-day or **Never expires** choices, and are individually revocable. Only hashes
 are stored; the secret is shown once. Rotation keeps old tokens valid until
 explicit revocation or expiry. Twenty active deploy tokens per account are
 allowed, independently of runtime keys and developer sessions.
 `POST /api/projects/<id>/deploy-tokens` takes `{ "name": "GitHub Actions", "days": 90 }`
-and returns `{ token, expires, project }`. `DELETE /api/projects/<id>/deploy-tokens/<hash>`
+and returns `{ token, expires, project }`. Send `"days": null` for no expiry;
+the response and account listing then contain `"expires": null`.
+`DELETE /api/projects/<id>/deploy-tokens/<hash>`
 revokes it. Browser mutations require the existing Origin/CSRF checks; a normal
 CLI login can also manage these tokens. Deploy tokens get only
 `{ region, projects: [{ id, name }] }` from `GET /api/account`, never the full
@@ -113,7 +115,9 @@ Runtime credentials have an explicit limit of twenty per account. Repeated
 browser/CLI sign-ins rotate their own sessions without revoking backend keys.
 
 The dashboard controls capacity, lifetime, empty grace, client-requested
-creation, match suspension/end/resume, save downloads, release deletion, logs,
+creation and shows selectable Game URL/Match URL fields for hosted web clients.
+Server-only releases have no hosted game URL. It also controls
+match suspension/end/resume, save downloads, release deletion, logs,
 recovery activity and credit. CPU measurements are fractions of one core; WASM
 memory reports linear memory, excluding the surrounding service/runtime.
 

@@ -65,7 +65,7 @@
     async function createDeployToken(event, project) {
         event.preventDefault(); const form = event.currentTarget, values = new FormData(form);
         await run(async () => {
-            deployToken = await api(`/api/projects/${project.id}/deploy-tokens`, { name: values.get('name'), days: Number(values.get('days')) });
+            deployToken = await api(`/api/projects/${project.id}/deploy-tokens`, { name: values.get('name'), days: values.get('days') === 'never' ? null : Number(values.get('days')) });
             form.reset(); message = 'Deploy token created. Copy it now; it will only be shown once.';
         });
     }
@@ -149,20 +149,25 @@
                                 <p class="small muted">Upload builds for this project from CI. Save the token as a secret named <code>TIDE_HOSTING_TOKEN</code> and run <code>tide deploy --project {project.id}</code>.</p>
                                 <form aria-label="Create CI deploy token" onsubmit={event => createDeployToken(event, project)}>
                                     <label>Token name<input name="name" placeholder="GitHub Actions" required maxlength="64" autocomplete="off"></label>
-                                    <label>Expires after<select name="days"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="365">1 year</option></select></label>
+                                    <label>Expires after<select name="days"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="365">1 year</option><option value="never">Never expires</option></select></label>
                                     <button disabled={busy}>Create deploy token</button>
                                 </form>
                                 {#if deployToken?.project === project.id}
-                                    <p class="small">Shown once. Expires {time(deployToken.expires)}.</p>
+                                    <p class="small">Shown once. {deployToken.expires === null ? 'Never expires.' : `Expires ${time(deployToken.expires)}.`}</p>
                                     <label>Deploy token<textarea readonly value={deployToken.token} spellcheck="false" rows="2"></textarea></label>
                                     <button type="button" onclick={() => deployToken = null}>Hide token</button>
                                 {/if}
                                 {#each account.deployTokens.filter(k => k.project === project.id) as key (key.hash)}
-                                    <p class="small">{key.name} · expires {time(key.expires)} · {key.hash.slice(0, 8)}</p>
+                                    <p class="small">{key.name} · {key.expires === null ? 'Never expires' : `expires ${time(key.expires)}`} · {key.hash.slice(0, 8)}</p>
                                     {@render action(`Revoke deploy token ${key.name}`, () => revokeDeployToken(project, key), true)}
                                 {/each}
                             </details>
-                            {#if project.release}<p>Release {project.release.slice(0,10)}</p><div class="actions">
+                            {#if project.release}<p>Release {project.release.slice(0,10)}</p>
+                                {#if project.hasClient}
+                                    <label>Game URL<input class="game-url" readonly value={project.playUrl} onclick={event => event.currentTarget.select()}></label>
+                                    {#if !project.clientCreate}<p>Client match creation is restricted. Share a running match's URL to join it.</p>{/if}
+                                {/if}
+                            <div class="actions">
                                 {#if project.hasClient && project.clientCreate}<a class="button" href={project.playUrl} target="_blank" rel="noopener">Open game ↗</a>{/if}
                                 {@render action('Start a match', () => startMatch(project))}
                             </div>
@@ -189,6 +194,9 @@ tide deploy</code></pre><p class="small muted">Your first deploy creates a proje
                             <p>{match.players} players · Release {match.release.slice(0,10)}</p>
                             {#if match.memoryBytes}<p>WASM memory {(match.memoryBytes / 1048576).toFixed(1)} MiB · {match.cpuFraction === null ? 'Measuring CPU…' : `CPU ${(match.cpuFraction * 100).toFixed(1)}% of one core`}</p>{/if}
                             {#if match.checkpoint_time}<p>Last completed save: {time(match.checkpoint_time)}</p>{/if}
+                            {#if project && match.hasClient && ['running','starting'].includes(match.state)}
+                                <label>Match URL<input class="match-url" readonly value={`${project.playUrl}?match=${match.id}`} onclick={event => event.currentTarget.select()}></label>
+                            {/if}
                             <div class="actions">
                                 {#if project && match.hasClient && ['running','starting'].includes(match.state)}<a class="button" href={`${project.playUrl}?match=${match.id}`} target="_blank" rel="noopener">Join match ↗</a>{/if}
                                 {#if ['running','starting','recovering'].includes(match.state)}

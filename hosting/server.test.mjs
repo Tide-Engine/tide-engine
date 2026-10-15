@@ -90,13 +90,15 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     const project = created.data;
     const deployPath = `/api/projects/${project.id}/deploy-tokens`;
     assert.equal((await call(deployPath, { method: 'POST', headers: browser, data: { name: 'CI' } })).status, 403);
-    const deployedKey = await call(deployPath, { method: 'POST', headers: authenticated, data: { name: 'GitHub Actions', days: 90 } });
+    const deployedKey = await call(deployPath, { method: 'POST', headers: authenticated, data: { name: 'GitHub Actions', days: null } });
     assert.equal(deployedKey.status, 201);
+    assert.equal(deployedKey.data.expires, null);
     const deployHeaders = { Authorization: `Bearer ${deployedKey.data.token}` };
     assert.deepEqual((await call('/api/account', { headers: deployHeaders })).data,
         { region: config.region, projects: [{ id: project.id, name: project.name }] });
     const tokenList = (await call('/api/account', { headers: browser })).data.deployTokens;
     assert.equal(tokenList[0].name, 'GitHub Actions');
+    assert.equal(tokenList[0].expires, null);
     assert.ok(!JSON.stringify(tokenList).includes(deployedKey.data.token));
     for (const path of ['/api/projects', '/api/billing/subscribe', '/api/billing/extra', '/api/checkout', '/api/device/approve',
         deployPath, `/api/projects/${project.id}/credentials`, `/api/projects/${project.id}/matches`, `/api/projects/${project.id}/policy`, '/api/matches/1/end']) {
@@ -172,6 +174,42 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
         headers: { Authorization: `Bearer ${otherToken.token}` } })).status, 404);
     assert.equal((await call('/api/logout', { method: 'POST', data: {}, headers: authenticated })).status, 200);
     assert.equal((await call('/api/account', { headers: browser })).status, 401);
+});
+
+test('monthly-only hosting credit serves games and configuration failures do not claim credit is missing', async t => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-hosting-monthly-game-'));
+    const config = configuration({ TIDE_HOSTING_DATA: folder, PORT: '0', TIDE_HOSTING_ACCEPTING: '0' });
+    const rooms = { ensure: async () => {}, endpoint: () => 'ABC123/0', close: async () => {} };
+    const service = await createService(config, { rooms });
+    t.after(async () => { await service.close(); await rm(folder, { recursive: true, force: true }); });
+    const store = service.store; store.invite(1);
+    const account = store.signIn({ id: 1, login: 'monthly-player' });
+    const project = store.createProject(account.id, { name: 'game', region: config.region, preset: 'small', maximum: 1 }, config);
+    const raw = encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, {
+        'server.wasm': wasmFixture(), 'client.html': Buffer.from('<script>console.log("game")</script>') });
+    const bundle = await service.bundles.put(raw);
+    store.registerRelease(account.id, project.id, bundle, config);
+    store.billing.required = true;
+    const started = Date.now();
+    store.billing.grant(account.id, 'sub_fixture', 'in_fixture', started, started + 30 * 86400_000, 2_000_000_000);
+    assert.equal(store.account(account.id).balance, 0);
+    const { port } = await service.start();
+    const game = () => new Promise((accept, reject) => {
+        const req = request({ hostname: '127.0.0.1', port, path: `/g/${project.id}/`, headers: { Host: new URL(config.gamesOrigin).host } }, res => {
+            let text = ''; res.on('data', data => text += data); res.on('end', () => accept({ status: res.statusCode, text }));
+        }); req.on('error', reject); req.end();
+    });
+    const unpriced = await game(); assert.equal(unpriced.status, 503); assert.match(unpriced.text, /prices are not configured/);
+    config.presets.small.rate = 1000;
+    const disabled = await game(); assert.equal(disabled.status, 503); assert.match(disabled.text, /creation is temporarily disabled/);
+    config.accepting = true;
+    assert.equal((await game()).status, 200);
+    store.db.prepare('UPDATE allowances SET remaining=0 WHERE account=?').run(account.id);
+    assert.equal((await game()).status, 402);
+    store.db.prepare('UPDATE allowances SET remaining=1 WHERE account=?').run(account.id);
+    assert.equal((await game()).status, 402, 'A positive balance must still fund a lease.');
+    store.now = () => started + 31 * 86400_000;
+    assert.equal((await game()).status, 402, 'Expired monthly allowance cannot serve games.');
 });
 
 test('configured sandbox credit choices render on the server and start Checkout without granting credit', async t => {

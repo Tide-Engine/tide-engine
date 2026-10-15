@@ -22,14 +22,17 @@ kill_timeout = 45
   TIDE_HOSTING_RETENTION_DAYS = '7'
   TIDE_HOSTING_TRANSFER_BYTES = '1073741824'
   TIDE_RELAY = 'wss://relay.tide-engine.dev'
-  # Sandbox credit choices. Usage rates still require measurement before launch.
+  # Amounts and usage rates use the same billing path in Stripe test/live mode.
   # GitHub/Stripe credentials are supplied through Fly secrets.
   TIDE_HOSTING_TOPUPS = '500,1000,2500'
-  # Configurable sandbox subscription; live launch pricing is not selected.
+  # Monthly subscription configuration.
   TIDE_HOSTING_MONTHLY_AMOUNT = '2000'
   TIDE_STRIPE_MONTHLY_PRICE = 'price_1UQrw7EOEguEtdxR8VTaPR66'
   TIDE_STRIPE_PORTAL_CONFIG = 'bpc_1UQrw7EOEguEtdxRj71OCIMM'
-  TIDE_HOSTING_ACCEPTING = '0'
+  # Integer millionths of a minor currency unit per allocated second.
+  TIDE_HOSTING_SMALL_RATE = '1000'
+  TIDE_HOSTING_STANDARD_RATE = '2000'
+  TIDE_HOSTING_ACCEPTING = '1'
 
 [[mounts]]
   source = 'hosting_data'

@@ -147,13 +147,19 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         }, 'The reloaded dashboard did not hydrate.');
         await evaluate(`document.querySelector('form[aria-label="Create CI deploy token"]').closest('details').open = true`);
         await until(async () => {
-            await evaluate(`(() => { const f = document.querySelector('form[aria-label="Create CI deploy token"]'); f.elements.name.value = 'Browser CI'; f.querySelector('button').click(); })()`);
+            await evaluate(`(() => { const f = document.querySelector('form[aria-label="Create CI deploy token"]'); f.elements.name.value = 'Browser CI'; f.elements.days.value = 'never'; f.querySelector('button').click(); })()`);
             return store.db.prepare('SELECT COUNT(*) AS n FROM deploy_tokens').get().n === 1;
         }, 'The deploy-token form did not create a credential.');
         await until(() => evaluate('!!document.querySelector("textarea[readonly]")?.value'), 'The new deploy token was not shown once.');
         const issued = await evaluate('document.querySelector("textarea[readonly]").value');
         const identity = store.authenticate(issued, 'deploy');
         assert.equal(identity.id, account.id);
+        assert.equal(store.db.prepare('SELECT expires FROM tokens WHERE hash=?').get(identity.token_hash).expires, 0);
+        assert.equal(await evaluate(`document.querySelector('form[aria-label="Create CI deploy token"]').closest('details').textContent.includes('Never expires')`), true);
+        assert.equal(await evaluate('document.querySelector(".game-url").value'), `${games}/g/${project.id}/`);
+        assert.match(await evaluate('document.querySelector(".match-url").value'), new RegExp(`/g/${project.id}/\\?match=\\d+$`));
+        await evaluate('document.querySelector(".game-url").click()');
+        assert.equal(await evaluate('document.querySelector(".game-url").selectionEnd'), `${games}/g/${project.id}/`.length);
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Hide token').click()`);
         assert.equal(await evaluate('!!document.querySelector("textarea[readonly]")'), false);
