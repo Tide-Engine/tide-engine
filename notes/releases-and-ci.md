@@ -1,5 +1,62 @@
 # Releases, installing and CI
 
+## Nightly package/test fixture corrections (2026-10-15)
+
+Owner-requested run `38761765659` at ea0ad363 completed with four failing
+checks: Linux/macOS package cache comparisons and Windows native/MinGW
+dedicated-server harness shutdown. Windows packaging, Linux native/sanitizers,
+all three web suites, macOS native, Docs deployment and JetBrains verification
+passed. The aggregate Build jobs failed/cancelled and Release was skipped;
+no nightly was published. The two underlying fixture corrections and their
+reproductions are in cli-and-packages.md and dedicated-servers.md. No workflow,
+publication gate, client verification assertion or timeout was removed.
+
+Local full native debug passes all 2,342 tests, including GPU validation and
+both transports (412.07 seconds, Node 24.16.0/Clang 23.1.2). Full web debug
+passes all 2,255 tests, including WebGL/WebGPU (269.88 seconds). The final
+server harness passes its focused transport rerun too.
+
+Merged the current dev work, including visibility and folder deployment links;
+the only conflict was adjacent CLI notes, both retained. The merged full native
+debug suite passes all 2,359 tests (119.78 seconds), and full web debug passes
+all 2,272 (282.54 seconds), including WebGL/WebGPU. The refreshed installed
+CLI also passes the complete native/web cache, stripping, failure-recovery,
+debug/release web-watch and bounded dedicated-server integration cases.
+
+Fresh requested run `38767273771` at a7aae14c found a separate macOS package
+failure before the cache checks: the newer runner image combines standalone
+CLT 27 with default Xcode 26.6, exposing hardcoded SDK discovery inconsistent
+with Apple's selected linker. The fix, native cross-platform discovery fixture
+and remaining actual-Mac validation are in cli-and-packages.md, Selected Apple
+SDK. This changes the CLI's automatic SDK lookup, not the workflow or its gates.
+Local validation after that correction passes all 2,360 native debug and 2,272
+web debug CTests, plus the discovery regression on Windows/Linux. The old code
+fails that regression. Actual Apple linking remains the next package run's gate.
+
+Run `38768886333` confirms the Apple fix on the same newer macOS image:
+all package smoke/C++/cache/watch checks pass, including both repaired-build
+comparisons. Windows native instead failed only tide_cli_installers: the
+partial PowerShell warm-up took 10.2 seconds, but the first timed case still
+spent 18.5 seconds between its release-list return and first mock download,
+using only 0.125 seconds of CPU in that interval. It hit the unchanged
+30-second guard after both mock downloads. The exact assembly/file wait in
+release selection/scratch setup is not identified; the earlier assertion that
+the cmdlet-only warm-up covered all first-load costs was too broad.
+
+The preflight now executes the actual mocked fresh installer with the same
+release fixture, real checksum and isolated modules/TEMP, stopping before
+unpacking. It keeps its existing 300-second startup guard; all nine cases keep
+their 30-second guards and assertions. No real installation, PATH/profile or
+registry write is performed. A temporary one-time 31-second release-selection
+stall fails the old first case and is absorbed by the full preflight; the new
+nine cases then all pass. Ordinary and poisoned inherited module/cache-path
+runs pass all nine cases locally. A separate 31-second stall injected only
+after preflight still fails the first timed case at 30.02 seconds. Full native
+debug passes 2,360 tests (67.65 seconds), and web debug passes 2,272 (178.91
+seconds), including WebGL/WebGPU. The final preflight's release/request/cleanup
+assertions and all nine ordinary cases pass again; Node syntax and whitespace
+checks pass. No installer or workflow behavior changed.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate

@@ -166,11 +166,24 @@ void DressProp(mut Optics optics, Prop prop)
                 PropBox(optics, prop, float3(0, .18 + rung * .32, 0), float3(.5, .045, .055), metal);
             return;
         case PropKind.ExitSign:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.95, .32, .065), Color(.025, .26, .08), glow: .35);
+            // A three-by-five EXIT face. Local +x is the reader's left when
+            // looking at the prop's +z front, so the word runs towards -x.
+            for (int letter = 0; letter < 4; letter++)
+            {
+                int face = letter switch { 0 => 29391, 1 => 23213, 2 => 29847, _ => 9367 };
+                for (int row = 0; row < 5; row++)
+                    for (int column = 0; column < 3; column++)
+                        if ((face & (1 << (row * 3 + column))) != 0)
+                            PropBox(optics, prop, float3(.329 - (letter * 4 + column) * .047, .094 - row * .047, .05),
+                                    float3(.048, .048, .02), Color(.85, .95, .8), glow: .8);
+            }
+            return;
         case PropKind.Arrow:
         case PropKind.HandSign:
         case PropKind.EyeSign:
         case PropKind.FigureSign:
-            PropBox(optics, prop, float3(0, 0, 0), float3(.64, .4, .065), prop.kind == PropKind.ExitSign ? Color(.04, .3, .12) : dark, glow: .35);
+            PropBox(optics, prop, float3(0, 0, 0), float3(.64, .4, .065), dark, glow: .35);
             if (prop.kind == PropKind.EyeSign)
             {
                 PropBox(optics, prop, float3(0, 0, .044), float3(.36, .1, .025), pale, glow: .6);

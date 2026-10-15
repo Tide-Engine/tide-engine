@@ -99,15 +99,15 @@ static void operator_at(tide_entity entity, tide_float3 position, float yaw)
     check(tide_set_Operator(&world, entity, body), "test operator exists");
 }
 
-static void record(image *out)
+static void frame_for(const int active, const bool menu)
 {
     const tide_float2 screen = {WIDTH, HEIGHT};
     const tide_devices devices = {0};
-    local.Interface.open = false;
+    local.Interface.open = menu;
     local.Interface.looking = false;
     local.Interface.introduced = true;
-    local.Control.active = 0;
-    local.Control.started = true;
+    local.Control.active = active;
+    local.Control.started = !menu;
     local.Optics.warmed = 3; // Past the first frames, which are drawn with folds that aren't there
     tide_local_frame_time(&local, 0);
     tide_draw_reset(&draw);
@@ -115,6 +115,11 @@ static void record(image *out)
     tide_gui_begin(&gui, &devices, screen, tide_platform_measure_text);
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
+}
+
+static void record(image *out)
+{
+    frame_for(0, false);
 
     // Independently project the source aperture, for a yaw-zero camera.
     const Operator viewer = tide_get_Operator(&world, world.Arena.op0);
@@ -379,6 +384,278 @@ static void lamp_and_fog_checks(void)
     select_place(0);
 }
 
+// A fold is one opening in one face, not a hole through the back of the
+// cupboard. The receptive panel is only .8 m thick, within InFold's cut depth.
+static void portal_back_checks(void)
+{
+    select_place(2);
+    world.Arena.arrive = 2;
+    world.Watcher.state = Watching_Away;
+    for (int end = 0; end < 4; end++) world.Fold.ends.at[end] = (Portal){0};
+    operator_at(world.Arena.op1, (tide_float3){-10, 0, -6}, 0);
+    operator_at(world.Arena.op0, (tide_float3){10.8f, 0, 7.6f}, TIDE_PI_F);
+    cube_at((tide_float3){-5, .5f, -6});
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {10.8f, 1.55f, 6}, .face = {0, 0, -1}, .size = 1};
+    world.Fold.ends.at[1] = (Portal){.at = {-12, 1.55f, -3}, .face = {1, 0, 0}, .size = 1};
+    scene_samples = true;
+    image solid, rear, front, cargo;
+    record(&solid);
+    capture_scene("portal-rear-solid");
+    world.Fold.ends.at[1].open = true;
+    record(&rear);
+    capture_scene("portal-rear-linked");
+    printf("Portal rear changed samples: %d\n", changed(&solid, &rear));
+    check(changed(&solid, &rear) <= 4, "a linked fold preserves its thin wall's opaque rear face");
+
+    // Keep these samples inside the reverse of the aperture; the exposed side
+    // of the cupboard outside it may legitimately receive its front-side glow.
+    operator_at(world.Arena.op0, (tide_float3){10, 0, 7.6f}, tide_atan2_f(.8f, -.8f));
+    world.Fold.ends.at[1].open = false;
+    record(&solid);
+    capture_scene("portal-rear-oblique-solid");
+    world.Fold.ends.at[1].open = true;
+    record(&rear);
+    capture_scene("portal-rear-oblique");
+    printf("Oblique portal rear changed samples: %d\n", changed(&solid, &rear));
+    check(changed(&solid, &rear) <= 4, "an oblique rear view keeps the same opaque wall around its fold");
+
+    operator_at(world.Arena.op0, (tide_float3){10.8f, 0, 3.8f}, 0);
+    record(&front);
+    capture_scene("portal-front-empty");
+    cube_at((tide_float3){-9, 1.55f, -2.4f});
+    record(&cargo);
+    capture_scene("portal-front-cargo");
+    check(changed(&front, &cargo) >= 8, "the same fold still shows live geometry from its receptive front");
+    scene_samples = false;
+    select_place(0);
+}
+
+static void exit_sign_checks(void)
+{
+    select_place(2);
+    world.Arena.arrive = 2;
+    for (int end = 0; end < 4; end++) world.Fold.ends.at[end] = (Portal){0};
+    operator_at(world.Arena.op0, (tide_float3){6, 0, 4.2f}, 0);
+    Operator viewer = tide_get_Operator(&world, world.Arena.op0);
+    viewer.pitch = tide_atan2_f(4.2f - 1.55f, 7.45f - 4.2f);
+    check(tide_set_Operator(&world, world.Arena.op0, viewer), "look at the exit header from its approach");
+    scene_samples = true;
+    image sign, header;
+    record(&sign);
+    capture_scene("reception-exit-sign");
+    int signs = 0;
+    for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+        if (!tide_has_Prop(&world, entity)) continue;
+        Prop prop = tide_get_Prop(&world, entity);
+        if (prop.kind != PropKind_ExitSign || prop.chamber != world.Arena.chamber) continue;
+        prop.at.y -= 1000;
+        check(tide_set_Prop(&world, entity, prop), "hide exit plaque to compare its unobstructed header");
+        signs++;
+    }
+    check(signs == 1, "the Reception exit has one mounted sign");
+    local.Optics.dressed = -1;
+    record(&header);
+    printf("Visible exit sign samples: %d\n", changed(&sign, &header));
+    check(changed(&sign, &header) >= 8, "the exit plaque is visible from its room-side approach");
+#ifndef __wasm__
+    if (getenv("FOLDLINE_CAPTURES")) {
+        select_place(2);
+        world.Arena.arrive = 2;
+        world.Arena.signals = 1 << 1;
+        world.Arena.gate = 1;
+        operator_at(world.Arena.op0, (tide_float3){4, 0, 3.8f}, tide_atan2_f(2, 4.2f));
+        viewer = tide_get_Operator(&world, world.Arena.op0);
+        viewer.pitch = .16f;
+        check(tide_set_Operator(&world, world.Arena.op0, viewer), "frame the corrected exit approach for review");
+        record(&sign);
+        capture_scene("reception-exit-approach");
+    }
+#endif
+    scene_samples = false;
+    select_place(0);
+}
+
+enum { RETICLE_BAR, RETICLE_TOP, RETICLE_BOTTOM, RETICLE_PIP, RETICLE_RIM, RETICLE_PARTS };
+
+typedef struct reticle_image {
+    uint32_t pixels[2][RETICLE_PARTS];
+    bool valid[2];
+} reticle_image;
+
+// These samples deliberately cover the HUD pixels excluded from record()'s
+// scene grid. The fixture remains at 720p, where one UI dot is two pixels.
+static void record_reticle(reticle_image *out, const int active, const bool menu)
+{
+    tide_float2 points[2 * RETICLE_PARTS];
+    for (int end = 0; end < 2; end++) {
+        const float side = end == 0 ? -1.0f : 1.0f;
+        const float x = WIDTH * .5f, y = HEIGHT * .5f;
+        points[end * RETICLE_PARTS + RETICLE_BAR] = (tide_float2){x + side * 10 + .25f, y + .25f};
+        points[end * RETICLE_PARTS + RETICLE_TOP] = (tide_float2){x + side * 8 + .25f, y - 4 + .25f};
+        points[end * RETICLE_PARTS + RETICLE_BOTTOM] = (tide_float2){x + side * 8 + .25f, y + 4 + .25f};
+        points[end * RETICLE_PARTS + RETICLE_PIP] = (tide_float2){x + side * 10 + .25f, y + 12 + .25f};
+        points[end * RETICLE_PARTS + RETICLE_RIM] = (tide_float2){x + side * 10 + 2.25f, y + 12 + .25f};
+    }
+    const uint64_t before = tide_world_hash(&world);
+    frame_for(active, menu);
+    check(tide_world_hash(&world) == before, "placement preview frames do not change match state");
+    out->valid[0] = local.Interface.shot0.valid;
+    out->valid[1] = local.Interface.shot1.valid;
+    tide_platform_read_pixels_as(&draw, WIDTH, HEIGHT, 1, points, 2 * RETICLE_PARTS, &out->pixels[0][0]);
+}
+
+static int reticle_brightness(const uint32_t pixel)
+{
+    int brightest = 0;
+    for (int shift = 8; shift <= 24; shift += 8) {
+        const int channel = (int)((pixel >> shift) & 255);
+        if (channel > brightest) brightest = channel;
+    }
+    return brightest;
+}
+
+static bool reticle_color(const uint32_t pixel, const int end)
+{
+    const int r = (pixel >> 24) & 255, g = (pixel >> 16) & 255, b = (pixel >> 8) & 255;
+    if (end == 0) return r > g + 30 && g > b + 25;
+    if (end == 1) return g > r + 70 && b > r + 70 && abs(g - b) < 40;
+    if (end == 2) return r > b + 50 && b > g + 20;
+    return b > r + 30 && r > g + 20;
+}
+
+static void reticle_placed(const reticle_image *seen, const int end, const bool placed)
+{
+    const int contrast = color_distance(seen->pixels[end][RETICLE_PIP], seen->pixels[end][RETICLE_RIM]);
+    check(placed ? contrast < 8 : contrast > 70, placed ? "a planted end has a filled status square" : "an unplanted end has a hollow status square");
+}
+
+static void reticle_ready(const reticle_image *seen, const int end, const bool ready, const reticle_image *reference)
+{
+    check(seen->valid[end] == ready, ready ? "HUD previews a permitted placement for this end" : "HUD refuses this end's current placement");
+    if (ready) {
+        check(color_distance(seen->pixels[end][RETICLE_BAR], seen->pixels[end][RETICLE_TOP]) < 8 &&
+              color_distance(seen->pixels[end][RETICLE_BAR], seen->pixels[end][RETICLE_BOTTOM]) < 8,
+              "a permitted placement draws both bright bracket caps");
+    } else {
+        check(reticle_brightness(reference->pixels[end][RETICLE_BAR]) - reticle_brightness(seen->pixels[end][RETICLE_BAR]) > 50,
+              "an unavailable placement dims its side bar");
+        check(color_distance(reference->pixels[end][RETICLE_TOP], seen->pixels[end][RETICLE_TOP]) > 30 &&
+              color_distance(reference->pixels[end][RETICLE_BOTTOM], seen->pixels[end][RETICLE_BOTTOM]) > 30,
+              "an unavailable placement removes both bright bracket caps");
+    }
+}
+
+static tide_entity reticle_rear_wall(void)
+{
+    for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+        if (!tide_has_Wall(&world, entity)) continue;
+        const Wall wall = tide_get_Wall(&world, entity);
+        if (wall.chamber == world.Arena.chamber && wall.takes &&
+            tide_abs_f(wall.center.x + 10.5f) < .01f && wall.center.z > 5) return entity;
+    }
+    check(false, "the reticle fixture has an off-camera receptive wall");
+    return (tide_entity){0};
+}
+
+static void reticle_checks(void)
+{
+    select_place(0);
+    world.Arena.arrive = 2;
+    world.Arena.ride = 0;
+    world.Watcher.state = Watching_Away;
+    for (int end = 0; end < 4; end++) world.Fold.ends.at[end] = (Portal){0};
+    world.Fold.busy.at[0] = world.Fold.busy.at[1] = 0;
+    world.Fold.holding.at[0] = world.Fold.holding.at[1] = 0;
+    operator_at(world.Arena.op0, (tide_float3){-6, 0, -7}, TIDE_PI_F);
+    operator_at(world.Arena.op1, (tide_float3){-7, 0, -7}, TIDE_PI_F);
+
+    reticle_image ready, placed, blocked, overlap, opposite, other, disabled;
+    record_reticle(&ready, 0, false);
+    capture_scene("reticle-ready");
+    const Portal target = local.Interface.shot0.portal;
+    for (int end = 0; end < 2; end++) {
+        reticle_ready(&ready, end, true, &ready);
+        reticle_placed(&ready, end, false);
+        check(reticle_color(ready.pixels[end][RETICLE_BAR], end), "operator A's placement buttons use amber and cyan");
+    }
+
+    // A preplaced end counts too. Its off-camera position does not alter the
+    // aimed surface, so readiness and stored placement can be checked apart.
+    const tide_entity rear = reticle_rear_wall();
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-10, 1.3f, 8}, .face = {1, 0, 0}, .wall = rear, .size = 1};
+    record_reticle(&placed, 0, false);
+    capture_scene("reticle-one-placed");
+    reticle_placed(&placed, 0, true);
+    reticle_placed(&placed, 1, false);
+    for (int end = 0; end < 2; end++) reticle_ready(&placed, end, true, &ready);
+
+    operator_at(world.Arena.op0, (tide_float3){-6, 0, -7}, TIDE_PI_F * .5f);
+    record_reticle(&blocked, 0, false);
+    capture_scene("reticle-blocked");
+    for (int end = 0; end < 2; end++) reticle_ready(&blocked, end, false, &ready);
+    reticle_placed(&blocked, 0, true);
+    reticle_placed(&blocked, 1, false);
+    check(color_distance(placed.pixels[0][RETICLE_PIP], blocked.pixels[0][RETICLE_PIP]) < 8,
+          "a planted square stays filled when the current aim becomes invalid");
+
+    // One unlinked end leaves its wall solid. Replacing itself is valid;
+    // putting the other button there would overlap it and must be refused.
+    operator_at(world.Arena.op0, (tide_float3){-6, 0, -7}, TIDE_PI_F);
+    world.Fold.ends.at[0] = target;
+    record_reticle(&overlap, 0, false);
+    reticle_ready(&overlap, 0, true, &ready);
+    reticle_ready(&overlap, 1, false, &ready);
+    reticle_placed(&overlap, 0, true);
+    reticle_placed(&overlap, 1, false);
+    world.Fold.ends.at[0] = (Portal){0};
+    world.Fold.ends.at[1] = target;
+    record_reticle(&opposite, 0, false);
+    reticle_ready(&opposite, 0, false, &ready);
+    reticle_ready(&opposite, 1, true, &ready);
+    reticle_placed(&opposite, 0, false);
+    reticle_placed(&opposite, 1, true);
+
+    // Deliberately asymmetric ownership catches reading A's state while B is
+    // active, independently of the palette changing to rose and violet.
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-10, 1.3f, 8}, .face = {1, 0, 0}, .wall = rear, .size = 1};
+    world.Fold.ends.at[1] = (Portal){0};
+    world.Fold.ends.at[3] = (Portal){.open = true, .at = {-10, 1.3f, 4}, .face = {1, 0, 0}, .wall = rear, .size = 1};
+    record_reticle(&other, 1, false);
+    capture_scene("reticle-operator-b");
+    reticle_placed(&other, 0, false);
+    reticle_placed(&other, 1, true);
+    for (int end = 0; end < 2; end++) {
+        reticle_ready(&other, end, true, &other);
+        check(reticle_color(other.pixels[end][RETICLE_BAR], end + 2), "operator B's placement buttons use rose and violet");
+    }
+
+    record_reticle(&placed, 0, false);
+    for (int gate = 0; gate < 3; gate++) {
+        world.Place.dead = gate == 0;
+        world.Fold.holding.at[0] = gate == 1 ? 1 : 0;
+        Operator viewer = tide_get_Operator(&world, world.Arena.op0);
+        viewer.taken = gate == 2 ? .1f : 0;
+        check(tide_set_Operator(&world, world.Arena.op0, viewer), "set the reticle's ordinary action gates");
+        record_reticle(&disabled, 0, false);
+        for (int end = 0; end < 2; end++) reticle_ready(&disabled, end, false, &placed);
+        reticle_placed(&disabled, 0, true);
+        reticle_placed(&disabled, 1, false);
+    }
+    world.Place.dead = false;
+    world.Fold.holding.at[0] = 0;
+    Operator viewer = tide_get_Operator(&world, world.Arena.op0);
+    viewer.taken = 0;
+    check(tide_set_Operator(&world, world.Arena.op0, viewer), "restore the reticle fixture's active operator");
+    record_reticle(&disabled, 0, true);
+    check(!disabled.valid[0] && !disabled.valid[1], "the menu clears placement previews");
+    for (int end = 0; end < 2; end++)
+        check(color_distance(disabled.pixels[end][RETICLE_RIM], placed.pixels[end][RETICLE_RIM]) > 30,
+              "the menu hides the fold status marks");
+    select_place(0);
+}
+
 static int render_checks(void *user, float seconds)
 {
     (void)user;
@@ -451,9 +728,12 @@ static int render_checks(void *user, float seconds)
     record(&occupied);
     printf("Nested submerged portal interior red samples: %d\n", red_interior(&occupied));
     check(red_interior(&occupied) > 55, "a submerged destination remains red through the other operator's fold");
+    portal_back_checks();
+    exit_sign_checks();
     beast_checks();
     lamp_and_fog_checks();
     transition_checks();
+    reticle_checks();
 
     tide_draw_forget(&draw);
     tide_draw_free(&draw);

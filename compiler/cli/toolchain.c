@@ -125,13 +125,12 @@ char *find_wasm_ld(const char *clang)
 bool find_macos_sdk(void)
 {
     if (sys_env("SDKROOT")) return true;
-    static const char *const sdks[] = {
-        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
-    };
-    for (size_t i = 0; i < sizeof sdks / sizeof sdks[0]; i++) {
-        if (sys_exists(sdks[i])) return setenv("SDKROOT", sdks[i], 1) == 0;
-    }
-    return false;
+    // Match /usr/bin/ld's selected developer tools. A separately installed
+    // CommandLineTools SDK can be newer than the active Xcode linker.
+    const char *const args[] = {"/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path", NULL};
+    char sdk[4096] = {0};
+    if (sys_capture(args, sdk, sizeof sdk) != 0) return false;
+    sdk[strcspn(sdk, "\r\n")] = '\0';
+    return sdk[0] == '/' && sys_is_dir(sdk) && setenv("SDKROOT", sdk, 1) == 0;
 }
 #endif

@@ -64,12 +64,11 @@ void TouchWeb(mut CrawlHunt hunt, int who, float3 at, bool object)
 
 void BuildCrawlspace(mut Arena arena, mut Place place, mut Fold fold)
 {
+    BuildMapCrawlspace(arena, place);
     place.kind = PlaceKind.Passage;
     place.dead = true;
     place.light = .25;
     place.fog = .05;
-    ArrivalLift(arena, place, float3(0, 0, -6.1), NORTH);
-    ExitLift(arena, place, float3(20, 0, 35.1), SOUTH);
     Fill(arena, -4, 4, -1, 0, -4, 4, CONCRETE);
     Fill(arena, -5, -4, -1, 4.4, -5, 5, PANELS);
     Fill(arena, 4, 5, -1, 4.4, -5, 5, PANELS);

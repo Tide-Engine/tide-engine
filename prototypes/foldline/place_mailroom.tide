@@ -2,8 +2,7 @@
 // The two-turn parcel duct stops a normal body and every outside shot.
 void BuildMailroom(mut Arena arena, mut Place place, mut Fold fold)
 {
-    ArrivalLift(arena, place, float3(-8, 0, -12.1), NORTH);
-    ExitLift(arena, place, float3(10, 0, 14.1), SOUTH, 1 << 0);
+    BuildMapMailroom(arena, place);
     Fill(arena, -14, 4, -1, 0, -10, 12, CARPET);
     Fill(arena, 4, 10, -1, 0, -4, 4, CONCRETE);
     Fill(arena, 6, 14, -1, 0, 4, 12, CARPET);
@@ -35,9 +34,6 @@ void BuildMailroom(mut Arena arena, mut Place place, mut Fold fold)
     PlaceEnd(fold, 2, west, float3(-14, 0, -5), float3(1, 0, 0));
     PlaceEnd(fold, 3, west, float3(-14, 0, 6), float3(1, 0, 0), .5);
     PutLoose(arena, fold, float3(-5, .4, 1));
-    LayPlate(arena, float3(11, 0, 7), 0);
-    RunWire(arena, 0, [float3(11.6, .025, 7), float3(13.96, .025, 7), float3(13.96, .025, 11.8),
-                       float3(13.96, 4.15, 11.8), float3(10, 4.15, 11.8)]);
 
     SetSolidProp(arena, PropKind.Desk, float3(-5, 0, 7), float3(1.7, .8, .8), float3(0, .4, 0), EAST, float3(1.6, 1, 1));
     SetSolidProp(arena, PropKind.Desk, float3(-5, 0, -6), float3(1.7, .8, .8), float3(0, .4, 0), EAST, float3(1.6, 1, 1));
@@ -49,7 +45,6 @@ void BuildMailroom(mut Arena arena, mut Place place, mut Fold fold)
     SetProp(arena, PropKind.Monitor, float3(6.8, .75, 10.5), EAST);
     SetProp(arena, PropKind.Chair, float3(7.5, 0, 10.5), EAST);
     SetProp(arena, PropKind.Arrow, float3(3.9, .7, -3), EAST);
-    SetProp(arena, PropKind.ExitSign, float3(10, 3.5, 11.8), SOUTH);
     LampGrid(place, float2(-14, -10), float2(4, 4), 7, 6);
     HangLamps(place, 0, 4, 0, 5, 4.4);
     HangLamps(place, 5, 6, 4, 5, 4.4);

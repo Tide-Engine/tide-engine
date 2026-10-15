@@ -2,43 +2,18 @@
 // cupboard; the other makes the route that brings its weight out for both.
 void BuildReception(mut Arena arena, mut Place place, mut Fold fold, bool ending = false)
 {
-    ArrivalLift(arena, place, float3(-6, 0, -10.1), NORTH);
-    ExitLift(arena, place, float3(6, 0, 10.1), SOUTH, 1 << 1);
-    Fill(arena, -12, 12, -1, 0, -8, 8, CARPET);
-    Fill(arena, -13, 13, 4.4, 5.4, -9, 9, CEILING_TILE, false, 2);
-    var west = Fill(arena, -13, -12, -2, 4.4, -9, 9, WALLPAPER, true);
-    var east = Fill(arena, 12, 13, -2, 4.4, -9, 9, WALLPAPER, true);
-    Fill(arena, -13, -9, -2, 4.4, -9, -8, PANELS);
-    Fill(arena, -3, 13, -2, 4.4, -9, -8, PANELS);
-    Fill(arena, -13, 3, -2, 4.4, 8, 9, PANELS);
-    Fill(arena, 9, 13, -2, 4.4, 8, 9, PANELS);
-    Fill(arena, -.2, .2, 0, 4.4, -8, 0, PANELS, false, 4);
-    Fill(arena, -.4, .4, 0, 4.4, 0, 8, CONCRETE);
-    PlaceEnd(fold, 0, west, float3(-12, 0, -3), float3(1, 0, 0));
-    PlaceEnd(fold, 1, east, float3(12, 0, -3), float3(-1, 0, 0));
-
-    Fill(arena, 5.4, 6, 0, 4.4, 2, 6.6, PANELS);
-    Fill(arena, 10, 10.6, 0, 4.4, 2, 6.6, PANELS);
-    Fill(arena, 6, 10, 0, 4.4, 6, 6.8, WALLPAPER, true);
-    Fill(arena, 6, 10, 0, 4.4, 1.8, 2, PANELS, false, 4);
-    HangDoor(arena, float3(8, 2.2, 2.35), float3(4, 4.4, .3), 1 << 0);
-    PutLoose(arena, fold, ending ? float3(4, .4, 5.5) : float3(8, .4, 4.4));
-    LayPlate(arena, float3(-8, 0, 4), 0);
-    RunWire(arena, 0, [float3(-7.4, .025, 4), float3(-.43, .025, 4), float3(-.43, 4.15, 4), float3(-.43, 4.15, 1.5),
-                       float3(8, 4.15, 1.5), float3(8, 4.65, 2.1)]);
-    LayPlate(arena, float3(4, 0, 5.5), 1);
-    RunWire(arena, 1, [float3(4, .025, 6.1), float3(4, .025, 7.96), float3(4, 4.2, 7.96), float3(6, 4.2, 7.96)]);
+    BuildMapReception(arena, place, fold);
+    PutLoose(arena, fold, ending ? float3(4, .4, 5.5) : float3(10.8, .4, 4.4));
 
     SetSolidProp(arena, PropKind.Desk, float3(-4, 0, .8), float3(1.7, .8, .8), float3(0, .4, 0), SOUTH);
     SetProp(arena, PropKind.Monitor, float3(-4, .81, .8), SOUTH);
     for (int chair = 0; chair < 3; chair++)
     {
         SetProp(arena, PropKind.PlasticChair, float3(-10.7, 0, 1 + chair * 1.2), EAST);
-        SetProp(arena, PropKind.Cabinet, float3(11.3, 0, 2.8 + chair * 1.1), WEST);
+        SetProp(arena, PropKind.Cabinet, float3(-11.65, 0, 2.8 + chair * 1.1), EAST);
     }
     SetProp(arena, PropKind.Clock, float3(-.44, 2.8, 2), WEST);
     SetProp(arena, PropKind.Plant, float3(-2, 0, 6.8));
-    SetProp(arena, PropKind.ExitSign, float3(6, 3.5, 7.8), SOUTH);
     LampGrid(place, float2(-12, -8), float2(4, 4), 6, 4);
     HangLamps(place, 0, 5, 0, 3, 4.4);
     HangLamp(place, 0, 3, 4.4, LampState.Stutter);

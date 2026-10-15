@@ -1,7 +1,7 @@
 // The first glimpse of the showroom's rule, from behind a physical grille.
 void BuildLampsOut(Arena arena, mut Place place)
 {
-    StoppingLift(arena, place, float3(0), NORTH, 11);
+    BuildMapLampsOut(arena, place);
     place.dead = true;
     place.light = .35;
     place.grade = float3(.86, 1, .92);

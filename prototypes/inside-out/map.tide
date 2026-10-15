@@ -376,6 +376,8 @@ struct Transit
     float from = 1;
     float to = 1;
     float scale = 1;
+    float distance = .7;
+    bool targetInside;
 }
 
 // Pushed from `old` in `oldRoom` to `now` in `newRoom`: into the box beside
@@ -389,7 +391,7 @@ Transit BeginTransit(LevelLayout layout, Puzzle puzzle, int oldRoom, float2 old,
         var gate = BoxAt(layout, puzzle, oldRoom, cell + Direction(direction));
         if (gate < 0 || gate != newRoom) continue;
         return Transit { via = oldRoom, at = old, goal = float2(cell + Direction(direction)) - float2(Direction(direction)) * .30,
-            from = 1, to = RoomScale(layout, newRoom), scale = 1 };
+            from = 1, to = RoomScale(layout, newRoom), scale = 1, targetInside = true };
     }
     // Out of its room: it stands beside that room's box.
     for (var direction = 0; direction < 4 && ValidRoom(layout, oldRoom); direction++)
@@ -409,7 +411,7 @@ Transit BeginTransit(LevelLayout layout, Puzzle puzzle, int oldRoom, float2 old,
         var apart = second - first;
         if (Math.Abs(apart.x) + Math.Abs(apart.y) == 1)
             return Transit { via = puzzle.rooms[oldRoom].room, at = float2(first) + float2(apart) * .30, goal = float2(second) - float2(apart) * .30,
-                from = RoomScale(layout, oldRoom), to = RoomScale(layout, newRoom), scale = RoomScale(layout, oldRoom) };
+                from = RoomScale(layout, oldRoom), to = RoomScale(layout, newRoom), scale = RoomScale(layout, oldRoom), targetInside = true };
     }
     return Transit { };
 }
@@ -426,7 +428,7 @@ void StepTransit(mut Transit transit, float dt)
         return;
     }
     transit.at = transit.at + left * (step / far);
-    transit.scale = Math.Lerp(transit.to, transit.from, Math.Saturate((far - step) / .7));
+    transit.scale = Math.Lerp(transit.to, transit.from, Math.Saturate((far - step) / Math.Max(.001, transit.distance)));
 }
 
 // Where a crossing has a thing drawn, and how large; without one, where it is.
@@ -441,12 +443,38 @@ float ShownScale(Transit crossing) { return crossing.via != -2 ? crossing.scale 
 // takes a moment to cross, which is the crossing returned: that covers
 // another room and the same room again, where a room holds itself. Boxes and
 // parcels share every rule of it.
-Transit FollowPushed(LevelLayout layout, Puzzle puzzle, Transit crossing, int wasRoom, float2 was, int room, int2 cell, bool snap, float dt, out float2 drawn)
+Transit FollowPushed(LevelLayout layout, Puzzle puzzle, Transit crossing, int wasRoom, float2 was, int room, int2 cell, bool snap, bool undo, float dt, out float2 drawn)
 {
     drawn = float2(cell);
     if (snap) return Transit { };
     var left = drawn - was;
     var far = Math.Length(left);
+    // Undo may arrive before a doorway crossing finishes. Reverse from the
+    // currently drawn pose in its containing room, not from the simulation's
+    // already-arrived cell on the other side of the opening.
+    if (undo && crossing.via != -2)
+    {
+        mut var next = crossing;
+        mut var scale = 1.0;
+        mut var goal = drawn;
+        // Remember the destination's coordinate space independently of the
+        // scale's direction. Consecutive undos can reverse a crossing and
+        // then an ordinary one-cell push before the first animation retires.
+        var inside = room != crossing.via || room == wasRoom &&
+            (far > 1.5 ? !crossing.targetInside : crossing.targetInside);
+        if (inside && ValidRoom(layout, room) && puzzle.rooms[room].room == crossing.via)
+        {
+            scale = RoomScale(layout, room);
+            goal = float2(puzzle.rooms[room].position) + (drawn - RoomCenter(layout, room)) * scale;
+        }
+        else if (room != crossing.via) return BeginTransit(layout, puzzle, wasRoom, was, room, cell);
+        next.goal = goal;
+        next.from = next.scale;
+        next.to = scale;
+        next.targetInside = inside;
+        next.distance = Math.Length(goal - next.at);
+        return next;
+    }
     if (room != wasRoom || (crossing.via == -2 && far > 1.5)) return BeginTransit(layout, puzzle, wasRoom, was, room, cell);
     mut var next = crossing;
     StepTransit(next, dt);
@@ -462,9 +490,9 @@ float2 SmoothCell(float2 current, float2 target, float blend)
 }
 
 // The heading's rows end here; the scene has the window below them.
-float SceneTop(float2 screen) { return screen.x < 720 ? 122.0 : 112.0; }
+float SceneTop(float2 screen) { return 76.0; }
 // What the controls along the bottom need clear of the focused room.
-float SceneBottom(float2 screen) { return screen.x < 720 ? 206.0 : 124.0; }
+float SceneBottom(float2 screen) { return screen.x < 720 ? 112.0 : 96.0; }
 float SceneSide(float2 screen)
 {
     return Math.Max(200, Math.Min(screen.x - 24, screen.y - SceneTop(screen) - SceneBottom(screen)));
