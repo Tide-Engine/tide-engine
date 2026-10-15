@@ -155,6 +155,8 @@ test('configured sandbox credit choices render on the server and start Checkout 
     const service = await createService(config, { rooms: null, fetcher: async (url, options) => {
         assert.equal(url, 'https://api.stripe.com/v1/checkout/sessions');
         assert.equal(options.body.get('line_items[0][price_data][unit_amount]'), '1000');
+        assert.equal(options.body.get('payment_method_types[0]'), null);
+        assert.equal(options.headers['Stripe-Version'], '2026-09-30.endive');
         checkouts++;
         return { ok: true, json: async () => ({ id: 'cs_test_fixture', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture' }) };
     } });
