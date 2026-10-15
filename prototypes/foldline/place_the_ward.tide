@@ -2,7 +2,7 @@ using Box3D;
 
 void BuildTheWard(Arena arena, mut Place place)
 {
-    StoppingLift(arena, place, float3(0), EAST, 9);
+    BuildMapTheWard(arena, place);
     place.dead = true;
     place.light = .45;
     place.grade = float3(.83, .98, 1.04);
@@ -19,7 +19,6 @@ void BuildTheWard(Arena arena, mut Place place)
         SetProp(arena, PropKind.Bed, float3(7 + bed * 4, 0, 2.5), SOUTH);
         SetProp(arena, PropKind.Curtain, float3(8.8 + bed * 4, 0, 2), EAST);
     }
-    Machine(arena, float3(12, .8, 0), float3(12, .8, 0), float3(.35, .12, .25), 0, false, 1, float3(0), float3(0));
     SpawnBeast(arena, BeastKind.Flayed, float3(16, 0, -2), WEST, skin: BeastSkin.Dark, clip: "Twitch");
     LampGrid(place, float2(2, -4), float2(4, 8), 4, 1);
     HangLamps(place, 0, 3, 0, 0, 4.4);
