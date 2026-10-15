@@ -3255,6 +3255,8 @@ static void levels_of_detail(void)
             }
             check_pixels(checks, LOD_CELLS * 3);
         }
+        expect(tide_platform_draw_vertices() == 135,
+               "submitted vertices count each instance at its selected LOD, through built-in and custom shaders");
     }
     // Four draws alone at three levels, in an order that changes level each time: a draw call a level, and the clear
     for (int kind = 0; kind < 2; kind++) {
@@ -3268,7 +3270,46 @@ static void levels_of_detail(void)
         snprintf(what, sizeof what, "%s drawn four times at three levels of detail is three draw calls, and the clear (%u)",
                  kinds[kind], (unsigned)calls);
         expect(calls == 4u, what);
+        expect(tide_platform_draw_vertices() == 27,
+               "LOD counts submitted indices, including repeats, rather than the mesh's stored corners");
     }
+}
+
+// What the stats read: geometry submitted in every pass, with overlays left out.
+static void vertex_counts(void)
+{
+    static tide_shader blit_shader;
+    blit_shader = flat_shader;
+    blit_shader.id = 0x7E57BE17;
+    blit_shader.vertex_size = sizeof(tide_vertex);
+    const tide_render_target target = tide_render_target_make(16, 16);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background); // Three vertices
+    tide_draw_rect(&list, at(20, 20), tide_f2(8, 8), white);
+    tide_draw_circle(&list, at(40, 20), 4, white); // Six each, even when batched
+    quad(at(60, 16), at(68, 24), white, white, NULL, TIDE_FILTER_POINT, true); // Six indices, four corners
+    tide_draw_text(&list, "M", at(80, 16), 16, white); // Six for a glyph
+    tide_draw_to(&list, target.id, 16, 16);
+    tide_draw_clear(&list, background);
+    tide_draw_rect(&list, tide_f2(0, 0), tide_f2(8, 8), white); // Nine more in another pass
+    tide_draw_to(&list, 0, 0, 0);
+    tide_draw_blit(&list, &blit_shader, TIDE_BLEND_REPLACE, &white, NULL, NULL, 0); // Six more
+    tide_platform_draw(&list);
+    expect(tide_platform_draw_vertices() == 42,
+           "vertex totals include shapes, 2D meshes, text, clears, render targets and blits");
+    const uint32_t calls = tide_platform_draw_calls();
+    tide_draw_list over = {0};
+    tide_draw_rect(&over, tide_f2(0, 0), tide_f2(8, 8), white);
+    tide_platform_draw_over(&over);
+    tide_platform_draw_overlay("vertices");
+    expect(tide_platform_draw_vertices() == 42 && tide_platform_draw_calls() == calls,
+           "host overlays leave the game's vertex and draw-call totals alone");
+    tide_draw_free(&over);
+    tide_render_target_dispose(target);
+    tide_draw_reset(&list);
+    tide_platform_draw(&list);
+    expect(tide_platform_draw_vertices() == 0 && tide_platform_draw_calls() == 0,
+           "an empty frame resets geometry totals to zero");
 }
 
 // ---------------------------------------------------------------------------
@@ -4015,6 +4056,7 @@ static int frame(void *user, const float seconds)
         cull_settings();
         frustum_culling();
         levels_of_detail();
+        vertex_counts();
 #ifdef DRAW_VULKAN
         // The renderer asked for the device as the checks drew: another was made, which they drew with
         expect(tide_gpu_vulkan.epoch() != lost_epoch, "Vulkan's lost device was made again, and drew everything again");
@@ -4043,6 +4085,7 @@ static int frame(void *user, const float seconds)
     cull_settings();
     frustum_culling();
     levels_of_detail();
+    vertex_counts();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
