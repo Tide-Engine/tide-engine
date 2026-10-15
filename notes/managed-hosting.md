@@ -2,6 +2,64 @@
 
 ## Status and agreed scope (2026-10-15)
 
+The owner approved a monthly minimum with included usage and opt-in prepaid
+extra usage. The configurable sandbox example is EUR 20/month with EUR 20
+included, not approved public pricing. Paid monthly allowance expires at its
+invoice service-period end; purchased credit carries forward. Both manual and
+automatic extra purchases share the customer's cycle spending cap, including
+pending amounts. Extra usage/automatic charging defaults off. Deploying does
+not subscribe. Cancellation retains access through the paid period. No postpaid
+debt or unpaid renewal grace is added.
+
+Implemented in billing-store.mjs and payments.mjs, with persistent Customer
+mapping, hosted subscription Checkout, paid-invoice grants, period-end
+cancellation and a configured Stripe Customer Portal. The server retains its
+immediate transaction/lease enforcement; it does not migrate to Stripe meters
+or Metronome. The previous Stripe planner's one-time-only scope is superseded
+by this approved subscription change. The Stripe skill's Billing/security
+references were read. The current Stripe MCP rejects both planner/docs calls
+with authentication required; used official Stripe docs and the already
+configured runtime sandbox key for setup without exposing it.
+
+SQLite migration keeps existing accounts.balance as purchased credit. A separate
+allowance ledger tracks each invoice/cycle, and reservation source records make
+refunds restore their original bucket. Expired allowance cannot become purchased
+credit. Leases are bounded by confirmed paid periods. A late renewal confirmation
+may suspend worlds at that boundary; credit reconciliation enables manual resume.
+Subscription access is required even with purchased funds after cancellation.
+Without a configured Price, isolated local/prepaid test configurations remain
+usable; the Fly service config enables monthly enforcement for all accounts.
+
+Durable purchase IDs and exact provider request parameters are written before
+external calls. Uncertain retries preserve the original amount, method and
+idempotency key, and reserve cap space. Unknown operations older than 23 hours
+require reconciliation rather than creating another potentially paid operation.
+Off-session payments use the saved method with explicit extra-usage consent;
+authentication-required intents are canceled before releasing their cap hold.
+Definitive failures pause automatic buying until settings are explicitly saved.
+Known pending payments/subscriptions reconcile each minute; billing requests
+run separately from match ticks and abort/drain on shutdown. Existing one-time
+Checkout notifications remain fulfillable; provider redirects never grant funds.
+Refunds/disputes freeze mapped accounts, including subscription payments.
+Restricted live key mode detection now recognizes rk_live_ as well as sk_live_.
+
+Created sandbox Product prod_VRlTIssGVtFmiM, Price
+price_1UQrw7EOEguEtdxR8VTaPR66 (EUR 20/month) and Portal configuration
+bpc_1UQrw7EOEguEtdxRj71OCIMM (payment-method updates, invoice history and
+period-end cancellation). Expanded the existing webhook endpoint's event list
+for subscriptions/invoices/automatic payments without changing its signing
+secret. All requests use the pinned 2026-09-30.endive API. No live resources,
+tax collection, infrastructure scaling or real-money charges were enabled.
+
+Validation so far: all 40 hosting tests pass with installed native/web/managed
+CLI tools and muted Chrome. Seven new billing cases cover paid-only grants,
+duplicate/out-of-order renewal, expiry, cancellation, source-preserving refunds,
+paid-period lease bounds, shared caps, uncertain retries and authentication
+failure. The real settings API is exercised in the browser, with extra usage
+off initially, then opt-in. Desktop/phone light/dark UI captures were inspected;
+Svelte check has zero errors/warnings and both production builds pass. Final
+provider drills/deployment/integration results follow completion.
+
 Implemented first local-build hosting workflow, at the owner's request. GitHub
 sign-in, Stripe prepaid credit and the existing Fly.io organization/relay are
 selected. `hosting/README.md` is the operator/API/ABI reference;
@@ -286,7 +344,8 @@ Balances use integer millionths of minor currency units (100,000,000 = EUR 1).
 Allocated resource seconds consume prepaid credit; unused whole reserved seconds
 are refunded once. Low-credit incidents warn; exhaustion blocks allocation and
 saves/suspends explicit worlds. Resume rechecks credit, capacity and operator
-allocation switch. Frozen accounts stop. No postpaid credit or auto-top-up.
+allocation switch. Frozen accounts stop. Optional prepaid automatic top-ups
+share the monthly extra-purchase cap; no postpaid credit is granted.
 Traffic/storage have hard included allowances, not surprise overage charges.
 Application egress counts are not physical provider traffic or an exact currency
 ceiling. Rates require measurement and explicit operator configuration.
@@ -354,7 +413,7 @@ security review and customer-facing rates/retention. No CI was dispatched.
 
 Unbuilt: multi-host/region scaling, managed player auth, email notifications,
 remote builds, compiled-module caching, automatic native client updates,
-production match hot reload, cross-release save upgrades and auto top-up.
+production match hot reload and cross-release save upgrades.
 
 ## Design references
 

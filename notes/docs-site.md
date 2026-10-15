@@ -1,5 +1,11 @@
 # The docs site
 
+Subscription hosting guide (2026-10-15): managed hosting now documents the
+approved monthly included allowance, separate purchased credit, opt-in prepaid
+extra usage, shared purchase cap, cancellation and billing controls. Public
+launch pricing remains undecided; the configured EUR 20 plan is sandbox-only.
+The production docs build passes; console/provider checks are in managed-hosting.md.
+
 Folder deployment guide (2026-10-15): the CLI/managed-hosting pages now start
 with `tide deploy`, explain automatic folder-named project creation and the
 portable `tide.deploy.json` target, explicit relinking and failed target checks.
