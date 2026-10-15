@@ -1,0 +1,13 @@
+asset string rules = "assets/rules.txt";
+asset string visual = "assets/rules.txt";
+asset Texture picture = "assets/hero.png";
+singleton State { int value; string source = rules; }
+scene Main { }
+int ReadRules() { return rules.length; }
+int VisualHelper() { return visual.length; }
+system Tick(mut State state) { state.value = ReadRules(); }
+view Show()
+{
+    Draw.Text($"{VisualHelper()}", float2(0, 0), 12, Color.white);
+    Draw.Mesh([Vertex { }, Vertex { }, Vertex { }], [0, 1, 2], picture);
+}

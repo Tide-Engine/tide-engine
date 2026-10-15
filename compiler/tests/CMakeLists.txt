@@ -16,6 +16,7 @@ function(tide_e2e_test name)
 endfunction()
 
 tide_e2e_test(asset_sharing SOURCES e2e/asset_sharing.tide e2e/asset_sharing_c.c)
+tide_e2e_test(hosting)
 tide_e2e_test(move_clamp)
 tide_e2e_test(map_iteration)
 tide_e2e_test(structural)

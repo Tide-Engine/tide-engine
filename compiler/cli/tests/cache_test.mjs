@@ -1,5 +1,5 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only] [--gpu] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, gpu: false, keep: false };
+const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, gpu: false, keep: false };
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -17,10 +17,11 @@ for (let i = 2; i < process.argv.length; i++) {
     else if (process.argv[i] === "--web") opts.web = true;
     else if (process.argv[i] === "--watch-only") opts.watchOnly = true;
     else if (process.argv[i] === "--strip-only") opts.stripOnly = true;
+    else if (process.argv[i] === "--server-only") opts.serverOnly = true;
     else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only] [--gpu] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
@@ -64,6 +65,49 @@ async function run(executable, args, cwd, extra = {}) {
         child.on("error", reject);
         child.on("close", (code) => accept({ code, said }));
     });
+}
+
+async function serverTests(tide, root) {
+    const game = join(root, "server-cache");
+    mkdirSync(game);
+    const source = "asset string rules = \"rules.txt\";\nasset string visual = \"visual.txt\";\n"
+        + "singleton ServerState { int value; }\nscene Main { }\n"
+        + "system Tick(mut ServerState state) { state.value = rules.length; }\n"
+        + "view Show() { Debug.Assert(visual.length > 0); }\n";
+    writeFileSync(join(game, "main.tide"), source);
+    writeFileSync(join(game, "rules.txt"), "simulation");
+    writeFileSync(join(game, "visual.txt"), "presentation");
+    mkdirSync(join(game, "build"));
+    const player = join(game, "build", `server-cache${process.platform === "win32" ? ".exe" : ""}`);
+    writeFileSync(player, "preserve-player");
+    const server = join(game, "build", `server-cache-server${process.platform === "win32" ? ".exe" : ""}`);
+    const pack = join(game, "build", "server-cache-server.pack");
+    const build = async (...flags) => {
+        const result = await run(tide, ["build", game, ...flags], root, { TIDE_HIDDEN: "1" });
+        check(result.code === 0, `server build failed:\n${result.said}`);
+        check(existsSync(server), "server executable has its own output name");
+        check(readFileSync(player, "utf8") === "preserve-player", "server preserves the player executable");
+    };
+    await build("--server");
+    check(readFileSync(pack).readUInt32LE(12) === 1, "Tide-only server retains simulation assets only");
+    writeFileSync(join(game, "entry.c"), '#include "game.h"\n#include "tide/hosting.h"\n'
+        + '_Static_assert(sizeof(ServerState) == 4, "server_header_changed");\n'
+        + 'void tide_server_entry(tide_hosting_desc *host) { host->max_matches = 2; }\n');
+    await build("--server");
+    check(readFileSync(pack).readUInt32LE(12) === 2, "custom C conservatively retains server assets");
+    await build("--strip-server-assets");
+    check(readFileSync(pack).readUInt32LE(12) === 1, "custom C can explicitly opt into simulation pruning");
+    writeFileSync(join(game, "main.tide"), source.replace("int value", "long value"));
+    const changed = await run(tide, ["build", game, "--server"], root, { TIDE_HIDDEN: "1" });
+    check(changed.code !== 0 && changed.said.includes("server_header_changed"),
+        `a generated header edit must rebuild the unchanged server C entry:\n${changed.said}`);
+    writeFileSync(join(game, "main.tide"), source);
+    await build("--server", "--release");
+    const launched = await run(server, ["--anonymous", "--udp-only", "--frames", "2", "--port", "65533"], game,
+        { TIDE_HIDDEN: "1" });
+    check(launched.code === 0 && launched.said.includes("dedicated server listening"),
+        `installed release server failed:\n${launched.said}`);
+    console.log("Dedicated server entry/header cache, asset policy, output isolation and bounded release run passed.");
 }
 
 function objectFiles(cache) {
@@ -663,18 +707,20 @@ async function main() {
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
-        if (!opts.watchOnly) {
+        if (opts.serverOnly) await serverTests(tide, root);
+        if (!opts.watchOnly && !opts.serverOnly) {
             for (const target of opts.web ? ["native", "web"] : ["native"]) await strippingTests(tide, installation, root, target, embedded);
             if (!opts.stripOnly) {
                 for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
                 for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
             }
         }
-        if (!opts.stripOnly && (opts.web || opts.watchOnly)) {
+        if (!opts.serverOnly && !opts.stripOnly && (opts.web || opts.watchOnly)) {
             await webRunTest(tide, root);
             await webRunTest(tide, root, true);
         }
-        if (opts.gpu && !opts.watchOnly && !opts.stripOnly) await nativeRunTest(tide, root);
+        if (opts.gpu && !opts.watchOnly && !opts.stripOnly && !opts.serverOnly) await nativeRunTest(tide, root);
+        if (!opts.serverOnly && !opts.watchOnly && !opts.stripOnly) await serverTests(tide, root);
         console.log("Cache integration tests passed.");
     } finally {
         if (opts.keep) console.log(`Kept fixtures: ${root}`);

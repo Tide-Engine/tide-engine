@@ -69,6 +69,64 @@ static void free_info(game_info *info)
     free(info->asset_paths);
 }
 
+TIDE_TEST(asset_usage_server_follows_simulation_helpers_and_preserves_client_identity)
+{
+    static const char text[] =
+        "asset string keep = \"assets/rules.txt\";\n"
+        "asset string visual = \"assets/rules.txt\";\n"
+        "asset Texture picture = \"assets/hero.png\";\n"
+        "asset AnimationCatalog clips = \"animations/clips/a.gltf\";\n"
+        "component Art { Texture image = picture; }\n"
+        "int Rules() { return keep.length; }\n"
+        "int Visual() { return visual.length; }\n"
+        "singleton State { int value; }\nscene Main { }\nsystem Tick(mut State state) { state.value = Rules(); }\n"
+        "view Show() { local Spawn(Art { }); Debug.Assert(Visual() > 0 && clips.count > 0); Draw.Mesh([Vertex { }, Vertex { }, Vertex { }], [0,1,2], picture); }\n";
+    TIDE_REQUIRE(folder_make(ASSET_USAGE_WORK));
+    char *client_header = NULL;
+    size_t client_size = 0;
+    for (int server = 0; server < 2; server++) {
+        program *p = checked(text);
+        TIDE_REQUIRE(p);
+        const codegen_options options = {.name = "server_usage", .out_dir = ASSET_USAGE_WORK,
+            .pack = ASSET_USAGE_WORK "/server_usage.pack", .server = server != 0, .strip_server_assets = server != 0};
+        TIDE_REQUIRE(codegen(p, &options));
+        size_t size;
+        char *h = read_bytes(ASSET_USAGE_WORK "/server_usage.h", &size);
+        TIDE_REQUIRE(h);
+        if (!server) { client_header = h; client_size = size; }
+        else {
+            TIDE_CHECK(size > client_size && memcmp(client_header, h, client_size) == 0);
+            TIDE_CHECK(p->assets.count == 1 && has_asset(p, "keep"));
+            free(h);
+        }
+        tide_pack_header *pack = read_bytes(options.pack, &size);
+        TIDE_REQUIRE(pack);
+        TIDE_CHECK(pack->entries == (server ? 1u : 4u));
+        free(pack);
+        done();
+    }
+    free(client_header);
+}
+
+TIDE_TEST(asset_usage_server_retains_dynamic_match_asset_reference_targets)
+{
+    static const char text[] =
+        "asset string defaults = \"assets/rules.txt\";\n"
+        "struct V { float3 position; int extra = defaults.length; }\n"
+        "asset Mesh<V> first = \"assets/meshes/quad.glb\";\n"
+        "asset Mesh<V> second = \"assets/meshes/quad.glb\";\n"
+        "asset Texture picture = \"assets/hero.png\";\n"
+        "input Controls { Asset<Mesh<V>> choice; }\n"
+        "singleton State { int count; }\nscene Main { }\n"
+        "system Use(Controls input, mut State state) { state.count = input.choice.Value.vertices.count; }\n";
+    program *p = checked(text);
+    TIDE_REQUIRE(p);
+    program_strip_server_assets(p);
+    TIDE_CHECK(has_asset(p, "first") && has_asset(p, "second") && has_asset(p, "defaults"));
+    TIDE_CHECK(!has_asset(p, "picture"));
+    done();
+}
+
 TIDE_TEST(asset_usage_retains_instantiated_prefab_values)
 {
     static const char text[] =

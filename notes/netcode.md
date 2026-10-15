@@ -1,5 +1,15 @@
 # Netcode: sessions, prediction, commands
 
+## Dedicated match admission (2026-10-15)
+
+hosting.h multiplexes independent servers over one transport and gates traffic
+through create/join authorization before normal session messages. Optional
+tide_server_desc.identity binds reconnect cookies to the verified account and
+permits that account to resume without a cookie. Metadata is outside world
+snapshots/hashes; legacy sessions keep their existing cookie behavior. The
+session protocol is unchanged. Different client/server packs use protocol 14's
+self-contained state-transfer fallback. Contracts/tests: dedicated-servers.md.
+
 ## Per-tick game input prediction (2026-10-13)
 
 Owner-approved Predict()/[DontPredict] compile to optional

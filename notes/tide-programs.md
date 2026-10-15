@@ -1,5 +1,13 @@
 # `tide_add_game` and the generated header
 
+Dedicated service targets (2026-10-15): tide_add_game(... SERVER) generates a
+server_run.h launcher on native targets, preserving the client game identity.
+It omits client-only assets automatically without custom C; STRIP_SERVER_ASSETS
+is the explicit C opt-in and requires SERVER. SERVER rejects HOST, WINDOW,
+LAYOUT, web and Android. Header/source installation uses the existing paths.
+Both debug/release collect unreachable client code. Contracts/tests are in
+dedicated-servers.md.
+
 Docs playground (2026-10-14): opt-in TIDE_DOC_PLAYGROUND builds its shared Tide
 example with LAYOUT and a portable HOST (ordinary tide_run for native captures,
 tide_host_run_web for the browser). On web it also builds tidec_browser from the

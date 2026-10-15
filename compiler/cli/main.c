@@ -75,6 +75,16 @@ static void usage(void)
            "\n",
            TIDE_VERSION);
     // In two parts: C promises a string literal of 4095 characters only
+    printf("dedicated servers:\n"
+           "  --server             run/build a native headless server, hosting many matches in one process\n"
+           "  --strip-server-assets also select --server; opt custom C into simulation asset pruning\n"
+           "  --anonymous          run --server: allow clients to create and join matches without authentication\n"
+           "  --port <n>           server listening port (7777 by default)\n"
+           "  --max-matches <n>    maximum simultaneous matches (64 by default)\n"
+           "  --max-connections <n> maximum admitted/pending connections (256 by default)\n"
+           "  --udp-only           disable the server's WebRTC room\n"
+           "  --connect host:port/0 requests a new match; /<match-id> joins an existing match\n"
+           "  --join room/0        the same over WebRTC, including web clients\n\n");
     printf("run, with no window, to see what the game draws (not on the web or Android). The game runs once, in\n"
            "made-up time, a 60th of a second a frame, so a run repeats exactly, and tide ends with its exit code:\n"
            "  --capture <file.png>  the run's last frame, as a PNG\n"
@@ -263,6 +273,7 @@ int main(const int argc, char **argv)
     bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
     bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
+    bool server_args = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
@@ -271,7 +282,19 @@ int main(const int argc, char **argv)
             free(defines);
             return 2;
         }
-        if (run && strcmp(a, "--host") == 0) {
+        if (strcmp(a, "--server") == 0) {
+            opts.server = true;
+        } else if (strcmp(a, "--strip-server-assets") == 0) {
+            opts.server = opts.server_strip_assets = true;
+        } else if (run && (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0)) {
+            server_args = true;
+            game_args[game_arg_count++] = a;
+        } else if (run && (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
+                          || strcmp(a, "--max-connections") == 0) && left >= 1) {
+            server_args = true;
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+        } else if (run && strcmp(a, "--host") == 0) {
             game_args[game_arg_count++] = a;
             if (left >= 1 && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') game_args[game_arg_count++] = argv[++i];
         } else if (run && (strcmp(a, "--join") == 0 || strcmp(a, "--connect") == 0) && left >= 1) {
@@ -365,11 +388,33 @@ int main(const int argc, char **argv)
     // starts as one line.
     opts.stats_open = run && opts.stats;
     // Interactive runs reload as files change. Runs with no window end once.
-    opts.watch = run && !headless;
+    opts.watch = run && !headless && !opts.server;
     // DEBUG is every build's but --release's
     if (!opts.release) defines[opts.define_count++] = "DEBUG";
     // The game's tide.packages reads them too: its #if lines say which packages this build has
     packages_set_symbols(defines, opts.define_count);
+    if (server_args && !opts.server) {
+        fputs("tide: --anonymous, --udp-only, --port and server capacity options require --server\n", stderr);
+        free(defines);
+        return 2;
+    }
+    if (opts.server) {
+        for (int i = 0; i < game_arg_count; i++) {
+            const char *a = game_args[i];
+            if (a[0] != '-') continue;
+            if (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0) continue;
+            if (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
+                || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0) { i++; continue; }
+            fprintf(stderr, "tide: --server does not take %s\n", a);
+            free(defines);
+            return 2;
+        }
+    }
+    if (opts.server && (opts.web || opts.android || opts.stats || opts.debug_views || sized || players)) {
+        fputs("tide: --server is a native headless build; omit --web, --android, --stats, --debug-views, --size and --players\n", stderr);
+        free(defines);
+        return 2;
+    }
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
         free(defines);

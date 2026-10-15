@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Dedicated hosting (2026-10-15)
+
+The owner approved multiple headless matches per process, match IDs, separate
+create/join policies and pluggable authentication. New hosting.h/hosting.c and
+platform serve/server_run hosts are agent-maintained under the temporary runtime
+exception. Optional tide_server_desc.identity and host metadata getters bind
+reconnects to verified identities outside world state. Generated Tide calls no
+new runtime function; the handwritten server launcher/host uses these APIs.
+No inner session protocol, tide_game ABI, snapshot or hash changes. Contracts,
+provisional C entry points and validation are in dedicated-servers.md.
+
 ## Vulkan's SPIR-V in tide_shader (2026-10-14)
 
 `tide_shader` (`tide/draw.h`, agent-maintained) has two more fields, `spirv` and `spirv_words`. Generated code fills them under `TIDE_SPIRV`, which the header defines everywhere but the web (Android since 2026-10-14, when it began drawing with Vulkan), with the words tidec translated from the shader's WGSL. No runtime function is new, and generated code calls nothing it didn't. The struct's layout changed, so hosts, game libraries and generated games rebuild together, as with every `tide/draw.h` layout change. The platform's `tide_gpu_pipeline_desc` (`platform/src/gpu.h`) carries the same two fields. Contracts and tests are in `notes/rendering.md` and `notes/shaders.md`, both under Vulkan / SPIR-V.

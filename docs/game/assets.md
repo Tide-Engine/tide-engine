@@ -4,6 +4,12 @@ description: "Import images, audio and glTF, FBX or OBJ models as Tide assets. S
 
 # Assets
 
+[Dedicated server builds](../tools/cli.md#dedicated-servers) can omit assets used
+only by views and other client code. Assets reached by simulation helpers,
+defaults and dynamic match asset references remain available. Server and client
+retain the same match identity even when their packs differ. Projects with
+custom C retain assets conservatively unless explicitly opting into pruning.
+
 An asset is a file a game is built with: an image, a model, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.
 
 ## Supported formats

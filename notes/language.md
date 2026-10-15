@@ -1,5 +1,16 @@
 # Language features, as tidec builds them
 
+## Dedicated server asset selection (2026-10-15)
+
+Server codegen preserves the ordinary client header/game identity before
+selecting simulation assets through asset_usage.c's checked iterative traversal.
+No new Tide syntax or match capability is added. Reachable Asset<Mesh<V>> types
+keep their complete resolver domain for input/command selections. Host metadata
+macros are outside the shared hash. Client-only globals can remain zero in
+unreachable emitted code; loaders/preflight/packs retain only the selected
+closure. Custom C requires conservative retention or explicit opt-in. Full
+contracts, fixtures and validation are in dedicated-servers.md.
+
 ## View inclusion in authored preview (2026-10-13)
 
 The owner approved views-only preview after discussing initialization and the

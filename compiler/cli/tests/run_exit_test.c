@@ -125,6 +125,8 @@ int main(void)
         {{"tide", "run", "--microphone", "voice.wav"}, 4, "UN"},
         {{"tide", "run", "--web", "--no-open"}, 4, "Uw"},
         {{"tide", "run", "--android"}, 3, "Ua"},
+        {{"tide", "run", "--server", "--anonymous"}, 4, "UN"},
+        {{"tide", "run", "--server", "--frames", "2"}, 5, "UN"},
     };
     for (size_t i = 0; i < sizeof runs / sizeof runs[0]; i++) {
         call_count = 0;

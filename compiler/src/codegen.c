@@ -15774,6 +15774,10 @@ static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
+    if (!prog->assets.count && g->opts->server) {
+        sb_put(o, "bool tide_assets_load(const uint8_t *bytes, const size_t size)\n"
+                  "{ (void)bytes; (void)size; return true; }\n\n");
+    }
     if (!prog->assets.count && !prog->asset_refs.count) return;
     sb_put(o, "// The game's assets: the values their names read as, from the pack (tide/pack.h)\n");
     for (int i = 0; i < prog->assets.count; i++) {
@@ -19088,9 +19092,47 @@ bool codegen(program *prog, const codegen_options *opts)
     g.game_hash = 0xCBF29CE484222325ull;
     for (const char *p = types ? types : g.h.data; *p; p++) g.game_hash = (g.game_hash ^ (uint8_t)*p) * 0x100000001B3ull;
 
+    // Compatibility describes the complete client program. A server changes
+    // only what is loaded, after the identity and public types are fixed.
+    const int all_asset_count = prog->assets.count;
+    decl **all_assets = NULL;
+    if (opts->server) {
+        all_assets = arena_alloc((size_t)(all_asset_count ? all_asset_count : 1) * sizeof *all_assets);
+        memcpy(all_assets, prog->assets.items, (size_t)all_asset_count * sizeof *all_assets);
+        for (int i = 0; i < all_asset_count; i++) all_assets[i]->server_asset = true;
+        if (opts->strip_server_assets) program_strip_server_assets(prog);
+        sb_printf(&g.h, "\n// Host build metadata, outside the shared match identity.\n"
+                        "#define TIDE_SERVER_BUILD 1\n#define TIDE_SERVER_HAS_ASSETS %d\n", prog->assets.count != 0);
+        int dependencies = 0;
+        for (int i = 0; i < g.asset_dependencies.count; i++) {
+            const asset_dependency dep = g.asset_dependencies.items[i];
+            if (dep.asset->server_asset) g.asset_dependencies.items[dependencies++] = dep;
+        }
+        g.asset_dependencies.count = dependencies;
+        int skinned = 0;
+        for (int i = 0; i < g.skinned_fingerprints.count; i++) {
+            const asset_dependency dep = g.skinned_fingerprints.items[i];
+            if (dep.asset->server_asset) g.skinned_fingerprints.items[skinned++] = dep;
+        }
+        g.skinned_fingerprints.count = skinned;
+        free(g.pack_bytes);
+        g.pack_bytes = NULL;
+        if (opts->info) {
+            for (int i = 0; i < opts->info->asset_count; i++) free(opts->info->asset_paths[i]);
+            free(opts->info->asset_paths);
+            opts->info->asset_paths = NULL;
+            opts->info->asset_count = 0;
+        }
+        build_pack(&g);
+    }
+
     gen_prelude(&g);
     gen_result_types(&g); // Before routine signatures and maps' Get helpers.
     gen_routine_prototypes(&g);
+    for (int i = 0; opts->server && i < all_asset_count; i++) {
+        const decl *d = all_assets[i];
+        if (!d->server_asset) sb_printf(&g.c, "static %s %s __attribute__((unused));\n", asset_ctype(d->return_type), asset_cname(d));
+    }
     gen_assets(&g);
     gen_session_helpers(&g);
     gen_io_adapters(&g);
@@ -19152,7 +19194,7 @@ bool codegen(program *prog, const codegen_options *opts)
 
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);
-    if (!g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
+    if (!opts->server && !g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
     const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &g.c) && write_pack(&g);
     free(g.pack_bytes);
     return ok;

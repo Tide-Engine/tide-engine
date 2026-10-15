@@ -1,5 +1,13 @@
 # `tide`, packages and the package
 
+Dedicated service builds (2026-10-15): run/build --server has separate server
+debug/release caches, an ordinary console entry, no watch/reload and section
+collection in both configurations. Server-only runtime options are forwarded
+and incompatible player/capture targets rejected. Closed builds automatically
+strip client-only assets; --strip-server-assets opts custom C in explicitly.
+serve.h/server_run.h ship through existing platform header/archive installation.
+Contracts, entry callbacks, auth and validation: dedicated-servers.md.
+
 ## Upgrade fixture channels (2026-10-14)
 
 `tide_cli_upgrade` reads both the version and default channel from the built

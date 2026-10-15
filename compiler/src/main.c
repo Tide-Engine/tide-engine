@@ -28,6 +28,8 @@ static void usage(void)
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
+            "  --server               preserve the client identity and emit server build metadata\n"
+            "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
             "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
             "  --pack-c       also write the assets' pack as C (<name>_pack.c: tide_game_pack), for a host that embeds it\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
@@ -153,6 +155,10 @@ int main(const int argc, char **argv)
             opts.name = argv[++i];
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
+        } else if (strcmp(argv[i], "--server") == 0) {
+            opts.server = true;
+        } else if (strcmp(argv[i], "--strip-server-assets") == 0) {
+            opts.server = opts.strip_server_assets = true;
         } else if (strcmp(argv[i], "--no-line") == 0) {
             opts.line_directives = false;
         } else if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {

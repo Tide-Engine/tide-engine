@@ -3704,11 +3704,34 @@ Implemented, awaiting approval:
 ### Open
 
 - Keeping the cookie across restarts, and making it unguessable.
-- Servers with no window and no player of their own.
+- Tide syntax for process-level dedicated-server orchestration; native C entry points are implemented (see Dedicated servers below).
 - Keeping a room open across reloads under `tide run --web`.
 - Lobbies in the language or the engine: they're packages (`lobby`, and `steam` for Steam), over a game's own network where they bring one.
 - A game's own network: whether `Session.Open` should also take a UDP port beside it, a ping that leaves out the frame's wait without the transport's own clock, and keeping a match on it across a reload.
 - Showing other players from confirmed state, blended between confirmed ticks (see Views and drawing, Open).
+
+### Dedicated servers
+
+**Decided:** a dedicated server has no window, rendering, audio, views or local
+player. One process hosts independent matches of the same game, sharing immutable
+assets and execution resources. Creation and joining have separate admission
+policies, supporting client-requested matches and creation restricted to trusted
+sources. Match IDs route requests and do not confer access. Pluggable
+authentication runs outside simulation; ordinary deterministic join events admit
+accepted players. Credentials remain outside replicated state. Server packs can
+omit assets reached only from client code without changing shared match identity.
+
+**Provisional, implemented:** `tide run/build --server`, the C
+`tide_server_entry(tide_hosting_desc *)` process hook, per-match typed `tide_start`
+selection, and `tide/hosting.h` admission/multiplexing APIs. Standard clients use
+`Session.Connect("host:port/0")` or `Session.Join("ROOMID/0")` to request a match;
+a nonzero suffix joins its ID. Anonymous policies are explicit. Custom clients
+provide bounded credentials over protected transports to the game's verifier;
+acceptance binds an opaque identity to the match's `PlayerID`, including
+reconnects. Current ownership, limits and callbacks are documented in
+`docs/c/network.md` and `notes/dedicated-servers.md`. There is no new Tide syntax.
+Account providers, process restart persistence, native crash isolation and
+sandboxed managed hosting are outside this implementation.
 
 ## Settings
 

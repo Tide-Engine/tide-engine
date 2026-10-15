@@ -133,6 +133,31 @@ endif()
 if(TIDE_PLATFORM)
     add_subdirectory(platform)
     if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        tide_add_game(tide_server_smoke SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_build.tide")
+        add_test(NAME tide_server_smoke COMMAND tide_server_smoke --anonymous --udp-only --frames 2)
+        if(TIDE_NODE)
+            tide_add_game(tide_server_pack_client NAME game
+                SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_build.tide"
+                HOST "${PROJECT_SOURCE_DIR}/platform/tests/server_pack_client.c")
+            target_link_libraries(tide_server_pack_client PRIVATE tide_platform)
+            add_test(NAME tide_server_pack COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
+                "$<TARGET_FILE:tide_server_smoke>" "$<TARGET_FILE:tide_server_pack_client>")
+            set_tests_properties(tide_server_pack PROPERTIES TIMEOUT 20)
+            add_test(NAME tide_server_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
+                "$<TARGET_FILE:tide_server_smoke>" "$<TARGET_FILE:tide_server_pack_client>" room)
+            set_tests_properties(tide_server_room PROPERTIES TIMEOUT 20)
+        endif()
+        tide_add_game(tide_server_entry SERVER NAME game SOURCES
+            "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"
+            "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_entry.c")
+        add_test(NAME tide_server_entry COMMAND tide_server_entry --anonymous --udp-only --frames 2 --port 7778)
+        tide_add_game(tide_server_visual SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_visual.tide")
+        add_test(NAME tide_server_visual COMMAND tide_server_visual --anonymous --udp-only --frames 2 --port 7779)
+        set_tests_properties(tide_server_smoke tide_server_entry tide_server_visual PROPERTIES TIMEOUT 30)
+        target_sources(tidec_e2e_hosting PRIVATE "${PROJECT_SOURCE_DIR}/platform/tests/hosting.c")
+        target_link_libraries(tidec_e2e_hosting PRIVATE tide_platform)
+    endif()
+    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_subdirectory(tools/tide-editor)
     endif()
     add_subdirectory(demo)

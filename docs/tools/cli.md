@@ -207,6 +207,55 @@ When the game gets into a state you don't want, press **Ctrl+R** in the game, or
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
 
+## Dedicated servers
+
+```sh
+tide run --server --anonymous --port 7777 --max-matches 64
+tide build --server --release
+```
+
+`--server` builds a native console service with no window, rendering, audio,
+views or local player. Its cache is separate from ordinary native builds, and
+its default output is `<folder>/build/<name>-server` (with `.exe` on Windows),
+beside its own `<name>-server.pack` when needed. `run` runs it once without hot
+reload. Server executables support:
+
+| Option | Meaning |
+|---|---|
+| `--anonymous` | Allow anonymous match creation and joining for quick startup |
+| `--port <n>` | Listening UDP port, default 7777 |
+| `--max-matches <n>` | Concurrent match limit, default 64, maximum 4096 |
+| `--max-connections <n>` | Admitted/pending connection limit, default 256, maximum 65536 |
+| `--udp-only` | Omit the shared WebRTC room |
+| `--frames <n>` | Bound a test run to this many service iterations |
+
+The service uses wall-clock time and sleeps between iterations, normally about
+one millisecond. `--frames` bounds service iterations; it does not render frames
+or make networking deterministic. `TIDE_HIDDEN` requires this bound. Interactive
+services stop on Ctrl+C or SIGTERM. Empty matches expire after 60 seconds by
+default; a custom host can change that interval.
+
+Clients use `--connect localhost:7777/0` to request a new match, or replace `0`
+with its match ID. `--join K7QF2M/0` does the same through the server's WebRTC
+room. The admitted client prints its match ID and exposes the complete address
+through `Session.room`. Web clients use the room form.
+
+Without anonymous policies, the game supplies
+`void tide_server_entry(tide_hosting_desc *host)` in its C sources to configure
+authentication, match startup and process callbacks. A local menu `Main` requires
+a startup callback selecting a match scene. The C entry point is the first
+implementation; a Tide orchestration declaration has no agreed syntax yet.
+See [dedicated hosting](../c/network.md#dedicated-hosting).
+
+Closed Tide-only server builds automatically retain only simulation assets.
+Games or packages with C/C++ or prebuilt libraries retain all assets because C
+can find entries by name. `--strip-server-assets` explicitly enables server
+pruning for such projects when their C has no additional asset dependencies.
+This option also selects `--server`. Source asset validation still runs for all
+declarations. Standalone server links discard unreachable client code in debug
+and release. `--web`, `--android` and capture/view options do not apply to a
+server executable; browser players still connect through WebRTC.
+
 ## Multiplayer
 
 `tide run` can start a match others join, or join one. For `--host`, the game's `Main` scene must be the match's (see [Scenes](../game/scenes.md)); a game that starts in a menu does the same from code (see [Matches](../multiplayer/matches.md)).

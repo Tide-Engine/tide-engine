@@ -194,6 +194,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Entity/table/page/heap/list/map/grid/text runtime, queries, snapshots and hashes | `notes/ecs.md` |
 | Scheduler analysis, tick threads, parallel loops and temporary handles | `notes/schedule-and-threads.md` |
 | Session/net/delta runtime, inputs, commands, lead, migration and verification | `notes/netcode.md` |
+| Dedicated server builds, multiple matches, match IDs and authentication/admission | `notes/dedicated-servers.md` |
 | Verified/local event handlers and generated listeners | `notes/verified-and-local-handlers.md` |
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |

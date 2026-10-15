@@ -307,6 +307,11 @@ typedef struct tide_server_desc {
     // With no entropy, the seed of the match it starts (Time.seed): its low 31
     // bits. 0 unless the host picked one.
     uint32_t seed;
+    // Optional admission identity, supplied by a trusted host, outside ticks.
+    // False refuses this peer. A nonzero 32-byte identity binds reconnects to
+    // that account; zero is anonymous. Never sent, snapshotted or hashed.
+    void *identity_user;
+    bool (*identity)(void *user, uint32_t transport, tide_address peer, uint8_t identity[32]);
 } tide_server_desc;
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
@@ -317,6 +322,8 @@ void tide_server_update(tide_server *s, double now);
 const void *tide_server_world(const tide_server *s);
 uint32_t tide_server_tick(const tide_server *s); // Ticks run so far
 uint32_t tide_server_player_count(const tide_server *s);
+// Trusted host metadata; false (and zero output) for anonymous/unknown players.
+bool tide_server_player_identity(const tide_server *s, tide_player_id player, uint8_t identity[32]);
 // Sends `player` away: they go offline with TIDE_DISCONNECT_KICKED and
 // `message` (NULL for none), and PlayerLeft follows at the end of the next
 // tick. A goodbye can be lost: one who didn't hear it is told again whenever
