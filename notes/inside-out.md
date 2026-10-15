@@ -750,6 +750,80 @@ travel that pushes a parcel.
 
 ## Solvability and verification contract
 
+Puzzle solver (2026-10-15, the polish round: the lead agent's brief asked
+for the tool and its five commands; what follows beyond that is my pick).
+`inside_out_solve` (`test/solve.c`, usage at its top) is a native tool for
+whoever draws puzzles, not a test: CTest does not run it, and it is not
+built for the web or Android.
+- Moves go through the generated Move command handler, sent and ticked as
+  `test/simulation.c` does. `MovePuzzle` is a `static inline` helper in the
+  generated C, out of a host's reach, so calling it directly was not an
+  option. The puzzle count, names, chapters and lessons come from
+  `test/solve.tide`, in this target alone: a `Describe` command whose
+  handler hands `LEVEL_COUNT` and `levels.tide`'s words to an `extern`
+  (`inside_out_solve_words`, defined in `solve.c`). It changes no state.
+- Build: `tide_add_game(inside_out_solve SOURCES game.tide levels.tide
+  test/solve.tide NAME game` with Rooms, `HOST test/solve.c)`, and
+  `target_compile_options(-O2)` on it, so the generated C and the solver
+  are optimized in every configuration. The command line is `-O0 ... -O2
+  ... -fno-fast-math -ffp-contract=off` (the engine's flags come from
+  `tide_flags` after the target's), and the generated C keeps its `#pragma
+  STDC FP_CONTRACT OFF`. The engine library is built as configured.
+- A position is a byte for each robot, box and battery: (room + 1) * 49 +
+  y * 7 + x, 254 for a robot off the board, 255 for an inactive battery.
+  Batteries are alike to the rule, so theirs are sorted; facing, trails
+  (rebuilt from the boxes after every move), moves and solved are left out.
+  The key is two 64-bit words in an open-addressing table of 32-bit indices
+  (linear probing, at most half full); a position's link packs the parent's
+  index over the 3-bit move, so `--limit` is under 2^29. The default limit
+  is 30,000,000: about 600 MB of keys and links and a 256 MB table at that
+  size. 30 million synthetic keys went in and back without a false
+  duplicate in 4 s. The match is started again before `Time.tick` (an int)
+  passes 2^30.
+- Shortest search: breadth first, stopping at the first position the
+  handler calls solved; the witness is replayed from a fresh match through
+  the handler before it is printed as solving. `--alone <seat>` takes the
+  other robot to the table at (-16, -16), off every grid (the campaign
+  test's `alone` uses the table's corner, which is wall in every puzzle so
+  far), explores everything and asks what `IsSolved` asks but the goals:
+  every active battery on a socket, every socket filled, every outline
+  taken. Put facing into the key and it counts 8,042 and 30,454 for
+  puzzles 6 and 7 against the campaign test's 8,043 and 30,455: that test
+  never puts its start in its table, so it counts the start twice once a
+  move comes back to it.
+- `--print` draws every map in `levels.tide`'s notation; for puzzles 1 to 7
+  its 144 rows are exactly the file's.
+- Speed (this machine, the debug preset, the target at -O2): 200,000 to
+  430,000 moves a second across runs on a shared machine, and from about
+  5 to 7 moves for each new position, as the share of moves that find known
+  positions grows: some 30,000 to 140,000 positions a second, so a search to
+  the default limit takes minutes. Measured once: a tick on its own
+  is 0.06 µs, a command refused for its serial 0.8 µs, a refused move 2.8
+  µs and a taken one 3.3 µs, so the handler is most of it. Generated C
+  passes read-only structs by value: `Authorized`, `Together` and `SeatOf`
+  are each handed the 38,368-byte `Workshop`, and `MovePuzzle`'s helpers
+  the 1,156-byte `LevelLayout`, which is the likely bulk (not measured
+  apart). That is the compiler's, and unchanged here.
+
+`inside_out_solve all`, and `--alone` for both seats, at the default limit:
+every shortest solution replayed, every alone search exhausted.
+
+| Puzzle | Shortest | Positions found before it | Amber alone | Teal alone |
+| --- | ---: | ---: | --- | --- |
+| 1 A room outside | 10 | 130 | 19, no | 29, yes |
+| 2 No handle inside | 12 | 3,291 | 489, no | 489, no |
+| 3 The other opening | 20 | 16,840 | 659, no | 1,159, no |
+| 4 A place to stand | 15 | 67,283 | 21,545, yes | 21,545, yes |
+| 5 All in a row | 11 | 8,083 | 182,875, yes | 182,875, yes |
+| 6 Hold it steady | 19 | 7,243 | 3,454, no | 3,454, no |
+| 7 Posted | 15 | 2,430 | 13,966, no | 13,966, no |
+
+"Alone" is how many positions that robot reaches and whether one of them
+has everything in place. The witnesses of puzzles 1 to 3 and 5 to 7 are
+shortest; puzzle 4's is 31 moves against 15. Puzzles 1, 4 and 5 can be put
+in place by one robot alone (puzzle 1 by Teal only), so they show no
+co-operation mechanically; 2, 3, 6 and 7 do.
+
 The authored replacement campaign has these production-command witnesses:
 
 | Puzzle | Moves |

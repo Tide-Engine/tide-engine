@@ -118,4 +118,9 @@ Enable `TIDE_PRIVATE_PROTOTYPES` when configuring the repository. Build
 `inside_out_play_webgl` and `inside_out_play_webgpu` test two real browser
 players with muted audio. The campaign test replays checked-in witnesses
 through production commands; it establishes solvability, not optimality
-or measured human difficulty. Contracts and validation: `notes/inside-out.md`.
+or measured human difficulty. `inside_out_solve`, a native tool for drawing
+puzzles, moves through the same Move handler: `inside_out_solve 3` finds
+puzzle 3's shortest solution, `--print` shows its maps, `--alone <seat>`
+asks whether one robot can do it alone, `--play "<moves>"` plays moves, and
+`inside_out_solve all` tabulates every puzzle (usage at the top of
+`test/solve.c`). Contracts and validation: `notes/inside-out.md`.

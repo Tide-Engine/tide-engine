@@ -9,6 +9,16 @@ target_include_directories(inside_out_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests
 add_test(NAME inside_out_tests COMMAND inside_out_tests)
 set_tests_properties(inside_out_tests PROPERTIES TIMEOUT 120 LABELS "private-prototype")
 
+# The puzzle solver and inspector (usage at the top of test/solve.c), a
+# desktop tool rather than a test. It moves through the generated Move
+# handler, so the game's C is optimized with it in every configuration; the
+# engine's float flags (cmake/TideFlags.cmake) come after -O2 and still hold.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(inside_out_solve SOURCES game.tide levels.tide test/solve.tide NAME game ${INSIDE_OUT_ROOMS}
+        HOST test/solve.c)
+    target_compile_options(inside_out_solve PRIVATE -O2)
+endif()
+
 if(NOT TARGET tide_platform)
     return()
 endif()
