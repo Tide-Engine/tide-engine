@@ -1,9 +1,20 @@
 # Tide managed hosting
 
 This is the first single-host implementation of local builds, artifact upload,
-WASM matches, developer accounts and prepaid credit. It has not been launched.
-The checked-in Fly configuration disables allocations. Rates, provider secrets,
-domains and operational launch checks must be configured before paid use.
+WASM matches, developer accounts and subscription-backed credit. Access is
+invite-only. The checked-in Fly configuration enables bounded allocations on
+the existing machine. Provider secrets, domains and operational launch checks
+must be configured before paid public use.
+
+Several game projects and developer accounts share this host. Each match runs
+its game/C code in a separate WASM instance and Worker with its own bounded
+memory. Games receive no filesystem handles, directories, environment secrets or
+arbitrary networking API. The host selects save paths and enforces account/project
+ownership for downloads, deletion and controls. Shared artifact bytes are retained
+while any project references them; uploads, deletion and collection are serialized.
+Small/Standard matches have 250/500 ms wall watchdogs for stuck updates, with
+separate 0.25/0.5-core sampled CPU limits. Wall headroom accommodates cold WASM
+compilation and shared-host scheduling; it is not a game tick interval.
 
 ## Run and validate
 
@@ -185,7 +196,7 @@ Current defaults are provisional operator settings, rather than language rules:
 | Limit | Initial policy |
 |---|---|
 | Active matches | 2 per account and host; project chooses 1–2 |
-| Match presets | Small: 64 MiB/0.25 core/20 ms update; Standard: 128 MiB/0.5 core/40 ms |
+| Match presets | Small: 64 MiB/0.25 core/250 ms wall watchdog; Standard: 128 MiB/0.5 core/500 ms |
 | Fly memory reservation ceiling | 128 MiB across active matches on the fixed 512 MiB machine |
 | Empty grace | 60 seconds, configurable 5–3600 |
 | Startup/save deadline | 5 seconds; guest update overruns terminate that worker |
@@ -269,8 +280,9 @@ It shows amount selection only when top-ups and both Stripe secrets are
 configured; otherwise it explains that purchases are unavailable. Test-mode
 keys display a sandbox label and test-payment button. The current Fly setup
 offers a configurable EUR 20/month sandbox plan with EUR 20 included and
-EUR 5/10/25 extra top-ups; allocations and usage rates remain disabled. This
-does not select public launch pricing. The runtime key now also needs Customer,
+EUR 5/10/25 extra top-ups. Allocations are enabled within the two-match host cap;
+Small/Standard rates are EUR 0.036/0.072 per allocated hour. Stripe test/live
+mode changes payment processing, not hosting eligibility. The runtime key also needs Customer,
 Subscription, Invoice, Customer Portal Session and PaymentIntent permissions;
 Product/Price/webhook configuration belongs to operator setup, not the runtime.
 
@@ -304,8 +316,8 @@ Other refs run the service tests without deploying. The workflow uses Node
 with `--remote-only --ha=false`. The installed-toolchain/browser integration
 cases skip because this workflow does not stage Tide or a browser. It reuses
 the existing repository `FLY_API_TOKEN`; GitHub OAuth and Stripe credentials
-remain in Fly secrets. It does not configure domains, rates, invites or enable
-allocations. Complete the setup above before the first deployment.
+remain in Fly secrets. Deployment applies the checked-in rates and allocation
+switch; domains, provider secrets and invites require operator setup.
 The shared Fly secret contains app-scoped deployment credentials for both
 `tide-website` and `tide-hosting`, expiring in October 2027; renew both together.
 

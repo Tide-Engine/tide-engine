@@ -1,5 +1,51 @@
 # Managed hosting and deployment
 
+## Shared-host isolation audit (2026-10-15)
+
+The owner explicitly requested shared machines for different game projects and
+protection against reading, modifying or deleting another game's data. This is
+already a multi-project/multi-account service: projects are routing/accounting
+units, not Fly apps. One host runs independent Workers/WASM memories per match.
+No guest JS/native module is accepted; all game C runs inside WASM. The only
+WASI operations are bounded stdout/stderr, empty argv/environment, clocks,
+entropy and lifecycle calls. File/directory and arbitrary network imports are
+rejected before instantiation. Saves accept bounded bytes, never guest filenames.
+Host filesystem paths use validated host-generated match IDs and content hashes.
+Account/project authorization precedes save/log reads and destructive controls.
+
+Found and fixed an artifact lifecycle race: deleting the last old release could
+unlink the same content-addressed artifact while another upload was registering
+it for a different project. A process-local artifact guard now serializes upload,
+release deletion and retention collection, including each awaited filesystem
+operation. Contending mutations return 429; collection waits for uploads/deletion
+to finish. Startup sets the next collection time after its initial sweep.
+Existing reference checks retain bytes while any project owns a release.
+
+Added regressions for different games/accounts running together, independent
+guest state and continued operation after ending the other game; forbidden
+file/directory/network/host imports; empty WASI environment and refusal of
+arbitrary fd_write descriptors; cross-account save/log reads and deletion;
+retaining shared release bytes and private saves; and controlled upload/delete
+interleaving. WASM instances provide guest isolation within a shared Node host,
+not separate OS kernels or independent machine availability. This work does not
+implement multi-machine scheduling or automatic provisioning.
+
+The live game page returns 200 and the deployed operator status confirms
+accepting=true with the same two-match/128 MiB guest reservation cap. A bounded
+real match probe initially started, then failed its 20 ms wall watchdog. An
+isolated ten-update measurement of that exact release on Fly measured 15.8 ms
+for the cold update, 3.25 ms next and 0.08–0.49 ms subsequently. The cold JIT and
+shared-CPU scheduling left insufficient wall headroom. Small/Standard watchdogs
+are now 250/500 ms; their independent sampled CPU limits remain 0.25/0.5 core.
+Infinite-loop and CPU-overuse tests continue enforcing termination. This does
+not change guest scheduling, game tick rate or deterministic simulation.
+
+Validation: all 48 hosting tests pass with staged native/web/managed CLI and
+muted Chrome, including the filesystem/environment/ownership and concurrent
+artifact cases above, infinite-loop interruption and sampled CPU enforcement.
+Svelte check/build and the updated docs production build pass. No engine or
+compiler source changes and no CI dispatch. Deployment results follow.
+
 ## Non-expiring CI tokens and game links (2026-10-15)
 
 The owner requested optional infinite tokens. CI deploy creation now offers
@@ -35,7 +81,10 @@ zero purchased credit, missing prices, disabled creation, insufficient and
 expired allowance. Browser coverage creates/revokes a non-expiring token and
 checks visible URL values and click-to-select. Expanded desktop/phone UI captures
 were inspected; Svelte has zero errors/warnings and both production builds pass.
-Deployment results follow after completion.
+Source 5e1bf4ff deployed as Fly release 7, image
+deployment-01M50A168MME2S59CAHBAAKGR1. Machine smoke/health checks pass. Operator
+status reports accepting=true and the owner's game URL returns 200 with its
+hosted client. This deployment retains the existing machine and volume.
 
 ## CI deploy credentials (2026-10-15)
 
@@ -429,7 +478,7 @@ policy, not language semantics or approved launch pricing:
 | Control | Default |
 |---|---|
 | Capacity | Two active matches/account and host; project maximum one or two |
-| Small / Standard | 64/128 MiB, 0.25/0.5 sampled CPU core, 20/40 ms update deadline |
+| Small / Standard | 64/128 MiB, 0.25/0.5 sampled CPU core, 250/500 ms wall watchdog |
 | Fly host | One fixed 512 MiB shared CPU machine in fra, 128 MiB total guest reservation |
 | Credit | Thirty-second allocation lease, renew with five seconds left |
 | Saves | 8 MiB each, eight/account and sixteen/host, seven inactive days |

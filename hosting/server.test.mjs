@@ -162,6 +162,15 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     service.store.invite(2);
     const other = service.store.signIn({ id: 2, login: 'other' });
     const otherToken = service.store.issueToken(other.id, 'cli', 100000);
+    const otherHeaders = { Authorization: `Bearer ${otherToken.token}` };
+    for (const action of ['save', 'logs']) {
+        assert.equal((await call(`/api/matches/${original.id}/${action}`, { headers: otherHeaders })).status, 404);
+    }
+    for (const action of ['discard', 'end', 'suspend', 'resume']) {
+        assert.equal((await call(`/api/matches/${original.id}/${action}`, { method: 'POST', headers: otherHeaders, data: {} })).status, 404);
+    }
+    assert.equal((await call(`/api/projects/${project.id}/releases/${'a'.repeat(64)}`, { method: 'DELETE', headers: otherHeaders })).status, 404);
+    assert.ok(service.store.match(original.id).checkpoint, 'Foreign requests must not delete the saved world.');
     assert.equal((await call(deployPath, { method: 'POST', headers: { Authorization: `Bearer ${otherToken.token}` }, data: { name: 'stolen' } })).status, 404);
     const otherSession = service.store.issueToken(other.id, 'browser', 100000);
     const [ownerHtml, otherHtml] = await Promise.all([call('/dashboard', { headers: browser }),
@@ -174,6 +183,46 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
         headers: { Authorization: `Bearer ${otherToken.token}` } })).status, 404);
     assert.equal((await call('/api/logout', { method: 'POST', data: {}, headers: authenticated })).status, 200);
     assert.equal((await call('/api/account', { headers: browser })).status, 401);
+});
+
+test('artifact uploads and deletion are serialized so an unlink cannot race another project publishing the same artifact', async t => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-artifact-lock-'));
+    const config = configuration({ TIDE_HOSTING_DATA: folder, PORT: '0' });
+    const service = await createService(config, { rooms: null });
+    let unblockDelete = () => {}, unblockUpload = () => {};
+    t.after(async () => { unblockDelete(); unblockUpload(); await service.close(); await rm(folder, { recursive: true, force: true }); });
+    const store = service.store; store.invite(1);
+    const account = store.signIn({ id: 1, login: 'artifact-owner' });
+    const project = store.createProject(account.id, { name: 'game', region: config.region, preset: 'small', maximum: 1 }, config);
+    const raw = encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, { 'server.wasm': wasmFixture() });
+    const old = await service.bundles.put(raw); store.registerRelease(account.id, project.id, old, config);
+    const next = await service.bundles.put(encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, { 'server.wasm': wasmFixture({ empty: true }) }));
+    store.registerRelease(account.id, project.id, next, config);
+    const token = store.issueToken(account.id, 'cli', 60000).token;
+    const { port } = await service.start();
+    const call = (path, method, raw) => new Promise((accept, reject) => {
+        const req = request({ hostname: '127.0.0.1', port, path, method,
+            headers: { Host: new URL(config.origin).host, Authorization: `Bearer ${token}`, ...(raw ? { 'Content-Length': raw.length } : {}) } }, res => {
+            res.resume(); res.on('end', () => accept(res.statusCode));
+        }); req.on('error', reject); req.end(raw);
+    });
+    const remove = service.bundles.remove.bind(service.bundles);
+    let deleting; const deleteStarted = new Promise(resolve => deleting = resolve);
+    const deleteHold = new Promise(resolve => unblockDelete = resolve);
+    service.bundles.remove = async id => { deleting(); await deleteHold; await remove(id); };
+    const deletion = call(`/api/projects/${project.id}/releases/${old.id}`, 'DELETE');
+    await deleteStarted;
+    assert.equal(await call(`/api/projects/${project.id}/releases`, 'POST', raw), 429);
+    unblockDelete(); assert.equal(await deletion, 200); service.bundles.remove = remove;
+    const validate = service.matches.validate.bind(service.matches);
+    let uploading; const uploadStarted = new Promise(resolve => uploading = resolve);
+    const uploadHold = new Promise(resolve => unblockUpload = resolve);
+    service.matches.validate = async (...args) => { uploading(); await uploadHold; return validate(...args); };
+    const upload = call(`/api/projects/${project.id}/releases`, 'POST', raw);
+    await uploadStarted;
+    assert.equal(await call(`/api/projects/${project.id}/releases/${next.id}`, 'DELETE'), 429);
+    unblockUpload(); assert.equal(await upload, 201);
+    assert.equal((await service.bundles.get(old.id)).id, old.id);
 });
 
 test('monthly-only hosting credit serves games and configuration failures do not claim credit is missing', async t => {

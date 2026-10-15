@@ -82,7 +82,10 @@ of project files, command arguments and logs.
 ## Matches and versions
 
 Each managed match owns a separate WASM instance, including its memory and C
-globals. The service can run several matches of the same game in one process.
+globals. Different game projects can share a hosting process, as can several
+matches of one game. Guest code has no host filesystem access or access to other
+matches' memory. The host manages each match's saves, and account/project checks
+protect downloads, deletion and match controls.
 Views, the local menu, rendering and audio do not run on the server. Match
 `Main` is the default entry; games with a local menu select their match scene
 through the [server entry callback](../c/network.md#dedicated-hosting).
