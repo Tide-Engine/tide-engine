@@ -29,9 +29,8 @@ You can see part of a robot standing beside your box.
 The camera keeps that framing when your partner moves or leaves the screen.
 Your robot walks and shrinks through the doorway; leaving grows them back
 into the surrounding world. Your partner can watch that passage from outside.
-The outside follows the doorway you used: a moved shell changes your surroundings,
-and a recursive doorway can put the same room
-around itself. Amber and Teal keep their identity colours wherever they
+The outside is your room's box, wherever it stands: a moved box changes your
+surroundings, and a box inside itself puts the same room around itself. Amber and Teal keep their identity colours wherever they
 travel. A room shell contains a live miniature of its shared interior;
 nested and recursive preview details collapse to markers after a few layers.
 Floors, walls, batteries and robots are real 3D geometry. The orthographic view
@@ -57,7 +56,7 @@ it: a yellow bar against a box you would push, a green arrow into a doorway
 you would enter. The direction buttons show the same for every direction,
 with a bar across the arrow where you cannot go.
 
-The shelf can revisit or skip any of the nine puzzles. A plus beside a
+The shelf can revisit or skip any puzzle. A plus beside a
 title marks one you have completed in this match. Hints start with a small
 nudge; ask for more to reveal an arrangement and then a more specific plan.
 They are optional. Ambience, sound and reduced motion are local settings.
@@ -77,9 +76,10 @@ One rule moves everything: robots, batteries and boxes.
 - A moving box carries everything inside it.
 - A room has one box that is its outside. Walk out through an edge door and
   you come out beside that box; so does anything you push out.
-- A pale box is a copy of a room: a way in, and never the way out. A room is
-  one place, so what is in it shows in every box of it, and a room can hold
-  a copy of itself.
+- Every room has exactly one box. A box can stand inside its own room: leave
+  that room and you come out beside its box, in the same room. Two boxes can
+  stand inside each other: leave one and you come out beside it, in the
+  other. A room is one place, so what is in it shows in every view of it.
 - Every room is a square grid, so a box always fills the cell it stands in.
 - Seat every battery in a socket, park each box on its numbered outline, and
   put both robots on goals. A seated battery can be moved again while you
