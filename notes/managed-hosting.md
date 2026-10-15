@@ -7,9 +7,17 @@ sign-in, Stripe prepaid credit and the existing Fly.io organization/relay are
 selected. `hosting/README.md` is the operator/API/ABI reference;
 `docs/multiplayer/hosting.md` is the developer guide. No new Tide syntax.
 
-The service has not been deployed. No real OAuth/payment credentials, customer
-payments or paid infrastructure were used during implementation validation.
-Allocations in the Fly configuration are disabled and prices default to zero
+The first Fly deployment completed on 2026-10-15 through Hosting run
+38754895170 attempt 2 (341051c4): one 512 MiB shared CPU machine in `fra`, one
+1 GiB `hosting_data` volume, a passing Fly health check and `{"ok":true}` from
+the public Fly hostname with the console Host header. All four provider secrets
+are now deployed. Cloudflare DNS and Fly-managed TLS for console.tide-engine.dev
+and play.tide-engine.dev are configured and verified; both HTTPS health requests
+return 200. The console homepage serves GitHub sign-in. Real provider/payment
+flows remain unvalidated. No customer
+payment was made. Earlier implementation validation used no real provider
+credentials or paid infrastructure. Allocations remain disabled in the Fly
+configuration and prices default to zero
 (which also disables allocation). Public paid launch requires provider setup,
 measured rates and the remote/security/restore checks in the operator guide.
 The inactive remote mod build service remains on hold: this work does not
@@ -174,6 +182,33 @@ high availability or an independent backup.
 
 ## Validation and remaining launch work
 
+The manually triggered Hosting workflow (`.github/workflows/hosting.yml`) now
+tests the service and, on `dev`, deploys `hosting/` to `tide-hosting`, reusing the
+existing repository `FLY_API_TOKEN` as requested by the owner. Other refs test
+only. Node 24.16.0 matches the service image. Installed-toolchain/browser cases
+skip without staged tools; the ordinary service tests include real WebRTC.
+Provider secrets remain in Fly, and the workflow does not enable allocations
+or configure first-deployment domains, rates, invites or backups. See the
+operator README and notes/releases-and-ci.md for the completed run and token setup.
+Workflow validation passes actionlint 1.7.12, Fly configuration validation and
+the production image build. Node 24.16.0 service tests pass on Windows and in
+the Linux service image (29 passed, two staged-tool cases skipped).
+The first owner-triggered Hosting run passed service tests but Fly configuration
+validation required a token absent from that step. The workflow now supplies
+the existing `FLY_API_TOKEN` to both Fly validation and deployment. The owner
+authorized a fresh run after this correction. Run 38754895170 attempt 2 passes
+tests, validation and deployment. The existing repository token was website-only;
+its replacement combines one-year app-scoped FlyV1 credentials for the website
+and hosting, retaining the same secret name and refusing an unrelated app (403).
+The runtime has no copy of this deployment token. The service is healthy on Fly.
+The owner then authorized Cloudflare OAuth in their own browser. DNS-only
+A/AAAA records for console/play use the hosting app's public addresses, and
+the console ACME CNAME provides DNS validation. Both Fly certificates are
+issued and both custom-domain HTTPS health checks pass. Website release 282
+adds the requested Console menu on desktop/mobile; the apex remains the docs
+site. See notes/docs-site.md. Provider and other launch checks below remain
+outstanding; allocations and rates were not enabled by domain setup.
+
 Validation exercises SQLite/auth/payment mocks, real HTTP, WASM isolation,
 memory growth limits, infinite-loop interruption, returning CPU-heavy guests,
 credit/caps, checkpoint atomicity, retention, bounded recovery, real local relay/
@@ -287,7 +322,26 @@ then validate the actual runtime flows in the sandbox before provisioning the
 live equivalent. Customer/invoice API permissions can follow the implemented
 features. Runtime keys do not need webhook administration rights. Creating the
 runtime key remains an owner Dashboard/2FA step; the MCP API search did not expose
-a restricted-key creation operation. The owner will push secrets to Fly.
+a restricted-key creation operation.
+
+The owner subsequently asked the agent to push the Stripe secrets. Created the
+Fly app namespace `tide-hosting` in the existing personal organization and
+imported `TIDE_STRIPE_WEBHOOK_SECRET` directly from the private local file with
+`fly secrets import --stage`. Fly lists it as staged; no machines, volumes or
+deployment were created. `TIDE_STRIPE_SECRET` is still absent. An existing
+`STRIPE_PRIVATE` environment value was verified through Stripe's account API:
+it belongs to a different sandbox, so it was not uploaded or modified. The
+matching Tide Engine sandbox API key requires Dashboard access; the shared
+browser currently requests sign-in. No secret values were printed or committed.
+
+After the owner's next setup confirmation, `fly secrets list --app tide-hosting`
+shows all four required names staged: `TIDE_GITHUB_CLIENT_ID`,
+`TIDE_GITHUB_CLIENT_SECRET`, `TIDE_STRIPE_SECRET` and
+`TIDE_STRIPE_WEBHOOK_SECRET`. The agent did not create or upload the three
+newly present values and did not retrieve their contents. Thus their presence
+is verified, while the API key's sandbox/account and permissions remain untested.
+Secrets are uploaded but not deployed to a machine; no additional Stripe key
+was created. The shared browser still displays Stripe sign-in.
 
 Validation: 14 existing auth/payment/store tests pass; two isolated mock-provider
 reproductions confirm the key-mode and retry findings. Runtime code is unchanged
