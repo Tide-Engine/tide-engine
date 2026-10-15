@@ -1,0 +1,11 @@
+// The solver (test/solve.c) learns how many puzzles there are and each
+// one's words, which levels.tide keeps, through this command: its handler
+// hands them to C. It changes nothing in the match.
+[NativeName("inside_out_solve_words")]
+extern void SolverWords(int puzzles, int level, int chapter, string name, string chapterName, string lesson);
+command Describe { int level; }
+command(Describe describe, PlayerID sender) DescribePuzzle()
+{
+    var chapter = LevelChapter(describe.level);
+    SolverWords(LEVEL_COUNT, describe.level, chapter, LevelName(describe.level), ChapterName(chapter), LevelLesson(describe.level));
+}
