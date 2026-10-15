@@ -19,6 +19,7 @@
 #include "serve.h"
 #include "sys.h"
 #include "toolchain.h"
+#include "tide/sha256.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
 #include <zlib.h>
@@ -346,6 +347,7 @@ static void title_field(char *out, const size_t size, const build_options *opts,
 // tide_add_game's (cmake/Tide.cmake).
 static bool write_main(const char *path, const build_options *opts, const char *name)
 {
+    if (opts->managed) return sys_write_text(path, "#include \"game.h\"\n#include \"tide/managed_run.h\"\n");
     if (opts->server) {
         char server[1024], escaped[512];
         c_string(escaped, sizeof escaped, name);
@@ -448,7 +450,7 @@ static bool find_target(const char *root, const build_options *opts)
     const char *runtime = NULL;
     if (opts->android) return true; // Each of its CPUs, as it's built (build_android)
     if (opts->web) {
-        build_target.flag = "--target=wasm32-wasip1-threads";
+        build_target.flag = opts->managed ? "--target=wasm32-wasip1" : "--target=wasm32-wasip1-threads";
         runtime = "wasi";
     }
 #ifdef NATIVE_TARGET
@@ -502,12 +504,13 @@ static uint64_t header_stamp(const char *folder);
 // every configuration, with debug information and assertions in development.
 static void config_flags(args *a, const build *b, const bool cpp, const bool engine)
 {
+    if (b->opts->server) arg(a, "-DTIDE_SERVER_BUILD=1");
     if (build_target.flag) {
         arg(a, build_target.flag);
         arg(a, build_target.sysroot_flag);
     }
     if (b->opts->web) {
-        arg(a, "-pthread");
+        if (!b->opts->managed) arg(a, "-pthread");
         arg(a, "-msimd128"); // WebAssembly's SIMD, the same on every machine (not relaxed SIMD)
     }
     arg_list(a, cpp ? cpp_flags : c_flags);
@@ -967,7 +970,7 @@ static bool build_setup(build *b, const char *root, const build_options *opts, c
     // Everything tide makes goes in <folder>/.tide/<configuration>.
     char *tide_dir = tide_work_folder(b->folder);
     char config[32];
-    snprintf(config, sizeof config, "%s-%s", opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
+    snprintf(config, sizeof config, "%s-%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
              opts->release ? "release" : "debug");
     b->cache = path_join(tide_dir, config);
     free(tide_dir);
@@ -1138,7 +1141,18 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     char *flags = stamp_of(b, false);
     uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
     h = hash_text(hash_text(h, source), text);
-    h = hash_text(h, header);
+    // Only the managed reactor embeds this macro in its launcher. Ordinary
+    // launchers use the game API's identity, so gameplay edits still reuse
+    // their objects. Every other header byte remains a cache dependency.
+    char *identity = !first && !b->opts->managed ? strstr(header, "\n#define TIDE_SIMULATION_ID ") : NULL;
+    if (identity) {
+        char *end = strchr(identity + 1, '\n');
+        *identity = '\0';
+        h = hash_text(h, header);
+        h = hash_text(h, end ? end : "");
+    } else {
+        h = hash_text(h, header);
+    }
     free(flags);
     free(text);
     free(header);
@@ -1501,7 +1515,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     // library, so that nothing else can come from it.
     char *lib_dir = path_join(b->root, opts->web ? "lib/web" : "lib/native");
     char *platform_lib = format("%s/lib%s.a", lib_dir, "tide_platform");
-    if (!shared || b->info.bold) arg(&a, platform_lib);
+    if (!opts->managed && (!shared || b->info.bold)) arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
     arg_list(&a, opts->release ? release_flags : debug_flags);
@@ -1519,10 +1533,15 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     char *ld_flag = NULL;
     char *imports_flag = NULL;
     if (opts->web) {
-        arg_list(&a, web_link_flags);
-        imports_flag = page_imports_flag(output, platform_lib);
-        arg(&a, "-Xlinker"); // Not -Wl, which would split a path at its commas
-        arg(&a, imports_flag);
+        if (opts->managed) {
+            arg(&a, "-mexec-model=reactor");
+            arg(&a, "-Wl,--import-memory,--export-memory,--max-memory=134217728,-z,stack-size=1048576");
+        } else {
+            arg_list(&a, web_link_flags);
+            imports_flag = page_imports_flag(output, platform_lib);
+            arg(&a, "-Xlinker"); // Not -Wl, which would split a path at its commas
+            arg(&a, imports_flag);
+        }
 #ifndef TIDE_EMBEDDED_CLANG
         ld_flag = format("-fuse-ld=%s", b->wasm_ld, NULL); // It may be elsewhere than clang, as with Homebrew
         arg(&a, ld_flag);
@@ -1788,6 +1807,50 @@ static bool generate(build *b, const char *gen, const bool layout)
     int count = 0;
     compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count);
     if (!inputs) return false;
+    tide_sha256 external;
+    tide_sha256_init(&external);
+    static const char *const identity_extensions[] = {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl",
+        ".a", ".lib", ".so", ".dll", ".dylib", NULL};
+    bool has_external = false;
+    for (int k = 0; k <= b->packages.count; k++) {
+        const char *folder = k == b->packages.count ? b->folder : b->packages.items[k].folder;
+        const char *name = k == b->packages.count ? "game" : b->packages.items[k].name;
+        file_list files = own_files_of(folder, identity_extensions);
+        if (files.count) qsort(files.items, (size_t)files.count, sizeof(char *), path_order);
+        char *prefix = path_join(folder, "");
+        for (int i = 0; i < files.count; i++) {
+            size_t size;
+            char *bytes = sys_read_file(files.items[i], &size);
+            if (!bytes) { fprintf(stderr, "tide: cannot fingerprint %s\n", files.items[i]); free_files(&files); free(prefix); free(inputs); free_files(&paths); return false; }
+            has_external = true;
+            // Source checkout line endings do not change C semantics. Binary
+            // libraries remain exact bytes, including every target variant.
+            if (!has_extension(files.items[i], ".a") && !has_extension(files.items[i], ".lib")
+                && !has_extension(files.items[i], ".so") && !has_extension(files.items[i], ".dll") && !has_extension(files.items[i], ".dylib")) {
+                size_t written = 0;
+                for (size_t at = 0; at < size; at++) {
+                    if (bytes[at] == '\r' && at + 1u < size && bytes[at + 1u] == '\n') continue;
+                    bytes[written++] = bytes[at];
+                }
+                size = written;
+            }
+            tide_sha256_add(&external, name, strlen(name) + 1u);
+            const char *relative = files.items[i] + strlen(prefix);
+            tide_sha256_add(&external, relative, strlen(relative) + 1u);
+            uint8_t digest[32];
+            tide_sha256_of(bytes, size, digest);
+            tide_sha256_add(&external, digest, sizeof digest);
+            free(bytes);
+        }
+        free(prefix);
+        free_files(&files);
+    }
+    uint8_t external_identity[32];
+    if (has_external) {
+        const uint8_t release = b->opts->release ? 1u : 0u;
+        tide_sha256_add(&external, &release, 1);
+    }
+    tide_sha256_end(&external, external_identity);
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
     b->externs = (sb){0};
     game_info next_info = {0};
@@ -1801,6 +1864,7 @@ static bool generate(build *b, const char *gen, const bool layout)
                                      .strip_server_assets = strip_server_assets(b),
                                      .strip_unused_assets = strip_game_assets(b, layout),
                                      .defines = b->opts->defines, .define_count = b->opts->define_count,
+                                     .external_identity = has_external ? external_identity : NULL,
                                      .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
                                      .editor_source = b->opts->editor_source, .editor_text = editor_text};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
@@ -1857,7 +1921,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
     if (!compile_game(&b, gen, game_c, main_c, &objects, &c) || !find_libraries(&b, &c)) return NULL;
 
     char *output;
-    const char *suffix = opts->web ? ".html" : EXE_SUFFIX;
+    const char *suffix = opts->managed ? ".wasm" : opts->web ? ".html" : EXE_SUFFIX;
     if (opts->output) {
         output = path_absolute(opts->output);
     } else {
@@ -1871,23 +1935,28 @@ static char *build_game(const char *root, const build_options *opts, const char 
     sys_mkdirs(output_dir);
     // Web builds link a .wasm, which then goes inside the page.
     char *program = output;
-    if (opts->web) {
+    if (opts->web && !opts->managed) {
         char file[512];
         snprintf(file, sizeof file, "%s.wasm", b.name);
         program = path_join(b.cache, file);
     }
     if (!link_objects(&b, &objects, &c, program, false, NULL)) return NULL;
     char *pack = pack_of(gen);
-    if (opts->web && !make_page(root, program, output, pack, args, opts->release && !opts->watch)) return NULL;
-    if (!opts->web) { // Beside the program, as <name>.pack, which tide/run.h loads
+    if (opts->web && !opts->managed && !make_page(root, program, output, pack, args, opts->release && !opts->watch)) return NULL;
+    if (!opts->web || opts->managed) { // Beside the program, as <name>.pack, which tide/run.h loads
         char file[512];
-        snprintf(file, sizeof file, "%s%s.pack", b.name, opts->server ? "-server" : "");
+        snprintf(file, sizeof file, "%s.pack", opts->managed ? "server" : b.name);
+        if (opts->server && !opts->managed) snprintf(file, sizeof file, "%s-server.pack", b.name);
         char *beside = path_join(output_dir, file);
         const bool placed = place_pack(pack, beside);
         free(beside);
         if (!placed) return NULL;
     }
     free(pack);
+    char *identity = format("%s.simulation", output, NULL);
+    const bool wrote_identity = sys_write_text(identity, b.info.simulation);
+    free(identity);
+    if (!wrote_identity) return NULL;
     copy_dynamic(&c, output_dir);
     if (!opts->server) place_moltenvk(&b, output_dir);
     free_game_c(&c);

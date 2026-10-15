@@ -1,5 +1,21 @@
 # Netcode: sessions, prediction, commands
 
+## Simulation compatibility and managed recovery (2026-10-15)
+
+Session protocol is now 15: HELLO carries the 32-byte generated Simulation ID
+and the receiver checks it independently of layout identity. Handwritten games
+with all-zero Simulation ID retain the legacy hash fallback. Generated-header
+ABI marker forces hosts to rebuild. Hosting envelope 2 checks simulation before
+allocation and returns WRONG_VERSION; standard hosts propagate update guidance.
+The intentional two-client local-events wire-byte pin increases by 64 bytes;
+world deterministic hashes are unchanged. Tests cover unequal simulation with
+equal layout, equal simulation with different layout, and checkpoint reconnect
+cookie/identity restoration. Host-only recovery metadata preserves pending player
+sets, identities/digests, seed, dt, closed and started state; it does not alter
+world snapshots/hashes. Managed exact-release save envelopes and validation are
+in managed-hosting.md. The original dedicated-host note below predates these
+explicitly requested protocol/ABI changes.
+
 ## Dedicated match admission (2026-10-15)
 
 hosting.h multiplexes independent servers over one transport and gates traffic

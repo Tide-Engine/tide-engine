@@ -1,5 +1,20 @@
 # Language features, as tidec builds them
 
+## Generated simulation identity (2026-10-15)
+
+`asset_usage.c` now also walks an ordered canonical simulation graph for SHA-256
+compatibility. Match schemas/defaults, transitive helpers/tasks, handlers, input
+Sanitize/Predict, scenes/prefabs, settings and simulation asset contents enter;
+local fields/views/presentation helpers do not. Repeated edges and ordering
+participate, with stable numeric node references rather than pointer bytes.
+Wire archetypes remain conservative inputs. Codegen fingerprints before server
+stripping and emits both `TIDE_SIMULATION_ID` and `tide_game.simulation` outside
+the old header-layout hash. CMake normalizes compiler/runtime sources into the
+toolchain identity; custom C/library identity is supplied by CLI. Simulation
+asset edits require regeneration while visual assets can still repack. Three
+compiler regression cases cover helper/view exclusion, ordering and asset bytes.
+No syntax change; contracts, session tests and validation: managed-hosting.md.
+
 ## Dedicated server asset selection (2026-10-15)
 
 Server codegen preserves the ordinary client header/game identity before

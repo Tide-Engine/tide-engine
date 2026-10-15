@@ -24,9 +24,10 @@ TIDE_TEST(hosting_two_matches_over_real_udp_without_a_graphics_context)
     for (int i = 0; i < 2; i++) {
         tide_transport transport;
         TIDE_REQUIRE(tide_platform_udp_open(0, &transport));
-        const tide_hosting_client_desc cd = {.transport = transport,
+        tide_hosting_client_desc cd = {.transport = transport,
             .server = {.kind = TIDE_ADDRESS_IPV4, .host = UINT32_C(0x7f000001), .port = port},
             .nonce = tide_platform_entropy()};
+        memcpy(cd.simulation, tide_game_api.simulation, 32);
         admission[i] = tide_hosting_client_create(&cd, now);
         TIDE_REQUIRE(admission[i]);
     }

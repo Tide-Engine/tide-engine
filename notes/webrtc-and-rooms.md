@@ -1,5 +1,16 @@
 # Desktop WebRTC, rooms and their tests
 
+Managed service (2026-10-15): hosting/rooms.mjs implements the existing relay
+signaling protocol with node-datachannel 0.33.4, project room/key persistence,
+bounded peers and TURN configuration. Outer protocol 2 checks Simulation ID
+before creating a guest and routes bound match envelopes to isolated Workers.
+Rooms restore on startup and refresh signaling after 24 hours. A real local
+relay/RTC regression covers wrong-version rejection, idempotent creation,
+fragmented replies and cross-match rejection; gated Chrome testing joins an
+actual uploaded Tide guest. Loopback success is not Fly NAT/TURN validation:
+remote native/browser checks remain required before launch. No public UDP
+allocation is needed by the initial relay/TURN path. Contracts: managed-hosting.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Building

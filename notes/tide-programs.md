@@ -1,5 +1,13 @@
 # `tide_add_game` and the generated header
 
+Managed deployment (2026-10-15): the installed CLI's internal managed target
+builds a wasm32-wasip1 reactor with imported bounded memory and `managed_run.h`;
+it is distinct from CMake's native SERVER target and the threaded web player.
+Generated headers expose `TIDE_SIMULATION_ID` outside the layout hash; the game
+API carries its 32 bytes. Header session ABI marker is 15. Platform installation
+now also supplies single-threaded WASI headers/libc/libm/crt1-reactor. Full
+contracts, source-toolchain fingerprint and validation: managed-hosting.md.
+
 Dedicated service targets (2026-10-15): tide_add_game(... SERVER) generates a
 server_run.h launcher on native targets, preserving the client game identity.
 It omits client-only assets automatically without custom C; STRIP_SERVER_ASSETS

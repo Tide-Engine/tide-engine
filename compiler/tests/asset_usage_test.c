@@ -42,6 +42,79 @@ static void done(void)
     lex_symbols_reset();
 }
 
+TIDE_TEST(simulation_identity_tracks_match_helpers_but_not_view_helpers_or_local_defaults)
+{
+    static const char *const sources[] = {
+        "singleton State { float value; local float color = 1; } scene Main {} "
+        "float Step() { return 1; } float Shade() { return 1; } "
+        "system Tick(mut State s) { s.value += Step(); } view Show() { Draw.Circle(float2(0), Shade(), Color.white); }",
+        "singleton State { float value; local float color = 2; } scene Main {} "
+        "float Step() { return 1; } float Shade() { return 2; } "
+        "system Tick(mut State s) { s.value += Step(); } view Show() { Draw.Circle(float2(1), Shade(), Color.white); }",
+        "singleton State { float value; local float color = 2; } scene Main {} "
+        "float Step() { return 2; } float Shade() { return 2; } "
+        "system Tick(mut State s) { s.value += Step(); } view Show() { Draw.Circle(float2(1), Shade(), Color.white); }",
+        "singleton State { float value; local float color = 2; } scene Main {} "
+        "float Step() { return 1; } float Shade() { return 2; } "
+        "system Tick(mut State s) { s.value -= Step(); } view Show() { Draw.Circle(float2(1), Shade(), Color.white); }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 4; i++) {
+        program *p = checked(sources[i]);
+        TIDE_REQUIRE(p);
+        uint8_t id[32]; program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK((memcmp(first, id, sizeof first) == 0) == (i == 1));
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_preserves_ordered_edges_to_shared_expressions)
+{
+    static const char *const sources[] = {
+        "const int A = 1; const int B = 2; singleton State { int value; } scene Main {} system Tick(mut State s) { s.value = A - B; }",
+        "const int A = 1; const int B = 2; singleton State { int value; } scene Main {} system Tick(mut State s) { s.value = B - A; }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 2; i++) {
+        program *p = checked(sources[i]); TIDE_REQUIRE(p);
+        uint8_t id[32]; program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK(memcmp(first, id, sizeof first) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_includes_simulation_asset_content_and_excludes_view_only_assets)
+{
+    program *p = checked("asset string kept = \"assets/rules.txt\"; asset string visual = \"assets/rules.txt\"; "
+        "scene Main {} singleton State { int size; } system Tick(mut State s) { s.size = kept.length; } "
+        "view Show() { Debug.Log(visual); }");
+    TIDE_REQUIRE(p && p->assets.count == 2);
+    uint8_t before[32], after[32];
+    program_simulation_id(p, before, false);
+    // Each declaration can share cached source bytes. Supply a distinct edited
+    // value rather than mutating the cache shared by these two declarations.
+    uint8_t conservative[32];
+    program_simulation_id(p, conservative, true);
+    asset_value changed = *p->assets.items[1]->asset;
+    asset_match item = changed.items[0]; item.hash[0] ^= 1u; changed.items = &item;
+    p->assets.items[1]->asset = &changed;
+    program_simulation_id(p, after, false);
+    TIDE_CHECK(memcmp(before, after, 32) == 0);
+    program_simulation_id(p, after, true);
+    TIDE_CHECK(memcmp(conservative, after, 32) != 0);
+    p->assets.items[0]->asset = &changed;
+    program_simulation_id(p, after, false);
+    TIDE_CHECK(memcmp(before, after, 32) != 0);
+    done();
+    p = checked("asset string unused = \"assets/rules.txt\"; scene Main {}");
+    TIDE_REQUIRE(p);
+    TIDE_CHECK(!program_simulation_id(p, before, false));
+    TIDE_CHECK(program_simulation_id(p, after, true));
+    done();
+}
+
 static bool has_asset(const program *p, const char *name)
 {
     for (int i = 0; i < p->assets.count; i++) if (str_eq_c(p->assets.items[i]->name, name)) return true;
@@ -231,7 +304,7 @@ TIDE_TEST(asset_usage_codegen_opt_in_prunes_pack_globals_watch_paths_and_model_i
         TIDE_CHECK((strstr(h, "TIDE_HAS_ASSETS") != NULL));
         TIDE_CHECK((strstr(h, "unusedClips") != NULL) == !strip);
         free(h);
-        TIDE_CHECK(info.assets_affect_match == !strip);
+        TIDE_CHECK(info.assets_affect_match); // The retained ordinary asset initializes match state too.
         TIDE_CHECK(info.asset_count == (strip ? 1 : 3));
         for (int i = 0; strip && i < info.asset_count; i++) TIDE_CHECK(strstr(info.asset_paths[i], "rules.txt") != NULL);
         free_info(&info);

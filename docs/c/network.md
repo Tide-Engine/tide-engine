@@ -197,6 +197,8 @@ account's player slot; the original account can resume without a cookie.
 
 Custom clients call `tide_hosting_client_create` with the transport, endpoint,
 match ID (zero to create), fresh nonce and optional credentials/parameters.
+Copy the generated game's `simulation` array into the client description's
+`simulation` field; incompatible requests are rejected before allocation.
 Set `secure` only for a protected transport. Update until accepted, then hand
 `tide_hosting_client_transport` and `tide_hosting_client_address` to an ordinary
 client/session. Keep updating the hosting client before its session, and destroy
@@ -207,3 +209,10 @@ the shared jobs pool. `ready`/`poll` belong to the service loop, not the
 transport-neutral update function. Match-specific C globals remain the game's
 responsibility. Native crash containment, restart persistence and dedicated-server
 host migration are not supplied by this API.
+
+Managed WASM hosting uses the same `start` callback for scene selection, with
+project admission and trusted creation handled by its service. Guard server C
+with `#ifdef TIDE_SERVER_BUILD` before including `game.h`. Native process/auth
+hooks do not run inside managed guests. See [Managed hosting](../multiplayer/hosting.md)
+for deployment, credentials, lifetime and recovery. The service's optional C
+save/load callbacks are documented in `hosting/README.md` in the repository.

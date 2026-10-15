@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store, digest } from './store.mjs';
+import { Maintenance } from './maintenance.mjs';
+import { configuration } from './config.mjs';
+import { atomicFile } from './files.mjs';
+
+test('retention warns, deletes only inactive saves, and keeps required releases; daily usage retains exact totals', async t => {
+    const folder = await mkdtemp(join(tmpdir(), 'tide-retention-'));
+    t.after(() => rm(folder, { recursive: true, force: true }));
+    let now = Date.now(); const store = new Store(':memory:', { now: () => now }); t.after(() => store.close());
+    const limits = configuration({ TIDE_HOSTING_SMALL_RATE: '1000' });
+    const bundles = { folder: join(folder, 'bundles'), remove: async () => {} }, saves = join(folder, 'saves');
+    const maintenance = new Maintenance(store, bundles, saves, limits);
+    store.invite(1); const account = store.signIn({ id: 1, login: 'test' });
+    store.db.prepare('UPDATE accounts SET balance=1000000 WHERE id=?').run(account.id);
+    const project = store.createProject(account.id, { name: 'test', preset: 'small', region: 'fra', maximum: 2, lifetime: 'explicit' }, limits);
+    const release = 'a'.repeat(64); store.registerRelease(account.id, project.id, { id: release, simulation: release, bytes: 1, manifest: {} }, limits);
+    const paused = store.reserveMatch(account.id, project.id, limits), active = store.reserveMatch(account.id, project.id, limits);
+    const bytes = Buffer.from('world'), hash = digest(bytes);
+    await mkdir(saves);
+    for (const m of [paused, active]) { await writeFile(join(saves, `${m.id}.${hash}.save`), bytes); store.checkpoint(m.id, hash); }
+    store.finishMatch(paused.id, 'suspended', limits);
+    store.setMatchState(active.id, 'running');
+    const balance = store.account(account.id).balance;
+    now += 6.5 * 86400_000; await maintenance.sweep();
+    assert.ok(store.incidents(account.id).some(i => i.kind === 'retention-warning'));
+    assert.ok(store.match(paused.id).checkpoint);
+    now += 86400_000; await maintenance.sweep();
+    assert.equal(store.match(paused.id).checkpoint, null); assert.equal(store.match(paused.id).state, 'ended');
+    assert.deepEqual(await readFile(join(saves, `${active.id}.${hash}.save`)), bytes);
+    const newer = 'b'.repeat(64); store.registerRelease(account.id, project.id, { id: newer, simulation: newer, bytes: 1, manifest: {} }, limits);
+    await assert.rejects(maintenance.deleteRelease(account.id, project.id, release), /still required/);
+    const before = store.db.prepare('SELECT SUM(amount) AS n FROM ledger').get().n;
+    now += 40 * 86400_000; await maintenance.sweep();
+    const after = store.db.prepare('SELECT SUM(amount) AS n FROM ledger').get().n;
+    assert.equal(after, before); assert.equal(store.account(account.id).balance, balance);
+    assert.ok(store.db.prepare("SELECT 1 FROM ledger WHERE reference LIKE 'usage/%'").get());
+    const path = join(folder, 'atomic'); await atomicFile(path, Buffer.from('first')); await atomicFile(path, Buffer.from('second'));
+    assert.equal(await readFile(path, 'utf8'), 'second');
+});

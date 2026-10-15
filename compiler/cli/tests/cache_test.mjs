@@ -336,19 +336,19 @@ async function webRunTest(tide, root, release = false) {
         check(generated, "web run's generated object not found");
         put(c, "int Native(int value) { return value + 2; }\n");
         await waitFor(async () => await buildNumber() === 2, "C-only hot reload");
-        expectWrites(cache, before, ["c/native.c.o"], "web C-only reload keeps generated objects");
+        expectWrites(cache, before, ["c/native.c.o", generated], "web C-only reload refreshes simulation identity and keeps launcher");
         before = mark(cache);
         put(source, tideText.replace("+ 1;", "+ 2;"));
         await waitFor(async () => await buildNumber() === 3, "Tide hot reload");
         expectWrites(cache, before, [generated], "web Tide body reload keeps launcher");
 
-        // Ordinary assets still publish only a new pack, without compilation.
+        // Custom C can read every asset, so its asset edits refresh compatibility.
         before = mark(cache);
         const packed = await packNumber();
         put(join(game, "message.txt"), "after");
         await waitFor(async () => await packNumber() > packed, "ordinary asset repack");
-        check(await buildNumber() === 3, "ordinary assets do not rebuild the game");
-        expectWrites(cache, before, [], "ordinary asset repack keeps every object");
+        await waitFor(async () => await buildNumber() === 4, "conservative custom-C asset reload");
+        expectWrites(cache, before, [generated], "custom-C asset edit refreshes identity and keeps launcher");
 
         // Models affect deterministic gameplay: a file or its external buffer
         // must publish a build with a new identity, rather than swapping only
@@ -367,13 +367,13 @@ async function webRunTest(tide, root, release = false) {
         put(buffer, floats, 1600000000.1);
         put(join(game, "actor.gltf"), JSON.stringify(model));
         put(source, tideText.replace("+ 1;", "+ 2;") + 'asset SkinnedMesh<Vertex3> actor = "actor.gltf";\n');
-        await waitFor(async () => await buildNumber() === 4, "adding a gameplay model");
+        await waitFor(async () => await buildNumber() === 5, "adding a gameplay model");
         const generatedFolder = join(cache, dirname(generated), "gen");
         const header = join(generatedFolder, "game.h");
         let identity = readFileSync(header, "utf8");
         model.nodes[0].translation = [2, 0, 0];
         put(join(game, "actor.gltf"), JSON.stringify(model));
-        await waitFor(async () => await buildNumber() === 5, "gameplay model file reload");
+        await waitFor(async () => await buildNumber() === 6, "gameplay model file reload");
         check(readFileSync(header, "utf8") !== identity, "model file changes the generated game identity");
         identity = readFileSync(header, "utf8");
         const bufferBefore = statSync(buffer, { bigint: true });
@@ -383,7 +383,7 @@ async function webRunTest(tide, root, release = false) {
         check(bufferAfter.size === bufferBefore.size && bufferAfter.mtimeNs !== bufferBefore.mtimeNs
             && bufferAfter.mtimeNs / 1000000000n === bufferBefore.mtimeNs / 1000000000n,
             "model buffer edits have equal sizes and distinct timestamps within one second");
-        await waitFor(async () => await buildNumber() === 6, "gameplay model buffer reload");
+        await waitFor(async () => await buildNumber() === 7, "gameplay model buffer reload");
         check(readFileSync(header, "utf8") !== identity, "external model buffer changes the generated game identity");
 
         const failedPack = await packNumber();
@@ -391,17 +391,28 @@ async function webRunTest(tide, root, release = false) {
         put(join(game, "actor.gltf"), "{");
         await waitFor(() => output.split("the page keeps running its last build").length > failuresBefore,
             "invalid gameplay model keeps its last build");
-        check(await buildNumber() === 6 && await packNumber() === failedPack, "invalid model publishes no build or pack");
+        check(await buildNumber() === 7 && await packNumber() === failedPack, "invalid model publishes no build or pack");
         put(join(game, "actor.gltf"), JSON.stringify(model));
-        await waitFor(async () => await buildNumber() === 7, "corrected gameplay model is still watched");
+        await waitFor(async () => await buildNumber() === 8, "corrected gameplay model is still watched");
 
-        // Removing the last model restores the ordinary asset path.
+        // Removing the last model still leaves conservative C asset dependencies.
         put(source, tideText.replace("+ 1;", "+ 2;"));
-        await waitFor(async () => await buildNumber() === 8, "removing the gameplay model");
+        await waitFor(async () => await buildNumber() === 9, "removing the gameplay model");
         const noModelsPacked = await packNumber();
         put(join(game, "message.txt"), "without models");
         await waitFor(async () => await packNumber() > noModelsPacked, "ordinary asset repack after removing models");
-        check(await buildNumber() === 8, "removing models restores pack-only reload");
+        await waitFor(async () => await buildNumber() === 10, "custom-C assets still refresh identity without models");
+
+        // Remove C, then visual-only assets return to pack-only reload.
+        removeOwned(root, c);
+        put(source, 'scene Main {}\nasset string message = "message.txt";\nview Show() { Debug.Log(message); }\n');
+        await waitFor(async () => await buildNumber() === 11, "removing custom C");
+        const visualPack = await packNumber();
+        before = mark(cache);
+        put(join(game, "message.txt"), "view only");
+        await waitFor(async () => await packNumber() > visualPack, "visual-only asset repack");
+        check(await buildNumber() === 11, "visual assets do not rebuild simulation");
+        expectWrites(cache, before, [], "visual-only repack keeps every object");
     } catch (error) {
         throw new Error(`${release ? "release" : "debug"} web hot reload: ${error.message}\n${lastRequest}\n${output}`,
             { cause: error });
@@ -473,7 +484,7 @@ async function targetTests(tide, installation, root, target, embedded) {
     before = mark(cache);
     put(c, originalC.replace("+ 1;", "+ 2;"));
     await build();
-    expectWrites(cache, before, ["c/native.c.o"], "C body edit keeps generated objects");
+    expectWrites(cache, before, ["c/native.c.o", "game.o"], "C body edit refreshes simulation identity and keeps launcher");
 
     before = mark(cache);
     put(source, originalTide.replace("int value;", "int value; int extra;").replace("+ 1;", "+ 2;"));
@@ -677,7 +688,8 @@ async function atOnceTests(tide, root, target) {
     const fixed = await build(0);
     check(fixed.code === 0, `the build after the fix failed:\n${fixed.said}`);
     const again = written(cache, before);
-    check(!again.some((file) => !file.startsWith("c/")), `the build after the fix compiled more than the game's C: ${again}`);
+    check(!again.some((file) => !file.startsWith("c/") && file !== "game.o"),
+        `the build after the fix compiled more than the game's C and identity: ${again}`);
     check(JSON.stringify([...contents(cache)].sort()) === JSON.stringify([...built[0].files].sort()), "the build after the fix left other files than a clean build");
     console.log("  a build that failed keeps what compiled, and the next one finishes it");
 
