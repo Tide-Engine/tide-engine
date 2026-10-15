@@ -37,8 +37,8 @@ On the first deploy, Tide uses a lowercase, hyphenated version of the folder
 name to create or reuse a Small project with one maximum active match. No
 dashboard setup is needed. It saves the project ID and service origin in
 `tide.deploy.json` in your game folder. Future deploys use this link, even if
-you rename the folder. You can commit it so teammates deploy to the same
-project; it contains no credentials.
+you rename the folder. You can commit it to keep the target with the game;
+it contains no credentials and grants no access to the project.
 
 Use `tide deploy --project <name-or-id>` to select a different project and
 update the link. A missing name creates a project; an unavailable ID fails.

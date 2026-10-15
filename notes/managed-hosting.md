@@ -97,6 +97,14 @@ All 2,255 web debug tests pass, including WebGL/WebGPU. Deployment results are
 recorded after completion. Other native platforms/Android were not run; no CI
 workflow was dispatched.
 
+Integration through origin/dev 48ca18ce retains the concurrent visibility and
+Foldline work. Resolved only the docs-site note's competing top insertions by
+keeping both entries. Because the compiler/runtime dependencies changed, rebuilt
+the CLI, refreshed its private installation's engine sources/headers and reran
+all 33 hosting tests with native/web/server identity and browser cases enabled;
+all pass. The merged docs production build passes with both guides retained.
+Clarified that committing the target file grants no project access.
+
 Owner access and console appearance (2026-10-15): the owner's live GitHub
 callback reached the invite gate. Resolved the authenticated local GitHub
 identity as BlenMiner (4602596) and ran the operator `admin.mjs invite` on

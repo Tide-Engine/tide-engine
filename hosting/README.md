@@ -77,7 +77,8 @@ names become lowercase hyphenated project names (up to 48 characters, with
 `game-` prefixed when needed). No dashboard project creation is required. It
 saves the service origin and immutable project ID in `tide.deploy.json` in the
 game folder, so later deployments keep the target even after renaming the
-folder. Commit this file to share the target with teammates; it has no secrets.
+folder. Commit this file to keep the target with the game; it has no secrets.
+Deployment still requires an account with access to that project.
 Use `--project <name-or-id>` to select another target and replace the link.
 Unknown names create projects; unavailable IDs fail instead of creating one.
 Invalid links, another service origin or an inaccessible project fail with
