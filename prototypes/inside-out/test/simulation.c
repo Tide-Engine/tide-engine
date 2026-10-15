@@ -756,6 +756,243 @@ TIDE_TEST(inside_out_two_boxes_inside_each_other_are_left_into_each_other)
     tide_world_free(&world);
 }
 
+// Plates and shutters: a plate is pressed by anything on it and powers its
+// channel's shutters in every room; a closed shutter is a wall to anything
+// coming in, and what it closed on stays and can be pushed out.
+
+static void tile(const int room, const int x, const int y, const Tile kind)
+{
+    if (room < 0) world.Workshop.layout.tiles.at[cell(x, y, world.Workshop.layout.width)] = kind;
+    else world.Workshop.layout.rooms.at[room].tiles.at[cell(x, y, world.Workshop.layout.rooms.at[room].width)] = kind;
+}
+static bool crate_at(const int index, const int room, const int x, const int y)
+{
+    const Cargo *const battery = &world.Workshop.puzzle.crates.at[index];
+    return battery->active && battery->room == room && same_cell(battery->position, tide_i2(x, y));
+}
+// The kind of the cue a move sends, -1 for none.
+static int move_cue(const int seat, const int direction)
+{
+    tide_event_log events = {0};
+    TIDE_CHECK(inside_out_test_command(TIDE_COMMAND_ID_Move, seat, world.Workshop.serial, direction));
+    tide_world_tick_events(&world, NULL, &events);
+    int kind = -1;
+    uint32_t offset = 0;
+    const tide_heard *const heard = tide_event_log_next(&events, &offset);
+    if (heard != NULL && heard->size >= sizeof *heard + sizeof(PuzzleCue)) {
+        PuzzleCue cue;
+        memcpy(&cue, heard + 1, sizeof cue);
+        kind = cue.kind;
+    }
+    tide_event_log_free(&events);
+    return kind;
+}
+
+TIDE_TEST(inside_out_a_plate_pressed_by_a_bot_a_battery_or_a_box_opens_only_its_channel)
+{
+    for (int presser = 0; presser < 3; presser++) {
+        fixture(1);
+        tile(-1, 1, 1, Tile_PlateA);
+        tile(-1, 6, 5, Tile_ShutterA);
+        tile(-1, 5, 6, Tile_ShutterB);
+        actor(1, -1, 5, 5);
+        // The bot steps onto the plate, or pushes a battery or a box onto it.
+        actor(0, -1, 1, presser == 0 ? 2 : 3);
+        if (presser == 1) crate(0, -1, 1, 2);
+        if (presser == 2) world.Workshop.puzzle.rooms.at[0].position = tide_i2(1, 2);
+        const Puzzle initial = world.Workshop.puzzle;
+        blocked(1, 1);
+        blocked(1, 2);
+        move(0, 0);
+        if (presser == 0) TIDE_CHECK(bot_at(0, -1, 1, 1));
+        if (presser == 1) TIDE_CHECK(crate_at(0, -1, 1, 1) && bot_at(0, -1, 1, 2));
+        if (presser == 2) TIDE_CHECK(same_cell(world.Workshop.puzzle.rooms.at[0].position, tide_i2(1, 1)) && bot_at(0, -1, 1, 2));
+        move(1, 1); // Channel A's shutter is open.
+        TIDE_CHECK(bot_at(1, -1, 6, 5));
+        move(1, 3);
+        blocked(1, 2); // Channel B's is still shut.
+        undo_all(3);
+        TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+        tide_world_free(&world);
+    }
+}
+
+TIDE_TEST(inside_out_a_plate_in_one_room_opens_a_shutter_in_another)
+{
+    fixture(1);
+    tile(0, 2, 2, Tile_PlateA);    // In box 1's room.
+    tile(-1, 4, 3, Tile_ShutterA); // On the table, beside that box's east door.
+    tile(-1, 1, 1, Tile_PlateB);   // On the table.
+    tile(0, 3, 2, Tile_ShutterB);  // In box 1's room.
+    actor(0, 0, 4, 2);
+    actor(1, 0, 2, 3);
+    const Puzzle initial = world.Workshop.puzzle;
+    blocked(0, 1); // Out of the east door is beside the box: a closed shutter.
+    move(1, 0);    // Onto the plate in the room.
+    move(0, 1);    // The shutter on the table is open now.
+    TIDE_CHECK(bot_at(0, -1, 4, 3) && world.Workshop.puzzle.actors.at[0].depth == 0);
+    blocked(1, 1); // The room's own shutter is channel B's.
+    move(0, 0);
+    move(0, 3);
+    move(0, 3);
+    move(0, 3);
+    move(0, 0); // Onto the table's plate.
+    TIDE_CHECK(bot_at(0, -1, 1, 1));
+    move(1, 1);
+    TIDE_CHECK(bot_at(1, 0, 3, 2));
+    undo_all(8);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_a_shutter_closes_on_a_battery_which_stays_and_can_be_pushed_out)
+{
+    fixture(1);
+    world.Workshop.puzzle.rooms.at[0].position = tide_i2(5, 5);
+    tile(-1, 1, 1, Tile_PlateA);
+    tile(-1, 3, 1, Tile_ShutterA);
+    actor(0, -1, 1, 1); // On the plate.
+    actor(1, -1, 3, 2);
+    crate(0, -1, 2, 1);
+    const Puzzle initial = world.Workshop.puzzle;
+    // Stepping off the plate and pushing the battery into the shutter is one
+    // move, worked out from before it: the shutter was open, so it goes in.
+    move(0, 1);
+    TIDE_CHECK(bot_at(0, -1, 2, 1) && crate_at(0, -1, 3, 1));
+    move(1, 2); // The shutter has closed on it, and it stays.
+    move(1, 0);
+    TIDE_CHECK(crate_at(0, -1, 3, 1));
+    // Pushed, it goes on out of the shutter, and the bot that pushed it,
+    // which cannot come into a closed shutter, stays where it is.
+    const int moves = world.Workshop.puzzle.moves;
+    TIDE_CHECK(move_cue(0, 1) == 1);
+    TIDE_CHECK(world.Workshop.puzzle.moves == moves + 1);
+    TIDE_CHECK(bot_at(0, -1, 2, 1) && crate_at(0, -1, 4, 1));
+    blocked(0, 1); // Empty and closed, it is a wall.
+    blocked(1, 0);
+    // A bot it closes on stops a row like any bot, and can step out.
+    move(0, 3);
+    move(1, 0);
+    TIDE_CHECK(bot_at(1, -1, 3, 1));
+    move(0, 1);
+    blocked(0, 1);
+    move(1, 0);
+    TIDE_CHECK(bot_at(1, -1, 3, 0));
+    blocked(1, 2);
+    undo_all(8);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_a_push_into_a_closed_shutter_moves_only_what_it_closed_on)
+{
+    // A row: the bot and the first battery stay, the battery in the shutter
+    // goes on. Then the first battery is against a closed, empty shutter.
+    fixture(1);
+    tile(-1, 2, 1, Tile_ShutterA);
+    actor(0, -1, 0, 1);
+    crate(0, -1, 1, 1);
+    crate(1, -1, 2, 1);
+    Puzzle initial = world.Workshop.puzzle;
+    move(0, 1);
+    TIDE_CHECK(bot_at(0, -1, 0, 1) && crate_at(0, -1, 1, 1) && crate_at(1, -1, 3, 1));
+    blocked(0, 1);
+    undo_all(1);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+
+    // A box a shutter closed on, which cannot be pushed out, lets the bot in
+    // by its doorway, as any box that cannot move does.
+    fixture(1);
+    world.Workshop.puzzle.rooms.at[0].position = tide_i2(2, 1);
+    tile(-1, 2, 1, Tile_ShutterA);
+    tile(-1, 3, 1, Tile_Wall);
+    actor(0, -1, 1, 1);
+    initial = world.Workshop.puzzle;
+    move(0, 1);
+    TIDE_CHECK(bot_at(0, 0, 0, 2) && same_cell(world.Workshop.puzzle.rooms.at[0].position, tide_i2(2, 1)));
+    undo_all(1);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+
+    // Out of a doorway, beside the room's box, into a closed shutter holding
+    // a battery: the battery goes on and the bot stays in its room. That is
+    // a push, not a doorway crossing.
+    fixture(1);
+    tile(-1, 4, 3, Tile_ShutterA);
+    crate(0, -1, 4, 3);
+    actor(0, 0, 4, 2);
+    initial = world.Workshop.puzzle;
+    TIDE_CHECK(move_cue(0, 1) == 1);
+    TIDE_CHECK(world.Workshop.puzzle.moves == 1);
+    TIDE_CHECK(bot_at(0, 0, 4, 2) && crate_at(0, -1, 5, 3));
+    blocked(0, 1);
+    undo_all(1);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_a_shutter_in_a_doorway_lets_nobody_into_the_box_while_closed)
+{
+    fixture(1);
+    tile(-1, 4, 3, Tile_Wall); // The box cannot be pushed east.
+    tile(0, 0, 2, Tile_ShutterA); // Its west door cell.
+    tile(-1, 2, 5, Tile_PlateA);
+    actor(0, -1, 2, 3);
+    actor(1, -1, 1, 5);
+    Puzzle initial = world.Workshop.puzzle;
+    blocked(0, 1);
+    move(1, 1); // Onto the plate.
+    move(0, 1);
+    TIDE_CHECK(bot_at(0, 0, 0, 2));
+    move(0, 3); // Out again, beside the box.
+    TIDE_CHECK(bot_at(0, -1, 2, 3));
+    undo_all(3);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+
+    // Closed on a battery: walking at the box pushes the battery on into the
+    // room, and the bot stays outside.
+    fixture(1);
+    tile(-1, 4, 3, Tile_Wall);
+    tile(0, 0, 2, Tile_ShutterA);
+    actor(0, -1, 2, 3);
+    crate(0, 0, 0, 2);
+    initial = world.Workshop.puzzle;
+    move(0, 1);
+    TIDE_CHECK(bot_at(0, -1, 2, 3) && crate_at(0, 0, 1, 2));
+    blocked(0, 1);
+    undo_all(1);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_a_box_carries_its_pressed_plate_and_keeps_the_shutter_open)
+{
+    for (int pressed = 1; pressed >= 0; pressed--) {
+        fixture(1);
+        tile(0, 2, 2, Tile_PlateA); // Inside the box.
+        tile(-1, 5, 3, Tile_ShutterA);
+        actor(0, -1, 2, 3);
+        crate(0, 0, pressed ? 2 : 1, pressed ? 2 : 1);
+        const Puzzle initial = world.Workshop.puzzle;
+        move(0, 1);
+        move(0, 1);
+        if (pressed) {
+            // The plate went with the box and the battery is still on it.
+            TIDE_CHECK(same_cell(world.Workshop.puzzle.rooms.at[0].position, tide_i2(5, 3)));
+            TIDE_CHECK(bot_at(0, -1, 4, 3) && crate_at(0, 0, 2, 2));
+        } else {
+            // Nothing presses it: the shutter stops the box, and the bot goes in.
+            TIDE_CHECK(same_cell(world.Workshop.puzzle.rooms.at[0].position, tide_i2(4, 3)));
+            TIDE_CHECK(bot_at(0, 0, 0, 2));
+        }
+        undo_all(2);
+        TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+        tide_world_free(&world);
+    }
+}
+
 TIDE_TEST(inside_out_a_bot_faces_the_way_it_last_moved_and_undo_turns_it_back)
 {
     fixture(1);

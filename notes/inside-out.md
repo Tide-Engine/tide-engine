@@ -56,6 +56,73 @@ copies' fields, and their witnesses replay unchanged.
   stage of this round rewrites it. `Hands.portalTime` is the flash after any
   doorway crossing, not a copy's, and stays.
 
+Plates and shutters (2026-10-15, the polish round's decision D2: the lead
+agent's pick, provisional until the owner confirms; no puzzle uses them yet,
+the campaign stage adds chapter 3). `Tile` gains `PlateA`, `ShutterA`,
+`PlateB` and `ShutterB` after the old four, so their values are unchanged.
+- Rules (`game.tide`). `Powered(layout, puzzle, channel)` is true while
+  anything stands on a plate of that channel in any room or on the table:
+  a bot, a battery, or a box on a plate of the room it stands in (it looks
+  where each thing stands rather than at every cell, which is the same
+  answer). `Power` is the two channels as bits. `Passable` is the one test
+  of a cell anything steps, is pushed or goes through a doorway into: never
+  a wall, a shutter only while its channel is powered; `StepFrom` (the step
+  inside a room and the step out beside the room's box) and `Gateway` (the
+  door cell) use it and take `power`, which `Shove` works out once from
+  the puzzle before the move. `IsSolved` is unchanged.
+- What a shutter closed on (my reading, to report as a pick). The brief
+  says a thing in a shutter when it closes "can leave or be pushed out",
+  and that a closed shutter holding something is still a wall for anything
+  else coming in. Under push-or-enter those two clash: pushing a thing out
+  of a cell is coming into it. So `Shove` lets the push through without the
+  pusher: where the next cell is a closed shutter with something in it
+  (`ClosedOnThing`), that something joins the row as if the shutter were
+  open, marked `through`, and when the row moves, everything before the
+  last such mark stays where it is. A bot there is a stop like any bot; a
+  box there that cannot move is entered by its doorway as any box is; a
+  doorway whose door cell closed on something has that something pushed on
+  into the room while whatever was going in stays outside. `Step` is Push
+  when the bot stayed. `MoveHand` now calls a move a doorway crossing only
+  when the bot itself moved, so such a push out of a doorway cues a push.
+- Look (`paint.tide`). Signal paints magenta (A) and lime (B), with a ring
+  for A and a diamond for B (`ChannelColor`, `ChannelMark`). A plate is a
+  low square pad in its paint, softened towards the plaster, in a dark
+  groove, the shape dark on it; pressed it sinks from 0.044 to 0.010 of a
+  tile and its shape and a line round the groove glow (the line shows past
+  a bot or a battery on it). A closed shutter is a block 0.80 of a tile
+  across and 0.22 high (a wall is a whole cell, 0.31), its top in the
+  paint with three dark slanting stripes, mirrored for B; open, its top is
+  flush with the floor inside a thin frame of the paint. Closed on
+  something, only a rim at the frame's edge rises, 0.55 of the way, round
+  what is in it. Below 6 pixels a tile each is one flat block of colour.
+  `Picture.cellRise` holds every plate's and shutter's height (49 cells of
+  the table, then of each room), eased towards its goal at 16 a second in
+  `Workbench`, about a fifth of a second, and set outright on a new puzzle,
+  undo, reset or reduced motion (`snap`). The guide has two lines on them
+  and the README a rule.
+- Fixtures (`test/simulation.c`): a plate pressed by a bot, a battery and
+  a box each opens its channel's shutter and not the other's; a plate in a
+  room opens a shutter on the table beside that room's box (the step out
+  of the doorway) and a table plate a shutter in the room; stepping off the
+  plate while pushing a battery into the shutter puts it in, the shutter
+  closes on it, it stays, a push takes it out while the pusher stays (cue
+  kind 1), nobody steps into the empty shutter, a bot it closed on stops a
+  row and steps out; a row of a bot and two batteries moves only the one
+  in the shutter, a box a shutter closed on that cannot move is entered,
+  and a push out of a doorway into a held shutter leaves the bot in its
+  room with a push cue; a doorway's shutter keeps a bot out of a box until
+  a plate is pressed, and when it closed on a battery the battery is pushed
+  in and the bot stays outside; a box carried with a pressed plate inside
+  it moves into a shutter, and without the battery on that plate is stopped
+  by it and entered. Each is undone to the exact start. 35 tests pass;
+  witnesses and the solo searches are unchanged.
+- Looked at: native captures at 1280x800 of a temporary puzzle (not
+  committed) with both channels in three nested rooms, from inside a 5x5
+  and a 7x7 room, closed, opening, open, closing, held, pressed by bots,
+  and the guide (`build/inside-out-captures/plates/`). The guide now just
+  fits a 720-high window. Not done: no sound for them (the sound stage's),
+  the browser fixture, and no puzzle.
+
 The owner, after playing with a partner, sent six points, was shown my
 reading of each with two questions, and answered "once done push and
 deploy", so the two readings are mine: (a) "stop making doors between

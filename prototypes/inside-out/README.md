@@ -80,6 +80,17 @@ One rule moves everything: robots, batteries and boxes.
   that room and you come out beside its box, in the same room. Two boxes can
   stand inside each other: leave one and you come out beside it, in the
   other. A room is one place, so what is in it shows in every view of it.
+- Pressure plates and shutters come in two colours, each with its own
+  shape: magenta with a ring and lime with a diamond. A plate is pressed
+  while anything stands on it: a robot, a battery, or a box on a plate of the
+  room it stands in. While any plate of a colour is pressed, in any room or
+  on the table, every shutter of that colour, in every room, is open floor.
+  Closed, a shutter is a wall to anything walking, pushed or going into a box
+  through it. Whatever it closed on stays: a robot can step out, and a push
+  moves what is in it on, while whatever pushed stays where it is. Each step
+  is worked out from where everything stood before it, so you can step off a
+  plate and push a battery through its shutter in one move. Plates and
+  shutters are not goals.
 - Every room is a square grid, so a box always fills the cell it stands in.
 - Seat every battery in a socket, park each box on its numbered outline, and
   put both robots on goals. A seated battery can be moved again while you
