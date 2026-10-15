@@ -11,11 +11,12 @@ singleton Control
     Entity card;
     Entity hand;
     Entity handCard;
+    Entity laterCard;
     int action;
 }
 
 scene Main { }
-scene Hand { }
+scene Hand { string secret = "scene-hidden-state"; }
 
 VisibilityGroup MakeGroup(Audience audience)
 {
@@ -44,14 +45,33 @@ event(Spawned) Setup(with Main, mut Control control)
     control.privateCards = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
     control.object = Spawn(PublicState { value = 1 }, Secret, Visibility { group = control.region });
     control.card = Spawn(PublicState { value = 2 }, Secret, Visibility);
-    control.hand = Scene.Load(Hand, SceneVisibility.Private);
-    Scene.AddPlayer(control.hand, PlayerID(0));
+    control.hand = Scene.Load(Hand, Visibility { group = control.privateCards });
 }
 
 event(Spawned) HandContents(with Hand, mut Control control)
 {
-    control.handCard = Spawn(PublicState { value = 3 }, Secret);
+    control.handCard = Spawn(PublicState { value = 3 }, Secret, Visibility { group = control.region });
 }
+
+event(Spawned) PublicHandFace(PublicState state, mut Visibility visibility)
+{
+    if (state.value == 3) visibility.Set<Secret>(Audience.All);
+}
+
+system LaterCard(with Hand, mut Control control)
+{
+    if (control.action == 9) control.laterCard = Spawn(PublicState { value = 4 }, Secret);
+    if (control.action == 12) this.Remove(Visibility);
+}
+
+system LoadPrivateHand(with Main, mut Control control)
+{
+    if (control.action == 11)
+        control.hand = Scene.Load(Hand, Visibility { group = control.privateCards });
+}
+
+local event(Spawned) HandAppeared(with Hand) { }
+local event(Spawned) CardAppeared(PublicState state) { Debug.Assert(state.value > 0); }
 
 system Configure(PublicState state, mut Visibility visibility, Control control)
 {
@@ -75,4 +95,6 @@ system ChangeGroups(mut Control control)
         Debug.Assert(control.region != default);
     }
     if (control.action == 4) Visibility.Set(control.region, Audience.None);
+    if (control.action == 6) Visibility.Set(control.privateCards, Audience.Only(PlayerID(69)));
+    if (control.action == 7) Visibility.Set(control.region, Audience.Only(PlayerID(0)));
 }

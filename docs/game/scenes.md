@@ -48,8 +48,8 @@ Scene.Unload(level);
 
 Settings are normal root components. Component arguments override only the fields
 they name and can add root components. A bare component argument resets that
-component to its declared defaults. Match scene visibility comes last by name:
-`Scene.Load(Level, visibility: SceneVisibility.Private)`.
+component to its declared defaults. A match scene uses the ordinary root
+`Visibility` component: `Scene.Load(Level, Visibility { group = group })`.
 
 All entities, component values, references and parenting exist before the
 instance's `Spawned` handlers run, root-first. Nested children move with their
@@ -89,6 +89,11 @@ Scene.Unload(arena);
 
 `Scene.Load` loads a scene into the current world and returns its entity. `Scene.Unload` unloads it, destroying every entity it owns, and so does `Destroy` on a scene's entity. `Scene.Unload` of an entity that isn't a scene does nothing. `Spawn` of a scene is an error that says to use `Scene.Load`.
 
+Additional component arguments attach to the loaded root, for example
+`Scene.Load(Arena { size = 30 }, Visibility { group = group })`. They use the
+same component names and literals as `Spawn` and are present before `Spawned`
+handlers run. Local scenes can also take root components, using local placement.
+
 Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. A scene is set up by `Spawned` handlers, and its entities get `Destroyed` when it unloads, both within that tick.
 
 `Main` is the fallback. When the last scene of its world unloads, `Main` loads again at the end of that tick, set up by its `Spawned` handlers as at the start: a match `Main` in the match, a local one in the local state. Unloading one scene and loading another in the same tick never brings it back, and entities in no scene don't count. `Main` comes back at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
@@ -126,7 +131,8 @@ Loaded scenes share their world: the same systems, singletons and `Time`.
 
 ## Private scenes
 
-Scenes are public by default. `SceneVisibility.Private` and `Scene.AddPlayer` restrict a scene and its entities to the chosen players:
+Scenes are public by default. Give a match scene root an ordinary `Visibility`
+component to restrict the scene and every entity it owns:
 
 ```csharp
 scene Hand
@@ -136,11 +142,20 @@ scene Hand
 
 event(PlayerJoined joined) DealIn()
 {
-    var hand = Scene.Load(Hand { player = joined.player }, SceneVisibility.Private);
-    Scene.AddPlayer(hand, joined.player);
+    var group = Visibility.CreateGroup(Audience.Only(joined.player));
+    Scene.Load(Hand { player = joined.player }, Visibility { group = group });
 }
 ```
 
-`Scene.AddPlayer(scene, player)` and `Scene.RemovePlayer(scene, player)` change that membership. It is part of the match, so only match code changes it.
+Use `Visibility.Set(group, audience)` to replace the scene's audience. The same
+group can serve several scenes and ordinary entities. Audience changes are match
+state, so only match code changes them. Local scenes belong to this machine and
+do not take `Visibility`.
 
-A private scene with no members stays on the server. Adding a player supplies its current permitted state; removing one conceals it. Entity and component policies can restrict this audience further, using the [`Visibility` component and shared groups](./visibility.md). The server simulates the complete match and corrects clients where hidden simulation affects their permitted state.
+A scene whose group has `Audience.None` stays on the server. Including a player
+supplies its current permitted state; excluding one conceals it. An entity's
+group can restrict the scene audience further, and a component's policy can
+restrict the entity audience further. These three scopes intersect; an inner
+scope cannot broaden an outer one. See [State visibility](./visibility.md) for
+shared groups and component policies. The server simulates the complete match
+and corrects clients where hidden simulation affects their permitted state.

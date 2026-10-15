@@ -850,7 +850,6 @@ typedef enum builtin_call {
     CALL_SEND,      // Send(RoundOver { ... }), or target.Send(Hit { ... }): type_decl is the event
     CALL_LOAD,      // Scene.Load(Arena { ... }): a spawn whose entity is its own scene; type_decl is the scene
     CALL_UNLOAD,    // Scene.Unload(scene)
-    CALL_SCENE_PLAYER, // Scene.AddPlayer(scene, player) and Scene.RemovePlayer(scene, player)
     CALL_SESSION,   // Session.Start, Open, Close, Join, Connect and Leave: `name` says which; type_decl is Start's scene
     CALL_CLIPBOARD, // Clipboard.Copy(text)
     CALL_SNAP,      // entity.Snap() or singleton.Snap(): views draw it as it is this tick; type_decl is a singleton's
@@ -952,7 +951,6 @@ typedef struct prefab_instance {
     bool load;
     VEC(prefab_entity) entities;
     VEC(expr *) overrides;
-    expr *visibility;
 } prefab_instance;
 
 struct expr {
@@ -1348,7 +1346,6 @@ typedef struct program {
     decl *editor_create; // Private preview factory, present only in an editor build.
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.
-    decl *scene_visibility; // The built-in enum SceneVisibility
     decl *anchor;        // The built-in enum Anchor: where GUILayout.Area goes, and the place of a text's box
     decl *font;          // The built-in enum Font, the weight text is drawn in
     // Whether code names Font.Bold, or makes a Font of a number: only then does
