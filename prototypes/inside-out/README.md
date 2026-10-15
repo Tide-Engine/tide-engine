@@ -59,7 +59,8 @@ with a bar across the arrow where you cannot go.
 The shelf can revisit or skip any puzzle. A plus beside a
 title marks one you have completed in this match. Hints start with a small
 nudge; ask for more to reveal an arrangement and then a more specific plan.
-They are optional. Ambience, sound and reduced motion are local settings.
+They are optional. Sound on or off, the music's volume and reduced motion
+are local settings.
 
 ## The rules
 
@@ -104,8 +105,9 @@ until both seats are present again.
 ## Development
 
 The prototype uses Tide and the existing Rooms package. Its deterministic
-match rules are in `game.tide`; campaign layouts and optional hints are in
-`levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
+match rules are in `game.tide`; the puzzles, drawn as text maps (their
+legend is at the top of the file), with their chapters and optional hints,
+are in `levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
 handles lighting, shadow mapping and screen-space ambient occlusion.
 Presentation, controls and original audio are local state.
 There are no new engine or runtime APIs.
