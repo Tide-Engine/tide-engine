@@ -287,7 +287,17 @@ then validate the actual runtime flows in the sandbox before provisioning the
 live equivalent. Customer/invoice API permissions can follow the implemented
 features. Runtime keys do not need webhook administration rights. Creating the
 runtime key remains an owner Dashboard/2FA step; the MCP API search did not expose
-a restricted-key creation operation. The owner will push secrets to Fly.
+a restricted-key creation operation.
+
+The owner subsequently asked the agent to push the Stripe secrets. Created the
+Fly app namespace `tide-hosting` in the existing personal organization and
+imported `TIDE_STRIPE_WEBHOOK_SECRET` directly from the private local file with
+`fly secrets import --stage`. Fly lists it as staged; no machines, volumes or
+deployment were created. `TIDE_STRIPE_SECRET` is still absent. An existing
+`STRIPE_PRIVATE` environment value was verified through Stripe's account API:
+it belongs to a different sandbox, so it was not uploaded or modified. The
+matching Tide Engine sandbox API key requires Dashboard access; the shared
+browser currently requests sign-in. No secret values were printed or committed.
 
 Validation: 14 existing auth/payment/store tests pass; two isolated mock-provider
 reproductions confirm the key-mode and retry findings. Runtime code is unchanged
