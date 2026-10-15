@@ -18,6 +18,9 @@ failure. Its clean builds at different parallelism levels still compare every
 file, including main.o. Compiler/cache behavior and public contracts are unchanged.
 The original comparison fails locally under Linux with only main.o named;
 the corrected fixture passes all parallel-build and failure-recovery checks.
+The staged Windows CLI with an external Clang 23.1.2 also passes the full
+native/web cache, stripping, failure recovery, debug/release watch and dedicated
+server integration script with Node 24.16.0.
 
 Folder deployment link (2026-10-15): `tide deploy` needs no dashboard setup.
 Its existing project auto-creation now normalizes the folder name and saves

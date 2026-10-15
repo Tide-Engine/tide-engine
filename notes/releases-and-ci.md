@@ -16,6 +16,13 @@ both transports (412.07 seconds, Node 24.16.0/Clang 23.1.2). Full web debug
 passes all 2,255 tests, including WebGL/WebGPU (269.88 seconds). The final
 server harness passes its focused transport rerun too.
 
+Merged the current dev work, including visibility and folder deployment links;
+the only conflict was adjacent CLI notes, both retained. The merged full native
+debug suite passes all 2,359 tests (119.78 seconds), and full web debug passes
+all 2,272 (282.54 seconds), including WebGL/WebGPU. The refreshed installed
+CLI also passes the complete native/web cache, stripping, failure-recovery,
+debug/release web-watch and bounded dedicated-server integration cases.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
