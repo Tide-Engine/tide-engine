@@ -1,0 +1,78 @@
+settings { maxPlayers = 70; }
+
+component PublicState { int value; }
+component Secret { int value = 123; }
+singleton Control
+{
+    VisibilityGroup region;
+    VisibilityGroup privateCards;
+    VisibilityGroup replacement;
+    Entity object;
+    Entity card;
+    Entity hand;
+    Entity handCard;
+    int action;
+}
+
+scene Main { }
+scene Hand { }
+
+VisibilityGroup MakeGroup(Audience audience)
+{
+    return Visibility.CreateGroup(audience);
+}
+
+void Restrict(mut Visibility visibility, VisibilityGroup group)
+{
+    visibility.Set<Secret>(group);
+}
+
+event(Spawned) Setup(with Main, mut Control control)
+{
+    mut var audience = Audience.From([PlayerID(0), PlayerID(32), PlayerID(69)]);
+    audience.Remove(PlayerID(32));
+    audience.Add(PlayerID(33));
+    audience.Add(PlayerID(-1));
+    audience.Add(PlayerID(70));
+    Debug.Assert(audience.Contains(PlayerID(0)));
+    Debug.Assert(!audience.Contains(PlayerID(32)));
+    Debug.Assert(audience.Contains(PlayerID(33)));
+    Debug.Assert(audience.Contains(PlayerID(69)));
+    Debug.Assert(!Audience.All.Contains(PlayerID(70)));
+    Debug.Assert(!Audience.None.Contains(PlayerID(0)));
+    control.region = MakeGroup(audience);
+    control.privateCards = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
+    control.object = Spawn(PublicState { value = 1 }, Secret, Visibility { group = control.region });
+    control.card = Spawn(PublicState { value = 2 }, Secret, Visibility);
+    control.hand = Scene.Load(Hand, SceneVisibility.Private);
+    Scene.AddPlayer(control.hand, PlayerID(0));
+}
+
+event(Spawned) HandContents(with Hand, mut Control control)
+{
+    control.handCard = Spawn(PublicState { value = 3 }, Secret);
+}
+
+system Configure(PublicState state, mut Visibility visibility, Control control)
+{
+    if (state.value != 2) return;
+    if (control.action == 0) Restrict(visibility, control.privateCards);
+    if (control.action == 3) visibility.Reset<Secret>();
+    if (control.action == 4) {
+        visibility.group = control.region;
+        visibility.Set<Secret>(Audience.All);
+    }
+    if (control.action == 5) visibility.Set<Secret>(Audience.Only(PlayerID(1)));
+}
+
+system ChangeGroups(mut Control control)
+{
+    if (control.action == 1) Visibility.Set(control.region, Audience.Only(PlayerID(1)));
+    if (control.action == 2) {
+        Visibility.DestroyGroup(control.privateCards);
+        control.replacement = Visibility.CreateGroup(Audience.All);
+        Debug.Assert(control.privateCards != control.replacement);
+        Debug.Assert(control.region != default);
+    }
+    if (control.action == 4) Visibility.Set(control.region, Audience.None);
+}

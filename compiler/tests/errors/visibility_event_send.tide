@@ -1,0 +1,3 @@
+// expect: the engine sends 'Hidden'; games can't
+scene Main { }
+system Incorrect() { Send(Hidden { }); }

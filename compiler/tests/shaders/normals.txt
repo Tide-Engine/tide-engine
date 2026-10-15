@@ -179,7 +179,7 @@ fn ts_Lit(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     return tide_color;
 }
 
-// Turn and Shown on Corner: GLSL, vertex
+// Turn and Displayed on Corner: GLSL, vertex
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
@@ -222,7 +222,7 @@ void main() {
     tide_s1 = tide_vertex.m_normal;
 }
 
-// Turn and Shown on Corner: GLSL, fragment
+// Turn and Displayed on Corner: GLSL, fragment
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
@@ -234,20 +234,20 @@ struct tt_Corner {
     vec3 m_position;
     vec3 m_normal;
 };
-void ts_Shown(tt_Corner t_corner, inout vec4 t_color) {
+void ts_Displayed(tt_Corner t_corner, inout vec4 t_color) {
     t_color = vec4(t_corner.m_normal.x, t_corner.m_normal.y, t_corner.m_normal.z, 1.0);
 }
 
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    ts_Shown(tt_Corner(vec3(0.0), tide_s1), tide_color);
+    ts_Displayed(tt_Corner(vec3(0.0), tide_s1), tide_color);
     tide_color = tide_color * tide_tint;
     tide_color.rgb = tide_color.rgb * tide_color.a;
     if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
-// Turn and Shown on Corner: WGSL
+// Turn and Displayed on Corner: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -286,7 +286,7 @@ fn ts_Turn(t_corner: ptr<function, tt_Corner>) {
     (*t_corner).m_normal = tide_normalize3(tide_normals(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3)) * ((*t_corner).m_normal));
 }
 
-fn ts_Shown(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
+fn ts_Displayed(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     (*t_color) = vec4f(t_corner.m_normal.x, t_corner.m_normal.y, t_corner.m_normal.z, 1.0);
 }
 
@@ -307,7 +307,7 @@ fn ts_Shown(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
 @fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
-    ts_Shown(tt_Corner(vec3f(), in.tide_s1), &tide_color);
+    ts_Displayed(tt_Corner(vec3f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
     tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {

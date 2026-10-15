@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 
 #include "game.h"
@@ -12,6 +13,7 @@
 static tide_loopback *net;
 static tide_session *machines[MACHINES];
 static double now;
+static tide_game full_world_game;
 
 static void sample(void *user, const uint32_t tick, void *input)
 {
@@ -22,11 +24,24 @@ static void sample(void *user, const uint32_t tick, void *input)
 
 static void setup(void)
 {
+    // This case explicitly exercises the trusted full-world handover path.
+    // The same generated game tests actual private projection separately below;
+    // partial clients must never be promoted into authoritative hosts.
+    full_world_game = tide_game_api;
+    full_world_game.client_state = NULL;
+    full_world_game.load_client_state = NULL;
+    full_world_game.client_hash = NULL;
+    full_world_game.filter_client_input = NULL;
+    full_world_game.filter_client_inputs = NULL;
+    full_world_game.client_destroyed = NULL;
+    full_world_game.hear_visibility = NULL;
+    full_world_game.tick_client_events = NULL;
+    full_world_game.check_client_events = NULL;
     now = 0.0;
     net = tide_loopback_create(5);
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.02});
     for (int i = 0; i < MACHINES; i++) {
-        machines[i] = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .sample = sample, .user = (void *)(intptr_t)i});
+        machines[i] = tide_session_create(&(tide_session_desc){.game = &full_world_game, .sample = sample, .user = (void *)(intptr_t)i});
     }
 }
 
@@ -83,6 +98,44 @@ TIDE_TEST(players_a_game_says_how_many_its_matches_take)
     TIDE_CHECK(world.inputs[199].push == 7);
     TIDE_CHECK(world.inputs[TIDE_SERVER_INPUT].push == 0);
     tide_world_free(&world);
+}
+
+TIDE_TEST(players_private_scene_projects_membership_across_all_200_players)
+{
+    tide_world server = {0}, member = {0}, excluded = {0};
+    tide_world_init(&server, 1.0f / 60.0f);
+    for (int32_t player = 0; player < (int32_t)TIDE_GAME_PLAYERS; player++)
+        tide_world_player_joined(&server, tide_player_from_index(player));
+    tide_world_tick(&server);
+    const tide_entity table = server.Match.table;
+    TIDE_CHECK(server.Match.joined == 200 && seated(tide_get_Table(&server, table)) == 200);
+    TIDE_REQUIRE(tide_game_api.client_state && tide_game_api.load_client_state);
+    const tide_player_id last = tide_player_from_index(199);
+    uint32_t size;
+    uint8_t *bytes = tide_game_api.client_state(&server, last, &size);
+    TIDE_REQUIRE(bytes != NULL);
+    TIDE_CHECK(tide_game_api.load_client_state(&member, bytes, size));
+    TIDE_CHECK(tide_has_Table(&member, table));
+    TIDE_CHECK(tide_game_api.client_hash(&member, last) == tide_game_api.client_hash(&server, last));
+    free(bytes);
+
+    // The last configured bit of the seventh word restricts state delivery too.
+    tide_world_player_left(&server, last);
+    tide_world_tick(&server);
+    TIDE_CHECK(server.Match.left == 1 && seated(tide_get_Table(&server, table)) == 199);
+    bytes = tide_game_api.client_state(&server, last, &size);
+    TIDE_REQUIRE(bytes != NULL);
+    TIDE_CHECK(tide_game_api.load_client_state(&excluded, bytes, size));
+    TIDE_CHECK(!tide_entity_alive(&excluded.entities, table) && !tide_has_Table(&excluded, table));
+    free(bytes);
+    bytes = tide_game_api.client_state(&server, tide_player_from_index(198), &size);
+    TIDE_REQUIRE(bytes != NULL);
+    TIDE_CHECK(tide_game_api.load_client_state(&member, bytes, size));
+    TIDE_CHECK(tide_has_Table(&member, table));
+    free(bytes);
+    tide_world_free(&excluded);
+    tide_world_free(&member);
+    tide_world_free(&server);
 }
 
 TIDE_TEST(players_a_match_takes_more_than_a_word_of_them)

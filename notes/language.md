@@ -1,5 +1,155 @@
 # Language features, as tidec builds them
 
+## Entity/component visibility and shared audiences (2026-10-15)
+
+The owner approved client simulation culling for world chunks, individual
+players and private card state. Visibility applies to entities and whole
+components; the field-level proposal was withdrawn. A visible component has
+all its fields, while a withheld component has ordinary absence semantics.
+The server remains authoritative. Games choose spatial/ownership/team policy
+and how to expose interactions with hidden state. The exact API spellings,
+opaque-handle representation and initial codec choices below are implementation
+picks, recorded as Provisional in the spec.
+
+`Visibility { group = group }` is a builtin match component usable through the
+ordinary spawn/Add/Remove/mut machinery. It references a shared opaque
+`VisibilityGroup`. `Visibility.CreateGroup(Audience)` creates a group,
+`Visibility.Set(group, audience)` changes its audience, and
+`Visibility.DestroyGroup(group)` invalidates it. IDs increase monotonically and
+are never reused. The default group inherits an unrestricted audience; a stale,
+destroyed or otherwise invalid nondefault group fails closed. Creating/changing
+groups in a projected client world does not change server policy.
+
+`Audience.All`, `.None`, `.Only(PlayerID)` and `.From(List<PlayerID>)` construct
+value bitsets sized to `maxPlayers`. `mut` audiences have `Add(player)` and
+`Remove(player)`; `Contains(player)` only reads. Invalid/out-of-game player
+indices are ignored and never index outside the mask. A group's audience is a
+live reference, not copied into every member. Per-component restrictions use
+`visibility.Set<Inventory>(group)` or `visibility.Set<Inventory>(audience)`;
+`visibility.Reset<Inventory>()` restores inheritance. They require an ordinary
+writable `Visibility` value and preserve normal helper/caller capabilities.
+These calls target match components, never fields, scenes, Visibility itself,
+or components whose values require local placement.
+
+Scene membership remains the enclosing audience limit. Entity group and
+component override audiences intersect it; a child override cannot reveal its
+parent. A loaded root's Visibility group also limits its scene's contents.
+Ordinary transform parenting does not implicitly create a visibility group.
+Static group mutations inherit match effects through helper chains and count
+as heap writes in scheduling; input/local/GPU code cannot mutate the directory.
+Audience value operations need no match capability. The checker uses the new
+`CALL_VISIBILITY` and ordinary writable-place/evaluation-order machinery.
+
+The compiler synthesizes private world-owned directory and policy maps over
+existing checked map/heap helpers (`visibility_check.inc` and
+`visibility_codegen.inc`). No new exported engine function is called by Tide.
+These values participate in server snapshots, hashing, packing and generated
+reload layouts. Component override keys hash qualified type names, so source
+declaration reordering does not silently retarget retained policies; collisions
+are rejected. A renamed type intentionally has another key. Builtin types and
+state activate when visibility is named or a private-scene API is used.
+
+Only match component types targeted by Set/Reset gain automatic sparse presence
+storage. This avoids enumerating every component subset and reuses ordinary
+query/filter/Has/Get/TryGet/task/view presence checks. Such types remain present
+on the server unless normal game code removes them. Generated C-system wrappers
+split filtered rows into contiguous passing runs; the preexisting restriction on
+explicit `[Sparse]` C-system parameters is unchanged. Entity culling omits the
+row entirely. Projected worlds do not restart Main or report the match ended
+merely because no scene is currently available to that recipient.
+
+`client_state_codegen.inc` writes permitted logical values rather than raw heap
+pages. It recursively encodes text, lists, maps, arrays, optional stored values,
+plain structs and input device records; map insertion orders are retained.
+Grid chunks sort by coordinates, and cells use their typed codec. Allocated
+zero chunks are retained: dropping them would change open-grid foreach extent.
+Hierarchy links retain only available direct parents/children/siblings; loading
+validates reciprocal links and rejects cycles. Cutting a hidden parent entity or
+an existing hidden parent Transform detaches the child. If that retained subtree
+has a permitted Transform, private client metadata carries the exact parent
+affine matrix and rotation, while the child's local TRS stays unchanged. The
+prefix uses the server's original multiplication/normalization order, preserving
+shear and nonuniform scale. A subtree with no permitted Transform gets no anchor.
+Explicit reparenting and destruction clear anchors; ordinary snapshots/reload
+retain them. Readers validate booleans, UTF-8,
+counts, duplicate map keys/orders, grid coordinates and packet completion before
+replacing the previous world. Entity IDs remain authoritative even across large
+unseen gaps; their missing slot pages are left absent. Prediction appends beyond
+known IDs instead of reusing concealed slots. Encoding/decoding recursive values
+is bounded at 256 nested typed values; deeper encoding stops with an explicit
+message recommending entity references instead of unbounded value nesting.
+
+Private directory/policy bytes and hidden components' owned data do not enter
+recipient state or hashes. Whole match singletons remain public; secret game
+state belongs in visibility-controlled entities/components. The current physics
+packages need visibility-aware integration before concealing bodies: public
+Box2D.Physics.image contains the complete native snapshot byte list,
+Box3D.Physics.stamp hashes native world operations, and both packages retain
+public collider/rewind lists. Hiding Body/collider entities or omitting Resident
+does not restrict those ordinary singleton fields. Internal command
+delivery state is restricted to the recipient's own sequence/window; other
+players' command activity is withheld. Input audience masks are derived once per
+recipient by walking entities, then reused for all input slots. Remote previous
+input is normalized to its filtered current input; ordinary completed-tick
+endpoints already have equal previous/current input, preserving button edges.
+The session uses the bulk input callback to avoid scanning the world per slot.
+Source task frames
+can contain secrets captured from hidden state, and opaque `Resident` storage
+can contain hidden collision/runtime data. Both remain authoritative server
+state in this implementation. Joining/repairing clients do not receive those
+continuations or resume their server execution; permitted component outcomes
+reconcile through the ordinary correction path. Clients may run the tasks and
+C-side state they can derive locally, but that is prediction, not a private
+server-state transfer. Full-world games retain their existing task/Resident
+snapshot and transfer path. The session protocol and lifecycle contracts are
+recorded in `notes/netcode.md` and `notes/verified-and-local-handlers.md`.
+
+Coverage: `visibility_groups` checks multiword audiences, bounds, shared changes,
+private components, direct overrides/reset, fail-closed destroyed handles,
+scene inheritance, helper capabilities, COW snapshots and raw packing.
+`visibility_projection` checks secret markers absent from payloads, nested
+owned values, canonical equality despite heap/grid insertion history, actual
+component/query/C-row absence, filtered hierarchy destruction, all-hidden scene
+behavior, sparse high entity IDs and raw round trips, malformed truncation
+atomicity, withheld input slots, private command metadata, no-listener destruction
+causes and opaque Resident privacy. Exact affine boundary regressions include
+nonuniform scale/rotation, hidden parent Transform, reparenting and omission of
+anchors for hidden leaf Transforms. Initial recipient state pins canonical hash
+`ed6d2f60242f07d3` across native debug, WASI web debug and native release. Its integrated
+two-recipient loopback case exercises changing chunk/player/card audiences and
+hidden impacts under latency, jitter and loss against retained authoritative
+tick snapshots. `visibility_*` error fixtures pin unsupported scopes, local
+values, readonly receivers and capability propagation. Final full-suite results
+are recorded with the networking/editor changes after validation completes.
+
+Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
+fixture plus 10,000 visible PublicState rows with empty owned fields produced
+1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
+2.12–2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22–3.54 ms. Full-world hashes measured
+4.19–9.76 us with that column dirty and 2.57–11.11 us unchanged. These operations
+do different work: full-world hashing reuses cached page hashes and only rehashes
+the changed integer-column pages, whereas recipient hashing currently traverses
+and serializes every permitted logical value and allocates the temporary byte
+stream each call. This is not a comparison of equivalent serializers or a
+hardware-independent tick budget. Debug/O0 (40 calls) measured 6.08 ms for the
+recipient hash versus 13.88 us for the changed-column full-world hash, and
+8.66 ms versus 36.31 us unchanged, including full-world cache warmup. The
+visibility path's linear work and allocation remain a performance limitation;
+no projection hash cache is implemented. The no-visibility path keeps its
+ordinary cached full-world hash. The focused release projection fixture passes
+all 12 cases and the same canonical pin.
+
+Pre-integration validation: warning-free complete Windows native and WASI web
+debug builds pass all 2,357 native CTests (76.53 s, including 31 GPU tests) and
+2,270 web CTests (212.18 s, including WebGL/WebGPU). The lifecycle fixture passes
+16 cases, covering privacy, rollback, bulk destruction and malformed received
+values. LSP 234/234, shared grammar 244/244, VS Code adapter 28/28 and the
+production docs build pass with Node 24.21 and clang 23.1.2. Earlier opted-in
+Cracked/Foldline native/web targets and tests also passed after the reserved-name
+renames; final incoming integration validation follows below. Android, other
+operating systems and sanitizers were not run; no CI was dispatched.
+
 ## Frustum culling settings (2026-10-15)
 
 The approved rendering work adds `Draw.FrustumCulling(bool)` / `SetFrustumCulling(bool)` and `Draw.Bounds(float3 center, float3 size)` / `SetBounds` through `add_setting`, including reset forms. Target lookup, editor signatures/docs, block/Set diagnostics and early-exit pops use the existing machinery. No parser/checker, capability or evaluation-order rule changes. Generated fragment-only 3D shaders advertise their position offset for automatic bounds; user verts and skinning do not. `draw_frustum` E2E verifies rejected operands still run, and two error fixtures pin the setting forms. API choices are provisional in the spec; runtime and validation are in `notes/drawing.md`, Frustum culling.

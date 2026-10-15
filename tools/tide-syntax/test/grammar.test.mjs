@@ -164,27 +164,27 @@ const cases = {
         ]],
     ],
     'local and async, in either order': [
-        ['local event Shown', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type']]],
+        ['local event Displayed', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Displayed', 'entity.name.type']]],
         ['component Toast', [['component', 'storage.type'], ['Toast', 'entity.name.type']]],
-        ['async local event(Shown) Fade(', [
-            ['async', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type'],
+        ['async local event(Displayed) Fade(', [
+            ['async', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Displayed', 'entity.name.type'],
             ['Fade', 'entity.name.function'], ['Fade', '!entity.name.function.call'],
         ]],
-        ['local async event(Shown) Glow(', [['local', 'storage.modifier'], ['async', 'storage.modifier'], ['event', 'storage.type'], ['Glow', 'entity.name.function']]],
+        ['local async event(Displayed) Glow(', [['local', 'storage.modifier'], ['async', 'storage.modifier'], ['event', 'storage.type'], ['Glow', 'entity.name.function']]],
         ['async void Countdown()', [['async', 'storage.modifier'], ['void', 'storage.type.primitive'], ['Countdown', 'entity.name.function'], ['Wait', 'support.class'], ['await', 'keyword.control']]],
     ],
     'virtual and override, where a declaration starts': [
         ['virtual system Drift(', [['virtual', 'storage.modifier'], ['system', 'storage.type'], ['Drift', 'entity.name.function'], ['Drift', '!entity.name.function.call']]],
-        ['virtual local async event(Shown) Blink(', [
+        ['virtual local async event(Displayed) Blink(', [
             ['virtual', 'storage.modifier'], ['local', 'storage.modifier'], ['async', 'storage.modifier'], ['event', 'storage.type'],
-            ['Shown', 'entity.name.type'], ['Blink', 'entity.name.function'], ['Blink', '!entity.name.function.call'],
+            ['Displayed', 'entity.name.type'], ['Blink', 'entity.name.function'], ['Blink', '!entity.name.function.call'],
         ]],
         ['override system Combat.Drive(', [
             ['override', 'storage.modifier'], ['system', 'storage.type'], ['Combat', 'entity.name.namespace'], ['.', 'punctuation.accessor'],
             ['Drive', 'entity.name.function'], ['Drive', '!entity.name.function.call'], ['mut', 'storage.modifier'],
         ]],
         ['override view Combat.Hud.Bar(', [['view', 'storage.type'], ['Combat', 'entity.name.namespace'], ['Hud', 'entity.name.namespace'], ['Bar', 'entity.name.function']]],
-        ['override local event(Shown) Combat.Flash(', [
+        ['override local event(Displayed) Combat.Flash(', [
             ['override', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Combat', 'entity.name.namespace'],
             ['Flash', 'entity.name.function'], ['Flash', '!entity.name.function.call'],
         ]],
@@ -237,6 +237,11 @@ const cases = {
         ['[Min(1)] [Max(3)] int gear', [['Min', 'entity.name.function.attribute'], ['Max', 'entity.name.function.attribute'], ['int', 'storage.type.primitive']]],
     ],
     'built-in types and groups': [
+        ['Audience audience', [['Audience', 'support.class']]],
+        ['VisibilityGroup group', [['VisibilityGroup', 'support.class']]],
+        ['Visibility policy', [['Visibility', 'support.class']]],
+        ['local event(Shown) BecameVisible', [['Shown', 'support.class']]],
+        ['local event(Hidden) BecameHidden', [['Hidden', 'support.class']]],
         ['enum Voxel : byte', [['enum', 'storage.type'], ['Voxel', 'entity.name.type'], [':', 'punctuation.separator.colon'], [':', '!keyword.operator'], ['byte', 'storage.type.primitive']]],
         ['Keyboard keyboard', [['Keyboard', 'support.class']]],
         ['Mouse mouse', [['Mouse', 'support.class']]],

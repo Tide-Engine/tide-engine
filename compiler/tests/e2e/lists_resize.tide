@@ -48,7 +48,7 @@ singleton Job
 }
 
 // ...and of the next frame
-local singleton Shown
+local singleton Displayed
 {
     List<int> numbers;
     int count = -1;
@@ -231,7 +231,7 @@ system Run(mut Store store, mut Job job)
 }
 
 // The local world's list
-view Show(mut Shown shown)
+view Show(mut Displayed shown)
 {
     if (shown.count < 0) return;
     shown.numbers.Resize(shown.count);

@@ -1,0 +1,3 @@
+// expect: Visibility controls which clients receive match entities
+view Change() { local Spawn(Visibility); }
+scene Main { }

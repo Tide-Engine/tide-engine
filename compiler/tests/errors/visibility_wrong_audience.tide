@@ -1,0 +1,4 @@
+// expect: a component's visibility is an Audience or a VisibilityGroup
+component Secret { int value; }
+system Change(mut Visibility visibility) { visibility.Set<Secret>(1); }
+scene Main { }

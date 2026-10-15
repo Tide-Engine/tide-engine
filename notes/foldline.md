@@ -1209,3 +1209,8 @@ and WASI replay hashes remain `14010256285904244944`. A silent standard-host
 capture confirms that the green C beacon is readable from the entrance.
 This is mechanical/visual validation; human pacing and audio remain untested.
 No full repository suite, other platforms or CI were run.
+
+2026-10-15 visibility integration: the renderer helper `Shown` is now named
+`Displayed`, because `Shown` names an engine availability event. This changes
+no rendering expression or match state. The visibility integration includes
+the prototype targets/tests in its full native and web validation.
