@@ -1,6 +1,8 @@
 # Inside Out
 
-A cooperative puzzle game for **two friends in separate browsers**.
+A cooperative puzzle game for **two friends**, designed for native desktop
+play. The browser version is a convenient way to preview the same game in
+two tabs without installing a player.
 You are two small test robots packed in a small box, itself inside another
 room, on a model that sits on a table. Work your way out.
 Push rooms with your partner inside, fit them through tight passages, and
@@ -13,11 +15,12 @@ keeps your room sharp while the larger rooms around it fall out of focus,
 with quiet music and soft wooden, brass and robot sounds.
 There are no threats or jumpscares.
 
-Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
-catalog links to the same public page; friends need no admin account.
-Choose **Host a room**, then share the invite link or six-character room
-code. Both players must connect before either can move. Use a voice call or
-chat alongside the game to discuss plans.
+Choose **Host a room**, then share **Copy invite** or the six-character room
+code. Opening a browser invite joins that room directly; **Join a friend**
+also accepts its code. Both players must connect before either can move.
+Use a voice call or chat alongside the game to discuss plans. The current
+review build runs locally as described below; the public prototype at
+<https://tide-engine.dev/prototypes/inside-out/> is the earlier deployed build.
 
 ## Playing
 
@@ -43,24 +46,22 @@ keeps the grid and movement directions familiar; there is no camera rotation.
 | Leave a room | Walk outward through an edge doorway |
 | Undo the last shared move | Z or Backspace |
 | Reset this puzzle | R |
-| Show / hide hints | H |
-| Continue after solving | Enter |
+| Open / close the menu | Escape |
 
-Touch uses the same directional arrows. Rooms move first; when a wall
+On touchscreens, swipe in a direction to take one step. Rooms move first; when a wall
 or your partner stops a row, walking into a stopped box's open doorway
 enters it. Directions match the screen: W is up, D right, S down and A left.
 After undo or reset, release a held direction before pressing it again.
 
 Beside a box, the game shows what your next step will do before you take
 it: a yellow bar against a box you would push, a green arrow into a doorway
-you would enter. The direction buttons show the same for every direction,
-with a bar across the arrow where you cannot go.
+you would enter. There is no directional button overlay.
 
 The menu's chapter selector can revisit or skip any puzzle. A sage tick beside a
-title marks one you have completed. Hints start with a small
-nudge; ask for more to reveal an arrangement and then a more specific plan.
-They are optional. Settings include master, music, effects and interface
-volumes, mute, reduced motion, step previews and lesson cards. Settings and
+title marks one you have completed. The game teaches through its puzzles;
+there are no hint panels, guide pages or lesson cards. Settings include
+master, music, effects and interface volumes, mute, reduced motion and
+step previews. Settings and
 completion ticks are saved on this machine. Escape opens the in-game menu;
 your partner's match keeps running. Reset and changing an active puzzle ask
 before clearing the shared moves.
@@ -102,24 +103,36 @@ One rule moves everything: robots, batteries and boxes.
 
 Shared undo takes back the last successful action, whoever made it, and
 retains 128 actions. Reset restores the complete starting arrangement.
-Completion waits for you to continue. Losing a participant stops gameplay
-until both seats are present again.
+After solving, the game holds the completed arrangement briefly, then
+opens the next puzzle automatically. Each new arrangement is revealed before
+movement begins. Undo or restart cancels an outstanding transition. The last
+puzzle remains on its completed ending. Losing a participant stops gameplay
+and advancement until both seats are present again.
 
 ## Development
 
-To play locally without deploying the website, run these commands from the
-repository root (Node 24.16 or newer on Windows):
+For native desktop play, configure and build from the repository root:
 
 ```powershell
-$env:TIDE_HIDDEN = '1'
+cmake --preset debug -DTIDE_PRIVATE_PROTOTYPES=ON
+cmake --build --preset debug --target inside_out
+build/debug/bin/inside_out.exe
+```
+
+Two native players can host and join using the same room code. To preview
+locally in two browser tabs without deploying the website, run these
+commands from the repository root (Node 24.16 or newer on Windows):
+
+```powershell
 cmake --preset web-release -DTIDE_PRIVATE_PROTOTYPES=ON
 cmake --build --preset web-release --target inside_out_page
 node prototypes/inside-out/serve.mjs
 ```
 
 Open <http://127.0.0.1:8790/prototypes/inside-out/> in two tabs. Choose
-**Host a room** in one and **Join a friend** in the other, click the code
-field and enter the host's six-character code. The server runs its own
+**Host a room** in one, copy its invite, and open that URL in the other.
+You can also choose **Join a friend** and enter the six-character code.
+The server runs its own
 local relay on port 8791 and serves the page with the isolation headers
 needed by Tide. It reads the latest staged page on each reload. Ctrl+C
 stops both services; optional HTTP and relay ports are the script's two
@@ -127,7 +140,7 @@ positional arguments. The server binds to this machine only.
 
 The prototype uses Tide and the existing Rooms package. Its deterministic
 match rules are in `game.tide`; the puzzles, drawn as text maps (their
-legend is at the top of the file), with their chapters and optional hints,
+legend is at the top of the file), with their chapter grouping,
 are in `levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
 handles lighting, shadow mapping and screen-space ambient occlusion.
 Presentation, controls and original audio are local state.
