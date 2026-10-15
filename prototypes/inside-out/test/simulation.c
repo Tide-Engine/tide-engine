@@ -105,6 +105,42 @@ static void blocked(const int seat, const int direction)
     TIDE_CHECK(world.Workshop.historyCount == history);
 }
 
+TIDE_TEST(inside_out_name_hold_waits_for_partner_and_same_level_retries_are_quick)
+{
+    inside_out_test_start(1);
+    TIDE_REQUIRE(world.Workshop.initialized && world.Workshop.introTicks == 114);
+    for (int tick = 0; tick < 180; tick++) tide_world_tick(&world);
+    const int joined_at = world.Time.tick;
+    tide_world_player_joined(&world, player(1));
+    tide_world_tick(&world);
+    TIDE_REQUIRE(world.Workshop.present.at[1]);
+    TIDE_CHECK(world.Workshop.openedTick == joined_at && world.Workshop.introTicks == 114);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Reset, 0, 0));
+    TIDE_CHECK(world.Workshop.introTicks == 0);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, 0));
+    TIDE_CHECK(world.Workshop.introTicks == 0);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, 1));
+    TIDE_CHECK(world.Workshop.introTicks == 114);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Reset, 0, 0));
+    TIDE_CHECK(world.Workshop.introTicks == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_rejoining_a_moved_room_does_not_restart_its_name_hold)
+{
+    inside_out_test_start(2);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 1));
+    TIDE_REQUIRE(world.Workshop.puzzle.moves == 1);
+    const int opened_at = world.Workshop.openedTick;
+    tide_world_player_left(&world, player(1));
+    tide_world_tick(&world);
+    for (int tick = 0; tick < 180; tick++) tide_world_tick(&world);
+    tide_world_player_joined(&world, player(1));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Workshop.present.at[1] && world.Workshop.openedTick == opened_at);
+    tide_world_free(&world);
+}
+
 TIDE_TEST(inside_out_requires_two_real_present_participants)
 {
     inside_out_test_start(1);

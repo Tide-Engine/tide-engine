@@ -303,15 +303,12 @@ void ShutterTile(mut Sculpture sculpture, int channel, float2 at, float size, fl
         var to = shift >= 0 ? float2(half, half - shift) : float2(half + shift, half);
         FloorLine(sculpture, at + float2(from.x, from.y * flip), at + float2(to.x, to.y * flip), size * .085, dark, top, size);
     }
-    // Both open and closed shutters carry the same shape as their plates.
-    // The cover sits above the real stripe relief, including its minimum
-    // height at miniature scales. Coplanar stripe and cover tops fight for
-    // depth; the channel shape is another separate layer above the cover.
+    // The channel shape is painted directly over the uninterrupted stripes.
+    // A light outline remains legible on both the paint and dark bands;
+    // there is no raised solid badge hiding the middle of the shutter.
     var clearance = Math.Max(.02, size * .003);
-    var cover = top + FloorRelief(size) + clearance;
-    var coverHeight = Math.Max(.02, size * .004);
-    Cuboid(sculpture, at, float2(size * .47), coverHeight, lid, cover, size);
-    ChannelMark(sculpture, channel, at, size * .32, side, cover + coverHeight + clearance, size);
+    var mark = top + FloorRelief(size) + clearance;
+    ChannelMark(sculpture, channel, at, size * .32, Math.Lerp(tone, DECAL, .80), mark, size);
 }
 
 // The rise of a plate or a shutter cell, eased by Workbench.
@@ -326,14 +323,18 @@ float CellRise(Picture picture, LevelLayout layout, int room, int2 at)
     return index < 0 ? 0.0 : picture.cellRise[index];
 }
 
-void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor, float rise = 0, bool held = false)
+void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor, float rise = 0, bool held = false, SurfaceRole surface = SurfaceRole.Floor)
 {
     // One pale plaster floor: cells meet without a joint, and only a faint
     // change of shade from one to the next keeps them countable.
-    var tone = variation % 2 == 0 ? PLASTER : Color(.835, .805, .745);
+    var tone = sculpture.look < 0 ? (variation % 2 == 0 ? PLASTER : Color(.835, .805, .745)) :
+        surface == SurfaceRole.Table ? ChapterTable(sculpture.look, variation % 2) : ChapterFloor(sculpture.look, variation % 2);
     var thickness = Math.Max(.08, size * .010);
+    sculpture.surface = surface;
     Cuboid(sculpture, at, float2(size), thickness, Color(.40, .38, .36), floor - thickness, size);
     Cuboid(sculpture, at, float2(size), thickness * .24, tone, floor, size);
+    // Game pieces and their symbols retain their own paints and materials.
+    sculpture.surface = SurfaceRole.Prop;
     if (PlateChannel(tile) >= 0) PlateTile(sculpture, PlateChannel(tile), at, size, rise, floor + thickness * .25);
     else if (ShutterChannel(tile) >= 0) ShutterTile(sculpture, ShutterChannel(tile), at, size, rise, held, floor + thickness * .25);
     else if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
@@ -351,13 +352,15 @@ void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool o
 
 // A wall cell: a block in its box's paint. Cells that touch are one block,
 // as each fills its cell and they share a paint.
-void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, float tall = .31)
+void WallTile(mut Sculpture sculpture, float2 at, float size, Color tone, float floor, float tall = .31, SurfaceRole surface = SurfaceRole.Wall)
 {
     // One paint on top, right to its edges. A darker rim round a raised face
     // read as a stain on the huge blocks of a containing room.
     var height = size * tall;
+    sculpture.surface = surface;
     Cuboid(sculpture, at, float2(size), height, Math.Lerp(tone, RUBBER, .30), floor, size);
     Cuboid(sculpture, at, float2(size), size * .018, tone, floor + height, size);
+    sculpture.surface = SurfaceRole.Prop;
 }
 
 [Stage(ArtStage.Backdrop)]
@@ -396,7 +399,9 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
             if (tile == Tile.Wall)
             {
                 // The outermost room is the table: a low top, not walls.
-                WallTile(sculpture, at, lens.tile, tone, lens.floor, room < 0 ? .06 : .31);
+                var paint = room < 0 && sculpture.look >= 0 ? ChapterTable(sculpture.look, (x + y) % 2) : tone;
+                WallTile(sculpture, at, lens.tile, paint, lens.floor, room < 0 ? .06 : .31,
+                    room < 0 ? SurfaceRole.Table : SurfaceRole.Wall);
             }
             else
             {
@@ -418,7 +423,7 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
                     if (workshop.puzzle.crates[crate].active && ShownRoom(picture.crateTransit[crate], picture.cargoRoom[crate]) == room &&
                         Math.Length(ShownAt(picture.crateTransit[crate], picture.crates[crate]) - float2(position)) < .85) held = true;
                 TilePaint(sculpture, covered ? Tile.Floor : tile, at, lens.tile, occupied, x + y, lens.floor,
-                    CellRise(picture, workshop.layout, room, position), held);
+                    CellRise(picture, workshop.layout, room, position), held, room < 0 ? SurfaceRole.Table : SurfaceRole.Floor);
                 if (covered)
                 {
                     // Signals under boxes must stay below the miniature's
@@ -569,15 +574,17 @@ void PassageMaker(mut Sculpture sculpture, Workshop workshop, Picture picture, H
 
 // The edge of a room where its outermost cell is floor: a narrow run of the
 // same block the wall cells are, as tall and in the same two paints.
-void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness, Color tone, float floor, float tile, float tall = .31)
+void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness, Color tone, float floor, float tile, float tall = .31, SurfaceRole surface = SurfaceRole.Wall)
 {
     mut var size = float2(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
     if (size.x < 0.001 && size.y < 0.001) return;
     if (size.x < 0.001) size.x = thickness;
     if (size.y < 0.001) size.y = thickness;
     var height = tile * tall;
+    sculpture.surface = surface;
     Cuboid(sculpture, (from + to) * .5, size, height, Math.Lerp(tone, RUBBER, .30), floor, tile);
     Cuboid(sculpture, (from + to) * .5, size, tile * .018, tone, floor + height, tile);
+    sculpture.surface = SurfaceRole.Prop;
 }
 
 // The walls sit inside the exact room footprint. Where the outermost cell is
@@ -608,7 +615,8 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
             if (room < 0)
             {
                 // The table has a raised frame all the way round.
-                WallStrip(sculpture, first, last, thickness, FRAME, lens.floor, lens.tile, .13);
+                var frame = sculpture.look >= 0 ? ChapterFrame(sculpture.look) : FRAME;
+                WallStrip(sculpture, first, last, thickness, frame, lens.floor, lens.tile, .13, SurfaceRole.Trim);
                 continue;
             }
             if (!open || !CellEqual(cell, door))
@@ -644,6 +652,11 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
         var center = MapPoint(RoomCenter(workshop.layout, item.room), item.lens);
         if (!InPlayfield(center, Math.Max(dims.x, dims.y) * item.lens.tile, lens)) continue;
         sculpture.ground = item.lens.floor;
+        // Procedural finishes use the canonical room's coordinates, shared
+        // by every tile and carried with its miniature through a doorway.
+        sculpture.surfaceOrigin = item.lens.origin;
+        sculpture.surfaceTile = item.lens.tile;
+        sculpture.surface = SurfaceRole.Prop;
         DimensionFloor(sculpture, workshop, item.room, item.lens, picture);
         DimensionPieces(sculpture, workshop, item.room, item.lens, picture, hands);
         RoomTrim(sculpture, workshop.layout, item.room, item.lens);
@@ -669,8 +682,14 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
             else
             {
                 sculpture.ground = interior.floor;
+                sculpture.surfaceOrigin = interior.origin;
+                sculpture.surfaceTile = interior.tile;
+                sculpture.surface = SurfaceRole.Wall;
                 Cuboid(sculpture, MapPoint(stands, item.lens), float2(item.lens.tile * ShownScale(crossing)), interior.tile * .20, RoomColor(box), interior.floor, interior.tile);
                 sculpture.ground = item.lens.floor;
+                sculpture.surfaceOrigin = item.lens.origin;
+                sculpture.surfaceTile = item.lens.tile;
+                sculpture.surface = SurfaceRole.Prop;
             }
         }
     }
@@ -678,29 +697,19 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
 
 // The HUD is screen-space and independent of the room's camera.
 [Stage(ArtStage.Board, 2)]
-view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby, Picture picture)
+view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby)
 {
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
     Draw.SetScreen();
     var narrow = Screen.width < 720;
-    var title = $"{workshop.level + 1:D2} / {LEVEL_COUNT}   {LevelName(workshop.level)}";
-    var titleSize = Math.Min(narrow ? 17.0 : 24.0, (Screen.width - 124) * 24 / Math.Max(1, Draw.MeasureText(title, 24, Font.Bold).x));
+    var title = $"{workshop.level + 1:D2} / {LEVEL_COUNT}";
     Label($"CHAPTER {LevelChapter(workshop.level) + 1} / {ChapterName(LevelChapter(workshop.level))}", float2(20, 22), 11, BRASS);
-    Draw.Text(title, float2(20, 47), titleSize, INK, Anchor.MiddleLeft, Font.Bold);
+    Draw.Text(title, float2(20, 47), narrow ? 17.0 : 24.0, INK, Anchor.MiddleLeft, Font.Bold);
     Label($"{workshop.puzzle.moves} moves", float2(Screen.width - (narrow ? 20.0 : 108.0), narrow ? 68.0 : 37.0), 14, MUTED, Anchor.MiddleRight);
-    if (picture.focusRoom != -2)
-    {
-        var location = DimensionName(picture.cameraActor.room);
-        var context = picture.cameraActor.room < 0 ? location : $"{location} / outside: {DimensionName(picture.cameraSurround.room)}";
-        var at = float2(Screen.width * .5, Screen.height - 118);
-        var wide = Math.Min(Screen.width - 32, Draw.MeasureText(context, 12).x + 28);
-        Chip(at, float2(wide, 28));
-        Label(context, at, 12, MUTED, Anchor.MiddleCenter);
-    }
 }
 
 [Stage(ArtStage.Board)]
-view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture picture, mut Sculpture sculpture, mut SceneRender render)
+view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview preview, mut Picture picture, mut Sculpture sculpture, mut SceneRender render)
 {
     render.pending = false;
     Draw.SetScreen();
@@ -947,6 +956,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     Draw.Clip(region)
     {
         BeginSculpture(sculpture, lens.tile, region);
+        sculpture.look = preview.look;
         mut MapLens[4] contexts = default;
         mut RoomSurround[3] ancestors = default;
         mut int[4] dimensions = default;
