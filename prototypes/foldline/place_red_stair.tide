@@ -4,52 +4,49 @@ component WellFall { }
 
 void BuildRedStair(Arena arena, mut Place place)
 {
+    BuildMapRedStair(arena, place);
     place.kind = PlaceKind.Passage;
     place.dead = true;
     place.light = .28;
     place.fog = .04;
     place.fogColor = float3(.055, .014, .012);
     place.grade = float3(1.12, .86, .8);
-    ArrivalLift(arena, place, float3(-10.5, 8, -12.1), NORTH);
-    ExitLift(arena, place, float3(10.5, 0, 17.1), SOUTH);
     DigBloodPit(arena, -8, 8, -8, 8);
-    Fill(arena, -13, -8, 7.4, 8, -10, -6, RUST);
+    Fill(arena, -13.5, -7.5, 7.4, 8, -10, -6, RUST);
     for (int step = 0; step < 5; step++)
     {
         float top = 8 - (step + 1) * .4;
-        Fill(arena, -13, -8, top - .6, top, -6 + step * .65, -6 + (step + 1) * .65, CONCRETE);
+        Fill(arena, -13.5, -8, top - .6, top, -6 + step * .65, -6 + (step + 1) * .65, CONCRETE);
     }
-    Fill(arena, -13, -8, 5.4, 6, -2.75, -1.5, RUST);
-    Fill(arena, -13, -8, 5.4, 6, 4.5, 12, RUST);
-    HangDeck(arena, float3(-10.5, 5.85, -1.5), float3(-10.5, 5.85, 4.5), float3(3, .3, 3), speed: 1.6);
+    Fill(arena, -13.5, -8, 5.4, 6, -2.75, -1.5, RUST);
+    Fill(arena, -13.5, -8, 5.4, 6, 4.5, 12, RUST);
     for (int step = 0; step < 8; step++)
     {
         float top = 6 - (step + 1) * .375;
         Fill(arena, -8 + step * .8, -8 + (step + 1) * .8, top - .6, top, 8, 12, CONCRETE);
     }
-    Fill(arena, -1.6, 13, 2.4, 3, 8, 12, RUST);
-    Fill(arena, 9, 13, 2.4, 3, 3, 8, RUST);
-    Fill(arena, 9, 13, 2.4, 3, -8, -3, RUST);
-    HangDeck(arena, float3(10.5, 2.85, 3), float3(10.5, 2.85, -3), float3(3, .3, 3), speed: 1.6);
+    Fill(arena, -1.6, 13.5, 2.4, 3, 8, 12, RUST);
+    Fill(arena, 9, 13.5, 2.4, 3, 3, 8, RUST);
+    Fill(arena, 9, 13.5, 2.4, 3, -8, -3, RUST);
     for (int step = 0; step < 8; step++)
     {
         float top = 3 - (step + 1) * .375;
         Fill(arena, 9 - (step + 1) * .75, 9 - step * .75, top - .6, top, -12, -8, CONCRETE);
     }
     Fill(arena, 2, 3.5, -1, 0, -14, -8, RUST);
-    Fill(arena, 3, 13, -1, 0, -14, -12, RUST);
-    Fill(arena, 9, 13, -1, 0, -12, 15, RUST);
+    Fill(arena, 3, 13.5, -1, 0, -14, -12, RUST);
+    Fill(arena, 9, 13.5, -1, 0, -12, 15, RUST);
     Fill(arena, 7.5, 9, -1, 0, 12, 15, RUST);
     // The south return corridor lies beyond the last stair, inside this
     // outer wall. Neither its floor nor the bottom landing overlaps the wall.
     // Outer walls, with actual openings for the two lift shells.
-    Fill(arena, -14, -13, -4, 14, -15, 16, CONCRETE);
-    Fill(arena, 13, 14, -4, 14, -15, 16, CONCRETE);
-    Fill(arena, -14, -13.5, -4, 14, -15, -14, CONCRETE);
-    Fill(arena, -7.5, 14, -4, 14, -15, -14, CONCRETE);
-    Fill(arena, -14, 7.5, -4, 14, 15, 16, CONCRETE);
-    Fill(arena, 13.5, 14, -4, 14, 15, 16, CONCRETE);
-    Fill(arena, -14, 14, 14, 15, -15, 16, CONCRETE, false, 2);
+    Fill(arena, -14.5, -13.5, -4, 14, -15, 16, CONCRETE);
+    Fill(arena, 13.5, 14.5, -4, 14, -15, 16, CONCRETE);
+    Fill(arena, -14.5, -13.5, -4, 14, -15, -14, CONCRETE);
+    Fill(arena, -7.5, 14.5, -4, 14, -15, -14, CONCRETE);
+    Fill(arena, -14.5, 7.5, -4, 14, 15, 16, CONCRETE);
+    Fill(arena, 13.5, 14.5, -4, 14, 15, 16, CONCRETE);
+    Fill(arena, -14.5, 14.5, 14, 15, -15, 16, CONCRETE, false, 2);
     // Railings border the void, never a boarding edge.
     Raise(arena, float3(-8.15, 6.6, 6.5), float3(.12, 1.2, 2.8), RUST, false, 4);
     Raise(arena, float3(3, 3.6, 8.15), float3(11.4, 1.2, .12), RUST, false, 4);
