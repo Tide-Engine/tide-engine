@@ -76,6 +76,7 @@ view Solid(Art art)
 // Into a target, by its own methods
 view Into(Art art)
 {
+    art.target.SetFrustumCulling(false); // This fixture inspects sampling commands at the camera origin
     art.target.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
     art.target.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Bilinear, Wrap.Mirror);
 }

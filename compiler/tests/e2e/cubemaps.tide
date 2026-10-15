@@ -135,9 +135,11 @@ view Fill(Room room)
         var into = room.reflection.faces[face];
         into.Clear(Color(face / 5.0, 0, 0));
         into.SetCamera(float3(0, 0, 0), quaternion.identity, 90);
+        into.SetFrustumCulling(false); // Inspect every face's commands, including geometry at the camera origin
         into.Mesh(room.box, room.boxFaces, float4x4.identity);
     }
     Up(room.bright).Clear(Color(4, 4, 4));
+    room.probe.front.SetFrustumCulling(false);
     room.probe.front.Mesh(room.ball, room.faces, float4x4.identity, Sky);
     // One that was never made has no faces to draw into: these are passed by
     room.none.faces[0].Clear(Color.white);
