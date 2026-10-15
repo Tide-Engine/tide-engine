@@ -106,8 +106,17 @@ they verify persisted theme selection and styled OAuth recovery after hydration.
 Desktop light/dark and phone dashboard/error captures were inspected with no
 horizontal overflow. The Linux production image builds and renders both guest
 and authenticated pages with private/no-store and nonce CSP, and serves the
-theme script, logo and font with the intended MIME types. Deployment results
-are recorded after completion.
+theme script, logo and font with the intended MIME types.
+
+Deployed source 2ee3d6d5 (including e586ff63) directly to tide-hosting as Fly
+release 2, image deployment-01M5030QHVNHBTZJWJJR6TKRS3. The existing fra
+512 MiB machine and 1 GB volume were retained; smoke/health checks passed.
+Live console requests verify SvelteKit-rendered guest HTML, private/no-store
+caching, nonce CSP and styled expired-sign-in recovery. Authenticated first
+paint was verified locally and in the Linux production image, including a
+browser with JavaScript disabled; no owner session cookie was accessed.
+Existing sessions remain valid. Allocations remain disabled, with no payments,
+credit grants or additional hosting resources. No CI run was dispatched.
 
 Node 24.16+, ESM, SQLite WAL/FULL synchronization, node-datachannel 0.33.4. The
 service owns accounting, routing, credentials and lifecycle outside guest state.
