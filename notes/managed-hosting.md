@@ -28,7 +28,14 @@ restore its source-build, signing or closed-source requirements.
 - `tide login` uses a ten-minute device code explicitly approved in an authenticated
   browser. CLI credentials last thirty days, are bound to the service origin and
   use user-bound DPAPI on Windows/private files on POSIX. `tide logout` revokes.
-- `tide deploy [folder] --project name-or-id` builds locally in release mode:
+- `tide deploy [folder]` creates/reuses a folder-named project and saves its ID
+  and service origin in the game's `tide.deploy.json`. Repeat deploys keep that
+  target after a rename; `--project name-or-id` explicitly replaces the link.
+  Unavailable IDs, malformed links and service mismatches fail with selection
+  guidance. Credentials stay outside the game; the link can be committed.
+  Folder names normalize to lowercase ASCII letters/digits/hyphens, at most 48
+  characters, prefixed with `game-` when they do not start with a letter.
+  This builds locally in release mode:
   a single-threaded WASI reactor, its simulation asset pack and a web client.
   `--server-only` omits the client; `--bundle-only` builds without authentication.
   The default result includes the release, game URL, room endpoint and dashboard.
@@ -56,6 +63,65 @@ restore its source-build, signing or closed-source requirements.
   uploaded code obeys its claimed simulation identity.
 
 ## Service and authentication
+
+Folder-first deployment and credit discovery (2026-10-15): the owner requested
+deployment without dashboard project setup and reported an empty credit selector.
+CLI project auto-creation already existed; the UI wrongly implied manual setup
+was required. The empty Projects panel now leads with `tide login`/`tide deploy`,
+with custom project creation secondary. The CLI persists its target as described
+above, using an atomic replacement and verifying ownership through account data.
+`--bundle-only` remains offline and does not read/write the deployment link.
+
+The balance links directly to Add credit. The account response exposes payment
+availability and sandbox mode, never provider secrets; amount selection appears
+only with configured top-ups and both Stripe secrets. Unconfigured services show
+a clear unavailable message. Test keys label Checkout as a sandbox/test payment.
+After the owner confirmed sandbox testing, the running key was checked by prefix
+only (sandbox=true, webhook configured); no secret value was retrieved. Fly
+configuration now supplies EUR 5/10/25 top-ups. Match allocations/rates stay off.
+A provider account read using the runtime key returns 200 and verifies the
+expected Tide Engine sandbox account; key contents were not logged.
+
+Validation: Svelte check has zero errors/warnings, the console and docs production
+builds pass, Fly configuration validates and all 33 hosting tests pass with the
+installed CLI/native/web tools and muted Chrome. Coverage includes persistent
+folder links/renames, explicit selection, malformed/foreign/missing targets,
+sandbox amount rendering, unavailable payments and a mocked Checkout POST
+without granting credit. Desktop/phone captures of the empty project and credit
+panel were inspected. The final CLI builds cleanly with strict C17 warnings.
+The native debug full run passes 2,303/2,305; both server-pack clients connect
+successfully, but their 5,000-frame server processes hit the existing 15-second
+shutdown deadline under concurrent suite/build load. Both unchanged cases pass
+in a sequential recheck (10.97/14.43 seconds). No deadline/assertion was relaxed.
+All 2,255 web debug tests pass, including WebGL/WebGPU. Deployment results are
+recorded after completion. Other native platforms/Android were not run; no CI
+workflow was dispatched.
+
+Integration through origin/dev 48ca18ce retains the concurrent visibility and
+Foldline work. Resolved only the docs-site note's competing top insertions by
+keeping both entries. Because the compiler/runtime dependencies changed, rebuilt
+the CLI, refreshed its private installation's engine sources/headers and reran
+all 33 hosting tests with native/web/server identity and browser cases enabled;
+all pass. The merged docs production build passes with both guides retained.
+Clarified that committing the target file grants no project access.
+
+Deployed c85179a6 as Fly release 3, image deployment-01M5051CME9PYXNPZV5VNAMYRK,
+on the existing machine/volume; smoke, health and public HTTPS health checks pass.
+A real sandbox Checkout attempt then exposed Stripe rejecting the old
+payment_method_types parameter (HTTP 400), which mocks had accepted. Following
+[Stripe's migration guide](https://docs.stripe.com/payments/payment-methods/dynamic-payment-methods),
+removed that parameter so configured Dashboard payment methods apply, and pinned
+both session creation/retrieval to 2026-09-30.endive, matching the webhook version.
+Regressions assert the omitted parameter/version and provider-state fulfillment.
+All seven affected auth/payment/HTTP tests pass. Deployed df6c019a as Fly release
+4, image deployment-01M5059C33CH27SD5CSKA0M4Z8, with passing machine checks and
+public HTTPS health. A real sandbox Checkout Session for EUR 5 now creates
+successfully using the deployed Payments module and configured runtime key;
+the operator probe confirms the test checkout URL, all three top-up amounts
+and unchanged account balance. One unpaid sandbox Checkout record was created;
+no payment was completed or credit granted by the probe. Webhook fulfillment
+and refund drills still require their own real sandbox transaction tests.
+The machine/volume/capacity are unchanged and match allocations remain disabled.
 
 Owner access and console appearance (2026-10-15): the owner's live GitHub
 callback reached the invite gate. Resolved the authenticated local GitHub

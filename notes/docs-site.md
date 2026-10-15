@@ -1,5 +1,12 @@
 # The docs site
 
+Folder deployment guide (2026-10-15): the CLI/managed-hosting pages now start
+with `tide deploy`, explain automatic folder-named project creation and the
+portable `tide.deploy.json` target, explicit relinking and failed target checks.
+The credit guide points to Add credit beside the balance and explains sandbox
+labels and unavailable payments. Console implementation/validation is recorded
+in managed-hosting.md; no docs UI or routing changes.
+
 ## Visibility language documentation (2026-10-15)
 
 Added `/game/visibility` to the Simulation sidebar with practical shared-group,

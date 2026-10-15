@@ -1,5 +1,38 @@
 # Releases, installing and CI
 
+## Nightly package/test fixture corrections (2026-10-15)
+
+Owner-requested run `38761765659` at ea0ad363 completed with four failing
+checks: Linux/macOS package cache comparisons and Windows native/MinGW
+dedicated-server harness shutdown. Windows packaging, Linux native/sanitizers,
+all three web suites, macOS native, Docs deployment and JetBrains verification
+passed. The aggregate Build jobs failed/cancelled and Release was skipped;
+no nightly was published. The two underlying fixture corrections and their
+reproductions are in cli-and-packages.md and dedicated-servers.md. No workflow,
+publication gate, client verification assertion or timeout was removed.
+
+Local full native debug passes all 2,342 tests, including GPU validation and
+both transports (412.07 seconds, Node 24.16.0/Clang 23.1.2). Full web debug
+passes all 2,255 tests, including WebGL/WebGPU (269.88 seconds). The final
+server harness passes its focused transport rerun too.
+
+Merged the current dev work, including visibility and folder deployment links;
+the only conflict was adjacent CLI notes, both retained. The merged full native
+debug suite passes all 2,359 tests (119.78 seconds), and full web debug passes
+all 2,272 (282.54 seconds), including WebGL/WebGPU. The refreshed installed
+CLI also passes the complete native/web cache, stripping, failure-recovery,
+debug/release web-watch and bounded dedicated-server integration cases.
+
+Fresh requested run `38767273771` at a7aae14c found a separate macOS package
+failure before the cache checks: the newer runner image combines standalone
+CLT 27 with default Xcode 26.6, exposing hardcoded SDK discovery inconsistent
+with Apple's selected linker. The fix, native cross-platform discovery fixture
+and remaining actual-Mac validation are in cli-and-packages.md, Selected Apple
+SDK. This changes the CLI's automatic SDK lookup, not the workflow or its gates.
+Local validation after that correction passes all 2,360 native debug and 2,272
+web debug CTests, plus the discovery regression on Windows/Linux. The old code
+fails that regression. Actual Apple linking remains the next package run's gate.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate

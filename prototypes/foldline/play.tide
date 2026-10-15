@@ -239,6 +239,7 @@ component Mover
     bool any;
     float3 lamp;         // The middle of its row of lamps, one for each signal it needs, and which way the row runs
     float3 lampAlong = float3(1, 0, 0);
+    float lampDepth;     // Explicit surface-mounted housing depth; zero uses the door/deck default.
 }
 
 // A plate in the floor. What stands on it, and what rests on it, weighs on it, whole bodies more than small ones,

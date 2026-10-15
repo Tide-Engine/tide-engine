@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "name": "crawlspace",
+  "function": "BuildMapCrawlspace",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        0,
+        0,
+        -6.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        20,
+        0,
+        35.1
+      ],
+      "yaw": "SOUTH",
+      "need": []
+    }
+  ],
+  "plates": [],
+  "machines": [],
+  "anchors": {},
+  "wires": [],
+  "place_ids": [
+    8
+  ],
+  "external_geometry": true
+}
