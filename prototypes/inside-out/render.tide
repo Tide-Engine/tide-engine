@@ -51,6 +51,8 @@ local singleton SceneRender
 
 struct SceneBlurStep { float2 direction; }
 
+float3 SceneLightDirection() { return Math.Normalize(float3(0.52, -0.80, -0.34)); }
+
 bool SceneInBoard(float2 point, float4 board)
 {
     return point.x >= board.x && point.y >= board.y &&
@@ -433,18 +435,24 @@ view SceneLighting(Sculpture sculpture, mut SceneRender render)
         render.ready = true;
     }
     render.screenSize = float2(Screen.width, Screen.height);
-    render.lightDirection = Math.Normalize(float3(0.52, -0.80, -0.34));
+    render.lightDirection = SceneLightDirection();
     var clip = Rect(render.board.x, render.board.y, render.board.z, render.board.w);
     var focus = float3(render.focusPixels.x - Screen.width * 0.5, 0,
         -(render.focusPixels.y - Screen.height * 0.5) / SCENE_SIN);
     // Fit the working space, not the enormous extents of repeated ancestors.
     // Off-map receivers remain lit rather than sampling a clamped shadow edge.
-    var span = Math.Max(160, Math.Max(clip.width, clip.height) * 1.8 + render.tile * 2);
+    // The map's XY footprint stays fixed while entering or leaving a room;
+    // only its depth interval follows the actual caster bounds. Recursive
+    // ancestors can be far taller than this viewport-sized footprint.
+    var span = Math.Max(160, Math.Max(clip.width, clip.height) * 1.8);
     render.lampTexel = span / 4096;
-    var lamp = float4x4.TRS(focus - render.lightDirection * (span * 3),
+    var focusDepth = Math.Dot(focus, render.lightDirection);
+    var distance = Math.Max(span * 3, focusDepth - sculpture.shadowLow + span);
+    var depth = Math.Max(span * 6, sculpture.shadowHigh - focusDepth + distance + span);
+    var lamp = float4x4.TRS(focus - render.lightDirection * distance,
         quaternion.LookRotation(render.lightDirection, float3(0, 1, 0)), float3(1));
     render.lamp.Clear(Color.white);
-    render.lamp.SetCamera(lamp, float4x4.Ortho(span, span, 0.1, span * 6));
+    render.lamp.SetCamera(lamp, float4x4.Ortho(span, span, 0.1, depth));
     render.toLamp = render.lamp.WorldToClip();
     render.fromLamp = Math.Inverse(render.toLamp);
     render.lamp.SetDepth(Depth.ReadWrite);
