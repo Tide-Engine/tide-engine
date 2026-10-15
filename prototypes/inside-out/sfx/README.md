@@ -9,10 +9,23 @@ The 84-second game loop and 36-second menu loop are stereo 48 kHz Vorbis.
 They crossfade over one second when entering/leaving play. Opening the
 in-game menu keeps the game music. Effects are mono 48 kHz PCM16 except
 `solve.ogg`, a 2.6-second Vorbis chime. All 29 shipping WAVs have exact zero
-endpoints; the reviewed set totals 2,129,691 bytes including the music.
+endpoints; the current set totals 2,128,602 bytes including the music.
 The old ventilation hum and old cues are removed.
 
-`generate/make_music.py` and `generate/make_sfx.py` are the reviewed seeded
+The owner's listening feedback on 2026-10-15 was that the sound was muffled
+and movement annoying. The current movement clips are 70–80 ms dry,
+unpitched rubber scuffs, without the former servo chirp or pulsed motor
+body. They are 7 dB quieter and retrigger at most once per 0.22 seconds per
+robot. Blocked movement uses short unvoiced contacts, capped at one per
+0.26 seconds. Steps remain audible feedback rather than a repeated melody.
+
+Box/battery/shutter textures now retain detail up to about 3.4–3.6 kHz;
+the earlier cascaded filters removed most detail above 1.1–1.8 kHz.
+Broad presence EQ and a little less low-mid body clarify the rest of the
+effects. Music has a modest presence shelf and less reverb at the same
+overall RMS level. Gentle attacks and upper-treble filtering remain.
+
+`generate/make_music.py` and `generate/make_sfx.py` are the seeded
 generators. They need Python, NumPy and FFmpeg with libvorbis on `PATH`.
 Python 3.14, NumPy 2.5 and FFmpeg's bundled libvorbis produced the checked-in
 files. PCM generation is reproducible on the same toolchain; compressed
@@ -33,8 +46,8 @@ Run `python prototypes/inside-out/sfx/generate/check_assets.py` to check all
 shipping hashes, WAV formats, zero endpoints and peak bounds. Its optional
 directory argument checks a complete regenerated set instead. Copy the two
 regenerated music Oggs into the regenerated SFX directory for that check.
-`SHA256SUMS` pins the final reviewed revision, including music revised after
-the first asset integration attempt.
+`SHA256SUMS` pins the current feedback revision. Earlier recovery hashes
+in the notes describe the previous sound, which the owner has now heard.
 
 The generators measure spectra and loop seams without a listening device.
 Their reports and spectrograms are useful engineering checks; the owner

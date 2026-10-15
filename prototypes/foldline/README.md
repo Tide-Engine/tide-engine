@@ -30,6 +30,13 @@ Closed shutters and moving platforms stop shots. Some pairs are already open
 when you arrive; they still belong to their operator and can be moved normally.
 In certain passages the device cannot place new ends, while existing ends work.
 
+The crosshair's left and right marks match your two placement buttons. Bright
+brackets mean that end can be placed at the current aim; short dim marks mean
+the shot cannot place it. The small squares underneath fill when each end has
+already been placed, independently of the current aim. Tab switches these marks
+to the other operator's own pair. Carrying an object disables the placement
+brackets because clicking throws it.
+
 Painted frames set the size of an end. Crossing multiplies your current size by
 the destination size divided by the entry size. Repeated crossings compound:
 half, quarter, eighth. Crossing in reverse restores size. There is no gameplay
@@ -99,6 +106,34 @@ ctest --preset web-debug -R '^foldline'
 Serve `docs/static` and visit `/prototypes/foldline/`. The page is self-contained.
 Keyboard/mouse and gamepad gameplay are supported; touchscreen movement is not.
 The PSX picture uses 300 rows, nearest textures and dithered lighting.
+
+## Map authoring
+
+The campaign's metric assemblies live in `maps/*.foldmap.json`. They own lift
+slots, plates, moving devices, cable anchors and circuit connections. Reception
+also defines its structural boxes and pre-opened folds there. Named box faces
+provide attachment coordinates; the format does not impose a tile grid.
+Other rooms keep their procedural geometry and encounter scripts in Tide.
+
+After editing a map, regenerate its checked-in Tide source from the repository
+root (Python 3.10 or newer, standard library only):
+
+```sh
+python prototypes/foldline/tools/foldmap.py
+cmake --build --preset debug --target foldline
+```
+
+The build rejects stale generated output and validates all fourteen actual
+constructed places against their source assemblies. It checks complete cable
+support and source/target connections, lift clearance and floor support,
+mounted signs, and fold backing. Custom Tide geometry goes through those same
+built-scene checks. Native and WASI tests include the validator and its defect
+regressions. Format details and limits are in `tools/README.md`.
+
+The ordinary `tide run` command consumes the checked-in generated source;
+run the checked CMake build after map changes before using that shortcut.
+Spatial validation complements the input-driven solves and GPU checks;
+it does not establish puzzle quality, pacing or every possible physics route.
 
 The simulation fixtures include input-driven puzzle solves. Pacing, first-time
 discoverability, live human co-op and sound balance still need human playtesting.

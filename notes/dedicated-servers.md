@@ -2,6 +2,22 @@
 
 ## CI corrections (2026-10-15)
 
+Run `38761765659` passed the full-pack/reduced-pack client checks over both
+UDP and WebRTC on Windows native and MinGW, then failed waiting for the
+server's 5,000 real-time iterations to finish before the harness's 15-second
+deadline. That frame count is not a wall-clock duration: timer scheduling and
+host contention affect it. The harness now terminates its owned server when
+the client has verified the asset, twenty ticks and zero resyncs. It accepts
+only normal exit or the SIGTERM it explicitly requested; unexpected server
+exit, client failures and the unchanged deadline still fail. Both children
+are reaped and the local relay closes before the harness exits. Bounded
+natural server exit remains covered by the smoke/entry/visual fixtures.
+
+Real local UDP/WebRTC cases pass. Temporary process probes confirm successful
+clients no longer wait for a slow service bound, while client exit 9, server
+exit 7 before listening and a stalled client all fail; the stalled case hits
+the unchanged 15-second deadline and leaves neither process running.
+
 Run `38716371711` found two server-build defects in `bfc10e14`.
 The optional process hook now has a weak no-op definition on Apple targets:
 a standalone Mach-O executable cannot link an absent weak reference with the

@@ -12,6 +12,16 @@ import test, { before } from 'node:test';
 const source = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const payload = 'installer regression package';
 const sum = createHash('sha256').update(payload).digest('hex');
+const site = 'https://tide-engine.dev/releases';
+function fixtureReleases(packageName) {
+    const release = (tag, prerelease = false) => ({
+        tag_name: tag, prerelease, draft: false, assets: [
+            { name: packageName, size: payload.length, browser_download_url: `${site}/${tag}/${packageName}` },
+            { name: 'SHA256SUMS', size: 1, browser_download_url: `${site}/${tag}/SHA256SUMS` },
+        ],
+    });
+    return JSON.stringify([release('v1.3.0-nightly.1', true), release('v1.2.0'), release('v1.2.1')]);
+}
 const shells = process.platform === 'win32' ? ['powershell'] : ['sh'];
 if (process.env.INSTALL_TEST_SH) shells.push('sh');
 const cases = [
@@ -190,41 +200,48 @@ else
 fi
 `;
 
-// Windows PowerShell's first start on a machine loads and checks the
-// assemblies its module imports, its JSON cmdlets (System.Web.Extensions)
-// and its file and hash cmdlets use, which a fresh hosted runner, with 2 CPUs
-// and other tests beside it, did in 20 seconds and more, its process all but
-// idle: waiting on the disk and the machine's scanner, not running. Later
-// processes take a second. That's the runner's, not the installer's, and the
-// cases' 30-second guard measured it in whichever case came first (Build runs
-// 38623397915, 38637433618). So one process does all of it first, with a guard
-// of its own for a real hang, and the cases' guard measures the installer.
+// A partial cmdlet warm-up misses the installer's version comparisons and
+// scratch setup (38768886333 still stalled after reading the release list).
+// Preflight the actual mocked fresh-install path, through its real checksum,
+// before timing individual cases. It stops before unpacking, just as they do.
+// Cold assembly/file scanning has its own guard; cases retain 30 seconds.
 if (shells.includes('powershell')) before(() => {
     const work = mkdtempSync(join(tmpdir(), 'tide-installers-warm-'));
     try {
-        const warm = String.raw`
-$ErrorActionPreference = 'Stop'
-$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
-Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'))
-Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'))
-$file = Join-Path $env:TEST_WORK 'warm.json'
-@{ warm = @(1, 'two') } | ConvertTo-Json -Compress -Depth 8 | Add-Content $file
-$null = Get-Content $file -Raw | ConvertFrom-Json
-$null = Get-FileHash $file -Algorithm SHA256
-'warm'
-`;
+        const temporary = join(work, 'temporary');
+        mkdirSync(temporary);
+        writeFileSync(join(temporary, 'tide-installer-fixture.txt'), temporary);
+        writeFileSync(join(work, 'list.json'), fixtureReleases('tide-windows-x64.zip'));
         const script = join(work, 'warm.ps1');
-        writeFileSync(script, warm);
-        const env = { ...process.env, TEST_WORK: work, PSModuleAnalysisCachePath: join(work, 'ModuleAnalysisCache') };
-        for (const key of Object.keys(env)) if (key.toUpperCase() === 'PSMODULEPATH') delete env[key];
+        writeFileSync(script, powershell);
+        const env = { ...process.env, GH_TOKEN: 'a-token-nobody-is-sent', GITHUB_TOKEN: 'another-token-nobody-is-sent',
+            TIDE_CHANNEL: '', TIDE_RELEASES_URL: 'file:///original-override.json', TIDE_ASSOCIATE_PREFABS: '',
+            LOCALAPPDATA: join(work, 'local'), HOME: join(work, 'user'), TEMP: temporary, TMP: temporary,
+            TEST_WORK: temporary, TEST_LOG: join(work, 'requests.jsonl'), TEST_LIST: join(work, 'list.json'),
+            TEST_INSTALLER: join(source, 'install.ps1'), TEST_FAIL_UPGRADE: '', TEST_PAYLOAD: payload,
+            TEST_SUMS: `${sum}  tide-windows-x64.zip\n`, TIDE_HIDDEN: '1' };
+        for (const key of Object.keys(env)) {
+            if (['PSMODULEPATH', 'PSMODULEANALYSISCACHEPATH'].includes(key.toUpperCase())) delete env[key];
+        }
         env.PSModulePath = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
+        env.PSModuleAnalysisCachePath = join(work, 'ModuleAnalysisCache');
         const started = Date.now();
         const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
             { env, encoding: 'utf8', windowsHide: true, timeout: 300_000 });
         const said = `${result.stdout}\n${result.stderr}`;
         assert.ok(!result.error, `PowerShell's first start: ${result.error}\n${said}`);
         assert.equal(result.status, 0, `PowerShell's first start failed:\n${said}`);
-        console.log(`Windows PowerShell's first start took ${((Date.now() - started) / 1000).toFixed(1)} s`);
+        assert.ok(said.includes('Stopped before unpacking.'), `Installer preflight did not reach unpacking:\n${said}`);
+        const entries = readFileSync(env.TEST_LOG, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line));
+        const requests = entries.filter(entry => entry.op === 'request');
+        assert.deepEqual(requests.map(entry => entry.url).sort(),
+            [`${site}.json`, `${site}/v1.2.1/tide-windows-x64.zip`, `${site}/v1.2.1/SHA256SUMS`].sort());
+        for (const request of requests) {
+            assert.equal(request.auth || '', '');
+            if (request.output) assert.ok(!existsSync(request.output), 'Preflight left a temporary download.');
+        }
+        assert.deepEqual(entries.filter(entry => entry.op !== 'request').map(entry => entry.op), ['unpack']);
+        console.log(`Windows PowerShell's installer preflight took ${((Date.now() - started) / 1000).toFixed(1)} s`);
     } finally { rmSync(work, { recursive: true, force: true }); }
 });
 
@@ -236,14 +253,7 @@ for (const runtime of shells) for (const c of cases) {
         let result;
         try {
             const packageName = runtime === 'powershell' ? 'tide-windows-x64.zip' : 'tide-linux-x64.tar.gz';
-            const site = 'https://tide-engine.dev/releases';
-            const release = (tag, prerelease = false) => ({
-                tag_name: tag, prerelease, draft: false, assets: [
-                    { name: packageName, size: payload.length, browser_download_url: `${site}/${tag}/${packageName}` },
-                    { name: 'SHA256SUMS', size: 1, browser_download_url: `${site}/${tag}/SHA256SUMS` },
-                ],
-            });
-            writeFileSync(join(work, 'list.json'), JSON.stringify([release('v1.3.0-nightly.1', true), release('v1.2.0'), release('v1.2.1')]));
+            writeFileSync(join(work, 'list.json'), fixtureReleases(packageName));
             mkdirSync(join(work, 'temporary'));
             writeFileSync(join(work, 'temporary', 'tide-installer-fixture.txt'), join(work, 'temporary'));
             const installation = runtime === 'powershell' ? join(work, 'local', 'Tide') : join(work, 'user', '.tide');

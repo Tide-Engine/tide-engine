@@ -681,6 +681,7 @@ async function atOnceTests(tide, root, target) {
     // C come before a game's own C, so once the files are right again only C
     // of the game's is compiled.
     let before = mark(cache);
+    const keptLauncher = contents(cache).get("main.o");
     check([...before.keys()].some((file) => file.startsWith("engine/")) && before.has("game.o") && before.has("main.o"),
         "a build that failed in the game's C still compiled the engine and the generated C");
     put(join(game, `${name(5)}.c`), text(5), headerTime);
@@ -690,7 +691,15 @@ async function atOnceTests(tide, root, target) {
     const again = written(cache, before);
     check(!again.some((file) => !file.startsWith("c/") && file !== "game.o"),
         `the build after the fix compiled more than the game's C and identity: ${again}`);
-    check(JSON.stringify([...contents(cache)].sort()) === JSON.stringify([...built[0].files].sort()), "the build after the fix left other files than a clean build");
+    const repaired = contents(cache);
+    // The launcher intentionally survives identity-only header edits. DWARF
+    // can retain the checksum of game.h from the failed build, so its debug
+    // bytes need not match a clean compile against the restored header.
+    // Require exact reuse of that object, and clean-build parity everywhere else.
+    check(repaired.get("main.o") === keptLauncher, "the build after the fix changed the reused launcher");
+    const differ = [...built[0].files].filter(([path, bytes]) => path !== "main.o" && repaired.get(path) !== bytes).map(([path]) => path);
+    const more = [...repaired.keys()].filter((path) => !built[0].files.has(path));
+    check(!differ.length && !more.length, `the build after the fix left other files than a clean build: ${[...differ, ...more]}`);
     console.log("  a build that failed keeps what compiled, and the next one finishes it");
 
     // A count that's no count

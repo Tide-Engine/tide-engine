@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "name": "long_throw",
+  "function": "BuildMapLongThrow",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -9,
+        0,
+        -14.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        13,
+        5.4,
+        18.1
+      ],
+      "yaw": "SOUTH",
+      "need": [
+        1
+      ]
+    }
+  ],
+  "plates": [
+    {
+      "id": "plate_0",
+      "at": [
+        -3,
+        0,
+        -9
+      ],
+      "signal": 0
+    },
+    {
+      "id": "plate_1",
+      "at": [
+        14,
+        5.4,
+        13
+      ],
+      "signal": 1
+    }
+  ],
+  "machines": [
+    {
+      "id": "machine_0",
+      "from": [
+        0,
+        -0.15,
+        -9
+      ],
+      "to": [
+        0,
+        7.85,
+        -9
+      ],
+      "size": [
+        3,
+        0.3,
+        3
+      ],
+      "need": [
+        0
+      ],
+      "speed": 2.2,
+      "lamp": [
+        -3.8,
+        0.7,
+        -6.405
+      ],
+      "along": [
+        1,
+        0,
+        0
+      ],
+      "lamp_depth": 0.18
+    },
+    {
+      "id": "machine_1",
+      "from": [
+        2,
+        0.6,
+        5
+      ],
+      "to": [
+        5,
+        0.6,
+        5
+      ],
+      "size": [
+        3,
+        0.3,
+        3
+      ],
+      "need": [],
+      "speed": 1.2,
+      "lamp": [
+        2,
+        0.36999999999999994,
+        5
+      ],
+      "along": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "anchors": {
+    "wire_1_0": {
+      "at": [
+        14.6,
+        5.425,
+        13
+      ],
+      "support": "scene"
+    },
+    "wire_1_1": {
+      "at": [
+        15.96,
+        5.425,
+        13
+      ],
+      "support": "scene"
+    },
+    "wire_1_2": {
+      "at": [
+        15.96,
+        5.425,
+        15.435
+      ],
+      "support": "scene"
+    },
+    "wire_1_3": {
+      "at": [
+        15.96,
+        9.6,
+        15.435
+      ],
+      "support": "scene"
+    },
+    "wire_1_4": {
+      "at": [
+        13,
+        9.6,
+        15.435
+      ],
+      "support": "scene"
+    },
+    "wire_1_5": {
+      "at": [
+        13,
+        9.6,
+        15.45
+      ],
+      "support": "scene"
+    },
+    "wire_0_0": {
+      "support": "scene",
+      "at": [
+        -2.4,
+        0.025,
+        -9
+      ]
+    },
+    "wire_0_1": {
+      "support": "scene",
+      "at": [
+        -3.8,
+        0.025,
+        -9
+      ]
+    },
+    "wire_0_2": {
+      "support": "scene",
+      "at": [
+        -3.8,
+        0.025,
+        -6.405
+      ]
+    },
+    "wire_0_3": {
+      "support": "scene",
+      "at": [
+        -3.8,
+        0.7,
+        -6.405
+      ]
+    }
+  },
+  "wires": [
+    {
+      "id": "wire_0",
+      "signal": 0,
+      "from": "plate_0",
+      "to": "machine_0",
+      "points": [
+        "wire_0_0",
+        "wire_0_1",
+        "wire_0_2",
+        "wire_0_3"
+      ]
+    },
+    {
+      "id": "wire_1",
+      "signal": 1,
+      "from": "plate_1",
+      "to": "exit",
+      "points": [
+        "wire_1_0",
+        "wire_1_1",
+        "wire_1_2",
+        "wire_1_3",
+        "wire_1_4",
+        "wire_1_5"
+      ]
+    }
+  ],
+  "place_ids": [
+    9
+  ],
+  "external_geometry": true,
+  "boxes": [
+    {
+      "id": "deck_control_post",
+      "min": [
+        -3.96,
+        0,
+        -6.76
+      ],
+      "max": [
+        -3.64,
+        1,
+        -6.44
+      ],
+      "paint": "PANELS"
+    }
+  ]
+}

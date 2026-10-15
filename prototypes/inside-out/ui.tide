@@ -1,5 +1,13 @@
 using Rooms;
 
+extern string InsideOutInviteBase();
+
+void CopyInvite(mut Rooms.Lobby lobby, string room)
+{
+    Clipboard.Copy($"{InsideOutInviteBase()}?join={room}");
+    lobby.copied = 0;
+}
+
 enum ArtStage { Backdrop, Prepare, Board, Controls, Sound }
 
 const Color INK = Color(0.94, 0.90, 0.80);
@@ -39,25 +47,21 @@ local singleton Hands
     int held = -1;
     bool release;
     float repeat;
-    int hint;
-    bool hintOpen;
     bool journal;
-    bool guide;
     bool reduceMotion;
     bool preview = true;
-    bool lesson = true;
-    int guidePage;
     int chapter;
     int pendingLevel = -1;
     bool pendingReset;
     bool confirmFromPlaying;
-    float intro;
     float clock;
     Rooms.Page pageAtStart;
-    bool hadPartner;
     bool preferencesLoaded;
     string savedPreferences;
     int completed;
+    int swipeId = -1;
+    bool swipeReady;
+    float2 swipeStart;
     // How much longer each seat's bot shakes after a step that could not be
     // taken. Every screen shows it for both, so a partner sees the bump too.
     float[2] blockTime;
@@ -140,7 +144,6 @@ view PrepareHands(Session session, Rooms.Lobby lobby, mut Hands hands, mut Inter
     hands.player = session.player;
     for (var seat = 0; seat < 2; seat++) hands.blockTime[seat] = Math.Max(0, hands.blockTime[seat] - Frame.dt);
     hands.portalTime = Math.Max(0, hands.portalTime - Frame.dt);
-    hands.intro = Math.Max(0, hands.intro - Frame.dt);
     hands.clock += Math.Min(Frame.dt, 0.1);
     hands.pageAtStart = lobby.page;
     feedback.remaining = Math.Max(0, feedback.remaining - Frame.dt);
@@ -179,9 +182,6 @@ view Roster(Workshop workshop, mut Hands hands, mut Rooms.Lobby lobby)
     if (hands.level != workshop.level)
     {
         hands.level = workshop.level;
-        hands.hint = 0;
-        hands.hintOpen = false;
-        hands.intro = 2.5;
         hands.chapter = LevelChapter(workshop.level);
         hands.pendingLevel = -1;
         hands.pendingReset = false;
@@ -192,9 +192,9 @@ view Roster(Workshop workshop, mut Hands hands, mut Rooms.Lobby lobby)
         hands.held = -1;
         hands.release = true;
         hands.repeat = 0.25;
+        hands.swipeReady = false;
+        hands.swipeId = -1;
     }
-    if (Together(workshop) && !hands.hadPartner) hands.intro = 2.5;
-    hands.hadPartner = Together(workshop);
 }
 
 int KeyDirection(Devices devices, bool edge)
@@ -207,121 +207,77 @@ int KeyDirection(Devices devices, bool edge)
     return -1;
 }
 
-Color StepTone(Step step)
-{
-    if (step == Step.Push) return HAZARD;
-    if (step == Step.Enter) return Color(0.48, 0.74, 0.48);
-    return step == Step.Blocked ? MUTED : TEAL;
-}
-
-// A direction's arrow says what the step will do: a solid block ahead of it
-// is a box it pushes, an open frame around its tip a doorway it enters, and
-// a bar across its tip a step that cannot happen.
-void StepMark(float2 at, int direction, float size, Step step)
-{
-    var tone = StepTone(step);
-    var axis = float2(Direction(direction));
-    var cross = float2(-axis.y, axis.x);
-    DirectionMark(at, direction, size, tone);
-    var tip = at + axis * size;
-    if (step == Step.Push) Draw.Rect(tip + axis * size * 0.75, float2(size * 0.9), tone);
-    if (step == Step.Enter) Draw.WireRoundRect(tip - axis * size * 0.1, float2(size * 1.7), 0, 1.5, tone);
-    if (step == Step.Blocked) Draw.Line(tip + axis * 2 - cross * size * 0.7, tip + axis * 2 + cross * size * 0.7, 1.5, tone);
-}
-
-void DirectionMark(float2 at, int direction, float size, Color tone)
-{
-    var step = Direction(direction);
-    var axis = float2(step);
-    var cross = float2(-axis.y, axis.x);
-    var tip = at + axis * size;
-    Draw.Line(at - axis * size, tip, 1.5, tone);
-    Draw.Line(tip, tip - axis * size * 0.65 + cross * size * 0.40, 1.5, tone);
-    Draw.Line(tip, tip - axis * size * 0.65 - cross * size * 0.40, 1.5, tone);
-}
-
-string DirectionKey(int direction)
-{
-    if (direction == 0) return "W";
-    if (direction == 1) return "D";
-    if (direction == 2) return "S";
-    return "A";
-}
-
-void Compass(float2 at, int held)
-{
-    for (var d = 0; d < 4; d++)
-    {
-        var step = Direction(d);
-        var axis = float2(step);
-        DirectionMark(at + axis * 13, d, 5, held == d ? TEAL : MUTED);
-        Label(DirectionKey(d), at + axis * 27, 10, held == d ? TEAL : MUTED, Anchor.MiddleCenter);
-    }
-}
-
 [Stage(ArtStage.Controls)]
 [Before(Rooms.Pages)]
-view WorkshopControls(Workshop workshop, Session session, Devices devices, mut Rooms.Lobby lobby, mut Hands hands)
+view WorkshopControls(Workshop workshop, Time time, Session session, Devices devices, mut Rooms.Lobby lobby, mut Hands hands)
 {
     Draw.SetScreen();
     if (lobby.page != Rooms.Page.Playing) return;
+    // This game sends commands from a view rather than sampling an input.
+    // Keep gameplay keys here so arrows cannot start navigating HUD widgets.
+    GUI.ClaimKeyboard();
+    var key = devices.keyboard;
+    if (key.escape.down || devices.gamepad.start.down)
+    {
+        lobby.page = Rooms.Page.Room;
+        lobby.resume = true;
+        UiSound(UiCue.Open);
+        return;
+    }
     var width = Screen.width;
     var height = Screen.height;
     var narrow = width < 720;
     var together = Together(workshop);
-    var overlay = hands.journal || hands.guide || hands.pendingReset || hands.pendingLevel >= 0;
+    var overlay = hands.journal || hands.pendingReset || hands.pendingLevel >= 0;
     var playing = lobby.playing && together && hands.seat >= 0 && !overlay;
+    var revealing = time.tick - workshop.openedTick < REVEAL_TICKS;
     for (var d = 0; d < 4; d++)
     {
         hands.ahead[d] = Step.Blocked;
-        if (!playing || workshop.puzzle.solved || !hands.preview) continue;
+        if (!playing || revealing || workshop.puzzle.solved || !hands.preview) continue;
         mut var trial = workshop.puzzle;
         MovePuzzle(workshop.layout, trial, hands.seat, d, out var step);
         hands.ahead[d] = step;
     }
     if (overlay) return;
-    var key = devices.keyboard;
-    var bottom = height - (narrow ? 144.0 : 92.0);
-    var actionWidth = narrow ? 74.0 : 96.0;
-    var left = narrow ? 16.0 : 24.0;
-    if (PaperButton(hands.lesson ? "Hide tip" : "Show tip", Rect(width - 88, narrow ? 78.0 : 68.0, 72, 32)))
-        hands.lesson = !hands.lesson;
-
     if (!together)
     {
         var boxWidth = Math.Min(width - 32, 480);
         var at = float2(width * .5, height * .53);
         Panel(at, float2(boxWidth, 270));
         Heading("A place for your partner", at + float2(0, -95), narrow ? 22.0 : 28.0);
-        Label("Share this room code with your friend.", at + float2(0, -55), 14, MUTED, Anchor.MiddleCenter);
+        Label("Share your invite with a friend.", at + float2(0, -55), 14, MUTED, Anchor.MiddleCenter);
         if (session.room != "")
         {
             Heading(session.room, at + float2(0, -6), 38, BRASS);
-            if (PaperButton(lobby.copied < 1.5 ? "Copied" : "Copy code", Rect(at.x - 100, at.y + 26, 200, 44), true, true))
-                Rooms.CopyCode(lobby, session.room);
+            var buttonWidth = (boxWidth - 60) * .5;
+            if (PaperButton(lobby.copied < 1.5 ? "Copied" : "Copy invite", Rect(at.x - boxWidth * .5 + 24, at.y + 26, buttonWidth, 44), true, true))
+                CopyInvite(lobby, session.room);
+            if (PaperButton("Copy code", Rect(at.x + 6, at.y + 26, buttonWidth, 44))) Rooms.CopyCode(lobby, session.room);
         }
         else if (session.server && !session.open)
         {
             if (PaperButton("Open a room", Rect(at.x - 100, at.y + 26, 200, 44), session.state == SessionState.Connected, true)) Session.Open();
         }
         else Label("Opening your room...", at + float2(0, 32), 15, MUTED, Anchor.MiddleCenter);
-        Paragraph("The puzzle starts when your friend joins with this code.", at + float2(-boxWidth * .5 + 24, 98), boxWidth - 48, 13, MUTED);
+        Label("The puzzle begins when you're both here.", at + float2(0, 102), narrow ? 12.0 : 14.0, MUTED, Anchor.MiddleCenter);
         return;
     }
-
+    var left = narrow ? 16.0 : 24.0;
     for (var seat = 0; seat < 2; seat++)
     {
         var actor = workshop.puzzle.actors[seat];
         var name = seat == 0 ? "Amber" : "Teal";
         var who = seat == hands.seat ? $"You: {name}" : name;
         var plateWidth = narrow ? (width - 40) * .5 : 224.0;
-        var plate = float2(left + plateWidth * .5 + seat * (plateWidth + 8), height - (narrow ? 186.0 : 28.0));
+        var plate = float2(left + plateWidth * .5 + seat * (plateWidth + 8), height - (narrow ? 148.0 : 28.0));
         Chip(plate, float2(plateWidth, 28));
         Label($"{who} / {DimensionName(actor.room)}", plate, narrow ? 10.0 : 12.0, seat == 0 ? AMBER : TEAL, Anchor.MiddleCenter);
     }
-    if (PaperButton("Undo / Z", Rect(left, bottom, actionWidth, 44), workshop.historyCount > 0 && playing) || playing && (key.z.down || key.backspace.down))
+    var bottom = height - 92;
+    if (PaperButton("Undo", Rect(left, bottom, 82, 40), workshop.historyCount > 0 && playing) || playing && (key.z.down || key.backspace.down))
         Send(Undo { serial = workshop.serial });
-    if (PaperButton("Reset / R", Rect(left + actionWidth + 8, bottom, actionWidth, 44), playing) || playing && key.r.down)
+    if (PaperButton("Restart", Rect(left + 90, bottom, 82, 40), playing) || playing && key.r.down)
     {
         hands.pendingReset = true;
         hands.confirmFromPlaying = true;
@@ -329,17 +285,17 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, mut R
         lobby.resume = true;
         UiSound(UiCue.Open);
     }
-    if (PaperButton("Hint / H", Rect(left + (actionWidth + 8) * 2, bottom, actionWidth, 44), playing) || playing && key.h.down)
-    {
-        hands.hintOpen = !hands.hintOpen;
-        UiSound(UiCue.Open);
-    }
-
     hands.repeat -= Math.Min(Frame.dt, .1);
     var direction = KeyDirection(devices, false);
     var edge = KeyDirection(devices, true);
     if (direction < 0) hands.release = false;
-    if (!playing || workshop.puzzle.solved) { hands.held = -1; hands.repeat = .25; hands.release = direction >= 0; }
+    if (!playing || revealing || workshop.puzzle.solved)
+    {
+        hands.held = -1;
+        hands.repeat = .25;
+        hands.release = direction >= 0;
+        hands.swipeReady = false;
+    }
     else if (direction < 0) { hands.held = -1; hands.repeat = 0; }
     else if (!hands.release && (edge >= 0 || direction != hands.held || hands.repeat <= 0))
     {
@@ -347,69 +303,29 @@ view WorkshopControls(Workshop workshop, Session session, Devices devices, mut R
         hands.repeat = hands.held == direction ? .16 : .28;
         hands.held = direction;
     }
-    var arrowSize = narrow ? 42.0 : 44.0;
-    var pad = float2(width - (narrow ? 68.0 : 92.0), height - (narrow ? 104.0 : 112.0));
-    for (var d = 0; d < 4; d++)
+    // One deliberate swipe is one step. No persistent directional overlay
+    // occupies either the desktop or a phone's board.
+    var touch = devices.touchscreen.primaryTouch;
+    if (playing && !revealing && !workshop.puzzle.solved)
     {
-        var at = pad + float2(Direction(d)) * arrowSize;
-        var enabled = playing && !workshop.puzzle.solved;
-        if (PaperButton("", Rect(at.x - arrowSize * .5, at.y - arrowSize * .5, arrowSize - 2, arrowSize - 2), enabled))
-            Send(Move { serial = workshop.serial, direction = d });
-        if (enabled && hands.preview) StepMark(at + float2(-1, -7), d, 6, hands.ahead[d]);
-        else DirectionMark(at + float2(-1, -7), d, 6, MUTED);
-        Label(DirectionKey(d), at + float2(-1, 8), 11, enabled ? INK : MUTED, Anchor.MiddleCenter);
-    }
-    if (!narrow)
-        Label("WASD / arrows to move   •   Take your time.", float2(width * .60, height - 28), 12, MUTED, Anchor.MiddleCenter);
-
-    if (hands.hintOpen)
-    {
-        var hintWidth = Math.Min(width - 32, 580);
-        var hintText = LevelHint(workshop.level, hands.hint);
-        var hintHeight = 108 + WrappedLines(hintText, hintWidth - 40, 15) * 21;
-        var at = float2(width * .5, bottom - 16 - hintHeight * .5);
-        Panel(at, float2(hintWidth, hintHeight));
-        Label($"A NUDGE / {hands.hint + 1} OF 3", at + float2(-hintWidth * .5 + 20, -hintHeight * .5 + 24), 12, BRASS);
-        Paragraph(hintText, at + float2(-hintWidth * .5 + 20, -hintHeight * .5 + 54), hintWidth - 40);
-        if (PaperButton("Close", Rect(at.x - hintWidth * .5 + 20, at.y + hintHeight * .5 - 48, 88, 34))) hands.hintOpen = false;
-        if (PaperButton(hands.hint < 2 ? "More help" : "Start over", Rect(at.x + hintWidth * .5 - 132, at.y + hintHeight * .5 - 48, 112, 34)))
-            hands.hint = (hands.hint + 1) % 3;
-    }
-
-    if (workshop.puzzle.solved)
-    {
-        GUI.Navigate();
-        var at = float2(width * .5, height * .5);
-        var boxWidth = Math.Min(width - 32, 480);
-        Panel(at, float2(boxWidth, 248));
-        Heading("Solved", at + float2(0, -86), 36, SAGE);
-        var chapterEnd = workshop.level == LEVEL_COUNT - 1 || LevelChapter(workshop.level + 1) != LevelChapter(workshop.level);
-        Label(chapterEnd ? $"{ChapterName(LevelChapter(workshop.level))} complete" : "Another way found, together.", at + float2(0, -46), 16, INK, Anchor.MiddleCenter);
-        Label($"{workshop.puzzle.moves} shared moves", at + float2(0, -17), 14, MUTED, Anchor.MiddleCenter);
-        if (workshop.level < LEVEL_COUNT - 1)
+        if (touch.press.down)
         {
-            if (PaperButton("Next puzzle / Enter", Rect(at.x - 122, at.y + 14, 244, 44), playing, true) || playing && key.enter.down)
-                Send(Next { serial = workshop.serial });
+            hands.swipeId = touch.id;
+            hands.swipeStart = touch.position;
+            hands.swipeReady = true;
         }
-        else Label("A whole world of small possibilities.", at + float2(0, 34), 14, MUTED, Anchor.MiddleCenter);
-        if (PaperButton("Choose puzzle", Rect(at.x - 122, at.y + 70, 244, 40)))
+        if (hands.swipeReady && touch.press.pressed && touch.id == hands.swipeId)
         {
-            hands.journal = true;
-            lobby.page = Rooms.Page.Room;
-            lobby.resume = true;
+            var swipe = touch.position - hands.swipeStart;
+            if (Math.Length(swipe) >= 28)
+            {
+                var dir = Math.Abs(swipe.x) > Math.Abs(swipe.y) ? (swipe.x > 0 ? 1 : 3) : (swipe.y > 0 ? 0 : 2);
+                Send(Move { serial = workshop.serial, direction = dir });
+                hands.swipeReady = false;
+            }
         }
     }
-    else if (hands.intro > 0 && workshop.puzzle.moves == 0)
-    {
-        var opacity = hands.reduceMotion ? 1.0 : Math.Min(1, hands.intro * 2);
-        var w = Math.Min(width - 32, 520);
-        var h = 90 + WrappedLines(LevelLesson(workshop.level), w - 40, 14) * 20;
-        var at = float2(width * .5, SceneTop(float2(width, height)) + h * .5 + 24);
-        Draw.RoundRect(at, float2(w, h), 6, Color(PAPER.r, PAPER.g, PAPER.b, opacity * .96));
-        Label(ChapterName(LevelChapter(workshop.level)), at + float2(0, -h * .5 + 22), 12, Color(BRASS.r, BRASS.g, BRASS.b, opacity), Anchor.MiddleCenter);
-        Heading($"{workshop.level + 1:D2}. {LevelName(workshop.level)}", at + float2(0, -h * .5 + 52), narrow ? 21.0 : 26.0, Color(INK.r, INK.g, INK.b, opacity));
-        Paragraph(LevelLesson(workshop.level), at + float2(-w * .5 + 20, -h * .5 + 84), w - 40, 14, Color(MUTED.r, MUTED.g, MUTED.b, opacity));
-    }
+    if (!touch.press.pressed) hands.swipeReady = false;
 }
 
 // Hover events carry the control's position so moving between controls makes
@@ -470,14 +386,13 @@ struct Preferences
     bool muted;
     bool reducedMotion;
     bool preview = true;
-    bool lesson = true;
     int completed;
 }
 
 Preferences CurrentPreferences(Rooms.Lobby lobby, Mixer mixer, Hands hands)
 {
     return Preferences { master = lobby.volume, music = mixer.music, effects = mixer.effects, interface = mixer.interface,
-        muted = mixer.muted, reducedMotion = hands.reduceMotion, preview = hands.preview, lesson = hands.lesson, completed = hands.completed };
+        muted = mixer.muted, reducedMotion = hands.reduceMotion, preview = hands.preview, completed = hands.completed };
 }
 
 void WritePreferences(string text) fails IOError
@@ -503,7 +418,6 @@ view ReadPreferences(mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
             mixer.muted = saved.muted;
             hands.reduceMotion = saved.reducedMotion;
             hands.preview = saved.preview;
-            hands.lesson = saved.lesson;
             hands.completed = saved.completed & ((1 << LEVEL_COUNT) - 1);
         }
     }
@@ -522,81 +436,6 @@ view SavePreferences(Workshop workshop, Rooms.Lobby lobby, Mixer mixer, mut Hand
     if (WritePreferences(text) is IOError) return;
 }
 
-string GuideTitle(int page)
-{
-    if (page == 0) return "Make a little space";
-    if (page == 1) return "Push, then step inside";
-    if (page == 2) return "The way back out";
-    if (page == 3) return "Be each other's wall";
-    if (page == 4) return "A place for everything";
-    if (page == 5) return "A little power";
-    return "A room inside itself";
-}
-
-string GuideWords(int page)
-{
-    if (page == 0) return "Use WASD, the arrow keys or the on-screen arrows. Walk into a battery or box to push it. A row moves together until a wall or your partner stops it.";
-    if (page == 1) return "A box always tries to move first. When it cannot move, walk into a doorway facing you to enter. Batteries and other boxes can be pushed inside too. A brass bar previews a push; a green arrow previews an entry.";
-    if (page == 2) return "Walk through an edge doorway to leave a room. You arrive beside that room's own box, wherever it stands now. Moving a box carries its whole interior and everyone in it.";
-    if (page == 3) return "Your partner is the only movable wall. One robot can hold a box still so the other can enter or post a battery inside. Swap jobs, make space and talk through your next move.";
-    if (page == 4) return "Push batteries onto the sockets marked with a plus. Bring numbered boxes to their matching outlines. Then both robots need their own green goal. Z undoes a shared move; R restarts; H offers three hints.";
-    if (page == 5) return "A robot, battery or box on a pressure plate opens every shutter of its channel, even in another room. A has a ring; B has a diamond. Leaving a plate closes the shutters. Anything already in a shutter can still leave.";
-    return "There is only one box for each room. A box can stand inside its own room, or two boxes can contain each other. Step out of a self-containing room and you arrive beside its box, in that very same room.";
-}
-
-void GuideDiagram(int page, float2 at, float width)
-{
-    var step = Math.Min(64, (width - 40) / 4);
-    for (var i = 0; i < 4; i++)
-        Draw.RoundRect(at + float2((i - 1.5) * step, 0), float2(step - 5), 5, Color(.25, .22, .18));
-    var a = at - float2(step * 1.5, 0);
-    var b = at - float2(step * .5, 0);
-    var c = at + float2(step * .5, 0);
-    var end = at + float2(step * 1.5, 0);
-    if (page == 0)
-    {
-        Draw.RoundRect(a, float2(step * .46), 5, AMBER);
-        Draw.Rect(b, float2(step * .55), BRASS);
-        Draw.Rect(c, float2(step * .55), RoomColor(0));
-        DirectionMark(end, 1, step * .18, INK);
-    }
-    else if (page == 1 || page == 3)
-    {
-        Draw.RoundRect(a, float2(step * .46), 5, AMBER);
-        DirectionMark(b, 1, step * .20, SAGE);
-        Draw.WireRoundRect(c, float2(step * .72), 2, 5, RoomColor(0));
-        Draw.Rect(c - float2(step * .35, 0), float2(7, step * .35), PAPER);
-        if (page == 3) Draw.RoundRect(end, float2(step * .46), 5, TEAL);
-        else Draw.Rect(end, float2(step * .65), MUTED);
-    }
-    else if (page == 2 || page == 6)
-    {
-        Draw.WireRoundRect(at, float2(step * 3.75, step * 1.65), 3, 4, RoomColor(0));
-        Draw.Rect(at + float2(0, step * .825), float2(step * .6, 10), PAPER);
-        Draw.WireRoundRect(b, float2(step * .70), 2, 4, RoomColor(0));
-        Draw.RoundRect(c, float2(step * .35), 3, AMBER);
-        DirectionMark(at + float2(0, step * .70), 2, step * .18, SAGE);
-        if (page == 6) Draw.WireRoundRect(b, float2(step * .28), 1, 2, RoomColor(0));
-    }
-    else if (page == 4)
-    {
-        Draw.WireRoundRect(a, float2(step * .73), 2, 2, BRASS);
-        Label("+", a, 28, BRASS, Anchor.MiddleCenter);
-        Draw.Rect(b, float2(step * .55), BRASS);
-        Draw.WireRoundRect(c, float2(step * .73), 2, 2, RoomColor(1));
-        Draw.WireRoundRect(end, float2(step * .73), 2, 2, SAGE);
-        Draw.RoundRect(end, float2(step * .35), 3, TEAL);
-    }
-    else
-    {
-        Draw.WireCircle(a, step * .24, 3, ChannelColor(0));
-        Draw.RoundRect(a, float2(step * .24), 3, AMBER);
-        Draw.Line(b - float2(step * .35, 0), c + float2(step * .35, 0), 2, ChannelColor(0));
-        Draw.WireRoundRect(end, float2(step * .7), 2, 3, ChannelColor(0));
-        DirectionMark(end, 1, step * .18, SAGE);
-    }
-}
-
 [Stage(ArtStage.Controls, 1)]
 [After(Rooms.Pages)]
 view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
@@ -605,25 +444,6 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
     mut var escape = devices.keyboard.escape.down || devices.gamepad.buttonEast.down;
     // The Escape that opened Rooms' menu is not also its Back action.
     if (hands.pageAtStart != lobby.page) escape = false;
-    if (hands.guide)
-    {
-        var guideWidth = Math.Min(Screen.width - 32, 580);
-        var guideRows = WrappedLines(GuideWords(hands.guidePage), guideWidth - 52, 15);
-        var card = MenuCard(580, Math.Max(540, 428 + guideRows * 21));
-        PagePanel(card, "How to play", $"A small guide / {hands.guidePage + 1} of 7");
-        Heading(GuideTitle(hands.guidePage), float2(Screen.width * .5, card.y + 124), Screen.width < 720 ? 23.0 : 27.0);
-        GuideDiagram(hands.guidePage, float2(Screen.width * .5, card.y + 213), card.width - 40);
-        Paragraph(GuideWords(hands.guidePage), float2(card.x + 26, card.y + 292), card.width - 52, 15);
-        var bw = (card.width - 60) * .5;
-        if (PaperButton("Previous", Rect(card.x + 24, card.y + card.height - 120, bw, 42), hands.guidePage > 0)) hands.guidePage--;
-        if (PaperButton(hands.guidePage == 6 ? "Got it" : "Next", Rect(card.x + 36 + bw, card.y + card.height - 120, bw, 42), true, true))
-        {
-            if (hands.guidePage == 6) hands.guide = false;
-            else hands.guidePage++;
-        }
-        if (MenuBack(card) || escape) { hands.guide = false; UiSound(UiCue.Back); }
-        return;
-    }
     if (hands.pendingReset || hands.pendingLevel >= 0)
     {
         var card = MenuCard(480, 300);
@@ -690,7 +510,7 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
 
     if (lobby.page == Rooms.Page.Title)
     {
-        var card = MenuCard(510, 560);
+        var card = MenuCard(510, 500);
         GUI.Navigate();
         GUI.ClaimPointer(Rect(0, 0, Screen.width, Screen.height));
         Draw.Rect(float2(Screen.width, Screen.height) * .5, float2(Screen.width, Screen.height), Color(.075, .055, .035));
@@ -715,11 +535,10 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
             UiSound(UiCue.Open);
         }
         if (PaperButton("Join a friend", Rect(x, card.y + 272, w, 48))) { Rooms.ShowJoin(lobby); UiSound(UiCue.Open); }
-        if (PaperButton("How to play", Rect(x, card.y + 332, w, 48))) { hands.guide = true; hands.guidePage = 0; UiSound(UiCue.Open); }
-        if (PaperButton("Settings", Rect(x, card.y + 392, w, 48))) { Rooms.ShowSettings(lobby); UiSound(UiCue.Open); }
-        Label($"{LEVEL_COUNT} puzzles / {CHAPTER_COUNT} chapters", float2(Screen.width * .5, card.y + 472), 13, BRASS, Anchor.MiddleCenter);
-        Label("A puzzle game for two. Play together online.", float2(Screen.width * .5, card.y + 504), Screen.width < 720 ? 12.0 : 14.0, MUTED, Anchor.MiddleCenter);
-        if (lobby.message != "") Paragraph(lobby.message, float2(x, card.y + 533), w, 12, AMBER);
+        if (PaperButton("Settings", Rect(x, card.y + 332, w, 48))) { Rooms.ShowSettings(lobby); UiSound(UiCue.Open); }
+        Label($"{LEVEL_COUNT} puzzles / {CHAPTER_COUNT} chapters", float2(Screen.width * .5, card.y + 412), 13, BRASS, Anchor.MiddleCenter);
+        Label("A puzzle game for two. Play together online.", float2(Screen.width * .5, card.y + 444), Screen.width < 720 ? 12.0 : 14.0, MUTED, Anchor.MiddleCenter);
+        if (lobby.message != "") Paragraph(lobby.message, float2(x, card.y + 473), w, 12, AMBER);
         return;
     }
     if (lobby.page == Rooms.Page.Join)
@@ -742,8 +561,8 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
     }
     if (lobby.page == Rooms.Page.Settings)
     {
-        var card = MenuCard(520, 620);
-        var compact = card.height / 620;
+        var card = MenuCard(520, 570);
+        var compact = card.height / 570;
         PagePanel(card, "Settings", "Make yourself at home. These settings are yours.");
         Label("SOUND", float2(card.x + 24, card.y + 120 * compact), 12, BRASS);
         if (GUI.Slider(Rect(card.x + 24, card.y + 142 * compact, card.width - 48, 36), "Master", lobby.volume, 0, 1)) UiSound(UiCue.Slide);
@@ -754,14 +573,13 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
         Label("GAMEPLAY", float2(card.x + 24, card.y + 393 * compact), 12, BRASS);
         if (GUI.Toggle(Rect(card.x + 24, card.y + 414 * compact, card.width - 48, 38), "Reduced motion", hands.reduceMotion)) UiSound(UiCue.Toggle);
         if (GUI.Toggle(Rect(card.x + 24, card.y + 460 * compact, card.width - 48, 38), "Step preview", hands.preview)) UiSound(UiCue.Toggle);
-        if (GUI.Toggle(Rect(card.x + 24, card.y + 506 * compact, card.width - 48, 38), "Show puzzle advice", hands.lesson)) UiSound(UiCue.Toggle);
         if (MenuBack(card) || escape) { Rooms.LeaveSettings(lobby); UiSound(UiCue.Back); }
         return;
     }
     if (lobby.page == Rooms.Page.Room)
     {
-        var card = MenuCard(500, 650);
-        var compact = card.height / 650;
+        var card = MenuCard(500, 590);
+        var compact = card.height / 590;
         PagePanel(card, "Menu", "The game keeps going for your partner.");
         var x = card.x + 24;
         var w = card.width - 48;
@@ -772,12 +590,12 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
             hands.confirmFromPlaying = false;
         }
         if (PaperButton("Choose puzzle", Rect(x, card.y + 238 * compact, w, 46))) { hands.journal = true; UiSound(UiCue.Open); }
-        if (PaperButton("How to play", Rect(x, card.y + 296 * compact, w, 46))) { hands.guide = true; hands.guidePage = 0; UiSound(UiCue.Open); }
-        if (PaperButton("Settings", Rect(x, card.y + 354 * compact, w, 46))) { Rooms.ShowSettings(lobby); UiSound(UiCue.Open); }
-        Label(session.room != "" ? $"ROOM / {session.room}" : "Opening your room...", float2(Screen.width * .5, card.y + 439 * compact), 17, BRASS, Anchor.MiddleCenter);
-        if (PaperButton(lobby.copied < 1.5 ? "Copied" : "Copy code", Rect(x, card.y + 464 * compact, w, 42), session.room != "")) Rooms.CopyCode(lobby, session.room);
-        if (PaperButton("Leave the room", Rect(x, card.y + 540 * compact, w, 44))) { Rooms.Leave(session, lobby); UiSound(UiCue.Back); }
-        Label("Escape to return", float2(Screen.width * .5, card.y + 612 * compact), 12, MUTED, Anchor.MiddleCenter);
+        if (PaperButton("Settings", Rect(x, card.y + 296 * compact, w, 46))) { Rooms.ShowSettings(lobby); UiSound(UiCue.Open); }
+        Label(session.room != "" ? $"ROOM / {session.room}" : "Opening your room...", float2(Screen.width * .5, card.y + 381 * compact), 17, BRASS, Anchor.MiddleCenter);
+        if (PaperButton(lobby.copied < 1.5 ? "Copied" : "Copy invite", Rect(x, card.y + 406 * compact, (w - 12) * .5, 42), session.room != "", true)) CopyInvite(lobby, session.room);
+        if (PaperButton("Copy code", Rect(x + (w + 12) * .5, card.y + 406 * compact, (w - 12) * .5, 42), session.room != "")) Rooms.CopyCode(lobby, session.room);
+        if (PaperButton("Leave the room", Rect(x, card.y + 482 * compact, w, 44))) { Rooms.Leave(session, lobby); UiSound(UiCue.Back); }
+        Label("Escape to return", float2(Screen.width * .5, card.y + 552 * compact), 12, MUTED, Anchor.MiddleCenter);
         if (escape) { Rooms.Resume(lobby); UiSound(UiCue.Back); }
     }
 }

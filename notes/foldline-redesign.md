@@ -689,3 +689,18 @@ and in notes/foldline.md, including the latest audio and silk catch regression.
 Human first-time solves, solve time, live co-op over the Internet and sound
 balance remain unmeasured.
 The campaign's 45-75 minute target is a hypothesis.
+
+## Checked assembly source (2026-10-15 follow-up)
+
+The owner's screenshot review led to a checked map format. Connection placement
+now comes from `prototypes/foldline/maps/*.foldmap.json`, compiled by
+`tools/foldmap.py` into checked-in Tide. Reception also defines its structural
+boxes there; the other rooms retain procedural Tide architecture and encounters.
+Thirteen assemblies cover all fourteen stops because the ending reuses Reception.
+
+Native and WASI build checks inspect the actual generated worlds and compare
+them to source assemblies. Full lift approaches/floors, supported cables and
+connected sockets, mounted signs, and receptive fold backing are checked.
+Free metric geometry remains possible and must pass the same built-scene checks.
+The detailed contract, repairs, verification and limitations are in the final
+section of `notes/foldline.md` and `prototypes/foldline/tools/README.md`.

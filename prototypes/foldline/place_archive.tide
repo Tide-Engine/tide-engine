@@ -19,13 +19,12 @@ bool ArchiveMetal(float3 at)
 
 void BuildArchive(mut Arena arena, mut Place place, mut Fold fold)
 {
+    BuildMapArchive(arena, place);
     place.kind = PlaceKind.Passage;
     place.dead = true;
     place.light = .22;
     place.fog = .045;
     place.grade = float3(.88, .95, 1.05);
-    ArrivalLift(arena, place, float3(-8, 0, -14.1), NORTH);
-    ExitLift(arena, place, float3(8, 0, 14.1), SOUTH);
     Fill(arena, -12, 12, -1, 0, -12, -2, CARPET);
     Fill(arena, -12, 12, -1, 0, -2, 0, RUST);
     Fill(arena, -12, 12, -1, 0, 0, 4, CARPET);
@@ -52,7 +51,6 @@ void BuildArchive(mut Arena arena, mut Place place, mut Fold fold)
         }
     }
     SetProp(arena, PropKind.Cone, float3(-10.5, 0, -2.6));
-    SetProp(arena, PropKind.ExitSign, float3(8, 3.5, 11.8), SOUTH);
     LampGrid(place, float2(-12, -12), float2(4, 4), 6, 6);
     OfficeLamps(place, 0, 5, 0, 5, 4.4, 27);
     HangLamp(place, 0, 1, 4.4, LampState.Red);

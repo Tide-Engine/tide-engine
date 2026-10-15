@@ -12,15 +12,15 @@ static void place_reception_tests(void)
     walk_to(&world, 1, -4.8f, -6);
     walk_to(&world, 1, -10.5f, -3);
     cross_fold(&world, 1, (tide_float3){-12, 1.3f, -3}, 120);
-    walk_to(&world, 1, 8, 0);
-    aim_at(&world, 1, (tide_float3){8, 1.3f, 6});
+    walk_to(&world, 1, 10.8f, 0);
+    aim_at(&world, 1, (tide_float3){10.8f, 1.3f, 6});
     act(&world, 1, (PilotInput){.amber = true});
     CHECK(!world.Fold.ends.at[2].open && world.Fold.fizzleTime > 0);
     // A ray through the bars still meets the shutter immediately behind it.
     walk_to(&world, 0, -8, -6);
     walk_to(&world, 0, -8, 4);
     CHECK((world.Arena.signals & 1) != 0);
-    aim_at(&world, 0, (tide_float3){8, 1.3f, 6});
+    aim_at(&world, 0, (tide_float3){10.8f, 1.3f, 6});
     act(&world, 0, (PilotInput){.amber = true});
     CHECK(world.Fold.ends.at[0].face.x > .99f && world.Fold.fizzleTime > 0);
     act(&world, 1, (PilotInput){.amber = true});
@@ -33,7 +33,7 @@ static void place_reception_tests(void)
     CHECK(pilot(&world, 1).position.z > 2 && pilot(&world, 1).position.z < 6);
     act(&world, 1, (PilotInput){.carry = true});
     CHECK(world.Fold.holding.at[1] == 1);
-    cross_fold(&world, 1, (tide_float3){8, 1.3f, 6}, 120);
+    cross_fold(&world, 1, (tide_float3){10.8f, 1.3f, 6}, 120);
     walk_to(&world, 1, 8, -1);
     walk_to(&world, 1, 4, 3.8f);
     aim_at(&world, 1, (tide_float3){4, 0, 5.5f});
@@ -41,6 +41,10 @@ static void place_reception_tests(void)
     act(&world, 1, (PilotInput){.carry = true});
     ticks(&world, 70);
     CHECK((world.Arena.signals & 2) != 0 && world.Arena.gate > .99f);
+    // The cupboard must not obstruct the right half of the exit approach.
+    // Start beside the live plate and walk directly across that former wall.
+    walk_to(&world, 1, 7.5f, 5.5f);
+    walk_to(&world, 1, 7.5f, 7.2f);
     // The west plate is momentary. Once its job is finished, both can leave.
     walk_to(&world, 0, -8, -3);
     CHECK((world.Arena.signals & 1) == 0);
@@ -48,9 +52,6 @@ static void place_reception_tests(void)
     walk_to(&world, 0, 3, -1);
     walk_to(&world, 0, 3, 7);
     walk_to(&world, 0, 4.8f, 10.1f);
-    walk_to(&world, 1, 1.5f, 3.8f);
-    walk_to(&world, 1, 1.5f, 7.2f);
-    walk_to(&world, 1, 7.2f, 7.2f);
     walk_to(&world, 1, 7.2f, 10.1f);
     const int chamber = world.Arena.chamber;
     ticks(&world, 180);
