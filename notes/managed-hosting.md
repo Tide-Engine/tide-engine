@@ -1,5 +1,42 @@
 # Managed hosting and deployment
 
+## Non-expiring CI tokens and game links (2026-10-15)
+
+The owner requested optional infinite tokens. CI deploy creation now offers
+Never expires (API days:null), keeping 90 days as the default. The existing
+NOT NULL token expiry column uses zero for non-expiring deploy credentials;
+JSON returns expires:null. Authentication, cleanup and console listings honor
+this value only for deploy tokens. Browser/CLI/runtime sessions retain their
+bounded lifetimes. Project scope, account suspension, twenty-token limit and
+individual revocation continue to apply. Existing credentials are unchanged.
+
+The owner also reported a game refusing credit while the console showed a paid
+EUR 20 monthly allowance. The game gate already uses the billing ledger, but its
+combined credit/price check reported HTTP 402 when rates were unset (charge=0).
+It now distinguishes available plan credit, missing operator prices (503),
+insufficient lease funds (402) and disabled allocations (503). Existing paid
+matches remain accessible when new allocations are disabled. The owner then
+explicitly requested normal hosting operation regardless of Stripe key mode:
+Fly enables allocations with Small/Standard rates 1000/2000 integer units per
+allocated second (EUR 0.036/0.072 per hour), retaining the existing machine,
+volume and two-match cap. Stripe test/live mode does not gate hosting. No
+subscription, balance or provider key is manually changed.
+
+Project cards now expose a selectable Game URL for web-client releases, with
+Match URL on running/starting client matches. Existing buttons remain. Restricted
+client creation explains that a specific running match link should be shared.
+Server-only releases have no game URL. The URL fields select their text on click.
+
+Validation: all 43 hosting tests pass with staged CLI/native/web builds and
+muted Chrome. New store coverage advances a non-expiring token ten years,
+triggers cleanup and verifies suspension/revocation; reopening SQLite retains
+it. HTTP coverage verifies nullable token expiry and monthly-only funds with
+zero purchased credit, missing prices, disabled creation, insufficient and
+expired allowance. Browser coverage creates/revokes a non-expiring token and
+checks visible URL values and click-to-select. Expanded desktop/phone UI captures
+were inspected; Svelte has zero errors/warnings and both production builds pass.
+Deployment results follow after completion.
+
 ## CI deploy credentials (2026-10-15)
 
 The owner requested private authentication for CI. Added named, project-scoped
@@ -10,7 +47,7 @@ selects the existing project; deploy tokens cannot create projects.
 
 Secrets are random 256-bit base64url values, returned once and SHA-256 hashed at
 rest. Persistent deploy_tokens rows bind the hash to its project and display
-name. Expiry defaults to 90 days, with 30/365-day choices. Twenty/account requires
+name. Expiry defaults to 90 days, with 30/365-day or no-expiry choices. Twenty/account requires
 explicit revocation, independently of runtime keys; browser/CLI session rotation
 does not revoke them. Existing database startup creates the new table in place.
 Account suspension and token expiry/revocation immediately reject authentication.

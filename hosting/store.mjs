@@ -130,9 +130,10 @@ export class Store {
     }
     account(id) { return this.db.prepare('SELECT * FROM accounts WHERE id=?').get(id); }
     issueToken(account, kind, lifetime) {
-        requireValue(['browser', 'cli', 'service', 'deploy'].includes(kind) && lifetime > 0, 500, 'Invalid token policy.');
-        const token = secret(), csrf = secret(), expires = this.now() + lifetime;
-        this.db.prepare('DELETE FROM tokens WHERE expires<=?').run(this.now());
+        requireValue(['browser', 'cli', 'service', 'deploy'].includes(kind)
+            && ((Number.isSafeInteger(lifetime) && lifetime > 0) || (kind === 'deploy' && lifetime === null)), 500, 'Invalid token policy.');
+        const token = secret(), csrf = secret(), expires = lifetime === null ? 0 : this.now() + lifetime;
+        this.db.prepare('DELETE FROM tokens WHERE expires>0 AND expires<=?').run(this.now());
         // Signing in must never silently revoke a trusted backend's runtime
         // key. Bound those explicitly; browser/CLI sessions rotate separately.
         if (['service', 'deploy'].includes(kind)) requireValue(this.db.prepare('SELECT COUNT(*) AS n FROM tokens WHERE account=? AND kind=?').get(account, kind).n < 20,
@@ -140,12 +141,12 @@ export class Store {
         else this.db.prepare(`DELETE FROM tokens WHERE hash IN
             (SELECT hash FROM tokens WHERE account=? AND kind=? ORDER BY expires DESC,rowid DESC LIMIT -1 OFFSET 19)`).run(account, kind);
         this.db.prepare('INSERT INTO tokens VALUES (?,?,?,?,?)').run(digest(token), account, kind, csrf, expires);
-        return { token, csrf, expires };
+        return { token, csrf, expires: expires || null };
     }
     authenticate(token, kind) {
         if (typeof token !== 'string' || token.length > 128) return null;
         return this.db.prepare(`SELECT a.*,t.kind,t.csrf,t.hash AS token_hash FROM tokens t
-            JOIN accounts a ON a.id=t.account WHERE t.hash=? AND t.kind=? AND t.expires>?
+            JOIN accounts a ON a.id=t.account WHERE t.hash=? AND t.kind=? AND (t.expires>? OR (t.kind='deploy' AND t.expires=0))
             AND a.disabled=0`).get(digest(token), kind, this.now()) || null;
     }
     revokeToken(tokenHash) { this.db.prepare('DELETE FROM tokens WHERE hash=?').run(tokenHash); }
@@ -161,9 +162,9 @@ export class Store {
         const { name, days = 90 } = options;
         requireValue(typeof name === 'string' && name.trim().length >= 1 && name.length <= 64 && !/[\x00-\x1f\x7f]/.test(name),
             400, 'Give this deploy token a name of 1–64 characters.');
-        requireValue([30, 90, 365].includes(days), 400, 'Choose a deploy token lifetime of 30, 90 or 365 days.');
+        requireValue([30, 90, 365, null].includes(days), 400, 'Choose 30, 90 or 365 days, or no expiry.');
         return this.transaction(() => {
-            const credential = this.issueToken(account, 'deploy', days * 86400_000);
+            const credential = this.issueToken(account, 'deploy', days === null ? null : days * 86400_000);
             this.db.prepare('INSERT INTO deploy_tokens VALUES (?,?,?)').run(digest(credential.token), project, name.trim());
             return { token: credential.token, expires: credential.expires, project };
         });

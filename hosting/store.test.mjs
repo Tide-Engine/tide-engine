@@ -53,7 +53,7 @@ test('invites bind numeric identities; credentials are hashed, scoped, revocable
 test('named deploy tokens expire, hash secrets, require ownership and survive login rotation until revoked', t => {
     const { store, account, project, advance } = setup(t);
     assert.throws(() => store.issueDeployToken(account.id, project.id, { name: '' }), /name/);
-    assert.throws(() => store.issueDeployToken(account.id, project.id, { name: 'CI', days: 0 }), /lifetime/);
+    assert.throws(() => store.issueDeployToken(account.id, project.id, { name: 'CI', days: 0 }), /no expiry/);
     assert.throws(() => store.issueDeployToken('other', project.id, { name: 'CI' }), /not found/);
     const key = store.issueDeployToken(account.id, project.id, { name: ' GitHub Actions ', days: 30 });
     const row = store.db.prepare('SELECT * FROM deploy_tokens').get();
@@ -72,6 +72,22 @@ test('named deploy tokens expire, hash secrets, require ownership and survive lo
     store.revokeToken(digest(next.token));
     assert.equal(store.authenticate(next.token, 'deploy'), null);
     assert.equal(store.db.prepare('SELECT 1 FROM deploy_tokens WHERE hash=?').get(digest(next.token)), undefined);
+});
+
+test('non-expiring deploy tokens survive cleanup and time passage but remain revocable and suspended with the account', t => {
+    const { store, account, project, advance } = setup(t);
+    assert.throws(() => store.issueToken(account.id, 'cli', null), /Invalid token policy/);
+    assert.throws(() => store.issueToken(account.id, 'service', null), /Invalid token policy/);
+    const key = store.issueDeployToken(account.id, project.id, { name: 'Permanent CI', days: null });
+    assert.equal(key.expires, null);
+    advance(10 * 365 * 86400_000);
+    store.issueToken(account.id, 'browser', 1000); // Triggers expiry cleanup.
+    assert.equal(store.authenticate(key.token, 'deploy').id, account.id);
+    store.db.prepare('UPDATE accounts SET disabled=1 WHERE id=?').run(account.id);
+    assert.equal(store.authenticate(key.token, 'deploy'), null);
+    store.db.prepare('UPDATE accounts SET disabled=0 WHERE id=?').run(account.id);
+    store.revokeToken(digest(key.token));
+    assert.equal(store.authenticate(key.token, 'deploy'), null);
 });
 
 test('device authorization requires the secret polling token and consumes it once', t => {
@@ -179,10 +195,12 @@ test('identity, balances, releases and checkpoints survive closing the database'
         pay(store, account);
         const match = store.reserveMatch(account.id, project.id, limits);
         store.checkpoint(match.id, 'f'.repeat(64));
+        const ci = store.issueDeployToken(account.id, project.id, { name: 'Persistent CI', days: null });
         store.close();
         store = new Store(path);
         assert.ok(store.account(account.id).balance > 0);
         assert.equal(store.match(match.id).checkpoint, 'f'.repeat(64));
+        assert.equal(store.authenticate(ci.token, 'deploy').id, account.id);
         assert.equal(store.signIn({ id: 123, login: 'renamed' }).id, account.id);
     } finally { store?.close(); rmSync(folder, { recursive: true, force: true }); }
 });
