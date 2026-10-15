@@ -70,6 +70,7 @@ local singleton Hearing
     bool[2] present;
     int[2] steps;
     float[2] bumpWait;
+    float[2] movementWait;
     int pushes;
     float hoverWait;
     float slideWait;
@@ -90,7 +91,11 @@ view WorkshopSound(Rooms.Lobby lobby, Mixer mixer, mut Hearing hearing)
     hearing.inGame = inGame;
     hearing.hoverWait = Math.Max(0, hearing.hoverWait - dt);
     hearing.slideWait = Math.Max(0, hearing.slideWait - dt);
-    for (var seat = 0; seat < 2; seat++) hearing.bumpWait[seat] = Math.Max(0, hearing.bumpWait[seat] - dt);
+    for (var seat = 0; seat < 2; seat++)
+    {
+        hearing.bumpWait[seat] = Math.Max(0, hearing.bumpWait[seat] - dt);
+        hearing.movementWait[seat] = Math.Max(0, hearing.movementWait[seat] - dt);
+    }
 
     // Source levels are balanced. Bus gains retain the quiet mix and leave
     // headroom for several different state changes sounding together.
@@ -138,9 +143,11 @@ local event(PuzzleCue cue) HearPuzzle(Workshop workshop, Hands hands, Mixer mixe
     var near = seat == hands.seat ? 1 : 0.5;
     if (cue.kind == 0)
     {
+        if (hearing.movementWait[seat] > 0) return;
+        hearing.movementWait[seat] = 0.22;
         var variant = hearing.steps[seat] % robotSteps.count;
         hearing.steps[seat] = (hearing.steps[seat] + 1) % 3;
-        PlayCue(robotSteps[variant], 0.13, MixBus.Effects, near, seat == 0 ? 0.98 : 1.02);
+        PlayCue(robotSteps[variant], 0.08, MixBus.Effects, near);
     }
     else if (cue.kind == 1)
     {
@@ -163,13 +170,17 @@ local event(PuzzleCue cue) HearPuzzle(Workshop workshop, Hands hands, Mixer mixe
         PlayCue(outward ? doorwayExit : doorwayEnter, outward ? 0.44 : 0.6);
     }
     else if (cue.kind == 3) PlayCue(littleUndo, 0.26);
-    else if (cue.kind == 4) PlayCue(littleReset, 0.62);
+    // Next/selection share the reset event, but get the new puzzle's intro
+    // from WorkshopChanges. Avoid stacking a reset sweep over that chime.
+    else if (cue.kind == 4 && workshop.level == hearing.level) PlayCue(littleReset, 0.62);
     else if (cue.kind == 5) PlayCue(puzzleSolve, 2.6);
     else if (cue.kind == 6)
     {
+        if (hearing.movementWait[seat] > 0) return;
+        hearing.movementWait[seat] = 0.26;
         var soft = hearing.bumpWait[seat] > 0;
         if (!soft) hearing.bumpWait[seat] = 0.5;
-        PlayCue(soft ? robotBumpSoft : robotBump, soft ? 0.085 : 0.18, MixBus.Effects, near);
+        PlayCue(soft ? robotBumpSoft : robotBump, soft ? 0.065 : 0.105, MixBus.Effects, near);
     }
 }
 

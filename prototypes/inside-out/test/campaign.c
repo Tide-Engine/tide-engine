@@ -68,6 +68,103 @@ static bool play_witness(int level, const char *witness, int *actions)
     if (actions) *actions = count;
     return world.Workshop.puzzle.solved && seats == 3;
 }
+static void wait_ticks(const int ticks)
+{
+    for (int tick = 0; tick < ticks; tick++) tide_world_tick(&world);
+}
+
+TIDE_TEST(inside_out_solved_puzzle_advances_after_72_simulation_ticks)
+{
+    inside_out_test_start(2);
+    TIDE_REQUIRE(play_witness(0, inside_out_solutions[0], NULL));
+    const int solved_tick = world.Workshop.solvedTick;
+    const int serial = world.Workshop.serial;
+    const Puzzle solved = world.Workshop.puzzle;
+    TIDE_CHECK(world.Time.tick == solved_tick + 1);
+    // A tick's systems read Time.tick before the tick increments it.
+    // All 71 earlier elapsed ticks must retain the solved arrangement.
+    wait_ticks(71);
+    TIDE_CHECK(world.Time.tick == solved_tick + 72);
+    TIDE_CHECK(world.Workshop.level == 0 && world.Workshop.serial == serial);
+    TIDE_CHECK(memcmp(&solved, &world.Workshop.puzzle, sizeof solved) == 0);
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Workshop.level == 1 && !world.Workshop.puzzle.solved);
+    TIDE_CHECK(world.Workshop.openedTick == solved_tick + 72 && world.Workshop.solvedTick == -1);
+    TIDE_CHECK(world.Workshop.serial == serial + 1 && world.Workshop.historyCount == 0);
+    TIDE_CHECK(world.Workshop.puzzle.moves == 0 && (world.Workshop.completed & 1) != 0);
+    // A reliable command already in flight belongs to the previous puzzle.
+    const Puzzle next = world.Workshop.puzzle;
+    TIDE_REQUIRE(inside_out_test_command(TIDE_COMMAND_ID_Move, 0, serial, 0));
+    tide_world_tick(&world);
+    TIDE_CHECK(memcmp(&next, &world.Workshop.puzzle, sizeof next) == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_undo_and_reset_cancel_automatic_progression)
+{
+    for (int reset = 0; reset < 2; reset++) {
+        inside_out_test_start(2);
+        const Puzzle initial = world.Workshop.puzzle;
+        TIDE_REQUIRE(play_witness(0, inside_out_solutions[0], NULL));
+        wait_ticks(36);
+        TIDE_REQUIRE(inside_out_test_act(reset ? TIDE_COMMAND_ID_Reset : TIDE_COMMAND_ID_Undo, 1, 0));
+        TIDE_CHECK(!world.Workshop.puzzle.solved);
+        wait_ticks(80);
+        TIDE_CHECK(world.Workshop.level == 0 && world.Workshop.solvedTick == -1);
+        if (reset) {
+            TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+        } else {
+            // Undo removed the witness's final south step. Solving again
+            // must start a fresh delay, not reuse the cancelled deadline.
+            TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 2));
+            TIDE_REQUIRE(world.Workshop.puzzle.solved);
+            const int again = world.Workshop.solvedTick;
+            wait_ticks(71);
+            TIDE_CHECK(world.Workshop.level == 0);
+            tide_world_tick(&world);
+            TIDE_CHECK(world.Workshop.level == 1 && world.Workshop.openedTick == again + 72);
+        }
+        tide_world_free(&world);
+    }
+}
+
+TIDE_TEST(inside_out_automatic_progression_waits_for_the_missing_partner)
+{
+    inside_out_test_start(2);
+    TIDE_REQUIRE(play_witness(0, inside_out_solutions[0], NULL));
+    const Puzzle solved = world.Workshop.puzzle;
+    wait_ticks(20);
+    tide_world_player_left(&world, tide_player_from_index(1));
+    tide_world_tick(&world);
+    TIDE_REQUIRE(!world.Workshop.present.at[1]);
+    wait_ticks(144);
+    TIDE_CHECK(world.Workshop.level == 0);
+    TIDE_CHECK(memcmp(&solved, &world.Workshop.puzzle, sizeof solved) == 0);
+    // The deadline may have elapsed, but no puzzle opens without both seats.
+    tide_world_player_joined(&world, tide_player_from_index(1));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Workshop.present.at[1] && world.Workshop.level == 0);
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Workshop.level == 1 && !world.Workshop.puzzle.solved);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_last_campaign_puzzle_retains_its_solved_ending)
+{
+    inside_out_test_start(2);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, PUZZLES - 1));
+    TIDE_REQUIRE(play_witness(PUZZLES - 1, inside_out_solutions[PUZZLES - 1], NULL));
+    const Puzzle solved = world.Workshop.puzzle;
+    const int serial = world.Workshop.serial;
+    const int solved_tick = world.Workshop.solvedTick;
+    wait_ticks(216);
+    TIDE_CHECK(world.Workshop.level == PUZZLES - 1 && world.Workshop.serial == serial);
+    TIDE_CHECK(world.Workshop.solvedTick == solved_tick && world.Workshop.puzzle.solved);
+    TIDE_CHECK((world.Workshop.completed & (1 << (PUZZLES - 1))) != 0);
+    TIDE_CHECK(memcmp(&solved, &world.Workshop.puzzle, sizeof solved) == 0);
+    tide_world_free(&world);
+}
+
 TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
 {
     for (int level = 0; level < PUZZLES; level++) {

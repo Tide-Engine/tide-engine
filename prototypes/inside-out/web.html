@@ -17,6 +17,7 @@
 <script>
   var Tide = {
     canvas: document.getElementById('canvas'),
+    arguments: [`--inside-out-invite-base=${new URL(location.pathname, location.origin).href}`],
     print: text => console.log(text),
     printErr: text => console.error(text),
   };

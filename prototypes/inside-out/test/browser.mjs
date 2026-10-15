@@ -282,7 +282,8 @@ try {
         const key = async (code, key, down, frameCount = 1) => {
             await command('Input.dispatchKeyEvent', { type: down ? 'keyDown' : 'keyUp', code, key,
                 ...(down && key.length === 1 ? { text: key } : {}),
-                windowsVirtualKeyCode: code === 'Escape' ? 27 : code === 'ShiftLeft' ? 16 : key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0 });
+                windowsVirtualKeyCode: ({ Escape: 27, ShiftLeft: 16, Enter: 13, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 })[code]
+                    ?? (key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0) });
             await frames(frameCount);
         };
         const tapKey = async (code, value, frameCount = 1) => {
@@ -323,6 +324,9 @@ try {
         await command('Runtime.addBinding', { name: '__lastLightFrame' });
         await command('Runtime.addBinding', { name: '__lastLightEvent' });
         await command('Page.addScriptToEvaluateOnNewDocument', { source: `
+            // Observe the game's real copy request without changing the OS clipboard.
+            window.__copied = '';
+            Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { window.__copied = String(text); } } });
             // Explicit frames and a match clock independent of rendering speed.
             ${installFrameControl.toString()}
             installFrameControl(window);
@@ -414,7 +418,7 @@ try {
     };
     const dimensionClip = client => {
         const { width, height } = client.state.screen;
-        return { x: width / 2 - 36, y: height - (width < 720 ? 230 : 153), width: 72, height: 16 };
+        return { x: width / 2 - 36, y: height - 126, width: 72, height: 16 };
     };
     // The scene fills the window below the heading. The focused room sits
     // in a square clear of the heading and the controls (SceneSide and
@@ -423,7 +427,7 @@ try {
     // more of the containing world on a wide screen.
     const sceneSquare = client => {
         const { width, height } = client.state.screen;
-        const top = width < 720 ? 122 : 112, bottom = width < 720 ? 206 : 124;
+        const top = 76, bottom = width < 720 ? 112 : 96;
         return { side: Math.max(200, Math.min(width - 24, height - top - bottom)), x: width / 2, y: top + (height - top - bottom) / 2 };
     };
     const cameraBody = client => {
@@ -470,18 +474,24 @@ try {
     await host.tapKey('KeyD', 'd');
     assertImagesEqual(await moveLabel(host), waiting, 'a missing partner stops puzzle moves');
     await host.screenshot('desktop-waiting');
+    await host.click(535, 720 * .53 + 48);
+    const copied = await host.command('Runtime.evaluate', { expression: 'window.__copied', returnByValue: true });
+    const invitation = copied.result.value;
+    assert.equal(invitation, `${origin}/prototypes/inside-out/?join=${room}`, 'Copy invite uses this page origin/path and replaces old query parameters');
 
     stage = 'two initialized players join through real WebRTC';
     const small = await player('teal-maker');
     // Finish cold rendering before starting a live join. Click the actual
     // custom title's Join a friend button, then type into Rooms.JoinPage.
     await navigate(small);
-    await small.click(640, (720 - 560) / 2 + 296);
+    await small.click(640, (720 - 500) / 2 + 296);
     await small.click(700, (720 - 360) / 2 + 156);
     for (const character of room) {
         await small.tapKey(`${/\d/.test(character) ? 'Digit' : 'Key'}${character}`, character, 2);
     }
-    await small.tapKey('Enter', 'Enter');
+    // Follow the actual copied invite. The ordinary URL join path must
+    // reach the same host without entering a code again.
+    await small.command('Page.navigate', { url: invitation });
     const connected = value => value.state === 2 && value.peers.includes('connected') && value.messages > 5 && value.sent > 5;
     await host.until(connected, 'amber maker exchanging real WebRTC packets');
     await small.until(connected, 'teal maker exchanging real WebRTC packets');
@@ -494,7 +504,7 @@ try {
         await Promise.all(clients.map((client, index) => client.until(value =>
             connected(value) && value.verified >= before[index].verified + ticks && value.frames > before[index].frames &&
             value.messages > before[index].messages && value.sent > before[index].sent, `${ticks} verified ticks and fresh match packets`,
-            Math.max(30_000, ticks * 1500))));
+            Math.max(30_000, ticks * 2500))));
         for (const client of clients) assert.equal(client.state.visibility, 'visible', 'both player screens remain visible');
     };
     await advanceMatch(10);
@@ -520,24 +530,26 @@ try {
         await small.resize(1280, 800);
         await advanceMatch();
         await host.click(1228, 37);
-        await host.click(640, (800 - 650) / 2 + 261);
+        await host.click(640, (800 - 590) / 2 + 261);
         await host.click(363 + chapter * 138.4, (800 - 650) / 2 + 134);
         await host.click(640, (800 - 650) / 2 + 228 + row * 57);
         // Choosing another puzzle after any move asks before clearing the
         // shared history. Confirm through the public interface.
         await host.click(640, (800 - 300) / 2 + 188);
-        // Let the 2.5-second introduction finish before camera/scene crops.
-        await advanceMatch(80);
+        // Finish the synchronized reveal before camera/scene crops.
+        await advanceMatch(50);
     };
     const reset = async client => {
         await client.tapKey('KeyR', 'r');
         await client.click(client.state.screen.width / 2, (client.state.screen.height - 300) / 2 + 188);
+        await advanceMatch(26);
     };
 
     stage = 'nested outward travel, shared undo and reset';
-    await action('E');
+    await host.tapKey('ArrowRight', 'ArrowRight');
+    await advanceMatch();
     const oneMove = await moveLabel(host);
-    assertImagesDiffer(oneMove, zeroMoves, 'Amber leaves the home box through its east doorway');
+    assertImagesDiffer(oneMove, zeroMoves, 'the right arrow moves Amber through the east doorway instead of navigating UI');
     assertImagesEqual(await moveLabel(small), oneMove, 'Teal sees the shared outward move');
     await advanceMatch(24);
     const containingTitle = await dimensionLabel(host);
@@ -634,18 +646,21 @@ try {
     await advanceMatch(24);
 
     stage = 'production tutorial solution and outward progression';
-    await witness('EEEN eeeees');
+    await witness('EEEN eeeee');
+    await small.key('KeyS', 's', true);
     await advanceMatch();
     const completedMoves = await moveLabel(host);
     assertImagesEqual(await moveLabel(small), completedMoves, 'the tutorial completion agrees on both screens');
     await host.screenshot('desktop-first-puzzle-complete-amber');
     await small.screenshot('desktop-first-puzzle-complete-teal');
-    await small.tapKey('Enter', 'Enter');
-    await advanceMatch();
+    await advanceMatch(96);
     const secondTitle = await host.crop(titleClip);
-    assertImagesDiffer(secondTitle, firstTitle, 'Enter advances after the actual puzzle is solved');
+    assertImagesDiffer(secondTitle, firstTitle, 'the solved puzzle automatically advances after its visual transition');
     assertImagesEqual(await small.crop(titleClip), secondTitle, 'both players enter the next puzzle');
     assertImagesEqual(await moveLabel(host), zeroMoves, 'the next puzzle starts at zero moves');
+    await advanceMatch(8);
+    assertImagesEqual(await moveLabel(host), zeroMoves, 'a direction held through completion cannot move in the next puzzle');
+    await small.key('KeyS', 's', false);
 
     stage = 'offset doorway and physical occupied-box transport';
     await choose(1);
@@ -671,12 +686,13 @@ try {
     await host.screenshot('desktop-offset-occupied-box-outside');
     await small.screenshot('desktop-offset-occupied-box-inside');
     await small.tapKey('KeyZ', 'z');
+    const undoEarly = await saveCrop(small, 'occupied-box-undo-early', carryPatch(3.4, -4.3));
+    assertImagesDiffer(undoEarly, outsideBefore, 'undo eases the passenger surroundings instead of snapping the occupied box to its old position');
     await advanceMatch(24);
     assertImagesEqual(await small.crop(carryPatch(3.4, -4.3)), outsideBefore, 'shared undo restores the physical parent context');
     await action('N');
     await witness('eeee WS');
-    await small.tapKey('Enter', 'Enter');
-    await advanceMatch();
+    await advanceMatch(96);
     assertImagesDiffer(await host.crop(titleClip), secondTitle, 'the occupied-box witness completes through production rules');
 
     stage = 'a room containing its own one real box';
@@ -700,8 +716,7 @@ try {
     await host.screenshot('desktop-self-recursion-amber');
     await small.screenshot('desktop-self-recursion-teal');
     await witness('NN');
-    await small.tapKey('Enter', 'Enter');
-    await advanceMatch();
+    await advanceMatch(96);
     // The two pages draw the same title from glyphs they each cached in
     // their own order, and one pixel of it has differed between them (a
     // failure kept both screenshots: the same words, one pixel apart at
@@ -719,10 +734,12 @@ try {
     const phoneZero = await moveLabel(host);
     await host.screenshot('phone-big-maker');
     await small.screenshot('phone-little-maker');
-    // The cardinal D button moves right on the shared top-down scene.
-    const touchX = host.state.screen.width - 68 + 42;
-    const touchY = host.state.screen.height - 104;
+    // A rightward swipe moves once without an on-screen directional pad.
+    const touchX = host.state.screen.width * .5;
+    const touchY = host.state.screen.height * .55;
     await host.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchX, y: touchY, id: 1 }] });
+    await host.frames();
+    await host.command('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchX + 48, y: touchY, id: 1 }] });
     await host.frames();
     await host.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await advanceMatch();

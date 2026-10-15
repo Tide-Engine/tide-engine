@@ -141,7 +141,6 @@ TIDE_TEST(inside_out_rejects_stale_malformed_and_forged_actions)
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 1, INT32_MAX));
     TIDE_CHECK(!inside_out_test_command(TIDE_COMMAND_ID_Move, 2, world.Workshop.serial, 1));
     tide_world_tick(&world);
-    TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Next, 0, 0));
     TIDE_CHECK(memcmp(&before, &world.Workshop.puzzle, sizeof before) == 0);
     TIDE_CHECK(world.Workshop.historyCount == 0 && world.Workshop.level == 0);
     tide_world_free(&world);
@@ -167,9 +166,6 @@ TIDE_TEST(inside_out_rejoin_keeps_independent_seats_and_serial)
     move(0, 1);
     TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(2, 3)));
     TIDE_CHECK(memcmp(&before.actors.at[1], &world.Workshop.puzzle.actors.at[1], sizeof(Traveler)) == 0);
-    world.Workshop.puzzle.solved = true;
-    TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Next, 1, 0));
-    TIDE_CHECK(world.Workshop.level == 1 && world.Workshop.puzzle.moves == 0 && world.Workshop.historyCount == 0);
     tide_world_free(&world);
 }
 

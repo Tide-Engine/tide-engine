@@ -24,7 +24,12 @@ def main():
         if path.suffix == ".wav":
             with wave.open(str(path)) as wav:
                 assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) == (1, 2, 48000), name
+                seconds = wav.getnframes() / wav.getframerate()
                 pcm = array("h", wav.readframes(wav.getnframes()))
+            if name.startswith("step"):
+                assert .06 <= seconds <= .09, f"movement cue is too long: {name}"
+            if name == "bump.wav":
+                assert seconds <= .12, "blocked movement cue is too long"
             if sys.byteorder != "little":
                 pcm.byteswap()
             assert pcm[0] == pcm[-1] == 0, f"nonzero endpoints: {name}"

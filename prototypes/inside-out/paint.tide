@@ -3,6 +3,8 @@ local singleton Picture
     bool ready;
     int level = -1;
     int serial = -1;
+    int openedTick = -1;
+    int moves;
     float2[2] actors;
     int[2] actorRoom;
     float[2] actorScale;
@@ -15,6 +17,7 @@ local singleton Picture
     float focusTile;
     Traveler[2] travelers;
     MakerPassage[2] passages;
+    int[2] passageMove;
     bool[2] doorwayPending;
     int[2] doorwayDirection;
     Traveler[2] doorwaySource;
@@ -301,8 +304,14 @@ void ShutterTile(mut Sculpture sculpture, int channel, float2 at, float size, fl
         FloorLine(sculpture, at + float2(from.x, from.y * flip), at + float2(to.x, to.y * flip), size * .085, dark, top, size);
     }
     // Both open and closed shutters carry the same shape as their plates.
-    Cuboid(sculpture, at, float2(size * .47), size * .004, lid, top + size * .003, size);
-    ChannelMark(sculpture, channel, at, size * .32, side, top + size * .008, size);
+    // The cover sits above the real stripe relief, including its minimum
+    // height at miniature scales. Coplanar stripe and cover tops fight for
+    // depth; the channel shape is another separate layer above the cover.
+    var clearance = Math.Max(.02, size * .003);
+    var cover = top + FloorRelief(size) + clearance;
+    var coverHeight = Math.Max(.02, size * .004);
+    Cuboid(sculpture, at, float2(size * .47), coverHeight, lid, cover, size);
+    ChannelMark(sculpture, channel, at, size * .32, side, cover + coverHeight + clearance, size);
 }
 
 // The rise of a plate or a shutter cell, eased by Workbench.
@@ -429,7 +438,14 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
         if (layout.dockRoom != room || layout.dock.x < 0) continue;
         // Any box standing on an outline hides it: none of it shows through
         // that box's doorways.
-        if (BoxAt(workshop.layout, workshop.puzzle, room, layout.dock) >= 0) continue;
+        mut var covered = BoxAt(workshop.layout, workshop.puzzle, room, layout.dock) >= 0;
+        for (var instance = 0; instance < workshop.layout.roomCount && !covered; instance++)
+        {
+            var shown = ShownAt(picture.boxTransit[instance], picture.boxes[instance]) - float2(layout.dock);
+            if (ShownRoom(picture.boxTransit[instance], picture.boxParent[instance]) == room &&
+                Math.Abs(shown.x) < .98 && Math.Abs(shown.y) < .98) covered = true;
+        }
+        if (covered) continue;
         var here = MapPoint(float2(layout.dock), lens);
         FloorOutline(sculpture, here, float2(lens.tile * .91), FloorStroke(lens.tile), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
         if (lens.tile > 18) FloorNumber(sculpture, shell + 1, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, RUBBER, lens.floor + lens.tile * .014, lens.tile);
@@ -566,7 +582,7 @@ void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness,
 
 // The walls sit inside the exact room footprint. Where the outermost cell is
 // wall, that block already runs to the edge and nothing more is drawn. A
-// doorway is a gap in the strip between two posts.
+// doorway is a plain open edge cell: the wall blockout is its whole frame.
 void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens)
 {
     var thickness = lens.tile * 0.11;
@@ -600,13 +616,6 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
                 WallStrip(sculpture, first, last, thickness, tone, lens.floor, lens.tile);
                 continue;
             }
-            var start = mouth - tangent * lens.tile * 0.41;
-            var end = mouth + tangent * lens.tile * 0.41;
-            WallStrip(sculpture, first, start, thickness, tone, lens.floor, lens.tile);
-            WallStrip(sculpture, end, last, thickness, tone, lens.floor, lens.tile);
-            var jambSize = horizontal ? float2(thickness * 0.35, thickness) : float2(thickness, thickness * 0.35);
-            Cuboid(sculpture, start - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
-            Cuboid(sculpture, end - normal * thickness * .5, jambSize, lens.tile * .32, HAZARD, lens.floor, lens.tile);
         }
     }
 }
@@ -669,7 +678,7 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
 
 // The HUD is screen-space and independent of the room's camera.
 [Stage(ArtStage.Board, 2)]
-view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby, Picture picture, Hands hands)
+view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby, Picture picture)
 {
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
     Draw.SetScreen();
@@ -679,20 +688,11 @@ view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby, Picture picture, Hand
     Label($"CHAPTER {LevelChapter(workshop.level) + 1} / {ChapterName(LevelChapter(workshop.level))}", float2(20, 22), 11, BRASS);
     Draw.Text(title, float2(20, 47), titleSize, INK, Anchor.MiddleLeft, Font.Bold);
     Label($"{workshop.puzzle.moves} moves", float2(Screen.width - (narrow ? 20.0 : 108.0), narrow ? 68.0 : 37.0), 14, MUTED, Anchor.MiddleRight);
-    if (hands.lesson)
-    {
-        var most = Math.Min(Screen.width - 124, 740);
-        var advice = LevelLesson(workshop.level);
-        var rows = WrappedLines(advice, most - 28, narrow ? 11.0 : 13.0);
-        var at = float2(16 + most * .5, narrow ? 81.0 : 84.0);
-        Chip(at, float2(most, rows * (narrow ? 17.0 : 19.0) + 14));
-        Paragraph(advice, float2(30, at.y - (rows - 1) * (narrow ? 8.5 : 9.5)), most - 28, narrow ? 11.0 : 13.0, MUTED);
-    }
     if (picture.focusRoom != -2)
     {
         var location = DimensionName(picture.cameraActor.room);
         var context = picture.cameraActor.room < 0 ? location : $"{location} / outside: {DimensionName(picture.cameraSurround.room)}";
-        var at = float2(Screen.width * .5, Screen.height - (narrow ? 222.0 : 145.0));
+        var at = float2(Screen.width * .5, Screen.height - 118);
         var wide = Math.Min(Screen.width - 32, Draw.MeasureText(context, 12).x + 28);
         Chip(at, float2(wide, 28));
         Label(context, at, 12, MUTED, Anchor.MiddleCenter);
@@ -712,12 +712,13 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     if (picture.solved) picture.celebration += dt;
     var first = !picture.ready;
     var levelChanged = picture.level != workshop.level;
-    var changed = levelChanged || picture.serial != workshop.serial;
-    var snap = first || changed || hands.reduceMotion;
+    var reopened = levelChanged || picture.openedTick != workshop.openedTick;
+    var undo = !reopened && picture.serial != workshop.serial && workshop.puzzle.moves < picture.moves;
+    var snap = first || reopened || hands.reduceMotion;
     // Plates sink while pressed; shutters rise while their channel has no
     // pressed plate, only round the rim where they closed on something. Each
     // eases there in about a fifth of a second, and is simply there on a new
-    // puzzle, an undo or a reset.
+    // puzzle or a reset. Shared undo eases back with the moving pieces.
     var power = Power(workshop.layout, workshop.puzzle);
     for (var room = -1; room < MAX_ROOMS; room++)
     {
@@ -746,7 +747,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
         if (!ValidRoom(workshop.layout, box)) continue;
         var placement = workshop.puzzle.rooms[box];
         picture.boxTransit[box] = FollowPushed(workshop.layout, workshop.puzzle, picture.boxTransit[box], picture.boxParent[box], picture.boxes[box],
-            placement.room, placement.position, snap, dt, out var drawn);
+            placement.room, placement.position, snap, undo, dt, out var drawn);
         picture.boxes[box] = drawn;
         picture.boxParent[box] = placement.room;
     }
@@ -754,7 +755,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     {
         var cargo = workshop.puzzle.crates[crate];
         picture.crateTransit[crate] = FollowPushed(workshop.layout, workshop.puzzle, picture.crateTransit[crate], picture.cargoRoom[crate], picture.crates[crate],
-            cargo.room, cargo.position, snap || !cargo.active, dt, out var drawn);
+            cargo.room, cargo.position, snap || !cargo.active, undo, dt, out var drawn);
         picture.crates[crate] = drawn;
         picture.cargoRoom[crate] = cargo.room;
     }
@@ -762,37 +763,53 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     {
         var actor = workshop.puzzle.actors[seat];
         var before = picture.travelers[seat];
-        var passageSnap = first || levelChanged || hands.reduceMotion || (changed && workshop.puzzle.moves == 0);
+        var passageSnap = snap;
         var was = picture.actors[seat];
         var makerBlend = passageSnap ? 1.0 : Math.Min(1, dt * 20);
         var travel = actor.room != before.room || !SameEntrance(before, actor);
         var cueSource = picture.doorwaySource[seat];
         var cueDirection = picture.doorwayDirection[seat];
+        // Undo can cross a self-room doorway without changing room/trail.
+        // Infer the action being reversed from its saved facing and the
+        // two canonical cells, then restart from the current rendered pose.
+        var reversed = undo && !travel && (!CellEqual(before.position, actor.position) || picture.passageMove[seat] == picture.moves);
+        var undoEntry = reversed && EnteredBox(workshop, actor, before, before.facing) >= 0;
+        var undoExit = reversed && !undoEntry && ValidRoom(workshop.layout, actor.room) &&
+            workshop.puzzle.rooms[actor.room].room == actor.room &&
+            CellEqual(actor.position, DoorCell(workshop.layout, actor.room, before.facing)) &&
+            !OnRoomGrid(workshop.layout, actor.room, actor.position + Direction(before.facing)) &&
+            CellEqual(before.position, workshop.puzzle.rooms[actor.room].position + Direction(before.facing));
         // Out of a room whose box stands inside it: beside that box, in the
         // same room, so the room and depth are unchanged.
         var cueBox = cueSource.room;
         var cuePlacement = ValidRoom(workshop.layout, cueBox) ? workshop.puzzle.rooms[cueBox] : RoomShell { };
-        var cycleExit = picture.doorwayPending[seat] && !travel && !passageSnap &&
+        var cycleExit = undoEntry || picture.doorwayPending[seat] && !travel && !passageSnap &&
             cueSource.room >= 0 && cueSource.room == actor.room && SameEntrance(cueSource, actor) &&
             ValidRoom(workshop.layout, cueBox) && cuePlacement.room == actor.room &&
             CellEqual(actor.position, cuePlacement.position + Direction(cueDirection)) &&
             CellEqual(cueSource.position, DoorCell(workshop.layout, cueSource.room, cueDirection)) &&
             !OnRoomGrid(workshop.layout, cueSource.room, cueSource.position + Direction(cueDirection));
-        var cycleEntry = picture.doorwayPending[seat] && !travel && !passageSnap && !cycleExit &&
+        var cycleEntry = undoExit || picture.doorwayPending[seat] && !travel && !passageSnap && !cycleExit &&
             cueSource.room == actor.room && EnteredBox(workshop, cueSource, actor, cueDirection) >= 0;
         var captured = cycleExit || cycleEntry;
-        var moveDirection = picture.doorwayPending[seat] ? cueDirection : -1;
+        var moveDirection = undoEntry || undoExit ? (before.facing + 2) % 4 : picture.doorwayPending[seat] ? cueDirection : -1;
         picture.doorwayPending[seat] = false;
         if (passageSnap)
         {
             picture.passages[seat] = MakerPassage { };
+            picture.passageMove[seat] = -1;
             picture.actors[seat] = float2(actor.position);
             picture.actorScale[seat] = 1;
         }
         else
         {
-            if (travel || captured) picture.passages[seat] = BeginPassage(workshop, picture, seat, captured ? cueSource : before, actor, captured,
-                moveDirection);
+            if (travel || captured)
+            {
+                picture.passages[seat] = BeginPassage(workshop, picture, seat, captured && !undoEntry && !undoExit ? cueSource : before, actor, captured,
+                    moveDirection);
+                if (!undo && moveDirection >= 0) picture.passageMove[seat] = workshop.puzzle.moves;
+                if (undoEntry || undoExit) picture.passageMove[seat] = -1;
+            }
             if (cycleExit && seat == (hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0)) localCycleExit = true;
             if (cycleEntry && seat == (hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0)) localCycleEntry = true;
             mut var trip = picture.passages[seat];
@@ -848,6 +865,8 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     picture.ready = true;
     picture.level = workshop.level;
     picture.serial = workshop.serial;
+    picture.openedTick = workshop.openedTick;
+    picture.moves = workshop.puzzle.moves;
     var screen = float2(Screen.width, Screen.height);
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
     var localSeat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
@@ -859,7 +878,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, mut Picture pi
     var crossing = localCycleExit || localCycleEntry || actor.room != picture.focusRoom || surround.room != picture.focusParent ||
         surround.box != picture.focusBox || actor.depth != picture.focusDepth;
     var transitioning = picture.cameraBlend < 1;
-    if (firstView || levelChanged || resized || hands.reduceMotion)
+    if (firstView || reopened || resized || hands.reduceMotion)
     {
         picture.cameraFrom = target;
         picture.cameraLens = target;

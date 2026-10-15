@@ -1655,3 +1655,49 @@ and repeated the complete scoped suites: four native and five web tests passed
 again, including the 60 validator cases and all three rendering backends.
 Both simulation hashes above remain unchanged, and the native/WASI built-layout
 JSON exports are byte-for-byte identical.
+
+## Crosshair placement and owned ends (2026-10-15)
+
+The owner requested a crosshair indication of valid placement and which ends
+have already been shot. Each side now corresponds to that operator's first or
+second placement button, retaining amber/cyan for A and rose/violet for B.
+Bright brackets mean that particular end can be placed at the current aim;
+short dim marks mean it cannot. A separate square below each side is hollow
+until that end is open and filled afterwards, independently of aim validity.
+Preplaced ends count as open, and switching solo bodies selects the other
+operator's pair. A single placed end is visible without suggesting a linked pair.
+The controls menu and README explain the two marks.
+
+`PreviewFold` is the read-only extraction of `Shoot`'s existing ray, frame snap,
+fit, floor/ceiling, busy-pair, crossed-wall, overlap and clearance checks.
+`Shoot` consumes its candidate and retains the existing fizzle, wall rebuild
+and placement writes. The HUD uses that same helper for each of the active
+operator's ends, with the displayed operator's eye/aim. It suppresses readiness
+while carrying (click throws), taken, in a dead-device place or at a room
+handoff; menus clear both previews. Placed squares remain independent.
+The two previews are local `Interface` values; no match schema or input field
+was added. This is immediate aim feedback, not a promise against geometry or
+other players moving between the displayed frame and the next shot tick.
+
+The simulation regression reads the actual HUD's two local previews before
+ordinary trigger ticks and compares the resulting portal, wall version or
+precise fizzle against the preview. It covers ordinary floor nudging, corner
+nudging, a half frame, self-replacement versus overlap, a busy pair, bare and
+thin walls, a shutter immediately behind a grille, its opened sightline, and
+a complete miss. Every recorded preview frame preserves the match hash.
+
+Dedicated GPU samples inspect the actual bracket caps, dim bars, square
+centres and outlines. They cover ready/unplaced, invalid/placed, asymmetric
+per-end overlap, A/B ownership and all four colours, carrying, dead devices,
+taken bodies and menus. These checks follow the existing scene fixtures so
+their world-generation-dependent creature samples retain the same setup;
+all prior rendering thresholds are unchanged. Silent 1280 x 720 captures of
+ready, blocked, one-placed and B states were inspected, along with the controls
+legend in the native and collaborative-browser menus at 960 x 540.
+
+Final scoped debug validation passes four native tests (Vulkan with validation)
+and five web tests (WASI, WebGL 2 and WebGPU), including all campaign solves,
+the preview/firing parity cases and 60 map-validator regressions. Native and
+WASI retain replay hash `12725895089924583359` and campaign hash
+`12965826754438740368`. No full repository suite, other-platform run or CI was
+needed or run for this prototype-only change.

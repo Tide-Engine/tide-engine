@@ -9,6 +9,26 @@ target_include_directories(inside_out_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests
 add_test(NAME inside_out_tests COMMAND inside_out_tests)
 set_tests_properties(inside_out_tests PROPERTIES TIMEOUT 120 LABELS "private-prototype")
 
+add_executable(inside_out_invite_test invite.c test/invite.c)
+target_link_libraries(inside_out_invite_test PRIVATE tide_flags)
+set(invite_fallback "https://tide-engine.dev/prototypes/inside-out/")
+add_test(NAME inside_out_invite_fallback COMMAND inside_out_invite_test "${invite_fallback}")
+if(TIDE_WEB)
+    add_test(NAME inside_out_invite_local COMMAND inside_out_invite_test
+        "http://127.0.0.1:8790/prototypes/inside-out/"
+        "--inside-out-invite-base=http://127.0.0.1:8790/prototypes/inside-out/")
+    add_test(NAME inside_out_invite_hosted COMMAND inside_out_invite_test
+        "https://preview.example/games/inside-out/"
+        "--inside-out-invite-base=https://preview.example/games/inside-out/")
+    add_test(NAME inside_out_invite_invalid COMMAND inside_out_invite_test "${invite_fallback}"
+        "--inside-out-invite-base=javascript:alert(1)"
+        "--inside-out-invite-base=https://preview.example/?join=OLD"
+        "--inside-out-invite-base=https://preview.example/#fragment")
+    string(REPEAT "x" 2100 invite_long_path)
+    add_test(NAME inside_out_invite_overlong COMMAND inside_out_invite_test "${invite_fallback}"
+        "--inside-out-invite-base=https://preview.example/${invite_long_path}")
+endif()
+
 # The puzzle solver and inspector (usage at the top of test/solve.c), a
 # desktop tool rather than a test. It moves through the generated Move
 # handler, so the game's C is optimized with it in every configuration; the
@@ -23,7 +43,7 @@ if(NOT TARGET tide_platform)
     return()
 endif()
 set(TIDE_WEB_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/web.html")
-tide_add_game(inside_out SOURCES ${INSIDE_OUT_SOURCES} ${INSIDE_OUT_ROOMS} STATS)
+tide_add_game(inside_out SOURCES ${INSIDE_OUT_SOURCES} invite.c ${INSIDE_OUT_ROOMS} STATS)
 if(TIDE_WEB)
     set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/inside-out")
     add_custom_target(inside_out_page
@@ -38,7 +58,7 @@ if(TIDE_WEB)
                     "${CMAKE_CURRENT_SOURCE_DIR}/test/browser.mjs"
                     "$<TARGET_FILE_DIR:inside_out>/inside_out.html"
                     "${CMAKE_CURRENT_BINARY_DIR}/captures/${backend}" "${backend}")
-            set_tests_properties(inside_out_play_${backend} PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE
+            set_tests_properties(inside_out_play_${backend} PROPERTIES TIMEOUT 1500 RUN_SERIAL TRUE
                 LABELS "private-prototype" SKIP_REGULAR_EXPRESSION "SKIPPED:")
         endforeach()
         set_tests_properties(inside_out_play_webgpu PROPERTIES LABELS "private-prototype;webgpu")
