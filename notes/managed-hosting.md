@@ -174,6 +174,18 @@ high availability or an independent backup.
 
 ## Validation and remaining launch work
 
+The manually triggered Hosting workflow (`.github/workflows/hosting.yml`) now
+tests the service and, on `dev`, deploys `hosting/` to `tide-hosting`, reusing the
+existing repository `FLY_API_TOKEN` as requested by the owner. Other refs test
+only. Node 24.16.0 matches the service image. Installed-toolchain/browser cases
+skip without staged tools; the ordinary service tests include real WebRTC.
+Provider secrets remain in Fly, and the workflow does not enable allocations
+or configure first-deployment domains, rates, invites or backups. See the
+operator README and notes/releases-and-ci.md. No workflow was dispatched.
+Workflow validation passes actionlint 1.7.12, Fly configuration validation and
+the production image build. Node 24.16.0 service tests pass on Windows and in
+the Linux service image (29 passed, two staged-tool cases skipped).
+
 Validation exercises SQLite/auth/payment mocks, real HTTP, WASM isolation,
 memory growth limits, infinite-loop interruption, returning CPU-heavy guests,
 credit/caps, checkpoint atomicity, retention, bounded recovery, real local relay/
