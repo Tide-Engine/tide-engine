@@ -20,7 +20,7 @@ singleton Board
     int doubledSum;
 }
 
-local singleton Shown
+local singleton Displayed
 {
     List<int> order;    // What the view sorted, lowest first
     int count;
@@ -74,7 +74,7 @@ system Place(mut Racer racer, query (Racer other) others)
 }
 
 // A view's rows are made before it runs: a sort beside them is the same.
-view Show(mut Shown shown, query (Racer racer) racers)
+view Show(mut Displayed shown, query (Racer racer) racers)
 {
     shown.order.Clear();
     foreach (var row in racers) shown.order.Add(row.racer.score);

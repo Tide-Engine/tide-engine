@@ -4555,13 +4555,24 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     // Completion: `verified` where a local handler's event goes, then the match's events
     const char *trigger = complete(GAME_TYPES "event Hit { }\nlocal event Note { }\nlocal event($)\n");
     TIDE_CHECK(offers(trigger, "verified") && offers(trigger, "Hit") && offers(trigger, "Note") && offers(trigger, "Spawned"));
+    TIDE_CHECK(offers(trigger, "Shown") && offers(trigger, "Hidden"));
     TIDE_CHECK(has(trigger, "Once the server confirmed the tick that sent the event"));
     const char *confirmed = complete(GAME_TYPES "event Hit { }\nlocal event Note { }\nlocal event(verified $)\n");
     TIDE_CHECK(offers(confirmed, "Hit") && offers(confirmed, "Spawned") && offers(confirmed, "PlayerJoined"));
+    TIDE_CHECK(offers(confirmed, "Shown") && offers(confirmed, "Hidden"));
     TIDE_CHECK(!offers(confirmed, "Note") && !offers(confirmed, "Forgotten") && !offers(confirmed, "verified"));
     // The match hears nothing confirmed, and a command comes from one machine
     TIDE_CHECK(!offers(complete(GAME_TYPES "event Hit { }\nevent($)\n"), "verified"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Shown"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Hidden"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "command Bump { }\ncommand($)\n"), "verified"));
+
+    open_document(GAME_TYPES "local singleton Seen { int n; }\n"
+                  "local event(Sho$wn) Available(Body body, mut Seen seen) { seen.n += int(body.radius); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "local availability notification"));
+    open_document(GAME_TYPES "local singleton Seen { int n; }\n"
+                  "local event(Hid$den) Concealed(Body body, mut Seen seen) { seen.n += int(body.radius); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "last permitted state"));
 
     // The formatter keeps the trigger's word
     static const char messy[] = GAME_TYPES "event Hit { int damage; }\nlocal singleton Fx { int flashes; }\n"
@@ -4570,6 +4581,52 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     format_reply(messy);
     TIDE_CHECK(has(apply_reply(messy, NULL), "local event(verified Hit hit) SureHit(mut Fx fx) { fx.flashes += hit.damage; }\n"));
 }
+
+#define VISIBILITY_GAME \
+    "component Card { int value; }\n" \
+    "singleton Policies { VisibilityGroup group; }\n" \
+    "scene Main { }\n" \
+    "event(Spawned) Setup(with Main, mut Policies policies)\n" \
+    "{\n" \
+    "    policies.group = Visibility.CreateGroup(Audience.None);\n" \
+    "    Spawn(Card, Visibility { group = policies.group }, Owner);\n" \
+    "}\n"
+
+TIDE_TEST(lsp_visibility_policies)
+{
+    start();
+    const char *audience = complete(VISIBILITY_GAME "system Work() { Audience.$ }\n");
+    TIDE_CHECK(offers(audience, "All") && offers(audience, "None"));
+    TIDE_CHECK(offers(audience, "Only") && offers(audience, "From"));
+    TIDE_CHECK(has(audience, "PlayerID player") && has(audience, "List<PlayerID> players"));
+    const char *groups = complete(VISIBILITY_GAME "system Work() { Visibility.$ }\n");
+    TIDE_CHECK(offers(groups, "CreateGroup") && offers(groups, "Set") && offers(groups, "DestroyGroup"));
+    TIDE_CHECK(!offers(complete(VISIBILITY_GAME "view Work() { Visibility.$ }\n"), "CreateGroup"));
+    const char *members = complete(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.$ }\n");
+    TIDE_CHECK(offers(members, "group") && offers(members, "Set") && offers(members, "Reset"));
+    TIDE_CHECK(has(members, "Set<T>(Audience audience)") && has(members, "Set<T>(VisibilityGroup group)"));
+    TIDE_CHECK(!offers(members, "overrides"));
+    members = complete(VISIBILITY_GAME "system Work() { mut var audience = Audience.None; audience.$ }\n");
+    TIDE_CHECK(offers(members, "Add") && offers(members, "Remove") && offers(members, "Contains"));
+    TIDE_CHECK(!offers(members, "words") && !offers(members, "all"));
+    const char *types = complete(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.Set<$ }\n");
+    TIDE_CHECK(offers(types, "Card") && !offers(types, "Main") && !offers(types, "Visibility"));
+
+    open_document(VISIBILITY_GAME "system Work(Policies policies) { Visibility.Se$t(policies.group, Audience.All); }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Visibility.Set(VisibilityGroup group, Audience audience)"));
+    open_document(VISIBILITY_GAME "system Work() { var audience = Audience.A$ll; Debug.Assert(audience.Contains(default)); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Every player"));
+    open_document(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.Se$t<Card>(Audience.None); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "whole component"));
+    open_document(VISIBILITY_GAME "system Work() { Visibility.Set($); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "VisibilityGroup group, Audience audience"));
+    open_document(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.Set<Card>($); }\n");
+    const char *signatures = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signatures, "Set<T>(Audience audience)") && has(signatures, "Set<T>(VisibilityGroup group)"));
+}
+
+#undef VISIBILITY_GAME
 
 // An error nothing handles: carry on with the default, or pass it on.
 TIDE_TEST(lsp_quick_fixes_for_errors)

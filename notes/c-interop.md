@@ -1,5 +1,19 @@
 # C: lists C makes, jobs, systems written in C
 
+## Component visibility and C systems (2026-10-15)
+
+A component targeted by `Visibility.Set<T>`/`Reset<T>` acquires compiler-generated
+presence storage. This preserves its ordinary source-level component contract,
+including use by an extern system; explicitly sparse source components retain
+the existing extern-system diagnostic. Generated C wrappers split a table chunk
+into contiguous runs satisfying required/without presence filters before calling
+`tide_rows_begin` and the existing C function. No rows ABI or runtime entry point
+was added. C never receives a hidden component's row on a projected client.
+
+`visibility_projection` checks a C system requiring the restricted component and
+one selecting its absence, alongside Tide queries and normal Has/Get. Games
+without generated optional presence use their previous wrapper path.
+
 ## Borrowed immutable asset lists (2026-10-11)
 
 Generated `mut List<T>` extern wrappers now receive destination ownership internally and call the owner-approved `tide_list_prepare` before writable flattening. The C extern's public parameter shape is unchanged. `out` still avoids copying discarded data; ending an out call releases old immutable descriptor leases as appropriate. A C caller using `tide_list_copy` may now receive a borrowed asset value. Before manually writing it, call `tide_list_prepare(&local, sizeof(element), TIDE_IN_SCRATCH)` (or the actual field's match/local ownership). Raw `_at_mut` returns NULL for immutable values. Plain nonasset lists retain their old copying path. Updated owned-model C regressions and `asset_sharing_c.c` exercise these contracts.

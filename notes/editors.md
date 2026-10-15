@@ -1,5 +1,35 @@
 # The language server and the editors
 
+## Visibility APIs and availability events (2026-10-15)
+
+`Shown`/`Hidden` complete only in local event triggers (including verified),
+with hovers distinguishing availability from real Spawned/Destroyed. Their
+names and Audience/Visibility/VisibilityGroup are reserved built-ins. The
+shared TextMate grammar scopes all five as built-ins; the probe retains its
+custom-local-event examples under the unreserved name Displayed.
+
+Audience completion/hover/signature help covers All/None, Only(PlayerID),
+From(List<PlayerID>), and instance Add/Remove/Contains. Visibility supplies
+static CreateGroup/Set/DestroyGroup, its public group field, and instance
+Set<T>(Audience|VisibilityGroup)/Reset<T>(). Internal word/override fields
+never complete. Generic component completion excludes scene and Visibility
+policy types. Static group-writing forms stay out of view/input completion.
+CALL_VISIBILITY carries owner/receiver occurrences and named-argument hint
+metadata; method signatures have both Set overloads rather than relying on
+the ordinary builtin signature table. This updates the common language-server
+analysis and grammar used by all editor clients, not a client-specific API.
+
+`lsp_visibility_policies` pins member/type completion, hidden internals,
+generic targets, pure versus match-only forms, hovers and static/instance
+signature help. Existing local-event completion tests pin Shown/Hidden local
+and verified forms and their absence in match triggers. The full fresh native `tidels_tests` passes 234/234, including the new
+policy test and availability completion assertions. `npm ci`
+in docs installed the pinned dependencies; `npm run test:grammar` passes
+244/244 with Node 24.21.0. A final fresh run after endpoint reconciliation
+passes LSP 234/234, shared grammar 244/244 and VS Code Node adapter tests 28/28
+with no IDE-host launch. Docs production build and all three SEO checks pass
+under that Node too; final merged-doc rebuild is tracked separately.
+
 ## JetBrains prefab tool-window API correction (2026-10-14)
 
 Build run 38471050893 reached plugin verification after successful adapter tests

@@ -1,0 +1,185 @@
+// The ordinary spider glimpsed from the lift is much larger down here. Silk
+// answers contact, not sight. Recesses beside its track give both bodies time.
+component CrawlHunt
+{
+    int node;
+    int next;
+    int goal;
+    float working;
+    bool bait;
+    bool[30] touching;
+}
+
+bool CrawlOpen(float x, float z)
+{
+    return (x < -5.2 && z > 7.2 && z < 8.8) ||
+           (x > -6.8 && x < -5.2 && z > 7.2 && z < 16.8) ||
+           (x > -6.8 && x < 5.8 && z > 15.2 && z < 16.8) ||
+           (x > 4.2 && x < 5.8 && z > 15.2 && z < 23.8) ||
+           (x > -5.8 && x < 5.8 && z > 22.2 && z < 23.8) ||
+           (x > -5.8 && x < -4.2 && z > 22.2 && z < 29.8) ||
+           (x > -5.8 && z > 28.2 && z < 29.8) ||
+           (x > -4 && x < -2 && z > 16 && z < 18) ||
+           (x > 1 && x < 3 && z > 14 && z < 16) ||
+           (x > -2 && x < 0 && z > 23 && z < 25);
+}
+
+bool CrawlRefuge(float3 at)
+{
+    return (at.x > -4 && at.x < -2 && at.z > 16.8 && at.z < 18) ||
+           (at.x > 1 && at.x < 3 && at.z > 14 && at.z < 15.2) ||
+           (at.x > -2 && at.x < 0 && at.z > 23.8 && at.z < 25);
+}
+
+float3 WebNode(int node)
+{
+    return node switch { 1 => float3(5, 0, 16), 2 => float3(5, 0, 23), 3 => float3(-2, 0, 16),
+                         4 => float3(3, 0, 16), 5 => float3(0, 0, 23), _ => float3(5, 0, 19) };
+}
+
+bool WebNeighbour(int a, int b)
+{
+    return (a == 0 && (b == 1 || b == 2)) || (b == 0 && (a == 1 || a == 2)) ||
+           (a == 1 && b == 4) || (b == 1 && a == 4) || (a == 4 && b == 3) || (b == 4 && a == 3) ||
+           (a == 2 && b == 5) || (b == 2 && a == 5);
+}
+
+void TouchWeb(mut CrawlHunt hunt, int who, float3 at, bool object)
+{
+    for (int web = 0; web < 3; web++)
+    {
+        var node = web + 3;
+        var point = WebNode(node);
+        bool touching = Math.Abs(at.x - point.x) < .16 && Math.Abs(at.z - point.z) < .78 && at.y < .55;
+        int slot = who * 3 + web;
+        if (touching && !hunt.touching[slot] && (object || !hunt.bait || hunt.working >= 5))
+        {
+            hunt.goal = node;
+            hunt.working = 0;
+            hunt.bait = object;
+        }
+        hunt.touching[slot] = touching;
+    }
+}
+
+void BuildCrawlspace(mut Arena arena, mut Place place, mut Fold fold)
+{
+    place.kind = PlaceKind.Passage;
+    place.dead = true;
+    place.light = .25;
+    place.fog = .05;
+    ArrivalLift(arena, place, float3(0, 0, -6.1), NORTH);
+    ExitLift(arena, place, float3(20, 0, 35.1), SOUTH);
+    Fill(arena, -4, 4, -1, 0, -4, 4, CONCRETE);
+    Fill(arena, -5, -4, -1, 4.4, -5, 5, PANELS);
+    Fill(arena, 4, 5, -1, 4.4, -5, 5, PANELS);
+    Fill(arena, -5, -3, -1, 4.4, -5, -4, PANELS);
+    Fill(arena, 3, 5, -1, 4.4, -5, -4, PANELS);
+    var start = Fill(arena, -4, 4, -1, 4.4, 4, 5, WALLPAPER, true);
+    Fill(arena, -5, 5, 4.4, 5.4, -5, 6, PANELS, false, 2);
+    Fill(arena, -4, 4, -1, 4.4, 5, 6, CONCRETE);
+    Fill(arena, -12, 12, -1, 0, 6, 32, PLANKS);
+    Fill(arena, -13, 13, 1.1, 1.7, 5, 33, PLASTER, false, 2);
+    var west = Fill(arena, -13, -12, -1, 1.1, 6, 32, WALLPAPER, true);
+    var east = Fill(arena, 12, 13, -1, 1.1, 6, 32, WALLPAPER, true);
+    Fill(arena, -14, -13, -1, 2, 5, 33, CONCRETE);
+    Fill(arena, 13, 14, -1, 2, 5, 33, CONCRETE);
+    Fill(arena, -13, 13, -1, 1.1, 5, 6, PLASTER);
+    Fill(arena, -13, 13, -1, 1.1, 32, 33, PLASTER);
+    // Merge the solid half-metre cells into runs. This is authored S-shaped
+    // geometry, not a random maze; floors stay continuous at every joint.
+    for (int row = 0; row < 52; row++)
+    {
+        float z = 6 + row * .5;
+        mut int first = -1;
+        for (int col = 0; col <= 48; col++)
+        {
+            bool solid = col < 48 && !CrawlOpen(-11.75 + col * .5, z + .25);
+            if (solid && first < 0) first = col;
+            if (!solid && first >= 0)
+            {
+                Fill(arena, -12 + first * .5, -12 + col * .5, 0, 1.1, z, z + .5, PLASTER);
+                first = -1;
+            }
+        }
+    }
+    PlaceEnd(fold, 0, start, float3(0, 0, 4), float3(0, 0, -1));
+    PlaceEnd(fold, 1, west, float3(-12, 0, 8), float3(1, 0, 0), .25);
+    PaintFrame(arena, float3(-12, 0, 8), float3(1, 0, 0), .25);
+    Fill(arena, 16, 24, -1, 0, 25, 33, CONCRETE);
+    var finish = Fill(arena, 15, 16, -1, 4.4, 25, 33, WALLPAPER, true);
+    Fill(arena, 14, 15, -1, 4.4, 24, 34, CONCRETE);
+    Fill(arena, 24, 25, -1, 4.4, 24, 34, PANELS);
+    Fill(arena, 16, 24, -1, 4.4, 24, 25, PANELS);
+    Fill(arena, 16, 17, -1, 4.4, 33, 34, PANELS);
+    Fill(arena, 23, 24, -1, 4.4, 33, 34, PANELS);
+    Fill(arena, 15, 25, 4.4, 5.4, 24, 34, PANELS, false, 2);
+    PlaceEnd(fold, 2, east, float3(12, 0, 29), float3(-1, 0, 0), .25);
+    PlaceEnd(fold, 3, finish, float3(16, 0, 29), float3(1, 0, 0));
+    PaintFrame(arena, float3(12, 0, 29), float3(-1, 0, 0), .25);
+    PutLoose(arena, fold, float3(-2, .4, 1), 1);
+    PutLoose(arena, fold, float3(2, .4, 1), 1);
+    PutLoose(arena, fold, float3(1.35, .1, 14.3), 1, .25);
+    PutLoose(arena, fold, float3(2.65, .1, 14.3), 1, .25);
+    var spider = SpawnBeast(arena, BeastKind.Spider, WebNode(0), scale: .45, eyes: true);
+    spider.Add(CrawlHunt { });
+    for (int web = 0; web < 3; web++) SetProp(arena, PropKind.Web, WebNode(web + 3));
+    for (int pipe = 0; pipe < 8; pipe++) SetProp(arena, PropKind.Pipe, float3(-6.65, .85, 9 + pipe * 2), scale: float3(.5));
+    LampGrid(place, float2(-12, 6), float2(3, 3), 8, 9);
+    for (int row = 0; row < 9; row++)
+        for (int col = 0; col < 8; col++)
+            if (CrawlOpen(-10.5 + col * 3, 7.5 + row * 3)) HangLamp(place, col, row, 1.1, LampState.Red);
+    MenuView(place, float3(-5.7, .65, 14), .05, 0);
+}
+
+[Before(EvaluatePlace)]
+system SpiderAtWork(mut Beast beast, mut CrawlHunt hunt, mut Arena arena, Place place,
+                    query (Operator body) operators, query (Cube cube) objects, Fold fold, Time time)
+{
+    if (place.id != CRAWLSPACE || beast.chamber != arena.chamber || arena.caught > 0) return;
+    foreach (var row in objects)
+        if (row.cube.chamber == arena.chamber && fold.holding[0] != row.cube.index + 1 && fold.holding[1] != row.cube.index + 1)
+            TouchWeb(hunt, row.cube.index + 2, row.cube.at, true);
+    foreach (var row in operators) TouchWeb(hunt, row.body.id, row.body.position, false);
+    // Breadth-first distances on the spider's six-node track. It never cuts
+    // through a wall or takes a refuge, even if its next meal is beside one.
+    mut int[6] far = [99, 99, 99, 99, 99, 99];
+    far[hunt.goal] = 0;
+    for (int pass = 0; pass < 6; pass++)
+        for (int a = 0; a < 6; a++)
+            for (int b = 0; b < 6; b++)
+                if (WebNeighbour(a, b)) far[a] = Math.Min(far[a], far[b] + 1);
+    mut var target = WebNode(hunt.next);
+    mut float gap = Math.Distance(beast.at, target);
+    if (gap < .02)
+    {
+        hunt.node = hunt.next;
+        if (hunt.node == hunt.goal)
+        {
+            hunt.working += time.dt;
+            if (hunt.goal != 0 && hunt.working >= 5)
+            {
+                hunt.goal = 0;
+                hunt.bait = false;
+            }
+        }
+        for (int next = 0; next < 6; next++)
+            if (WebNeighbour(hunt.node, next) && far[next] < far[hunt.next]) hunt.next = next;
+    }
+    target = WebNode(hunt.next);
+    gap = Math.Distance(beast.at, target);
+    bool moving = gap > .01;
+    beast.clip = moving ? "Walk" : hunt.goal == 0 ? "Idle" : "Attack";
+    beast.time += time.dt;
+    if (moving)
+    {
+        beast.yaw = Math.Atan2(target.x - beast.at.x, target.z - beast.at.z);
+        beast.at += (target - beast.at) / gap * Math.Min(gap, 3 * time.dt);
+    }
+    foreach (var row in operators)
+    {
+        var at = row.body.position;
+        if (at.y < .6 && at.z > 6 && at.z < 32 && !CrawlRefuge(at) && Math.Distance(at.xz, beast.at.xz) < .32)
+            arena.caught = .001;
+    }
+}
