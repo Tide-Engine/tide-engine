@@ -204,6 +204,8 @@ cases skip because this workflow does not stage Tide or a browser. It reuses
 the existing repository `FLY_API_TOKEN`; GitHub OAuth and Stripe credentials
 remain in Fly secrets. It does not configure domains, rates, invites or enable
 allocations. Complete the setup above before the first deployment.
+The shared Fly secret contains app-scoped deployment credentials for both
+`tide-website` and `tide-hosting`, expiring in October 2027; renew both together.
 
 The existing relay must supply working TURN credentials for this NAT-hosted
 service; verify real remote native/browser players through TURN before launch.

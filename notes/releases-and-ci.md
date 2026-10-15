@@ -30,6 +30,29 @@ hiding that this command also requires authentication. Supply the same
 The owner explicitly requested a fresh run after the fix; follow its completed
 result rather than retrying the old commit's unchanged workflow.
 
+Run 38754895170 on 341051c4 then passed validation but deployment was rejected
+as unauthorized. Fly's token list showed the repository credential was scoped
+to `tide-website`. Created one-year deploy credentials for `tide-website` and
+`tide-hosting`, combined their FlyV1 macaroon bundles using Fly's supported
+comma-separated header format, and updated the existing repository
+`FLY_API_TOKEN` secret. Both app API reads succeed and an unrelated app returns
+403. No organization-wide token was created, no prior token was revoked, and
+the website workflow keeps the same secret name. The combined value is held
+outside the repository in the private user-only hosting-setup directory; no
+token values were printed. These credentials expire in October 2027. Retried
+the corrected run after this credential update.
+
+Attempt 2 of 38754895170 passed all steps and deployed 341051c4. Fly reports one
+started shared-cpu-1x/512 MiB machine in `fra`, one encrypted 1 GiB `hosting_data`
+volume and a passing health check. All four OAuth/Stripe secrets now show
+Deployed. An HTTPS request through `tide-hosting.fly.dev` with the configured
+console Host header returns `{"ok":true}`. The console custom domain still does
+not resolve here; no app certificates are configured yet. This is the first
+service deployment, not completion of paid-launch/provider/restore checks.
+Allocation enablement and rates remain unchanged. The checkout@v4 Node 20
+deprecation annotation does not fail the run; other workflows use that action
+too and it was not changed as part of this fix.
+
 ## Stable upgrade fixture failure (2026-10-14)
 
 Build run 38577620235 builds release commit b23c42ff as 0.3.0 on the stable
