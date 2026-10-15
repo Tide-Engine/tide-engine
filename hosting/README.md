@@ -65,15 +65,24 @@ the browser. No real GitHub login, Stripe payment or Fly resource is needed.
 
 ```sh
 tide login
-tide deploy --project my-game
-tide deploy --project my-game --server-only
+tide deploy
+tide deploy --server-only
 tide deploy --bundle-only
 tide logout
 ```
 
-`deploy` defaults to the current folder, creates a Small/one-match project if
-the selected name doesn't exist, and builds release artifacts locally. It
-returns the immutable release ID, playable URL, room endpoint and dashboard.
+`deploy` defaults to the current folder, creates or reuses a Small/one-match
+project named after the folder, and builds release artifacts locally. Folder
+names become lowercase hyphenated project names (up to 48 characters, with
+`game-` prefixed when needed). No dashboard project creation is required. It
+saves the service origin and immutable project ID in `tide.deploy.json` in the
+game folder, so later deployments keep the target even after renaming the
+folder. Commit this file to share the target with teammates; it has no secrets.
+Use `--project <name-or-id>` to select another target and replace the link.
+Unknown names create projects; unavailable IDs fail instead of creating one.
+Invalid links, another service origin or an inaccessible project fail with
+guidance to select the target explicitly. Credentials remain outside the game.
+Deployment returns the immutable release ID, playable URL, room endpoint and dashboard.
 `--server-only` uploads no web client. `--bundle-only` requires no account and
 writes `.tide/deploy/release.tide-deploy`. No source is uploaded or built remotely.
 The default service is `https://console.tide-engine.dev`; set `TIDE_HOSTING_URL`
@@ -188,6 +197,12 @@ Register `/webhooks/stripe` for `checkout.session.completed`,
 currency and account are checked; replay adds credit once. Refunds/disputes
 freeze hosting pending review, including events delivered out of order.
 Browser redirects never grant credit. No postpaid usage or auto top-up exists.
+
+The dashboard links **Add credit** beside the balance to the credit panel.
+It shows amount selection only when top-ups and both Stripe secrets are
+configured; otherwise it explains that purchases are unavailable. Test-mode
+keys display a sandbox label and test-payment button. The current Fly setup
+offers EUR 5/10/25 sandbox top-ups; allocations and usage rates remain disabled.
 
 Low credit produces dashboard incidents. Exhaustion stops new allocations,
 saves explicit worlds and suspends them. Resume requires credit/capacity.
