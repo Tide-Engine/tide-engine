@@ -17,6 +17,9 @@ Real local UDP/WebRTC cases pass. Temporary process probes confirm successful
 clients no longer wait for a slow service bound, while client exit 9, server
 exit 7 before listening and a stalled client all fail; the stalled case hits
 the unchanged 15-second deadline and leaves neither process running.
+Requested Build 38772910822 passes the complete native, MinGW, web and sanitizer
+suites and publishes v0.4.0-nightly.3. Both transport integration cases pass on
+Windows, Linux, macOS and MinGW; the natural-exit fixtures pass as well.
 
 Run `38716371711` found two server-build defects in `bfc10e14`.
 The optional process hook now has a weak no-op definition on Apple targets:
