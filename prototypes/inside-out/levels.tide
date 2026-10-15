@@ -287,8 +287,8 @@ void TheOtherOpening(mut Draft draft)
         "#######  .......",
     ]);
 }
-// 4. The socket is the cell to push the home from, so the battery waits
-// elsewhere until the home is on its outline.
+// 4. The socket is the cell to push the home from: leave the battery inside
+// until the home is on its outline, then deliver it through the west door.
 void APlaceToStand(mut Draft draft)
 {
     Room(draft, -1, [
@@ -429,6 +429,127 @@ void Posted(mut Draft draft)
     ]);
 }
 
+// Reposition the box first, then exchange which side is held steady.
+void ChangeEnds(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#1#  .1.", "###  ..."]);
+    Room(draft, 0, [
+        "#####  .....", "#...#  .....", "#....  ...&.",
+        "#...#  ..@..", "##.##  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......", "#0....#  .0.....", "#.###.#  .......",
+        "#x.2.x#  ..2....", "#.###.#  .......", "#.....#  .......", "#######  .......",
+    ]);
+    Room(draft, 2, [
+        "#####  .....", "#...#  .....", ".o...  ..+..", "#...#  .....", "#####  .....",
+    ]);
+}
+// The posted battery needs a turn inside; do not push it beyond that turn.
+void AroundTheCorner(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#1#  .1.", "###  ..."]);
+    Room(draft, 0, [
+        "#####  .....", "#...#  .....", "#....  ...&.",
+        "#...#  ..@..", "##.##  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......", "#0....#  .0.....", "#.###.#  .......",
+        "#x.2x.#  ..+2...", "#.###.#  .......", "#.....#  .......", "#######  .......",
+    ]);
+    Room(draft, 2, [
+        "#####  .....", "#.o.#  .....", "....#  .....", "#...#  .....", "#####  .....",
+    ]);
+}
+// A separate plate holder lets the battery pass the dividing shutter.
+void HoldTheLine(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..A.o#  .&+....",
+        "#..#..#  .......", "#a.#..#  .@.....", "#x.#.x#  .......", "#######  .......",
+    ]);
+}
+// Wiring crosses room boundaries, even while the plate holder is inside.
+void LongWire(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#1.#..#  .1.....", "#..#..#  .......",
+        "#..A.o#  .&+....", "#..#..#  .......", "#x.#.x#  .......", "#######  .......",
+    ]);
+    Room(draft, 1, ["###  ...", "#a#  .@.", "#.#  ..."]);
+}
+// The far-side plate frees the first holder, so both can cross.
+void PassItOn(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..A.o#  .&+....",
+        "#..#..#  .......", "#a.#.a#  .@.....", "#..#xx#  .......", "#######  .......",
+    ]);
+}
+// The second circuit opens a different route for the first plate holder.
+void BorrowedPower(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..A.o#  .&+....",
+        "#..#..#  .......", "#a.B.b#  .@.....", "#..#xx#  .......", "#######  .......",
+    ]);
+}
+// A battery inside the box powers the shutter the occupied box passes.
+// The inside robot then becomes the backstop that lets its partner aboard.
+void CarryTheCurrent(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..#.x#  .......",
+        "#..A1x#  .@1....", "#..#..#  .......", "#..#..#  .......", "#######  .......",
+    ]);
+    Room(draft, 1, [
+        "#####  .....", "#.o.#  .....", "..a..  ..+..", "#...#  ..&..", "#####  .....",
+    ]);
+}
+// Leaving north seats the battery beside the very box that contains it.
+// The arriving partner then holds that box so the other robot can enter it.
+void BesideItself(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####.#  .......", "#o###.#  .......", "#x###.#  .+.....",
+        "#0###.#  .0...&.", "#.###.#  .@.....", "#####x#  .......", "#####.#  .......",
+    ]);
+}
+// Move a self-containing box to move where its north doorway comes out.
+void ShiftTheExit(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####.#  .......", "#x###.#  .@...+.", "#.###.#  .0...&.",
+        "#o###.#  .......", "#0###.#  .......", "#.###x#  .......", "#####.#  .......",
+    ]);
+}
+// Move the outside box in the other room before sending the battery out.
+// The receiving robot's alcove cannot be reached from the delivery landing.
+void ReturnDelivery(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####  .....", "#1..#  .1...", "#.x..  ..@+.", "#...#  .....", "#####  .....",
+    ]);
+    Room(draft, 1, [
+        "#####  .....", "#x#.#  .&...", "#.#.#  .0...", "#0o.#  .....", "#####  .....",
+    ]);
+}
+
+// Exchange the two circuits while the box moves within its own interior.
+// The first exit delivers the battery and supplies the backstop for entry.
+void TradingPlaces(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####.#  .......", "#o###A#  .......", "#b###x#  .+.....",
+        "#.###x#  .0...&.", "#a###a#  .@.....", "#0###B#  .......", "#####.#  .......",
+    ]);
+}
+
 void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
 {
     var chosen = Math.Clamp(level, 0, LEVEL_COUNT - 1);
@@ -446,6 +567,17 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
         case 4: AllInARow(draft); break;
         case 5: HoldItSteady(draft); break;
         case 6: Posted(draft); break;
+        case 7: ChangeEnds(draft); break;
+        case 8: AroundTheCorner(draft); break;
+        case 9: HoldTheLine(draft); break;
+        case 10: LongWire(draft); break;
+        case 11: PassItOn(draft); break;
+        case 12: BorrowedPower(draft); break;
+        case 13: CarryTheCurrent(draft); break;
+        case 14: BesideItself(draft); break;
+        case 15: ShiftTheExit(draft); break;
+        case 16: ReturnDelivery(draft); break;
+        case 17: TradingPlaces(draft); break;
     }
     var rooms = (1 << draft.layout.roomCount) - 1;
     Debug.Assert(draft.robots == 3, $"Puzzle {chosen + 1}: both robots, @ and &, are drawn once");
@@ -467,7 +599,10 @@ const int CHAPTER_COUNT = 5;
 int LevelChapter(int level)
 {
     if (level < 5) return 0;
-    return 1;
+    if (level < 9) return 1;
+    if (level < 14) return 2;
+    if (level < 17) return 3;
+    return 4;
 }
 string ChapterName(int chapter)
 {
@@ -493,6 +628,17 @@ string LevelName(int level)
         case 4: return "All in a row";
         case 5: return "Hold it steady";
         case 6: return "Posted";
+        case 7: return "Change ends";
+        case 8: return "Around the corner";
+        case 9: return "Hold the line";
+        case 10: return "Long wire";
+        case 11: return "Pass it on";
+        case 12: return "Borrowed power";
+        case 13: return "Carry the current";
+        case 14: return "Beside itself";
+        case 15: return "Shift the exit";
+        case 16: return "Return delivery";
+        case 17: return "Trading places";
     }
     return "Inside Out";
 }
@@ -504,11 +650,89 @@ string LevelLesson(int level)
     if (level == 3) return "Leave the battery in the left socket and the home on the right outline.";
     if (level == 4) return "Seat the battery and park the small box. A row of things moves as one.";
     if (level == 5) return "Park the small box on its outline with its battery seated inside. A box only lets you in while it cannot move.";
-    return "Seat the battery inside the small box without moving the box off its outline.";
+    if (level == 6) return "Seat the battery inside the small box without moving the box off its outline.";
+    if (level == 7) return "Park the small box, then hold its other side to seat the battery.";
+    if (level == 8) return "Post the battery into the small box, then turn it towards its socket.";
+    if (level == 9) return "One robot holds the circuit while the other delivers the battery.";
+    if (level == 10) return "A plate inside a room powers the shutter outside it.";
+    if (level == 11) return "Use the far plate to bring the first plate holder across.";
+    if (level == 12) return "Trade circuits to bring both robots to the far side.";
+    if (level == 13) return "Carry a live battery inside the box, then help the outside robot aboard.";
+    if (level == 14) return "This box contains its own room. Leave it to arrive beside it, in the same room.";
+    if (level == 15) return "Moving a box inside itself moves where its own doorway comes out.";
+    if (level == 16) return "Each room's outside is in the other. Move the receiving box before delivery.";
+    if (level == 17) return "Exchange circuits, then move the box inside itself to bring your partner through.";
+    return "";
 }
 string LevelHint(int level, int tier)
 {
     var detail = Math.Clamp(tier, 0, 2);
+    if (level == 7)
+    {
+        if (detail == 0) return "Which side of the battery do you need to stand on?";
+        if (detail == 1) return "Push the box onto its outline first. Then swap the pusher and the backstop to enter from the east.";
+        return "Amber pushes the small box east onto its outline. Teal goes round to its east side; Amber waits west of it. Teal enters from the east, pushes the battery west, then both return to the outside goals.";
+    }
+    if (level == 8)
+    {
+        if (detail == 0) return "The socket is above the battery's path, rather than at its end.";
+        if (detail == 1) return "Hold the box from the east. Push the battery just far enough to stand below it inside.";
+        return "Teal holds the box from the east. Amber posts the battery through the west door, follows it two cells in, goes below it and pushes north into the socket. Come back out west.";
+    }
+    if (level == 9)
+    {
+        if (detail == 0) return "What keeps the shutter open?";
+        if (detail == 1) return "The plate is away from the battery's pushing position. Someone must stay on it.";
+        return "Amber waits on the ring plate. Teal pushes the battery east through the shutter onto its socket. Once Teal is across, Amber can leave the plate; take one goal on each side.";
+    }
+    if (level == 10)
+    {
+        if (detail == 0) return "Does the wiring stop at a box's walls?";
+        if (detail == 1) return "Keep the inside robot on its plate until the battery is through the shutter.";
+        return "Amber stays on the plate in the little box. Teal delivers the battery east. Amber then leaves south and goes to the left goal; Teal takes the right goal.";
+    }
+    if (level == 11)
+    {
+        if (detail == 0) return "Both goals are beyond the shutter. Who lets the first holder leave?";
+        if (detail == 1) return "There are two plates on the same channel. The second holder can take over.";
+        return "Teal delivers the battery and stands on the far ring plate. Amber leaves the near plate and crosses the shutter. Once both are across, step onto the two goals.";
+    }
+    if (level == 12)
+    {
+        if (detail == 0) return "The lower shutter has a different shape from the upper one.";
+        if (detail == 1) return "The far diamond plate opens a second crossing for the first holder.";
+        return "Amber holds the ring plate while Teal delivers the battery through the upper shutter. Teal stands on the far diamond plate. Amber crosses the lower shutter; then both take the goals.";
+    }
+    if (level == 13)
+    {
+        if (detail == 0) return "What is powering the shutter? Where will the outside robot stand after the box moves?";
+        if (detail == 1) return "Keep the battery on its plate while pushing the occupied box across. The robot inside can become its backstop.";
+        return "Amber pushes the box east twice. Teal seats the inside battery, then leaves east and holds the box from outside. Amber enters from the west. Teal steps north onto a goal so Amber can leave east onto the other.";
+    }
+    if (level == 14)
+    {
+        if (detail == 0) return "Follow the north doorway to the outside of this very box.";
+        if (detail == 1) return "The robot in the right-hand passage can deliver the battery by leaving north.";
+        return "Teal leaves north, pushing the battery onto its socket in the left column. Teal now holds the box steady from above. Amber enters it from below and steps north onto the right goal.";
+    }
+    if (level == 15)
+    {
+        if (detail == 0) return "Which cell will the battery land on when it leaves north?";
+        if (detail == 1) return "Move the box down one cell before sending the battery out. Then use a row push.";
+        return "Amber pushes the box south once and steps back north. Teal pushes the battery north out of the room. Amber pushes the delivered battery and the box south together, seating the battery and parking the box. Take the two goals.";
+    }
+    if (level == 16)
+    {
+        if (detail == 0) return "The east doorway comes out beside this room's box, in the other room.";
+        if (detail == 1) return "The robot in the narrow left alcove controls where the battery will arrive.";
+        return "Teal pushes the box south onto its outline. Amber sends the battery east out of its room, landing on the socket in Teal's room, then backs up to the goal. Teal steps back north.";
+    }
+    if (level == 17)
+    {
+        if (detail == 0) return "The north and south doorways lead beside the same box. Each circuit is needed at a different time.";
+        if (detail == 1) return "Teal leaves north while Amber holds the ring plate. Teal then holds the diamond plate and becomes Amber's backstop.";
+        return "Teal leaves north and seats the battery. Amber enters the box from below, passes the diamond shutter and holds the far ring plate. Teal pushes the box south onto its outline, enters from above and passes the ring shutter. Finish on the two right-hand goals.";
+    }
     if (level == 0)
     {
         if (detail == 0) return "Where does your doorway lead? What is standing in the battery's path?";
@@ -530,8 +754,8 @@ string LevelHint(int level, int tier)
     if (level == 3)
     {
         if (detail == 0) return "Does a seated battery leave somewhere to stand beside the home?";
-        if (detail == 1) return "The battery's socket is also where you stand to push the home east. Put the battery aside first.";
-        return "Take the battery out and leave it off its socket. Push the home east onto its outline from the socket's cell, then bring the battery back to the socket.";
+        if (detail == 1) return "The battery's socket is also where you stand to push the home east. Leave the battery inside until the home is parked.";
+        return "Amber leaves west, stands on the socket and pushes the home east onto its outline, then goes to the right goal. Teal pushes the battery west out of the home onto its socket and takes the left goal.";
     }
     if (level == 4)
     {

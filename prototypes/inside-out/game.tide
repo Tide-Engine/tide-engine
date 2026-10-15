@@ -12,7 +12,7 @@ settings
 const int MAX_ROOMS = 4;
 const int MAX_CRATES = 8;
 const int MAX_DEPTH = 8;
-const int LEVEL_COUNT = 7;
+const int LEVEL_COUNT = 18;
 const int UNDO_LIMIT = 128;
 
 // A plate and a shutter for each of two channels, A and B.
@@ -377,6 +377,9 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
     // Set for a thing pushed out of a closed shutter: what is before it in
     // the row stays.
     mut bool[20] through = default;
+    // A blocked door may pass a push to its occupant, but never admit the
+    // thing outside through another box standing in that closed doorway.
+    mut bool[20] closedDoor = default;
     row[0] = Thing { kind = 0, index = seat };
     mut var count = 1;
     mut var entered = false;
@@ -413,6 +416,7 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             {
                 row[count] = ahead;
                 through[count] = shut;
+                closedDoor[count] = false;
                 count += 1;
                 continue;
             }
@@ -422,6 +426,7 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             {
                 row[count] = ahead;
                 through[count] = shut;
+                closedDoor[count] = false;
                 count += 1;
             }
         }
@@ -434,11 +439,13 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
         {
             var into = row[count - 1];
             count -= 1;
+            if (closedDoor[count - 1]) continue;
             if (into.kind != 1) continue;
             var at = SpotOf(puzzle, into);
-            if (!Gateway(layout, puzzle, power, at.room, at.cell, direction, out var destination, out var entry) &&
-                !ClosedOnThing(layout, puzzle, destination, entry, power)) continue;
+            var open = Gateway(layout, puzzle, power, at.room, at.cell, direction, out var destination, out var entry);
+            if (!open && !ClosedOnThing(layout, puzzle, destination, entry, power)) continue;
             goals[count - 1] = Spot { room = destination, cell = entry };
+            closedDoor[count - 1] = !open;
             decided = true;
             found = true;
             if (count == 1) entered = true;
@@ -538,7 +545,7 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
     if (!Authorized(workshop, sender, move.serial)) return;
     var seat = SeatOf(workshop, sender);
     var before = workshop.puzzle;
-    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction, out _))
+    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction, out var step))
     {
         Send(PuzzleCue { kind = 6, seat = seat });
         return;
@@ -548,7 +555,7 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop)
     var now = workshop.puzzle.actors[seat];
     // A bot that pushed something out of a closed shutter stayed where it was.
     var stepped = source.room != now.room || !CellEqual(source.position, now.position);
-    var travel = stepped && (source.room != now.room || source.depth != now.depth ||
+    var travel = step == Step.Enter || stepped && (source.room != now.room || source.depth != now.depth ||
         !OnRoomGrid(workshop.layout, source.room, source.position + Direction(move.direction)));
     Send(PuzzleCue { kind = travel ? 2 : Pushed(before, workshop.puzzle) ? 1 : 0, seat = seat,
         direction = travel ? move.direction : -1, source = travel ? source : Traveler { } });

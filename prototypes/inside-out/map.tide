@@ -120,22 +120,17 @@ float2 DoorLip(LevelLayout layout, int room, int side)
 
 // The box a bot went into by one step: one beside where it stood, whose
 // facing doorway is where it now stands. -1 for any other step. In a cycle,
-// leaving a room and entering a box can both arrive in the same room; where
-// the bot arrives tells them apart.
-int EnteredBox(Workshop workshop, Traveler before, Traveler after)
+// leaving a room and entering a box can arrive at the same cell; the move's
+// direction distinguishes them.
+int EnteredBox(Workshop workshop, Traveler before, Traveler after, int direction)
 {
-    var apart = after.position - before.position;
-    if (before.room == after.room && Math.Abs(apart.x) + Math.Abs(apart.y) == 1) return -1;
-    for (var direction = 0; direction < 4; direction++)
-    {
-        var box = BoxAt(workshop.layout, workshop.puzzle, before.room, before.position + Direction(direction));
-        if (box < 0 || box != after.room) continue;
-        if (CellEqual(after.position, DoorCell(workshop.layout, after.room, (direction + 2) % 4))) return box;
-    }
-    return -1;
+    if (direction < 0 || direction > 3) return -1;
+    var box = BoxAt(workshop.layout, workshop.puzzle, before.room, before.position + Direction(direction));
+    return box >= 0 && box == after.room &&
+        CellEqual(after.position, DoorCell(workshop.layout, after.room, (direction + 2) % 4)) ? box : -1;
 }
 
-MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after, bool capturedSource = false)
+MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after, bool capturedSource = false, int direction = -1)
 {
     var destination = ReturnSurround(workshop, after, picture);
     var previous = ReturnSurround(workshop, before, picture);
@@ -152,10 +147,10 @@ MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler
         trip.fromSide = PassageSide(destination.anchor - previous.anchor);
         trip.side = (trip.fromSide + 2) % 4;
     }
-    else if (EnteredBox(workshop, before, after) >= 0)
+    else if (EnteredBox(workshop, before, after, direction) >= 0)
     {
         // In through the box it stood beside.
-        var box = EnteredBox(workshop, before, after);
+        var box = EnteredBox(workshop, before, after, direction);
         trip.entering = true;
         trip.gate = RoomSurround { room = before.room, anchor = picture.boxes[box], box = box };
         trip.side = PassageSide(float2(before.position) - trip.gate.anchor);
@@ -467,9 +462,9 @@ float2 SmoothCell(float2 current, float2 target, float blend)
 }
 
 // The heading's rows end here; the scene has the window below them.
-float SceneTop(float2 screen) { return screen.x < 1050 ? 128.0 : 66.0; }
+float SceneTop(float2 screen) { return screen.x < 720 ? 122.0 : 112.0; }
 // What the controls along the bottom need clear of the focused room.
-float SceneBottom(float2 screen) { return screen.x < 720 ? 200.0 : 80.0; }
+float SceneBottom(float2 screen) { return screen.x < 720 ? 206.0 : 124.0; }
 float SceneSide(float2 screen)
 {
     return Math.Max(200, Math.Min(screen.x - 24, screen.y - SceneTop(screen) - SceneBottom(screen)));

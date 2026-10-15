@@ -10,7 +10,7 @@ set of batteries, boxes and people.
 The 3D rooms keep a fixed, gently tilted view of a painted model: pale
 floors, matte painted boxes, soft shadows, marks that glow, and a lens that
 keeps your room sharp while the larger rooms around it fall out of focus,
-with quiet ventilation.
+with quiet music and soft wooden, brass and robot sounds.
 There are no threats or jumpscares.
 
 Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
@@ -46,8 +46,8 @@ keeps the grid and movement directions familiar; there is no camera rotation.
 | Show / hide hints | H |
 | Continue after solving | Enter |
 
-Touch uses the same directional arrows. Rooms move first; when a wall,
-another box or your partner stops a room, walking into its open doorway
+Touch uses the same directional arrows. Rooms move first; when a wall
+or your partner stops a row, walking into a stopped box's open doorway
 enters it. Directions match the screen: W is up, D right, S down and A left.
 After undo or reset, release a held direction before pressing it again.
 
@@ -56,11 +56,14 @@ it: a yellow bar against a box you would push, a green arrow into a doorway
 you would enter. The direction buttons show the same for every direction,
 with a bar across the arrow where you cannot go.
 
-The shelf can revisit or skip any puzzle. A plus beside a
-title marks one you have completed in this match. Hints start with a small
+The menu's chapter selector can revisit or skip any puzzle. A sage tick beside a
+title marks one you have completed. Hints start with a small
 nudge; ask for more to reveal an arrangement and then a more specific plan.
-They are optional. Sound on or off, the music's volume and reduced motion
-are local settings.
+They are optional. Settings include master, music, effects and interface
+volumes, mute, reduced motion, step previews and lesson cards. Settings and
+completion ticks are saved on this machine. Escape opens the in-game menu;
+your partner's match keeps running. Reset and changing an active puzzle ask
+before clearing the shared moves.
 
 ## The rules
 
@@ -103,6 +106,24 @@ Completion waits for you to continue. Losing a participant stops gameplay
 until both seats are present again.
 
 ## Development
+
+To play locally without deploying the website, run these commands from the
+repository root (Node 24.16 or newer on Windows):
+
+```powershell
+$env:TIDE_HIDDEN = '1'
+cmake --preset web-release -DTIDE_PRIVATE_PROTOTYPES=ON
+cmake --build --preset web-release --target inside_out_page
+node prototypes/inside-out/serve.mjs
+```
+
+Open <http://127.0.0.1:8790/prototypes/inside-out/> in two tabs. Choose
+**Host a room** in one and **Join a friend** in the other, click the code
+field and enter the host's six-character code. The server runs its own
+local relay on port 8791 and serves the page with the isolation headers
+needed by Tide. It reads the latest staged page on each reload. Ctrl+C
+stops both services; optional HTTP and relay ports are the script's two
+positional arguments. The server binds to this machine only.
 
 The prototype uses Tide and the existing Rooms package. Its deterministic
 match rules are in `game.tide`; the puzzles, drawn as text maps (their

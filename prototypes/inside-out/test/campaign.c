@@ -12,7 +12,7 @@
 #define world inside_out_test_world
 // LEVEL_COUNT in game.tide; inside_out_campaign_has_exactly_the_witnessed_puzzles
 // fails if the two disagree.
-#define PUZZLES 7
+#define PUZZLES 18
 _Static_assert(sizeof inside_out_solutions / sizeof inside_out_solutions[0] == PUZZLES, "one witness per puzzle");
 static bool same_cell(tide_int2 a, tide_int2 b) { return a.x == b.x && a.y == b.y; }
 static Tile tile_at(const LevelLayout *const layout, const int room, const tide_int2 at)
@@ -77,7 +77,7 @@ TIDE_TEST(inside_out_every_campaign_puzzle_has_a_production_rules_solution)
         const LevelLayout layout = world.Workshop.layout;
         TIDE_CHECK(initial.actors.at[0].room >= 0 && initial.actors.at[1].room >= 0);
         TIDE_CHECK(!initial.solved);
-        TIDE_CHECK(layout.roomCount >= 2 && layout.roomCount <= 4 && layout.crateCount <= 8);
+        TIDE_CHECK(layout.roomCount >= 1 && layout.roomCount <= 4 && layout.crateCount <= 8);
         for (int room = 0; room < layout.roomCount; room++) {
             // Every box is a square, so it fills the cell it stands in.
             TIDE_CHECK(layout.rooms.at[room].width >= 3 && layout.rooms.at[room].width <= 7);
@@ -134,10 +134,50 @@ TIDE_TEST(inside_out_campaign_players_can_exchange_their_jobs)
     }
 }
 
-// Every position either bot can reach acting alone, with the other bot taken
-// off the board: more room than merely leaving it standing. Returns how many
-// there are, and whether any of them has the small box on its outline with
-// its battery seated, which is all of the puzzle but the robots' goals.
+// Completion except the robots' goals: every battery and socket, and every
+// box outline. The absent robot must never make an otherwise trivial goal
+// condition masquerade as a dependency on a partner.
+static bool cargo_ready(const LevelLayout *const layout, const Puzzle *const puzzle)
+{
+    for (int crate = 0; crate < layout->crateCount; crate++) {
+        const Cargo battery = puzzle->crates.at[crate];
+        if (battery.active && tile_at(layout, battery.room, battery.position) != Tile_Target) return false;
+    }
+    for (int room = 0; room < layout->roomCount; room++) {
+        const RoomLayout inside = layout->rooms.at[room];
+        const RoomShell box = puzzle->rooms.at[room];
+        if (inside.dock.x >= 0 && (box.room != inside.dockRoom || !same_cell(box.position, inside.dock))) return false;
+    }
+    for (int room = -1; room < layout->roomCount; room++) {
+        const int size = room < 0 ? layout->width : layout->rooms.at[room].width;
+        for (int y = 0; y < size; y++) for (int x = 0; x < size; x++) {
+            const tide_int2 at = tide_i2(x, y);
+            if (tile_at(layout, room, at) != Tile_Target) continue;
+            bool occupied = false;
+            for (int crate = 0; crate < layout->crateCount; crate++) {
+                const Cargo battery = puzzle->crates.at[crate];
+                if (battery.active && battery.room == room && same_cell(battery.position, at)) occupied = true;
+            }
+            if (!occupied) return false;
+        }
+    }
+    return true;
+}
+static uint32_t state_hash(const Puzzle *const puzzle)
+{
+    uint32_t hash = 2166136261u;
+    const unsigned char *const bytes = (const unsigned char *)puzzle;
+    for (size_t i = 0; i < sizeof *puzzle; i++) hash = (hash ^ bytes[i]) * 16777619u;
+    return hash;
+}
+static void search_state(Puzzle *const puzzle)
+{
+    puzzle->moves = 0;
+    puzzle->solved = false;
+    for (int seat = 0; seat < 2; seat++) puzzle->actors.at[seat].facing = 0;
+}
+// Exhaust every position either robot can reach with the other's body
+// removed. A limit hit is an unsuccessful test, never an impossibility proof.
 static int alone(int level, int seat, bool *done)
 {
     enum { LIMIT = 600000, BUCKETS = 1 << 21 };
@@ -145,33 +185,34 @@ static int alone(int level, int seat, bool *done)
     if (!inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, level)) return -1;
     Puzzle *const states = malloc((size_t)LIMIT * sizeof *states);
     int *const table = malloc((size_t)BUCKETS * sizeof *table);
-    if (!states || !table) return -1;
+    if (!states || !table) {
+        free(states);
+        free(table);
+        tide_world_free(&world);
+        return -1;
+    }
     memset(table, 0xff, (size_t)BUCKETS * sizeof *table);
     const LevelLayout layout = world.Workshop.layout;
     states[0] = world.Workshop.puzzle;
     states[0].actors.at[1 - seat].room = -1;
-    states[0].actors.at[1 - seat].position = tide_i2(0, 0);
+    states[0].actors.at[1 - seat].position = tide_i2(-16, -16);
+    states[0].actors.at[1 - seat].depth = 0;
+    for (int entry = 0; entry < 8; entry++) states[0].actors.at[1 - seat].trail.at[entry] = (Entry){.box = -1};
+    search_state(&states[0]);
+    table[state_hash(&states[0]) & (uint32_t)(BUCKETS - 1)] = 0;
     int count = 1;
     *done = false;
     for (int index = 0; index < count && count < LIMIT; index++) {
         const Puzzle current = states[index];
-        const RoomShell box = current.rooms.at[2];
-        const Cargo battery = current.crates.at[0];
-        const RoomLayout *inside = &layout.rooms.at[2];
-        if (box.room == layout.rooms.at[2].dockRoom && same_cell(box.position, layout.rooms.at[2].dock) && battery.room == 2
-            && inside->tiles.at[battery.position.y * inside->width + battery.position.x] == Tile_Target) *done = true;
+        if (cargo_ready(&layout, &current)) *done = true;
         for (int direction = 0; direction < 4; direction++) {
             world.Workshop.puzzle = current;
             world.Workshop.historyCount = 0;
             if (!inside_out_test_act(TIDE_COMMAND_ID_Move, seat, direction)) continue;
             Puzzle next = world.Workshop.puzzle;
             if (next.moves == current.moves) continue;
-            next.moves = 0;
-            next.solved = false;
-            uint32_t hash = 2166136261u;
-            const unsigned char *bytes = (const unsigned char *)&next;
-            for (size_t i = 0; i < sizeof next; i++) hash = (hash ^ bytes[i]) * 16777619u;
-            uint32_t slot = hash & (uint32_t)(BUCKETS - 1);
+            search_state(&next);
+            uint32_t slot = state_hash(&next) & (uint32_t)(BUCKETS - 1);
             bool seen = false;
             while (table[slot] >= 0) {
                 if (memcmp(&states[table[slot]], &next, sizeof next) == 0) { seen = true; break; }
@@ -189,16 +230,52 @@ static int alone(int level, int seat, bool *done)
 }
 TIDE_TEST(inside_out_a_box_is_entered_only_with_the_partner_behind_it)
 {
-    // "Hold it steady" and "Posted": the small box has to end on its outline
-    // with its battery seated inside. A bot gets into a box only while the
-    // box cannot move, and here the only thing that can stop it where it
-    // has to stand is the other bot. Alone, neither bot can ever do both.
-    for (int level = 5; level <= 6; level++)
+    // Every puzzle about the partner as a backstop, and every power puzzle,
+    // requires both robots even with the player goals ignored. The later
+    // movement/recursion puzzles retain that stronger dependency too.
+    const int levels[] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17};
+    for (size_t index = 0; index < sizeof levels / sizeof levels[0]; index++)
         for (int seat = 0; seat < 2; seat++) {
+            const int level = levels[index];
             bool done = true;
             const int count = alone(level, seat, &done);
             TIDE_CHECK(count > 0 && count < 600000);
             TIDE_CHECK(!done);
-            printf("  Puzzle %d, seat %d alone: %d positions, the box never parked with its battery seated.\n", level + 1, seat, count);
+            printf("  Puzzle %d, seat %d alone: %d positions, cargo and outlines never all ready.\n", level + 1, seat, count);
         }
+}
+
+TIDE_TEST(inside_out_recursive_lesson_needs_a_partner_body_after_delivery)
+{
+    inside_out_test_start(2);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, 14));
+    const LevelLayout layout = world.Workshop.layout;
+    TIDE_CHECK(layout.roomCount == 1 && world.Workshop.puzzle.rooms.at[0].room == 0);
+    for (int step = 0; step < 4; step++) TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 0));
+    const Puzzle before = world.Workshop.puzzle;
+    TIDE_CHECK(cargo_ready(&layout, &before));
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 0));
+    const Puzzle entered = world.Workshop.puzzle;
+    TIDE_CHECK(same_cell(entered.actors.at[0].position, tide_i2(5, 6)));
+    TIDE_CHECK(same_cell(entered.rooms.at[0].position, before.rooms.at[0].position));
+    world.Workshop.puzzle = before;
+    world.Workshop.puzzle.actors.at[1].room = -1;
+    world.Workshop.puzzle.actors.at[1].position = tide_i2(-16, -16);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 0));
+    TIDE_CHECK(!same_cell(world.Workshop.puzzle.actors.at[0].position, entered.actors.at[0].position));
+    TIDE_CHECK(!same_cell(world.Workshop.puzzle.rooms.at[0].position, before.rooms.at[0].position));
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_campaign_cycle_has_one_box_for_each_canonical_room)
+{
+    inside_out_test_start(2);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, 16));
+    const Puzzle initial = world.Workshop.puzzle;
+    TIDE_CHECK(world.Workshop.layout.roomCount == 2);
+    TIDE_CHECK(initial.rooms.at[0].room == 1 && initial.rooms.at[1].room == 0);
+    TIDE_REQUIRE(play_witness(16, inside_out_solutions[16], NULL));
+    TIDE_CHECK(world.Workshop.puzzle.crates.at[0].room == 1);
+    TIDE_CHECK(world.Workshop.puzzle.actors.at[0].room == 0 && world.Workshop.puzzle.actors.at[1].room == 1);
+    tide_world_free(&world);
 }
