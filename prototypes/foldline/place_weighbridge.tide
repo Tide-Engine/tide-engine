@@ -2,8 +2,7 @@
 // last shutter, then the grown cargo keeps the upper exit open for both.
 void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
 {
-    ArrivalLift(arena, place, float3(-8, 0, -16.1), NORTH);
-    ExitLift(arena, place, float3(8, 5.4, 16.1), SOUTH, 1 << 1);
+    BuildMapWeighbridge(arena, place);
     Fill(arena, -14, 14, -1, 0, -14, 14, PANELS);
     Fill(arena, -15, 15, 12.6, 13.6, -15, 15, CONCRETE, false, 2);
     Fill(arena, -15, -14, 0, 12.6, -15, -13, PANELS);
@@ -43,20 +42,11 @@ void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -6, -5.6, 5.4, 8.2, 13.96, 14.9, PANELS);
     Fill(arena, -12.4, -5.6, 5.4, 8.2, 14.8, 15.2, PANELS);
     PutLoose(arena, fold, float3(-6, .4, -9));
-    LayPlate(arena, float3(-9, 5.4, 11.5), 1, heavy: true, need: 350);
-    RunWire(arena, 1, [float3(-8.2, 5.425, 11.5), float3(4, 5.425, 11.5), float3(4, 5.425, 13.96),
-                       float3(4, 9.6, 13.96), float3(8, 9.6, 13.96)]);
     // A whole person works here; the giant cannot enter beneath the low roof.
-    HangDeck(arena, float3(8, -.15, -7), float3(8, 3.45, -7), float3(3, .3, 3), speed: 1.8);
     Fill(arena, 4, 14, 2.8, 3.6, -5.6, 3, PANELS);
     Fill(arena, 4, 14, 6, 6.6, -5.6, 3, PANELS, false, 2);
     Fill(arena, 3.7, 4, 3.6, 6, -5.6, 3, RUST, false, 4);
     Fill(arena, 4, 14, 3.6, 6, 3, 3.3, RUST, false, 4);
-    LayPlate(arena, float3(8, 3.6, 0), 0);
-    Machine(arena, float3(-9, 6.3, 4.8), float3(-9, 13.3, 4.8), float3(10, 5.4, .35), 1 << 0, false, DOOR_SPEED,
-            float3(-9, 9.3, 4.8), float3(1, 0, 0));
-    RunWire(arena, 0, [float3(8.6, 3.625, 0), float3(13.96, 3.625, 0), float3(13.96, 11.4, 0),
-                       float3(13.96, 11.4, 4.8), float3(-9, 11.4, 4.8), float3(-9, 9.3, 4.8)]);
     for (int rack = 0; rack < 3; rack++)
     {
         SetProp(arena, PropKind.Shelf, float3(12.8, 0, 5 + rack * 1.4), WEST);
@@ -64,7 +54,6 @@ void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
     }
     SetProp(arena, PropKind.Monitor, float3(9.7, 3.6, 1), SOUTH);
     SetProp(arena, PropKind.Pipe, float3(-14, 0, 8), 0, float3(1, 3, 1));
-    SetProp(arena, PropKind.ExitSign, float3(8, 8.9, 13.8), SOUTH);
     SetProp(arena, PropKind.Arrow, float3(-13.8, .02, -3.8), NORTH, float3(2));
     SpawnBeast(arena, BeastKind.Crawler, float3(0, 10.5, 12), EAST, .8, clip: "Run");
     Fill(arena, -3, 3, 10.4, 12.6, 11.7, 12.1, RUST, false, 4);
