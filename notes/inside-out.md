@@ -78,6 +78,8 @@ Rendering and undo:
   its distance records the reversed interpolation's full length. Same-room
   robot doorway undo is inferred from restored/current cells and saved
   facing, and restarts the passage/camera from the current rendered pose.
+  Picture.passageMove remembers a doorway action even when a self-entry
+  leaves canonical coordinates unchanged; reset and reversal clear it.
 - Dock outlines remain hidden under interpolated arriving/departing room
   footprints, matching the existing rule for signal paint. This prevents an
   exposed canonical dock outline cutting through a still-overlapping room
@@ -92,6 +94,10 @@ the observed outside patch differs from its final state in
 current intermediate pose. UI captures under build/inside-out-captures/ui
 cover desktop/phone pages, arrow-only solving, held movement across automatic
 progression, the transition at multiple phases, and one-move phone swipes.
+Additional bounded captures under build/inside-out-captures/undo-review cover
+fast self-entry undo, consecutive self-entry/self-exit undo, and consecutive
+undos while an occupied room is being pushed. Both seats return to
+pixel-identical canonical scene baselines, including a post-merge native run.
 
 Audio:
 
@@ -131,6 +137,23 @@ cases pass. Browser validation additionally observes the real clipboard copy,
 follows that URL to the host, moves with an arrow, checks held input across
 automatic progression, verifies intermediate occupied-room undo, and swipes
 on phone. Final backend results are recorded below once completed.
+
+The initial browser attempts ran WebGL and WebGPU concurrently and each hit
+the old 900-second CTest limit while still producing frames/captures; neither
+reported a gameplay, shader or GPU assertion failure. The added automatic
+progression waits make that allowance too short under software-GPU contention.
+The harness now waits 50 rather than 80 ticks for an introduction that ends
+at 48, allows 2.5 seconds per verified tick for long waits, and sets the whole
+browser test allowance to 1500 seconds. Final backend runs are serialized.
+
+Merged origin/dev at d909a851 without conflicts or Inside Out overlap. The
+incoming compiler/engine visibility work changes dependencies, so all game
+targets were rebuilt on native/web debug and the web release page restaged.
+Native aggregate/invite tests and the web aggregate/five invite cases pass
+again against those dependencies. No full engine suite or CI dispatch is
+required by this game-only change. Native captures run without a Vulkan
+validation layer on this machine; browser fixtures enable checkGL and GPU
+validation. All runs use hidden/muted or device-free capture paths.
 
 ## Current polish round (2026-10-15)
 
