@@ -1,5 +1,21 @@
 # Releases, installing and CI
 
+## Nightly package/test fixture corrections (2026-10-15)
+
+Owner-requested run `38761765659` at ea0ad363 completed with four failing
+checks: Linux/macOS package cache comparisons and Windows native/MinGW
+dedicated-server harness shutdown. Windows packaging, Linux native/sanitizers,
+all three web suites, macOS native, Docs deployment and JetBrains verification
+passed. The aggregate Build jobs failed/cancelled and Release was skipped;
+no nightly was published. The two underlying fixture corrections and their
+reproductions are in cli-and-packages.md and dedicated-servers.md. No workflow,
+publication gate, client verification assertion or timeout was removed.
+
+Local full native debug passes all 2,342 tests, including GPU validation and
+both transports (412.07 seconds, Node 24.16.0/Clang 23.1.2). Full web debug
+passes all 2,255 tests, including WebGL/WebGPU (269.88 seconds). The final
+server harness passes its focused transport rerun too.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
