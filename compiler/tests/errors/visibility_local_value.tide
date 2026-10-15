@@ -1,0 +1,4 @@
+// expect: contains machine-local field
+component LocalValue { LocalEntity entity; }
+system Change(mut Visibility visibility) { visibility.Set<LocalValue>(Audience.None); }
+scene Main { }

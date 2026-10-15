@@ -7,7 +7,7 @@ component Health
     local float flash;
 }
 
-local singleton Shown
+local singleton Displayed
 {
     int hits;
     int deaths;
@@ -43,24 +43,24 @@ event(Hit hit) TakeHit(mut Health health)
     if (health.value <= 0) this.Destroy();
 }
 
-local event(Hit hit) Flash(mut Health health, mut Shown shown)
+local event(Hit hit) Flash(mut Health health, mut Displayed shown)
 {
     health.flash = 1;
     shown.hits += hit.damage;
 }
 
 [Before(Flash)]
-local event(verified Hit) Count(mut Shown shown)
+local event(verified Hit) Count(mut Displayed shown)
 {
     shown.hits += 1;
 }
 
-local event(Glanced glanced) Spark(mut Shown shown)
+local event(Glanced glanced) Spark(mut Displayed shown)
 {
     if (glanced.at.x > 0) shown.hits += 1;
 }
 
-local event(verified Destroyed) Mourn(Health health, mut Shown shown)
+local event(verified Destroyed) Mourn(Health health, mut Displayed shown)
 {
     shown.deaths += health.value + 1;
 }

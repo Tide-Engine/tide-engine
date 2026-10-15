@@ -1,0 +1,4 @@
+// expect: changes visibility groups
+VisibilityGroup Create() { return Visibility.CreateGroup(Audience.None); }
+view Change() { _ = Create(); }
+scene Main { }

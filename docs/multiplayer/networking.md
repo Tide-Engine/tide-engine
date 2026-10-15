@@ -22,10 +22,13 @@ The server ticks the one true world. Every tick, it sends each player:
 
 - who joined or left,
 - the inputs that changed,
-- the commands scheduled for that tick, with their sender and sequence (a big one by the number of the transfer every player was sent it as),
-- and a hash of the world after the tick.
+- in full-world games, commands scheduled for that tick, with sender and sequence,
+- a hash of that player's permitted world after the tick,
+- and, with visibility, the state correction and genuine lifecycle journal needed for that recipient.
 
 An input that didn't change, or didn't arrive, keeps its last value, on every machine. One that changed goes as what changed: a bit for each value that didn't. Players send theirs the same way, each tick's from the tick before. Its ints and enums take as little as they need: a number from -64 to 63 takes a byte, one up to about 8,000 either way two, and so on, and one that changed goes as by how much, so a big number that moves a little takes a byte too. A float that changed goes as the bits that changed, which for a value that moved a little, or a round one, is far fewer than its 32. Nothing is rounded: every value arrives exactly as it was sent, bit for bit.
+
+With visibility, owner input is filtered conservatively when that owner uses hidden entities or restricted components; the recipient's own input remains available. Previous and current inputs are normalized to the same permitted form before delta encoding. Commands execute on the server and clients observe permitted state consequences; their raw targets and payloads are not replayed to projected clients.
 
 ## Prediction and rollback
 
@@ -35,7 +38,7 @@ A client keeps a snapshot of every tick from the last one the server confirmed, 
 
 - If it went as the client guessed, the client only checks its hash against its snapshot.
 - If an input was different, the client goes back to the snapshot before that tick, and runs it and the ticks after it again with the right inputs.
-- If a hash differs anyway, the client gets the world again from the server: only the pages its own world lacks (see [Sending worlds](#sending-worlds)).
+- If a hash differs anyway, the client receives an authoritative repair of its permitted world (see [Sending worlds](#sending-worlds)).
 
 Below are two machines in one match: the first runs the server, and the second joined its room. Move the pointer over a frame to steer that machine's player. A disc is where the machine drawing it predicts the body is, and the ring of its color is where the server has confirmed it, which a view reads [`verified`](#predicted-and-confirmed).
 
@@ -55,7 +58,7 @@ A guess that was wrong is put right the moment the server's answer arrives, whic
 
 :::
 
-A client predicts at most a second ahead of the verified tick; beyond that, it waits for the server. The server keeps four seconds of ticks to send again, and a player further behind gets the whole world. A player that was sent the world has every tick since kept for it until it catches up, however long a big world took to arrive, up to 32 seconds; one that can't catch up in that long gets the world again.
+A client predicts at most a second ahead of the verified tick; beyond that, it waits for the server. The server keeps four seconds of ticks to send again, and a player further behind gets its complete permitted state. A player that was sent the world has every tick since kept for it until it catches up, however long a big world took to arrive, up to 32 seconds; one that can't catch up in that long gets the world again.
 
 When a client gets a world, or returns after its machine stopped while the match went on, it first catches up with the ticks the server has already run. It predicts nothing from the old world while doing so, and samples no input for ticks that can't arrive in time. A short pause skips old inputs too, even when it does not need catch-up. If the pause leaves new inputs behind the server and more confirmed ticks due now than the frame can run, the client catches up before making new predictions. Future inputs still go to the server while the client catches up. Catch-up work is spread over frames: normally no more than eight authoritative ticks a frame, with room for more when frames are consistently longer. A client with a clock for measuring its work also gives that work a budget of half a frame's time, checked between ticks, while running enough ticks to make progress, up to eight mandatory ticks. A machine too slow for the match falls behind and gets the world again; its frames don't keep asking for more work because the last one took longer.
 
@@ -67,7 +70,9 @@ Snapshots are cheap, which is what makes this work. The world is plain data, wit
 
 ## Sending worlds
 
-A world goes over the network page by page, as a delta: each page is either the same as the one the receiver has in its place, or its bytes, with runs of zeros packed small. Where its rows or cells are like the ones before them (entities lined up, a grid of sand), a page goes as how each one differs from the one before, which is mostly zeros too. Every byte arrives exactly as it was. A player with a world like the match's, such as its own after a hash differed, or the last one it had of a match that changed hands, first gets a hash of each page, says which ones its world lacks, and gets only those. A player joining with nothing does the same with the match as it started, which it starts itself, when starting a match calls no C (see [Calling C](../c/functions.md#what-c-is-trusted-with)): what never changed since, like a level the match made as it started, never goes over the network. A world small enough to go in one update goes whole, as do worlds of games whose start calls C, and of matches that went on from another's world. A world that doesn't come out as the server's hash says is asked for again, whole.
+Visibility-enabled games encode a canonical value stream for each recipient. It contains permitted entities/components and their reachable values, without server allocator metadata or hidden heap contents. Tick corrections delta-compress that stream from a known verified baseline. A larger repair transfers it in chunks, then adopts it only after validation and the expected hash agree. Hidden interactions can therefore correct public results without sending the hidden cause.
+
+Games without visibility keep the existing page-based path. Each page is either the same as the receiver's or its bytes, with runs of zeros packed small. Where rows or cells resemble those before them, a page goes as their differences too. A player with a similar world first gets page hashes and requests only missing pages. Joining can reuse unchanged pages of the match's deterministic initial world when starting it calls no C (see [Calling C](../c/functions.md#what-c-is-trusted-with)). Small worlds and starts that call C transfer whole. Both paths preserve values exactly.
 
 ## Views and prediction
 
@@ -82,7 +87,7 @@ Local code tells what's predicted from what the server has confirmed with one wo
 
 Without it, a view draws the world as this machine predicts it, and a [local handler](../game/events.md#local-handlers) hears each tick as this machine first ran it.
 
-A local handler hears an event once, though the tick that sent it may run again. A client remembers what each tick it hasn't had confirmed delivered: an event the tick sends again stays silent, one only the corrected tick has is heard then, late, and one the correction removed isn't taken back (see [Once, under rollback](../game/events.md#once-under-rollback)). What's kept for that is beside the world and never in it, so hashes, snapshots and what's sent are the same with local handlers or without.
+A local handler hears an event once, though the tick that sent it may run again. A client remembers what each tick it hasn't had confirmed delivered: an event the tick sends again stays silent, one only the corrected tick has is heard then, late, and one the correction removed isn't taken back (see [Once, under rollback](../game/events.md#once-under-rollback)). These records stay beside the world, outside its hash and snapshots. Visibility sessions separately carry authorized genuine lifecycle state for local handlers.
 
 ### Provisional correction smoothing
 
@@ -98,7 +103,9 @@ A player who joins gets the world (see [Sending worlds](#sending-worlds)) and a 
 
 ## Host migration
 
-With the game's `hostMigration` setting, the server tells every player what they need for its match to go on without it: its room's code, the room's key (which lets only them take the room over), which players are in the match, and the SHA-256 of each one's cookie. When the server leaves or stops answering, its players go to the room again. The relay pings the room's host: if it's gone, the first player there hosts the room, and the relay introduces the others to it. That machine runs the server from the last tick it verified, with the players already in its world, and the others join it with their cookies, which it checks against the hashes. Their own last worlds are nearly the new server's, so they only get the pages theirs lack. A match that ends says so at the relay too, which keeps its room as ended for five minutes: a player who missed the goodbye and comes back to take the match over is told it ended. See [Matches](./matches.md#host-migration).
+For full-world games, the game's `hostMigration` setting lets another player continue the match from its last verified world. The server distributes the room key, player identities and cookie hashes needed to reconnect; the relay introduces the new host and the other players. Existing worlds can reuse matching pages. An ended room stays marked ended for five minutes, so a late player does not revive it. See [Matches](./matches.md#host-migration).
+
+Visibility-enabled clients hold partial worlds and cannot currently become authoritative hosts. Tide refuses that promotion; a trusted complete-state handover is not implemented. A full snapshot held only on the old server is not a usable handover after it disappears.
 
 ## Reliability
 
@@ -106,7 +113,7 @@ Everything is sent again until it's acknowledged. Nothing waits on a reliable st
 
 [Commands](../game/commands.md) have a pending queue separate from tick inputs. The server schedules each received command into its next ticks and records its order. A command stays pending until a verified world confirms its sequence; duplicates are ignored. Per-player sequence state is part of the world and follows snapshots and host migration: a sequence for each [channel](../game/commands.md#ordering-channels) a game's commands are in, and a window of the unordered ids applied. Command handlers use ordinary guard clauses to check the sender's permissions and the payload against match state.
 
-A command too big for a datagram (one with a `List<byte>`: a file's bytes, up to 4 MiB) goes up in chunks of 1000 bytes, 16 an update, acknowledged and resent as a world's chunks are, under the inputs. Once the server has it whole, and its turn in its channel has come, the server sends it down to every player in the match the same way, and puts it in a tick only once they all have it: the tick's frame names the transfer rather than carrying the bytes, so no tick waits for one, on the server or on any player. A player being sent the world, or catching up with one, gets the transfer with the ticks it lacks, and one who joins with a world from a later tick needs nothing of it.
+A command too big for a datagram (one with a `List<byte>`, up to 4 MiB) uploads in 1000-byte chunks, 16 an update, acknowledged and resent under the inputs. In full-world games the server then distributes it before scheduling its tick, whose frame names the transfer. Visibility-enabled games keep command execution server-only and send permitted state consequences instead; a command transfer is not a public broadcast channel.
 
 ## Transports
 
@@ -116,11 +123,12 @@ Players find each other in rooms, by a code (see [Matches](./matches.md#rooms)),
 
 ## Who sees what
 
-[Private scenes](../game/scenes.md#private-scenes) record which players belong to them, but selective replication is not built yet: every client receives and simulates the whole match. A private scene therefore cannot keep cards, random seeds or other secrets from another player's machine. Hiding them in a view only changes what the screen draws.
+[State visibility](../game/visibility.md) restricts replication and partial client simulation to permitted entities and whole components. [Private scenes](../game/scenes.md#private-scenes) supply an enclosing audience, and `Visibility` groups add live entity and component policies. Hidden state is absent from the client, while the server continues simulating the complete match.
+
+Each tick verifies the recipient's canonical permitted state. Corrections use a known verified baseline, with deltas for changed bytes and chunked transfer when a repair is larger than one frame. Visibility changes supply fresh permitted state and local `Shown`/`Hidden` notifications. True `Spawned`/`Destroyed` state is journaled authoritatively for recipients permitted at event time; a generic custom-event audience channel is not currently provided. See the visibility page for public-state, task and resident-state constraints.
 
 ## Coming later
 
-- Selective state visibility and clients simulating only the parts of the world they receive.
 - Dedicated servers with no window and no player of their own, and a public match browser. Room codes and a [ready-made lobby](./matches.md#a-menu-that-comes-with-tide) are available now.
 
 ## Collider rewind
