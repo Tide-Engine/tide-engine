@@ -195,17 +195,65 @@ Currency defaults to EUR (`TIDE_HOSTING_CURRENCY`). Use Stripe test mode first.
 API requests are pinned to `2026-09-30.endive`; use that version for the webhook
 endpoint too. Available payment methods come from the Stripe Dashboard settings.
 Register `/webhooks/stripe` for `checkout.session.completed`,
-`checkout.session.async_payment_succeeded`, `charge.refunded` and
+`checkout.session.async_payment_succeeded`, `checkout.session.expired`,
+`invoice.paid`, `invoice.payment_failed`, `customer.subscription.created`,
+`customer.subscription.updated`, `customer.subscription.deleted`,
+`payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded` and
 `charge.dispute.created`. Raw webhook signatures, provider state, exact amount,
 currency and account are checked; replay adds credit once. Refunds/disputes
 freeze hosting pending review, including events delivered out of order.
-Browser redirects never grant credit. No postpaid usage or auto top-up exists.
+Browser redirects never grant credit. There is no postpaid usage.
 
-The dashboard links **Add credit** beside the balance to the credit panel.
+Set `TIDE_STRIPE_MONTHLY_PRICE` to a fixed EUR monthly recurring Price, quantity
+one, and `TIDE_HOSTING_MONTHLY_AMOUNT` to its minor-unit amount (default 2000).
+The same amount is granted as included hosting usage once per verified paid
+subscription invoice. The price/currency/amount/period are checked against
+provider state; only initial/cycle invoices qualify. Old or duplicate invoices
+cannot add another allowance for the same subscription period. Subscription
+Checkout, not a deploy, starts the recurring charge. Customers are persistent.
+
+Monthly allowance expires at its service-period end and is consumed before
+purchased credit. Purchased credit, including existing balances, carries
+forward, but an active paid subscription and enabled extra usage are required
+to spend it. Cancellation schedules the end of renewal, retaining paid-period
+access. Set `TIDE_STRIPE_PORTAL_CONFIG` to a Stripe Customer Portal configuration
+with payment-method updates, invoice history and cancellation at period end.
+The dashboard also supplies an explicit cancel/keep-renewal action.
+
+Extra usage defaults off. Customers select a top-up amount and a cap in minor
+units (up to 100000 extra per cycle). This explicitly authorizes automatic
+off-session prepaid payments. Manual Checkout and automatic PaymentIntent
+purchases share that cap, including pending/uncertain purchases. Purchases are
+assigned to the paid cycle in which they started. No credit is spendable until
+provider-confirmed payment. Processing payments retain their cap reservation;
+authentication-required payments are canceled before releasing it, with
+automatic charging paused until settings are saved again. A confirmed payment
+can complete after opt-out; previously authorized pending purchases are honored.
+
+Purchase IDs and customer idempotency keys are persisted before external calls.
+Ambiguous failures retry the same provider operation; after 23 hours, unknown
+operations require support reconciliation rather than risking another charge
+after Stripe's idempotency retention. Open hosted checkouts are reused; expire
+or finish them before selecting a different amount. The service reconciles
+known subscriptions/pending payment IDs each minute, separately from match ticks.
+Legacy one-time Checkout notifications remain fulfillable. Without a configured
+subscription Price, the existing local/prepaid test configuration remains usable.
+
+Lease refunds return to their original source, and expired allowance cannot
+become purchased credit. New leases cannot extend past a confirmed paid period.
+If renewal confirmation arrives late, a world can suspend at that boundary;
+after credit updates, resume it through the dashboard. No unpaid renewal grace
+or automatic restart of payment-suspended worlds is supplied.
+
+The dashboard links **Plan & extra credit** beside the balance to billing.
 It shows amount selection only when top-ups and both Stripe secrets are
 configured; otherwise it explains that purchases are unavailable. Test-mode
 keys display a sandbox label and test-payment button. The current Fly setup
-offers EUR 5/10/25 sandbox top-ups; allocations and usage rates remain disabled.
+offers a configurable EUR 20/month sandbox plan with EUR 20 included and
+EUR 5/10/25 extra top-ups; allocations and usage rates remain disabled. This
+does not select public launch pricing. The runtime key now also needs Customer,
+Subscription, Invoice, Customer Portal Session and PaymentIntent permissions;
+Product/Price/webhook configuration belongs to operator setup, not the runtime.
 
 Low credit produces dashboard incidents. Exhaustion stops new allocations,
 saves explicit worlds and suspends them. Resume requires credit/capacity.
@@ -256,6 +304,6 @@ production payments were created by implementation validation.
 
 Unbuilt: multiple host machines/regions, email notifications, managed player
 auth, cross-release save upgrades, remote builds, native client auto-updates,
-auto top-up and reusable compiled-module caching. WASM memory/import validation
+reusable compiled-module caching. WASM memory/import validation
 and worker interruption are exercised locally; the surrounding Node/native RTC
 service still needs production security/operational review.

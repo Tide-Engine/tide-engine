@@ -15,6 +15,7 @@ import { Maintenance } from './maintenance.mjs';
 export async function createService(config, options = {}) {
     await mkdir(config.folder, { recursive: true, mode: 0o700 });
     const store = options.store || new Store(join(config.folder, 'hosting.sqlite'));
+    store.billing.required = config.subscriptionRequired;
     const auth = new Auth(store, { ...config, fetcher: options.fetcher });
     const payments = new Payments(store, { ...config, fetcher: options.fetcher });
     const bundles = new Bundles(join(config.folder, 'bundles'), config);
@@ -37,7 +38,9 @@ export async function createService(config, options = {}) {
         memoryBytes: matches.running.get(match.id)?.worker?.memoryBytes || 0,
         cpuFraction: matches.running.get(match.id)?.worker?.cpuFraction ?? null,
         created: match.created, updated: match.updated, players: matches.running.get(match.id)?.players || 0 });
-    const accountView = account => ({ id: account.id, login: account.login, balance: account.balance,
+    const accountView = account => ({ id: account.id, login: account.login, balance: store.billing.state(account.id).balance,
+        billing: { ...store.billing.state(account.id), monthlyAmount: config.monthlyAmount,
+            available: Boolean(config.stripePrice && config.stripeSecret && config.stripeWebhookSecret), portal: Boolean(config.stripePortal) },
         csrf: account.kind === 'browser' ? account.csrf : undefined, currency: config.currency,
         topups: config.topups, paymentsAvailable: Boolean(config.topups.length && config.stripeSecret && config.stripeWebhookSecret),
         paymentTestMode: /^[sr]k_test_/.test(config.stripeSecret || ''), region: config.region, presets: config.presets,
@@ -75,7 +78,7 @@ export async function createService(config, options = {}) {
                 const charge = config.presets[project.preset].rate * config.leaseSeconds;
                 const paid = store.db.prepare(`SELECT 1 FROM matches WHERE project=? AND paid_until>?
                     AND state IN ('starting','running','recovering') LIMIT 1`).get(project.id, store.now());
-                requireValue(paid || (charge > 0 && store.account(project.account).balance >= charge),
+                requireValue(paid || (charge > 0 && store.billing.state(project.account).balance >= charge),
                     402, 'This game needs prepaid hosting credit before it can be played.');
                 const bundle = await bundles.get(match?.release || project.release), client = bundle.files.get('client.html');
                 requireValue(client, 404, 'This deployment hosts only the server.');
@@ -164,6 +167,17 @@ export async function createService(config, options = {}) {
             if (method === 'POST' && url.pathname === '/api/checkout') {
                 rate.take(`checkout/${account.id}`, 5);
                 return json(response, 200, { url: await payments.checkout(account, (await body(request)).amount) });
+            }
+            if (method === 'POST' && url.pathname.startsWith('/api/billing/')) {
+                rate.take(`billing/${account.id}`, 10);
+                if (url.pathname === '/api/billing/subscribe') return json(response, 200, { url: await payments.subscribe(account) });
+                if (url.pathname === '/api/billing/portal') return json(response, 200, { url: await payments.portal(account) });
+                if (url.pathname === '/api/billing/cancel') {
+                    await payments.cancellation(account, (await body(request)).cancel); return json(response, 200, { ok: true });
+                }
+                if (url.pathname === '/api/billing/extra') {
+                    store.billing.settings(account.id, await body(request), config.topups); return json(response, 200, { ok: true });
+                }
             }
             if (method === 'POST' && url.pathname === '/api/projects') {
                 const project = store.createProject(account.id, await body(request), config);
@@ -295,7 +309,8 @@ export async function createService(config, options = {}) {
                 if (closing) return;
                 try {
                     await matches.tick();
-                    if (store.now() >= cleanupAt) { cleanupAt = store.now() + 60_000; await maintenance.sweep(); }
+                    payments.poll(config);
+                    if (store.now() >= cleanupAt) { cleanupAt = store.now() + 60_000; store.billing.expire(); await maintenance.sweep(); }
                 } catch (error) { console.error('tide: hosting maintenance failed:', error.message); }
                 finally { if (!closing) timer = setTimeout(tick, 5); }
             };
@@ -305,6 +320,7 @@ export async function createService(config, options = {}) {
         },
         async close() {
             closing = true; clearTimeout(timer);
+            await payments.close();
             const httpClosed = new Promise(accept => server.close(accept));
             await matches.close(); await rooms?.close();
             await httpClosed;
