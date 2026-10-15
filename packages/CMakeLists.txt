@@ -298,6 +298,22 @@ target_include_directories(tide_box3d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/test
 target_link_libraries(tide_box3d_rewind PRIVATE tide_box3d)
 add_test(NAME tide_box3d_rewind COMMAND tide_box3d_rewind)
 
+tide_add_game(tide_box3d_mesh SOURCES box3d/bridge.c box3d/test/mesh.tide NAME mesh PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/mesh_test.c)
+target_include_directories(tide_box3d_mesh PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_mesh PRIVATE tide_box3d)
+add_test(NAME tide_box3d_mesh COMMAND tide_box3d_mesh)
+
+tide_add_game(tide_box3d_mesh_join SOURCES box3d/bridge.c box3d/test/mesh.tide NAME mesh PACKAGES Box3D box3d/box3d.tide
+    HOST box3d/test/join_test.c)
+target_compile_definitions(tide_box3d_mesh_join PRIVATE BOX3D_JOIN_HEADER="mesh.h")
+target_link_libraries(tide_box3d_mesh_join PRIVATE tide_box3d)
+add_test(NAME tide_box3d_mesh_join
+    COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:tide_box3d_mesh_join>"
+        "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/box3d_mesh_join"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test/join.cmake")
+set_tests_properties(tide_box3d_mesh_join PROPERTIES TIMEOUT 120)
+
 # A client's actual confirmed frame -> sampled input -> server's historical hit,
 # with server ticks, each client's updates and presentation paced independently.
 foreach(dimension 2 3)
