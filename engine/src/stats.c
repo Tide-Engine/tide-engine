@@ -369,6 +369,7 @@ static void fill(tide_stats *s, const tide_stats_values *v)
     } else {
         line(s, "draw calls", "%u", (unsigned)v->draw_calls);
     }
+    line(s, "vertices", "%llu", (unsigned long long)v->vertices);
     if (v->match) {
         const uint32_t from = s->line_count;
         // The input's delay goes with the ping it comes of, where the ping is in the list

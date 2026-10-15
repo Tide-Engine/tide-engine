@@ -9,6 +9,29 @@ creation/authentication, ownership, limits and tests: dedicated-servers.md.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
+## Vertex count in the stats (2026-10-15)
+
+The open drawer now has a `vertices` row after the GPU/draw-call row. The
+host passes the current frame's `tide_platform_draw_vertices` through the
+64-bit `tide_stats_values.vertices`; the row also shows zero for an empty
+frame and exists outside a match. Its scope is the game's submitted geometry
+in every pass, excluding the host overlays; see `notes/rendering.md`.
+`TIDE_STATS_LINES` is 16 to leave room for the additional row alongside both
+render timers and all three slow systems. Existing layout/input tests cover
+the added row, small-screen truncation and a value above 32 bits. User-facing
+counting rules are in `docs/tools/cli.md`.
+
+Validation: Windows Clang 23.1.2, Node 24.19.0; the full native debug suite
+(2,337 tests) and web debug suite (2,250) pass after correcting the new blit
+fixture's vertex layout and rerunning the affected draw tests. Native coverage
+includes OpenGL and Vulkan with both descriptor paths under validation; web
+coverage includes WebGL/WebGPU and exact host-to-drawer vertex totals.
+The production docs build and `git diff --check` pass. A 960×540 hidden capture
+was visually checked: a clear plus one rectangle reports 9 vertices, with the
+drawer excluded. Android, other OS builds and sanitizers were not run; no CI
+was dispatched. Hardware vertex-shader invocation counts remain outside this
+submitted-geometry counter's scope.
+
 ## Rendering and platform
 
 - `tide/run.h` is the standard host: `tide_run(&(tide_run_desc){.title = "...", .argc = argc, .argv = argv})` opens a window and runs the game in a session (`tide/session.h`), sampling this machine's input from the devices once per tick it runs, and draws its views and their GUI. The devices keep what happened for the next sample (a key that went down and up between two ticks, how far the mouse moved), and a sample clears them (`tide_devices_consume`). Where no tick can sample, the host clears them itself at the end of each frame (`tide_run_frame`): in a game with no input, and while the session isn't connected (in no match, connecting, or finding a match that changed hands), which is the session's to say, never a count of frames. So a match started from a menu reads what's held as it starts, never what was pressed before it; in a match that runs, a frame with no tick clears nothing. `tide_platform_web_first_tick` (`platform/tests/web_first_tick.c` with `first_tick.tide`) checks both in a page, and `tide_platform_first_tick` (`first_tick.mjs`, label `gpu`) the first in a run with no window. When `Main` is the match's, it starts at once, and opens it with `--host [port]`, or joins another with `--join code` (a room's) or `--connect address`. This machine's player joins before the first tick. A game needs no other C. Its loop is in `tide/host.h`, which runs a game through a table of its functions (`tide_host_game`), so that `tide run` can swap builds (see Hot reloading).
