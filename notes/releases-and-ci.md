@@ -57,6 +57,22 @@ seconds), including WebGL/WebGPU. The final preflight's release/request/cleanup
 assertions and all nine ordinary cases pass again; Node syntax and whitespace
 checks pass. No installer or workflow behavior changed.
 
+Final requested Build `38772910822`, at 16117bd1, completed successfully and
+published `v0.4.0-nightly.3` at 17:21:26 UTC on 2026-10-15. All native/web,
+MinGW, sanitizer and Android suites, all three packages and their installed
+smoke/C++/incremental checks, Google Play checks, JetBrains verification and
+Docs deployment passed. Windows native passed all 2,292 CTests, including the
+installer fixture in 22.83 seconds. Marketplace was skipped as intended for a
+nightly. The preceding run finished with only that installer fixture failing;
+its other suites and all package integrations passed too.
+
+Verified the published tag names exactly 16117bd1, the release is a nondraft
+prerelease with all five nonempty uploaded assets, and the public release JSON
+reports the same assets. The public SHA256SUMS contains all three platform
+packages, and the deployed docs homepage responds HTTP 200. Both Windows
+(nine cases) and Linux/POSIX (eight cases) installer fixtures pass locally.
+These final notes are unbuilt text; no additional workflow dispatch is needed.
+
 ## Managed hosting deployment workflow (2026-10-15)
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
