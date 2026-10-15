@@ -17,7 +17,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 FACES = {"+x": (0, 1), "-x": (0, -1), "+y": (1, 1), "-y": (1, -1), "+z": (2, 1), "-z": (2, -1)}
 YAWS = {"NORTH": 0.0, "EAST": math.pi / 2, "SOUTH": math.pi, "WEST": -math.pi / 2}
-PAINTS = {"CONCRETE", "PANELS", "WALLPAPER", "CARPET", "CEILING_TILE", "PLASTER", "PLANKS", "RUST", "TILES", "STONE", "METAL"}
+PAINTS = {"DOORS", "BRICK", "PANELS", "CONCRETE", "MARBLE", "PLANKS", "HAZARD", "RUST", "SHUTTER", "WALLPAPER", "CARPET", "CEILING_TILE", "PLASTER"}
+PROP_SOLID_PARTS = {"Desk":6, "Chair":6, "PlasticChair":6, "Cabinet":1, "Locker":1, "Partition":4,
+                    "Shelf":7, "Vending":1, "Cooler":2, "Monitor":2, "Bed":9, "Lounger":9,
+                    "Curtain":1, "Plant":2, "CoatRack":3, "Pipe":3, "Ladder":11,
+                    "Cardboard":1, "Pallet":7, "Cone":6, "Dollhouse":6}
 
 
 class MapError(ValueError):
@@ -194,13 +198,12 @@ def lifted(at, yaw, point):
 def lift_boxes(lift):
     """Mirror LiftShell's actual boxes so structural checks include its jambs."""
     at, yaw = lift["at"], YAWS[lift["yaw"]]
-    shapes = [((0, -.5, 0), (6, 1, 5.4)), ((-3.5, 2.2, 0), (1, 4.4, 5.4)),
-              ((3.5, 2.2, 0), (1, 4.4, 5.4)), ((0, 2.2, -2.72), (8, 4.4, 1)),
-              ((0, 4.2, 2.1), (6, .4, 1)), ((0, 4.9, 0), (8, 1, 4.2)),
-              ((0, -.5, 2.1), (6.08, 1, 1.2))]
-    for end in (-1, 1):
-        for side in (-1, 1):
-            shapes.append(((side * 3.5, 2.2, end * 2.1), (1.08, 4.4, 1.08)))
+    shapes = [((0, -.5, -.06), (8, 1, 4.32)), ((-3.5, 2.2, 0), (1, 4.4, 3.12)),
+              ((3.5, 2.2, 0), (1, 4.4, 3.12)), ((0, 2.2, -2.72), (8, 4.4, 1)),
+              ((0, 4.2, 2.1), (6, .4, 1)), ((0, 4.8, -.31), (8, 1, 3.82))]
+    for side in (-1, 1):
+        shapes.append(((side * 3.5, 2.2, 2.1), (1, 4.4, 1.08)))
+        shapes.append(((side * 3.5, 2.2, -1.89), (1, 4.4, .66)))
     result = []
     for center, size in shapes:
         rotated = turn(size, yaw)
@@ -219,6 +222,17 @@ def validate_lift(lift, boxes, label):
     for box in boxes:
         description = box.get("id", f"built {box.get('kind', 'wall')} at {box.get('center')} size {box.get('size')}")
         require(not intersects(clear, box), f"{label}: lift opening/approach is blocked by {description}")
+        if box.get("kind") in (4, 5) or "rotation" in box:
+            continue
+        low, high = bounds(box)
+        center = turn(sub(tuple((a + b) / 2 for a, b in zip(low, high)), lift["at"]), -yaw)
+        size = tuple(abs(v) for v in turn(sub(high, low), -yaw))
+        inner = tuple(c - s / 2 for c, s in zip(center, size))
+        outer = tuple(c + s / 2 for c, s in zip(center, size))
+        if min(outer[1], 3.94) - max(inner[1], .06) <= 1e-4 or min(outer[2], 2.64) - max(inner[2], -2.22) <= 1e-4:
+            continue
+        coincident = abs(inner[0] - 3) < 1e-4 or abs(outer[0] + 3) < 1e-4
+        require(not coincident, f"{label}: {description} is coplanar with the lift's inner side lining; leave the full eight-metre shell slot")
     # Exact rectangular union coverage: every boundary comes from an actual
     # floor edge. Membership is constant inside each resulting cell, so this
     # catches even a narrow gap instead of relying on a spacing of sample rays.
@@ -619,9 +633,8 @@ def validate_bindings(sources, scene, campaign=False):
         expected_walls = []
         for box in boxes.values():
             low, high = bounds(box)
-            seam = .06 if not box.get("takes", False) and high[0] - low[0] > 1 and high[2] - low[2] > 1 and high[1] - low[1] <= 2.5 else 0
             expected_walls.append({"center":tuple((a + b) / 2 for a, b in zip(low, high)),
-                                   "size":tuple(b - a + (seam if i != 1 else 0) for i, (a, b) in enumerate(zip(low, high))),
+                                   "size":tuple(b - a for a, b in zip(low, high)),
                                    "takes":box.get("takes", False), "kind":box.get("kind", 0)})
         matching(expected_walls, room.get("walls", []), f"{label} structural boxes", exact=False)
         wires = [{"signal":w["signal"], "points":[point(p, anchors) for p in w["points"]]} for w in source.get("wires", [])]
@@ -657,6 +670,38 @@ def validate_bindings(sources, scene, campaign=False):
     return errors
 
 
+def exposed_top_overlaps(boxes):
+    """Find shared top-face areas that are not buried inside other structure."""
+    solids = [(box, bounds(box)) for box in boxes if box.get("kind") != 4]
+    conflicts = []
+    for first, (a, (al, ah)) in enumerate(solids):
+        for second in range(first + 1, len(solids)):
+            b, (bl, bh) = solids[second]
+            if abs(ah[1] - bh[1]) > 1e-4:
+                continue
+            x0, x1 = max(al[0], bl[0]), min(ah[0], bh[0])
+            z0, z1 = max(al[2], bl[2]), min(ah[2], bh[2])
+            if x1 - x0 <= 1e-4 or z1 - z0 <= 1e-4:
+                continue
+            covers = []
+            for other, (_, (low, high)) in enumerate(solids):
+                if other in (first, second) or not low[1] - 1e-4 <= ah[1] + .002 < high[1] - 1e-4:
+                    continue
+                left, right = max(x0, low[0]), min(x1, high[0])
+                near, far = max(z0, low[2]), min(z1, high[2])
+                if left < right and near < far:
+                    covers.append((left, right, near, far))
+            xs = sorted({x0, x1} | {v for rect in covers for v in rect[:2]})
+            zs = sorted({z0, z1} | {v for rect in covers for v in rect[2:]})
+            exposed = any(right - left > 1e-4 and far - near > 1e-4 and
+                          not any(lx <= (left + right) / 2 <= hx and lz <= (near + far) / 2 <= hz
+                                  for lx, hx, lz, hz in covers)
+                          for left, right in zip(xs, xs[1:]) for near, far in zip(zs, zs[1:]))
+            if exposed:
+                conflicts.append((a, b, ah[1]))
+    return conflicts
+
+
 def validate_scene(scene):
     """Validate exported match geometry, including geometry made by Tide hooks.
 
@@ -670,6 +715,18 @@ def validate_scene(scene):
     for room in scene.get("maps", []):
         label = f"map {room['id']}"
         boxes = room.get("walls", []) + [b for b in room.get("solids", []) if b.get("kind") not in ("door", "gate")]
+        for first, second, height in exposed_top_overlaps(room.get("walls", [])):
+            errors.append(f"{label}: coplanar exposed top surfaces at y {height:.4g}: {first.get('center', first.get('id'))} and {second.get('center', second.get('id'))}")
+        for prop in room.get("props", []):
+            expected = PROP_SOLID_PARTS.get(prop.get("kind_name"), 0)
+            if not expected:
+                continue
+            count = prop.get("solid_parts", 0)
+            if count != expected:
+                errors.append(f"{label}: {prop['kind_name']} at {prop['at']} needs {expected} attached solid parts, found {count}")
+            actual = [b for b in room.get("solids", []) if b.get("kind") == "prop" and b.get("owner") == prop.get("entity")]
+            if len(actual) != expected:
+                errors.append(f"{label}: {prop['kind_name']} at {prop['at']} is missing its actual compound collision geometry")
         for index, wire in enumerate(room.get("wires", [])):
             points = wire["points"]
             for segment, (a, b) in enumerate(zip(points, points[1:])):

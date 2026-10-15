@@ -13,7 +13,13 @@ static void freight_jump(tide_world *world, float z, float high, bool under_shut
         if (op.position.z >= z && op.position.y > high - .1f) { across = true; break; }
     }
     input(world, 0, (PilotInput){0});
-    ticks(world, 35);
+    // The carried body can still be descending when the leading foot clears
+    // the lip. Wait for the real landing rather than assuming 35 frames.
+    for (int settle = 0; settle < 180; settle++) {
+        const Operator landed = pilot(world, 0);
+        if (landed.grounded && near(landed.position.y, high, .15f)) break;
+        tide_world_tick(world);
+    }
     if (!across || fabsf(pilot(world, 0).position.y - high) > .15f)
         fprintf(stderr, "freight jump: z %.2f high %.2f actual %.2f %.2f %.2f cube %.2f %.2f %.2f held %d\n", z, high,
                 pilot(world, 0).position.x, pilot(world, 0).position.y, pilot(world, 0).position.z,
@@ -107,11 +113,19 @@ static void place_weighbridge_tests(void)
     CHECK(!world.Fold.ends.at[2].open || world.Fold.ends.at[2].at.y < 5.4f);
     freight_jump(&world, 7, 5.4f, true);
     freight_jump(&world, 11.2f, 5.4f, false);
-    walk_to(&world, 0, -9, 12.8f);
-    aim_at(&world, 0, (tide_float3){-9, 5.4f, 11.5f});
+    // Set the large cargo down from beside the plate. A steep downward aim
+    // with the giant pressed against the rear wall jams it into its own body.
+    // Stay close enough that its held position reaches the plate after braking.
+    walk_to(&world, 0, -8.2f, 11.5f);
+    aim_at(&world, 0, (tide_float3){-9, 6.14f, 11.5f});
     ticks(&world, 45);
+    CHECK((world.Arena.signals & 2) == 0 && world.Arena.gate < .01f);
     act(&world, 0, (PilotInput){.carry = true});
     ticks(&world, 120);
+    CHECK(world.Fold.holding.at[0] == 0 && world.Fold.cubeScale == 2);
+    if (!((world.Arena.signals & 2) != 0 && world.Arena.gate > .99f))
+        fprintf(stderr, "Freight cargo %.3f %.3f %.3f scale%.3f holder%d operator %.3f %.3f %.3f signals%d\n", world.Fold.cube.x, world.Fold.cube.y, world.Fold.cube.z,
+                world.Fold.cubeScale, world.Fold.holding.at[0], pilot(&world, 0).position.x, pilot(&world, 0).position.y, pilot(&world, 0).position.z, world.Arena.signals);
     CHECK((world.Arena.signals & 2) != 0 && world.Arena.gate > .99f);
     aim_at(&world, 0, (tide_float3){-9, 6.7f, 13.99f});
     act(&world, 0, (PilotInput){.amber = true});

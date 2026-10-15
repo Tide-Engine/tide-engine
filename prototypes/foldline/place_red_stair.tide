@@ -33,19 +33,26 @@ void BuildRedStair(Arena arena, mut Place place)
         float top = 3 - (step + 1) * .375;
         Fill(arena, 9 - (step + 1) * .75, 9 - step * .75, top - .6, top, -12, -8, CONCRETE);
     }
-    Fill(arena, 2, 3.5, -1, 0, -14, -8, RUST);
+    Fill(arena, 2, 3, -1, 0, -14, -8, RUST);
     Fill(arena, 3, 13.5, -1, 0, -14, -12, RUST);
     Fill(arena, 9, 13.5, -1, 0, -12, 15, RUST);
     Fill(arena, 7.5, 9, -1, 0, 12, 15, RUST);
     // The south return corridor lies beyond the last stair, inside this
     // outer wall. Neither its floor nor the bottom landing overlaps the wall.
     // Outer walls, with actual openings for the two lift shells.
-    Fill(arena, -14.5, -13.5, -4, 14, -15, 16, CONCRETE);
-    Fill(arena, 13.5, 14.5, -4, 14, -15, 16, CONCRETE);
-    Fill(arena, -14.5, -13.5, -4, 14, -15, -14, CONCRETE);
-    Fill(arena, -7.5, 14.5, -4, 14, -15, -14, CONCRETE);
-    Fill(arena, -14.5, 7.5, -4, 14, 15, 16, CONCRETE);
-    Fill(arena, 13.5, 14.5, -4, 14, 15, 16, CONCRETE);
+    Fill(arena, -14.5, -13.5, -4, 8, -15, 16, CONCRETE);
+    Fill(arena, -14.5, -13.5, 8, 12.4, -9.46, 16, CONCRETE);
+    Fill(arena, -14.5, -13.5, 12.4, 14, -15, 16, CONCRETE);
+    Fill(arena, 13.5, 14.5, -4, 0, -15, 16, CONCRETE);
+    Fill(arena, 13.5, 14.5, 0, 4.4, -15, 14.46, CONCRETE);
+    Fill(arena, 13.5, 14.5, 4.4, 14, -15, 16, CONCRETE);
+    Fill(arena, -14.5, -6.5, -4, 8, -15, -14.32, CONCRETE);
+    Fill(arena, -14.5, -6.5, -4, 7.9, -14.32, -14, CONCRETE);
+    Fill(arena, -13.5, -6.5, 12.4, 14, -15, -14, CONCRETE);
+    Fill(arena, -6.5, 14.5, -4, 14, -15, -14, CONCRETE);
+    Fill(arena, -14.5, 6.5, -4, 14, 15, 16, CONCRETE);
+    Fill(arena, 6.5, 14.5, -4, -.1, 15, 16, CONCRETE);
+    Fill(arena, 6.5, 13.5, 4.4, 14, 15, 16, CONCRETE);
     Fill(arena, -14.5, 14.5, 14, 15, -15, 16, CONCRETE, false, 2);
     // Railings border the void, never a boarding edge.
     Raise(arena, float3(-8.15, 6.6, 6.5), float3(.12, 1.2, 2.8), RUST, false, 4);
@@ -54,8 +61,8 @@ void BuildRedStair(Arena arena, mut Place place)
     var falling = SpawnBeast(arena, BeastKind.Drowned, float3(0, 10, 0), clip: "Crawl");
     falling.Add(WellFall);
     SpawnBeast(arena, BeastKind.Crawler, float3(12.5, 10, 4), WEST, .5, clip: "Idle");
-    for (int chain = 0; chain < 6; chain++)
-        SetProp(arena, PropKind.Pipe, float3(-7.5 + chain * 3, 10, 0), scale: float3(.15, .15, 4));
+    for (int conduit = 0; conduit < 6; conduit++)
+        SetProp(arena, PropKind.Pipe, float3(-7.5 + conduit * 3, 14, 0), scale: float3(.15, .15, 4));
     LampGrid(place, float2(-14, -12), float2(4, 4), 7, 7);
     for (int row = 0; row < 7; row++)
         for (int col = 0; col < 7; col++)

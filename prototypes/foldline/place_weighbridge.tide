@@ -10,8 +10,8 @@ void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -15, -14, 5.6, 12.6, -13, -4, PANELS);
     Fill(arena, -15, -14.8, 0, 5.6, -13, -4, PANELS);
     Fill(arena, 14, 15, 0, 12.6, -15, 15, PANELS);
-    Fill(arena, -15, -11, 0, 12.6, -15, -14, PANELS);
-    Fill(arena, -5, 15, 0, 12.6, -15, -14, PANELS);
+    Fill(arena, -15, -12, 0, 12.6, -15, -14, PANELS);
+    Fill(arena, -4, 15, 0, 12.6, -15, -14, PANELS);
     // Receptive panels sit before the structural walls. Cover their narrow
     // side/reverse faces so a distant shot cannot use a hidden upright edge.
     var west = Fill(arena, -14.8, -14, 0, 5.6, -13, -4, WALLPAPER, true);
@@ -26,17 +26,17 @@ void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
     // Broad loading terraces. No furniture offers a half step to a whole body.
     Fill(arena, -14, -4, 0, 1.8, -3, 1, PANELS);
     Fill(arena, -14, -4, 0, 3.6, 1, 5, PANELS);
-    Fill(arena, -14, -4, 0, 5.4, 5, 14, PANELS);
+    Fill(arena, -14, -4, 0, 5.4, 5, 10, PANELS);
     Fill(arena, -14, 14, 4.4, 5.4, 10, 14, PANELS);
     // This opaque fourth riser spans the gallery, including its east side:
     // otherwise the service operator can shoot diagonally around its edge.
     // The giant can jump it; a small stack cannot shoot over.
     Fill(arena, -14, 14, 5.4, 7.2, 9.8, 10.2, CONCRETE);
     Fill(arena, -15, -12, 5.4, 12.6, 14, 15, PANELS);
-    Fill(arena, -6, 5, 5.4, 12.6, 14, 15, PANELS);
+    Fill(arena, -6, 4, 5.4, 12.6, 14, 15, PANELS);
     Fill(arena, -12, -6, 8.2, 12.6, 14, 15, PANELS);
-    Fill(arena, 11, 15, 5.4, 12.6, 14, 15, PANELS);
-    Fill(arena, 5, 11, 9.4, 12.6, 14, 15, PANELS);
+    Fill(arena, 12, 15, 5.4, 12.6, 14, 15, PANELS);
+    Fill(arena, 4, 12, 9.8, 12.6, 14, 15, PANELS);
     Fill(arena, -12, -6, 5.4, 8.2, 13.99, 14.8, WALLPAPER, true);
     Fill(arena, -12.4, -12, 5.4, 8.2, 13.96, 14.9, PANELS);
     Fill(arena, -6, -5.6, 5.4, 8.2, 13.96, 14.9, PANELS);
@@ -49,12 +49,13 @@ void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, 4, 14, 3.6, 6, 3, 3.3, RUST, false, 4);
     for (int rack = 0; rack < 3; rack++)
     {
-        SetProp(arena, PropKind.Shelf, float3(12.8, 0, 5 + rack * 1.4), WEST);
+        SetProp(arena, PropKind.Shelf, float3(10.8, 0, 5 + rack * 1.6), WEST);
         Fill(arena, 12.4, 14, 0, 4.1, 4.4 + rack * 1.4, 5.6 + rack * 1.4, RUST);
     }
-    SetProp(arena, PropKind.Monitor, float3(9.7, 3.6, 1), SOUTH);
+    SetProp(arena, PropKind.Desk, float3(11, 3.6, 0), SOUTH);
+    SetProp(arena, PropKind.Monitor, float3(11, 4.405, 0), SOUTH);
     SetProp(arena, PropKind.Pipe, float3(-14, 0, 8), 0, float3(1, 3, 1));
-    SetProp(arena, PropKind.Arrow, float3(-13.8, .02, -3.8), NORTH, float3(2));
+    SetProp(arena, PropKind.Arrow, float3(-13.935, 1.2, -4.8), EAST, float3(2));
     SpawnBeast(arena, BeastKind.Crawler, float3(0, 10.5, 12), EAST, .8, clip: "Run");
     Fill(arena, -3, 3, 10.4, 12.6, 11.7, 12.1, RUST, false, 4);
     LampGrid(place, float2(-14, -14), float2(4, 4), 7, 7);
