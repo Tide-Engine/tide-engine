@@ -41,12 +41,12 @@ MapLens WorkshopLens(LevelLayout layout, float2 screen, int room)
 
 float2 MapPoint(float2 cell, MapLens lens) { return lens.origin + cell * lens.tile; }
 
+// The room a room's box stands in, where in it, and which box that is.
 struct RoomSurround
 {
     int room = -1;
     float2 anchor;
     int box = -1;
-    bool reference;
 }
 
 // A maker has one visible pose while crossing a doorway. Its position and
@@ -81,7 +81,7 @@ struct MakerPassage
 
 float2 PassageAnchor(RoomSurround gate, Picture picture)
 {
-    return gate.box >= 0 && gate.box < 8 ? picture.boxes[gate.box] : gate.anchor;
+    return gate.box >= 0 && gate.box < MAX_ROOMS ? picture.boxes[gate.box] : gate.anchor;
 }
 
 bool SameGate(RoomSurround a, RoomSurround b)
@@ -119,21 +119,18 @@ float2 DoorLip(LevelLayout layout, int room, int side)
 }
 
 // The box a bot went into by one step: one beside where it stood, whose
-// facing doorway is where it now stands. -1 for any other step.
-int EnteredBox(Workshop workshop, Traveler before, Traveler after)
+// facing doorway is where it now stands. -1 for any other step. In a cycle,
+// leaving a room and entering a box can arrive at the same cell; the move's
+// direction distinguishes them.
+int EnteredBox(Workshop workshop, Traveler before, Traveler after, int direction)
 {
-    var apart = after.position - before.position;
-    if (before.room == after.room && Math.Abs(apart.x) + Math.Abs(apart.y) == 1) return -1;
-    for (var direction = 0; direction < 4; direction++)
-    {
-        var box = BoxAt(workshop.layout, workshop.puzzle, before.room, before.position + Direction(direction));
-        if (box < 0 || BoxDestination(workshop.layout, box) != after.room) continue;
-        if (CellEqual(after.position, DoorCell(workshop.layout, after.room, (direction + 2) % 4))) return box;
-    }
-    return -1;
+    if (direction < 0 || direction > 3) return -1;
+    var box = BoxAt(workshop.layout, workshop.puzzle, before.room, before.position + Direction(direction));
+    return box >= 0 && box == after.room &&
+        CellEqual(after.position, DoorCell(workshop.layout, after.room, (direction + 2) % 4)) ? box : -1;
 }
 
-MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after, bool capturedSource = false)
+MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler before, Traveler after, bool capturedSource = false, int direction = -1)
 {
     var destination = ReturnSurround(workshop, after, picture);
     var previous = ReturnSurround(workshop, before, picture);
@@ -150,13 +147,12 @@ MakerPassage BeginPassage(Workshop workshop, Picture picture, int seat, Traveler
         trip.fromSide = PassageSide(destination.anchor - previous.anchor);
         trip.side = (trip.fromSide + 2) % 4;
     }
-    else if (EnteredBox(workshop, before, after) >= 0)
+    else if (EnteredBox(workshop, before, after, direction) >= 0)
     {
-        // In through the box it stood beside, which may be a copy: the room
-        // it is in afterwards has one box of its own, somewhere else.
-        var box = EnteredBox(workshop, before, after);
+        // In through the box it stood beside.
+        var box = EnteredBox(workshop, before, after, direction);
         trip.entering = true;
-        trip.gate = RoomSurround { room = before.room, anchor = picture.boxes[box], box = box, reference = box >= MAX_ROOMS };
+        trip.gate = RoomSurround { room = before.room, anchor = picture.boxes[box], box = box };
         trip.side = PassageSide(float2(before.position) - trip.gate.anchor);
     }
     else if (after.depth > before.depth && destination.room == before.room)
@@ -310,9 +306,9 @@ void PassagePose(LevelLayout layout, mut MakerPassage trip, Picture picture)
         trip.scale = Math.Lerp(trip.sourceScale, trip.entering ? scale : 1.0, blend);
         trip.visualInside = trip.sourceInside;
     }
-    // Canonical copies can occur through a movable reference or a containment
-    // cycle. Their edge passage crossfades with the actual gateway pose, using
-    // the same policy for every box rather than popping recursive aliases.
+    // A room is drawn more than once where a box is inside itself or in a
+    // cycle. Those drawings' edge passage crossfades with the actual gateway
+    // pose, using the same policy for every box rather than popping them.
     var aliasBlend = trip.entering ? PassageEase((progress - (trip.bridge ? 0.80 : 0.70)) / (trip.bridge ? 0.20 : 0.30)) : PassageEase(progress / 0.30);
     trip.aliasPosition = Math.Lerp(trip.aliasSource, trip.entering ? trip.target : trip.lip / scale + center, aliasBlend);
     // Inside, the doorway pose only shows through the opening itself. A
@@ -321,35 +317,26 @@ void PassagePose(LevelLayout layout, mut MakerPassage trip, Picture picture)
         Math.Lerp(trip.aliasFrom, 0.0, PassageEase((progress - 0.22) / 0.08));
     if (!trip.entering && trip.gate.room == trip.child && progress > 0.65)
     {
-        // A self exit reaches another occurrence of the same shared room.
-        // Its canonical copies arrive at the parent pose before completion,
-        // rather than suddenly reappearing when the passage is retired.
+        // A self exit reaches another drawing of the same room. The room's
+        // other drawings of the bot arrive at the parent pose before
+        // completion, rather than suddenly reappearing when the passage is
+        // retired.
         trip.aliasPosition = trip.position;
         trip.aliasAlpha = PassageEase((progress - 0.65) / 0.35);
     }
 }
 
-RoomSurround AncestorSurround(Workshop workshop, Traveler actor, int room, int layer, Picture picture)
+// What is outside a room: its one box, and the room that box stands in, which
+// is the room itself where the box is inside itself.
+RoomSurround AncestorSurround(Workshop workshop, int room, Picture picture)
 {
-    mut var surround = RoomSurround { };
-    if (room < 0 || room >= workshop.layout.roomCount) return surround;
-    mut var entry = Entry { box = room };
-    var step = actor.depth - 1 - layer;
-    if (step >= 0 && step < MAX_DEPTH && EntryDestination(workshop.layout, actor.trail[step]) == room)
-        entry = actor.trail[step];
-    if (ValidBox(workshop.layout, entry.box))
-    {
-        surround.room = BoxPlacement(workshop.layout, workshop.puzzle, entry.box).room;
-        surround.anchor = picture.boxes[entry.box];
-        surround.box = entry.box;
-        surround.reference = entry.box >= MAX_ROOMS;
-    }
-    return surround;
+    if (!ValidRoom(workshop.layout, room)) return RoomSurround { };
+    return RoomSurround { room = workshop.puzzle.rooms[room].room, anchor = picture.boxes[room], box = room };
 }
 
 RoomSurround ReturnSurround(Workshop workshop, Traveler actor, Picture picture)
 {
-    return AncestorSurround(workshop, actor, actor.room, 0, picture);
+    return AncestorSurround(workshop, actor.room, picture);
 }
 
 MapLens InteriorLens(LevelLayout layout, int room, MapLens parent, float2 anchor)
@@ -400,16 +387,15 @@ Transit BeginTransit(LevelLayout layout, Puzzle puzzle, int oldRoom, float2 old,
     for (var direction = 0; direction < 4; direction++)
     {
         var gate = BoxAt(layout, puzzle, oldRoom, cell + Direction(direction));
-        if (gate < 0 || BoxDestination(layout, gate) != newRoom) continue;
+        if (gate < 0 || gate != newRoom) continue;
         return Transit { via = oldRoom, at = old, goal = float2(cell + Direction(direction)) - float2(Direction(direction)) * .30,
             from = 1, to = RoomScale(layout, newRoom), scale = 1 };
     }
-    // Out of its room: it stands beside a box of that room, whichever copy
-    // its pusher came in through.
+    // Out of its room: it stands beside that room's box.
     for (var direction = 0; direction < 4 && ValidRoom(layout, oldRoom); direction++)
     {
         var shell = BoxAt(layout, puzzle, newRoom, now - Direction(direction));
-        if (shell < 0 || BoxDestination(layout, shell) != oldRoom) continue;
+        if (shell != oldRoom) continue;
         return Transit { via = newRoom, at = float2(now) - float2(Direction(direction)) * .70, goal = float2(now),
             from = RoomScale(layout, oldRoom), to = 1, scale = RoomScale(layout, oldRoom) };
     }
@@ -476,9 +462,9 @@ float2 SmoothCell(float2 current, float2 target, float blend)
 }
 
 // The heading's rows end here; the scene has the window below them.
-float SceneTop(float2 screen) { return screen.x < 1050 ? 128.0 : 66.0; }
+float SceneTop(float2 screen) { return screen.x < 720 ? 122.0 : 112.0; }
 // What the controls along the bottom need clear of the focused room.
-float SceneBottom(float2 screen) { return screen.x < 720 ? 200.0 : 80.0; }
+float SceneBottom(float2 screen) { return screen.x < 720 ? 206.0 : 124.0; }
 float SceneSide(float2 screen)
 {
     return Math.Max(200, Math.Min(screen.x - 24, screen.y - SceneTop(screen) - SceneBottom(screen)));
