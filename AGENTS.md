@@ -115,7 +115,7 @@ Simulation never includes platform headers. Views read the world and draw withou
 - Repair NaN/infinite input fields to their defaults before `Sanitize`. Math should avoid propagating invalid values: preserve forgiving clamp/min/max/normalize behavior in `tide/math.h`.
 - Hash and check the world **every tick, in every build**. Optimize its cost rather than making it periodic. Verified ticks have received required state and corrections; later ticks are predicted.
 - State visibility and partial client simulation are agreed designs, **not implemented**: every client still receives and simulates the whole world. Do not treat private scenes or hidden RNG seeds as protected secrets today. Future visibility is decided dynamically by the server, with ordinary state behind it.
-- Hosted matches are an agreed future direction, **not built**: WebAssembly sandboxing with tick budgets, including any game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views.
+- Hosted matches are an agreed future direction, **not built**: WebAssembly sandboxing with tick budgets, including any game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views. The agreed local-build deployment, simulation compatibility, lifetime/recovery and prepaid hosting design is in `notes/managed-hosting.md`; provider choices and implementation APIs remain open.
 
 ## Modding
 
@@ -195,6 +195,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Scheduler analysis, tick threads, parallel loops and temporary handles | `notes/schedule-and-threads.md` |
 | Session/net/delta runtime, inputs, commands, lead, migration and verification | `notes/netcode.md` |
 | Dedicated server builds, multiple matches, match IDs and authentication/admission | `notes/dedicated-servers.md` |
+| Planned managed WASM hosting, local-build deployment, simulation compatibility, recovery and prepaid billing | `notes/managed-hosting.md` |
 | Verified/local event handlers and generated listeners | `notes/verified-and-local-handlers.md` |
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |

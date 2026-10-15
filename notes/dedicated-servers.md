@@ -13,6 +13,11 @@ The API names, C entry point, limits, timeouts and wire envelope below are agent
 picks, Provisional in docs/spec.md. No Tide declaration syntax was approved or
 introduced. Managed/sandboxed hosting and the inactive build service are separate.
 
+The subsequent agreed managed-hosting design is recorded in
+[managed-hosting.md](managed-hosting.md): local artifact builds/uploads, WASM
+match isolation, simulation compatibility, persistent recovery and prepaid
+billing. It is planned work and does not change the native implementation below.
+
 ## Implementation and ownership
 
 `engine/include/tide/hosting.h` and `engine/src/hosting.c` are agent-maintained on
