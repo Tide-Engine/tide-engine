@@ -52,6 +52,17 @@ Windows native debug passes 2,360 CTests (119.33 seconds), and web debug passes
 2,272 (259.60 seconds), including WebGL/WebGPU. Node 24.16.0/Clang 23.1.2,
 Node syntax checks for the earlier fixture edits and git diff --check pass.
 
+## Complete Windows installer preflight (2026-10-15)
+
+The installer fixture's startup preflight now uses its real mocked fresh-install
+path, sharing the release list with timed cases and exercising selection,
+scratch creation and the real checksum before stopping at mocked unpacking.
+It verifies the selected release, credential-free requests and temporary-file
+cleanup. Cases retain their 30-second limits, assertions and fresh isolated
+module caches; preflight retains its 300-second cold-start guard and writes no
+user installation, PATH or registry state. Run 38768886333's phase evidence,
+one-time-delay/failure probes and validation are in releases-and-ci.md.
+
 Folder deployment link (2026-10-15): `tide deploy` needs no dashboard setup.
 Its existing project auto-creation now normalizes the folder name and saves
 the immutable project ID plus service origin atomically in `tide.deploy.json`.
