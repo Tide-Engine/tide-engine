@@ -4,7 +4,15 @@
 // game C: void tide_server_entry(tide_hosting_desc *host).
 #include "tide/serve.h"
 
+#ifdef __APPLE__
+// Supply a replaceable default so standalone Mach-O servers link without a hook.
+__attribute__((weak)) void tide_server_entry(tide_hosting_desc *host)
+{
+    (void)host;
+}
+#else
 extern void tide_server_entry(tide_hosting_desc *host) __attribute__((weak));
+#endif
 
 static inline int tide_server_run(const int argc, char **argv, const char *name)
 {

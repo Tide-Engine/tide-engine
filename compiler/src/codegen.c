@@ -19098,7 +19098,7 @@ bool codegen(program *prog, const codegen_options *opts)
     decl **all_assets = NULL;
     if (opts->server) {
         all_assets = arena_alloc((size_t)(all_asset_count ? all_asset_count : 1) * sizeof *all_assets);
-        memcpy(all_assets, prog->assets.items, (size_t)all_asset_count * sizeof *all_assets);
+        if (all_asset_count) memcpy(all_assets, prog->assets.items, (size_t)all_asset_count * sizeof *all_assets);
         for (int i = 0; i < all_asset_count; i++) all_assets[i]->server_asset = true;
         if (opts->strip_server_assets) program_strip_server_assets(prog);
         sb_printf(&g.h, "\n// Host build metadata, outside the shared match identity.\n"
