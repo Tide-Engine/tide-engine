@@ -857,6 +857,16 @@ static bool sync_body(body *b)
         // next resident commit marks the whole arena. Box3D wakes the body, lets go of everything it touches, and finds
         // what still does in the step
         if (b->type != b->step_type) {
+            // Mesh contacts require a static body. Keep the component and native
+            // body in agreement if game code tries to make one move by type.
+            if (b->type != b3_staticBody && b->step_type == b3_staticBody) {
+                const int count = b3t_body_shapes(b->id);
+                for (int i = 0; i < count; i++) {
+                    if (b3Shape_GetType(listed[i]) == b3_meshShape) { b->type = b3_staticBody; break; }
+                }
+            }
+        }
+        if (b->type != b->step_type) {
             b3Body_SetType(id, (b3BodyType)b->type);
             retyped = true;
             did |= 64u;
@@ -1156,6 +1166,103 @@ int64_t b3t_capsule(const int64_t on, const capsule *s)
 
 // ---------------------------------------------------------------------------
 // The step
+
+static bool finite3(tide_float3 v);
+static bool finite1(float x);
+
+// The native row helper flattens the lists. Bounds and arithmetic are checked
+// before Box3D sees arbitrary game data. Cook once; the world owns the result.
+static int64_t attach_mesh(const int64_t on, const tide_float3 *vertices, const int32_t vertex_count,
+                 const int32_t *indices, const int32_t index_count, const tide_float3 scale,
+                 const tide_float3 offset, const float friction, const float bounce)
+{
+    if (!active || on == 0) return 0;
+    const b3BodyId owner = body_of(active, on);
+    if (!b3Body_IsValid(owner) || b3Body_GetType(owner) != b3_staticBody) return 0;
+    // Bounds keep the cooker's signed counts/byte offsets and temporary arrays
+    // comfortably within range, including on wasm32 and the resident arena.
+    if (!vertices || !indices || vertex_count < 3 || vertex_count > 65536 ||
+        index_count < 3 || index_count > 3 * 65536 || index_count % 3 != 0 ||
+        !finite3(scale) || !finite3(offset) || scale.x == 0 || scale.y == 0 || scale.z == 0 ||
+        !finite1(friction) || friction < 0 || !finite1(bounce) || bounce < 0 || bounce > 1) return 0;
+    for (int i = 0; i < index_count; i++) if (indices[i] < 0 || indices[i] >= vertex_count) return 0;
+    b3Vec3 *points = malloc((size_t)vertex_count * sizeof *points);
+    if (!points) return 0;
+    for (int i = 0; i < vertex_count; i++) {
+        points[i] = (b3Vec3){vertices[i].x * scale.x + offset.x, vertices[i].y * scale.y + offset.y,
+                             vertices[i].z * scale.z + offset.z};
+        const b3Vec3 p = points[i];
+        // Finite bounded coordinates also prevent overflowing the cooker's
+        // cross products, squared areas and BVH cost calculations.
+        if (!finite3(float3(p)) || p.x < -1e6f || p.x > 1e6f || p.y < -1e6f || p.y > 1e6f || p.z < -1e6f || p.z > 1e6f) {
+            free(points); return 0;
+        }
+    }
+    const b3MeshDef mesh_def = {.vertices = points, .indices = (int32_t *)(uintptr_t)indices,
+        .vertexCount = vertex_count, .triangleCount = index_count / 3, .identifyEdges = true,
+        .clockWiseWinding = (scale.x < 0) ^ (scale.y < 0) ^ (scale.z < 0)};
+    b3MeshData *cooked = b3CreateMesh(&mesh_def, NULL, 0);
+    free(points);
+    if (!cooked) return 0;
+    const b3MeshData *kept = b3World_InternMesh(active->id, cooked);
+    b3DestroyMesh(cooked);
+    const b3ShapeDef def = shape_def(0, friction, bounce, false);
+    const b3ShapeId made = b3CreateMeshShape(owner, &def, kept, b3Vec3_one);
+    if (made.index1 == 0) return 0;
+    note('m', &on, sizeof on);
+    note('m', &kept->byteCount, sizeof kept->byteCount);
+    note('m', kept, (size_t)kept->byteCount);
+    note('m', &friction, sizeof friction);
+    note('m', &bounce, sizeof bounce);
+    return handle(made.index1, made.generation);
+}
+
+// These C systems read real list handles and derive their lengths here, so
+// Tide code never supplies a raw buffer length to the trusted mesh cooker.
+typedef struct mesh_collider {
+    tide_list vertices, indices;
+    tide_float3 scale, offset;
+    float friction, bounce;
+} mesh_collider;
+typedef struct part { tide_entity of; int64_t box, sphere, capsule, mesh; } part;
+_Static_assert(sizeof(mesh_collider) == 40 && sizeof(part) == 40, "mesh component ABI changed");
+
+static int64_t attach_mesh_component(const int64_t on, const mesh_collider *m)
+{
+    const int32_t vertices = tide_list_count(m->vertices), indices = tide_list_count(m->indices);
+    if (vertices < 3 || vertices > 65536 || indices < 3 || indices > 3 * 65536) return 0;
+    bool copied_vertices = false, copied_indices = false;
+    tide_float3 *points = tide_list_flatten(m->vertices, sizeof(tide_float3), false, &copied_vertices);
+    int32_t *triangles = tide_list_flatten(m->indices, sizeof(int32_t), false, &copied_indices);
+    const int64_t shape = attach_mesh(on, points, vertices, triangles, indices, m->scale, m->offset, m->friction, m->bounce);
+    tide_list_unflatten(m->vertices, points, sizeof(tide_float3), false, copied_vertices);
+    tide_list_unflatten(m->indices, triangles, sizeof(int32_t), false, copied_indices);
+    return shape;
+}
+
+void b3t_attach_meshes(tide_rows *rows, physics *p)
+{
+    for (uint32_t i = 0; i < tide_rows_count(rows); i++) {
+        body b;
+        mesh_collider m;
+        tide_rows_get(rows, 0, i, &b);
+        tide_rows_get(rows, 1, i, &m);
+        if (attach_mesh_component(b.id, &m)) p->shapes = tide_add_i(p->shapes, 1);
+    }
+}
+
+void b3t_attach_mesh_parts(tide_rows *rows, physics *p)
+{
+    for (uint32_t i = 0; i < tide_rows_count(rows); i++) {
+        mesh_collider m;
+        part part;
+        tide_rows_get(rows, 0, i, &m);
+        tide_rows_get(rows, 1, i, &part);
+        part.mesh = attach_mesh_component(part.mesh, &m);
+        if (part.mesh) p->shapes = tide_add_i(p->shapes, 1);
+        tide_rows_set(rows, 1, i, &part);
+    }
+}
 
 // A body's place and speeds as its component keeps them, from Box3D's own.
 static void place_of(float *place, const b3Pos at, const b3Quat rotation, const b3Vec3 velocity, const b3Vec3 angular)
@@ -2081,9 +2188,20 @@ static int scene_read(const world *w, const int64_t native_id, collider **out)
     const int count = b3Body_GetShapeCount(on);
     if (count <= 0 || (size_t)count > SIZE_MAX / sizeof(b3ShapeId) || (size_t)count > SIZE_MAX / sizeof(collider)) return 0;
     b3ShapeId *shapes = malloc((size_t)count * sizeof *shapes);
-    collider *records = calloc((size_t)count, sizeof *records);
-    if (!shapes || !records) { free(shapes); free(records); return 0; }
+    if (!shapes) return 0;
     const int got = b3Body_GetShapes(on, shapes, count);
+    size_t room = (size_t)got;
+    for (int i = 0; i < got; i++) {
+        if (b3Shape_GetType(shapes[i]) != b3_meshShape) continue;
+        const b3Mesh mesh = b3Shape_GetMesh(shapes[i]);
+        if (!mesh.data || mesh.data->triangleCount < 1) { free(shapes); return 0; }
+        const size_t extra = (size_t)mesh.data->triangleCount - 1;
+        if (extra > SIZE_MAX - room) { free(shapes); return 0; }
+        room += extra;
+    }
+    if (room > (1u << 30) / sizeof(collider) || room > SIZE_MAX / sizeof(collider)) { free(shapes); return 0; }
+    collider *records = calloc(room, sizeof *records);
+    if (!records) { free(shapes); return 0; }
     const b3WorldTransform pose = b3Body_GetTransform(on);
     int used = 0;
     for (int i = 0; i < got; i++) {
@@ -2115,6 +2233,24 @@ static int scene_read(const world *w, const int64_t native_id, collider **out)
             for (int k = 0; k < c.count; k++) c.points[k] = scene_float(points[k]);
             break;
         }
+        case b3_meshShape: {
+            // Detached scenes retain triangle values, never arena pointers.
+            // Their existing BVH indexes triangles, including concave gaps.
+            const b3Mesh mesh = b3Shape_GetMesh(id);
+            const b3Vec3 *vertices = b3GetMeshVertices(mesh.data);
+            const b3MeshTriangle *triangles = b3GetMeshTriangles(mesh.data);
+            if (!vertices || !triangles) continue;
+            c.count = 3;
+            const bool mirrored = (mesh.scale.x < 0) ^ (mesh.scale.y < 0) ^ (mesh.scale.z < 0);
+            for (int k = 0; k < mesh.data->triangleCount; k++) {
+                const b3MeshTriangle t = triangles[k];
+                c.points[0] = scene_float(b3Mul(mesh.scale, vertices[t.index1]));
+                c.points[1] = scene_float(b3Mul(mesh.scale, vertices[mirrored ? t.index3 : t.index2]));
+                c.points[2] = scene_float(b3Mul(mesh.scale, vertices[mirrored ? t.index2 : t.index3]));
+                if (scene_real(&c)) records[used++] = c;
+            }
+            continue;
+        }
         default: continue;
         }
         if (scene_real(&c)) records[used++] = c;
@@ -2128,8 +2264,9 @@ void b3t_read_colliders(const int64_t handle, tide_list_out *out)
 {
     collider *records;
     const int count = scene_read(active, handle, &records);
-    if (count) memcpy(tide_list_out_room(out, (uint32_t)count), records, (size_t)count * sizeof *records);
-    tide_list_out_count(out, (uint32_t)count);
+    void *room = count ? tide_list_out_room(out, (uint32_t)count) : NULL;
+    if (room) memcpy(room, records, (size_t)count * sizeof *records);
+    tide_list_out_count(out, room ? (uint32_t)count : 0);
     free(records);
 }
 
@@ -2204,6 +2341,36 @@ static b3ShapeProxy scene_proxy(const collider *c, b3Vec3 points[8])
     return (b3ShapeProxy){points, c->count, c->radius};
 }
 
+// A one-leaf mesh over a detached triangle lets historical queries use the
+// same front-face tests and narrow phase as native mesh queries, with no cook.
+typedef struct scene_triangle {
+    b3MeshData data;
+    b3MeshNode node;
+    b3Vec3 vertices[3];
+    b3MeshTriangle triangle;
+    uint8_t material;
+} scene_triangle;
+
+static b3Mesh scene_triangle_mesh(scene_triangle *t, const b3Vec3 *points)
+{
+    memset(t, 0, sizeof *t);
+    t->data.nodeOffset = offsetof(scene_triangle, node);
+    t->data.vertexOffset = offsetof(scene_triangle, vertices);
+    t->data.triangleOffset = offsetof(scene_triangle, triangle);
+    t->data.materialOffset = offsetof(scene_triangle, material);
+    t->data.nodeCount = 1;
+    t->data.vertexCount = 3;
+    t->data.triangleCount = 1;
+    t->data.materialCount = 1;
+    memcpy(t->vertices, points, sizeof t->vertices);
+    t->triangle = (b3MeshTriangle){0, 1, 2};
+    t->node.data.asLeaf.type = 3;
+    t->node.data.asLeaf.triangleCount = 1;
+    t->node.lowerBound = b3Min(points[0], b3Min(points[1], points[2]));
+    t->node.upperBound = b3Max(points[0], b3Max(points[1], points[2]));
+    return (b3Mesh){&t->data, b3Vec3_one};
+}
+
 static bool scene_overlap(const collider *c, b3ShapeProxy query, const tide_float3 position)
 {
     if (!scene_real(c) || !finite3(position)) return false;
@@ -2231,7 +2398,16 @@ static found scene_cast(const collider *c, b3ShapeProxy query, const tide_float3
     b3Vec3 points[8];
     const b3ShapeCastPairInput input = {.proxyA = scene_proxy(c, points), .proxyB = query,
         .transform = {relative, b3Quat_identity}, .translationB = translation, .maxFraction = 1.0f};
-    const b3CastOutput hit = b3ShapeCast(&input);
+    b3CastOutput hit;
+    if (c->count == 3) {
+        scene_triangle triangle;
+        const b3Mesh mesh = scene_triangle_mesh(&triangle, points);
+        b3Vec3 shifted[8];
+        if (query.count < 1 || query.count > 8) return result;
+        for (int i = 0; i < query.count; i++) shifted[i] = b3Add(relative, query.points[i]);
+        const b3ShapeCastInput cast = {.proxy = {shifted, query.count, query.radius}, .translation = translation, .maxFraction = 1};
+        hit = b3ShapeCastMesh(&mesh, &cast);
+    } else hit = b3ShapeCast(&input);
     if (!hit.hit) return result;
     result.body = c->body; result.shape = c->shape;
     result.point = scene_float(b3Add(scene_vec(c->position), hit.point));
@@ -2265,6 +2441,13 @@ found b3t_scene_ray(const collider *c, const tide_float3 from, const tide_float3
     else if (c->count == 2) {
         const b3Capsule shape = {scene_vec(c->points[0]), scene_vec(c->points[1]), c->radius};
         hit = b3RayCastCapsule(&shape, &input);
+    }
+    else if (c->count == 3) {
+        scene_triangle triangle;
+        b3Vec3 points[3];
+        for (int i = 0; i < 3; i++) points[i] = scene_vec(c->points[i]);
+        const b3Mesh mesh = scene_triangle_mesh(&triangle, points);
+        hit = b3RayCastMesh(&mesh, &input);
     }
     else {
         tide_float3 lo = c->points[0], hi = lo;

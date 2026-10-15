@@ -1,68 +1,591 @@
-// Outward journeys through physically nested boxes and shared interiors.
-void WorkshopTile(mut LevelLayout layout, int room, int2 at, Tile tile)
+// The puzzles, drawn as text: one function for each, which draws the table
+// and each room as a map.
+//
+//     Room(draft, 0, [
+//         "#####  .....",
+//         "#...#  .@...",
+//         "...o#  ..+..",
+//         "#...#  .....",
+//         "#####  .....",
+//     ]);
+//
+// A map is the table's (room -1) or a room's (0 to 3, which is also the id of
+// the box that holds it; the game names it Box 1 to 4). It is square, one
+// string a row, at the room's own size: 3 to 7 for a box, 1 to 7 for the
+// table. A table nobody draws is 7 by 7 and all wall. Each row is the tiles,
+// then spaces, then what stands on them, the same width:
+//
+//   Tiles                                  What stands on them
+//   #    wall                              .    nothing
+//   .    floor                             @    Amber, the first robot (seat 0)
+//   o    socket, where a battery goes      &    Teal, the second robot (seat 1)
+//   x    goal, where a robot ends          +    a battery
+//   a A  plate A, shutter A                0-3  box 0 to 3
+//   b B  plate B, shutter B
+//   0-3  floor with the outline of box 0 to 3: where that box has to end
+//
+// So a robot on a goal is an x under an @, a battery on a plate an a under
+// a +, and a box on its own outline its digit in both halves.
+// - Doorways come from a room's edge, which is wall but for them: an open
+//   cell (anything but #) on a side, not at a corner, is that side's
+//   doorway, one a side at most. The table has none.
+// - A box stands where its digit is in the other half of a map: a box in
+//   its own room's map is inside itself, two boxes in each other's are a
+//   cycle. Every room that is drawn has its box somewhere.
+// - Batteries are numbered in the order they are drawn.
+// A map that breaks one of these stops the game with what is wrong, on the
+// first load of that puzzle (the campaign test loads them all).
+
+// A puzzle as it is drawn, with what has been drawn so far.
+struct Draft
+{
+    LevelLayout layout;
+    Puzzle puzzle;
+    int level;
+    // A bit for each map drawn: the table's is the first, then each room's.
+    int drawn;
+    // A bit for each box that stands somewhere, and each robot.
+    int placed;
+    int robots;
+}
+
+string MapName(Draft draft, int room)
+{
+    return room < 0 ? $"Puzzle {draft.level + 1}, the table" : $"Puzzle {draft.level + 1}, room {room}";
+}
+void SetTile(mut LevelLayout layout, int room, int2 at, Tile tile)
 {
     if (room < 0) layout.tiles[at.y * layout.width + at.x] = tile;
     else layout.rooms[room].tiles[at.y * layout.rooms[room].width + at.x] = tile;
 }
-void WorkshopBlank(mut LevelLayout layout, mut Puzzle puzzle)
+// What a mark in a map's tiles is. A digit is floor with a box's outline on it.
+Tile MapTile(char mark, out bool known)
 {
-    layout = LevelLayout { width = 7, height = 7 };
-    puzzle = Puzzle { };
-    for (var room = 0; room < MAX_ROOMS; room++) layout.rooms[room] = RoomLayout { };
-    for (var cell = 0; cell < 49; cell++) layout.tiles[cell] = Tile.Wall;
+    known = true;
+    switch (mark)
+    {
+        case '#': return Tile.Wall;
+        case 'o': return Tile.Target;
+        case 'x': return Tile.Exit;
+        case 'a': return Tile.PlateA;
+        case 'A': return Tile.ShutterA;
+        case 'b': return Tile.PlateB;
+        case 'B': return Tile.ShutterB;
+        case '.':
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+            return Tile.Floor;
+    }
+    known = false;
+    return Tile.Wall;
 }
-void WorkshopRoom(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at, int2 dock,
-    int width = 5, int height = 5, int doors = 15, int parent = -1, int dockParent = -1,
-    int north = -1, int east = -1, int south = -1, int west = -1)
+void DrawTile(mut Draft draft, int room, int2 at, char mark)
 {
-    layout.roomCount = Math.Max(layout.roomCount, room + 1);
-    layout.rooms[room] = RoomLayout { width = width, height = height, doors = doors,
-        north = north, east = east, south = south, west = west, dock = dock, dockRoom = dockParent };
-    puzzle.rooms[room] = RoomShell { room = parent, position = at };
-    for (var cell = 0; cell < 49; cell++) layout.rooms[room].tiles[cell] = Tile.Wall;
-    for (var y = 1; y < height - 1; y++)
-        for (var x = 1; x < width - 1; x++) WorkshopTile(layout, room, int2(x, y), Tile.Floor);
+    var tile = MapTile(mark, out var known);
+    Debug.Assert(known, $"{MapName(draft, room)}: '{mark}' at {at} is no tile");
+    SetTile(draft.layout, room, at, tile);
+    if (mark < '0' || mark > '3') return;
+    var box = mark - '0';
+    Debug.Assert(draft.layout.rooms[box].dock.x < 0, $"{MapName(draft, room)}: box {box} has a second outline at {at}");
+    draft.layout.rooms[box].dock = at;
+    draft.layout.rooms[box].dockRoom = room;
+}
+void DrawThing(mut Draft draft, int room, int2 at, char mark)
+{
+    if (mark == '.') return;
+    var where = MapName(draft, room);
+    Debug.Assert(TileAt(draft.layout, room, at) != Tile.Wall, $"{where}: '{mark}' at {at} stands in a wall");
+    if (mark == '@' || mark == '&')
+    {
+        var seat = mark == '@' ? 0 : 1;
+        Debug.Assert((draft.robots & (1 << seat)) == 0, $"{where}: robot '{mark}' is drawn twice");
+        draft.robots |= 1 << seat;
+        draft.puzzle.actors[seat] = Traveler { room = room, position = at };
+    }
+    else if (mark == '+')
+    {
+        Debug.Assert(draft.layout.crateCount < MAX_CRATES, $"{where}: more than {MAX_CRATES} batteries");
+        if (draft.layout.crateCount >= MAX_CRATES) return;
+        draft.puzzle.crates[draft.layout.crateCount] = Cargo { room = room, position = at, active = true };
+        draft.layout.crateCount += 1;
+    }
+    else if (mark >= '0' && mark <= '3')
+    {
+        var box = mark - '0';
+        Debug.Assert((draft.placed & (1 << box)) == 0, $"{where}: box {box} stands in two places");
+        draft.placed |= 1 << box;
+        draft.puzzle.rooms[box] = RoomShell { room = room, position = at };
+    }
+    else Debug.Assert(false, $"{where}: '{mark}' at {at} is nothing that stands on a tile");
+}
+string SideName(int side)
+{
+    if (side == 0) return "north";
+    if (side == 1) return "east";
+    return side == 2 ? "south" : "west";
+}
+// A room's doorways are the open cells of its edge, one a side at most, and
+// none at a corner. One in the middle of its side is the default (-1).
+void Doorways(mut Draft draft, int room)
+{
+    var size = draft.layout.rooms[room].width;
+    var last = size - 1;
+    var where = MapName(draft, room);
+    for (var corner = 0; corner < 4; corner++)
+    {
+        var at = int2(corner % 2 == 0 ? 0 : last, corner < 2 ? 0 : last);
+        Debug.Assert(TileAt(draft.layout, room, at) == Tile.Wall, $"{where}: the corner at {at} is open; a doorway is on a side, not at a corner");
+    }
+    mut var doors = 0;
     for (var side = 0; side < 4; side++)
-        if ((doors & (1 << side)) != 0) WorkshopTile(layout, room, DoorCell(layout, room, side), Tile.Floor);
+    {
+        mut var door = -1;
+        mut var count = 0;
+        for (var along = 1; along < last; along++)
+        {
+            var at = side == 0 ? int2(along, 0) : side == 1 ? int2(last, along) : side == 2 ? int2(along, last) : int2(0, along);
+            if (TileAt(draft.layout, room, at) == Tile.Wall) continue;
+            count += 1;
+            if (door < 0) door = along;
+        }
+        Debug.Assert(count <= 1, $"{where}: {count} doorways on the {SideName(side)} side; a side has one at most");
+        if (door >= 0) doors |= 1 << side;
+        var offset = door == size / 2 ? -1 : door;
+        if (side == 0) draft.layout.rooms[room].north = offset;
+        else if (side == 1) draft.layout.rooms[room].east = offset;
+        else if (side == 2) draft.layout.rooms[room].south = offset;
+        else draft.layout.rooms[room].west = offset;
+    }
+    draft.layout.rooms[room].doors = doors;
 }
-void WorkshopWalker(mut Puzzle puzzle, int seat, int room, int2 at)
+// One map: the table's (room -1) or a room's. See the top of this file.
+void Room(mut Draft draft, int room, List<string> rows)
 {
-    puzzle.actors[seat] = Traveler { room = room, position = at };
+    var where = MapName(draft, room);
+    Debug.Assert(room >= -1 && room < MAX_ROOMS, $"{where}: there are rooms 0 to {MAX_ROOMS - 1} and the table, -1");
+    if (room < -1 || room >= MAX_ROOMS) return;
+    Debug.Assert((draft.drawn & (1 << (room + 1))) == 0, $"{where} is drawn twice");
+    draft.drawn |= 1 << (room + 1);
+    var least = room < 0 ? 1 : 3;
+    Debug.Assert(rows.count >= least && rows.count <= 7, $"{where} has {rows.count} rows, and is {least} to 7 square");
+    var size = Math.Clamp(rows.count, least, 7);
+    if (room < 0)
+    {
+        draft.layout.width = size;
+        draft.layout.height = size;
+    }
+    else
+    {
+        draft.layout.roomCount = Math.Max(draft.layout.roomCount, room + 1);
+        draft.layout.rooms[room].width = size;
+        draft.layout.rooms[room].height = size;
+        for (var cell = 0; cell < 49; cell++) draft.layout.rooms[room].tiles[cell] = Tile.Wall;
+    }
+    for (var y = 0; y < size; y++)
+    {
+        var row = rows[y];
+        var gap = row.IndexOf(' ');
+        var tiles = gap < 0 ? row : row.Substring(0, gap);
+        var things = gap < 0 ? "" : row.Substring(gap).Trim();
+        Debug.Assert(tiles.length == size && things.length == size, $"{where}, row {y}: {size} tiles, spaces, then {size} things");
+        for (var x = 0; x < size; x++) DrawTile(draft, room, int2(x, y), tiles[x]);
+        for (var x = 0; x < size; x++) DrawThing(draft, room, int2(x, y), things[x]);
+    }
+    if (room >= 0) Doorways(draft, room);
 }
-void WorkshopCargo(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at)
+
+// 1. Two robots in a corridor of a box, in a room on the table.
+void ARoomOutside(mut Draft draft)
 {
-    puzzle.crates[layout.crateCount] = Cargo { room = room, position = at, active = true };
-    layout.crateCount += 1;
+    Room(draft, -1, [
+        "#######  .......",
+        "#######  .......",
+        "####x##  .......",
+        "###1.o#  ...1...",
+        "####x##  .......",
+        "#######  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 0, [
+        "###  ...",
+        "...  &+@",
+        "###  ...",
+    ]);
+    Room(draft, 1, [
+        "####  ....",
+        "#0..  .0..",
+        "#..#  ....",
+        "####  ....",
+    ]);
 }
-void WorkshopReference(mut LevelLayout layout, mut Puzzle puzzle, int room, int2 at, int destination)
+// 2. The robot outside cannot get back in once the home is parked: carry the
+// one inside to the way out, rather than move an empty box.
+void NoHandleInside(mut Draft draft)
 {
-    layout.references[layout.referenceCount] = ReferenceLayout { destination = destination };
-    puzzle.references[layout.referenceCount] = RoomShell { room = room, position = at };
-    layout.referenceCount += 1;
+    Room(draft, -1, [
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+        "###1###  ...1...",
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 0, [
+        "#.###  .@...",
+        "#....  .&+..",
+        "##..#  .....",
+        "#...#  .....",
+        "#####  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......",
+        "#######  .......",
+        "#..0xo#  .......",
+        "#...###  ...0...",
+        "#.x.###  .......",
+        "#.....#  .......",
+        "#######  .......",
+    ]);
 }
-void WorkshopPatch(mut LevelLayout layout, int room, int x0, int y0, int x1, int y1, Tile tile = Tile.Floor)
+// 3. The home's battery goes into the tall room beside it, once the home is
+// pushed to line its east opening up with the tall room's west one.
+void TheOtherOpening(mut Draft draft)
 {
-    for (var y = y0; y <= y1; y++)
-        for (var x = x0; x <= x1; x++) WorkshopTile(layout, room, int2(x, y), tile);
+    Room(draft, -1, [
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+        "###2###  ...2...",
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 0, [
+        "#.###  .....",
+        "#....  .&+..",
+        "##..#  .....",
+        "#...#  .....",
+        "#####  .....",
+    ]);
+    Room(draft, 1, [
+        "#####  .....",
+        "..o.#  .....",
+        "#...#  .....",
+        "#...#  .@...",
+        "#####  .....",
+    ]);
+    Room(draft, 2, [
+        "#######  .......",
+        "#######  .......",
+        "#..0x1#  .....1.",
+        "#...###  ...0...",
+        "#.x.###  .......",
+        "#.....#  .......",
+        "#######  .......",
+    ]);
 }
-void WorkshopClear(mut LevelLayout layout, int room)
+// 4. The socket is the cell to push the home from: leave the battery inside
+// until the home is on its outline, then deliver it through the west door.
+void APlaceToStand(mut Draft draft)
 {
-    for (var cell = 0; cell < 49; cell++) layout.rooms[room].tiles[cell] = Tile.Wall;
+    Room(draft, -1, [
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+        "###1###  ...1...",
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 0, [
+        "#####  .....",
+        "#...#  .@.&.",
+        "....#  ..+..",
+        "#...#  .....",
+        "##.##  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......",
+        "#.....#  .......",
+        "#.#...#  .......",
+        "#o.0..#  ..0....",
+        "#x...x#  .......",
+        "#.....#  .......",
+        "#######  .......",
+    ]);
 }
-void WorkshopContaining(mut LevelLayout layout, mut Puzzle puzzle, int room, int width = 7, int height = 5, int doors = 0)
+// 5. A row moves as one, however long: a battery, a box and nothing to stop
+// them.
+void AllInARow(mut Draft draft)
 {
-    WorkshopTile(layout, -1, int2(3, 3), Tile.Floor);
-    WorkshopRoom(layout, puzzle, room, int2(3, 3), int2(3, 3), width, height, doors);
+    Room(draft, -1, [
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+        "###1###  ...1...",
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 0, [
+        "#####  .....",
+        "#...#  .....",
+        "#....  ..&@.",
+        "#...#  .....",
+        "#####  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......",
+        "#.x...#  .......",
+        "#.....#  .......",
+        "#0..o2#  .0.+2..",
+        "#.....#  .......",
+        "#.x...#  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 2, [
+        "###  ...",
+        "..#  ...",
+        "###  ...",
+    ]);
 }
-void WorkshopCarryingFloor(mut LevelLayout layout, int parent)
+// 6. A box only lets a robot in while it cannot move, and this one has open
+// floor behind its outline: the partner is the wall. The room is a figure of
+// eight round two blocks, so either robot can reach either side of the small
+// box, and nothing else can be put behind it. The home is in a corner and
+// cannot be moved.
+void HoldItSteady(mut Draft draft)
 {
-    WorkshopClear(layout, parent);
-    WorkshopPatch(layout, parent, 1, 2, 2, 4);
-    WorkshopPatch(layout, parent, 3, 2, 3, 4);
-    WorkshopPatch(layout, parent, 4, 2, 5, 2);
+    Room(draft, -1, [
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+        "###1###  ...1...",
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 0, [
+        "#####  .....",
+        "#...#  .....",
+        "#....  ...&.",
+        "#...#  ..@..",
+        "##.##  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......",
+        "#0....#  .0.....",
+        "#.###.#  .......",
+        "#x.2x.#  ..2....",
+        "#.###.#  .......",
+        "#.....#  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 2, [
+        "#####  .....",
+        "#...#  .....",
+        "...o#  ..+..",
+        "#...#  .....",
+        "#####  .....",
+    ]);
 }
-void WorkshopSeed(mut LevelLayout layout, mut Puzzle puzzle)
+// 7. A battery goes into a box that cannot move, and so does the robot
+// behind it. The room is the figure of eight of the puzzle before, so the
+// partner can stand behind the box.
+void Posted(mut Draft draft)
 {
+    Room(draft, -1, [
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+        "###1###  ...1...",
+        "#######  .......",
+        "#######  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 0, [
+        "#####  .....",
+        "#...#  .....",
+        "#....  ...&.",
+        "#...#  ..@..",
+        "##.##  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......",
+        "#0....#  .0.....",
+        "#.###.#  .......",
+        "#x.2x.#  ..+2...",
+        "#.###.#  .......",
+        "#.....#  .......",
+        "#######  .......",
+    ]);
+    Room(draft, 2, [
+        "###  ...",
+        ".o#  ...",
+        "###  ...",
+    ]);
+}
+
+// Reposition the box first, then exchange which side is held steady.
+void ChangeEnds(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#1#  .1.", "###  ..."]);
+    Room(draft, 0, [
+        "#####  .....", "#...#  .....", "#....  ...&.",
+        "#...#  ..@..", "##.##  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......", "#0....#  .0.....", "#.###.#  .......",
+        "#x.2.x#  ..2....", "#.###.#  .......", "#.....#  .......", "#######  .......",
+    ]);
+    Room(draft, 2, [
+        "#####  .....", "#...#  .....", ".o...  ..+..", "#...#  .....", "#####  .....",
+    ]);
+}
+// The posted battery needs a turn inside; do not push it beyond that turn.
+void AroundTheCorner(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#1#  .1.", "###  ..."]);
+    Room(draft, 0, [
+        "#####  .....", "#...#  .....", "#....  ...&.",
+        "#...#  ..@..", "##.##  .....",
+    ]);
+    Room(draft, 1, [
+        "#######  .......", "#0....#  .0.....", "#.###.#  .......",
+        "#x.2x.#  ..+2...", "#.###.#  .......", "#.....#  .......", "#######  .......",
+    ]);
+    Room(draft, 2, [
+        "#####  .....", "#.o.#  .....", "....#  .....", "#...#  .....", "#####  .....",
+    ]);
+}
+// A separate plate holder lets the battery pass the dividing shutter.
+void HoldTheLine(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..A.o#  .&+....",
+        "#..#..#  .......", "#a.#..#  .@.....", "#x.#.x#  .......", "#######  .......",
+    ]);
+}
+// Wiring crosses room boundaries, even while the plate holder is inside.
+void LongWire(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#1.#..#  .1.....", "#..#..#  .......",
+        "#..A.o#  .&+....", "#..#..#  .......", "#x.#.x#  .......", "#######  .......",
+    ]);
+    Room(draft, 1, ["###  ...", "#a#  .@.", "#.#  ..."]);
+}
+// The far-side plate frees the first holder, so both can cross.
+void PassItOn(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..A.o#  .&+....",
+        "#..#..#  .......", "#a.#.a#  .@.....", "#..#xx#  .......", "#######  .......",
+    ]);
+}
+// The second circuit opens a different route for the first plate holder.
+void BorrowedPower(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..A.o#  .&+....",
+        "#..#..#  .......", "#a.B.b#  .@.....", "#..#xx#  .......", "#######  .......",
+    ]);
+}
+// A battery inside the box powers the shutter the occupied box passes.
+// The inside robot then becomes the backstop that lets its partner aboard.
+void CarryTheCurrent(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#..#..#  .......", "#..#.x#  .......",
+        "#..A1x#  .@1....", "#..#..#  .......", "#..#..#  .......", "#######  .......",
+    ]);
+    Room(draft, 1, [
+        "#####  .....", "#.o.#  .....", "..a..  ..+..", "#...#  ..&..", "#####  .....",
+    ]);
+}
+// Leaving north seats the battery beside the very box that contains it.
+// The arriving partner then holds that box so the other robot can enter it.
+void BesideItself(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####.#  .......", "#o###.#  .......", "#x###.#  .+.....",
+        "#0###.#  .0...&.", "#.###.#  .@.....", "#####x#  .......", "#####.#  .......",
+    ]);
+}
+// Move a self-containing box to move where its north doorway comes out.
+void ShiftTheExit(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####.#  .......", "#x###.#  .@...+.", "#.###.#  .0...&.",
+        "#o###.#  .......", "#0###.#  .......", "#.###x#  .......", "#####.#  .......",
+    ]);
+}
+// Move the outside box in the other room before sending the battery out.
+// The receiving robot's alcove cannot be reached from the delivery landing.
+void ReturnDelivery(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####  .....", "#1..#  .1...", "#.x..  ..@+.", "#...#  .....", "#####  .....",
+    ]);
+    Room(draft, 1, [
+        "#####  .....", "#x#.#  .&...", "#.#.#  .0...", "#0o.#  .....", "#####  .....",
+    ]);
+}
+
+// Exchange the two circuits while the box moves within its own interior.
+// The first exit delivers the battery and supplies the backstop for entry.
+void TradingPlaces(mut Draft draft)
+{
+    Room(draft, 0, [
+        "#####.#  .......", "#o###A#  .......", "#b###x#  .+.....",
+        "#.###x#  .0...&.", "#a###a#  .@.....", "#0###B#  .......", "#####.#  .......",
+    ]);
+}
+
+void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
+{
+    var chosen = Math.Clamp(level, 0, LEVEL_COUNT - 1);
+    mut var draft = Draft { level = chosen };
+    draft.layout = LevelLayout { width = 7, height = 7 };
+    draft.puzzle = Puzzle { };
+    for (var room = 0; room < MAX_ROOMS; room++) draft.layout.rooms[room] = RoomLayout { };
+    for (var cell = 0; cell < 49; cell++) draft.layout.tiles[cell] = Tile.Wall;
+    switch (chosen)
+    {
+        case 0: ARoomOutside(draft); break;
+        case 1: NoHandleInside(draft); break;
+        case 2: TheOtherOpening(draft); break;
+        case 3: APlaceToStand(draft); break;
+        case 4: AllInARow(draft); break;
+        case 5: HoldItSteady(draft); break;
+        case 6: Posted(draft); break;
+        case 7: ChangeEnds(draft); break;
+        case 8: AroundTheCorner(draft); break;
+        case 9: HoldTheLine(draft); break;
+        case 10: LongWire(draft); break;
+        case 11: PassItOn(draft); break;
+        case 12: BorrowedPower(draft); break;
+        case 13: CarryTheCurrent(draft); break;
+        case 14: BesideItself(draft); break;
+        case 15: ShiftTheExit(draft); break;
+        case 16: ReturnDelivery(draft); break;
+        case 17: TradingPlaces(draft); break;
+    }
+    var rooms = (1 << draft.layout.roomCount) - 1;
+    Debug.Assert(draft.robots == 3, $"Puzzle {chosen + 1}: both robots, @ and &, are drawn once");
+    Debug.Assert(draft.drawn >> 1 == rooms, $"Puzzle {chosen + 1}: the rooms drawn are 0 to {draft.layout.roomCount - 1}, with none left out");
+    Debug.Assert(draft.placed == rooms, $"Puzzle {chosen + 1}: the box of every room drawn, and no other, stands somewhere");
+    layout = draft.layout;
+    puzzle = draft.puzzle;
+    // Where each robot is inside of: its room's box, that box's room's, and so on.
     for (var seat = 0; seat < 2; seat++)
     {
         mut var actor = puzzle.actors[seat];
@@ -71,261 +594,29 @@ void WorkshopSeed(mut LevelLayout layout, mut Puzzle puzzle)
     }
 }
 
-// Every box is a square grid, so its miniature fills the cell it stands in.
-// A room authored longer one way is packed out with rows or columns of wall,
-// the odd one below or to the right (above or to the left with `low`), and
-// everything in it moves with it. A
-// doorway on a packed side reaches the new edge along a corridor of floor.
-void SquareRoom(mut LevelLayout layout, mut Puzzle puzzle, int room, bool low)
+// The campaign's chapters, each a run of puzzles that teaches one thing.
+const int CHAPTER_COUNT = 5;
+int LevelChapter(int level)
 {
-    var old = layout.rooms[room];
-    var width = old.width;
-    var height = old.height;
-    if (width == height) return;
-    var span = Math.Max(width, height);
-    var odd = low ? 1 : 0;
-    var shift = int2((span - width + odd) / 2, (span - height + odd) / 2);
-    mut int2[4] doors = default;
-    for (var side = 0; side < 4; side++) doors[side] = DoorCell(layout, room, side);
-    mut var next = old;
-    next.width = span;
-    next.height = span;
-    for (var cell = 0; cell < 49; cell++) next.tiles[cell] = Tile.Wall;
-    for (var y = 0; y < height; y++)
-        for (var x = 0; x < width; x++) next.tiles[(y + shift.y) * span + x + shift.x] = old.tiles[y * width + x];
-    for (var side = 0; side < 4; side++)
+    if (level < 5) return 0;
+    if (level < 9) return 1;
+    if (level < 14) return 2;
+    if (level < 17) return 3;
+    return 4;
+}
+string ChapterName(int chapter)
+{
+    switch (chapter)
     {
-        if ((old.doors & (1 << side)) == 0 || doors[side].x < 0) continue;
-        var at = doors[side] + shift;
-        if (side == 0) next.north = at.x;
-        if (side == 1) next.east = at.y;
-        if (side == 2) next.south = at.x;
-        if (side == 3) next.west = at.y;
-        mut var walk = at;
-        while (walk.x >= 0 && walk.y >= 0 && walk.x < span && walk.y < span)
-        {
-            if (next.tiles[walk.y * span + walk.x] == Tile.Wall) next.tiles[walk.y * span + walk.x] = Tile.Floor;
-            walk = walk + Direction(side);
-        }
+        case 0: return "Boxes";
+        case 1: return "Each other";
+        case 2: return "Power";
+        case 3: return "Itself";
+        case 4: return "Everything";
     }
-    layout.rooms[room] = next;
-    for (var seat = 0; seat < 2; seat++)
-        if (puzzle.actors[seat].room == room) puzzle.actors[seat].position = puzzle.actors[seat].position + shift;
-    for (var crate = 0; crate < MAX_CRATES; crate++)
-        if (puzzle.crates[crate].active && puzzle.crates[crate].room == room) puzzle.crates[crate].position = puzzle.crates[crate].position + shift;
-    for (var box = 0; box < MAX_ROOMS; box++)
-    {
-        if (puzzle.rooms[box].room == room && box < layout.roomCount) puzzle.rooms[box].position = puzzle.rooms[box].position + shift;
-        if (layout.rooms[box].dockRoom == room && layout.rooms[box].dock.x >= 0) layout.rooms[box].dock = layout.rooms[box].dock + shift;
-    }
-    for (var copy = 0; copy < layout.referenceCount; copy++)
-        if (puzzle.references[copy].room == room) puzzle.references[copy].position = puzzle.references[copy].position + shift;
+    return "";
 }
 
-// Squaring a room leaves it a second row or column of wall where it was
-// packed out. These cells of that doubled wall are floor instead, so a room
-// fills its square: each was opened only while the puzzle's witness still
-// solved it and still showed what the campaign asks of it.
-void WidenRooms(int level, mut LevelLayout layout)
-{
-    switch (level)
-    {
-        case 0:
-            WorkshopTile(layout, 1, int2(1, 2), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 2), Tile.Floor);
-            break;
-        case 1:
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Floor);
-            WorkshopTile(layout, 0, int2(3, 3), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Floor);
-            break;
-        case 2:
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Floor);
-            WorkshopTile(layout, 0, int2(3, 3), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 1), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 2), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 3), Tile.Floor);
-            WorkshopTile(layout, 2, int2(1, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 2, int2(5, 5), Tile.Floor);
-            WorkshopTile(layout, 0, int2(1, 3), Tile.Floor);
-            break;
-        case 3:
-            WorkshopTile(layout, 1, int2(1, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
-            break;
-        case 7:
-            WorkshopTile(layout, 0, int2(4, 1), Tile.Floor);
-            WorkshopTile(layout, 0, int2(4, 3), Tile.Floor);
-            WorkshopTile(layout, 0, int2(4, 4), Tile.Floor);
-            WorkshopTile(layout, 1, int2(2, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(3, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(4, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(5, 5), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 5), Tile.Floor);
-            break;
-    }
-}
-
-void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
-{
-    WorkshopBlank(layout, puzzle);
-    switch (Math.Clamp(level, 0, LEVEL_COUNT - 1))
-    {
-        case 0:
-            WorkshopContaining(layout, puzzle, 1, 4, 3, 2);
-            WorkshopRoom(layout, puzzle, 0, int2(1, 1), int2(1, 1), 3, 3, 10, 1, 1);
-            WorkshopWalker(puzzle, 0, 0, int2(2, 1));
-            WorkshopWalker(puzzle, 1, 0, int2(0, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
-            WorkshopPatch(layout, -1, 4, 2, 4, 4);
-            WorkshopTile(layout, -1, int2(5, 3), Tile.Target);
-            WorkshopTile(layout, -1, int2(4, 2), Tile.Exit);
-            WorkshopTile(layout, -1, int2(4, 4), Tile.Exit);
-            break;
-        case 1:
-            // The outside maker cannot re-enter after docking. Carry the
-            // inside maker to an export route, rather than move an empty box.
-            WorkshopContaining(layout, puzzle, 1, 7, 6);
-            WorkshopCarryingFloor(layout, 1);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 2), 5, 4, 3, 1, 1, 1, 1);
-            WorkshopTile(layout, 0, int2(1, 2), Tile.Wall);
-            WorkshopWalker(puzzle, 0, 0, int2(1, 0));
-            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(2, 1));
-            WorkshopTile(layout, 1, int2(5, 2), Tile.Target);
-            WorkshopTile(layout, 1, int2(2, 4), Tile.Exit);
-            WorkshopTile(layout, 1, int2(4, 2), Tile.Exit);
-            break;
-        case 2:
-            WorkshopContaining(layout, puzzle, 2, 7, 6);
-            WorkshopCarryingFloor(layout, 2);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 3), int2(3, 2), 5, 4, 3, 2, 2, 1, 1);
-            WorkshopTile(layout, 0, int2(1, 2), Tile.Wall);
-            WorkshopRoom(layout, puzzle, 1, int2(5, 2), int2(5, 2), 4, 5, 8, 2, 2, -1, -1, -1, 1);
-            WorkshopWalker(puzzle, 0, 1, int2(1, 3));
-            WorkshopWalker(puzzle, 1, 0, int2(1, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(2, 1));
-            WorkshopTile(layout, 1, int2(2, 1), Tile.Target);
-            WorkshopTile(layout, 2, int2(2, 4), Tile.Exit);
-            WorkshopTile(layout, 2, int2(4, 2), Tile.Exit);
-            break;
-        case 3:
-            WorkshopContaining(layout, puzzle, 1, 7, 5);
-            WorkshopPatch(layout, 1, 1, 0, 5, 0);
-            WorkshopTile(layout, 1, int2(2, 1), Tile.Wall);
-            WorkshopRoom(layout, puzzle, 0, int2(2, 2), int2(3, 2), 5, 5, 12, 1, 1);
-            WorkshopWalker(puzzle, 0, 0, int2(1, 1));
-            WorkshopWalker(puzzle, 1, 0, int2(3, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(2, 2));
-            WorkshopTile(layout, 1, int2(1, 2), Tile.Target);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(5, 3), Tile.Exit);
-            break;
-        case 4:
-            // A row moves as one, however long: a battery, a box and nothing
-            // to stop them.
-            WorkshopContaining(layout, puzzle, 1, 7, 7);
-            WorkshopRoom(layout, puzzle, 0, int2(1, 3), int2(1, 3), 5, 5, 2, 1, 1);
-            WorkshopRoom(layout, puzzle, 2, int2(4, 3), int2(5, 3), 3, 3, 8, 1, 1);
-            WorkshopWalker(puzzle, 0, 0, int2(3, 2));
-            WorkshopWalker(puzzle, 1, 0, int2(2, 2));
-            WorkshopCargo(layout, puzzle, 1, int2(3, 3));
-            WorkshopTile(layout, 1, int2(4, 3), Tile.Target);
-            WorkshopTile(layout, 1, int2(2, 1), Tile.Exit);
-            WorkshopTile(layout, 1, int2(2, 5), Tile.Exit);
-            break;
-        case 5:
-            // A box only lets a bot in while it cannot move, and this one
-            // has open floor behind its outline: the partner is the wall.
-            // The room is a figure of eight round two blocks, so either bot
-            // can reach either side of the small box, and nothing else can
-            // be put behind it. The home is in a corner and cannot be moved.
-            WorkshopContaining(layout, puzzle, 1, 7, 7);
-            WorkshopClear(layout, 1);
-            WorkshopPatch(layout, 1, 1, 1, 5, 1);
-            WorkshopPatch(layout, 1, 1, 3, 5, 3);
-            WorkshopPatch(layout, 1, 1, 5, 5, 5);
-            WorkshopTile(layout, 1, int2(1, 2), Tile.Floor);
-            WorkshopTile(layout, 1, int2(5, 2), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 4), Tile.Floor);
-            WorkshopTile(layout, 1, int2(5, 4), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 0, int2(1, 1), int2(1, 1), 5, 5, 6, 1, 1);
-            WorkshopRoom(layout, puzzle, 2, int2(2, 3), int2(3, 3), 5, 5, 8, 1, 1);
-            WorkshopWalker(puzzle, 0, 0, int2(2, 3));
-            WorkshopWalker(puzzle, 1, 0, int2(3, 2));
-            WorkshopCargo(layout, puzzle, 2, int2(2, 2));
-            WorkshopTile(layout, 2, int2(3, 2), Tile.Target);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
-            break;
-        case 6:
-            // A battery goes into a box that cannot move, and so does the bot
-            // behind it. The room is the figure of eight of the puzzle before,
-            // so the partner can stand behind the box.
-            WorkshopContaining(layout, puzzle, 1, 7, 7);
-            WorkshopClear(layout, 1);
-            WorkshopPatch(layout, 1, 1, 1, 5, 1);
-            WorkshopPatch(layout, 1, 1, 3, 5, 3);
-            WorkshopPatch(layout, 1, 1, 5, 5, 5);
-            WorkshopTile(layout, 1, int2(1, 2), Tile.Floor);
-            WorkshopTile(layout, 1, int2(5, 2), Tile.Floor);
-            WorkshopTile(layout, 1, int2(1, 4), Tile.Floor);
-            WorkshopTile(layout, 1, int2(5, 4), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 0, int2(1, 1), int2(1, 1), 5, 5, 6, 1, 1);
-            WorkshopRoom(layout, puzzle, 2, int2(3, 3), int2(3, 3), 3, 3, 8, 1, 1);
-            WorkshopWalker(puzzle, 0, 0, int2(2, 3));
-            WorkshopWalker(puzzle, 1, 0, int2(3, 2));
-            WorkshopCargo(layout, puzzle, 1, int2(2, 3));
-            WorkshopTile(layout, 2, int2(1, 1), Tile.Target);
-            WorkshopTile(layout, 1, int2(1, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
-            break;
-        case 7:
-            WorkshopContaining(layout, puzzle, 1, 7, 5);
-            WorkshopClear(layout, 1);
-            WorkshopPatch(layout, 1, 2, 3, 4, 3);
-            WorkshopTile(layout, 1, int2(3, 2), Tile.Floor);
-            WorkshopRoom(layout, puzzle, 0, int2(3, 2), int2(3, 2), 5, 6, 15, 1, 1, 1, 2, 3, 3);
-            WorkshopTile(layout, 0, int2(2, 3), Tile.Wall);
-            WorkshopReference(layout, puzzle, 0, int2(3, 2), 0);
-            WorkshopWalker(puzzle, 0, 0, int2(4, 2));
-            WorkshopWalker(puzzle, 1, 0, int2(2, 1));
-            WorkshopCargo(layout, puzzle, 0, int2(1, 1));
-            WorkshopTile(layout, 0, int2(1, 4), Tile.Target);
-            WorkshopTile(layout, 1, int2(2, 3), Tile.Exit);
-            WorkshopTile(layout, 1, int2(4, 3), Tile.Exit);
-            break;
-        case 8:
-            // A copy is a way in, and never the way out: the room's own box
-            // stands outside, on the table, and that is where its doors lead.
-            WorkshopContaining(layout, puzzle, 1, 7, 7);
-            WorkshopRoom(layout, puzzle, 0, int2(1, 3), int2(1, 3), 5, 5, 2, 1, 1);
-            WorkshopRoom(layout, puzzle, 2, int2(4, 3), int2(-1), 5, 5, 12, -1, -1);
-            WorkshopReference(layout, puzzle, 1, int2(5, 3), 2);
-            WorkshopWalker(puzzle, 0, 0, int2(3, 2));
-            WorkshopWalker(puzzle, 1, 0, int2(2, 2));
-            WorkshopCargo(layout, puzzle, 1, int2(4, 3));
-            WorkshopPatch(layout, -1, 4, 3, 5, 5);
-            WorkshopTile(layout, -1, int2(4, 5), Tile.Target);
-            WorkshopTile(layout, -1, int2(5, 4), Tile.Exit);
-            WorkshopTile(layout, -1, int2(5, 5), Tile.Exit);
-            break;
-    }
-    for (var room = 0; room < layout.roomCount; room++) SquareRoom(layout, puzzle, room, false);
-    WidenRooms(Math.Clamp(level, 0, LEVEL_COUNT - 1), layout);
-    WorkshopSeed(layout, puzzle);
-}
 string LevelName(int level)
 {
     switch (level)
@@ -337,8 +628,17 @@ string LevelName(int level)
         case 4: return "All in a row";
         case 5: return "Hold it steady";
         case 6: return "Posted";
-        case 7: return "The same corner";
-        case 8: return "The other way in";
+        case 7: return "Change ends";
+        case 8: return "Around the corner";
+        case 9: return "Hold the line";
+        case 10: return "Long wire";
+        case 11: return "Pass it on";
+        case 12: return "Borrowed power";
+        case 13: return "Carry the current";
+        case 14: return "Beside itself";
+        case 15: return "Shift the exit";
+        case 16: return "Return delivery";
+        case 17: return "Trading places";
     }
     return "Inside Out";
 }
@@ -351,12 +651,88 @@ string LevelLesson(int level)
     if (level == 4) return "Seat the battery and park the small box. A row of things moves as one.";
     if (level == 5) return "Park the small box on its outline with its battery seated inside. A box only lets you in while it cannot move.";
     if (level == 6) return "Seat the battery inside the small box without moving the box off its outline.";
-    if (level == 7) return "Seat the battery down the left corridor, then leave this room together.";
-    return "Seat the battery on the table outside. A pale box is a copy: a way in, never the way out.";
+    if (level == 7) return "Park the small box, then hold its other side to seat the battery.";
+    if (level == 8) return "Post the battery into the small box, then turn it towards its socket.";
+    if (level == 9) return "One robot holds the circuit while the other delivers the battery.";
+    if (level == 10) return "A plate inside a room powers the shutter outside it.";
+    if (level == 11) return "Use the far plate to bring the first plate holder across.";
+    if (level == 12) return "Trade circuits to bring both robots to the far side.";
+    if (level == 13) return "Carry a live battery inside the box, then help the outside robot aboard.";
+    if (level == 14) return "This box contains its own room. Leave it to arrive beside it, in the same room.";
+    if (level == 15) return "Moving a box inside itself moves where its own doorway comes out.";
+    if (level == 16) return "Each room's outside is in the other. Move the receiving box before delivery.";
+    if (level == 17) return "Exchange circuits, then move the box inside itself to bring your partner through.";
+    return "";
 }
 string LevelHint(int level, int tier)
 {
     var detail = Math.Clamp(tier, 0, 2);
+    if (level == 7)
+    {
+        if (detail == 0) return "Which side of the battery do you need to stand on?";
+        if (detail == 1) return "Push the box onto its outline first. Then swap the pusher and the backstop to enter from the east.";
+        return "Amber pushes the small box east onto its outline. Teal goes round to its east side; Amber waits west of it. Teal enters from the east, pushes the battery west, then both return to the outside goals.";
+    }
+    if (level == 8)
+    {
+        if (detail == 0) return "The socket is above the battery's path, rather than at its end.";
+        if (detail == 1) return "Hold the box from the east. Push the battery just far enough to stand below it inside.";
+        return "Teal holds the box from the east. Amber posts the battery through the west door, follows it two cells in, goes below it and pushes north into the socket. Come back out west.";
+    }
+    if (level == 9)
+    {
+        if (detail == 0) return "What keeps the shutter open?";
+        if (detail == 1) return "The plate is away from the battery's pushing position. Someone must stay on it.";
+        return "Amber waits on the ring plate. Teal pushes the battery east through the shutter onto its socket. Once Teal is across, Amber can leave the plate; take one goal on each side.";
+    }
+    if (level == 10)
+    {
+        if (detail == 0) return "Does the wiring stop at a box's walls?";
+        if (detail == 1) return "Keep the inside robot on its plate until the battery is through the shutter.";
+        return "Amber stays on the plate in the little box. Teal delivers the battery east. Amber then leaves south and goes to the left goal; Teal takes the right goal.";
+    }
+    if (level == 11)
+    {
+        if (detail == 0) return "Both goals are beyond the shutter. Who lets the first holder leave?";
+        if (detail == 1) return "There are two plates on the same channel. The second holder can take over.";
+        return "Teal delivers the battery and stands on the far ring plate. Amber leaves the near plate and crosses the shutter. Once both are across, step onto the two goals.";
+    }
+    if (level == 12)
+    {
+        if (detail == 0) return "The lower shutter has a different shape from the upper one.";
+        if (detail == 1) return "The far diamond plate opens a second crossing for the first holder.";
+        return "Amber holds the ring plate while Teal delivers the battery through the upper shutter. Teal stands on the far diamond plate. Amber crosses the lower shutter; then both take the goals.";
+    }
+    if (level == 13)
+    {
+        if (detail == 0) return "What is powering the shutter? Where will the outside robot stand after the box moves?";
+        if (detail == 1) return "Keep the battery on its plate while pushing the occupied box across. The robot inside can become its backstop.";
+        return "Amber pushes the box east twice. Teal seats the inside battery, then leaves east and holds the box from outside. Amber enters from the west. Teal steps north onto a goal so Amber can leave east onto the other.";
+    }
+    if (level == 14)
+    {
+        if (detail == 0) return "Follow the north doorway to the outside of this very box.";
+        if (detail == 1) return "The robot in the right-hand passage can deliver the battery by leaving north.";
+        return "Teal leaves north, pushing the battery onto its socket in the left column. Teal now holds the box steady from above. Amber enters it from below and steps north onto the right goal.";
+    }
+    if (level == 15)
+    {
+        if (detail == 0) return "Which cell will the battery land on when it leaves north?";
+        if (detail == 1) return "Move the box down one cell before sending the battery out. Then use a row push.";
+        return "Amber pushes the box south once and steps back north. Teal pushes the battery north out of the room. Amber pushes the delivered battery and the box south together, seating the battery and parking the box. Take the two goals.";
+    }
+    if (level == 16)
+    {
+        if (detail == 0) return "The east doorway comes out beside this room's box, in the other room.";
+        if (detail == 1) return "The robot in the narrow left alcove controls where the battery will arrive.";
+        return "Teal pushes the box south onto its outline. Amber sends the battery east out of its room, landing on the socket in Teal's room, then backs up to the goal. Teal steps back north.";
+    }
+    if (level == 17)
+    {
+        if (detail == 0) return "The north and south doorways lead beside the same box. Each circuit is needed at a different time.";
+        if (detail == 1) return "Teal leaves north while Amber holds the ring plate. Teal then holds the diamond plate and becomes Amber's backstop.";
+        return "Teal leaves north and seats the battery. Amber enters the box from below, passes the diamond shutter and holds the far ring plate. Teal pushes the box south onto its outline, enters from above and passes the ring shutter. Finish on the two right-hand goals.";
+    }
     if (level == 0)
     {
         if (detail == 0) return "Where does your doorway lead? What is standing in the battery's path?";
@@ -378,8 +754,8 @@ string LevelHint(int level, int tier)
     if (level == 3)
     {
         if (detail == 0) return "Does a seated battery leave somewhere to stand beside the home?";
-        if (detail == 1) return "The battery's socket is also where you stand to push the home east. Put the battery aside first.";
-        return "Take the battery out and leave it off its socket. Push the home east onto its outline from the socket's cell, then bring the battery back to the socket.";
+        if (detail == 1) return "The battery's socket is also where you stand to push the home east. Leave the battery inside until the home is parked.";
+        return "Amber leaves west, stands on the socket and pushes the home east onto its outline, then goes to the right goal. Teal pushes the battery west out of the home onto its socket and takes the left goal.";
     }
     if (level == 4)
     {
@@ -393,19 +769,7 @@ string LevelHint(int level, int tier)
         if (detail == 1) return "Your partner can be the wall. One of you goes round to the far side of the outline and waits there; then the other can walk in.";
         return "Teal leaves the home east and goes round to the goal just east of the outline. Amber leaves south, pushes the small box one step east onto its outline, then walks into it again: Teal stops the push, so Amber goes inside. Amber pushes the battery east onto its socket, comes back out west and steps onto the goal.";
     }
-    if (level == 6)
-    {
-        if (detail == 0) return "A battery pushed at a box that cannot move goes in through its door. What can stop this box?";
-        if (detail == 1) return "Your partner stands behind the box. Push the battery at it once and it goes in; push again and you follow, pushing it on.";
-        return "Teal goes round to the goal east of the box. Amber leaves south and pushes the battery east: it goes into the box. Amber pushes again, goes in after it and seats it, then comes back out west onto the goal.";
-    }
-    if (level == 7)
-    {
-        if (detail == 0) return "Where can you stand above the battery? Can a doorway lead back into this very room?";
-        if (detail == 1) return "The small box is this room again. Going into it from one side brings you in at this room's door on that side.";
-        return "Use the small box as a way round: step into it to come in at the room's edge door, reach the cell above the battery, and push it down the corridor to its socket. Then both leave by the south door.";
-    }
-    if (detail == 0) return "The pale box and the box on the table outside are the same room. Which of them do its doors lead out beside?";
-    if (detail == 1) return "The pale copy is against the wall, so pushing the battery at it sends the battery in, and you after it.";
-    return "Push the battery east into the pale box and follow it in. Inside, push it across and out by the south door: it comes out on the table beside the room's own box. Follow it out, pushing it onto the socket, and take a goal each.";
+    if (detail == 0) return "A battery pushed at a box that cannot move goes in through its door. What can stop this box?";
+    if (detail == 1) return "Your partner stands behind the box. Push the battery at it once and it goes in; push again and you follow, pushing it on.";
+    return "Teal goes round to the goal east of the box. Amber leaves south and pushes the battery east: it goes into the box. Amber pushes again, goes in after it and seats it, then comes back out west onto the goal.";
 }

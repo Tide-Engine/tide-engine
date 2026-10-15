@@ -1,258 +1,353 @@
-# Managed hosting and deployment design
+# Managed hosting and deployment
 
-## Status and scope
+## Status and agreed scope (2026-10-15)
 
-Agreed product direction from the owner's design discussion, 2026-10-15.
-This records planned behavior, not a shipped hosting service or permission to
-start implementation. Exact APIs, formats, limits and providers remain open
-where listed below. No new Tide language syntax is approved here.
+Implemented first local-build hosting workflow, at the owner's request. GitHub
+sign-in, Stripe prepaid credit and the existing Fly.io organization/relay are
+selected. `hosting/README.md` is the operator/API/ABI reference;
+`docs/multiplayer/hosting.md` is the developer guide. No new Tide syntax.
 
-The first service combines local compilation, artifact upload, a hosted web
-client, sandboxed match execution, a developer dashboard and prepaid billing.
-The implementation status of native dedicated servers is in
-[dedicated-servers.md](dedicated-servers.md). The old remote mod build service
-remains on hold; this design does not reactivate it or its withdrawn requirements
-([build-service.md](build-service.md)).
+The first Fly deployment completed on 2026-10-15 through Hosting run
+38754895170 attempt 2 (341051c4): one 512 MiB shared CPU machine in `fra`, one
+1 GiB `hosting_data` volume, a passing Fly health check and `{"ok":true}` from
+the public Fly hostname with the console Host header. All four provider secrets
+are now deployed. Cloudflare DNS and Fly-managed TLS for console.tide-engine.dev
+and play.tide-engine.dev are configured and verified; both HTTPS health requests
+return 200. The console homepage serves GitHub sign-in. Real provider/payment
+flows remain unvalidated. No customer
+payment was made. Earlier implementation validation used no real provider
+credentials or paid infrastructure. Allocations remain disabled in the Fly
+configuration and prices default to zero
+(which also disables allocation). Public paid launch requires provider setup,
+measured rates and the remote/security/restore checks in the operator guide.
+The inactive remote mod build service remains on hold: this work does not
+restore its source-build, signing or closed-source requirements.
 
-## Local build and deployment
+## Commands, artifacts and compatibility
 
-- `tide deploy` builds locally and uploads artifacts. Whole-game deployment is
-  the default: a web client, a WASM server, their assets and generated release
-  metadata. It returns a playable URL, a server connection address and a
-  dashboard link.
-- `tide deploy --server-only` omits publication of the web client and uploads
-  the server with its required assets. These commands describe the intended
-  interface; they are not implemented commands today.
-- Source upload and remote compilation are not required. A future opt-in
-  package/service can produce the same deployment bundle remotely. Hosting
-  consumes artifacts independently of where they were compiled.
-- Client and server artifacts come from the same resolved project inputs and
-  toolchain. Platform-specific binaries and reduced server asset packs can
-  differ while sharing simulation compatibility.
-- A release is immutable and identifies its exact artifacts. A deployment runs
-  a release in a region with configured capacity. Publishing a new release
-  directs new matches to it; existing matches can finish on their old release.
-  Recoverable worlds must retain access to their release under the published
-  payment and retention policies.
-- Projects group the game, deployments, authorized developers and billing.
-  Authentication is needed for developer CLI and dashboard access. A browser
-  login flow, discussed as `tide login`, is planned; its provider and protocol
-  are undecided.
+- `tide login` uses a ten-minute device code explicitly approved in an authenticated
+  browser. CLI credentials last thirty days, are bound to the service origin and
+  use user-bound DPAPI on Windows/private files on POSIX. `tide logout` revokes.
+- `tide deploy [folder] --project name-or-id` builds locally in release mode:
+  a single-threaded WASI reactor, its simulation asset pack and a web client.
+  `--server-only` omits the client; `--bundle-only` builds without authentication.
+  The default result includes the release, game URL, room endpoint and dashboard.
+- `TIDEDEP1` bundles contain an LE32 manifest length, JSON and up to three files
+  (`server.wasm`, `server.pack`, `client.html`). SHA-256 of the exact bundle is
+  the immutable release ID; per-file sizes/digests are verified. A new release
+  changes new matches, while old running/saved matches retain their release.
+- Simulation ID is a separate generated SHA-256. Admission protocol 2 checks
+  it before allocation and session protocol 15 checks it before joining.
+  `tide_game.hash` remains the generated-layout/hot-reload identity.
+- The compiler fingerprints an ordered canonical graph of match schema/defaults,
+  systems, handlers, scenes/prefabs, tasks, transitive helpers, input sanitation
+  and prediction, settings and simulation-read assets. Local fields, views and
+  presentation-only dependencies are excluded. Shared dependencies participate.
+  Archetype IDs/masks remain conservative wire dependencies.
+- Toolchain identity includes normalized compiler/runtime sources, relevant
+  build policy and Tide version, detecting source edits without manual version
+  increments. CLI custom C/C++/headers and all library target variants are
+  conservative inputs, including the optimization mode when C is present.
+  Custom C also makes every packed asset a conservative compatibility input;
+  C can read assets without a visible Tide dependency.
+  Client/server identity is calculated before stripping; final binary bytes
+  are never the compatibility hash. The same inputs share native/web/server IDs.
+- Compatibility metadata is neither authentication nor proof that untrusted
+  uploaded code obeys its claimed simulation identity.
 
-## Release identity and simulation compatibility
+## Service and authentication
 
-Two distinct generated identities are required:
+Node 24.16+, ESM, SQLite WAL/FULL synchronization, node-datachannel 0.33.4. The
+service owns accounting, routing, credentials and lifecycle outside guest state.
+Developer accounts are invite-only by stable numeric GitHub ID. OAuth uses
+PKCE S256, browser-bound one-use state and no repository permissions. Provider
+access tokens are discarded after identity lookup. Dashboard sessions are
+Secure/HttpOnly/SameSite cookies with Origin/CSRF checks on mutations. Browser
+and game content have separate origins; game-host requests cannot access APIs.
 
-| Identity | Purpose |
+Browser credentials last eight hours; CLI and runtime credentials thirty days.
+Runtime credentials are revealed once, hashed at rest, revocable and scoped to
+one project's match controls. They cannot publish releases or access billing,
+accounts or other projects. Public client match creation can be disabled per
+project while trusted runtime keys continue creating matches. Match IDs are
+routing identifiers, not authorization tokens. Managed player authentication is
+not implemented; supplied player credentials are rejected rather than trusted.
+Native dedicated authorization callbacks remain a separate supported path.
+Runtime keys have a twenty/account limit requiring explicit revocation; browser
+and CLI session rotation cannot silently revoke a backend's runtime key.
+
+Stripe hosted Checkout accepts operator-configured amounts/currency. Raw webhook
+HMAC/time checks precede provider-state verification; exact account/amount/
+currency/payment intent must match the stored checkout. Fulfillment is idempotent.
+Refunds/disputes freeze hosting, including reversals delivered before completion.
+A redirect never grants credit. No public operator/credit-minting endpoint.
+
+## Execution, transport and entry point
+
+Each match has a separate Worker and WASM instance/memory/globals. Guest C/C++
+runs inside WASM too. There is no Node WASI, filesystem, process environment or
+arbitrary network import. Module import/table/memory validation happens before
+instantiation. Imported nonshared wasm32 memory has a preset maximum. The host
+supplies bounded packets, entropy, clocks, stdout and an explicit asset pack.
+A wall-time watchdog terminates nonreturning WASM; sampled Worker thread CPU
+limits returning but over-budget workloads. JS heap and packet queues are bounded.
+Worker memory statistics include actual WASM linear-memory bytes. Per-match
+limits do not claim to fully bound Node/JIT/native RTC process RSS; production
+operational/security review and host-level monitoring remain necessary.
+
+Managed ABI 1 lives in `platform/include/tide/managed_run.h`: allocate/free,
+init/update/receive/status, simulation ID and save/restore. It uses the existing
+session server with raw packet queues and no platform/render/audio library.
+A match `Main` starts automatically. A game with local-menu `Main` supplies
+`tide_server_entry` and selects its generated typed `tide_start`, receiving
+bounded start parameters. Native process hooks authorize/secure_peer/ready/poll
+are rejected in managed instances; trusted orchestration lives in the service.
+Guard server C with `TIDE_SERVER_BUILD` before including generated `game.h`.
+
+The host joins the existing relay as a project room via node-datachannel and
+routes admission protocol 2/multiplexed packets to one guest per match. Nonces,
+peer-bound routes, fragment queues and daily egress are bounded. Wrong simulation
+is rejected before credit reservation. Project room identity survives restart;
+rooms are restored on startup and signaling refreshes before TURN expiry.
+A hosted `?match=id` URL serves that match's original client after newer releases
+are published. Server-only releases expose a room endpoint but no play link.
+An unpaid project cannot use the service as free static hosting.
+
+## Lifetime, durable saves and recovery
+
+Default lifetime is while occupied, with sixty-second empty grace configurable
+from five seconds to one hour. The timer starts at allocation, resets while
+players are present, and counts the session server's connected players. Explicit
+lifetime has no idle expiry. Project defaults can be overridden per match.
+`Session.Close` controls admission; `Session.End` ends the guest match.
+
+Explicit worlds save at startup/every sixty seconds, before suspension and on
+graceful shutdown. Optional paired C callbacks `tide_managed_write_save` and
+`tide_managed_read_save` own the durable payload. Without them, generated world
+packing supplies an exact-release checkpoint, not a cross-release save format.
+A host envelope preserves reconnect identities/cookies, pending player sets,
+seed, tick timing, admission/start metadata outside deterministic world bytes.
+
+A new content-addressed save is flushed/renamed before the SQLite checkpoint
+changes; interruption retains the previous completed save. Recovery uses the
+same release, match ID and latest completed save, with 1/2/4-second backoff and
+at most three consecutive attempts. Five healthy minutes reset the retry count.
+Failed restoration settles the reservation without retaining a ghost allocation.
+Ended/payment-suspended worlds stay stopped. Service restart recovers only
+interrupted desired-running explicit worlds. Incidents include save time and
+potential progress loss. Notifications are in-dashboard; no email integration.
+
+## Prepaid limits and operator exposure
+
+Provisional defaults, configurable as described in README, are implementation
+policy, not language semantics or approved launch pricing:
+
+| Control | Default |
 |---|---|
-| Release ID | Identify exact deployment and distribution artifacts. |
-| Simulation ID | Decide whether a client and server may share a match. |
+| Capacity | Two active matches/account and host; project maximum one or two |
+| Small / Standard | 64/128 MiB, 0.25/0.5 sampled CPU core, 20/40 ms update deadline |
+| Fly host | One fixed 512 MiB shared CPU machine in fra, 128 MiB total guest reservation |
+| Credit | Thirty-second allocation lease, renew with five seconds left |
+| Saves | 8 MiB each, eight/account and sixteen/host, seven inactive days |
+| Releases/storage | Six releases and 64 MiB/account, 512 MiB/host |
+| Uploads | 32 MiB bundle, 8 MiB server WASM |
+| Daily creation | 200/account and 1000/host, including failed starts |
+| Daily egress | 1 GiB/account and host, reserved before application sends |
+| Connections | 64 peers/host, 32/project |
 
-Admission requires equal simulation IDs. Mismatches receive an explicit
-update/version-mismatch result before creating or entering a match. Developers
-do not maintain compatibility version numbers. Human-readable versions can
-remain optional labels.
+Balances use integer millionths of minor currency units (100,000,000 = EUR 1).
+Allocated resource seconds consume prepaid credit; unused whole reserved seconds
+are refunded once. Low-credit incidents warn; exhaustion blocks allocation and
+saves/suspends explicit worlds. Resume rechecks credit, capacity and operator
+allocation switch. Frozen accounts stop. No postpaid credit or auto-top-up.
+Traffic/storage have hard included allowances, not surprise overage charges.
+Application egress counts are not physical provider traffic or an exact currency
+ceiling. Rates require measurement and explicit operator configuration.
+Admission replies, game datagrams, hosted clients and authenticated save/log
+downloads all reserve outgoing transfer; repeated version refusals cannot use
+an unmetered application-data path. HTTP/RTC protocol overhead remains separate.
 
-The simulation fingerprint includes match systems, handlers, called helpers,
-tasks, simulation types and defaults, scenes and prefabs, input and command
-schemas, input sanitization, simulation settings, simulation-read assets and
-the relevant compiler/runtime version. Dependencies are transitive: a helper
-used by both a view and simulation participates. Presentation-only views,
-shaders, local UI state and assets are excluded. A purely visual change should
-leave simulation compatibility unchanged.
+Inactive saves warn during the last day and expire after seven days; active
+saves are protected. Running/saved releases cannot be deleted. Unsaved ended
+matches and detailed usage retain thirty days, then usage becomes exact daily
+totals. Payment deduplication persists. Logs are in-memory, bounded to 100 lines
+for at most 32 matches; incidents are durable and bounded per account.
 
-Custom C/C++ and library dependencies are conservative fingerprint inputs
-initially; the compiler cannot assume their presentation/simulation separation.
-The exact treatment of target-specific native libraries versus their WASM
-counterparts needs design. Fingerprints must not be hashes of the final binary:
-desktop, web and server outputs naturally differ. Server asset omission also
-must not create a simulation mismatch.
+Fly runs a separate app/volume and origins, not the docs service. It has no
+provisioning API token or autoscaling permission. Environment allocation enable
+and the persisted admin allocation switch both gate creation/resume; existing
+paid leases continue when new allocation is blocked. `admin.mjs` supplies invites,
+freeze/unfreeze, aggregate status and that emergency switch. One volume is not
+high availability or an independent backup.
 
-The existing `tide_game.hash`, emitted in `compiler/src/codegen.c` and checked
-by `engine/src/session.c`, primarily fingerprints the generated header and
-selected asset dependencies. Gameplay bodies can change while that header stays
-the same. It is not the planned simulation fingerprint. How the new identity
-coexists with layout identity and the session protocol is still open.
+## Validation and remaining launch work
 
-Compatibility metadata is not authentication, a code signature or proof of
-equivalent behavior for arbitrary developer-uploaded code.
+The manually triggered Hosting workflow (`.github/workflows/hosting.yml`) now
+tests the service and, on `dev`, deploys `hosting/` to `tide-hosting`, reusing the
+existing repository `FLY_API_TOKEN` as requested by the owner. Other refs test
+only. Node 24.16.0 matches the service image. Installed-toolchain/browser cases
+skip without staged tools; the ordinary service tests include real WebRTC.
+Provider secrets remain in Fly, and the workflow does not enable allocations
+or configure first-deployment domains, rates, invites or backups. See the
+operator README and notes/releases-and-ci.md for the completed run and token setup.
+Workflow validation passes actionlint 1.7.12, Fly configuration validation and
+the production image build. Node 24.16.0 service tests pass on Windows and in
+the Linux service image (29 passed, two staged-tool cases skipped).
+The first owner-triggered Hosting run passed service tests but Fly configuration
+validation required a token absent from that step. The workflow now supplies
+the existing `FLY_API_TOKEN` to both Fly validation and deployment. The owner
+authorized a fresh run after this correction. Run 38754895170 attempt 2 passes
+tests, validation and deployment. The existing repository token was website-only;
+its replacement combines one-year app-scoped FlyV1 credentials for the website
+and hosting, retaining the same secret name and refusing an unrelated app (403).
+The runtime has no copy of this deployment token. The service is healthy on Fly.
+The owner then authorized Cloudflare OAuth in their own browser. DNS-only
+A/AAAA records for console/play use the hosting app's public addresses, and
+the console ACME CNAME provides DNS validation. Both Fly certificates are
+issued and both custom-domain HTTPS health checks pass. Website release 282
+adds the requested Console menu on desktop/mobile; the apex remains the docs
+site. See notes/docs-site.md. Provider and other launch checks below remain
+outstanding; allocations and rates were not enabled by domain setup.
 
-## Managed execution and authority
+Validation exercises SQLite/auth/payment mocks, real HTTP, WASM isolation,
+memory growth limits, infinite-loop interruption, returning CPU-heavy guests,
+credit/caps, checkpoint atomicity, retention, bounded recovery, real local relay/
+WebRTC admission and cross-match routing. Gated tests build actual Tide games,
+compare client/server IDs, test game-owned saves, run CLI device login/deploy/
+logout and connect a muted headless Chrome client to an uploaded guest match.
+Dashboard desktop/mobile screenshots and overflow are checked. Compiler/session
+regressions cover simulation changes, view exclusions and restored reconnects.
+Final suite/package results are recorded below when validation completes.
 
-The managed-host direction is a separate WASM instance per match, isolating its
-linear memory, globals and simulation state. Many instances can run in one host
-process; compiled code can be reused. This avoids requiring a container per
-match or customer for game-memory isolation. The surrounding service still
-needs its own operational security boundaries.
+Docker builds and imports the Linux native RTC module; Fly configuration is
+validated locally. Still required before enabling paid hosting: real GitHub and
+Stripe test-mode setup, refund drills, remote Fly/TURN native/browser connectivity,
+process/volume restart drills, external backups, process resource measurements,
+security review and customer-facing rates/retention. No CI was dispatched.
 
-All game C/C++ executes inside the WASM sandbox. No unrestricted native escape
-is part of this design. Instances receive explicit, bounded host capabilities,
-with CPU/tick budgets, memory limits and bounded service calls. Network,
-storage and external-service access are controlled by the trusted host.
+Unbuilt: multi-host/region scaling, managed player auth, email notifications,
+remote builds, compiled-module caching, automatic native client updates,
+production match hot reload, cross-release save upgrades and auto top-up.
 
-The trusted service owns connections, admission, match routing, resource
-accounting and lifecycle. Developer accounts and billing are separate from
-player identities. Games retain separate authorization decisions for creating
-and joining matches, with trusted creation supported. Match IDs route players;
-they are not permission tokens. Public client requests cannot bypass project
-quotas or payment checks. Credentials and verified account metadata stay
-outside deterministic world state.
+## Design references
 
-Existing native hosting auth hooks do not provide an account database, login
-service, token issuer or built-in credential verifier. Managed player identity
-is a possible later service, not a first-version requirement.
+Official references used during design: [GameLift scaling](https://docs.aws.amazon.com/gameliftservers/latest/developerguide/fleets-autoscaling-target.html),
+[PlayFab standby](https://learn.microsoft.com/en-us/gaming/playfab/multiplayer/servers/scaling-standby),
+[Agones buffers](https://agones.dev/site/docs/reference/fleetautoscaler/),
+[Steam updates](https://partner.steamgames.com/doc/store/updates?l=english),
+[WASM security model](https://webassembly.org/docs/security/) and
+[TUF trust](https://theupdateframework.io/docs/faq/). These informed controls;
+provider selection is the owner's subsequent GitHub/Stripe/Fly decision.
 
-## Client distribution and updates
+Validation before integration: Clang 23.1.2/Node 24.16.0, full native debug
+2,300/2,300 and web debug 2,250/2,250 CTests (including GPU/WebGPU). The final
+conservative-C asset-watch correction additionally passes all 13 asset-usage
+cases and installed debug/release web-watch checks. Installed native/web cache,
+stripping, parallel compilation and invalidation phases pass; final integrated
+package validation is repeated after merging upstream. All 31 hosting tests pass
+with actual CLI/native/web/server identity comparison and Chrome integration
+enabled. Desktop/mobile captures were inspected, with no horizontal overflow.
+The docs site and browser compiler build, Docker image builds, Linux RTC/HTTP
+smoke passes, and Fly configuration validates. Other native OS/Android and real
+provider/Fly connectivity coverage remain unrun; no CI dispatch.
 
-The first hosted version rejects incompatible clients. It does not automatically
-download native client code from a match server. Web distribution publishes the
-client at the game's URL; reopening it loads the published version. A browser
-holding an incompatible client receives the mismatch result. A native store
-client can direct its player to update through its distribution channel.
+Integration validation after merging origin/dev at bf444057: both notes-only
+conflicts retain the hosting and incoming frustum records. Complete native debug
+2,305/2,305 and web debug 2,255/2,255 CTests pass. The full private-installation
+native/web cache, release stripping, parallel/failure invalidation, debug/release
+watch and dedicated-server integration script passes. All 31 hosting tests pass
+with native/web/server IDs and real Chrome/relay/guest execution enabled. Final
+policy regressions cover admission transfer reservations, save/log download
+limits, cross-project runtime-key refusal/revocation and preserving runtime keys
+through repeated developer sign-ins. Project cards show the allocated hourly
+rate. The merged docs site/browser compiler build and Linux Docker RTC/HTTP plus
+actual generated-WASM save/restore smoke pass; Fly configuration validates.
+Screenshots and the whitespace diff were checked. Provider/Fly launch checks and
+other-platform native coverage remain as listed above; no deployment or CI run.
 
-Production upgrades of running matches are deferred. Development hot reload
-remains useful but does not supply deployment coordination automatically.
-Current web reload closes the room and current native dedicated service builds
-do not reload; see [hot-reload.md](hot-reload.md).
+## Stripe planner review and sandbox setup (2026-10-15)
 
-If automatic client code delivery is introduced later, a server may announce a
-release ID but cannot grant that release execution authority. The client must
-independently verify the game's publishing authority. Runtime server credentials
-must not authorize publication. Signing, revocation, downgrade policy and any
-native client sandbox require separate design. Those future questions do not
-reinstate the old mod build service's signing model.
+At the owner's request, installed stripe@openai-curated and registered the
+https://mcp.stripe.com server in user-level Codex configuration. The owner
+completed OAuth in their own browser. The existing running agent did not expose
+new MCP tools, so a fresh Codex app-server connection invoked the authenticated
+MCP directly, without running an additional agent/model turn or reading OAuth
+credentials. stripe_implementation_planner was called with Tide's existing
+prepaid architecture and its decision-tree selections were accepted. No skills
+fallback was needed. The authorized account is Tide Engine sandbox (test mode).
 
-Steam's published guidance asks developers to deliver updates through Steam
-and avoid required in-game downloads. Use Steam distribution as the baseline;
-this is not a claim that Valve categorically prohibits hot reload. Hosted game
-pages also need separation from dashboard/account origins and credentials.
+The planner selects hosted one-time Checkout. Keep the synchronous prepaid
+allocation ledger and hard hosting limits. Recommended next steps, not newly
+approved product/pricing requirements: persistent Stripe Customer mapping and
+optional paid invoice documents for top-ups, with any later recurring/usage
+Billing package designed separately. Checkout post-payment invoice generation
+is priced separately; do not enable it or tax collection merely because the
+products were selected in onboarding. Invoice events must not double-credit
+purchases already fulfilled through Checkout. Tax treatment/registrations and
+net service credit versus total payment need resolution before live collection.
 
-## Match lifetime and recovery
+Confirmed findings in hosting/payments.mjs:
 
-| Lifetime | Behavior |
-|---|---|
-| While occupied (default) | End after the match is empty for a configurable grace period. A join/reconnect cancels the empty timer. |
-| Until explicitly ended | Continue running without players until server code or an authorized operator ends it, subject to payment and resource policies. |
+- The live/test check recognizes sk_live_ only. A correctly signed live event
+  is rejected with rk_live_, preventing fulfillment using a live restricted key.
+  Fix the mode check before live launch and test both restricted key modes.
+- A fresh idempotency key is generated per checkout request, with the payment
+  record inserted after Stripe returns. A simulated local persistence failure
+  followed by retry produces a second Checkout Session. Persist a purchase ID
+  before the external request and reuse its idempotency key/parameters on retry.
+  This reproduction establishes duplicate/orphan sessions; it does not establish
+  a real double charge or loss of a paid purchase in the normal response flow.
+- API requests do not pin Stripe-Version; webhook and API versions should be
+  tested and pinned together. Checkout currently hardcodes card-only methods;
+  use Dashboard-managed dynamic methods and test delayed settlement/reversal
+  behavior before offering additional methods. Customer mapping, invoice
+  generation/links and reconciliation of missed notifications remain unbuilt.
 
-Server-side orchestration can select/change lifetime per match and configure
-the empty timeout. Explicit lifetime has no implicit idle expiry or maximum
-duration; optional duration limits apply when configured. Admission remains
-separate: `Session.Close` closes admission, while `Session.End` ends a match.
-The managed default timeout, initial-player wait and counting of disconnected
-players still need precise definitions. Sixty seconds was an example, not a
-new approved managed-host default.
+A real sandbox API read found no webhook endpoints. Created and read back
+we_1UQpaeEOEguEtdxRUxRRVN8g for
+https://console.tide-engine.dev/webhooks/stripe, pinned to
+2026-09-30.endive (verified supported by Stripe's API schema), with only
+checkout.session.completed, checkout.session.async_payment_succeeded,
+charge.refunded and charge.dispute.created. Its signing secret is stored outside
+the checkout in the current user's LocalAppData/Tide/hosting-setup/stripe-webhook.env,
+with a user-only Windows ACL. No secret value was printed or committed. The
+endpoint is registered; public delivery is not validated because the hosting
+service is not deployed. No live objects, payments, subscriptions, tax settings,
+pricing changes or paid services were created.
 
-Long-lived worlds automatically recover from unexpected interruption:
+Stripe's API schema lists checkout_session_write for POST /v1/checkout/sessions.
+The current runtime uses only Checkout Session create/retrieve, so begin with a
+sandbox restricted key granting Checkout Sessions Write (which includes Read),
+then validate the actual runtime flows in the sandbox before provisioning the
+live equivalent. Customer/invoice API permissions can follow the implemented
+features. Runtime keys do not need webhook administration rights. Creating the
+runtime key remains an owner Dashboard/2FA step; the MCP API search did not expose
+a restricted-key creation operation.
 
-1. Detect the failure and record/notify the incident.
-2. Restart the affected instance on the same release.
-3. Restore the latest completed durable save through the game's save/load
-   integration.
-4. Keep a stable match address so players can reconnect.
-5. Report recovery, including the save timestamp and potential progress loss.
+The owner subsequently asked the agent to push the Stripe secrets. Created the
+Fly app namespace `tide-hosting` in the existing personal organization and
+imported `TIDE_STRIPE_WEBHOOK_SECRET` directly from the private local file with
+`fly secrets import --stage`. Fly lists it as staged; no machines, volumes or
+deployment were created. `TIDE_STRIPE_SECRET` is still absent. An existing
+`STRIPE_PRIVATE` environment value was verified through Stripe's account API:
+it belongs to a different sandbox, so it was not uploaded or modified. The
+matching Tide Engine sandbox API key requires Dashboard access; the shared
+browser currently requests sign-in. No secret values were printed or committed.
 
-Games own their save content and restoration logic; hosting provides durable
-storage and recovery orchestration through an interface still to be designed.
-Publishing saves must be atomic: an incomplete replacement leaves the previous
-completed save available. Runtime snapshots/hot-reload layouts are not currently
-a promised durable save format.
+After the owner's next setup confirmation, `fly secrets list --app tide-hosting`
+shows all four required names staged: `TIDE_GITHUB_CLIENT_ID`,
+`TIDE_GITHUB_CLIENT_SECRET`, `TIDE_STRIPE_SECRET` and
+`TIDE_STRIPE_WEBHOOK_SECRET`. The agent did not create or upload the three
+newly present values and did not retrieve their contents. Thus their presence
+is verified, while the API key's sandbox/account and permissions remain untested.
+Secrets are uploaded but not deployed to a machine; no additional Stripe key
+was created. The shared browser still displays Stripe sign-in.
 
-A match trap can restart one instance; host-process failure requires recovery
-of all affected persistent matches. Retries use bounded backoff and stop after
-repeated failures, with escalation. An explicitly ended world stays ended.
-Payment suspension must also remain suspended rather than enter a recovery
-loop. Recovery cannot promise to repair arbitrary broken game logic or saves.
-Changing a persistent world's release requires an explicit upgrade/migration
-path, separate from restarting it.
-
-## Capacity, dashboard and billing
-
-The initial capacity controls are region, match size (CPU/memory presets),
-maximum capacity and match lifetime. Start with one region per deployment;
-multiple-region placement can follow. Capacity grows on demand within the
-configured limits. When full, new match requests wait briefly or receive a
-clear capacity error. Ordinary scaling does not terminate ongoing matches.
-
-Advanced spare/readiness capacity tuning is deferred. Sharing ready host
-capacity across WASM games is a possibility to measure, not a promise of free
-idle capacity or instant startup.
-
-The dashboard is planned to show deployments, releases, status, logs, matches,
-player counts, resource usage, recovery incidents, stop/restart controls, credit
-and billing history. The existing site's private admin dashboard is not a
-developer account or billing system. Account roles and notification channels
-remain undecided.
-
-Launch with prepaid credit, limited/invite-only access and conservative quotas:
-
-- Require payment before public hosting; any trial has a fixed allowance and
-  expiry. No unlimited free usage or open postpaid credit is planned.
-- Meter allocated resource time. Disclose storage and any traffic charges;
-  exact rates, presets, metering units and allowances need cost measurements.
-- Enforce per-account limits on compute, match creation, bandwidth, storage
-  and retained artifacts, independently of who requests a match.
-- Reserve credit before allocation, including a bounded save/shutdown allowance.
-  Warn at low credit and stop accepting new matches before exhaustion.
-- At usable-credit exhaustion, save and suspend running worlds, including
-  worlds configured to run until explicitly ended. Saving has a bounded budget;
-  failed saving must not enable unlimited running time, and previously completed
-  saves remain the recovery point.
-- Give suspended worlds a published, finite save-retention period, with warnings
-  before deletion. Optional automatic top-ups have a customer-configured cap.
-- Bound the operator's total provisioned capacity separately from customer
-  credit. Start with a small pool, a provisioning ceiling and a switch to block
-  new allocations. Billing alerts alone do not enforce an infrastructure cap.
-
-Exact warning thresholds, retention duration, retry limits, queue timeouts,
-payment-failure handling and suspension/resumption semantics are still open.
-Do not promise that delayed usage metering or a provider budget alert gives an
-exact hard currency ceiling; resource enforcement must bound exposure too.
-
-## Implementation sequence and open decisions
-
-A proposed first technical milestone is an end-to-end prototype: locally build
-and upload compatible client/server artifacts, run isolated WASM matches with
-enforced budgets, and join through the hosted web client. This sequence is a
-proposal, not an implementation assignment.
-
-Before paid launch, resolve and validate:
-
-- Artifact/manifest format, compatibility closure, protocol negotiation and
-  pairing client/server outputs across platforms.
-- WASM runtime, scheduling, permitted imports and interruption/budget enforcement.
-- Infrastructure, persistent storage and payment providers; none are selected.
-- Developer authentication, project permissions and CLI credentials.
-- Match entry/start configuration and managed equivalents of native C hooks.
-- Stable routing, reconnect identity restoration and durable save/load callbacks.
-- Health detection, retry/backoff policy, notifications and upgrade behavior.
-- Capacity/credit reservations under concurrent requests, bounded traffic and
-  storage, retention cleanup and operator cost ceilings.
-
-No account service, dashboard, billing integration, deploy command, managed WASM
-runtime, simulation fingerprint or durable recovery is implemented by this note.
-No change to existing Tide syntax or runtime behavior is made.
-
-## Research used in the discussion
-
-Official references checked on 2026-10-15; product capabilities and prices can
-change. These inform the controls above and do not select a provider:
-
-- [GameLift capacity buffers and min/max scaling](https://docs.aws.amazon.com/gameliftservers/latest/developerguide/fleets-autoscaling-target.html)
-  and [instance pricing](https://aws.amazon.com/gamelift/servers/pricing/instance-pricing/).
-- [PlayFab standby scaling](https://learn.microsoft.com/en-us/xbox/playfab/multiplayer/servers/scaling-standby)
-  and [consumption billing](https://learn.microsoft.com/en-us/xbox/playfab/multiplayer/servers/billing-for-thunderhead).
-- [Edgegap on-demand/reserved pricing](https://edgegap.com/resources/pricing)
-  and [persistence and recovery responsibilities](https://docs.edgegap.com/learn/orchestration/persistence).
-- [Nodecraft sleeping and always-on plans](https://nodecraft.com/pricing).
-- [Agones buffer and room-capacity autoscaling](https://agones.dev/site/docs/reference/fleetautoscaler/).
-- [Steam update guidance](https://partner.steamgames.com/doc/store/updates?l=english),
-  [WebAssembly sandbox model](https://webassembly.org/docs/security/), and
-  [TUF update trust and key management](https://theupdateframework.io/docs/faq/).
-
-## Validation of this record
-
-Documentation only: checked the discussion against current dedicated-server and
-reload notes, the compiler's generated-header hash and the session join check.
-Local references resolve and the diff passes whitespace checks. No engine,
-compiler or docs-site build is required for this unbuilt text. No infrastructure
-deployment or CI dispatch is part of this work.
+Validation: 14 existing auth/payment/store tests pass; two isolated mock-provider
+reproductions confirm the key-mode and retry findings. Runtime code is unchanged
+by this review. Private setup helpers/results are under ignored build/; the
+webhook secret is outside the repository. Local references and whitespace diff
+checked. Official references: [restricted keys](https://docs.stripe.com/keys/restricted-api-keys),
+[idempotent requests](https://docs.stripe.com/api/idempotent_requests),
+[paid invoice receipts](https://docs.stripe.com/receipts) and
+[Stripe MCP](https://docs.stripe.com/mcp).

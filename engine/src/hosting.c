@@ -5,7 +5,7 @@
 #include <string.h>
 
 #define HOST_MAGIC UINT32_C(0x48534454)
-#define HOST_VERSION 1u
+#define HOST_VERSION 2u
 #define HOST_REQUEST 1u
 #define HOST_REPLY 2u
 #define HOST_DATA 3u
@@ -322,7 +322,7 @@ bool tide_hosting_resolve(tide_hosting *h, const uint64_t request, const tide_ho
 {
     host_peer *p = h ? find_peer(h, request) : NULL;
     if (!p || p->result != TIDE_HOSTING_PENDING || result == TIDE_HOSTING_PENDING
-        || (unsigned)result > TIDE_HOSTING_INVALID) return false;
+        || (unsigned)result > TIDE_HOSTING_WRONG_VERSION) return false;
     p->result = result;
     if (result == TIDE_HOSTING_ACCEPTED) {
         if (grant) p->grant = *grant;
@@ -351,6 +351,7 @@ bool tide_hosting_resolve(tide_hosting *h, const uint64_t request, const tide_ho
 static void on_request(tide_hosting *h, const tide_address from, const uint64_t nonce, tide_reader *r)
 {
     const uint64_t match = tide_read_u64(r);
+    const uint8_t *simulation = tide_read_bytes(r, 32);
     const uint16_t cn = tide_read_u16(r), pn = tide_read_u16(r);
     if (cn > TIDE_HOSTING_CREDENTIAL_BYTES || pn > TIDE_HOSTING_PARAMETER_BYTES || (match && pn)) return;
     const uint8_t *credential = tide_read_bytes(r, cn), *parameters = tide_read_bytes(r, pn);
@@ -373,7 +374,9 @@ static void on_request(tide_hosting *h, const tide_address from, const uint64_t 
     if (pn) memcpy(p->parameters, parameters, pn);
     tide_hosting_grant grant = {0};
     tide_hosting_result result = TIDE_HOSTING_DENIED;
-    if (cn && (!h->desc.secure_peer || !h->desc.secure_peer(h->desc.user, from))) {
+    if (memcmp(simulation, h->desc.game->simulation, 32) != 0) {
+        result = TIDE_HOSTING_WRONG_VERSION;
+    } else if (cn && (!h->desc.secure_peer || !h->desc.secure_peer(h->desc.user, from))) {
         result = TIDE_HOSTING_DENIED;
     } else if (h->desc.authorize) {
         const tide_hosting_request request = request_of(p);
@@ -494,6 +497,7 @@ tide_hosting_client *tide_hosting_client_create(const tide_hosting_client_desc *
     c->sent = now - 1.0;
     tide_writer w = header(c->request, HOST_REQUEST, desc->nonce);
     tide_write_u64(&w, desc->match);
+    tide_write_bytes(&w, desc->simulation, 32);
     tide_write_u16(&w, (uint16_t)desc->credential_size);
     tide_write_u16(&w, (uint16_t)desc->parameter_size);
     tide_write_bytes(&w, desc->credential, desc->credential_size);
@@ -528,7 +532,7 @@ void tide_hosting_client_update(tide_hosting_client *c, const double now)
         if (kind == HOST_REPLY && route == c->desc.nonce) {
             const uint8_t result = tide_read_u8(&r);
             const uint64_t match = tide_read_u64(&r), id = tide_read_u64(&r);
-            if (r.failed || r.at != r.size || result > TIDE_HOSTING_INVALID || !id
+            if (r.failed || r.at != r.size || result > TIDE_HOSTING_WRONG_VERSION || !id
                 || (result == TIDE_HOSTING_ACCEPTED && (!match || (c->desc.match && c->desc.match != match)))) continue;
             // A delayed PENDING must not undo an accepted/refused decision.
             if (c->result > TIDE_HOSTING_ACCEPTED || (c->result == TIDE_HOSTING_ACCEPTED

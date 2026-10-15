@@ -10,3 +10,6 @@ void program_strip_unused_assets(program *prog);
 // Closed server builds: simulation roots, followed through checked helpers and
 // defaults. Uncalled local code remains compilable but does not load its assets.
 void program_strip_server_assets(program *prog);
+// Canonical checked simulation graph; independent of source paths and local code.
+// Returns whether the simulation reads assets (watched edits need regeneration).
+bool program_simulation_id(const program *prog, uint8_t out[32], bool conservative_assets);

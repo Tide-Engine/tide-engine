@@ -24,7 +24,8 @@
 
 #define SAME_HASH UINT64_C(0x5945DBD91B407964)
 #define SAME_SERVER_SENT 29132u
-#define SAME_CLIENTS_SENT 11044u
+// Protocol 15 adds a 32-byte simulation ID to each of the two HELLOs.
+#define SAME_CLIENTS_SENT 11108u
 #define SAME_WHOLE_SIZE 202u
 #define SAME_WHOLE UINT64_C(0x5B30CD0C096F89F9)
 #define SAME_DELTA_SIZE 91u

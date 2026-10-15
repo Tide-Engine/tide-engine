@@ -66,6 +66,27 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 - **`Physics`** is the world: `gravity` and `substeps`, and how it steps, each a field with Box3D's own value unless a game writes another: `contactStiffness` (30 cycles a second), `contactDamping` (10) and `contactSpeed` (3 meters a second: the fastest two bodies that overlap are pushed apart), `bounceSpeed` (1: slower than this nothing bounces), `hitSpeed` (1) and `sleeping` (true). What's written is the next step's. A gravity that changes wakes every body, and so does `sleeping` turned off.
 - An entity that's destroyed takes its body with it.
 
+### Static mesh colliders
+
+`MeshCollider` accepts indexed triangle geometry on a `BodyType.Static` body, or on a `Part` of one:
+
+```csharp
+Spawn(Body { type = BodyType.Static }, MeshCollider {
+    vertices = [float3(-10, 0, -10), float3(-10, 0, 10), float3(10, 0, 10), float3(10, 0, -10)],
+    indices = [0, 1, 2, 0, 2, 3]
+});
+```
+
+Indices are zero-based triples, counterclockwise from the front (upwards in this example). The collider preserves concave surfaces and gaps. `scale` defaults to `float3(1)` and may be nonuniform or mirrored, with no zero component; `offset` is added after scaling, in body space. The body's position and rotation then place it in the world. `friction` defaults to 0.6 and `bounce` to 0. Mesh colliders have no density or sensor setting.
+
+Geometry and material are read once, like the other shapes. To change one, replace its part. A mesh on a dynamic or kinematic body makes no shape; a mesh part whose body is unsuitable is destroyed. Once a body has a mesh, requests to change its type are reset to `Static`. Its position and rotation can still be written.
+
+Each collider accepts 3–65,536 vertices and 1–65,536 triangles. All indices must be in range, and the index count must be divisible by three. Coordinates after scale and offset must be finite and within ±1,000,000 on each axis; friction must be finite and nonnegative, bounce finite in [0, 1]. Invalid geometry makes no shape. Degenerate triangles are discarded; an entirely degenerate mesh makes no shape. A failed attachment is attempted once, as with other shapes.
+
+Current and rewound rays, primitive casts and overlaps include meshes. Rays and casts meet triangle fronts; a mesh is a surface with no solid interior. `Body.rewind` includes its meshes too. Prepared rewind scenes retain triangle values and index them in their spatial tree, so they survive rollback and native-world replacement. Preparation and retained history cost memory proportional to triangle count; ordinary physics ticks capture none when rewind history is disabled.
+
+Cooked geometry belongs to the match's resident state and is deduplicated by its bytes. As with box hulls, unused geometry remains until the world is destroyed. Imported rendering meshes need their positions and indices supplied explicitly; there is no automatic render-mesh collider conversion.
+
 ### Asking the world
 
 Functions that ask what's in the world and change nothing. Each takes the `Physics` singleton and says whether it found anything, with what it found through `out`:
@@ -166,7 +187,7 @@ Bodies still go in and out through two systems written in C (`extern system`, `t
 
 The owner asked for these five things (2026-10-06): shapes on entities of their own, a body's type that can change, queries, what's in a sensor and hits, and tuning as fields of `Physics`. The names and the details are picks they haven't confirmed, made to match what the Box2D package is to get:
 
-- **`Part`**, with `of`; its own handles (`box`, `sphere`, `capsule`) in it. A part with no body to be on, when its shapes would be made or once its body goes, is destroyed: the one way both are handled. An entity with a `Body` and a `Part` has its shapes on the part's body.
+- **`Part`**, with `of`; its own handles (`box`, `sphere`, `capsule`, `mesh`) in it. A part with no body to be on, when its shapes would be made or once its body goes, is destroyed: the one way both are handled. An entity with a `Body` and a `Part` has its shapes on the part's body.
 - **`part` and `otherPart`** in `Touched` and `Parted`, each the entity itself for a shape of its own. The events still go to the bodies' entities, and a part's own entity hears nothing. A part that was destroyed still says its body, with `default` for the part.
 - **A type that changes sends nothing for what still touches**, though Box3D lets go of it and finds it again.
 - **A body's `gravityScale`, `linearDamping`, `angularDamping` and `bullet` follow what's written later too**, with its `type`: they were read when it was made, and silently not after.
@@ -177,7 +198,7 @@ The owner asked for these five things (2026-10-06): shapes on entities of their 
 
 ## Not there yet
 
-- Hulls other than boxes, meshes, height fields, compounds and joints. Box3D's canonical snapshot holds meshes, height fields and joints already, with their geometry, but the package exposes none of them. A world with a compound has no canonical snapshot, as a compound's bytes aren't the same on every machine.
+- Hulls other than boxes, height fields, compounds and joints. Box3D's canonical snapshot holds height fields and joints already, with their geometry, but the package exposes none of them. A world with a compound has no canonical snapshot, as a compound's bytes aren't the same on every machine.
 - A hull no shape has any more stays in the resident arena: a game that makes boxes of ever new sizes keeps them all.
 - A parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
 - A shape's fields don't follow later changes: its size, its `density`, `friction` and `bounce`, and whether it's a sensor are read when it's put on its body. A part that's destroyed and spawned again is how a shape changes.

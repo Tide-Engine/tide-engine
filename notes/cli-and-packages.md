@@ -1,5 +1,20 @@
 # `tide`, packages and the package
 
+Managed deployment (2026-10-15): `login`, `logout` and `deploy` are implemented
+in deploy.c, using explicit browser device approval, origin-bound credentials,
+Windows DPAPI/POSIX private files and bounded HTTP responses. Whole-game local
+release builds are default; `--server-only` and offline `--bundle-only` are
+available. The managed WASI reactor has its own cache and no platform library;
+normal web/native targets are preserved. Every build writes an output.simulation
+sidecar. CLI hashes normalized custom C/header contents plus all library target
+variants conservatively. C edits now rebuild game.o to publish the new Simulation
+ID; ordinary launchers still reuse their objects on body/identity-only edits.
+The managed launcher embeds the ID and must rebuild on it. Cache tests pin this
+distinction. Provider setup, wire bundle format, actual CLI/browser deployment
+tests, quotas and remaining launch work: managed-hosting.md, hosting/README.md.
+Custom C also makes asset edits refresh compatibility; the watch regression now
+checks that path, then removes C to verify visual-only pack reload is preserved.
+
 Dedicated service builds (2026-10-15): run/build --server has separate server
 debug/release caches, an ordinary console entry, no watch/reload and section
 collection in both configurations. Server-only runtime options are forwarded

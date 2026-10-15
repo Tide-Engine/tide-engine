@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "build.h"
+#include "deploy.h"
 #include "editors.h"
 #include "install.h"
 #include "lexer.h"
@@ -38,6 +39,8 @@ static void usage(void)
            "\n"
            "  run [folder]       build the game in folder (default: here), play it and reload as files change\n"
            "  build [folder]     build the game into <folder>/build\n"
+           "  deploy [folder]    build locally and upload client + WASM server (--server-only omits the client)\n"
+           "  login / logout     authorize or revoke this CLI's hosting access through the browser\n"
            "  schedule [folder]  show which systems can run at the same time, and why the others wait\n"
            "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
            "  add <source>       add a package to the game here: from git, a folder, or one that comes with tide (see below)\n"
@@ -76,6 +79,7 @@ static void usage(void)
            TIDE_VERSION);
     // In two parts: C promises a string literal of 4095 characters only
     printf("dedicated servers:\n"
+           "  deploy --project <name> selects a hosting project; --bundle-only builds without uploading\n"
            "  --server             run/build a native headless server, hosting many matches in one process\n"
            "  --strip-server-assets also select --server; opt custom C into simulation asset pruning\n"
            "  --anonymous          run --server: allow clients to create and join matches without authentication\n"
@@ -248,6 +252,8 @@ int main(const int argc, char **argv)
         return tide_upgrade(root, channel, exact);
     }
 
+    if (strcmp(command, "deploy") == 0 || strcmp(command, "login") == 0 || strcmp(command, "logout") == 0)
+        return tide_hosting_command(root, argc, argv);
     const bool run = strcmp(command, "run") == 0;
     const bool build = strcmp(command, "build") == 0;
     const bool shaders = strcmp(command, "shaders") == 0;

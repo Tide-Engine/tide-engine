@@ -1,5 +1,13 @@
 # Hot reloading
 
+Managed releases (2026-10-15): deployment does not hot-reload production worlds.
+Release IDs identify immutable bundles; Simulation IDs govern admission while
+`tide_game.hash` retains layout/migration identity. The new macro is appended
+outside that layout hash. Client/server closure is computed before stripping.
+Existing matches retain their release and ?match=id serves that release's client.
+Exact-release durable recovery does not promise cross-release migration.
+Contracts, asset watch regeneration and tests: managed-hosting.md.
+
 Docs playground (2026-10-14): locally compiled Wasm is supplied through the
 page's manual replacement mode, using exactly the existing web save/migrate
 host and layout representation. Program and pack install together after

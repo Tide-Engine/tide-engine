@@ -1,5 +1,11 @@
 # Repository layout and reference history
 
+Managed hosting (2026-10-15): hosting/ contains the separate Node/SQLite service,
+dashboard, WASM Workers, relay RTC adapter, tests and Fly/Docker configuration.
+compiler/cli/deploy.c owns local bundle/login/upload commands; managed_run.h is
+the generated game's platform-free WASI reactor host. Contracts and validation
+are in managed-hosting.md; the inactive builds/ service is unchanged.
+
 Copper & Coil (2026-10-13): `prototypes/copper-coil/` is the cooperative
 logic-circuit publisher prototype, opt-in with the existing private prototypes.
 Its build, gameplay and publisher material are in `notes/copper-coil.md`.

@@ -84,6 +84,7 @@ export const sidebar: Group[] = [
         text: 'Multiplayer',
         items: [
             { text: 'Matches', link: '/multiplayer/matches' },
+            { text: 'Managed hosting', link: '/multiplayer/hosting' },
             { text: 'Your own network and service', link: '/multiplayer/own-network' },
             { text: 'Networking', link: '/multiplayer/networking' },
             { text: 'Determinism', link: '/multiplayer/determinism' },

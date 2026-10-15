@@ -115,7 +115,7 @@ Simulation never includes platform headers. Views read the world and draw withou
 - Repair NaN/infinite input fields to their defaults before `Sanitize`. Math should avoid propagating invalid values: preserve forgiving clamp/min/max/normalize behavior in `tide/math.h`.
 - Hash and check the world **every tick, in every build**. Optimize its cost rather than making it periodic. Verified ticks have received required state and corrections; later ticks are predicted.
 - Visibility is decided dynamically by the server for entities and whole components, with ordinary state behind it; there is no field visibility. Hidden state is absent from the recipient's simulation. Put secrets in restricted components or scenes, not public match singletons or public payloads. Client verification hashes permitted logical values and repairs from an acknowledged authoritative baseline. Availability (Shown/Hidden) is distinct from actual lifetime (Spawned/Destroyed). Current transfer, prediction and migration limitations are in `notes/netcode.md` and `notes/language.md`.
-- Hosted matches are an agreed future direction, **not built**: WebAssembly sandboxing with tick budgets, including any game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views. The agreed local-build deployment, simulation compatibility, lifetime/recovery and prepaid hosting design is in `notes/managed-hosting.md`; provider choices and implementation APIs remain open.
+- Managed hosting runs one bounded WebAssembly instance per match, including game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views. Local artifact builds are the default; remote source builds remain deferred. GitHub sign-in, Stripe prepaid credit and Fly.io are selected. Contracts, validation and the remaining public-launch work are in `notes/managed-hosting.md`.
 
 ## Modding
 
@@ -195,7 +195,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Scheduler analysis, tick threads, parallel loops and temporary handles | `notes/schedule-and-threads.md` |
 | Session/net/delta runtime, inputs, commands, lead, migration and verification | `notes/netcode.md` |
 | Dedicated server builds, multiple matches, match IDs and authentication/admission | `notes/dedicated-servers.md` |
-| Planned managed WASM hosting, local-build deployment, simulation compatibility, recovery and prepaid billing | `notes/managed-hosting.md` |
+| Managed WASM hosting, local-build deployment, simulation compatibility, recovery and prepaid billing | `notes/managed-hosting.md` |
 | Verified/local event handlers and generated listeners | `notes/verified-and-local-handlers.md` |
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |

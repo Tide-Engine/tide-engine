@@ -42,6 +42,198 @@ static void done(void)
     lex_symbols_reset();
 }
 
+TIDE_TEST(simulation_identity_tracks_match_helpers_but_not_view_helpers_or_local_defaults)
+{
+    static const char *const sources[] = {
+        "singleton State { float value; local float color = 1; } scene Main {} "
+        "float Step() { return 1; } float Shade() { return 1; } "
+        "system Tick(mut State s) { s.value += Step(); } view Show() { Draw.Circle(float2(0), Shade(), Color.white); }",
+        "singleton State { float value; local float color = 2; } scene Main {} "
+        "float Step() { return 1; } float Shade() { return 2; } "
+        "system Tick(mut State s) { s.value += Step(); } view Show() { Draw.Circle(float2(1), Shade(), Color.white); }",
+        "singleton State { float value; local float color = 2; } scene Main {} "
+        "float Step() { return 2; } float Shade() { return 2; } "
+        "system Tick(mut State s) { s.value += Step(); } view Show() { Draw.Circle(float2(1), Shade(), Color.white); }",
+        "singleton State { float value; local float color = 2; } scene Main {} "
+        "float Step() { return 1; } float Shade() { return 2; } "
+        "system Tick(mut State s) { s.value -= Step(); } view Show() { Draw.Circle(float2(1), Shade(), Color.white); }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 4; i++) {
+        program *p = checked(sources[i]);
+        TIDE_REQUIRE(p);
+        uint8_t id[32]; program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK((memcmp(first, id, sizeof first) == 0) == (i == 1));
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_preserves_recipient_listener_wire_contract)
+{
+    static const char prefix[] =
+        "component Marker { int value; local int color = 1; } component Gate { int value; } "
+        "singleton State { int value; } local singleton Fx { int count; } "
+        "local singleton OtherFx { float count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate, Visibility); } ";
+    static const char *const listeners[] = {
+        "int Shade() { return 1; } local event(Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value + Shade(); }",
+        "int Shade() { return 99; } local event(Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value * 2 + Shade(); }",
+        "int Shade() { return 1; } local event(Spawned) Show(Marker m, mut OtherFx fx) { fx.count += m.value + Shade(); }",
+        "int Shade() { return 1; } local event(Spawned) Show(mut Marker m, mut Fx fx) { m.color += 1; fx.count += m.value + Shade(); }",
+        "local event(Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value; } "
+            "local event(Spawned) Extra(Marker m, mut Fx fx) { fx.count += m.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, with Gate) { fx.count += m.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, without Gate) { fx.count += m.value; }",
+        "local event(verified Spawned) Show(Marker m, mut Fx fx) { fx.count += m.value; }",
+        "local event(Spawned) Show(State state, mut Fx fx, with Marker) { fx.count += state.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, query (Marker other) rows) "
+            "{ fx.count += m.value; foreach (var row in rows) fx.count += row.other.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, query (Marker other, without Gate) rows) "
+            "{ fx.count += m.value; foreach (var row in rows) fx.count += row.other.value; }",
+        "local event(Spawned) Show(Marker m, mut Fx fx, query (with Marker, Gate gate) rows) "
+            "{ fx.count += m.value; foreach (var row in rows) fx.count += row.gate.value; }"
+    };
+    uint8_t first[32], with_filter[32], query[32];
+    for (int i = 0; i < (int)(sizeof listeners / sizeof listeners[0]); i++) {
+        char source[4096];
+        snprintf(source, sizeof source, "%s%s", prefix, listeners[i]);
+        program *p = checked(source);
+        TIDE_REQUIRE(p && p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK((memcmp(first, id, sizeof first) == 0) == (i == 1 || i == 2 || i == 3));
+        if (i == 5) memcpy(with_filter, id, sizeof with_filter);
+        if (i == 6) TIDE_CHECK(memcmp(with_filter, id, sizeof with_filter) != 0);
+        if (i == 9) memcpy(query, id, sizeof query);
+        if (i > 9) TIDE_CHECK(memcmp(query, id, sizeof query) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_includes_effective_sparse_wire_storage_from_unused_helpers)
+{
+    static const char prefix[] =
+        "component Marker { int value; } component Unused { List<int> values; } "
+        "component Other { long value; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Unused, Other, Visibility); } ";
+    static const char *const helpers[] = {
+        "void NeverCalled(mut Visibility v) { v.Set<Unused>(Audience.None); }",
+        "",
+        "void NeverCalled(mut Visibility v) { v.Set<Other>(Audience.None); }",
+        "void NeverCalled(mut Visibility v) { v.Reset<Unused>(); }"
+    };
+    uint8_t first[32], dense[32];
+    for (int i = 0; i < 4; i++) {
+        char source[4096];
+        snprintf(source, sizeof source, "%s%s", prefix, helpers[i]);
+        program *p = checked(source);
+        TIDE_REQUIRE(p && p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK((memcmp(first, id, sizeof first) == 0) == (i == 3));
+        if (i == 1) memcpy(dense, id, sizeof dense);
+        if (i == 2) TIDE_CHECK(memcmp(dense, id, sizeof dense) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_preserves_global_listener_query_record_order)
+{
+    static const char prefix[] =
+        "component Marker { int value; } component Gate { int value; } "
+        "local singleton Fx { int count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate, Visibility); } ";
+    static const char appeared[] =
+        "local event(Spawned) Show(mut Fx fx, query (Marker marker) rows) "
+        "{ foreach (var row in rows) fx.count += row.marker.value; } ";
+    static const char destroyed[] =
+        "local event(Destroyed) Hide(mut Fx fx, query (Gate gate) rows) "
+        "{ foreach (var row in rows) fx.count += row.gate.value; } ";
+    uint8_t first[32];
+    for (int reversed = 0; reversed < 2; reversed++) {
+        char source[4096];
+        snprintf(source, sizeof source, "%s%s%s", prefix, reversed ? destroyed : appeared, reversed ? appeared : destroyed);
+        program *p = checked(source);
+        TIDE_REQUIRE(p && p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!reversed) memcpy(first, id, sizeof first);
+        else TIDE_CHECK(memcmp(first, id, sizeof first) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_keeps_local_only_listeners_outside_nonvisibility_wire)
+{
+    static const char *const sources[] = {
+        "component Marker { int value; } component Gate { int value; } local singleton Fx { int count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate); } "
+        "local event(Spawned) Show(Marker marker, mut Fx fx) { fx.count += marker.value; }",
+        "component Marker { int value; } component Gate { int value; } local singleton Fx { int count; } scene Main {} "
+        "event(Spawned) Setup(with Main) { Spawn(Marker, Gate); } "
+        "local event(verified Spawned) Show(Marker marker, mut Fx fx, without Gate) { fx.count += marker.value * 2; }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 2; i++) {
+        program *p = checked(sources[i]);
+        TIDE_REQUIRE(p && !p->visibility_state);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK(memcmp(first, id, sizeof first) == 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_preserves_ordered_edges_to_shared_expressions)
+{
+    static const char *const sources[] = {
+        "const int A = 1; const int B = 2; singleton State { int value; } scene Main {} system Tick(mut State s) { s.value = A - B; }",
+        "const int A = 1; const int B = 2; singleton State { int value; } scene Main {} system Tick(mut State s) { s.value = B - A; }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 2; i++) {
+        program *p = checked(sources[i]); TIDE_REQUIRE(p);
+        uint8_t id[32]; program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK(memcmp(first, id, sizeof first) != 0);
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_includes_simulation_asset_content_and_excludes_view_only_assets)
+{
+    program *p = checked("asset string kept = \"assets/rules.txt\"; asset string visual = \"assets/rules.txt\"; "
+        "scene Main {} singleton State { int size; } system Tick(mut State s) { s.size = kept.length; } "
+        "view Show() { Debug.Log(visual); }");
+    TIDE_REQUIRE(p && p->assets.count == 2);
+    uint8_t before[32], after[32];
+    program_simulation_id(p, before, false);
+    // Each declaration can share cached source bytes. Supply a distinct edited
+    // value rather than mutating the cache shared by these two declarations.
+    uint8_t conservative[32];
+    program_simulation_id(p, conservative, true);
+    asset_value changed = *p->assets.items[1]->asset;
+    asset_match item = changed.items[0]; item.hash[0] ^= 1u; changed.items = &item;
+    p->assets.items[1]->asset = &changed;
+    program_simulation_id(p, after, false);
+    TIDE_CHECK(memcmp(before, after, 32) == 0);
+    program_simulation_id(p, after, true);
+    TIDE_CHECK(memcmp(conservative, after, 32) != 0);
+    p->assets.items[0]->asset = &changed;
+    program_simulation_id(p, after, false);
+    TIDE_CHECK(memcmp(before, after, 32) != 0);
+    done();
+    p = checked("asset string unused = \"assets/rules.txt\"; scene Main {}");
+    TIDE_REQUIRE(p);
+    TIDE_CHECK(!program_simulation_id(p, before, false));
+    TIDE_CHECK(program_simulation_id(p, after, true));
+    done();
+}
+
 static bool has_asset(const program *p, const char *name)
 {
     for (int i = 0; i < p->assets.count; i++) if (str_eq_c(p->assets.items[i]->name, name)) return true;
@@ -231,7 +423,7 @@ TIDE_TEST(asset_usage_codegen_opt_in_prunes_pack_globals_watch_paths_and_model_i
         TIDE_CHECK((strstr(h, "TIDE_HAS_ASSETS") != NULL));
         TIDE_CHECK((strstr(h, "unusedClips") != NULL) == !strip);
         free(h);
-        TIDE_CHECK(info.assets_affect_match == !strip);
+        TIDE_CHECK(info.assets_affect_match); // The retained ordinary asset initializes match state too.
         TIDE_CHECK(info.asset_count == (strip ? 1 : 3));
         for (int i = 0; strip && i < info.asset_count; i++) TIDE_CHECK(strstr(info.asset_paths[i], "rules.txt") != NULL);
         free_info(&info);
