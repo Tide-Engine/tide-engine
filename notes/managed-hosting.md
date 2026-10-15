@@ -113,9 +113,15 @@ payment_method_types parameter (HTTP 400), which mocks had accepted. Following
 removed that parameter so configured Dashboard payment methods apply, and pinned
 both session creation/retrieval to 2026-09-30.endive, matching the webhook version.
 Regressions assert the omitted parameter/version and provider-state fulfillment.
-All seven affected auth/payment/HTTP tests pass. No payment was completed or
-credit granted by the probe. Sandbox retry and follow-up deployment results
-are recorded after completion.
+All seven affected auth/payment/HTTP tests pass. Deployed df6c019a as Fly release
+4, image deployment-01M5059C33CH27SD5CSKA0M4Z8, with passing machine checks and
+public HTTPS health. A real sandbox Checkout Session for EUR 5 now creates
+successfully using the deployed Payments module and configured runtime key;
+the operator probe confirms the test checkout URL, all three top-up amounts
+and unchanged account balance. One unpaid sandbox Checkout record was created;
+no payment was completed or credit granted by the probe. Webhook fulfillment
+and refund drills still require their own real sandbox transaction tests.
+The machine/volume/capacity are unchanged and match allocations remain disabled.
 
 Owner access and console appearance (2026-10-15): the owner's live GitHub
 callback reached the invite gate. Resolved the authenticated local GitHub
