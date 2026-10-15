@@ -19,8 +19,16 @@ Created DNS-only A/AAAA records for both subdomains pointing to tide-hosting
 (66.241.125.185 and 2a09:8280:1::1b8:4b3a:0), TTL 300, and registered both Fly
 managed certificates. Added the Fly-provided console ACME CNAME for independent
 DNS validation. Existing apex/www records are unchanged. Play HTTPS is verified;
-console certificate issuance is pending at this step. Deployment/final checks
-are recorded below when complete.
+console issuance subsequently completed with an active Let's Encrypt certificate.
+Both custom-domain `/health` requests return HTTPS 200 with `{"ok":true}`, and
+the console homepage returns 200 with GitHub sign-in. No provider login/payment
+was performed during these probes.
+
+Source 1f81a312 deployed directly to tide-website as release 282, image
+deployment-01M501F063DS5S441CCCWYX27T, with its existing machine/volume and a
+passing health check. The public homepage now has the Console link; muted
+headless Chrome verifies the live desktop and mobile menu target with no
+horizontal overflow. No CI workflow was dispatched for this navigation change.
 
 Managed hosting guide (2026-10-15): multiplayer/hosting.md and the docs sidebar
 describe login/deploy, server-only bundles, Simulation ID admission and lifetime/
