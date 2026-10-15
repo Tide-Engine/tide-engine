@@ -25,6 +25,10 @@ kill_timeout = 45
   # Sandbox credit choices. Usage rates still require measurement before launch.
   # GitHub/Stripe credentials are supplied through Fly secrets.
   TIDE_HOSTING_TOPUPS = '500,1000,2500'
+  # Configurable sandbox subscription; live launch pricing is not selected.
+  TIDE_HOSTING_MONTHLY_AMOUNT = '2000'
+  TIDE_STRIPE_MONTHLY_PRICE = 'price_1UQrw7EOEguEtdxR8VTaPR66'
+  TIDE_STRIPE_PORTAL_CONFIG = 'bpc_1UQrw7EOEguEtdxRj71OCIMM'
   TIDE_HOSTING_ACCEPTING = '0'
 
 [[mounts]]

@@ -99,11 +99,11 @@ export class Matches {
             const wasExplicit = live.project.lifetime === 'explicit';
             Object.assign(live.project, this.store.matchPolicy(match.id));
             if (!wasExplicit && live.project.lifetime === 'explicit' && !match.checkpoint) live.saveAt = this.now();
-            if (match.paid_until <= this.now()) { await this.stopLive(live, 'suspended', false); return; }
+            if (match.paid_until <= this.now()) { await this.stopLive(live, 'suspended', this.store.billing.required); return; }
             if (match.desired !== 'running' || this.store.account(live.project.account).disabled) {
                 await this.stopLive(live, match.desired === 'ended' ? 'ended' : 'suspended', true); return;
             }
-            const low = this.store.account(live.project.account).balance
+            const low = this.store.billing.state(live.project.account).balance
                 < this.limits.presets[live.project.preset].rate * this.limits.leaseSeconds * 2;
             if (low && !live.lowWarned) {
                 this.store.incident(live.project.account, match.id, 'credit-low',
@@ -113,8 +113,13 @@ export class Matches {
             if (match.paid_until - this.now() <= this.limits.shutdownSeconds * 1000) {
                 try { match = this.store.renewMatch(match.id, this.limits); }
                 catch (error) {
-                    this.store.incident(live.project.account, match.id, 'credit', 'Prepaid credit exhausted; saving and suspending the match.');
-                    await this.stopLive(live, 'suspended', true); return;
+                    // A paid period may end between leases. Keep serving already
+                    // paid time while waiting for the next confirmed invoice.
+                    if (!(error.status === 402 && this.store.billing.required
+                        && this.store.billing.state(live.project.account).periodEnd === match.paid_until)) {
+                        this.store.incident(live.project.account, match.id, 'credit', 'Hosting credit exhausted; saving and suspending the match.');
+                        await this.stopLive(live, 'suspended', true); return;
+                    }
                 }
             }
             if (live.retryAt) {
