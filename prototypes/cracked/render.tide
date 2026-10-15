@@ -612,7 +612,7 @@ void TakeLight(mut Light light, mut Heaven heaven, int map)
 // Avatar's place is blended between ticks, and glides to where the server
 // says when this machine guessed otherwise.
 [Stage(Layers.Prepare, -1)]
-view Stand(Avatar avatar, mut Shown shown)
+view Stand(Avatar avatar, mut Presentation shown)
 {
     if (avatar.seat < 0 || avatar.seat >= SEATS) return;
     shown.position[avatar.seat] = avatar.position;
@@ -622,7 +622,7 @@ view Stand(Avatar avatar, mut Shown shown)
 // A seat as a view draws it: the match's, where this frame shows it. What a
 // view draws of a seat, or follows, asks this; what the match would do from
 // where the seat is (the aim, a bullet's way) asks the seat itself.
-Seat Seen(Arena arena, Shown shown, int s)
+Seat Seen(Arena arena, Presentation shown, int s)
 {
     mut var seat = arena.seats[s];
     seat.position = shown.position[s];
@@ -779,7 +779,7 @@ local event(RoundStarted started) Faced(mut Look look)
 // looks at, and `hand.aim` is the way from the fire point to where it looks,
 // as ShooterBase.GetFinalInput has it.
 [Stage(Layers.Camera)]
-view Aim(Devices devices, Arena arena, Shown shown, Session session, Lobby lobby, Spectator spectator, Fx fx, mut Hand hand, mut Look look, mut Light light)
+view Aim(Devices devices, Arena arena, Presentation shown, Session session, Lobby lobby, Spectator spectator, Fx fx, mut Hand hand, mut Look look, mut Light light)
 {
     var dt = fx.dt;
     look.seat = arena.players.TryGet(session.player, out var seat) ? seat : -1;
@@ -954,7 +954,7 @@ bool Lands(Arena arena, int shooter, float3 from, float3 way, float length, floa
 // the shown avatar's, as the Unity game's is its visuals': from the tick's,
 // the place would step thirty times a second under a camera that glides.
 [Stage(Layers.Camera, 1)]
-view Sights(Arena arena, Shown shown, Time time, Look look, Hand hand, mut Sight sight)
+view Sights(Arena arena, Presentation shown, Time time, Look look, Hand hand, mut Sight sight)
 {
     sight.found = false;
     var s = look.seat;

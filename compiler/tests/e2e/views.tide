@@ -16,7 +16,7 @@ component Tint
     Color color = Color.red;
 }
 
-component Hidden
+component Concealed
 {
     bool yes;
 }
@@ -27,7 +27,7 @@ event(Spawned) Setup(with Main)
 {
     Spawn(Body { position = float2(1, 2) }, Tint);
     Spawn(Body { position = float2(3, 4), radius = 2 }, Tint { color = Color(0, 0.5, 1, 0.25) });
-    Spawn(Body { position = float2(5, 6) }, Hidden);
+    Spawn(Body { position = float2(5, 6) }, Concealed);
 }
 
 // Once per frame: no entity parameters.
@@ -39,7 +39,7 @@ view Background(Palette palette, Time time)
 }
 
 // Once per matching entity, skipping hidden ones.
-view Bodies(Body body, Tint tint, without Hidden)
+view Bodies(Body body, Tint tint, without Concealed)
 {
     Draw.Circle(body.position, body.radius, tint.color);
     mut var solid = tint.color;
@@ -47,7 +47,7 @@ view Bodies(Body body, Tint tint, without Hidden)
     Draw.WireRect(body.position, float2(body.radius * 2), solid);
 }
 
-view Hints(Body body, with Hidden)
+view Hints(Body body, with Concealed)
 {
     Draw.Line(body.position, body.position + float2(1, 0), Color.yellow);
     Draw.WireCircle(body.position, body.radius, Color(1, 1, 1));

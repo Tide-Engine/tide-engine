@@ -229,7 +229,7 @@ fn ts_Look(t_corner: tt_Corner, t_lamp: tt_FromLamp, t_color: ptr<function, vec4
     return tide_color;
 }
 
-// Depths and Shown on Corner: GLSL, vertex
+// Depths and Displayed on Corner: GLSL, vertex
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
@@ -262,7 +262,7 @@ void main() {
     tide_h0_0 = tide_handed0.m_near;
 }
 
-// Depths and Shown on Corner: GLSL, fragment
+// Depths and Displayed on Corner: GLSL, fragment
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
@@ -277,20 +277,20 @@ struct tt_Corner {
 struct tt_Seen {
     float m_near;
 };
-void ts_Shown(tt_Corner t_corner, tt_Seen t_seen, inout vec4 t_color) {
+void ts_Displayed(tt_Corner t_corner, tt_Seen t_seen, inout vec4 t_color) {
     t_color = vec4(t_seen.m_near, t_seen.m_near, t_seen.m_near, 1.0);
 }
 
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    ts_Shown(tt_Corner(vec3(0.0), vec3(0.0)), tt_Seen(tide_h0_0), tide_color);
+    ts_Displayed(tt_Corner(vec3(0.0), vec3(0.0)), tt_Seen(tide_h0_0), tide_color);
     tide_color = tide_color * tide_tint;
     tide_color.rgb = tide_color.rgb * tide_color.a;
     if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
-// Depths and Shown on Corner: WGSL
+// Depths and Displayed on Corner: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -318,7 +318,7 @@ fn ts_Depths(t_corner: ptr<function, tt_Corner>, t_seen: ptr<function, tt_Seen>)
     (*t_seen).m_near = ((tide_block.tide_camera * (mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f((*t_corner).m_position, 1.0))).z / (tide_block.tide_camera * (mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f((*t_corner).m_position, 1.0))).w);
 }
 
-fn ts_Shown(t_corner: tt_Corner, t_seen: tt_Seen, t_color: ptr<function, vec4f>) {
+fn ts_Displayed(t_corner: tt_Corner, t_seen: tt_Seen, t_color: ptr<function, vec4f>) {
     (*t_color) = vec4f(t_seen.m_near, t_seen.m_near, t_seen.m_near, 1.0);
 }
 
@@ -340,7 +340,7 @@ fn ts_Shown(t_corner: tt_Corner, t_seen: tt_Seen, t_color: ptr<function, vec4f>)
 @fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
-    ts_Shown(tt_Corner(vec3f(), vec3f()), tt_Seen(in.tide_h0_0), &tide_color);
+    ts_Displayed(tt_Corner(vec3f(), vec3f()), tt_Seen(in.tide_h0_0), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
     tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {

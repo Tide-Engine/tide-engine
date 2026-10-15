@@ -269,6 +269,59 @@ static char *bundle(const char *root, const char *folder, const bool server_only
     return path;
 }
 
+static bool project_id(const char *id)
+{
+    return id && strlen(id) == 32 && strspn(id, "0123456789abcdef") == 32;
+}
+// A portable target, never credentials. Keep the ID when a folder is renamed.
+static bool load_project(const char *path, const char *origin, char **id)
+{
+    if (!sys_exists(path)) return true;
+    const int64_t size = sys_file_size(path);
+    size_t length = 0;
+    char *text = size > 0 && size <= 4096 ? sys_read_file(path, &length) : NULL;
+    const json *config = text && length <= 4096 ? json_parse(text, length) : NULL;
+    const char *saved_origin = json_str(json_get(config, "origin"));
+    const char *saved_id = json_str(json_get(config, "project"));
+    const bool valid = saved_origin && project_id(saved_id);
+    const bool same = valid && strcmp(saved_origin, origin) == 0;
+    if (same) *id = copy(saved_id);
+    else fprintf(stderr, "tide: %s %s; use --project <name-or-id> to link this folder explicitly\n", path,
+                 valid ? "belongs to another hosting service" : "is invalid");
+    json_release(); free(text);
+    return same;
+}
+static bool save_project(const char *path, const char *origin, const char *id)
+{
+    jbuf config = {0}, temporary = {0};
+    jb_put(&config, "{\n  \"origin\": "); jb_string(&config, origin);
+    jb_put(&config, ",\n  \"project\": "); jb_string(&config, id); jb_put(&config, "\n}\n");
+    jb_printf(&temporary, "%s.tmp-%u", path, sys_pid());
+    const bool ok = sys_write_file(temporary.data, config.data, config.len) && sys_rename(temporary.data, path);
+    if (!ok) { sys_remove(temporary.data); fprintf(stderr, "tide: cannot save deployment link to %s\n", path); }
+    jb_free(&config); jb_free(&temporary);
+    return ok;
+}
+static void folder_name(const char *folder, char name[49])
+{
+    const unsigned char *start = (const unsigned char *)folder, *end = start + strlen(folder);
+    while (end > start && (end[-1] == '/' || end[-1] == '\\')) end--;
+    const unsigned char *base = end;
+    while (base > start && base[-1] != '/' && base[-1] != '\\') base--;
+    int n = 0;
+    if (base == end || !((*base >= 'a' && *base <= 'z') || (*base >= 'A' && *base <= 'Z'))) {
+        strcpy(name, "game-"); n = 5;
+    }
+    for (; base < end && n < 48; base++) {
+        unsigned char c = *base;
+        if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) name[n++] = (char)c;
+        else if (n && name[n - 1] != '-') name[n++] = '-';
+    }
+    while (n && name[n - 1] == '-') n--;
+    name[n] = 0;
+}
+
 int tide_hosting_command(const char *root, const int argc, char **argv)
 {
     const bool sign_in = strcmp(argv[1], "login") == 0, sign_out = strcmp(argv[1], "logout") == 0;
@@ -280,13 +333,13 @@ int tide_hosting_command(const char *root, const int argc, char **argv)
         || strpbrk(authority + 3, "/?#@\r\n")) {
         fputs("tide: TIDE_HOSTING_URL must be an HTTPS origin (or a local development origin), without a trailing slash\n", stderr); return 2;
     }
-    bool server_only = false, bundle_only = false;
+    bool server_only = false, bundle_only = false, has_folder = false;
     const char *folder = ".", *project = NULL;
     for (int i = 2; i < argc; i++) {
         if (!sign_in && !sign_out && strcmp(argv[i], "--server-only") == 0) server_only = true;
         else if (!sign_in && !sign_out && strcmp(argv[i], "--bundle-only") == 0) bundle_only = true;
         else if (!sign_in && !sign_out && strcmp(argv[i], "--project") == 0 && i + 1 < argc) project = argv[++i];
-        else if (!sign_in && !sign_out && argv[i][0] != '-' && strcmp(folder, ".") == 0) folder = argv[i];
+        else if (!sign_in && !sign_out && argv[i][0] != '-' && !has_folder) { folder = argv[i]; has_folder = true; }
         else { fprintf(stderr, "tide: %s doesn't take '%s'\n", argv[1], argv[i]); return 2; }
     }
     if (bundle_only) {
@@ -306,30 +359,47 @@ int tide_hosting_command(const char *root, const int argc, char **argv)
         if (reply) { char *path = path_join(credentials, "login"); sys_remove(path); free(path); puts("Signed out."); }
         free(reply); free(token); free(credentials); return result;
     }
+    int result = 1;
+    char *absolute = path_absolute(folder), *link = path_join(absolute, "tide.deploy.json");
+    char *id = NULL, *name = NULL;
+    if (!sys_is_dir(absolute)) { fprintf(stderr, "tide: game folder does not exist: %s\n", absolute); goto done; }
+    if (!project && !load_project(link, origin, &id)) goto done;
+    const bool linked = id != NULL;
+    char suggested[49]; folder_name(absolute, suggested);
+    const char *target = project ? project : linked ? id : suggested;
     char *reply = request(&h, "GET", "/api/account", NULL, NULL);
-    if (!reply) { free(token); free(credentials); return 1; }
+    if (!reply) goto done;
     const json *account = json_parse(reply, strlen(reply));
     const json *projects = json_get(account, "projects");
-    char *absolute = path_absolute(folder);
-    const char *name = project ? project : path_base(absolute);
-    char *id = NULL, *region = copy(json_str(json_get(account, "region")));
+    char *found = NULL, *region = copy(json_str(json_get(account, "region")));
     for (int i = 0; projects && i < projects->count; i++) {
         const json *p = projects->items[i];
         const char *pn = json_str(json_get(p, "name")), *pi = json_str(json_get(p, "id"));
-        if ((pn && strcmp(pn, name) == 0) || (pi && strcmp(pi, name) == 0)) { id = copy(pi); break; }
+        if (project_id(pi) && ((pn && strcmp(pn, target) == 0) || strcmp(pi, target) == 0)) {
+            found = copy(pi); name = copy(pn); break;
+        }
     }
     json_release(); free(reply);
-    if (!id && region) {
-        jbuf create = {0}; jb_put(&create, "{\"name\":"); jb_string(&create, name);
+    if (!found && (linked || project_id(target))) {
+        fprintf(stderr, "tide: project %s is not available to this account; use --project <name-or-id> to select another\n", target);
+        free(region); goto done;
+    }
+    if (!found && region) {
+        name = copy(target);
+        jbuf create = {0}; jb_put(&create, "{\"name\":"); jb_string(&create, target);
         jb_put(&create, ",\"region\":"); jb_string(&create, region);
         jb_put(&create, ",\"preset\":\"small\",\"maximum\":1}");
         reply = request(&h, "POST", "/api/projects", create.data, NULL); jb_free(&create);
         const json *p = reply ? json_parse(reply, strlen(reply)) : NULL;
-        id = copy(json_str(json_get(p, "id"))); json_release(); free(reply);
+        const char *created = json_str(json_get(p, "id"));
+        if (project_id(created)) { found = copy(created); printf("Created project %s\n", name); }
+        json_release(); free(reply);
     }
     free(region);
+    free(id); id = found;
+    if (!id || !save_project(link, origin, id)) goto done;
+    printf("Deploying to %s (%s)\nLinked in %s\n", name ? name : id, id, link);
     char *path = id ? bundle(root, absolute, server_only) : NULL;
-    int result = 1;
     if (path) {
         char route[128]; snprintf(route, sizeof route, "/api/projects/%s/releases", id);
         reply = request(&h, "POST", route, NULL, path);
@@ -346,6 +416,8 @@ int tide_hosting_command(const char *root, const int argc, char **argv)
             json_release(); free(reply);
         }
     }
-    free(path); free(id); free(absolute); free(token); free(credentials);
+    free(path);
+done:
+    free(name); free(id); free(link); free(absolute); free(token); free(credentials);
     return result;
 }

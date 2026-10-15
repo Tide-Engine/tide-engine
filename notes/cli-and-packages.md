@@ -19,6 +19,18 @@ file, including main.o. Compiler/cache behavior and public contracts are unchang
 The original comparison fails locally under Linux with only main.o named;
 the corrected fixture passes all parallel-build and failure-recovery checks.
 
+Folder deployment link (2026-10-15): `tide deploy` needs no dashboard setup.
+Its existing project auto-creation now normalizes the folder name and saves
+the immutable project ID plus service origin atomically in `tide.deploy.json`.
+The file is portable and contains no credentials. Future deploys use the ID
+after folder renames; `--project <name-or-id>` selects/relinks explicitly.
+Malformed links, service mismatches and inaccessible IDs fail without creating
+another project. Explicit missing names still create a Small/one-match project.
+Bundle-only builds ignore the link. Help, the hosting guide and operator README
+describe this behavior. Installed-CLI coverage exercises first deploy, repeat
+after rename, invalid/mismatched/missing links, name creation and ID selection;
+validation results are recorded in managed-hosting.md.
+
 Managed deployment (2026-10-15): `login`, `logout` and `deploy` are implemented
 in deploy.c, using explicit browser device approval, origin-bound credentials,
 Windows DPAPI/POSIX private files and bounded HTTP responses. Whole-game local

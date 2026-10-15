@@ -331,10 +331,14 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 // Whether `d` is one of the built-in enums generated C has only in a game
 // whose code names it (decl.named), so that the others' is what it was before
 // there was one: Depth, Cull, Wrap, Format, StencilTest and StencilOp.
+static void ensure_visibility(program *prog);
+static void order_struct(program *prog, decl *d);
+
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
-        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time;
+        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time
+        || d == prog->audience || d == prog->visibility_group;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -351,6 +355,8 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
+            if (!prog->quiet_names && (d == prog->visibility || d == prog->visibility_group || d == prog->audience))
+                ensure_visibility((program *)prog);
             if (d == prog->transform && d->index < 0) {
                 program *p = (program *)prog;
                 d->index = p->components.count;
@@ -2511,6 +2517,10 @@ static void record_change(const checker *c, const expr *e, const comp_mask comps
 static decl *component_placement(program *prog, decl *d, const bool local, const loc at)
 {
     if (d->placement_of) d = d->placement_of;
+    if (d == prog->visibility && local) {
+        diag_error(at, "Visibility controls which clients receive match entities; local entities already belong to this machine");
+        return d;
+    }
     if (d->is_scene) {
         if (d->is_local != local) diag_error(at, "'" STR_FMT "' belongs to %s", STR_ARG(d->name), d->is_local ? "local state" : "the match");
         return d;
@@ -2609,6 +2619,76 @@ static void ensure_hierarchy(program *prog, const bool local)
     f.type = map_of(prog, T_ENTITY_, (type){TY_STRUCT, prog->hierarchy_node}, false);
     vec_push(state->fields, f);
     prog->hierarchy[local] = state;
+    prog->uses_heap = true;
+    vec_push(prog->singletons, state);
+}
+
+// Visibility is ordinary match state. Opaque group IDs never get reused, and
+// typed override keys are stable qualified component names rather than indices.
+static void ensure_visibility(program *prog)
+{
+    if (prog->visibility_state) return;
+    prog->audience->named = prog->visibility_group->named = true;
+    if (prog->visibility->index < 0) {
+        prog->visibility->index = prog->components.count;
+        vec_push(prog->components, prog->visibility);
+    }
+    decl *policy = NEW(decl);
+    policy->kind = DECL_STRUCT;
+    policy->builtin = true;
+    policy->name = policy->qualified = str_from("tide_visibility_policy");
+    policy->c_name = "tide_visibility_policy";
+    field f = {0};
+    f.hidden = true;
+    f.name = str_from("group");
+    f.type = (type){TY_STRUCT, prog->visibility_group};
+    vec_push(policy->fields, f);
+    f.name = str_from("audience");
+    f.type = (type){TY_STRUCT, prog->audience};
+    vec_push(policy->fields, f);
+    f.name = str_from("direct");
+    f.type = (type){TY_BOOL, NULL};
+    vec_push(policy->fields, f);
+    prog->visibility_policy = policy;
+    // Its dependencies are source-nameable builtins ordered in the normal pass.
+    vec_push(prog->decls, policy);
+    order_struct(prog, policy);
+    f.name = str_from("overrides");
+    f.type = map_of(prog, (type){TY_LONG, NULL}, (type){TY_STRUCT, policy}, false);
+    vec_push(prog->visibility->fields, f);
+    decl *state = NEW(decl);
+    state->kind = DECL_SINGLETON;
+    state->builtin = true;
+    state->name = state->qualified = str_from("tide_visibility_state");
+    state->c_name = "tide_visibility_state";
+    state->index = prog->singletons.count;
+    f.name = str_from("next");
+    f.type = (type){TY_LONG, NULL};
+    vec_push(state->fields, f);
+    f.name = str_from("groups");
+    f.type = map_of(prog, (type){TY_LONG, NULL}, (type){TY_STRUCT, prog->audience}, false);
+    vec_push(state->fields, f);
+    f.name = str_from("client");
+    f.type = T_INT_;
+    vec_push(state->fields, f);
+    decl *anchor = NEW(decl);
+    anchor->kind = DECL_STRUCT;
+    anchor->builtin = true;
+    anchor->name = anchor->qualified = str_from("tide_visibility_anchor");
+    anchor->c_name = "tide_visibility_anchor";
+    f.name = str_from("matrix");
+    f.type = (type){TY_FLOAT4X4, NULL};
+    vec_push(anchor->fields, f);
+    f.name = str_from("rotation");
+    f.type = (type){TY_QUATERNION, NULL};
+    vec_push(anchor->fields, f);
+    prog->visibility_anchor = anchor;
+    vec_push(prog->decls, anchor);
+    order_struct(prog, anchor);
+    f.name = str_from("anchors");
+    f.type = map_of(prog, T_ENTITY_, (type){TY_STRUCT, anchor}, false);
+    vec_push(state->fields, f);
+    prog->visibility_state = state;
     prog->uses_heap = true;
     vec_push(prog->singletons, state);
 }
@@ -3687,6 +3767,7 @@ static type check_send(checker *c, expr *e)
         diag_error(e->args.items[0]->at, "the engine sends '" STR_FMT "'; games can't", STR_ARG(event->name));
         if (event == c->prog->spawned) diag_note("it's sent to each entity as it's spawned");
         else if (event == c->prog->destroyed) diag_note("it's sent to each entity as it's destroyed");
+        else if (event == c->prog->shown || event == c->prog->hidden) diag_note("it's sent on this machine when the entity's permitted components become available or are concealed");
         else if (event == c->prog->forgotten) diag_note("it's sent to an entity of the match as its local fields go");
         else if (event->is_local) diag_note("it's sent when this machine joins or leaves a match");
         else diag_note("it's sent when a player joins or leaves");
@@ -5069,6 +5150,7 @@ static type check_scene_call(checker *c, expr *e)
             }
         }
         if (e->args.count == 2) {
+            if (!local) ensure_visibility(c->prog);
             const type t = check_expr(c, e->args.items[1]);
             if (t.kind != TY_ERROR && !(t.kind == TY_ENUM && t.decl == c->prog->scene_visibility)) {
                 diag_error(e->args.items[1]->at, "a scene's visibility is 'SceneVisibility.Public' or 'SceneVisibility.Private', not %s",
@@ -5135,6 +5217,7 @@ static type check_scene_call(checker *c, expr *e)
         return T_ERR;
     }
     if (players) {
+        ensure_visibility(c->prog);
         if (local) {
             diag_error(e->at, "which players see a scene is the match's to decide, so local code can't change it");
             return T_ERR;
@@ -6807,8 +6890,12 @@ static type check_parse_call(checker *c, expr *e, const type result)
     return result;
 }
 
+#include "visibility_check.inc"
+
 static type check_method(checker *c, expr *e)
 {
+    if (visibility_owner(c, e->object, "Visibility") || visibility_owner(c, e->object, "Audience"))
+        return check_visibility_static(c, e);
     if (str_eq_c(e->name, "Count")) {
         decl *d = named_enum(c, e->object);
         if (d) {
@@ -6836,7 +6923,9 @@ static type check_method(checker *c, expr *e)
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
     }
     // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads
-    if (e->type_arg.len > 0 && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))) {
+    if (e->type_arg.len > 0 && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
+        && !((str_eq_c(e->name, "Set") || str_eq_c(e->name, "Reset"))
+             && visibility_typed_receiver(c, e->object))) {
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
         diag_note("the World's methods do: 'world.Get<Health>(entity)', in code that takes 'World world'");
     }
@@ -7000,6 +7089,9 @@ static type check_method(checker *c, expr *e)
     }
 
     const type obj = check_expr(c, e->object);
+    if ((obj.kind == TY_STRUCT && obj.decl == c->prog->audience)
+        || (obj.kind == TY_COMPONENT && obj.decl == c->prog->visibility))
+        return check_visibility_method(c, e, obj);
     if (obj.kind == TY_ERROR) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
@@ -7564,6 +7656,8 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
 {
     *overload = NULL;
     if (l.kind == TY_ERROR || r.kind == TY_ERROR) return T_ERR;
+    if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
+        && l.decl == prog->visibility_group && r.decl == prog->visibility_group) return T_BOOL_;
     // Text joins with anything it can show, and compares with text.
     if (l.kind == TY_STRING || r.kind == TY_STRING) {
         const type other = l.kind == TY_STRING ? r : l;
@@ -7992,6 +8086,15 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
 
 static type check_member(checker *c, expr *e)
 {
+    if (visibility_owner(c, e->object, "Audience")) {
+        ensure_visibility(c->prog);
+        e->object->bind = BIND_TYPE;
+        e->object->type_decl = c->prog->audience;
+        if (str_eq_c(e->member, "All")) e->c_constant = "TIDE_AUDIENCE_ALL";
+        else if (str_eq_c(e->member, "None")) e->c_constant = "((Audience){0})";
+        else { diag_error(e->at, "Audience has All and None; use Only(player) or From(players) for selected players"); return T_ERR; }
+        return (type){TY_STRUCT, c->prog->audience};
+    }
     if (e->enum_shorthand) {
         if (!e->type_decl) {
             diag_error(e->at, "'." STR_FMT "' needs an expected enum type; write 'EnumName." STR_FMT "' here",
@@ -8057,6 +8160,8 @@ static type check_member(checker *c, expr *e)
     decl *const enum_decl = named_enum(c, e->object);
     if (enum_decl) {
         const type member = check_enum_member(e, enum_decl);
+        if (enum_decl == c->prog->scene_visibility && e->enum_member && e->enum_member->number == 1)
+            ensure_visibility(c->prog);
         // Font.Bold: the game draws in bold, so it carries the bold's file
         if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
         // Filter.Trilinear: the game's textures can be read between their smaller images
@@ -8996,6 +9101,7 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_WAIT: what = "wait"; break;
     case CALL_ACTION: what = "run a block"; break;
     case CALL_NEW_GRID: what = "make grids"; break;
+    case CALL_VISIBILITY: if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups"; break;
     default: break;
     }
     if (!what && e->kind == E_AWAIT) what = "wait";
@@ -10538,6 +10644,10 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
     case CALL_ROLL: // A step rolls for its own cell, whichever thread runs it
         break;
+    case CALL_VISIBILITY:
+        if (e->visibility_operation & VISIBILITY_WORLD) return false;
+        if ((e->visibility_operation & VISIBILITY_MUT) && !step_own(e->object, loop)) return false;
+        break;
     case CALL_SKINNED:
         if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
             && (!e->object || !step_own(e->object, loop))) return false;
@@ -10684,6 +10794,7 @@ static void check_step_expr(checker *c, const expr *e)
     case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SESSION: case CALL_CLIPBOARD: what = "make requests of the host"; break;
     case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load and unload scenes"; break;
+    case CALL_VISIBILITY: if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups"; break;
     case CALL_SNAP: what = "snap"; break;
     default: break;
     }
@@ -11589,6 +11700,7 @@ static bool stands_alone(const expr *e)
         || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0
+        || (call == CALL_VISIBILITY && (called->visibility_operation & VISIBILITY_MUT))
         || e->kind == E_TRY // Passes an error on, even from a variable
         || called->kind == E_AWAIT;
 }
@@ -12967,6 +13079,7 @@ static void resolve_field_types(const checker *c, const decl *d)
 {
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
+        if (f->hidden && !f->type_name.len && f->type.kind != TY_ERROR) continue;
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
         if (builtin_type_named(f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
             if (f->type.kind != TY_RESIDENT) continue;
@@ -14003,13 +14116,15 @@ static void check_extern_system(const checker *c, decl *sys)
 // A system written in C runs for whole runs of rows, so it can't be told which
 // rows have a sparse component, which is the row's and not the archetype's:
 // checked once the archetypes are derived, which says which components are.
+static bool sparse_component_source(const program *prog, const decl *d);
+
 static void check_extern_sparse(const program *prog)
 {
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
         for (int k = 0; sys->extern_system && k < sys->params.count; k++) {
             const param *p = &sys->params.items[k];
-            if (p->type.kind != TY_COMPONENT || !p->type.decl->is_sparse) continue;
+            if (p->type.kind != TY_COMPONENT || !sparse_component_source(prog, p->type.decl)) continue;
             const loc at = p->type_at.line ? p->type_at : p->at;
             const bool filter = p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT;
             if (filter) {
@@ -14489,6 +14604,10 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
         if (handler->is_async) diag_error(handler->async_at, "a command handler can't be async; it validates and handles one submission immediately");
         return;
     }
+    if ((d == c->prog->shown || d == c->prog->hidden) && !handler->is_local) {
+        diag_error(at, "'" STR_FMT "' describes this machine's visibility: handle it with 'local event(" STR_FMT ")'",
+                   STR_ARG(d->name), STR_ARG(d->name));
+    }
     if (p->verified) check_verified_trigger(handler, p, d);
     // Spawned and Destroyed come from both worlds; the handler's side picks one
     // (check_listener). A local handler of another of the match's events hears
@@ -14641,6 +14760,11 @@ static void check_listener(const program *prog, decl *sys)
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
         if (!p->type.decl->is_local && !of_match) of_match = p;
         if (p->type.decl->is_local && p->type.kind == TY_COMPONENT && !of_local) of_local = p;
+    }
+    if ((sys->event == prog->shown || sys->event == prog->hidden) && of_local) {
+        diag_error(of_local->at, "'" STR_FMT "' describes availability of match entities, so it can't take a local component",
+                   STR_ARG(sys->event->name));
+        diag_note("take the match component being shown or hidden, and keep presentation data in its local fields or a local singleton");
     }
     if (either && !of_match && !trigger->verified) return; // The local world's entities
     if (either && of_local) {
@@ -15278,6 +15402,7 @@ static bool call_acts(const expr *e)
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
+    case CALL_VISIBILITY: return (e->visibility_operation & VISIBILITY_MUT) != 0;
     case CALL_FUNCTION:
     case CALL_METHOD: {
         const decl *m = e->method;
@@ -15532,10 +15657,46 @@ static void add_builtins(program *prog)
     }
     prog->transform = transform_component;
 
+    decl *audience = NEW(decl);
+    audience->kind = DECL_STRUCT;
+    audience->name = str_from("Audience");
+    audience->builtin = true;
+    field audience_word = {0};
+    audience_word.name = str_from("players");
+    audience_word.type_name = str_from("int");
+    audience_word.type = T_INT_;
+    audience_word.hidden = true;
+    vec_push(audience->fields, audience_word);
+    prog->audience = audience;
+    decl *visibility_group = NEW(decl);
+    visibility_group->kind = DECL_STRUCT;
+    visibility_group->name = str_from("VisibilityGroup");
+    visibility_group->builtin = true;
+    field group_id = {0};
+    group_id.name = str_from("id");
+    group_id.type_name = str_from("long");
+    group_id.type = (type){TY_LONG, NULL};
+    group_id.hidden = true;
+    vec_push(visibility_group->fields, group_id);
+    prog->visibility_group = visibility_group;
+    decl *visibility_component = NEW(decl);
+    visibility_component->kind = DECL_COMPONENT;
+    visibility_component->name = str_from("Visibility");
+    visibility_component->builtin = true;
+    visibility_component->index = -1;
+    field group_field = {0};
+    group_field.name = str_from("group");
+    group_field.type_name = str_from("VisibilityGroup");
+    group_field.type = (type){TY_STRUCT, visibility_group};
+    vec_push(visibility_component->fields, group_field);
+    prog->visibility = visibility_component;
+
     // The events the engine sends: to each entity as it's spawned or destroyed,
     // and to the world as players join and leave.
     prog->spawned = builtin_event("Spawned", false);
     prog->destroyed = builtin_event("Destroyed", false);
+    prog->shown = builtin_event("Shown", false);
+    prog->hidden = builtin_event("Hidden", false);
     prog->player_joined = builtin_event("PlayerJoined", true);
     prog->player_left = builtin_event("PlayerLeft", true);
     vec_push(prog->player_joined->fields, player);
@@ -15957,6 +16118,9 @@ static void add_builtins(program *prog)
     vec_push(decls, random);
     vec_push(decls, owner);
     vec_push(decls, transform_component);
+    vec_push(decls, audience);
+    vec_push(decls, visibility_group);
+    vec_push(decls, visibility_component);
     vec_push(decls, visibility);
     vec_push(decls, prediction);
     vec_push(decls, io_error);
@@ -15988,6 +16152,8 @@ static void add_builtins(program *prog)
     vec_push(decls, prog->player_joined);
     vec_push(decls, prog->player_left);
     vec_push(decls, prog->forgotten); // After the others, whose numbers the match's queue keeps
+    vec_push(decls, prog->shown);
+    vec_push(decls, prog->hidden);
     for (int i = 0; i < prog->decls.count; i++) vec_push(decls, prog->decls.items[i]);
     prog->decls.items = decls.items;
     prog->decls.count = decls.count;
@@ -16187,7 +16353,7 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug")
-        || str_eq_c(name, "Transform");
+        || str_eq_c(name, "Transform") || str_eq_c(name, "Visibility") || str_eq_c(name, "VisibilityGroup") || str_eq_c(name, "Audience");
 }
 
 // What a declaration is called in generated C: Combat_Health for Combat.Health.
@@ -16386,7 +16552,7 @@ static void collect_decls(program *prog)
                     prog->main = d;
                 }
             }
-            if (d == prog->transform) { d->index = -1; break; }
+            if (d == prog->transform || d == prog->visibility) { d->index = -1; break; }
             d->index = prog->components.count;
             if (d->index == MAX_COMPONENTS) {
                 diag_error(d->at, "too many components; the limit is %d for now", MAX_COMPONENTS);
@@ -16491,13 +16657,18 @@ static comp_mask solid(const program *prog, const comp_mask m)
 // Add or Remove names, which would otherwise double the archetypes it can
 // reach. A tag only set at Spawn stays part of its archetype, so filtering on
 // it costs nothing a row.
-static bool sparse_component(const program *prog, const decl *d)
+static bool sparse_component_source(const program *prog, const decl *d)
 {
     if (d->is_scene) return false;
     for (int a = 0; a < d->attributes.count; a++) {
         if (str_eq_c(d->attributes.items[a].name, "Sparse")) return true;
     }
     return d->fields.count == 0 && (mask_has(prog->added_mask, d->index) || mask_has(prog->removed_mask, d->index));
+}
+
+static bool sparse_component(const program *prog, const decl *d)
+{
+    return (!d->is_local && d->visibility_optional) || sparse_component_source(prog, d);
 }
 
 // Whether a system's (or handler's, or view's) filters admit archetype `mask`:
@@ -18650,6 +18821,13 @@ static void drop_unused_seed(program *prog)
 static void add_scene_player_words(program *prog)
 {
     const uint32_t players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
+    for (uint32_t word = 1; word * 32u < players; word++) {
+        field more = prog->audience->fields.items[0];
+        sb name = {0};
+        sb_printf(&name, "players%u", (unsigned)word);
+        more.name = (str){name.data, (int)name.len};
+        vec_push(prog->audience->fields, more);
+    }
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_COMPONENT || !d->is_scene) continue;

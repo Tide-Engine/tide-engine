@@ -10,7 +10,7 @@ event(Spawned) Setup(with Main)
     Kill(e);
 }
 local singleton Seen { Entity last; }
-local event(Hit hit) Shown(Enemy enemy, mut Seen seen)
+local event(Hit hit) Displayed(Enemy enemy, mut Seen seen)
 {
     if (enemy.hp < hit.damage) Kill(seen.last);
 }

@@ -1,0 +1,9 @@
+// expect: takes no type in '<>'
+component Secret { int value; }
+component Value
+{
+    int value;
+    mut void Set(int next) { value = next; }
+}
+system Change(mut Value value) { value.Set<Secret>(1); }
+scene Main { }

@@ -25,7 +25,7 @@ static void run(tide_world *w, const int op, const int count)
 // A frame in which its view makes its list `count` long.
 static void show(const int count)
 {
-    local.Shown.count = count;
+    local.Displayed.count = count;
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
@@ -155,16 +155,16 @@ TIDE_TEST(lists_resize_in_the_local_world)
     tide_local_init(&local);
     const uint64_t before = tide_world_hash(&world);
     show(10);
-    TIDE_CHECK(tide_list_read_count(&local.heap, local.Shown.numbers) == 10 && local.Shown.sum == 1);
-    TIDE_CHECK(local.Shown.numbers.at >> 30 == TIDE_IN_LOCAL);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 10 && local.Displayed.sum == 1);
+    TIDE_CHECK(local.Displayed.numbers.at >> 30 == TIDE_IN_LOCAL);
     show(50000); // In chunks: the tenth is still 1, and so is the last
-    TIDE_CHECK(tide_list_read_count(&local.heap, local.Shown.numbers) == 50000 && local.Shown.sum == 2);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 50000 && local.Displayed.sum == 2);
     show(20); // The last one went
-    TIDE_CHECK(tide_list_read_count(&local.heap, local.Shown.numbers) == 20 && local.Shown.sum == 2);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 20 && local.Displayed.sum == 2);
     show(0);
-    TIDE_CHECK(tide_list_read_count(&local.heap, local.Shown.numbers) == 0 && local.Shown.sum == 0);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 0 && local.Displayed.sum == 0);
     show(50000);
-    TIDE_CHECK(local.Shown.sum == 1);
+    TIDE_CHECK(local.Displayed.sum == 1);
     TIDE_CHECK(tide_world_hash(&world) == before); // Nothing of it is the match's
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_local_free(&local);

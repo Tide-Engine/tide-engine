@@ -1155,7 +1155,7 @@ local event(Hit) ShowHit(mut Creep creep)
 }
 
 // A tower that's just been built, by anyone.
-local event(Spawned) ShowBuilt(Tower tower, mut Fx fx)
+local event(Shown) ShowBuilt(Tower tower, mut Fx fx)
 {
     if (fx.rings.count > 100) return;
     fx.rings.Add(Ring { at = float2(tower.cell), radius = 0.9, built = true });

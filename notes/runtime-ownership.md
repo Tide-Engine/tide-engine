@@ -1,5 +1,28 @@
 # Runtime written by Claude for now
 
+## Recipient visibility (2026-10-15)
+
+The owner approved entity/component visibility, shared live audience groups,
+partial client simulation, authoritative corrections and separate availability
+events. This work maintains the existing temporary session/entity/event runtime
+exception. Generated code uses private specialized group/policy and canonical
+value codecs built on existing containers; it calls no new exported runtime
+function. Optional `tide_game` projection, input-filter, lifecycle-journal and
+availability callbacks extend the existing session boundary. Hosts and generated
+games rebuild together through the Session ABI identity marker. Protocol 15's
+simulation identity includes the recipient state and listener journal schemas.
+
+Entity metadata pages may be absent between visible global entity IDs. Dense
+tables keep their previous hash/pack/delta representation; sparse tables have an
+explicit indexed-page representation. Generated local delivery reconciles
+Shown/Hidden against its last presented predicted and verified endpoints, with
+private COW snapshots and destruction-cause tracking. Rollback can restore a
+resource after canceled concealment without replaying unchanged availability.
+Contracts and validation are in ecs.md, netcode.md, memory-safety.md and
+verified-and-local-handlers.md. The Tide API spellings and conservative handling
+of opaque server state are documented
+separately from agreed visibility semantics in docs/spec.md.
+
 ## Managed hosting and simulation identity (2026-10-15)
 
 The owner requested implementation of local deployment, isolated WASM matches,
